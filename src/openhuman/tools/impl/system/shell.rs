@@ -120,7 +120,9 @@ impl Tool for ShellTool {
     }
 
     fn description(&self) -> &str {
-        "Execute a shell command in the workspace directory"
+        "Execute a shell command. Use this to run code, manipulate files in the workspace, \
+         or perform system actions on the user's machine — including launching applications \
+         (e.g. `open -a Music` on macOS, `xdg-open music://` on Linux)."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -475,6 +477,119 @@ mod tests {
             CommandClass::Destructive
         );
         assert!(tool.external_effect_with_args(&json!({"command": "rm -rf /"})));
+    }
+
+    /// End-to-end regression guard for #3238.
+    ///
+    /// PR #3074 split `Config.action_dir` (the agent's read/write root)
+    /// from `Config.workspace_dir` (internal product state). `ShellTool`
+    /// is contractually obligated to spawn its child process with
+    /// `current_dir = security.action_dir` so `pwd` inside the shell
+    /// reports the action sandbox path, never `workspace_dir` and never
+    /// the cargo-test caller's CWD.
+    ///
+    /// This test constructs a `SecurityPolicy` whose `action_dir` is a
+    /// fresh tempdir (distinct from `workspace_dir` and from `cwd`),
+    /// runs `pwd`, and asserts the captured stdout canonicalises to the
+    /// same path as `action_dir`. If `ShellTool::run_with_security`
+    /// stops passing `&security.action_dir` to `build_shell_command`
+    /// (or `build_shell_command` stops calling `current_dir`), this
+    /// test fails before the regression ships.
+    #[cfg(not(windows))]
+    #[tokio::test]
+    async fn shell_pwd_returns_action_dir_not_workspace_dir() {
+        let action_tmp = tempfile::tempdir().expect("create action tempdir");
+        let workspace_tmp = tempfile::tempdir().expect("create workspace tempdir");
+        let security = Arc::new(SecurityPolicy {
+            autonomy: AutonomyLevel::Supervised,
+            workspace_dir: workspace_tmp.path().to_path_buf(),
+            action_dir: action_tmp.path().to_path_buf(),
+            ..SecurityPolicy::default()
+        });
+        let tool = ShellTool::new(security.clone(), test_runtime(), test_audit());
+
+        let result = tool
+            .execute(json!({"command": "pwd"}))
+            .await
+            .expect("pwd should execute without harness error");
+        assert!(
+            !result.is_error,
+            "pwd unexpectedly errored: {}",
+            result.output()
+        );
+
+        // Canonicalise both sides — on macOS `/tmp` is a symlink to
+        // `/private/tmp`, so the raw strings won't match even when the
+        // paths are the same.
+        let reported = std::path::PathBuf::from(result.output().trim());
+        let actual = reported.canonicalize().unwrap_or_else(|_| reported.clone());
+        let expected = security
+            .action_dir
+            .canonicalize()
+            .unwrap_or_else(|_| security.action_dir.clone());
+        let workspace_canon = security
+            .workspace_dir
+            .canonicalize()
+            .unwrap_or_else(|_| security.workspace_dir.clone());
+
+        assert_eq!(
+            actual,
+            expected,
+            "pwd must report `action_dir`. got `{}`, expected `{}`. \
+             If this fails, `ShellTool::run_with_security` likely stopped \
+             passing `&security.action_dir` to `runtime.build_shell_command`, \
+             or `build_shell_command` stopped calling `current_dir(...)`. See #3238.",
+            actual.display(),
+            expected.display(),
+        );
+        assert_ne!(
+            actual, workspace_canon,
+            "pwd reported `workspace_dir` instead of `action_dir` — the \
+             action/internal split is broken. See #3074, #3238."
+        );
+    }
+
+    /// Source-level regression guard for #3238.
+    ///
+    /// Locks in the contract that the three shell-family acting tools
+    /// (`shell`, `node_exec`, `npm_exec`) resolve their CWD against
+    /// `security.action_dir`, never `security.workspace_dir`. The
+    /// behavioural assertion above covers `shell`; this guard catches
+    /// regressions in `node_exec` / `npm_exec` without requiring a real
+    /// Node.js install in CI (their `execute()` path runs
+    /// `NodeBootstrap::resolve()` first, which is brittle to mock).
+    ///
+    /// If a future refactor accidentally switches any of these tools
+    /// back to `workspace_dir`, this assertion fires at compile-time
+    /// string-match level.
+    #[test]
+    fn shell_family_tools_route_cwd_through_action_dir() {
+        const SHELL_SRC: &str = include_str!("shell.rs");
+        const NODE_EXEC_SRC: &str = include_str!("node_exec.rs");
+        const NPM_EXEC_SRC: &str = include_str!("npm_exec.rs");
+
+        // Compose forbidden patterns at runtime so this test's own source
+        // doesn't trigger the contains() check on itself.
+        let bad_field = format!("self.security.{}_dir", "workspace");
+        let bad_call_1 = format!("build_shell_command(&command, &{bad_field})");
+        let bad_call_2 = format!("build_shell_command(command, &{bad_field})");
+
+        for (name, src) in [
+            ("shell.rs", SHELL_SRC),
+            ("node_exec.rs", NODE_EXEC_SRC),
+            ("npm_exec.rs", NPM_EXEC_SRC),
+        ] {
+            assert!(
+                src.contains("self.security.action_dir"),
+                "{name} must reference `self.security.action_dir` for tool CWD \
+                 (see #3074, #3238)"
+            );
+            assert!(
+                !src.contains(&bad_call_1) && !src.contains(&bad_call_2),
+                "{name} must not pass `workspace_dir` to `build_shell_command` — \
+                 acting tools spawn into `action_dir`. See #3074, #3238."
+            );
+        }
     }
 
     #[tokio::test]

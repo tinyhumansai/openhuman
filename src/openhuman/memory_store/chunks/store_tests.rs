@@ -1647,3 +1647,47 @@ fn global_topic_purge_removes_only_global_and_topic() {
         "source summary folder must survive the purge"
     );
 }
+
+// ── extraction_coverage (#002 FR-010 / US5) ──────────────────────────────
+
+#[test]
+fn extraction_coverage_empty_store_is_zero() {
+    let (_tmp, cfg) = test_config();
+    assert_eq!(extraction_coverage(&cfg).unwrap(), 0.0);
+}
+
+#[test]
+fn extraction_coverage_reflects_indexed_fraction() {
+    let (_tmp, cfg) = test_config();
+    // Two chunks; index an entity for only the first → coverage 0.5.
+    let c1 = sample_chunk("slack:#eng", 0, 1_700_000_000_000);
+    let c2 = sample_chunk("slack:#eng", 1, 1_700_000_001_000);
+    upsert_chunks(&cfg, &[c1.clone(), c2.clone()]).unwrap();
+
+    with_connection(&cfg, |conn| {
+        conn.execute(
+            "INSERT INTO mem_tree_entity_index
+                (entity_id, node_id, node_kind, entity_kind, surface, score, timestamp_ms)
+             VALUES (?1, ?2, 'leaf', 'person', 'Alice', 0.9, 1)",
+            params!["person:Alice", c1.id],
+        )?;
+        Ok(())
+    })
+    .unwrap();
+
+    let cov = extraction_coverage(&cfg).unwrap();
+    assert!((cov - 0.5).abs() < 1e-6, "expected 0.5, got {cov}");
+
+    // Index the second chunk too → full coverage.
+    with_connection(&cfg, |conn| {
+        conn.execute(
+            "INSERT INTO mem_tree_entity_index
+                (entity_id, node_id, node_kind, entity_kind, surface, score, timestamp_ms)
+             VALUES (?1, ?2, 'leaf', 'person', 'Bob', 0.9, 2)",
+            params!["person:Bob", c2.id],
+        )?;
+        Ok(())
+    })
+    .unwrap();
+    assert!((extraction_coverage(&cfg).unwrap() - 1.0).abs() < 1e-6);
+}

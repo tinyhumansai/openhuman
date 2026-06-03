@@ -1976,6 +1976,12 @@ impl Config {
             };
         }
 
+        if let Some(raw) = env.get("OPENHUMAN_MEMORY_TREE_CLOUD_SUMMARIZATION") {
+            if let Some(val) = parse_env_bool("OPENHUMAN_MEMORY_TREE_CLOUD_SUMMARIZATION", &raw) {
+                self.memory_tree.cloud_summarization_opt_in = val;
+            }
+        }
+
         // Auto-update overrides
         if let Some(flag) = env.get("OPENHUMAN_AUTO_UPDATE_ENABLED") {
             let normalized = flag.trim().to_ascii_lowercase();

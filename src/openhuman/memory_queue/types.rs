@@ -283,6 +283,14 @@ pub struct Job {
     pub available_at_ms: i64,
     pub locked_until_ms: Option<i64>,
     pub last_error: Option<String>,
+    /// Typed failure code (e.g. "budget_exhausted") set when a job is marked
+    /// `failed` with a classified reason; `None` otherwise. Distinct from the
+    /// freeform `last_error` — this is the machine-readable cause the
+    /// status/doctor surface renders.
+    pub failure_reason: Option<String>,
+    /// Failure class ("transient" | "unrecoverable") paired with
+    /// `failure_reason`; `None` until a classified failure is recorded.
+    pub failure_class: Option<String>,
     pub created_at_ms: i64,
     pub started_at_ms: Option<i64>,
     pub completed_at_ms: Option<i64>,

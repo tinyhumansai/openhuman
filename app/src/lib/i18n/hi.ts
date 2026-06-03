@@ -229,7 +229,7 @@ const messages: TranslationMap = {
   'routines.typeCommand': 'कमान',
   'nav.routines': 'Routines',
   'chat.newThread': 'नई थ्रेड',
-  'chat.typeMessage': 'मैसेज टाइप करें...',
+  'chat.typeMessage': 'आज मैं आपकी कैसे मदद कर सकता हूँ?',
   'chat.send': 'मैसेज भेजें',
   'chat.thinking': 'सोच रहा है...',
   'chat.noMessages': 'अभी कोई मैसेज नहीं',
@@ -438,6 +438,11 @@ const messages: TranslationMap = {
   'memoryTree.status.hoursAgo': '{count} hr पहले',
   'memoryTree.status.dayAgo': '1 दिन पहले',
   'memoryTree.status.daysAgo': '{count} दिन पहले',
+  'memoryTree.status.integrationsTitle': 'प्रति-एकीकरण स्थिति',
+  'memoryTree.status.integrationsEmpty': 'कोई एकीकरण कनेक्ट नहीं है',
+  'memoryTree.status.integrationActive': 'सक्रिय',
+  'memoryTree.status.integrationStale': 'पुराना',
+  'memoryTree.status.integrationChunks': 'चंक्स: {count}',
   'alerts.title': 'अलर्ट',
   'alerts.empty': 'अभी कोई अलर्ट नहीं',
   'alerts.markAllRead': 'सभी पढ़ा हुआ मार्क करें',
@@ -2260,6 +2265,9 @@ const messages: TranslationMap = {
   'app.openhumanLink.discord.perk2': 'लाभ 2',
   'app.openhumanLink.discord.perk3': 'लाभ 3',
   'app.openhumanLink.discord.perk4': 'लाभ 4',
+  'app.openhumanLink.discordReport.intro':
+    'माफ करें — हमारी तरफ से कुछ गड़बड़ हुई। हम इन्हें स्वचालित रूप से लॉग करने की कोशिश करते हैं, लेकिन Discord पर विवरण साझा करने से हमें इसे जल्दी ठीक करने में मदद मिलती है।',
+  'app.openhumanLink.discordReport.openDiscord': 'Discord खोलें',
   'app.openhumanLink.done': 'हो गया',
   'app.openhumanLink.loadingChannelSetup': 'चैनल सेटअप लोड हो रहा है',
   'app.openhumanLink.maybeLater': 'शायद बाद में',
@@ -2280,6 +2288,7 @@ const messages: TranslationMap = {
   'app.openhumanLink.title.accounts': 'अपने ऐप्स कनेक्ट करें',
   'app.openhumanLink.title.billing': 'बिलिंग और क्रेडिट',
   'app.openhumanLink.title.discord': 'कम्युनिटी जॉइन करें',
+  'app.openhumanLink.title.discordReport': 'इस त्रुटि की रिपोर्ट करें',
   'app.openhumanLink.title.messaging': 'चैट चैनल कनेक्ट करें',
   'app.openhumanLink.title.notifications': 'नोटिफिकेशन की अनुमति दें',
   'app.persistRehydration.body': 'विवरण',
@@ -4466,7 +4475,50 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'स्थानीय भंडारण अस्वीकार करें',
   'pages.settings.account.security': 'सुरक्षा',
   'pages.settings.account.securityDesc': 'रहस्य भंडारण मोड और कीचेन स्थिति',
+  // #002 memory-pipeline-hardening: degraded badges + typed remediation.
+  'memoryTree.status.statusDegraded': 'अवक्रमित',
+  'memoryTree.status.degradedRecall': 'सिमेंटिक रिकॉल अक्षम',
+  'memoryTree.status.degradedStructure': 'विकी संरचना अधूरी',
+  'memoryTree.status.extractionCoverage': 'एक्सट्रैक्शन कवरेज: {pct}% खंडों में संरचना है',
+  'memory.health.remediation.budget_exhausted':
+    'मेमोरी एम्बेडिंग प्रबंधित बजट तक पहुँच गई। स्थानीय Ollama एम्बेडिंग सेट करें (सेटिंग्स → AI → एम्बेडिंग्स) या मेमोरी बनाना जारी रखने के लिए अपनी स्वयं की एम्बेडिंग API कुंजी जोड़ें।',
+  'memory.health.remediation.auth_missing':
+    'कोई एम्बेडिंग क्रेडेंशियल नहीं मिला। OpenHuman में लॉग इन करें, या सेटिंग्स → AI → एम्बेडिंग्स में स्थानीय Ollama एम्बेडिंग सेट करें।',
+  'memory.health.remediation.auth_invalid':
+    'आपके एम्बेडिंग क्रेडेंशियल अस्वीकार कर दिए गए। फिर से प्रमाणित करें, या सेटिंग्स → AI → एम्बेडिंग्स में स्थानीय Ollama एम्बेडिंग पर स्विच करें।',
+  'memory.health.remediation.embeddings_unconfigured':
+    'कोई एम्बेडिंग प्रदाता कॉन्फ़िगर नहीं किया गया है, इसलिए सिमेंटिक रिकॉल बंद है। स्थानीय Ollama एम्बेडिंग सेट करें (अनुशंसित) या सेटिंग्स → AI → एम्बेडिंग्स में एम्बेडिंग कुंजी जोड़ें।',
+  'memory.health.remediation.embedding_dim_mismatch':
+    'एम्बेडिंग मॉडल गलत वेक्टर आकार लौटाता है (मेमोरी को 1024 आयाम अपेक्षित हैं)। 1024-आयाम वाला मॉडल चुनें, या अपने प्रदाता से 1024 आयाम का अनुरोध करें।',
+  'memory.health.remediation.local_model_unavailable':
+    'एक आवश्यक स्थानीय मॉडल उपलब्ध नहीं है। Ollama इंस्टॉल/चलाएँ और मॉडल डाउनलोड करें, या सेटिंग्स → AI में इस वर्कलोड को क्लाउड प्रदाता पर स्विच करें।',
+  'memory.health.remediation.extraction_timeout':
+    'मेमोरी एक्सट्रैक्शन मॉडल टाइम आउट हो रहा है, इसलिए विकी में बहुत कम संरचना है। सेटिंग्स → AI में मेमोरी एक्सट्रैक्शन मॉडल को तेज़ मॉडल में बदलें।',
+  'memory.health.remediation.summarizer_unavailable':
+    'सारांश ट्री बनाएँ के लिए कोई सारांश प्रदाता उपलब्ध नहीं है। स्थानीय AI (Ollama) सक्षम करें, या सेटिंग्स → AI → मेमोरी में क्लाउड सारांश सक्षम करें।',
+  'memory.health.remediation.transient':
+    'एक अस्थायी त्रुटि ने मेमोरी प्रोसेसिंग को बाधित किया। स्वचालित रूप से पुनः प्रयास किया जाएगा।',
+  'memory.health.remediation.unknown':
+    'मेमोरी प्रोसेसिंग में एक समस्या आई। कॉन्फ़िगरेशन के लिए सेटिंग्स → AI जाँचें।',
+  // Chat — agent-generated artifacts (#2779)
+  'chat.artifact.aria': 'आर्टिफैक्ट: {title}',
+  'chat.artifact.generating': '{kind} बना रहा है…',
+  'chat.artifact.ready': 'तैयार',
+  'chat.artifact.failed': 'निर्माण विफल',
+  'chat.artifact.download': 'डाउनलोड',
+  'chat.artifact.downloading': 'डाउनलोड हो रहा है…',
+  'chat.artifact.downloaded': '{path} में सहेजा गया',
+  'chat.artifact.download_failed': 'डाउनलोड विफल: {reason}',
+  'chat.artifact.retry': 'पुनः प्रयास',
+  'chat.artifact.reveal': 'फ़ोल्डर में दिखाएं',
+  'chat.artifact.show_more': 'और दिखाएं',
+  'chat.artifact.show_less': 'कम दिखाएं',
 
+  // Chat composer toolbar
+  'composer.attachFile': 'फ़ाइल संलग्न करें',
+  'composer.modelSelector': 'मॉडल',
+  'composer.voiceMode': 'वॉइस मोड',
+  'composer.qualityHigh': 'उच्च',
   // Agent activity level
   'activityLevel.title': 'एजेंट गतिविधि स्तर',
   'activityLevel.description':

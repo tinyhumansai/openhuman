@@ -44,7 +44,14 @@ pub use types::{
 
 use crate::openhuman::agent::harness::session::transcript::{self, SessionTranscript};
 use crate::openhuman::memory::Memory;
+use futures::stream::StreamExt;
 use std::path::Path;
+
+/// Max number of persist round-trips (markdown write + SQLite tx + embedding)
+/// kept in flight at once during ingestion. Bounds provider load so a
+/// transcript yielding dozens of candidates can't open dozens of concurrent
+/// embedding requests.
+const PERSIST_CONCURRENCY: usize = 8;
 
 /// Ingest a single session transcript file: extract memory candidates,
 /// dedupe against what's already stored, and persist new entries.
@@ -108,25 +115,73 @@ pub async fn ingest_session_transcript(
     let (kept_reflections, deduped_reflections) =
         dedupe::filter_new_reflections(memory, reflections).await?;
 
-    let mut stored = 0usize;
-    for candidate in &kept {
-        match persist::store_candidate(memory, candidate).await {
-            Ok(()) => stored += 1,
-            Err(err) => log::warn!(
-                "[transcript_ingest] failed to persist candidate kind={:?} importance={:?}: {err}",
-                candidate.kind,
-                candidate.importance
-            ),
-        }
-    }
+    // Persist kept candidates + reflections with BOUNDED concurrency instead
+    // of one sequential await each. A single transcript can yield dozens of
+    // items, and each persist is a markdown write + SQLite tx + an embedding
+    // round-trip — overlapping them (capped at PERSIST_CONCURRENCY) lets their
+    // network/disk waits run in parallel, finishing the background ingest job
+    // sooner, without opening an unbounded number of concurrent embed requests.
+    // Order is irrelevant here — only the per-item Ok/Err accounting matters.
+    // Each future logs its own error and yields 1 on success / 0 on failure,
+    // so no borrowed candidate reference crosses the stream-combinator
+    // boundary (which otherwise trips a higher-ranked-lifetime error). The
+    // fold just sums the per-item outcomes.
+    // Collect the per-item futures into a `Vec` *before* handing them to
+    // `buffer_unordered`. Mapping lazily on the stream (`stream::iter(it.map(..))`)
+    // would store the closure in the polled state and require it to hold for
+    // any lifetime (HRTB), which fails to compile once the whole ingest future
+    // is spawned (`Send + 'static`). Collecting runs each closure up front, so
+    // the stream only carries already-built futures with concrete lifetimes.
+    // Stable correlation fields for the per-item failure logs below. `&str`
+    // is `Copy`, so each `async move` closure copies these in (same as it
+    // already does for `memory`) without moving `thread_id` / `basename`,
+    // which are still needed after the persist stage. Use the transcript
+    // *basename* (not the full path) and avoid logging transcript-derived
+    // content (e.g. reflection theme) so failure logs can't leak the user's
+    // home directory or conversational PII.
+    let thread_label = thread_id.as_deref().unwrap_or("-");
+    let transcript_label = basename.as_str();
 
-    let mut stored_reflections = 0usize;
-    for reflection in &kept_reflections {
-        match persist::store_reflection(memory, reflection).await {
-            Ok(()) => stored_reflections += 1,
-            Err(err) => log::warn!("[transcript_ingest] failed to persist reflection: {err}"),
-        }
-    }
+    let candidate_futs: Vec<_> = kept
+        .iter()
+        .map(|candidate| async move {
+            match persist::store_candidate(memory, candidate).await {
+                Ok(()) => 1usize,
+                Err(err) => {
+                    log::warn!(
+                        "[transcript_ingest] failed to persist candidate kind={:?} importance={:?} thread={thread_label} transcript={transcript_label}: {err}",
+                        candidate.kind,
+                        candidate.importance
+                    );
+                    0usize
+                }
+            }
+        })
+        .collect();
+    let stored = futures::stream::iter(candidate_futs)
+        .buffer_unordered(PERSIST_CONCURRENCY)
+        .fold(0usize, |acc, n| async move { acc + n })
+        .await;
+
+    let reflection_futs: Vec<_> = kept_reflections
+        .iter()
+        .map(|reflection| async move {
+            match persist::store_reflection(memory, reflection).await {
+                Ok(()) => 1usize,
+                Err(err) => {
+                    log::warn!(
+                        "[transcript_ingest] failed to persist reflection importance={:?} thread={thread_label} transcript={transcript_label}: {err}",
+                        reflection.importance
+                    );
+                    0usize
+                }
+            }
+        })
+        .collect();
+    let stored_reflections = futures::stream::iter(reflection_futs)
+        .buffer_unordered(PERSIST_CONCURRENCY)
+        .fold(0usize, |acc, n| async move { acc + n })
+        .await;
 
     log::info!(
         "[transcript_ingest] ingested {}: extracted={} stored={} deduped={} reflections={}/{} (deduped={}) thread={}",

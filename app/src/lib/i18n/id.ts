@@ -231,7 +231,7 @@ const messages: TranslationMap = {
   'routines.typeCommand': 'Perintah',
   'nav.routines': 'Routines',
   'chat.newThread': 'Thread baru',
-  'chat.typeMessage': 'Ketik pesan...',
+  'chat.typeMessage': 'Apa yang bisa saya bantu hari ini?',
   'chat.send': 'Kirim pesan',
   'chat.thinking': 'Berpikir...',
   'chat.noMessages': 'Belum ada pesan',
@@ -441,6 +441,11 @@ const messages: TranslationMap = {
   'memoryTree.status.hoursAgo': '{count} jam lalu',
   'memoryTree.status.dayAgo': '1 hari lalu',
   'memoryTree.status.daysAgo': '{count} hari lalu',
+  'memoryTree.status.integrationsTitle': 'Kesehatan per integrasi',
+  'memoryTree.status.integrationsEmpty': 'Tidak ada integrasi tersambung',
+  'memoryTree.status.integrationActive': 'Aktif',
+  'memoryTree.status.integrationStale': 'Usang',
+  'memoryTree.status.integrationChunks': 'Potongan: {count}',
   'alerts.title': 'Peringatan',
   'alerts.empty': 'Belum ada peringatan',
   'alerts.markAllRead': 'Tandai semua sudah dibaca',
@@ -2263,6 +2268,9 @@ const messages: TranslationMap = {
   'app.openhumanLink.discord.perk2': 'Keuntungan 2',
   'app.openhumanLink.discord.perk3': 'Keuntungan 3',
   'app.openhumanLink.discord.perk4': 'Keuntungan 4',
+  'app.openhumanLink.discordReport.intro':
+    'Mohon maaf — terjadi kesalahan di pihak kami. Kami berusaha mencatat error ini secara otomatis, tetapi membagikan detailnya di Discord membantu kami memperbaikinya lebih cepat.',
+  'app.openhumanLink.discordReport.openDiscord': 'Buka Discord',
   'app.openhumanLink.done': 'Selesai',
   'app.openhumanLink.loadingChannelSetup': 'Memuat pengaturan kanal',
   'app.openhumanLink.maybeLater': 'Mungkin nanti',
@@ -2283,6 +2291,7 @@ const messages: TranslationMap = {
   'app.openhumanLink.title.accounts': 'Hubungkan aplikasi Anda',
   'app.openhumanLink.title.billing': 'Tagihan & kredit',
   'app.openhumanLink.title.discord': 'Bergabung ke komunitas',
+  'app.openhumanLink.title.discordReport': 'Laporkan error ini',
   'app.openhumanLink.title.messaging': 'Hubungkan kanal chat',
   'app.openhumanLink.title.notifications': 'Izinkan notifikasi',
   'app.persistRehydration.body': 'Isi',
@@ -4476,7 +4485,50 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Tolak penyimpanan lokal',
   'pages.settings.account.security': 'Keamanan',
   'pages.settings.account.securityDesc': 'Mode penyimpanan rahasia dan status keychain',
+  // #002 memory-pipeline-hardening: degraded badges + typed remediation.
+  'memoryTree.status.statusDegraded': 'Terdegradasi',
+  'memoryTree.status.degradedRecall': 'Recall semantik dinonaktifkan',
+  'memoryTree.status.degradedStructure': 'Struktur wiki tidak lengkap',
+  'memoryTree.status.extractionCoverage': 'Cakupan ekstraksi: {pct}% bagian memiliki struktur',
+  'memory.health.remediation.budget_exhausted':
+    'Embedding memori mencapai batas anggaran terkelola. Siapkan embedding Ollama lokal (Pengaturan → AI → Sematan) atau tambahkan kunci API embedding Anda sendiri untuk terus membangun memori.',
+  'memory.health.remediation.auth_missing':
+    'Kredensial embedding tidak ditemukan. Masuk ke OpenHuman, atau siapkan embedding Ollama lokal di Pengaturan → AI → Sematan.',
+  'memory.health.remediation.auth_invalid':
+    'Kredensial embedding Anda ditolak. Autentikasi ulang, atau beralih ke embedding Ollama lokal di Pengaturan → AI → Sematan.',
+  'memory.health.remediation.embeddings_unconfigured':
+    'Tidak ada penyedia embedding yang dikonfigurasi, sehingga recall semantik nonaktif. Siapkan embedding Ollama lokal (disarankan) atau tambahkan kunci embedding di Pengaturan → AI → Sematan.',
+  'memory.health.remediation.embedding_dim_mismatch':
+    'Model embedding mengembalikan ukuran vektor yang salah (memori mengharapkan 1024 dimensi). Pilih model 1024 dimensi, atau minta 1024 dimensi dari penyedia Anda.',
+  'memory.health.remediation.local_model_unavailable':
+    'Model lokal yang diperlukan tidak tersedia. Instal/jalankan Ollama dan unduh model, atau alihkan beban kerja ini ke penyedia cloud di Pengaturan → AI.',
+  'memory.health.remediation.extraction_timeout':
+    'Model ekstraksi memori kehabisan waktu, sehingga wiki memiliki sedikit struktur. Ganti model ekstraksi memori ke yang lebih cepat di Pengaturan → AI.',
+  'memory.health.remediation.summarizer_unavailable':
+    'Tidak ada penyedia ringkasan yang tersedia untuk Buat Pohon Ringkasan. Aktifkan AI lokal (Ollama), atau aktifkan ringkasan cloud di Pengaturan → AI → Memori.',
+  'memory.health.remediation.transient':
+    'Kesalahan sementara mengganggu pemrosesan memori. Akan dicoba lagi secara otomatis.',
+  'memory.health.remediation.unknown':
+    'Pemrosesan memori mengalami masalah. Periksa Pengaturan → AI untuk konfigurasi.',
+  // Chat — agent-generated artifacts (#2779)
+  'chat.artifact.aria': 'Artefak: {title}',
+  'chat.artifact.generating': 'Membuat {kind}…',
+  'chat.artifact.ready': 'Siap',
+  'chat.artifact.failed': 'Gagal dibuat',
+  'chat.artifact.download': 'Unduh',
+  'chat.artifact.downloading': 'Mengunduh…',
+  'chat.artifact.downloaded': 'Disimpan ke {path}',
+  'chat.artifact.download_failed': 'Unduhan gagal: {reason}',
+  'chat.artifact.retry': 'Coba lagi',
+  'chat.artifact.reveal': 'Tampilkan di folder',
+  'chat.artifact.show_more': 'Tampilkan selengkapnya',
+  'chat.artifact.show_less': 'Tampilkan lebih sedikit',
 
+  // Chat composer toolbar
+  'composer.attachFile': 'Lampirkan file',
+  'composer.modelSelector': 'Model',
+  'composer.voiceMode': 'Mode suara',
+  'composer.qualityHigh': 'Tinggi',
   // Agent activity level
   'activityLevel.title': 'Tingkat aktivitas agen',
   'activityLevel.description':

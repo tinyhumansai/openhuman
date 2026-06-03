@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, type Mock, test, vi } from 'vitest';
 
 import { callCoreRpc } from '../../services/coreRpcClient';
 import {
+  memorySyncStatusList,
   memoryTreeBackfillStatus,
   memoryTreeChunkScore,
   memoryTreeDeleteChunk,
@@ -417,5 +418,47 @@ describe('memoryTreeObsidianVaultStatus', () => {
       params: {},
     });
     expect(out.registered).toBe(true);
+  });
+});
+
+describe('memorySyncStatusList', () => {
+  test('dispatches openhuman.memory_sync_status_list and returns the rows from a result envelope', async () => {
+    mockCallCoreRpc.mockResolvedValueOnce({
+      result: {
+        statuses: [
+          {
+            provider: 'slack',
+            chunks_synced: 5,
+            chunks_pending: 0,
+            batch_total: 0,
+            batch_processed: 0,
+            last_chunk_at_ms: 1_700_000_000_000,
+            freshness: 'active',
+          },
+        ],
+      },
+    });
+
+    const rows = await memorySyncStatusList();
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.memory_sync_status_list',
+      params: {},
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].provider).toBe('slack');
+    expect(rows[0].freshness).toBe('active');
+  });
+
+  test('handles bare-value responses (no logs envelope)', async () => {
+    mockCallCoreRpc.mockResolvedValueOnce({ statuses: [] });
+    const rows = await memorySyncStatusList();
+    expect(rows).toEqual([]);
+  });
+
+  test('falls back to empty array when statuses is missing', async () => {
+    mockCallCoreRpc.mockResolvedValueOnce({});
+    const rows = await memorySyncStatusList();
+    expect(rows).toEqual([]);
   });
 });

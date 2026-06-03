@@ -229,7 +229,7 @@ const messages: TranslationMap = {
   'routines.typeCommand': '명령',
   'nav.routines': 'Routines',
   'chat.newThread': '새 스레드',
-  'chat.typeMessage': '메시지를 입력하세요...',
+  'chat.typeMessage': '오늘 무엇을 도와드릴까요?',
   'chat.send': '메시지 보내기',
   'chat.thinking': '생각 중...',
   'chat.noMessages': '아직 메시지가 없습니다',
@@ -438,6 +438,11 @@ const messages: TranslationMap = {
   'memoryTree.status.hoursAgo': '{count}시간 전',
   'memoryTree.status.dayAgo': '1일 전',
   'memoryTree.status.daysAgo': '{count}일 전',
+  'memoryTree.status.integrationsTitle': '통합별 상태',
+  'memoryTree.status.integrationsEmpty': '연결된 통합이 없습니다',
+  'memoryTree.status.integrationActive': '활성',
+  'memoryTree.status.integrationStale': '오래됨',
+  'memoryTree.status.integrationChunks': '청크: {count}개',
   'alerts.title': '알림',
   'alerts.empty': '아직 알림이 없습니다',
   'alerts.markAllRead': '모두 읽음으로 표시',
@@ -2236,6 +2241,9 @@ const messages: TranslationMap = {
   'app.openhumanLink.discord.perk2': '혜택2',
   'app.openhumanLink.discord.perk3': '혜택3',
   'app.openhumanLink.discord.perk4': '혜택4',
+  'app.openhumanLink.discordReport.intro':
+    '죄송합니다 — 저희 측에서 오류가 발생했습니다. 이러한 오류를 자동으로 기록하려고 하지만, Discord에 세부 정보를 공유해 주시면 더 빠르게 해결할 수 있습니다.',
+  'app.openhumanLink.discordReport.openDiscord': 'Discord 열기',
   'app.openhumanLink.done': '완료',
   'app.openhumanLink.loadingChannelSetup': '채널 설정 불러오는 중',
   'app.openhumanLink.maybeLater': '나중에',
@@ -2256,6 +2264,7 @@ const messages: TranslationMap = {
   'app.openhumanLink.title.accounts': '앱 연결',
   'app.openhumanLink.title.billing': '결제 및 크레딧',
   'app.openhumanLink.title.discord': '커뮤니티 참여',
+  'app.openhumanLink.title.discordReport': '이 오류 신고',
   'app.openhumanLink.title.messaging': '채팅 채널 연결',
   'app.openhumanLink.title.notifications': '알림 허용',
   'app.persistRehydration.body': '본문',
@@ -4423,7 +4432,50 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': '로컬 저장소 거부',
   'pages.settings.account.security': '보안',
   'pages.settings.account.securityDesc': '비밀 저장 모드 및 키체인 상태',
+  // #002 memory-pipeline-hardening: degraded badges + typed remediation.
+  'memoryTree.status.statusDegraded': '저하됨',
+  'memoryTree.status.degradedRecall': '의미 기반 검색 비활성화됨',
+  'memoryTree.status.degradedStructure': '위키 구조 불완전',
+  'memoryTree.status.extractionCoverage': '추출 범위: 청크의 {pct}%에 구조가 있음',
+  'memory.health.remediation.budget_exhausted':
+    '메모리 임베딩이 관리형 예산에 도달했습니다. 로컬 Ollama 임베딩을 설정하거나(설정 → AI → 임베딩) 메모리를 계속 구축하려면 자체 임베딩 API 키를 추가하세요.',
+  'memory.health.remediation.auth_missing':
+    '임베딩 자격 증명을 찾을 수 없습니다. OpenHuman에 로그인하거나 설정 → AI → 임베딩에서 로컬 Ollama 임베딩을 설정하세요.',
+  'memory.health.remediation.auth_invalid':
+    '임베딩 자격 증명이 거부되었습니다. 다시 인증하거나 설정 → AI → 임베딩에서 로컬 Ollama 임베딩으로 전환하세요.',
+  'memory.health.remediation.embeddings_unconfigured':
+    '구성된 임베딩 제공자가 없어 의미 기반 검색이 꺼져 있습니다. 로컬 Ollama 임베딩을 설정하거나(권장) 설정 → AI → 임베딩에서 임베딩 키를 추가하세요.',
+  'memory.health.remediation.embedding_dim_mismatch':
+    '임베딩 모델이 잘못된 벡터 크기를 반환합니다(메모리는 1024차원을 예상함). 1024차원 모델을 선택하거나 제공자에게 1024차원을 요청하세요.',
+  'memory.health.remediation.local_model_unavailable':
+    '필요한 로컬 모델을 사용할 수 없습니다. Ollama를 설치/실행하고 모델을 다운로드하거나, 설정 → AI에서 이 작업을 클라우드 제공자로 전환하세요.',
+  'memory.health.remediation.extraction_timeout':
+    '메모리 추출 모델이 시간 초과되어 위키 구조가 거의 없습니다. 설정 → AI에서 메모리 추출 모델을 더 빠른 것으로 변경하세요.',
+  'memory.health.remediation.summarizer_unavailable':
+    '요약 트리 만들기에 사용할 수 있는 요약 제공자가 없습니다. 로컬 AI(Ollama)를 활성화하거나, 설정 → AI → 메모리에서 클라우드 요약을 활성화하세요.',
+  'memory.health.remediation.transient':
+    '일시적인 오류로 메모리 처리가 중단되었습니다. 자동으로 다시 시도됩니다.',
+  'memory.health.remediation.unknown':
+    '메모리 처리 중 문제가 발생했습니다. 설정 → AI에서 구성을 확인하세요.',
+  // Chat — agent-generated artifacts (#2779)
+  'chat.artifact.aria': '아티팩트: {title}',
+  'chat.artifact.generating': '{kind} 생성 중…',
+  'chat.artifact.ready': '준비됨',
+  'chat.artifact.failed': '생성 실패',
+  'chat.artifact.download': '다운로드',
+  'chat.artifact.downloading': '다운로드 중…',
+  'chat.artifact.downloaded': '{path}에 저장됨',
+  'chat.artifact.download_failed': '다운로드 실패: {reason}',
+  'chat.artifact.retry': '다시 시도',
+  'chat.artifact.reveal': '폴더에서 보기',
+  'chat.artifact.show_more': '더 보기',
+  'chat.artifact.show_less': '간단히 보기',
 
+  // Chat composer toolbar
+  'composer.attachFile': '파일 첨부',
+  'composer.modelSelector': '모델',
+  'composer.voiceMode': '음성 모드',
+  'composer.qualityHigh': '높음',
   // Agent activity level
   'activityLevel.title': '에이전트 활동 수준',
   'activityLevel.description':

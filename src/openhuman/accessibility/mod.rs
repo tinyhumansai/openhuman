@@ -6,6 +6,7 @@
 //! instead of owning platform-specific code directly.
 
 mod automation_state;
+pub mod ax_interact;
 mod capture;
 mod focus;
 mod globe;
@@ -17,6 +18,10 @@ mod permissions;
 mod terminal;
 mod text_util;
 mod types;
+// Windows accessibility backend for `ax_interact` (UI Automation). Sibling of
+// the macOS Swift-helper path; selected via cfg-dispatch in `ax_interact.rs`.
+#[cfg(target_os = "windows")]
+mod uia_interact;
 
 #[cfg(test)]
 pub(crate) use automation_state::test_lock as automation_state_test_lock;

@@ -219,7 +219,7 @@ const messages: TranslationMap = {
   'routines.typeCommand': '命令',
   'nav.routines': 'Routines',
   'chat.newThread': '新对话',
-  'chat.typeMessage': '输入消息...',
+  'chat.typeMessage': '今天我能帮您做什么？',
   'chat.send': '发送',
   'chat.thinking': '思考中...',
   'chat.noMessages': '暂无消息',
@@ -424,6 +424,11 @@ const messages: TranslationMap = {
   'memoryTree.status.hoursAgo': '{count} 小时前',
   'memoryTree.status.dayAgo': '1 天前',
   'memoryTree.status.daysAgo': '{count} 天前',
+  'memoryTree.status.integrationsTitle': '各集成状态',
+  'memoryTree.status.integrationsEmpty': '未连接任何集成',
+  'memoryTree.status.integrationActive': '活跃',
+  'memoryTree.status.integrationStale': '过期',
+  'memoryTree.status.integrationChunks': '分块: {count}',
   'alerts.title': '通知',
   'alerts.empty': '暂无通知',
   'alerts.markAllRead': '全部标记为已读',
@@ -2149,6 +2154,9 @@ const messages: TranslationMap = {
   'app.openhumanLink.discord.perk2': '福利 2',
   'app.openhumanLink.discord.perk3': '福利 3',
   'app.openhumanLink.discord.perk4': '福利 4',
+  'app.openhumanLink.discordReport.intro':
+    '抱歉 — 我们这边出错了。我们会尝试自动记录这些错误，但在 Discord 上分享详情能帮助我们更快地修复问题。',
+  'app.openhumanLink.discordReport.openDiscord': '打开 Discord',
   'app.openhumanLink.done': '完成',
   'app.openhumanLink.loadingChannelSetup': '正在加载渠道设置',
   'app.openhumanLink.maybeLater': '稍后再说',
@@ -2169,6 +2177,7 @@ const messages: TranslationMap = {
   'app.openhumanLink.title.accounts': '连接你的应用',
   'app.openhumanLink.title.billing': '账单与配额',
   'app.openhumanLink.title.discord': '加入社区',
+  'app.openhumanLink.title.discordReport': '报告此错误',
   'app.openhumanLink.title.messaging': '连接聊天渠道',
   'app.openhumanLink.title.notifications': '允许通知',
   'app.persistRehydration.body': '正在恢复应用状态',
@@ -4244,7 +4253,48 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': '拒绝本地存储',
   'pages.settings.account.security': '安全',
   'pages.settings.account.securityDesc': '密钥存储模式和密钥链状态',
+  // #002 memory-pipeline-hardening: degraded badges + typed remediation.
+  'memoryTree.status.statusDegraded': '已降级',
+  'memoryTree.status.degradedRecall': '语义召回已禁用',
+  'memoryTree.status.degradedStructure': 'Wiki 结构不完整',
+  'memoryTree.status.extractionCoverage': '提取覆盖率：{pct}% 的片段具有结构',
+  'memory.health.remediation.budget_exhausted':
+    '记忆嵌入已达到托管预算上限。请设置本地 Ollama 嵌入（设置 → AI → 向量嵌入），或添加你自己的嵌入 API 密钥以继续构建记忆。',
+  'memory.health.remediation.auth_missing':
+    '未找到嵌入凭据。请登录 OpenHuman，或在设置 → AI → 向量嵌入 中设置本地 Ollama 嵌入。',
+  'memory.health.remediation.auth_invalid':
+    '你的嵌入凭据被拒绝。请重新进行身份验证，或在设置 → AI → 向量嵌入 中切换到本地 Ollama 嵌入。',
+  'memory.health.remediation.embeddings_unconfigured':
+    '未配置嵌入提供方，因此语义召回已关闭。请设置本地 Ollama 嵌入（推荐），或在设置 → AI → 向量嵌入 中添加嵌入密钥。',
+  'memory.health.remediation.embedding_dim_mismatch':
+    '嵌入模型返回的向量大小不正确（记忆需要 1024 维）。请选择 1024 维的模型，或向你的提供方请求 1024 维。',
+  'memory.health.remediation.local_model_unavailable':
+    '所需的本地模型不可用。请安装/运行 Ollama 并拉取模型，或在设置 → AI 中将此工作负载切换到云提供方。',
+  'memory.health.remediation.extraction_timeout':
+    '记忆提取模型超时，因此 Wiki 结构很少。请在设置 → AI 中将记忆提取模型更换为更快的模型。',
+  'memory.health.remediation.summarizer_unavailable':
+    '没有可用于构建摘要树的摘要提供方。请启用本地 AI（Ollama），或在设置 → AI → 记忆中启用云端摘要。',
+  'memory.health.remediation.transient': '临时错误中断了记忆处理。将自动重试。',
+  'memory.health.remediation.unknown': '记忆处理遇到问题。请在设置 → AI 中检查配置。',
+  // Chat — agent-generated artifacts (#2779)
+  'chat.artifact.aria': '工件：{title}',
+  'chat.artifact.generating': '正在生成{kind}…',
+  'chat.artifact.ready': '已就绪',
+  'chat.artifact.failed': '生成失败',
+  'chat.artifact.download': '下载',
+  'chat.artifact.downloading': '下载中…',
+  'chat.artifact.downloaded': '已保存到 {path}',
+  'chat.artifact.download_failed': '下载失败：{reason}',
+  'chat.artifact.retry': '重试',
+  'chat.artifact.reveal': '在文件夹中显示',
+  'chat.artifact.show_more': '显示更多',
+  'chat.artifact.show_less': '收起',
 
+  // Chat composer toolbar
+  'composer.attachFile': '附加文件',
+  'composer.modelSelector': '模型',
+  'composer.voiceMode': '语音模式',
+  'composer.qualityHigh': '高',
   // Agent activity level
   'activityLevel.title': '智能体活动级别',
   'activityLevel.description': '控制您的智能体的主动程度。级别越高，消耗的令牌越多。',

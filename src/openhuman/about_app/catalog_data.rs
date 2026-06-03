@@ -327,6 +327,16 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         privacy: LOCAL_RAW,
     },
     Capability {
+        id: "intelligence.memory_pipeline_doctor",
+        name: "Memory Pipeline Doctor",
+        domain: "intelligence",
+        category: CapabilityCategory::Intelligence,
+        description: "Diagnose why the memory tree / wiki is empty or stalled. Walks each pipeline stage (embeddings config, scheduler gate, job queue, extraction/recall degradation, summary-tree precondition) and reports the single first blocking cause with an actionable fix, plus counters and extraction coverage. The agent can run it on itself; a typed 'first blocking cause' is surfaced in the Memory status panel, and jobs that failed under a now-fixed config can be requeued on demand via the `memory_tree_retry_failed` RPC.",
+        how_to: "Memory status panel shows the cause + fix; or ask the agent to diagnose memory; or `openhuman-core` RPC `memory_tree_doctor`",
+        status: CapabilityStatus::Beta,
+        privacy: LOCAL_RAW,
+    },
+    Capability {
         id: "intelligence.github_repo_memory_source",
         name: "GitHub Repo Memory Source",
         domain: "memory_sources",

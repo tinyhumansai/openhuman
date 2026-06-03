@@ -329,6 +329,12 @@ fn apply_schema(conn: &Connection) -> Result<()> {
         "is_user",
         "INTEGER NOT NULL DEFAULT 0",
     )?;
+    // #002 memory-pipeline-hardening: typed failure metadata on jobs so the
+    // worker can fail-fast on unrecoverable errors and the status/doctor
+    // surface can show an actionable cause. Both nullable; only set when a
+    // job is marked `failed` with a classified reason.
+    add_column_if_missing(conn, "mem_tree_jobs", "failure_reason", "TEXT")?;
+    add_column_if_missing(conn, "mem_tree_jobs", "failure_class", "TEXT")?;
     Ok(())
 }
 

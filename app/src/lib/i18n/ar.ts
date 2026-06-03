@@ -227,7 +227,7 @@ const messages: TranslationMap = {
   'routines.typeCommand': 'القيادة',
   'nav.routines': 'Routines',
   'chat.newThread': 'محادثة جديدة',
-  'chat.typeMessage': 'اكتب رسالة...',
+  'chat.typeMessage': 'كيف يمكنني مساعدتك اليوم؟',
   'chat.send': 'إرسال الرسالة',
   'chat.thinking': 'جارٍ التفكير...',
   'chat.noMessages': 'لا توجد رسائل بعد',
@@ -432,6 +432,11 @@ const messages: TranslationMap = {
   'memoryTree.status.hoursAgo': 'قبل شهر',
   'memoryTree.status.dayAgo': 'قبل يوم واحد',
   'memoryTree.status.daysAgo': 'قبل أيام',
+  'memoryTree.status.integrationsTitle': 'حالة التكاملات',
+  'memoryTree.status.integrationsEmpty': 'لا توجد تكاملات متصلة',
+  'memoryTree.status.integrationActive': 'نشط',
+  'memoryTree.status.integrationStale': 'قديم',
+  'memoryTree.status.integrationChunks': 'الشرائح: {count}',
   'alerts.title': 'التنبيهات',
   'alerts.empty': 'لا توجد تنبيهات بعد',
   'alerts.markAllRead': 'تحديد الكل كمقروء',
@@ -2217,6 +2222,9 @@ const messages: TranslationMap = {
   'app.openhumanLink.discord.perk2': 'ميزة 2',
   'app.openhumanLink.discord.perk3': 'ميزة 3',
   'app.openhumanLink.discord.perk4': 'ميزة 4',
+  'app.openhumanLink.discordReport.intro':
+    'نعتذر — حدث خطأ من جانبنا. نحاول تسجيل هذه الأخطاء تلقائيًا، لكن مشاركة التفاصيل على Discord تساعدنا على إصلاحها بشكل أسرع.',
+  'app.openhumanLink.discordReport.openDiscord': 'فتح Discord',
   'app.openhumanLink.done': 'تم',
   'app.openhumanLink.loadingChannelSetup': 'جارٍ تحميل إعداد القناة',
   'app.openhumanLink.maybeLater': 'ربما لاحقًا',
@@ -2237,6 +2245,7 @@ const messages: TranslationMap = {
   'app.openhumanLink.title.accounts': 'ربط تطبيقاتك',
   'app.openhumanLink.title.billing': 'الفوترة والرصيد',
   'app.openhumanLink.title.discord': 'الانضمام إلى المجتمع',
+  'app.openhumanLink.title.discordReport': 'الإبلاغ عن هذا الخطأ',
   'app.openhumanLink.title.messaging': 'ربط قناة محادثة',
   'app.openhumanLink.title.notifications': 'السماح بالإشعارات',
   'app.persistRehydration.body': 'المحتوى',
@@ -4381,7 +4390,50 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'رفض التخزين المحلي',
   'pages.settings.account.security': 'الأمان',
   'pages.settings.account.securityDesc': 'وضع تخزين الأسرار وحالة سلسلة المفاتيح',
+  // #002 memory-pipeline-hardening: degraded badges + typed remediation.
+  'memoryTree.status.statusDegraded': 'متدهور',
+  'memoryTree.status.degradedRecall': 'الاسترجاع الدلالي معطّل',
+  'memoryTree.status.degradedStructure': 'بنية الويكي غير مكتملة',
+  'memoryTree.status.extractionCoverage': 'تغطية الاستخراج: {pct}% من الأجزاء لها بنية',
+  'memory.health.remediation.budget_exhausted':
+    'استنفدت تضمينات الذاكرة الميزانية المُدارة. أعدّ تضمينات Ollama المحلية (الإعدادات → الذكاء الاصطناعي → التضمينات) أو أضف مفتاح API الخاص بك للتضمينات لمواصلة بناء الذاكرة.',
+  'memory.health.remediation.auth_missing':
+    'لم يتم العثور على بيانات اعتماد التضمينات. سجّل الدخول إلى OpenHuman، أو أعدّ تضمينات Ollama المحلية في الإعدادات → الذكاء الاصطناعي → التضمينات.',
+  'memory.health.remediation.auth_invalid':
+    'تم رفض بيانات اعتماد التضمينات الخاصة بك. أعد المصادقة، أو بدّل إلى تضمينات Ollama المحلية في الإعدادات → الذكاء الاصطناعي → التضمينات.',
+  'memory.health.remediation.embeddings_unconfigured':
+    'لم يتم تكوين أي مزوّد تضمينات، لذا فإن الاسترجاع الدلالي معطّل. أعدّ تضمينات Ollama المحلية (موصى به) أو أضف مفتاح تضمينات في الإعدادات → الذكاء الاصطناعي → التضمينات.',
+  'memory.health.remediation.embedding_dim_mismatch':
+    'يعيد نموذج التضمين حجم متجه خاطئًا (تتوقع الذاكرة 1024 بُعدًا). اختر نموذجًا بـ 1024 بُعدًا، أو اطلب 1024 بُعدًا من مزوّدك.',
+  'memory.health.remediation.local_model_unavailable':
+    'نموذج محلي مطلوب غير متوفر. ثبّت/شغّل Ollama ونزّل النموذج، أو بدّل هذا الحِمل إلى مزوّد سحابي في الإعدادات → الذكاء الاصطناعي.',
+  'memory.health.remediation.extraction_timeout':
+    'يتجاوز نموذج استخراج الذاكرة المهلة الزمنية، لذا فإن بنية الويكي قليلة. بدّل نموذج استخراج الذاكرة إلى نموذج أسرع في الإعدادات → الذكاء الاصطناعي.',
+  'memory.health.remediation.summarizer_unavailable':
+    'لا يتوفر مزوّد تلخيص لميزة إنشاء أشجار التلخيص. فعّل الذكاء الاصطناعي المحلي (Ollama)، أو فعّل تلخيص السحابة في الإعدادات → الذكاء الاصطناعي → الذاكرة.',
+  'memory.health.remediation.transient':
+    'حدث خطأ مؤقت أدى إلى مقاطعة معالجة الذاكرة. ستتم إعادة المحاولة تلقائيًا.',
+  'memory.health.remediation.unknown':
+    'واجهت معالجة الذاكرة مشكلة. تحقق من الإعدادات → الذكاء الاصطناعي للتكوين.',
+  // Chat — agent-generated artifacts (#2779)
+  'chat.artifact.aria': 'الملف: {title}',
+  'chat.artifact.generating': 'جارٍ إنشاء {kind}…',
+  'chat.artifact.ready': 'جاهز',
+  'chat.artifact.failed': 'فشل الإنشاء',
+  'chat.artifact.download': 'تنزيل',
+  'chat.artifact.downloading': 'جارٍ التنزيل…',
+  'chat.artifact.downloaded': 'تم الحفظ في {path}',
+  'chat.artifact.download_failed': 'فشل التنزيل: {reason}',
+  'chat.artifact.retry': 'إعادة المحاولة',
+  'chat.artifact.reveal': 'عرض في المجلد',
+  'chat.artifact.show_more': 'عرض المزيد',
+  'chat.artifact.show_less': 'عرض أقل',
 
+  // Chat composer toolbar
+  'composer.attachFile': 'إرفاق ملف',
+  'composer.modelSelector': 'النموذج',
+  'composer.voiceMode': 'وضع الصوت',
+  'composer.qualityHigh': 'عالٍ',
   // Agent activity level
   'activityLevel.title': 'مستوى نشاط الوكيل',
   'activityLevel.description':

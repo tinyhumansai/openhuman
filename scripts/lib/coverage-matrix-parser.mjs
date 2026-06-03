@@ -1,37 +1,86 @@
-const ROW_REGEX = /^\| (\d+(?:\.\d+){2,3}) \| ([^|]+) \| ([^|]+) \| ([^|]+) \| ([^|]+) \| ([^|]+) \|/;
+const ROW_REGEX =
+  /^\|\s*(\d+(?:\.\d+){2,3})\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*([^|]*?)\s*\|\s*$/u;
+
 const ID_REGEX = /^\d+(?:\.\d+){2,3}$/;
-const VALID_STATUS = new Set(['✅', '🟡', '❌', '🚫']);
+
+const VALID_STATUS = new Set(["✅", "🟡", "❌", "🚫"]);
 
 export function parseMatrix(markdown) {
+  if (typeof markdown !== "string") {
+    return {
+      rows: [],
+      errors: ["Input must be a string"],
+    };
+  }
+
   const rows = [];
   const errors = [];
-  if (typeof markdown !== 'string') {
-    return { rows, errors };
-  }
-  for (const line of markdown.split(/\r?\n/)) {
-    const match = line.match(ROW_REGEX);
+
+  const lines = markdown.split(/\r?\n/);
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    const match = ROW_REGEX.exec(line);
     if (!match) continue;
-    const [, id, name, layer, path, status, notes] = match.map((v) => (typeof v === 'string' ? v.trim() : v));
+
+    const [, id, name, layer, path, rawStatus, notes] = match;
+
+    const status = rawStatus.trim();
+
     if (!ID_REGEX.test(id)) {
-      errors.push(`Invalid ID format: ${id}`);
+      errors.push(`Line ${i + 1}: Invalid ID format "${id}"`);
       continue;
     }
+
     if (!VALID_STATUS.has(status)) {
-      errors.push(`Row ${id}: invalid status "${status}" (must be one of ${[...VALID_STATUS].join(' ')})`);
+      errors.push(`Line ${i + 1} (${id}): invalid status "${status}"`);
       continue;
     }
-    rows.push({ id, name, layer, path, status, notes });
+
+    rows.push({
+      id,
+      name: name.trim(),
+      layer: layer.trim(),
+      path: path.trim(),
+      status,
+      notes: notes.trim(),
+    });
   }
+
   return { rows, errors };
 }
 
-export function validateAgainstCatalog(parsedRows, catalogIds) {
-  const seen = new Map();
-  for (const row of parsedRows) {
-    seen.set(row.id, (seen.get(row.id) ?? 0) + 1);
+export function validateAgainstCatalog(rows, catalogIds) {
+  const counts = new Map();
+
+  for (const { id } of rows) {
+    counts.set(id, (counts.get(id) ?? 0) + 1);
   }
-  const duplicates = [...seen.entries()].filter(([, count]) => count > 1).map(([id]) => id);
-  const present = new Set(seen.keys());
-  const missingFromMatrix = [...catalogIds].filter((id) => !present.has(id));
-  return { missingFromMatrix, duplicates };
+
+  const duplicates = [];
+
+  for (const [id, count] of counts) {
+    if (count > 1) {
+      duplicates.push(id);
+    }
+  }
+
+  const catalogSet =
+    catalogIds instanceof Set ? catalogIds : new Set(catalogIds);
+
+  const missingFromMatrix = [];
+
+  for (const id of catalogSet) {
+    if (!counts.has(id)) {
+      missingFromMatrix.push(id);
+    }
+  }
+
+  return {
+    missingFromMatrix,
+    duplicates,
+    totalRows: rows.length,
+    uniqueRows: counts.size,
+  };
 }

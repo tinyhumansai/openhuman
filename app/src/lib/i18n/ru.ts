@@ -231,7 +231,7 @@ const messages: TranslationMap = {
   'routines.typeCommand': 'Команда',
   'nav.routines': 'Routines',
   'chat.newThread': 'Новый чат',
-  'chat.typeMessage': 'Введи сообщение...',
+  'chat.typeMessage': 'Чем я могу помочь тебе сегодня?',
   'chat.send': 'Отправить сообщение',
   'chat.thinking': 'Думаю...',
   'chat.noMessages': 'Сообщений пока нет',
@@ -441,6 +441,11 @@ const messages: TranslationMap = {
   'memoryTree.status.hoursAgo': '{count} час назад',
   'memoryTree.status.dayAgo': '1 день назад',
   'memoryTree.status.daysAgo': '{count} дней назад',
+  'memoryTree.status.integrationsTitle': 'Состояние интеграций',
+  'memoryTree.status.integrationsEmpty': 'Нет подключённых интеграций',
+  'memoryTree.status.integrationActive': 'Активна',
+  'memoryTree.status.integrationStale': 'Устарела',
+  'memoryTree.status.integrationChunks': 'Куски: {count}',
   'alerts.title': 'Оповещения',
   'alerts.empty': 'Оповещений пока нет',
   'alerts.markAllRead': 'Отметить всё прочитанным',
@@ -2274,6 +2279,9 @@ const messages: TranslationMap = {
   'app.openhumanLink.discord.perk2': 'Преимущество 2',
   'app.openhumanLink.discord.perk3': 'Преимущество 3',
   'app.openhumanLink.discord.perk4': 'Преимущество 4',
+  'app.openhumanLink.discordReport.intro':
+    'Приносим извинения — что-то пошло не так с нашей стороны. Мы стараемся фиксировать такие ошибки автоматически, но если вы поделитесь подробностями в Discord, мы исправим их быстрее.',
+  'app.openhumanLink.discordReport.openDiscord': 'Открыть Discord',
   'app.openhumanLink.done': 'Готово',
   'app.openhumanLink.loadingChannelSetup': 'Загрузка настроек канала',
   'app.openhumanLink.maybeLater': 'Может, потом',
@@ -2294,6 +2302,7 @@ const messages: TranslationMap = {
   'app.openhumanLink.title.accounts': 'Подключи свои приложения',
   'app.openhumanLink.title.billing': 'Оплата и кредиты',
   'app.openhumanLink.title.discord': 'Вступи в сообщество',
+  'app.openhumanLink.title.discordReport': 'Сообщить об ошибке',
   'app.openhumanLink.title.messaging': 'Подключи канал связи',
   'app.openhumanLink.title.notifications': 'Разрешить уведомления',
   'app.persistRehydration.body': 'Текст',
@@ -4502,7 +4511,50 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Отклонить локальное хранилище',
   'pages.settings.account.security': 'Безопасность',
   'pages.settings.account.securityDesc': 'Режим хранения секретов и статус связки ключей',
+  // #002 memory-pipeline-hardening: degraded badges + typed remediation.
+  'memoryTree.status.statusDegraded': 'Ухудшено',
+  'memoryTree.status.degradedRecall': 'Семантический поиск отключён',
+  'memoryTree.status.degradedStructure': 'Структура вики неполная',
+  'memoryTree.status.extractionCoverage': 'Охват извлечения: {pct}% фрагментов имеют структуру',
+  'memory.health.remediation.budget_exhausted':
+    'Эмбеддинги памяти исчерпали управляемый бюджет. Настройте локальные эмбеддинги Ollama (Настройки → ИИ → Эмбеддинги) или добавьте свой ключ API для эмбеддингов, чтобы продолжить построение памяти.',
+  'memory.health.remediation.auth_missing':
+    'Учётные данные для эмбеддингов не найдены. Войдите в OpenHuman или настройте локальные эмбеддинги Ollama в разделе Настройки → ИИ → Эмбеддинги.',
+  'memory.health.remediation.auth_invalid':
+    'Ваши учётные данные для эмбеддингов отклонены. Пройдите аутентификацию заново или переключитесь на локальные эмбеддинги Ollama в разделе Настройки → ИИ → Эмбеддинги.',
+  'memory.health.remediation.embeddings_unconfigured':
+    'Поставщик эмбеддингов не настроен, поэтому семантический поиск отключён. Настройте локальные эмбеддинги Ollama (рекомендуется) или добавьте ключ эмбеддингов в разделе Настройки → ИИ → Эмбеддинги.',
+  'memory.health.remediation.embedding_dim_mismatch':
+    'Модель эмбеддингов возвращает неверный размер вектора (память ожидает 1024 измерения). Выберите модель с 1024 измерениями или запросите 1024 измерения у своего поставщика.',
+  'memory.health.remediation.local_model_unavailable':
+    'Требуемая локальная модель недоступна. Установите/запустите Ollama и загрузите модель либо переключите эту задачу на облачного поставщика в разделе Настройки → ИИ.',
+  'memory.health.remediation.extraction_timeout':
+    'Модель извлечения памяти превышает время ожидания, поэтому в вики мало структуры. Выберите более быструю модель извлечения памяти в разделе Настройки → ИИ.',
+  'memory.health.remediation.summarizer_unavailable':
+    'Нет доступного поставщика суммаризации для «Построить деревья сводок». Включите локальный ИИ (Ollama) или включите облачную суммаризацию в разделе Настройки → ИИ → Память.',
+  'memory.health.remediation.transient':
+    'Временная ошибка прервала обработку памяти. Повтор произойдёт автоматически.',
+  'memory.health.remediation.unknown':
+    'При обработке памяти возникла проблема. Проверьте конфигурацию в разделе Настройки → ИИ.',
+  // Chat — agent-generated artifacts (#2779)
+  'chat.artifact.aria': 'Артефакт: {title}',
+  'chat.artifact.generating': 'Создание {kind}…',
+  'chat.artifact.ready': 'Готово',
+  'chat.artifact.failed': 'Сбой генерации',
+  'chat.artifact.download': 'Скачать',
+  'chat.artifact.downloading': 'Скачивание…',
+  'chat.artifact.downloaded': 'Сохранено в {path}',
+  'chat.artifact.download_failed': 'Сбой скачивания: {reason}',
+  'chat.artifact.retry': 'Повторить',
+  'chat.artifact.reveal': 'Показать в папке',
+  'chat.artifact.show_more': 'Показать больше',
+  'chat.artifact.show_less': 'Свернуть',
 
+  // Chat composer toolbar
+  'composer.attachFile': 'Прикрепить файл',
+  'composer.modelSelector': 'Модель',
+  'composer.voiceMode': 'Голосовой режим',
+  'composer.qualityHigh': 'Высокое',
   // Agent activity level
   'activityLevel.title': 'Уровень активности агента',
   'activityLevel.description':

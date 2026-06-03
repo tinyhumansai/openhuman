@@ -13,6 +13,7 @@ fn make_meta(id: &str, title: &str, created_at: chrono::DateTime<Utc>) -> Artifa
         size_bytes: 100,
         status: ArtifactStatus::Ready,
         created_at,
+        error: None,
     }
 }
 

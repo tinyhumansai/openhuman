@@ -93,6 +93,12 @@ pub struct ArtifactMeta {
     pub status: ArtifactStatus,
     /// UTC timestamp when this artifact was created.
     pub created_at: DateTime<Utc>,
+    /// Failure reason set when [`ArtifactStatus::Failed`]; `None`
+    /// otherwise. Persisted so list/get RPCs can surface why a build
+    /// did not produce a usable file without callers having to scrape
+    /// stderr from a separate log.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 #[cfg(test)]
@@ -207,6 +213,7 @@ mod tests {
             size_bytes: 204800,
             status: ArtifactStatus::Ready,
             created_at: Utc.with_ymd_and_hms(2025, 6, 1, 12, 0, 0).unwrap(),
+            error: None,
         };
         let json = serde_json::to_value(&meta).unwrap();
         assert_eq!(json["id"], "abc-123");
@@ -229,6 +236,7 @@ mod tests {
             size_bytes: 0,
             status: ArtifactStatus::Pending,
             created_at: Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
+            error: None,
         };
         let v = serde_json::to_value(&meta).unwrap();
         // Verify all expected fields are present

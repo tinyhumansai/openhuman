@@ -168,6 +168,10 @@ pub fn all_tools_with_runtime(
         // and tool callers share one spawn path.
         Box::new(RunSkillTool::new()),
         Box::new(CurrentTimeTool::new()),
+        Box::new(LaunchAppTool::new()),
+        Box::new(AxInteractTool::new(
+            root_config.computer_control.ax_interact_mutations,
+        )),
         Box::new(CodegraphIndexTool::new(
             config.clone(),
             action_dir.to_path_buf(),
@@ -195,6 +199,9 @@ pub fn all_tools_with_runtime(
         Box::new(MemoryStoreTool::new(memory.clone(), security.clone())),
         Box::new(MemoryRecallTool::new(memory.clone())),
         Box::new(MemoryForgetTool::new(memory.clone(), security.clone())),
+        // #002: read-only self-diagnosis of the memory pipeline so the agent
+        // can explain an empty/stalled wiki + the fix.
+        Box::new(MemoryDoctorTool::new(config.clone())),
         Box::new(MemoryQueryTool),
         Box::new(MemoryQueryWalkTool),
         Box::new(SmartMemoryWalkTool),
@@ -446,6 +453,14 @@ pub fn all_tools_with_runtime(
         Box::new(WorkspaceResetPersonaTool::new(config.clone())),
         Box::new(WorkspaceInitTool),
     ];
+
+    // Presentation generation (#2778). Native-Rust engine (ppt-rs
+    // backed) as of the #2780-follow-up rust-engine refactor — no
+    // managed Python venv, no first-call install latency. Always
+    // registered.
+    tools.push(Box::new(PresentationTool::new(
+        root_config.workspace_dir.clone(),
+    )));
 
     if browser_config.enabled {
         // Unified web-access allowlist (merge fetch + browser firewalls): the

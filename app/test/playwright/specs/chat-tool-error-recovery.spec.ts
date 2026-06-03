@@ -99,7 +99,7 @@ async function waitForSocketConnected(page: Page): Promise<void> {
 async function sendMessage(page: Page, prompt: string): Promise<void> {
   await waitForSocketConnected(page);
   await dismissWalkthroughIfPresent(page);
-  await page.getByPlaceholder('Type a message...').fill(prompt);
+  await page.getByPlaceholder('How can I help you today?').fill(prompt);
   await dismissWalkthroughIfPresent(page);
   await expect(page.getByTestId('send-message-button')).toBeEnabled();
   await page.getByTestId('send-message-button').click();
@@ -119,7 +119,13 @@ test.describe('Chat Tool Error Recovery', () => {
     const threadId = await createNewThread(page);
     await sendMessage(page, 'Tell me something important.');
 
-    await expect(page.getByText('Starting to answer')).toBeVisible({ timeout: 20_000 });
+    // Two elements briefly carry the streamed text: the live-streaming
+    // preview block (`font-mono` console-style render in Conversations.tsx)
+    // and the persisted message bubble that takes over once the segment
+    // commits. Playwright strict-mode trips when both are simultaneously
+    // visible during the transition. `.first()` keeps the assertion robust
+    // — we just care that the streamed substring rendered somewhere.
+    await expect(page.getByText('Starting to answer').first()).toBeVisible({ timeout: 20_000 });
 
     await expect
       .poll(async () => {
@@ -142,7 +148,7 @@ test.describe('Chat Tool Error Recovery', () => {
       })
       .toBeNull();
 
-    const composer = page.getByPlaceholder('Type a message...');
+    const composer = page.getByPlaceholder('How can I help you today?');
     await expect(composer).toBeEnabled();
 
     await setMockBehavior('llmStreamScript', '');
