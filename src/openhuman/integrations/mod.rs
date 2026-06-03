@@ -10,7 +10,10 @@ pub mod client;
 pub mod tools;
 pub mod types;
 
-pub use client::{build_client, pricing_for_config, IntegrationClient};
+pub use client::{
+    build_client, is_backend_user_state_error, pricing_for_config, BackendUserStateError,
+    IntegrationClient,
+};
 pub use types::{
     BackendResponse, IntegrationPricing, IntegrationPricingEntry, PricingIntegrations, ToolScope,
 };

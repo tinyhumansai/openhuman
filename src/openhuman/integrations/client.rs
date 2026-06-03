@@ -2,8 +2,86 @@
 
 use super::types::{BackendResponse, IntegrationPricing};
 use std::error::Error as _;
+use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
+
+/// Typed marker error attached to `anyhow::Error` when the backend returned a
+/// deterministic user-state failure (insufficient balance, missing-required-
+/// field, toolkit-not-enabled, …) classified by
+/// [`crate::core::observability::expected_error_kind`] as
+/// `BackendUserError` / `BudgetExhausted` / `ProviderUserState`.
+///
+/// The point is *not* to change what the error renders as — the `Display`
+/// impl reproduces the same `Backend returned 400 …: <detail>` shape the
+/// `anyhow::bail!` call would have produced, so existing callers that just
+/// stringify the error see no behaviour change. The point is to let the
+/// agent tool runner (`agent::harness::engine::tools`) downcast and route
+/// the failure to the warn-only path instead of `report_error`, so a tool
+/// call that fails 19 times in one turn because the user is out of credits
+/// doesn't generate 19 Sentry events (TAURI-RUST-5KG).
+///
+/// User-state vs system failure is a contract decision that belongs at the
+/// boundary that knows the difference — the HTTP client, which has both the
+/// status code and the body to classify. Bubbling everything as an opaque
+/// `anyhow::Error` and re-classifying at every call site is what caused the
+/// regression to begin with.
+#[derive(Debug, Clone)]
+pub struct BackendUserStateError {
+    pub message: String,
+}
+
+impl fmt::Display for BackendUserStateError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for BackendUserStateError {}
+
+/// Returns `true` when `err`'s chain contains a [`BackendUserStateError`].
+///
+/// Use at tool-runner / Sentry-capture sites that hold an `anyhow::Error`
+/// and need to decide whether to report-as-bug or treat-as-clean-failure.
+pub fn is_backend_user_state_error(err: &anyhow::Error) -> bool {
+    err.downcast_ref::<BackendUserStateError>().is_some()
+        || err
+            .chain()
+            .any(|cause| cause.downcast_ref::<BackendUserStateError>().is_some())
+}
+
+/// Classify `message` via [`crate::core::observability::expected_error_kind`]
+/// and return `Some` of an `anyhow::Error` wrapping [`BackendUserStateError`]
+/// when the kind is one of the user-state buckets that must not reach
+/// Sentry. Returns `None` when the message is genuinely unexpected (5xx,
+/// unknown shapes, transport bugs) so the caller falls back to
+/// `anyhow::bail!` and the existing capture path runs.
+///
+/// Buckets considered user-state here:
+/// - `BackendUserError`  — generic 4xx with classified body (insufficient
+///   balance, generic "missing required fields", …).
+/// - `BudgetExhausted`   — "insufficient balance" / "budget exceeded" /
+///   "add credits" — the user can't proceed without topping up.
+/// - `ProviderUserState` — composio "toolkit not enabled", trigger slug
+///   missing, OAuth scopes missing, etc.
+///
+/// Other expected kinds (`NetworkUnreachable`, `TransientUpstreamHttp`,
+/// `SessionExpired`, …) are *also* demoted by the breadcrumb classifier but
+/// represent transport / session conditions, not a clean user-state failure
+/// the tool should report-and-stop on; we leave them as plain anyhow so the
+/// existing retry / re-auth machinery keeps working.
+fn classify_as_user_state(message: &str) -> Option<anyhow::Error> {
+    use crate::core::observability::{expected_error_kind, ExpectedErrorKind};
+
+    match expected_error_kind(message)? {
+        ExpectedErrorKind::BackendUserError
+        | ExpectedErrorKind::BudgetExhausted
+        | ExpectedErrorKind::ProviderUserState => Some(anyhow::Error::new(BackendUserStateError {
+            message: message.to_string(),
+        })),
+        _ => None,
+    }
+}
 
 /// Maximum length (in bytes) of backend error body included in propagated
 /// errors. Keep this bounded — error messages flow through tracing/Sentry and
@@ -204,8 +282,9 @@ impl IntegrationClient {
             // firing a Sentry event. 5xx and non-transient 4xx still
             // surface — see `is_backend_user_error_message` for the exact
             // status set classified as expected.
+            let bail_message = format!("Backend returned {status} for POST {url}: {detail}");
             crate::core::observability::report_error_or_expected(
-                format!("Backend returned {status} for POST {url}: {detail}").as_str(),
+                bail_message.as_str(),
                 "integrations",
                 "post",
                 &[
@@ -214,7 +293,16 @@ impl IntegrationClient {
                     ("failure", "non_2xx"),
                 ],
             );
-            anyhow::bail!("Backend returned {status} for POST {url}: {detail}");
+            // When the failure classifies as a known user-state bucket,
+            // attach the typed `BackendUserStateError` marker so downstream
+            // sites (notably `agent::harness::engine::tools`) can downcast
+            // and route to the warn-only path instead of re-capturing in
+            // Sentry. Display string is preserved → unchanged for the many
+            // callers that only stringify the error.
+            if let Some(typed) = classify_as_user_state(&bail_message) {
+                return Err(typed);
+            }
+            anyhow::bail!(bail_message);
         }
 
         let envelope: BackendResponse<T> = resp.json().await?;
@@ -235,7 +323,11 @@ impl IntegrationClient {
                 "post",
                 &[("path", path), ("failure", "envelope_error")],
             );
-            anyhow::bail!("Backend error for POST {}: {}", url, msg);
+            let bail_message = format!("Backend error for POST {}: {}", url, msg);
+            if let Some(typed) = classify_as_user_state(&bail_message) {
+                return Err(typed);
+            }
+            anyhow::bail!(bail_message);
         }
         envelope
             .data
@@ -284,8 +376,9 @@ impl IntegrationClient {
             // user-input / auth-state shapes demote to a warn breadcrumb
             // via the observability classifier; 5xx and non-transient 4xx
             // still surface.
+            let bail_message = format!("Backend returned {status} for GET {url}: {detail}");
             crate::core::observability::report_error_or_expected(
-                format!("Backend returned {status} for GET {url}: {detail}").as_str(),
+                bail_message.as_str(),
                 "integrations",
                 "get",
                 &[
@@ -294,7 +387,10 @@ impl IntegrationClient {
                     ("failure", "non_2xx"),
                 ],
             );
-            anyhow::bail!("Backend returned {status} for GET {url}: {detail}");
+            if let Some(typed) = classify_as_user_state(&bail_message) {
+                return Err(typed);
+            }
+            anyhow::bail!(bail_message);
         }
 
         let envelope: BackendResponse<T> = resp.json().await?;
@@ -311,7 +407,11 @@ impl IntegrationClient {
                 "get",
                 &[("path", path), ("failure", "envelope_error")],
             );
-            anyhow::bail!("Backend error for GET {}: {}", url, msg);
+            let bail_message = format!("Backend error for GET {}: {}", url, msg);
+            if let Some(typed) = classify_as_user_state(&bail_message) {
+                return Err(typed);
+            }
+            anyhow::bail!(bail_message);
         }
         envelope
             .data
