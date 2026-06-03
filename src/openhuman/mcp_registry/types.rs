@@ -448,6 +448,7 @@ mod tests {
         });
         let s: InstalledServer = serde_json::from_value(legacy).unwrap();
         assert_eq!(s.transport, Transport::Stdio);
+        assert!(s.enabled, "enabled should default to true when field is absent");
     }
 
     #[test]
