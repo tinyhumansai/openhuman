@@ -745,6 +745,11 @@ pub enum DomainEvent {
     /// changed at runtime. Live sessions should rebuild their `SecurityPolicy`
     /// from the persisted config before the next turn.
     AutonomyConfigChanged,
+    /// The agent's filesystem roots (currently the `action_dir` sandbox) were
+    /// changed at runtime via `config.update_agent_paths`. The live
+    /// `SecurityPolicy` is hot-swapped in-band; this broadcast lets other
+    /// listeners observe the change.
+    AgentPathsChanged,
     /// A component's health status changed.
     HealthChanged {
         component: String,
@@ -941,6 +946,7 @@ impl DomainEvent {
             | Self::SystemRestartRequested { .. }
             | Self::SystemShutdownRequested { .. }
             | Self::AutonomyConfigChanged
+            | Self::AgentPathsChanged
             | Self::HealthChanged { .. }
             | Self::HealthRestarted { .. } => "system",
 
@@ -1047,6 +1053,7 @@ impl DomainEvent {
             Self::SystemRestartRequested { .. } => "SystemRestartRequested",
             Self::SystemShutdownRequested { .. } => "SystemShutdownRequested",
             Self::AutonomyConfigChanged => "AutonomyConfigChanged",
+            Self::AgentPathsChanged => "AgentPathsChanged",
             Self::HealthChanged { .. } => "HealthChanged",
             Self::HealthRestarted { .. } => "HealthRestarted",
             Self::KeyringConsentRequired => "KeyringConsentRequired",
