@@ -185,18 +185,6 @@ fn normalize_entity_id_falls_back_to_default_when_blank() {
 }
 
 #[test]
-fn normalize_tool_slug_supports_legacy_action_name() {
-    assert_eq!(
-        normalize_tool_slug("GMAIL_FETCH_EMAILS"),
-        "gmail-fetch-emails"
-    );
-    assert_eq!(
-        normalize_tool_slug(" github-list-repos "),
-        "github-list-repos"
-    );
-}
-
-#[test]
 fn extract_redirect_url_supports_v2_and_v3_shapes() {
     let v2 = json!({"redirectUrl": "https://app.composio.dev/connect-v2"});
     let v3 = json!({"redirect_url": "https://app.composio.dev/connect-v3"});
@@ -313,19 +301,24 @@ fn composio_api_base_url_is_v3() {
 }
 
 #[test]
-fn build_execute_action_v3_request_uses_fixed_endpoint_and_body_account_id() {
+fn build_execute_action_v3_request_uses_execute_path_and_uppercase_action_slug() {
+    // #3219: v3 action execute is POST /tools/execute/{ACTION_SLUG} with the
+    // UPPERCASE_SNAKE action slug — NOT /tools/{lowercase-dashed}/execute.
     let (url, body) = ComposioTool::build_execute_action_v3_request(
-        "gmail-send-email",
-        json!({"to": "test@example.com"}),
+        "GMAIL_SEND_EMAIL",
+        json!({"recipient_email": "test@example.com"}),
         Some("workspace-user"),
         Some("account-42"),
     );
 
     assert_eq!(
         url,
-        "https://backend.composio.dev/api/v3/tools/gmail-send-email/execute"
+        "https://backend.composio.dev/api/v3/tools/execute/GMAIL_SEND_EMAIL"
     );
-    assert_eq!(body["arguments"]["to"], json!("test@example.com"));
+    assert_eq!(
+        body["arguments"]["recipient_email"],
+        json!("test@example.com")
+    );
     assert_eq!(body["user_id"], json!("workspace-user"));
     assert_eq!(body["connected_account_id"], json!("account-42"));
 }
@@ -333,7 +326,7 @@ fn build_execute_action_v3_request_uses_fixed_endpoint_and_body_account_id() {
 #[test]
 fn build_execute_action_v3_request_drops_blank_optional_fields() {
     let (url, body) = ComposioTool::build_execute_action_v3_request(
-        "github-list-repos",
+        "GITHUB_LIST_REPOSITORIES",
         json!({}),
         None,
         Some("   "),
@@ -341,7 +334,7 @@ fn build_execute_action_v3_request_drops_blank_optional_fields() {
 
     assert_eq!(
         url,
-        "https://backend.composio.dev/api/v3/tools/github-list-repos/execute"
+        "https://backend.composio.dev/api/v3/tools/execute/GITHUB_LIST_REPOSITORIES"
     );
     assert_eq!(body["arguments"], json!({}));
     assert!(body.get("connected_account_id").is_none());
@@ -486,6 +479,61 @@ async fn list_tool_schemas_v3_sends_repeated_tags_to_v3_tools_endpoint() {
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].slug, "GITHUB_STAR_A_REPOSITORY");
     assert_eq!(items[0].toolkit_slug.as_deref(), Some("github"));
+}
+
+// ── execute_action over HTTP (correct v3 path/slug/body reach the wire) ────
+
+#[tokio::test]
+async fn execute_action_v3_posts_uppercase_slug_to_execute_path() {
+    use axum::{extract::Path, routing::post, Json, Router};
+    use std::sync::Mutex;
+
+    // Capture the path slug + body the server actually received so we assert on
+    // the WIRE shape, not just the pure builder. Regression guard for #3219.
+    let captured: Arc<Mutex<Option<(String, serde_json::Value)>>> = Arc::new(Mutex::new(None));
+    let sink = captured.clone();
+    let app = Router::new().route(
+        "/tools/execute/{slug}",
+        post(
+            move |Path(slug): Path<String>, Json(body): Json<serde_json::Value>| {
+                let sink = sink.clone();
+                async move {
+                    *sink.lock().unwrap() = Some((slug, body));
+                    Json(json!({ "successful": true, "data": { "id": "msg_1" } }))
+                }
+            },
+        ),
+    );
+    let base = start_mock_backend(app).await;
+
+    let tool = ComposioTool::new_with_v3_base("ck_test_direct", None, test_security(), base);
+    let result = tool
+        .execute_action(
+            "GMAIL_SEND_EMAIL",
+            json!({ "recipient_email": "a@b.com" }),
+            Some("workspace-user"),
+            Some("ca_42"),
+        )
+        .await
+        .expect("v3 execute should succeed against the mock");
+
+    assert_eq!(result["successful"], json!(true));
+
+    let (slug, body) = captured
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("mock server should have observed the execute request");
+
+    // The action slug must reach the URL UPPERCASE_SNAKE — the toolkit-slug
+    // transform (gmail-send-email) was the root cause of the 404 in #3219.
+    assert_eq!(
+        slug, "GMAIL_SEND_EMAIL",
+        "must POST the uppercase action slug"
+    );
+    assert_eq!(body["arguments"]["recipient_email"], json!("a@b.com"));
+    assert_eq!(body["user_id"], json!("workspace-user"));
+    assert_eq!(body["connected_account_id"], json!("ca_42"));
 }
 
 // ── ensure_https ──────────────────────────────────────────────────────────
