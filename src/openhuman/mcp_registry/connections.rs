@@ -125,12 +125,20 @@ pub async fn connect(config: &Config, server: &InstalledServer) -> anyhow::Resul
     match &result {
         Ok(_) => {
             last_errors().write().await.remove(&server.server_id);
+            tracing::debug!(
+                "[mcp-registry] last_error cleared server_id={}",
+                server.server_id
+            );
         }
         Err(err) => {
             last_errors()
                 .write()
                 .await
                 .insert(server.server_id.clone(), err.to_string());
+            tracing::debug!(
+                "[mcp-registry] last_error recorded server_id={} err={err}",
+                server.server_id
+            );
         }
     }
     result
