@@ -9851,3 +9851,117 @@ async fn json_rpc_workflows_lifecycle_round_trip() {
     api_join.abort();
     rpc_join.abort();
 }
+
+/// Task 4 / #3090: when a web-chat request is sent with
+/// `speak_reply: true`, the progress bridge should drive the agent's
+/// final text through `voice::reply_speech::synthesize_reply` after the
+/// turn completes.
+///
+/// We activate the [`reply_speech::test_seam`] short-circuit via the
+/// `OPENHUMAN_TEST_REPLY_SPEECH_SEAM` env var so the call is recorded
+/// without contacting the ElevenLabs proxy.
+#[tokio::test]
+async fn json_rpc_channel_web_chat_with_speak_reply_invokes_reply_speech() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+    // Activate the reply_speech test seam so synthesize_reply records and
+    // short-circuits instead of calling the hosted backend.
+    let _seam_guard = EnvVarGuard::set(
+        openhuman_core::openhuman::voice::reply_speech::TEST_SEAM_ENV,
+        "1",
+    );
+
+    openhuman_core::openhuman::voice::reply_speech::test_seam::clear();
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+
+    write_min_config(&openhuman_home, &mock_origin);
+    let user_scoped_dir = openhuman_home.join("users").join("e2e-user");
+    write_min_config(&user_scoped_dir, &mock_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Authenticate so the agent loop has a session token available.
+    let store = post_json_rpc(
+        &rpc_base,
+        9300,
+        "openhuman.auth_store_session",
+        json!({
+            "token": "e2e-test-jwt",
+            "user_id": "e2e-user"
+        }),
+    )
+    .await;
+    assert_no_jsonrpc_error(&store, "store_session");
+
+    let client_id = "ptt-e2e-client";
+    let thread_id = "ptt-e2e-thread";
+    let events_url = format!("{}/events?client_id={}", rpc_base, client_id);
+    let sse_task = tokio::spawn(async move { read_terminal_web_chat_event(&events_url).await });
+
+    // PTT-style chat send: speak_reply=true, source=ptt, session_id=1.
+    let web_chat = post_json_rpc(
+        &rpc_base,
+        9301,
+        "openhuman.channel_web_chat",
+        json!({
+            "client_id": client_id,
+            "thread_id": thread_id,
+            "message": "Hello from PTT",
+            "model_override": "e2e-mock-model",
+            "speak_reply": true,
+            "source": "ptt",
+            "session_id": 1,
+        }),
+    )
+    .await;
+    let web_chat_result = assert_no_jsonrpc_error(&web_chat, "channel_web_chat");
+    assert_eq!(
+        web_chat_result
+            .get("result")
+            .and_then(|v| v.get("accepted")),
+        Some(&json!(true))
+    );
+
+    let sse_event = tokio::time::timeout(Duration::from_secs(12), sse_task)
+        .await
+        .expect("timed out waiting for chat_done with speak_reply=true")
+        .expect("sse task join should succeed");
+    assert_eq!(
+        sse_event.get("event").and_then(Value::as_str),
+        Some("chat_done")
+    );
+
+    // The bridge should have buffered the streamed assistant text and
+    // routed it through synthesize_reply on TurnCompleted. Poll briefly
+    // because the bridge task may finish slightly after chat_done.
+    let mut observed: Vec<String> = Vec::new();
+    for _ in 0..50 {
+        observed = openhuman_core::openhuman::voice::reply_speech::test_seam::observed();
+        if !observed.is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(
+        !observed.is_empty(),
+        "expected reply_speech::synthesize_reply to be invoked when speak_reply=true; observed={observed:?}"
+    );
+    assert!(
+        observed.iter().any(|t| !t.trim().is_empty()),
+        "expected at least one non-empty text passed to synthesize_reply; observed={observed:?}"
+    );
+
+    mock_join.abort();
+    rpc_join.abort();
+}

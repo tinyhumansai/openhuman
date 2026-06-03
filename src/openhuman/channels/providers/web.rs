@@ -870,7 +870,7 @@ async fn run_chat_task(
         thread_id.to_string(),
         request_id.to_string(),
         turn_state_store,
-        metadata,
+        metadata.clone(),
     );
 
     // Make `thread_id` ambient for any outbound provider call inside
@@ -910,6 +910,62 @@ async fn run_chat_task(
         }
     };
 
+    // Voice / PTT integration (#3090 Task 4). When the chat was sent with
+    // `speak_reply: true`, drive the agent's full reply through
+    // `voice::reply_speech::synthesize_reply` so the renderer can play it.
+    // When the call originated as a PTT session, also publish
+    // `PttTranscriptCommitted` so screen-intelligence (and any future bus
+    // subscriber) can react to a completed PTT turn.
+    //
+    // Why here (not in the progress bridge): the bridge sees `TextDelta`s
+    // only when the inference provider streams. The non-streaming fallback
+    // (and the JSON-RPC E2E mocks) produce a single final response with no
+    // deltas — so buffering deltas alone loses the reply text in those
+    // paths. The full response is available right here, regardless of
+    // streaming mode, which makes this the most reliable hook point.
+    //
+    // Failures are non-fatal (TTS / observability are best-effort side
+    // channels).
+    if let Ok(ref task_result) = result {
+        let speak_reply = matches!(metadata.speak_reply, Some(true));
+        let trimmed_response = task_result.full_response.trim();
+        if speak_reply && !trimmed_response.is_empty() {
+            let opts = crate::openhuman::voice::reply_speech::ReplySpeechOptions::default();
+            match crate::openhuman::voice::reply_speech::synthesize_reply(
+                &config,
+                &task_result.full_response,
+                &opts,
+            )
+            .await
+            {
+                Ok(_) => log::debug!(
+                    "[web-channel] reply_speech dispatched chars={} client_id={} thread_id={} request_id={}",
+                    task_result.full_response.len(),
+                    client_id,
+                    thread_id,
+                    request_id,
+                ),
+                Err(err) => log::warn!(
+                    "[web-channel] reply_speech failed: {err} client_id={} thread_id={} request_id={}",
+                    client_id,
+                    thread_id,
+                    request_id,
+                ),
+            }
+        }
+        if metadata.source.as_deref() == Some("ptt") {
+            if let Some(session_id) = metadata.session_id {
+                crate::openhuman::voice::publish_ptt_transcript_committed(
+                    thread_id.to_string(),
+                    session_id,
+                    task_result.full_response.chars().count(),
+                    0,
+                    false,
+                );
+            }
+        }
+    }
+
     // Clear the sender so it doesn't hold the channel open across sessions.
     agent.set_on_progress(None);
 
@@ -932,9 +988,13 @@ async fn run_chat_task(
 /// with the correct client/thread/request IDs. The task runs until the
 /// sender is dropped (i.e. when the agent turn finishes).
 ///
-/// `metadata` is accepted here so that Task 4 (TTS integration) can read the
-/// PTT fields (`speak_reply`, `source`, `session_id`) from the bridge context.
-/// For now they are logged and otherwise unused.
+/// `metadata` is logged on the bridge's diagnostic lines so PTT turns are
+/// easy to correlate across the stream of progress events. The
+/// authoritative TTS / PTT-commit dispatch (`speak_reply` →
+/// `voice::reply_speech::synthesize_reply`, `source == "ptt"` →
+/// `publish_ptt_transcript_committed`) is owned by `run_chat_task`, which
+/// sees the full assistant response even when the provider falls back to
+/// non-streaming.
 fn spawn_progress_bridge(
     mut rx: tokio::sync::mpsc::Receiver<crate::openhuman::agent::progress::AgentProgress>,
     client_id: String,
@@ -955,10 +1015,10 @@ fn spawn_progress_bridge(
             metadata.source,
             metadata.session_id,
         );
-        // TODO(#3090, Task 4): consume metadata for reply_speech — speak_reply drives
-        // whether the final assistant text should be synthesised; source and session_id
-        // are forwarded as metadata to the TTS call site.
-        let _ = metadata;
+        // Buffer the streamed assistant text so we can drive TTS / observability
+        // sinks once the turn finishes (Task 4 / #3090). The buffer is local to
+        // this bridge — it does not affect any other consumer of TextDelta.
+        let mut assistant_text = String::new();
         let mut round: u32 = 0;
         let mut events_seen: u64 = 0;
         let mut turn_state =
@@ -1430,6 +1490,13 @@ fn spawn_progress_bridge(
                     });
                 }
                 AgentProgress::TextDelta { delta, iteration } => {
+                    // Accumulate the streamed assistant reply purely for the
+                    // diagnostic `buffered_chars=` field on the TurnCompleted
+                    // log line. The authoritative TTS / PTT-commit dispatch
+                    // happens from `run_chat_task` where the full response is
+                    // available even when streaming is unavailable (Task 4 /
+                    // #3090).
+                    assistant_text.push_str(&delta);
                     publish_web_channel_event(WebChannelEvent {
                         event: "text_delta".to_string(),
                         client_id: client_id.clone(),
@@ -1480,7 +1547,12 @@ fn spawn_progress_bridge(
                 AgentProgress::TurnCompleted { iterations } => {
                     log::debug!(
                         "[web_channel] turn completed after {iterations} iteration(s) \
-                         client_id={client_id} thread_id={thread_id} request_id={request_id}"
+                         client_id={client_id} thread_id={thread_id} request_id={request_id} \
+                         buffered_chars={} speak_reply={:?} source={:?} session_id={:?}",
+                        assistant_text.len(),
+                        metadata.speak_reply,
+                        metadata.source,
+                        metadata.session_id,
                     );
                 }
                 AgentProgress::TurnCostUpdated {
