@@ -27,6 +27,7 @@ import providerSurfacesReducer from './providerSurfaceSlice';
 import socketReducer from './socketSlice';
 import themeReducer from './themeSlice';
 import threadReducer from './threadSlice';
+import { pttReducer } from './pttSlice';
 import { userScopedStorage } from './userScopedStorage';
 import workflowsReducer from './workflowsSlice';
 
@@ -150,6 +151,17 @@ const persistedMascotReducer = persistReducer(mascotPersistConfig, mascotReducer
 const personaPersistConfig = { key: 'persona', storage, whitelist: ['displayName', 'description'] };
 const persistedPersonaReducer = persistReducer(personaPersistConfig, personaReducer);
 
+// PTT (Push-to-Talk): persist the hotkey binding and session preferences.
+// `isHeld` is a runtime-only flag — deliberately excluded from the whitelist so
+// a crash or force-quit can never leave the app stuck in the "held" state.
+// The boot hook (T11) also explicitly resets it to false on mount.
+const pttPersistConfig = {
+  key: 'ptt',
+  storage,
+  whitelist: ['shortcut', 'speakReplies', 'showOverlay'],
+};
+const persistedPttReducer = persistReducer(pttPersistConfig, pttReducer);
+
 export const store = configureStore({
   reducer: {
     socket: socketReducer,
@@ -167,6 +179,7 @@ export const store = configureStore({
     mascot: persistedMascotReducer,
     persona: persistedPersonaReducer,
     theme: persistedThemeReducer,
+    ptt: persistedPttReducer,
     workflows: workflowsReducer,
   },
   middleware: getDefaultMiddleware => {
