@@ -2102,6 +2102,21 @@ pub async fn bootstrap_core_runtime(host_kind: crate::core::types::HostKind) {
         })
         .unwrap_or(false);
     let decision = crate::core::types::approval_gate_boot_decision(host_kind, env_override_requested);
+    // Record the boot decision before publishing the warning event so the
+    // first poll of `approval_get_gate_state` after boot reflects the same
+    // host-aware verdict the event itself describes — no race.
+    crate::openhuman::approval::gate::record_boot_state(
+        crate::openhuman::approval::gate::ApprovalGateBootState {
+            installed: decision.install_gate,
+            disabled_by_env: decision.gate_disabled_by_override,
+            override_ignored: decision.override_ignored,
+            host: match host_kind {
+                crate::core::types::HostKind::TauriShell => "tauri-shell",
+                crate::core::types::HostKind::Cli => "cli",
+                crate::core::types::HostKind::Docker => "docker",
+            },
+        },
+    );
     if decision.override_ignored {
         log::warn!(
             "[runtime] OPENHUMAN_APPROVAL_GATE=0 IGNORED under desktop shell — \

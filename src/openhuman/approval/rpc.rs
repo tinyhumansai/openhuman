@@ -7,8 +7,33 @@ use anyhow::anyhow;
 
 use crate::rpc::RpcOutcome;
 
-use super::gate::ApprovalGate;
+use super::gate::{try_boot_state, ApprovalGate, ApprovalGateBootState};
 use super::types::{ApprovalAuditEntry, ApprovalDecision, PendingApproval};
+
+/// Read the host-aware approval-gate boot decision so the UI banner can
+/// render the right state on first paint (rather than waiting for a
+/// connected socket subscriber to catch a transient boot-time event).
+///
+/// Returns a benign "installed, no banner" default when the boot state was
+/// never recorded — older test paths that bring up the gate directly bypass
+/// `bootstrap_core_runtime` and therefore never call `record_boot_state`.
+pub async fn approval_get_gate_state() -> anyhow::Result<RpcOutcome<ApprovalGateBootState>> {
+    tracing::debug!("[rpc:approval_get_gate_state] entry");
+    let state = try_boot_state().unwrap_or(ApprovalGateBootState {
+        installed: ApprovalGate::try_global().is_some(),
+        disabled_by_env: false,
+        override_ignored: false,
+        host: "unknown",
+    });
+    tracing::debug!(
+        installed = state.installed,
+        disabled_by_env = state.disabled_by_env,
+        override_ignored = state.override_ignored,
+        host = state.host,
+        "[rpc:approval_get_gate_state] exit"
+    );
+    Ok(RpcOutcome::new(state, vec![]))
+}
 
 /// List rows still awaiting a user decision in the current session.
 ///
