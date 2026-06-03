@@ -38,7 +38,7 @@
 
 pub mod lifecycle;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -57,11 +57,19 @@ use crate::meet_scanner;
 /// automation before CEF starts renderer shutdown. Aborting the scanner
 /// drops its CDP connections, which unblocks the window destruction
 /// sequence. See the module-level doc for details.
+///
+/// `terminated` tracks which `request_id`s have already emitted a
+/// terminal `meet-call:failed` event so we never fire two toasts for
+/// the same call when multiple failure sites trip in quick succession
+/// (e.g. scanner timeout + audio bind error). Cleared on
+/// `WindowEvent::Destroyed`.
 pub struct MeetCallState {
     /// request_id → window label
     inner: Mutex<HashMap<String, String>>,
     /// request_id → scanner task abort handle
     scanner_aborts: Mutex<HashMap<String, AbortHandle>>,
+    /// request_ids whose terminal `meet-call:failed` event was already emitted.
+    terminated: Mutex<HashSet<String>>,
 }
 
 impl MeetCallState {
@@ -69,7 +77,28 @@ impl MeetCallState {
         Self {
             inner: Mutex::new(HashMap::new()),
             scanner_aborts: Mutex::new(HashMap::new()),
+            terminated: Mutex::new(HashSet::new()),
         }
+    }
+
+    /// Returns `true` if this is the first call for `request_id`; `false`
+    /// if a terminal event was already emitted for this call.
+    pub fn mark_terminated(&self, request_id: &str) -> bool {
+        self.terminated
+            .lock()
+            .unwrap()
+            .insert(request_id.to_string())
+    }
+
+    /// Drop the dedup record so a subsequent re-attempt with the same
+    /// `request_id` can emit again. Called from `WindowEvent::Destroyed`.
+    pub fn clear_terminated(&self, request_id: &str) {
+        self.terminated.lock().unwrap().remove(request_id);
+    }
+
+    #[cfg(test)]
+    pub fn is_terminated_empty(&self) -> bool {
+        self.terminated.lock().unwrap().is_empty()
     }
 }
 
@@ -546,5 +575,40 @@ mod tests {
         let state = MeetCallState::default();
         assert!(state.inner.lock().unwrap().is_empty());
         assert!(state.scanner_aborts.lock().unwrap().is_empty());
+        assert!(state.terminated.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn terminated_set_inserts_once() {
+        let state = MeetCallState::new();
+        assert!(
+            state.mark_terminated("req-1"),
+            "first mark must report insert"
+        );
+        assert!(
+            !state.mark_terminated("req-1"),
+            "second mark must report no-op"
+        );
+        assert!(
+            state.mark_terminated("req-2"),
+            "different request_id is independent"
+        );
+    }
+
+    #[test]
+    fn clear_terminated_resets_request() {
+        let state = MeetCallState::new();
+        state.mark_terminated("req-1");
+        state.clear_terminated("req-1");
+        assert!(
+            state.mark_terminated("req-1"),
+            "post-clear mark must re-insert"
+        );
+    }
+
+    #[test]
+    fn meet_call_state_default_terminated_empty() {
+        let state = MeetCallState::default();
+        assert!(state.is_terminated_empty());
     }
 }
