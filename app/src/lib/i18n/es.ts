@@ -1554,6 +1554,29 @@ const messages: TranslationMap = {
   'voice.externalProviders.apiKey': 'Clave de API',
   'voice.externalProviders.apiKeyPlaceholder': 'sk-…',
   'voice.externalProviders.add': 'Add',
+  'pttSettings.title': 'Pulsa para hablar',
+  'pttSettings.description':
+    'Mantén pulsada una tecla para hablar con OpenHuman mientras estás en otra aplicación. Al soltarla se envía la grabación; OpenHuman dice la respuesta en voz alta.',
+  'pttSettings.shortcutLabel': 'Atajo de teclado',
+  'pttSettings.shortcutPlaceholder': 'Pulsa una tecla (p. ej. F13)',
+  'pttSettings.shortcutUnsetHint':
+    'Pulsa para hablar está desactivado — elige un atajo para activarlo.',
+  'pttSettings.speakRepliesLabel': 'Leer las respuestas del agente en voz alta',
+  'pttSettings.showOverlayLabel': 'Mostrar el panel mientras se mantiene pulsado',
+  'pttSettings.errorConflictsWithDictation':
+    'Este atajo ya lo usa el dictado. Elige una tecla distinta.',
+  'pttSettings.errorModifierOnly':
+    'Elige una tecla normal (p. ej. F13) — los atajos compuestos solo por modificadores no funcionan para pulsa para hablar.',
+  'pttSettings.errorEmpty': 'Elige una tecla para asignarla.',
+  'pttSettings.errorAccessibility':
+    'macOS necesita permiso de Accesibilidad para este atajo. Abre Ajustes del sistema → Privacidad y seguridad → Accesibilidad y activa OpenHuman.',
+  'pttSettings.errorShortcutInUse': 'Otra aplicación ya usa este atajo. Elige uno distinto.',
+  'pttSettings.errorUnsupportedWayland':
+    'Las sesiones Wayland todavía no admiten atajos globales en OpenHuman — cambia a una sesión X11 o usa el botón de dictado dentro de la aplicación.',
+  'pttSettings.exclusiveFullscreenHint':
+    'En juegos a pantalla completa exclusiva el panel no se mostrará — solo oirás el aviso sonoro. Cambia a pantalla completa sin bordes para ver el panel.',
+  'pttOverlay.listening': 'Escuchando…',
+  'pttOverlay.idle': 'En espera',
   'autocomplete.title': 'Autocompletado',
   'autocomplete.settings': 'Configuración',
   'autocomplete.acceptWithTab': 'Aceptar con Tab',

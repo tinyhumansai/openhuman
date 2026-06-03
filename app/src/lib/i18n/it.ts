@@ -1548,6 +1548,30 @@ const messages: TranslationMap = {
   'voice.externalProviders.apiKey': 'Chiave API',
   'voice.externalProviders.apiKeyPlaceholder': 'sk-…',
   'voice.externalProviders.add': 'Add',
+  'pttSettings.title': 'Premi per parlare',
+  'pttSettings.description':
+    'Tieni premuto un tasto per parlare con OpenHuman mentre sei in un’altra app. Al rilascio l’audio viene inviato; OpenHuman risponde a voce.',
+  'pttSettings.shortcutLabel': 'Scorciatoia',
+  'pttSettings.shortcutPlaceholder': 'Premi un tasto (es. F13)',
+  'pttSettings.shortcutUnsetHint':
+    'Premi per parlare è disattivato — scegli una scorciatoia per attivarlo.',
+  'pttSettings.speakRepliesLabel': 'Pronuncia le risposte dell’agente',
+  'pttSettings.showOverlayLabel': 'Mostra il riquadro mentre il tasto è premuto',
+  'pttSettings.errorConflictsWithDictation':
+    'Questa scorciatoia è già usata dalla dettatura. Scegli un tasto diverso.',
+  'pttSettings.errorModifierOnly':
+    'Scegli un tasto normale (es. F13) — le scorciatoie con soli modificatori non funzionano per premi per parlare.',
+  'pttSettings.errorEmpty': 'Scegli un tasto da assegnare.',
+  'pttSettings.errorAccessibility':
+    'macOS richiede l’autorizzazione Accessibilità per questa scorciatoia. Apri Impostazioni di sistema → Privacy e sicurezza → Accessibilità e attiva OpenHuman.',
+  'pttSettings.errorShortcutInUse':
+    'Un’altra app utilizza già questa scorciatoia. Scegline una diversa.',
+  'pttSettings.errorUnsupportedWayland':
+    'Le sessioni Wayland non supportano ancora le scorciatoie globali in OpenHuman — passa a una sessione X11 o usa l’interruttore di dettatura nell’app.',
+  'pttSettings.exclusiveFullscreenHint':
+    'Nei giochi a schermo intero esclusivo il riquadro non verrà mostrato — sentirai solo il segnale acustico. Passa allo schermo intero senza bordi per vedere il riquadro.',
+  'pttOverlay.listening': 'In ascolto…',
+  'pttOverlay.idle': 'In attesa',
   'autocomplete.title': 'Autocompletamento',
   'autocomplete.settings': 'Impostazioni',
   'autocomplete.acceptWithTab': 'Accetta con Tab',

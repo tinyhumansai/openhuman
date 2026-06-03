@@ -1553,6 +1553,29 @@ const messages: TranslationMap = {
   'voice.externalProviders.apiKey': 'Chave de API',
   'voice.externalProviders.apiKeyPlaceholder': 'sk-…',
   'voice.externalProviders.add': 'Add',
+  'pttSettings.title': 'Pressionar para falar',
+  'pttSettings.description':
+    'Mantenha uma tecla pressionada para falar com o OpenHuman enquanto está noutro aplicativo. Soltar a tecla envia o áudio; o OpenHuman lê a resposta em voz alta.',
+  'pttSettings.shortcutLabel': 'Atalho',
+  'pttSettings.shortcutPlaceholder': 'Pressione uma tecla (por exemplo, F13)',
+  'pttSettings.shortcutUnsetHint':
+    'Pressionar para falar está desligado — escolha um atalho para ativar.',
+  'pttSettings.speakRepliesLabel': 'Ler as respostas do agente em voz alta',
+  'pttSettings.showOverlayLabel': 'Mostrar a sobreposição enquanto a tecla está pressionada',
+  'pttSettings.errorConflictsWithDictation':
+    'Este atalho já é usado pelo ditado. Escolha uma tecla diferente.',
+  'pttSettings.errorModifierOnly':
+    'Escolha uma tecla normal (por exemplo, F13) — atalhos apenas com modificadores não funcionam para pressionar para falar.',
+  'pttSettings.errorEmpty': 'Escolha uma tecla para vincular.',
+  'pttSettings.errorAccessibility':
+    'O macOS precisa de permissão de Acessibilidade para este atalho. Abra Ajustes do Sistema → Privacidade e Segurança → Acessibilidade e ative o OpenHuman.',
+  'pttSettings.errorShortcutInUse': 'Outro aplicativo já está a usar este atalho. Escolha outro.',
+  'pttSettings.errorUnsupportedWayland':
+    'As sessões Wayland ainda não suportam atalhos globais no OpenHuman — mude para uma sessão X11 ou use o controlo de ditado integrado no aplicativo.',
+  'pttSettings.exclusiveFullscreenHint':
+    'Em jogos no modo de ecrã inteiro exclusivo a sobreposição não será apresentada — só ouvirá o aviso sonoro. Mude para ecrã inteiro sem margens para ver a sobreposição.',
+  'pttOverlay.listening': 'A escutar…',
+  'pttOverlay.idle': 'Inativo',
   'autocomplete.title': 'Autocompletar',
   'autocomplete.settings': 'Configurações',
   'autocomplete.acceptWithTab': 'Aceitar com Tab',

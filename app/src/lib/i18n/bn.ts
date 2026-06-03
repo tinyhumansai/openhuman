@@ -1521,6 +1521,30 @@ const messages: TranslationMap = {
   'voice.externalProviders.apiKey': 'API কী',
   'voice.externalProviders.apiKeyPlaceholder': 'sk-…',
   'voice.externalProviders.add': 'Add',
+  'pttSettings.title': 'চাপ দিয়ে কথা বলুন',
+  'pttSettings.description':
+    'অন্য একটি অ্যাপে থাকার সময় OpenHuman-এর সাথে কথা বলতে একটি কী চেপে ধরে রাখুন। কী ছেড়ে দিলে রেকর্ডিং পাঠানো হয়; OpenHuman উত্তরটি জোরে পড়ে শোনায়।',
+  'pttSettings.shortcutLabel': 'হটকি',
+  'pttSettings.shortcutPlaceholder': 'একটি কী চাপুন (যেমন F13)',
+  'pttSettings.shortcutUnsetHint':
+    'চাপ দিয়ে কথা বলুন বন্ধ আছে — চালু করতে একটি হটকি নির্বাচন করুন।',
+  'pttSettings.speakRepliesLabel': 'এজেন্টের উত্তর জোরে পড়ুন',
+  'pttSettings.showOverlayLabel': 'চেপে ধরা অবস্থায় ওভারলে দেখান',
+  'pttSettings.errorConflictsWithDictation':
+    'এই শর্টকাটটি ইতিমধ্যে ডিকটেশনের জন্য ব্যবহৃত হচ্ছে। অন্য একটি কী বেছে নিন।',
+  'pttSettings.errorModifierOnly':
+    'একটি সাধারণ কী বেছে নিন (যেমন F13) — শুধু মডিফায়ার নিয়ে গঠিত শর্টকাট চাপ দিয়ে কথা বলুনের জন্য কাজ করে না।',
+  'pttSettings.errorEmpty': 'বাঁধার জন্য একটি কী বেছে নিন।',
+  'pttSettings.errorAccessibility':
+    'এই শর্টকাটের জন্য macOS-এর অ্যাক্সেসিবিলিটি অনুমতি দরকার। System Settings → Privacy & Security → Accessibility খুলুন এবং OpenHuman চালু করুন।',
+  'pttSettings.errorShortcutInUse':
+    'অন্য একটি অ্যাপ ইতিমধ্যে এই শর্টকাট ব্যবহার করছে। ভিন্ন একটি বেছে নিন।',
+  'pttSettings.errorUnsupportedWayland':
+    'Wayland সেশন এখনও OpenHuman-এ গ্লোবাল শর্টকাট সমর্থন করে না — একটি X11 সেশনে চলে যান অথবা অ্যাপের ভেতরের ডিকটেশন টগল ব্যবহার করুন।',
+  'pttSettings.exclusiveFullscreenHint':
+    'এক্সক্লুসিভ ফুলস্ক্রিন গেমে ওভারলে রেন্ডার হবে না — আপনি শুধু সাউন্ড সংকেতটি শুনতে পাবেন। ওভারলে দেখতে বর্ডারলেস ফুলস্ক্রিনে যান।',
+  'pttOverlay.listening': 'শুনছে…',
+  'pttOverlay.idle': 'অপেক্ষায়',
   'autocomplete.title': 'অটোকমপ্লিট',
   'autocomplete.settings': 'সেটিংস',
   'autocomplete.acceptWithTab': 'Tab দিয়ে গ্রহণ করুন',

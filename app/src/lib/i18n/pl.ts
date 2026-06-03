@@ -1541,6 +1541,29 @@ const messages: TranslationMap = {
   'voice.externalProviders.apiKey': 'Klucz API',
   'voice.externalProviders.apiKeyPlaceholder': 'sk-…',
   'voice.externalProviders.add': 'Dodaj',
+  'pttSettings.title': 'Naciśnij, aby mówić',
+  'pttSettings.description':
+    'Przytrzymaj klawisz, aby mówić do OpenHuman, gdy korzystasz z innej aplikacji. Zwolnienie klawisza wysyła nagranie; OpenHuman odczyta odpowiedź na głos.',
+  'pttSettings.shortcutLabel': 'Skrót klawiszowy',
+  'pttSettings.shortcutPlaceholder': 'Naciśnij klawisz (np. F13)',
+  'pttSettings.shortcutUnsetHint':
+    'Naciśnij, aby mówić jest wyłączone — wybierz skrót, aby je włączyć.',
+  'pttSettings.speakRepliesLabel': 'Czytaj odpowiedzi agenta na głos',
+  'pttSettings.showOverlayLabel': 'Pokazuj nakładkę podczas przytrzymania',
+  'pttSettings.errorConflictsWithDictation':
+    'Ten skrót jest już używany przez dyktowanie. Wybierz inny klawisz.',
+  'pttSettings.errorModifierOnly':
+    'Wybierz zwykły klawisz (np. F13) — skróty złożone tylko z modyfikatorów nie działają dla naciśnij, aby mówić.',
+  'pttSettings.errorEmpty': 'Wybierz klawisz do przypisania.',
+  'pttSettings.errorAccessibility':
+    'macOS wymaga uprawnienia Dostępność dla tego skrótu. Otwórz Ustawienia systemowe → Prywatność i bezpieczeństwo → Dostępność i włącz OpenHuman.',
+  'pttSettings.errorShortcutInUse': 'Inna aplikacja używa już tego skrótu. Wybierz inny.',
+  'pttSettings.errorUnsupportedWayland':
+    'Sesje Wayland nie obsługują jeszcze globalnych skrótów w OpenHuman — przełącz się na sesję X11 lub użyj przełącznika dyktowania w aplikacji.',
+  'pttSettings.exclusiveFullscreenHint':
+    'W grach na wyłącznym pełnym ekranie nakładka nie zostanie wyświetlona — usłyszysz tylko sygnał dźwiękowy. Przełącz na pełny ekran bez ramki, aby zobaczyć nakładkę.',
+  'pttOverlay.listening': 'Słucham…',
+  'pttOverlay.idle': 'Gotowy',
   'autocomplete.title': 'Autouzupełnianie',
   'autocomplete.settings': 'Ustawienia',
   'autocomplete.acceptWithTab': 'Akceptuj Tabem',

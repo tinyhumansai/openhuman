@@ -1532,6 +1532,30 @@ const messages: TranslationMap = {
   'voice.externalProviders.apiKey': 'API-ключ',
   'voice.externalProviders.apiKeyPlaceholder': 'sk-…',
   'voice.externalProviders.add': 'Add',
+  'pttSettings.title': 'Нажми и говори',
+  'pttSettings.description':
+    'Удерживайте клавишу, чтобы говорить с OpenHuman, пока вы находитесь в другом приложении. При отпускании запись отправляется; OpenHuman озвучит ответ.',
+  'pttSettings.shortcutLabel': 'Сочетание клавиш',
+  'pttSettings.shortcutPlaceholder': 'Нажмите клавишу (например, F13)',
+  'pttSettings.shortcutUnsetHint':
+    'Нажми и говори выключено — выберите сочетание клавиш, чтобы включить.',
+  'pttSettings.speakRepliesLabel': 'Озвучивать ответы агента',
+  'pttSettings.showOverlayLabel': 'Показывать наложение во время удержания',
+  'pttSettings.errorConflictsWithDictation':
+    'Это сочетание уже используется диктовкой. Выберите другую клавишу.',
+  'pttSettings.errorModifierOnly':
+    'Выберите обычную клавишу (например, F13) — сочетания только из модификаторов не работают для «нажми и говори».',
+  'pttSettings.errorEmpty': 'Выберите клавишу для назначения.',
+  'pttSettings.errorAccessibility':
+    'macOS требует разрешения «Универсальный доступ» для этого сочетания. Откройте Системные настройки → Конфиденциальность и безопасность → Универсальный доступ и включите OpenHuman.',
+  'pttSettings.errorShortcutInUse':
+    'Это сочетание уже использует другое приложение. Выберите другое.',
+  'pttSettings.errorUnsupportedWayland':
+    'Сессии Wayland пока не поддерживают глобальные сочетания клавиш в OpenHuman — перейдите на сессию X11 или используйте встроенный переключатель диктовки.',
+  'pttSettings.exclusiveFullscreenHint':
+    'В играх с эксклюзивным полноэкранным режимом наложение не отобразится — вы услышите только звуковой сигнал. Переключитесь на оконный полноэкранный режим, чтобы видеть наложение.',
+  'pttOverlay.listening': 'Слушаю…',
+  'pttOverlay.idle': 'Ожидание',
   'autocomplete.title': 'Автодополнение',
   'autocomplete.settings': 'Настройки',
   'autocomplete.acceptWithTab': 'Принять с помощью Tab',

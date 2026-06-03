@@ -1505,6 +1505,30 @@ const messages: TranslationMap = {
   'voice.externalProviders.apiKey': 'API 키',
   'voice.externalProviders.apiKeyPlaceholder': 'sk-…',
   'voice.externalProviders.add': 'Add',
+  'pttSettings.title': '눌러서 말하기',
+  'pttSettings.description':
+    '다른 앱을 사용하는 중에도 키를 누르고 있으면 OpenHuman과 대화할 수 있습니다. 키를 놓으면 녹음이 전송되고 OpenHuman이 답변을 음성으로 들려줍니다.',
+  'pttSettings.shortcutLabel': '단축키',
+  'pttSettings.shortcutPlaceholder': '키를 누르세요 (예: F13)',
+  'pttSettings.shortcutUnsetHint':
+    '눌러서 말하기가 꺼져 있습니다 — 활성화하려면 단축키를 선택하세요.',
+  'pttSettings.speakRepliesLabel': '에이전트 답변 음성으로 읽어주기',
+  'pttSettings.showOverlayLabel': '누르고 있는 동안 오버레이 표시',
+  'pttSettings.errorConflictsWithDictation':
+    '이 단축키는 받아쓰기에 이미 사용 중입니다. 다른 키를 선택하세요.',
+  'pttSettings.errorModifierOnly':
+    '일반 키를 선택하세요(예: F13) — 보조 키로만 구성된 단축키는 눌러서 말하기에서 동작하지 않습니다.',
+  'pttSettings.errorEmpty': '바인딩할 키를 선택하세요.',
+  'pttSettings.errorAccessibility':
+    '이 단축키에는 macOS의 손쉬운 사용 권한이 필요합니다. 시스템 설정 → 개인정보 보호 및 보안 → 손쉬운 사용을 열고 OpenHuman을 활성화하세요.',
+  'pttSettings.errorShortcutInUse':
+    '다른 앱이 이미 이 단축키를 사용 중입니다. 다른 단축키를 선택하세요.',
+  'pttSettings.errorUnsupportedWayland':
+    'Wayland 세션은 OpenHuman의 전역 단축키를 아직 지원하지 않습니다 — X11 세션으로 전환하거나 앱 내 받아쓰기 토글을 사용하세요.',
+  'pttSettings.exclusiveFullscreenHint':
+    '전용 전체 화면 게임에서는 오버레이가 표시되지 않습니다 — 알림음만 들립니다. 오버레이를 보려면 테두리 없는 전체 화면으로 전환하세요.',
+  'pttOverlay.listening': '듣는 중…',
+  'pttOverlay.idle': '대기 중',
   'autocomplete.title': '자동 완성',
   'autocomplete.settings': '설정',
   'autocomplete.acceptWithTab': 'Tab으로 수락',

@@ -1439,6 +1439,27 @@ const messages: TranslationMap = {
   'voice.externalProviders.apiKey': 'API 密钥',
   'voice.externalProviders.apiKeyPlaceholder': 'sk-…',
   'voice.externalProviders.add': 'Add',
+  'pttSettings.title': '按住说话',
+  'pttSettings.description':
+    '在其他应用中时，按住按键即可与 OpenHuman 对话。松开按键发送录音；OpenHuman 会用语音读出回复。',
+  'pttSettings.shortcutLabel': '快捷键',
+  'pttSettings.shortcutPlaceholder': '按下一个键（例如 F13）',
+  'pttSettings.shortcutUnsetHint': '按住说话已关闭 — 请选择一个快捷键来启用。',
+  'pttSettings.speakRepliesLabel': '朗读智能体的回复',
+  'pttSettings.showOverlayLabel': '按住时显示悬浮层',
+  'pttSettings.errorConflictsWithDictation': '该快捷键已被听写功能占用。请选择其他按键。',
+  'pttSettings.errorModifierOnly':
+    '请选择一个常规按键（例如 F13）— 仅由修饰键组成的快捷键无法用于按住说话。',
+  'pttSettings.errorEmpty': '请选择要绑定的按键。',
+  'pttSettings.errorAccessibility':
+    '此快捷键需要 macOS 的辅助功能权限。请打开系统设置 → 隐私与安全 → 辅助功能，并启用 OpenHuman。',
+  'pttSettings.errorShortcutInUse': '该快捷键已被其他应用占用。请选择其他快捷键。',
+  'pttSettings.errorUnsupportedWayland':
+    'Wayland 会话尚不支持 OpenHuman 的全局快捷键 — 请切换到 X11 会话，或使用应用内的听写开关。',
+  'pttSettings.exclusiveFullscreenHint':
+    '在独占式全屏游戏中悬浮层不会显示 — 你只会听到提示音。切换到无边框全屏即可看到悬浮层。',
+  'pttOverlay.listening': '正在聆听…',
+  'pttOverlay.idle': '空闲',
   'autocomplete.title': '自动补全',
   'autocomplete.settings': '设置',
   'autocomplete.acceptWithTab': 'Tab 键接受',

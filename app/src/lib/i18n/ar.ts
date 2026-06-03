@@ -1490,6 +1490,28 @@ const messages: TranslationMap = {
   'voice.externalProviders.apiKey': 'مفتاح API',
   'voice.externalProviders.apiKeyPlaceholder': 'sk-…',
   'voice.externalProviders.add': 'Add',
+  'pttSettings.title': 'اضغط للتحدث',
+  'pttSettings.description':
+    'اضغط مفتاحًا باستمرار للتحدث إلى OpenHuman أثناء وجودك في تطبيق آخر. تحرير المفتاح يُرسل التسجيل، ثم ينطق OpenHuman الرد.',
+  'pttSettings.shortcutLabel': 'اختصار المفتاح',
+  'pttSettings.shortcutPlaceholder': 'اضغط مفتاحًا (مثل F13)',
+  'pttSettings.shortcutUnsetHint': 'اضغط للتحدث متوقف — اختر اختصارًا لتفعيله.',
+  'pttSettings.speakRepliesLabel': 'نطق ردود الوكيل',
+  'pttSettings.showOverlayLabel': 'إظهار التراكب أثناء الضغط',
+  'pttSettings.errorConflictsWithDictation':
+    'هذا الاختصار مُستخدم بالفعل لخاصية الإملاء. اختر مفتاحًا مختلفًا.',
+  'pttSettings.errorModifierOnly':
+    'اختر مفتاحًا عاديًا (مثل F13) — الاختصارات المكونة من مفاتيح تعديل فقط لا تعمل مع اضغط للتحدث.',
+  'pttSettings.errorEmpty': 'اختر مفتاحًا للربط.',
+  'pttSettings.errorAccessibility':
+    'يحتاج macOS إلى إذن إمكانية الوصول لهذا الاختصار. افتح إعدادات النظام ← الخصوصية والأمان ← إمكانية الوصول وفعّل OpenHuman.',
+  'pttSettings.errorShortcutInUse': 'يستخدم تطبيق آخر هذا الاختصار بالفعل. اختر اختصارًا مختلفًا.',
+  'pttSettings.errorUnsupportedWayland':
+    'جلسات Wayland لا تدعم بعد الاختصارات العامة في OpenHuman — انتقل إلى جلسة X11 أو استخدم زر الإملاء داخل التطبيق.',
+  'pttSettings.exclusiveFullscreenHint':
+    'في ألعاب وضع ملء الشاشة الحصري لن يظهر التراكب — ستسمع التنبيه الصوتي فقط. انتقل إلى وضع ملء الشاشة بلا إطار لرؤية التراكب.',
+  'pttOverlay.listening': 'يستمع…',
+  'pttOverlay.idle': 'في الانتظار',
   'autocomplete.title': 'الإكمال التلقائي',
   'autocomplete.settings': 'الإعدادات',
   'autocomplete.acceptWithTab': 'قبول بـ Tab',

@@ -17,6 +17,7 @@ import coreModeReducer from '../store/coreModeSlice';
 import localeReducer from '../store/localeSlice';
 import mascotReducer from '../store/mascotSlice';
 import personaReducer from '../store/personaSlice';
+import { pttReducer } from '../store/pttSlice';
 import socketReducer from '../store/socketSlice';
 
 /**
@@ -37,6 +38,7 @@ const testRootReducer = combineReducers({
   locale: localeReducer,
   mascot: mascotReducer,
   persona: personaReducer,
+  ptt: pttReducer,
   socket: socketReducer,
 });
 

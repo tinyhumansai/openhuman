@@ -1520,6 +1520,29 @@ const messages: TranslationMap = {
   'voice.externalProviders.apiKey': 'API कुंजी',
   'voice.externalProviders.apiKeyPlaceholder': 'sk-…',
   'voice.externalProviders.add': 'Add',
+  'pttSettings.title': 'दबाकर बोलें',
+  'pttSettings.description':
+    'जब आप किसी दूसरे ऐप में हों तब OpenHuman से बात करने के लिए कोई कुंजी दबाए रखें। कुंजी छोड़ने पर रिकॉर्डिंग भेजी जाती है; OpenHuman उत्तर को बोलकर सुनाता है।',
+  'pttSettings.shortcutLabel': 'हॉटकी',
+  'pttSettings.shortcutPlaceholder': 'कोई कुंजी दबाएँ (जैसे F13)',
+  'pttSettings.shortcutUnsetHint': 'दबाकर बोलें बंद है — चालू करने के लिए कोई हॉटकी चुनें।',
+  'pttSettings.speakRepliesLabel': 'एजेंट के उत्तर ज़ोर से सुनाएँ',
+  'pttSettings.showOverlayLabel': 'दबाए रखने के दौरान ओवरले दिखाएँ',
+  'pttSettings.errorConflictsWithDictation':
+    'यह शॉर्टकट पहले से डिक्टेशन में उपयोग हो रहा है। कोई दूसरी कुंजी चुनें।',
+  'pttSettings.errorModifierOnly':
+    'कोई सामान्य कुंजी चुनें (जैसे F13) — केवल मॉडिफ़ायर वाले शॉर्टकट दबाकर बोलें के लिए काम नहीं करते।',
+  'pttSettings.errorEmpty': 'बाँधने के लिए कोई कुंजी चुनें।',
+  'pttSettings.errorAccessibility':
+    'इस शॉर्टकट के लिए macOS को एक्सेसिबिलिटी अनुमति चाहिए। System Settings → Privacy & Security → Accessibility खोलें और OpenHuman को सक्षम करें।',
+  'pttSettings.errorShortcutInUse':
+    'कोई दूसरा ऐप पहले से इस शॉर्टकट का उपयोग कर रहा है। कोई दूसरा चुनें।',
+  'pttSettings.errorUnsupportedWayland':
+    'Wayland सत्र अभी OpenHuman में ग्लोबल शॉर्टकट का समर्थन नहीं करते — X11 सत्र पर जाएँ या ऐप के अंदर डिक्टेशन टॉगल का उपयोग करें।',
+  'pttSettings.exclusiveFullscreenHint':
+    'एक्सक्लूसिव फुलस्क्रीन गेम्स में ओवरले प्रदर्शित नहीं होगा — आपको केवल चाइम सुनाई देगा। ओवरले देखने के लिए बॉर्डरलेस फुलस्क्रीन पर जाएँ।',
+  'pttOverlay.listening': 'सुन रहा है…',
+  'pttOverlay.idle': 'निष्क्रिय',
   'autocomplete.title': 'ऑटोकम्पलीट',
   'autocomplete.settings': 'सेटिंग्स',
   'autocomplete.acceptWithTab': 'Tab से एक्सेप्ट करें',
