@@ -40,12 +40,6 @@ pub const AGENT_RUN_TURN_METHOD: &str = "agent.run_turn";
 /// bus carries them by value without touching serialization. Consumers can
 /// therefore pass trait objects (`Arc<dyn Provider>`, tool trait-object
 /// registries) and streaming senders (`on_delta`) through unchanged.
-/// Full owned payload for a single agentic turn executed through the bus.
-///
-/// All fields are either owned values, [`Arc`]s, or channel handles — the
-/// bus carries them by value without touching serialization. Consumers can
-/// therefore pass trait objects (`Arc<dyn Provider>`, tool trait-object
-/// registries) and streaming senders (`on_delta`) through unchanged.
 pub struct AgentTurnRequest {
     /// LLM provider, already constructed and warmed up by the caller.
     /// Shared via Arc to allow sub-agents to reuse the same connection pool.
