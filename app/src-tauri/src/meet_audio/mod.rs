@@ -91,7 +91,7 @@ pub async fn start<R: Runtime>(
     bot_display_name: String,
 ) -> Result<(), String> {
     log::info!(
-        "[meet-audio] start request_id={request_id} url_prefix={} \
+        "[meet-lifecycle] phase=joined request_id={request_id} audio_start=true url_prefix={} \
          owner_chars={} bot_chars={}",
         truncate_for_log(&meet_url, 64),
         owner_display_name.chars().count(),
@@ -270,7 +270,7 @@ pub async fn stop<R: Runtime>(
                 .unwrap_or(0.0) as f32;
             let turns = v.get("turn_count").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
             log::info!(
-                "[meet-audio] stop ok request_id={request_id} listened={listened:.2}s spoken={spoken:.2}s turns={turns}"
+                "[meet-lifecycle] phase=closed request_id={request_id} audio_stop=true listened={listened:.2}s spoken={spoken:.2}s turns={turns}"
             );
             Ok(Some(StopSummary {
                 request_id,

@@ -80,7 +80,9 @@ pub fn spawn<R: Runtime>(
     let handle = tokio::spawn(async move {
         match run(&app, &request_id, &meet_url, &display_name).await {
             Ok(()) => {
-                log::info!("[meet-scanner] join sequence completed request_id={request_id}");
+                log::info!(
+                    "[meet-lifecycle] phase=joined request_id={request_id} scanner_completed=true"
+                );
                 // Diagnostic build: keep the window VISIBLE post-join so
                 // we can verify whether the previous `window.hide()` was
                 // suspending the renderer enough to break the audio +
@@ -93,7 +95,9 @@ pub fn spawn<R: Runtime>(
                 // via Tauri set_position rather than orderOut:).
             }
             Err(err) => {
-                log::warn!("[meet-scanner] join sequence aborted request_id={request_id} err={err}")
+                log::warn!(
+                    "[meet-lifecycle] phase=failed request_id={request_id} aborted=true err={err}"
+                )
             }
         }
     });
@@ -107,7 +111,9 @@ async fn run<R: Runtime>(
     display_name: &str,
 ) -> Result<(), String> {
     let (mut cdp, session) = wait_for_meet_target(meet_url).await?;
-    log::info!("[meet-scanner] attached to meet target request_id={request_id} session={session}");
+    log::info!(
+        "[meet-lifecycle] phase=joining request_id={request_id} attached=true session={session}"
+    );
 
     // `Runtime.enable` is required before `Runtime.evaluate` returns
     // structured results in some CEF builds. `Page.enable` is harmless

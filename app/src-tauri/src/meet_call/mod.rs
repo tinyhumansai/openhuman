@@ -149,7 +149,7 @@ pub async fn meet_call_open_window<R: Runtime>(
     let label = window_label_for(&request_id);
 
     if let Some(existing) = app.get_webview_window(&label) {
-        log::info!("[meet-call] reusing existing window label={label} request_id={request_id}");
+        log::info!("[meet-lifecycle] phase=joining request_id={request_id} reused_window=true label={label}");
         let _ = existing.show();
         let _ = existing.set_focus();
         return Ok(label);
@@ -184,7 +184,7 @@ pub async fn meet_call_open_window<R: Runtime>(
     }
 
     log::info!(
-        "[meet-call] opening window label={label} request_id={request_id} url_host={} display_name_chars={}",
+        "[meet-lifecycle] phase=joining request_id={request_id} opened_window=true label={label} url_host={} display_name_chars={}",
         parsed.host_str().unwrap_or(""),
         args.display_name.chars().count()
     );
@@ -380,7 +380,7 @@ pub async fn meet_call_open_window<R: Runtime>(
                         log::debug!("[meet-call] emit closed failed: {err}");
                     }
                     log::info!(
-                        "[meet-call] window destroyed label={label_for_event} request_id={request_id_for_event}"
+                        "[meet-lifecycle] phase=closed request_id={request_id_for_event} destroyed=true label={label_for_event}"
                     );
                     // Tear down the meet-agent audio loop *before* the
                     // data dir wipe so the audio handler registration
