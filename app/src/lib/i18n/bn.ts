@@ -4468,6 +4468,31 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'স্থানীয় সঞ্চয়স্থান প্রত্যাখ্যান করুন',
   'pages.settings.account.security': 'নিরাপত্তা',
   'pages.settings.account.securityDesc': 'গোপনীয়তা সঞ্চয়স্থান মোড এবং কিচেন অবস্থা',
+  // #002 memory-pipeline-hardening: degraded badges + typed remediation.
+  'memoryTree.status.statusDegraded': 'অবনমিত',
+  'memoryTree.status.degradedRecall': 'সিম্যান্টিক রিকল নিষ্ক্রিয়',
+  'memoryTree.status.degradedStructure': 'উইকি কাঠামো অসম্পূর্ণ',
+  'memoryTree.status.extractionCoverage': 'এক্সট্র্যাকশন কভারেজ: {pct}% অংশের কাঠামো আছে',
+  'memory.health.remediation.budget_exhausted':
+    'মেমরি এমবেডিং পরিচালিত বাজেটে পৌঁছেছে। স্থানীয় Ollama এমবেডিং সেট আপ করুন (সেটিংস → AI → এমবেডিংস) অথবা মেমরি তৈরি চালিয়ে যেতে আপনার নিজস্ব এমবেডিং API কী যোগ করুন।',
+  'memory.health.remediation.auth_missing':
+    'কোনও এমবেডিং শংসাপত্র পাওয়া যায়নি। OpenHuman-এ লগ ইন করুন, অথবা সেটিংস → AI → এমবেডিংস-এ স্থানীয় Ollama এমবেডিং সেট আপ করুন।',
+  'memory.health.remediation.auth_invalid':
+    'আপনার এমবেডিং শংসাপত্র প্রত্যাখ্যাত হয়েছে। পুনরায় প্রমাণীকরণ করুন, অথবা সেটিংস → AI → এমবেডিংস-এ স্থানীয় Ollama এমবেডিং-এ স্যুইচ করুন।',
+  'memory.health.remediation.embeddings_unconfigured':
+    'কোনও এমবেডিং প্রদানকারী কনফিগার করা নেই, তাই সিম্যান্টিক রিকল বন্ধ। স্থানীয় Ollama এমবেডিং সেট আপ করুন (প্রস্তাবিত) অথবা সেটিংস → AI → এমবেডিংস-এ একটি এমবেডিং কী যোগ করুন।',
+  'memory.health.remediation.embedding_dim_mismatch':
+    'এমবেডিং মডেল ভুল ভেক্টর আকার ফেরত দেয় (মেমরি 1024 মাত্রা প্রত্যাশা করে)। 1024-মাত্রার একটি মডেল বেছে নিন, অথবা আপনার প্রদানকারীর কাছে 1024 মাত্রা অনুরোধ করুন।',
+  'memory.health.remediation.local_model_unavailable':
+    'একটি প্রয়োজনীয় স্থানীয় মডেল উপলব্ধ নেই। Ollama ইনস্টল/চালু করুন এবং মডেলটি ডাউনলোড করুন, অথবা সেটিংস → AI-তে এই কাজের চাপ একটি ক্লাউড প্রদানকারীতে স্যুইচ করুন।',
+  'memory.health.remediation.extraction_timeout':
+    'মেমরি এক্সট্র্যাকশন মডেল টাইম আউট হচ্ছে, তাই উইকিতে সামান্য কাঠামো আছে। সেটিংস → AI-তে মেমরি এক্সট্র্যাকশন মডেল একটি দ্রুততর মডেলে পরিবর্তন করুন।',
+  'memory.health.remediation.summarizer_unavailable':
+    'সারাংশ ট্রি তৈরির জন্য কোনও সারাংশ প্রদানকারী উপলব্ধ নেই। স্থানীয় AI (Ollama) সক্ষম করুন, অথবা সেটিংস → AI → মেমরিতে ক্লাউড সারাংশ সক্ষম করুন।',
+  'memory.health.remediation.transient':
+    'একটি অস্থায়ী ত্রুটি মেমরি প্রক্রিয়াকরণে বাধা দিয়েছে। স্বয়ংক্রিয়ভাবে পুনরায় চেষ্টা করা হবে।',
+  'memory.health.remediation.unknown':
+    'মেমরি প্রক্রিয়াকরণে একটি সমস্যা হয়েছে। কনফিগারেশনের জন্য সেটিংস → AI পরীক্ষা করুন।',
   // Chat — agent-generated artifacts (#2779)
   'chat.artifact.aria': 'আর্টিফ্যাক্ট: {title}',
   'chat.artifact.generating': '{kind} তৈরি হচ্ছে…',

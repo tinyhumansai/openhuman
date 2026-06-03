@@ -4551,6 +4551,32 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Rechazar almacenamiento local',
   'pages.settings.account.security': 'Seguridad',
   'pages.settings.account.securityDesc': 'Modo de almacenamiento de secretos y estado del llavero',
+  // #002 memory-pipeline-hardening: degraded badges + typed remediation.
+  'memoryTree.status.statusDegraded': 'Degradado',
+  'memoryTree.status.degradedRecall': 'Recuperación semántica desactivada',
+  'memoryTree.status.degradedStructure': 'Estructura de la wiki incompleta',
+  'memoryTree.status.extractionCoverage':
+    'Cobertura de extracción: {pct}% de los fragmentos tienen estructura',
+  'memory.health.remediation.budget_exhausted':
+    'Los embeddings de memoria agotaron el presupuesto gestionado. Configura embeddings locales de Ollama (Configuración → IA → Incrustaciones) o añade tu propia clave de API de embeddings para seguir construyendo la memoria.',
+  'memory.health.remediation.auth_missing':
+    'No se encontraron credenciales de embeddings. Inicia sesión en OpenHuman o configura embeddings locales de Ollama en Configuración → IA → Incrustaciones.',
+  'memory.health.remediation.auth_invalid':
+    'Tus credenciales de embeddings fueron rechazadas. Vuelve a autenticarte o cambia a embeddings locales de Ollama en Configuración → IA → Incrustaciones.',
+  'memory.health.remediation.embeddings_unconfigured':
+    'No hay ningún proveedor de embeddings configurado, por lo que la recuperación semántica está desactivada. Configura embeddings locales de Ollama (recomendado) o añade una clave de embeddings en Configuración → IA → Incrustaciones.',
+  'memory.health.remediation.embedding_dim_mismatch':
+    'El modelo de embeddings devuelve un tamaño de vector incorrecto (la memoria espera 1024 dimensiones). Elige un modelo de 1024 dimensiones o solicita 1024 dimensiones a tu proveedor.',
+  'memory.health.remediation.local_model_unavailable':
+    'No hay disponible un modelo local requerido. Instala/ejecuta Ollama y descarga el modelo, o cambia esta carga de trabajo a un proveedor en la nube en Configuración → IA.',
+  'memory.health.remediation.extraction_timeout':
+    'El modelo de extracción de memoria está agotando el tiempo de espera, por lo que la wiki tiene poca estructura. Cambia el modelo de extracción de memoria por uno más rápido en Configuración → IA.',
+  'memory.health.remediation.summarizer_unavailable':
+    'No hay ningún proveedor de resúmenes disponible para Crear árboles de resumen. Activa la IA local (Ollama) o activa el resumen en la nube en Configuración → IA → Memoria.',
+  'memory.health.remediation.transient':
+    'Un error temporal interrumpió el procesamiento de la memoria. Se reintentará automáticamente.',
+  'memory.health.remediation.unknown':
+    'El procesamiento de la memoria encontró un problema. Comprueba Configuración → IA para la configuración.',
   // Chat — agent-generated artifacts (#2779)
   'chat.artifact.aria': 'Artefacto: {title}',
   'chat.artifact.generating': 'Generando {kind}…',

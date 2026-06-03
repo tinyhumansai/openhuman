@@ -4253,6 +4253,29 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': '拒绝本地存储',
   'pages.settings.account.security': '安全',
   'pages.settings.account.securityDesc': '密钥存储模式和密钥链状态',
+  // #002 memory-pipeline-hardening: degraded badges + typed remediation.
+  'memoryTree.status.statusDegraded': '已降级',
+  'memoryTree.status.degradedRecall': '语义召回已禁用',
+  'memoryTree.status.degradedStructure': 'Wiki 结构不完整',
+  'memoryTree.status.extractionCoverage': '提取覆盖率：{pct}% 的片段具有结构',
+  'memory.health.remediation.budget_exhausted':
+    '记忆嵌入已达到托管预算上限。请设置本地 Ollama 嵌入（设置 → AI → 向量嵌入），或添加你自己的嵌入 API 密钥以继续构建记忆。',
+  'memory.health.remediation.auth_missing':
+    '未找到嵌入凭据。请登录 OpenHuman，或在设置 → AI → 向量嵌入 中设置本地 Ollama 嵌入。',
+  'memory.health.remediation.auth_invalid':
+    '你的嵌入凭据被拒绝。请重新进行身份验证，或在设置 → AI → 向量嵌入 中切换到本地 Ollama 嵌入。',
+  'memory.health.remediation.embeddings_unconfigured':
+    '未配置嵌入提供方，因此语义召回已关闭。请设置本地 Ollama 嵌入（推荐），或在设置 → AI → 向量嵌入 中添加嵌入密钥。',
+  'memory.health.remediation.embedding_dim_mismatch':
+    '嵌入模型返回的向量大小不正确（记忆需要 1024 维）。请选择 1024 维的模型，或向你的提供方请求 1024 维。',
+  'memory.health.remediation.local_model_unavailable':
+    '所需的本地模型不可用。请安装/运行 Ollama 并拉取模型，或在设置 → AI 中将此工作负载切换到云提供方。',
+  'memory.health.remediation.extraction_timeout':
+    '记忆提取模型超时，因此 Wiki 结构很少。请在设置 → AI 中将记忆提取模型更换为更快的模型。',
+  'memory.health.remediation.summarizer_unavailable':
+    '没有可用于构建摘要树的摘要提供方。请启用本地 AI（Ollama），或在设置 → AI → 记忆中启用云端摘要。',
+  'memory.health.remediation.transient': '临时错误中断了记忆处理。将自动重试。',
+  'memory.health.remediation.unknown': '记忆处理遇到问题。请在设置 → AI 中检查配置。',
   // Chat — agent-generated artifacts (#2779)
   'chat.artifact.aria': '工件：{title}',
   'chat.artifact.generating': '正在生成{kind}…',

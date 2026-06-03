@@ -504,7 +504,34 @@ const en: TranslationMap = {
   'memoryTree.status.statusSyncing': 'Syncing',
   'memoryTree.status.statusError': 'Error',
   'memoryTree.status.statusIdle': 'Idle',
+  'memoryTree.status.statusDegraded': 'Degraded',
   'memoryTree.status.never': 'Never',
+  // #002: degraded badges + typed remediation strings. The Rust core sends a
+  // `remediation_key` (one of memory.health.remediation.*) which the status
+  // panel resolves verbatim, so the cause + fix come from one source of truth.
+  'memoryTree.status.degradedRecall': 'Semantic recall disabled',
+  'memoryTree.status.degradedStructure': 'Wiki structure incomplete',
+  'memoryTree.status.extractionCoverage': 'Extraction coverage: {pct}% of chunks have structure',
+  'memory.health.remediation.budget_exhausted':
+    'Memory embeddings hit the managed budget. Set up local Ollama embeddings (Settings → AI → Embeddings) or add your own embeddings API key to keep building memory.',
+  'memory.health.remediation.auth_missing':
+    'No embeddings credentials found. Log in to OpenHuman, or set up local Ollama embeddings in Settings → AI → Embeddings.',
+  'memory.health.remediation.auth_invalid':
+    'Your embeddings credentials were rejected. Re-authenticate, or switch to local Ollama embeddings in Settings → AI → Embeddings.',
+  'memory.health.remediation.embeddings_unconfigured':
+    'No embeddings provider is configured, so semantic recall is off. Set up local Ollama embeddings (recommended) or add an embeddings key in Settings → AI → Embeddings.',
+  'memory.health.remediation.embedding_dim_mismatch':
+    'The embedding model returns the wrong vector size (memory expects 1024 dimensions). Pick a 1024-dim model, or request 1024 dimensions for your provider.',
+  'memory.health.remediation.local_model_unavailable':
+    'A required local model is not available. Install/run Ollama and pull the model, or switch this workload to a cloud provider in Settings → AI.',
+  'memory.health.remediation.extraction_timeout':
+    'The memory extraction model is timing out, so the wiki has little structure. Switch the Memory extraction model to a faster one in Settings → AI.',
+  'memory.health.remediation.summarizer_unavailable':
+    'No summarization provider is available for Build Summary Trees. Enable local AI (Ollama), or enable cloud summarization in Settings → AI → Memory.',
+  'memory.health.remediation.transient':
+    'A temporary error interrupted memory processing. It will retry automatically.',
+  'memory.health.remediation.unknown':
+    'Memory processing encountered an issue. Check Settings → AI for configuration.',
   'memoryTree.status.fetchError': "Couldn't fetch Memory Tree status",
   'memoryTree.status.retry': 'Retry',
   'memoryTree.status.toggleFailed': "Couldn't toggle auto-sync",

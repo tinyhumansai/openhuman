@@ -131,7 +131,8 @@ pub fn claim_next(config: &Config, lock_duration_ms: i64) -> Result<Option<Job>>
                   )
               RETURNING id, kind, payload_json, dedupe_key, status, attempts,
                         max_attempts, available_at_ms, locked_until_ms, last_error,
-                        created_at_ms, started_at_ms, completed_at_ms",
+                        created_at_ms, started_at_ms, completed_at_ms,
+                        failure_reason, failure_class",
                 params![now_ms, lock_until],
                 row_to_job,
             )
@@ -196,10 +197,33 @@ pub fn mark_done(config: &Config, job: &Job) -> Result<()> {
 /// cannot clobber an active lessee's row — rows_affected == 0 is a silent
 /// no-op.
 pub fn mark_failed(config: &Config, job: &Job, error: &str) -> Result<()> {
+    mark_failed_typed(config, job, error, None)
+}
+
+/// Like [`mark_failed`], but with an optional typed [`PipelineFailure`]
+/// classification (#002). When `failure` is `Some` and **unrecoverable**
+/// (budget exhausted, bad key, missing local model, dim mismatch), the job
+/// terminates as `failed` **immediately** — no retry budget is burned, since
+/// retrying the same input cannot succeed — and the typed
+/// `failure_reason` / `failure_class` columns are persisted alongside the
+/// freeform `last_error`. Transient classifications (and the untyped `None`
+/// case) keep the existing attempts-bounded retry-with-backoff behaviour.
+///
+/// The claim-token gate (`attempts` + `started_at_ms`) is preserved on every
+/// branch so a stale lessee's settlement remains a silent no-op.
+pub fn mark_failed_typed(
+    config: &Config,
+    job: &Job,
+    error: &str,
+    failure: Option<&crate::openhuman::memory_tree::health::PipelineFailure>,
+) -> Result<()> {
     let job_id = &job.id;
     let attempts = job.attempts as i64;
     let max_attempts = job.max_attempts as i64;
     let claim_started_at = job.started_at_ms;
+    let unrecoverable = failure.map(|f| f.is_unrecoverable()).unwrap_or(false);
+    let failure_reason = failure.map(|f| f.code.as_str());
+    let failure_class = failure.map(|f| f.class.as_str());
     with_connection(config, |conn| {
         let now_ms = Utc::now().timestamp_millis();
 
@@ -207,21 +231,34 @@ pub fn mark_failed(config: &Config, job: &Job, error: &str) -> Result<()> {
         // may carry credential-shaped substrings; scrub before logging,
         // but keep the original in the DB column for diagnostics.
         let error_for_log = scrub_for_log(error);
-        if attempts >= max_attempts {
+        // Terminal when the retry budget is exhausted OR the failure is
+        // classified unrecoverable (fail fast — #002 FR-003).
+        if attempts >= max_attempts || unrecoverable {
             log::warn!(
                 "[memory::jobs] terminal failure id={job_id} \
-                 attempts={attempts}/{max_attempts} err={error_for_log}"
+                 attempts={attempts}/{max_attempts} unrecoverable={unrecoverable} \
+                 reason={failure_reason:?} err={error_for_log}"
             );
             let n = conn.execute(
                 "UPDATE mem_tree_jobs
                     SET status = 'failed',
                         completed_at_ms = ?1,
                         locked_until_ms = NULL,
-                        last_error = ?2
+                        last_error = ?2,
+                        failure_reason = ?6,
+                        failure_class = ?7
                   WHERE id = ?3
                     AND attempts = ?4
                     AND started_at_ms IS ?5",
-                params![now_ms, error, job_id, attempts, claim_started_at],
+                params![
+                    now_ms,
+                    error,
+                    job_id,
+                    attempts,
+                    claim_started_at,
+                    failure_reason,
+                    failure_class,
+                ],
             )?;
             if n == 0 {
                 log::warn!(
@@ -335,6 +372,43 @@ pub fn recover_stale_locks(config: &Config) -> Result<usize> {
     })
 }
 
+/// Requeue every terminally-`failed` job back to `ready` (#002 FR-011).
+///
+/// Backs the manual `memory_tree_retry_failed` RPC: once the user fixes the
+/// underlying cause (e.g. adds an embeddings key, switches to a faster
+/// extraction model), the jobs that failed under the old config re-run without
+/// re-ingesting source data. Resets `attempts` to 0 (a fresh retry budget),
+/// clears the typed `failure_reason` / `failure_class` and `last_error`, and
+/// makes the row immediately available. Returns the number of jobs requeued.
+///
+/// NOTE: there is currently **no automatic caller**. An automatic
+/// requeue-on-sync was planned, but its hook lived on the upstream-removed
+/// vault sync path and has not been re-homed, so requeue is **manual-only**
+/// (the `memory_tree_retry_failed` RPC) for now.
+pub fn requeue_failed(config: &Config) -> Result<u64> {
+    with_connection(config, |conn| {
+        let now_ms = Utc::now().timestamp_millis();
+        let n = conn.execute(
+            "UPDATE mem_tree_jobs
+                SET status = 'ready',
+                    attempts = 0,
+                    available_at_ms = ?1,
+                    locked_until_ms = NULL,
+                    started_at_ms = NULL,
+                    completed_at_ms = NULL,
+                    last_error = NULL,
+                    failure_reason = NULL,
+                    failure_class = NULL
+              WHERE status = 'failed'",
+            params![now_ms],
+        )?;
+        if n > 0 {
+            log::info!("[memory::jobs] requeued {n} failed job(s) for retry");
+        }
+        Ok(n as u64)
+    })
+}
+
 /// Release this process's in-flight job locks on a *graceful* shutdown:
 /// flip every `running` row back to `ready` so the work is immediately
 /// re-claimable on next launch instead of waiting out the lease and
@@ -412,7 +486,8 @@ pub fn get_job(config: &Config, id: &str) -> Result<Option<Job>> {
             .query_row(
                 "SELECT id, kind, payload_json, dedupe_key, status, attempts, max_attempts,
                         available_at_ms, locked_until_ms, last_error,
-                        created_at_ms, started_at_ms, completed_at_ms
+                        created_at_ms, started_at_ms, completed_at_ms,
+                        failure_reason, failure_class
                    FROM mem_tree_jobs WHERE id = ?1",
                 params![id],
                 row_to_job,
@@ -436,6 +511,8 @@ fn row_to_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<Job> {
     let created_at_ms: i64 = row.get(10)?;
     let started_at_ms: Option<i64> = row.get(11)?;
     let completed_at_ms: Option<i64> = row.get(12)?;
+    let failure_reason: Option<String> = row.get(13)?;
+    let failure_class: Option<String> = row.get(14)?;
 
     let kind = JobKind::parse(&kind_s).map_err(|e| {
         rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, e.into())
@@ -455,6 +532,8 @@ fn row_to_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<Job> {
         available_at_ms,
         locked_until_ms,
         last_error,
+        failure_reason,
+        failure_class,
         created_at_ms,
         started_at_ms,
         completed_at_ms,
@@ -513,6 +592,144 @@ mod tests {
         assert_eq!(row.status, JobStatus::Done);
         assert!(row.completed_at_ms.is_some());
         assert!(row.locked_until_ms.is_none());
+    }
+
+    /// T006/T007: the new `failure_reason`/`failure_class` columns must exist
+    /// (migration ran) and round-trip through `claim_next` (RETURNING) and
+    /// `get_job` (SELECT) as `None` until a classified failure is recorded
+    /// (T012 wires the write side).
+    #[test]
+    fn typed_failure_columns_roundtrip_as_none_by_default() {
+        let (_tmp, cfg) = test_config();
+        let nj = NewJob::extract_chunk(&ExtractChunkPayload {
+            chunk_id: "c-typed-fail".into(),
+        })
+        .unwrap();
+        let id = enqueue(&cfg, &nj).unwrap().expect("inserted");
+
+        let claimed = claim_next(&cfg, DEFAULT_LOCK_DURATION_MS).unwrap().unwrap();
+        assert_eq!(claimed.failure_reason, None);
+        assert_eq!(claimed.failure_class, None);
+
+        let row = get_job(&cfg, &id).unwrap().unwrap();
+        assert_eq!(row.failure_reason, None);
+        assert_eq!(row.failure_class, None);
+    }
+
+    /// T012: an **unrecoverable** typed failure must terminate the job
+    /// immediately (status `failed`, `completed_at_ms` set) on the FIRST
+    /// attempt — no retry budget burned — and persist the typed
+    /// `failure_reason` / `failure_class` columns. A job with `max_attempts`
+    /// far above 1 proves the short-circuit isn't just the budget running out.
+    #[test]
+    fn mark_failed_typed_unrecoverable_terminates_immediately() {
+        use crate::openhuman::memory_tree::health::{FailureCode, PipelineFailure};
+        let (_tmp, cfg) = test_config();
+        let mut nj = NewJob::extract_chunk(&ExtractChunkPayload {
+            chunk_id: "c-budget".into(),
+        })
+        .unwrap();
+        nj.max_attempts = Some(5); // plenty of budget left
+        let id = enqueue(&cfg, &nj).unwrap().expect("inserted");
+
+        let claimed = claim_next(&cfg, DEFAULT_LOCK_DURATION_MS).unwrap().unwrap();
+        assert_eq!(claimed.attempts, 1, "first claim");
+        let failure = PipelineFailure::new(FailureCode::BudgetExhausted);
+        mark_failed_typed(&cfg, &claimed, "Insufficient budget", Some(&failure)).unwrap();
+
+        let row = get_job(&cfg, &id).unwrap().unwrap();
+        assert_eq!(
+            row.status,
+            JobStatus::Failed,
+            "unrecoverable failure must terminate on first attempt"
+        );
+        assert!(row.completed_at_ms.is_some());
+        assert_eq!(row.failure_reason.as_deref(), Some("budget_exhausted"));
+        assert_eq!(row.failure_class.as_deref(), Some("unrecoverable"));
+        assert_eq!(row.last_error.as_deref(), Some("Insufficient budget"));
+    }
+
+    /// T012: a **transient** typed failure keeps the existing
+    /// attempts-bounded retry path — the job bounces back to `ready` with a
+    /// future `available_at_ms` and does NOT set the typed columns (they are
+    /// only persisted on a terminal classified failure).
+    /// T028 (FR-011): `requeue_failed` flips terminal `failed` jobs back to
+    /// `ready` with a fresh attempt budget and the typed failure cleared, so
+    /// they re-run after the cause is fixed. Non-failed jobs are untouched.
+    #[test]
+    fn requeue_failed_resets_failed_jobs_only() {
+        use crate::openhuman::memory_tree::health::{FailureCode, PipelineFailure};
+        let (_tmp, cfg) = test_config();
+
+        // Job A: drive to terminal failure (max_attempts=1, unrecoverable).
+        let mut a = NewJob::extract_chunk(&ExtractChunkPayload {
+            chunk_id: "a".into(),
+        })
+        .unwrap();
+        a.max_attempts = Some(1);
+        let id_a = enqueue(&cfg, &a).unwrap().unwrap();
+        let claim_a = claim_next(&cfg, DEFAULT_LOCK_DURATION_MS).unwrap().unwrap();
+        mark_failed_typed(
+            &cfg,
+            &claim_a,
+            "Insufficient budget",
+            Some(&PipelineFailure::new(FailureCode::BudgetExhausted)),
+        )
+        .unwrap();
+        assert_eq!(
+            get_job(&cfg, &id_a).unwrap().unwrap().status,
+            JobStatus::Failed
+        );
+
+        // Job B: leave ready (untouched control).
+        let b = NewJob::extract_chunk(&ExtractChunkPayload {
+            chunk_id: "b".into(),
+        })
+        .unwrap();
+        let id_b = enqueue(&cfg, &b).unwrap().unwrap();
+
+        let requeued = requeue_failed(&cfg).unwrap();
+        assert_eq!(requeued, 1, "only the failed job should requeue");
+
+        let row_a = get_job(&cfg, &id_a).unwrap().unwrap();
+        assert_eq!(row_a.status, JobStatus::Ready);
+        assert_eq!(row_a.attempts, 0, "attempt budget reset");
+        assert_eq!(row_a.failure_reason, None, "typed reason cleared");
+        assert_eq!(row_a.failure_class, None);
+        assert_eq!(row_a.last_error, None);
+        assert!(row_a.completed_at_ms.is_none());
+
+        // B was already ready — still ready, not double-counted.
+        assert_eq!(
+            get_job(&cfg, &id_b).unwrap().unwrap().status,
+            JobStatus::Ready
+        );
+    }
+
+    #[test]
+    fn mark_failed_typed_transient_still_retries() {
+        use crate::openhuman::memory_tree::health::{FailureCode, PipelineFailure};
+        let (_tmp, cfg) = test_config();
+        let mut nj = NewJob::extract_chunk(&ExtractChunkPayload {
+            chunk_id: "c-transient".into(),
+        })
+        .unwrap();
+        nj.max_attempts = Some(5);
+        let id = enqueue(&cfg, &nj).unwrap().expect("inserted");
+
+        let claimed = claim_next(&cfg, DEFAULT_LOCK_DURATION_MS).unwrap().unwrap();
+        let failure = PipelineFailure::new(FailureCode::Transient);
+        mark_failed_typed(&cfg, &claimed, "503 upstream", Some(&failure)).unwrap();
+
+        let row = get_job(&cfg, &id).unwrap().unwrap();
+        assert_eq!(
+            row.status,
+            JobStatus::Ready,
+            "transient failure must retry, not terminate"
+        );
+        assert!(row.available_at_ms > Utc::now().timestamp_millis());
+        assert_eq!(row.failure_reason, None, "typed cols unset on retry");
+        assert_eq!(row.failure_class, None);
     }
 
     #[test]

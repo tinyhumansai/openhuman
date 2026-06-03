@@ -43,6 +43,32 @@ impl Provider for StubProvider {
     }
 }
 
+/// #002 (FR-008): a Provider that errors only when the system prompt names a
+/// specific summarization level (`level_name` is embedded by
+/// `summarize_to_limit`), succeeding otherwise. Lets a test force a single
+/// propagation node to fail while the rest of the run proceeds.
+struct FailAtLevelProvider {
+    fail_level: &'static str,
+    reply: String,
+}
+
+#[async_trait]
+impl Provider for FailAtLevelProvider {
+    async fn chat_with_system(
+        &self,
+        system: Option<&str>,
+        _message: &str,
+        _model: &str,
+        _temperature: f64,
+    ) -> anyhow::Result<String> {
+        let sys = system.unwrap_or("");
+        if sys.contains(&format!("at the {} level", self.fail_level)) {
+            anyhow::bail!("simulated {} summarization failure", self.fail_level);
+        }
+        Ok(self.reply.clone())
+    }
+}
+
 // ── group_by_hour ────────────────────────────────────────────────────────
 
 #[test]
@@ -345,7 +371,7 @@ async fn run_summarization_empty_buffer_returns_none() {
     std::fs::create_dir_all(&cfg.workspace_dir).unwrap();
     let provider = StubProvider::with_reply("should not be called");
     let ts = Utc::now();
-    let result = run_summarization(&cfg, &provider, "test-ns", ts)
+    let result = run_summarization(&cfg, &provider, "test-model", "test-ns", ts)
         .await
         .unwrap();
     assert!(result.is_none(), "empty buffer must return None");
@@ -364,7 +390,9 @@ async fn run_summarization_drains_buffer_and_writes_hour_node() {
     store::buffer_write(&cfg, ns, "entry two", &ts, None).unwrap();
 
     let provider = StubProvider::with_reply("hour leaf summary from LLM");
-    let last_node = run_summarization(&cfg, &provider, ns, ts).await.unwrap();
+    let last_node = run_summarization(&cfg, &provider, "test-model", ns, ts)
+        .await
+        .unwrap();
 
     let node = last_node.expect("non-empty buffer must return an hour node");
     log::debug!(
@@ -398,7 +426,9 @@ async fn run_summarization_builds_ancestor_chain() {
     store::buffer_write(&cfg, ns, "test content", &ts, None).unwrap();
 
     let provider = StubProvider::with_reply("summary text");
-    run_summarization(&cfg, &provider, ns, ts).await.unwrap();
+    run_summarization(&cfg, &provider, "test-model", ns, ts)
+        .await
+        .unwrap();
 
     // Day, month, year, and root must all be present.
     assert!(
@@ -434,7 +464,7 @@ async fn run_summarization_multi_hour_groups_produce_multiple_hour_leaves() {
     store::buffer_write(&cfg, ns, "afternoon entry", &ts_h14, None).unwrap();
 
     let provider = StubProvider::with_reply("grouped summary");
-    run_summarization(&cfg, &provider, ns, ts_h14)
+    run_summarization(&cfg, &provider, "test-model", ns, ts_h14)
         .await
         .unwrap();
 
@@ -509,7 +539,9 @@ async fn rebuild_tree_restores_buffer_and_rewrites_ancestors() {
     store::buffer_write(&cfg, ns, "pending buffer item", &ts, None).unwrap();
     let provider = StubProvider::with_reply("rebuilt summary");
 
-    let status = rebuild_tree(&cfg, &provider, ns).await.unwrap();
+    let status = rebuild_tree(&cfg, &provider, "test-model", ns)
+        .await
+        .unwrap();
     assert!(status.total_nodes >= 5, "expected leaf + ancestor chain");
 
     let restored_buffer = store::buffer_read(&cfg, ns).unwrap();
@@ -533,13 +565,66 @@ async fn rebuild_tree_restores_buffer_and_rewrites_ancestors() {
 }
 
 #[tokio::test]
+async fn rebuild_tree_partial_success_when_one_level_fails() {
+    // #002 (FR-008): a single propagation node failing must NOT abort the
+    // whole rebuild. Seed two LARGE hour leaves so the day-level combine
+    // exceeds the 2000-token Day budget and forces an LLM call there; a
+    // provider that fails only at the "day" level makes that one node fail.
+    // The rebuild must still return Ok and the hour leaves must survive.
+    let tmp = TempDir::new().unwrap();
+    let cfg = test_config(&tmp);
+    std::fs::create_dir_all(&cfg.workspace_dir).unwrap();
+    let ns = "partial-rebuild";
+    let ts = Utc.with_ymd_and_hms(2024, 3, 15, 10, 0, 0).unwrap();
+
+    // ~5000 chars each (~1250 tokens) → combined ~2500 tokens > Day budget 2000.
+    let big = "word ".repeat(1000);
+    let make_hour = |id: &str| TreeNode {
+        node_id: id.to_string(),
+        namespace: ns.to_string(),
+        level: NodeLevel::Hour,
+        parent_id: derive_parent_id(id),
+        summary: big.clone(),
+        token_count: estimate_tokens(&big),
+        child_count: 0,
+        created_at: ts,
+        updated_at: ts,
+        metadata: None,
+    };
+    store::write_node(&cfg, &make_hour("2024/03/15/10")).unwrap();
+    store::write_node(&cfg, &make_hour("2024/03/15/11")).unwrap();
+
+    let provider = FailAtLevelProvider {
+        fail_level: "day",
+        reply: "ok summary".to_string(),
+    };
+
+    // Must NOT error despite the day-level summarization failing.
+    let status = rebuild_tree(&cfg, &provider, "test-model", ns)
+        .await
+        .expect("partial failure must not abort the rebuild");
+
+    // The hour leaves (written before propagation) survive.
+    assert!(
+        status.total_nodes >= 2,
+        "hour leaves must survive a partial rebuild"
+    );
+    assert!(store::read_node(&cfg, ns, "2024/03/15/10")
+        .unwrap()
+        .is_some());
+    assert!(store::read_node(&cfg, ns, "2024/03/15/11")
+        .unwrap()
+        .is_some());
+}
+
+#[tokio::test]
 async fn rebuild_tree_on_empty_namespace_is_noop() {
     let tmp = TempDir::new().unwrap();
     let cfg = test_config(&tmp);
     std::fs::create_dir_all(&cfg.workspace_dir).unwrap();
 
     let provider = StubProvider::with_reply("unused");
-    let status = rebuild_tree(&cfg, &provider, "empty-rebuild")
+    let status = rebuild_tree(&cfg, &provider, "test-model", "empty-rebuild")
         .await
         .unwrap();
     assert_eq!(status.total_nodes, 0);

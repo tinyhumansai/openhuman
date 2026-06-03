@@ -4614,14 +4614,16 @@ async fn tree_summarizer_ops_cover_validation_query_and_local_provider_guards() 
         )
         .await
         .unwrap_err();
-    assert!(provider_guard.contains("local_ai"));
+    // No local AI + cloud-summarization opt-in defaults off ⇒ the guard names the
+    // local-AI remediation in user-facing prose ("enable local AI ...").
+    assert!(provider_guard.contains("local AI"));
     let rebuild_guard =
         openhuman_core::openhuman::memory_tree::tree_runtime::ops::tree_summarizer_rebuild(
             &config, "ops_ns",
         )
         .await
         .unwrap_err();
-    assert!(rebuild_guard.contains("local_ai"));
+    assert!(rebuild_guard.contains("local AI"));
 }
 
 #[tokio::test]

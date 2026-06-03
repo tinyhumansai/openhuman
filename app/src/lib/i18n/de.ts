@@ -4585,6 +4585,32 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Lokalen Speicher ablehnen',
   'pages.settings.account.security': 'Sicherheit',
   'pages.settings.account.securityDesc': 'Geheimnisspeicher-Modus und Schlüsselbund-Status',
+  // #002 memory-pipeline-hardening: degraded badges + typed remediation.
+  'memoryTree.status.statusDegraded': 'Eingeschränkt',
+  'memoryTree.status.degradedRecall': 'Semantische Suche deaktiviert',
+  'memoryTree.status.degradedStructure': 'Wiki-Struktur unvollständig',
+  'memoryTree.status.extractionCoverage':
+    'Extraktionsabdeckung: {pct}% der Abschnitte haben Struktur',
+  'memory.health.remediation.budget_exhausted':
+    'Die Speicher-Embeddings haben das verwaltete Budget erreicht. Richte lokale Ollama-Embeddings ein (Einstellungen → KI → Einbettungen) oder füge deinen eigenen Embeddings-API-Schlüssel hinzu, um den Speicher weiter aufzubauen.',
+  'memory.health.remediation.auth_missing':
+    'Keine Embeddings-Anmeldedaten gefunden. Melde dich bei OpenHuman an oder richte lokale Ollama-Embeddings unter Einstellungen → KI → Einbettungen ein.',
+  'memory.health.remediation.auth_invalid':
+    'Deine Embeddings-Anmeldedaten wurden abgelehnt. Authentifiziere dich erneut oder wechsle unter Einstellungen → KI → Einbettungen zu lokalen Ollama-Embeddings.',
+  'memory.health.remediation.embeddings_unconfigured':
+    'Es ist kein Embeddings-Anbieter konfiguriert, daher ist die semantische Suche deaktiviert. Richte lokale Ollama-Embeddings ein (empfohlen) oder füge unter Einstellungen → KI → Einbettungen einen Embeddings-Schlüssel hinzu.',
+  'memory.health.remediation.embedding_dim_mismatch':
+    'Das Embedding-Modell liefert die falsche Vektorgröße (der Speicher erwartet 1024 Dimensionen). Wähle ein Modell mit 1024 Dimensionen oder fordere 1024 Dimensionen von deinem Anbieter an.',
+  'memory.health.remediation.local_model_unavailable':
+    'Ein erforderliches lokales Modell ist nicht verfügbar. Installiere/starte Ollama und lade das Modell herunter, oder wechsle diese Arbeitslast unter Einstellungen → KI zu einem Cloud-Anbieter.',
+  'memory.health.remediation.extraction_timeout':
+    'Das Modell zur Speicherextraktion überschreitet die Zeit, daher hat das Wiki wenig Struktur. Wechsle das Modell für die Speicherextraktion unter Einstellungen → KI zu einem schnelleren.',
+  'memory.health.remediation.summarizer_unavailable':
+    'Für „Zusammenfassungsbäume erstellen” ist kein Zusammenfassungsanbieter verfügbar. Aktiviere die lokale KI (Ollama) oder aktiviere die Cloud-Zusammenfassung unter Einstellungen → KI → Speicher.',
+  'memory.health.remediation.transient':
+    'Ein vorübergehender Fehler hat die Speicherverarbeitung unterbrochen. Es wird automatisch erneut versucht.',
+  'memory.health.remediation.unknown':
+    'Bei der Speicherverarbeitung ist ein Problem aufgetreten. Überprüfe Einstellungen → KI für die Konfiguration.',
   // Chat — agent-generated artifacts (#2779)
   'chat.artifact.aria': 'Artefakt: {title}',
   'chat.artifact.generating': 'Erstelle {kind}…',

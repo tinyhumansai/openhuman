@@ -4511,6 +4511,31 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Отклонить локальное хранилище',
   'pages.settings.account.security': 'Безопасность',
   'pages.settings.account.securityDesc': 'Режим хранения секретов и статус связки ключей',
+  // #002 memory-pipeline-hardening: degraded badges + typed remediation.
+  'memoryTree.status.statusDegraded': 'Ухудшено',
+  'memoryTree.status.degradedRecall': 'Семантический поиск отключён',
+  'memoryTree.status.degradedStructure': 'Структура вики неполная',
+  'memoryTree.status.extractionCoverage': 'Охват извлечения: {pct}% фрагментов имеют структуру',
+  'memory.health.remediation.budget_exhausted':
+    'Эмбеддинги памяти исчерпали управляемый бюджет. Настройте локальные эмбеддинги Ollama (Настройки → ИИ → Эмбеддинги) или добавьте свой ключ API для эмбеддингов, чтобы продолжить построение памяти.',
+  'memory.health.remediation.auth_missing':
+    'Учётные данные для эмбеддингов не найдены. Войдите в OpenHuman или настройте локальные эмбеддинги Ollama в разделе Настройки → ИИ → Эмбеддинги.',
+  'memory.health.remediation.auth_invalid':
+    'Ваши учётные данные для эмбеддингов отклонены. Пройдите аутентификацию заново или переключитесь на локальные эмбеддинги Ollama в разделе Настройки → ИИ → Эмбеддинги.',
+  'memory.health.remediation.embeddings_unconfigured':
+    'Поставщик эмбеддингов не настроен, поэтому семантический поиск отключён. Настройте локальные эмбеддинги Ollama (рекомендуется) или добавьте ключ эмбеддингов в разделе Настройки → ИИ → Эмбеддинги.',
+  'memory.health.remediation.embedding_dim_mismatch':
+    'Модель эмбеддингов возвращает неверный размер вектора (память ожидает 1024 измерения). Выберите модель с 1024 измерениями или запросите 1024 измерения у своего поставщика.',
+  'memory.health.remediation.local_model_unavailable':
+    'Требуемая локальная модель недоступна. Установите/запустите Ollama и загрузите модель либо переключите эту задачу на облачного поставщика в разделе Настройки → ИИ.',
+  'memory.health.remediation.extraction_timeout':
+    'Модель извлечения памяти превышает время ожидания, поэтому в вики мало структуры. Выберите более быструю модель извлечения памяти в разделе Настройки → ИИ.',
+  'memory.health.remediation.summarizer_unavailable':
+    'Нет доступного поставщика суммаризации для «Построить деревья сводок». Включите локальный ИИ (Ollama) или включите облачную суммаризацию в разделе Настройки → ИИ → Память.',
+  'memory.health.remediation.transient':
+    'Временная ошибка прервала обработку памяти. Повтор произойдёт автоматически.',
+  'memory.health.remediation.unknown':
+    'При обработке памяти возникла проблема. Проверьте конфигурацию в разделе Настройки → ИИ.',
   // Chat — agent-generated artifacts (#2779)
   'chat.artifact.aria': 'Артефакт: {title}',
   'chat.artifact.generating': 'Создание {kind}…',

@@ -199,6 +199,9 @@ pub fn all_tools_with_runtime(
         Box::new(MemoryStoreTool::new(memory.clone(), security.clone())),
         Box::new(MemoryRecallTool::new(memory.clone())),
         Box::new(MemoryForgetTool::new(memory.clone(), security.clone())),
+        // #002: read-only self-diagnosis of the memory pipeline so the agent
+        // can explain an empty/stalled wiki + the fix.
+        Box::new(MemoryDoctorTool::new(config.clone())),
         Box::new(MemoryQueryTool),
         Box::new(MemoryQueryWalkTool),
         Box::new(SmartMemoryWalkTool),

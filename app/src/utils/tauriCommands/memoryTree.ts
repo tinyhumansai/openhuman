@@ -753,7 +753,54 @@ export async function memoryTreeBackfillStatus(): Promise<BackfillStatus> {
  * verbatim to a colored pill in the status panel — `paused` is the only
  * state the toggle directly influences.
  */
-export type MemoryTreePipelineStatusKind = 'running' | 'paused' | 'syncing' | 'error' | 'idle';
+export type MemoryTreePipelineStatusKind =
+  | 'running'
+  | 'paused'
+  | 'syncing'
+  | 'error'
+  | 'idle'
+  | 'degraded';
+
+/**
+ * Stable typed failure codes the Rust `health::FailureCode` emits (#002). The
+ * UI maps each to a localized remediation string; `remediation_key` carries
+ * the i18n key directly so the panel renders the core's guidance verbatim.
+ */
+export type MemoryTreeFailureCode =
+  | 'budget_exhausted'
+  | 'auth_missing'
+  | 'auth_invalid'
+  | 'embeddings_unconfigured'
+  | 'embedding_dim_mismatch'
+  | 'local_model_unavailable'
+  | 'extraction_timeout'
+  | 'summarizer_unavailable'
+  | 'transient';
+
+/**
+ * Typed pipeline failure (#002 FR-004). Mirrors Rust `health::PipelineFailure`.
+ * `remediation_key` is an i18n key (e.g. `memory.health.remediation.*`); the UI
+ * resolves it via `useT()`. `detail` is a short non-localized diagnostic
+ * string (never a secret) for logs/tooltips.
+ */
+export interface MemoryTreePipelineFailure {
+  code: MemoryTreeFailureCode;
+  class: 'transient' | 'unrecoverable';
+  remediation_key: string;
+  detail?: string;
+}
+
+/**
+ * "The pipeline ran but output quality is reduced" (#002 FR-002/FR-005).
+ * Mirrors Rust `health::DegradedState`. `semantic_recall` true when embeddings
+ * were skipped (no usable provider → recall falls back to recency);
+ * `structure` true when extraction yielded nothing across the board.
+ */
+export interface MemoryTreeDegradedState {
+  semantic_recall: boolean;
+  structure: boolean;
+  cause?: MemoryTreePipelineFailure | null;
+}
 
 /**
  * Per-state job counters returned in {@link MemoryTreePipelineStatus}. Mirrors
@@ -795,6 +842,24 @@ export interface MemoryTreePipelineStatus {
   is_syncing: boolean;
   /** Convenience flag: scheduler-gate mode is `off`. */
   is_paused: boolean;
+  /**
+   * #002 (FR-002/FR-005): degradation snapshot. Optional for back-compat with
+   * older cores that don't emit it (the Rust field is `#[serde(default)]`);
+   * absent ⇒ treat as not degraded.
+   */
+  degraded?: MemoryTreeDegradedState;
+  /**
+   * #002 (FR-004): the single first blocking/most-significant cause, rendered
+   * verbatim by the panel (resolving `remediation_key`). `null`/absent when
+   * the pipeline is healthy.
+   */
+  first_blocking_cause?: MemoryTreePipelineFailure | null;
+  /**
+   * #002 (FR-010 / US5): fraction of chunks with ≥1 indexed entity, in
+   * `[0.0, 1.0]`. Near 0 with `total_chunks > 0` ⇒ extraction is producing no
+   * structure ("empty-but-built wiki"). Optional for back-compat.
+   */
+  extraction_coverage?: number | null;
 }
 
 /**

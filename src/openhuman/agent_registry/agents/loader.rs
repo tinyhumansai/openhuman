@@ -341,6 +341,41 @@ mod tests {
         }
     }
 
+    /// Regression guard for #3236.
+    ///
+    /// PR #3074 introduced the `Config.action_dir` / `Config.workspace_dir`
+    /// split: acting tools resolve to `action_dir` (default
+    /// `~/OpenHuman/projects`), and `workspace_dir` is reserved for
+    /// internal product state (memory / sessions / vault / etc.) that is
+    /// denied to agent tools. The coding-agent prompts must reflect that
+    /// split — saying "in a sandboxed environment" or "the workspace has
+    /// code …" without anchoring contradicts the new model and steers
+    /// the model toward paths that hit the internal-state denylist.
+    ///
+    /// If a future edit reintroduces stale phrasing, this assertion fires
+    /// at `cargo test` time before the bad prompt ships.
+    #[test]
+    fn coding_agent_prompts_reference_action_sandbox_not_stale_workspace() {
+        let code_executor = include_str!("code_executor/prompt.md");
+        assert!(
+            !code_executor.contains("sandboxed environment"),
+            "code_executor/prompt.md still says 'sandboxed environment' \
+             generically — anchor in the action sandbox path (see #3236)"
+        );
+        assert!(
+            code_executor.contains("action sandbox") || code_executor.contains("action_dir"),
+            "code_executor/prompt.md must reference the action sandbox or action_dir (see #3236)"
+        );
+
+        let planner = include_str!("planner/prompt.md");
+        assert!(
+            !planner.contains("the workspace has code"),
+            "planner/prompt.md still says 'the workspace has code …' — \
+             use 'the project tree' or similar to avoid colliding with \
+             `Config.workspace_dir` (internal product state). See #3236."
+        );
+    }
+
     #[test]
     fn every_builtin_has_a_prompt_body() {
         use crate::openhuman::context::prompt::{

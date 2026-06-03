@@ -4475,6 +4475,31 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'स्थानीय भंडारण अस्वीकार करें',
   'pages.settings.account.security': 'सुरक्षा',
   'pages.settings.account.securityDesc': 'रहस्य भंडारण मोड और कीचेन स्थिति',
+  // #002 memory-pipeline-hardening: degraded badges + typed remediation.
+  'memoryTree.status.statusDegraded': 'अवक्रमित',
+  'memoryTree.status.degradedRecall': 'सिमेंटिक रिकॉल अक्षम',
+  'memoryTree.status.degradedStructure': 'विकी संरचना अधूरी',
+  'memoryTree.status.extractionCoverage': 'एक्सट्रैक्शन कवरेज: {pct}% खंडों में संरचना है',
+  'memory.health.remediation.budget_exhausted':
+    'मेमोरी एम्बेडिंग प्रबंधित बजट तक पहुँच गई। स्थानीय Ollama एम्बेडिंग सेट करें (सेटिंग्स → AI → एम्बेडिंग्स) या मेमोरी बनाना जारी रखने के लिए अपनी स्वयं की एम्बेडिंग API कुंजी जोड़ें।',
+  'memory.health.remediation.auth_missing':
+    'कोई एम्बेडिंग क्रेडेंशियल नहीं मिला। OpenHuman में लॉग इन करें, या सेटिंग्स → AI → एम्बेडिंग्स में स्थानीय Ollama एम्बेडिंग सेट करें।',
+  'memory.health.remediation.auth_invalid':
+    'आपके एम्बेडिंग क्रेडेंशियल अस्वीकार कर दिए गए। फिर से प्रमाणित करें, या सेटिंग्स → AI → एम्बेडिंग्स में स्थानीय Ollama एम्बेडिंग पर स्विच करें।',
+  'memory.health.remediation.embeddings_unconfigured':
+    'कोई एम्बेडिंग प्रदाता कॉन्फ़िगर नहीं किया गया है, इसलिए सिमेंटिक रिकॉल बंद है। स्थानीय Ollama एम्बेडिंग सेट करें (अनुशंसित) या सेटिंग्स → AI → एम्बेडिंग्स में एम्बेडिंग कुंजी जोड़ें।',
+  'memory.health.remediation.embedding_dim_mismatch':
+    'एम्बेडिंग मॉडल गलत वेक्टर आकार लौटाता है (मेमोरी को 1024 आयाम अपेक्षित हैं)। 1024-आयाम वाला मॉडल चुनें, या अपने प्रदाता से 1024 आयाम का अनुरोध करें।',
+  'memory.health.remediation.local_model_unavailable':
+    'एक आवश्यक स्थानीय मॉडल उपलब्ध नहीं है। Ollama इंस्टॉल/चलाएँ और मॉडल डाउनलोड करें, या सेटिंग्स → AI में इस वर्कलोड को क्लाउड प्रदाता पर स्विच करें।',
+  'memory.health.remediation.extraction_timeout':
+    'मेमोरी एक्सट्रैक्शन मॉडल टाइम आउट हो रहा है, इसलिए विकी में बहुत कम संरचना है। सेटिंग्स → AI में मेमोरी एक्सट्रैक्शन मॉडल को तेज़ मॉडल में बदलें।',
+  'memory.health.remediation.summarizer_unavailable':
+    'सारांश ट्री बनाएँ के लिए कोई सारांश प्रदाता उपलब्ध नहीं है। स्थानीय AI (Ollama) सक्षम करें, या सेटिंग्स → AI → मेमोरी में क्लाउड सारांश सक्षम करें।',
+  'memory.health.remediation.transient':
+    'एक अस्थायी त्रुटि ने मेमोरी प्रोसेसिंग को बाधित किया। स्वचालित रूप से पुनः प्रयास किया जाएगा।',
+  'memory.health.remediation.unknown':
+    'मेमोरी प्रोसेसिंग में एक समस्या आई। कॉन्फ़िगरेशन के लिए सेटिंग्स → AI जाँचें।',
   // Chat — agent-generated artifacts (#2779)
   'chat.artifact.aria': 'आर्टिफैक्ट: {title}',
   'chat.artifact.generating': '{kind} बना रहा है…',

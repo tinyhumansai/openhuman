@@ -4390,6 +4390,31 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'رفض التخزين المحلي',
   'pages.settings.account.security': 'الأمان',
   'pages.settings.account.securityDesc': 'وضع تخزين الأسرار وحالة سلسلة المفاتيح',
+  // #002 memory-pipeline-hardening: degraded badges + typed remediation.
+  'memoryTree.status.statusDegraded': 'متدهور',
+  'memoryTree.status.degradedRecall': 'الاسترجاع الدلالي معطّل',
+  'memoryTree.status.degradedStructure': 'بنية الويكي غير مكتملة',
+  'memoryTree.status.extractionCoverage': 'تغطية الاستخراج: {pct}% من الأجزاء لها بنية',
+  'memory.health.remediation.budget_exhausted':
+    'استنفدت تضمينات الذاكرة الميزانية المُدارة. أعدّ تضمينات Ollama المحلية (الإعدادات → الذكاء الاصطناعي → التضمينات) أو أضف مفتاح API الخاص بك للتضمينات لمواصلة بناء الذاكرة.',
+  'memory.health.remediation.auth_missing':
+    'لم يتم العثور على بيانات اعتماد التضمينات. سجّل الدخول إلى OpenHuman، أو أعدّ تضمينات Ollama المحلية في الإعدادات → الذكاء الاصطناعي → التضمينات.',
+  'memory.health.remediation.auth_invalid':
+    'تم رفض بيانات اعتماد التضمينات الخاصة بك. أعد المصادقة، أو بدّل إلى تضمينات Ollama المحلية في الإعدادات → الذكاء الاصطناعي → التضمينات.',
+  'memory.health.remediation.embeddings_unconfigured':
+    'لم يتم تكوين أي مزوّد تضمينات، لذا فإن الاسترجاع الدلالي معطّل. أعدّ تضمينات Ollama المحلية (موصى به) أو أضف مفتاح تضمينات في الإعدادات → الذكاء الاصطناعي → التضمينات.',
+  'memory.health.remediation.embedding_dim_mismatch':
+    'يعيد نموذج التضمين حجم متجه خاطئًا (تتوقع الذاكرة 1024 بُعدًا). اختر نموذجًا بـ 1024 بُعدًا، أو اطلب 1024 بُعدًا من مزوّدك.',
+  'memory.health.remediation.local_model_unavailable':
+    'نموذج محلي مطلوب غير متوفر. ثبّت/شغّل Ollama ونزّل النموذج، أو بدّل هذا الحِمل إلى مزوّد سحابي في الإعدادات → الذكاء الاصطناعي.',
+  'memory.health.remediation.extraction_timeout':
+    'يتجاوز نموذج استخراج الذاكرة المهلة الزمنية، لذا فإن بنية الويكي قليلة. بدّل نموذج استخراج الذاكرة إلى نموذج أسرع في الإعدادات → الذكاء الاصطناعي.',
+  'memory.health.remediation.summarizer_unavailable':
+    'لا يتوفر مزوّد تلخيص لميزة إنشاء أشجار التلخيص. فعّل الذكاء الاصطناعي المحلي (Ollama)، أو فعّل تلخيص السحابة في الإعدادات → الذكاء الاصطناعي → الذاكرة.',
+  'memory.health.remediation.transient':
+    'حدث خطأ مؤقت أدى إلى مقاطعة معالجة الذاكرة. ستتم إعادة المحاولة تلقائيًا.',
+  'memory.health.remediation.unknown':
+    'واجهت معالجة الذاكرة مشكلة. تحقق من الإعدادات → الذكاء الاصطناعي للتكوين.',
   // Chat — agent-generated artifacts (#2779)
   'chat.artifact.aria': 'الملف: {title}',
   'chat.artifact.generating': 'جارٍ إنشاء {kind}…',

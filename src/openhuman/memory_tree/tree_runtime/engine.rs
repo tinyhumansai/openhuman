@@ -33,6 +33,7 @@ const MAX_SUMMARY_CHARS: usize = 20_000 * 4;
 pub async fn run_summarization(
     config: &Config,
     provider: &dyn Provider,
+    model: &str,
     namespace: &str,
     _ts: DateTime<Utc>,
 ) -> Result<Option<TreeNode>> {
@@ -79,7 +80,6 @@ pub async fn run_summarization(
             combined
         };
 
-        let model = &config.local_ai.chat_model_id;
         let hour_summary = summarize_to_limit(
             provider,
             &to_summarize,
@@ -128,8 +128,17 @@ pub async fn run_summarization(
         last_hour_node = Some(hour_node);
     }
 
-    // Deduplicate and propagate in bottom-up order (days, months, years, root)
+    // Deduplicate and propagate in bottom-up order (days, months, years, root).
+    //
+    // #002 (FR-008): partial success. A single node's summarization failure
+    // (e.g. the LLM times out on one busy day) must NOT void the entire run —
+    // the hour leaves are already durably written, and the other ancestors
+    // should still propagate. We collect per-node failures and continue
+    // instead of `?`-aborting on the first one; the run still succeeds, the
+    // failures are logged with their node ids for diagnosis.
     let mut seen = std::collections::HashSet::new();
+    let mut failed: Vec<String> = Vec::new();
+    let mut propagated: u32 = 0;
     for level in [
         NodeLevel::Day,
         NodeLevel::Month,
@@ -138,24 +147,43 @@ pub async fn run_summarization(
     ] {
         for (node_id, node_level) in &all_propagation_ids {
             if *node_level == level && seen.insert(node_id.clone()) {
-                propagate_node(
-                    config,
-                    provider,
-                    namespace,
-                    node_id,
-                    level,
-                    &config.local_ai.chat_model_id,
-                )
-                .await
-                .with_context(|| format!("propagate {node_id}"))?;
+                match propagate_node(config, provider, namespace, node_id, level, model).await {
+                    Ok(()) => propagated += 1,
+                    Err(e) => {
+                        log::warn!(
+                            "[tree_summarizer] propagate failed (continuing) namespace='{namespace}' \
+                             node={node_id} level={}: {e:#}",
+                            level.as_str()
+                        );
+                        failed.push(node_id.clone());
+                    }
+                }
             }
         }
     }
+    if !failed.is_empty() {
+        log::warn!(
+            "[tree_summarizer] partial summarization for '{namespace}': {propagated} node(s) \
+             propagated, {} failed ({:?})",
+            failed.len(),
+            failed
+        );
+    }
 
-    // All hour leaves are durably written and propagation is complete.
-    // Now it's safe to delete the buffer entries.
-    store::buffer_delete(config, namespace, &buffer_filenames)
-        .context("delete buffer entries after successful summarization")?;
+    // Only clear the buffer when propagation was fully successful. If any nodes
+    // failed, keep the buffer entries so `run_hourly_loop` re-discovers this
+    // namespace on the next pass and retries the failed levels — otherwise a
+    // transient day/month/year/root failure becomes sticky degradation.
+    if failed.is_empty() {
+        store::buffer_delete(config, namespace, &buffer_filenames)
+            .context("delete buffer entries after successful summarization")?;
+    } else {
+        log::info!(
+            "[tree_summarizer] keeping buffer for '{namespace}' — {n} failed node(s) \
+             will be retried on the next run",
+            n = failed.len()
+        );
+    }
 
     Ok(last_hour_node)
 }
@@ -166,6 +194,7 @@ pub async fn run_summarization(
 pub async fn rebuild_tree(
     config: &Config,
     provider: &dyn Provider,
+    model: &str,
     namespace: &str,
 ) -> Result<TreeStatus> {
     tracing::debug!("[tree_summarizer] rebuilding tree for namespace '{namespace}'");
@@ -239,26 +268,55 @@ pub async fn rebuild_tree(
         }
     }
 
-    // Propagate bottom-up: days, then months, then years, then root
-    let model = &config.local_ai.chat_model_id;
+    // Propagate bottom-up: days, then months, then years, then root.
+    //
+    // #002 (FR-008): partial success — a single node's failure must not abort
+    // the whole rebuild. Collect-and-continue (the hour leaves are already
+    // re-written above), logging each failure for diagnosis; the rebuild still
+    // returns the resulting status rather than erroring out wholesale.
+    let mut failed: Vec<String> = Vec::new();
+    let mut propagate = |id: &str, level: NodeLevel| {
+        let node_id = id.to_string();
+        async move {
+            if let Err(e) =
+                propagate_node(config, provider, namespace, &node_id, level, model).await
+            {
+                log::warn!(
+                    "[tree_summarizer] rebuild propagate failed (continuing) namespace='{namespace}' \
+                     node={node_id} level={}: {e:#}",
+                    level.as_str()
+                );
+                Some(node_id)
+            } else {
+                None
+            }
+        }
+    };
     for day_id in &day_ids {
-        propagate_node(config, provider, namespace, day_id, NodeLevel::Day, model).await?;
+        if let Some(f) = propagate(day_id, NodeLevel::Day).await {
+            failed.push(f);
+        }
     }
     for month_id in &month_ids {
-        propagate_node(
-            config,
-            provider,
-            namespace,
-            month_id,
-            NodeLevel::Month,
-            model,
-        )
-        .await?;
+        if let Some(f) = propagate(month_id, NodeLevel::Month).await {
+            failed.push(f);
+        }
     }
     for year_id in &year_ids {
-        propagate_node(config, provider, namespace, year_id, NodeLevel::Year, model).await?;
+        if let Some(f) = propagate(year_id, NodeLevel::Year).await {
+            failed.push(f);
+        }
     }
-    propagate_node(config, provider, namespace, "root", NodeLevel::Root, model).await?;
+    if let Some(f) = propagate("root", NodeLevel::Root).await {
+        failed.push(f);
+    }
+    if !failed.is_empty() {
+        log::warn!(
+            "[tree_summarizer] partial rebuild for '{namespace}': {} node(s) failed ({:?})",
+            failed.len(),
+            failed
+        );
+    }
 
     let final_status = store::get_tree_status(config, namespace)?;
 
@@ -529,7 +587,7 @@ fn collect_hour_leaves_recursive(
 ///
 /// This should be called once at application startup. The task runs
 /// indefinitely, sleeping until the next hour boundary.
-pub async fn run_hourly_loop(config: Config, provider: Box<dyn Provider>) {
+pub async fn run_hourly_loop(config: Config, provider: Box<dyn Provider>, model: String) {
     tracing::debug!("[tree_summarizer] hourly loop started");
 
     loop {
@@ -557,7 +615,7 @@ pub async fn run_hourly_loop(config: Config, provider: Box<dyn Provider>) {
         let ts = Utc::now();
         let namespaces = discover_active_namespaces(&config);
         for ns in &namespaces {
-            match run_summarization(&config, provider.as_ref(), ns, ts).await {
+            match run_summarization(&config, provider.as_ref(), &model, ns, ts).await {
                 Ok(Some(node)) => {
                     tracing::debug!(
                         "[tree_summarizer] hourly job completed for '{}': node {} ({} tokens)",
