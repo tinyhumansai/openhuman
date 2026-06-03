@@ -175,6 +175,174 @@ async fn execute_happy_path_returns_artifact_metadata() {
     assert!(md.contains("1-slide"));
 }
 
+/// Canonical 1×1 PNG, written to disk to exercise the File source path.
+fn png_1x1() -> Vec<u8> {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    STANDARD
+        .decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==")
+        .unwrap()
+}
+
+/// Pull the JSON payload out of a tool result.
+fn payload_of(result: &ToolResult) -> serde_json::Value {
+    match result.content.first().expect("a content block") {
+        crate::openhuman::skills::types::ToolContent::Json { data } => data.clone(),
+        other => panic!("expected Json content block, got {other:?}"),
+    }
+}
+
+/// Read the entry names of the produced .pptx artifact.
+fn pptx_entry_names(artifact_path: &str) -> Vec<String> {
+    let bytes = std::fs::read(artifact_path).expect("artifact file readable");
+    let cursor = std::io::Cursor::new(bytes);
+    let mut zip = zip::ZipArchive::new(cursor).expect("artifact is a valid zip");
+    (0..zip.len())
+        .map(|i| zip.by_index(i).unwrap().name().to_string())
+        .collect()
+}
+
+#[tokio::test]
+async fn execute_embeds_file_image_into_deck() {
+    let ws = workspace();
+    let img_path = ws.path().join("chart.png");
+    std::fs::write(&img_path, png_1x1()).expect("write png");
+
+    let tool = PresentationTool::new(ws.path().to_path_buf());
+    let args = json!({
+        "title": "Deck with image",
+        "slides": [{
+            "title": "Chart",
+            "bullets": ["See below"],
+            "images": [{
+                "source": { "type": "file", "path": img_path.to_string_lossy() },
+                "caption": "Quarterly revenue"
+            }]
+        }]
+    });
+    let result = tool.execute(args).await.expect("execute returns Ok");
+    assert!(!result.is_error, "valid image should not error the deck");
+
+    let payload = payload_of(&result);
+    assert!(
+        payload["image_warnings"]
+            .as_array()
+            .map(|a| a.is_empty())
+            .unwrap_or(true),
+        "no warnings expected for a valid PNG: {:?}",
+        payload["image_warnings"]
+    );
+
+    let names = pptx_entry_names(payload["artifact_path"].as_str().unwrap());
+    assert!(
+        names.iter().any(|n| n == "ppt/media/image1.png"),
+        "embedded PNG missing from artifact (got: {names:?})"
+    );
+}
+
+#[tokio::test]
+async fn execute_skips_unsupported_mime_image_with_warning() {
+    let ws = workspace();
+    let txt_path = ws.path().join("notanimage.txt");
+    std::fs::write(&txt_path, b"i am plain text, not an image").expect("write txt");
+
+    let tool = PresentationTool::new(ws.path().to_path_buf());
+    let args = json!({
+        "title": "Deck",
+        "slides": [{
+            "title": "Slide",
+            "bullets": ["text"],
+            "images": [{ "source": { "type": "file", "path": txt_path.to_string_lossy() } }]
+        }]
+    });
+    let result = tool.execute(args).await.expect("execute returns Ok");
+    // Partial success: deck still produced, but the bad image is reported.
+    assert!(!result.is_error, "bad image must not fail the whole deck");
+    let payload = payload_of(&result);
+    let warnings = payload["image_warnings"]
+        .as_array()
+        .expect("warnings array");
+    assert_eq!(warnings.len(), 1, "exactly one image warning expected");
+    assert!(
+        warnings[0]
+            .as_str()
+            .unwrap()
+            .contains("unsupported image type"),
+        "warning should name the MIME problem: {:?}",
+        warnings[0]
+    );
+}
+
+#[tokio::test]
+async fn execute_skips_oversize_image_with_warning() {
+    let ws = workspace();
+    let big_path = ws.path().join("huge.png");
+    // 5 MB + 1 byte — exceeds the per-image cap. Caught at metadata stat
+    // before the bytes are pulled into memory.
+    std::fs::write(&big_path, vec![0u8; 5 * 1024 * 1024 + 1]).expect("write big file");
+
+    let tool = PresentationTool::new(ws.path().to_path_buf());
+    let args = json!({
+        "title": "Deck",
+        "slides": [{
+            "title": "Slide",
+            "bullets": ["text"],
+            "images": [{ "source": { "type": "file", "path": big_path.to_string_lossy() } }]
+        }]
+    });
+    let result = tool.execute(args).await.expect("execute returns Ok");
+    assert!(!result.is_error);
+    let payload = payload_of(&result);
+    let warnings = payload["image_warnings"]
+        .as_array()
+        .expect("warnings array");
+    assert_eq!(warnings.len(), 1);
+    assert!(
+        warnings[0].as_str().unwrap().contains("cap"),
+        "warning should mention the size cap: {:?}",
+        warnings[0]
+    );
+}
+
+#[tokio::test]
+async fn execute_skips_missing_artifact_with_warning() {
+    let ws = workspace();
+    let tool = PresentationTool::new(ws.path().to_path_buf());
+    let args = json!({
+        "title": "Deck",
+        "slides": [{
+            "title": "Slide",
+            "bullets": ["text"],
+            "images": [{ "source": { "type": "artifact", "artifact_id": "does-not-exist" } }]
+        }]
+    });
+    let result = tool.execute(args).await.expect("execute returns Ok");
+    assert!(!result.is_error);
+    let payload = payload_of(&result);
+    let warnings = payload["image_warnings"]
+        .as_array()
+        .expect("warnings array");
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].as_str().unwrap().contains("unreadable"));
+}
+
+#[tokio::test]
+async fn execute_rejects_too_many_images_per_deck() {
+    let ws = workspace();
+    let tool = PresentationTool::new(ws.path().to_path_buf());
+    // 9 images total across slides — exceeds the deck cap of 8. This is a
+    // hard validation reject (cheap structural check), not a skip.
+    let images: Vec<_> = (0..9)
+        .map(|i| json!({ "source": { "type": "artifact", "artifact_id": format!("a{i}") } }))
+        .collect();
+    let args = json!({
+        "title": "Deck",
+        "slides": [{ "title": "Slide", "bullets": ["x"], "images": images }]
+    });
+    let result = tool.execute(args).await.expect("execute returns Ok");
+    assert!(result.is_error, "9 images should be rejected outright");
+    assert!(result.text().contains("images"));
+}
+
 #[test]
 fn truncate_stderr_caps_payload_with_suffix() {
     let raw = "y".repeat(2000);
