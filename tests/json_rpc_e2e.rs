@@ -9853,9 +9853,8 @@ async fn json_rpc_workflows_lifecycle_round_trip() {
 }
 
 /// Task 4 / #3090: when a web-chat request is sent with
-/// `speak_reply: true`, the progress bridge should drive the agent's
-/// final text through `voice::reply_speech::synthesize_reply` after the
-/// turn completes.
+/// `speak_reply: true`, `run_chat_task` should drive the agent's final text
+/// through `voice::reply_speech::synthesize_reply` after the turn completes.
 ///
 /// We activate the [`reply_speech::test_seam`] short-circuit via the
 /// `OPENHUMAN_TEST_REPLY_SPEECH_SEAM` env var so the call is recorded
@@ -9960,6 +9959,10 @@ async fn json_rpc_channel_web_chat_with_speak_reply_invokes_reply_speech() {
     assert!(
         observed.iter().any(|t| !t.trim().is_empty()),
         "expected at least one non-empty text passed to synthesize_reply; observed={observed:?}"
+    );
+    assert!(
+        observed.iter().any(|t| t.contains("Hello from e2e mock agent")),
+        "expected the observed seam text to include the mock reply phrase; got {observed:?}"
     );
 
     mock_join.abort();

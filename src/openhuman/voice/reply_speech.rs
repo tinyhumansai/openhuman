@@ -15,7 +15,7 @@
 //! in a `Tool` impl, the `external_effect()` method MUST stay `false`
 //! (the trait's default) so the approval gate never prompts on TTS.
 
-use log::debug;
+use log::{debug, warn};
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -132,9 +132,15 @@ pub async fn synthesize_reply(
         return Err("text is required".to_string());
     }
 
-    // Test seam: when OPENHUMAN_TEST_REPLY_SPEECH_SEAM is set, record the call
-    // and short-circuit before hitting the backend. See `test_seam` module docs.
-    if test_seam_enabled() {
+    // Test seam: when OPENHUMAN_TEST_REPLY_SPEECH_SEAM is set (and only in
+    // debug builds — the seam is structurally dead in release), record the
+    // call and short-circuit before hitting the backend.
+    // See `test_seam` module docs and `TEST_SEAM_ENV` for the activation gate.
+    if cfg!(debug_assertions) && test_seam_enabled() {
+        warn!(
+            "[voice_reply] TEST SEAM ACTIVE — synthesize_reply short-circuited ({} is set); skipping backend call",
+            TEST_SEAM_ENV
+        );
         let _ = (config, opts);
         test_seam::OBSERVED_CALLS
             .lock()

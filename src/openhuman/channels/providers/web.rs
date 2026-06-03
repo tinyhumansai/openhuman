@@ -939,14 +939,14 @@ async fn run_chat_task(
             .await
             {
                 Ok(_) => log::debug!(
-                    "[web-channel] reply_speech dispatched chars={} client_id={} thread_id={} request_id={}",
+                    "[web_channel] reply_speech dispatched chars={} client_id={} thread_id={} request_id={}",
                     task_result.full_response.len(),
                     client_id,
                     thread_id,
                     request_id,
                 ),
                 Err(err) => log::warn!(
-                    "[web-channel] reply_speech failed: {err} client_id={} thread_id={} request_id={}",
+                    "[web_channel] reply_speech failed: {err} client_id={} thread_id={} request_id={}",
                     client_id,
                     thread_id,
                     request_id,
@@ -955,6 +955,8 @@ async fn run_chat_task(
         }
         if metadata.source.as_deref() == Some("ptt") {
             if let Some(session_id) = metadata.session_id {
+                // TODO(#3090 T11): held_ms will be supplied by the renderer once the PTT
+                // watchdog reports actual hold duration. 0 is a placeholder until then.
                 crate::openhuman::voice::publish_ptt_transcript_committed(
                     thread_id.to_string(),
                     session_id,
@@ -1015,10 +1017,6 @@ fn spawn_progress_bridge(
             metadata.source,
             metadata.session_id,
         );
-        // Buffer the streamed assistant text so we can drive TTS / observability
-        // sinks once the turn finishes (Task 4 / #3090). The buffer is local to
-        // this bridge — it does not affect any other consumer of TextDelta.
-        let mut assistant_text = String::new();
         let mut round: u32 = 0;
         let mut events_seen: u64 = 0;
         let mut turn_state =
@@ -1490,13 +1488,6 @@ fn spawn_progress_bridge(
                     });
                 }
                 AgentProgress::TextDelta { delta, iteration } => {
-                    // Accumulate the streamed assistant reply purely for the
-                    // diagnostic `buffered_chars=` field on the TurnCompleted
-                    // log line. The authoritative TTS / PTT-commit dispatch
-                    // happens from `run_chat_task` where the full response is
-                    // available even when streaming is unavailable (Task 4 /
-                    // #3090).
-                    assistant_text.push_str(&delta);
                     publish_web_channel_event(WebChannelEvent {
                         event: "text_delta".to_string(),
                         client_id: client_id.clone(),
@@ -1548,8 +1539,7 @@ fn spawn_progress_bridge(
                     log::debug!(
                         "[web_channel] turn completed after {iterations} iteration(s) \
                          client_id={client_id} thread_id={thread_id} request_id={request_id} \
-                         buffered_chars={} speak_reply={:?} source={:?} session_id={:?}",
-                        assistant_text.len(),
+                         speak_reply={:?} source={:?} session_id={:?}",
                         metadata.speak_reply,
                         metadata.source,
                         metadata.session_id,
