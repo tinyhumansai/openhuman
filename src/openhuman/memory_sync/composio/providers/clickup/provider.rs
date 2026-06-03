@@ -30,8 +30,9 @@ use serde_json::json;
 use super::{ingest::ingest_task_into_memory_tree, sync};
 use crate::openhuman::memory_sync::composio::providers::sync_state::SyncState;
 use crate::openhuman::memory_sync::composio::providers::{
-    first_array_str, merge_extra, pick_str, ComposioProvider, CuratedTool, NormalizedTask,
-    ProviderContext, ProviderUserProfile, SyncOutcome, SyncReason, TaskFetchFilter,
+    first_array_str, merge_extra, pick_str, resolve_sync_interval_secs, ComposioProvider,
+    CuratedTool, NormalizedTask, ProviderContext, ProviderUserProfile, SyncOutcome, SyncReason,
+    TaskFetchFilter,
 };
 
 pub(crate) const ACTION_GET_AUTHORIZED_USER: &str = "CLICKUP_GET_AUTHORIZED_USER";
@@ -85,7 +86,7 @@ impl ComposioProvider for ClickUpProvider {
         // 30 minutes — same cadence as Notion. ClickUp tasks change
         // more slowly than chat but faster than email, so this is in
         // the middle.
-        Some(30 * 60)
+        Some(resolve_sync_interval_secs("clickup", 30 * 60))
     }
 
     async fn fetch_user_profile(

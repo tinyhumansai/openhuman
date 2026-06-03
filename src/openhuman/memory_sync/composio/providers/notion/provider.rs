@@ -22,8 +22,9 @@ use super::ingest::ingest_page_into_memory_tree;
 use super::sync;
 use crate::openhuman::memory_sync::composio::providers::sync_state::{extract_item_id, SyncState};
 use crate::openhuman::memory_sync::composio::providers::{
-    first_array_str, merge_extra, pick_str, ComposioProvider, CuratedTool, NormalizedTask,
-    ProviderContext, ProviderUserProfile, SyncOutcome, SyncReason, TaskFetchFilter,
+    first_array_str, merge_extra, pick_str, resolve_sync_interval_secs, ComposioProvider,
+    CuratedTool, NormalizedTask, ProviderContext, ProviderUserProfile, SyncOutcome, SyncReason,
+    TaskFetchFilter,
 };
 
 pub(crate) const ACTION_GET_ABOUT_ME: &str = "NOTION_GET_ABOUT_ME";
@@ -75,7 +76,7 @@ impl ComposioProvider for NotionProvider {
     }
 
     fn sync_interval_secs(&self) -> Option<u64> {
-        Some(30 * 60)
+        Some(resolve_sync_interval_secs("notion", 30 * 60))
     }
 
     async fn fetch_user_profile(

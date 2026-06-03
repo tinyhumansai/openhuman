@@ -47,8 +47,8 @@ use super::users::SlackUsers;
 use crate::openhuman::composio::types::ComposioExecuteResponse;
 use crate::openhuman::memory_sync::composio::providers::sync_state::SyncState;
 use crate::openhuman::memory_sync::composio::providers::{
-    pick_str, ComposioProvider, CuratedTool, ProviderContext, ProviderUserProfile, SyncOutcome,
-    SyncReason,
+    pick_str, resolve_sync_interval_secs, ComposioProvider, CuratedTool, ProviderContext,
+    ProviderUserProfile, SyncOutcome, SyncReason,
 };
 
 /// Composio action slug for channel listing.
@@ -252,7 +252,7 @@ impl ComposioProvider for SlackProvider {
     }
 
     fn sync_interval_secs(&self) -> Option<u64> {
-        Some(SYNC_INTERVAL_SECS)
+        Some(resolve_sync_interval_secs("slack", SYNC_INTERVAL_SECS))
     }
 
     fn post_process_action_result(
