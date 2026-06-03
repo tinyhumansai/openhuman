@@ -116,3 +116,44 @@ async fn unknown_tool_call_returns_error() {
 
     let _ = connections::disconnect(&server.server_id).await;
 }
+
+#[tokio::test]
+async fn failed_connect_records_last_error() {
+    let (_tmp, cfg) = fresh_workspace_config();
+    let mut server = make_installed_server();
+    server.command = "/this/path/does/not/exist".to_string();
+
+    store::insert_server(&cfg, &server).expect("insert installed server");
+
+    let err = connections::connect(&cfg, &server)
+        .await
+        .expect_err("connect should fail for bogus command");
+    assert!(!err.to_string().is_empty());
+
+    let recorded = connections::last_error_for(&server.server_id).await;
+    assert!(
+        recorded.is_some(),
+        "LAST_ERRORS must hold the connect failure for server_id={}",
+        server.server_id
+    );
+}
+
+#[tokio::test]
+async fn successful_connect_clears_last_error() {
+    let (_tmp, cfg) = fresh_workspace_config();
+    let mut server = make_installed_server();
+    server.command = "/nonexistent".to_string();
+    let _ = connections::connect(&cfg, &server).await;
+    assert!(connections::last_error_for(&server.server_id).await.is_some());
+
+    server.command = env!("CARGO_BIN_EXE_test-mcp-stub").to_string();
+    connections::connect(&cfg, &server)
+        .await
+        .expect("real connect succeeds");
+    assert!(
+        connections::last_error_for(&server.server_id).await.is_none(),
+        "successful connect must clear the prior error"
+    );
+
+    let _ = connections::disconnect(&server.server_id).await;
+}
