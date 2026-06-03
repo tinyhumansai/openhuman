@@ -105,8 +105,6 @@ const AgentAccessPanel = () => {
       } catch (e) {
         if (!cancelled)
           setError(e instanceof Error ? e.message : t('settings.agentAccess.loadError'));
-      } finally {
-        if (!cancelled) setIsLoading(false);
       }
       try {
         const agentResp = await openhumanGetAgentSettings();
@@ -127,6 +125,8 @@ const AgentAccessPanel = () => {
       } catch {
         // Non-fatal: the Directories section falls back to the documented
         // defaults below. We don't gate the rest of the panel on this.
+      } finally {
+        if (!cancelled) setIsLoading(false);
       }
     };
     void load();
