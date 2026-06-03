@@ -936,6 +936,11 @@ async fn llm_meeting_agentic(prompt: &str, request_id: &str) -> Result<String, S
     let fut = crate::openhuman::agent::turn_origin::with_origin(
         crate::openhuman::agent::turn_origin::AgentTurnOrigin::ExternalChannel {
             channel: "meet".to_string(),
+            // Meet utterances don't carry a stable per-participant identity
+            // at this layer (the room is the addressing primitive); leave
+            // sender unset and let the gate fall back to the per-channel
+            // audit-row + TTL-deny policy.
+            sender: None,
             reply_target: request_id.to_string(),
             message_id: format!("meet-{request_id}-{now_ms}"),
         },

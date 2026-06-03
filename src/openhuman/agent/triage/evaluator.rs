@@ -497,6 +497,11 @@ async fn try_arm(
         // classifies and routes — but label correctly for defense in depth).
         origin: crate::openhuman::agent::turn_origin::AgentTurnOrigin::ExternalChannel {
             channel: envelope.source.slug().to_string(),
+            // Triage runs over an upstream envelope (composio / webhook /
+            // cron / external caller) that doesn't carry a per-user sender
+            // at this layer. Leave it unset and let the gate apply the
+            // strict per-channel TTL-deny default.
+            sender: None,
             reply_target: envelope.display_label.clone(),
             message_id: envelope.external_id.clone(),
         },
