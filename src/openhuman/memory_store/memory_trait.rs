@@ -312,9 +312,9 @@ impl Memory for UnifiedMemory {
             namespace.to_string()
         };
         let conn = self.conn.lock();
-        let row: Option<(String, String, String, f64, String)> = conn
+        let row: Option<(String, String, String, f64, String, String)> = conn
             .query_row(
-                "SELECT document_id, key, content, updated_at, category
+                "SELECT document_id, key, content, updated_at, category, taint
                  FROM memory_docs WHERE namespace = ?1 AND key = ?2 LIMIT 1",
                 params![ns, key],
                 |row| {
@@ -324,12 +324,13 @@ impl Memory for UnifiedMemory {
                         row.get(2)?,
                         row.get(3)?,
                         row.get(4)?,
+                        row.get(5)?,
                     ))
                 },
             )
             .optional()?;
-        Ok(
-            row.map(|(id, key, content, updated_at, category)| MemoryEntry {
+        Ok(row.map(
+            |(id, key, content, updated_at, category, taint_str)| MemoryEntry {
                 id,
                 key,
                 content,
@@ -338,9 +339,9 @@ impl Memory for UnifiedMemory {
                 timestamp: timestamp_to_rfc3339(updated_at),
                 session_id: None,
                 score: None,
-                taint: crate::openhuman::memory::MemoryTaint::Internal,
-            }),
-        )
+                taint: crate::openhuman::memory::MemoryTaint::from_db_str(&taint_str),
+            },
+        ))
     }
 
     async fn list(
@@ -362,6 +363,10 @@ impl Memory for UnifiedMemory {
             .unwrap_or_default();
         for (idx, d) in items.into_iter().enumerate() {
             let cat = category.cloned().unwrap_or(MemoryCategory::Core);
+            let taint_str = d
+                .get("taint")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("internal");
             out.push(MemoryEntry {
                 id: d
                     .get("documentId")
@@ -383,7 +388,7 @@ impl Memory for UnifiedMemory {
                 timestamp: format!("idx-{idx}"),
                 session_id: None,
                 score: None,
-                taint: crate::openhuman::memory::MemoryTaint::Internal,
+                taint: crate::openhuman::memory::MemoryTaint::from_db_str(taint_str),
             });
         }
         Ok(out)

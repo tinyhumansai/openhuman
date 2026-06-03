@@ -443,7 +443,7 @@ impl UnifiedMemory {
         if let Some(ns) = namespace {
             let mut stmt = conn
                 .prepare(
-                    "SELECT document_id, namespace, key, title, source_type, priority, created_at, updated_at
+                    "SELECT document_id, namespace, key, title, source_type, priority, created_at, updated_at, taint
                      FROM memory_docs WHERE namespace = ?1 ORDER BY updated_at DESC",
                 )
                 .map_err(|e| format!("prepare list_documents: {e}"))?;
@@ -463,12 +463,13 @@ impl UnifiedMemory {
                     "priority": row.get::<_, String>(5).map_err(|e| e.to_string())?,
                     "createdAt": row.get::<_, f64>(6).map_err(|e| e.to_string())?,
                     "updatedAt": row.get::<_, f64>(7).map_err(|e| e.to_string())?,
+                    "taint": row.get::<_, String>(8).map_err(|e| e.to_string())?,
                 }));
             }
         } else {
             let mut stmt = conn
                 .prepare(
-                    "SELECT document_id, namespace, key, title, source_type, priority, created_at, updated_at
+                    "SELECT document_id, namespace, key, title, source_type, priority, created_at, updated_at, taint
                      FROM memory_docs ORDER BY updated_at DESC",
                 )
                 .map_err(|e| format!("prepare list_documents: {e}"))?;
@@ -488,6 +489,7 @@ impl UnifiedMemory {
                     "priority": row.get::<_, String>(5).map_err(|e| e.to_string())?,
                     "createdAt": row.get::<_, f64>(6).map_err(|e| e.to_string())?,
                     "updatedAt": row.get::<_, f64>(7).map_err(|e| e.to_string())?,
+                    "taint": row.get::<_, String>(8).map_err(|e| e.to_string())?,
                 }));
             }
         }
