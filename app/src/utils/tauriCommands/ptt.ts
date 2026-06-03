@@ -35,6 +35,10 @@ export async function unregisterPttHotkey(): Promise<void> {
  * Show or hide the PTT overlay window.
  */
 export async function showPttOverlay(active: boolean, sessionId: number): Promise<void> {
-  if (!isTauri()) return;
+  if (!isTauri()) {
+    console.debug('[ptt] showPttOverlay: skipped — not running in Tauri');
+    return;
+  }
+  console.debug('[ptt] showPttOverlay: active=%s sessionId=%d', active, sessionId);
   await invoke<void>('show_ptt_overlay', { active, sessionId });
 }
