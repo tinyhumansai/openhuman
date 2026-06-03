@@ -242,3 +242,60 @@ async fn boot_skips_disabled_servers_and_records_errors() {
 
     let _ = connections::disconnect(&a.server_id).await;
 }
+
+#[tokio::test]
+async fn set_enabled_false_disconnects_running_server() {
+    use openhuman_core::openhuman::mcp_registry::ops;
+
+    let (_tmp, cfg) = fresh_workspace_config();
+    let server = make_installed_server();
+    store::insert_server(&cfg, &server).expect("insert");
+    connections::connect(&cfg, &server).await.expect("connect");
+
+    let outcome = ops::mcp_clients_set_enabled(&cfg, server.server_id.clone(), false)
+        .await
+        .expect("set_enabled ok");
+    assert_eq!(outcome.value["enabled"], serde_json::json!(false));
+
+    let loaded = store::get_server(&cfg, &server.server_id).unwrap();
+    assert!(!loaded.enabled);
+    let statuses = connections::all_status(&cfg).await;
+    let mine = statuses.iter().find(|s| s.server_id == server.server_id).unwrap();
+    assert_eq!(mine.status.as_str(), "disabled");
+}
+
+#[tokio::test]
+async fn connect_refuses_disabled_server() {
+    use openhuman_core::openhuman::mcp_registry::ops;
+
+    let (_tmp, cfg) = fresh_workspace_config();
+    let mut server = make_installed_server();
+    server.enabled = false;
+    store::insert_server(&cfg, &server).expect("insert");
+
+    let err = ops::mcp_clients_connect(&cfg, server.server_id.clone())
+        .await
+        .expect_err("connect must reject disabled server");
+    assert!(err.to_lowercase().contains("disabled"), "got: {err}");
+}
+
+#[tokio::test]
+async fn set_enabled_true_clears_disabled_status_but_does_not_auto_connect() {
+    use openhuman_core::openhuman::mcp_registry::ops;
+
+    let (_tmp, cfg) = fresh_workspace_config();
+    let mut server = make_installed_server();
+    server.enabled = false;
+    store::insert_server(&cfg, &server).expect("insert");
+
+    ops::mcp_clients_set_enabled(&cfg, server.server_id.clone(), true)
+        .await
+        .expect("set_enabled true ok");
+    let statuses = connections::all_status(&cfg).await;
+    let mine = statuses.iter().find(|s| s.server_id == server.server_id).unwrap();
+    assert_eq!(
+        mine.status.as_str(),
+        "disconnected",
+        "re-enabling alone must not bring up the subprocess; the user calls connect explicitly"
+    );
+}

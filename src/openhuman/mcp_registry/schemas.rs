@@ -29,6 +29,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("config_assist"),
         schemas("registry_settings_get"),
         schemas("registry_settings_set"),
+        schemas("set_enabled"),
         // Setup-agent surface (mcp_setup namespace, lives in setup_ops.rs).
         setup_schemas("search"),
         setup_schemas("get"),
@@ -92,6 +93,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("registry_settings_set"),
             handler: handle_registry_settings_set,
+        },
+        RegisteredController {
+            schema: schemas("set_enabled"),
+            handler: handle_set_enabled,
         },
         RegisteredController {
             schema: setup_schemas("search"),
@@ -535,6 +540,40 @@ pub fn schemas(function: &str) -> ControllerSchema {
             ],
         },
 
+        "set_enabled" => ControllerSchema {
+            namespace: "mcp_clients",
+            function: "set_enabled",
+            description: "Enable or disable an installed MCP server. Disabling auto-disconnects any live session and hides the server's tools from the agent; the install row and env values are kept so re-enabling does not require re-entry.",
+            inputs: vec![
+                FieldSchema {
+                    name: "server_id",
+                    ty: TypeSchema::String,
+                    comment: "UUID of the installed server.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "enabled",
+                    ty: TypeSchema::Bool,
+                    comment: "Target state; `false` also disconnects.",
+                    required: true,
+                },
+            ],
+            outputs: vec![
+                FieldSchema {
+                    name: "server_id",
+                    ty: TypeSchema::String,
+                    comment: "Echoed server id.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "enabled",
+                    ty: TypeSchema::Bool,
+                    comment: "Effective enabled state after the call.",
+                    required: true,
+                },
+            ],
+        },
+
         // Handled by setup_schemas() — surface a clearer error rather than
         // falling through to the generic unknown sink.
         "setup_search"
@@ -652,6 +691,20 @@ fn handle_disconnect(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let server_id = read_required::<String>(&params, "server_id")?;
         to_json(crate::openhuman::mcp_registry::ops::mcp_clients_disconnect(server_id).await?)
+    })
+}
+
+fn handle_set_enabled(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let server_id = read_required::<String>(&params, "server_id")?;
+        let enabled = read_required::<bool>(&params, "enabled")?;
+        to_json(
+            crate::openhuman::mcp_registry::ops::mcp_clients_set_enabled(
+                &config, server_id, enabled,
+            )
+            .await?,
+        )
     })
 }
 

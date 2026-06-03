@@ -269,6 +269,13 @@ pub async fn mcp_clients_connect(
 
     let server = store::get_server(config, server_id.trim()).map_err(|e| e.to_string())?;
 
+    if !server.enabled {
+        return Err(format!(
+            "server_id={} is disabled; enable it via mcp_clients_set_enabled before connecting",
+            server_id.trim()
+        ));
+    }
+
     let tools = connections::connect(config, &server)
         .await
         .map_err(|e| e.to_string())?;
@@ -290,6 +297,54 @@ pub async fn mcp_clients_connect(
             "connected server_id={} tools={}",
             server_id.trim(),
             tool_count
+        )],
+    ))
+}
+
+// ── set_enabled ────────────────────────────────────────────────────────────────
+
+/// Flip the `enabled` flag on an installed server.
+///
+/// - `enabled=false`: persist the flip, then disconnect any live session so
+///   the server's tools immediately disappear from the agent's surface. The
+///   install row and env values are kept intact so re-enabling later does
+///   not require re-entering credentials.
+/// - `enabled=true`: persist the flip. The server is NOT auto-connected here
+///   — the user calls `connect` explicitly. This keeps "enabled" purely a
+///   persistent setting and "connected" purely a live-session state.
+pub async fn mcp_clients_set_enabled(
+    config: &Config,
+    server_id: String,
+    enabled: bool,
+) -> Result<RpcOutcome<Value>, String> {
+    if server_id.trim().is_empty() {
+        return Err("server_id must not be empty".to_string());
+    }
+    let server_id = server_id.trim().to_string();
+
+    tracing::debug!(
+        "[mcp-client] set_enabled server_id={} enabled={}",
+        server_id,
+        enabled
+    );
+
+    // Existence check produces a clear error before we mutate.
+    let _existing = store::get_server(config, &server_id).map_err(|e| e.to_string())?;
+    store::update_enabled(config, &server_id, enabled).map_err(|e| e.to_string())?;
+
+    if !enabled {
+        connections::disconnect(&server_id).await;
+        connections::clear_last_error(&server_id).await;
+        let _ = publish_global(DomainEvent::McpServerDisconnected {
+            server_id: server_id.clone(),
+            reason: Some("disabled".to_string()),
+        });
+    }
+
+    Ok(RpcOutcome::new(
+        json!({ "server_id": server_id, "enabled": enabled }),
+        vec![format!(
+            "set_enabled server_id={server_id} enabled={enabled}"
         )],
     ))
 }

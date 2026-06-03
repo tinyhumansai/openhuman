@@ -8571,6 +8571,112 @@ async fn mcp_clients_install_connect_tool_call_happy_path() {
     rpc_join.abort();
 }
 
+/// `mcp_clients_set_enabled` smoke: installs a server, disables it via RPC,
+/// and asserts the response carries `enabled=false` (issue #3196).
+#[tokio::test]
+async fn mcp_clients_set_enabled_smoke() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+    write_min_config(&openhuman_home, &mock_origin);
+    let user_scoped_dir = openhuman_home.join("users").join("local");
+    write_min_config(&user_scoped_dir, &mock_origin);
+
+    // Seed the registry detail cache so install resolves offline to the stub.
+    let stub_path = env!("CARGO_BIN_EXE_test-mcp-stub");
+    let qualified_name = "@openhuman-test/echo-set-enabled";
+    let detail = serde_json::json!({
+        "qualifiedName": qualified_name,
+        "displayName": "Test Echo SetEnabled",
+        "description": "Stub for set_enabled smoke.",
+        "connections": [{
+            "type": "stdio",
+            "published": true,
+            "exampleConfig": { "command": stub_path, "args": [] }
+        }]
+    });
+    let seed_config = openhuman_core::openhuman::config::load_config_with_timeout()
+        .await
+        .expect("load config for cache seed");
+    openhuman_core::openhuman::mcp_registry::store::set_cached(
+        &seed_config,
+        &format!("smithery:detail:{qualified_name}"),
+        &detail.to_string(),
+    )
+    .expect("seed smithery detail cache");
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // ── 1. install ───────────────────────────────────────────────────────────
+    let install = post_json_rpc(
+        &rpc_base,
+        9940,
+        "openhuman.mcp_clients_install",
+        json!({ "qualified_name": qualified_name, "env": {} }),
+    )
+    .await;
+    let install_result = assert_no_jsonrpc_error(&install, "mcp_clients_install (set_enabled smoke)");
+    let install_body = install_result.get("result").unwrap_or(install_result);
+    let server_id = install_body
+        .get("server")
+        .and_then(|s| s.get("server_id"))
+        .and_then(Value::as_str)
+        .expect("install returns server.server_id")
+        .to_string();
+
+    // ── 2. set_enabled=false ─────────────────────────────────────────────────
+    let set_enabled = post_json_rpc(
+        &rpc_base,
+        9941,
+        "openhuman.mcp_clients_set_enabled",
+        json!({ "server_id": server_id, "enabled": false }),
+    )
+    .await;
+    let se_result = assert_no_jsonrpc_error(&set_enabled, "mcp_clients_set_enabled (false)");
+    let se_body = se_result.get("result").unwrap_or(se_result);
+    assert_eq!(
+        se_body.get("enabled"),
+        Some(&json!(false)),
+        "set_enabled should report enabled=false: {se_body}"
+    );
+    assert_eq!(
+        se_body.get("server_id").and_then(Value::as_str),
+        Some(server_id.as_str()),
+        "set_enabled should echo server_id: {se_body}"
+    );
+
+    // ── 3. set_enabled=true restores it ─────────────────────────────────────
+    let set_enabled_true = post_json_rpc(
+        &rpc_base,
+        9942,
+        "openhuman.mcp_clients_set_enabled",
+        json!({ "server_id": server_id, "enabled": true }),
+    )
+    .await;
+    let se_true_result =
+        assert_no_jsonrpc_error(&set_enabled_true, "mcp_clients_set_enabled (true)");
+    let se_true_body = se_true_result.get("result").unwrap_or(se_true_result);
+    assert_eq!(
+        se_true_body.get("enabled"),
+        Some(&json!(true)),
+        "set_enabled=true should report enabled=true: {se_true_body}"
+    );
+
+    mock_join.abort();
+    rpc_join.abort();
+}
+
 /// Registry settings RPC: the getter reports `*_set` booleans without ever
 /// echoing secret values; the setter persists and clears them (issue #3039
 /// gap A6).
