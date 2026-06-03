@@ -197,3 +197,39 @@ async fn status_reflects_last_connect_error() {
         "last_error populated"
     );
 }
+
+#[tokio::test]
+async fn boot_skips_disabled_servers_and_records_errors() {
+    use openhuman_core::openhuman::mcp_registry::boot;
+
+    let (_tmp, cfg) = fresh_workspace_config();
+
+    // Server A: enabled, real stub → connects.
+    let mut a = make_installed_server();
+    a.server_id = format!("a-{}", uuid::Uuid::new_v4());
+    store::insert_server(&cfg, &a).expect("insert a");
+
+    // Server B: enabled but command does not exist → records error, doesn't crash boot.
+    let mut b = make_installed_server();
+    b.server_id = format!("b-{}", uuid::Uuid::new_v4());
+    b.command = "/nonexistent-mcp".to_string();
+    store::insert_server(&cfg, &b).expect("insert b");
+
+    // Server C: disabled → boot must skip without attempting connect.
+    let mut c = make_installed_server();
+    c.server_id = format!("c-{}", uuid::Uuid::new_v4());
+    c.enabled = false;
+    store::insert_server(&cfg, &c).expect("insert c");
+
+    boot::spawn_installed_servers(&cfg).await;
+
+    // A is connected; B recorded an error; C never attempted.
+    let statuses = connections::all_status(&cfg).await;
+    let by_id = |id: &str| statuses.iter().find(|s| s.server_id == id).cloned().unwrap();
+    assert_eq!(by_id(&a.server_id).status.as_str(), "connected");
+    assert_eq!(by_id(&b.server_id).status.as_str(), "error");
+    assert_eq!(by_id(&c.server_id).status.as_str(), "disabled");
+    assert!(connections::last_error_for(&c.server_id).await.is_none());
+
+    let _ = connections::disconnect(&a.server_id).await;
+}
