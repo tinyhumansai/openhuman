@@ -32,13 +32,17 @@ pub(crate) fn ensure_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), String
         .skip_taskbar(true)
         .focused(false)
         .resizable(false)
+        // NOTE: .shadow(false) is a no-op under the project's CEF runtime
+        // (tauri-runtime-cef has a TODO stub); harmless but won't actually
+        // suppress the OS shadow until CEF wires it through.
         .shadow(false)
-        .visible(false)
-        .accept_first_mouse(false);
+        .visible(false);
 
     #[cfg(target_os = "macos")]
     {
-        builder = builder.visible_on_all_workspaces(true);
+        builder = builder
+            .visible_on_all_workspaces(true)
+            .accept_first_mouse(false);
     }
 
     let _window = builder
@@ -69,7 +73,10 @@ pub(crate) async fn show_ptt_overlay<R: Runtime>(
 ) -> Result<(), String> {
     let window = app
         .get_webview_window(OVERLAY_LABEL)
-        .ok_or_else(|| "ptt overlay window not created — register a hotkey first".to_string())?;
+        .ok_or_else(|| {
+            "[ptt-overlay] window not ready (register_ptt_hotkey must succeed before show_ptt_overlay)"
+                .to_string()
+        })?;
 
     if active {
         window
