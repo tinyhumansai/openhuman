@@ -331,16 +331,37 @@ impl NodeExecTool {
     ) -> ToolResult {
         use crate::openhuman::sandbox;
 
-        let config = crate::openhuman::config::RuntimeConfig::default();
+        // Load the live `RuntimeConfig` so `resolve_sandbox_policy` derives
+        // the right backend (Docker / local / noop) from the operator's
+        // configuration instead of the unconfigured `RuntimeConfig::default()`.
+        // Falls back to defaults with a warning if the config load fails —
+        // a failed config read shouldn't block tool execution. (CodeRabbit
+        // finding on PR #3309.)
+        let runtime_cfg = match crate::openhuman::config::ops::load_config_with_timeout().await {
+            Ok(cfg) => cfg.runtime,
+            Err(err) => {
+                tracing::warn!(
+                    error = %err,
+                    "[node_exec] failed to load live RuntimeConfig — falling back to defaults"
+                );
+                crate::openhuman::config::RuntimeConfig::default()
+            }
+        };
+        // `is_remote_session = false` matches `ShellTool::run_sandboxed`'s
+        // current behavior (PR #3261). Threading the real session origin
+        // through requires a new `tokio::task_local!` next to
+        // `CURRENT_AGENT_SANDBOX_MODE` and is the same gap across all three
+        // shell-family tools; tracked separately so it can be fixed uniformly.
         let policy = sandbox::resolve_sandbox_policy(
             crate::openhuman::agent::harness::definition::SandboxMode::Sandboxed,
             &self.security.action_dir,
-            &config,
+            &runtime_cfg,
             false,
         );
 
         tracing::debug!(
             backend = ?policy.backend,
+            runtime_kind = ?runtime_cfg.kind,
             "[node_exec] routing to sandbox backend"
         );
 

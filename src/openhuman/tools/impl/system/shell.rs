@@ -971,11 +971,15 @@ mod tests {
                 "{name} must compare against `SandboxMode::Sandboxed` to opt in to the \
                  sandbox routing path (see #3235)"
             );
+            // Use the call-site pattern `.run_sandboxed(` so the assertion
+            // doesn't trivially pass on the helper definition itself
+            // (`fn run_sandboxed(...)`). If `execute()` / `run_with_security()`
+            // stop delegating, this fires even though the helper still exists.
             assert!(
-                src.contains("run_sandboxed("),
+                src.contains(".run_sandboxed("),
                 "{name} must delegate to a `run_sandboxed` helper when the sandbox mode is \
                  active (see #3235). Whitespace before `.run_sandboxed` is tolerated; the \
-                 helper call must appear in the source."
+                 helper call must appear in the source — *not* just the helper definition."
             );
         }
     }
