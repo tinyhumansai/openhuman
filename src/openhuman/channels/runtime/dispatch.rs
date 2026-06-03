@@ -1013,8 +1013,14 @@ pub(crate) async fn process_channel_message(
     // as untrusted (remote-attacker-controlled). Cron-driven channel
     // deliveries get a `TrustedAutomation { Cron }` label from the
     // scheduler instead and never reach this dispatch path.
+    // Per-sender provenance flows into the origin so a co-channel attacker
+    // who reads a leaked `quote_id` / approval prompt from a shared Discord /
+    // Slack channel cannot use it from their own session — distinct senders
+    // produce distinct origins, and the wallet preparer / parked-approval
+    // gates compare these for equality before honouring confirmations.
     let turn_origin = crate::openhuman::agent::turn_origin::AgentTurnOrigin::ExternalChannel {
         channel: msg.channel.clone(),
+        sender: Some(msg.sender.clone()),
         reply_target: msg.reply_target.clone(),
         message_id: msg.id.clone(),
     };

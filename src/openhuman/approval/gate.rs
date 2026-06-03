@@ -237,12 +237,14 @@ impl ApprovalGate {
             }
             AgentTurnOrigin::ExternalChannel {
                 channel,
+                sender,
                 reply_target,
                 message_id,
             } => {
                 tracing::info!(
                     tool = tool_name,
                     channel = %channel,
+                    sender = %sender.as_deref().unwrap_or("<unknown>"),
                     reply_target = %reply_target,
                     message_id = %message_id,
                     "[approval::gate] external channel turn — persisting audit row and parking \
@@ -956,6 +958,7 @@ mod tests {
         let gate = Arc::new(gate);
         let origin = AgentTurnOrigin::ExternalChannel {
             channel: "telegram".into(),
+            sender: Some("tg-user-1".into()),
             reply_target: "tg-chat-1".into(),
             message_id: "msg-1".into(),
         };
