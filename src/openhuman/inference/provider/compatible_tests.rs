@@ -277,6 +277,91 @@ fn parse_responses_response_body_reports_sanitized_snippet() {
     assert!(!msg.contains("sk-another-secret"));
 }
 
+// ── aggregate_responses_sse_body (#3201) ─────────────────────────────────────
+
+/// Per-delta accumulation: the Codex/ChatGPT OAuth stream is a sequence of
+/// `response.output_text.delta` events whose `delta` fields concatenate into
+/// the final assistant text.
+#[test]
+fn aggregate_responses_sse_body_concatenates_text_deltas() {
+    let body = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello \"}\n\n\
+                data: {\"type\":\"response.output_text.delta\",\"delta\":\"world\"}\n\n\
+                data: [DONE]\n";
+    let text =
+        super::compatible_parse::aggregate_responses_sse_body("custom", body).expect("aggregate");
+    assert_eq!(text, "hello world");
+}
+
+/// Some providers (and the Codex endpoint when the model batches its
+/// reply) skip per-token deltas and emit the full text in
+/// `response.completed.response.output_text`. The aggregator must fall
+/// back to that terminal field when no deltas accumulated.
+#[test]
+fn aggregate_responses_sse_body_prefers_terminal_output_text_when_present() {
+    let body = "data: {\"type\":\"response.created\",\"response\":{}}\n\n\
+                data: {\"type\":\"response.completed\",\"response\":{\"output_text\":\"batched final text\"}}\n\n\
+                data: [DONE]\n";
+    let text =
+        super::compatible_parse::aggregate_responses_sse_body("custom", body).expect("aggregate");
+    assert_eq!(text, "batched final text");
+}
+
+/// Carriage-return line endings (CRLF, common in HTTP/1.1 SSE) parse the
+/// same as LF-only — the trimming is just `\r` stripping.
+#[test]
+fn aggregate_responses_sse_body_tolerates_crlf_line_endings() {
+    let body = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"crlf\"}\r\n\r\n\
+                data: [DONE]\r\n";
+    let text =
+        super::compatible_parse::aggregate_responses_sse_body("custom", body).expect("aggregate");
+    assert_eq!(text, "crlf");
+}
+
+/// `response.failed` / `response.error` / `error` event shapes are
+/// terminal failures — bubble them up so the caller surfaces the upstream
+/// reason instead of returning empty text.
+#[test]
+fn aggregate_responses_sse_body_surfaces_failure_events() {
+    let body = "data: {\"type\":\"response.created\",\"response\":{}}\n\n\
+                data: {\"type\":\"response.failed\",\"error\":\"upstream model unavailable\"}\n\n";
+    let err = super::compatible_parse::aggregate_responses_sse_body("custom", body)
+        .expect_err("failure event should propagate");
+    assert!(
+        err.to_string()
+            .contains("custom Responses API stream reported a failure event"),
+        "unexpected error: {err}"
+    );
+}
+
+/// A stream that produced no usable text events returns a sanitised
+/// "no text events" error so the caller sees something actionable
+/// instead of an empty string.
+#[test]
+fn aggregate_responses_sse_body_errors_when_no_text_events_present() {
+    let body = "data: {\"type\":\"response.created\",\"response\":{}}\n\n\
+                data: [DONE]\n";
+    let err = super::compatible_parse::aggregate_responses_sse_body("custom", body)
+        .expect_err("empty stream should fail");
+    assert!(
+        err.to_string()
+            .contains("custom Responses API SSE stream produced no text events"),
+        "unexpected error: {err}"
+    );
+}
+
+/// Malformed individual events (provider keepalive comments, etc.) must
+/// not abort the whole turn — they're skipped and the good deltas still
+/// aggregate.
+#[test]
+fn aggregate_responses_sse_body_skips_unparseable_events() {
+    let body = "data: {malformed-keepalive\n\n\
+                data: {\"type\":\"response.output_text.delta\",\"delta\":\"good\"}\n\n\
+                data: [DONE]\n";
+    let text =
+        super::compatible_parse::aggregate_responses_sse_body("custom", body).expect("aggregate");
+    assert_eq!(text, "good");
+}
+
 #[test]
 fn x_api_key_auth_style() {
     let p = OpenAiCompatibleProvider::new(
@@ -396,6 +481,13 @@ fn extra_query_params_are_applied_to_codex_urls() {
     );
 }
 
+/// #3201: the Codex/ChatGPT OAuth Responses endpoint rejects
+/// `stream: false` with `{"detail":"Stream must be set to true"}` and
+/// only emits SSE bodies. The non-streaming `chat_via_responses` wrapper
+/// must therefore (a) flip the `stream` flag for `/backend-api/codex`
+/// URLs and (b) aggregate the SSE body back into the same `String`
+/// the caller expects. PR #3192 fixed the sibling `store: false`
+/// requirement; this test pins both wire-shape requirements together.
 #[tokio::test]
 async fn responses_api_primary_posts_directly_to_responses() {
     let server = MockServer::start().await;
@@ -407,13 +499,16 @@ async fn responses_api_primary_posts_directly_to_responses() {
                 "role": "user",
                 "content": [{"type": "input_text", "text": "hello"}]
             }],
-            "stream": false,
+            "stream": true,
             "store": false
         })))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "output_text": "hello from responses",
-            "output": []
-        })))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello \"}\n\n\
+             data: {\"type\":\"response.output_text.delta\",\"delta\":\"from \"}\n\n\
+             data: {\"type\":\"response.output_text.delta\",\"delta\":\"responses\"}\n\n\
+             data: {\"type\":\"response.completed\",\"response\":{\"output_text\":\"hello from responses\"}}\n\n\
+             data: [DONE]\n\n",
+        ))
         .mount(&server)
         .await;
 

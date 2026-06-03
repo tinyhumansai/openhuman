@@ -30,8 +30,9 @@ use futures_util::{stream, StreamExt};
 
 use compatible_dump::{dump_prompt_if_enabled, dump_response_if_enabled, reserve_dump_seq};
 use compatible_parse::{
-    build_responses_prompt, extract_responses_text, normalize_function_arguments,
-    parse_chat_response_body, parse_responses_response_body, parse_tool_calls_from_content_json,
+    aggregate_responses_sse_body, build_responses_prompt, extract_responses_text,
+    normalize_function_arguments, parse_chat_response_body, parse_responses_response_body,
+    parse_tool_calls_from_content_json,
 };
 use compatible_stream::sse_bytes_to_chunks;
 use compatible_types::{
@@ -347,11 +348,29 @@ impl OpenAiCompatibleProvider {
             );
         }
 
+        // #3201: the Codex/ChatGPT OAuth Responses endpoint
+        // (`https://chatgpt.com/backend-api/codex/responses`) rejects
+        // `stream: false` outright with `{"detail":"Stream must be set to
+        // true"}`. PR #3192 fixed the sibling `store: false` requirement;
+        // this branch lifts the same constraint for the stream flag and
+        // parses the resulting SSE body inline so the existing non-streaming
+        // call signature is preserved. Other Responses-API providers (real
+        // OpenAI, custom OpenAI-compatible) keep the single-envelope path —
+        // they accept `stream: false` and the SSE branch would be wasted
+        // work for them.
+        //
+        // Detection is keyed on the `/backend-api/codex` path segment, not
+        // the `chatgpt.com` host: the same path segment is what
+        // `OpenAiCodexRouting` substitutes when a user is signed in via
+        // OAuth (see `OPENAI_CODEX_BACKEND_BASE_URL`), and it's specific
+        // enough that no other OpenAI-compatible provider URL uses it.
+        let is_codex_oauth_responses = self.base_url.contains("/backend-api/codex");
+
         let request = ResponsesRequest {
             model: model.to_string(),
             input,
             instructions,
-            stream: Some(false),
+            stream: Some(is_codex_oauth_responses),
             store: Some(false),
         };
 
@@ -417,6 +436,12 @@ impl OpenAiCompatibleProvider {
         }
 
         let body = response.text().await?;
+        if is_codex_oauth_responses {
+            // SSE branch — `stream: true` always produces a Server-Sent
+            // Event body, even on the non-streaming wrapper. Aggregate it
+            // back into the same `String` shape the caller expects.
+            return aggregate_responses_sse_body(&self.name, &body);
+        }
         let responses = parse_responses_response_body(&self.name, &body)?;
 
         extract_responses_text(responses)
