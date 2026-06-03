@@ -4926,6 +4926,14 @@ const en: TranslationMap = {
   // Monthly cost badge
   'monthlyCost.badge': '${amount} this month',
   'monthlyCost.noData': 'No syncs this month',
+
+  // Security banner (approval-gate host-aware boot state)
+  'security.approvalGateDisabled.title': 'Approval gate disabled',
+  'security.approvalGateDisabled.body':
+    'OPENHUMAN_APPROVAL_GATE=0 is set in your environment. External-effect tools will run without asking for confirmation.',
+  'security.approvalGateOverrideIgnored.title': 'Override blocked',
+  'security.approvalGateOverrideIgnored.body':
+    'An OPENHUMAN_APPROVAL_GATE=0 override was detected but ignored: the desktop app always keeps the approval gate on.',
 };
 
 export default en;

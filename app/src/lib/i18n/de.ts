@@ -4814,6 +4814,14 @@ const messages: TranslationMap = {
   'memoryData.windowError': 'Speicherfenster',
   'memoryData.windowUpdated': 'Speicherfenster aktualisiert',
   'memoryData.windowUpdatedMsg': 'Auf {window} gesetzt.',
+  // Security banner (approval-gate host-aware boot state)
+  'security.approvalGateDisabled.title': 'Genehmigungstor deaktiviert',
+  'security.approvalGateDisabled.body':
+    'OPENHUMAN_APPROVAL_GATE=0 ist in deiner Umgebung gesetzt. Tools mit externer Wirkung werden ohne Bestätigungsabfrage ausgeführt.',
+  'security.approvalGateOverrideIgnored.title': 'Override blockiert',
+  'security.approvalGateOverrideIgnored.body':
+    'Ein OPENHUMAN_APPROVAL_GATE=0-Override wurde erkannt, aber ignoriert: Die Desktop-App lässt das Genehmigungstor immer eingeschaltet.',
+
 };
 
 export default messages;
