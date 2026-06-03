@@ -113,3 +113,4 @@ test-map.md
 .claude/skills/
 .codex-tmp
 *.enc
+crates/*/target/

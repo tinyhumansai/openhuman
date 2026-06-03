@@ -1,0 +1,12 @@
+[package]
+name = "openhuman-memory-types"
+version = "0.1.0"
+edition = "2021"
+description = "Core data types for the OpenHuman memory system (Chunk, Entity, Score, etc.)"
+license = "MIT"
+
+[dependencies]
+chrono = { version = "0.4", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"

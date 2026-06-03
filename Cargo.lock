@@ -5188,6 +5188,8 @@ dependencies = [
  "objc2-contacts",
  "objc2-foundation 0.3.2",
  "once_cell",
+ "openhuman-embeddings",
+ "openhuman-memory-types",
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
@@ -5254,6 +5256,29 @@ dependencies = [
  "x25519-dalek",
  "xz2",
  "zip 2.4.2",
+]
+
+[[package]]
+name = "openhuman-embeddings"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "openhuman-memory-types"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
 ]
 
 [[package]]
