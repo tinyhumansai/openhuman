@@ -371,7 +371,7 @@ pub(crate) fn aggregate_responses_sse_body(
                 // `extract_responses_text` / `first_nonempty` so a
                 // whitespace-only terminal `output_text` doesn't override
                 // a non-empty accumulated delta stream and collapse a
-                // valid streamed reply to blank output (CodeRabbit nit).
+                // valid streamed reply to blank output.
                 terminal_text = value
                     .get("response")
                     .and_then(|response| response.get("output_text"))

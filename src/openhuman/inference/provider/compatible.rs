@@ -369,7 +369,7 @@ impl OpenAiCompatibleProvider {
         // whole `base_url` so a proxy URL whose query string or fragment
         // contains the literal `/backend-api/codex` (e.g.
         // `.../v1?upstream=/backend-api/codex`) doesn't get falsely
-        // promoted into the SSE branch (CodeRabbit nit).
+        // promoted into the SSE branch.
         let is_codex_oauth_responses = reqwest::Url::parse(&self.base_url)
             .ok()
             .and_then(|url| {
