@@ -66,3 +66,33 @@ export function routingWithProviderRemoved(
 export function isChatSelectableLocalModel(model: { chat_capable?: boolean | null }): boolean {
   return model.chat_capable !== false;
 }
+
+/** A locally-installed model mapped to the picker shape consumed by the LLM/chat selectors. */
+export interface SelectableChatModel {
+  id: string;
+  sizeBytes: number;
+  family: string;
+}
+
+/**
+ * Filter the installed-model list down to chat-selectable models (hiding
+ * embedding-only ones via {@link isChatSelectableLocalModel}) and map each to
+ * the `{ id, sizeBytes, family }` picker shape.
+ *
+ * Pure so the filter + map wiring is unit-testable without rendering the panel
+ * — both picker consumers (`CustomRoutingDialog` + `GlobalOwnModelSelector`)
+ * route a chat model, never the embedder (configured separately in
+ * `EmbeddingsPanel`). Selecting an embedding model as chat 400s every turn on
+ * Ollama (TAURI-RUST-4P6).
+ */
+export function toSelectableChatModels(
+  installed: readonly { name: string; size?: number | null; chat_capable?: boolean | null }[]
+): SelectableChatModel[] {
+  return installed
+    .filter(isChatSelectableLocalModel)
+    .map(m => ({
+      id: m.name,
+      sizeBytes: m.size ?? 0,
+      family: m.name.split(/[:/]/, 1)[0] ?? 'model',
+    }));
+}

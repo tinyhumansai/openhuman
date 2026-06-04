@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import type { CloudProvider, ProviderRef, RoutingMap } from '../AIPanel';
-import { isChatSelectableLocalModel, routingWithProviderRemoved } from '../aiRouting';
+import {
+  isChatSelectableLocalModel,
+  routingWithProviderRemoved,
+  toSelectableChatModels,
+} from '../aiRouting';
 
 const WORKLOADS = [
   'chat',
@@ -128,5 +132,39 @@ describe('isChatSelectableLocalModel (TAURI-RUST-4P6)', () => {
       'llama3',
       'mystery',
     ]);
+  });
+});
+
+describe('toSelectableChatModels (TAURI-RUST-4P6)', () => {
+  it('drops embedding-only models and maps the rest to picker shape', () => {
+    const out = toSelectableChatModels([
+      { name: 'llama3:8b', size: 4_700_000_000, chat_capable: true },
+      { name: 'bge-m3:latest', size: 1_200_000_000, chat_capable: false },
+      { name: 'mystery', size: 100, chat_capable: null },
+    ]);
+    expect(out).toEqual([
+      { id: 'llama3:8b', sizeBytes: 4_700_000_000, family: 'llama3' },
+      { id: 'mystery', sizeBytes: 100, family: 'mystery' },
+    ]);
+  });
+
+  it('derives family from the name before the first `:` or `/` separator', () => {
+    const out = toSelectableChatModels([
+      { name: 'qwen2.5:14b', chat_capable: true },
+      { name: 'library/phi3', chat_capable: true },
+    ]);
+    expect(out.map(m => m.family)).toEqual(['qwen2.5', 'library']);
+  });
+
+  it('defaults sizeBytes to 0 when size is null/undefined', () => {
+    const out = toSelectableChatModels([
+      { name: 'a', size: null, chat_capable: true },
+      { name: 'b', chat_capable: true },
+    ]);
+    expect(out.map(m => m.sizeBytes)).toEqual([0, 0]);
+  });
+
+  it('returns an empty list for no installed models', () => {
+    expect(toSelectableChatModels([])).toEqual([]);
   });
 });
