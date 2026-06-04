@@ -192,6 +192,55 @@ pub async fn execute_job_now(config: &Config, job: &CronJob) -> (bool, String) {
     execute_job_with_retry(config, &security, job).await
 }
 
+/// Did this failed agent-job attempt hit the backend session-expired state?
+///
+/// When the OpenHuman backend returns 401 because the user's app JWT has
+/// lapsed, [`inference::provider::ops::api_error`] already publishes
+/// [`crate::core::event_bus::DomainEvent::SessionExpired`] (via
+/// `publish_backend_session_expired`) and the credentials subscriber clears
+/// the stored session + flips the scheduler-gate `signed_out` override. The
+/// gate then halts downstream LLM work until the user re-auths.
+///
+/// The cron retry loop pre-dates that gate handshake: it sleeps with
+/// exponential backoff and retries the same job N times, every attempt
+/// hitting the same global 401, then calls `report_error` with
+/// `failure=retries_exhausted`. That generated TAURI-RUST-N (7,038 events /
+/// 5 users): a cron-fired `morning_briefing` agent grinding through retries
+/// after a single JWT lapse, every retries-exhausted capture pointing at a
+/// problem the user can only fix from the UI.
+///
+/// The right move is the same halt-on-first-occurrence pattern as
+/// `agent::harness::tool_loop::BACKEND_USER_STATE_MARKER` (#3334): the
+/// condition is global and retries can't recover it, so we stop after the
+/// first attempt. Skipping the `report_error` call too is correct because
+/// the existing classifier
+/// [`crate::core::observability::is_session_expired_message`] already
+/// considers this expected user state (`observability.rs` — anchored on
+/// `OpenHuman API error (401` + `"error":"Invalid token"`).
+///
+/// We match on `last_agent_error` first because cron's `run_agent_job`
+/// routes the raw anyhow chain there (containing the provider's wire
+/// message), while `last_output` only carries the canned user-facing
+/// notification (`AGENT_JOB_USER_FAILURE_MESSAGE` / per-variant copy). For
+/// the canned-message branch we still fall back to `last_output` so a
+/// future code path that surfaces the raw error there isn't a silent miss.
+///
+/// Restricted to `JobType::Agent`: shell jobs that happen to echo a
+/// 401-shaped string don't go through the inference layer's
+/// `SessionExpired` publish, so halting them based on stdout would skip
+/// retries the operator may want.
+fn is_session_expired_failure(
+    job_type: &JobType,
+    last_agent_error: Option<&str>,
+    last_output: &str,
+) -> bool {
+    if !matches!(job_type, JobType::Agent) {
+        return false;
+    }
+    let signal = last_agent_error.unwrap_or(last_output);
+    crate::core::observability::is_session_expired_message(signal)
+}
+
 async fn execute_job_with_retry(
     config: &Config,
     security: &SecurityPolicy,
@@ -201,6 +250,7 @@ async fn execute_job_with_retry(
     let mut last_agent_error: Option<String> = None;
     let retries = config.reliability.scheduler_retries;
     let mut backoff_ms = config.reliability.provider_backoff_ms.max(200);
+    let mut session_expired = false;
 
     for attempt in 0..=retries {
         let (success, output, agent_error) = match job.job_type {
@@ -224,6 +274,20 @@ async fn execute_job_with_retry(
             return (false, last_output);
         }
 
+        if is_session_expired_failure(
+            &job.job_type,
+            last_agent_error.as_deref(),
+            last_output.as_str(),
+        ) {
+            // Halt on the first occurrence — the inference layer already
+            // published `SessionExpired`, retries cannot recover until the
+            // user re-auths, and the classifier considers this expected
+            // user state (TAURI-RUST-N). See `is_session_expired_failure`
+            // for the full rationale.
+            session_expired = true;
+            break;
+        }
+
         if attempt < retries {
             let jitter_ms = u64::from(Utc::now().timestamp_subsec_millis() % 250);
             time::sleep(Duration::from_millis(backoff_ms + jitter_ms)).await;
@@ -231,7 +295,7 @@ async fn execute_job_with_retry(
         }
     }
 
-    if matches!(job.job_type, JobType::Agent) {
+    if matches!(job.job_type, JobType::Agent) && !session_expired {
         let report_message = last_agent_error
             .as_deref()
             .unwrap_or_else(|| last_output.as_str());

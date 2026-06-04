@@ -302,6 +302,87 @@ async fn execute_job_with_retry_exhausts_attempts() {
     assert!(output.contains("always_missing_for_retry_test"));
 }
 
+// TAURI-RUST-N — backend 401 ("Invalid token") leaks from a cron-fired agent
+// job through `last_agent_error` and the existing classifier in
+// `core::observability::is_session_expired_message` matches it (the
+// `OpenHuman API error (401` + `"error":"Invalid token"` conjunction was added
+// for OPENHUMAN-TAURI-4P0). `is_session_expired_failure` MUST consult that
+// classifier so the cron retry loop halts on the first occurrence instead of
+// retrying N times and reporting `failure=retries_exhausted` to Sentry.
+#[test]
+fn is_session_expired_failure_matches_openhuman_backend_401_in_agent_error() {
+    let wire =
+        r#"OpenHuman API error (401 Unauthorized): {"success":false,"error":"Invalid token"}"#;
+    assert!(
+        is_session_expired_failure(&JobType::Agent, Some(wire), AGENT_JOB_USER_FAILURE_MESSAGE),
+        "raw agent error carrying the 401 wire shape must trip the halt"
+    );
+}
+
+// Defense-in-depth: if a future code path ever surfaces the raw error in
+// `last_output` instead of `last_agent_error` (currently `run_agent_job`
+// keeps the canned user message in `last_output`), the predicate should
+// still classify. Falling back to `last_output` when `last_agent_error` is
+// `None` is what guards against that silent-miss case.
+#[test]
+fn is_session_expired_failure_matches_when_only_output_carries_signal() {
+    let wire =
+        r#"OpenHuman API error (401 Unauthorized): {"success":false,"error":"Invalid token"}"#;
+    assert!(is_session_expired_failure(&JobType::Agent, None, wire));
+}
+
+// Negative guard: the canned user-facing message that `run_agent_job`
+// routes into `last_output` today carries no session signal. The predicate
+// must NOT trip on it — otherwise every generic agent failure (provider
+// keys missing, tool error, network blip) would halt after one attempt and
+// stop reporting to Sentry, defeating the retry semantics for non-401
+// failures.
+#[test]
+fn is_session_expired_failure_does_not_match_canned_user_message() {
+    assert!(!is_session_expired_failure(
+        &JobType::Agent,
+        Some(AGENT_JOB_USER_FAILURE_MESSAGE),
+        AGENT_JOB_USER_FAILURE_MESSAGE,
+    ));
+}
+
+// Negative guard: ordinary provider-error wire text (e.g. a third-party
+// model rejecting a request as 400 / 500 / 429) must not be misclassified
+// as session expiry. Those failures are exactly what the retry loop +
+// `failure=retries_exhausted` capture exist for.
+#[test]
+fn is_session_expired_failure_does_not_match_ordinary_provider_error() {
+    let wire =
+        r#"OpenHuman API error (500 Internal Server Error): {"error":"Internal server error"}"#;
+    assert!(!is_session_expired_failure(&JobType::Agent, Some(wire), ""));
+
+    let byo_key = r#"OpenAI API error (401 Unauthorized): {"error":{"message":"Invalid API key","type":"invalid_request_error"}}"#;
+    assert!(
+        !is_session_expired_failure(&JobType::Agent, Some(byo_key), ""),
+        "third-party BYO-key 401 is actionable (user misconfigured their key) — must NOT classify as backend session expiry"
+    );
+}
+
+// Scope guard: the halt is restricted to `JobType::Agent` because the
+// `SessionExpired` publish + scheduler-gate handshake only fires from the
+// inference layer. A shell job that happens to echo the 401-shaped string
+// (e.g. an operator's curl wrapper printing the backend response verbatim)
+// MUST keep its existing retry semantics — the operator may want those
+// retries, and the gate has no reason to be flipped from a shell exit.
+#[test]
+fn is_session_expired_failure_does_not_halt_shell_jobs() {
+    let wire =
+        r#"OpenHuman API error (401 Unauthorized): {"success":false,"error":"Invalid token"}"#;
+    assert!(
+        !is_session_expired_failure(&JobType::Shell, None, wire),
+        "shell jobs must retain retry semantics regardless of stdout content"
+    );
+    assert!(
+        !is_session_expired_failure(&JobType::Shell, Some(wire), wire),
+        "shell jobs never populate last_agent_error — but even if a future path did, scope stays Agent-only"
+    );
+}
+
 #[tokio::test]
 async fn run_agent_job_returns_error_without_provider_key() {
     let tmp = TempDir::new().unwrap();
