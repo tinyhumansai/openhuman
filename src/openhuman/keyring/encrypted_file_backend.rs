@@ -53,10 +53,15 @@ pub fn init_master_key() {
                 Some(key)
             }
             Err(e) => {
-                log::warn!(
-                    "[keyring:encrypted_file] master key unavailable — secrets will be \
-                     inaccessible this session. Cause: {e}"
+                log::error!(
+                    "[keyring:encrypted_file] master key load FAILED — refusing to mint a \
+                     replacement (that would orphan existing secrets, #3311). Secrets are \
+                     inaccessible this session and recover once OS keychain access is \
+                     restored. Cause: {e}"
                 );
+                // Surface the denied state to the frontend instead of silently
+                // resetting — this is the "warn before reset" the issue asks for.
+                crate::openhuman::keyring_consent::policy::notify_master_key_unavailable(&e);
                 None
             }
         }
@@ -75,10 +80,49 @@ pub fn is_master_key_available() -> bool {
     MASTER_KEY.get().and_then(|k| k.as_ref()).is_some()
 }
 
+/// Abstraction over the OS-keychain entry that holds the master key.
+///
+/// Exists solely so the load-vs-mint decision in [`load_or_mint_master_key`]
+/// can be unit-tested against injected `keyring::Error` variants. A real
+/// `keyring::Entry` cannot be exercised non-interactively under `cargo test`
+/// (the first access blocks on a GUI permission prompt), so the decision logic
+/// is split out behind this trait and tested with a fake.
+trait MasterKeyEntry {
+    fn get_password(&self) -> Result<String, keyring::Error>;
+    fn set_password(&self, value: &str) -> Result<(), keyring::Error>;
+}
+
+impl MasterKeyEntry for keyring::Entry {
+    fn get_password(&self) -> Result<String, keyring::Error> {
+        keyring::Entry::get_password(self)
+    }
+    fn set_password(&self, value: &str) -> Result<(), keyring::Error> {
+        keyring::Entry::set_password(self, value)
+    }
+}
+
 fn try_load_master_key() -> Result<[u8; KEY_LEN], String> {
     let entry = keyring::Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_MASTER_KEY_USERNAME)
         .map_err(|e| format!("keychain entry creation failed: {e}"))?;
+    load_or_mint_master_key(&entry)
+}
 
+/// Load the existing master key, mint a fresh one, or fail safe.
+///
+/// **Only a genuine absence (`NoEntry`) may mint a new key.** Every other error
+/// — access denied, keychain locked, platform failure — returns `Err` WITHOUT
+/// minting or calling `set_password`, leaving the keychain entry untouched.
+///
+/// This is the fix for #3311. A macOS app update can change the binary's
+/// code-signing identity (or the keychain item's ACL trust), so reading the
+/// *existing* master key fails with an access error rather than `NoEntry`. The
+/// previous code conflated the two and minted a brand-new key on access
+/// denial, orphaning every secret encrypted under the old key — a silent
+/// API-key wipe plus disconnected connectors, with no warning. Failing safe
+/// keeps the ciphertext intact so it recovers on the next launch once keychain
+/// access is restored. The catch-all `Err(e)` arm makes this independent of
+/// which exact `keyring` error variant macOS returns on the denial.
+fn load_or_mint_master_key<E: MasterKeyEntry>(entry: &E) -> Result<[u8; KEY_LEN], String> {
     match entry.get_password() {
         Ok(hex_str) => {
             let bytes = crypto::hex_decode(hex_str.trim())?;
@@ -92,7 +136,7 @@ fn try_load_master_key() -> Result<[u8; KEY_LEN], String> {
             key.copy_from_slice(&bytes);
             Ok(key)
         }
-        Err(keyring::Error::NoEntry) | Err(keyring::Error::NoStorageAccess(_)) => {
+        Err(keyring::Error::NoEntry) => {
             let key_bytes = crypto::generate_random_bytes(KEY_LEN);
             let hex_value = crypto::hex_encode(&key_bytes);
             entry
@@ -109,11 +153,14 @@ fn try_load_master_key() -> Result<[u8; KEY_LEN], String> {
             let mut key = [0u8; KEY_LEN];
             key.copy_from_slice(&key_bytes);
             log::info!(
-                "[keyring:encrypted_file] generated and stored new master key in OS keychain"
+                "[keyring:encrypted_file] no existing master key — generated and stored a new one"
             );
             Ok(key)
         }
-        Err(e) => Err(format!("OS keychain access denied or failed: {e}")),
+        Err(e) => Err(format!(
+            "OS keychain access unavailable; refusing to mint a replacement master key so \
+             existing secrets are preserved (#3311): {e}"
+        )),
     }
 }
 
@@ -320,5 +367,126 @@ impl KeyringBackend for EncryptedFileBackend {
 
     fn name(&self) -> &'static str {
         "encrypted_file"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::{Cell, RefCell};
+
+    /// In-memory fake of the keychain entry, so [`load_or_mint_master_key`] can
+    /// be exercised without a real OS keychain. `absent_error` is a fn pointer
+    /// because `keyring::Error` is not `Clone` — we mint a fresh error per call.
+    /// These tests touch no process-wide state (`load_or_mint_master_key` never
+    /// reads `MASTER_KEY`), so no OnceLock reset seam is needed.
+    struct FakeEntry {
+        stored: RefCell<Option<String>>,
+        absent_error: fn() -> keyring::Error,
+        set_calls: Cell<usize>,
+    }
+
+    impl FakeEntry {
+        fn with_stored(value: &str) -> Self {
+            Self {
+                stored: RefCell::new(Some(value.to_string())),
+                absent_error: || keyring::Error::NoEntry,
+                set_calls: Cell::new(0),
+            }
+        }
+        fn absent(err: fn() -> keyring::Error) -> Self {
+            Self {
+                stored: RefCell::new(None),
+                absent_error: err,
+                set_calls: Cell::new(0),
+            }
+        }
+    }
+
+    impl MasterKeyEntry for FakeEntry {
+        fn get_password(&self) -> Result<String, keyring::Error> {
+            match &*self.stored.borrow() {
+                Some(v) => Ok(v.clone()),
+                None => Err((self.absent_error)()),
+            }
+        }
+        fn set_password(&self, value: &str) -> Result<(), keyring::Error> {
+            self.set_calls.set(self.set_calls.get() + 1);
+            *self.stored.borrow_mut() = Some(value.to_string());
+            Ok(())
+        }
+    }
+
+    fn access_denied() -> keyring::Error {
+        keyring::Error::NoStorageAccess(Box::new(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "keychain access denied",
+        )))
+    }
+
+    fn platform_failure() -> keyring::Error {
+        keyring::Error::PlatformFailure(Box::new(std::io::Error::other("platform boom")))
+    }
+
+    #[test]
+    fn loads_existing_key_without_minting() {
+        let hex = "ab".repeat(KEY_LEN); // 32 bytes of 0xab
+        let entry = FakeEntry::with_stored(&hex);
+        let key = load_or_mint_master_key(&entry).expect("should load existing key");
+        assert_eq!(key, [0xabu8; KEY_LEN]);
+        assert_eq!(entry.set_calls.get(), 0, "must not overwrite existing key");
+    }
+
+    #[test]
+    fn mints_only_on_no_entry() {
+        let entry = FakeEntry::absent(|| keyring::Error::NoEntry);
+        let key = load_or_mint_master_key(&entry).expect("should mint when genuinely absent");
+        assert_ne!(key, [0u8; KEY_LEN], "minted key should be random, not zero");
+        assert_eq!(
+            entry.set_calls.get(),
+            1,
+            "should store the freshly minted key"
+        );
+        // The key is now persisted, so a second load returns the same one.
+        assert!(entry.stored.borrow().is_some());
+    }
+
+    #[test]
+    fn does_not_mint_on_access_denied() {
+        // The #3311 case: existing key unreadable due to post-update ACL change.
+        let entry = FakeEntry::absent(access_denied);
+        let result = load_or_mint_master_key(&entry);
+        assert!(result.is_err(), "access denial must NOT mint a new key");
+        assert_eq!(
+            entry.set_calls.get(),
+            0,
+            "must never call set_password on access denial — that orphans existing secrets"
+        );
+        assert!(
+            entry.stored.borrow().is_none(),
+            "keychain entry left untouched"
+        );
+    }
+
+    #[test]
+    fn does_not_mint_on_platform_failure() {
+        // Variant-independence: any non-NoEntry error fails safe, not just
+        // NoStorageAccess (the exact macOS denial variant is unconfirmed).
+        let entry = FakeEntry::absent(platform_failure);
+        let result = load_or_mint_master_key(&entry);
+        assert!(result.is_err(), "platform failure must NOT mint a new key");
+        assert_eq!(entry.set_calls.get(), 0);
+    }
+
+    #[test]
+    fn rejects_wrong_length_key_without_minting() {
+        let entry = FakeEntry::with_stored("abcd"); // 2 bytes, not KEY_LEN
+        let result = load_or_mint_master_key(&entry);
+        assert!(result.is_err(), "wrong-length stored key is an error");
+        assert_eq!(
+            entry.set_calls.get(),
+            0,
+            "must not overwrite on length mismatch"
+        );
     }
 }
