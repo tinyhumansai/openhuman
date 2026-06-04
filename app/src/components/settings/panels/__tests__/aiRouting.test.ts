@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { CloudProvider, ProviderRef, RoutingMap } from '../AIPanel';
-import { routingWithProviderRemoved } from '../aiRouting';
+import { isChatSelectableLocalModel, routingWithProviderRemoved } from '../aiRouting';
 
 const WORKLOADS = [
   'chat',
@@ -98,5 +98,35 @@ describe('routingWithProviderRemoved', () => {
       []
     );
     expect(Object.keys(next).sort()).toEqual([...WORKLOADS].sort());
+  });
+});
+
+describe('isChatSelectableLocalModel (TAURI-RUST-4P6)', () => {
+  it('hides models the core flagged embedding-only (chat_capable=false)', () => {
+    expect(isChatSelectableLocalModel({ chat_capable: false })).toBe(false);
+  });
+
+  it('keeps chat-capable models (chat_capable=true)', () => {
+    expect(isChatSelectableLocalModel({ chat_capable: true })).toBe(true);
+  });
+
+  it('keeps models with unknown capability — fail-open', () => {
+    // null / undefined / missing → unknown, must stay visible so an older
+    // Ollama or an /api/show miss never hides a usable chat model.
+    expect(isChatSelectableLocalModel({ chat_capable: null })).toBe(true);
+    expect(isChatSelectableLocalModel({ chat_capable: undefined })).toBe(true);
+    expect(isChatSelectableLocalModel({})).toBe(true);
+  });
+
+  it('filters an installed-model list down to chat-capable + unknown', () => {
+    const models = [
+      { name: 'llama3', chat_capable: true },
+      { name: 'bge-m3', chat_capable: false },
+      { name: 'mystery', chat_capable: null },
+    ];
+    expect(models.filter(isChatSelectableLocalModel).map(m => m.name)).toEqual([
+      'llama3',
+      'mystery',
+    ]);
   });
 });

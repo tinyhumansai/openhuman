@@ -54,7 +54,7 @@ import { ConfirmationModal } from '../../intelligence/ConfirmationModal';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 import { ClaudeCodeStatusCard } from './ai/ClaudeCodeStatusCard';
-import { routingWithProviderRemoved } from './aiRouting';
+import { isChatSelectableLocalModel, routingWithProviderRemoved } from './aiRouting';
 import {
   authStyleForBuiltinCloudProvider,
   BUILTIN_CLOUD_PROVIDER_META,
@@ -473,11 +473,20 @@ function useOllamaStatus() {
 function useInstalledModels(snapshot: LocalProviderSnapshot | null): OllamaModel[] {
   return useMemo(() => {
     const list = snapshot?.installedModels ?? [];
-    return list.map(m => ({
-      id: m.name,
-      sizeBytes: m.size ?? 0,
-      family: m.name.split(/[:/]/, 1)[0] ?? 'model',
-    }));
+    return (
+      list
+        // Hide embedding-only models (e.g. `bge-m3`) from every LLM/chat
+        // workload picker — both consumers of this hook (CustomRoutingDialog
+        // and GlobalOwnModelSelector) route a chat model, never the embedder
+        // (which is configured separately in EmbeddingsPanel). Selecting an
+        // embedding model as chat 400s every turn on Ollama (TAURI-RUST-4P6).
+        .filter(isChatSelectableLocalModel)
+        .map(m => ({
+          id: m.name,
+          sizeBytes: m.size ?? 0,
+          family: m.name.split(/[:/]/, 1)[0] ?? 'model',
+        }))
+    );
   }, [snapshot]);
 }
 

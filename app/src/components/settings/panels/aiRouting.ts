@@ -49,3 +49,20 @@ export function routingWithProviderRemoved(
 
   return Object.fromEntries(scrubbed) as RoutingMap;
 }
+
+/**
+ * Whether a locally-installed Ollama model may be offered as a chat/LLM model
+ * in the settings pickers.
+ *
+ * Embedding-only models (e.g. `bge-m3`) cannot serve chat — Ollama 400s every
+ * turn with `"<model>" does not support chat`, which flooded Sentry
+ * (TAURI-RUST-4P6). The core reports `chat_capable: false` only when it is
+ * confident a model is embedding-only (from `/api/show` `capabilities`); a
+ * `null`/`undefined` value means unknown (older Ollama, or an `/api/show`
+ * miss) and stays selectable — fail-open, never hide a usable model. The
+ * embedding model is configured in a separate panel, so hiding these here
+ * never blocks embedding selection.
+ */
+export function isChatSelectableLocalModel(model: { chat_capable?: boolean | null }): boolean {
+  return model.chat_capable !== false;
+}
