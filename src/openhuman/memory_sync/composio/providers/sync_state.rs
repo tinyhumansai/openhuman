@@ -53,12 +53,15 @@ pub fn resolved_daily_request_limit() -> u32 {
         Ok(s) => match s.trim().parse::<u32>() {
             Ok(n) if n >= 1 => n,
             _ => {
-                tracing::warn!(
-                    env = ENV_DAILY_REQUEST_LIMIT,
-                    value = %s,
-                    default = DEFAULT_DAILY_REQUEST_LIMIT,
-                    "[composio:sync-state] env override not a positive u32; using default"
-                );
+                static WARNED: std::sync::Once = std::sync::Once::new();
+                WARNED.call_once(|| {
+                    tracing::warn!(
+                        env = ENV_DAILY_REQUEST_LIMIT,
+                        value = %s,
+                        default = DEFAULT_DAILY_REQUEST_LIMIT,
+                        "[composio:sync-state] env override not a positive u32; using default"
+                    );
+                });
                 DEFAULT_DAILY_REQUEST_LIMIT
             }
         },
@@ -563,6 +566,8 @@ mod tests {
     // across `#[test]` fns would race on `OPENHUMAN_COMPOSIO_DAILY_REQUEST_LIMIT`.
     #[test]
     fn resolved_daily_request_limit_honors_env() {
+        let _lock = crate::openhuman::config::TEST_ENV_LOCK.lock().unwrap();
+
         // Unset → default.
         let _g = EnvGuard::unset(ENV_DAILY_REQUEST_LIMIT);
         assert_eq!(resolved_daily_request_limit(), DEFAULT_DAILY_REQUEST_LIMIT);

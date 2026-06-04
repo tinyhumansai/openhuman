@@ -260,12 +260,15 @@ pub fn resolve_sync_interval_secs(toolkit: &str, default_secs: u64) -> u64 {
         Ok(s) => match s.trim().parse::<u64>() {
             Ok(n) if n >= 1 => n,
             _ => {
-                tracing::warn!(
-                    env = %key,
-                    value = %s,
-                    default = default_secs,
-                    "[composio:provider] sync-interval env override not a positive u64; using default"
-                );
+                static WARNED: std::sync::Once = std::sync::Once::new();
+                WARNED.call_once(|| {
+                    tracing::warn!(
+                        env = %key,
+                        value = %s,
+                        default = default_secs,
+                        "[composio:provider] sync-interval env override not a positive u64; using default"
+                    );
+                });
                 default_secs
             }
         },
@@ -329,6 +332,8 @@ mod tests {
     // drops its guard before the next so the env is in a known state.
     #[test]
     fn resolve_sync_interval_honors_per_toolkit_env() {
+        let _lock = crate::openhuman::config::TEST_ENV_LOCK.lock().unwrap();
+
         let key = sync_interval_env_var("slack");
         let default = 15 * 60;
 
