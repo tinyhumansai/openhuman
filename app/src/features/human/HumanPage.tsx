@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import { ToastContainer } from '../../components/intelligence/Toast';
 import { MeetingBotsModal } from '../../components/skills/MeetingBotsCard';
 import { useT } from '../../lib/i18n/I18nContext';
 import Conversations from '../../pages/Conversations';
@@ -10,6 +11,7 @@ import {
   selectCustomSecondaryColor,
   selectMascotColor,
 } from '../../store/mascotSlice';
+import type { ToastNotification } from '../../types/intelligence';
 import { IS_DEV } from '../../utils/config';
 import { CustomGifMascot, getMascotPalette, hexToArgbInt, RiveMascot } from './Mascot';
 import { useHumanMascot } from './useHumanMascot';
@@ -23,6 +25,19 @@ const HumanPage = () => {
     return raw === null ? true : raw === '1';
   });
   const [joinMeetingOpen, setJoinMeetingOpen] = useState(false);
+
+  // Toast surface for the Meeting Bots flow. Without this, terminal failures
+  // emitted via PR #3321's `meet-call:failed` event (e.g. admission timeout,
+  // ask-to-join timeout) fall through to a no-op since `MeetingBotsModal`'s
+  // `onToast` prop is optional.
+  const [toasts, setToasts] = useState<ToastNotification[]>([]);
+  const addToast = useCallback((toast: Omit<ToastNotification, 'id'>) => {
+    const id = `toast-${Date.now()}-${Math.random()}`;
+    setToasts(prev => [...prev, { ...toast, id }]);
+  }, []);
+  const removeToast = useCallback((id: string) => {
+    setToasts(prev => prev.filter(t => t.id !== id));
+  }, []);
 
   useEffect(() => {
     window.localStorage.setItem(SPEAK_REPLIES_KEY, speakReplies ? '1' : '0');
@@ -93,7 +108,11 @@ const HumanPage = () => {
         </button>
       )}
 
-      {joinMeetingOpen && <MeetingBotsModal onClose={() => setJoinMeetingOpen(false)} />}
+      {joinMeetingOpen && (
+        <MeetingBotsModal onClose={() => setJoinMeetingOpen(false)} onToast={addToast} />
+      )}
+
+      <ToastContainer notifications={toasts} onRemove={removeToast} />
 
       {/* Chat sidebar — vertically centered above the BottomTabBar (~80px). */}
       <div className="absolute right-4 top-0 bottom-20 z-10 flex items-center">
