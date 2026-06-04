@@ -125,15 +125,31 @@ pub fn set_action_dir(new: PathBuf) {
         *guard = new.clone();
     }
 
-    let rebuilt = state.policy.read().ok().map(|current| {
-        let mut next = (**current).clone();
-        next.action_dir = new.clone();
-        Arc::new(next)
-    });
+    let rebuilt = match state.policy.read() {
+        Ok(current) => Some({
+            let mut next = (**current).clone();
+            next.action_dir = new.clone();
+            Arc::new(next)
+        }),
+        Err(_) => {
+            tracing::warn!(
+                action_dir = %new.display(),
+                "[security:live_policy] set_action_dir: policy read lock poisoned; \
+                 action_dir stored but live policy not swapped — next reload_from will reconcile"
+            );
+            None
+        }
+    };
 
     if let Some(rebuilt) = rebuilt {
         if let Ok(mut guard) = state.policy.write() {
             *guard = rebuilt;
+        } else {
+            tracing::warn!(
+                action_dir = %new.display(),
+                "[security:live_policy] set_action_dir: policy write lock poisoned; \
+                 rebuilt policy discarded — next reload_from will reconcile"
+            );
         }
         let generation = state.generation.fetch_add(1, Ordering::Relaxed) + 1;
         tracing::info!(

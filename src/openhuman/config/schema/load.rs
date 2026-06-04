@@ -183,7 +183,13 @@ pub fn resolve_action_dir(action_dir_override: &Option<PathBuf>) -> PathBuf {
         return env_dir;
     }
     if let Some(over) = action_dir_override {
-        return over.clone();
+        if !over.as_os_str().is_empty() && over.is_absolute() {
+            return over.clone();
+        }
+        tracing::warn!(
+            value = %over.display(),
+            "[config] ignoring invalid action_dir_override; expected non-empty absolute path"
+        );
     }
     default_projects_dir()
 }

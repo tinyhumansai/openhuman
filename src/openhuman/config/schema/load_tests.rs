@@ -1909,3 +1909,31 @@ fn resolve_action_dir_blank_env_does_not_pin() {
         std::env::remove_var(ACTION_DIR_ENV_VAR);
     }
 }
+
+#[test]
+fn resolve_action_dir_rejects_relative_override() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    unsafe {
+        std::env::remove_var(ACTION_DIR_ENV_VAR);
+    }
+    let over = Some(PathBuf::from("relative/projects"));
+    assert_eq!(
+        resolve_action_dir(&over),
+        default_projects_dir(),
+        "relative override must be ignored, falling back to default"
+    );
+}
+
+#[test]
+fn resolve_action_dir_rejects_empty_override() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    unsafe {
+        std::env::remove_var(ACTION_DIR_ENV_VAR);
+    }
+    let over = Some(PathBuf::from(""));
+    assert_eq!(
+        resolve_action_dir(&over),
+        default_projects_dir(),
+        "empty override must be ignored, falling back to default"
+    );
+}
