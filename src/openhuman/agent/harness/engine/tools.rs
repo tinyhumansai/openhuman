@@ -307,23 +307,49 @@ pub(crate) async fn run_one_tool(
         Ok(Err(e)) => {
             // Distinguish user-state failures (out of credits, missing
             // required field, toolkit not enabled, …) from system / product
-            // failures. Tools that call the integrations backend now attach
-            // a typed `BackendUserStateError` marker for the user-state
-            // case (see `openhuman::integrations::client`). Capturing those
-            // in Sentry is noise — the UI already surfaces them, the user
-            // is the only one who can act on them, and an agent that
-            // retries `web_search` 19 times with an empty wallet generates
-            // 19 indistinguishable events (TAURI-RUST-5KG, ~1860 hits).
-            // Surface the message to the LLM so it stops and reports back
-            // to the user, and let the repeated-failure circuit breaker
-            // (caller side) trip on identical retries.
+            // failures. Tools that call the integrations backend attach a
+            // typed `BackendUserStateError` marker for the user-state case
+            // (see `openhuman::integrations::client`). For these:
+            //
+            // 1. Route through `report_error_or_expected` instead of the
+            //    always-capture `report_error`. The breadcrumb classifier
+            //    demotes the buckets we care about
+            //    (`BackendUserError` / `BudgetExhausted` /
+            //    `ProviderUserState`) to a `warn` — Sentry sees one
+            //    demoted breadcrumb per turn instead of the always-error
+            //    capture. We don't *silently* skip — observability still
+            //    sees the failure, it's just classified correctly.
+            //
+            // 2. Embed `BACKEND_USER_STATE_MARKER` in the LLM-visible
+            //    result text so the caller-side
+            //    [`crate::openhuman::agent::harness::tool_loop::RepeatFailureGuard`]
+            //    halts the agent loop on the FIRST occurrence with a
+            //    "user must act" message. Without this, the agent flooded
+            //    Sentry with ~19 retries per turn for ~9 users
+            //    (TAURI-RUST-5KG, ~1860 hits) because the per-(tool,args)
+            //    breaker can't catch varying queries and the consecutive
+            //    breaker resets on interleaved success. The real bug isn't
+            //    the Sentry noise — it's the runaway retry. Halting kills
+            //    both.
             if crate::openhuman::integrations::is_backend_user_state_error(&e) {
-                tracing::warn!(
-                    iteration,
-                    tool = call.name.as_str(),
-                    "[agent_loop] tool returned expected user-state error: {e:#}"
+                crate::core::observability::report_error_or_expected(
+                    &e,
+                    "tool",
+                    "execute",
+                    &[
+                        ("tool", call.name.as_str()),
+                        ("outcome", "failed_user_state"),
+                        ("iteration", &(iteration + 1).to_string()),
+                    ],
                 );
-                (format!("Error executing {}: {e}", call.name), false)
+                (
+                    format!(
+                        "{} Error executing {}: {e}",
+                        super::super::tool_loop::BACKEND_USER_STATE_MARKER,
+                        call.name,
+                    ),
+                    false,
+                )
             } else {
                 crate::core::observability::report_error(
                     &e,

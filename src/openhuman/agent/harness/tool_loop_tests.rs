@@ -1107,6 +1107,109 @@ fn hard_reject_distinct_args_do_not_trip_repeat() {
     );
 }
 
+// -- Backend user-state marker (TAURI-RUST-5KG, halt on FIRST occurrence) -------
+
+#[test]
+fn backend_user_state_marker_halts_on_first_occurrence() {
+    // The actual fix for TAURI-RUST-5KG (`web_search_tool` flooded Sentry with
+    // ~1860 events because the agent retried 19× per turn on a 400 Insufficient
+    // balance). Unlike hard policy rejects (which let the model try once and
+    // halt on the verbatim repeat), the underlying condition is *global* —
+    // varying the query or pivoting to a different paid tool cannot resolve
+    // an empty wallet. Halt immediately.
+    // `BACKEND_USER_STATE_MARKER` is `pub(crate)` in the parent `tool_loop`
+    // module and reached here via `use super::*;` at the top of this file.
+    let mut g = RepeatFailureGuard::new();
+    let body = format!(
+        "{BACKEND_USER_STATE_MARKER} Error executing web_search_tool: \
+         Backend returned 400 Bad Request for POST /agent-integrations/parallel/search: \
+         Insufficient balance"
+    );
+    let halt = g.record(
+        "web_search_tool",
+        "{\"query\":\"latest news\"}",
+        false,
+        &body,
+    );
+    assert!(
+        halt.is_some(),
+        "first backend-user-state failure must halt — retries can never resolve a global condition"
+    );
+    let msg = halt.unwrap();
+    assert!(
+        msg.contains("backend user-state error"),
+        "halt summary should label the failure class; got: {msg}"
+    );
+    assert!(
+        msg.contains("requires user action"),
+        "halt summary should tell the model to surface it to the user; got: {msg}"
+    );
+    assert!(
+        msg.contains("Insufficient balance"),
+        "halt summary should preserve the actionable root cause; got: {msg}"
+    );
+}
+
+#[test]
+fn backend_user_state_marker_halts_regardless_of_args() {
+    // The whole point of the first-occurrence semantic: the failure is global,
+    // so a *different* query that re-hits the same condition is still doomed.
+    // Pin that the breaker doesn't wait for an identical `(tool, args)` repeat
+    // the way the generic [`REPEAT_FAILURE_THRESHOLD`] would.
+    // `BACKEND_USER_STATE_MARKER` is `pub(crate)` in the parent `tool_loop`
+    // module and reached here via `use super::*;` at the top of this file.
+    let mut g = RepeatFailureGuard::new();
+    let body = format!("{BACKEND_USER_STATE_MARKER} Error: Insufficient balance");
+    assert!(
+        g.record("web_search_tool", "{\"query\":\"q1\"}", false, &body)
+            .is_some(),
+        "first call with a backend-user-state marker must halt even though \
+         (tool, args) hasn't repeated yet"
+    );
+}
+
+#[test]
+fn backend_user_state_marker_takes_precedence_over_generic_threshold() {
+    // If we ever broke ordering and the marker check sat *after* the generic
+    // `(tool, args)` repeat-threshold gate, a first-occurrence user-state
+    // failure would silently fall through to "not enough repeats yet" and the
+    // agent would keep retrying — defeating the whole point. Lock the order
+    // in with a direct assertion.
+    // `BACKEND_USER_STATE_MARKER` is `pub(crate)` in the parent `tool_loop`
+    // module and reached here via `use super::*;` at the top of this file.
+    let mut g = RepeatFailureGuard::new();
+    // Same (tool, args, body) shape that the closed PR would have allowed
+    // through 2 more times. With the marker check first, count=1 already
+    // trips. count==1 < REPEAT_FAILURE_THRESHOLD==3 → without the new gate
+    // this test would fail.
+    let body = format!("{BACKEND_USER_STATE_MARKER} Insufficient balance");
+    let halt = g.record("web_search_tool", "{}", false, &body);
+    assert!(halt.is_some(), "count=1 user-state failure must halt now");
+}
+
+#[test]
+fn backend_user_state_unmarked_failures_use_normal_threshold() {
+    // Regression guard: a tool error that *doesn't* carry the marker must
+    // continue to use the generic 3-attempt repeat threshold. The new gate
+    // should not widen to affect ordinary tool failures.
+    let mut g = RepeatFailureGuard::new();
+    // Backend-shaped 5xx — no marker, since `classify_as_user_state` rejects
+    // these and `is_backend_user_state_error` is false → no prefix added.
+    let body = "Error executing tool_x: Backend returned 500 for POST /foo: upstream blew up";
+    assert!(
+        g.record("tool_x", "{}", false, body).is_none(),
+        "first non-marker failure should not halt"
+    );
+    assert!(
+        g.record("tool_x", "{}", false, body).is_none(),
+        "second non-marker failure should not halt"
+    );
+    assert!(
+        g.record("tool_x", "{}", false, body).is_some(),
+        "third identical non-marker failure must halt via the 3-attempt threshold"
+    );
+}
+
 /// Provider that records the tool-spec names of every `chat()` request
 /// it sees, then returns the next scripted response.
 struct CapturingProvider {

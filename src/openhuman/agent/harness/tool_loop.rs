@@ -41,6 +41,29 @@ pub(crate) const NO_PROGRESS_FAILURE_THRESHOLD: u32 = 6;
 /// and pivot to a different, allowed approach.
 pub(crate) const HARD_REJECT_REPEAT_THRESHOLD: u32 = 2;
 
+/// Stable marker the tool runner embeds in a failed tool result when the
+/// underlying error carries the typed
+/// [`crate::openhuman::integrations::BackendUserStateError`] — i.e. the backend
+/// returned a deterministic *user-state* failure (insufficient balance, missing
+/// required field, toolkit not enabled, sign-in expired, …).
+///
+/// Unlike `(tool, args)`-coupled hard rejects, the underlying condition is
+/// **global**: the user's wallet is empty, or a toolkit they don't control is
+/// disabled. Retrying the same tool with a different query, or pivoting to a
+/// different paid integration, cannot resolve it — only the user can. The
+/// breaker therefore halts on the **first** occurrence rather than allowing
+/// the LLM to grind through a generic [`REPEAT_FAILURE_THRESHOLD`] of
+/// indistinguishable failures.
+///
+/// This is the actual fix for TAURI-RUST-5KG: `web_search_tool` flooded
+/// Sentry with ~19 events/turn × 9 users (1860 hits) because the agent kept
+/// retrying after a `400 Insufficient balance` — varying the search query so
+/// the per-`(tool,args)` breaker never tripped and interleaving the failures
+/// with succeeding tool calls so the consecutive-failure breaker reset. Halt
+/// on first occurrence stops the runaway directly instead of just routing
+/// the captured errors away from Sentry.
+pub(crate) const BACKEND_USER_STATE_MARKER: &str = "[backend-user-state]";
+
 /// Classification of a deterministic, recognizable policy rejection, detected via
 /// the stable markers the security/approval layers emit
 /// ([`crate::openhuman::security::POLICY_BLOCKED_MARKER`] /
@@ -108,6 +131,25 @@ impl RepeatFailureGuard {
             *c += 1;
             *c
         };
+        // Backend user-state failures (insufficient balance, toolkit disabled,
+        // missing required field, …) are a *global* deterministic condition
+        // the agent cannot resolve — only the user can. Halt on the FIRST
+        // occurrence rather than letting the model burn the generic
+        // identical-retry threshold by varying args, and rather than waiting
+        // for the consecutive-failure breaker (which resets on any interleaved
+        // success). See [`BACKEND_USER_STATE_MARKER`] for the TAURI-RUST-5KG
+        // background.
+        if result.contains(BACKEND_USER_STATE_MARKER) {
+            return Some(format!(
+                "Stopping: the `{tool}` call returned a backend user-state error \
+                 — this is a deterministic condition that requires user action \
+                 (e.g. add credits, enable the toolkit, sign in). Retrying \
+                 with different arguments or a different paid tool will not \
+                 help. Reason:\n{}\n\nReport this back to the user instead of \
+                 trying alternative tools.",
+                truncate_for_halt(result),
+            ));
+        }
         // Hard policy rejections trip on the first verbatim repeat; everything
         // else uses the generic identical-retry threshold.
         let hard = hard_reject_kind(result);
