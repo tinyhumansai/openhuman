@@ -95,6 +95,25 @@ impl EmbeddingProvider for CohereEmbedding {
             return Ok(Vec::new());
         }
 
+        // Fast-fail when no API key is configured. Cohere's hosted `/v2/embed`
+        // always requires a bearer token; without this guard we POST
+        // `Authorization: Bearer ` (empty) and Cohere returns a 401 "no api key
+        // supplied" on every call. That 401 is not retryable, so each embed
+        // attempt bails and reports an error — the memory pipeline re-embeds per
+        // document and floods Sentry (TAURI-RUST-52S: 8.7k events from a single
+        // misconfigured user). Bailing here skips the wasted request entirely,
+        // and the "API key not set" wording is demoted to a breadcrumb by the
+        // `ApiKeyMissing` classifier in
+        // `core::observability::expected_error_kind` instead of surfacing as a
+        // Sentry event. Scoped to Cohere on purpose: the OpenAI-compatible
+        // provider legitimately supports keyless local/custom endpoints, so it
+        // omits the header rather than bailing.
+        if self.api_key.trim().is_empty() {
+            anyhow::bail!(
+                "Cohere API key not set. Configure via the web UI or set the appropriate env var."
+            );
+        }
+
         let url = format!("{}/v2/embed", self.base_url);
 
         tracing::debug!(
@@ -251,6 +270,24 @@ mod tests {
     async fn embed_empty_returns_empty() {
         let p = CohereEmbedding::new("k", "", 0);
         assert!(p.embed(&[]).await.unwrap().is_empty());
+    }
+
+    /// Missing / whitespace-only API key bails before any HTTP request with the
+    /// classifiable "API key not set" wording (TAURI-RUST-52S). `with_base_url`
+    /// points at an address nothing is listening on, so the assertion that the
+    /// error is the key-guard message — not a connection error — proves no
+    /// request was attempted.
+    #[tokio::test]
+    async fn embed_missing_api_key_bails_without_request() {
+        for key in ["", "   "] {
+            let p = CohereEmbedding::new(key, "embed-english-v3.0", 1024)
+                .with_base_url("http://127.0.0.1:1");
+            let err = p.embed(&["hello"]).await.unwrap_err().to_string();
+            assert!(
+                err.contains("API key not set"),
+                "expected key-guard message for key {key:?}, got: {err}"
+            );
+        }
     }
 
     // ── 429 backoff tests ──────────────────────────────────────
