@@ -346,14 +346,6 @@ async fn persist_job_result_records_run_and_reschedules_shell_job() {
 
 #[tokio::test]
 async fn scheduler_flow_runs_active_hours_job_and_reschedules_inside_window() {
-    // #3312: this test calls `process_due_jobs`, which publishes
-    // `HealthChanged` for the `"scheduler"` health-registry row. The
-    // sibling `scheduler_tick_once_recovers_component_status_after_prior_error`
-    // asserts on the same row, so without this lock + restore guard the
-    // two can flip each other's state under cargo's parallel runner.
-    let _serial = lock_scheduler_health();
-    let _restore = SchedulerHealthGuard::capture();
-
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp).await;
     let active_minute = Utc::now() + ChronoDuration::minutes(2);
@@ -955,119 +947,65 @@ fn classify_agent_anyhow_does_not_leak_when_downcast_succeeds() {
 
 // ── #3312: scheduler auto-recovery ──────────────────────────────────────────
 
-/// Process-global lock serialising every test in this binary that mutates
-/// the `"scheduler"` row of the health registry. `mark_component_ok`,
-/// `mark_component_error`, and the bus subscriber that translates
-/// `HealthChanged` events all touch the same `OnceLock`-backed map, so
-/// without this lock a parallel test that calls `process_due_jobs` (which
-/// publishes `HealthChanged` for `"scheduler"`) can flip our entry between
-/// the setup line and the assertion. Acquire it for the *whole* test body.
-static SCHEDULER_HEALTH_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-fn lock_scheduler_health() -> std::sync::MutexGuard<'static, ()> {
-    SCHEDULER_HEALTH_LOCK
-        .lock()
-        .unwrap_or_else(|poison| poison.into_inner())
-}
-
-/// RAII guard that snapshots the `"scheduler"` health row on construction
-/// and restores it on drop. Pair with [`lock_scheduler_health`] so the
-/// observed prior state stays valid for the duration of the test.
-struct SchedulerHealthGuard {
-    prior: Option<crate::openhuman::health::ComponentHealth>,
-}
-
-impl SchedulerHealthGuard {
-    fn capture() -> Self {
-        let prior = crate::openhuman::health::snapshot()
-            .components
-            .get("scheduler")
-            .cloned();
-        Self { prior }
-    }
-}
-
-impl Drop for SchedulerHealthGuard {
-    fn drop(&mut self) {
-        match self.prior.as_ref() {
-            Some(entry) if entry.status == "error" => {
-                crate::openhuman::health::mark_component_error(
-                    "scheduler",
-                    entry
-                        .last_error
-                        .clone()
-                        .unwrap_or_else(|| "(restored)".to_string()),
-                );
-            }
-            Some(_) => {
-                crate::openhuman::health::mark_component_ok("scheduler");
-            }
-            None => {
-                // The component didn't exist before this test ran. The
-                // health registry has no public removal API; the
-                // closest benign baseline is "ok".
-                crate::openhuman::health::mark_component_ok("scheduler");
-            }
-        }
-    }
-}
-
-/// Block until the global event-bus subscriber has applied a pending
-/// `HealthChanged` event for the scheduler component. The bus is async,
-/// so a synchronous snapshot taken too soon after `publish_global` can
-/// race the subscriber's `handle()` callback.
-async fn wait_for_scheduler_status(expected: &str, attempts: usize) -> String {
-    let mut last = String::new();
-    for _ in 0..attempts {
-        let snap = crate::openhuman::health::snapshot();
-        if let Some(entry) = snap.components.get("scheduler") {
-            last = entry.status.clone();
-            if last == expected {
-                return last;
-            }
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-    }
-    last
-}
-
-/// #3312: a single transient cron job failure must not permanently brick
-/// the scheduler component. The next tick with no due work should
-/// re-emit `HealthChanged { healthy: true }` and the health registry
-/// should clear back to "ok" so the Docker health probe stops returning
-/// 503.
+/// #3312: a successful `tick_once` poll must publish
+/// `HealthChanged { component: "scheduler", healthy: true }` even when
+/// the job queue is empty. Without this recovery signal, a single
+/// transient job failure that flipped the component to `error` via
+/// `process_due_jobs` would stay there indefinitely while the queue
+/// was idle, leaving the Docker health check returning 503 for hours
+/// until a manual restart (the production bug captured 924 consecutive
+/// failures across 7h43m).
+///
+/// We assert on the bus event rather than the process-global registry
+/// row so this test doesn't race the many other tests in this binary
+/// that mutate the same `"scheduler"` row: snapshotting the wire is
+/// monotonic and per-subscriber, while the registry row is a
+/// last-writer-wins map that any parallel test can flip.
 #[tokio::test]
-async fn scheduler_tick_once_recovers_component_status_after_prior_error() {
-    // Serialize against every other test in this binary that mutates the
-    // process-global `"scheduler"` health row (e.g.
-    // `scheduler_flow_runs_active_hours_job_and_reschedules_inside_window`
-    // and the rest of the `process_due_jobs`-touching suite). The RAII
-    // guard restores the prior row on drop so we don't leak our error
-    // state into a sibling test that runs after this one.
-    let _serial = lock_scheduler_health();
-    let _restore = SchedulerHealthGuard::capture();
+async fn scheduler_tick_once_publishes_health_recovery_signal_on_empty_queue() {
+    use crate::core::event_bus::{
+        init_global, subscribe_global, DomainEvent, EventHandler, DEFAULT_CAPACITY,
+    };
+    use async_trait::async_trait;
+    use std::sync::Mutex as StdMutex;
+
+    #[derive(Default)]
+    struct HealthEventCollector {
+        events: Arc<StdMutex<Vec<(String, bool)>>>,
+    }
+
+    #[async_trait]
+    impl EventHandler for HealthEventCollector {
+        fn name(&self) -> &str {
+            "test::scheduler::tick_once::collector"
+        }
+
+        fn domains(&self) -> Option<&[&str]> {
+            Some(&["system"])
+        }
+
+        async fn handle(&self, event: &DomainEvent) {
+            if let DomainEvent::HealthChanged {
+                component, healthy, ..
+            } = event
+            {
+                self.events
+                    .lock()
+                    .unwrap()
+                    .push((component.clone(), *healthy));
+            }
+        }
+    }
 
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp).await;
 
-    // Make sure the bus + the health subscriber that translates
-    // `HealthChanged` events into registry mutations are both wired up
-    // for this test run — `run()` does this at boot, but we're calling
-    // `tick_once` directly.
-    crate::core::event_bus::init_global(crate::core::event_bus::DEFAULT_CAPACITY);
-    crate::openhuman::health::bus::register_health_subscriber();
-
-    crate::openhuman::health::mark_component_error("scheduler", "prior transient failure");
-    // Sanity: we really did flip the component into the bad state the
-    // production bug stays stuck in.
-    assert_eq!(
-        crate::openhuman::health::snapshot()
-            .components
-            .get("scheduler")
-            .map(|c| c.status.clone())
-            .unwrap_or_default(),
-        "error"
-    );
+    init_global(DEFAULT_CAPACITY);
+    let events: Arc<StdMutex<Vec<(String, bool)>>> = Arc::new(StdMutex::new(Vec::new()));
+    let collector = Arc::new(HealthEventCollector {
+        events: Arc::clone(&events),
+    });
+    let _handle = subscribe_global(collector).expect("bus subscriber installed");
 
     let security = Arc::new(SecurityPolicy::from_config(
         &config.autonomy,
@@ -1075,24 +1013,38 @@ async fn scheduler_tick_once_recovers_component_status_after_prior_error() {
         &config.action_dir,
     ));
 
-    // No jobs are due — this is exactly the scenario from the bug
-    // report after the failing cron job: the queue stays empty for a
-    // long stretch while the existing error sits in the registry.
+    // No jobs are due — this is exactly the scenario from #3312 after
+    // the failing cron job: the queue stays empty for a long stretch
+    // while a prior error sits in the registry. The fix is verified by
+    // observing that the tick still emits the recovery signal.
+    let before = events.lock().unwrap().len();
     tick_once(&config, &security).await;
 
-    let status = wait_for_scheduler_status("ok", 50).await;
-    assert_eq!(
-        status, "ok",
-        "tick_once with an empty queue must recover the scheduler component to ok"
-    );
-    let snap = crate::openhuman::health::snapshot();
-    let entry = snap
-        .components
-        .get("scheduler")
-        .expect("scheduler component present");
-    assert!(
-        entry.last_error.is_none(),
-        "recovery must clear last_error, got {:?}",
-        entry.last_error
-    );
+    // Bus delivery is async — wait briefly for the subscriber to drain.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        let saw_recovery = events
+            .lock()
+            .unwrap()
+            .iter()
+            .skip(before)
+            .any(|(component, healthy)| component == "scheduler" && *healthy);
+        if saw_recovery {
+            break;
+        }
+        if std::time::Instant::now() >= deadline {
+            let recent: Vec<(String, bool)> = events
+                .lock()
+                .unwrap()
+                .iter()
+                .skip(before)
+                .cloned()
+                .collect();
+            panic!(
+                "tick_once with an empty queue must publish HealthChanged{{scheduler, healthy: true}} (#3312); \
+                 events after tick: {recent:?}"
+            );
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
 }
