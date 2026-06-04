@@ -37,6 +37,10 @@ pub(crate) fn extract_error_detail(body: &str, max_bytes: usize) -> String {
     crate::openhuman::util::truncate_at_byte_boundary(body, max_bytes)
 }
 
+fn managed_budget_applies_to_path(path: &str) -> bool {
+    path != "/agent-integrations/pricing" && path.starts_with("/agent-integrations/")
+}
+
 /// Strip any inference-style path that snuck into a backend URL before
 /// it becomes the [`IntegrationClient::backend_url`] field. Idempotent —
 /// returns the input unchanged when already clean.
@@ -74,12 +78,29 @@ fn sanitize_backend_url(backend_url: &str) -> String {
 pub struct IntegrationClient {
     pub backend_url: String,
     pub auth_token: String,
+    budget_config: Option<Arc<crate::openhuman::config::Config>>,
     http_client: reqwest::Client,
     pricing: tokio::sync::OnceCell<IntegrationPricing>,
 }
 
 impl IntegrationClient {
     pub fn new(backend_url: String, auth_token: String) -> Self {
+        Self::new_inner(backend_url, auth_token, None)
+    }
+
+    pub fn new_with_budget_config(
+        backend_url: String,
+        auth_token: String,
+        config: Arc<crate::openhuman::config::Config>,
+    ) -> Self {
+        Self::new_inner(backend_url, auth_token, Some(config))
+    }
+
+    fn new_inner(
+        backend_url: String,
+        auth_token: String,
+        budget_config: Option<Arc<crate::openhuman::config::Config>>,
+    ) -> Self {
         // Defense-in-depth (issue #2075 / Sentry OPENHUMAN-TAURI-H6, -HN):
         // every prod call site routes `backend_url` through
         // `effective_backend_api_url` which strips inference-style paths,
@@ -106,9 +127,24 @@ impl IntegrationClient {
         Self {
             backend_url,
             auth_token,
+            budget_config,
             http_client,
             pricing: tokio::sync::OnceCell::new(),
         }
+    }
+
+    async fn ensure_budget_available(&self, path: &str) -> anyhow::Result<()> {
+        if !managed_budget_applies_to_path(path) {
+            return Ok(());
+        }
+        if let Some(config) = &self.budget_config {
+            if crate::openhuman::team::managed_tool_budget_exhausted(config).await {
+                anyhow::bail!(
+                    "Managed cloud tools are disabled because your OpenHuman AI credits are exhausted. Add credits or route the task to user-supplied providers."
+                );
+            }
+        }
+        Ok(())
     }
 
     /// POST JSON to a backend endpoint and parse the response `data` field.
@@ -117,6 +153,7 @@ impl IntegrationClient {
         path: &str,
         body: &serde_json::Value,
     ) -> anyhow::Result<T> {
+        self.ensure_budget_available(path).await?;
         let url = crate::api::config::api_url(&self.backend_url, path);
         tracing::debug!("[integrations] POST {}", url);
 
@@ -207,6 +244,7 @@ impl IntegrationClient {
 
     /// GET from a backend endpoint and parse the response `data` field.
     pub async fn get<T: serde::de::DeserializeOwned>(&self, path: &str) -> anyhow::Result<T> {
+        self.ensure_budget_available(path).await?;
         let url = crate::api::config::api_url(&self.backend_url, path);
         tracing::debug!("[integrations] GET {}", url);
 
@@ -391,7 +429,11 @@ pub fn build_client(config: &crate::openhuman::config::Config) -> Option<Arc<Int
                 backend_url = %backend_url,
                 "[integrations] client built (session token resolved)"
             );
-            Some(Arc::new(IntegrationClient::new(backend_url, token)))
+            Some(Arc::new(IntegrationClient::new_with_budget_config(
+                backend_url,
+                token,
+                Arc::new(config.clone()),
+            )))
         }
         None => {
             tracing::warn!(

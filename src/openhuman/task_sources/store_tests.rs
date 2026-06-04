@@ -20,6 +20,7 @@ fn github_filter() -> FilterSpec {
         labels: vec!["bug".into()],
         assignee_is_me: true,
         state: Some("open".into()),
+        fetch_mode: Default::default(),
         extra: json!({}),
     }
 }

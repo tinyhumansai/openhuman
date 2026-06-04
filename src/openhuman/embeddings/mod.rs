@@ -39,11 +39,14 @@ pub use factory::{
     create_embedding_provider, create_embedding_provider_with_credentials,
     default_embedding_provider, default_local_embedding_provider,
 };
+// #002 FR-015: the memory-tree OpenAI-compat embedder reuses the same key
+// resolution the embeddings RPC uses, so there is one source of truth.
 pub use noop::NoopEmbedding;
 pub use ollama::{OllamaEmbedding, DEFAULT_OLLAMA_DIMENSIONS, DEFAULT_OLLAMA_MODEL};
 pub use openai::OpenAiEmbedding;
 pub use provider_trait::{format_embedding_signature, EmbeddingProvider};
 pub use rpc::provider_from_config;
+pub(crate) use rpc::resolve_api_key;
 pub use schemas::{
     all_controller_schemas as all_embeddings_controller_schemas,
     all_registered_controllers as all_embeddings_registered_controllers,

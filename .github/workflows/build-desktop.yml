@@ -213,20 +213,27 @@ jobs:
       # Upstream @tauri-apps/cli doesn't bundle CEF framework files into the
       # produced installer. Only the fork at vendor/tauri-cef does. Build and
       # install that CLI so `cargo tauri build` invokes the cef-aware bundler.
+      #
+      # The cache key must include runner.arch, not just runner.os: cargo-tauri
+      # is a host-arch binary, and the Linux matrix runs on both x86_64
+      # (ubuntu-24.04) and aarch64 (ubuntu-24.04-arm) runners that share
+      # runner.os == 'Linux'. Keying on runner.os alone lets one arch restore
+      # the other arch's binary, which then fails to exec ("ELF ...: not found"
+      # / "Syntax error: word unexpected") when `cargo tauri build` runs it.
       - name: Cache vendored tauri-cli binary (unix)
         if: matrix.settings.platform != 'windows-latest'
         id: tauri-cli-cache-unix
         uses: actions/cache@v5
         with:
           path: ~/.cargo/bin/cargo-tauri
-          key: vendored-tauri-cli-${{ runner.os }}-${{ hashFiles('app/src-tauri/vendor/tauri-cef/crates/tauri-cli/Cargo.toml') }}
+          key: vendored-tauri-cli-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('app/src-tauri/vendor/tauri-cef/crates/tauri-cli/Cargo.toml') }}
       - name: Cache vendored tauri-cli binary (windows)
         if: matrix.settings.platform == 'windows-latest'
         id: tauri-cli-cache-windows
         uses: actions/cache@v5
         with:
           path: ~/.cargo/bin/cargo-tauri.exe
-          key: vendored-tauri-cli-${{ runner.os }}-${{ hashFiles('app/src-tauri/vendor/tauri-cef/crates/tauri-cli/Cargo.toml') }}
+          key: vendored-tauri-cli-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('app/src-tauri/vendor/tauri-cef/crates/tauri-cli/Cargo.toml') }}
       - name: Install vendored tauri-cli (cef-aware bundler)
         if:
           (matrix.settings.platform == 'windows-latest' && steps.tauri-cli-cache-windows.outputs.cache-hit

@@ -12,20 +12,30 @@ const MAX_LIMIT: usize = 200;
 
 /// List artifacts in the workspace with pagination.
 ///
+/// When `thread_id` is `Some(_)` the listing is filtered to artifacts whose
+/// persisted `meta.json` was produced in that chat thread (#3226) — the
+/// pagination `total` reflects the filtered set, not the workspace total,
+/// so the UI's "showing N of M" tally is meaningful per-thread. Legacy
+/// artifacts written before `ArtifactMeta.thread_id` existed have
+/// `thread_id = None` and are excluded from thread-scoped listings.
+///
 /// Returns `{ "artifacts": [...], "total": N, "offset": M, "limit": L }`.
 pub async fn ai_list_artifacts(
     config: &Config,
     offset: Option<usize>,
     limit: Option<usize>,
+    thread_id: Option<&str>,
 ) -> Result<RpcOutcome<Value>, String> {
     let offset = offset.unwrap_or(0);
     let limit = limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT);
     log::debug!(
-        "[artifacts] ai_list_artifacts: workspace={:?} offset={offset} limit={limit}",
-        config.workspace_dir
+        "[artifacts] ai_list_artifacts: workspace={:?} offset={offset} limit={limit} thread_id={:?}",
+        config.workspace_dir,
+        thread_id,
     );
 
-    let (artifacts, total) = store::list_artifacts(&config.workspace_dir, offset, limit).await?;
+    let (artifacts, total) =
+        store::list_artifacts(&config.workspace_dir, offset, limit, thread_id).await?;
 
     log::debug!(
         "[artifacts] ai_list_artifacts: returning {} of {total} total",

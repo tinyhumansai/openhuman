@@ -209,6 +209,10 @@ const messages: TranslationMap = {
   'home.usageExhaustedBody':
     'Vous n’avez plus d’utilisation incluse pour le moment. Démarrez un abonnement pour débloquer davantage de capacité continue.',
   'home.usageExhaustedCta': 'Prendre un abonnement',
+  'openrouterFree.cta': 'Utiliser les modèles gratuits OpenRouter',
+  'openrouterFree.saving': 'Connexion à OpenRouter...',
+  'openrouterFree.error':
+    'Impossible de passer aux modèles gratuits OpenRouter. Vérifiez votre connexion OpenRouter et réessayez.',
   'home.routinesCard': 'Vos routines',
   'home.routinesActive': '{count} actif(s)',
   'routines.title': 'Vos Routines',
@@ -448,6 +452,11 @@ const messages: TranslationMap = {
   'memoryTree.status.hoursAgo': '{count} il y a hr',
   'memoryTree.status.dayAgo': 'Il y a 1 jour',
   'memoryTree.status.daysAgo': '{count} il y a des jours',
+  'memoryTree.status.integrationsTitle': 'Santé par intégration',
+  'memoryTree.status.integrationsEmpty': 'Aucune intégration connectée',
+  'memoryTree.status.integrationActive': 'Active',
+  'memoryTree.status.integrationStale': 'Obsolète',
+  'memoryTree.status.integrationChunks': 'Morceaux : {count}',
   'alerts.title': 'Alertes',
   'alerts.empty': "Aucune alerte pour l'instant",
   'alerts.markAllRead': 'Tout marquer comme lu',
@@ -499,6 +508,7 @@ const messages: TranslationMap = {
   'onboarding.runtimeChoice.continueCloud': 'Continuer avec Simple',
   'onboarding.runtimeChoice.continueCustom': 'Continuer avec Personnalisé',
   'onboarding.runtimeChoice.recommended': 'Recommandé',
+  'onboarding.runtimeChoice.exitError': "Impossible de terminer l'intégration. Veuillez réessayer.",
   'onboarding.apiKeys.title': 'Ajoutons tes clés API',
   'onboarding.apiKeys.subtitle':
     'Tu peux les coller maintenant ou passer et les ajouter plus tard dans Paramètres › IA. Les clés sont stockées sur cet appareil, chiffrées au repos.',
@@ -1772,16 +1782,13 @@ const messages: TranslationMap = {
   'common.enable': 'Activer',
   'chat.safetyTimeout':
     "Aucune réponse de l'agent après 2 minutes. Réessaie ou vérifie ta connexion.",
-  'chat.filter.all': 'Tous',
-  'chat.filter.work': 'Travail',
-  'chat.filter.briefing': 'Briefing',
-  'chat.filter.notification': 'Notification',
-  'chat.filter.workers': 'Travailleurs',
+  'chat.filter.general': 'Général',
+  'chat.filter.subconscious': 'Subconscient',
+  'chat.filter.tasks': 'Tâches',
   'chat.selectThread': 'Sélectionne un fil',
   'chat.threads': 'Fils',
   'chat.noThreads': "Aucun fil pour l'instant",
   'chat.noLabelThreads': 'Aucun fil « {label} »',
-  'chat.noWorkerThreads': "Aucun fil worker pour l'instant",
   'chat.deleteThread': 'Supprimer le fil',
   'chat.deleteThreadConfirm': 'Es-tu sûr de vouloir supprimer « {title} » ?',
   'chat.untitledThread': 'Fil sans titre',
@@ -2334,6 +2341,9 @@ const messages: TranslationMap = {
   'app.openhumanLink.discord.perk2': 'Avantage 2',
   'app.openhumanLink.discord.perk3': 'Avantage 3',
   'app.openhumanLink.discord.perk4': 'Avantage 4',
+  'app.openhumanLink.discordReport.intro':
+    "Désolé — quelque chose s'est mal passé de notre côté. Nous essayons de journaliser ces erreurs automatiquement, mais partager les détails sur Discord nous aide à les corriger plus vite.",
+  'app.openhumanLink.discordReport.openDiscord': 'Ouvrir Discord',
   'app.openhumanLink.done': 'Terminé',
   'app.openhumanLink.loadingChannelSetup': 'Chargement de la configuration du canal',
   'app.openhumanLink.maybeLater': 'Peut-être plus tard',
@@ -2354,6 +2364,7 @@ const messages: TranslationMap = {
   'app.openhumanLink.title.accounts': 'Connecte tes apps',
   'app.openhumanLink.title.billing': 'Facturation & crédits',
   'app.openhumanLink.title.discord': 'Rejoins la communauté',
+  'app.openhumanLink.title.discordReport': 'Signaler cette erreur',
   'app.openhumanLink.title.messaging': 'Connecter un canal de chat',
   'app.openhumanLink.title.notifications': 'Autoriser les notifications',
   'app.persistRehydration.body': 'Corps',
@@ -2588,8 +2599,25 @@ const messages: TranslationMap = {
   'conversations.taskKanban.field.title': 'Titre',
   'conversations.taskKanban.saveChanges': 'Enregistrer les modifications',
   'conversations.taskKanban.deleteCard': 'Supprimer',
+  'conversations.taskKanban.workTask': 'Travailler la tâche',
+  'conversations.taskKanban.startingTask': 'Démarrage…',
   'conversations.taskKanban.updateFailed':
     "Impossible de mettre à jour la tâche; les modifications n'ont pas été enregistrées.",
+  'conversations.taskKanban.sourcesButton': 'Sources',
+  'conversations.taskKanban.source.openExternal': 'Ouvrir la tâche externe',
+  'conversations.taskKanban.source.openExternalShort': 'Ouvrir',
+  'conversations.taskKanban.source.unknownProvider': 'Source inconnue',
+  'conversations.taskKanban.source.urgencyValue': 'Urgence {percent}%',
+  'conversations.taskKanban.sources.desktopOnly':
+    'Les contrôles des sources de tâches sont disponibles dans l’application de bureau.',
+  'conversations.taskKanban.sources.title': 'Sources de tâches',
+  'conversations.taskKanban.sources.statusEnabled': 'Interrogation automatique activée',
+  'conversations.taskKanban.sources.manage': 'Gérer les sources',
+  'conversations.taskKanban.source.title': 'Source',
+  'conversations.taskKanban.source.sourceId': 'ID de source',
+  'conversations.taskKanban.source.externalId': 'ID externe',
+  'conversations.taskKanban.source.repo': 'Dépôt',
+  'conversations.taskKanban.source.urgency': 'Urgence',
   'conversations.toolTimeline.turn': 'tour',
   'conversations.toolTimeline.step': 'Étape',
   'conversations.toolTimeline.workerThread': 'fil worker',
@@ -2705,6 +2733,48 @@ const messages: TranslationMap = {
   'intelligence.tasks.composer.create': 'Créer une tâche',
   'intelligence.tasks.composer.creating': 'Création…',
   'intelligence.tasks.composer.createFailed': 'Impossible de créer la tâche',
+  'intelligence.tasks.composer.assignAgentLabel': "Laisser un agent s'en charger automatiquement",
+  'intelligence.tasks.composer.assignAgentHint':
+    "Le tableau des tâches la prend en charge et l'exécute pour vous. Laissez désactivé pour une simple tâche personnelle.",
+  'intelligence.tasks.sourceList.subtitle':
+    "Tâches de sources en attente de devenir du travail d'agent.",
+  'intelligence.tasks.sourceList.empty': 'Aucune tâche de source en attente.',
+  'intelligence.tasks.sourceList.queued': 'En file',
+  'intelligence.tasks.sourceList.workOnTask': 'Travailler sur la tâche',
+  'intelligence.tasks.sourcePlan.title': 'Affiner la tâche source',
+  'intelligence.tasks.sourcePlan.subtitle':
+    "Vérifiez le brouillon de recherche avant de créer une tâche d'agent.",
+  'intelligence.tasks.sourcePlan.researchAgent': "Brouillon de l'agent de recherche",
+  'intelligence.tasks.sourcePlan.approve': 'Approuver le plan',
+  'intelligence.tasks.sourcePlan.creating': 'Création de la tâche…',
+  'intelligence.tasks.sourcePlan.createFailed': "Impossible de créer la tâche d'agent",
+  'intelligence.tasks.workTaskFailed': 'Impossible de démarrer le travail sur la tâche',
+  'intelligence.workTask.sourceTaskHeading': 'Tâche source :',
+  'intelligence.workTask.repositoryLine': '- Dépôt : {repo}',
+  'intelligence.workTask.externalIdLine': '- ID externe : {externalId}',
+  'intelligence.workTask.urlLine': '- URL : {url}',
+  'intelligence.workTask.closingInstruction':
+    "Commencez par reformuler brièvement le plan d'implémentation concret, puis exécutez-le. Gardez la progression visible dans ce fil et mettez à jour le tableau des tâches lorsque l'état du travail change.",
+  'intelligence.refine.objectiveDefault':
+    "Transformez la tâche source en une tâche d'agent prête à être implémentée : {title}",
+  'intelligence.refine.sourceLine': 'Source : {url}',
+  'intelligence.refine.sourceIntake': 'Source : réception des sources de tâches',
+  'intelligence.refine.repositoryLine': 'Dépôt : {repo}',
+  'intelligence.refine.externalTaskLine': 'Tâche externe : {externalId}',
+  'intelligence.refine.planStep1':
+    'Lisez la tâche source liée et confirmez le comportement exact demandé.',
+  'intelligence.refine.planStep2':
+    "Inspectez les chemins de code pertinents et identifiez la plus petite frontière d'implémentation.",
+  'intelligence.refine.planStep3':
+    "Implémentez le changement avec des tests ciblés autour du comportement visible par l'utilisateur.",
+  'intelligence.refine.planStep4':
+    'Exécutez une validation ciblée et notez les risques résiduels ou le travail de suivi.',
+  'intelligence.refine.acceptance1':
+    "Les exigences de la tâche source sont représentées dans l'implémentation finale.",
+  'intelligence.refine.acceptance2':
+    "Des tests unitaires ou d'intégration pertinents couvrent le comportement modifié.",
+  'intelligence.refine.acceptance3':
+    "Les résultats de la validation et tout risque non résolu sont consignés à l'achèvement.",
   'notifications.card.dismiss': 'Ignorer la notification',
   'notifications.card.importanceTitle': 'Importance : {pct} %',
   'notifications.center.empty': "Aucune notification pour l'instant",
@@ -3754,6 +3824,13 @@ const messages: TranslationMap = {
   'settings.agentAccess.readWriteAccess': 'lecture + écriture',
   'settings.agentAccess.actionSandboxDesc':
     'Répertoire de travail par défaut pour les outils shell, fichiers et git.',
+  'settings.agentAccess.actionDir.edit': 'Modifier',
+  'settings.agentAccess.actionDir.save': 'Enregistrer',
+  'settings.agentAccess.actionDir.cancel': 'Annuler',
+  'settings.agentAccess.actionDir.placeholder': 'Chemin absolu, par ex. /Users/you/Projects',
+  'settings.agentAccess.actionDir.envLocked':
+    'Défini par OPENHUMAN_ACTION_DIR. Modifiez la variable d’environnement pour le remplacer.',
+  'settings.agentAccess.actionDir.saved': 'Répertoire d’action mis à jour.',
   'settings.agentAccess.internalState': 'État interne',
   'settings.agentAccess.agentBlocked': "bloqué pour l'agent",
   'settings.agentAccess.internalStateDesc':
@@ -3761,7 +3838,44 @@ const messages: TranslationMap = {
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',
-  'settings.agentAccess.viewApprovalHistory': 'View approval history',
+  'settings.agentAccess.viewApprovalHistory': "Voir l'historique des approbations",
+  'settings.sandbox.title': 'Exécution en sandbox',
+  'settings.sandbox.menuDesc':
+    "Configurer les backends sandbox pour l'isolation des outils de l'agent.",
+  'settings.sandbox.loading': 'Chargement…',
+  'settings.sandbox.desktopOnly':
+    "Les paramètres sandbox sont disponibles uniquement dans l'application de bureau.",
+  'settings.sandbox.loadError': 'Échec du chargement des paramètres sandbox.',
+  'settings.sandbox.saveError': 'Échec de la sauvegarde des paramètres sandbox.',
+  'settings.sandbox.saved': "Enregistré — applicable aux nouvelles sessions de l'agent.",
+  'settings.sandbox.saving': 'Enregistrement…',
+  'settings.sandbox.status': 'Statut',
+  'settings.sandbox.dockerStatus': 'Docker',
+  'settings.sandbox.available': 'Disponible',
+  'settings.sandbox.unavailable': 'Indisponible',
+  'settings.sandbox.detectedBackend': 'Backend OS',
+  'settings.sandbox.enableLabel': "Activer l'exécution en sandbox",
+  'settings.sandbox.enableDesc':
+    "Exécuter les outils de l'agent dans un environnement sandbox isolé.",
+  'settings.sandbox.backendLabel': 'Backend',
+  'settings.sandbox.backendDesc':
+    "Choisissez le backend d'isolation à utiliser pour l'exécution en sandbox.",
+  'settings.sandbox.backend.auto': 'Automatique (détecter le meilleur disponible)',
+  'settings.sandbox.backend.docker': 'Docker',
+  'settings.sandbox.backend.landlock': 'Landlock (Linux)',
+  'settings.sandbox.backend.firejail': 'Firejail (Linux)',
+  'settings.sandbox.backend.bubblewrap': 'Bubblewrap (Linux)',
+  'settings.sandbox.backend.none': 'Aucun (pas de sandbox)',
+  'settings.sandbox.dockerSettings': 'Paramètres Docker',
+  'settings.sandbox.dockerImage': 'Image',
+  'settings.sandbox.dockerImagePlaceholder': 'alpine:3.20',
+  'settings.sandbox.memoryLimit': 'Limite mémoire',
+  'settings.sandbox.memoryUnit': 'MB',
+  'settings.sandbox.cpuLimit': 'Limite CPU',
+  'settings.sandbox.cpuUnit': 'cœurs',
+  'settings.sandbox.envPassthrough': "Transfert des variables d'environnement",
+  'settings.sandbox.envPassthroughDesc': "Variables d'environnement transmises dans le sandbox.",
+  'settings.sandbox.noEnvVars': "Aucune variable d'environnement configurée.",
   'settings.approvalHistory.title': 'Approval history',
   'settings.approvalHistory.subtitle': 'Recent tool-approval decisions, newest first.',
   'settings.approvalHistory.refresh': 'Refresh',
@@ -4198,6 +4312,8 @@ const messages: TranslationMap = {
   'chat.agentProfile.defaultAgentLabel': 'Orchestrator',
   'chat.agentProfile.exists': "Le profil d'agent « {name} » existe déjà.",
   'chat.agentProfile.label': "Profil d'agent",
+  'chat.agentProfile.quick': 'Rapide',
+  'chat.agentProfile.reasoning': 'Raisonnement',
   'chat.agentProfile.namePlaceholder': 'Nom du profil',
   'chat.agentProfile.promptStylePlaceholder': 'Style de prompt',
   'chat.agentProfile.allowedToolsPlaceholder': 'Outils autorisés',
@@ -4334,6 +4450,10 @@ const messages: TranslationMap = {
   'settings.taskSources.github.repo': 'Dépôt (propriétaire/nom, facultatif)',
   'settings.taskSources.github.labels': 'Étiquettes (séparées par des virgules)',
   'settings.taskSources.notion.database': 'ID de la base de données (tableau)',
+  'settings.taskSources.notion.browseDatabases': 'Parcourir les bases de données',
+  'settings.taskSources.notion.loadingDatabases': 'Chargement des bases de données…',
+  'settings.taskSources.notion.selectDatabase': 'Sélectionner une base de données…',
+  'settings.taskSources.notion.noDatabases': 'Aucune base de données trouvée pour cette connexion.',
   'settings.taskSources.linear.team': "ID de l'équipe (facultatif)",
   'settings.taskSources.clickup.team': 'ID de l’espace de travail (équipe) (optionnel)',
   'settings.taskSources.assignedToMe': 'Uniquement les éléments qui me sont attribués',
@@ -4495,6 +4615,40 @@ const messages: TranslationMap = {
   'settings.agents.editor.toolsDone': 'Done',
   'settings.agents.editor.builtInReadonly':
     'Les agents intégrés ne peuvent pas être modifiés. Vous pouvez les activer, les désactiver ou les réinitialiser depuis la liste des agents.',
+  // Chat — agent-generated artifacts (#2779)
+  'chat.artifact.aria': 'Artefact : {title}',
+  'chat.artifact.generating': 'Génération de {kind}…',
+  'chat.artifact.ready': 'Prêt',
+  'chat.artifact.failed': 'Échec de la génération',
+  'chat.artifact.download': 'Télécharger',
+  'chat.artifact.downloading': 'Téléchargement…',
+  'chat.artifact.downloaded': 'Enregistré dans {path}',
+  'chat.artifact.download_failed': 'Échec du téléchargement : {reason}',
+  'chat.artifact.retry': 'Réessayer',
+  'chat.artifact.reveal': 'Afficher dans le dossier',
+  'chat.artifact.show_more': 'Voir plus',
+  'chat.artifact.show_less': 'Voir moins',
+
+  // Chat — files panel (#3024)
+  'chat.files.chip.aria.one': '{count} fichier dans cette discussion',
+  'chat.files.chip.aria.other': '{count} fichiers dans cette discussion',
+  'chat.files.panel.aria': 'Fichiers dans cette discussion',
+  'chat.files.panel.title': 'Fichiers ({count})',
+  'chat.files.panel.empty': 'Aucun fichier pour l’instant. Demandez à l’agent d’en générer un.',
+  'chat.files.panel.close': 'Fermer le panneau de fichiers',
+  'chat.files.delete.aria': 'Supprimer {title}',
+  'chat.files.delete.confirm': 'Supprimer ce fichier ?',
+  'chat.files.delete.cancel': 'Annuler',
+  'chat.files.delete.action': 'Supprimer',
+  'chat.files.delete.failed': 'Impossible de supprimer le fichier. Réessayez.',
+  'chat.files.error.not_desktop':
+    'Les téléchargements sont uniquement disponibles dans l’application bureau.',
+  'chat.files.error.missing_artifact_id': 'Identifiant d’artefact manquant.',
+  'chat.files.error.missing_artifact_path':
+    'Le chemin de l’artefact est absent de la réponse du cœur.',
+  'chat.files.error.resolve_failed': 'Impossible de résoudre l’artefact. Réessayez.',
+  'chat.files.error.download_failed': 'Échec du téléchargement. Réessayez.',
+  'chat.files.error.delete_failed': 'Impossible de supprimer le fichier. Réessayez.',
   'autocomplete.debounceMs': 'Anti-rebond (ms)',
   'autocomplete.maxChars': 'Caractères de contexte maximum',
   'autocomplete.overlayTtlMs': "Délai d'affichage (ms)",
@@ -4582,6 +4736,33 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Refuser le stockage local',
   'pages.settings.account.security': 'Sécurité',
   'pages.settings.account.securityDesc': 'Mode de stockage des secrets et état du trousseau',
+  // #002 memory-pipeline-hardening: degraded badges + typed remediation.
+  'memoryTree.status.statusDegraded': 'Dégradé',
+  'memoryTree.status.degradedRecall': 'Rappel sémantique désactivé',
+  'memoryTree.status.degradedStructure': 'Structure du wiki incomplète',
+  'memoryTree.status.extractionCoverage':
+    "Couverture d'extraction : {pct}% des fragments ont une structure",
+  'memory.health.remediation.budget_exhausted':
+    "Les embeddings de mémoire ont atteint le budget géré. Configurez des embeddings Ollama locaux (Paramètres → IA → Encastrements) ou ajoutez votre propre clé d'API d'embeddings pour continuer à construire la mémoire.",
+  'memory.health.remediation.auth_missing':
+    "Aucune information d'identification d'embeddings trouvée. Connectez-vous à OpenHuman ou configurez des embeddings Ollama locaux dans Paramètres → IA → Encastrements.",
+  'memory.health.remediation.auth_invalid':
+    "Vos informations d'identification d'embeddings ont été rejetées. Authentifiez-vous à nouveau ou passez aux embeddings Ollama locaux dans Paramètres → IA → Encastrements.",
+  'memory.health.remediation.embeddings_unconfigured':
+    "Aucun fournisseur d'embeddings n'est configuré, le rappel sémantique est donc désactivé. Configurez des embeddings Ollama locaux (recommandé) ou ajoutez une clé d'embeddings dans Paramètres → IA → Encastrements.",
+  'memory.health.remediation.embedding_dim_mismatch':
+    "Le modèle d'embeddings renvoie une taille de vecteur incorrecte (la mémoire attend 1024 dimensions). Choisissez un modèle à 1024 dimensions ou demandez 1024 dimensions à votre fournisseur.",
+  'memory.health.remediation.local_model_unavailable':
+    "Un modèle local requis n'est pas disponible. Installez/lancez Ollama et téléchargez le modèle, ou basculez cette charge de travail vers un fournisseur cloud dans Paramètres → IA.",
+  'memory.health.remediation.extraction_timeout':
+    "Le modèle d'extraction de mémoire dépasse le délai imparti, le wiki a donc peu de structure. Choisissez un modèle d'extraction de mémoire plus rapide dans Paramètres → IA.",
+  'memory.health.remediation.summarizer_unavailable':
+    "Aucun fournisseur de résumé n'est disponible pour Créer des arbres de résumé. Activez l'IA locale (Ollama) ou activez la synthèse cloud dans Paramètres → IA → Mémoire.",
+  'memory.health.remediation.transient':
+    'Une erreur temporaire a interrompu le traitement de la mémoire. Une nouvelle tentative aura lieu automatiquement.',
+  'memory.health.remediation.unknown':
+    'Le traitement de la mémoire a rencontré un problème. Vérifiez Paramètres → IA pour la configuration.',
+  // Chat — agent-generated artifacts (#2779)
 
   // Chat composer toolbar
   'composer.attachFile': 'Joindre un fichier',
@@ -4712,6 +4893,18 @@ const messages: TranslationMap = {
   'memoryData.windowError': 'Fenêtre de mémoire',
   'memoryData.windowUpdated': 'Fenêtre de mémoire mise à jour',
   'memoryData.windowUpdatedMsg': 'Définie sur {window}.',
+
+  // Run queue
+  'runQueue.mode.interrupt': 'Interrompre',
+  'runQueue.mode.steer': 'Orienter',
+  'runQueue.mode.followup': 'Suivi',
+  'runQueue.mode.collect': 'Ajouter du contexte',
+  'runQueue.queued': "Message en file d'attente",
+  'runQueue.steerHint': 'Orienter le tour en cours',
+  'runQueue.followupHint': "Mettre en file d'attente comme suivi",
+  'runQueue.collectHint': 'Ajouter comme contexte supplémentaire',
+  'runQueue.status': '{total} en attente',
+  'runQueue.cleared': "File d'attente vidée",
 };
 
 export default messages;

@@ -299,6 +299,7 @@ async fn web_channel_approval_bridge_forced_errors_and_newer_request_cancellatio
         Some(0.3),
         Some("missing-profile".to_string()),
         Some("en-US".to_string()),
+        None,
         ChatRequestMetadata::default(),
     )
     .await
@@ -324,6 +325,7 @@ async fn web_channel_approval_bridge_forced_errors_and_newer_request_cancellatio
         None,
         None,
         None,
+        None,
         ChatRequestMetadata::default(),
     )
     .await
@@ -332,6 +334,7 @@ async fn web_channel_approval_bridge_forced_errors_and_newer_request_cancellatio
         "round18-client-reconnect",
         "round18-shared-thread",
         "second request cancels the first",
+        None,
         None,
         None,
         None,

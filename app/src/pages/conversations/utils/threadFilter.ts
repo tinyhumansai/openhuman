@@ -1,18 +1,25 @@
 import type { Thread } from '../../../types/thread';
 
-/**
- * Sentinel label-tab value that surfaces only worker / sub-agent threads
- * (any thread whose `parentThreadId` is set). Issue #1624: the
- * `Workers` tab in the conversation sidebar is the deliberate UI surface
- * for background sub-agent activity — picking it inverts the default
- * `parentThreadId` filter so users can scan, open, and inspect worker
- * transcripts that the main `All` view intentionally hides.
- *
- * Lives at module scope so the sidebar tab definition, the filter
- * function, and the Vitest specs all reference the same string and a
- * future rename can never silently desync the three.
- */
-export const WORKERS_TAB_VALUE = 'workers';
+export const GENERAL_TAB_VALUE = 'general';
+export const SUBCONSCIOUS_TAB_VALUE = 'subconscious';
+export const TASKS_TAB_VALUE = 'tasks';
+export const LEGACY_GENERAL_LABEL = 'work';
+export const LEGACY_SUBCONSCIOUS_LABELS = ['from_reflection', 'subconscious_tick'];
+export const LEGACY_TASK_LABELS = ['agent-task', 'worker'];
+
+function hasAnyLabel(thread: Thread, labels: readonly string[]): boolean {
+  return Boolean(thread.labels?.some(label => labels.includes(label)));
+}
+
+function isSubconsciousThread(thread: Thread): boolean {
+  return hasAnyLabel(thread, [SUBCONSCIOUS_TAB_VALUE, ...LEGACY_SUBCONSCIOUS_LABELS]);
+}
+
+function isTaskThread(thread: Thread): boolean {
+  return Boolean(
+    thread.parentThreadId || hasAnyLabel(thread, [TASKS_TAB_VALUE, ...LEGACY_TASK_LABELS])
+  );
+}
 
 /**
  * Pure, side-effect-free thread filter shared between
@@ -21,21 +28,19 @@ export const WORKERS_TAB_VALUE = 'workers';
  * filter rule lands in one place with explicit unit coverage instead
  * of a buried `useMemo` body.
  *
- * Rules (issue #1624):
- *   - When `selectedLabel === WORKERS_TAB_VALUE`, return only worker
- *     threads (those with `parentThreadId`). The Workers tab is the
- *     intentional surface for background sub-agent activity.
- *   - Otherwise, hide every worker thread so the main sidebar stays
- *     dominated by user-initiated conversations and isn't polluted by
- *     orchestrator-spawned background work.
- *   - Within the non-Workers tabs, `selectedLabel === 'all'` keeps every
- *     non-worker thread; any other value scopes by the existing thread
- *     `labels[]` array (`work`, `briefing`, `notification`, …).
+ * Rules:
+ *   - Tasks includes task-board threads plus legacy worker/sub-agent threads.
+ *   - Subconscious includes new and legacy reflection/tick-generated threads.
+ *   - General is the fallback bucket for everything else, including legacy
+ *     `work`, unknown labels, and unlabeled historical threads.
  */
 export function isThreadVisibleInTab(thread: Thread, selectedLabel: string): boolean {
-  const isWorker = Boolean(thread.parentThreadId);
-  if (selectedLabel === WORKERS_TAB_VALUE) return isWorker;
-  if (isWorker) return false;
-  if (selectedLabel === 'all') return true;
+  const isSubconscious = isSubconsciousThread(thread);
+  const isTask = isTaskThread(thread);
+  if (selectedLabel === SUBCONSCIOUS_TAB_VALUE) return isSubconscious;
+  if (selectedLabel === TASKS_TAB_VALUE) return isTask;
+  if (selectedLabel === GENERAL_TAB_VALUE) {
+    return !isSubconscious && !isTask;
+  }
   return Boolean(thread.labels?.includes(selectedLabel));
 }

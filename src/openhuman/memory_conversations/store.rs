@@ -137,6 +137,7 @@ impl ConversationStore {
         let root = self.ensure_root()?;
         let threads_path = root.join(THREADS_FILENAME);
         let now = request.created_at.clone();
+        let labels = request.labels.clone().map(normalize_labels);
         append_jsonl(
             &threads_path,
             &ThreadLogEntry::Upsert {
@@ -145,7 +146,7 @@ impl ConversationStore {
                 created_at: request.created_at.clone(),
                 updated_at: now,
                 parent_thread_id: request.parent_thread_id.clone(),
-                labels: request.labels.clone(),
+                labels,
                 personality_id: request.personality_id.clone(),
             },
         )?;
@@ -479,6 +480,7 @@ impl ConversationStore {
             .get(thread_id)
             .ok_or_else(|| format!("thread {} not found", thread_id))?;
         let threads_path = self.ensure_root()?.join(THREADS_FILENAME);
+        let labels = normalize_labels(labels);
         append_jsonl(
             &threads_path,
             &ThreadLogEntry::Upsert {
@@ -689,7 +691,7 @@ impl ConversationStore {
                     last_message_at,
                     created_at: entry.created_at.clone(),
                     parent_thread_id: entry.parent_thread_id.clone(),
-                    labels: entry.labels.clone(),
+                    labels: normalize_labels(entry.labels.clone()),
                     personality_id: entry.personality_id.clone(),
                 }
             })
@@ -749,7 +751,7 @@ impl ConversationStore {
             last_message_at,
             created_at: entry.created_at.clone(),
             parent_thread_id: entry.parent_thread_id.clone(),
-            labels: entry.labels.clone(),
+            labels: normalize_labels(entry.labels.clone()),
             personality_id: entry.personality_id.clone(),
         }))
     }
@@ -784,13 +786,17 @@ impl ConversationStore {
                         Some(existing) => (
                             existing.created_at.clone(),
                             parent_thread_id.or_else(|| existing.parent_thread_id.clone()),
-                            labels.unwrap_or_else(|| existing.labels.clone()),
+                            labels
+                                .map(normalize_labels)
+                                .unwrap_or_else(|| existing.labels.clone()),
                             existing.message_count,
                             existing.last_message_at.clone(),
                             personality_id.or_else(|| existing.personality_id.clone()),
                         ),
                         None => {
-                            let inferred = labels.unwrap_or_else(|| infer_labels(&thread_id));
+                            let inferred = labels
+                                .map(normalize_labels)
+                                .unwrap_or_else(|| infer_labels(&thread_id));
                             (
                                 created_at,
                                 parent_thread_id,
@@ -880,8 +886,24 @@ fn infer_labels(thread_id: &str) -> Vec<String> {
     } else if thread_id.starts_with("proactive:") {
         vec!["notification".to_string()]
     } else {
-        vec!["work".to_string()]
+        vec!["general".to_string()]
     }
+}
+
+fn normalize_labels(labels: Vec<String>) -> Vec<String> {
+    let mut normalized = Vec::with_capacity(labels.len());
+    for label in labels {
+        let next = match label.as_str() {
+            "work" => "general".to_string(),
+            "from_reflection" | "subconscious_tick" => "subconscious".to_string(),
+            "agent-task" | "worker" => "tasks".to_string(),
+            _ => label,
+        };
+        if !normalized.contains(&next) {
+            normalized.push(next);
+        }
+    }
+    normalized
 }
 
 fn read_jsonl<T>(path: &Path) -> Result<Vec<T>, String>

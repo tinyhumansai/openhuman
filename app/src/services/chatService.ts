@@ -136,6 +136,57 @@ export interface ChatApprovalRequestEvent {
   args?: Record<string, unknown>;
 }
 
+/**
+ * Lowercase variant of the Rust `ArtifactKind` enum surfaced on
+ * artifact lifecycle socket events. Mirrors the slugs produced by
+ * `ArtifactKind::as_str()` in `src/openhuman/artifacts/types.rs`.
+ */
+export type ArtifactKind = 'presentation' | 'document' | 'image' | 'other';
+
+/**
+ * Emitted when the core `artifacts::store::finalize_artifact` flips an
+ * artifact's status to `Ready`. The chat runtime upserts the snapshot
+ * keyed on `artifact_id` so the `ArtifactCard` can render in the
+ * message timeline with a download button (#2779).
+ */
+export interface ArtifactReadyEvent {
+  thread_id: string;
+  client_id?: string;
+  /** UUID of the artifact record. Use with `ai_get_artifact`. */
+  artifact_id: string;
+  kind: ArtifactKind;
+  /** Human-readable title; also the on-disk filename stem. */
+  title: string;
+  /**
+   * Absolute workspace root the artifact belongs to. Subscribers must compare
+   * this to their own workspace binding and silently drop events that don't
+   * match — `path` is workspace-relative and would otherwise resolve into the
+   * wrong `<workspace>/artifacts/` tree after a workspace switch.
+   */
+  workspace_dir: string;
+  /** Relative path under `<workspace>/artifacts/`, e.g. `<uuid>/deck.pptx`. */
+  path: string;
+  /** Final on-disk size in bytes. */
+  size_bytes: number;
+}
+
+/**
+ * Emitted when `artifacts::store::fail_artifact` flips an artifact to
+ * `Failed` after the producer surfaced a reason. The frontend swaps
+ * the in-flight card for a retry-hint view.
+ */
+export interface ArtifactFailedEvent {
+  thread_id: string;
+  client_id?: string;
+  artifact_id: string;
+  kind: ArtifactKind;
+  title: string;
+  /** Absolute workspace root — see {@link ArtifactReadyEvent.workspace_dir}. */
+  workspace_dir: string;
+  /** Producer-supplied failure reason, already truncated. */
+  error: string;
+}
+
 /** Emitted when the agent turn begins (before the first LLM call). */
 export interface ChatInferenceStartEvent {
   thread_id: string;
@@ -354,6 +405,8 @@ export interface ChatEventListeners {
   onTaskBoardUpdated?: (event: ChatTaskBoardUpdatedEvent) => void;
   onProactiveMessage?: (event: ProactiveMessageEvent) => void;
   onApprovalRequest?: (event: ChatApprovalRequestEvent) => void;
+  onArtifactReady?: (event: ArtifactReadyEvent) => void;
+  onArtifactFailed?: (event: ArtifactFailedEvent) => void;
   onDone?: (event: ChatDoneEvent) => void;
   onError?: (event: ChatErrorEvent) => void;
 }
@@ -387,6 +440,8 @@ export function subscribeChatEvents(listeners: ChatEventListeners): () => void {
     taskBoardUpdated: 'task_board_updated',
     proactiveMessage: 'proactive_message',
     approvalRequest: 'approval_request',
+    artifactReady: 'artifact_ready',
+    artifactFailed: 'artifact_failed',
     done: 'chat_done',
     error: 'chat_error',
   } as const;
@@ -706,6 +761,138 @@ export function subscribeChatEvents(listeners: ChatEventListeners): () => void {
     handlers.push([EVENTS.approvalRequest, cb]);
   }
 
+  // Artifact lifecycle events (#2779). The Rust subscriber in
+  // `channels/providers/web::ArtifactSurfaceSubscriber` packs the
+  // artifact payload into the generic `args` field of the wire
+  // envelope (kept the WebChannelEvent struct shape stable to avoid
+  // touching ~10 existing call sites with `..Default::default()`).
+  // Flatten back into the typed `ArtifactReadyEvent` /
+  // `ArtifactFailedEvent` shape so listeners get a clean contract.
+  const validArtifactKinds: ReadonlySet<ArtifactKind> = new Set([
+    'presentation',
+    'document',
+    'image',
+    'other',
+  ]);
+  const isValidArtifactKind = (k: unknown): k is ArtifactKind =>
+    typeof k === 'string' && validArtifactKinds.has(k as ArtifactKind);
+  // Type-narrowing guards: previously `!args.title` etc. only checked
+  // truthiness, so a non-string `title` (number, object, true) would
+  // pass — and then `.slice(0, 80)` on a non-string `error` crashed
+  // at L833. Type the payload as `unknown` and narrow each field with
+  // `typeof` so the runtime contract matches the TS contract.
+  const isNonEmptyString = (v: unknown): v is string => typeof v === 'string' && v.length > 0;
+  const isFiniteNumber = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+  const readEnvelope = (
+    payload: unknown
+  ): { thread_id: string; client_id?: string; args: Record<string, unknown> } | null => {
+    if (!payload || typeof payload !== 'object') return null;
+    const env = payload as { thread_id?: unknown; client_id?: unknown; args?: unknown };
+    if (!isNonEmptyString(env.thread_id)) return null;
+    const client_id = typeof env.client_id === 'string' ? env.client_id : undefined;
+    const args =
+      env.args && typeof env.args === 'object' && !Array.isArray(env.args)
+        ? (env.args as Record<string, unknown>)
+        : {};
+    return { thread_id: env.thread_id, client_id, args };
+  };
+
+  if (listeners.onArtifactReady) {
+    const cb = (payload: unknown) => {
+      const env = readEnvelope(payload);
+      if (!env) {
+        chatLog('%s — skipping malformed payload (bad envelope)', EVENTS.artifactReady);
+        return;
+      }
+      const { args } = env;
+      if (
+        !isNonEmptyString(args.artifact_id) ||
+        !isValidArtifactKind(args.kind) ||
+        !isNonEmptyString(args.title) ||
+        !isNonEmptyString(args.workspace_dir) ||
+        !isNonEmptyString(args.path) ||
+        !isFiniteNumber(args.size_bytes)
+      ) {
+        chatLog(
+          '%s thread_id=%s — skipping malformed payload (bad args)',
+          EVENTS.artifactReady,
+          env.thread_id
+        );
+        return;
+      }
+      const event: ArtifactReadyEvent = {
+        thread_id: env.thread_id,
+        client_id: env.client_id,
+        artifact_id: args.artifact_id,
+        kind: args.kind,
+        title: args.title,
+        workspace_dir: args.workspace_dir,
+        path: args.path,
+        size_bytes: args.size_bytes,
+      };
+      chatLog(
+        '%s thread_id=%s artifact_id=%s kind=%s size=%d',
+        EVENTS.artifactReady,
+        event.thread_id,
+        event.artifact_id,
+        event.kind,
+        event.size_bytes
+      );
+      listeners.onArtifactReady?.(event);
+    };
+    socket.on(EVENTS.artifactReady, cb);
+    handlers.push([EVENTS.artifactReady, cb]);
+  }
+
+  if (listeners.onArtifactFailed) {
+    const cb = (payload: unknown) => {
+      const env = readEnvelope(payload);
+      if (!env) {
+        chatLog('%s — skipping malformed payload (bad envelope)', EVENTS.artifactFailed);
+        return;
+      }
+      const { args } = env;
+      if (
+        !isNonEmptyString(args.artifact_id) ||
+        !isValidArtifactKind(args.kind) ||
+        !isNonEmptyString(args.title) ||
+        !isNonEmptyString(args.workspace_dir) ||
+        !isNonEmptyString(args.error)
+      ) {
+        chatLog(
+          '%s thread_id=%s — skipping malformed payload (bad args)',
+          EVENTS.artifactFailed,
+          env.thread_id
+        );
+        return;
+      }
+      const event: ArtifactFailedEvent = {
+        thread_id: env.thread_id,
+        client_id: env.client_id,
+        artifact_id: args.artifact_id,
+        kind: args.kind,
+        title: args.title,
+        workspace_dir: args.workspace_dir,
+        error: args.error,
+      };
+      // Defence-in-depth: producer is expected to pre-truncate, but
+      // cap the log preview again so a leaky producer cannot blast
+      // unbounded provider stderr into client telemetry. (`event.error`
+      // is now guaranteed a string by the guard above — no .slice crash.)
+      chatLog(
+        '%s thread_id=%s artifact_id=%s kind=%s err=%s',
+        EVENTS.artifactFailed,
+        event.thread_id,
+        event.artifact_id,
+        event.kind,
+        event.error.slice(0, 80)
+      );
+      listeners.onArtifactFailed?.(event);
+    };
+    socket.on(EVENTS.artifactFailed, cb);
+    handlers.push([EVENTS.artifactFailed, cb]);
+  }
+
   if (listeners.onTaskBoardUpdated) {
     const cb = (payload: unknown) => {
       const e = payload as ChatTaskBoardUpdatedEvent;
@@ -755,6 +942,8 @@ export function subscribeChatEvents(listeners: ChatEventListeners): () => void {
   };
 }
 
+export type QueueMode = 'interrupt' | 'steer' | 'followup' | 'collect';
+
 export interface ChatSendParams {
   threadId: string;
   message: string;
@@ -782,6 +971,13 @@ export interface ChatSendParams {
    * session so the core can correlate audio and text events.
    */
   sessionId?: number;
+  /**
+   * Queue mode for concurrent messages. When a turn is already in
+   * flight: `steer` injects at the next iteration boundary, `followup`
+   * queues for after the turn, `collect` adds as context. `interrupt`
+   * (default) aborts the running turn.
+   */
+  queueMode?: QueueMode | null;
 }
 
 /**
@@ -810,6 +1006,7 @@ export async function chatSend(params: ChatSendParams): Promise<void> {
       speak_reply: params.speakReply ?? undefined,
       source: params.source ?? undefined,
       session_id: params.sessionId ?? undefined,
+      queue_mode: params.queueMode ?? undefined,
     },
   });
 }

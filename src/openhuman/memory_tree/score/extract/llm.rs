@@ -149,7 +149,18 @@ impl EntityExtractor for LlmEntityExtractor {
 
         for attempt in 0..MAX_ATTEMPTS {
             match self.try_extract(text).await {
-                Some(extracted) => return Ok(extracted),
+                Some(extracted) => {
+                    // #002 (T013): a completed extraction that yielded
+                    // structure means the extraction model is working —
+                    // clear any prior "structure degraded" flag so the
+                    // status/doctor surface recovers. (An empty-but-valid
+                    // result, e.g. genuinely entity-free text, is left
+                    // alone — it isn't evidence the model is broken.)
+                    if !extracted.entities.is_empty() || !extracted.topics.is_empty() {
+                        crate::openhuman::memory_tree::health::clear_structure_degraded();
+                    }
+                    return Ok(extracted);
+                }
                 None => {
                     // Transport failure. Retry with exponential backoff
                     // unless we've exhausted attempts.
@@ -167,10 +178,20 @@ impl EntityExtractor for LlmEntityExtractor {
             }
         }
 
+        // #002 (T013): every attempt hit a transport failure (the model
+        // timed out / was unreachable). The soft-fallback contract still
+        // returns empty (ingest never blocks on a slow model), but we now
+        // record a structure-degraded signal with a typed cause so the
+        // status/doctor surface can say "extraction is timing out — switch
+        // the Memory extraction model" instead of presenting an empty wiki
+        // as success.
         log::warn!(
             "[memory_tree::extract::llm] transport failed after {} attempts — \
-             returning empty extraction",
+             returning empty extraction (structure degraded)",
             MAX_ATTEMPTS
+        );
+        crate::openhuman::memory_tree::health::mark_structure_degraded(
+            crate::openhuman::memory_tree::health::FailureCode::ExtractionTimeout,
         );
         Ok(ExtractedEntities::default())
     }

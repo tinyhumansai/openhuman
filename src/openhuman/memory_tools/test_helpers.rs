@@ -42,6 +42,7 @@ impl Memory for MockMemory {
                 timestamp: "now".into(),
                 session_id: session_id.map(str::to_string),
                 score: None,
+                taint: Default::default(),
             },
         );
         Ok(())

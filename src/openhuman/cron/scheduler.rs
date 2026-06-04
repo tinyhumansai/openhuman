@@ -16,7 +16,7 @@ use tokio::time::{self, Duration};
 
 const MIN_POLL_SECONDS: u64 = 5;
 const SHELL_JOB_TIMEOUT_SECS: u64 = 120;
-const AGENT_JOB_USER_FAILURE_MESSAGE: &str = "Something went wrong. Please try again.\nThis error has been reported. You can also report it on Discord.\n<openhuman-link path=\"community/discord\">Report on Discord</openhuman-link>";
+const AGENT_JOB_USER_FAILURE_MESSAGE: &str = "Something went wrong. Please try again.\nThis error has been reported. You can also report it on Discord.\n<openhuman-link path=\"community/discord-report\">Report on Discord</openhuman-link>";
 const MORNING_BRIEFING_AGENT_ID: &str = "morning_briefing";
 const MORNING_BRIEFING_FAILURE_NOTIFICATION: &str = "Morning briefing could not run. Check your AI provider, API key, and connected apps, then run it again from Settings > Cron Jobs.";
 
@@ -424,7 +424,22 @@ async fn run_agent_job(config: &Config, job: &CronJob) -> (bool, String, Option<
                     // cron-triggered turns. `cron` is the channel so the
                     // event bus can filter from other flows (`cli`, `web`…).
                     agent.set_event_context(format!("cron:{}", job.id), "cron");
-                    agent.run_single(&prefixed_prompt).await
+                    // Scope a `TrustedAutomation { Cron }` origin around the
+                    // turn. The approval gate treats this as user-authorized
+                    // automation and lets external_effect tools run without
+                    // an in-app prompt — the user explicitly created this
+                    // cron job and authorized its prompt at the same time.
+                    let origin =
+                        crate::openhuman::agent::turn_origin::AgentTurnOrigin::TrustedAutomation {
+                            job_id: job.id.clone(),
+                            source:
+                                crate::openhuman::agent::turn_origin::TrustedAutomationSource::Cron,
+                        };
+                    crate::openhuman::agent::turn_origin::with_origin(
+                        origin,
+                        agent.run_single(&prefixed_prompt),
+                    )
+                    .await
                 }
                 Err(e) => Err(e),
             }

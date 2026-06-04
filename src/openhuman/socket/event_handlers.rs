@@ -10,7 +10,7 @@ use serde_json::json;
 use tokio::sync::mpsc;
 
 use crate::api::models::socket::ConnectionStatus;
-use crate::core::event_bus::{publish_global, DomainEvent};
+use crate::core::event_bus::{publish_global, BackendMeetTurn, DomainEvent};
 use crate::openhuman::webhooks::WebhookRequest;
 
 use super::manager::{emit_server_event, emit_state_change, SharedState};
@@ -246,6 +246,102 @@ pub(super) fn handle_sio_event(
             if !channel_id.is_empty() {
                 publish_global(DomainEvent::DevicePeerOffline { channel_id });
             }
+        }
+
+        // ── Backend Meet Bot events ──────────────────────────────────────
+        "bot:joined" => {
+            let meet_url = data
+                .get("meetUrl")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            log::info!("[socket] bot:joined meet_url_len={}", meet_url.len());
+            publish_global(DomainEvent::BackendMeetJoined { meet_url });
+        }
+        "bot:left" => {
+            let reason = data
+                .get("reason")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string();
+            log::info!("[socket] bot:left reason={}", reason);
+            publish_global(DomainEvent::BackendMeetLeft { reason });
+        }
+        "bot:reply" => {
+            let transcript = data
+                .get("transcript")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let reply = data
+                .get("reply")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let emotion = data
+                .get("emotion")
+                .and_then(|v| v.as_str())
+                .unwrap_or("neutral")
+                .to_string();
+            log::info!(
+                "[socket] bot:reply reply_len={} emotion={}",
+                reply.len(),
+                emotion
+            );
+            publish_global(DomainEvent::BackendMeetReply {
+                transcript,
+                reply,
+                emotion,
+            });
+        }
+        "bot:harness" => {
+            let transcript = data
+                .get("transcript")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let instruction = data
+                .get("instruction")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let emotion = data
+                .get("emotion")
+                .and_then(|v| v.as_str())
+                .unwrap_or("neutral")
+                .to_string();
+            log::info!(
+                "[socket] bot:harness instruction_len={} emotion={}",
+                instruction.len(),
+                emotion
+            );
+            publish_global(DomainEvent::BackendMeetHarness {
+                transcript,
+                instruction,
+                emotion,
+            });
+        }
+        "bot:transcript" => {
+            let turns: Vec<BackendMeetTurn> = data
+                .get("turns")
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                .unwrap_or_default();
+            let duration_ms = data.get("durationMs").and_then(|v| v.as_u64()).unwrap_or(0);
+            log::info!(
+                "[socket] bot:transcript turns={} duration_ms={}",
+                turns.len(),
+                duration_ms
+            );
+            publish_global(DomainEvent::BackendMeetTranscript { turns, duration_ms });
+        }
+        "bot:error" => {
+            let error = data
+                .get("error")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown error")
+                .to_string();
+            log::error!("[socket] bot:error: {}", error);
+            publish_global(DomainEvent::BackendMeetError { error });
         }
 
         // Channel inbound message — publish to event bus for ChannelInboundSubscriber

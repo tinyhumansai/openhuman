@@ -211,6 +211,50 @@ fn ollama_prefix() {
 }
 
 #[test]
+fn ollama_provider_opts_out_of_native_tool_calling() {
+    // Sub-issue 3 of #3098: Ollama's OpenAI-compat endpoint returns HTTP 400
+    // for many models when a `tools` array is sent (the existing detection
+    // path matches "unsupported parameter: tools"). The retry logic strips
+    // tools entirely, which silently breaks any skill or workflow that
+    // depends on tool calls. The factory must build the Ollama provider
+    // with native tool calling disabled so the agent harness uses the
+    // prompt-guided text format from the first request.
+    let config = Config::default();
+    let (provider, _model) = create_chat_provider_from_string("chat", "ollama:llama3.2", &config)
+        .expect("ollama:<model> must build");
+    let caps = provider.capabilities();
+    assert!(
+        !caps.native_tool_calling,
+        "ollama provider must report native_tool_calling=false so the agent harness emits prompt-guided tool specs instead of an OpenAI-style `tools` array"
+    );
+}
+
+#[test]
+fn lmstudio_provider_defaults_to_prompt_guided_tools() {
+    // All local providers (Ollama, LM Studio, MLX, local-openai) default to
+    // prompt-guided tool dispatch (#3246). This prevents HTTP 400 errors
+    // from models that don't support the native `tools` parameter. Users
+    // can override via `config.agent.tool_dispatcher = "native"` if their
+    // model supports it.
+    let mut config = Config::default();
+    config.local_ai.base_url = Some("http://127.0.0.1:1234".to_string());
+    let (provider, _model) =
+        create_chat_provider_from_string("chat", "lmstudio:google/gemma-4-e4b", &config)
+            .expect("lmstudio:<model> must build");
+    assert!(
+        !provider.capabilities().native_tool_calling,
+        "lmstudio provider must default to native_tool_calling=false (conservative local dispatch)"
+    );
+}
+
+// Note: a BYOK-cloud regression test (e.g. `openai:gpt-4o` keeps
+// native_tool_calling=true) would need an `AuthService` with the slug's API
+// key seeded. The unit test
+// `with_native_tool_calling_true_preserves_default` in compatible_tests.rs
+// already pins that the builder leaves the default in place when not
+// called, which is what every non-Ollama factory path relies on.
+
+#[test]
 fn lmstudio_prefix() {
     let mut config = Config::default();
     config.local_ai.base_url = Some("http://127.0.0.1:1234".to_string());
@@ -1643,4 +1687,155 @@ fn config_api_key_fallback_inert_without_inference_url() {
         "",
         "without inference_url there is no legacy slug — fallback must stay inert",
     );
+}
+
+// ── Local provider profile tests ─────────────────────────────────────────────
+
+#[test]
+fn mlx_provider_string_resolves() {
+    let config = Config::default();
+    let result = create_chat_provider_from_string("chat", "mlx:llama-3.1-8b", &config);
+    assert!(result.is_ok(), "mlx provider must resolve");
+    let (_, model) = result.unwrap();
+    assert_eq!(model, "llama-3.1-8b");
+}
+
+#[test]
+fn local_openai_provider_string_resolves() {
+    let config = Config::default();
+    let result = create_chat_provider_from_string("chat", "local-openai:phi3", &config);
+    assert!(result.is_ok(), "local-openai provider must resolve");
+    let (_, model) = result.unwrap();
+    assert_eq!(model, "phi3");
+}
+
+#[test]
+fn mlx_provider_empty_model_errors() {
+    let config = Config::default();
+    let result = create_chat_provider_from_string("chat", "mlx:", &config);
+    let err = result.err().expect("mlx: with empty model must error");
+    assert!(err.to_string().contains("empty model"));
+}
+
+#[test]
+fn local_openai_provider_empty_model_errors() {
+    let config = Config::default();
+    let result = create_chat_provider_from_string("chat", "local-openai:", &config);
+    let err = result
+        .err()
+        .expect("local-openai: with empty model must error");
+    assert!(err.to_string().contains("empty model"));
+}
+
+#[test]
+fn ollama_provider_passes_num_ctx() {
+    let mut config = Config::default();
+    config.local_ai.num_ctx = Some(32768);
+    let result = create_chat_provider_from_string("chat", "ollama:qwen3:14b", &config);
+    assert!(result.is_ok());
+    // The provider is constructed — num_ctx is set on the provider instance.
+    // Full integration test verifying the serialized body is in the JSON-RPC
+    // E2E suite; here we just confirm the factory doesn't reject it.
+}
+
+#[test]
+fn byok_fallback_skips_mlx_and_local_openai() {
+    let mut config = Config::default();
+    config.chat_provider = Some("mlx:llama3".to_string());
+    config.reasoning_provider = Some("local-openai:phi3".to_string());
+    // Neither should be picked up as a BYOK fallback
+    let result = resolve_byok_fallback_provider_string(&config);
+    assert!(
+        result.is_none(),
+        "local providers must not be BYOK fallbacks"
+    );
+}
+
+#[test]
+fn local_provider_string_detection() {
+    use crate::openhuman::inference::local::profile::is_local_provider_string;
+    assert!(is_local_provider_string("ollama:phi3"));
+    assert!(is_local_provider_string("lmstudio:model"));
+    assert!(is_local_provider_string("mlx:llama"));
+    assert!(is_local_provider_string("local-openai:qwen2"));
+    assert!(!is_local_provider_string("openai:gpt-4o"));
+    assert!(!is_local_provider_string("openhuman"));
+    assert!(!is_local_provider_string("cloud"));
+}
+
+// ── resolve_model_for_hint ──────────────────────────────────────────────
+
+#[test]
+fn resolve_model_for_hint_maps_known_hints_to_tiers() {
+    let config = Config::default();
+    assert_eq!(
+        resolve_model_for_hint("hint:reasoning", &config),
+        "reasoning-v1"
+    );
+    assert_eq!(
+        resolve_model_for_hint("hint:chat", &config),
+        "reasoning-quick-v1"
+    );
+    assert_eq!(
+        resolve_model_for_hint("hint:agentic", &config),
+        "agentic-v1"
+    );
+    assert_eq!(resolve_model_for_hint("hint:coding", &config), "coding-v1");
+    assert_eq!(
+        resolve_model_for_hint("hint:summarization", &config),
+        "summarization-v1"
+    );
+}
+
+#[test]
+fn resolve_model_for_hint_passes_through_tier_names() {
+    let config = Config::default();
+    assert_eq!(
+        resolve_model_for_hint("reasoning-v1", &config),
+        "reasoning-v1"
+    );
+    assert_eq!(resolve_model_for_hint("agentic-v1", &config), "agentic-v1");
+    assert_eq!(resolve_model_for_hint("coding-v1", &config), "coding-v1");
+}
+
+#[test]
+fn resolve_model_for_hint_extracts_model_from_byok_provider() {
+    let mut config = Config::default();
+    config.reasoning_provider = Some("openai:gpt-4o".to_string());
+    assert_eq!(resolve_model_for_hint("hint:reasoning", &config), "gpt-4o");
+
+    config.chat_provider = Some("anthropic:claude-sonnet-4-20250514".to_string());
+    assert_eq!(
+        resolve_model_for_hint("hint:chat", &config),
+        "claude-sonnet-4-20250514"
+    );
+}
+
+#[test]
+fn resolve_model_for_hint_falls_through_openhuman_and_cloud_sentinels() {
+    let mut config = Config::default();
+    config.reasoning_provider = Some("openhuman".to_string());
+    assert_eq!(
+        resolve_model_for_hint("hint:reasoning", &config),
+        "reasoning-v1"
+    );
+
+    config.reasoning_provider = Some("cloud".to_string());
+    assert_eq!(
+        resolve_model_for_hint("hint:reasoning", &config),
+        "reasoning-v1"
+    );
+
+    config.reasoning_provider = Some("".to_string());
+    assert_eq!(
+        resolve_model_for_hint("hint:reasoning", &config),
+        "reasoning-v1"
+    );
+}
+
+#[test]
+fn resolve_model_for_hint_handles_unknown_hint_passthrough() {
+    let config = Config::default();
+    let result = resolve_model_for_hint("hint:unknown_tier", &config);
+    assert_eq!(result, "hint:unknown_tier");
 }

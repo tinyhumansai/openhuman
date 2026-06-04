@@ -198,6 +198,7 @@ async fn web_start_chat_validation_forced_error_and_cancel_paths_are_structured(
             None,
             None,
             None,
+            None,
             ChatRequestMetadata::default()
         )
         .await
@@ -209,6 +210,7 @@ async fn web_start_chat_validation_forced_error_and_cancel_paths_are_structured(
             "client",
             " ",
             "hello",
+            None,
             None,
             None,
             None,
@@ -231,6 +233,7 @@ async fn web_start_chat_validation_forced_error_and_cancel_paths_are_structured(
         "Please respond through the forced error seam.",
         Some(" ".to_string()),
         Some(0.4),
+        None,
         None,
         None,
         ChatRequestMetadata::default(),

@@ -29,8 +29,8 @@ use super::ingest::ingest_page_into_memory_tree;
 use super::sync;
 use crate::openhuman::memory_sync::composio::providers::sync_state::{extract_item_id, SyncState};
 use crate::openhuman::memory_sync::composio::providers::{
-    pick_str, ComposioProvider, CuratedTool, ProviderContext, ProviderUserProfile, SyncOutcome,
-    SyncReason,
+    pick_str, resolve_sync_interval_secs, ComposioProvider, CuratedTool, ProviderContext,
+    ProviderUserProfile, SyncOutcome, SyncReason,
 };
 
 const ACTION_GET_PROFILE: &str = "GMAIL_GET_PROFILE";
@@ -117,7 +117,7 @@ impl ComposioProvider for GmailProvider {
     }
 
     fn sync_interval_secs(&self) -> Option<u64> {
-        Some(15 * 60)
+        Some(resolve_sync_interval_secs("gmail", 15 * 60))
     }
 
     fn post_process_action_result(

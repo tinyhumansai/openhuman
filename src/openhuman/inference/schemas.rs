@@ -28,6 +28,11 @@ struct InferenceVisionPromptParams {
 }
 
 #[derive(Debug, Deserialize)]
+struct InferenceResolveModelParams {
+    hint: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct InferenceTestProviderModelParams {
     workload: String,
     provider: String,
@@ -120,6 +125,7 @@ struct InferenceOpenAiOAuthCompleteParams {
 
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
+        schemas("resolve_model"),
         schemas("status"),
         schemas("get_client_config"),
         schemas("update_model_settings"),
@@ -140,11 +146,17 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("test_provider_model"),
         schemas("should_react"),
         schemas("analyze_sentiment"),
+        schemas("claude_code_status"),
+        schemas("claude_code_auth_status"),
     ]
 }
 
 pub fn all_registered_controllers() -> Vec<RegisteredController> {
     vec![
+        RegisteredController {
+            schema: schemas("resolve_model"),
+            handler: handle_inference_resolve_model,
+        },
         RegisteredController {
             schema: schemas("status"),
             handler: handle_inference_status,
@@ -225,11 +237,26 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
             schema: schemas("analyze_sentiment"),
             handler: handle_inference_analyze_sentiment,
         },
+        RegisteredController {
+            schema: schemas("claude_code_status"),
+            handler: handle_inference_claude_code_status,
+        },
+        RegisteredController {
+            schema: schemas("claude_code_auth_status"),
+            handler: handle_inference_claude_code_auth_status,
+        },
     ]
 }
 
 pub fn schemas(function: &str) -> ControllerSchema {
     match function {
+        "resolve_model" => ControllerSchema {
+            namespace: "inference",
+            function: "resolve_model",
+            description: "Resolve a model hint or tier name to the concrete model the provider router would use.",
+            inputs: vec![required_string("hint", "Model hint (e.g. hint:reasoning) or tier name (e.g. reasoning-v1).")],
+            outputs: vec![json_output("model", "Resolved concrete model id.")],
+        },
         "status" => ControllerSchema {
             namespace: "inference",
             function: "status",
@@ -436,6 +463,26 @@ pub fn schemas(function: &str) -> ControllerSchema {
             inputs: vec![required_string("message", "User message content to classify.")],
             outputs: vec![json_output("sentiment", "Sentiment analysis payload.")],
         },
+        "claude_code_status" => ControllerSchema {
+            namespace: "inference",
+            function: "claude_code_status",
+            description: "Probe the local `claude` CLI binary (Claude Code CLI provider) and return install + version status.",
+            inputs: vec![],
+            outputs: vec![json_output(
+                "status",
+                "CliStatus payload: ok | not_installed | outdated | unusable, with version + path when present.",
+            )],
+        },
+        "claude_code_auth_status" => ControllerSchema {
+            namespace: "inference",
+            function: "claude_code_auth_status",
+            description: "Detect Claude Code CLI auth state (Pro/Max subscription via credentials.json, API key env, or none). No CLI spawn, no token round-trip.",
+            inputs: vec![],
+            outputs: vec![json_output(
+                "auth",
+                "AuthStatus payload: source = subscription | api_key_env | none, plus optional account_email + expires_at + last_checked.",
+            )],
+        },
         other => panic!("unknown inference schema: {other}"),
     }
 }
@@ -501,6 +548,20 @@ fn json_output(name: &'static str, comment: &'static str) -> FieldSchema {
         comment,
         required: true,
     }
+}
+
+fn handle_inference_resolve_model(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let p = deserialize_params::<InferenceResolveModelParams>(params)?;
+        let config = config_rpc::load_config_with_timeout().await?;
+        let resolved = crate::openhuman::inference::provider::factory::resolve_model_for_hint(
+            &p.hint, &config,
+        );
+        to_json(RpcOutcome::new(
+            serde_json::json!({ "model": resolved }),
+            vec![],
+        ))
+    })
 }
 
 fn handle_inference_status(_params: Map<String, Value>) -> ControllerFuture {
@@ -815,6 +876,28 @@ fn handle_inference_analyze_sentiment(params: Map<String, Value>) -> ControllerF
             crate::openhuman::inference::rpc::inference_analyze_sentiment(&config, &p.message)
                 .await?,
         )
+    })
+}
+
+fn handle_inference_claude_code_status(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let status = tokio::task::spawn_blocking(
+            crate::openhuman::inference::provider::claude_code::version_check::probe,
+        )
+        .await
+        .map_err(|e| format!("claude_code_status join error: {e}"))?;
+        to_json(RpcOutcome::new(status, vec![]))
+    })
+}
+
+fn handle_inference_claude_code_auth_status(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let auth = tokio::task::spawn_blocking(
+            crate::openhuman::inference::provider::claude_code::auth_status::probe,
+        )
+        .await
+        .map_err(|e| format!("claude_code_auth_status join error: {e}"))?;
+        to_json(RpcOutcome::new(auth, vec![]))
     })
 }
 

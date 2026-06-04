@@ -21,6 +21,11 @@ const mockUseUsageState = vi.hoisted(() =>
 );
 vi.mock('../../hooks/useUsageState', () => ({ useUsageState: mockUseUsageState }));
 
+const mockUseOpenRouterFreeModels = vi.hoisted(() => vi.fn());
+vi.mock('../../services/api/openrouterFreeModels', () => ({
+  applyOpenRouterFreeModels: () => mockUseOpenRouterFreeModels(),
+}));
+
 // Default: return 'ok' so most tests see the normal state. The
 // blocking-state selector is the only thing this mock is asked to
 // resolve from the live code; Home.tsx also reads `theme.mode`, which
@@ -215,5 +220,20 @@ describe('Home page — budget completed banner', () => {
 
     expect(screen.getByText(/Exhausted Your Usage/i)).toBeInTheDocument();
     expect(screen.getByText(/out of included usage/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Use OpenRouter free models/i })).toBeInTheDocument();
+  });
+
+  it('clicking OpenRouter free models runs the routing helper', async () => {
+    mockUseUsageState.mockReturnValueOnce({ shouldShowBudgetCompletedMessage: true });
+    mockUseOpenRouterFreeModels.mockResolvedValueOnce(undefined);
+
+    const { default: Home } = await import('../Home');
+    render(<Home />);
+
+    fireEvent.click(screen.getByRole('button', { name: /Use OpenRouter free models/i }));
+
+    await waitFor(() => {
+      expect(mockUseOpenRouterFreeModels).toHaveBeenCalledTimes(1);
+    });
   });
 });

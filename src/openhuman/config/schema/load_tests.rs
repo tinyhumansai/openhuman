@@ -1846,3 +1846,94 @@ allowed_users = ["@admin"]
          (got {reloaded_token:?})"
     );
 }
+
+// ── resolve_action_dir precedence (env > override > default), issue #3240 ──────
+
+#[test]
+fn resolve_action_dir_env_beats_override_and_default() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    unsafe {
+        std::env::set_var(ACTION_DIR_ENV_VAR, "/tmp/env-action-dir");
+    }
+    let over = Some(PathBuf::from("/tmp/override-action-dir"));
+    assert_eq!(
+        resolve_action_dir(&over),
+        PathBuf::from("/tmp/env-action-dir"),
+        "env var must win over a persisted override"
+    );
+    unsafe {
+        std::env::remove_var(ACTION_DIR_ENV_VAR);
+    }
+}
+
+#[test]
+fn resolve_action_dir_override_beats_default_when_no_env() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    unsafe {
+        std::env::remove_var(ACTION_DIR_ENV_VAR);
+    }
+    let over = Some(PathBuf::from("/tmp/override-action-dir"));
+    assert_eq!(
+        resolve_action_dir(&over),
+        PathBuf::from("/tmp/override-action-dir"),
+        "override must be used when no env var is set"
+    );
+}
+
+#[test]
+fn resolve_action_dir_falls_back_to_default_when_none() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    unsafe {
+        std::env::remove_var(ACTION_DIR_ENV_VAR);
+    }
+    assert_eq!(
+        resolve_action_dir(&None),
+        default_projects_dir(),
+        "no env + no override must fall back to the default projects dir"
+    );
+}
+
+#[test]
+fn resolve_action_dir_blank_env_does_not_pin() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    unsafe {
+        std::env::set_var(ACTION_DIR_ENV_VAR, "   ");
+    }
+    let over = Some(PathBuf::from("/tmp/override-action-dir"));
+    assert_eq!(
+        resolve_action_dir(&over),
+        PathBuf::from("/tmp/override-action-dir"),
+        "blank env var must be ignored so the override still applies"
+    );
+    unsafe {
+        std::env::remove_var(ACTION_DIR_ENV_VAR);
+    }
+}
+
+#[test]
+fn resolve_action_dir_rejects_relative_override() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    unsafe {
+        std::env::remove_var(ACTION_DIR_ENV_VAR);
+    }
+    let over = Some(PathBuf::from("relative/projects"));
+    assert_eq!(
+        resolve_action_dir(&over),
+        default_projects_dir(),
+        "relative override must be ignored, falling back to default"
+    );
+}
+
+#[test]
+fn resolve_action_dir_rejects_empty_override() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    unsafe {
+        std::env::remove_var(ACTION_DIR_ENV_VAR);
+    }
+    let over = Some(PathBuf::from(""));
+    assert_eq!(
+        resolve_action_dir(&over),
+        default_projects_dir(),
+        "empty override must be ignored, falling back to default"
+    );
+}

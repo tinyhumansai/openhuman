@@ -920,11 +920,14 @@ pub(crate) async fn spawn_skill_run_background(
     // toolchain are loaded fresh per run; the parent returns the handle
     // immediately. Same flow handle_skills_run used to inline — extracted
     // so the `run_skill` agent tool can re-use it for skill chaining.
+    let inherited_origin = crate::openhuman::agent::turn_origin::current()
+        .unwrap_or(crate::openhuman::agent::turn_origin::AgentTurnOrigin::Cli);
     {
         let run_id = run_id.clone();
         let skill_id = skill_id.clone();
         let inputs = inputs.clone();
         let log_path = log_path.clone();
+        let inherited_origin = inherited_origin.clone();
         tokio::spawn(async move {
             if let Err(e) =
                 run_log::write_header(&log_path, &skill_id, &run_id, &inputs, &task_prompt).await
@@ -974,9 +977,15 @@ pub(crate) async fn spawn_skill_run_background(
             let bridge = tokio::spawn(run_log::drain_to_log(rx, log_path.clone()));
 
             let started = std::time::Instant::now();
-            let result =
-                with_autonomous_iter_cap(SKILL_RUN_MAX_ITERATIONS, agent.run_single(&task_prompt))
-                    .await;
+            // Inherit the parent turn's origin so a skill triggered from an
+            // ExternalChannel / tainted context retains its provenance
+            // through the approval gate. Falls back to Cli for direct
+            // user-initiated RPC / CLI flows.
+            let result = crate::openhuman::agent::turn_origin::with_origin(
+                inherited_origin,
+                with_autonomous_iter_cap(SKILL_RUN_MAX_ITERATIONS, agent.run_single(&task_prompt)),
+            )
+            .await;
             agent.set_on_progress(None);
             drop(agent);
             let _ = bridge.await;

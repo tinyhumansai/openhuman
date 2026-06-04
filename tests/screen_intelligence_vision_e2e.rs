@@ -286,6 +286,7 @@ async fn vision_pipeline_compress_parse_persist() {
         category: "screen_intelligence".to_string(),
         session_id: None,
         document_id: None,
+        taint: openhuman_core::openhuman::memory::MemoryTaint::Internal,
     })
     .await
     .expect("upsert_document");
@@ -360,6 +361,7 @@ async fn multiple_vision_summaries_persist_and_query() {
             category: "screen_intelligence".to_string(),
             session_id: None,
             document_id: None,
+            taint: openhuman_core::openhuman::memory::MemoryTaint::Internal,
         })
         .await
         .expect("upsert");
@@ -472,6 +474,7 @@ async fn vision_summary_upsert_is_idempotent() {
         category: "screen_intelligence".to_string(),
         session_id: None,
         document_id: None,
+        taint: openhuman_core::openhuman::memory::MemoryTaint::Internal,
     })
     .await
     .expect("first upsert");
@@ -489,6 +492,7 @@ async fn vision_summary_upsert_is_idempotent() {
         category: "screen_intelligence".to_string(),
         session_id: None,
         document_id: None,
+        taint: openhuman_core::openhuman::memory::MemoryTaint::Internal,
     })
     .await
     .expect("second upsert");
@@ -677,6 +681,7 @@ async fn vision_summary_struct_persist_and_deserialize_roundtrip() {
         category: "screen_intelligence".to_string(),
         session_id: None,
         document_id: None,
+        taint: openhuman_core::openhuman::memory::MemoryTaint::Internal,
     })
     .await
     .expect("upsert_document");

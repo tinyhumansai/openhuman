@@ -41,6 +41,7 @@ fn sample_hit() -> NamespaceMemoryHit {
             document_ids: vec!["doc-1".to_string()],
             chunk_ids: vec!["doc-1#chunk-1".to_string()],
         }],
+        taint: crate::openhuman::memory::MemoryTaint::Internal,
     }
 }
 
@@ -94,6 +95,7 @@ fn sample_hit_with_entity_types() -> NamespaceMemoryHit {
             document_ids: vec!["doc-2".to_string()],
             chunk_ids: vec!["doc-2#chunk-1".to_string()],
         }],
+        taint: crate::openhuman::memory::MemoryTaint::Internal,
     }
 }
 

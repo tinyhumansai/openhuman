@@ -160,6 +160,7 @@ mod tests {
                 labels: vec![],
                 assignee_is_me: true,
                 state: None,
+                fetch_mode: Default::default(),
                 extra: json!({}),
             },
             interval_secs,

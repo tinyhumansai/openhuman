@@ -25,6 +25,11 @@ pub(crate) fn linear_source_id(connection_id: &str, issue_id: &str) -> String {
     format!("linear:{connection_id}:{issue_id}")
 }
 
+/// Build the source tree / raw archive scope for one Linear connection.
+pub(crate) fn linear_source_scope(connection_id: &str) -> String {
+    format!("linear:{connection_id}")
+}
+
 /// Render the raw Linear issue payload as a markdown document body.
 fn render_issue_body(title: &str, issue: &Value) -> String {
     let pretty = serde_json::to_string_pretty(issue).unwrap_or_else(|_| "{}".to_string());
@@ -92,9 +97,14 @@ pub async fn ingest_issue_into_memory_tree(
         source_ref,
     };
     let tags: Vec<String> = DEFAULT_TAGS.iter().map(|s| s.to_string()).collect();
-    let owner = format!("linear:{connection_id}");
+    let owner = linear_source_scope(connection_id);
+    let path_scope = Some(owner.clone());
 
-    match ingest_pipeline::ingest_document(config, &source_id, &owner, tags, doc).await {
+    match ingest_pipeline::ingest_document_with_scope(
+        config, &source_id, &owner, tags, doc, path_scope,
+    )
+    .await
+    {
         Ok(IngestResult {
             chunks_written,
             already_ingested,
@@ -159,6 +169,17 @@ mod tests {
     }
 
     #[test]
+    fn linear_source_scope_is_connection_level() {
+        assert_eq!(linear_source_scope("conn-1"), "linear:conn-1");
+        assert_eq!(linear_source_scope("conn-2"), "linear:conn-2");
+        assert_eq!(
+            linear_source_scope("conn-1"),
+            linear_source_scope("conn-1"),
+            "scope must stay stable across issues in one connection"
+        );
+    }
+
+    #[test]
     fn parse_updated_time_handles_valid_and_invalid_inputs() {
         let good = parse_updated_time(Some("2026-05-28T12:34:56.000Z"));
         assert_eq!(good.format("%Y-%m-%d").to_string(), "2026-05-28");
@@ -186,11 +207,15 @@ mod tests {
 
     #[tokio::test]
     async fn ingest_issue_writes_to_memory_tree() {
-        use crate::openhuman::memory_store::chunks::store::{count_chunks, is_source_ingested};
+        use crate::openhuman::memory_store::chunks::store::{
+            count_chunks, is_source_ingested, list_chunks, ListChunksQuery,
+        };
 
         let (_tmp, cfg) = test_config();
         let connection_id = "conn-linear";
         let issue_id = "issue-routing";
+        let expected = linear_source_id(connection_id, issue_id);
+        let expected_scope = linear_source_scope(connection_id);
         let issue = sample_issue(issue_id, "2026-05-28T10:00:00.000Z");
         let chunks_before = count_chunks(&cfg).expect("count_chunks before");
 
@@ -212,10 +237,28 @@ mod tests {
             "ingest must populate mem_tree_chunks (#2885)"
         );
 
+        let rows = list_chunks(
+            &cfg,
+            &ListChunksQuery {
+                source_kind: Some(SourceKind::Document),
+                source_id: Some(expected.clone()),
+                limit: Some(1),
+                ..Default::default()
+            },
+        )
+        .expect("list chunks for linear issue");
+        let chunk = rows.first().expect("linear chunk should be listed");
+        assert_eq!(chunk.metadata.source_id, expected.as_str());
+        assert_eq!(
+            chunk.metadata.path_scope.as_deref(),
+            Some(expected_scope.as_str())
+        );
+
         let cfg_for_blocking = cfg.clone();
-        let expected = linear_source_id(connection_id, issue_id);
+        let expected_for_task = expected.clone();
         let registered = tokio::task::spawn_blocking(move || {
-            is_source_ingested(&cfg_for_blocking, SourceKind::Document, &expected).unwrap_or(false)
+            is_source_ingested(&cfg_for_blocking, SourceKind::Document, &expected_for_task)
+                .unwrap_or(false)
         })
         .await
         .expect("source-check task join");

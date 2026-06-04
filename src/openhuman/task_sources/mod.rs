@@ -27,7 +27,9 @@ pub mod store;
 pub mod tools;
 pub mod types;
 
-pub use crate::openhuman::memory_sync::composio::providers::{NormalizedTask, TaskFetchFilter};
+pub use crate::openhuman::memory_sync::composio::providers::{
+    NormalizedTask, TaskContainer, TaskFetchFilter, TaskKind,
+};
 pub use periodic::start_periodic_poll;
 pub use pipeline::run_source_once;
 pub use route::TASK_SOURCES_THREAD_ID;

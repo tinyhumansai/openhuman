@@ -40,6 +40,20 @@ mod summaries;
 /// Rough chars-per-token estimate for budget enforcement.
 const CHARS_PER_TOKEN: usize = 4;
 
+/// Result of building a subconscious situation report.
+///
+/// `has_external_content` is true iff the prompt now contains content
+/// derived from third-party sync sources (Gmail / Slack / Notion / chat
+/// transcripts / sealed source summaries). The subconscious engine uses
+/// this signal to upgrade the tick's `AgentTurnOrigin` to
+/// `TrustedAutomationSource::SubconsciousTainted`, which makes the
+/// approval gate refuse external_effect tools for the rest of the tick.
+#[derive(Debug, Clone)]
+pub struct SituationReport {
+    pub prompt_text: String,
+    pub has_external_content: bool,
+}
+
 /// Build the situation report for one subconscious tick.
 ///
 /// `last_tick_at` is 0.0 on cold start (include everything in the
@@ -54,10 +68,11 @@ pub async fn build_situation_report(
     last_tick_at: f64,
     token_budget: u32,
     recent_reflections: &[Reflection],
-) -> String {
+) -> SituationReport {
     let char_budget = (token_budget as usize) * CHARS_PER_TOKEN;
     let mut report = String::with_capacity(char_budget.min(64_000));
     let mut remaining = char_budget;
+    let mut has_external_content = false;
 
     // Section 1: environment anchor.
     let env_section = build_environment_section(workspace_dir);
@@ -74,12 +89,15 @@ pub async fn build_situation_report(
     append_section(&mut report, &mut remaining, &tasks_section);
 
     // Section 4: recently-sealed source summaries since last tick.
-    let summaries_section = summaries::build_section(config, last_tick_at).await;
+    let (summaries_section, summaries_tainted) =
+        summaries::build_section(config, last_tick_at).await;
     append_section(&mut report, &mut remaining, &summaries_section);
+    has_external_content |= summaries_tainted;
 
     // Section 5: source-tree recap window since last tick.
-    let recap_section = query_window::build_section(config, last_tick_at).await;
+    let (recap_section, recap_tainted) = query_window::build_section(config, last_tick_at).await;
     append_section(&mut report, &mut remaining, &recap_section);
+    has_external_content |= recap_tainted;
 
     // Section 6: previous reflections (anti-double-emit context).
     let reflections_section = reflections::build_section(recent_reflections);
@@ -89,7 +107,10 @@ pub async fn build_situation_report(
         report.push_str("No state changes detected since last tick.\n");
     }
 
-    report
+    SituationReport {
+        prompt_text: report,
+        has_external_content,
+    }
 }
 
 fn build_environment_section(workspace_dir: &Path) -> String {

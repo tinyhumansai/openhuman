@@ -39,6 +39,11 @@ export function UserTaskComposer({ onCreated, onClose }: UserTaskComposerProps) 
   const [objective, setObjective] = useState('');
   const [notes, setNotes] = useState('');
   const [attachThreadId, setAttachThreadId] = useState('');
+  // When on, the new personal-board card is assigned to the orchestrator so the
+  // task dispatcher's poller auto-picks and runs it. Off → a plain manual todo
+  // the poller never touches. Only meaningful on the personal board (the poller
+  // doesn't poll attached conversation threads), so it's disabled when attaching.
+  const [assignToAgent, setAssignToAgent] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -53,17 +58,25 @@ export function UserTaskComposer({ onCreated, onClose }: UserTaskComposerProps) 
     const trimmedTitle = title.trim();
     if (!trimmedTitle || submitting) return;
     const threadId = attachThreadId || USER_TASKS_THREAD_ID;
+    // Auto-pick only works on the personal board (the poller doesn't poll
+    // attached conversation threads), so ignore the toggle when attaching.
+    const assign = assignToAgent && !attachThreadId;
     setSubmitting(true);
     setError(null);
-    log('submit threadId=%s status=%s', threadId, status);
+    log('submit threadId=%s status=%s assign=%s', threadId, status, assign);
     try {
+      // Assigning to the orchestrator + waiving the per-card approval gate so
+      // the dispatcher's poller picks it up and runs it — done atomically in
+      // the single `add` call (no create-then-edit race / partial failure).
       const board = await todosApi.add({
         threadId,
         content: trimmedTitle,
         status,
         objective: objective.trim() || null,
         notes: notes.trim() || null,
+        ...(assign ? { assignedAgent: 'orchestrator', approvalMode: 'not_required' } : {}),
       });
+
       onCreated(threadId, board);
       onClose();
     } catch (err) {
@@ -166,6 +179,24 @@ export function UserTaskComposer({ onCreated, onClose }: UserTaskComposerProps) 
               placeholder={t('intelligence.tasks.composer.notesPlaceholder')}
               className="w-full resize-y rounded-md border border-stone-200 bg-white px-2 py-1.5 text-sm text-stone-900 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-50"
             />
+          </label>
+
+          <label className="flex items-start gap-2">
+            <input
+              type="checkbox"
+              checked={assignToAgent && !attachThreadId}
+              disabled={attachThreadId !== ''}
+              onChange={e => setAssignToAgent(e.target.checked)}
+              className="mt-0.5 h-4 w-4 flex-none rounded border-stone-300 text-ocean-600 focus:ring-ocean-500 disabled:opacity-50 dark:border-neutral-600 dark:bg-neutral-950"
+            />
+            <span className="text-xs text-stone-600 dark:text-neutral-300">
+              <span className="font-semibold text-stone-700 dark:text-neutral-200">
+                {t('intelligence.tasks.composer.assignAgentLabel')}
+              </span>
+              <span className="mt-0.5 block text-stone-500 dark:text-neutral-400">
+                {t('intelligence.tasks.composer.assignAgentHint')}
+              </span>
+            </span>
           </label>
 
           {error && (

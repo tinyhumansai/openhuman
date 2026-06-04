@@ -10,6 +10,7 @@ import {
 import { useUsageState } from '../hooks/useUsageState';
 import { useUser } from '../hooks/useUser';
 import { useT } from '../lib/i18n/I18nContext';
+import { applyOpenRouterFreeModels } from '../services/api/openrouterFreeModels';
 import { restartCoreProcess } from '../services/coreProcessControl';
 import { selectBlockingState } from '../store/connectivitySelectors';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
@@ -64,6 +65,7 @@ const Home = () => {
   const blocking = useAppSelector(selectBlockingState);
   const [isRestartingCore, setIsRestartingCore] = useState(false);
   const [restartError, setRestartError] = useState<string | null>(null);
+  const [openRouterStatus, setOpenRouterStatus] = useState<'idle' | 'saving' | 'error'>('idle');
 
   const dispatch = useAppDispatch();
   const themeMode = useAppSelector(state => state.theme.mode) as ThemeMode;
@@ -82,6 +84,18 @@ const Home = () => {
       setRestartError(err instanceof Error ? err.message : String(err));
     } finally {
       setIsRestartingCore(false);
+    }
+  };
+
+  const handleUseOpenRouterFree = async () => {
+    setOpenRouterStatus('saving');
+    try {
+      await applyOpenRouterFreeModels();
+      setOpenRouterStatus('idle');
+      navigate('/chat');
+    } catch (err) {
+      console.warn('[home] applyOpenRouterFreeModels failed', err);
+      setOpenRouterStatus('error');
     }
   };
 
@@ -143,7 +157,20 @@ const Home = () => {
             title={t('home.usageExhaustedTitle')}
             message={t('home.usageExhaustedBody')}
             ctaLabel={t('home.usageExhaustedCta')}
+            secondaryCtaLabel={
+              openRouterStatus === 'saving' ? t('openrouterFree.saving') : t('openrouterFree.cta')
+            }
+            onSecondaryCtaClick={() => {
+              if (openRouterStatus !== 'saving') {
+                void handleUseOpenRouterFree();
+              }
+            }}
           />
+        )}
+        {openRouterStatus === 'error' && (
+          <div className="mb-3 rounded-lg border border-coral-200 bg-coral-50 px-3 py-2 text-xs text-coral-700 dark:border-coral-500/30 dark:bg-coral-900/20 dark:text-coral-200">
+            {t('openrouterFree.error')}
+          </div>
         )}
 
         {showPromoBanner && <PromotionalCreditsBanner promoCredits={promoCredits} />}

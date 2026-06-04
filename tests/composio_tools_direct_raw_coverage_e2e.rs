@@ -164,7 +164,7 @@ async fn direct_composio_tool_uses_loopback_for_list_execute_connect_and_account
     let execute_result = tool
         .execute(json!({
             "action": "execute",
-            "tool_slug": "gmail-fetch-emails",
+            "tool_slug": "GMAIL_FETCH_EMAILS",
             "params": { "query": "newer_than:1d" },
             "connected_account_id": "acct-gmail"
         }))
@@ -204,7 +204,7 @@ async fn direct_composio_tool_uses_loopback_for_list_execute_connect_and_account
     }));
     assert!(requests.iter().any(|request| {
         request.method == "POST"
-            && request.path == "/api/v3/tools/gmail-fetch-emails/execute"
+            && request.path == "/api/v3/tools/execute/GMAIL_FETCH_EMAILS"
             && request.body.pointer("/user_id") == Some(&json!(" entity-override "))
             && request.body.pointer("/connected_account_id") == Some(&json!("acct-gmail"))
     }));
@@ -319,14 +319,14 @@ async fn composio_direct_handler(State(state): State<MockState>, request: Reques
             ]
         }))
         .into_response(),
-        (Method::POST, "/api/v3/tools/gmail-fetch-emails/execute") => Json(json!({
+        (Method::POST, "/api/v3/tools/execute/GMAIL_FETCH_EMAILS") => Json(json!({
             "successful": true,
             "data": {
                 "messages": [{ "id": "msg-direct", "subject": "hello" }]
             }
         }))
         .into_response(),
-        (Method::POST, "/api/v3/tools/fallback-action/execute") => (
+        (Method::POST, "/api/v3/tools/execute/FALLBACK_ACTION") => (
             StatusCode::BAD_GATEWAY,
             Json(json!({
                 "error": { "message": "temporary v3 outage" }
@@ -338,7 +338,7 @@ async fn composio_direct_handler(State(state): State<MockState>, request: Reques
             "input": body.get("input").cloned().unwrap_or_else(|| json!({}))
         }))
         .into_response(),
-        (Method::POST, "/api/v3/tools/broken-action/execute") => (
+        (Method::POST, "/api/v3/tools/execute/BROKEN_ACTION") => (
             StatusCode::BAD_REQUEST,
             Json(json!({
                 "error": {

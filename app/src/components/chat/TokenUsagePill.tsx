@@ -84,6 +84,7 @@ const TokenUsagePill = () => {
       {showPlanPill ? (
         <button
           type="button"
+          data-analytics-id="chat-token-plan-pill"
           onClick={() => {
             void openUrl(BILLING_DASHBOARD_URL);
           }}

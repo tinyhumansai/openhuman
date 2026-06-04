@@ -6,6 +6,7 @@
 //! exactly once in the file (so the model can't accidentally edit
 //! every match). Set `replace_all` to override.
 
+use crate::openhuman::file_state;
 use crate::openhuman::security::{CommandClass, GateDecision, SecurityPolicy};
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
 use async_trait::async_trait;
@@ -135,6 +136,29 @@ impl Tool for EditFileTool {
             }
         }
 
+        // Acquire per-path lock for the read-modify-write section.
+        let _path_guard = file_state::acquire_path_lock(&resolved).await;
+
+        // File-state guard: reject edits based on stale or partial reads.
+        if let Some(agent_id) = file_state::current_file_state_agent_id() {
+            if let Some(msg) = file_state::check_stale_read(&agent_id, &resolved) {
+                tracing::debug!(
+                    agent = %agent_id,
+                    path = %resolved.display(),
+                    "[file_state] edit blocked: stale read"
+                );
+                return Ok(ToolResult::error(msg));
+            }
+            if let Some(msg) = file_state::check_partial_read(&agent_id, &resolved) {
+                tracing::debug!(
+                    agent = %agent_id,
+                    path = %resolved.display(),
+                    "[file_state] edit blocked: partial read"
+                );
+                return Ok(ToolResult::error(msg));
+            }
+        }
+
         let contents = match tokio::fs::read_to_string(&resolved).await {
             Ok(c) => c,
             Err(e) => return Ok(ToolResult::error(format!("Failed to read file: {e}"))),
@@ -160,9 +184,14 @@ impl Tool for EditFileTool {
         };
 
         match tokio::fs::write(&resolved, &updated).await {
-            Ok(()) => Ok(ToolResult::success(format!(
-                "Edited {path}: {count} replacement(s)"
-            ))),
+            Ok(()) => {
+                if let Some(agent_id) = file_state::current_file_state_agent_id() {
+                    file_state::record_write(&agent_id, resolved);
+                }
+                Ok(ToolResult::success(format!(
+                    "Edited {path}: {count} replacement(s)"
+                )))
+            }
             Err(e) => Ok(ToolResult::error(format!("Failed to write file: {e}"))),
         }
     }

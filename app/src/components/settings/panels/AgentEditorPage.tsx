@@ -361,6 +361,7 @@ const AgentEditorPage = () => {
                   )}
                   <button
                     type="button"
+                    aria-label={t('settings.agents.editor.selectTools')}
                     onClick={() => setToolsOpen(true)}
                     className="inline-flex items-center gap-1 rounded-full border border-dashed border-stone-300 px-2.5 py-1 text-xs font-medium text-stone-600 hover:border-ocean-400 hover:text-ocean-600 dark:border-neutral-700 dark:text-neutral-300 dark:hover:border-ocean-500 dark:hover:text-ocean-300">
                     <LuPlus className="h-3 w-3" />

@@ -265,6 +265,7 @@ async fn two_personalities_have_isolated_sqlite_stores() {
             category: "core".to_string(),
             session_id: None,
             document_id: None,
+            taint: openhuman_core::openhuman::memory::MemoryTaint::Internal,
         })
         .await
         .expect("write default");
@@ -282,6 +283,7 @@ async fn two_personalities_have_isolated_sqlite_stores() {
             category: "core".to_string(),
             session_id: None,
             document_id: None,
+            taint: openhuman_core::openhuman::memory::MemoryTaint::Internal,
         })
         .await
         .expect("write alice");
@@ -337,6 +339,7 @@ async fn personality_memory_persists_across_reopens() {
             category: "core".to_string(),
             session_id: None,
             document_id: None,
+            taint: openhuman_core::openhuman::memory::MemoryTaint::Internal,
         })
         .await
         .expect("write");

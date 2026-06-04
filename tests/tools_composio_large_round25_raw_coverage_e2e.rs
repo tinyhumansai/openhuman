@@ -282,7 +282,7 @@ async fn round25_direct_mode_ops_use_loopback_factory_for_tools_connections_and_
     }));
     assert!(requests.iter().any(|request| {
         request.method == Method::POST
-            && request.path == "/api/v3/tools/gmail-fetch-emails/execute"
+            && request.path == "/api/v3/tools/execute/GMAIL_FETCH_EMAILS"
             && request.body["arguments"]["query"] == "label:INBOX"
             && request.body["user_id"] == "entity-round25"
     }));
@@ -402,7 +402,7 @@ async fn composio_direct_handler(State(state): State<MockState>, request: Reques
             }
         }))
         .into_response(),
-        (Method::POST, "/api/v3/tools/gmail-fetch-emails/execute") => Json(json!({
+        (Method::POST, "/api/v3/tools/execute/GMAIL_FETCH_EMAILS") => Json(json!({
             "successful": true,
             "data": {
                 "messages": [
@@ -411,7 +411,7 @@ async fn composio_direct_handler(State(state): State<MockState>, request: Reques
             }
         }))
         .into_response(),
-        (Method::POST, "/api/v3/tools/gmail-send-email/execute") => Json(json!({
+        (Method::POST, "/api/v3/tools/execute/GMAIL_SEND_EMAIL") => Json(json!({
             "successful": false,
             "error": "provider rejected send",
             "data": {

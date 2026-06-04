@@ -1,6 +1,7 @@
 import { configureStore } from '@reduxjs/toolkit';
 import { createLogger } from 'redux-logger';
 import {
+  createTransform,
   FLUSH,
   PAUSE,
   PERSIST,
@@ -14,6 +15,12 @@ import {
 import { E2E_RESTART_APP_AS_RELOAD, IS_DEV } from '../utils/config';
 import accountsReducer from './accountsSlice';
 import agentProfileReducer from './agentProfileSlice';
+import {
+  type ArtifactsByThread,
+  filterArtifactsForPersist,
+  rehydrateArtifactsFromPersist,
+} from './artifactsPersistFilter';
+import backendMeetReducer from './backendMeetSlice';
 import channelConnectionsReducer from './channelConnectionsSlice';
 import chatRuntimeReducer from './chatRuntimeSlice';
 import companionReducer from './companionSlice';
@@ -162,12 +169,39 @@ const pttPersistConfig = {
 };
 const persistedPttReducer = persistReducer(pttPersistConfig, pttReducer);
 
+// chatRuntime is mostly ephemeral (streaming buffers, tool timelines,
+// inference status) — those MUST NOT survive a restart or the UI tries
+// to resume a turn whose live driver has gone. The single exception is
+// `artifactsByThread`: agent-generated files (#3024) survive across
+// restarts so the user can return to a thread and still find a deck
+// they made earlier. Only `status === 'ready'` snapshots are written;
+// in_progress / failed states stay session-scoped via the transform
+// below (a half-written PPT shouldn't reappear as "Generating…" on
+// cold boot).
+// Pure filter/rehydrate logic lives in `artifactsPersistFilter.ts` so it
+// can be exercised by unit tests without instantiating redux-persist's
+// transform machinery (which expects a running store).
+const artifactsReadyOnlyTransform = createTransform<ArtifactsByThread, ArtifactsByThread>(
+  filterArtifactsForPersist,
+  rehydrateArtifactsFromPersist,
+  { whitelist: ['artifactsByThread'] }
+);
+
+const chatRuntimePersistConfig = {
+  key: 'chatRuntime',
+  storage,
+  whitelist: ['artifactsByThread'],
+  transforms: [artifactsReadyOnlyTransform],
+};
+const persistedChatRuntimeReducer = persistReducer(chatRuntimePersistConfig, chatRuntimeReducer);
+
 export const store = configureStore({
   reducer: {
+    backendMeet: backendMeetReducer,
     socket: socketReducer,
     connectivity: connectivityReducer,
     thread: persistedThreadReducer,
-    chatRuntime: chatRuntimeReducer,
+    chatRuntime: persistedChatRuntimeReducer,
     companion: companionReducer,
     agentProfiles: agentProfileReducer,
     channelConnections: persistedChannelConnectionsReducer,

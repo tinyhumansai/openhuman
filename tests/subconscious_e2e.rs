@@ -33,6 +33,7 @@ async fn ingest_doc(
                 category: "core".to_string(),
                 session_id: None,
                 document_id: None,
+                taint: openhuman_core::openhuman::memory::MemoryTaint::Internal,
             },
             config: ci_safe_ingestion_config(),
         })

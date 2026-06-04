@@ -1523,3 +1523,200 @@ async fn apply_agent_settings_none_leaves_timeout_unchanged() {
 
     assert_eq!(cfg.agent.agent_timeout_secs, 250);
 }
+
+// ── apply_agent_paths_settings (action_dir editable, issue #3240) ──────────────
+
+#[tokio::test]
+async fn apply_agent_paths_valid_abs_path_persists_override_and_recomputes() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    // Ensure no env override is interfering.
+    unsafe {
+        std::env::remove_var("OPENHUMAN_ACTION_DIR");
+    }
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    let new_dir = tmp.path().join("agent-projects");
+    std::fs::create_dir_all(&new_dir).unwrap();
+
+    let outcome = apply_agent_paths_settings(
+        &mut cfg,
+        AgentPathsPatch {
+            action_dir: Some(new_dir.to_string_lossy().to_string()),
+        },
+    )
+    .await
+    .expect("apply agent paths");
+
+    assert_eq!(cfg.action_dir_override.as_deref(), Some(new_dir.as_path()));
+    assert_eq!(cfg.action_dir, new_dir);
+    assert_eq!(
+        outcome.value["action_dir"],
+        serde_json::json!(new_dir.display().to_string())
+    );
+    assert_eq!(
+        outcome.value["action_dir_source"],
+        serde_json::json!("override")
+    );
+}
+
+#[tokio::test]
+async fn apply_agent_paths_rejects_relative_path() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    unsafe {
+        std::env::remove_var("OPENHUMAN_ACTION_DIR");
+    }
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+
+    let err = apply_agent_paths_settings(
+        &mut cfg,
+        AgentPathsPatch {
+            action_dir: Some("relative/projects".into()),
+        },
+    )
+    .await
+    .expect_err("relative path must be rejected");
+
+    assert!(err.contains("absolute"), "unexpected error: {err}");
+    assert!(cfg.action_dir_override.is_none());
+}
+
+#[tokio::test]
+async fn apply_agent_paths_rejects_action_dir_equal_to_workspace() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    unsafe {
+        std::env::remove_var("OPENHUMAN_ACTION_DIR");
+    }
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    let workspace = cfg.workspace_dir.clone();
+
+    let err = apply_agent_paths_settings(
+        &mut cfg,
+        AgentPathsPatch {
+            action_dir: Some(workspace.to_string_lossy().to_string()),
+        },
+    )
+    .await
+    .expect_err("action_dir == workspace_dir must be rejected");
+
+    assert!(err.contains("workspace"), "unexpected error: {err}");
+    assert!(cfg.action_dir_override.is_none());
+}
+
+#[tokio::test]
+async fn apply_agent_paths_empty_input_clears_override() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    unsafe {
+        std::env::remove_var("OPENHUMAN_ACTION_DIR");
+    }
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    // Start with an override in place.
+    let prior = tmp.path().join("prior-projects");
+    std::fs::create_dir_all(&prior).unwrap();
+    cfg.action_dir_override = Some(prior);
+
+    let outcome = apply_agent_paths_settings(
+        &mut cfg,
+        AgentPathsPatch {
+            action_dir: Some("   ".into()),
+        },
+    )
+    .await
+    .expect("clear override");
+
+    assert!(cfg.action_dir_override.is_none());
+    // Reverts to the default projects dir.
+    assert_eq!(
+        cfg.action_dir,
+        crate::openhuman::config::default_projects_dir()
+    );
+    assert_eq!(
+        outcome.value["action_dir_source"],
+        serde_json::json!("default")
+    );
+}
+
+#[tokio::test]
+async fn apply_agent_paths_auto_creates_missing_directory() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    unsafe {
+        std::env::remove_var("OPENHUMAN_ACTION_DIR");
+    }
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    let missing = tmp.path().join("not-yet").join("created");
+    assert!(!missing.exists());
+
+    apply_agent_paths_settings(
+        &mut cfg,
+        AgentPathsPatch {
+            action_dir: Some(missing.to_string_lossy().to_string()),
+        },
+    )
+    .await
+    .expect("auto-create action dir");
+
+    assert!(missing.is_dir(), "missing action_dir must be auto-created");
+    assert_eq!(cfg.action_dir, missing);
+}
+
+#[tokio::test]
+async fn apply_agent_paths_rejects_existing_file() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    unsafe {
+        std::env::remove_var("OPENHUMAN_ACTION_DIR");
+    }
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    let file = tmp.path().join("a-file.txt");
+    std::fs::write(&file, b"not a dir").unwrap();
+
+    let err = apply_agent_paths_settings(
+        &mut cfg,
+        AgentPathsPatch {
+            action_dir: Some(file.to_string_lossy().to_string()),
+        },
+    )
+    .await
+    .expect_err("a file path must be rejected");
+
+    assert!(err.contains("directory"), "unexpected error: {err}");
+    assert!(cfg.action_dir_override.is_none());
+}
+
+#[tokio::test]
+async fn apply_agent_paths_env_set_reports_source_env() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let tmp = tempdir().unwrap();
+    let env_dir = tmp.path().join("env-pinned");
+    std::fs::create_dir_all(&env_dir).unwrap();
+    unsafe {
+        std::env::set_var("OPENHUMAN_ACTION_DIR", &env_dir);
+    }
+
+    let mut cfg = tmp_config(&tmp);
+    // Even when the user sets an override, the env var wins for the effective
+    // value and the reported source.
+    let user_dir = tmp.path().join("user-choice");
+    std::fs::create_dir_all(&user_dir).unwrap();
+
+    let outcome = apply_agent_paths_settings(
+        &mut cfg,
+        AgentPathsPatch {
+            action_dir: Some(user_dir.to_string_lossy().to_string()),
+        },
+    )
+    .await
+    .expect("apply with env override present");
+
+    // Override is persisted, but the effective action_dir reflects the env.
+    assert_eq!(cfg.action_dir_override.as_deref(), Some(user_dir.as_path()));
+    assert_eq!(cfg.action_dir, env_dir);
+    assert_eq!(outcome.value["action_dir_source"], serde_json::json!("env"));
+
+    unsafe {
+        std::env::remove_var("OPENHUMAN_ACTION_DIR");
+    }
+}

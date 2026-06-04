@@ -8,7 +8,19 @@ use crate::openhuman::inference::provider::{temperature, thread_context};
 
 use super::{AuthStyle, OpenAiCompatibleProvider};
 
+const OPENROUTER_REFERER: &str = "https://openhuman.ai";
+const OPENROUTER_TITLE: &str = "OpenHuman";
+
 impl OpenAiCompatibleProvider {
+    /// Build the Ollama-specific `options` block for the request body.
+    /// Returns `None` when no `num_ctx` override is configured.
+    pub(super) fn build_ollama_options(&self) -> Option<super::compatible_types::OllamaOptions> {
+        self.ollama_num_ctx
+            .map(|num_ctx| super::compatible_types::OllamaOptions {
+                num_ctx: Some(num_ctx),
+            })
+    }
+
     /// Resolve the effective temperature for `model`. Returns `None` when the
     /// model matches a pattern in `temperature_unsupported_models` (causing the
     /// field to be omitted from the serialised request). Otherwise yields the
@@ -266,7 +278,7 @@ impl OpenAiCompatibleProvider {
                 .header("anthropic-version", "2023-06-01"),
             (AuthStyle::Custom(header), Some(credential)) => req.header(header, credential),
         };
-        self.apply_extra_headers(req)
+        self.apply_openrouter_attribution_headers(self.apply_extra_headers(req))
     }
 
     pub(super) fn apply_extra_headers(
@@ -280,5 +292,33 @@ impl OpenAiCompatibleProvider {
             req = req.header(name.as_str(), value.as_str());
         }
         req
+    }
+
+    pub(super) fn is_openrouter_endpoint(&self) -> bool {
+        if self.name.eq_ignore_ascii_case("openrouter") {
+            return true;
+        }
+
+        reqwest::Url::parse(&self.base_url)
+            .ok()
+            .and_then(|url| url.host_str().map(str::to_ascii_lowercase))
+            .is_some_and(|host| host == "openrouter.ai" || host.ends_with(".openrouter.ai"))
+    }
+
+    pub(super) fn apply_openrouter_attribution_headers(
+        &self,
+        req: reqwest::RequestBuilder,
+    ) -> reqwest::RequestBuilder {
+        if let Some((referer, title)) = self.openrouter_attribution_headers() {
+            req.header("HTTP-Referer", referer)
+                .header("X-OpenRouter-Title", title)
+        } else {
+            req
+        }
+    }
+
+    pub(super) fn openrouter_attribution_headers(&self) -> Option<(&'static str, &'static str)> {
+        self.is_openrouter_endpoint()
+            .then_some((OPENROUTER_REFERER, OPENROUTER_TITLE))
     }
 }

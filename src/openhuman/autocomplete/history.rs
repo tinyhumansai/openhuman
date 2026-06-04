@@ -132,6 +132,8 @@ pub async fn save_completion_to_local_docs(
         category: "daily".to_string(),
         session_id: None,
         document_id: None,
+        // Autocomplete acceptances are first-party UI signals.
+        taint: crate::openhuman::memory::MemoryTaint::Internal,
     };
 
     if let Err(e) = client.put_doc(input).await {

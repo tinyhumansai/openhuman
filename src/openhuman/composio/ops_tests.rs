@@ -1838,6 +1838,82 @@ async fn composio_list_connections_routes_through_direct_mode() {
     }
 }
 
+// ── Direct mode with no API key yet (Sentry TAURI-RUST-R4) ────────
+//
+// Direct mode selected but no key configured is a valid user *setup*
+// state, not an operation failure. `composio_list_connections` must
+// return an empty list (no key → no tenant → no connections) instead of
+// erroring, so the desktop UI's 5 s poll stops funnelling the factory's
+// "no api key is configured" error to Sentry on every tick.
+
+/// Direct mode selected, but NO key in the keychain and none in
+/// `config.toml`. The mode-aware factory would bail here with
+/// "composio direct mode selected but no api key is configured".
+fn direct_mode_no_key_config(tmp: &tempfile::TempDir) -> Config {
+    let mut c = Config::default();
+    c.workspace_dir = tmp.path().join("workspace");
+    c.config_path = tmp.path().join("config.toml");
+    c.composio.mode = crate::openhuman::config::schema::COMPOSIO_MODE_DIRECT.into();
+    c
+}
+
+#[test]
+fn direct_mode_without_key_is_false_in_backend_mode() {
+    let tmp = tempfile::tempdir().unwrap();
+    // Default mode is backend — the guard must never fire there, or
+    // backend users would get a silent empty list.
+    let config = test_config(&tmp);
+    assert!(!direct_mode_without_key(&config).unwrap());
+}
+
+#[test]
+fn direct_mode_without_key_is_true_when_direct_and_no_key() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = direct_mode_no_key_config(&tmp);
+    assert!(direct_mode_without_key(&config).unwrap());
+}
+
+#[test]
+fn direct_mode_without_key_is_false_when_key_in_config_toml() {
+    let tmp = tempfile::tempdir().unwrap();
+    // Key supplied via config.toml (not the keychain) still counts —
+    // the factory accepts it, so the guard must NOT short-circuit and
+    // hide the user's real connections.
+    let mut config = direct_mode_no_key_config(&tmp);
+    config.composio.api_key = Some("  ck_cfg_key  ".into());
+    assert!(!direct_mode_without_key(&config).unwrap());
+}
+
+#[test]
+fn direct_mode_without_key_is_false_when_key_in_keychain() {
+    let tmp = tempfile::tempdir().unwrap();
+    // `direct_mode_config` stores a key via the auth store — the guard
+    // must see it and report "has key".
+    let config = direct_mode_config(&tmp);
+    assert!(!direct_mode_without_key(&config).unwrap());
+}
+
+#[tokio::test]
+async fn composio_list_connections_returns_empty_when_direct_mode_no_key() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = direct_mode_no_key_config(&tmp);
+    // RC of TAURI-RUST-R4: this MUST be Ok(empty), not Err — no error is
+    // constructed, so nothing reaches Sentry and the 5 s poll stops
+    // churning.
+    let outcome = composio_list_connections(&config)
+        .await
+        .expect("direct mode with no key must return an empty list, not an error");
+    assert!(
+        outcome.value.connections.is_empty(),
+        "no key → no tenant → no connections"
+    );
+    assert!(
+        outcome.logs.iter().any(|l| l.contains("no api key")),
+        "log must explain the empty list is the no-key setup state, got {:?}",
+        outcome.logs
+    );
+}
+
 // ── Direct-mode authorize / list_tools / execute (commit 1, #1710) ─
 
 /// Direct-mode `composio_list_tools` now hits Composio v3 with the

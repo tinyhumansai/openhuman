@@ -4,10 +4,8 @@
 //! file just captures one snapshot at a time.
 
 use std::path::Path;
-use std::sync::Mutex;
 use std::time::Duration;
 
-use once_cell::sync::Lazy;
 use sysinfo::System;
 
 #[derive(Debug, Clone, Copy)]
@@ -107,16 +105,24 @@ fn probe_battery() -> Result<BatteryProbe, starship_battery::Error> {
 
 // ---- cpu -----------------------------------------------------------------
 
-static CPU_SYS: Lazy<Mutex<System>> = Lazy::new(|| Mutex::new(System::new()));
-
 fn sample_cpu() -> f32 {
-    // Two refreshes spaced ~MINIMUM_CPU_UPDATE_INTERVAL apart give sysinfo
-    // a real delta to compute usage from. The interval is small enough to
-    // run on the 30s sampler tick without noticeable cost.
-    let mut sys = match CPU_SYS.lock() {
-        Ok(g) => g,
-        Err(p) => p.into_inner(),
-    };
+    // Build a *fresh* `System` every sample instead of reusing a long-lived
+    // one. sysinfo 0.33's Linux CPU refresh builds a per-core Vec on its first
+    // refresh (sized to the `cpuN` lines in /proc/stat) and then, on every
+    // later refresh, indexes that Vec by line position. If the visible core
+    // count later grows — CPU hotplug, or a Proxmox / cloud host re-balancing
+    // vCPUs at runtime — the next refresh indexes past the Vec and panics
+    // ("index out of bounds: the len is N but the index is N"). A process-wide
+    // System captured the boot-time core count, so on such hosts *every* 30s
+    // tick panicked thereafter (Sentry CORE-RUST-ED). Building per call means
+    // both refreshes below always see the current core count, so the index
+    // stays in bounds.
+    //
+    // Two refreshes spaced ~MINIMUM_CPU_UPDATE_INTERVAL apart give sysinfo a
+    // real delta to compute usage from; we only read the global aggregate, so
+    // not retaining per-core state across calls costs us nothing. The interval
+    // is small enough to run on the 30s sampler tick without noticeable cost.
+    let mut sys = System::new();
     sys.refresh_cpu_usage();
     std::thread::sleep(Duration::from_millis(
         sysinfo::MINIMUM_CPU_UPDATE_INTERVAL.as_millis() as u64 + 50,
@@ -153,4 +159,46 @@ fn detect_server_mode(no_battery: bool) -> bool {
         return true;
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `sample_cpu` must always yield a finite percentage in `0..=100`, and
+    /// must not panic — the regression guard for Sentry CORE-RUST-ED, where a
+    /// long-lived `System` panicked with an out-of-bounds index after the
+    /// host's visible core count grew. A fresh `System` per call keeps the
+    /// per-core Vec sized to the current core count.
+    #[test]
+    fn sample_cpu_is_finite_and_bounded() {
+        let pct = sample_cpu();
+        assert!(pct.is_finite(), "cpu usage should be finite, got {pct}");
+        assert!(
+            (0.0..=100.0).contains(&pct),
+            "cpu usage out of range: {pct}"
+        );
+    }
+
+    /// Successive samples each build their own `System`; neither call shares
+    /// state with the other, so both must stay finite and in range.
+    #[test]
+    fn sample_cpu_repeatable() {
+        for _ in 0..2 {
+            let pct = sample_cpu();
+            assert!(pct.is_finite() && (0.0..=100.0).contains(&pct), "{pct}");
+        }
+    }
+
+    /// Full snapshot smoke: `Signals::sample()` returns well-formed values and
+    /// never panics through the CPU path.
+    #[test]
+    fn signals_sample_smoke() {
+        let s = Signals::sample();
+        assert!(s.cpu_usage_pct.is_finite());
+        assert!((0.0..=100.0).contains(&s.cpu_usage_pct));
+        if let Some(charge) = s.battery_charge {
+            assert!((0.0..=1.0).contains(&charge));
+        }
+    }
 }

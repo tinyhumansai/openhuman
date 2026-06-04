@@ -83,6 +83,7 @@ impl EventHandler for ChannelInboundSubscriber {
             None,
             None,
             None,
+            None,
             crate::openhuman::channels::providers::web::ChatRequestMetadata::default(),
         )
         .await

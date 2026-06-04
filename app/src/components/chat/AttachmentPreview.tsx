@@ -35,6 +35,7 @@ export default function AttachmentPreview({
           </div>
           <button
             type="button"
+            data-analytics-id="chat-attachment-remove"
             aria-label={t('chat.attachment.remove').replace('{name}', attachment.file.name)}
             onClick={() => onRemove(attachment.id)}
             disabled={disabled}

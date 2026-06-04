@@ -38,6 +38,7 @@ import NotificationsTabbedPanel from '../components/settings/panels/Notification
 import PersonaPanel from '../components/settings/panels/PersonaPanel';
 import PrivacyPanel from '../components/settings/panels/PrivacyPanel';
 import RecoveryPhrasePanel from '../components/settings/panels/RecoveryPhrasePanel';
+import SandboxSettingsPanel from '../components/settings/panels/SandboxSettingsPanel';
 import ScreenAwarenessDebugPanel from '../components/settings/panels/ScreenAwarenessDebugPanel';
 import ScreenIntelligencePanel from '../components/settings/panels/ScreenIntelligencePanel';
 import SearchPanel from '../components/settings/panels/SearchPanel';
@@ -465,6 +466,13 @@ const Settings = () => {
       route: 'activity-level',
       icon: LlmIcon,
     },
+    {
+      id: 'sandbox-settings',
+      title: t('settings.sandbox.title'),
+      description: t('settings.sandbox.menuDesc'),
+      route: 'sandbox-settings',
+      icon: AgentAccessIcon,
+    },
   ];
 
   const composioSettingsItems = [
@@ -596,6 +604,7 @@ const Settings = () => {
         <Route path="appearance" element={wrapSettingsPage(<AppearancePanel />)} />
         <Route path="agent-access" element={wrapSettingsPage(<AgentAccessPanel />)} />
         <Route path="activity-level" element={wrapSettingsPage(<AgentActivityPanel />)} />
+        <Route path="sandbox-settings" element={wrapSettingsPage(<SandboxSettingsPanel />)} />
         <Route path="approval-history" element={wrapSettingsPage(<ApprovalHistoryPanel />)} />
         <Route path="agents" element={wrapSettingsPage(<AgentsPanel />)} />
         <Route path="agents/new" element={wrapSettingsPage(<AgentEditorPage />)} />

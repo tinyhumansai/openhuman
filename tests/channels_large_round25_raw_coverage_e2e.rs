@@ -121,6 +121,7 @@ async fn web_channel_validation_cancellation_and_error_events_are_observable() {
         None,
         None,
         None,
+        None,
         web::ChatRequestMetadata::default()
     )
     .await
@@ -144,6 +145,7 @@ async fn web_channel_validation_cancellation_and_error_events_are_observable() {
         Some(0.2),
         None,
         Some("en-US".to_string()),
+        None,
         web::ChatRequestMetadata::default(),
     )
     .await

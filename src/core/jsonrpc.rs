@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use axum::extract::{Query, State, WebSocketUpgrade};
+use axum::extract::{DefaultBodyLimit, Query, State, WebSocketUpgrade};
 use axum::http::{header, HeaderValue, Method, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -846,6 +846,14 @@ async fn dictation_ws_handler(ws: WebSocketUpgrade) -> Response {
     })
 }
 
+/// Maximum accepted request-body size for the core HTTP server (64 MiB).
+///
+/// Sized to comfortably hold a `channel_web_chat` turn carrying the composer's
+/// maximum image payload — 4 × 8 MiB raw ≈ 43 MiB once base64-encoded into
+/// `[IMAGE:data:…]` markers — plus message text and JSON-RPC envelope overhead.
+/// Axum's 2 MiB default would otherwise reject any image attachment (#3205).
+const MAX_RPC_BODY_BYTES: usize = 64 * 1024 * 1024;
+
 /// Builds the main Axum router for the core HTTP server.
 ///
 /// Includes routes for health, schema, SSE events, JSON-RPC, and Telegram auth.
@@ -863,7 +871,20 @@ pub fn build_core_http_router(socketio_enabled: bool) -> Router {
         .route("/events", get(events_handler))
         .route("/events/webhooks", get(webhook_events_handler))
         .route("/events/domain", get(domain_events_handler))
-        .route("/rpc", post(rpc_handler))
+        // Raise the request-body cap above Axum's 2 MiB default — scoped to
+        // `/rpc` only so other routes keep the default. Chat image attachments
+        // are inlined into the `channel_web_chat` JSON-RPC body as base64
+        // `data:` URIs, and the composer permits up to ATTACHMENT_MAX_IMAGES (4)
+        // × ATTACHMENT_MAX_SIZE_BYTES (8 MiB) of raw image ≈ 43 MiB once
+        // base64-encoded. Without this the whole turn was rejected at the local
+        // RPC boundary with "failed to buffer the request body: length limit
+        // exceeded" before anything reached the provider (issue #3205). The
+        // server binds to 127.0.0.1 behind a per-launch bearer, so a generous
+        // localhost cap is safe.
+        .route(
+            "/rpc",
+            post(rpc_handler).route_layer(DefaultBodyLimit::max(MAX_RPC_BODY_BYTES)),
+        )
         .route("/ws/dictation", get(dictation_ws_handler))
         .route("/auth", get(desktop_auth_handler))
         .route("/auth/telegram", get(telegram_auth_handler))
@@ -1971,6 +1992,7 @@ pub async fn bootstrap_core_runtime(embedded_core: bool) {
     // --- Event bus bootstrap ---
     // Ensure the global event bus is initialized (no-op if already done by start_channels).
     crate::core::event_bus::init_global(crate::core::event_bus::DEFAULT_CAPACITY);
+    crate::openhuman::file_state::init_global();
     // Register domain subscribers for cross-module event handling.
     // Uses a Once guard so repeated calls to bootstrap_core_runtime()
     // cannot double-subscribe.
@@ -2075,12 +2097,20 @@ pub async fn bootstrap_core_runtime(embedded_core: bool) {
         // case. Without this, the gate parks and publishes but nothing reaches the
         // frontend → every prompt dies at the TTL. Idempotent (Once-guarded).
         crate::openhuman::channels::providers::web::register_approval_surface_subscriber();
+        crate::openhuman::channels::providers::web::register_artifact_surface_subscriber();
     } else {
         log::info!(
             "[runtime] approval gate disabled (OPENHUMAN_APPROVAL_GATE=0) — \
              Prompt-class external-effect tool calls run unprompted"
         );
     }
+    // Artifact surface bridges DomainEvent::ArtifactReady/Failed onto the web
+    // channel ("Files in this chat" panel + ArtifactCard updates). This is
+    // independent of the approval-gate config — keep it outside the
+    // `if approval_gate` block so artifact events still publish when the user
+    // sets OPENHUMAN_APPROVAL_GATE=0 (CR #3328947323 on PR #3026). Idempotent
+    // (OnceLock-guarded inside register_artifact_surface_subscriber).
+    crate::openhuman::channels::providers::web::register_artifact_surface_subscriber();
 
     // --- Workspace migrations --------------------------------------------
     crate::openhuman::startup::run_workspace_migrations(&workspace_dir);

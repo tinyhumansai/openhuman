@@ -27,6 +27,16 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
+#[cfg(not(test))]
+fn proactive_approval_gate() -> Option<Arc<crate::openhuman::approval::ApprovalGate>> {
+    crate::openhuman::approval::ApprovalGate::try_global()
+}
+
+#[cfg(test)]
+fn proactive_approval_gate() -> Option<Arc<crate::openhuman::approval::ApprovalGate>> {
+    None
+}
+
 /// Register a web-only proactive message subscriber on the global event
 /// bus. Guarded by `std::sync::Once` so it is safe to call from both
 /// `bootstrap_core_runtime` (desktop/JSON-RPC) and domain-level
@@ -181,7 +191,7 @@ impl EventHandler for ProactiveMessageSubscriber {
                 let mut approval_gate_for_audit: Option<
                     std::sync::Arc<crate::openhuman::approval::ApprovalGate>,
                 > = None;
-                if let Some(gate) = crate::openhuman::approval::ApprovalGate::try_global() {
+                if let Some(gate) = proactive_approval_gate() {
                     let summary = format!(
                         "proactive-send to {key} ({} chars)",
                         message.chars().count()

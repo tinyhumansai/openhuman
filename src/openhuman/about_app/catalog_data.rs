@@ -343,6 +343,16 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         privacy: LOCAL_RAW,
     },
     Capability {
+        id: "intelligence.memory_pipeline_doctor",
+        name: "Memory Pipeline Doctor",
+        domain: "intelligence",
+        category: CapabilityCategory::Intelligence,
+        description: "Diagnose why the memory tree / wiki is empty or stalled. Walks each pipeline stage (embeddings config, scheduler gate, job queue, extraction/recall degradation, summary-tree precondition) and reports the single first blocking cause with an actionable fix, plus counters and extraction coverage. The agent can run it on itself; a typed 'first blocking cause' is surfaced in the Memory status panel, and jobs that failed under a now-fixed config can be requeued on demand via the `memory_tree_retry_failed` RPC.",
+        how_to: "Memory status panel shows the cause + fix; or ask the agent to diagnose memory; or `openhuman-core` RPC `memory_tree_doctor`",
+        status: CapabilityStatus::Beta,
+        privacy: LOCAL_RAW,
+    },
+    Capability {
         id: "intelligence.github_repo_memory_source",
         name: "GitHub Repo Memory Source",
         domain: "memory_sources",
@@ -718,8 +728,8 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         name: "Configure Local Provider",
         domain: "local_ai",
         category: CapabilityCategory::LocalAI,
-        description: "Select Ollama or LM Studio as the local model provider and configure the local server endpoint.",
-        how_to: "Settings > AI > providers, or Settings > Local AI Model > Ollama server URL",
+        description: "Select Ollama, LM Studio, MLX, or a generic local OpenAI-compatible server as the local model provider and configure the endpoint.",
+        how_to: "Settings > AI > providers, or use provider strings: ollama:<model>, lmstudio:<model>, mlx:<model>, local-openai:<model>",
         status: CapabilityStatus::Beta,
         privacy: None,
     },
@@ -1558,6 +1568,21 @@ pub(super) const CAPABILITIES: &[Capability] = &[
                       of memory databases, session transcripts, tokens, and other internal state.",
         how_to: "Settings → Agent OS access",
         status: CapabilityStatus::Stable,
+        privacy: None,
+    },
+    Capability {
+        id: "security.sandbox_backends",
+        name: "Sandbox Execution Backends",
+        domain: "security",
+        category: CapabilityCategory::Settings,
+        description: "Route agent tool execution (shell, filesystem, process) through sandbox \
+                      backends — Docker containers or OS-level jails (Landlock/Seatbelt) — for \
+                      reduced blast radius on remote, channel, cron, or background sessions. \
+                      Configurable per agent/session/channel with safe defaults for non-main sessions.",
+        how_to: "Set sandbox_mode = \"sandboxed\" in agent.toml, or configure runtime.kind = \
+                 \"docker\" in the TOML config. Use openhuman.sandbox_status / \
+                 openhuman.sandbox_resolve_policy RPC to inspect.",
+        status: CapabilityStatus::Beta,
         privacy: None,
     },
     Capability {

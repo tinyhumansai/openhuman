@@ -92,6 +92,7 @@ impl UnifiedMemory {
                 content: hit.content,
                 score: hit.score,
                 category: hit.category,
+                taint: hit.taint,
             });
         }
         Ok(out)
@@ -171,6 +172,7 @@ impl UnifiedMemory {
                 document_id: Some(doc.document_id.clone()),
                 chunk_id: best_chunk_id,
                 supporting_relations,
+                taint: doc.taint,
             });
         }
 
@@ -209,6 +211,10 @@ impl UnifiedMemory {
                 document_id: None,
                 chunk_id: None,
                 supporting_relations: Vec::new(),
+                // KV rows have no provenance column; conservatively
+                // surface as Internal so the subconscious gate doesn't
+                // mis-escalate user-state writes.
+                taint: crate::openhuman::memory::MemoryTaint::Internal,
             });
         }
 
@@ -287,6 +293,10 @@ impl UnifiedMemory {
                     document_id: None,
                     chunk_id: None,
                     supporting_relations: Vec::new(),
+                    // Episodic rows are derived from user chat turns and
+                    // never carry sync-ingest content; surface as
+                    // Internal so the subconscious gate trusts them.
+                    taint: crate::openhuman::memory::MemoryTaint::Internal,
                 });
             }
         }
@@ -325,6 +335,10 @@ impl UnifiedMemory {
                 document_id: None,
                 chunk_id: None,
                 supporting_relations: Vec::new(),
+                // Event extractions are derived from chat segments;
+                // treat them as Internal until a future migration
+                // surfaces per-event provenance.
+                taint: crate::openhuman::memory::MemoryTaint::Internal,
             });
         }
 
@@ -428,6 +442,7 @@ impl UnifiedMemory {
                         .map(|relation| RelationMatch { relation, hop: 1 })
                         .collect::<Vec<_>>(),
                 ),
+                taint: doc.taint,
             });
         }
 
@@ -462,6 +477,7 @@ impl UnifiedMemory {
                 document_id: None,
                 chunk_id: None,
                 supporting_relations: Vec::new(),
+                taint: crate::openhuman::memory::MemoryTaint::Internal,
             });
         }
 

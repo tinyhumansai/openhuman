@@ -550,8 +550,8 @@ async fn composio_direct_and_mouse_tools_cover_validation_policy_and_schema_path
 
 #[tokio::test]
 async fn web_channel_public_paths_cover_validation_cancel_schema_and_event_bus() {
-    assert_eq!(all_web_channel_controller_schemas().len(), 2);
-    assert_eq!(all_web_channel_registered_controllers().len(), 2);
+    assert_eq!(all_web_channel_controller_schemas().len(), 4);
+    assert_eq!(all_web_channel_registered_controllers().len(), 4);
     assert_eq!(web_channel_schema("chat").function, "web_chat");
     assert_eq!(web_channel_schema("cancel").function, "web_cancel");
     assert_eq!(web_channel_schema("missing").function, "unknown");
@@ -560,6 +560,7 @@ async fn web_channel_public_paths_cover_validation_cancel_schema_and_event_bus()
         " ",
         "thread",
         "hello",
+        None,
         None,
         None,
         None,

@@ -49,6 +49,7 @@ export default function RespondQueuePanel({
         <button
           type="button"
           onClick={onRefresh}
+          data-analytics-id="respond-queue-refresh"
           className="rounded-lg border border-stone-200 dark:border-neutral-800 px-2 py-1 text-xs text-stone-600 dark:text-neutral-300 hover:bg-stone-50 dark:hover:bg-neutral-800/60">
           {t('common.refresh')}
         </button>
@@ -77,6 +78,7 @@ export default function RespondQueuePanel({
             <button
               key={item.id}
               type="button"
+              data-analytics-id={`respond-queue-item-${item.provider}`}
               onClick={() => {
                 if (item.deepLink) {
                   void openUrl(item.deepLink);

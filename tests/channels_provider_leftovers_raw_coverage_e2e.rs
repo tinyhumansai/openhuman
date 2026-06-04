@@ -347,6 +347,7 @@ async fn web_round19_covers_classifier_variants_and_cancel_cleanup() {
         None,
         None,
         None,
+        None,
         ChatRequestMetadata::default(),
     )
     .await

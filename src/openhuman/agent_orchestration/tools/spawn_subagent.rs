@@ -621,7 +621,7 @@ fn persist_worker_thread(
             title,
             created_at: now.clone(),
             parent_thread_id: None,
-            labels: Some(vec!["worker".to_string()]),
+            labels: Some(vec!["tasks".to_string()]),
             personality_id: None,
         },
     )
@@ -861,7 +861,7 @@ mod tests {
     }
 
     #[test]
-    fn persist_worker_thread_creates_thread_with_worker_label_and_messages() {
+    fn persist_worker_thread_creates_thread_with_tasks_label_and_messages() {
         let temp = TempDir::new().expect("tempdir");
         let outcome = sample_outcome("the answer is 42");
         let thread_id = persist_worker_thread(
@@ -879,7 +879,7 @@ mod tests {
             .iter()
             .find(|t| t.id == thread_id)
             .expect("worker thread present");
-        assert!(worker.labels.contains(&"worker".to_string()));
+        assert!(worker.labels.contains(&"tasks".to_string()));
         assert!(worker.title.starts_with("draft a long research plan"));
 
         let messages =

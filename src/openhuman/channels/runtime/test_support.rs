@@ -279,6 +279,7 @@ fn memory_entry(input: TestMemoryEntry) -> MemoryEntry {
         timestamp: "now".to_string(),
         session_id: None,
         score: input.score,
+        taint: crate::openhuman::memory::MemoryTaint::Internal,
     }
 }
 

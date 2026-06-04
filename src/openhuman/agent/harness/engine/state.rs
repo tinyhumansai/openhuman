@@ -49,7 +49,7 @@ pub(crate) trait TurnObserver: Send {
     /// typed `ConversationMessage` history; the subagent mirrors to its worker
     /// thread.
     #[allow(clippy::too_many_arguments)]
-    fn on_assistant(
+    async fn on_assistant(
         &mut self,
         _display_text: &str,
         _response_text: &str,
