@@ -196,6 +196,62 @@ impl OpenAiCompatibleProvider {
         }
     }
 
+    /// Build an actionable error for a model that lacks the chat capability —
+    /// e.g. an *embedding* model (Ollama `bge-m3`) selected as the chat model.
+    /// Ollama returns `400 "<model>" does not support chat`; we replace the
+    /// opaque upstream JSON with concrete remediation. See Sentry
+    /// TAURI-RUST-4P6.
+    ///
+    /// The phrase `does not support chat` is preserved verbatim so the
+    /// re-reported error still matches
+    /// [`super::config_rejection::is_provider_config_rejection_message`] and
+    /// stays demoted from Sentry.
+    fn not_chat_capable_model_message(&self, model: &str, sanitized: &str) -> String {
+        format!(
+            "{name} API error: model '{model}' does not support chat — it \
+             appears to be an embedding or non-chat model. Assign a \
+             chat-capable model to this provider (e.g. in Settings → AI), or \
+             pick a different model. Provider detail: {sanitized}",
+            name = self.name,
+        )
+    }
+
+    /// Detect a model rejected because it has no chat capability. Unlike the
+    /// completion-only base model (which 404s), an embedding model picked as
+    /// the chat model is rejected by Ollama with a **400/422** carrying
+    /// `"<model>" does not support chat`, so it bypasses
+    /// [`is_completion_only_model_404`]. Match is tight (the exact phrase) so
+    /// ordinary 400s keep their normal handling. See Sentry TAURI-RUST-4P6.
+    fn is_not_chat_capable_model(status: reqwest::StatusCode, error: &str) -> bool {
+        if !matches!(
+            status,
+            reqwest::StatusCode::BAD_REQUEST | reqwest::StatusCode::UNPROCESSABLE_ENTITY
+        ) {
+            return false;
+        }
+        error.to_lowercase().contains("does not support chat")
+    }
+
+    /// Guard shared by every chat-completions error handler: if the body shows
+    /// a non-chat-capable model (embedding model picked as chat), return the
+    /// actionable error so the caller fails fast with concrete remediation
+    /// instead of surfacing the opaque upstream JSON. `None` means "not this
+    /// case — proceed with normal fallback/enrich". See Sentry TAURI-RUST-4P6.
+    fn not_chat_capable_guard(
+        &self,
+        status: reqwest::StatusCode,
+        sanitized: &str,
+        model: &str,
+    ) -> Option<anyhow::Error> {
+        if Self::is_not_chat_capable_model(status, sanitized) {
+            Some(anyhow::anyhow!(
+                self.not_chat_capable_model_message(model, sanitized)
+            ))
+        } else {
+            None
+        }
+    }
+
     /// Create a provider with a custom User-Agent header.
     ///
     /// Some providers (for example Kimi Code) require a specific User-Agent
@@ -1535,6 +1591,13 @@ impl Provider for OpenAiCompatibleProvider {
                 return Err(err);
             }
 
+            // An embedding / non-chat model rejected with 400 "does not
+            // support chat" (e.g. Ollama bge-m3 picked as the chat model) —
+            // fail fast with actionable guidance. See Sentry TAURI-RUST-4P6.
+            if let Some(err) = self.not_chat_capable_guard(status, &sanitized, model) {
+                return Err(err);
+            }
+
             if status == reqwest::StatusCode::NOT_FOUND && self.supports_responses_fallback {
                 return self
                     .chat_via_responses(credential, &fallback_messages, model)
@@ -1736,7 +1799,21 @@ impl Provider for OpenAiCompatibleProvider {
                 return Err(anyhow::anyhow!("{enriched}"));
             }
 
+            // `api_error` reads the body and runs the shared classification
+            // (SessionExpired publish, config-rejection demotion, Sentry-report
+            // decision). For a non-chat-capable model (embedding model picked
+            // as chat → 400 "does not support chat") it already demotes the
+            // event, but its message is the opaque upstream JSON. Upgrade that
+            // to the actionable "assign a chat-capable model" copy — which
+            // still carries the phrase, so it stays demoted on any re-report.
+            // See Sentry TAURI-RUST-4P6.
             let err = super::api_error(&self.name, response).await;
+            let err_str = err.to_string();
+            if Self::is_not_chat_capable_model(status, &err_str) {
+                return Err(anyhow::anyhow!(
+                    self.not_chat_capable_model_message(model, &err_str)
+                ));
+            }
             let enriched = self.enrich_404_message(format!("{err:#}"), status);
             return Err(anyhow::anyhow!("{enriched}"));
         }
@@ -2110,6 +2187,13 @@ impl Provider for OpenAiCompatibleProvider {
             // A completion-only model 404s here and the /v1/responses fallback
             // cannot rescue it — fail fast with actionable guidance (#3193).
             if let Some(err) = self.completion_only_404_guard(status, &sanitized, model) {
+                return Err(err);
+            }
+
+            // An embedding / non-chat model rejected with 400 "does not
+            // support chat" (e.g. Ollama bge-m3 picked as the chat model) —
+            // fail fast with actionable guidance. See Sentry TAURI-RUST-4P6.
+            if let Some(err) = self.not_chat_capable_guard(status, &sanitized, model) {
                 return Err(err);
             }
 
