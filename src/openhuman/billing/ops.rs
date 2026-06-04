@@ -14,22 +14,15 @@ use serde::Serialize;
 use serde_json::{json, Value};
 
 use crate::api::config::effective_backend_api_url;
-use crate::api::jwt::get_session_token;
 use crate::api::BackendOAuthClient;
 use crate::openhuman::config::Config;
 use crate::rpc::RpcOutcome;
 
+/// Canonical authed-session guard. Delegates to `require_live_session_token`,
+/// which rejects an expired token locally (publishing `SessionExpired`) instead
+/// of firing a doomed backend 401 — see #3297 / `session_support`.
 fn require_token(config: &Config) -> Result<String, String> {
-    get_session_token(config)?
-        .and_then(|v| {
-            let t = v.trim().to_string();
-            if t.is_empty() {
-                None
-            } else {
-                Some(t)
-            }
-        })
-        .ok_or_else(|| "no backend session token; run auth_store_session first".to_string())
+    crate::openhuman::credentials::session_support::require_live_session_token(config)
 }
 
 async fn get_authed_value(
