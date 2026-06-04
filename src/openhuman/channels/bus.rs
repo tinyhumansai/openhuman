@@ -80,7 +80,7 @@ impl EventHandler for ChannelInboundSubscriber {
         // consumer that keys on client_id alone (audit logs, future
         // session-scoped caches, etc.). Build a stable per-sender label
         // here so the surface stays segregated end-to-end.
-        let client_id = derive_inbound_client_id(sender.as_deref());
+        let client_id = derive_inbound_client_id(channel, sender.as_deref());
 
         let mut event_rx =
             crate::openhuman::channels::providers::web::subscribe_web_channel_events();
@@ -1010,9 +1010,11 @@ pub(crate) fn derive_inbound_thread_id(
 /// `None` (legacy publisher that didn't fill `sender`) maps to the bare
 /// `"inbound"` literal that the path used historically, preserving
 /// behavior for single-DM flows where no co-channel attacker exists.
-pub(crate) fn derive_inbound_client_id(sender: Option<&str>) -> String {
+pub(crate) fn derive_inbound_client_id(channel: &str, sender: Option<&str>) -> String {
+    let trimmed_channel = channel.trim();
     let trimmed = sender.map(|s| s.trim()).filter(|s| !s.is_empty());
     match trimmed {
+        Some(s) if !trimmed_channel.is_empty() => format!("inbound:{trimmed_channel}:{s}"),
         Some(s) => format!("inbound:{s}"),
         None => "inbound".to_string(),
     }
@@ -1041,8 +1043,8 @@ mod inbound_thread_id_tests {
         // (audit log, future session caches) stay segregated. The
         // thread_id is already per-sender; this is the matching client_id
         // half of the pair.
-        let alice = derive_inbound_client_id(Some("alice"));
-        let bob = derive_inbound_client_id(Some("bob"));
+        let alice = derive_inbound_client_id("discord", Some("alice"));
+        let bob = derive_inbound_client_id("discord", Some("bob"));
         assert_ne!(alice, bob, "co-channel senders must not collapse");
         assert!(alice.starts_with("inbound"));
         assert!(bob.starts_with("inbound"));
@@ -1053,9 +1055,9 @@ mod inbound_thread_id_tests {
         // Legacy publishers that don't fill `sender` keep the historical
         // `"inbound"` literal so single-DM flows (where there's no
         // co-channel surface) are unchanged.
-        assert_eq!(derive_inbound_client_id(None), "inbound");
-        assert_eq!(derive_inbound_client_id(Some("")), "inbound");
-        assert_eq!(derive_inbound_client_id(Some("   ")), "inbound");
+        assert_eq!(derive_inbound_client_id("discord", None), "inbound");
+        assert_eq!(derive_inbound_client_id("discord", Some("")), "inbound");
+        assert_eq!(derive_inbound_client_id("discord", Some("   ")), "inbound");
     }
 
     #[test]
@@ -1068,8 +1070,8 @@ mod inbound_thread_id_tests {
         let alice_thread =
             derive_inbound_thread_id("discord", Some("alice"), Some("#general"), None);
         let bob_thread = derive_inbound_thread_id("discord", Some("bob"), Some("#general"), None);
-        let alice_client = derive_inbound_client_id(Some("alice"));
-        let bob_client = derive_inbound_client_id(Some("bob"));
+        let alice_client = derive_inbound_client_id("discord", Some("alice"));
+        let bob_client = derive_inbound_client_id("discord", Some("bob"));
 
         assert_ne!(alice_thread, bob_thread);
         assert_ne!(alice_client, bob_client);
