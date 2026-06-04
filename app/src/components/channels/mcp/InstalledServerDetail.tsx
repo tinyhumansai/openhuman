@@ -19,12 +19,14 @@ interface InstalledServerDetailProps {
   server: InstalledServer;
   connStatus: ConnStatus | undefined;
   onUninstalled: (serverId: string) => void;
+  onEnabledChange?: (serverId: string, enabled: boolean) => void;
 }
 
 const InstalledServerDetail = ({
   server,
   connStatus,
   onUninstalled,
+  onEnabledChange,
 }: InstalledServerDetailProps) => {
   const { t } = useT();
   const status: ServerStatus = connStatus?.status ?? 'disconnected';
@@ -114,6 +116,25 @@ const InstalledServerDetail = ({
       onUninstalled(server.server_id);
     });
   }, [server.server_id, runBusy, onUninstalled]);
+
+  const handleSetEnabled = useCallback(
+    (next: boolean) => {
+      void runBusy(async () => {
+        log('set_enabled server_id=%s enabled=%s', server.server_id, next);
+        await mcpClientsApi.setEnabled(server.server_id, next);
+        if (!next) {
+          // Disabling the server: drop stale tool list so no tool rows
+          // remain in view while the server is disabled, and clear any
+          // open playground session.
+          setTools([]);
+          setPlaygroundTool(null);
+        }
+        log('set_enabled done server_id=%s enabled=%s', server.server_id, next);
+        onEnabledChange?.(server.server_id, next);
+      });
+    },
+    [server.server_id, runBusy, onEnabledChange]
+  );
 
   const openReconfigure = useCallback(
     (prefill?: Record<string, string>) => {
@@ -217,23 +238,35 @@ const InstalledServerDetail = ({
 
       {/* Action buttons */}
       <div className="flex flex-wrap gap-2">
-        {status !== 'connected' ? (
-          <button
-            type="button"
-            disabled={busy || status === 'connecting'}
-            onClick={handleConnect}
-            className="rounded-lg bg-primary-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-600 disabled:opacity-50 transition-colors">
-            {status === 'connecting' ? t('mcp.detail.connecting') : t('mcp.detail.connect')}
-          </button>
-        ) : (
-          <button
-            type="button"
-            disabled={busy}
-            onClick={handleDisconnect}
-            className="rounded-lg border border-stone-200 dark:border-neutral-700 px-3 py-1.5 text-xs font-medium text-stone-600 dark:text-neutral-300 hover:border-stone-300 dark:hover:border-neutral-600 disabled:opacity-50">
-            {t('mcp.detail.disconnect')}
-          </button>
-        )}
+        {/* Connect / Disconnect — hidden when the server is disabled because the
+            core refuses connect calls on disabled servers. */}
+        {server.enabled &&
+          (status !== 'connected' ? (
+            <button
+              type="button"
+              disabled={busy || status === 'connecting'}
+              onClick={handleConnect}
+              className="rounded-lg bg-primary-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-600 disabled:opacity-50 transition-colors">
+              {status === 'connecting' ? t('mcp.detail.connecting') : t('mcp.detail.connect')}
+            </button>
+          ) : (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={handleDisconnect}
+              className="rounded-lg border border-stone-200 dark:border-neutral-700 px-3 py-1.5 text-xs font-medium text-stone-600 dark:text-neutral-300 hover:border-stone-300 dark:hover:border-neutral-600 disabled:opacity-50">
+              {t('mcp.detail.disconnect')}
+            </button>
+          ))}
+
+        {/* Enable / Disable toggle */}
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => handleSetEnabled(!server.enabled)}
+          className="rounded-lg border border-stone-200 dark:border-neutral-700 px-3 py-1.5 text-xs font-medium text-stone-600 dark:text-neutral-300 hover:border-stone-300 dark:hover:border-neutral-600 disabled:opacity-50">
+          {server.enabled ? t('mcp.detail.disable') : t('mcp.detail.enable')}
+        </button>
 
         <button
           type="button"

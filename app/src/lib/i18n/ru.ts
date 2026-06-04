@@ -1169,6 +1169,8 @@ const messages: TranslationMap = {
   'mcp.detail.reconfigureSuccess': 'Окружение обновлено, выполнено переподключение.',
   'mcp.detail.reconfigureReconnectFailed':
     'Сохранено, но переподключиться с новыми значениями не удалось.',
+  'mcp.detail.enable': 'Включить',
+  'mcp.detail.disable': 'Отключить',
   'mcp.detail.tools': 'Инструменты',
   'onboarding.skipForNow': 'Пропустить сейчас',
   'onboarding.localAI.continueWithCloud': 'Продолжить с Облако',

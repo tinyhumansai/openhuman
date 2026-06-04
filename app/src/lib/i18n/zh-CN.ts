@@ -1099,6 +1099,8 @@ const messages: TranslationMap = {
   'mcp.detail.reconfigureSaving': '正在保存…',
   'mcp.detail.reconfigureSuccess': '环境已更新并重新连接。',
   'mcp.detail.reconfigureReconnectFailed': '已保存，但使用新值重新连接失败。',
+  'mcp.detail.enable': '启用',
+  'mcp.detail.disable': '禁用',
   'mcp.detail.tools': '工具',
   'onboarding.skipForNow': '暂时跳过',
   'onboarding.localAI.continueWithCloud': '继续使用云',

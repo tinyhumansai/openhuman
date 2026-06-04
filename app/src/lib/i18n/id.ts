@@ -1161,6 +1161,8 @@ const messages: TranslationMap = {
   'mcp.detail.reconfigureSuccess': 'Lingkungan diperbarui dan terhubung kembali.',
   'mcp.detail.reconfigureReconnectFailed':
     'Tersimpan, tetapi gagal menghubungkan kembali dengan nilai baru.',
+  'mcp.detail.enable': 'Aktifkan',
+  'mcp.detail.disable': 'Nonaktifkan',
   'mcp.detail.tools': 'Alat',
   'onboarding.skipForNow': 'Lewati Sekarang',
   'onboarding.localAI.continueWithCloud': 'Lanjutkan dengan Cloud',

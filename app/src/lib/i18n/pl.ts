@@ -1174,6 +1174,8 @@ const messages: TranslationMap = {
   'mcp.detail.reconfigureSuccess': 'Środowisko zaktualizowane i połączone ponownie.',
   'mcp.detail.reconfigureReconnectFailed':
     'Zapisano, ale ponowne połączenie z nowymi wartościami nie powiodło się.',
+  'mcp.detail.enable': 'Włącz',
+  'mcp.detail.disable': 'Wyłącz',
   'mcp.detail.tools': 'Narzędzia',
   'onboarding.skipForNow': 'Pomiń na razie',
   'onboarding.localAI.continueWithCloud': 'Kontynuuj z chmurą',

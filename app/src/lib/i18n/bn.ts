@@ -1153,6 +1153,8 @@ const messages: TranslationMap = {
   'mcp.detail.reconfigureSuccess': 'এনভায়রনমেন্ট আপডেট ও পুনঃসংযোগ করা হয়েছে।',
   'mcp.detail.reconfigureReconnectFailed':
     'সংরক্ষিত হয়েছে, তবে নতুন মান দিয়ে পুনঃসংযোগ ব্যর্থ হয়েছে।',
+  'mcp.detail.enable': 'সক্রিয় করুন',
+  'mcp.detail.disable': 'নিষ্ক্রিয় করুন',
   'mcp.detail.tools': 'টুলস',
   'onboarding.skipForNow': 'এখনই এড়িয়ে যান',
   'onboarding.localAI.continueWithCloud': 'ক্লাউডের সাথে চালিয়ে যান',
