@@ -144,6 +144,11 @@ impl RepeatFailureGuard {
                 .replace(BACKEND_USER_STATE_MARKER, "")
                 .trim()
                 .to_string();
+            tracing::debug!(
+                tool,
+                reason = %truncate_for_halt(&clean_reason),
+                "[circuit_breaker:backend_user_state] halting on first occurrence — global condition, retry futile"
+            );
             return Some(format!(
                 "Stopping: the `{tool}` call returned a backend user-state error \
                  — this is a deterministic condition that requires user action \
