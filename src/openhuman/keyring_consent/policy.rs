@@ -141,6 +141,25 @@ pub fn retry_probe() -> KeyringStatus {
     current_status()
 }
 
+/// Surface a master-key load failure (e.g. OS keychain access denied after an
+/// app update) to the frontend by publishing the consent-required event.
+///
+/// Unlike [`check_secret_access`], this is called proactively at core startup
+/// when the encrypted-file backend cannot load its master key — so the user is
+/// warned *before* any secret read silently returns empty, rather than letting
+/// the failure pass unnoticed (the #3311 symptom: keys "wiped" with no warning).
+/// It reuses the same `CONSENT_EVENT_PUBLISHED` dedup flag as the lazy gate so
+/// we never double-publish if a secret op also hits the gate this session.
+pub fn notify_master_key_unavailable(reason: &str) {
+    warn!("{LOG_PREFIX} master key unavailable: {reason}");
+    if !CONSENT_EVENT_PUBLISHED.swap(true, Ordering::SeqCst) {
+        info!("{LOG_PREFIX} publishing KeyringConsentRequired event (master key unavailable)");
+        crate::core::event_bus::publish_global(
+            crate::core::event_bus::DomainEvent::KeyringConsentRequired,
+        );
+    }
+}
+
 /// Publish a decrypt-failure event for frontend notification.
 pub fn notify_decrypt_failure(field_name: &str, reason: &str) {
     warn!("{LOG_PREFIX} decrypt failure field={field_name} reason={reason}");
