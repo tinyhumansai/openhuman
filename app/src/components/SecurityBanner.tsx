@@ -20,7 +20,7 @@
 import { useEffect, useState } from 'react';
 
 import { useT } from '../lib/i18n/I18nContext';
-import { fetchApprovalGateState, type ApprovalGateBootState } from '../services/api/approvalApi';
+import { type ApprovalGateBootState, fetchApprovalGateState } from '../services/api/approvalApi';
 
 const OVERRIDE_IGNORED_AUTO_DISMISS_MS = 10_000;
 
@@ -37,7 +37,7 @@ const SecurityBanner = ({ fetchState = fetchApprovalGateState }: SecurityBannerP
   useEffect(() => {
     let cancelled = false;
     fetchState()
-      .then((s) => {
+      .then(s => {
         if (!cancelled) setState(s);
       })
       .catch(() => {
@@ -87,8 +87,7 @@ const SecurityBanner = ({ fetchState = fetchApprovalGateState }: SecurityBannerP
           textAlign: 'center',
           borderBottom: '1px solid #b91c1c',
           boxShadow: '0 1px 2px rgba(0,0,0,0.15)',
-        }}
-      >
+        }}>
         <strong style={{ marginRight: 8 }}>{t('security.approvalGateDisabled.title')}</strong>
         <span style={{ opacity: 0.92 }}>{t('security.approvalGateDisabled.body')}</span>
       </div>
@@ -115,8 +114,7 @@ const SecurityBanner = ({ fetchState = fetchApprovalGateState }: SecurityBannerP
           fontWeight: 500,
           textAlign: 'center',
           borderBottom: '1px solid #b45309',
-        }}
-      >
+        }}>
         <strong style={{ marginRight: 8 }}>
           {t('security.approvalGateOverrideIgnored.title')}
         </strong>

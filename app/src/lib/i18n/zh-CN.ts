@@ -4522,7 +4522,6 @@ const messages: TranslationMap = {
   'security.approvalGateOverrideIgnored.body':
     '检测到 OPENHUMAN_APPROVAL_GATE=0 覆盖，但已忽略：桌面应用始终保持审批门开启。',
 
-
   // Run queue
   'runQueue.mode.interrupt': '中断',
   'runQueue.mode.steer': '引导',

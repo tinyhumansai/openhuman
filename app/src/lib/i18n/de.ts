@@ -4888,7 +4888,6 @@ const messages: TranslationMap = {
   'security.approvalGateOverrideIgnored.body':
     'Ein OPENHUMAN_APPROVAL_GATE=0-Override wurde erkannt, aber ignoriert: Die Desktop-App lässt das Genehmigungstor immer eingeschaltet.',
 
-
   // Run queue
   'runQueue.mode.interrupt': 'Unterbrechen',
   'runQueue.mode.steer': 'Steuern',

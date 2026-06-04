@@ -4801,7 +4801,6 @@ const messages: TranslationMap = {
   'security.approvalGateOverrideIgnored.body':
     'Обнаружено переопределение OPENHUMAN_APPROVAL_GATE=0, но оно проигнорировано: настольное приложение всегда держит шлюз одобрения включённым.',
 
-
   // Run queue
   'runQueue.mode.interrupt': 'Прервать',
   'runQueue.mode.steer': 'Направить',

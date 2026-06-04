@@ -4772,7 +4772,6 @@ const messages: TranslationMap = {
   'security.approvalGateOverrideIgnored.body':
     'Override OPENHUMAN_APPROVAL_GATE=0 terdeteksi tetapi diabaikan: aplikasi desktop selalu menjaga gerbang persetujuan tetap aktif.',
 
-
   // Run queue
   'runQueue.mode.interrupt': 'Interupsi',
   'runQueue.mode.steer': 'Arahkan',

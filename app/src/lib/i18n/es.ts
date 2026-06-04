@@ -4855,7 +4855,6 @@ const messages: TranslationMap = {
   'security.approvalGateOverrideIgnored.body':
     'Se detectó una anulación OPENHUMAN_APPROVAL_GATE=0, pero se ignoró: la aplicación de escritorio mantiene siempre activa la puerta de aprobación.',
 
-
   // Run queue
   'runQueue.mode.interrupt': 'Interrumpir',
   'runQueue.mode.steer': 'Dirigir',

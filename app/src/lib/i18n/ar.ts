@@ -4663,7 +4663,6 @@ const messages: TranslationMap = {
   'security.approvalGateOverrideIgnored.body':
     'تم اكتشاف تجاوز OPENHUMAN_APPROVAL_GATE=0 لكنه تم تجاهله: يحافظ تطبيق سطح المكتب دائمًا على تفعيل بوابة الموافقة.',
 
-
   // Run queue
   'runQueue.mode.interrupt': 'مقاطعة',
   'runQueue.mode.steer': 'توجيه',

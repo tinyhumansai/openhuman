@@ -4870,7 +4870,6 @@ const messages: TranslationMap = {
   'security.approvalGateOverrideIgnored.body':
     "Un contournement OPENHUMAN_APPROVAL_GATE=0 a été détecté mais ignoré : l'application de bureau garde toujours la porte d'approbation activée.",
 
-
   // Run queue
   'runQueue.mode.interrupt': 'Interrompre',
   'runQueue.mode.steer': 'Orienter',

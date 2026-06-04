@@ -4708,7 +4708,6 @@ const messages: TranslationMap = {
   'security.approvalGateOverrideIgnored.body':
     'OPENHUMAN_APPROVAL_GATE=0 재정의가 감지되었지만 무시되었습니다: 데스크톱 앱은 승인 게이트를 항상 켜둡니다.',
 
-
   // Run queue
   'runQueue.mode.interrupt': '중단',
   'runQueue.mode.steer': '방향 조정',

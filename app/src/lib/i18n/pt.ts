@@ -4841,7 +4841,6 @@ const messages: TranslationMap = {
   'security.approvalGateOverrideIgnored.body':
     'Uma substituição OPENHUMAN_APPROVAL_GATE=0 foi detetada mas ignorada: o aplicativo de desktop mantém sempre o portão de aprovação ativado.',
 
-
   // Run queue
   'runQueue.mode.interrupt': 'Interromper',
   'runQueue.mode.steer': 'Direcionar',

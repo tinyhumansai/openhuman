@@ -4836,7 +4836,6 @@ const messages: TranslationMap = {
   'security.approvalGateOverrideIgnored.body':
     'Wykryto nadpisanie OPENHUMAN_APPROVAL_GATE=0, ale je zignorowano: aplikacja desktopowa zawsze utrzymuje bramkę zatwierdzania włączoną.',
 
-
   // Run queue
   'runQueue.mode.interrupt': 'Przerwij',
   'runQueue.mode.steer': 'Kieruj',

@@ -4753,7 +4753,6 @@ const messages: TranslationMap = {
   'security.approvalGateOverrideIgnored.body':
     'একটি OPENHUMAN_APPROVAL_GATE=0 ওভাররাইড সনাক্ত করা হয়েছিল কিন্তু উপেক্ষা করা হয়েছে: ডেস্কটপ অ্যাপ সর্বদা অনুমোদন গেট চালু রাখে।',
 
-
   // Run queue
   'runQueue.mode.interrupt': 'বাধা দিন',
   'runQueue.mode.steer': 'পরিচালনা করুন',

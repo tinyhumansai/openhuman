@@ -187,9 +187,9 @@ describe('deriveSessionKeys', () => {
     expect(() => deriveSessionKeys(new Uint8Array(31), ephDh, clientEph, serverEph)).toThrow(
       /32 bytes/i
     );
-    expect(() =>
-      deriveSessionKeys(staticDh, ephDh, new Uint8Array(0), serverEph)
-    ).toThrow(/32 bytes/i);
+    expect(() => deriveSessionKeys(staticDh, ephDh, new Uint8Array(0), serverEph)).toThrow(
+      /32 bytes/i
+    );
   });
 
   it('static-only adversary cannot recover prior session keys (FS sanity)', () => {

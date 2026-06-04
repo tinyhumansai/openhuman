@@ -4760,7 +4760,6 @@ const messages: TranslationMap = {
   'security.approvalGateOverrideIgnored.body':
     'एक OPENHUMAN_APPROVAL_GATE=0 ओवरराइड का पता चला लेकिन अनदेखा कर दिया गया: डेस्कटॉप ऐप अनुमोदन गेट को हमेशा चालू रखता है।',
 
-
   // Run queue
   'runQueue.mode.interrupt': 'बाधित करें',
   'runQueue.mode.steer': 'दिशा दें',
