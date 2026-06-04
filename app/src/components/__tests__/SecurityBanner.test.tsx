@@ -12,12 +12,14 @@ import { Provider } from 'react-redux';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { I18nProvider } from '../../lib/i18n/I18nContext';
-import localeReducer from '../../store/localeSlice';
 import type { ApprovalGateBootState } from '../../services/api/approvalApi';
+import localeReducer from '../../store/localeSlice';
 import SecurityBanner from '../SecurityBanner';
 
 function renderBanner(state: ApprovalGateBootState | Promise<ApprovalGateBootState>) {
-  const fetchState = vi.fn().mockReturnValue(state instanceof Promise ? state : Promise.resolve(state));
+  const fetchState = vi
+    .fn()
+    .mockReturnValue(state instanceof Promise ? state : Promise.resolve(state));
   const store = configureStore({
     reducer: { locale: localeReducer },
     preloadedState: { locale: { current: 'en' as const } },
@@ -59,12 +61,7 @@ describe('SecurityBanner', () => {
   });
 
   it('renders the persistent red banner when the gate is disabled by env override', async () => {
-    renderBanner({
-      installed: false,
-      disabledByEnv: true,
-      overrideIgnored: false,
-      host: 'cli',
-    });
+    renderBanner({ installed: false, disabledByEnv: true, overrideIgnored: false, host: 'cli' });
 
     const banner = await screen.findByTestId('security-banner-gate-disabled');
     expect(banner).toBeInTheDocument();
@@ -102,12 +99,7 @@ describe('SecurityBanner', () => {
   });
 
   it('does NOT auto-dismiss the persistent disabled banner', async () => {
-    renderBanner({
-      installed: false,
-      disabledByEnv: true,
-      overrideIgnored: false,
-      host: 'cli',
-    });
+    renderBanner({ installed: false, disabledByEnv: true, overrideIgnored: false, host: 'cli' });
 
     await screen.findByTestId('security-banner-gate-disabled');
 
@@ -119,14 +111,7 @@ describe('SecurityBanner', () => {
   });
 
   it('renders nothing on RPC failure (degraded core must not blank the app shell)', async () => {
-    // The fetcher returned by approvalApi already coerces failures to a benign
-    // "installed, no banner" default; pass that directly.
-    const { fetchState } = renderBanner({
-      installed: true,
-      disabledByEnv: false,
-      overrideIgnored: false,
-      host: 'unknown',
-    });
+    const { fetchState } = renderBanner(Promise.reject(new Error('rpc failed')));
 
     await waitFor(() => expect(fetchState).toHaveBeenCalledTimes(1));
 
