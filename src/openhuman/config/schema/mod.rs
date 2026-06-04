@@ -24,9 +24,15 @@ mod identity_cost;
 mod learning;
 mod load;
 pub use load::{
+<<<<<<< HEAD
     clear_active_user, default_action_dir, default_projects_dir, default_root_openhuman_dir,
     pre_login_user_dir, read_active_user_id, user_openhuman_dir, write_active_user_id,
     ACTION_DIR_ENV_VAR, PRE_LOGIN_USER_ID,
+=======
+    action_dir_env_override, clear_active_user, default_action_dir, default_projects_dir,
+    default_root_openhuman_dir, pre_login_user_dir, read_active_user_id, resolve_action_dir,
+    user_openhuman_dir, write_active_user_id, PRE_LOGIN_USER_ID,
+>>>>>>> upstream/main
 };
 pub mod claude_agent_sdk;
 pub use claude_agent_sdk::ClaudeAgentSdkConfig;

@@ -3535,6 +3535,13 @@ const messages: TranslationMap = {
   'settings.agentAccess.actionSandbox': '操作沙箱',
   'settings.agentAccess.readWriteAccess': '读取 + 写入',
   'settings.agentAccess.actionSandboxDesc': 'Shell、文件和 git 工具的默认工作目录。',
+  'settings.agentAccess.actionDir.edit': '编辑',
+  'settings.agentAccess.actionDir.save': '保存',
+  'settings.agentAccess.actionDir.cancel': '取消',
+  'settings.agentAccess.actionDir.placeholder': '绝对路径，例如 /Users/you/Projects',
+  'settings.agentAccess.actionDir.envLocked':
+    '由 OPENHUMAN_ACTION_DIR 设置。请更改环境变量以覆盖。',
+  'settings.agentAccess.actionDir.saved': '操作目录已更新。',
   'settings.agentAccess.internalState': '内部状态',
   'settings.agentAccess.agentBlocked': '代理已阻止',
   'settings.agentAccess.internalStateDesc':

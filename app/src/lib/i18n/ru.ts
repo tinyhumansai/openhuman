@@ -3749,6 +3749,13 @@ const messages: TranslationMap = {
   'settings.agentAccess.readWriteAccess': 'чтение + запись',
   'settings.agentAccess.actionSandboxDesc':
     'Рабочий каталог по умолчанию для инструментов оболочки, файлов и git.',
+  'settings.agentAccess.actionDir.edit': 'Изменить',
+  'settings.agentAccess.actionDir.save': 'Сохранить',
+  'settings.agentAccess.actionDir.cancel': 'Отмена',
+  'settings.agentAccess.actionDir.placeholder': 'Абсолютный путь, напр. /Users/you/Projects',
+  'settings.agentAccess.actionDir.envLocked':
+    'Задано переменной OPENHUMAN_ACTION_DIR. Измените переменную окружения, чтобы переопределить.',
+  'settings.agentAccess.actionDir.saved': 'Каталог действий обновлён.',
   'settings.agentAccess.internalState': 'Внутреннее состояние',
   'settings.agentAccess.agentBlocked': 'заблокировано для агента',
   'settings.agentAccess.internalStateDesc':

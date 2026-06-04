@@ -3732,6 +3732,13 @@ const messages: TranslationMap = {
   'settings.agentAccess.readWriteAccess': 'baca + tulis',
   'settings.agentAccess.actionSandboxDesc':
     'Direktori kerja default untuk alat shell, file, dan git.',
+  'settings.agentAccess.actionDir.edit': 'Edit',
+  'settings.agentAccess.actionDir.save': 'Simpan',
+  'settings.agentAccess.actionDir.cancel': 'Batal',
+  'settings.agentAccess.actionDir.placeholder': 'Jalur absolut, mis. /Users/you/Projects',
+  'settings.agentAccess.actionDir.envLocked':
+    'Disetel oleh OPENHUMAN_ACTION_DIR. Ubah variabel lingkungan untuk menggantinya.',
+  'settings.agentAccess.actionDir.saved': 'Direktori aksi diperbarui.',
   'settings.agentAccess.internalState': 'Status internal',
   'settings.agentAccess.agentBlocked': 'diblokir untuk agen',
   'settings.agentAccess.internalStateDesc':

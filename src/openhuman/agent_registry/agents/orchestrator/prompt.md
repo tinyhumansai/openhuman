@@ -221,3 +221,19 @@ When your answer is informed by retrieved memory, cite it with footnote markers:
 > [^1]: gmail · alice@example.com · 2026-04-22 · node:abc123
 
 Inline marker `[^N]` and a numbered footnote at the end carrying the node_id and source_ref from the RetrievalHit. Do not invent quotes — only quote text that appears verbatim in a hit's `content` field.
+
+## Presentations with images
+
+`generate_presentation` builds a `.pptx` from a `title` + `slides` array. Each slide may also carry an `images` array to embed pictures (charts, screenshots, diagrams) beneath the text:
+
+```
+"images": [
+  { "source": { "type": "artifact", "artifact_id": "<id from a prior tool>" }, "caption": "Q2 revenue" },
+  { "source": { "type": "file", "path": "/abs/path/chart.png" }, "caption": "Funnel" }
+]
+```
+
+- Two sources: `artifact` (bytes from a prior tool's output artifact) and `file` (a local path the agent can read). Remote URLs are **not** supported — fetch or save the image first, then reference it by artifact id or path.
+- Embeddable formats are **PNG and JPEG only**, ≤5 MB each, ≤6 per slide, ≤8 per deck. An image that fails these checks is **skipped** and reported in the tool's `image_warnings` — the deck is still produced. If you see warnings, tell the user which images were dropped and why.
+- **Grounding rule (mandatory):** only attach an image whose content you have actually verified. Before claiming "this chart shows X" in a caption or in your reply, confirm it via `research` / `memory_tree` / the tool output that produced the image. Never assert what an image depicts from its filename or the user's request alone — if you have not seen the contents, describe it neutrally or omit the claim.
+- v1 layout is single-column (images stacked beneath the text); a multi-image grid and richer placement are not yet available.

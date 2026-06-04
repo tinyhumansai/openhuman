@@ -8,7 +8,7 @@ import {
   openhumanGetAgentPaths,
   openhumanGetAgentSettings,
   openhumanGetAutonomySettings,
-  openhumanSetActionDir,
+  openhumanUpdateAgentPaths,
   openhumanUpdateAgentSettings,
   openhumanUpdateAutonomySettings,
   type TrustedAccess,
@@ -84,14 +84,14 @@ const AgentAccessPanel = () => {
   // RPC is pending or when not running under Tauri — the JSX falls back to
   // the documented defaults so the section never renders empty.
   const [agentPaths, setAgentPaths] = useState<AgentPaths | null>(null);
+  const [actionDirEditing, setActionDirEditing] = useState(false);
   const [actionDirInput, setActionDirInput] = useState('');
   const [actionDirError, setActionDirError] = useState<string | null>(null);
-  const [actionDirSavedNote, setActionDirSavedNote] = useState<string | null>(null);
-  const [isSavingActionDir, setIsSavingActionDir] = useState(false);
+  const [actionDirSaved, setActionDirSaved] = useState<string | null>(null);
+  const [actionDirSaving, setActionDirSaving] = useState(false);
   // Monotonic guard so out-of-order auto-save responses can't clobber UI state
   // with a stale result (last write wins).
   const persistSeqRef = useRef(0);
-  const actionDirSeqRef = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -186,55 +186,42 @@ const AgentAccessPanel = () => {
     }
   };
 
+  // True when the env var pins action_dir — the input must be disabled.
+  const actionDirEnvLocked = agentPaths?.action_dir_source === 'env';
+
+  const startEditActionDir = () => {
+    setActionDirInput(agentPaths?.action_dir ?? '');
+    setActionDirError(null);
+    setActionDirSaved(null);
+    setActionDirEditing(true);
+  };
+
+  const cancelEditActionDir = () => {
+    setActionDirEditing(false);
+    setActionDirError(null);
+    setActionDirInput('');
+  };
+
+  const saveActionDir = async () => {
+    if (!isTauri()) return;
+    setActionDirSaving(true);
+    setActionDirError(null);
+    setActionDirSaved(null);
+    try {
+      const resp = await openhumanUpdateAgentPaths({ action_dir: actionDirInput.trim() });
+      setAgentPaths(resp.result);
+      setActionDirEditing(false);
+      setActionDirSaved(t('settings.agentAccess.actionDir.saved'));
+    } catch (e) {
+      setActionDirError(e instanceof Error ? e.message : t('settings.agentAccess.saveError'));
+    } finally {
+      setActionDirSaving(false);
+    }
+  };
+
   const selectTier = (next: AutonomyLevel) => {
     setLevel(next);
     void persist({ level: next, workspaceOnly, requireTaskPlanApproval, trustedRoots });
-  };
-
-  /**
-   * Persist a new `action_dir` (issue #3240). The Save button calls this
-   * with the current input value; the core validates the path (env
-   * override, workspace_dir overlap, forbidden_paths, system blocks,
-   * createable) and hot-swaps the live `SecurityPolicy` on success. The
-   * monotonic guard prevents an in-flight earlier save from clobbering
-   * the UI after a newer one has resolved.
-   */
-  const saveActionDir = async () => {
-    if (!isTauri()) return;
-    if (agentPaths?.action_dir_env_override) {
-      setActionDirError(t('settings.agentAccess.actionDirEnvOverrideError'));
-      return;
-    }
-    const trimmed = actionDirInput.trim();
-    if (trimmed === '') {
-      setActionDirError(t('settings.agentAccess.actionDirEmptyError'));
-      return;
-    }
-    if (agentPaths && trimmed === agentPaths.action_dir) {
-      // No-op when nothing changed — silent, no spinner, no toast.
-      return;
-    }
-    const seq = ++actionDirSeqRef.current;
-    setActionDirError(null);
-    setActionDirSavedNote(null);
-    setIsSavingActionDir(true);
-    try {
-      const resp = await openhumanSetActionDir(trimmed);
-      if (actionDirSeqRef.current !== seq) return;
-      setAgentPaths(prev => (prev ? { ...prev, action_dir: resp.result.action_dir } : prev));
-      setActionDirInput(resp.result.action_dir);
-      setActionDirSavedNote(t('settings.agentAccess.actionDirSaved'));
-    } catch (e) {
-      if (actionDirSeqRef.current === seq) {
-        setActionDirError(
-          e instanceof Error ? e.message : t('settings.agentAccess.actionDirSaveError')
-        );
-      }
-    } finally {
-      if (actionDirSeqRef.current === seq) {
-        setIsSavingActionDir(false);
-      }
-    }
   };
 
   const toggleWorkspaceOnly = (next: boolean) => {
@@ -402,68 +389,78 @@ const AgentAccessPanel = () => {
                       {t('settings.agentAccess.readWriteAccess')}
                     </span>
                   </div>
-                  <p
-                    className="mt-0.5 text-xs text-stone-600 dark:text-neutral-400 font-mono"
-                    data-testid="agent-access-action-dir">
-                    {agentPaths?.action_dir ?? '~/OpenHuman/projects'}
-                  </p>
+                  {actionDirEditing ? (
+                    <div className="mt-1 space-y-1">
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          className="flex-1 rounded border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1 text-xs font-mono text-stone-900 dark:text-neutral-100"
+                          value={actionDirInput}
+                          onChange={e => setActionDirInput(e.target.value)}
+                          placeholder={t('settings.agentAccess.actionDir.placeholder')}
+                          disabled={actionDirSaving}
+                          data-testid="agent-access-action-dir-input"
+                        />
+                        <button
+                          type="button"
+                          className="rounded bg-ocean px-2 py-1 text-xs font-medium text-white disabled:opacity-50"
+                          onClick={() => void saveActionDir()}
+                          disabled={actionDirSaving}
+                          data-testid="agent-access-action-dir-save">
+                          {t('settings.agentAccess.actionDir.save')}
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded border border-stone-300 dark:border-neutral-700 px-2 py-1 text-xs font-medium text-stone-700 dark:text-neutral-300 disabled:opacity-50"
+                          onClick={cancelEditActionDir}
+                          disabled={actionDirSaving}
+                          data-testid="agent-access-action-dir-cancel">
+                          {t('settings.agentAccess.actionDir.cancel')}
+                        </button>
+                      </div>
+                      {actionDirError && (
+                        <p
+                          className="text-xs text-coral-600 dark:text-coral-400"
+                          data-testid="agent-access-action-dir-error">
+                          {actionDirError}
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="mt-0.5 flex items-center gap-2">
+                      <p
+                        className="text-xs text-stone-600 dark:text-neutral-400 font-mono"
+                        data-testid="agent-access-action-dir">
+                        {agentPaths?.action_dir ?? '~/OpenHuman/projects'}
+                      </p>
+                      {!actionDirEnvLocked && (
+                        <button
+                          type="button"
+                          className="text-xs font-medium text-ocean hover:underline"
+                          onClick={startEditActionDir}
+                          data-testid="agent-access-action-dir-edit">
+                          {t('settings.agentAccess.actionDir.edit')}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  {actionDirEnvLocked && (
+                    <p
+                      className="text-xs text-amber-600 dark:text-amber-400"
+                      data-testid="agent-access-action-dir-env-locked">
+                      {t('settings.agentAccess.actionDir.envLocked')}
+                    </p>
+                  )}
+                  {actionDirSaved && !actionDirEditing && (
+                    <p
+                      className="text-xs text-sage-600 dark:text-sage-400"
+                      data-testid="agent-access-action-dir-saved">
+                      {actionDirSaved}
+                    </p>
+                  )}
                   <p className="text-xs text-stone-500 dark:text-neutral-500">
                     {t('settings.agentAccess.actionSandboxDesc')}
                   </p>
-                  {/* Editable action_dir input (#3240). Disabled when the
-                      OPENHUMAN_ACTION_DIR env var is forcing the value —
-                      the core would refuse the RPC anyway. */}
-                  <div className="mt-2 flex items-center gap-2">
-                    <input
-                      type="text"
-                      aria-label={t('settings.agentAccess.actionDirInputLabel')}
-                      data-testid="agent-access-action-dir-input"
-                      className="flex-1 min-w-0 rounded border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1 text-xs font-mono text-stone-900 dark:text-neutral-100 disabled:opacity-60 disabled:cursor-not-allowed"
-                      value={actionDirInput}
-                      disabled={agentPaths?.action_dir_env_override ?? false}
-                      onChange={e => {
-                        setActionDirInput(e.target.value);
-                        setActionDirError(null);
-                        setActionDirSavedNote(null);
-                      }}
-                    />
-                    <button
-                      type="button"
-                      data-testid="agent-access-action-dir-save"
-                      className="rounded border border-stone-300 dark:border-neutral-700 bg-stone-50 dark:bg-neutral-800 px-2 py-1 text-xs text-stone-900 dark:text-neutral-100 hover:bg-stone-100 dark:hover:bg-neutral-700 disabled:opacity-60 disabled:cursor-not-allowed"
-                      disabled={
-                        isSavingActionDir ||
-                        (agentPaths?.action_dir_env_override ?? false) ||
-                        actionDirInput.trim() === '' ||
-                        actionDirInput.trim() === agentPaths?.action_dir
-                      }
-                      onClick={() => void saveActionDir()}>
-                      {isSavingActionDir
-                        ? t('settings.agentAccess.actionDirSaving')
-                        : t('settings.agentAccess.actionDirSave')}
-                    </button>
-                  </div>
-                  {agentPaths?.action_dir_env_override && (
-                    <p
-                      className="mt-1 text-xs text-amber-700 dark:text-amber-300"
-                      data-testid="agent-access-action-dir-env-note">
-                      {t('settings.agentAccess.actionDirEnvOverrideNote')}
-                    </p>
-                  )}
-                  {actionDirError && (
-                    <p
-                      className="mt-1 text-xs text-coral-600 dark:text-coral-400"
-                      data-testid="agent-access-action-dir-error">
-                      {actionDirError}
-                    </p>
-                  )}
-                  {actionDirSavedNote && (
-                    <p
-                      className="mt-1 text-xs text-sage-600 dark:text-sage-400"
-                      data-testid="agent-access-action-dir-saved">
-                      {actionDirSavedNote}
-                    </p>
-                  )}
                 </div>
                 <div className="px-3 py-2">
                   <div className="flex items-center gap-2">

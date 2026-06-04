@@ -3815,6 +3815,13 @@ const messages: TranslationMap = {
   'settings.agentAccess.readWriteAccess': 'Lesen + Schreiben',
   'settings.agentAccess.actionSandboxDesc':
     'Standard-Arbeitsverzeichnis für Shell-, Datei- und Git-Tools.',
+  'settings.agentAccess.actionDir.edit': 'Bearbeiten',
+  'settings.agentAccess.actionDir.save': 'Speichern',
+  'settings.agentAccess.actionDir.cancel': 'Abbrechen',
+  'settings.agentAccess.actionDir.placeholder': 'Absoluter Pfad, z. B. /Users/you/Projects',
+  'settings.agentAccess.actionDir.envLocked':
+    'Durch OPENHUMAN_ACTION_DIR festgelegt. Ändere die Umgebungsvariable zum Überschreiben.',
+  'settings.agentAccess.actionDir.saved': 'Aktionsverzeichnis aktualisiert.',
   'settings.agentAccess.internalState': 'Interner Zustand',
   'settings.agentAccess.agentBlocked': 'Agent-gesperrt',
   'settings.agentAccess.internalStateDesc':

@@ -4105,6 +4105,13 @@ const en: TranslationMap = {
   'settings.agentAccess.readWriteAccess': 'read + write',
   'settings.agentAccess.actionSandboxDesc':
     'Default working directory for shell, file, and git tools.',
+  'settings.agentAccess.actionDir.edit': 'Edit',
+  'settings.agentAccess.actionDir.save': 'Save',
+  'settings.agentAccess.actionDir.cancel': 'Cancel',
+  'settings.agentAccess.actionDir.placeholder': 'Absolute path, e.g. /Users/you/Projects',
+  'settings.agentAccess.actionDir.envLocked':
+    'Set by OPENHUMAN_ACTION_DIR. Change the environment variable to override.',
+  'settings.agentAccess.actionDir.saved': 'Action directory updated.',
   'settings.agentAccess.internalState': 'Internal state',
   'settings.agentAccess.agentBlocked': 'agent-blocked',
   'settings.agentAccess.internalStateDesc':

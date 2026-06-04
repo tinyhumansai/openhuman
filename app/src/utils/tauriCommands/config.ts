@@ -430,12 +430,15 @@ export async function openhumanGetAutonomySettings(): Promise<CommandResponse<Au
  *   Agent-blocked.
  * - `projects_dir` — default projects home; matches `action_dir` when no
  *   override is set.
+ * - `action_dir_source` — where the effective `action_dir` came from:
+ *   `'env'` (pinned by OPENHUMAN_ACTION_DIR — UI must disable editing),
+ *   `'override'` (a persisted user choice), or `'default'`.
  */
 export interface AgentPaths {
   action_dir: string;
   workspace_dir: string;
   projects_dir: string;
-  action_dir_env_override: boolean;
+  action_dir_source: 'env' | 'override' | 'default';
 }
 
 export async function openhumanGetAgentPaths(): Promise<CommandResponse<AgentPaths>> {
@@ -447,20 +450,20 @@ export async function openhumanGetAgentPaths(): Promise<CommandResponse<AgentPat
   });
 }
 
-export interface SetActionDirResult {
-  action_dir: string;
-  live_policy_generation: number | null;
+/** Partial update for the agent's editable filesystem roots (issue #3240). */
+export interface AgentPathsUpdate {
+  action_dir?: string;
 }
 
-export async function openhumanSetActionDir(
-  path: string
-): Promise<CommandResponse<SetActionDirResult>> {
+export async function openhumanUpdateAgentPaths(
+  update: AgentPathsUpdate
+): Promise<CommandResponse<AgentPaths>> {
   if (!isTauri()) {
     throw new Error('Not running in Tauri');
   }
-  return await callCoreRpc<CommandResponse<SetActionDirResult>>({
-    method: CORE_RPC_METHODS.configSetActionDir,
-    params: { path },
+  return await callCoreRpc<CommandResponse<AgentPaths>>({
+    method: CORE_RPC_METHODS.configUpdateAgentPaths,
+    params: update,
   });
 }
 

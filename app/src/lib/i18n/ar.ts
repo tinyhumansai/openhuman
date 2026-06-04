@@ -3644,6 +3644,13 @@ const messages: TranslationMap = {
   'settings.agentAccess.actionSandbox': 'صندوق الإجراءات',
   'settings.agentAccess.readWriteAccess': 'قراءة + كتابة',
   'settings.agentAccess.actionSandboxDesc': 'دليل العمل الافتراضي لأدوات الطرفية والملفات وgit.',
+  'settings.agentAccess.actionDir.edit': 'تعديل',
+  'settings.agentAccess.actionDir.save': 'حفظ',
+  'settings.agentAccess.actionDir.cancel': 'إلغاء',
+  'settings.agentAccess.actionDir.placeholder': 'مسار مطلق، مثل /Users/you/Projects',
+  'settings.agentAccess.actionDir.envLocked':
+    'محدد بواسطة OPENHUMAN_ACTION_DIR. غيّر متغير البيئة للتجاوز.',
+  'settings.agentAccess.actionDir.saved': 'تم تحديث دليل الإجراءات.',
   'settings.agentAccess.internalState': 'الحالة الداخلية',
   'settings.agentAccess.agentBlocked': 'محظور على الوكيل',
   'settings.agentAccess.internalStateDesc':

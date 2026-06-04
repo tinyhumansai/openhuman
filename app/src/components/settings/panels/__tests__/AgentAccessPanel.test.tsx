@@ -10,7 +10,7 @@ import {
   openhumanGetAgentPaths,
   openhumanGetAgentSettings,
   openhumanGetAutonomySettings,
-  openhumanSetActionDir,
+  openhumanUpdateAgentPaths,
   openhumanUpdateAgentSettings,
   openhumanUpdateAutonomySettings,
 } from '../../../../utils/tauriCommands';
@@ -41,7 +41,7 @@ const agentPaths = (overrides: Partial<AgentPaths> = {}): AgentPaths => ({
   action_dir: '/home/test/OpenHuman/projects',
   workspace_dir: '/home/test/.openhuman/users/u1/workspace',
   projects_dir: '/home/test/OpenHuman/projects',
-  action_dir_env_override: false,
+  action_dir_source: 'default',
   ...overrides,
 });
 
@@ -65,7 +65,7 @@ vi.mock('../../../../utils/tauriCommands', async () => {
     openhumanGetAgentSettings: vi.fn(),
     openhumanUpdateAgentSettings: vi.fn(),
     openhumanGetAgentPaths: vi.fn(),
-    openhumanSetActionDir: vi.fn(),
+    openhumanUpdateAgentPaths: vi.fn(),
   };
 });
 
@@ -74,7 +74,7 @@ const mockUpdate = vi.mocked(openhumanUpdateAutonomySettings);
 const mockGetAgent = vi.mocked(openhumanGetAgentSettings);
 const mockUpdateAgent = vi.mocked(openhumanUpdateAgentSettings);
 const mockGetAgentPaths = vi.mocked(openhumanGetAgentPaths);
-const mockSetActionDir = vi.mocked(openhumanSetActionDir);
+const mockUpdateAgentPaths = vi.mocked(openhumanUpdateAgentPaths);
 
 describe('AgentAccessPanel', () => {
   beforeEach(() => {
@@ -85,10 +85,7 @@ describe('AgentAccessPanel', () => {
     mockGetAgent.mockResolvedValue({ result: agentSettings(), logs: [] });
     mockUpdateAgent.mockResolvedValue({ result: {} as never, logs: [] });
     mockGetAgentPaths.mockResolvedValue({ result: agentPaths(), logs: [] });
-    mockSetActionDir.mockResolvedValue({
-      result: { action_dir: '/home/test/OpenHuman/projects', live_policy_generation: 1 },
-      logs: [],
-    });
+    mockUpdateAgentPaths.mockResolvedValue({ result: agentPaths(), logs: [] });
   });
 
   it('loads settings on mount and renders the three access tiers', async () => {
@@ -299,92 +296,67 @@ describe('AgentAccessPanel', () => {
     );
   });
 
-  it('renders the action_dir input prepopulated with the live value', async () => {
+  it('shows an Edit affordance for action_dir when the source is not env', async () => {
     mockGetAgentPaths.mockResolvedValue({
-      result: agentPaths({ action_dir: '/Users/sample/OpenHuman/projects' }),
+      result: agentPaths({ action_dir: '/Users/sample/projects', action_dir_source: 'default' }),
       logs: [],
     });
     renderWithProviders(<AgentAccessPanel />);
-    const input = (await screen.findByTestId('agent-access-action-dir-input')) as HTMLInputElement;
-    await waitFor(() => expect(input.value).toBe('/Users/sample/OpenHuman/projects'));
-    expect(input.disabled).toBe(false);
+    expect(await screen.findByTestId('agent-access-action-dir-edit')).toBeInTheDocument();
+    expect(screen.queryByTestId('agent-access-action-dir-env-locked')).not.toBeInTheDocument();
   });
 
-  it('persists a new action_dir via openhumanSetActionDir and shows the confirmation', async () => {
+  it('saving a new action_dir calls openhumanUpdateAgentPaths and updates the display', async () => {
     mockGetAgentPaths.mockResolvedValue({
-      result: agentPaths({ action_dir: '/Users/sample/OpenHuman/projects' }),
+      result: agentPaths({ action_dir: '/Users/sample/old', action_dir_source: 'default' }),
       logs: [],
     });
-    mockSetActionDir.mockResolvedValue({
-      result: { action_dir: '/Users/sample/work/repos', live_policy_generation: 7 },
+    mockUpdateAgentPaths.mockResolvedValue({
+      result: agentPaths({ action_dir: '/Users/sample/new', action_dir_source: 'override' }),
       logs: [],
     });
     renderWithProviders(<AgentAccessPanel />);
-    const input = (await screen.findByTestId('agent-access-action-dir-input')) as HTMLInputElement;
-    await waitFor(() => expect(input.value).toBe('/Users/sample/OpenHuman/projects'));
 
-    fireEvent.change(input, { target: { value: '/Users/sample/work/repos' } });
+    fireEvent.click(await screen.findByTestId('agent-access-action-dir-edit'));
+    const input = await screen.findByTestId('agent-access-action-dir-input');
+    fireEvent.change(input, { target: { value: '/Users/sample/new' } });
     fireEvent.click(screen.getByTestId('agent-access-action-dir-save'));
 
-    await waitFor(() => expect(mockSetActionDir).toHaveBeenCalledWith('/Users/sample/work/repos'));
-    expect(await screen.findByTestId('agent-access-action-dir-saved')).toBeInTheDocument();
     await waitFor(() =>
-      expect(screen.getByTestId('agent-access-action-dir')).toHaveTextContent(
-        '/Users/sample/work/repos'
-      )
+      expect(mockUpdateAgentPaths).toHaveBeenCalledWith({ action_dir: '/Users/sample/new' })
+    );
+    expect(await screen.findByTestId('agent-access-action-dir')).toHaveTextContent(
+      '/Users/sample/new'
     );
   });
 
-  it('surfaces an inline error when openhumanSetActionDir rejects', async () => {
+  it('renders a backend validation error inline without leaving edit mode', async () => {
     mockGetAgentPaths.mockResolvedValue({
-      result: agentPaths({ action_dir: '/Users/sample/OpenHuman/projects' }),
+      result: agentPaths({ action_dir: '/Users/sample/old', action_dir_source: 'default' }),
       logs: [],
     });
-    mockSetActionDir.mockRejectedValue(
-      new Error('action_dir cannot be inside workspace_dir (/Users/sample/.openhuman/workspace)')
-    );
+    mockUpdateAgentPaths.mockRejectedValue(new Error('action_dir must be an absolute path'));
     renderWithProviders(<AgentAccessPanel />);
-    const input = (await screen.findByTestId('agent-access-action-dir-input')) as HTMLInputElement;
-    await waitFor(() => expect(input.value).toBe('/Users/sample/OpenHuman/projects'));
 
-    fireEvent.change(input, { target: { value: '/Users/sample/.openhuman/workspace/sneaky' } });
+    fireEvent.click(await screen.findByTestId('agent-access-action-dir-edit'));
+    const input = await screen.findByTestId('agent-access-action-dir-input');
+    fireEvent.change(input, { target: { value: 'relative/path' } });
     fireEvent.click(screen.getByTestId('agent-access-action-dir-save'));
 
-    const errorNode = await screen.findByTestId('agent-access-action-dir-error');
-    expect(errorNode).toHaveTextContent('workspace_dir');
-    expect(screen.getByTestId('agent-access-action-dir')).toHaveTextContent(
-      '/Users/sample/OpenHuman/projects'
+    expect(await screen.findByTestId('agent-access-action-dir-error')).toHaveTextContent(
+      'action_dir must be an absolute path'
     );
+    expect(screen.getByTestId('agent-access-action-dir-input')).toBeInTheDocument();
   });
 
-  it('disables the input and shows an env-override note when OPENHUMAN_ACTION_DIR is set', async () => {
+  it('disables editing and shows the env-locked notice when source is env', async () => {
     mockGetAgentPaths.mockResolvedValue({
-      result: agentPaths({ action_dir: '/tmp/forced-by-env', action_dir_env_override: true }),
+      result: agentPaths({ action_dir: '/tmp/env-pinned', action_dir_source: 'env' }),
       logs: [],
     });
     renderWithProviders(<AgentAccessPanel />);
-    const input = (await screen.findByTestId('agent-access-action-dir-input')) as HTMLInputElement;
-    await waitFor(() => expect(input.disabled).toBe(true));
-    expect(screen.getByTestId('agent-access-action-dir-env-note')).toBeInTheDocument();
-    expect((screen.getByTestId('agent-access-action-dir-save') as HTMLButtonElement).disabled).toBe(
-      true
-    );
-    expect(mockSetActionDir).not.toHaveBeenCalled();
-  });
-
-  it('disables Save when the input is unchanged from the persisted value', async () => {
-    mockGetAgentPaths.mockResolvedValue({
-      result: agentPaths({ action_dir: '/Users/sample/OpenHuman/projects' }),
-      logs: [],
-    });
-    renderWithProviders(<AgentAccessPanel />);
-    const input = (await screen.findByTestId('agent-access-action-dir-input')) as HTMLInputElement;
-    await waitFor(() => expect(input.value).toBe('/Users/sample/OpenHuman/projects'));
-    const saveButton = screen.getByTestId('agent-access-action-dir-save') as HTMLButtonElement;
-    expect(saveButton.disabled).toBe(true);
-    fireEvent.change(input, { target: { value: '/Users/sample/work/repos' } });
-    expect(saveButton.disabled).toBe(false);
-    fireEvent.change(input, { target: { value: '/Users/sample/OpenHuman/projects' } });
-    expect(saveButton.disabled).toBe(true);
+    await screen.findByTestId('agent-access-action-dir');
+    expect(screen.queryByTestId('agent-access-action-dir-edit')).not.toBeInTheDocument();
+    expect(screen.getByTestId('agent-access-action-dir-env-locked')).toBeInTheDocument();
   });
 });

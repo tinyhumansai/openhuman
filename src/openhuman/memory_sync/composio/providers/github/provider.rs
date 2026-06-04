@@ -27,8 +27,9 @@ use super::ingest::ingest_issue_into_memory_tree;
 use super::sync;
 use crate::openhuman::memory_sync::composio::providers::sync_state::SyncState;
 use crate::openhuman::memory_sync::composio::providers::{
-    merge_extra, pick_str, ComposioProvider, CuratedTool, GithubFetchMode, NormalizedTask,
-    ProviderContext, ProviderUserProfile, SyncOutcome, SyncReason, TaskFetchFilter, TaskKind,
+    merge_extra, pick_str, resolve_sync_interval_secs, ComposioProvider, CuratedTool,
+    GithubFetchMode, NormalizedTask, ProviderContext, ProviderUserProfile, SyncOutcome, SyncReason,
+    TaskFetchFilter, TaskKind,
 };
 
 pub(crate) const ACTION_GET_AUTHENTICATED_USER: &str = "GITHUB_GET_THE_AUTHENTICATED_USER";
@@ -75,7 +76,7 @@ impl ComposioProvider for GitHubProvider {
         // 30 minutes — GitHub issues change less frequently than Slack
         // messages, so a half-hour cadence keeps the memory fresh without
         // hammering the search API.
-        Some(30 * 60)
+        Some(resolve_sync_interval_secs("github", 30 * 60))
     }
 
     async fn fetch_user_profile(

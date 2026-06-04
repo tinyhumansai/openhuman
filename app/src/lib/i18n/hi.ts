@@ -3725,6 +3725,13 @@ const messages: TranslationMap = {
   'settings.agentAccess.readWriteAccess': 'पढ़ना + लिखना',
   'settings.agentAccess.actionSandboxDesc':
     'शेल, फ़ाइल और git टूल के लिए डिफ़ॉल्ट कार्य निर्देशिका।',
+  'settings.agentAccess.actionDir.edit': 'संपादित करें',
+  'settings.agentAccess.actionDir.save': 'सहेजें',
+  'settings.agentAccess.actionDir.cancel': 'रद्द करें',
+  'settings.agentAccess.actionDir.placeholder': 'पूर्ण पथ, उदा. /Users/you/Projects',
+  'settings.agentAccess.actionDir.envLocked':
+    'OPENHUMAN_ACTION_DIR द्वारा सेट किया गया। ओवरराइड करने के लिए एनवायरनमेंट वेरिएबल बदलें।',
+  'settings.agentAccess.actionDir.saved': 'एक्शन डायरेक्टरी अपडेट हो गई।',
   'settings.agentAccess.internalState': 'आंतरिक स्थिति',
   'settings.agentAccess.agentBlocked': 'एजेंट-अवरुद्ध',
   'settings.agentAccess.internalStateDesc':

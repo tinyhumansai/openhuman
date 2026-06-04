@@ -465,6 +465,7 @@ pub fn all_tools_with_runtime(
     // registered.
     tools.push(Box::new(PresentationTool::new(
         root_config.workspace_dir.clone(),
+        security.clone(),
     )));
 
     if browser_config.enabled {

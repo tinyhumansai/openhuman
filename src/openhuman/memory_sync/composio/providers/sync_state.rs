@@ -29,7 +29,45 @@ use crate::openhuman::memory_store::MemoryClientRef;
 /// day. This covers the initial backfill case where there are thousands of
 /// unsynced items — after this many requests the provider yields and
 /// continues on the next day.
+///
+/// Compile-time default. The runtime value used by [`DailyBudget::default`]
+/// is resolved by [`resolved_daily_request_limit`], which honors the
+/// `OPENHUMAN_COMPOSIO_DAILY_REQUEST_LIMIT` env var so operators can widen
+/// (or tighten) the cap without recompiling. See the project `.env.example`
+/// for documentation.
 pub const DEFAULT_DAILY_REQUEST_LIMIT: u32 = 500;
+
+/// Environment variable read by [`resolved_daily_request_limit`] to override
+/// [`DEFAULT_DAILY_REQUEST_LIMIT`]. Must parse as a positive `u32`; values
+/// `< 1` or non-numeric content fall back to the default with a `warn`.
+pub const ENV_DAILY_REQUEST_LIMIT: &str = "OPENHUMAN_COMPOSIO_DAILY_REQUEST_LIMIT";
+
+/// Resolve the effective per-day request limit. Reads
+/// [`ENV_DAILY_REQUEST_LIMIT`] if set; otherwise returns
+/// [`DEFAULT_DAILY_REQUEST_LIMIT`]. A non-positive or unparseable value
+/// is rejected with a `warn` log and the default is used — we never
+/// silently honor `0` because that would freeze every provider's sync
+/// from the first tick.
+pub fn resolved_daily_request_limit() -> u32 {
+    match std::env::var(ENV_DAILY_REQUEST_LIMIT) {
+        Ok(s) => match s.trim().parse::<u32>() {
+            Ok(n) if n >= 1 => n,
+            _ => {
+                static WARNED: std::sync::Once = std::sync::Once::new();
+                WARNED.call_once(|| {
+                    tracing::warn!(
+                        env = ENV_DAILY_REQUEST_LIMIT,
+                        value = %s,
+                        default = DEFAULT_DAILY_REQUEST_LIMIT,
+                        "[composio:sync-state] env override not a positive u32; using default"
+                    );
+                });
+                DEFAULT_DAILY_REQUEST_LIMIT
+            }
+        },
+        Err(_) => DEFAULT_DAILY_REQUEST_LIMIT,
+    }
+}
 
 /// KV namespace under which all sync state keys live. Separate from the
 /// memory document namespaces (`skill-gmail`, etc.) to avoid collisions.
@@ -103,7 +141,7 @@ impl Default for DailyBudget {
         Self {
             date: today_str(),
             requests_used: 0,
-            limit: DEFAULT_DAILY_REQUEST_LIMIT,
+            limit: resolved_daily_request_limit(),
         }
     }
 }
@@ -492,5 +530,74 @@ mod tests {
         let s2 = SyncState::new("gmail", "conn_x");
         assert_eq!(s1.kv_key(), s2.kv_key());
         assert_eq!(s1.kv_key(), "gmail:conn_x");
+    }
+
+    /// RAII guard that save→set→restore an env var so the test does not
+    /// leak state to sibling tests in the same process.
+    struct EnvGuard {
+        key: &'static str,
+        previous: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self { key, previous }
+        }
+        fn unset(key: &'static str) -> Self {
+            let previous = std::env::var(key).ok();
+            std::env::remove_var(key);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match self.previous.take() {
+                Some(v) => std::env::set_var(self.key, v),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+
+    // Env-var override scenarios are bundled into one `#[test]` so they
+    // run sequentially within a single thread — `cargo test` parallelism
+    // across `#[test]` fns would race on `OPENHUMAN_COMPOSIO_DAILY_REQUEST_LIMIT`.
+    #[test]
+    fn resolved_daily_request_limit_honors_env() {
+        let _lock = crate::openhuman::config::TEST_ENV_LOCK.lock().unwrap();
+
+        // Unset → default.
+        let _g = EnvGuard::unset(ENV_DAILY_REQUEST_LIMIT);
+        assert_eq!(resolved_daily_request_limit(), DEFAULT_DAILY_REQUEST_LIMIT);
+        assert_eq!(DailyBudget::default().limit, DEFAULT_DAILY_REQUEST_LIMIT);
+        drop(_g);
+
+        // Valid override widens the cap.
+        let _g = EnvGuard::set(ENV_DAILY_REQUEST_LIMIT, "5000");
+        assert_eq!(resolved_daily_request_limit(), 5000);
+        assert_eq!(DailyBudget::default().limit, 5000);
+        drop(_g);
+
+        // Trims surrounding whitespace.
+        let _g = EnvGuard::set(ENV_DAILY_REQUEST_LIMIT, "  750  ");
+        assert_eq!(resolved_daily_request_limit(), 750);
+        drop(_g);
+
+        // Zero rejected — would otherwise freeze every sync.
+        let _g = EnvGuard::set(ENV_DAILY_REQUEST_LIMIT, "0");
+        assert_eq!(resolved_daily_request_limit(), DEFAULT_DAILY_REQUEST_LIMIT);
+        drop(_g);
+
+        // Non-numeric rejected.
+        let _g = EnvGuard::set(ENV_DAILY_REQUEST_LIMIT, "lots");
+        assert_eq!(resolved_daily_request_limit(), DEFAULT_DAILY_REQUEST_LIMIT);
+        drop(_g);
+
+        // Negative rejected (won't parse as u32).
+        let _g = EnvGuard::set(ENV_DAILY_REQUEST_LIMIT, "-1");
+        assert_eq!(resolved_daily_request_limit(), DEFAULT_DAILY_REQUEST_LIMIT);
+        drop(_g);
     }
 }

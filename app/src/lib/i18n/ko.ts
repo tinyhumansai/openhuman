@@ -3678,6 +3678,13 @@ const messages: TranslationMap = {
   'settings.agentAccess.actionSandbox': '액션 샌드박스',
   'settings.agentAccess.readWriteAccess': '읽기 + 쓰기',
   'settings.agentAccess.actionSandboxDesc': '셸, 파일 및 git 도구의 기본 작업 디렉터리.',
+  'settings.agentAccess.actionDir.edit': '편집',
+  'settings.agentAccess.actionDir.save': '저장',
+  'settings.agentAccess.actionDir.cancel': '취소',
+  'settings.agentAccess.actionDir.placeholder': '절대 경로, 예: /Users/you/Projects',
+  'settings.agentAccess.actionDir.envLocked':
+    'OPENHUMAN_ACTION_DIR로 설정됨. 재정의하려면 환경 변수를 변경하세요.',
+  'settings.agentAccess.actionDir.saved': '작업 디렉터리가 업데이트되었습니다.',
   'settings.agentAccess.internalState': '내부 상태',
   'settings.agentAccess.agentBlocked': '에이전트 차단됨',
   'settings.agentAccess.internalStateDesc':

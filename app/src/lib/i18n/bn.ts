@@ -3716,6 +3716,13 @@ const messages: TranslationMap = {
   'settings.agentAccess.readWriteAccess': 'পড়া + লেখা',
   'settings.agentAccess.actionSandboxDesc':
     'শেল, ফাইল এবং git টুলের জন্য ডিফল্ট কার্যকরী ডিরেক্টরি।',
+  'settings.agentAccess.actionDir.edit': 'সম্পাদনা',
+  'settings.agentAccess.actionDir.save': 'সংরক্ষণ',
+  'settings.agentAccess.actionDir.cancel': 'বাতিল',
+  'settings.agentAccess.actionDir.placeholder': 'পরম পথ, যেমন /Users/you/Projects',
+  'settings.agentAccess.actionDir.envLocked':
+    'OPENHUMAN_ACTION_DIR দ্বারা নির্ধারিত। ওভাররাইড করতে এনভায়রনমেন্ট ভেরিয়েবল পরিবর্তন করুন।',
+  'settings.agentAccess.actionDir.saved': 'অ্যাকশন ডিরেক্টরি আপডেট হয়েছে।',
   'settings.agentAccess.internalState': 'অভ্যন্তরীণ অবস্থা',
   'settings.agentAccess.agentBlocked': 'এজেন্ট-অবরুদ্ধ',
   'settings.agentAccess.internalStateDesc':

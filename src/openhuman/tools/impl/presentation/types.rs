@@ -17,6 +17,50 @@ pub(super) const MAX_TEXT_CHARS: usize = 2_000;
 /// unreadable slides and bloat the output file.
 pub(super) const MAX_BULLETS_PER_SLIDE: usize = 32;
 
+/// Maximum number of images attached to a single slide. The v1
+/// single-column layout stacks images vertically in the lower band of
+/// the slide; beyond this count each image is too small to read.
+pub(super) const MAX_IMAGES_PER_SLIDE: usize = 6;
+
+/// Maximum number of images across the whole deck. Bounds the embedded
+/// media payload (and therefore the artifact size) regardless of how
+/// the images are distributed across slides.
+pub(super) const MAX_IMAGES_PER_DECK: usize = 8;
+
+/// Per-image byte cap. Mirrors the multimodal pipeline's image ceiling
+/// (`agent::multimodal`) so a single oversized asset cannot balloon the
+/// deck or stall generation. Enforced at resolution time (once the
+/// bytes are in hand), not at schema-validation time.
+pub(super) const MAX_IMAGE_BYTES: usize = 5 * 1024 * 1024;
+
+/// Where a slide image's bytes come from. `Url` is intentionally
+/// **deferred** in v1 — fetching agent-supplied URLs at generation time
+/// is an SSRF surface that needs its own all- / deny-list design.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SlideImageSource {
+    /// Bytes from a workspace artifact (e.g. a chart the agent produced
+    /// earlier via another tool). Resolved through
+    /// [`crate::openhuman::artifacts::read_artifact_bytes`].
+    Artifact { artifact_id: String },
+    /// Bytes from a local filesystem path the agent already has read
+    /// access to (e.g. a screenshot saved under the action dir).
+    File { path: String },
+}
+
+/// One image attached to a slide. `caption`, when present, is rendered
+/// as a trailing text bullet beneath the image in v1 (a true
+/// image-anchored caption shape is deferred with the grid layout).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SlideImage {
+    /// Image data source. See [`SlideImageSource`].
+    pub source: SlideImageSource,
+    /// Optional caption rendered as a bullet under the image.
+    #[serde(default)]
+    pub caption: Option<String>,
+}
+
 /// Slide spec — one entry per content slide in the generated deck.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -36,6 +80,25 @@ pub struct SlideSpec {
     /// Speaker notes attached to the slide.
     #[serde(default)]
     pub speaker_notes: Option<String>,
+    /// Images attached to the slide, rendered single-column beneath the
+    /// text. Resolved + validated (MIME / size / dimensions) at the
+    /// async `execute()` boundary; a bad image is skipped with a
+    /// warning rather than failing the whole deck.
+    #[serde(default)]
+    pub images: Vec<SlideImage>,
+}
+
+/// An image resolved + validated at the async boundary, ready for the
+/// (synchronous, pure) engine to embed. Carries the decoded bytes, the
+/// `ppt-rs` format token (`"PNG"` / `"JPEG"`), and the native pixel
+/// dimensions used for aspect-preserving placement.
+#[derive(Debug, Clone)]
+pub(super) struct ResolvedSlideImage {
+    pub bytes: Vec<u8>,
+    pub format: &'static str,
+    pub width_px: u32,
+    pub height_px: u32,
+    pub caption: Option<String>,
 }
 
 /// Top-level input for the `generate_presentation` tool.
@@ -73,6 +136,12 @@ pub struct GeneratePresentationOutput {
     pub slide_count: usize,
     /// On-disk size of the produced `.pptx` in bytes.
     pub size_bytes: u64,
+    /// Per-image warnings for assets that could not be embedded (bad
+    /// MIME, oversize, unreadable, undecodable dimensions). The deck is
+    /// still produced without those images — partial success rather than
+    /// a hard failure. Empty when every image resolved cleanly.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub image_warnings: Vec<String>,
 }
 
 /// Structured error variants surfaced to the agent. Aligned with the
@@ -168,6 +237,13 @@ pub(super) fn validate_input(input: &GeneratePresentationInput) -> Result<(), Pr
             reason: format!("must contain ≤ {MAX_SLIDES} slides"),
         });
     }
+    let total_images: usize = input.slides.iter().map(|s| s.images.len()).sum();
+    if total_images > MAX_IMAGES_PER_DECK {
+        return Err(PresentationError::InvalidInput {
+            field: "slides[].images".to_string(),
+            reason: format!("deck must contain ≤ {MAX_IMAGES_PER_DECK} images total"),
+        });
+    }
     for (i, slide) in input.slides.iter().enumerate() {
         let has_title = !slide.title.trim().is_empty();
         let has_body = slide
@@ -219,6 +295,45 @@ pub(super) fn validate_input(input: &GeneratePresentationInput) -> Result<(), Pr
                     field: format!("slides[{i}].speaker_notes"),
                     reason: format!("must be ≤ {MAX_TEXT_CHARS} chars"),
                 });
+            }
+        }
+        if slide.images.len() > MAX_IMAGES_PER_SLIDE {
+            return Err(PresentationError::InvalidInput {
+                field: format!("slides[{i}].images"),
+                reason: format!("must contain ≤ {MAX_IMAGES_PER_SLIDE} images"),
+            });
+        }
+        for (img_idx, image) in slide.images.iter().enumerate() {
+            // Cheap structural checks only — MIME, size, and decodability
+            // are validated at resolution time when the bytes are in hand
+            // (and a failure there is a skip-with-warning, not a hard
+            // reject). Here we only catch malformed specs the agent can
+            // self-correct without touching the filesystem.
+            match &image.source {
+                SlideImageSource::Artifact { artifact_id } => {
+                    if artifact_id.trim().is_empty() {
+                        return Err(PresentationError::InvalidInput {
+                            field: format!("slides[{i}].images[{img_idx}].source.artifact_id"),
+                            reason: "must not be empty".to_string(),
+                        });
+                    }
+                }
+                SlideImageSource::File { path } => {
+                    if path.trim().is_empty() {
+                        return Err(PresentationError::InvalidInput {
+                            field: format!("slides[{i}].images[{img_idx}].source.path"),
+                            reason: "must not be empty".to_string(),
+                        });
+                    }
+                }
+            }
+            if let Some(caption) = image.caption.as_deref() {
+                if caption.chars().count() > MAX_TEXT_CHARS {
+                    return Err(PresentationError::InvalidInput {
+                        field: format!("slides[{i}].images[{img_idx}].caption"),
+                        reason: format!("must be ≤ {MAX_TEXT_CHARS} chars"),
+                    });
+                }
             }
         }
     }

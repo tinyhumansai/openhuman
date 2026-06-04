@@ -159,6 +159,41 @@ pub fn default_projects_dir() -> PathBuf {
 /// and git tools run by default. Separate from the internal workspace state
 /// dir. Defaults to `default_projects_dir()` (`~/OpenHuman/projects`);
 /// overridable via `OPENHUMAN_ACTION_DIR`.
+/// The `OPENHUMAN_ACTION_DIR` env override, when set to a non-empty value.
+///
+/// Returns `None` when the variable is unset or blank (a common shape from
+/// shells that pass through a declared-but-unset variable). The trim mirrors
+/// [`default_action_dir`] so an empty env var never pins `action_dir`.
+pub fn action_dir_env_override() -> Option<PathBuf> {
+    let raw = std::env::var(ACTION_DIR_ENV_VAR).ok()?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(trimmed))
+    }
+}
+
+/// Resolve the effective `action_dir` from the precedence chain:
+/// env `OPENHUMAN_ACTION_DIR` > persisted `action_dir_override` > default
+/// projects dir. Keeping the env var first means existing env-driven
+/// deployments are unaffected by a UI-set override.
+pub fn resolve_action_dir(action_dir_override: &Option<PathBuf>) -> PathBuf {
+    if let Some(env_dir) = action_dir_env_override() {
+        return env_dir;
+    }
+    if let Some(over) = action_dir_override {
+        if !over.as_os_str().is_empty() && over.is_absolute() {
+            return over.clone();
+        }
+        tracing::warn!(
+            value = %over.display(),
+            "[config] ignoring invalid action_dir_override; expected non-empty absolute path"
+        );
+    }
+    default_projects_dir()
+}
+
 pub fn default_action_dir() -> PathBuf {
     if let Ok(p) = std::env::var(ACTION_DIR_ENV_VAR) {
         let trimmed = p.trim();
@@ -1137,7 +1172,9 @@ impl Config {
                 parse_config_with_recovery(&config_path, &contents).await;
             config.config_path = config_path.clone();
             config.workspace_dir = workspace_dir;
-            config.action_dir = default_action_dir();
+            // Resolve from the precedence chain (env > persisted override >
+            // default) now that the override field is loaded from disk.
+            config.action_dir = resolve_action_dir(&config.action_dir_override);
             migrate_legacy_autocomplete_disabled_apps(&mut config);
             migrate_legacy_inference_url(&mut config);
             migrate_cloud_provider_slugs(&mut config);
@@ -1264,7 +1301,7 @@ impl Config {
         let (mut config, _was_corrupted) = parse_config_with_recovery(&config_path, &raw).await;
         config.config_path = config_path;
         config.workspace_dir = workspace_dir;
-        config.action_dir = default_action_dir();
+        config.action_dir = resolve_action_dir(&config.action_dir_override);
         config.apply_env_overrides();
         decrypt_config_secrets(&mut config, &openhuman_dir)?;
         Ok(config)
@@ -1301,7 +1338,7 @@ impl Config {
             parse_config_with_recovery(&config_path, &raw).await;
         config.config_path = config_path;
         config.workspace_dir = workspace_dir;
-        config.action_dir = default_action_dir();
+        config.action_dir = resolve_action_dir(&config.action_dir_override);
         migrate_legacy_autocomplete_disabled_apps(&mut config);
         migrate_legacy_inference_url(&mut config);
         migrate_cloud_provider_slugs(&mut config);

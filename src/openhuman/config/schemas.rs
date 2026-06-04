@@ -229,6 +229,13 @@ struct AgentSettingsUpdate {
 }
 
 #[derive(Debug, Deserialize)]
+struct AgentPathsUpdate {
+    /// New absolute action sandbox path. Empty string clears the override;
+    /// omitted leaves it unchanged. Validated server-side.
+    action_dir: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct ActivityLevelSettingsUpdate {
     /// "off" | "minimal" | "moderate" | "active" | "always_on" (or "0"-"4").
     level: Option<String>,
@@ -258,7 +265,11 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("reset_local_data"),
         schemas("get_data_paths"),
         schemas("get_agent_paths"),
+<<<<<<< HEAD
         schemas("set_action_dir"),
+=======
+        schemas("update_agent_paths"),
+>>>>>>> upstream/main
         schemas("get_onboarding_completed"),
         schemas("set_onboarding_completed"),
         schemas("get_dictation_settings"),
@@ -371,8 +382,13 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
             handler: handle_get_agent_paths,
         },
         RegisteredController {
+<<<<<<< HEAD
             schema: schemas("set_action_dir"),
             handler: handle_set_action_dir,
+=======
+            schema: schemas("update_agent_paths"),
+            handler: handle_update_agent_paths,
+>>>>>>> upstream/main
         },
         RegisteredController {
             schema: schemas("get_onboarding_completed"),
@@ -1032,6 +1048,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
             inputs: vec![],
             outputs: vec![json_output(
                 "paths",
+<<<<<<< HEAD
                 "Resolved agent paths: action_dir, workspace_dir, projects_dir, action_dir_env_override.",
             )],
         },
@@ -1049,6 +1066,25 @@ pub fn schemas(function: &str) -> ControllerSchema {
             outputs: vec![json_output(
                 "result",
                 "Persisted action_dir + live_policy_generation (None if the live policy was not yet installed, e.g. CLI-only invocation).",
+=======
+                "Resolved agent paths: action_dir (acting-tool CWD), workspace_dir (internal state, agent-blocked), projects_dir (default projects home), action_dir_source (env | override | default).",
+            )],
+        },
+        "update_agent_paths" => ControllerSchema {
+            namespace: "config",
+            function: "update_agent_paths",
+            description:
+                "Update the agent's editable filesystem roots. Currently only action_dir (the acting-tool sandbox). The path must be absolute; a missing directory is auto-created; it cannot equal the internal workspace_dir. An empty string clears the override and reverts to the default. Applies to new sessions immediately (live policy hot-swap), no restart. OPENHUMAN_ACTION_DIR still overrides at runtime when set.",
+            inputs: vec![FieldSchema {
+                name: "action_dir",
+                ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                comment: "New absolute action sandbox path. Empty string clears the override (revert to default). Omit to leave unchanged.",
+                required: false,
+            }],
+            outputs: vec![json_output(
+                "paths",
+                "Updated agent paths (same shape as get_agent_paths): action_dir, workspace_dir, projects_dir, action_dir_source.",
+>>>>>>> upstream/main
             )],
         },
         "get_onboarding_completed" => ControllerSchema {
@@ -1644,6 +1680,7 @@ fn handle_get_agent_paths(_params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+<<<<<<< HEAD
 fn handle_set_action_dir(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         log::debug!("[config][rpc] set_action_dir enter");
@@ -1655,6 +1692,28 @@ fn handle_set_action_dir(params: Map<String, Value>) -> ControllerFuture {
             }
             Err(err) => {
                 log::warn!("[config][rpc] set_action_dir fail: {err}");
+=======
+fn handle_update_agent_paths(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        log::debug!("[config][rpc] update_agent_paths enter");
+        let update = match deserialize_params::<AgentPathsUpdate>(params) {
+            Ok(u) => u,
+            Err(err) => {
+                log::warn!("[config][rpc] update_agent_paths invalid params: {err}");
+                return Err(err);
+            }
+        };
+        let patch = config_rpc::AgentPathsPatch {
+            action_dir: update.action_dir,
+        };
+        match config_rpc::load_and_apply_agent_paths_settings(patch).await {
+            Ok(outcome) => {
+                log::debug!("[config][rpc] update_agent_paths ok");
+                to_json(outcome)
+            }
+            Err(err) => {
+                log::warn!("[config][rpc] update_agent_paths failed: {err}");
+>>>>>>> upstream/main
                 Err(err)
             }
         }

@@ -3782,6 +3782,13 @@ const messages: TranslationMap = {
   'settings.agentAccess.readWriteAccess': 'odczyt + zapis',
   'settings.agentAccess.actionSandboxDesc':
     'Domyślny katalog roboczy dla narzędzi shell, plików i git.',
+  'settings.agentAccess.actionDir.edit': 'Edytuj',
+  'settings.agentAccess.actionDir.save': 'Zapisz',
+  'settings.agentAccess.actionDir.cancel': 'Anuluj',
+  'settings.agentAccess.actionDir.placeholder': 'Ścieżka bezwzględna, np. /Users/you/Projects',
+  'settings.agentAccess.actionDir.envLocked':
+    'Ustawione przez OPENHUMAN_ACTION_DIR. Zmień zmienną środowiskową, aby zastąpić.',
+  'settings.agentAccess.actionDir.saved': 'Zaktualizowano katalog akcji.',
   'settings.agentAccess.internalState': 'Stan wewnętrzny',
   'settings.agentAccess.agentBlocked': 'zablokowane dla agenta',
   'settings.agentAccess.internalStateDesc':
