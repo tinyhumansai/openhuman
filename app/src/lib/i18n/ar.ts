@@ -4662,6 +4662,13 @@ const messages: TranslationMap = {
   'memoryData.windowError': 'نافذة الذاكرة',
   'memoryData.windowUpdated': 'تم تحديث نافذة الذاكرة',
   'memoryData.windowUpdatedMsg': 'تم الضبط على {window}.',
+  // Security banner (approval-gate host-aware boot state)
+  'security.approvalGateDisabled.title': 'تم تعطيل بوابة الموافقة',
+  'security.approvalGateDisabled.body':
+    'تم تعيين OPENHUMAN_APPROVAL_GATE=0 في بيئتك. ستعمل الأدوات ذات التأثير الخارجي دون طلب تأكيد.',
+  'security.approvalGateOverrideIgnored.title': 'تم حظر التجاوز',
+  'security.approvalGateOverrideIgnored.body':
+    'تم اكتشاف تجاوز OPENHUMAN_APPROVAL_GATE=0 لكنه تم تجاهله: يحافظ تطبيق سطح المكتب دائمًا على تفعيل بوابة الموافقة.',
 
   // Run queue
   'runQueue.mode.interrupt': 'مقاطعة',

@@ -2800,6 +2800,39 @@ pub fn run() {
             //       let _ = window.show();
             //   }
 
+            // Synthetic-input main-thread executor. enigo's macOS keyboard-layout
+            // lookup (TSMGetInputSourceProperty) MUST run on the app main thread
+            // or it traps (`_dispatch_assert_queue_fail`/EXC_BREAKPOINT) and
+            // crashes the CEF host (Change 1.15, confirmed via crash report). The
+            // keyboard/mouse tools run on tokio workers, so they dispatch their
+            // enigo ops here via the native registry; we run each on the real
+            // main thread through `run_on_main_thread`.
+            {
+                use openhuman_core::core::event_bus::register_native_global;
+                use openhuman_core::openhuman::tools::{
+                    MainThreadInputOp, INPUT_ON_MAIN_THREAD_METHOD,
+                };
+                let input_app = app.handle().clone();
+                register_native_global::<MainThreadInputOp, Result<String, String>, _, _>(
+                    INPUT_ON_MAIN_THREAD_METHOD,
+                    move |req| {
+                        let input_app = input_app.clone();
+                        async move {
+                            let (tx, rx) = tokio::sync::oneshot::channel();
+                            let run = req.run;
+                            input_app
+                                .run_on_main_thread(move || {
+                                    let _ = tx.send((run)());
+                                })
+                                .map_err(|e| format!("run_on_main_thread dispatch failed: {e}"))?;
+                            rx.await
+                                .map_err(|_| "main-thread input op was cancelled".to_string())
+                        }
+                    },
+                );
+                log::info!("[computer] registered main-thread synthetic-input executor");
+            }
+
             // Tray icon setup moved to RunEvent::Ready (see below) — GTK is only
             // initialized after the event loop starts, so we must delay tray creation
             // until the Ready event fires. Creating the tray here would panic on

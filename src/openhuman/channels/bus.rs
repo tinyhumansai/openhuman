@@ -70,7 +70,17 @@ impl EventHandler for ChannelInboundSubscriber {
             reply_target.as_deref(),
             thread_ts.as_deref(),
         );
-        let client_id = "inbound".to_string();
+        // Per-sender client_id so the `AGENT_TURN_ORIGIN.WebChat.client_id`
+        // and the wallet `QuoteOwner.client_id` paired with it differ across
+        // distinct senders in the same shared channel. The thread_id is
+        // already per-sender via `derive_inbound_thread_id`, and the
+        // wallet/approval gates compare both halves of the (thread_id,
+        // client_id) owner pair for equality — but a single shared
+        // `client_id="inbound"` collapses the surface for any downstream
+        // consumer that keys on client_id alone (audit logs, future
+        // session-scoped caches, etc.). Build a stable per-sender label
+        // here so the surface stays segregated end-to-end.
+        let client_id = derive_inbound_client_id(channel, sender.as_deref());
 
         let mut event_rx =
             crate::openhuman::channels::providers::web::subscribe_web_channel_events();
@@ -989,6 +999,27 @@ pub(crate) fn derive_inbound_thread_id(
     key
 }
 
+/// Build the per-turn `client_id` for an inbound socket message. Inbound
+/// messages do not have a Socket.IO client id of their own — they arrive
+/// from the channel transport layer rather than from a connected web
+/// browser. Mint a stable label so downstream consumers that key on
+/// `client_id` (the agent-turn origin, approval-chat-context, wallet
+/// QuoteOwner pair, future audit-log keys) see distinct values for
+/// distinct senders sharing a single Discord / Slack channel.
+///
+/// `None` (legacy publisher that didn't fill `sender`) maps to the bare
+/// `"inbound"` literal that the path used historically, preserving
+/// behavior for single-DM flows where no co-channel attacker exists.
+pub(crate) fn derive_inbound_client_id(channel: &str, sender: Option<&str>) -> String {
+    let trimmed_channel = channel.trim();
+    let trimmed = sender.map(|s| s.trim()).filter(|s| !s.is_empty());
+    match trimmed {
+        Some(s) if !trimmed_channel.is_empty() => format!("inbound:{trimmed_channel}:{s}"),
+        Some(s) => format!("inbound:{s}"),
+        None => "inbound".to_string(),
+    }
+}
+
 /// True for any inbound channel string that addresses Telegram, whether
 /// the publisher uses the canonical slug (`"telegram"`) or the raw
 /// provider-prefixed form the socket layer emits (`"tg:<chat_id>"`,
@@ -1003,7 +1034,52 @@ fn channel_is_telegram(channel: &str) -> bool {
 
 #[cfg(test)]
 mod inbound_thread_id_tests {
-    use super::derive_inbound_thread_id;
+    use super::{derive_inbound_client_id, derive_inbound_thread_id};
+
+    #[test]
+    fn socket_inbound_client_id_keys_per_sender() {
+        // Distinct senders in the same shared channel must produce distinct
+        // client_id labels so downstream consumers that key on client_id
+        // (audit log, future session caches) stay segregated. The
+        // thread_id is already per-sender; this is the matching client_id
+        // half of the pair.
+        let alice = derive_inbound_client_id("discord", Some("alice"));
+        let bob = derive_inbound_client_id("discord", Some("bob"));
+        assert_ne!(alice, bob, "co-channel senders must not collapse");
+        assert!(alice.starts_with("inbound"));
+        assert!(bob.starts_with("inbound"));
+    }
+
+    #[test]
+    fn socket_inbound_client_id_legacy_fallback_keeps_bare_inbound() {
+        // Legacy publishers that don't fill `sender` keep the historical
+        // `"inbound"` literal so single-DM flows (where there's no
+        // co-channel surface) are unchanged.
+        assert_eq!(derive_inbound_client_id("discord", None), "inbound");
+        assert_eq!(derive_inbound_client_id("discord", Some("")), "inbound");
+        assert_eq!(derive_inbound_client_id("discord", Some("   ")), "inbound");
+    }
+
+    #[test]
+    fn socket_inbound_keys_per_sender_combined_with_thread_id() {
+        // Regression: in a shared Discord channel, two distinct senders
+        // sending into the same channel/reply_target produce a fully
+        // distinct (client_id, thread_id) pair. This is the surface the
+        // wallet preparer-binding and parked-approval routing both rely
+        // on for per-user isolation.
+        let alice_thread =
+            derive_inbound_thread_id("discord", Some("alice"), Some("#general"), None);
+        let bob_thread = derive_inbound_thread_id("discord", Some("bob"), Some("#general"), None);
+        let alice_client = derive_inbound_client_id("discord", Some("alice"));
+        let bob_client = derive_inbound_client_id("discord", Some("bob"));
+
+        assert_ne!(alice_thread, bob_thread);
+        assert_ne!(alice_client, bob_client);
+        assert_ne!(
+            (alice_client.as_str(), alice_thread.as_str()),
+            (bob_client.as_str(), bob_thread.as_str()),
+        );
+    }
 
     #[test]
     fn legacy_channel_only_keeps_old_shape() {

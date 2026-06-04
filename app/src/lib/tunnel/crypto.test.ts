@@ -6,13 +6,19 @@ import { describe, expect, it } from 'vitest';
 import {
   base64urlDecode,
   base64urlEncode,
+  deriveSessionKeys,
   deriveSharedSecret,
+  FRAME_VERSION,
   generateKeypair,
+  HKDF_INFO_C2S,
+  HKDF_INFO_S2C,
+  LEGACY_FRAME_VERSION_V1,
   open,
   openHandshake,
   ReplayTracker,
   seal,
   sealHandshake,
+  TunnelCipher,
 } from './crypto';
 
 // -- base64url helpers -------------------------------------------------------
@@ -144,6 +150,97 @@ describe('sealHandshake / openHandshake', () => {
     const core = generateKeypair();
     const tinyFrame = new Uint8Array([0x01, 0x00, 0x01]);
     expect(() => openHandshake(core.secretKey, tinyFrame)).toThrow(/too short/i);
+  });
+});
+
+// -- HKDF directional subkeys + frame v2 -------------------------------------
+
+describe('deriveSessionKeys', () => {
+  const staticDh = new Uint8Array(32).fill(0x11);
+  const ephDh = new Uint8Array(32).fill(0x22);
+  const clientEph = new Uint8Array(32).fill(0x33);
+  const serverEph = new Uint8Array(32).fill(0x44);
+
+  it('derives distinct directional subkeys for the same IKM+salt', () => {
+    const keys = deriveSessionKeys(staticDh, ephDh, clientEph, serverEph);
+    expect(keys.c2s).toHaveLength(32);
+    expect(keys.s2c).toHaveLength(32);
+    expect(Array.from(keys.c2s)).not.toEqual(Array.from(keys.s2c));
+  });
+
+  it('is deterministic across re-derivation', () => {
+    const a = deriveSessionKeys(staticDh, ephDh, clientEph, serverEph);
+    const b = deriveSessionKeys(staticDh, ephDh, clientEph, serverEph);
+    expect(Array.from(a.c2s)).toEqual(Array.from(b.c2s));
+    expect(Array.from(a.s2c)).toEqual(Array.from(b.s2c));
+  });
+
+  it('pins the HKDF info tags so a rename fails loudly', () => {
+    // The exact byte strings are part of the wire contract with the Rust
+    // peer; if these change, peers fail to derive the same session keys
+    // even though the underlying secret is identical.
+    expect(new TextDecoder().decode(HKDF_INFO_C2S)).toBe('openhuman-tunnel/v1/c2s');
+    expect(new TextDecoder().decode(HKDF_INFO_S2C)).toBe('openhuman-tunnel/v1/s2c');
+  });
+
+  it('rejects DH inputs that are not 32 bytes', () => {
+    expect(() => deriveSessionKeys(new Uint8Array(31), ephDh, clientEph, serverEph)).toThrow(
+      /32 bytes/i
+    );
+    expect(() => deriveSessionKeys(staticDh, ephDh, new Uint8Array(0), serverEph)).toThrow(
+      /32 bytes/i
+    );
+  });
+
+  it('static-only adversary cannot recover prior session keys (FS sanity)', () => {
+    const a = deriveSessionKeys(staticDh, new Uint8Array(32).fill(0xaa), clientEph, serverEph);
+    const b = deriveSessionKeys(staticDh, new Uint8Array(32).fill(0xbb), clientEph, serverEph);
+    expect(Array.from(a.c2s)).not.toEqual(Array.from(b.c2s));
+    expect(Array.from(a.s2c)).not.toEqual(Array.from(b.s2c));
+  });
+});
+
+describe('TunnelCipher (directional v2)', () => {
+  const keys = deriveSessionKeys(
+    new Uint8Array(32).fill(0x55),
+    new Uint8Array(32).fill(0x66),
+    new Uint8Array(32).fill(0x77),
+    new Uint8Array(32).fill(0x88)
+  );
+
+  it('client→server round-trips', () => {
+    const client = new TunnelCipher('client', keys);
+    const server = new TunnelCipher('server', keys);
+    const plaintext = new TextEncoder().encode('hi from client');
+    const frame = client.seal(plaintext);
+    expect(frame[0]).toBe(FRAME_VERSION);
+    const recovered = server.open(frame);
+    expect(Array.from(recovered)).toEqual(Array.from(plaintext));
+  });
+
+  it('server→client round-trips', () => {
+    const client = new TunnelCipher('client', keys);
+    const server = new TunnelCipher('server', keys);
+    const plaintext = new TextEncoder().encode('hi from server');
+    const frame = server.seal(plaintext);
+    const recovered = client.open(frame);
+    expect(Array.from(recovered)).toEqual(Array.from(plaintext));
+  });
+
+  it('cross-direction reflection fails (server cannot decrypt its own outbound frame)', () => {
+    const server = new TunnelCipher('server', keys);
+    const serverOpener = new TunnelCipher('server', keys);
+    const frame = server.seal(new TextEncoder().encode('frame from server'));
+    expect(() => serverOpener.open(frame)).toThrow(/authentication failed/i);
+  });
+
+  it('legacy v1 frames are explicitly rejected with re-pair hint', () => {
+    // Hand-roll a v1-shaped frame: 0x01 || nonce(24) || ct(16 bytes).
+    const v1Frame = new Uint8Array(1 + 24 + 16);
+    v1Frame[0] = LEGACY_FRAME_VERSION_V1;
+    const client = new TunnelCipher('client', keys);
+    expect(() => client.open(v1Frame)).toThrow(/UnsupportedFrameVersion/);
+    expect(() => client.open(v1Frame)).toThrow(/re-pair/);
   });
 });
 

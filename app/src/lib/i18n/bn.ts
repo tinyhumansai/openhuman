@@ -4752,6 +4752,13 @@ const messages: TranslationMap = {
   'memoryData.windowError': 'মেমোরি উইন্ডো',
   'memoryData.windowUpdated': 'মেমোরি উইন্ডো আপডেট হয়েছে',
   'memoryData.windowUpdatedMsg': '{window}-এ সেট করা হয়েছে।',
+  // Security banner (approval-gate host-aware boot state)
+  'security.approvalGateDisabled.title': 'অনুমোদন গেট নিষ্ক্রিয়',
+  'security.approvalGateDisabled.body':
+    'আপনার পরিবেশে OPENHUMAN_APPROVAL_GATE=0 সেট করা আছে। বাহ্যিক প্রভাব সম্পন্ন টুলগুলি নিশ্চিতকরণ ছাড়াই চলবে।',
+  'security.approvalGateOverrideIgnored.title': 'ওভাররাইড অবরুদ্ধ',
+  'security.approvalGateOverrideIgnored.body':
+    'একটি OPENHUMAN_APPROVAL_GATE=0 ওভাররাইড সনাক্ত করা হয়েছিল কিন্তু উপেক্ষা করা হয়েছে: ডেস্কটপ অ্যাপ সর্বদা অনুমোদন গেট চালু রাখে।',
 
   // Run queue
   'runQueue.mode.interrupt': 'বাধা দিন',

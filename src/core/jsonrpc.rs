@@ -1652,7 +1652,15 @@ async fn run_server_inner(
     let app = build_core_http_router(socketio_enabled);
 
     // --- Core runtime bootstrap --------------------------------------------
-    bootstrap_core_runtime(embedded_core).await;
+    // Map the legacy `embedded_core` boolean to the typed [`HostKind`] the
+    // bootstrap path now takes. Embedded == Tauri shell; standalone splits
+    // CLI / Docker via `HostKind::detect_standalone`.
+    let host_kind = if embedded_core {
+        crate::core::types::HostKind::TauriShell
+    } else {
+        crate::core::types::HostKind::detect_standalone()
+    };
+    bootstrap_core_runtime(host_kind).await;
 
     log::info!(
         "[core] OpenHuman core is ready — listening on http://{bind_addr} (version {})",
@@ -1977,9 +1985,20 @@ fn register_domain_subscribers(
 }
 
 /// Initializes long-lived socket/event-bus infrastructure.
-pub async fn bootstrap_core_runtime(embedded_core: bool) {
+///
+/// `host_kind` identifies the embedding process (Tauri desktop shell vs
+/// standalone CLI / Docker). It drives the approval-gate's host-aware
+/// decision tree: under the Tauri shell, the `OPENHUMAN_APPROVAL_GATE=0`
+/// env override is ignored and a domain event is published so the UI can
+/// surface a banner; under CLI / Docker the override is honored (with a
+/// noisy log + a domain event so any connected dashboard can flag it).
+pub async fn bootstrap_core_runtime(host_kind: crate::core::types::HostKind) {
+    use crate::core::types::HostKind;
     use crate::openhuman::socket::{set_global_socket_manager, SocketManager};
     use std::sync::Arc;
+    // `embedded_core` derived from host_kind so the rest of the function (which
+    // already keys behavior off the boolean) stays unchanged.
+    let embedded_core = host_kind.is_desktop_shell();
     let cfg = match crate::openhuman::config::Config::load_or_init().await {
         Ok(cfg) => cfg,
         Err(e) => {
@@ -2068,13 +2087,51 @@ pub async fn bootstrap_core_runtime(embedded_core: bool) {
     // OS access panel) AND only *interactive chat* turns park — background /
     // triage / cron turns carry no chat context and pass straight through, so
     // autonomous automation is never blocked.
-    if std::env::var("OPENHUMAN_APPROVAL_GATE")
+    //
+    // Host-aware override evaluation: under the Tauri desktop shell the env
+    // override is treated as advisory only — the gate ALWAYS installs and a
+    // `DomainEvent::ApprovalGateOverrideIgnored` is published so the UI can
+    // surface a one-shot banner explaining the override was rejected. Under
+    // standalone CLI / Docker (env-as-config is the operator's chosen
+    // surface) the override is honored, but a `DomainEvent::ApprovalGateDisabled`
+    // is still published so any connected dashboard / log shipper can
+    // surface the elevated-privilege state.
+    let env_override_requested = std::env::var("OPENHUMAN_APPROVAL_GATE")
         .map(|v| {
             let t = v.trim();
-            !(t == "0" || t.eq_ignore_ascii_case("false"))
+            t == "0" || t.eq_ignore_ascii_case("false")
         })
-        .unwrap_or(true)
-    {
+        .unwrap_or(false);
+    let decision =
+        crate::core::types::approval_gate_boot_decision(host_kind, env_override_requested);
+    // Record the boot decision before publishing the warning event so the
+    // first poll of `approval_get_gate_state` after boot reflects the same
+    // host-aware verdict the event itself describes — no race.
+    crate::openhuman::approval::gate::record_boot_state(
+        crate::openhuman::approval::gate::ApprovalGateBootState {
+            installed: decision.install_gate,
+            disabled_by_env: decision.gate_disabled_by_override,
+            override_ignored: decision.override_ignored,
+            host: match host_kind {
+                crate::core::types::HostKind::TauriShell => "tauri-shell",
+                crate::core::types::HostKind::Cli => "cli",
+                crate::core::types::HostKind::Docker => "docker",
+            },
+        },
+    );
+    if decision.override_ignored {
+        log::warn!(
+            "[runtime] OPENHUMAN_APPROVAL_GATE=0 IGNORED under desktop shell — \
+             gate is always on for the Tauri host (host={})",
+            host_kind.tag()
+        );
+        crate::core::event_bus::publish_global(
+            crate::core::event_bus::DomainEvent::ApprovalGateOverrideIgnored {
+                host: host_kind.tag().to_string(),
+            },
+        );
+    }
+    if decision.install_gate {
         // Per-launch correlation token for the approval gate. This is
         // a fresh UUID every boot — it is NOT derived from the
         // JSON-RPC bearer (`OPENHUMAN_CORE_TOKEN` / the in-memory
@@ -2099,9 +2156,16 @@ pub async fn bootstrap_core_runtime(embedded_core: bool) {
         crate::openhuman::channels::providers::web::register_approval_surface_subscriber();
         crate::openhuman::channels::providers::web::register_artifact_surface_subscriber();
     } else {
-        log::info!(
-            "[runtime] approval gate disabled (OPENHUMAN_APPROVAL_GATE=0) — \
-             Prompt-class external-effect tool calls run unprompted"
+        log::error!(
+            "[runtime] approval gate DISABLED (OPENHUMAN_APPROVAL_GATE=0 honored on host={}) — \
+             Prompt-class external-effect tool calls run unprompted",
+            host_kind.tag()
+        );
+        crate::core::event_bus::publish_global(
+            crate::core::event_bus::DomainEvent::ApprovalGateDisabled {
+                host: host_kind.tag().to_string(),
+                reason: "env-override".to_string(),
+            },
         );
     }
     // Artifact surface bridges DomainEvent::ArtifactReady/Failed onto the web

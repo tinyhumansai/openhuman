@@ -17,6 +17,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("list_pending"),
         schemas("list_recent_decisions"),
         schemas("decide"),
+        schemas("get_gate_state"),
     ]
 }
 
@@ -33,6 +34,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("decide"),
             handler: handle_decide,
+        },
+        RegisteredController {
+            schema: schemas("get_gate_state"),
+            handler: handle_get_gate_state,
         },
     ]
 }
@@ -66,6 +71,19 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 name: "decisions",
                 ty: TypeSchema::Array(Box::new(TypeSchema::Ref("ApprovalAuditEntry"))),
                 comment: "Recently decided approval rows.",
+                required: true,
+            }],
+        },
+        "get_gate_state" => ControllerSchema {
+            namespace: "approval",
+            function: "get_gate_state",
+            description:
+                "Read the host-aware approval-gate boot state so the UI can render the right banner on first paint.",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "state",
+                ty: TypeSchema::Ref("ApprovalGateBootState"),
+                comment: "Snapshot of the boot decision: installed / disabled-by-env / override-ignored / host tag.",
                 required: true,
             }],
         },
@@ -124,6 +142,15 @@ fn handle_list_recent_decisions(params: Map<String, Value>) -> ControllerFuture 
     Box::pin(async move {
         let limit = read_optional_u64(&params, "limit")?.map(|value| value as usize);
         let outcome = approval_rpc::approval_list_recent_decisions(limit)
+            .await
+            .map_err(|e| e.to_string())?;
+        to_json(outcome)
+    })
+}
+
+fn handle_get_gate_state(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let outcome = approval_rpc::approval_get_gate_state()
             .await
             .map_err(|e| e.to_string())?;
         to_json(outcome)
@@ -218,11 +245,16 @@ mod tests {
     #[test]
     fn all_registered_controllers_has_handler_per_schema() {
         let controllers = all_registered_controllers();
-        assert_eq!(controllers.len(), 3);
+        assert_eq!(controllers.len(), 4);
         let names: Vec<_> = controllers.iter().map(|c| c.schema.function).collect();
         assert_eq!(
             names,
-            vec!["list_pending", "list_recent_decisions", "decide"]
+            vec![
+                "list_pending",
+                "list_recent_decisions",
+                "decide",
+                "get_gate_state",
+            ]
         );
     }
 

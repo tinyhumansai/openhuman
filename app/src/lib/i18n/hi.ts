@@ -4759,6 +4759,13 @@ const messages: TranslationMap = {
   'memoryData.windowError': 'मेमोरी विंडो',
   'memoryData.windowUpdated': 'मेमोरी विंडो अपडेट हुई',
   'memoryData.windowUpdatedMsg': '{window} पर सेट किया गया।',
+  // Security banner (approval-gate host-aware boot state)
+  'security.approvalGateDisabled.title': 'अनुमोदन गेट अक्षम',
+  'security.approvalGateDisabled.body':
+    'आपके परिवेश में OPENHUMAN_APPROVAL_GATE=0 सेट है। बाहरी प्रभाव वाले टूल पुष्टि माँगे बिना चलेंगे।',
+  'security.approvalGateOverrideIgnored.title': 'ओवरराइड अवरुद्ध',
+  'security.approvalGateOverrideIgnored.body':
+    'एक OPENHUMAN_APPROVAL_GATE=0 ओवरराइड का पता चला लेकिन अनदेखा कर दिया गया: डेस्कटॉप ऐप अनुमोदन गेट को हमेशा चालू रखता है।',
 
   // Run queue
   'runQueue.mode.interrupt': 'बाधित करें',

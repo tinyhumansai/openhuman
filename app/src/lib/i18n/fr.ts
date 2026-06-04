@@ -4869,6 +4869,13 @@ const messages: TranslationMap = {
   'memoryData.windowError': 'Fenêtre de mémoire',
   'memoryData.windowUpdated': 'Fenêtre de mémoire mise à jour',
   'memoryData.windowUpdatedMsg': 'Définie sur {window}.',
+  // Security banner (approval-gate host-aware boot state)
+  'security.approvalGateDisabled.title': "Porte d'approbation désactivée",
+  'security.approvalGateDisabled.body':
+    "OPENHUMAN_APPROVAL_GATE=0 est défini dans votre environnement. Les outils à effet externe s'exécuteront sans demander de confirmation.",
+  'security.approvalGateOverrideIgnored.title': 'Contournement bloqué',
+  'security.approvalGateOverrideIgnored.body':
+    "Un contournement OPENHUMAN_APPROVAL_GATE=0 a été détecté mais ignoré : l'application de bureau garde toujours la porte d'approbation activée.",
 
   // Run queue
   'runQueue.mode.interrupt': 'Interrompre',

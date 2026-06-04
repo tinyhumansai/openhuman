@@ -4,6 +4,7 @@
 //! via platform-native APIs (Core Graphics on macOS, SendInput on Windows,
 //! X11/libxdo on Linux).
 
+use super::main_thread::run_input_on_main;
 use crate::openhuman::security::SecurityPolicy;
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
 use async_trait::async_trait;
@@ -186,21 +187,18 @@ impl Tool for KeyboardTool {
                 }
 
                 let len = text.len();
-                tokio::task::spawn_blocking(move || {
-                    let mut enigo = Enigo::new(&Settings::default())
-                        .map_err(|e| anyhow::anyhow!("Failed to create enigo instance: {e}"))?;
-                    enigo
-                        .text(&text)
-                        .map_err(|e| anyhow::anyhow!("text typing failed: {e}"))?;
-                    info!(
-                        tool = "keyboard",
-                        action = "type",
-                        chars = len,
-                        "[computer] typed text"
-                    );
-                    Ok(ToolResult::success(format!("Typed {len} characters")))
-                })
-                .await?
+                into_result(
+                    "type",
+                    run_input_on_main(move || {
+                        let mut enigo = Enigo::new(&Settings::default())
+                            .map_err(|e| format!("Failed to create enigo instance: {e}"))?;
+                        enigo
+                            .text(&text)
+                            .map_err(|e| format!("text typing failed: {e}"))?;
+                        Ok(format!("Typed {len} characters"))
+                    })
+                    .await,
+                )
             }
 
             "press" => {
@@ -214,21 +212,18 @@ impl Tool for KeyboardTool {
                     anyhow::anyhow!("Unknown key '{key_name}'. Use names like Enter, Tab, Escape, F1-F12, a-z, 0-9, Space, etc.")
                 })?;
 
-                tokio::task::spawn_blocking(move || {
-                    let mut enigo = Enigo::new(&Settings::default())
-                        .map_err(|e| anyhow::anyhow!("Failed to create enigo instance: {e}"))?;
-                    enigo
-                        .key(key, Direction::Click)
-                        .map_err(|e| anyhow::anyhow!("key press failed: {e}"))?;
-                    info!(
-                        tool = "keyboard",
-                        action = "press",
-                        key = key_name.as_str(),
-                        "[computer] pressed key"
-                    );
-                    Ok(ToolResult::success(format!("Pressed key '{key_name}'")))
-                })
-                .await?
+                into_result(
+                    "press",
+                    run_input_on_main(move || {
+                        let mut enigo = Enigo::new(&Settings::default())
+                            .map_err(|e| format!("Failed to create enigo instance: {e}"))?;
+                        enigo
+                            .key(key, Direction::Click)
+                            .map_err(|e| format!("key press failed: {e}"))?;
+                        Ok(format!("Pressed key '{key_name}'"))
+                    })
+                    .await,
+                )
             }
 
             "hotkey" => {
@@ -288,56 +283,61 @@ impl Tool for KeyboardTool {
                 }
 
                 let combo_desc = key_names.join("+");
-                tokio::task::spawn_blocking(move || {
-                    let mut enigo = Enigo::new(&Settings::default())
-                        .map_err(|e| anyhow::anyhow!("Failed to create enigo instance: {e}"))?;
+                into_result(
+                    "hotkey",
+                    run_input_on_main(move || {
+                        let mut enigo = Enigo::new(&Settings::default())
+                            .map_err(|e| format!("Failed to create enigo instance: {e}"))?;
 
-                    // Press keys in order, tracking which were successfully
-                    // pressed so we can release them on error.
-                    let mut pressed_keys: Vec<Key> = Vec::with_capacity(keys.len());
-                    let press_result: Result<(), anyhow::Error> = (|| {
-                        for key in &keys {
-                            enigo.key(*key, Direction::Press).map_err(|e| {
-                                anyhow::anyhow!("key press failed for {key:?}: {e}")
-                            })?;
-                            pressed_keys.push(*key);
-                            std::thread::sleep(HOTKEY_INTER_KEY_DELAY);
+                        // Press keys in order, tracking which were pressed so we
+                        // can release them on error.
+                        let mut pressed_keys: Vec<Key> = Vec::with_capacity(keys.len());
+                        let press_result: Result<(), String> = (|| {
+                            for key in &keys {
+                                enigo
+                                    .key(*key, Direction::Press)
+                                    .map_err(|e| format!("key press failed for {key:?}: {e}"))?;
+                                pressed_keys.push(*key);
+                                std::thread::sleep(HOTKEY_INTER_KEY_DELAY);
+                            }
+                            Ok(())
+                        })();
+
+                        // Always release pressed keys in reverse, even on error.
+                        for key in pressed_keys.iter().rev() {
+                            if let Err(e) = enigo.key(*key, Direction::Release) {
+                                tracing::warn!(
+                                    tool = "keyboard",
+                                    key = ?key,
+                                    error = %e,
+                                    "[computer] best-effort key release failed during cleanup"
+                                );
+                            }
                         }
-                        Ok(())
-                    })();
-
-                    // Always release all successfully pressed keys in reverse
-                    // order, even if a press failed partway through.
-                    for key in pressed_keys.iter().rev() {
-                        if let Err(e) = enigo.key(*key, Direction::Release) {
-                            tracing::warn!(
-                                tool = "keyboard",
-                                key = ?key,
-                                error = %e,
-                                "[computer] best-effort key release failed during cleanup"
-                            );
-                        }
-                    }
-
-                    // Now propagate any press error.
-                    press_result?;
-
-                    info!(
-                        tool = "keyboard",
-                        action = "hotkey",
-                        combo = combo_desc.as_str(),
-                        "[computer] hotkey executed"
-                    );
-                    Ok(ToolResult::success(format!(
-                        "Executed hotkey: {combo_desc}"
-                    )))
-                })
-                .await?
+                        press_result?;
+                        Ok(format!("Executed hotkey: {combo_desc}"))
+                    })
+                    .await,
+                )
             }
 
             other => Ok(ToolResult::error(format!(
                 "Unknown keyboard action '{other}'. Use: type, press, hotkey"
             ))),
+        }
+    }
+}
+
+/// Map a main-thread input op result to a `ToolResult`, logging the outcome.
+fn into_result(action: &str, r: Result<String, String>) -> anyhow::Result<ToolResult> {
+    match r {
+        Ok(msg) => {
+            info!(tool = "keyboard", action, "[computer] {msg}");
+            Ok(ToolResult::success(msg))
+        }
+        Err(e) => {
+            tracing::warn!(tool = "keyboard", action, "[computer] failed: {e}");
+            Ok(ToolResult::error(e))
         }
     }
 }

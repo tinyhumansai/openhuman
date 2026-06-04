@@ -1318,6 +1318,11 @@ async fn run_subagent_tool(params: &Map<String, Value>) -> Result<Value, ToolCal
     // run must route through the gate's audit + TTL-deny path.
     let origin = crate::openhuman::agent::turn_origin::AgentTurnOrigin::ExternalChannel {
         channel: "mcp_server".to_string(),
+        // MCP server callers don't carry a per-user identity at this
+        // layer — the calling MCP client is the addressing primitive.
+        // Leave sender unset; the gate's per-channel TTL-deny still
+        // gates any external_effect tool the agent tries to run.
+        sender: None,
         reply_target: agent_id.clone(),
         message_id: uuid::Uuid::new_v4().to_string(),
     };

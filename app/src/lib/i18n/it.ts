@@ -4844,6 +4844,13 @@ const messages: TranslationMap = {
   'memoryData.windowError': 'Finestra di memoria',
   'memoryData.windowUpdated': 'Finestra di memoria aggiornata',
   'memoryData.windowUpdatedMsg': 'Impostata su {window}.',
+  // Security banner (approval-gate host-aware boot state)
+  'security.approvalGateDisabled.title': 'Porta di approvazione disattivata',
+  'security.approvalGateDisabled.body':
+    'OPENHUMAN_APPROVAL_GATE=0 è impostato nel tuo ambiente. Gli strumenti con effetti esterni verranno eseguiti senza chiedere conferma.',
+  'security.approvalGateOverrideIgnored.title': 'Override bloccato',
+  'security.approvalGateOverrideIgnored.body':
+    "È stato rilevato un override OPENHUMAN_APPROVAL_GATE=0 ma è stato ignorato: l'app desktop mantiene sempre attiva la porta di approvazione.",
 
   // Run queue
   'runQueue.mode.interrupt': 'Interrompi',

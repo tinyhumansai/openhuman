@@ -4771,6 +4771,13 @@ const messages: TranslationMap = {
   'memoryData.windowError': 'Jendela memori',
   'memoryData.windowUpdated': 'Jendela memori diperbarui',
   'memoryData.windowUpdatedMsg': 'Diatur ke {window}.',
+  // Security banner (approval-gate host-aware boot state)
+  'security.approvalGateDisabled.title': 'Gerbang persetujuan dinonaktifkan',
+  'security.approvalGateDisabled.body':
+    'OPENHUMAN_APPROVAL_GATE=0 disetel di lingkungan Anda. Alat dengan efek eksternal akan berjalan tanpa meminta konfirmasi.',
+  'security.approvalGateOverrideIgnored.title': 'Override diblokir',
+  'security.approvalGateOverrideIgnored.body':
+    'Override OPENHUMAN_APPROVAL_GATE=0 terdeteksi tetapi diabaikan: aplikasi desktop selalu menjaga gerbang persetujuan tetap aktif.',
 
   // Run queue
   'runQueue.mode.interrupt': 'Interupsi',

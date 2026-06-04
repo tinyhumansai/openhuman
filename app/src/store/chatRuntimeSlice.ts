@@ -222,6 +222,9 @@ export interface ArtifactSnapshot {
   updatedAt: number;
 }
 
+/** Queue behavior when a turn is already in flight for a thread. */
+export type QueueMode = 'interrupt' | 'steer' | 'followup' | 'collect';
+
 /**
  * Per-thread UI state for an in-flight agent turn (socket events while the user
  * may navigate away from Conversations). The thread slice keeps `activeThreadId`
@@ -242,9 +245,8 @@ interface ChatRuntimeState {
    * download / retry affordances (#2779).
    */
   artifactsByThread: Record<string, ArtifactSnapshot[]>;
-  /** Per-thread run queue status. Updated from queue_status RPC responses. */
-  queueStatusByThread: Record<string, QueueStatus>;
   sessionTokenUsage: SessionTokenUsage;
+  queueStatusByThread: Record<string, QueueStatus>;
 }
 
 /** Snapshot of the active-run queue depth per lane. */
@@ -264,8 +266,8 @@ const initialState: ChatRuntimeState = {
   inferenceTurnLifecycleByThread: {},
   pendingApprovalByThread: {},
   artifactsByThread: {},
-  queueStatusByThread: {},
   sessionTokenUsage: { inputTokens: 0, outputTokens: 0, turns: 0, lastUpdated: 0 },
+  queueStatusByThread: {},
 };
 
 /**

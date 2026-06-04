@@ -1057,7 +1057,12 @@ async fn approval_schema_handlers_validate_params_and_surface_empty_gate_state()
             .iter()
             .map(|schema| schema.function)
             .collect::<Vec<_>>(),
-        vec!["list_pending", "list_recent_decisions", "decide"]
+        vec![
+            "list_pending",
+            "list_recent_decisions",
+            "decide",
+            "get_gate_state"
+        ]
     );
     let unknown = openhuman_core::openhuman::approval::schemas::schemas("missing");
     assert_eq!(unknown.namespace, "approval");

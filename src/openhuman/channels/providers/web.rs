@@ -644,7 +644,10 @@ pub async fn start_chat(
 
     {
         let mut in_flight = IN_FLIGHT.lock().await;
+
+        // Interrupt path: abort any in-flight turn (existing behavior).
         if let Some(existing) = in_flight.remove(&map_key) {
+            let cancelled_id = existing.request_id.clone();
             existing.handle.abort();
             log::info!(
                 "[web-channel] interrupted in-flight turn thread_id={} cancelled_request_id={}",
@@ -659,7 +662,7 @@ pub async fn start_chat(
                 event: "chat_error".to_string(),
                 client_id: client_id.clone(),
                 thread_id: thread_id.clone(),
-                request_id: existing.request_id,
+                request_id: cancelled_id,
                 full_response: None,
                 message: Some("Cancelled by newer request".to_string()),
                 error_type: Some("cancelled".to_string()),

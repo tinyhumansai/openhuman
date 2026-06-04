@@ -4521,6 +4521,13 @@ const messages: TranslationMap = {
   'memoryData.windowError': '记忆时间窗口',
   'memoryData.windowUpdated': '记忆时间窗口已更新',
   'memoryData.windowUpdatedMsg': '已设置为 {window}。',
+  // Security banner (approval-gate host-aware boot state)
+  'security.approvalGateDisabled.title': '审批门已禁用',
+  'security.approvalGateDisabled.body':
+    '您的环境中设置了 OPENHUMAN_APPROVAL_GATE=0。具有外部影响的工具将在不请求确认的情况下运行。',
+  'security.approvalGateOverrideIgnored.title': '覆盖已阻止',
+  'security.approvalGateOverrideIgnored.body':
+    '检测到 OPENHUMAN_APPROVAL_GATE=0 覆盖，但已忽略：桌面应用始终保持审批门开启。',
 
   // Run queue
   'runQueue.mode.interrupt': '中断',

@@ -4800,6 +4800,13 @@ const messages: TranslationMap = {
   'memoryData.windowError': 'Окно памяти',
   'memoryData.windowUpdated': 'Окно памяти обновлено',
   'memoryData.windowUpdatedMsg': 'Установлено значение {window}.',
+  // Security banner (approval-gate host-aware boot state)
+  'security.approvalGateDisabled.title': 'Шлюз одобрения отключён',
+  'security.approvalGateDisabled.body':
+    'В вашей среде установлено OPENHUMAN_APPROVAL_GATE=0. Инструменты с внешним эффектом будут запускаться без запроса подтверждения.',
+  'security.approvalGateOverrideIgnored.title': 'Переопределение заблокировано',
+  'security.approvalGateOverrideIgnored.body':
+    'Обнаружено переопределение OPENHUMAN_APPROVAL_GATE=0, но оно проигнорировано: настольное приложение всегда держит шлюз одобрения включённым.',
 
   // Run queue
   'runQueue.mode.interrupt': 'Прервать',

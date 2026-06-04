@@ -4854,6 +4854,13 @@ const messages: TranslationMap = {
   'memoryData.windowError': 'Ventana de memoria',
   'memoryData.windowUpdated': 'Ventana de memoria actualizada',
   'memoryData.windowUpdatedMsg': 'Establecida en {window}.',
+  // Security banner (approval-gate host-aware boot state)
+  'security.approvalGateDisabled.title': 'Puerta de aprobación desactivada',
+  'security.approvalGateDisabled.body':
+    'OPENHUMAN_APPROVAL_GATE=0 está configurado en tu entorno. Las herramientas con efectos externos se ejecutarán sin pedir confirmación.',
+  'security.approvalGateOverrideIgnored.title': 'Anulación bloqueada',
+  'security.approvalGateOverrideIgnored.body':
+    'Se detectó una anulación OPENHUMAN_APPROVAL_GATE=0, pero se ignoró: la aplicación de escritorio mantiene siempre activa la puerta de aprobación.',
 
   // Run queue
   'runQueue.mode.interrupt': 'Interrumpir',

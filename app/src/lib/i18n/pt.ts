@@ -4840,6 +4840,13 @@ const messages: TranslationMap = {
   'memoryData.windowError': 'Janela de memória',
   'memoryData.windowUpdated': 'Janela de memória atualizada',
   'memoryData.windowUpdatedMsg': 'Definida para {window}.',
+  // Security banner (approval-gate host-aware boot state)
+  'security.approvalGateDisabled.title': 'Portão de aprovação desativado',
+  'security.approvalGateDisabled.body':
+    'OPENHUMAN_APPROVAL_GATE=0 está definido no seu ambiente. Ferramentas com efeito externo serão executadas sem pedir confirmação.',
+  'security.approvalGateOverrideIgnored.title': 'Substituição bloqueada',
+  'security.approvalGateOverrideIgnored.body':
+    'Uma substituição OPENHUMAN_APPROVAL_GATE=0 foi detetada mas ignorada: o aplicativo de desktop mantém sempre o portão de aprovação ativado.',
 
   // Run queue
   'runQueue.mode.interrupt': 'Interromper',

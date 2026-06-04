@@ -34,8 +34,18 @@ pub enum AgentTurnOrigin {
     /// TTL-deny because no caller picks up the chat-routed approval on this
     /// surface yet — which is the correct fail-closed default for remote
     /// inputs.
+    ///
+    /// `sender` carries the per-user identity (Discord user id, Telegram
+    /// from_account, Slack user id, etc.) when available so per-user
+    /// isolation invariants survive into the gate's audit trail. Legacy
+    /// publishers that don't surface the sender pass `None`; the gate still
+    /// fails closed because the channel input is remote-untrusted regardless
+    /// of which sender produced it. Distinct senders in the same shared
+    /// channel produce distinct origins so a co-channel attacker cannot
+    /// resume a victim's parked approval flow.
     ExternalChannel {
         channel: String,
+        sender: Option<String>,
         reply_target: String,
         message_id: String,
     },

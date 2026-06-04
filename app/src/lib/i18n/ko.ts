@@ -4707,6 +4707,13 @@ const messages: TranslationMap = {
   'memoryData.windowError': '메모리 창',
   'memoryData.windowUpdated': '메모리 창 업데이트됨',
   'memoryData.windowUpdatedMsg': '{window}(으)로 설정되었습니다.',
+  // Security banner (approval-gate host-aware boot state)
+  'security.approvalGateDisabled.title': '승인 게이트 비활성화됨',
+  'security.approvalGateDisabled.body':
+    '환경에 OPENHUMAN_APPROVAL_GATE=0이 설정되어 있습니다. 외부 영향이 있는 도구가 확인을 요청하지 않고 실행됩니다.',
+  'security.approvalGateOverrideIgnored.title': '재정의 차단됨',
+  'security.approvalGateOverrideIgnored.body':
+    'OPENHUMAN_APPROVAL_GATE=0 재정의가 감지되었지만 무시되었습니다: 데스크톱 앱은 승인 게이트를 항상 켜둡니다.',
 
   // Run queue
   'runQueue.mode.interrupt': '중단',
