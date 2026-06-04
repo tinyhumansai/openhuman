@@ -2804,6 +2804,7 @@ async fn worker_a_controller_schemas_are_fully_exposed() {
                 "openhuman.config_set_browser_allow_all",
                 "openhuman.config_set_onboarding_completed",
                 "openhuman.config_update_activity_level_settings",
+                "openhuman.config_update_agent_paths",
                 "openhuman.config_update_agent_settings",
                 "openhuman.config_update_analytics_settings",
                 "openhuman.config_update_autonomy_settings",
