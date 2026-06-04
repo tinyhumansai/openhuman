@@ -346,6 +346,14 @@ async fn persist_job_result_records_run_and_reschedules_shell_job() {
 
 #[tokio::test]
 async fn scheduler_flow_runs_active_hours_job_and_reschedules_inside_window() {
+    // #3312: this test calls `process_due_jobs`, which publishes
+    // `HealthChanged` for the `"scheduler"` health-registry row. The
+    // sibling `scheduler_tick_once_recovers_component_status_after_prior_error`
+    // asserts on the same row, so without this lock + restore guard the
+    // two can flip each other's state under cargo's parallel runner.
+    let _serial = lock_scheduler_health();
+    let _restore = SchedulerHealthGuard::capture();
+
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp).await;
     let active_minute = Utc::now() + ChronoDuration::minutes(2);
