@@ -1171,6 +1171,7 @@ const messages: TranslationMap = {
     'Сохранено, но переподключиться с новыми значениями не удалось.',
   'mcp.detail.enable': 'Включить',
   'mcp.detail.disable': 'Отключить',
+  'mcp.status.disabled': 'Отключён',
   'mcp.detail.tools': 'Инструменты',
   'onboarding.skipForNow': 'Пропустить сейчас',
   'onboarding.localAI.continueWithCloud': 'Продолжить с Облако',

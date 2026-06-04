@@ -1152,6 +1152,7 @@ const messages: TranslationMap = {
   'mcp.detail.reconfigureReconnectFailed': '저장했지만 새 값으로 다시 연결하지 못했습니다.',
   'mcp.detail.enable': '활성화',
   'mcp.detail.disable': '비활성화',
+  'mcp.status.disabled': '비활성화됨',
   'mcp.detail.tools': '도구',
   'onboarding.skipForNow': '지금 건너뛰기',
   'onboarding.localAI.continueWithCloud': '클라우드 계속하기',

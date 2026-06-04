@@ -1183,6 +1183,7 @@ const messages: TranslationMap = {
     'Salvato, ma la riconnessione con i nuovi valori non è riuscita.',
   'mcp.detail.enable': 'Abilita',
   'mcp.detail.disable': 'Disabilita',
+  'mcp.status.disabled': 'Disabilitato',
   'mcp.detail.tools': 'Strumenti',
   'onboarding.skipForNow': 'Salta per ora',
   'onboarding.localAI.continueWithCloud': 'Continua con Cloud',

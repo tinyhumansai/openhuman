@@ -1163,6 +1163,7 @@ const messages: TranslationMap = {
     'Tersimpan, tetapi gagal menghubungkan kembali dengan nilai baru.',
   'mcp.detail.enable': 'Aktifkan',
   'mcp.detail.disable': 'Nonaktifkan',
+  'mcp.status.disabled': 'Dinonaktifkan',
   'mcp.detail.tools': 'Alat',
   'onboarding.skipForNow': 'Lewati Sekarang',
   'onboarding.localAI.continueWithCloud': 'Lanjutkan dengan Cloud',

@@ -1176,6 +1176,7 @@ const messages: TranslationMap = {
     'Zapisano, ale ponowne połączenie z nowymi wartościami nie powiodło się.',
   'mcp.detail.enable': 'Włącz',
   'mcp.detail.disable': 'Wyłącz',
+  'mcp.status.disabled': 'Wyłączony',
   'mcp.detail.tools': 'Narzędzia',
   'onboarding.skipForNow': 'Pomiń na razie',
   'onboarding.localAI.continueWithCloud': 'Kontynuuj z chmurą',

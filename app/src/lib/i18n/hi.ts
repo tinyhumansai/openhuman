@@ -1156,6 +1156,7 @@ const messages: TranslationMap = {
     'सहेजा गया, लेकिन नए मानों के साथ पुन: कनेक्ट करना विफल रहा।',
   'mcp.detail.enable': 'सक्षम करें',
   'mcp.detail.disable': 'अक्षम करें',
+  'mcp.status.disabled': 'अक्षम',
   'mcp.detail.tools': 'उपकरण',
   'onboarding.skipForNow': 'अभी के लिए छोड़ें',
   'onboarding.localAI.continueWithCloud': 'बादल के साथ जारी रखें',

@@ -1138,6 +1138,7 @@ const messages: TranslationMap = {
   'mcp.detail.reconfigureReconnectFailed': 'تم الحفظ، لكن فشلت إعادة الاتصال بالقيم الجديدة.',
   'mcp.detail.enable': 'تفعيل',
   'mcp.detail.disable': 'تعطيل',
+  'mcp.status.disabled': 'معطّل',
   'mcp.detail.tools': 'الأدوات',
   'onboarding.skipForNow': 'التخطي الآن',
   'onboarding.localAI.continueWithCloud': 'متابعة مع السحابة',

@@ -1355,6 +1355,7 @@ const en: TranslationMap = {
   'mcp.detail.reconfigureReconnectFailed': 'Saved, but reconnecting with the new values failed.',
   'mcp.detail.enable': 'Enable',
   'mcp.detail.disable': 'Disable',
+  'mcp.status.disabled': 'Disabled',
   'mcp.detail.tools': 'Tools',
   'onboarding.skipForNow': 'Skip for Now',
   'onboarding.localAI.continueWithCloud': 'Continue with Cloud',

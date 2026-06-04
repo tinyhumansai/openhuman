@@ -1188,6 +1188,7 @@ const messages: TranslationMap = {
     'Guardado, pero no se pudo reconectar con los nuevos valores.',
   'mcp.detail.enable': 'Habilitar',
   'mcp.detail.disable': 'Deshabilitar',
+  'mcp.status.disabled': 'Deshabilitado',
   'mcp.detail.tools': 'Herramientas',
   'onboarding.skipForNow': 'Saltar por ahora',
   'onboarding.localAI.continueWithCloud': 'Continuar con la nube',
