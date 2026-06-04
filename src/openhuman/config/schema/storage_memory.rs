@@ -338,6 +338,25 @@ pub struct MemoryTreeConfig {
     /// Env override: `OPENHUMAN_MEMORY_TREE_CLOUD_LLM_MODEL`.
     #[serde(default = "default_cloud_llm_model")]
     pub cloud_llm_model: Option<String>,
+
+    /// Provider:model string for the smart_walk retrieval agent (e.g.
+    /// `"deepseek:deepseek-chat"`). When set, the smart walk loop uses this
+    /// model instead of the general memory/chat provider. Fast, cheap models
+    /// work best here since the walker makes many short-turn calls.
+    ///
+    /// Env override: `OPENHUMAN_MEMORY_TREE_SMART_WALK_MODEL`.
+    #[serde(default)]
+    pub smart_walk_model: Option<String>,
+
+    /// Explicit opt-in to cloud-based summarization when local AI is disabled.
+    ///
+    /// Default `false` — "Build Summary Trees" was local-only before #002.
+    /// Enabling this routes workspace memory summaries to the configured cloud
+    /// provider. Set to `true` via Settings → AI → Memory or the env var
+    /// `OPENHUMAN_MEMORY_TREE_CLOUD_SUMMARIZATION=true` to acknowledge that
+    /// memory content will be sent to an external service.
+    #[serde(default)]
+    pub cloud_summarization_opt_in: bool,
 }
 
 /// Returns `None` so that existing installs that never opted into Phase 4
@@ -438,6 +457,8 @@ impl Default for MemoryTreeConfig {
             content_dir: default_memory_tree_content_dir(),
             llm_backend: default_llm_backend(),
             cloud_llm_model: default_cloud_llm_model(),
+            smart_walk_model: None,
+            cloud_summarization_opt_in: false,
         }
     }
 }

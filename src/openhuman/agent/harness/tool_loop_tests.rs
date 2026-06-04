@@ -1,6 +1,6 @@
 use super::*;
 use crate::openhuman::inference::provider::traits::ProviderCapabilities;
-use crate::openhuman::inference::provider::ChatResponse;
+use crate::openhuman::inference::provider::{ChatRequest, ChatResponse};
 use crate::openhuman::tools::{ToolResult, ToolScope};
 use async_trait::async_trait;
 use parking_lot::Mutex;
@@ -190,11 +190,13 @@ async fn run_tool_call_loop_intercepts_oversized_tool_results_via_summarizer() {
                 ),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             }),
             Ok(ChatResponse {
                 text: Some("done".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             }),
         ]),
         native_tools: false,
@@ -216,6 +218,7 @@ async fn run_tool_call_loop_intercepts_oversized_tool_results_via_summarizer() {
         true,
         "channel",
         &crate::openhuman::config::MultimodalConfig::default(),
+        &crate::openhuman::config::MultimodalFileConfig::default(),
         2,
         None,
         None,
@@ -267,6 +270,7 @@ async fn run_tool_call_loop_rejects_vision_markers_for_non_vision_provider() {
         true,
         "channel",
         &crate::openhuman::config::MultimodalConfig::default(),
+        &crate::openhuman::config::MultimodalFileConfig::default(),
         1,
         None,
         None,
@@ -288,6 +292,7 @@ async fn run_tool_call_loop_streams_final_text_chunks() {
             text: Some("word ".repeat(30)),
             tool_calls: vec![],
             usage: None,
+            reasoning_content: None,
         })]),
         native_tools: false,
         vision: false,
@@ -305,6 +310,7 @@ async fn run_tool_call_loop_streams_final_text_chunks() {
         true,
         "channel",
         &crate::openhuman::config::MultimodalConfig::default(),
+        &crate::openhuman::config::MultimodalFileConfig::default(),
         1,
         Some(tx),
         None,
@@ -335,11 +341,13 @@ async fn run_tool_call_loop_blocks_cli_rpc_only_tools_in_prompt_mode() {
                 ),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             }),
             Ok(ChatResponse {
                 text: Some("done".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             }),
         ]),
         native_tools: false,
@@ -358,6 +366,7 @@ async fn run_tool_call_loop_blocks_cli_rpc_only_tools_in_prompt_mode() {
         true,
         "channel",
         &crate::openhuman::config::MultimodalConfig::default(),
+        &crate::openhuman::config::MultimodalFileConfig::default(),
         2,
         None,
         None,
@@ -391,11 +400,13 @@ async fn run_tool_call_loop_persists_native_tool_results_as_tool_messages() {
                     arguments: "{}".into(),
                 }],
                 usage: None,
+                reasoning_content: None,
             }),
             Ok(ChatResponse {
                 text: Some("done".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             }),
         ]),
         native_tools: true,
@@ -414,6 +425,7 @@ async fn run_tool_call_loop_persists_native_tool_results_as_tool_messages() {
         true,
         "channel",
         &crate::openhuman::config::MultimodalConfig::default(),
+        &crate::openhuman::config::MultimodalFileConfig::default(),
         2,
         None,
         None,
@@ -442,11 +454,13 @@ async fn run_tool_call_loop_reports_unknown_tool_and_uses_default_max_iterations
                 text: Some("<tool_call>{\"name\":\"missing\",\"arguments\":{}}</tool_call>".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             }),
             Ok(ChatResponse {
                 text: Some("done".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             }),
         ]),
         native_tools: false,
@@ -464,6 +478,7 @@ async fn run_tool_call_loop_reports_unknown_tool_and_uses_default_max_iterations
         true,
         "channel",
         &crate::openhuman::config::MultimodalConfig::default(),
+        &crate::openhuman::config::MultimodalFileConfig::default(),
         0,
         None,
         None,
@@ -497,11 +512,13 @@ async fn run_tool_call_loop_formats_tool_error_paths() {
                 ),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             }),
             Ok(ChatResponse {
                 text: Some("done".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             }),
         ]),
         native_tools: false,
@@ -520,6 +537,7 @@ async fn run_tool_call_loop_formats_tool_error_paths() {
         true,
         "channel",
         &crate::openhuman::config::MultimodalConfig::default(),
+        &crate::openhuman::config::MultimodalFileConfig::default(),
         2,
         None,
         None,
@@ -560,6 +578,7 @@ async fn run_tool_call_loop_propagates_provider_errors_and_max_iteration_failure
         true,
         "channel",
         &crate::openhuman::config::MultimodalConfig::default(),
+        &crate::openhuman::config::MultimodalFileConfig::default(),
         1,
         None,
         None,
@@ -577,6 +596,7 @@ async fn run_tool_call_loop_propagates_provider_errors_and_max_iteration_failure
             text: Some("<tool_call>{\"name\":\"echo\",\"arguments\":{}}</tool_call>".into()),
             tool_calls: vec![],
             usage: None,
+            reasoning_content: None,
         })]),
         native_tools: false,
         vision: false,
@@ -593,6 +613,7 @@ async fn run_tool_call_loop_propagates_provider_errors_and_max_iteration_failure
         true,
         "channel",
         &crate::openhuman::config::MultimodalConfig::default(),
+        &crate::openhuman::config::MultimodalFileConfig::default(),
         1,
         None,
         None,
@@ -643,11 +664,13 @@ async fn run_tool_call_loop_aborts_when_stop_hook_returns_stop() {
                 text: Some("<tool_call>{\"name\":\"echo\",\"arguments\":{}}</tool_call>".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             }),
             Ok(ChatResponse {
                 text: Some("<tool_call>{\"name\":\"echo\",\"arguments\":{}}</tool_call>".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             }),
         ]),
         native_tools: false,
@@ -669,6 +692,7 @@ async fn run_tool_call_loop_aborts_when_stop_hook_returns_stop() {
             true,
             "channel",
             &crate::openhuman::config::MultimodalConfig::default(),
+            &crate::openhuman::config::MultimodalFileConfig::default(),
             10,
             None,
             None,
@@ -706,6 +730,7 @@ async fn run_tool_call_loop_runs_unchanged_when_no_stop_hooks_installed() {
             text: Some("done".into()),
             tool_calls: vec![],
             usage: None,
+            reasoning_content: None,
         })]),
         native_tools: false,
         vision: false,
@@ -721,6 +746,7 @@ async fn run_tool_call_loop_runs_unchanged_when_no_stop_hooks_installed() {
         true,
         "channel",
         &crate::openhuman::config::MultimodalConfig::default(),
+        &crate::openhuman::config::MultimodalFileConfig::default(),
         1,
         None,
         None,
@@ -772,12 +798,14 @@ async fn run_tool_call_loop_applies_per_tool_max_result_size_cap() {
                 ),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             }),
             // Round 2: stop.
             Ok(ChatResponse {
                 text: Some("done".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             }),
         ]),
         native_tools: false,
@@ -796,6 +824,7 @@ async fn run_tool_call_loop_applies_per_tool_max_result_size_cap() {
         true,
         "channel",
         &crate::openhuman::config::MultimodalConfig::default(),
+        &crate::openhuman::config::MultimodalFileConfig::default(),
         2,
         None,
         None,
@@ -842,6 +871,7 @@ async fn run_tool_call_loop_halts_on_repeated_identical_failure() {
             ),
             tool_calls: vec![],
             usage: None,
+            reasoning_content: None,
         }));
     }
     let provider = ScriptedProvider {
@@ -862,6 +892,7 @@ async fn run_tool_call_loop_halts_on_repeated_identical_failure() {
         true,
         "channel",
         &crate::openhuman::config::MultimodalConfig::default(),
+        &crate::openhuman::config::MultimodalFileConfig::default(),
         10, // max_iterations — must NOT be reached; breaker fires at 3
         None,
         None,
@@ -905,6 +936,7 @@ async fn run_tool_call_loop_halts_when_no_progress() {
             )),
             tool_calls: vec![],
             usage: None,
+            reasoning_content: None,
         }));
     }
     let provider = ScriptedProvider {
@@ -925,6 +957,7 @@ async fn run_tool_call_loop_halts_when_no_progress() {
         true,
         "channel",
         &crate::openhuman::config::MultimodalConfig::default(),
+        &crate::openhuman::config::MultimodalFileConfig::default(),
         20,
         None,
         None,
@@ -1131,6 +1164,7 @@ async fn run_tool_call_loop_dedups_duplicate_tool_names_before_provider_call() {
             text: Some("done".into()),
             tool_calls: vec![],
             usage: None,
+            reasoning_content: None,
         })]),
         // Native tool-calling on: only when the provider supports native
         // tools does `run_tool_call_loop` populate `ChatRequest.tools`.
@@ -1155,6 +1189,7 @@ async fn run_tool_call_loop_dedups_duplicate_tool_names_before_provider_call() {
         true,
         "channel",
         &crate::openhuman::config::MultimodalConfig::default(),
+        &crate::openhuman::config::MultimodalFileConfig::default(),
         2,
         None,
         None,
@@ -1238,7 +1273,11 @@ async fn auto_approved_external_effect_tool_runs_through_loop_without_parking() 
         auto_approve: vec![tool_name.into()],
         ..crate::openhuman::security::SecurityPolicy::default()
     };
-    crate::openhuman::security::live_policy::install(Arc::new(policy), std::env::temp_dir());
+    crate::openhuman::security::live_policy::install(
+        Arc::new(policy),
+        std::env::temp_dir(),
+        std::env::temp_dir(),
+    );
 
     // Install the process-global gate so the loop's external-effect branch has a
     // gate to route through (idempotent; the loop calls `ApprovalGate::try_global`).
@@ -1246,7 +1285,7 @@ async fn auto_approved_external_effect_tool_runs_through_loop_without_parking() 
         workspace_dir: std::env::temp_dir(),
         ..crate::openhuman::config::Config::default()
     };
-    crate::openhuman::approval::ApprovalGate::init_global(cfg, "loop-gate-e2e-session");
+    crate::openhuman::approval::ApprovalGate::init_global(cfg, "session-loop-gate-e2e");
 
     let ran = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let provider = ScriptedProvider {
@@ -1257,11 +1296,13 @@ async fn auto_approved_external_effect_tool_runs_through_loop_without_parking() 
                 )),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             }),
             Ok(ChatResponse {
                 text: Some("done".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             }),
         ]),
         native_tools: false,
@@ -1289,6 +1330,7 @@ async fn auto_approved_external_effect_tool_runs_through_loop_without_parking() 
                 true,
                 "channel",
                 &crate::openhuman::config::MultimodalConfig::default(),
+                &crate::openhuman::config::MultimodalFileConfig::default(),
                 2,
                 None,
                 None,

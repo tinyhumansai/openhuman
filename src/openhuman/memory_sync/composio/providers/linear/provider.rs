@@ -1,5 +1,5 @@
 //! Linear provider — incremental sync of issues assigned to the
-//! authenticated user, with per-item persistence into the Memory Tree.
+//! authenticated user, with per-issue memory_tree ingest.
 //!
 //! On each sync pass:
 //!
@@ -9,8 +9,8 @@
 //!   4. Page through `LINEAR_LIST_LINEAR_ISSUES` filtered to the viewer as
 //!      assignee, ordered by `updatedAt` descending. Stop early once we hit
 //!      issues older than the cursor or a page without a next-page cursor.
-//!   5. For each issue, persist as a single memory document if it's new
-//!      *or* edited since the last sync.
+//!   5. For each issue, ingest into memory_tree if it's new *or* edited
+//!      since the last sync.
 //!   6. Advance the cursor to the newest `updatedAt` seen and save.
 //!
 //! Privacy posture: we only pull issues the user is assigned to, never
@@ -19,15 +19,15 @@
 //! and avoids accidentally ingesting other teammates' private issues.
 
 use async_trait::async_trait;
-use serde_json::json;
+use futures::StreamExt;
+use serde_json::{json, Value};
 
-use super::sync;
-use crate::openhuman::memory_sync::composio::providers::sync_state::{
-    persist_single_item, SyncState,
-};
+use super::{ingest::ingest_issue_into_memory_tree, sync};
+use crate::openhuman::config::Config;
+use crate::openhuman::memory_sync::composio::providers::sync_state::{extract_item_id, SyncState};
 use crate::openhuman::memory_sync::composio::providers::{
-    pick_str, ComposioProvider, CuratedTool, ProviderContext, ProviderUserProfile, SyncOutcome,
-    SyncReason,
+    merge_extra, pick_str, ComposioProvider, CuratedTool, NormalizedTask, ProviderContext,
+    ProviderUserProfile, SyncOutcome, SyncReason, TaskFetchFilter, TaskKind,
 };
 
 const ACTION_LIST_USERS: &str = "LINEAR_LIST_LINEAR_USERS";
@@ -46,6 +46,10 @@ const MAX_PAGES_PER_SYNC: u32 = 20;
 
 /// Paths for extracting a Linear issue's unique ID.
 const ISSUE_ID_PATHS: &[&str] = &["id", "data.id", "identifier", "data.identifier"];
+
+/// Max in-flight ingests per page. DB writes serialize anyway and the
+/// cloud embedder has rate limits, so keep this small.
+const INGEST_CONCURRENCY: usize = 8;
 
 pub struct LinearProvider;
 
@@ -250,77 +254,23 @@ impl ComposioProvider for LinearProvider {
                 break;
             }
 
-            // ── Per-item dedup + persist ─────────────────────────────
-            for issue in &issues {
-                let Some(issue_id) =
-                    crate::openhuman::memory_sync::composio::providers::sync_state::extract_item_id(
-                        issue,
-                        ISSUE_ID_PATHS,
-                    )
-                else {
-                    tracing::debug!("[composio:linear] issue missing ID, skipping");
-                    continue;
-                };
+            // ── Per-item dedup + bounded-concurrency ingest ──────────
+            let (pending, page_hit_boundary) = select_pending(&issues, &state, &mut newest_updated);
+            if page_hit_boundary {
+                hit_cursor_boundary = true;
+            }
 
-                let updated = sync::extract_issue_updated(issue);
-
-                // Track newest `updatedAt` for cursor advancement.
-                if let Some(ref ts) = updated {
-                    if newest_updated.as_ref().is_none_or(|existing| ts > existing) {
-                        newest_updated = Some(ts.clone());
-                    }
-                }
-
-                // Composite (issue_id, updatedAt) key so re-edited
-                // issues are re-persisted on the next sync.
-                let sync_key = match &updated {
-                    Some(ts) => format!("{issue_id}@{ts}"),
-                    None => issue_id.clone(),
-                };
-
-                // If `updatedAt` is at or older than our cursor *and*
-                // we already synced this key, the rest of the page is
-                // by definition older — stop early.
-                if let (Some(ref cursor), Some(ref ts)) = (&state.cursor, &updated) {
-                    if ts <= cursor && state.is_synced(&sync_key) {
-                        hit_cursor_boundary = true;
-                        continue;
-                    }
-                }
-
-                if state.is_synced(&sync_key) {
-                    continue;
-                }
-
-                let title_text = sync::extract_issue_title(issue)
-                    .unwrap_or_else(|| format!("Linear issue {issue_id}"));
-                let doc_id = format!("composio-linear-issue-{issue_id}");
-                let title = format!("Linear: {title_text}");
-
-                match persist_single_item(
-                    &memory,
-                    "linear",
-                    &doc_id,
-                    &title,
-                    issue,
-                    "linear",
-                    ctx.connection_id.as_deref(),
-                )
-                .await
-                {
-                    Ok(_) => {
-                        state.mark_synced(&sync_key);
-                        total_persisted += 1;
-                    }
-                    Err(e) => {
-                        had_persist_failures = true;
-                        tracing::warn!(
-                            issue_id = %issue_id,
-                            error = %e,
-                            "[composio:linear] failed to persist issue (continuing)"
-                        );
-                    }
-                }
+            let ingestor = MemoryTreeIngestor {
+                config: ctx.config.as_ref(),
+                connection_id: &connection_id,
+            };
+            let outcome = ingest_pending_buffered(&ingestor, pending, INGEST_CONCURRENCY).await;
+            for key in &outcome.synced_keys {
+                state.mark_synced(key);
+            }
+            total_persisted += outcome.persisted;
+            if outcome.had_failures {
+                had_persist_failures = true;
             }
 
             if hit_cursor_boundary {
@@ -390,6 +340,133 @@ impl ComposioProvider for LinearProvider {
             }),
         })
     }
+
+    async fn fetch_tasks(
+        &self,
+        ctx: &ProviderContext,
+        filter: &TaskFetchFilter,
+    ) -> Result<Vec<NormalizedTask>, String> {
+        let max = filter.effective_max();
+        tracing::debug!(
+            connection_id = ?ctx.connection_id,
+            max,
+            team_id = ?filter.team_id,
+            assignee_is_me = filter.assignee_is_me,
+            "[composio:linear] fetch_tasks"
+        );
+
+        let mut args = json!({
+            "first": max.min(100) as u64,
+            "orderBy": "updatedAt",
+        });
+        if filter.assignee_is_me {
+            let resp = ctx
+                .execute(ACTION_LIST_USERS, Some(json!({ "isMe": true })))
+                .await
+                .map_err(|e| format!("[composio:linear] {ACTION_LIST_USERS}: {e:#}"))?;
+            // Fail closed: a failed viewer lookup must not silently widen
+            // the query beyond "assigned to me".
+            if !resp.successful {
+                return Err(format!(
+                    "[composio:linear] {ACTION_LIST_USERS}: {}",
+                    resp.error.unwrap_or_else(|| "provider failure".into())
+                ));
+            }
+            let viewer_id = sync::extract_viewer_id(&resp.data).ok_or_else(|| {
+                "[composio:linear] LINEAR_LIST_LINEAR_USERS returned no viewer id".to_string()
+            })?;
+            args["assigneeId"] = json!(viewer_id);
+        }
+        if let Some(team) = filter
+            .team_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            args["teamId"] = json!(team);
+        }
+        merge_extra(&mut args, &filter.extra);
+
+        let resp = ctx
+            .execute(ACTION_LIST_ISSUES, Some(args))
+            .await
+            .map_err(|e| format!("[composio:linear] {ACTION_LIST_ISSUES}: {e:#}"))?;
+        if !resp.successful {
+            return Err(format!(
+                "[composio:linear] {ACTION_LIST_ISSUES}: {}",
+                resp.error.unwrap_or_else(|| "provider failure".into())
+            ));
+        }
+
+        let want_state = filter
+            .state
+            .as_deref()
+            .map(|s| s.trim().to_ascii_lowercase())
+            .filter(|s| !s.is_empty());
+
+        let mut out: Vec<NormalizedTask> = Vec::new();
+        for issue in sync::extract_issues(&resp.data) {
+            if out.len() >= max {
+                break;
+            }
+            let Some(nt) = normalize_linear_issue(&issue) else {
+                continue;
+            };
+            if let Some(ref want) = want_state {
+                let matches = nt
+                    .status
+                    .as_deref()
+                    .map(|s| s.to_ascii_lowercase() == *want)
+                    .unwrap_or(false);
+                if !matches {
+                    continue;
+                }
+            }
+            out.push(nt);
+        }
+        tracing::debug!(count = out.len(), "[composio:linear] fetch_tasks complete");
+        Ok(out)
+    }
+}
+
+/// Map a raw Linear issue payload into a [`NormalizedTask`].
+fn normalize_linear_issue(issue: &serde_json::Value) -> Option<NormalizedTask> {
+    let external_id = extract_item_id(issue, ISSUE_ID_PATHS)?;
+    let title =
+        sync::extract_issue_title(issue).unwrap_or_else(|| format!("Linear issue {external_id}"));
+    Some(NormalizedTask {
+        external_id,
+        source_id: String::new(),
+        provider: "linear".to_string(),
+        kind: TaskKind::Generic,
+        title,
+        body: pick_str(issue, &["description", "data.description"]),
+        url: pick_str(issue, &["url", "data.url"]),
+        status: pick_str(issue, &["state.name", "data.state.name", "state.type"]),
+        assignee: pick_str(issue, &["assignee.name", "data.assignee.name"]),
+        due: pick_str(issue, &["dueDate", "data.dueDate"]),
+        labels: extract_linear_labels(issue),
+        priority: pick_str(issue, &["priorityLabel", "data.priorityLabel"]),
+        updated_at: sync::extract_issue_updated(issue),
+        raw: issue.clone(),
+    })
+}
+
+/// Extract label names from a Linear issue (`labels.nodes[].name`).
+fn extract_linear_labels(issue: &serde_json::Value) -> Vec<String> {
+    let arr = issue
+        .get("labels")
+        .or_else(|| issue.get("data").and_then(|d| d.get("labels")))
+        .and_then(|l| l.get("nodes"))
+        .and_then(|v| v.as_array());
+    match arr {
+        Some(items) => items
+            .iter()
+            .filter_map(|l| l.get("name").and_then(|n| n.as_str()))
+            .map(|s| s.to_string())
+            .collect(),
+        None => Vec::new(),
+    }
 }
 
 impl LinearProvider {
@@ -421,5 +498,310 @@ impl LinearProvider {
         sync::extract_viewer_id(&resp.data).ok_or_else(|| {
             "[composio:linear] LINEAR_LIST_LINEAR_USERS returned no viewer id".to_string()
         })
+    }
+}
+
+/// One issue that passed dedupe in pass 1 and is queued for concurrent
+/// ingest in pass 2. Borrows the raw issue `Value` out of the current
+/// page's `issues` (same scope — no clone needed).
+struct PendingIngest<'a> {
+    sync_key: String,
+    issue_id: String,
+    title: String,
+    updated: Option<String>,
+    issue: &'a Value,
+}
+
+/// Folded result of [`ingest_pending_buffered`]. Every field is
+/// order-independent, so the concurrent stage can accumulate into it
+/// regardless of the order ingests complete.
+#[derive(Default)]
+struct BufferedIngestOutcome {
+    /// `sync_key`s whose ingest succeeded — the caller marks each synced.
+    synced_keys: Vec<String>,
+    /// Number of issues persisted (equals `synced_keys.len()`).
+    persisted: usize,
+    /// Whether any per-item ingest failed (the caller holds the cursor).
+    had_failures: bool,
+}
+
+/// Seam over "ingest one Linear issue", so the bounded-concurrency driver
+/// can be unit-tested with a fake that records peak in-flight calls
+/// without a real memory tree or embedder.
+#[async_trait]
+trait IssueIngestor {
+    async fn ingest(
+        &self,
+        issue_id: &str,
+        title: &str,
+        updated: Option<&str>,
+        issue: &Value,
+    ) -> anyhow::Result<usize>;
+}
+
+/// Production ingestor: routes into the memory-tree pipeline via
+/// [`ingest_issue_into_memory_tree`].
+struct MemoryTreeIngestor<'c> {
+    config: &'c Config,
+    connection_id: &'c str,
+}
+
+#[async_trait]
+impl IssueIngestor for MemoryTreeIngestor<'_> {
+    async fn ingest(
+        &self,
+        issue_id: &str,
+        title: &str,
+        updated: Option<&str>,
+        issue: &Value,
+    ) -> anyhow::Result<usize> {
+        ingest_issue_into_memory_tree(
+            self.config,
+            self.connection_id,
+            issue_id,
+            title,
+            updated,
+            issue,
+        )
+        .await
+    }
+}
+
+/// Pass 1 (pure, no I/O): scan one page of `issues`, advance
+/// `newest_updated`, skip already-synced items, and collect the issues
+/// still needing ingest. Returns the queued items and whether we crossed
+/// the persistent cursor boundary (the signal to stop paginating). All
+/// order-dependent decisions (cursor/timestamp) live here — never in the
+/// concurrent stage.
+fn select_pending<'a>(
+    issues: &'a [Value],
+    state: &SyncState,
+    newest_updated: &mut Option<String>,
+) -> (Vec<PendingIngest<'a>>, bool) {
+    let mut hit_cursor_boundary = false;
+    let mut pending: Vec<PendingIngest> = Vec::new();
+    for issue in issues {
+        let Some(issue_id) = extract_item_id(issue, ISSUE_ID_PATHS) else {
+            tracing::debug!("[composio:linear] issue missing ID, skipping");
+            continue;
+        };
+
+        let updated = sync::extract_issue_updated(issue);
+
+        // Track newest `updatedAt` for cursor advancement.
+        if let Some(ref ts) = updated {
+            if newest_updated.as_ref().is_none_or(|existing| ts > existing) {
+                *newest_updated = Some(ts.clone());
+            }
+        }
+
+        // Composite (issue_id, updatedAt) key so re-edited issues are
+        // re-persisted on the next sync.
+        let sync_key = match &updated {
+            Some(ts) => format!("{issue_id}@{ts}"),
+            None => issue_id.clone(),
+        };
+
+        // Older than cursor AND already synced → caught up.
+        if let (Some(ref cursor), Some(ref ts)) = (&state.cursor, &updated) {
+            if ts <= cursor && state.is_synced(&sync_key) {
+                hit_cursor_boundary = true;
+                continue;
+            }
+        }
+
+        if state.is_synced(&sync_key) {
+            continue;
+        }
+
+        let title_text =
+            sync::extract_issue_title(issue).unwrap_or_else(|| format!("Linear issue {issue_id}"));
+        let title = format!("Linear: {title_text}");
+
+        pending.push(PendingIngest {
+            sync_key,
+            issue_id,
+            title,
+            updated,
+            issue,
+        });
+    }
+    (pending, hit_cursor_boundary)
+}
+
+/// Pass 2: ingest the queued issues with bounded concurrency. Overlaps
+/// the per-item embedding RTT (`buffer_unordered`, up to `concurrency` in
+/// flight) and folds results into an order-independent
+/// [`BufferedIngestOutcome`]. Unordered is correct here: nothing
+/// downstream depends on completion order — successes are keyed by
+/// `sync_key`. A failed ingest is logged and skipped, tripping
+/// `had_failures` so the caller holds the cursor (parity with the
+/// previous sequential path).
+async fn ingest_pending_buffered<I: IssueIngestor + Sync>(
+    ingestor: &I,
+    pending: Vec<PendingIngest<'_>>,
+    concurrency: usize,
+) -> BufferedIngestOutcome {
+    // Materialize the per-item futures into a Vec before `buffer_unordered`
+    // so the spawned sync future keeps concrete lifetimes / `Send`.
+    let ingest_futs = pending
+        .into_iter()
+        .map(|p| async move {
+            let res = ingestor
+                .ingest(&p.issue_id, &p.title, p.updated.as_deref(), p.issue)
+                .await;
+            (p.sync_key, p.issue_id, res)
+        })
+        .collect::<Vec<_>>();
+
+    let mut outcome = BufferedIngestOutcome::default();
+    let mut ingest_stream = futures::stream::iter(ingest_futs).buffer_unordered(concurrency);
+    while let Some((sync_key, issue_id, res)) = ingest_stream.next().await {
+        match res {
+            Ok(_chunks_written) => {
+                outcome.synced_keys.push(sync_key);
+                outcome.persisted += 1;
+            }
+            Err(e) => {
+                outcome.had_failures = true;
+                tracing::warn!(
+                    issue_id = %issue_id,
+                    error = %e,
+                    "[composio:linear] failed to ingest issue into memory_tree (continuing)"
+                );
+            }
+        }
+    }
+    outcome
+}
+
+#[cfg(test)]
+mod buffered_tests {
+    use super::*;
+    use serde_json::json;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    /// Fake ingestor: records the peak number of concurrent in-flight
+    /// `ingest` calls and can be told to fail one specific `issue_id`. No
+    /// memory tree or embedder involved — lets us assert the concurrency
+    /// bound and overlap deterministically.
+    struct CountingIngestor {
+        in_flight: AtomicUsize,
+        peak: AtomicUsize,
+        fail_issue: Option<String>,
+    }
+
+    impl CountingIngestor {
+        fn new(fail_issue: Option<&str>) -> Arc<Self> {
+            Arc::new(Self {
+                in_flight: AtomicUsize::new(0),
+                peak: AtomicUsize::new(0),
+                fail_issue: fail_issue.map(str::to_string),
+            })
+        }
+    }
+
+    #[async_trait]
+    impl IssueIngestor for CountingIngestor {
+        async fn ingest(
+            &self,
+            issue_id: &str,
+            _title: &str,
+            _updated: Option<&str>,
+            _issue: &Value,
+        ) -> anyhow::Result<usize> {
+            let now = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+            self.peak.fetch_max(now, Ordering::SeqCst);
+            // Yield a few times so futures genuinely interleave and the
+            // peak counter reflects real overlap, not accidental serial run.
+            for _ in 0..4 {
+                tokio::task::yield_now().await;
+            }
+            self.in_flight.fetch_sub(1, Ordering::SeqCst);
+            if self.fail_issue.as_deref() == Some(issue_id) {
+                Err(anyhow::anyhow!("forced failure for {issue_id}"))
+            } else {
+                Ok(1)
+            }
+        }
+    }
+
+    fn make_issues(n: usize) -> Vec<Value> {
+        (0..n).map(|i| json!({ "id": format!("i{i}") })).collect()
+    }
+
+    fn make_pending(issues: &[Value]) -> Vec<PendingIngest<'_>> {
+        issues
+            .iter()
+            .enumerate()
+            .map(|(i, issue)| PendingIngest {
+                sync_key: format!("k{i}"),
+                issue_id: format!("i{i}"),
+                title: format!("Linear: issue {i}"),
+                updated: None,
+                issue,
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn ingest_pending_buffered_bounds_and_overlaps() {
+        let ingestor = CountingIngestor::new(None);
+        let issues = make_issues(20);
+        let pending = make_pending(&issues);
+
+        let outcome = ingest_pending_buffered(ingestor.as_ref(), pending, 8).await;
+
+        assert_eq!(outcome.persisted, 20, "all issues persisted");
+        assert_eq!(outcome.synced_keys.len(), 20);
+        assert!(!outcome.had_failures);
+
+        let peak = ingestor.peak.load(Ordering::SeqCst);
+        assert!(peak <= 8, "peak in-flight {peak} exceeded the bound of 8");
+        assert!(peak >= 2, "peak in-flight {peak} shows no real overlap");
+    }
+
+    #[tokio::test]
+    async fn ingest_pending_buffered_skips_failures_order_independent() {
+        let ingestor = CountingIngestor::new(Some("i2"));
+        let issues = make_issues(5);
+        let pending = make_pending(&issues);
+
+        let outcome = ingest_pending_buffered(ingestor.as_ref(), pending, 4).await;
+
+        assert_eq!(outcome.persisted, 4, "the one failed ingest is not counted");
+        assert!(outcome.had_failures);
+        assert_eq!(outcome.synced_keys.len(), 4);
+        assert!(
+            !outcome.synced_keys.contains(&"k2".to_string()),
+            "the failed issue's sync_key must not be marked synced"
+        );
+    }
+
+    #[test]
+    fn select_pending_tracks_newest_skips_synced_and_detects_boundary() {
+        let mut state = SyncState::new("linear", "conn1");
+        state.cursor = Some("2026-04-15T00:00:00Z".to_string());
+        // Issue B is already synced and older than the cursor.
+        state.mark_synced("b@2026-04-01T00:00:00Z");
+
+        let issues = vec![
+            json!({ "id": "a", "updatedAt": "2026-05-01T00:00:00Z" }),
+            json!({ "id": "b", "updatedAt": "2026-04-01T00:00:00Z" }),
+            json!({ "updatedAt": "2026-03-01T00:00:00Z" }), // no id → skipped
+        ];
+
+        let mut newest: Option<String> = None;
+        let (pending, hit_boundary) = select_pending(&issues, &state, &mut newest);
+
+        assert_eq!(pending.len(), 1, "only the new issue A is queued");
+        assert_eq!(pending[0].issue_id, "a");
+        assert_eq!(pending[0].sync_key, "a@2026-05-01T00:00:00Z");
+        assert!(
+            hit_boundary,
+            "older synced issue B trips the cursor boundary"
+        );
+        assert_eq!(newest.as_deref(), Some("2026-05-01T00:00:00Z"));
     }
 }

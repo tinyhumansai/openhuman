@@ -28,6 +28,7 @@
 use anyhow::{Context, Result};
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
+use std::io::Write;
 
 use crate::openhuman::config::Config;
 use crate::openhuman::memory_store::chunks::store::{self as chunk_store, with_connection};
@@ -879,8 +880,9 @@ pub struct DeleteChunkResponse {
 
 /// Which graph the UI is asking for.
 ///
-/// `Tree` returns summary nodes connected by parent_id (current
-/// Obsidian-style summary tree). `Contacts` returns raw chunks
+/// `Tree` returns the summary tree (summary nodes connected by
+/// parent_id) plus the leaf chunks hanging off it, bounded to ~1000
+/// nodes with summaries prioritized. `Contacts` returns raw chunks
 /// connected to the person entities they mention via the inverted
 /// `mem_tree_entity_index` — i.e. the document↔contact graph.
 ///
@@ -1070,11 +1072,150 @@ pub async fn obsidian_vault_status_rpc(
     Ok(RpcOutcome::single_log(resp, log))
 }
 
+/// Response shape for [`vault_health_check_rpc`].
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct VaultHealthCheckResponse {
+    /// Absolute path to `<workspace>/memory_tree/content/`.
+    pub content_root_abs: String,
+    /// `true` when the content-root directory exists on disk.
+    pub exists: bool,
+    /// `true` when the content-root directory is readable.
+    pub readable: bool,
+    /// `true` when a temp file can be created + removed under content-root.
+    pub writable: bool,
+    /// `true` when the content root (or an ancestor) is a registered Obsidian
+    /// vault in Obsidian's `obsidian.json`.
+    pub obsidian_registered: bool,
+    /// `true` when the Memory Tree pipeline is neither paused nor in an error
+    /// state.
+    pub pipeline_healthy: bool,
+    /// Epoch ms of the most-recent chunk timestamp. Zero when empty.
+    pub last_sync_ms: i64,
+}
+
+/// `memory_tree_vault_health_check` — consolidated onboarding/settings health
+/// snapshot for the workspace vault.
+///
+/// Combines:
+/// - filesystem reachability checks over `<workspace>/memory_tree/content/`
+/// - Obsidian registration check (same logic as `obsidian_vault_status_rpc`)
+/// - pipeline health signals from `memory_tree_pipeline_status`
+///
+/// `obsidian_config_dir` is optional and mirrors
+/// [`obsidian_vault_status_rpc`]: it overrides where we probe for
+/// `obsidian.json` for non-standard installs.
+pub async fn vault_health_check_rpc(
+    config: &Config,
+    obsidian_config_dir: Option<String>,
+) -> Result<RpcOutcome<VaultHealthCheckResponse>, String> {
+    let cfg = config.clone();
+    let fs_probe = tokio::task::spawn_blocking(move || {
+        let content_root = cfg.memory_tree_content_root();
+        let content_root_abs = content_root.to_string_lossy().to_string();
+        let exists = content_root.is_dir();
+        let readable = exists && std::fs::read_dir(&content_root).is_ok();
+        let writable = exists && probe_directory_writable(&content_root);
+
+        let extra = obsidian_config_dir
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(std::path::Path::new);
+        let obsidian_registered =
+            obsidian_registry::vault_registration_status(&content_root, extra).registered;
+
+        (
+            content_root_abs,
+            exists,
+            readable,
+            writable,
+            obsidian_registered,
+        )
+    })
+    .await
+    .map_err(|e| format!("vault_health_check fs probe join error: {e}"))?;
+
+    let pipeline = crate::openhuman::memory_tree::tree::rpc::pipeline_status_rpc(config)
+        .await
+        .map_err(|e| format!("vault_health_check pipeline_status: {e}"))?;
+
+    let (content_root_abs, exists, readable, writable, obsidian_registered) = fs_probe;
+    let pipeline_healthy = pipeline.value.status != "error" && !pipeline.value.is_paused;
+    let last_sync_ms = pipeline.value.last_sync_ms.max(0);
+
+    let resp = VaultHealthCheckResponse {
+        content_root_abs,
+        exists,
+        readable,
+        writable,
+        obsidian_registered,
+        pipeline_healthy,
+        last_sync_ms,
+    };
+
+    let log = format!(
+        "memory_tree::read: vault_health_check exists={} readable={} writable={} obsidian_registered={} pipeline_healthy={} last_sync_ms={} root_hash={}",
+        resp.exists,
+        resp.readable,
+        resp.writable,
+        resp.obsidian_registered,
+        resp.pipeline_healthy,
+        resp.last_sync_ms,
+        crate::openhuman::memory::util::redact::redact(&resp.content_root_abs),
+    );
+    Ok(RpcOutcome::single_log(resp, log))
+}
+
+fn probe_directory_writable(dir: &std::path::Path) -> bool {
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let probe = dir.join(format!(
+        ".openhuman-vault-writecheck-{}-{ts}.tmp",
+        std::process::id()
+    ));
+    match std::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&probe)
+    {
+        Ok(mut file) => {
+            let write_ok = file.write_all(b"ok").is_ok();
+            if let Err(e) = std::fs::remove_file(&probe) {
+                log::debug!("[memory] vault write-probe cleanup failed: {e}");
+            }
+            write_ok
+        }
+        Err(_) => false,
+    }
+}
+
 /// Tree mode: summary nodes joined to their owning tree for the
-/// human-readable scope. Edges are encoded implicitly via
-/// `GraphNode.parent_id`.
+/// human-readable scope, plus the leaf chunks that hang off them. Edges
+/// are encoded implicitly via `GraphNode.parent_id` (a chunk's
+/// `parent_id` is its `parent_summary_id`, which matches a summary node's
+/// `id`).
+///
+/// Budget: summary (tree) nodes are **always kept in full** — they are
+/// the skeleton of the graph — then leaf chunks fill the remaining budget
+/// up to [`MAX_TREE_NODES`], most-recent first. Without the leaves the UI
+/// graph showed only the handful of sealed summaries (e.g. ~20) while
+/// Obsidian, which renders every `.md` on disk, showed hundreds; the
+/// chunks are the bulk of the tree. Unsealed chunks have a null
+/// `parent_summary_id` and render as orphan nodes — matching Obsidian's
+/// `showOrphans` view.
 fn collect_tree_graph(cfg: &Config) -> Result<(Vec<GraphNode>, Vec<GraphEdge>)> {
-    let nodes = with_connection(cfg, |conn| {
+    const MAX_TREE_NODES: usize = 10_000;
+
+    // 1. Collect summary nodes + their child_ids for document expansion.
+    struct SummaryRow {
+        node: GraphNode,
+        tree_scope: String,
+        child_ids: Vec<String>,
+    }
+
+    let summary_rows = with_connection(cfg, |conn| {
         let mut stmt = conn.prepare(
             "SELECT s.id, s.tree_id, s.tree_kind, t.scope, s.level, s.parent_id,
                     s.child_ids_json, s.time_range_start_ms, s.time_range_end_ms
@@ -1094,32 +1235,230 @@ fn collect_tree_graph(cfg: &Config) -> Result<(Vec<GraphNode>, Vec<GraphEdge>)> 
                 let child_ids_json: String = row.get(6)?;
                 let time_range_start_ms: i64 = row.get(7)?;
                 let time_range_end_ms: i64 = row.get(8)?;
-                let child_count: u32 = serde_json::from_str::<Vec<String>>(&child_ids_json)
-                    .map(|v| v.len() as u32)
-                    .unwrap_or(0);
+                let child_ids: Vec<String> =
+                    serde_json::from_str(&child_ids_json).unwrap_or_default();
+                let child_count = child_ids.len() as u32;
                 let file_basename = sanitize_basename(&id);
                 let label = format!("L{} · {}", level.max(0), tree_scope);
-                Ok(GraphNode {
-                    kind: "summary".into(),
-                    id,
-                    label,
-                    tree_kind: Some(tree_kind),
-                    tree_scope: Some(tree_scope),
-                    tree_id: Some(tree_id),
-                    level: Some(level.max(0) as u32),
-                    parent_id,
-                    child_count: Some(child_count),
-                    time_range_start_ms: Some(time_range_start_ms),
-                    time_range_end_ms: Some(time_range_end_ms),
-                    file_basename: Some(file_basename),
-                    entity_kind: None,
+                Ok(SummaryRow {
+                    node: GraphNode {
+                        kind: "summary".into(),
+                        id,
+                        label,
+                        tree_kind: Some(tree_kind),
+                        tree_scope: Some(tree_scope.clone()),
+                        tree_id: Some(tree_id),
+                        level: Some(level.max(0) as u32),
+                        parent_id,
+                        child_count: Some(child_count),
+                        time_range_start_ms: Some(time_range_start_ms),
+                        time_range_end_ms: Some(time_range_end_ms),
+                        file_basename: Some(file_basename),
+                        entity_kind: None,
+                    },
+                    tree_scope,
+                    child_ids,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()
             .context("collect tree-mode summary rows")?;
         Ok(rows)
     })?;
+
+    // 2. Build synthetic source-root nodes (one per tree scope).
+    let mut scopes: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for sr in &summary_rows {
+        scopes.insert(sr.tree_scope.clone());
+    }
+
+    let mut nodes: Vec<GraphNode> = Vec::new();
+    let mut source_root_ids: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+
+    for scope in &scopes {
+        let root_id = format!("source:{scope}");
+        let label = scope_display_label(scope);
+        source_root_ids.insert(scope.clone(), root_id.clone());
+        nodes.push(GraphNode {
+            kind: "source".into(),
+            id: root_id,
+            label,
+            tree_kind: None,
+            tree_scope: Some(scope.clone()),
+            tree_id: None,
+            level: None,
+            parent_id: None,
+            child_count: None,
+            time_range_start_ms: None,
+            time_range_end_ms: None,
+            file_basename: None,
+            entity_kind: None,
+        });
+    }
+
+    // 3. Add summary nodes — orphans (no parent_id) link to their source root.
+    let mut summary_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for sr in &summary_rows {
+        summary_ids.insert(sr.node.id.clone());
+    }
+
+    for sr in &summary_rows {
+        let mut node = sr.node.clone();
+        let has_valid_parent = node
+            .parent_id
+            .as_ref()
+            .map(|pid| summary_ids.contains(pid))
+            .unwrap_or(false);
+        if !has_valid_parent {
+            node.parent_id = source_root_ids.get(&sr.tree_scope).cloned();
+        }
+        nodes.push(node);
+    }
+
+    // 4. For L1 summaries, emit document nodes from child_ids (commits/issues/PRs).
+    //    These are the raw items that were summarised. Only for summaries whose
+    //    children are NOT other summaries (i.e. L1 nodes whose children are
+    //    raw item IDs, not summary IDs).
+    let doc_budget = MAX_TREE_NODES.saturating_sub(nodes.len());
+    let mut doc_count = 0usize;
+    for sr in &summary_rows {
+        if doc_count >= doc_budget {
+            break;
+        }
+        if sr.node.level != Some(1) {
+            continue;
+        }
+        // Skip if children look like summary IDs (L2+ children).
+        if sr
+            .child_ids
+            .first()
+            .map(|c| c.starts_with("summary:"))
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        for child_id in &sr.child_ids {
+            if doc_count >= doc_budget {
+                break;
+            }
+            let label = document_label(child_id);
+            nodes.push(GraphNode {
+                kind: "chunk".into(),
+                id: format!("doc:{}:{}", sr.tree_scope, child_id),
+                label,
+                tree_kind: None,
+                tree_scope: Some(sr.tree_scope.clone()),
+                tree_id: None,
+                level: None,
+                parent_id: Some(sr.node.id.clone()),
+                child_count: None,
+                time_range_start_ms: sr.node.time_range_start_ms,
+                time_range_end_ms: sr.node.time_range_end_ms,
+                file_basename: None,
+                entity_kind: None,
+            });
+            doc_count += 1;
+        }
+    }
+
+    // 5. Fill remaining budget with DB-backed leaf chunks (gmail etc).
+    let chunk_budget = MAX_TREE_NODES.saturating_sub(nodes.len());
+    if chunk_budget > 0 {
+        let chunk_nodes = with_connection(cfg, |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT c.id, c.parent_summary_id, c.content,
+                        c.time_range_start_ms, c.time_range_end_ms, c.source_id
+                   FROM mem_tree_chunks c
+                  ORDER BY c.timestamp_ms DESC
+                  LIMIT ?1",
+            )?;
+            let rows = stmt
+                .query_map(params![chunk_budget as i64], |row| {
+                    let id: String = row.get(0)?;
+                    let parent_id: Option<String> = row.get(1)?;
+                    let content: String = row.get(2)?;
+                    let time_range_start_ms: i64 = row.get(3)?;
+                    let time_range_end_ms: i64 = row.get(4)?;
+                    let source_id: String = row.get(5)?;
+                    let label = content
+                        .lines()
+                        .next()
+                        .unwrap_or("")
+                        .chars()
+                        .take(72)
+                        .collect::<String>();
+                    Ok((
+                        GraphNode {
+                            kind: "chunk".into(),
+                            id,
+                            label,
+                            tree_kind: None,
+                            tree_scope: None,
+                            tree_id: None,
+                            level: None,
+                            parent_id: parent_id.filter(|s| !s.is_empty()),
+                            child_count: None,
+                            time_range_start_ms: Some(time_range_start_ms),
+                            time_range_end_ms: Some(time_range_end_ms),
+                            file_basename: None,
+                            entity_kind: None,
+                        },
+                        source_id,
+                    ))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .context("collect tree-mode leaf chunk rows")?;
+            Ok(rows)
+        })?;
+
+        for (chunk, _source_id) in chunk_nodes {
+            nodes.push(chunk);
+        }
+    }
+
     Ok((nodes, Vec::new()))
+}
+
+fn scope_display_label(scope: &str) -> String {
+    if scope.starts_with("github:") {
+        let repo = scope.strip_prefix("github:").unwrap_or(scope);
+        format!("GitHub · {repo}")
+    } else if scope.starts_with("gmail:") {
+        let account = scope
+            .strip_prefix("gmail:")
+            .unwrap_or(scope)
+            .replace("-at-", "@")
+            .replace("-dot-", ".");
+        format!("Gmail · {account}")
+    } else if scope.starts_with("slack:") {
+        let channel = scope.strip_prefix("slack:").unwrap_or(scope);
+        format!("Slack · {channel}")
+    } else {
+        scope.to_string()
+    }
+}
+
+fn document_label(child_id: &str) -> String {
+    if let Some(sha) = child_id.strip_prefix("commit:") {
+        format!("commit {}", &sha[..sha.len().min(8)])
+    } else if let Some(n) = child_id.strip_prefix("issue:") {
+        format!("issue #{n}")
+    } else if let Some(n) = child_id.strip_prefix("pr:") {
+        format!("PR #{n}")
+    } else {
+        child_id.chars().take(40).collect()
+    }
+}
+
+fn source_id_to_scope(source_id: &str) -> String {
+    // Chunk source_ids like "gmail:stevent95-at-gmail-dot-com:thread:abc"
+    // → scope "gmail:stevent95-at-gmail-dot-com"
+    let parts: Vec<&str> = source_id.splitn(3, ':').collect();
+    if parts.len() >= 2 {
+        format!("{}:{}", parts[0], parts[1])
+    } else {
+        source_id.to_string()
+    }
 }
 
 /// Contacts mode: every chunk that mentions a person entity, plus the
@@ -1614,6 +1953,89 @@ pub async fn reset_tree_rpc(config: &Config) -> Result<RpcOutcome<ResetTreeRespo
     Ok(RpcOutcome::single_log(resp, log))
 }
 
+// ── flush_source_tree (per-source immediate seal) ───────────────────────
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FlushSourceTreeResponse {
+    pub tree_scope: String,
+    pub seals_fired: u32,
+}
+
+/// `memory_tree_flush_source` — seal one source tree's L0 buffer immediately,
+/// bypassing the job queue. Mutex per tree_scope so concurrent clicks are
+/// serialised.
+pub async fn flush_source_tree_rpc(
+    config: &Config,
+    source_scope: &str,
+) -> Result<RpcOutcome<FlushSourceTreeResponse>, String> {
+    use crate::openhuman::memory::tree_source::get_or_create_source_tree;
+    use crate::openhuman::memory_tree::tree::bucket_seal::LabelStrategy;
+    use crate::openhuman::memory_tree::tree::flush::force_flush_tree;
+    use crate::openhuman::memory_tree::tree::TreeFactory;
+    use std::collections::HashSet;
+    use std::sync::Mutex;
+
+    static ACTIVE: std::sync::LazyLock<Mutex<HashSet<String>>> =
+        std::sync::LazyLock::new(|| Mutex::new(HashSet::new()));
+
+    let scope = source_scope.to_string();
+
+    {
+        let mut active = ACTIVE.lock().unwrap_or_else(|e| e.into_inner());
+        if !active.insert(scope.clone()) {
+            return Ok(RpcOutcome::single_log(
+                FlushSourceTreeResponse {
+                    tree_scope: scope,
+                    seals_fired: 0,
+                },
+                "memory_tree::read: flush_source_tree already running for this scope".to_string(),
+            ));
+        }
+    }
+
+    let cfg = config.clone();
+    let scope_for_task = scope.clone();
+    let result = tokio::task::spawn_blocking(move || -> Result<FlushSourceTreeResponse> {
+        let tree = get_or_create_source_tree(&cfg, &scope_for_task)
+            .context("get_or_create_source_tree")?;
+        let strategy = TreeFactory::from_tree(&tree).label_strategy(&cfg);
+        Ok(FlushSourceTreeResponse {
+            tree_scope: scope_for_task,
+            seals_fired: 0,
+        })
+    })
+    .await
+    .map_err(|e| format!("flush_source_tree join error: {e}"))?;
+
+    let tree_info = result.map_err(|e| format!("flush_source_tree: {e:#}"))?;
+
+    let cfg2 = config.clone();
+    let scope2 = scope.clone();
+    let resp = tokio::spawn(async move {
+        let tree = get_or_create_source_tree(&cfg2, &scope2)?;
+        let strategy = TreeFactory::from_tree(&tree).label_strategy(&cfg2);
+        let sealed = force_flush_tree(&cfg2, &tree.id, Some(chrono::Utc::now()), &strategy).await?;
+        Ok::<_, anyhow::Error>(FlushSourceTreeResponse {
+            tree_scope: scope2,
+            seals_fired: sealed.len() as u32,
+        })
+    })
+    .await
+    .map_err(|e| format!("flush_source_tree join error: {e}"))?
+    .map_err(|e| format!("flush_source_tree: {e:#}"))?;
+
+    {
+        let mut active = ACTIVE.lock().unwrap_or_else(|e| e.into_inner());
+        active.remove(&scope);
+    }
+
+    let log = format!(
+        "memory_tree::read: flush_source_tree scope={} seals={}",
+        resp.tree_scope, resp.seals_fired
+    );
+    Ok(RpcOutcome::single_log(resp, log))
+}
+
 // ── flush_now (manual "Build summary trees" trigger) ────────────────────
 
 /// Response shape for [`flush_now_rpc`].
@@ -1730,784 +2152,5 @@ fn parse_source_kind_str(s: &str) -> Option<SourceKind> {
 // ── Tests ────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::openhuman::composio::providers::sync_state::KV_NAMESPACE;
-    use crate::openhuman::embeddings::NoopEmbedding;
-    use crate::openhuman::memory::ingest_pipeline::ingest_chat;
-    use crate::openhuman::memory_queue::drain_until_idle;
-    use crate::openhuman::memory_store::unified::UnifiedMemory;
-    use crate::openhuman::memory_sync::canonicalize::chat::{ChatBatch, ChatMessage};
-    use crate::openhuman::memory_sync::composio::providers::slack::ingest::ingest_page_into_memory_tree as ingest_slack_page;
-    use crate::openhuman::memory_sync::composio::providers::slack::SlackMessage;
-    use chrono::{TimeZone, Utc};
-    use rusqlite::params;
-    use std::sync::Arc;
-    use tempfile::TempDir;
-
-    fn test_config() -> (TempDir, Config) {
-        let tmp = TempDir::new().unwrap();
-        let mut cfg = Config::default();
-        cfg.workspace_dir = tmp.path().to_path_buf();
-        // Point config_path inside the tempdir so any persistence during
-        // tests stays inside disposable workspace state.
-        cfg.config_path = tmp.path().join("config.toml");
-        cfg.memory_tree.embedding_endpoint = None;
-        cfg.memory_tree.embedding_model = None;
-        cfg.memory_tree.embedding_strict = false;
-        // Default llm is Cloud — but the cloud provider needs a bearer
-        // token to actually fire. Tests that exercise the LLM path
-        // override either the backend or the extractor. The read RPCs
-        // below don't touch the LLM, so this default is fine.
-        (tmp, cfg)
-    }
-
-    async fn seed_chat_chunk(cfg: &Config, source: &str, body: &str) {
-        let batch = ChatBatch {
-            platform: "slack".into(),
-            channel_label: source.into(),
-            messages: vec![ChatMessage {
-                author: "alice".into(),
-                timestamp: Utc.timestamp_millis_opt(1_700_000_000_000).unwrap(),
-                text: body.into(),
-                source_ref: Some("slack://x".into()),
-            }],
-        };
-        ingest_chat(cfg, source, "alice", vec![], batch)
-            .await
-            .unwrap();
-    }
-
-    async fn seed_slack_chunk_with_raw_archive(cfg: &Config) -> String {
-        let msg = SlackMessage {
-            channel_id: "C123".into(),
-            channel_name: "engineering".into(),
-            is_private: false,
-            author: "alice".into(),
-            author_id: "U123".into(),
-            text: "Phoenix migration launch window is Friday at 22:00 UTC.".into(),
-            timestamp: Utc.timestamp_opt(1_700_000_000, 0).single().unwrap(),
-            ts_raw: "1700000000.000100".into(),
-            thread_ts: None,
-            permalink: Some("https://slack.example.test/archives/C123/p1700000000000100".into()),
-        };
-        ingest_slack_page(cfg, "alice", "conn-slack-1", &[msg])
-            .await
-            .expect("seed slack ingest");
-        drain_until_idle(cfg).await.expect("drain slack ingest");
-
-        list_chunks_rpc(cfg, ChunkFilter::default())
-            .await
-            .expect("list chunks")
-            .value
-            .chunks
-            .into_iter()
-            .find(|chunk| chunk.source_id == "slack:conn-slack-1")
-            .expect("seeded slack chunk")
-            .id
-    }
-
-    fn update_chunk_timestamp(cfg: &Config, chunk_id: &str, timestamp_ms: i64) {
-        with_connection(cfg, |conn| {
-            conn.execute(
-                "UPDATE mem_tree_chunks
-                    SET timestamp_ms = ?1,
-                        time_range_start_ms = ?1,
-                        time_range_end_ms = ?1
-                  WHERE id = ?2",
-                params![timestamp_ms, chunk_id],
-            )?;
-            Ok(())
-        })
-        .unwrap();
-    }
-
-    fn insert_raw_chunk(
-        cfg: &Config,
-        id: &str,
-        source_kind: &str,
-        source_id: &str,
-        timestamp_ms: i64,
-        tags_json: &str,
-        content: &str,
-        token_count: i64,
-    ) {
-        with_connection(cfg, |conn| {
-            conn.execute(
-                "INSERT INTO mem_tree_chunks (
-                    id, source_kind, source_id, source_ref, owner, timestamp_ms,
-                    time_range_start_ms, time_range_end_ms, tags_json, content,
-                    token_count, seq_in_source, created_at_ms, lifecycle_status, content_path
-                 ) VALUES (?1, ?2, ?3, NULL, 'tester', ?4, ?4, ?4, ?5, ?6, ?7, 0, ?4, 'seeded', NULL)",
-                params![id, source_kind, source_id, timestamp_ms, tags_json, content, token_count],
-            )?;
-            Ok(())
-        })
-        .unwrap();
-    }
-
-    #[tokio::test]
-    async fn list_chunks_returns_seeded_chunk() {
-        let (_tmp, cfg) = test_config();
-        seed_chat_chunk(&cfg, "slack:#eng", "hello @alice phoenix migration").await;
-        let resp = list_chunks_rpc(&cfg, ChunkFilter::default())
-            .await
-            .unwrap()
-            .value;
-        assert!(!resp.chunks.is_empty());
-        assert_eq!(resp.total, resp.chunks.len() as u64);
-    }
-
-    #[tokio::test]
-    async fn list_chunks_filters_by_source_id() {
-        let (_tmp, cfg) = test_config();
-        seed_chat_chunk(&cfg, "slack:#a", "alpha").await;
-        seed_chat_chunk(&cfg, "slack:#b", "beta").await;
-        let only_a = list_chunks_rpc(
-            &cfg,
-            ChunkFilter {
-                source_ids: Some(vec!["slack:#a".into()]),
-                ..ChunkFilter::default()
-            },
-        )
-        .await
-        .unwrap()
-        .value;
-        assert!(only_a.chunks.iter().all(|c| c.source_id == "slack:#a"));
-        assert!(only_a.total >= 1);
-    }
-
-    #[tokio::test]
-    async fn list_chunks_query_substring_works() {
-        let (_tmp, cfg) = test_config();
-        seed_chat_chunk(&cfg, "slack:#eng", "phoenix migration ships friday").await;
-        seed_chat_chunk(&cfg, "slack:#eng", "different unrelated text").await;
-        let resp = list_chunks_rpc(
-            &cfg,
-            ChunkFilter {
-                query: Some("phoenix".into()),
-                ..ChunkFilter::default()
-            },
-        )
-        .await
-        .unwrap()
-        .value;
-        assert!(resp.chunks.iter().any(|c| {
-            c.content_preview
-                .as_deref()
-                .unwrap_or("")
-                .contains("phoenix")
-        }));
-    }
-
-    #[tokio::test]
-    async fn list_chunks_filters_by_source_kind_and_applies_limit_offset() {
-        let (_tmp, cfg) = test_config();
-        seed_chat_chunk(&cfg, "slack:#a", "first chat").await;
-        seed_chat_chunk(&cfg, "slack:#b", "second chat").await;
-
-        let filtered = list_chunks_rpc(
-            &cfg,
-            ChunkFilter {
-                source_kinds: Some(vec!["chat".into()]),
-                limit: Some(1),
-                offset: Some(1),
-                ..ChunkFilter::default()
-            },
-        )
-        .await
-        .unwrap()
-        .value;
-        assert_eq!(filtered.chunks.len(), 1);
-        assert_eq!(filtered.total, 2);
-        assert!(filtered.chunks.iter().all(|c| c.source_kind == "chat"));
-    }
-
-    #[tokio::test]
-    async fn list_chunks_filters_by_entity_id_and_time_window() {
-        let (_tmp, cfg) = test_config();
-        seed_chat_chunk(&cfg, "slack:#eng", "alice@example.com handles phoenix").await;
-        seed_chat_chunk(&cfg, "slack:#eng", "bob@example.com handles atlas").await;
-
-        let seeded = list_chunks_rpc(&cfg, ChunkFilter::default())
-            .await
-            .unwrap()
-            .value
-            .chunks;
-        let alice = seeded
-            .iter()
-            .find(|chunk| {
-                chunk
-                    .content_preview
-                    .as_deref()
-                    .unwrap_or("")
-                    .contains("alice@example.com")
-            })
-            .expect("alice chunk present");
-        let bob = seeded
-            .iter()
-            .find(|chunk| {
-                chunk
-                    .content_preview
-                    .as_deref()
-                    .unwrap_or("")
-                    .contains("bob@example.com")
-            })
-            .expect("bob chunk present");
-
-        update_chunk_timestamp(&cfg, &alice.id, 1_700_000_000_100);
-        update_chunk_timestamp(&cfg, &bob.id, 1_700_000_000_900);
-
-        let filtered = list_chunks_rpc(
-            &cfg,
-            ChunkFilter {
-                entity_ids: Some(vec!["email:alice@example.com".into()]),
-                since_ms: Some(1_700_000_000_000),
-                until_ms: Some(1_700_000_000_500),
-                ..ChunkFilter::default()
-            },
-        )
-        .await
-        .unwrap()
-        .value;
-
-        assert_eq!(filtered.total, 1);
-        assert_eq!(filtered.chunks.len(), 1);
-        assert_eq!(filtered.chunks[0].id, alice.id);
-    }
-
-    #[tokio::test]
-    async fn list_chunks_ignores_empty_filter_lists_and_blank_query() {
-        let (_tmp, cfg) = test_config();
-        seed_chat_chunk(&cfg, "slack:#a", "alpha").await;
-        seed_chat_chunk(&cfg, "slack:#b", "beta").await;
-
-        let resp = list_chunks_rpc(
-            &cfg,
-            ChunkFilter {
-                source_kinds: Some(vec![]),
-                source_ids: Some(vec![]),
-                entity_ids: Some(vec![]),
-                query: Some("   ".into()),
-                limit: Some(10),
-                ..ChunkFilter::default()
-            },
-        )
-        .await
-        .unwrap()
-        .value;
-
-        assert_eq!(resp.total, 2);
-        assert_eq!(resp.chunks.len(), 2);
-    }
-
-    #[tokio::test]
-    async fn list_chunks_normalizes_invalid_tags_negative_tokens_and_empty_content() {
-        let (_tmp, cfg) = test_config();
-        insert_raw_chunk(
-            &cfg,
-            "raw-empty",
-            "document",
-            "notion:page-1",
-            1_700_000_000_123,
-            "not-json",
-            "",
-            -7,
-        );
-
-        let resp = list_chunks_rpc(&cfg, ChunkFilter::default())
-            .await
-            .unwrap()
-            .value;
-        let row = resp
-            .chunks
-            .into_iter()
-            .find(|chunk| chunk.id == "raw-empty")
-            .expect("raw chunk listed");
-
-        assert_eq!(row.token_count, 0);
-        assert_eq!(row.tags, Vec::<String>::new());
-        assert_eq!(row.content_preview, None);
-        assert!(!row.has_embedding);
-    }
-
-    #[tokio::test]
-    async fn list_sources_aggregates() {
-        let (_tmp, cfg) = test_config();
-        seed_chat_chunk(&cfg, "slack:#a", "x").await;
-        seed_chat_chunk(&cfg, "slack:#a", "y").await;
-        seed_chat_chunk(&cfg, "slack:#b", "z").await;
-        let sources = list_sources_rpc(&cfg, None).await.unwrap().value;
-        let a = sources
-            .iter()
-            .find(|s| s.source_id == "slack:#a")
-            .expect("expected slack:#a");
-        let b = sources
-            .iter()
-            .find(|s| s.source_id == "slack:#b")
-            .expect("expected slack:#b");
-        assert_eq!(a.chunk_count, 2);
-        assert_eq!(b.chunk_count, 1);
-    }
-
-    #[tokio::test]
-    async fn list_sources_formats_email_threads_with_trimmed_user_hint() {
-        let (_tmp, cfg) = test_config();
-        insert_raw_chunk(
-            &cfg,
-            "email-thread",
-            "email",
-            "gmail:Alice@Example.com|bob@example.com|carol@example.com",
-            1_700_000_000_123,
-            "[]",
-            "thread body",
-            12,
-        );
-
-        let sources = list_sources_rpc(&cfg, Some(" alice@example.com ".into()))
-            .await
-            .unwrap()
-            .value;
-        let source = sources
-            .iter()
-            .find(|row| {
-                row.source_id == "gmail:Alice@Example.com|bob@example.com|carol@example.com"
-            })
-            .expect("email thread source present");
-        assert_eq!(source.display_name, "bob@example.com, carol@example.com");
-    }
-
-    #[tokio::test]
-    async fn entity_index_for_returns_extracted_entities() {
-        let (_tmp, cfg) = test_config();
-        seed_chat_chunk(&cfg, "slack:#eng", "alice@example.com owns it").await;
-        // Find the chunk we just seeded.
-        let chunks = list_chunks_rpc(&cfg, ChunkFilter::default())
-            .await
-            .unwrap()
-            .value
-            .chunks;
-        let id = &chunks[0].id;
-        let refs = entity_index_for_rpc(&cfg, id.clone()).await.unwrap().value;
-        assert!(
-            refs.iter().any(|r| r.entity_id.contains("alice")),
-            "expected alice entity in index, got: {refs:?}"
-        );
-    }
-
-    #[tokio::test]
-    async fn chunks_for_entity_returns_leaf_chunk_ids_only() {
-        let (_tmp, cfg) = test_config();
-        seed_chat_chunk(&cfg, "slack:#eng", "alice@example.com owns it").await;
-        let chunk_id = list_chunks_rpc(&cfg, ChunkFilter::default())
-            .await
-            .unwrap()
-            .value
-            .chunks[0]
-            .id
-            .clone();
-
-        let rows = chunks_for_entity_rpc(&cfg, "email:alice@example.com".into())
-            .await
-            .unwrap()
-            .value;
-        assert_eq!(rows, vec![chunk_id]);
-    }
-
-    #[tokio::test]
-    async fn top_entities_returns_most_frequent() {
-        let (_tmp, cfg) = test_config();
-        seed_chat_chunk(&cfg, "slack:#a", "alice@example.com x").await;
-        seed_chat_chunk(&cfg, "slack:#b", "alice@example.com y").await;
-        seed_chat_chunk(&cfg, "slack:#c", "bob@example.com z").await;
-        let top = top_entities_rpc(&cfg, Some("email".into()), 10)
-            .await
-            .unwrap()
-            .value;
-        assert!(top
-            .iter()
-            .any(|e| e.entity_id == "email:alice@example.com" && e.count >= 2));
-    }
-
-    #[tokio::test]
-    async fn delete_chunk_removes_chunk_and_dependent_rows() {
-        let (_tmp, cfg) = test_config();
-        seed_chat_chunk(&cfg, "slack:#eng", "alice@example.com owns it").await;
-        let chunks = list_chunks_rpc(&cfg, ChunkFilter::default())
-            .await
-            .unwrap()
-            .value
-            .chunks;
-        let id = chunks[0].id.clone();
-        let resp = delete_chunk_rpc(&cfg, id.clone()).await.unwrap().value;
-        assert!(resp.deleted);
-        // Re-list — the chunk should be gone.
-        let after = list_chunks_rpc(&cfg, ChunkFilter::default())
-            .await
-            .unwrap()
-            .value;
-        assert!(after.chunks.iter().all(|c| c.id != id));
-    }
-
-    #[tokio::test]
-    async fn delete_missing_chunk_is_idempotent() {
-        let (_tmp, cfg) = test_config();
-        let resp = delete_chunk_rpc(&cfg, "does-not-exist".into())
-            .await
-            .unwrap()
-            .value;
-        assert!(!resp.deleted);
-        assert_eq!(resp.score_rows_removed, 0);
-    }
-
-    #[tokio::test]
-    async fn chunk_score_returns_breakdown_after_ingest() {
-        let (_tmp, cfg) = test_config();
-        seed_chat_chunk(
-            &cfg,
-            "slack:#eng",
-            "alice@example.com owns the phoenix migration",
-        )
-        .await;
-        let chunks = list_chunks_rpc(&cfg, ChunkFilter::default())
-            .await
-            .unwrap()
-            .value
-            .chunks;
-        let id = &chunks[0].id;
-        let breakdown = chunk_score_rpc(&cfg, id.clone()).await.unwrap().value;
-        assert!(breakdown.is_some(), "expected score row after ingest");
-        let b = breakdown.unwrap();
-        assert!(b.signals.iter().any(|s| s.name == "metadata_weight"));
-        assert!(b.threshold > 0.0);
-    }
-
-    #[tokio::test]
-    async fn search_returns_matching_chunks() {
-        let (_tmp, cfg) = test_config();
-        seed_chat_chunk(&cfg, "slack:#eng", "phoenix migration scheduled friday").await;
-        seed_chat_chunk(&cfg, "slack:#eng", "different unrelated text").await;
-        let hits = search_rpc(&cfg, "phoenix".into(), 10).await.unwrap().value;
-        assert!(hits.iter().any(|c| {
-            c.content_preview
-                .as_deref()
-                .unwrap_or("")
-                .contains("phoenix")
-        }));
-    }
-
-    #[tokio::test]
-    async fn read_chunk_row_returns_preview_and_metadata() {
-        let (_tmp, cfg) = test_config();
-        seed_chat_chunk(
-            &cfg,
-            "slack:#eng",
-            "phoenix migration scheduled friday with context and source refs",
-        )
-        .await;
-        let chunk = list_chunks_rpc(&cfg, ChunkFilter::default())
-            .await
-            .unwrap()
-            .value
-            .chunks
-            .into_iter()
-            .next()
-            .expect("seeded chunk");
-
-        let row = read_chunk_row(&cfg, &chunk.id).unwrap().expect("chunk row");
-        assert_eq!(row.id, chunk.id);
-        assert_eq!(row.source_kind, "chat");
-        assert_eq!(row.source_id, "slack:#eng");
-        assert_eq!(row.source_ref.as_deref(), Some("slack://x"));
-        assert_eq!(row.owner, "alice");
-        assert_eq!(row.lifecycle_status, "pending_extraction");
-        assert!(row.content_path.is_some());
-        assert!(row
-            .content_preview
-            .as_deref()
-            .unwrap_or("")
-            .contains("phoenix migration scheduled friday"));
-    }
-
-    #[tokio::test]
-    async fn read_chunk_row_falls_back_to_sqlite_preview_when_file_missing() {
-        let (_tmp, cfg) = test_config();
-        let body = "sqlite preview survives missing file";
-        seed_chat_chunk(&cfg, "slack:#eng", body).await;
-        let chunk = list_chunks_rpc(&cfg, ChunkFilter::default())
-            .await
-            .unwrap()
-            .value
-            .chunks
-            .into_iter()
-            .next()
-            .expect("seeded chunk");
-
-        let rel_path = chunk.content_path.clone().expect("content path present");
-        let abs_path = cfg.memory_tree_content_root().join(rel_path);
-        std::fs::remove_file(&abs_path).expect("remove chunk file");
-
-        let row = read_chunk_row(&cfg, &chunk.id).unwrap().expect("chunk row");
-        assert_eq!(row.content_path, chunk.content_path);
-        assert!(row.content_preview.as_deref().unwrap_or("").contains(body));
-    }
-
-    #[tokio::test]
-    async fn flush_now_enqueues_once_and_reports_stale_buffers() {
-        let (_tmp, cfg) = test_config();
-        seed_chat_chunk(
-            &cfg,
-            "slack:#eng",
-            "Phoenix migration ships Friday after the release checklist closes.",
-        )
-        .await;
-        drain_until_idle(&cfg).await.expect("drain jobs");
-
-        let first = flush_now_rpc(&cfg).await.expect("flush_now first");
-        assert!(first.value.enqueued, "first flush should enqueue work");
-        assert!(
-            first.value.stale_buffers >= 1,
-            "expected at least one stale buffer after ingest"
-        );
-
-        let second = flush_now_rpc(&cfg).await.expect("flush_now second");
-        assert!(
-            !second.value.enqueued,
-            "same 3-hour window should dedupe duplicate flush triggers"
-        );
-        assert!(
-            second.value.stale_buffers >= 1,
-            "deduped flush should still report current stale buffer count"
-        );
-    }
-
-    #[tokio::test]
-    async fn reset_tree_preserves_raw_archive_and_source_registry() {
-        let (_tmp, cfg) = test_config();
-        let chunk_id = seed_slack_chunk_with_raw_archive(&cfg).await;
-        let content_root = cfg.memory_tree_content_root();
-        let raw_file = content_root
-            .join("raw")
-            .join("slack-conn-slack-1")
-            .join("chats")
-            .join("1700000000000_1700000000.000100.md");
-        let source_file = content_root
-            .join("raw")
-            .join("slack-conn-slack-1")
-            .join("_source.md");
-        assert!(raw_file.exists(), "raw archive should exist before reset");
-        assert!(
-            source_file.exists(),
-            "source registry should exist before reset"
-        );
-
-        let stale_summary = content_root
-            .join("wiki")
-            .join("summaries")
-            .join("source-slack-conn-slack-1")
-            .join("L1")
-            .join("summary-stale.md");
-        std::fs::create_dir_all(
-            stale_summary
-                .parent()
-                .expect("stale summary parent should exist"),
-        )
-        .expect("create stale summary dir");
-        std::fs::write(&stale_summary, "stale summary body").expect("write stale summary");
-        assert!(stale_summary.exists(), "stale summary fixture should exist");
-
-        let outcome = reset_tree_rpc(&cfg).await.expect("reset_tree");
-        assert_eq!(outcome.value.chunks_requeued, 1);
-        assert_eq!(outcome.value.jobs_enqueued, 1);
-        assert!(
-            outcome.value.tree_rows_deleted >= 1,
-            "buffer/tree rows should be removed during reset"
-        );
-
-        let row = read_chunk_row(&cfg, &chunk_id)
-            .expect("read chunk row")
-            .expect("chunk row present after reset");
-        assert_eq!(row.lifecycle_status, "pending_extraction");
-        assert!(raw_file.exists(), "raw archive must survive reset_tree");
-        assert!(
-            source_file.exists(),
-            "source registry must survive reset_tree"
-        );
-        assert!(
-            !content_root.join("wiki").join("summaries").exists(),
-            "derived wiki summaries should be removed"
-        );
-    }
-
-    #[test]
-    fn read_chunk_row_returns_none_for_missing_chunk() {
-        let (_tmp, cfg) = test_config();
-        assert!(read_chunk_row(&cfg, "missing-chunk").unwrap().is_none());
-    }
-
-    #[test]
-    fn display_name_unslugs_email_thread_with_user_hint() {
-        let name = display_name_for_source(
-            "gmail:alice@example.com|bob@example.com",
-            Some("alice@example.com"),
-        );
-        assert_eq!(name, "bob@example.com");
-    }
-
-    #[test]
-    fn display_name_falls_back_to_arrow_when_user_unknown() {
-        let name = display_name_for_source("gmail:alice@example.com|bob@example.com", None);
-        assert!(name.contains("alice@example.com"));
-        assert!(name.contains("bob@example.com"));
-        assert!(name.contains("↔"));
-    }
-
-    #[test]
-    fn display_name_strips_platform_prefix() {
-        assert_eq!(
-            display_name_for_source("slack:#engineering", None),
-            "#engineering"
-        );
-    }
-
-    #[test]
-    fn display_name_handles_multiple_participants_and_trimmed_hint() {
-        let name = display_name_for_source(
-            "gmail:Alice@Example.com|bob@example.com|carol@example.com",
-            Some(" alice@example.com "),
-        );
-        assert_eq!(name, "bob@example.com, carol@example.com");
-    }
-
-    #[test]
-    fn display_name_handles_no_prefix() {
-        assert_eq!(display_name_for_source("loose-id", None), "loose-id");
-    }
-
-    #[test]
-    fn sanitize_basename_replaces_windows_illegal_characters() {
-        assert_eq!(
-            sanitize_basename(r#"chat:slack/#eng\name*?"<>|"#),
-            "chat-slack-#eng-name------"
-        );
-        assert_eq!(sanitize_basename("safe-name.md"), "safe-name.md");
-    }
-
-    #[test]
-    fn parse_source_kind_str_accepts_known_values_only() {
-        assert_eq!(parse_source_kind_str("chat"), Some(SourceKind::Chat));
-        assert_eq!(parse_source_kind_str("email"), Some(SourceKind::Email));
-        assert_eq!(
-            parse_source_kind_str("document"),
-            Some(SourceKind::Document)
-        );
-        assert_eq!(parse_source_kind_str("unknown"), None);
-    }
-
-    #[test]
-    fn clear_composio_sync_state_removes_only_target_namespace() {
-        let tmp = TempDir::new().unwrap();
-        let _memory = UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).unwrap();
-        let db_path = tmp.path().join("memory").join("memory.db");
-        let conn = rusqlite::Connection::open(&db_path).unwrap();
-
-        conn.execute(
-            "INSERT INTO kv_namespace (namespace, key, value_json, updated_at)
-             VALUES (?1, 'cursor', '{}', 1.0)",
-            params![KV_NAMESPACE],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO kv_namespace (namespace, key, value_json, updated_at)
-             VALUES ('other-namespace', 'cursor', '{}', 2.0)",
-            [],
-        )
-        .unwrap();
-        drop(conn);
-
-        let removed = clear_composio_sync_state(&db_path).unwrap();
-        assert_eq!(removed, 1);
-
-        let conn = rusqlite::Connection::open(&db_path).unwrap();
-        let composio_count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM kv_namespace WHERE namespace = ?1",
-                params![KV_NAMESPACE],
-                |row| row.get(0),
-            )
-            .unwrap();
-        let other_count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM kv_namespace WHERE namespace = 'other-namespace'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(composio_count, 0);
-        assert_eq!(other_count, 1);
-    }
-
-    #[tokio::test]
-    async fn obsidian_status_registered_when_override_config_lists_content_root() {
-        let (_tmp, cfg) = test_config();
-        let content_root = cfg.memory_tree_content_root();
-        // A separate dir standing in for a non-standard Obsidian config
-        // location, with an obsidian.json that registers the content root.
-        let cfg_dir = TempDir::new().unwrap();
-        let body = format!(
-            "{{ \"vaults\": {{ \"id0\": {{ \"path\": {}, \"open\": true }} }} }}",
-            serde_json::to_string(&content_root.to_string_lossy().to_string()).unwrap()
-        );
-        std::fs::write(cfg_dir.path().join("obsidian.json"), body).unwrap();
-
-        let outcome =
-            obsidian_vault_status_rpc(&cfg, Some(cfg_dir.path().to_string_lossy().to_string()))
-                .await
-                .unwrap();
-
-        assert!(outcome.value.registered);
-        assert!(outcome.value.config_found);
-        assert_eq!(
-            outcome.value.content_root_abs,
-            content_root.to_string_lossy().to_string()
-        );
-        // The log reports the booleans but redacts the absolute path (it
-        // embeds the user's home / username).
-        assert!(
-            outcome.logs[0].contains("registered=true"),
-            "log: {}",
-            outcome.logs[0]
-        );
-        assert!(
-            !outcome.logs[0].contains(content_root.to_str().unwrap()),
-            "log leaked content root: {}",
-            outcome.logs[0]
-        );
-    }
-
-    #[tokio::test]
-    async fn obsidian_status_not_registered_for_empty_override_dir() {
-        let (_tmp, cfg) = test_config();
-        // Empty override dir → no obsidian.json there → content root is not a
-        // registered vault. (A temp content root can't be under any real host
-        // vault either, so this stays false regardless of the dev machine.)
-        let cfg_dir = TempDir::new().unwrap();
-        let outcome =
-            obsidian_vault_status_rpc(&cfg, Some(cfg_dir.path().to_string_lossy().to_string()))
-                .await
-                .unwrap();
-        assert!(!outcome.value.registered);
-    }
-
-    #[tokio::test]
-    async fn obsidian_status_blank_override_is_treated_as_none() {
-        // A whitespace-only override must be normalized to None rather than
-        // resolving to "." and probing a stray local ./obsidian.json. The temp
-        // content root isn't under any real host vault, so this stays false.
-        let (_tmp, cfg) = test_config();
-        let outcome = obsidian_vault_status_rpc(&cfg, Some("   ".to_string()))
-            .await
-            .unwrap();
-        assert!(!outcome.value.registered);
-    }
-}
+#[path = "read_rpc_tests.rs"]
+mod tests;

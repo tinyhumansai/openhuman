@@ -1,60 +1,98 @@
 /**
  * Analytics & Sentry service
  *
- * Initializes Sentry for error reporting and Google Analytics 4 for anonymous
- * usage tracking. Both are gated on user analytics consent and skipped in dev.
+ * Initializes Sentry for error reporting and OpenPanel for privacy-limited
+ * usage tracking. Both are gated on user analytics consent.
  *
  * Sentry privacy guarantees enforced in `beforeSend`:
  *   - No breadcrumbs, requests, extras, or arbitrary contexts (only OS /
  *     browser / device metadata kept)
  *   - No frame-level locals or source-context snippets
- *   - No PII — `user` is reduced to a stable anonymous id (or omitted)
+ *   - No PII — `user` is reduced to a stable account id (or omitted)
  *   - `sendDefaultPii: false` (no IP, no cookies)
  *   - All breadcrumb-producing integrations disabled
  *
- * GA4 privacy guarantees:
+ * OpenPanel privacy guarantees:
  *   - Only page views and feature-engagement events from the allowlist are sent
  *   - No user content, messages, credentials, or PII is ever included
- *   - Ad personalization signals are disabled
- *   - Skipped when `IS_DEV` is true or `GA_MEASUREMENT_ID` is not set
  */
 import * as Sentry from '@sentry/react';
-import ReactGA from 'react-ga4';
 
 import { getCoreStateSnapshot } from '../lib/coreState/store';
 import {
+  APP_BINARY_VERSION,
   APP_ENVIRONMENT,
+  APP_VERSION,
+  BUILD_SHA,
+  CORE_CARGO_VERSION,
   GA_MEASUREMENT_ID,
   IS_DEV,
+  OPENPANEL_API_URL,
+  OPENPANEL_CLIENT_ID,
   SENTRY_DSN,
   SENTRY_RELEASE,
   SENTRY_SMOKE_TEST,
+  TAURI_CARGO_VERSION,
 } from '../utils/config';
 import { CoreRpcError } from './coreRpcClient';
 
 // ---------------------------------------------------------------------------
-// GA4 — module-level state
+// Google Analytics 4 typings — raw gtag.js API
 // ---------------------------------------------------------------------------
 
-/** Set to `true` after `ReactGA.initialize()` succeeds. */
+type GtagCommand = 'config' | 'event' | 'set' | 'js';
+interface GtagFn {
+  (...args: [GtagCommand, ...unknown[]]): void;
+}
+
+declare global {
+  interface Window {
+    dataLayer: unknown[];
+    gtag: GtagFn;
+  }
+}
+
+const OPENPANEL_TRACK_URL = `${OPENPANEL_API_URL}/track`;
+const MAX_PENDING_ANALYTICS_EVENTS = 20;
+const INTERACTIVE_CLICK_SELECTOR =
+  'button,a,[role="button"],summary,[data-track],[data-analytics-id],[data-testid],[data-walkthrough]';
+const CONTROL_CHANGE_SELECTOR =
+  'select,input[type="checkbox"],input[type="radio"],input[type="range"],[role="switch"],[role="checkbox"],[role="radio"]';
+
+// ---------------------------------------------------------------------------
+// Module-level state
+// ---------------------------------------------------------------------------
+
 let gaInitialized = false;
+let opInitialized = false;
+let analyticsConsentSynced = false;
+let uiInteractionTrackingStarted = false;
+
+type AnalyticsParams = Record<string, string | number | boolean>;
+
+interface PendingAnalyticsEvent {
+  type: 'event' | 'page_view';
+  name: string;
+  params?: AnalyticsParams;
+}
+
+const pendingAnalyticsEvents: PendingAnalyticsEvent[] = [];
 
 /**
- * Shadow of the user's analytics consent state for GA operations that need to
- * check it without async reads. Kept in sync by `syncAnalyticsConsent`.
- * Default: `false` (deny until explicitly allowed).
+ * Shadow of the user's analytics consent state. Kept in sync by
+ * `syncAnalyticsConsent`. Default: `false` (deny until explicitly allowed).
  */
-let gaEnabled = false;
+let analyticsEnabled = false;
 
 /**
- * Allowlist of event names that may be sent to GA4.
+ * Allowlist of event names that may be sent to OpenPanel.
  *
  * Keeping an explicit allowlist prevents accidentally forwarding internal
  * debug names or future ad-hoc calls that could carry sensitive information.
  * Any `trackEvent` call with a name not in this set is dropped and a warning
  * is logged.
  */
-export const GA_ALLOWED_EVENTS = new Set([
+export const ALLOWED_EVENTS = new Set([
   'app_open',
   'onboarding_start',
   'onboarding_step_complete',
@@ -64,6 +102,11 @@ export const GA_ALLOWED_EVENTS = new Set([
   'chat_message_sent',
   'skill_install',
   'skill_uninstall',
+  'tab_bar_change',
+  'tauri_browser_click',
+  'ui_click',
+  'ui_control_change',
+  'ui_form_submit',
 ]);
 
 /** Check if the current user has opted into analytics. */
@@ -101,7 +144,7 @@ export function initSentry(): void {
     // Privacy: disable EVERYTHING that could leak sensitive state.
     replaysSessionSampleRate: 0,
     replaysOnErrorSampleRate: 0,
-    tracesSampler: () => (isAnalyticsEnabled() ? 0.1 : 0),
+    tracesSampleRate: 0,
     defaultIntegrations: false,
     integrations: [
       Sentry.functionToStringIntegration(),
@@ -166,7 +209,7 @@ export function initSentry(): void {
       // Tag with surface so events filter cleanly inside `openhuman-react`.
       event.tags = { ...(event.tags ?? {}), surface: 'react' };
 
-      // Strip PII; keep a stable anonymous user id only.
+      // Strip PII; keep a stable account id only.
       const userId = getCoreStateSnapshot().snapshot.currentUser?._id;
       event.user = userId ? { id: userId } : undefined;
 
@@ -223,96 +266,394 @@ export function syncAnalyticsConsent(enabled: boolean): void {
     void Sentry.flush(2000);
   }
 
-  // Update the GA consent shadow. Ad-personalization is already disabled
-  // unconditionally in initGA() — no need to re-set it on every toggle.
-  gaEnabled = enabled;
-  if (gaInitialized) {
-    console.debug(`[analytics] GA consent updated: enabled=${enabled}`);
+  analyticsEnabled = enabled;
+  analyticsConsentSynced = true;
+  if (gaInitialized || opInitialized) {
+    console.debug(`[analytics] consent updated: enabled=${enabled}`);
+  }
+  if (enabled) {
+    initializeAnalyticsProviders();
+    flushPendingAnalyticsEvents();
+  } else {
+    pendingAnalyticsEvents.length = 0;
   }
 }
 
 // ---------------------------------------------------------------------------
-// GA4 — public API
+// Analytics — public API (GA4 + OpenPanel, both fire on every call)
 // ---------------------------------------------------------------------------
 
-/**
- * Initialize Google Analytics 4.
- *
- * No-ops when:
- *   - `GA_MEASUREMENT_ID` is empty/unset
- *   - `IS_DEV` is true (dev builds never send analytics)
- *   - Already initialized (idempotent)
- */
-export function initGA(): void {
-  if (gaInitialized) return;
-  if (IS_DEV) {
-    console.debug('[analytics] GA skipped in dev build');
-    return;
-  }
-  if (!GA_MEASUREMENT_ID) {
-    console.debug('[analytics] GA skipped — VITE_GA_MEASUREMENT_ID not set');
-    return;
-  }
-
+function initGoogleAnalytics(): void {
+  if (gaInitialized || !GA_MEASUREMENT_ID) return;
   try {
-    ReactGA.initialize(GA_MEASUREMENT_ID, {
-      gaOptions: {
-        // Disable automatic page view so we send them manually from AppShell.
-        send_page_view: false,
-      },
+    window.dataLayer = window.dataLayer || [];
+    window.gtag = function gtag(...args: [GtagCommand, ...unknown[]]) {
+      window.dataLayer.push(args);
+    };
+    window.gtag('js', new Date());
+    window.gtag('config', GA_MEASUREMENT_ID, {
+      send_page_view: false,
+      allow_ad_personalization_signals: false,
     });
-    // Disable ad personalization signals unconditionally — this is a privacy
-    // tool, not an advertising platform.
-    ReactGA.set({ allow_ad_personalization_signals: false });
+
+    const script = document.createElement('script');
+    script.async = true;
+    script.src = `https://www.googletagmanager.com/gtag/js?id=${GA_MEASUREMENT_ID}`;
+    document.head.appendChild(script);
+
     gaInitialized = true;
-    // Sync enabled state from the current consent snapshot now that GA is up.
-    gaEnabled = isAnalyticsEnabled();
-    console.debug('[analytics] GA initialized', { measurementId: GA_MEASUREMENT_ID });
+    console.debug('[analytics] GA initialized (gtag.js)', { measurementId: GA_MEASUREMENT_ID });
   } catch (err) {
     console.warn('[analytics] GA initialization failed:', err);
   }
 }
 
-/**
- * Send an anonymous page view if analytics consent is on and GA is initialized.
- *
- * @param path - The route pathname (e.g. `/home`, `/settings`). Never include
- *   query strings or hash fragments that could contain user content.
- */
-export function trackPageView(path: string): void {
-  if (!gaInitialized || !gaEnabled) return;
-  console.debug('[analytics] trackPageView', { path });
-  ReactGA.send({ hitType: 'pageview', page: path });
+function initOpenPanel(): void {
+  if (opInitialized || !OPENPANEL_CLIENT_ID || !OPENPANEL_API_URL) return;
+  opInitialized = true;
+  console.debug('[analytics] OpenPanel initialized (direct ingestion)', {
+    clientId: OPENPANEL_CLIENT_ID,
+    apiUrl: OPENPANEL_API_URL,
+  });
+}
+
+function initializeAnalyticsProviders(): void {
+  initGoogleAnalytics();
+  initOpenPanel();
 }
 
 /**
- * Send an anonymous feature-engagement event if analytics consent is on.
- *
- * Event names must appear in `GA_ALLOWED_EVENTS`. Calls with unlisted names
- * are dropped and a console warning is emitted — this prevents accidental
- * exfiltration of internal or sensitive event names.
- *
- * Params must contain only non-sensitive metadata (strings, numbers, booleans).
- * Never pass user content, credentials, message text, or PII.
- *
- * @param eventName - An allowlisted event name.
- * @param params    - Optional key/value metadata attached to the event.
+ * Initialize all analytics providers (GA4 + OpenPanel).
+ * Idempotent — each provider initializes at most once.
  */
-export function trackEvent(
-  eventName: string,
-  params?: Record<string, string | number | boolean>
-): void {
-  if (!gaInitialized || !gaEnabled) return;
+export function initGA(): void {
+  analyticsEnabled = isAnalyticsEnabled();
+  if (analyticsEnabled) {
+    initializeAnalyticsProviders();
+    flushPendingAnalyticsEvents();
+  }
+}
 
-  if (!GA_ALLOWED_EVENTS.has(eventName)) {
+/**
+ * Send a privacy-limited page view to all initialized providers.
+ */
+export function trackPageView(path: string): void {
+  const pagePath = normalizeAnalyticsPagePath(path);
+  if (!analyticsEnabled) {
+    queuePendingAnalyticsEvent({
+      type: 'page_view',
+      name: 'screen_view',
+      params: { page: pagePath },
+    });
+    return;
+  }
+  if (!gaInitialized && !opInitialized) return;
+  console.debug('[analytics] trackPageView', { path: pagePath });
+  const properties = { page: pagePath, __path: pagePath, ...analyticsPageContextProperties() };
+  if (gaInitialized) {
+    window.gtag('event', 'page_view', {
+      page_path: pagePath,
+      page_location: analyticsPageLocation(),
+      ...properties,
+    });
+  }
+  if (opInitialized) {
+    void sendOpenPanelTrack('screen_view', { ...properties, __title: currentDocumentTitle() });
+  }
+}
+
+/**
+ * Send a privacy-limited feature-engagement event to all initialized providers.
+ *
+ * Event names must appear in `ALLOWED_EVENTS`. Calls with unlisted names
+ * are dropped and a console warning is emitted.
+ */
+export function trackEvent(eventName: string, params?: AnalyticsParams): void {
+  if (!ALLOWED_EVENTS.has(eventName)) {
     console.warn(
-      `[analytics] trackEvent dropped — '${eventName}' is not in GA_ALLOWED_EVENTS allowlist`
+      `[analytics] trackEvent dropped — '${eventName}' is not in ALLOWED_EVENTS allowlist`
     );
     return;
   }
 
-  console.debug('[analytics] trackEvent', { eventName, params });
-  ReactGA.event(eventName, params);
+  if (!analyticsEnabled) {
+    queuePendingAnalyticsEvent({ type: 'event', name: eventName, params });
+    return;
+  }
+  if (!gaInitialized && !opInitialized) return;
+
+  const properties = { ...(params ?? {}), ...analyticsContextProperties() };
+  const loggableProperties = { ...properties };
+  delete loggableProperties.user_id;
+  console.debug('[analytics] trackEvent', { eventName, params: loggableProperties });
+  if (gaInitialized) window.gtag('event', eventName, properties);
+  if (opInitialized) {
+    void sendOpenPanelTrack(eventName, properties);
+  }
+}
+
+export function startUiInteractionTracking(): () => void {
+  if (uiInteractionTrackingStarted || typeof document === 'undefined') return () => undefined;
+  uiInteractionTrackingStarted = true;
+
+  const handleClick = (event: MouseEvent) => {
+    const target = event.target instanceof Element ? event.target : null;
+    const element = target?.closest(INTERACTIVE_CLICK_SELECTOR);
+    if (!(element instanceof HTMLElement) || shouldSkipInteractionElement(element)) return;
+
+    trackEvent('ui_click', {
+      ...interactionBaseProperties(element),
+      interaction_kind: 'click',
+      control_id: controlIdentifier(element),
+      destination: destinationForElement(element),
+    });
+  };
+
+  const handleChange = (event: Event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    const element = target?.closest(CONTROL_CHANGE_SELECTOR);
+    if (!(element instanceof HTMLElement) || shouldSkipInteractionElement(element)) return;
+
+    trackEvent('ui_control_change', {
+      ...interactionBaseProperties(element),
+      interaction_kind: 'change',
+      control_id: controlIdentifier(element),
+      control_state: controlState(element),
+    });
+  };
+
+  const handleSubmit = (event: SubmitEvent) => {
+    const form = event.target instanceof HTMLFormElement ? event.target : null;
+    if (!form || shouldSkipInteractionElement(form)) return;
+
+    trackEvent('ui_form_submit', {
+      ...interactionBaseProperties(form),
+      interaction_kind: 'submit',
+      control_id: controlIdentifier(form),
+    });
+  };
+
+  document.addEventListener('click', handleClick, true);
+  document.addEventListener('change', handleChange, true);
+  document.addEventListener('submit', handleSubmit, true);
+
+  return () => {
+    document.removeEventListener('click', handleClick, true);
+    document.removeEventListener('change', handleChange, true);
+    document.removeEventListener('submit', handleSubmit, true);
+    uiInteractionTrackingStarted = false;
+  };
+}
+
+function queuePendingAnalyticsEvent(event: PendingAnalyticsEvent): void {
+  if (analyticsConsentSynced) return;
+  pendingAnalyticsEvents.push(event);
+  if (pendingAnalyticsEvents.length > MAX_PENDING_ANALYTICS_EVENTS) {
+    pendingAnalyticsEvents.splice(0, pendingAnalyticsEvents.length - MAX_PENDING_ANALYTICS_EVENTS);
+  }
+}
+
+function flushPendingAnalyticsEvents(): void {
+  if (!analyticsEnabled || pendingAnalyticsEvents.length === 0) return;
+  const events = pendingAnalyticsEvents.splice(0, pendingAnalyticsEvents.length);
+  for (const event of events) {
+    if (event.type === 'page_view') {
+      trackPageView(String(event.params?.page ?? event.name));
+    } else {
+      trackEvent(event.name, event.params);
+    }
+  }
+}
+
+function interactionBaseProperties(element: HTMLElement): AnalyticsParams {
+  return {
+    page: currentAppPath(),
+    page_hash: currentPageHash(),
+    element_tag: element.tagName.toLowerCase(),
+    element_role: scrubIdentifier(element.getAttribute('role')) ?? '',
+    element_type: scrubIdentifier(element.getAttribute('type')) ?? '',
+  };
+}
+
+function controlIdentifier(element: HTMLElement): string {
+  const explicit =
+    element.getAttribute('data-analytics-id') ??
+    element.getAttribute('data-track') ??
+    element.getAttribute('data-testid') ??
+    element.getAttribute('data-walkthrough') ??
+    element.getAttribute('name') ??
+    element.id;
+  const scrubbed = scrubIdentifier(explicit);
+  if (scrubbed) return scrubbed;
+
+  const hrefDestination = destinationForElement(element);
+  if (hrefDestination) return `link_${scrubIdentifier(hrefDestination) ?? 'internal'}`;
+
+  const container = nearestStableContainer(element);
+  const tag = element.tagName.toLowerCase();
+  if (container) return `${tag}_in_${container}`;
+  return tag;
+}
+
+function destinationForElement(element: HTMLElement): string {
+  const href = element instanceof HTMLAnchorElement ? element.getAttribute('href') : null;
+  if (!href) return '';
+  if (href.startsWith('#/')) return href.slice(1);
+  if (href.startsWith('/')) return href;
+  return href.startsWith('http') ? 'external' : '';
+}
+
+function controlState(element: HTMLElement): string {
+  if (element instanceof HTMLInputElement) {
+    if (element.type === 'checkbox' || element.type === 'radio') {
+      return element.checked ? 'checked' : 'unchecked';
+    }
+    if (element.type === 'range') return 'changed';
+  }
+  if (element instanceof HTMLSelectElement) return 'selected';
+
+  const ariaChecked = element.getAttribute('aria-checked');
+  if (ariaChecked === 'true' || ariaChecked === 'false' || ariaChecked === 'mixed') {
+    return ariaChecked;
+  }
+  return 'changed';
+}
+
+function nearestStableContainer(element: HTMLElement): string | undefined {
+  const container = element.closest('[data-testid],[data-walkthrough],[data-analytics-id]');
+  if (!(container instanceof HTMLElement) || container === element) return undefined;
+  return scrubIdentifier(
+    container.getAttribute('data-analytics-id') ??
+      container.getAttribute('data-testid') ??
+      container.getAttribute('data-walkthrough')
+  );
+}
+
+function shouldSkipInteractionElement(element: HTMLElement): boolean {
+  if (element.closest('[data-analytics-skip="true"],[data-no-analytics="true"]')) return true;
+  if (element.closest('[contenteditable="true"]')) return true;
+  if (element instanceof HTMLInputElement) {
+    return ['text', 'search', 'email', 'password', 'tel', 'url', 'number', 'file'].includes(
+      element.type
+    );
+  }
+  if (element instanceof HTMLTextAreaElement) return true;
+  return false;
+}
+
+function scrubIdentifier(value: string | null | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+  const withoutQuery = trimmed.split(/[?#]/)[0] ?? trimmed;
+  const scrubbed = withoutQuery
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, ':email')
+    .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, ':id')
+    .replace(/\b[0-9a-f]{16,}\b/gi, ':id')
+    .replace(/\b\d{3,}\b/g, ':num')
+    .replace(/[^a-zA-Z0-9:_/-]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .toLowerCase()
+    .slice(0, 80);
+  return scrubbed || undefined;
+}
+
+function currentAppPath(): string {
+  if (typeof window === 'undefined') return '';
+  return normalizeAnalyticsPagePath(window.location.pathname);
+}
+
+function currentPageHash(): string {
+  if (typeof window === 'undefined') return '';
+  return window.location.hash.startsWith('#/') ? window.location.hash : '';
+}
+
+function normalizeAnalyticsPagePath(path: string): string {
+  if (typeof window !== 'undefined' && window.location.hash.startsWith('#/')) {
+    return hashToPath(window.location.hash);
+  }
+  if (path.startsWith('#/')) return hashToPath(path);
+  return path || '/';
+}
+
+function hashToPath(hash: string): string {
+  const withoutHash = hash.slice(1);
+  return withoutHash || '/';
+}
+
+async function sendOpenPanelTrack(eventName: string, params?: AnalyticsParams): Promise<void> {
+  const profileId = currentAnalyticsUserId();
+  const properties = {
+    __path: currentOpenPanelPath(),
+    __referrer: currentDocumentReferrer(),
+    __timestamp: new Date().toISOString(),
+    ...(params ?? {}),
+  };
+
+  try {
+    const response = await fetch(OPENPANEL_TRACK_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'openpanel-client-id': OPENPANEL_CLIENT_ID,
+        'openpanel-sdk-name': 'openhuman-react',
+        'openpanel-sdk-version': '0.1.0',
+      },
+      body: JSON.stringify({
+        type: 'track',
+        payload: { name: eventName, ...(profileId ? { profileId } : {}), properties },
+      }),
+      keepalive: true,
+    });
+
+    if (!response.ok) {
+      console.warn('[analytics] OpenPanel track failed:', response.status, await response.text());
+    }
+  } catch (err) {
+    console.warn('[analytics] OpenPanel track failed:', err);
+  }
+}
+
+function analyticsContextProperties(): AnalyticsParams {
+  const userId = currentAnalyticsUserId();
+  return {
+    user_id: userId ?? '',
+    app_version: APP_VERSION,
+    binary_version: APP_BINARY_VERSION,
+    core_cargo_version: CORE_CARGO_VERSION,
+    tauri_cargo_version: TAURI_CARGO_VERSION,
+    release: SENTRY_RELEASE,
+    build_sha: BUILD_SHA,
+    app_environment: APP_ENVIRONMENT,
+  };
+}
+
+function analyticsPageContextProperties(): AnalyticsParams {
+  return { ...analyticsContextProperties(), page_hash: currentPageHash() };
+}
+
+function currentAnalyticsUserId(): string | undefined {
+  return getCoreStateSnapshot().snapshot.currentUser?._id;
+}
+
+function currentOpenPanelPath(): string {
+  return currentAppPath();
+}
+
+function analyticsPageLocation(): string {
+  if (typeof window === 'undefined') return '';
+  const pagePath = currentAppPath();
+  return `${window.location.origin}${pagePath}`;
+}
+
+function currentDocumentTitle(): string {
+  if (typeof document === 'undefined') return '';
+  return document.title;
+}
+
+function currentDocumentReferrer(): string {
+  if (typeof document === 'undefined') return '';
+  return document.referrer;
 }
 
 /**

@@ -424,7 +424,7 @@ export async function memoryTreeSetLlm(
  * node (Tree mode); `"chunk"` is a raw memory chunk and `"contact"`
  * is a person entity (Contacts mode).
  */
-export type GraphNodeKind = 'summary' | 'chunk' | 'contact';
+export type GraphNodeKind = 'source' | 'summary' | 'chunk' | 'contact';
 
 /**
  * One node in the graph export. Optional fields are populated only
@@ -564,6 +564,26 @@ export interface FlushNowResponse {
  * Safe to spam — same UTC-day dedupe key as the scheduled flush, so
  * duplicate clicks return `enqueued=false` rather than queuing twice.
  */
+interface FlushSourceResponse {
+  tree_scope: string;
+  seals_fired: number;
+}
+
+export async function memoryTreeFlushSource(sourceScope: string): Promise<FlushSourceResponse> {
+  console.debug('[memory-tree-rpc] memoryTreeFlushSource: entry scope=%s', sourceScope);
+  const resp = await callCoreRpc<FlushSourceResponse | ResultEnvelope<FlushSourceResponse>>({
+    method: 'openhuman.memory_tree_flush_source',
+    params: { source_scope: sourceScope },
+  });
+  const out = unwrapResult(resp);
+  console.debug(
+    '[memory-tree-rpc] memoryTreeFlushSource: exit scope=%s seals=%d',
+    out.tree_scope,
+    out.seals_fired
+  );
+  return out;
+}
+
 export async function memoryTreeFlushNow(): Promise<FlushNowResponse> {
   console.debug('[memory-tree-rpc] memoryTreeFlushNow: entry');
   const resp = await callCoreRpc<FlushNowResponse | ResultEnvelope<FlushNowResponse>>({
@@ -651,6 +671,53 @@ export async function memoryTreeObsidianVaultStatus(
   return out;
 }
 
+/** Response shape for `memory_tree_vault_health_check`. */
+export interface VaultHealthCheck {
+  /** Absolute filesystem path to `<workspace>/memory_tree/content/`. */
+  content_root_abs: string;
+  /** True when the vault directory exists on disk. */
+  exists: boolean;
+  /** True when the vault directory is readable. */
+  readable: boolean;
+  /** True when a temp-file create+delete probe succeeds in the vault. */
+  writable: boolean;
+  /** True when Obsidian has this folder (or an ancestor) registered as a vault. */
+  obsidian_registered: boolean;
+  /** True when pipeline status is not paused and not in error. */
+  pipeline_healthy: boolean;
+  /** Epoch ms of newest chunk timestamp; zero when no chunks exist yet. */
+  last_sync_ms: number;
+}
+
+/**
+ * Consolidated onboarding/settings health snapshot for the workspace memory
+ * vault (`<workspace>/memory_tree/content/`).
+ *
+ * Backed by `openhuman.memory_tree_vault_health_check`.
+ */
+export async function memoryTreeVaultHealthCheck(
+  obsidianConfigDir?: string
+): Promise<VaultHealthCheck> {
+  console.debug(
+    '[memory-tree-rpc] memoryTreeVaultHealthCheck: entry override=%s',
+    obsidianConfigDir ? 'set' : 'none'
+  );
+  const resp = await callCoreRpc<VaultHealthCheck | ResultEnvelope<VaultHealthCheck>>({
+    method: 'openhuman.memory_tree_vault_health_check',
+    params: obsidianConfigDir ? { obsidian_config_dir: obsidianConfigDir } : {},
+  });
+  const out = unwrapResult(resp);
+  console.debug(
+    '[memory-tree-rpc] memoryTreeVaultHealthCheck: exit exists=%s readable=%s writable=%s obsidian_registered=%s pipeline_healthy=%s',
+    out.exists,
+    out.readable,
+    out.writable,
+    out.obsidian_registered,
+    out.pipeline_healthy
+  );
+  return out;
+}
+
 /**
  * #1574 §4b: per-model embedding re-embed backfill status. The AI settings
  * panel polls this after an embedder change to warn that semantic recall
@@ -677,4 +744,259 @@ export async function memoryTreeBackfillStatus(): Promise<BackfillStatus> {
     out.pending_jobs
   );
   return out;
+}
+
+// ── memory_tree_pipeline_status (#1856 Part 1) ───────────────────────────
+
+/**
+ * Coarse status string emitted by `memory_tree_pipeline_status`. Mapped
+ * verbatim to a colored pill in the status panel — `paused` is the only
+ * state the toggle directly influences.
+ */
+export type MemoryTreePipelineStatusKind =
+  | 'running'
+  | 'paused'
+  | 'syncing'
+  | 'error'
+  | 'idle'
+  | 'degraded';
+
+/**
+ * Stable typed failure codes the Rust `health::FailureCode` emits (#002). The
+ * UI maps each to a localized remediation string; `remediation_key` carries
+ * the i18n key directly so the panel renders the core's guidance verbatim.
+ */
+export type MemoryTreeFailureCode =
+  | 'budget_exhausted'
+  | 'auth_missing'
+  | 'auth_invalid'
+  | 'embeddings_unconfigured'
+  | 'embedding_dim_mismatch'
+  | 'local_model_unavailable'
+  | 'extraction_timeout'
+  | 'summarizer_unavailable'
+  | 'transient';
+
+/**
+ * Typed pipeline failure (#002 FR-004). Mirrors Rust `health::PipelineFailure`.
+ * `remediation_key` is an i18n key (e.g. `memory.health.remediation.*`); the UI
+ * resolves it via `useT()`. `detail` is a short non-localized diagnostic
+ * string (never a secret) for logs/tooltips.
+ */
+export interface MemoryTreePipelineFailure {
+  code: MemoryTreeFailureCode;
+  class: 'transient' | 'unrecoverable';
+  remediation_key: string;
+  detail?: string;
+}
+
+/**
+ * "The pipeline ran but output quality is reduced" (#002 FR-002/FR-005).
+ * Mirrors Rust `health::DegradedState`. `semantic_recall` true when embeddings
+ * were skipped (no usable provider → recall falls back to recency);
+ * `structure` true when extraction yielded nothing across the board.
+ */
+export interface MemoryTreeDegradedState {
+  semantic_recall: boolean;
+  structure: boolean;
+  cause?: MemoryTreePipelineFailure | null;
+}
+
+/**
+ * Per-state job counters returned in {@link MemoryTreePipelineStatus}. Mirrors
+ * the Rust `PipelineJobCounts` struct exactly — snake_case carried through.
+ */
+export interface MemoryTreePipelineJobCounts {
+  /** Jobs queued and waiting for a worker. */
+  ready: number;
+  /** Jobs currently being processed by a worker. */
+  running: number;
+  /** Jobs that exhausted retries and remain in the table for diagnosis. */
+  failed: number;
+}
+
+/**
+ * Aggregated Memory Tree health snapshot returned by
+ * `openhuman.memory_tree_pipeline_status`. The UI status panel polls this
+ * (every ~1.5s while syncing, ~4s otherwise) and renders the four tiles
+ * directly from the payload — no client-side derivation required.
+ */
+export interface MemoryTreePipelineStatus {
+  /** UI status pill — one of `running` / `paused` / `syncing` / `error` / `idle`. */
+  status: MemoryTreePipelineStatusKind;
+  /**
+   * Optional human-readable reason. Present when `status` is `paused`
+   * (carries the gate mode) or `error` (carries the failed-job count);
+   * `null` otherwise.
+   */
+  reason: string | null;
+  /** Epoch ms of the most-recent chunk timestamp. Zero when the store is empty. */
+  last_sync_ms: number;
+  /** Total `mem_tree_chunks` rows across all sources. */
+  total_chunks: number;
+  /** Recursive on-disk size of the `wiki/` sub-tree under the memory_tree content root, in bytes. */
+  wiki_size_bytes: number;
+  /** Snapshot of `mem_tree_jobs` by status. */
+  pipeline_jobs: MemoryTreePipelineJobCounts;
+  /** Convenience flag: at least one job is currently `running`. */
+  is_syncing: boolean;
+  /** Convenience flag: scheduler-gate mode is `off`. */
+  is_paused: boolean;
+  /**
+   * #002 (FR-002/FR-005): degradation snapshot. Optional for back-compat with
+   * older cores that don't emit it (the Rust field is `#[serde(default)]`);
+   * absent ⇒ treat as not degraded.
+   */
+  degraded?: MemoryTreeDegradedState;
+  /**
+   * #002 (FR-004): the single first blocking/most-significant cause, rendered
+   * verbatim by the panel (resolving `remediation_key`). `null`/absent when
+   * the pipeline is healthy.
+   */
+  first_blocking_cause?: MemoryTreePipelineFailure | null;
+  /**
+   * #002 (FR-010 / US5): fraction of chunks with ≥1 indexed entity, in
+   * `[0.0, 1.0]`. Near 0 with `total_chunks > 0` ⇒ extraction is producing no
+   * structure ("empty-but-built wiki"). Optional for back-compat.
+   */
+  extraction_coverage?: number | null;
+}
+
+/**
+ * Fetch the Memory Tree pipeline status snapshot. Cheap and idempotent —
+ * the handler runs three SQL counters + one recursive dir walk. Safe to
+ * poll at ~1.5s intervals while the panel is mounted.
+ *
+ * Backed by `openhuman.memory_tree_pipeline_status` (#1856 Part 1).
+ */
+export async function memoryTreePipelineStatus(): Promise<MemoryTreePipelineStatus> {
+  console.debug('[memory-tree-rpc] memoryTreePipelineStatus: entry');
+  const resp = await callCoreRpc<
+    MemoryTreePipelineStatus | ResultEnvelope<MemoryTreePipelineStatus>
+  >({ method: 'openhuman.memory_tree_pipeline_status', params: {} });
+  const out = unwrapResult(resp);
+  console.debug(
+    '[memory-tree-rpc] memoryTreePipelineStatus: exit status=%s total=%d syncing=%s paused=%s',
+    out.status,
+    out.total_chunks,
+    out.is_syncing,
+    out.is_paused
+  );
+  return out;
+}
+
+// ── memory_tree_set_enabled (#1856 Part 1) ───────────────────────────────
+
+/**
+ * Wire shape returned by `openhuman.memory_tree_set_enabled`. `changed=false`
+ * means the persisted mode already matched the request (idempotent toggle).
+ */
+export interface MemoryTreeSetEnabledResponse {
+  /** Echo of the requested enabled state (post-write). */
+  enabled: boolean;
+  /** True when the persisted mode flipped; false when the call was a no-op. */
+  changed: boolean;
+  /** New scheduler-gate mode as wire string (`auto` / `off`). */
+  mode: string;
+}
+
+/**
+ * Toggle Memory Tree auto-sync. `enabled=true` flips the scheduler-gate to
+ * `auto`; `enabled=false` flips it to `off`, which pauses every LLM-bound
+ * background worker cooperatively at their next `wait_for_capacity()`
+ * await on the Rust side.
+ *
+ * Backed by `openhuman.memory_tree_set_enabled` (#1856 Part 1). The 20-min
+ * Composio fetch loop is *not* paused by this toggle yet — that lands in
+ * #1856 Part 2.
+ */
+export async function memoryTreeSetEnabled(
+  enabled: boolean
+): Promise<MemoryTreeSetEnabledResponse> {
+  console.debug('[memory-tree-rpc] memoryTreeSetEnabled: entry enabled=%s', enabled);
+  const resp = await callCoreRpc<
+    MemoryTreeSetEnabledResponse | ResultEnvelope<MemoryTreeSetEnabledResponse>
+  >({ method: 'openhuman.memory_tree_set_enabled', params: { enabled } });
+  const out = unwrapResult(resp);
+  console.debug(
+    '[memory-tree-rpc] memoryTreeSetEnabled: exit enabled=%s changed=%s mode=%s',
+    out.enabled,
+    out.changed,
+    out.mode
+  );
+  return out;
+}
+
+// ── Sync Audit Log ─────────────────────────────────────────────────
+
+export interface SyncAuditEntry {
+  timestamp: string;
+  source_id: string;
+  source_kind: string;
+  scope: string;
+  items_fetched: number;
+  batches: number;
+  input_tokens: number;
+  output_tokens: number;
+  estimated_cost_usd: number;
+  duration_ms: number;
+  success: boolean;
+  error?: string;
+}
+
+export async function memorySyncAuditLog(): Promise<SyncAuditEntry[]> {
+  const resp = await callCoreRpc<
+    { entries: SyncAuditEntry[] } | ResultEnvelope<{ entries: SyncAuditEntry[] }>
+  >({ method: 'openhuman.memory_sources_sync_audit_log', params: {} });
+  return unwrapResult(resp).entries ?? [];
+}
+
+// ── memory_sync_status_list (#2763 — per-integration health strip) ───────
+
+/**
+ * Freshness label emitted by `openhuman.memory_sync_status_list`. Snake-case
+ * mirrors the Rust `FreshnessLabel` serde rename. Derived from
+ * `now - last_chunk_at_ms` at RPC time, not stored.
+ */
+export type MemorySyncFreshness = 'active' | 'recent' | 'idle';
+
+/**
+ * One row per provider that has produced chunks. Mirrors the Rust
+ * `MemorySyncStatus` struct exactly — snake_case carried through so the
+ * wire payload deserialises without a remap layer.
+ */
+export interface MemorySyncStatusRow {
+  /** Provider key — `slack`, `gmail`, `notion`, `discord`, `telegram`, etc. */
+  provider: string;
+  /** Total chunks in `mem_tree_chunks` for this provider. */
+  chunks_synced: number;
+  /** Chunks fetched but not yet extracted/embedded. Lifetime metric. */
+  chunks_pending: number;
+  /** Total chunks in the current sync wave. Zero when no wave is active. */
+  batch_total: number;
+  /** Of `batch_total`, how many have been processed. */
+  batch_processed: number;
+  /** Epoch ms of the most-recent chunk for this provider; null if none yet. */
+  last_chunk_at_ms: number | null;
+  /** Coarse activity label — derived at RPC time. */
+  freshness: MemorySyncFreshness;
+}
+
+/**
+ * Fetch the per-provider sync-status list. Single SQL query against
+ * `mem_tree_chunks` (GROUP BY source_kind); safe to poll alongside
+ * `memoryTreePipelineStatus` on the same 1.5s / 4s adaptive cadence.
+ *
+ * Backed by `openhuman.memory_sync_status_list` (#1136). Surfaced by the
+ * per-integration health strip in `MemoryTreeStatusPanel` (#2763).
+ */
+export async function memorySyncStatusList(): Promise<MemorySyncStatusRow[]> {
+  console.debug('[memory-tree-rpc] memorySyncStatusList: entry');
+  const resp = await callCoreRpc<
+    { statuses: MemorySyncStatusRow[] } | ResultEnvelope<{ statuses: MemorySyncStatusRow[] }>
+  >({ method: 'openhuman.memory_sync_status_list', params: {} });
+  const out = unwrapResult(resp);
+  const rows = out.statuses ?? [];
+  console.debug('[memory-tree-rpc] memorySyncStatusList: exit rows=%d', rows.length);
+  return rows;
 }

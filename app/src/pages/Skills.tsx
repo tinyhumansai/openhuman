@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
 import ChannelSetupModal from '../components/channels/ChannelSetupModal';
+import McpServersTab from '../components/channels/mcp/McpServersTab';
 import ComposioConnectModal from '../components/composio/ComposioConnectModal';
 import {
   composioToolkitMeta,
@@ -46,7 +47,8 @@ import type { ChannelConnectionStatus, ChannelDefinition, ChannelType } from '..
 import type { ToastNotification } from '../types/intelligence';
 import { IS_DEV } from '../utils/config';
 import { isLocalSessionToken } from '../utils/localSession';
-import { openhumanComposioGetMode, subconsciousEscalationsDismiss } from '../utils/tauriCommands';
+import { openhumanComposioGetMode } from '../utils/tauriCommands';
+import SkillsDashboard from './SkillsDashboard';
 
 function channelStatusLabel(status: ChannelConnectionStatus, t: (key: string) => string): string {
   switch (status) {
@@ -131,13 +133,7 @@ interface ComposioConnectorTileProps {
   meta: ComposioToolkitMeta;
   connection: ComposioConnection | undefined;
   hasComposioError: boolean;
-  /**
-   * Whether this toolkit has a curated agent-ready catalog on the
-   * core. Connected toolkits without a catalog show a "Preview"
-   * badge so users know the agent can't act on them yet — see
-   * issue #2283.
-   */
-  isAgentReady: boolean;
+  agentUnsupported: boolean;
   testId?: string;
   onOpen: () => void;
   onRetryGlobal: () => void;
@@ -147,16 +143,20 @@ function ComposioConnectorTile({
   meta,
   connection,
   hasComposioError,
-  isAgentReady,
+  agentUnsupported,
   testId,
   onOpen,
   onRetryGlobal,
 }: ComposioConnectorTileProps) {
   const { t } = useT();
-  const state = hasComposioError ? 'error' : deriveComposioState(connection);
+  const rawState = deriveComposioState(connection);
+  const state = hasComposioError ? 'error' : rawState;
+  const isPreview = !hasComposioError && agentUnsupported && rawState === 'connected';
   const statusLabel = hasComposioError
     ? t('composio.statusUnavailable')
-    : composioStatusLabel(connection, t);
+    : isPreview
+      ? t('composio.previewBadge')
+      : composioStatusLabel(connection, t);
   const ctaLabel = hasComposioError
     ? t('common.retry')
     : state === 'connected'
@@ -169,16 +169,10 @@ function ComposioConnectorTile({
             ? t('common.retry')
             : t('skills.connect');
 
-  const isConnected = state === 'connected';
+  const isConnected = state === 'connected' && !isPreview;
   const isPending = state === 'pending';
   const isExpired = state === 'expired';
   const isError = state === 'error' || hasComposioError;
-  // Show the preview badge for connected toolkits without a curated
-  // catalog, AND for unconnected uncurated toolkits so users see the
-  // limitation BEFORE going through OAuth (issue #2283).
-  const showPreviewBadge = !isAgentReady && (isConnected || (!isPending && !isExpired && !isError));
-  const previewLabel = t('composio.previewBadge');
-  const previewTooltip = t('composio.previewTooltip');
 
   const handleClick = () => {
     if (hasComposioError) {
@@ -193,34 +187,29 @@ function ComposioConnectorTile({
       type="button"
       data-testid={testId}
       onClick={handleClick}
-      title={
-        showPreviewBadge
-          ? `${meta.name} — ${meta.description} (${previewTooltip})`
-          : `${meta.name} — ${meta.description}`
-      }
-      aria-label={
-        showPreviewBadge
-          ? `${meta.name}, ${statusLabel}, ${previewLabel}. ${ctaLabel}.`
-          : `${meta.name}, ${statusLabel}. ${ctaLabel}.`
-      }
-      className={`group flex flex-col justify-center items-center rounded-2xl border p-3 text-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/40 ${
+      title={`${meta.name} — ${isPreview ? t('composio.previewTooltip') : meta.description}`}
+      aria-label={`${meta.name}, ${statusLabel}. ${ctaLabel}.`}
+      className={`group relative flex h-full w-full flex-col justify-center items-center rounded-2xl border p-3 text-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/40 ${
         isConnected
           ? 'border-sage-300 bg-sage-50/80 shadow-[0_0_0_1px_rgba(34,197,94,0.12)] hover:bg-sage-50 dark:border-sage-500/30 dark:bg-sage-500/10 dark:hover:bg-sage-500/15'
-          : isPending
-            ? 'border-amber-200 bg-amber-50/40 hover:bg-amber-50/70 dark:border-amber-500/30 dark:bg-amber-500/10 dark:hover:bg-amber-500/15'
-            : isExpired || isError
-              ? 'border-coral-200 bg-coral-50/30 hover:bg-coral-50/50 dark:border-coral-500/30 dark:bg-coral-500/10 dark:hover:bg-coral-500/15'
-              : 'border-stone-200 bg-white hover:bg-stone-50 dark:border-neutral-800 dark:bg-neutral-900 dark:hover:bg-neutral-800/60'
+          : isPreview
+            ? 'border-amber-200 bg-amber-50/60 shadow-[0_0_0_1px_rgba(245,158,11,0.12)] hover:bg-amber-50/80 dark:border-amber-500/30 dark:bg-amber-500/10 dark:hover:bg-amber-500/15'
+            : isPending
+              ? 'border-amber-200 bg-amber-50/40 hover:bg-amber-50/70 dark:border-amber-500/30 dark:bg-amber-500/10 dark:hover:bg-amber-500/15'
+              : isExpired || isError
+                ? 'border-coral-200 bg-coral-50/30 hover:bg-coral-50/50 dark:border-coral-500/30 dark:bg-coral-500/10 dark:hover:bg-coral-500/15'
+                : 'border-stone-200 bg-white hover:bg-stone-50 dark:border-neutral-800 dark:bg-neutral-900 dark:hover:bg-neutral-800/60'
       }`}>
+      {isPreview && (
+        <span
+          data-testid={`composio-preview-badge-${meta.slug}`}
+          className="absolute right-1.5 top-1.5 max-w-[4.5rem] truncate rounded-full border border-amber-200 bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase leading-none text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/15 dark:text-amber-200"
+          title={t('composio.previewTooltip')}>
+          {t('composio.previewBadge')}
+        </span>
+      )}
       <div className="relative flex h-12 w-12 flex-shrink-0 items-center justify-center text-stone-700 dark:text-neutral-200 [&_img]:max-h-10 [&_img]:max-w-10 [&_svg]:h-8 [&_svg]:w-8">
         {meta.icon}
-        {showPreviewBadge && (
-          <span
-            data-testid={`composio-preview-badge-${meta.slug}`}
-            className="absolute -top-1 -right-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[8px] font-semibold uppercase leading-none text-amber-800 ring-1 ring-amber-300 dark:bg-amber-500/20 dark:text-amber-200 dark:ring-amber-500/40">
-            {previewLabel}
-          </span>
-        )}
       </div>
       <div className="flex w-full min-w-0 flex-col items-center justify-start gap-0.5">
         <span className="line-clamp-2 text-[11px] font-semibold leading-tight text-stone-900 dark:text-neutral-100">
@@ -230,7 +219,9 @@ function ComposioConnectorTile({
           className={`line-clamp-1 text-[10px] font-medium ${
             hasComposioError
               ? 'text-amber-700 dark:text-amber-300'
-              : composioStatusColor(connection)
+              : isPreview
+                ? 'text-amber-700 dark:text-amber-300'
+                : composioStatusColor(connection)
           }`}>
           {statusLabel}
         </span>
@@ -283,35 +274,6 @@ function ChannelTile({ def, status, icon, testId, onOpen }: ChannelTileProps) {
         </span>
       </div>
     </button>
-  );
-}
-
-function McpComingSoonPanel() {
-  const { t } = useT();
-  return (
-    <EmptyStateCard
-      icon={
-        <svg
-          className="h-7 w-7 text-primary-500"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-          strokeWidth={1.5}>
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            d="M6.75 7.5h10.5m-10.5 4.5h10.5m-10.5 4.5h6m-9.75 3h13.5A2.25 2.25 0 0 0 19.5 17.25V6.75A2.25 2.25 0 0 0 17.25 4.5H6.75A2.25 2.25 0 0 0 4.5 6.75v10.5A2.25 2.25 0 0 0 6.75 19.5Z"
-          />
-        </svg>
-      }
-      title={t('skills.mcpComingSoon.title')}
-      description={t('skills.mcpComingSoon.description')}
-      footer={
-        <span className="mt-4 inline-flex items-center rounded-full bg-primary-50 dark:bg-primary-500/10 px-3 py-1 text-xs font-medium text-primary-600 dark:text-primary-400">
-          {t('common.comingSoon')}
-        </span>
-      }
-    />
   );
 }
 
@@ -379,7 +341,7 @@ interface SkillItem {
 
 // ─── Main Skills Page ──────────────────────────────────────────────────────────
 
-type ConnectionsTab = 'channels' | 'composio' | 'mcp';
+type ConnectionsTab = 'channels' | 'composio' | 'mcp' | 'runners';
 
 export default function Skills() {
   const { t } = useT();
@@ -387,7 +349,17 @@ export default function Skills() {
   const location = useLocation();
   const navigate = useNavigate();
   const isLocalSession = isLocalSessionToken(getCoreStateSnapshot().snapshot.sessionToken);
-  const [activeTab, setActiveTab] = useState<ConnectionsTab>('composio');
+  // Honour `?tab=<runners|composio|channels|mcp>` so `/skills?tab=runners`
+  // lands directly on the Runners sub-tab (used by SkillsRun's back button
+  // so closing the runner returns to the dashboard, not Composio).
+  const initialTab: ConnectionsTab = (() => {
+    const params = new URLSearchParams(location.search);
+    const t = params.get('tab');
+    if (t === 'runners') return IS_DEV ? 'runners' : 'composio';
+    if (t === 'composio' || t === 'channels' || t === 'mcp') return t;
+    return 'composio';
+  })();
+  const [activeTab, setActiveTab] = useState<ConnectionsTab>(initialTab);
   const dispatch = useAppDispatch();
   const [defaultChannelBusy, setDefaultChannelBusy] = useState<ChannelType | null>(null);
   const handleSetDefaultChannel = useCallback(
@@ -419,24 +391,12 @@ export default function Skills() {
     error: composioError,
     refresh: refreshComposio,
   } = useComposioIntegrations();
-
-  // Set of curated agent-ready toolkit slugs — see issue #2283. We
-  // intentionally do NOT block UI rendering on this fetch; while
-  // loading we treat every toolkit as agent-ready (no preview
-  // badges) and only flip on uncurated toolkits once the response
-  // arrives. This avoids a flash of preview-badges on the curated
-  // tiles during the initial paint.
-  //
-  // When the RPC FAILS (non-loading, empty set, non-null error), we
-  // also default to "agent-ready" so curated toolkits don't all
-  // light up with a misleading Preview badge — the UI gracefully
-  // degrades to the pre-#2283 behaviour rather than misrepresenting
-  // the agent surface (CodeRabbit review on PR #2361).
   const {
-    agentReady: agentReadyToolkits,
-    loading: agentReadyLoading,
-    error: agentReadyError,
+    agentReady: agentReadyComposioToolkits,
+    loading: agentReadyComposioLoading,
+    error: agentReadyComposioError,
   } = useAgentReadyComposioToolkits();
+  const agentReadinessKnown = !agentReadyComposioLoading && agentReadyComposioError === null;
 
   const [channelModalDef, setChannelModalDef] = useState<ChannelDefinition | null>(null);
   const [composioModalToolkit, setComposioModalToolkit] = useState<ComposioToolkitMeta | null>(
@@ -466,43 +426,6 @@ export default function Skills() {
   const removeToast = useCallback((id: string) => {
     setToasts(prev => prev.filter(toast => toast.id !== id));
   }, []);
-  const pendingEscalationId =
-    location.state &&
-    typeof location.state === 'object' &&
-    'subconsciousEscalationId' in location.state &&
-    typeof location.state.subconsciousEscalationId === 'string'
-      ? location.state.subconsciousEscalationId
-      : null;
-
-  const clearPendingEscalationState = useCallback(() => {
-    navigate(location.pathname, { replace: true, state: null });
-  }, [location.pathname, navigate]);
-
-  const dismissPendingEscalationIfResolved = useCallback(
-    async (resolution: string) => {
-      if (!pendingEscalationId) return;
-      console.debug('[skills][subconscious] dismiss escalation:start', {
-        escalationId: pendingEscalationId,
-        resolution,
-      });
-      try {
-        await subconsciousEscalationsDismiss(pendingEscalationId);
-        console.debug('[skills][subconscious] dismiss escalation:success', {
-          escalationId: pendingEscalationId,
-          resolution,
-        });
-      } catch (error) {
-        console.debug('[skills][subconscious] dismiss escalation:error', {
-          escalationId: pendingEscalationId,
-          resolution,
-          error: error instanceof Error ? error.message : String(error),
-        });
-        return;
-      }
-      clearPendingEscalationState();
-    },
-    [clearPendingEscalationState, pendingEscalationId]
-  );
 
   // Discover SKILL.md skills via the core RPC. Ignore failures — the rest of
   // the page still works when the sidecar is unreachable or no skills exist.
@@ -658,56 +581,18 @@ export default function Skills() {
     return entries;
   }, [composioCatalogToolkits, composioConnectionByToolkit]);
 
-  // Exclude preview toolkits (not in the agent-ready catalog) from the default
-  // grid. Toolkits with an existing connection are always shown so users can
-  // manage or disconnect them. The filter is skipped while the agent-ready list
-  // is loading or errored — both cases degrade to showing everything.
-  // When the user selects the 'Preview' filter pill this memo is bypassed in
-  // composioFilteredEntries, which reads directly from composioGridEntries.
-  const composioAgentReadyEntries = useMemo(() => {
-    const resolved = !agentReadyLoading && !agentReadyError;
-    if (!resolved) return composioGridEntries;
-    return composioGridEntries.filter(
-      ({ meta, connection }) => Boolean(connection) || agentReadyToolkits.has(meta.slug)
-    );
-  }, [composioGridEntries, agentReadyToolkits, agentReadyLoading, agentReadyError]);
-
   const composioFilteredEntries = useMemo(() => {
     const q = searchQuery.toLowerCase();
     const matchesSearch = (meta: ComposioToolkitMeta) =>
       !q || meta.name.toLowerCase().includes(q) || meta.description.toLowerCase().includes(q);
-
-    if (selectedCategory === 'Preview') {
-      // Show only toolkits that are not in the agent-ready catalog.
-      // If data is still loading or errored, show all matching entries so the
-      // grid doesn't flash blank — same graceful-degradation contract as the
-      // default view.
-      const resolved = !agentReadyLoading && !agentReadyError;
-      if (!resolved) {
-        return composioGridEntries.filter(({ meta }) => matchesSearch(meta));
-      }
-      return composioGridEntries.filter(
-        ({ meta }) => matchesSearch(meta) && !agentReadyToolkits.has(meta.slug)
-      );
-    }
 
     const matchesCategory =
       selectedCategory === 'All'
         ? () => true
         : (meta: ComposioToolkitMeta) => meta.category === selectedCategory;
 
-    return composioAgentReadyEntries.filter(
-      ({ meta }) => matchesCategory(meta) && matchesSearch(meta)
-    );
-  }, [
-    composioAgentReadyEntries,
-    composioGridEntries,
-    searchQuery,
-    selectedCategory,
-    agentReadyToolkits,
-    agentReadyLoading,
-    agentReadyError,
-  ]);
+    return composioGridEntries.filter(({ meta }) => matchesCategory(meta) && matchesSearch(meta));
+  }, [composioGridEntries, searchQuery, selectedCategory]);
 
   const composioSortedEntries = useMemo(() => {
     return [...composioFilteredEntries].sort((a, b) => {
@@ -735,24 +620,13 @@ export default function Skills() {
       if (item.category === 'Channels') continue;
       cats.add(item.category);
     }
-    for (const { meta } of composioAgentReadyEntries) {
+    for (const { meta } of composioGridEntries) {
       cats.add(meta.category);
     }
-    // Show the 'Preview' pill when there are toolkits outside the agent-ready
-    // catalog (i.e., there's something to see in that filter).
-    const resolved = !agentReadyLoading && !agentReadyError;
-    if (resolved && composioGridEntries.some(({ meta }) => !agentReadyToolkits.has(meta.slug))) {
-      cats.add('Preview');
-    }
-    return SKILL_CATEGORY_ORDER.filter(c => c !== 'Channels' && cats.has(c));
-  }, [
-    allItems,
-    composioAgentReadyEntries,
-    composioGridEntries,
-    agentReadyToolkits,
-    agentReadyLoading,
-    agentReadyError,
-  ]);
+    return SKILL_CATEGORY_ORDER.filter(
+      c => c !== 'Channels' && cats.has(c) && (IS_DEV || c !== 'Other')
+    );
+  }, [allItems, composioGridEntries]);
 
   const filteredItems = useMemo(() => {
     const q = searchQuery.toLowerCase();
@@ -782,7 +656,7 @@ export default function Skills() {
     return items.length > 0 ? { category: 'Channels' as SkillCategory, items } : undefined;
   }, [allItems]);
   const otherGroups = useMemo(
-    () => groupedItems.filter(g => g.category !== 'Channels'),
+    () => groupedItems.filter(g => g.category !== 'Channels' && (IS_DEV || g.category !== 'Other')),
     [groupedItems]
   );
 
@@ -1033,10 +907,22 @@ export default function Skills() {
                 { value: 'composio', label: t('skills.tabs.composio') },
                 { value: 'channels', label: t('skills.tabs.channels') },
                 { value: 'mcp', label: t('skills.tabs.mcp') },
+                ...(IS_DEV ? [{ value: 'runners' as const, label: t('skills.tabs.runners') }] : []),
               ]}
             />
             {
               <>
+                {IS_DEV && activeTab === 'runners' && (
+                  <div className="rounded-2xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-6 shadow-soft animate-fade-up">
+                    {/* The Runners sub-tab IS the scheduled-skills dashboard:
+                        header + [+ Create a Skill] + [▷ Run a Skill] CTAs
+                        plus the list of enable/disable cards. The picker +
+                        runner UX itself lives at /skills/run (a focused
+                        single-purpose page reached via the "Run a Skill"
+                        button or a card click). */}
+                    <SkillsDashboard />
+                  </div>
+                )}
                 {activeTab === 'channels' && channelsGroup && (
                   <div className="rounded-2xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-3 shadow-soft animate-fade-up">
                     <div className="px-1 pb-3 pt-1">
@@ -1137,17 +1023,23 @@ export default function Skills() {
                       (composioSortedEntries.length > 0 ? (
                         <div
                           className="grid gap-2 sm:gap-3"
-                          style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(5.5rem, 1fr))' }}>
+                          style={{
+                            gridTemplateColumns: 'repeat(auto-fill, minmax(5.5rem, 1fr))',
+                            gridAutoRows: '6.5rem',
+                          }}>
                           {composioSortedEntries.map(({ meta, connection }) => (
-                            <div key={meta.slug} data-testid={`skill-row-composio-${meta.slug}`}>
+                            <div
+                              key={meta.slug}
+                              data-testid={`skill-row-composio-${meta.slug}`}
+                              className="overflow-hidden">
                               <ComposioConnectorTile
                                 meta={meta}
                                 connection={connection}
                                 hasComposioError={Boolean(composioError)}
-                                isAgentReady={
-                                  agentReadyLoading ||
-                                  Boolean(agentReadyError) ||
-                                  agentReadyToolkits.has(meta.slug)
+                                agentUnsupported={
+                                  agentReadinessKnown &&
+                                  deriveComposioState(connection) === 'connected' &&
+                                  !agentReadyComposioToolkits.has(meta.slug)
                                 }
                                 testId={`skill-install-composio-${meta.slug}`}
                                 onOpen={() => setComposioModalToolkit(meta)}
@@ -1176,7 +1068,21 @@ export default function Skills() {
                         {t('channels.mcp.description')}
                       </p>
                     </div>
-                    <McpComingSoonPanel />
+                    {IS_DEV ? (
+                      <div className="h-[72vh] min-h-[480px]">
+                        <McpServersTab />
+                      </div>
+                    ) : (
+                      <div className="flex flex-col items-center justify-center py-16 text-center">
+                        <div className="text-3xl mb-3">🔌</div>
+                        <p className="text-sm font-medium text-stone-700 dark:text-neutral-300">
+                          {t('misc.comingSoon')}
+                        </p>
+                        <p className="mt-1 text-xs text-stone-500 dark:text-neutral-400">
+                          {t('channels.mcp.description')}
+                        </p>
+                      </div>
+                    )}
                   </div>
                 )}
               </>
@@ -1208,9 +1114,11 @@ export default function Skills() {
         <ComposioConnectModal
           toolkit={composioModalToolkit}
           connection={composioConnectionByToolkit.get(composioModalToolkit.slug)}
+          agentUnsupported={
+            agentReadinessKnown && !agentReadyComposioToolkits.has(composioModalToolkit.slug)
+          }
           onChanged={() => {
             void refreshComposio();
-            void dismissPendingEscalationIfResolved(`composio:${composioModalToolkit.slug}`);
           }}
           onClose={() => setComposioModalToolkit(null)}
         />

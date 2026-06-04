@@ -194,6 +194,7 @@ export interface InstalledModelInfo {
 
 export interface LocalAiDiagnostics {
   ollama_running: boolean;
+  ollama_runner_ok?: boolean;
   ollama_base_url: string;
   ollama_binary_path: string | null;
   vision_mode?: string;

@@ -7,6 +7,7 @@ import {
   getDefaultEnabledTools,
   getEnabledRustToolNames,
   getToolsByCategory,
+  normalizeEnabledToolList,
   TOOL_CATEGORIES,
 } from '../../../utils/toolDefinitions';
 import SettingsHeader from '../components/SettingsHeader';
@@ -38,7 +39,14 @@ const ToolsPanel = ({ embedded = false }: ToolsPanelProps = {}) => {
   useEffect(() => {
     if (savingRef.current) return;
     const persisted = onboardingTasks?.enabledTools;
-    const enabledList = persisted && persisted.length > 0 ? persisted : getDefaultEnabledTools();
+    // normalizeEnabledToolList converts persisted Rust tool names (e.g.
+    // "web_search_tool") back to UI toggle IDs ("web_search") so the
+    // includes() check below works regardless of what format was saved
+    // (fixes #2742: web_search toggle auto-reverts to OFF).
+    const enabledList =
+      persisted && persisted.length > 0
+        ? normalizeEnabledToolList(persisted)
+        : getDefaultEnabledTools();
     const map: Record<string, boolean> = {};
     for (const cat of TOOL_CATEGORIES) {
       for (const tool of toolsByCategory[cat]) {
@@ -121,6 +129,8 @@ const ToolsPanel = ({ embedded = false }: ToolsPanelProps = {}) => {
                     <button
                       key={tool.id}
                       type="button"
+                      role="switch"
+                      aria-checked={Boolean(enabled[tool.id])}
                       onClick={() => toggle(tool.id)}
                       className="w-full flex items-center justify-between p-2.5 rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 hover:border-stone-300 dark:border-neutral-700 dark:hover:border-neutral-700 transition-colors text-left">
                       <div className="min-w-0 flex-1">

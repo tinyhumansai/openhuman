@@ -8,42 +8,42 @@
   "collapse-color-groups": false,
   "colorGroups": [
     {
-      "query": "file:summary-L1",
+      "query": "path:L1",
       "color": {
         "a": 1,
         "rgb": 14701138
       }
     },
     {
-      "query": "file:summary-L2",
+      "query": "path:L2",
       "color": {
         "a": 1,
         "rgb": 14725458
       }
     },
     {
-      "query": "file:summary-L3",
+      "query": "path:L3",
       "color": {
         "a": 1,
         "rgb": 11657298
       }
     },
     {
-      "query": "file:summary-L4",
+      "query": "path:L4",
       "color": {
         "a": 1,
         "rgb": 5420768
       }
     },
     {
-      "query": "file:summary-L5",
+      "query": "path:L5",
       "color": {
         "a": 1,
         "rgb": 5431504
       }
     },
     {
-      "query": "file:summary-L6",
+      "query": "path:L6",
       "color": {
         "a": 1,
         "rgb": 14701261

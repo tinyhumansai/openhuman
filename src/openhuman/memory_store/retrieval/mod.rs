@@ -197,6 +197,7 @@ mod tests {
                 time_range: (ts, ts),
                 tags: tags.iter().map(|s| (*s).to_string()).collect(),
                 source_ref: None,
+                path_scope: None,
             },
             token_count: 3,
             seq_in_source: 0,

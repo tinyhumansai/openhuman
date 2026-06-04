@@ -5,7 +5,7 @@
 //! All on-disk mutations serialise through a single process-wide mutex so
 //! concurrent RPC handlers don't interleave writes.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs::{self, File, OpenOptions};
 use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader, Write};
@@ -16,6 +16,7 @@ use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use tempfile::NamedTempFile;
 
+use super::inverted_index::InvertedIndex;
 use super::types::{
     ConversationMessage, ConversationMessagePatch, ConversationThread, CreateConversationThread,
     CrossThreadHit,
@@ -25,6 +26,42 @@ const LOG_PREFIX: &str = "[memory:conversations]";
 const THREADS_FILENAME: &str = "threads.jsonl";
 const THREAD_MESSAGES_DIR: &str = "threads";
 static CONVERSATION_STORE_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+
+/// Per-workspace inverted index cache. Keyed by the workspace's
+/// `memory/conversations` root so multiple `ConversationStore` clones
+/// pointing at the same workspace share one index. The cache outlives
+/// individual store handles (which are cloneable PathBuf wrappers); it
+/// is bounded by the number of distinct workspaces a single process
+/// touches, which in practice is one. Tests using `TempDir` paths leave
+/// behind dead entries when the dir is removed — acceptable for an
+/// in-process cache.
+///
+/// # Lock ordering
+///
+/// When BOTH `CONVERSATION_STORE_LOCK` and `CONVERSATION_INDEX_CACHE`
+/// must be held simultaneously, `CONVERSATION_STORE_LOCK` MUST be
+/// acquired first. This applies to `append_message` (writes JSONL then
+/// updates the warm index) and `with_index` (caller holds the outer
+/// lock, then takes the cache lock to run the search closure).
+///
+/// `prime_index_if_cold` minimises shared locking. It may hold both
+/// locks only momentarily, and always in the `CONVERSATION_STORE_LOCK`
+/// → `CONVERSATION_INDEX_CACHE` order above: while holding the outer
+/// lock to snapshot live thread IDs via `thread_index_unlocked`
+/// (header-only, no per-thread I/O) it re-checks the cache once. It then
+/// releases `CONVERSATION_STORE_LOCK` before reading per-thread JSONL
+/// content (no lock held) and finally acquires `CONVERSATION_INDEX_CACHE`
+/// alone to insert the built index. It never holds both across the slow
+/// JSONL walk, and neither operation calls back into a function that
+/// would acquire the other lock.
+///
+/// `list_threads_unlocked` MUST NOT be used inside the locked snapshot —
+/// it calls `measure_messages_unlocked` per legacy thread (no Stats
+/// history), which reads every per-thread JSONL file and appends a
+/// `Stats` entry to `threads.jsonl`, reintroducing the multi-second
+/// stall under the outer lock that this design was built to avoid.
+static CONVERSATION_INDEX_CACHE: Lazy<Mutex<HashMap<PathBuf, InvertedIndex>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
 
 fn redact_title_for_log(title: &str) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -61,6 +98,8 @@ enum ThreadLogEntry {
         parent_thread_id: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         labels: Option<Vec<String>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        personality_id: Option<String>,
     },
     Delete {
         thread_id: String,
@@ -98,6 +137,7 @@ impl ConversationStore {
         let root = self.ensure_root()?;
         let threads_path = root.join(THREADS_FILENAME);
         let now = request.created_at.clone();
+        let labels = request.labels.clone().map(normalize_labels);
         append_jsonl(
             &threads_path,
             &ThreadLogEntry::Upsert {
@@ -106,7 +146,8 @@ impl ConversationStore {
                 created_at: request.created_at.clone(),
                 updated_at: now,
                 parent_thread_id: request.parent_thread_id.clone(),
-                labels: request.labels.clone(),
+                labels,
+                personality_id: request.personality_id.clone(),
             },
         )?;
         debug!(
@@ -148,33 +189,182 @@ impl ConversationStore {
     /// chat continuity needs a direct cross-thread reader to surface
     /// context the user shared in chat A when they ask a dependent
     /// question in chat B.
+    ///
+    /// Backed by an in-memory trigram/CJK-bigram inverted index
+    /// (`super::inverted_index`). The legacy implementation walked every
+    /// JSONL file and did `content.to_lowercase().contains(term)` per
+    /// message, which is O(threads × messages × content_len). The index
+    /// turns that into O(|posting lists|) for typical queries while
+    /// preserving the previous scoring contract
+    /// (`score = matched_terms / total_terms`, recency tiebreak).
+    ///
+    /// # Lock strategy (issue #2849)
+    ///
+    /// **Fast path (warm cache):** acquires only `CONVERSATION_INDEX_CACHE`
+    /// — no outer store lock — and returns immediately.
+    ///
+    /// **Cold path (first access):** snapshots the thread list under
+    /// `CONVERSATION_STORE_LOCK` (brief), then releases it before reading
+    /// JSONL files to build the inverted index. This avoids blocking
+    /// `append_message` / `get_messages` / `list_threads` during the
+    /// potentially-long rebuild. JSONL files are append-only, so a
+    /// concurrent write during the rebuild may mean the rebuilt index
+    /// misses that one message. It is *not* re-read later; subsequent
+    /// `append_message` calls only index their own (new) messages once
+    /// the cache is warm. The missed message therefore stays absent
+    /// until the cache is evicted and rebuilt — an accepted tradeoff
+    /// for issue #2849.
     pub fn search_cross_thread_messages(
         &self,
         query: &str,
         limit: usize,
         exclude_thread_id: Option<&str>,
     ) -> Result<Vec<CrossThreadHit>, String> {
+        // Warm the index outside the outer lock so concurrent
+        // append_message / get_messages calls are not stalled during the
+        // cold JSONL rebuild (which can take seconds on large workspaces).
+        // After this returns the cache entry is guaranteed to exist, so
+        // with_index will not trigger a second rebuild.
+        self.prime_index_if_cold()?;
+
         let _guard = CONVERSATION_STORE_LOCK.lock();
-        let query_lower = query.to_lowercase();
-        let terms: Vec<&str> = query_lower
-            .split_whitespace()
-            .filter(|t| t.len() >= 3)
-            .collect();
-        if terms.is_empty() {
-            return Ok(Vec::new());
+        self.with_index(|idx| idx.search(query, limit, exclude_thread_id))
+    }
+
+    /// If no index entry exists for this workspace, snapshot the live thread
+    /// IDs under `CONVERSATION_STORE_LOCK` (fast — reads only
+    /// `threads.jsonl`, no per-thread I/O), release that lock, read all
+    /// per-thread JSONL files with no lock held (safe — append-only), then
+    /// insert the built index into `CONVERSATION_INDEX_CACHE` using
+    /// `entry().or_insert()` so a concurrent prime that finished first wins
+    /// and ours is discarded.
+    ///
+    /// After this call returns, `with_index` will always find a warm entry
+    /// and will not re-enter `populate_index_unlocked`.
+    fn prime_index_if_cold(&self) -> Result<(), String> {
+        let key = self.root_dir();
+        // Fast path: already warm — one tiny lock acquisition and out.
+        if CONVERSATION_INDEX_CACHE.lock().contains_key(&key) {
+            return Ok(());
         }
-        let threads = self.list_threads_unlocked()?;
-        let mut hits: Vec<CrossThreadHit> = Vec::new();
-        for thread in threads {
-            if exclude_thread_id == Some(thread.id.as_str()) {
+        // Snapshot live thread IDs while holding the outer lock.
+        // `thread_index_unlocked` reads only `threads.jsonl` (header-only,
+        // O(threads), no per-thread file I/O) — the lock is released
+        // immediately after, so the slow content reads below never block
+        // concurrent writers.
+        //
+        // Do NOT call `list_threads_unlocked` here.  For workspaces where
+        // any thread has no `MessageAppended`/`Stats` history (common before
+        // the Stats log was introduced), `list_threads_unlocked` triggers
+        // `measure_messages_unlocked` + a `Stats` append per thread — all
+        // under `CONVERSATION_STORE_LOCK` — reintroducing the multi-second
+        // stall this function is designed to avoid.
+        let thread_ids: Vec<String> = {
+            let _guard = CONVERSATION_STORE_LOCK.lock();
+            // Re-check after acquiring: a concurrent prime may have just
+            // finished while we waited for the outer lock.
+            if CONVERSATION_INDEX_CACHE.lock().contains_key(&key) {
+                return Ok(());
+            }
+            self.thread_index_unlocked()?.into_keys().collect()
+        };
+        // Build the index with no locks held.  The per-thread JSONL files are
+        // append-only so reads are safe without synchronisation. The worst
+        // case is a message appended during this window: append_message sees a
+        // still-cold cache (we have not inserted yet) and skips its index
+        // update, so that specific message stays absent from the in-memory
+        // index until the next cold rebuild (e.g. a process restart re-reads
+        // JSONL). Later appends index only their own messages, not the raced
+        // one. This is the accepted tradeoff documented in issue #2849.
+        let mut idx = InvertedIndex::new();
+        for thread_id in &thread_ids {
+            let path = self.thread_messages_path(thread_id);
+            if !path.exists() {
                 continue;
             }
+            match read_jsonl::<ConversationMessage>(&path) {
+                Ok(messages) => {
+                    for msg in messages {
+                        idx.insert(thread_id, msg);
+                    }
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        "{LOG_PREFIX} index prime skipped unreadable file path={} error={}",
+                        path.display(),
+                        err
+                    );
+                }
+            }
+        }
+        // Insert only if the key is still absent — a concurrent prime that
+        // finished first wins; ours is discarded. Log the discard so
+        // duplicate-build churn under load is diagnosable.
+        {
+            let mut cache = CONVERSATION_INDEX_CACHE.lock();
+            if cache.contains_key(&key) {
+                debug!(
+                    "{LOG_PREFIX} discarded freshly-built index; concurrent prime won workspace={}",
+                    key.display()
+                );
+            } else {
+                cache.insert(key.clone(), idx);
+                debug!(
+                    "{LOG_PREFIX} inverted index primed workspace={}",
+                    key.display()
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// Acquire the cached inverted index for this workspace (building it
+    /// from JSONL on first access) and run `f` against it. Caller MUST
+    /// hold `CONVERSATION_STORE_LOCK` for the duration of the closure.
+    ///
+    /// In the normal path the index has already been warmed by
+    /// `prime_index_if_cold`, so the cold-build branch here is a safety net
+    /// for any future callers that bypass the priming step.
+    fn with_index<R>(&self, f: impl FnOnce(&mut InvertedIndex) -> R) -> Result<R, String> {
+        let key = self.root_dir();
+        let mut cache = CONVERSATION_INDEX_CACHE.lock();
+        if !cache.contains_key(&key) {
+            let mut idx = InvertedIndex::new();
+            self.populate_index_unlocked(&mut idx)?;
+            cache.insert(key.clone(), idx);
+        }
+        let idx = cache.get_mut(&key).expect("inserted above if absent");
+        Ok(f(idx))
+    }
+
+    /// Walk every per-thread JSONL file in the workspace and insert each
+    /// message into `idx`. Used as the fallback cold-build path inside
+    /// `with_index`; `prime_index_if_cold` handles the normal first-access
+    /// case outside the outer lock. The JSONL files are the source of truth
+    /// so a rebuild after a process crash is always safe.
+    fn populate_index_unlocked(&self, idx: &mut InvertedIndex) -> Result<(), String> {
+        // Caller (`with_index`) already holds `CONVERSATION_STORE_LOCK`, so we
+        // must NOT re-acquire it here — `parking_lot::Mutex` is not reentrant
+        // and doing so would deadlock. Use the `_unlocked` thread reader
+        // directly.
+        //
+        // `list_threads_unlocked` already handles a fresh workspace:
+        // `ensure_root` creates the directory + threads log if missing, and
+        // `read_jsonl` returns an empty Vec for an empty file. Anything that
+        // still bubbles up here is a real filesystem/setup failure and must
+        // propagate — silently returning Ok would mask it and make search
+        // appear to return zero results for an undiagnosed reason.
+        let threads = self.list_threads_unlocked()?;
+        for thread in threads {
             let path = self.thread_messages_path(&thread.id);
+            if !path.exists() {
+                continue;
+            }
             let messages = match read_jsonl::<ConversationMessage>(&path) {
                 Ok(m) => m,
                 Err(err) => {
                     tracing::warn!(
-                        "[conversations] cross-thread scan skipped unreadable file path={} error={}",
+                        "{LOG_PREFIX} index build skipped unreadable file path={} error={}",
                         path.display(),
                         err
                     );
@@ -182,30 +372,14 @@ impl ConversationStore {
                 }
             };
             for msg in messages {
-                let content_lower = msg.content.to_lowercase();
-                let matched = terms.iter().filter(|t| content_lower.contains(*t)).count();
-                if matched == 0 {
-                    continue;
-                }
-                let score = matched as f64 / terms.len() as f64;
-                hits.push(CrossThreadHit {
-                    thread_id: thread.id.clone(),
-                    message_id: msg.id,
-                    role: msg.sender,
-                    content: msg.content,
-                    created_at: msg.created_at,
-                    score,
-                });
+                idx.insert(&thread.id, msg);
             }
         }
-        hits.sort_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| b.created_at.cmp(&a.created_at))
-        });
-        hits.truncate(limit);
-        Ok(hits)
+        debug!(
+            "{LOG_PREFIX} inverted index populated workspace={}",
+            self.root_dir().display()
+        );
+        Ok(())
     }
 
     /// Append a message to the thread's JSONL file. Errors if the thread is missing.
@@ -235,6 +409,20 @@ impl ConversationStore {
                 last_message_at: message.created_at.clone(),
             },
         )?;
+        // Keep the inverted index in sync. We only update if the index
+        // has already been materialized for this workspace — otherwise
+        // the next search will lazily rebuild and pick up this message
+        // anyway, and we avoid paying the rebuild cost on a write path.
+        // `insert` takes the message by value so it can move owned
+        // fields straight into its `DocEntry`; we clone here only when
+        // the cache is actually warm, paying for one extra owned copy
+        // (instead of cloning each field inside `insert`).
+        {
+            let mut cache = CONVERSATION_INDEX_CACHE.lock();
+            if let Some(idx) = cache.get_mut(&self.root_dir()) {
+                idx.insert(thread_id, message.clone());
+            }
+        }
         debug!(
             "{LOG_PREFIX} appended message thread_id={} message_id={} path={}",
             thread_id,
@@ -266,6 +454,7 @@ impl ConversationStore {
                 updated_at: updated_at.to_string(),
                 parent_thread_id: entry.parent_thread_id.clone(),
                 labels: Some(entry.labels.clone()),
+                personality_id: entry.personality_id.clone(),
             },
         )?;
         debug!(
@@ -291,6 +480,7 @@ impl ConversationStore {
             .get(thread_id)
             .ok_or_else(|| format!("thread {} not found", thread_id))?;
         let threads_path = self.ensure_root()?.join(THREADS_FILENAME);
+        let labels = normalize_labels(labels);
         append_jsonl(
             &threads_path,
             &ThreadLogEntry::Upsert {
@@ -300,6 +490,7 @@ impl ConversationStore {
                 updated_at: updated_at.to_string(),
                 parent_thread_id: entry.parent_thread_id.clone(),
                 labels: Some(labels),
+                personality_id: entry.personality_id.clone(),
             },
         )?;
         debug!(
@@ -370,6 +561,14 @@ impl ConversationStore {
                 ));
             }
         }
+        // Drop every indexed message for this thread so future searches
+        // don't surface stale content.
+        {
+            let mut cache = CONVERSATION_INDEX_CACHE.lock();
+            if let Some(idx) = cache.get_mut(&self.root_dir()) {
+                idx.remove_thread(thread_id);
+            }
+        }
         debug!(
             "{LOG_PREFIX} deleted thread id={} path={}",
             thread_id,
@@ -388,6 +587,13 @@ impl ConversationStore {
                 .map_err(|e| format!("remove conversation dir {}: {e}", root.display()))?;
         }
         self.ensure_root()?;
+        // Drop the cached inverted index — the workspace is now empty,
+        // and any next search will lazily rebuild from the (now empty)
+        // JSONL tree.
+        {
+            let mut cache = CONVERSATION_INDEX_CACHE.lock();
+            cache.remove(&root);
+        }
         debug!(
             "{LOG_PREFIX} purged threads={} messages={} root={}",
             stats.thread_count,
@@ -485,7 +691,8 @@ impl ConversationStore {
                     last_message_at,
                     created_at: entry.created_at.clone(),
                     parent_thread_id: entry.parent_thread_id.clone(),
-                    labels: entry.labels.clone(),
+                    labels: normalize_labels(entry.labels.clone()),
+                    personality_id: entry.personality_id.clone(),
                 }
             })
             .collect();
@@ -544,7 +751,8 @@ impl ConversationStore {
             last_message_at,
             created_at: entry.created_at.clone(),
             parent_thread_id: entry.parent_thread_id.clone(),
-            labels: entry.labels.clone(),
+            labels: normalize_labels(entry.labels.clone()),
+            personality_id: entry.personality_id.clone(),
         }))
     }
 
@@ -564,6 +772,7 @@ impl ConversationStore {
                     created_at,
                     parent_thread_id,
                     labels,
+                    personality_id,
                     ..
                 } => {
                     let (
@@ -572,17 +781,30 @@ impl ConversationStore {
                         labels_value,
                         message_count_value,
                         last_message_at_value,
+                        personality_id_value,
                     ) = match index.get(&thread_id) {
                         Some(existing) => (
                             existing.created_at.clone(),
                             parent_thread_id.or_else(|| existing.parent_thread_id.clone()),
-                            labels.unwrap_or_else(|| existing.labels.clone()),
+                            labels
+                                .map(normalize_labels)
+                                .unwrap_or_else(|| existing.labels.clone()),
                             existing.message_count,
                             existing.last_message_at.clone(),
+                            personality_id.or_else(|| existing.personality_id.clone()),
                         ),
                         None => {
-                            let inferred = labels.unwrap_or_else(|| infer_labels(&thread_id));
-                            (created_at, parent_thread_id, inferred, None, None)
+                            let inferred = labels
+                                .map(normalize_labels)
+                                .unwrap_or_else(|| infer_labels(&thread_id));
+                            (
+                                created_at,
+                                parent_thread_id,
+                                inferred,
+                                None,
+                                None,
+                                personality_id,
+                            )
                         }
                     };
                     index.insert(
@@ -594,6 +816,7 @@ impl ConversationStore {
                             labels: labels_value,
                             message_count: message_count_value,
                             last_message_at: last_message_at_value,
+                            personality_id: personality_id_value,
                         },
                     );
                 }
@@ -654,6 +877,7 @@ struct ThreadIndexEntry {
     message_count: Option<usize>,
     /// Timestamp of the newest message, or `None` if unknown (legacy).
     last_message_at: Option<String>,
+    personality_id: Option<String>,
 }
 
 fn infer_labels(thread_id: &str) -> Vec<String> {
@@ -662,8 +886,24 @@ fn infer_labels(thread_id: &str) -> Vec<String> {
     } else if thread_id.starts_with("proactive:") {
         vec!["notification".to_string()]
     } else {
-        vec!["work".to_string()]
+        vec!["general".to_string()]
     }
+}
+
+fn normalize_labels(labels: Vec<String>) -> Vec<String> {
+    let mut normalized = Vec::with_capacity(labels.len());
+    for label in labels {
+        let next = match label.as_str() {
+            "work" => "general".to_string(),
+            "from_reflection" | "subconscious_tick" => "subconscious".to_string(),
+            "agent-task" | "worker" => "tasks".to_string(),
+            _ => label,
+        };
+        if !normalized.contains(&next) {
+            normalized.push(next);
+        }
+    }
+    normalized
 }
 
 fn read_jsonl<T>(path: &Path) -> Result<Vec<T>, String>

@@ -106,7 +106,7 @@ describe('Accounts provider picker contract', () => {
     expect(visibleProviderIds).not.toContain('zoom');
 
     await browser.execute(() => {
-      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     });
     await waitForAddAccountModalClosed();
   });
@@ -129,7 +129,7 @@ describe('Accounts provider picker contract', () => {
       providersToRegister.map(provider => provider.id)
     );
     await browser.execute(() => {
-      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     });
     await waitForAddAccountModalClosed();
 

@@ -19,11 +19,12 @@
 //! - **[`fork_context`]**: Task-local storage for parent context sharing.
 //! - **[`interrupt`]**: Infrastructure for graceful cancellation of agent loops.
 
-pub(crate) mod archivist;
+pub mod archivist;
 pub(crate) mod builtin_definitions;
 mod credentials;
 pub mod definition;
 pub(crate) mod definition_loader;
+pub(crate) mod engine;
 pub mod fork_context;
 mod instructions;
 pub mod interrupt;
@@ -31,6 +32,7 @@ pub(crate) mod memory_context;
 pub(crate) mod memory_context_safety;
 mod parse;
 pub(crate) mod payload_summarizer;
+pub mod run_queue;
 pub mod sandbox_context;
 pub(crate) mod self_healing;
 pub mod session;
@@ -40,6 +42,7 @@ pub mod subagent_runner;
 mod token_budget;
 pub(crate) mod tool_filter;
 mod tool_loop;
+pub(crate) mod tool_result_artifacts;
 
 pub use definition::{
     AgentDefinition, AgentDefinitionRegistry, DefinitionSource, ModelSpec, PromptSource,
@@ -60,7 +63,7 @@ mod bughunt_tests;
 #[cfg(test)]
 pub(crate) mod test_support;
 #[cfg(test)]
-mod test_support_test;
+mod test_support_tests;
 
 #[cfg(test)]
 mod harness_gap_tests;

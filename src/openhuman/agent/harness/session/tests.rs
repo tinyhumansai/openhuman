@@ -6,6 +6,7 @@
 //! (`MockProvider`, `RecordingProvider`, `MockTool`) are defined here.
 
 use super::types::{Agent, AgentBuilder};
+use crate::core::event_bus::{init_global, publish_global, DomainEvent};
 use crate::openhuman::agent::dispatcher::{NativeToolDispatcher, XmlToolDispatcher};
 use crate::openhuman::inference::provider::{ChatRequest, ConversationMessage, Provider};
 use crate::openhuman::memory::Memory;
@@ -43,6 +44,7 @@ impl Provider for MockProvider {
                 text: Some("done".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             });
         }
         Ok(guard.remove(0))
@@ -99,6 +101,7 @@ impl Provider for RecordingProvider {
                 text: Some("done".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             });
         }
         Ok(guard.remove(0))
@@ -170,6 +173,22 @@ fn build_minimal_agent_with_definition_name(definition_name: Option<&str>) -> Ag
     }
 
     builder.build().expect("minimal agent build should succeed")
+}
+
+fn integration_delegate_toolkit_enum(agent: &Agent) -> Vec<String> {
+    let spec = agent
+        .tool_specs()
+        .iter()
+        .find(|spec| spec.name == "delegate_to_integrations_agent")
+        .expect("delegate_to_integrations_agent tool spec should be present");
+    let mut out: Vec<String> = spec.parameters["properties"]["toolkit"]["enum"]
+        .as_array()
+        .expect("toolkit enum should be an array")
+        .iter()
+        .filter_map(|v| v.as_str().map(ToString::to_string))
+        .collect();
+    out.sort();
+    out
 }
 
 /// Regression test for the `build_session_agent_inner` agent-id
@@ -254,6 +273,141 @@ fn set_connected_integrations_marks_session_initialized_and_updates_hash() {
     );
 }
 
+#[test]
+fn refresh_delegation_tools_updates_schema_even_when_tool_arc_is_shared() {
+    use crate::openhuman::agent::harness::AgentDefinitionRegistry;
+
+    AgentDefinitionRegistry::init_global_builtins().unwrap();
+    let mut agent = build_minimal_agent_with_definition_name(Some("orchestrator"));
+    agent.set_connected_integrations(vec![
+        crate::openhuman::context::prompt::ConnectedIntegration {
+            toolkit: "gmail".into(),
+            description: "Email".into(),
+            tools: vec![],
+            gated_tools: vec![],
+            connected: true,
+            non_active_status: None,
+        },
+    ]);
+
+    assert!(agent.refresh_delegation_tools());
+    assert_eq!(
+        integration_delegate_toolkit_enum(&agent),
+        vec!["gmail".to_string()]
+    );
+
+    // Simulate an in-flight turn holding a shared Arc clone.
+    let _shared_tools = agent.tools_arc();
+    agent.set_connected_integrations(vec![
+        crate::openhuman::context::prompt::ConnectedIntegration {
+            toolkit: "gmail".into(),
+            description: "Email".into(),
+            tools: vec![],
+            gated_tools: vec![],
+            connected: true,
+            non_active_status: None,
+        },
+        crate::openhuman::context::prompt::ConnectedIntegration {
+            toolkit: "notion".into(),
+            description: "Docs".into(),
+            tools: vec![],
+            gated_tools: vec![],
+            connected: true,
+            non_active_status: None,
+        },
+    ]);
+
+    assert!(agent.refresh_delegation_tools());
+    assert_eq!(
+        integration_delegate_toolkit_enum(&agent),
+        vec!["gmail".to_string(), "notion".to_string()]
+    );
+}
+
+/// Regression for #3044: repeated mid-session connects while the `tools`
+/// Arc stays shared (the normal `before_dispatch` path, where
+/// `AgentToolSource` holds a clone) must not accumulate duplicate
+/// synthesised `ToolSpec`s.
+///
+/// Before the fix, a failed `tools` reconcile rolled `synthesized_tool_names`
+/// back to the *old* mask. On the next refresh the spec `retain` used that
+/// stale mask and failed to drop the intervening refresh's specs, so the
+/// synthesised delegate spec piled up once per connect.
+#[test]
+fn refresh_delegation_tools_no_duplicate_specs_across_shared_arc_connects() {
+    use crate::openhuman::agent::harness::AgentDefinitionRegistry;
+
+    AgentDefinitionRegistry::init_global_builtins().unwrap();
+    let mut agent = build_minimal_agent_with_definition_name(Some("orchestrator"));
+
+    let conn = |slug: &str, desc: &str| crate::openhuman::context::prompt::ConnectedIntegration {
+        toolkit: slug.into(),
+        description: desc.into(),
+        tools: vec![],
+        gated_tools: vec![],
+        connected: true,
+        non_active_status: None,
+    };
+
+    let delegate_spec_count = |agent: &Agent| -> usize {
+        agent
+            .tool_specs()
+            .iter()
+            .filter(|s| s.name == "delegate_to_integrations_agent")
+            .count()
+    };
+
+    // Turn 1: gmail connects.
+    agent.set_connected_integrations(vec![conn("gmail", "Email")]);
+    assert!(agent.refresh_delegation_tools());
+
+    // Hold a shared clone across every subsequent refresh so `Arc::get_mut`
+    // always fails — exactly what happens during an in-flight turn.
+    let _shared_tools = agent.tools_arc();
+
+    // Turn 2: notion connects mid-session.
+    agent.set_connected_integrations(vec![conn("gmail", "Email"), conn("notion", "Docs")]);
+    assert!(agent.refresh_delegation_tools());
+
+    // Turn 3: slack connects mid-session — this is where the old code
+    // produced a duplicate `delegate_to_integrations_agent` spec.
+    agent.set_connected_integrations(vec![
+        conn("gmail", "Email"),
+        conn("notion", "Docs"),
+        conn("slack", "Chat"),
+    ]);
+    assert!(agent.refresh_delegation_tools());
+
+    assert_eq!(
+        delegate_spec_count(&agent),
+        1,
+        "exactly one synthesised delegate spec must remain after repeated shared-Arc connects"
+    );
+    assert_eq!(
+        integration_delegate_toolkit_enum(&agent),
+        vec![
+            "gmail".to_string(),
+            "notion".to_string(),
+            "slack".to_string()
+        ]
+    );
+}
+
+#[test]
+fn composio_listener_drains_integrations_changed_events() {
+    let _ = init_global(64);
+    let mut agent = build_minimal_agent_with_definition_name(Some("orchestrator"));
+    agent.ensure_composio_integrations_listener();
+    publish_global(DomainEvent::ComposioIntegrationsChanged {
+        toolkits: vec!["gmail".into()],
+    });
+    assert!(agent.drain_composio_integrations_changed_events());
+    assert!(
+        !agent.drain_composio_integrations_changed_events(),
+        "event queue should be drained after one pass"
+    );
+}
+
 #[tokio::test]
 async fn turn_without_tools_returns_text() {
     let workspace = tempfile::TempDir::new().expect("temp workspace");
@@ -264,6 +418,7 @@ async fn turn_without_tools_returns_text() {
             text: Some("hello".into()),
             tool_calls: vec![],
             usage: None,
+            reasoning_content: None,
         }]),
     });
 
@@ -303,11 +458,13 @@ async fn turn_with_native_dispatcher_handles_tool_results_variant() {
                     arguments: "{}".into(),
                 }],
                 usage: None,
+                reasoning_content: None,
             },
             crate::openhuman::inference::provider::ChatResponse {
                 text: Some("done".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             },
         ]),
     });
@@ -351,11 +508,13 @@ async fn turn_with_native_dispatcher_persists_fallback_tool_calls() {
                 ),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             },
             crate::openhuman::inference::provider::ChatResponse {
                 text: Some("done".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             },
         ]),
     });
@@ -442,16 +601,19 @@ async fn turn_dispatches_spawn_subagent_through_full_path() {
                     .to_string(),
                 }],
                 usage: None,
+                reasoning_content: None,
             },
             crate::openhuman::inference::provider::ChatResponse {
                 text: Some("X is Y".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             },
             crate::openhuman::inference::provider::ChatResponse {
                 text: Some("Based on the research, X is Y.".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             },
         ]),
     });
@@ -530,16 +692,19 @@ async fn system_prompt_and_model_are_byte_stable_across_turns() {
                 text: Some("first".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             },
             crate::openhuman::inference::provider::ChatResponse {
                 text: Some("second".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             },
             crate::openhuman::inference::provider::ChatResponse {
                 text: Some("third".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             },
         ]),
         captures: Mutex::new(Vec::new()),

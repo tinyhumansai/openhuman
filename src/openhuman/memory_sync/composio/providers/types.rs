@@ -1,7 +1,7 @@
 //! Shared types for Composio provider implementations.
 
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crate::openhuman::composio::client::{
     create_composio_client, direct_execute, ComposioClient, ComposioClientKind,
@@ -29,6 +29,35 @@ impl SyncReason {
             SyncReason::ConnectionCreated => "connection_created",
             SyncReason::Periodic => "periodic",
             SyncReason::Manual => "manual",
+        }
+    }
+}
+
+/// What kind of work an ingested task implies. GitHub's issues-and-PRs
+/// search returns both shapes, and the job differs fundamentally —
+/// *resolve* an issue vs *review* a pull request — so providers tag each
+/// task and the `task_sources` enrichment phrases the objective / agent
+/// prompt accordingly (the triage LLM then knows what to do). Providers
+/// that don't distinguish (notion, linear, clickup) leave this `Generic`.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskKind {
+    /// No issue/PR distinction — the default for non-code providers.
+    #[default]
+    Generic,
+    /// A tracker issue: the job is to resolve / implement it.
+    Issue,
+    /// A pull request: the job is to review it (read the diff, give feedback).
+    PullRequest,
+}
+
+impl TaskKind {
+    /// Stable lowercase tag, mirrored into the card's `source_metadata`.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            TaskKind::Generic => "generic",
+            TaskKind::Issue => "issue",
+            TaskKind::PullRequest => "pull_request",
         }
     }
 }
@@ -77,6 +106,150 @@ impl SyncOutcome {
     }
 }
 
+/// A provider-agnostic, structured work item produced by
+/// [`super::ComposioProvider::fetch_tasks`].
+///
+/// Unlike the `sync()` path — which persists upstream items into the
+/// memory store as passive context — `fetch_tasks` *returns* normalized
+/// tasks so the `task_sources` domain can enrich them and route them
+/// onto the agent's todo board. Every native task provider (github,
+/// notion, linear, clickup) maps its upstream payload shape into this
+/// common envelope.
+///
+/// `source_id` is left empty by providers and stamped by the
+/// `task_sources` pipeline with the originating `TaskSource.id` — a
+/// provider has no knowledge of which configured source asked for the
+/// fetch.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct NormalizedTask {
+    /// Upstream provider's stable id for the item (issue/task/page id).
+    pub external_id: String,
+    /// The `TaskSource.id` that produced this task. Empty until the
+    /// pipeline stamps it.
+    #[serde(default)]
+    pub source_id: String,
+    /// Toolkit slug, e.g. `"github"`.
+    pub provider: String,
+    /// Whether this task is an issue, a pull request, or undifferentiated.
+    /// Drives intent-aware objective / prompt phrasing in enrichment.
+    #[serde(default)]
+    pub kind: TaskKind,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assignee: Option<String>,
+    /// Due date as an ISO-8601 string, when the provider exposes one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub due: Option<String>,
+    #[serde(default)]
+    pub labels: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority: Option<String>,
+    /// Last-updated ISO-8601 timestamp — used for cursor advancement and
+    /// edit-aware dedup (`{external_id}@{updated_at}`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+    /// The raw upstream payload, retained for enrichment / debugging.
+    #[serde(default)]
+    pub raw: serde_json::Value,
+}
+
+/// A selectable upstream task container (board / database / list) used to
+/// populate a picker so the user chooses from a list instead of pasting a
+/// raw id. Today this is a Notion database, later a Linear team or ClickUp
+/// list. Surfaced to the task-source UI as `{ id, title }`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskContainer {
+    /// Provider-native id (e.g. a Notion database id) used as the filter id.
+    pub id: String,
+    /// Human-readable label for the picker.
+    pub title: String,
+}
+
+/// Provider-agnostic filter passed into
+/// [`super::ComposioProvider::fetch_tasks`].
+///
+/// The `task_sources` domain builds this from a user-configured,
+/// per-provider `FilterSpec`. Each provider reads only the fields that
+/// apply to it (github reads `repo`/`labels`; notion reads
+/// `database_id`; linear/clickup read `team_id`; …) and ignores the
+/// rest. `extra` is a free-form escape hatch surfaced in the UI for
+/// advanced provider-native query fragments.
+/// How the GitHub task-source fetch reaches GitHub. Shipped desktop users
+/// connect GitHub via Composio OAuth (no `gh` on PATH, no `GITHUB_TOKEN`),
+/// while local dev / self-host setups often have the reverse. `Auto` does the
+/// right thing for both; `Composio` / `Local` force a path when the user wants.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GithubFetchMode {
+    /// Try the connected Composio account first; fall back to local `gh`/REST
+    /// only when Composio is unavailable. The safe default — no regression for
+    /// shipped users, still a true fallback for local/dev.
+    #[default]
+    Auto,
+    /// Force the connected Composio account (classic shipped-app behaviour).
+    Composio,
+    /// Force local `gh` CLI / REST with a `GH_TOKEN`/`GITHUB_TOKEN` env token.
+    Local,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskFetchFilter {
+    /// Scope to items assigned to (or involving) the authenticated user.
+    #[serde(default)]
+    pub assignee_is_me: bool,
+    /// GitHub fetch path selector (Composio vs local `gh`/REST). Default `Auto`.
+    #[serde(default)]
+    pub github_fetch_mode: GithubFetchMode,
+    /// GitHub `owner/name` repository scope.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo: Option<String>,
+    /// GitHub label filter.
+    #[serde(default)]
+    pub labels: Vec<String>,
+    /// Issue/task state filter (e.g. `"open"`, `"todo"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<String>,
+    /// Notion database (board) id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub database_id: Option<String>,
+    /// Notion status property filter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    /// Linear / ClickUp team (workspace) id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team_id: Option<String>,
+    /// ClickUp list id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub list_id: Option<String>,
+    /// Free-form provider-native filter fragment (advanced).
+    #[serde(default)]
+    pub extra: serde_json::Value,
+    /// Hard cap on how many tasks a single fetch returns.
+    #[serde(default)]
+    pub max: u32,
+}
+
+impl TaskFetchFilter {
+    /// Effective per-fetch item cap, defaulting to a safe bound when the
+    /// caller leaves `max` unset (0).
+    pub fn effective_max(&self) -> usize {
+        if self.max == 0 {
+            25
+        } else {
+            self.max as usize
+        }
+    }
+}
+
 /// Per-call context handed to provider methods.
 ///
 /// `connection_id` is `None` when a method runs in a "no specific
@@ -90,11 +263,38 @@ impl SyncOutcome {
 /// keeps an [`Arc<Config>`] and resolves the underlying client per call
 /// through [`ProviderContext::execute`], mirroring the agent-tool
 /// migration in [`crate::openhuman::composio::tools::ComposioExecuteTool`].
+/// Per-sync accumulator for Composio billable-action usage.
+///
+/// Lives behind a shared handle on [`ProviderContext`] so the single
+/// `execute` chokepoint can tally every action a provider fires during one
+/// sync run, regardless of which provider (gmail / slack / github / notion /
+/// linear / clickup) or how many pages it paginates.
+/// [`crate::openhuman::memory_sync::composio::run_connection_sync`] returns
+/// the final tally alongside the [`SyncOutcome`] for the sync audit log
+/// (#3111).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ComposioUsage {
+    /// Count of `execute` calls that returned a response this run.
+    pub actions_called: u32,
+    /// Sum of each response's backend-reported `cost_usd`.
+    pub cost_usd: f64,
+}
+
+/// Shared, interior-mutable handle to a [`ComposioUsage`] tally. Cloning a
+/// [`ProviderContext`] shares the same underlying counter, so the count is
+/// stable no matter how the context is passed around within a sync.
+pub type ComposioUsageHandle = Arc<Mutex<ComposioUsage>>;
+
 #[derive(Clone)]
 pub struct ProviderContext {
     pub config: Arc<Config>,
     pub toolkit: String,
     pub connection_id: Option<String>,
+    /// Accumulates Composio billable-action usage across this context's
+    /// lifetime. Defaulted at every construction site; only the sync path
+    /// (`run_connection_sync`) reads it back. Non-sync callers (agent tools,
+    /// task-source fetches) leave it at zero — harmless.
+    pub usage: ComposioUsageHandle,
 }
 
 impl ProviderContext {
@@ -124,6 +324,7 @@ impl ProviderContext {
                 config,
                 toolkit: toolkit.into(),
                 connection_id,
+                usage: ComposioUsageHandle::default(),
             }),
             Err(e) => {
                 tracing::debug!(
@@ -156,17 +357,27 @@ impl ProviderContext {
         // Arc<Config> snapshot held by `self` was taken at agent-init time
         // and is otherwise stale relative to subsequent set_api_key /
         // clear_api_key RPCs.
-        let live_config = config_rpc::load_config_with_timeout().await.map_err(|e| {
-            tracing::warn!(
-                action = %action,
-                toolkit = %self.toolkit,
-                error = %e,
-                "[composio:provider_context] execute: load_config failed"
-            );
-            anyhow::anyhow!("composio provider_context: failed to load live config: {e}")
-        })?;
+        //
+        // Use `reload_config_snapshot_with_timeout` (anchored to the snapshot's
+        // `config_path`) rather than `load_config_with_timeout` (which
+        // re-resolves `OPENHUMAN_WORKSPACE` from the process env). The config
+        // path is stable for the lifetime of a `ProviderContext` — it is set
+        // at context creation from the agent's scoped config — so reading from
+        // it always reaches the correct user workspace and avoids a data-race
+        // in tests that share the process env.
+        let live_config = config_rpc::reload_config_snapshot_with_timeout(&self.config)
+            .await
+            .map_err(|e| {
+                tracing::warn!(
+                    action = %action,
+                    toolkit = %self.toolkit,
+                    error = %e,
+                    "[composio:provider_context] execute: reload_config failed"
+                );
+                anyhow::anyhow!("composio provider_context: failed to reload live config: {e}")
+            })?;
         let kind = create_composio_client(&live_config)?;
-        match kind {
+        let result = match kind {
             ComposioClientKind::Backend(client) => {
                 tracing::debug!(
                     action = %action,
@@ -183,7 +394,21 @@ impl ProviderContext {
                 );
                 direct_execute(&direct, action, arguments, &live_config.composio.entity_id).await
             }
+        };
+
+        // Tally billable-action usage at the single chokepoint every provider
+        // routes through (#3111). We count any *completed* round-trip — even a
+        // provider-reported failure (`successful == false`) is a billable call
+        // — and sum the backend-reported `cost_usd`. Transport errors (the
+        // `Err` arm) never reached Composio, so they don't count. The lock is
+        // held only for the increment, never across an `.await`.
+        if let Ok(ref resp) = result {
+            if let Ok(mut usage) = self.usage.lock() {
+                usage.actions_called = usage.actions_called.saturating_add(1);
+                usage.cost_usd += resp.cost_usd;
+            }
         }
+        result
     }
 
     /// Resolve a `ComposioClient` for callers that need a handle to
@@ -202,16 +427,21 @@ impl ProviderContext {
         // snapshot held by `self` was taken at agent-init time and is
         // otherwise stale relative to subsequent set_api_key /
         // clear_api_key RPCs.
-        let live_config = config_rpc::load_config_with_timeout().await.map_err(|e| {
-            tracing::warn!(
-                toolkit = %self.toolkit,
-                error = %e,
-                "[composio:provider_context] backend_client: load_config failed"
-            );
-            anyhow::anyhow!(
-                "composio provider_context.backend_client: failed to load live config: {e}"
-            )
-        })?;
+        //
+        // Anchored to the snapshot's config_path (not OPENHUMAN_WORKSPACE)
+        // for the same isolation reason as `execute`.
+        let live_config = config_rpc::reload_config_snapshot_with_timeout(&self.config)
+            .await
+            .map_err(|e| {
+                tracing::warn!(
+                    toolkit = %self.toolkit,
+                    error = %e,
+                    "[composio:provider_context] backend_client: reload_config failed"
+                );
+                anyhow::anyhow!(
+                    "composio provider_context.backend_client: failed to reload live config: {e}"
+                )
+            })?;
         match create_composio_client(&live_config)? {
             ComposioClientKind::Backend(client) => Ok(client),
             ComposioClientKind::Direct(_) => Err(anyhow::anyhow!(
@@ -243,13 +473,51 @@ impl ProviderContext {
 mod tests {
     use super::*;
 
-    // Both `ProviderContext::execute` and `ProviderContext::backend_client`
-    // now reload config via `config_rpc::load_config_with_timeout()` per
-    // call (#1710 Wave 4), so the injected `Arc<Config>` no longer drives
-    // the factory — the live on-disk config under `OPENHUMAN_WORKSPACE`
-    // does. Both tests below therefore set up an isolated, persisted
-    // config under `TEST_ENV_LOCK` rather than relying on a constructed
-    // `Arc<Config>` helper.
+    /// The whole #3111 tally relies on the `usage` handle being *shared*
+    /// across `ProviderContext` clones: a provider's `sync` runs against a
+    /// clone (or the same ctx passed by `&`), accumulates via `execute`, and
+    /// `run_connection_sync` reads the count back from its own handle. Pin
+    /// that the `Arc<Mutex<_>>` is genuinely shared so a clone's increments
+    /// are visible from the original — if this regressed to a per-clone
+    /// counter, the audit cost would silently always read zero.
+    #[test]
+    fn usage_handle_is_shared_across_context_clones() {
+        let ctx = ProviderContext {
+            config: Arc::new(Config::default()),
+            toolkit: "gmail".to_string(),
+            connection_id: None,
+            usage: ComposioUsageHandle::default(),
+        };
+        let cloned = ctx.clone();
+
+        // Simulate two `execute` round-trips accumulating on the clone.
+        {
+            let mut usage = cloned.usage.lock().expect("lock usage");
+            usage.actions_called = usage.actions_called.saturating_add(2);
+            usage.cost_usd += 0.015;
+        }
+
+        // The original handle must observe the clone's tally.
+        let observed = ctx.usage.lock().expect("lock usage");
+        assert_eq!(observed.actions_called, 2);
+        assert!((observed.cost_usd - 0.015).abs() < 1e-9);
+    }
+
+    /// `ComposioUsage` defaults to a zero tally — the value
+    /// `run_connection_sync` returns for a sync that fired no Composio
+    /// actions, and what non-sync `ProviderContext` callers carry.
+    #[test]
+    fn composio_usage_defaults_to_zero() {
+        let usage = ComposioUsage::default();
+        assert_eq!(usage.actions_called, 0);
+        assert_eq!(usage.cost_usd, 0.0);
+    }
+
+    // `ProviderContext::execute` and `ProviderContext::backend_client` reload
+    // config from `ctx.config.config_path` (via `reload_config_snapshot_with_timeout`)
+    // rather than from the process-global `OPENHUMAN_WORKSPACE`. Tests
+    // therefore only need to persist the config to `config_path` — no env var
+    // manipulation required.
 
     #[tokio::test]
     async fn provider_context_execute_resolves_via_factory_at_call_time() {
@@ -259,23 +527,7 @@ mod tests {
         // `client: ComposioClient` field was always backend, so this
         // path would have surfaced a backend session lookup error
         // even with `mode = "direct"`.
-        //
-        // Production `ctx.execute(..)` calls `load_config_with_timeout()`
-        // per call which reads from `~/.openhuman/config.toml` (or the
-        // workspace pointed at by `OPENHUMAN_WORKSPACE`). To isolate
-        // the test from the dev's real config we hold `TEST_ENV_LOCK`,
-        // point `OPENHUMAN_WORKSPACE` at a tempdir, and persist the
-        // test's `Config` to that tempdir's `config.toml` before
-        // invoking `execute`. Without the lock this test also races the
-        // shared `OPENHUMAN_WORKSPACE` env var against the other
-        // `load_config_with_timeout`-driven composio tests.
-        use crate::openhuman::config::TEST_ENV_LOCK;
-        let _env_guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-
         let tmp = tempfile::tempdir().expect("tempdir");
-        unsafe {
-            std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
-        }
 
         let mut config = Config::default();
         config.config_path = tmp.path().join("config.toml");
@@ -289,6 +541,7 @@ mod tests {
             config: Arc::new(config),
             toolkit: "gmail".to_string(),
             connection_id: None,
+            usage: ComposioUsageHandle::default(),
         };
         let res = ctx.execute("GMAIL_FETCH_EMAILS", None).await;
         // The actual HTTP call will fail in the unit-test sandbox, but
@@ -301,10 +554,6 @@ mod tests {
                 "direct-mode execute must not surface backend session artifacts: {msg}"
             );
         }
-
-        unsafe {
-            std::env::remove_var("OPENHUMAN_WORKSPACE");
-        }
     }
 
     #[tokio::test]
@@ -313,21 +562,7 @@ mod tests {
         // token: the factory should return a backend-session error from
         // `ctx.execute`. Verifies the backend branch is reachable and
         // the error surface is sensible.
-        //
-        // Production `ctx.execute(..)` calls `load_config_with_timeout()`
-        // per call which reads from `~/.openhuman/config.toml` (or the
-        // workspace pointed at by `OPENHUMAN_WORKSPACE`). To isolate
-        // the test from the dev's real config we hold `TEST_ENV_LOCK`,
-        // point `OPENHUMAN_WORKSPACE` at a tempdir, and persist the
-        // test's `Config` to that tempdir's `config.toml` before
-        // invoking `execute`.
-        use crate::openhuman::config::TEST_ENV_LOCK;
-        let _env_guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-
         let tmp = tempfile::tempdir().expect("tempdir");
-        unsafe {
-            std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
-        }
 
         let mut config = Config::default();
         config.config_path = tmp.path().join("config.toml");
@@ -339,6 +574,7 @@ mod tests {
             config: Arc::new(config),
             toolkit: "gmail".to_string(),
             connection_id: None,
+            usage: ComposioUsageHandle::default(),
         };
         let res = ctx.execute("GMAIL_FETCH_EMAILS", None).await;
         let err = res.expect_err("no backend session must error");
@@ -347,9 +583,5 @@ mod tests {
             msg.contains("backend") || msg.contains("session"),
             "expected backend-session error, got: {msg}"
         );
-
-        unsafe {
-            std::env::remove_var("OPENHUMAN_WORKSPACE");
-        }
     }
 }

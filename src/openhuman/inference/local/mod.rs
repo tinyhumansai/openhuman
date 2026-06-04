@@ -36,9 +36,12 @@ pub(crate) mod lm_studio;
 pub(crate) mod model_requirements;
 mod ollama;
 mod process_util;
+pub mod profile;
 pub(crate) mod provider;
 pub(crate) use model_requirements::{evaluate_context, ContextEligibility, MIN_CONTEXT_TOKENS};
-pub(crate) use ollama::{ollama_base_url, ollama_base_url_from_config, OLLAMA_BASE_URL};
+pub(crate) use ollama::{
+    ollama_base_url, ollama_base_url_from_config, validate_ollama_url, OLLAMA_BASE_URL,
+};
 pub mod service;
 pub(crate) mod voice_install_common;
 

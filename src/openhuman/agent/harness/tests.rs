@@ -95,6 +95,7 @@ impl Provider for VisionProvider {
             text: Some("vision-ok".to_string()),
             tool_calls: Vec::new(),
             usage: None,
+            reasoning_content: None,
         })
     }
 }
@@ -121,6 +122,7 @@ async fn run_tool_call_loop_returns_structured_error_for_non_vision_provider() {
         true,
         "cli",
         &crate::openhuman::config::MultimodalConfig::default(),
+        &crate::openhuman::config::MultimodalFileConfig::default(),
         3,
         None,
         None,
@@ -166,6 +168,7 @@ async fn run_tool_call_loop_rejects_oversized_image_payload() {
         true,
         "cli",
         &multimodal,
+        &crate::openhuman::config::MultimodalFileConfig::default(),
         3,
         None,
         None,
@@ -205,6 +208,7 @@ async fn run_tool_call_loop_accepts_valid_multimodal_request_flow() {
         true,
         "cli",
         &crate::openhuman::config::MultimodalConfig::default(),
+        &crate::openhuman::config::MultimodalFileConfig::default(),
         3,
         None,
         None,
@@ -531,6 +535,7 @@ fn build_tool_instructions_includes_all_tools() {
     let security = Arc::new(SecurityPolicy::from_config(
         &crate::openhuman::config::AutonomyConfig::default(),
         std::path::Path::new("/tmp"),
+        std::path::Path::new("/tmp"),
     ));
     let tools = tools::default_tools(security);
     let instructions = build_tool_instructions(&tools);
@@ -547,6 +552,7 @@ fn tools_to_openai_format_produces_valid_schema() {
     use crate::openhuman::security::SecurityPolicy;
     let security = Arc::new(SecurityPolicy::from_config(
         &crate::openhuman::config::AutonomyConfig::default(),
+        std::path::Path::new("/tmp"),
         std::path::Path::new("/tmp"),
     ));
     let tools = tools::default_tools(security);

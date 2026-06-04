@@ -66,6 +66,17 @@ pub struct SkillFrontmatter {
     /// (non-binding hint; the host decides what to expose).
     #[serde(default, rename = "allowed-tools", alias = "allowed_tools")]
     pub allowed_tools: Vec<String>,
+    /// Domain events that should activate this skill.
+    ///
+    /// Each entry is a trigger pattern of the form `"domain"` or
+    /// `"domain/event_slug"` (e.g. `"composio"`,
+    /// `"composio/trigger_received"`, `"cron"`, `"channel/inbound_message"`).
+    /// A bare domain (no slash) matches any event in that domain.
+    /// The host builds a [`TriggeredSkillIndex`] at startup and registers a
+    /// subscriber that logs matching skills; the actual agent-session launch
+    /// is handled by the integration layer (see `skills::bus`).
+    #[serde(default)]
+    pub triggers: Vec<String>,
     /// Forward-compat hatch for spec additions. Non-spec top-level keys
     /// (including legacy `version`, `author`, `tags`) land here and trigger
     /// a migration warning when read.

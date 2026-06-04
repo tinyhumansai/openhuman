@@ -18,7 +18,8 @@ impl Tool for MemoryTreeSearchEntitiesTool {
         "Free-text LIKE search over the entity index — resolve a name or \
          handle to a canonical id (e.g. \"alice\" -> \
          `email:alice@example.com`). ALWAYS call this first when the user \
-         mentions someone by name before calling `memory_tree_query_topic`."
+         mentions someone by name before a `memory_tree` retrieval \
+         (`query_source` / `smart_walk` / `walk`) keyed on that id."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

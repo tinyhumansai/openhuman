@@ -114,6 +114,9 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::composio::all_composio_registered_controllers());
     // Scheduled job management
     controllers.extend(crate::openhuman::cron::all_cron_registered_controllers());
+    // Proactive task ingestion from external tools (github/notion/linear/clickup)
+    controllers.extend(crate::openhuman::task_sources::all_task_sources_registered_controllers());
+    controllers.extend(crate::openhuman::dashboard::all_dashboard_registered_controllers());
     // MCP client subsystem: Smithery registry browser, local server install/connect, tool dispatch
     controllers.extend(crate::openhuman::mcp_registry::all_mcp_registry_registered_controllers());
     // Webview APIs bridge — proxies connector calls (Gmail, …) through
@@ -121,19 +124,30 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::webview_apis::all_webview_apis_registered_controllers());
     // Agent definition and prompt inspection
     controllers.extend(crate::openhuman::agent::all_agent_registered_controllers());
+    // User-facing agent registry: defaults, enablement, custom agents, tool policy.
+    controllers
+        .extend(crate::openhuman::agent_registry::all_agent_registry_registered_controllers());
     // Local procedural operating experience for agent self-learning
     controllers
         .extend(crate::openhuman::agent_experience::all_agent_experience_registered_controllers());
+    // Agent workflows — phase-keyed guidance bound to task lifecycle
+    controllers
+        .extend(crate::openhuman::agent_workflows::all_agent_workflows_registered_controllers());
     // System and process health monitoring
     controllers.extend(crate::openhuman::health::all_health_registered_controllers());
     // Diagnostic tools
     controllers.extend(crate::openhuman::doctor::all_doctor_registered_controllers());
     // Secret storage and encryption
     controllers.extend(crate::openhuman::encryption::all_encryption_registered_controllers());
+    // Keyring consent — user approval before local secret storage fallback
+    controllers
+        .extend(crate::openhuman::keyring_consent::all_keyring_consent_registered_controllers());
     // Security policy metadata
     controllers.extend(crate::openhuman::security::all_security_registered_controllers());
     // Interactive approval workflow (#1339 — gate external-effect tool calls)
     controllers.extend(crate::openhuman::approval::all_approval_registered_controllers());
+    // Agent-generated artifact storage, retrieval, and lifecycle management
+    controllers.extend(crate::openhuman::artifacts::all_artifacts_registered_controllers());
     // Background heartbeat loop controls
     controllers.extend(crate::openhuman::heartbeat::all_heartbeat_registered_controllers());
     // Ad-hoc static directory HTTP hosting for local file sharing / previews
@@ -158,6 +172,8 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::service::all_service_registered_controllers());
     // Data migration utilities
     controllers.extend(crate::openhuman::migration::all_migration_registered_controllers());
+    // Model Council: multi-model deliberation (parallel members + chair synthesis)
+    controllers.extend(crate::openhuman::model_council::all_model_council_registered_controllers());
     // Unified inference domain: text / vision / local runtime / cloud providers.
     // (Formerly split across inference, local_ai, and providers namespaces.)
     controllers.extend(crate::openhuman::inference::all_inference_registered_controllers());
@@ -170,6 +186,8 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(
         crate::openhuman::screen_intelligence::all_screen_intelligence_registered_controllers(),
     );
+    // Sandbox execution backends (Docker, local jail, policy, cleanup)
+    controllers.extend(crate::openhuman::sandbox::all_sandbox_registered_controllers());
     // Backend Socket.IO bridge + related runtime plumbing
     controllers.extend(crate::openhuman::socket::all_socket_registered_controllers());
     // Managed Node.js runtime bridge (tool listing + dispatch)
@@ -178,8 +196,6 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::skills::all_skills_registered_controllers());
     // User workspace and file management
     controllers.extend(crate::openhuman::workspace::all_workspace_registered_controllers());
-    // Knowledge vaults — folder-of-files mirrored into memory
-    controllers.extend(crate::openhuman::vault::all_vault_registered_controllers());
     // Skill tool registry
     controllers.extend(crate::openhuman::tools::all_tools_registered_controllers());
     // Unified read-only registry across MCP stdio tools and controller-backed tools
@@ -198,6 +214,9 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(
         crate::openhuman::memory_sync::sync_status::all_memory_sync_status_registered_controllers(),
     );
+    // Memory sources — user-configured data connectors registry
+    controllers
+        .extend(crate::openhuman::memory_sources::all_memory_sources_registered_controllers());
     // Link shortener for long tracking URLs — saves LLM tokens
     controllers
         .extend(crate::openhuman::redirect_links::all_redirect_links_registered_controllers());
@@ -215,6 +234,8 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::test_support::all_test_support_registered_controllers());
     // Local wallet metadata and onboarding status
     controllers.extend(crate::openhuman::wallet::all_wallet_registered_controllers());
+    // High-level web3 surface (swaps / bridges / dapp calls) over the wallet
+    controllers.extend(crate::openhuman::web3::all_web3_registered_controllers());
     // Local assistive surfaces over third-party provider apps
     controllers.extend(
         crate::openhuman::provider_surfaces::all_provider_surfaces_registered_controllers(),
@@ -245,6 +266,9 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::notifications::all_notifications_registered_controllers());
     // Google Meet call-join request validation (shell handles the webview)
     controllers.extend(crate::openhuman::meet::all_meet_registered_controllers());
+    // Agent meetings — backend-delegated Meet bot via Socket.IO
+    controllers
+        .extend(crate::openhuman::agent_meetings::all_agent_meetings_registered_controllers());
     // Live meet-agent loop: STT/LLM/TTS over the open call's audio.
     controllers.extend(crate::openhuman::meet_agent::all_meet_agent_registered_controllers());
     // Desktop companion — Clicky-style interaction loop.
@@ -256,6 +280,8 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::whatsapp_data::all_whatsapp_data_registered_controllers());
     // Mobile device pairing and management
     controllers.extend(crate::openhuman::devices::all_devices_registered_controllers());
+    // Durable agent session database — queryable index over transcripts, lineage, tool calls
+    controllers.extend(crate::openhuman::session_db::all_session_db_registered_controllers());
     controllers
 }
 
@@ -285,15 +311,21 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::audio_toolkit::all_audio_toolkit_controller_schemas());
     schemas.extend(crate::openhuman::composio::all_composio_controller_schemas());
     schemas.extend(crate::openhuman::cron::all_cron_controller_schemas());
+    schemas.extend(crate::openhuman::task_sources::all_task_sources_controller_schemas());
+    schemas.extend(crate::openhuman::dashboard::all_dashboard_controller_schemas());
     schemas.extend(crate::openhuman::mcp_registry::all_mcp_registry_controller_schemas());
     schemas.extend(crate::openhuman::webview_apis::all_webview_apis_controller_schemas());
     schemas.extend(crate::openhuman::agent::all_agent_controller_schemas());
+    schemas.extend(crate::openhuman::agent_registry::all_agent_registry_controller_schemas());
     schemas.extend(crate::openhuman::agent_experience::all_agent_experience_controller_schemas());
+    schemas.extend(crate::openhuman::agent_workflows::all_agent_workflows_controller_schemas());
     schemas.extend(crate::openhuman::health::all_health_controller_schemas());
     schemas.extend(crate::openhuman::doctor::all_doctor_controller_schemas());
     schemas.extend(crate::openhuman::encryption::all_encryption_controller_schemas());
+    schemas.extend(crate::openhuman::keyring_consent::all_keyring_consent_controller_schemas());
     schemas.extend(crate::openhuman::security::all_security_controller_schemas());
     schemas.extend(crate::openhuman::approval::all_approval_controller_schemas());
+    schemas.extend(crate::openhuman::artifacts::all_artifacts_controller_schemas());
     schemas.extend(crate::openhuman::heartbeat::all_heartbeat_controller_schemas());
     schemas.extend(crate::openhuman::http_host::all_http_host_controller_schemas());
     schemas.extend(crate::openhuman::cost::all_cost_controller_schemas());
@@ -306,6 +338,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::credentials::all_credentials_controller_schemas());
     schemas.extend(crate::openhuman::service::all_service_controller_schemas());
     schemas.extend(crate::openhuman::migration::all_migration_controller_schemas());
+    schemas.extend(crate::openhuman::model_council::all_model_council_controller_schemas());
     schemas.extend(crate::openhuman::inference::all_inference_controller_schemas());
     schemas.extend(crate::openhuman::inference::all_local_ai_controller_schemas());
     schemas.extend(crate::openhuman::embeddings::all_embeddings_controller_schemas());
@@ -313,11 +346,11 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(
         crate::openhuman::screen_intelligence::all_screen_intelligence_controller_schemas(),
     );
+    schemas.extend(crate::openhuman::sandbox::all_sandbox_controller_schemas());
     schemas.extend(crate::openhuman::socket::all_socket_controller_schemas());
     schemas.extend(crate::openhuman::javascript::all_javascript_controller_schemas());
     schemas.extend(crate::openhuman::skills::all_skills_controller_schemas());
     schemas.extend(crate::openhuman::workspace::all_workspace_controller_schemas());
-    schemas.extend(crate::openhuman::vault::all_vault_controller_schemas());
     schemas.extend(crate::openhuman::tools::all_tools_controller_schemas());
     schemas.extend(crate::openhuman::tool_registry::all_tool_registry_controller_schemas());
     schemas.extend(crate::openhuman::memory::all_memory_controller_schemas());
@@ -329,6 +362,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(
         crate::openhuman::memory_sync::sync_status::all_memory_sync_status_controller_schemas(),
     );
+    schemas.extend(crate::openhuman::memory_sources::all_memory_sources_controller_schemas());
     schemas.extend(crate::openhuman::redirect_links::all_redirect_links_controller_schemas());
     schemas.extend(crate::openhuman::referral::all_referral_controller_schemas());
     schemas.extend(crate::openhuman::billing::all_billing_controller_schemas());
@@ -336,6 +370,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     #[cfg(feature = "e2e-test-support")]
     schemas.extend(crate::openhuman::test_support::all_test_support_controller_schemas());
     schemas.extend(crate::openhuman::wallet::all_wallet_controller_schemas());
+    schemas.extend(crate::openhuman::web3::all_web3_controller_schemas());
     schemas.extend(crate::openhuman::provider_surfaces::all_provider_surfaces_controller_schemas());
     schemas.extend(crate::openhuman::text_input::all_text_input_controller_schemas());
     schemas.extend(crate::openhuman::voice::all_voice_controller_schemas());
@@ -356,6 +391,8 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::notifications::all_notifications_controller_schemas());
     // Google Meet call-join request validation
     schemas.extend(crate::openhuman::meet::all_meet_controller_schemas());
+    // Agent meetings — backend-delegated Meet bot via Socket.IO
+    schemas.extend(crate::openhuman::agent_meetings::all_agent_meetings_controller_schemas());
     // Live meet-agent listening + speaking loop
     schemas.extend(crate::openhuman::meet_agent::all_meet_agent_controller_schemas());
     // Desktop companion — Clicky-style interaction loop.
@@ -364,6 +401,8 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::whatsapp_data::all_whatsapp_data_controller_schemas());
     // Mobile device pairing and management
     schemas.extend(crate::openhuman::devices::all_devices_controller_schemas());
+    // Durable agent session database
+    schemas.extend(crate::openhuman::session_db::all_session_db_controller_schemas());
     schemas
 }
 
@@ -389,6 +428,7 @@ pub fn rpc_method_name(schema: &ControllerSchema) -> String {
 pub fn namespace_description(namespace: &str) -> Option<&'static str> {
     match namespace {
         "about_app" => Some("Catalog the app's user-facing capabilities and where to find them."),
+        "ai" => Some("Agent-generated artifact storage, retrieval, and lifecycle management."),
         "app_state" => Some("Expose core-owned app shell state for frontend polling."),
         "auth" => Some("Manage app session and provider credentials."),
         "agent_experience" => Some("Local procedural experience capture and retrieval for agents."),
@@ -402,6 +442,9 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
             "Connectivity diagnostics for the local sidecar, listening port, and backend Socket.IO state.",
         ),
         "cron" => Some("Manage scheduled jobs and run history."),
+        "dashboard" => Some(
+            "Operator-facing dashboard aggregations: per-model health comparison rows.",
+        ),
         "mcp_clients" => Some(
             "Browse the Smithery.ai MCP registry, install MCP servers locally, manage their stdio connections, and expose their tools to the agent.",
         ),
@@ -428,6 +471,9 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         "memory_sync" => Some(
             "Per-connection memory sync status, user enable toggle, and live progress for the desktop UI.",
         ),
+        "memory_sources" => Some(
+            "User-configured data connectors (Composio, folders, GitHub repos, RSS, web pages) that feed memory.",
+        ),
         "redirect_links" => Some(
             "Shorten long tracking URLs to `openhuman://link/<id>` placeholders (SQLite-backed) to save tokens in prompts, with round-trip rewrite helpers.",
         ),
@@ -441,6 +487,9 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
             "E2E test support — wipe sidecar state in-place between specs.",
         ),
         "wallet" => Some("Local wallet onboarding status and derived multi-chain account metadata."),
+        "web3_swap" => Some("Single-chain crypto swaps via deBridge, built on the local wallet."),
+        "web3_bridge" => Some("Cross-chain crypto bridges via deBridge DLN, built on the local wallet."),
+        "web3_dapp" => Some("Generic EVM dapp contract calls signed by the local wallet."),
         "provider_surfaces" => Some(
             "Local-first assistive surfaces for provider events, respond queues, and drafts.",
         ),
@@ -476,6 +525,9 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         "meet_agent" => Some(
             "Live agent loop for an open Google Meet call: shell streams inbound PCM, \
              core runs VAD-segmented STT → LLM → TTS, shell pulls synthesized PCM back.",
+        ),
+        "agent_meetings" => Some(
+            "Backend-delegated meeting bot (Google Meet, Zoom, Teams, Webex) via Socket.IO — join, leave, and harness response.",
         ),
         "devices" => Some(
             "Paired mobile device management — pairing channel creation, listing, and revocation.",

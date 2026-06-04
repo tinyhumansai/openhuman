@@ -1,6 +1,7 @@
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { Provider } from 'react-redux';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { store } from '../../../../store';
 import type { ToolTimelineEntry } from '../../../../store/chatRuntimeSlice';
@@ -35,6 +36,17 @@ describe('SubagentActivityBlock', () => {
     expect(block.textContent).toContain('turn 2/5');
   });
 
+  it('renders "step N" when childMaxIterations is null (extended policy)', () => {
+    renderInStore(
+      <SubagentActivityBlock
+        subagent={{ taskId: 't', agentId: 'code_executor', childIteration: 7, toolCalls: [] }}
+      />
+    );
+    const block = screen.getByTestId('subagent-activity');
+    expect(block.textContent).toContain('step 7');
+    expect(block.textContent).not.toContain('/');
+  });
+
   it('renders final-run statistics on a completed sub-agent', () => {
     renderInStore(
       <SubagentActivityBlock
@@ -52,7 +64,7 @@ describe('SubagentActivityBlock', () => {
     expect(block.textContent).toContain('4.2s');
   });
 
-  it('renders one row per child tool call with status + timing', () => {
+  it('renders one row per child tool call with formatted names, status + timing', () => {
     renderInStore(
       <SubagentActivityBlock
         subagent={{
@@ -61,19 +73,77 @@ describe('SubagentActivityBlock', () => {
           toolCalls: [
             { callId: 'c1', toolName: 'web_search', status: 'success', elapsedMs: 312 },
             { callId: 'c2', toolName: 'composio_execute', status: 'running', iteration: 2 },
-            { callId: 'c3', toolName: 'noisy', status: 'error', elapsedMs: 50 },
+            { callId: 'c3', toolName: 'file_read', status: 'error', elapsedMs: 50 },
           ],
         }}
       />
     );
     const calls = screen.getAllByTestId('subagent-tool-call');
     expect(calls).toHaveLength(3);
-    expect(calls[0].textContent).toContain('web_search');
+    expect(calls[0].textContent).toContain('Searching the web');
     expect(calls[0].textContent).toContain('success');
     expect(calls[0].textContent).toContain('312ms');
+    expect(calls[1].textContent).toContain('Composio Execute');
     expect(calls[1].textContent).toContain('running');
     expect(calls[1].textContent).toContain('·t2');
+    expect(calls[2].textContent).toContain('Reading file');
     expect(calls[2].textContent).toContain('error');
+  });
+
+  it('shows a live preview of streamed visible text (preferred over thinking)', () => {
+    renderInStore(
+      <SubagentActivityBlock
+        subagent={{
+          taskId: 't',
+          agentId: 'researcher',
+          toolCalls: [],
+          transcript: [
+            { kind: 'thinking', iteration: 1, text: 'pondering the request' },
+            { kind: 'text', iteration: 1, text: 'Here is what I found so far about the topic' },
+          ],
+        }}
+      />
+    );
+    const preview = screen.getByTestId('subagent-preview');
+    expect(preview.textContent).toContain('Here is what I found so far');
+    // Visible text takes precedence, so the thinking tail is not shown.
+    expect(preview.textContent).not.toContain('pondering');
+  });
+
+  it('falls back to the thinking tail while only reasoning has streamed', () => {
+    renderInStore(
+      <SubagentActivityBlock
+        subagent={{
+          taskId: 't',
+          agentId: 'researcher',
+          toolCalls: [],
+          transcript: [{ kind: 'thinking', iteration: 1, text: 'I should search the web first' }],
+        }}
+      />
+    );
+    expect(screen.getByTestId('subagent-preview').textContent).toContain(
+      'I should search the web first'
+    );
+  });
+
+  it('renders the view-processing button only when onView is provided', async () => {
+    const onView = vi.fn();
+    const { rerender } = renderInStore(
+      <SubagentActivityBlock subagent={{ taskId: 't', agentId: 'researcher', toolCalls: [] }} />
+    );
+    expect(screen.queryByTestId('subagent-view-processing')).toBeNull();
+
+    rerender(
+      <Provider store={store}>
+        <SubagentActivityBlock
+          subagent={{ taskId: 't', agentId: 'researcher', toolCalls: [] }}
+          onView={onView}
+        />
+      </Provider>
+    );
+    const btn = screen.getByTestId('subagent-view-processing');
+    await userEvent.click(btn);
+    expect(onView).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -97,7 +167,7 @@ describe('ToolTimelineBlock — subagent rendering', () => {
 
     const calls = screen.getAllByTestId('subagent-tool-call');
     expect(calls).toHaveLength(1);
-    expect(calls[0].textContent).toContain('web_search');
+    expect(calls[0].textContent).toContain('Searching the web');
     expect(screen.getByTestId('subagent-activity').textContent).toContain('turn 1/5');
   });
 

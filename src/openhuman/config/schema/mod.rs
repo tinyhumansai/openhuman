@@ -2,6 +2,8 @@
 //!
 //! Split into submodules; this module re-exports the main `Config` and all public types.
 
+pub mod activity_level;
+pub use activity_level::AgentActivityLevel;
 pub mod cloud_providers;
 pub use cloud_providers::{
     generate_provider_id, is_slug_reserved, migrate_legacy_fields, AuthStyle, CloudProviderCreds,
@@ -11,8 +13,10 @@ mod accessibility;
 mod agent;
 mod autocomplete;
 mod autonomy;
+mod capability_providers;
 mod channels;
 mod context;
+mod dashboard;
 mod defaults;
 mod dictation;
 mod heartbeat_cron;
@@ -20,9 +24,12 @@ mod identity_cost;
 mod learning;
 mod load;
 pub use load::{
-    clear_active_user, default_projects_dir, default_root_openhuman_dir, pre_login_user_dir,
-    read_active_user_id, user_openhuman_dir, write_active_user_id, PRE_LOGIN_USER_ID,
+    clear_active_user, default_action_dir, default_projects_dir, default_root_openhuman_dir,
+    pre_login_user_dir, read_active_user_id, user_openhuman_dir, write_active_user_id,
+    PRE_LOGIN_USER_ID,
 };
+pub mod claude_agent_sdk;
+pub use claude_agent_sdk::ClaudeAgentSdkConfig;
 mod local_ai;
 mod meet;
 mod node;
@@ -33,6 +40,7 @@ mod runtime;
 mod runtime_python;
 mod scheduler_gate;
 mod storage_memory;
+mod task_sources;
 mod tools;
 mod update;
 
@@ -43,6 +51,7 @@ pub use agent::{
 };
 pub use autocomplete::AutocompleteConfig;
 pub use autonomy::AutonomyConfig;
+pub use capability_providers::{CapabilityProviderConfig, CapabilityProviderTrustState};
 pub use channels::{
     AuditConfig, ChannelsConfig, DingTalkConfig, DiscordConfig, IMessageConfig, IrcConfig,
     LarkConfig, LarkReceiveMode, MatrixConfig, MattermostConfig, QQConfig, ResourceLimitsConfig,
@@ -50,8 +59,9 @@ pub use channels::{
     TelegramConfig, WebhookConfig, WhatsAppConfig,
 };
 pub use context::ContextConfig;
+pub use dashboard::{DashboardConfig, DiagramViewerConfig, EventStreamConfig, ModelHealthConfig};
 pub use dictation::{DictationActivationMode, DictationConfig};
-pub use heartbeat_cron::{CronConfig, HeartbeatConfig};
+pub use heartbeat_cron::{CronConfig, HeartbeatConfig, SubconsciousMode};
 pub use identity_cost::{CostConfig, ModelPricing};
 pub use learning::{LearningConfig, ReflectionSource};
 pub use local_ai::{LocalAiConfig, LocalAiUsage};
@@ -71,14 +81,15 @@ pub use storage_memory::{
     LlmBackend, MemoryConfig, MemoryTreeConfig, StorageConfig, StorageProviderConfig,
     StorageProviderSection, DEFAULT_CLOUD_LLM_MODEL,
 };
+pub use task_sources::TaskSourcesConfig;
 pub use tools::{
     BrowserComputerUseConfig, BrowserConfig, ComposioConfig, ComputerControlConfig, CurlConfig,
     GitbooksConfig, HttpRequestConfig, IntegrationToggle, IntegrationsConfig, McpAuthConfig,
     McpClientConfig, McpClientIdentityConfig, McpServerConfig, MultimodalConfig,
-    PolymarketClobCredentials, PolymarketConfig, SearchConfig, SearchEngine,
+    MultimodalFileConfig, PolymarketClobCredentials, PolymarketConfig, SearchConfig, SearchEngine,
     SearchEngineCredentials, SearxngConfig, SecretsConfig, SeltzConfig, WebSearchConfig,
-    COMPOSIO_MODE_BACKEND, COMPOSIO_MODE_DIRECT, SEARCH_ENGINE_BRAVE, SEARCH_ENGINE_MANAGED,
-    SEARCH_ENGINE_PARALLEL,
+    COMPOSIO_MODE_BACKEND, COMPOSIO_MODE_DIRECT, SEARCH_ENGINE_BRAVE, SEARCH_ENGINE_DISABLED,
+    SEARCH_ENGINE_MANAGED, SEARCH_ENGINE_PARALLEL, SEARCH_ENGINE_QUERIT,
 };
 pub use update::{UpdateConfig, UpdateRestartStrategy};
 mod voice_server;

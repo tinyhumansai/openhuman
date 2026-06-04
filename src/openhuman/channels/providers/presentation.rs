@@ -52,6 +52,11 @@ pub async fn deliver_response(
             full_response: Some(full_response.to_string()),
             message: None,
             error_type: None,
+            error_source: None,
+            error_retryable: None,
+            error_retry_after_ms: None,
+            error_provider: None,
+            error_fallback_available: None,
             tool_name: None,
             skill_id: None,
             args: None,
@@ -92,6 +97,11 @@ pub async fn deliver_response(
             full_response: Some(segment.clone()),
             message: None,
             error_type: None,
+            error_source: None,
+            error_retryable: None,
+            error_retry_after_ms: None,
+            error_provider: None,
+            error_fallback_available: None,
             tool_name: None,
             skill_id: None,
             args: None,
@@ -124,6 +134,11 @@ pub async fn deliver_response(
         full_response: Some(full_response.to_string()),
         message: None,
         error_type: None,
+        error_source: None,
+        error_retryable: None,
+        error_retry_after_ms: None,
+        error_provider: None,
+        error_fallback_available: None,
         tool_name: None,
         skill_id: None,
         args: None,
@@ -411,6 +426,42 @@ async fn try_reaction(user_message: &str) -> Option<String> {
             tracing::debug!(error = %e, "[presentation:reaction] local model reaction failed");
             None
         }
+    }
+}
+
+#[cfg(any(test, debug_assertions))]
+pub mod test_support {
+    use crate::openhuman::agent::memory_loader::MemoryCitation;
+
+    pub fn segment_for_delivery_for_test(text: &str) -> Vec<String> {
+        super::segment_for_delivery(text)
+    }
+
+    pub fn segment_delay_for_test(segment: &str) -> u64 {
+        super::segment_delay(segment)
+    }
+
+    pub fn is_structured_content_for_test(text: &str) -> bool {
+        super::is_structured_content(text)
+    }
+
+    pub async fn deliver_response_for_test(
+        client_id: &str,
+        thread_id: &str,
+        request_id: &str,
+        full_response: &str,
+        user_message: &str,
+        citations: &[MemoryCitation],
+    ) {
+        super::deliver_response(
+            client_id,
+            thread_id,
+            request_id,
+            full_response,
+            user_message,
+            citations,
+        )
+        .await;
     }
 }
 

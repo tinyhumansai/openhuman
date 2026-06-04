@@ -47,22 +47,22 @@ pub const MEMORY_ARTIFACT_FORMAT: u32 = 2;
 pub const OPENHUMAN_CORE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Build the canonical Obsidian `source/<slug>` tag for a given
-/// `source_id`. Used to seed the `tags:` block on every chunk and
+/// source scope. Used to seed the `tags:` block on every chunk and
 /// every source-tree summary so the Obsidian graph view can filter by
 /// source.
 ///
 /// Slug rules match `slugify_source_id` (lowercase ASCII, `-` separators,
 /// alphanumerics + `_` preserved) so the tag matches the on-disk
 /// `raw/<slug>/...` directory name byte-for-byte.
-pub fn source_tag(source_id: &str) -> String {
-    format!("source/{}", slugify_source_id(source_id))
+pub fn source_tag(scope: &str) -> String {
+    format!("source/{}", slugify_source_id(scope))
 }
 
 /// Prepend the source tag to `tags`, dedup, and return the new list.
 /// Order is preserved otherwise — `source/...` always comes first so
 /// it shows up at the top of the YAML block.
-pub fn with_source_tag(source_id: &str, tags: &[String]) -> Vec<String> {
-    let st = source_tag(source_id);
+pub fn with_source_tag(scope: &str, tags: &[String]) -> Vec<String> {
+    let st = source_tag(scope);
     let mut out = Vec::with_capacity(tags.len() + 1);
     out.push(st.clone());
     for t in tags {
@@ -123,6 +123,9 @@ fn build_front_matter(chunk: &Chunk) -> Vec<u8> {
     fm.push_str(&format!("source_kind: {}\n", meta.source_kind.as_str()));
     // Escape backslashes and quotes in source_id for safety.
     fm.push_str(&format!("source_id: {}\n", yaml_scalar(&meta.source_id)));
+    if let Some(path_scope) = meta.path_scope.as_deref() {
+        fm.push_str(&format!("path_scope: {}\n", yaml_scalar(path_scope)));
+    }
     fm.push_str(&format!("seq: {}\n", chunk.seq_in_source));
     fm.push_str(&format!("owner: {}\n", yaml_scalar(&meta.owner)));
     fm.push_str(&format!("timestamp: {ts}\n"));
@@ -136,7 +139,14 @@ fn build_front_matter(chunk: &Chunk) -> Vec<u8> {
     // Always seed the source tag so the Obsidian graph filter can pick
     // up `source/<slug>` for every chunk regardless of what the
     // ingest-side tag list contained.
-    let seeded_tags = with_source_tag(&meta.source_id, &meta.tags);
+    let source_scope = meta.path_scope.as_deref().unwrap_or(&meta.source_id);
+    log::debug!(
+        "[content_store::compose] seeding source tag source_id={} source_scope={} path_scope={}",
+        crate::openhuman::memory::util::redact::redact(&meta.source_id),
+        crate::openhuman::memory::util::redact::redact(source_scope),
+        meta.path_scope.is_some()
+    );
+    let seeded_tags = with_source_tag(source_scope, &meta.tags);
     fm.push_str("tags:\n");
     for tag in &seeded_tags {
         fm.push_str(&format!("  - {}\n", yaml_scalar(tag)));
@@ -641,6 +651,7 @@ mod tests {
                 time_range: (ts, ts),
                 tags: vec!["person/Alice".into(), "org/Acme".into()],
                 source_ref: Some(SourceRef::new("slack://m1".to_string())),
+                path_scope: None,
             },
             token_count: 10,
             seq_in_source: 0,
@@ -665,6 +676,21 @@ mod tests {
             body,
             b"## 2026-01-01T00:00:00Z \xe2\x80\x94 alice\nhello world"
         );
+    }
+
+    #[test]
+    fn compose_persists_path_scope_and_seeds_scoped_source_tag() {
+        let mut chunk = sample_chunk();
+        chunk.metadata.source_id = "notion:conn-1:page-123".into();
+        chunk.metadata.path_scope = Some("notion:conn-1".into());
+
+        let (full, _) = compose_chunk_file(&chunk);
+        let full_str = std::str::from_utf8(&full).unwrap();
+
+        assert!(full_str.contains("source_id: \"notion:conn-1:page-123\""));
+        assert!(full_str.contains("path_scope: \"notion:conn-1\""));
+        assert!(full_str.contains("  - source/notion-conn-1"));
+        assert!(!full_str.contains("  - source/notion-conn-1-page-123"));
     }
 
     #[test]
@@ -721,6 +747,7 @@ mod tests {
                 time_range: (ts, ts),
                 tags: vec!["gmail".into()],
                 source_ref: None,
+                path_scope: None,
             },
             token_count: 15,
             seq_in_source: 0,
@@ -781,6 +808,7 @@ mod tests {
                 time_range: (ts, ts),
                 tags: vec![],
                 source_ref: None,
+                path_scope: None,
             },
             token_count: 1,
             seq_in_source: 3,
@@ -853,6 +881,7 @@ mod tests {
                 time_range: (ts, ts),
                 tags: vec![],
                 source_ref: None,
+                path_scope: None,
             },
             token_count: 1,
             seq_in_source: 0,

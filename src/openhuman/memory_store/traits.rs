@@ -191,6 +191,7 @@ mod tests {
                 owner: "alice".into(),
                 source_ref: None,
                 tags: vec!["person:alice".into()],
+                path_scope: None,
             },
             seq_in_source: 7,
             token_count: 2,

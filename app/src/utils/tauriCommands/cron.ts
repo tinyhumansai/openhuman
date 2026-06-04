@@ -52,6 +52,28 @@ export interface CoreCronRun {
   duration_ms?: number | null;
 }
 
+export interface CronAddParams {
+  name?: string;
+  schedule: CoreCronSchedule;
+  job_type?: 'shell' | 'agent';
+  command?: string;
+  prompt?: string;
+  session_target?: 'isolated' | 'main';
+  model?: string;
+  agent_id?: string;
+  delivery?: { mode: string; channel?: string | null; to?: string | null; best_effort?: boolean };
+  delete_after_run?: boolean;
+}
+
+export async function openhumanCronAdd(
+  params: CronAddParams
+): Promise<CommandResponse<CoreCronJob>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<CoreCronJob>>({ method: 'openhuman.cron_add', params });
+}
+
 export async function openhumanCronList(): Promise<CommandResponse<CoreCronJob[]>> {
   if (!isTauri()) {
     throw new Error('Not running in Tauri');
@@ -89,9 +111,9 @@ export async function openhumanCronRun(
 ): Promise<
   CommandResponse<{
     job_id: string;
-    status: 'ok' | 'error' | string;
-    duration_ms: number;
-    output: string;
+    status: 'queued' | 'ok' | 'error' | string;
+    duration_ms?: number;
+    output?: string;
   }>
 > {
   if (!isTauri()) {
@@ -100,9 +122,9 @@ export async function openhumanCronRun(
   return await callCoreRpc<
     CommandResponse<{
       job_id: string;
-      status: 'ok' | 'error' | string;
-      duration_ms: number;
-      output: string;
+      status: 'queued' | 'ok' | 'error' | string;
+      duration_ms?: number;
+      output?: string;
     }>
   >({ method: 'openhuman.cron_run', params: { job_id: jobId } });
 }

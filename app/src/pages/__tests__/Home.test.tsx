@@ -21,6 +21,11 @@ const mockUseUsageState = vi.hoisted(() =>
 );
 vi.mock('../../hooks/useUsageState', () => ({ useUsageState: mockUseUsageState }));
 
+const mockUseOpenRouterFreeModels = vi.hoisted(() => vi.fn());
+vi.mock('../../services/api/openrouterFreeModels', () => ({
+  applyOpenRouterFreeModels: () => mockUseOpenRouterFreeModels(),
+}));
+
 // Default: return 'ok' so most tests see the normal state. The
 // blocking-state selector is the only thing this mock is asked to
 // resolve from the live code; Home.tsx also reads `theme.mode`, which
@@ -59,15 +64,6 @@ vi.mock('../../utils/openUrl', () => ({ openUrl: vi.fn() }));
 const restartCoreProcessMock = vi.fn<() => Promise<void>>();
 vi.mock('../../services/coreProcessControl', () => ({
   restartCoreProcess: () => restartCoreProcessMock(),
-}));
-
-const mockShouldShowBanner = vi.fn<() => boolean>(() => true);
-const mockDismissBanner = vi.fn<(id: string) => void>();
-
-vi.mock('../../components/upsell/upsellDismissState', () => ({
-  shouldShowBanner: (...args: Parameters<typeof mockShouldShowBanner>) =>
-    mockShouldShowBanner(...args),
-  dismissBanner: (...args: Parameters<typeof mockDismissBanner>) => mockDismissBanner(...args),
 }));
 
 describe('resolveHomeUserName', () => {
@@ -111,7 +107,7 @@ describe('resolveHomeUserName', () => {
 describe('Home page — handleRestartCore and blocking state rendering', () => {
   it('shows "Restart Core" button when blocking=core-unreachable (lines 194, 200)', async () => {
     useAppSelectorMock.mockReturnValue('core-unreachable');
-    mockShouldShowBanner.mockReturnValue(false);
+
     const { default: Home } = await import('../Home');
     render(<Home />);
 
@@ -120,7 +116,7 @@ describe('Home page — handleRestartCore and blocking state rendering', () => {
 
   it('does NOT show "Restart Core" button when blocking=ok (line 194)', async () => {
     useAppSelectorMock.mockReturnValue('ok');
-    mockShouldShowBanner.mockReturnValue(false);
+
     const { default: Home } = await import('../Home');
     render(<Home />);
 
@@ -129,7 +125,7 @@ describe('Home page — handleRestartCore and blocking state rendering', () => {
 
   it('handleRestartCore calls restartCoreProcess and resets state on success (lines 78-81, 85)', async () => {
     useAppSelectorMock.mockReturnValue('core-unreachable');
-    mockShouldShowBanner.mockReturnValue(false);
+
     restartCoreProcessMock.mockResolvedValueOnce(undefined);
 
     const { default: Home } = await import('../Home');
@@ -150,7 +146,7 @@ describe('Home page — handleRestartCore and blocking state rendering', () => {
 
   it('handleRestartCore shows error message when restartCoreProcess throws (lines 78-83, 202)', async () => {
     useAppSelectorMock.mockReturnValue('core-unreachable');
-    mockShouldShowBanner.mockReturnValue(false);
+
     restartCoreProcessMock.mockRejectedValueOnce(new Error('sidecar not found'));
 
     const { default: Home } = await import('../Home');
@@ -164,7 +160,7 @@ describe('Home page — handleRestartCore and blocking state rendering', () => {
 
   it('handleRestartCore shows string error when restartCoreProcess throws a non-Error (lines 83)', async () => {
     useAppSelectorMock.mockReturnValue('core-unreachable');
-    mockShouldShowBanner.mockReturnValue(false);
+
     restartCoreProcessMock.mockRejectedValueOnce('raw string error');
 
     const { default: Home } = await import('../Home');
@@ -177,40 +173,11 @@ describe('Home page — handleRestartCore and blocking state rendering', () => {
   });
 });
 
-describe('Home page — EarlyBirdy banner integration', () => {
-  it('shows the EarlyBirdy banner when shouldShowBanner returns true', async () => {
-    mockShouldShowBanner.mockReturnValue(true);
-    const { default: Home } = await import('../Home');
-    render(<Home />);
-    expect(screen.getByText('The first 1,000 users get 60% off.')).toBeInTheDocument();
-  });
-
-  it('hides the EarlyBirdy banner when shouldShowBanner returns false', async () => {
-    mockShouldShowBanner.mockReturnValue(false);
-    const { default: Home } = await import('../Home');
-    render(<Home />);
-    expect(screen.queryByText('The first 1,000 users get 60% off.')).not.toBeInTheDocument();
-  });
-
-  it('dismisses the EarlyBirdy banner and calls dismissBanner when the X button is clicked', async () => {
-    mockShouldShowBanner.mockReturnValue(true);
-    const { default: Home } = await import('../Home');
-    render(<Home />);
-
-    const dismissBtn = screen.getByRole('button', { name: /dismiss early bird banner/i });
-    fireEvent.click(dismissBtn);
-
-    expect(mockDismissBanner).toHaveBeenCalledWith('home-earlybirdy');
-    expect(screen.queryByText('The first 1,000 users get 60% off.')).not.toBeInTheDocument();
-  });
-});
-
 describe('Home page — theme toggle', () => {
   it('renders "Switch to dark mode" in light mode and dispatches setThemeMode("dark") on click', async () => {
     themeModeProbe.current = 'light';
     const dispatch = vi.fn();
     useAppDispatchMock.mockReturnValue(dispatch);
-    mockShouldShowBanner.mockReturnValue(false);
 
     const { default: Home } = await import('../Home');
     render(<Home />);
@@ -228,7 +195,6 @@ describe('Home page — theme toggle', () => {
     themeModeProbe.current = 'dark';
     const dispatch = vi.fn();
     useAppDispatchMock.mockReturnValue(dispatch);
-    mockShouldShowBanner.mockReturnValue(false);
 
     const { default: Home } = await import('../Home');
     render(<Home />);
@@ -248,12 +214,26 @@ describe('Home page — budget completed banner', () => {
   // Covers line 151: UsageLimitBanner render when shouldShowBudgetCompletedMessage=true
   it('renders UsageLimitBanner when shouldShowBudgetCompletedMessage=true', async () => {
     mockUseUsageState.mockReturnValueOnce({ shouldShowBudgetCompletedMessage: true });
-    mockShouldShowBanner.mockReturnValue(false);
 
     const { default: Home } = await import('../Home');
     render(<Home />);
 
     expect(screen.getByText(/Exhausted Your Usage/i)).toBeInTheDocument();
     expect(screen.getByText(/out of included usage/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Use OpenRouter free models/i })).toBeInTheDocument();
+  });
+
+  it('clicking OpenRouter free models runs the routing helper', async () => {
+    mockUseUsageState.mockReturnValueOnce({ shouldShowBudgetCompletedMessage: true });
+    mockUseOpenRouterFreeModels.mockResolvedValueOnce(undefined);
+
+    const { default: Home } = await import('../Home');
+    render(<Home />);
+
+    fireEvent.click(screen.getByRole('button', { name: /Use OpenRouter free models/i }));
+
+    await waitFor(() => {
+      expect(mockUseOpenRouterFreeModels).toHaveBeenCalledTimes(1);
+    });
   });
 });

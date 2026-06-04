@@ -26,18 +26,19 @@ pub mod read_rpc;
 pub mod remember;
 pub mod schema;
 pub mod sync;
+pub mod tools;
 pub mod util;
 
 // Tree instances — policy and orchestration over the generic memory_tree engine.
-pub mod tree_global;
+// The global (time-axis) and topic (subject-axis) trees were removed; source
+// trees plus the entity index are the substrate.
 pub mod tree_policy;
 pub mod tree_source;
-pub mod tree_topic;
 
 #[cfg(test)]
-mod sync_pipeline_e2e_test;
+mod sync_pipeline_e2e_tests;
 #[cfg(test)]
-mod tree_e2e_test;
+mod tree_e2e_tests;
 pub use ingestion::{
     ExtractedEntity, ExtractedRelation, ExtractionMode, IngestionJob, IngestionQueue,
     IngestionState, IngestionStatusSnapshot, MemoryIngestionConfig, MemoryIngestionRequest,
@@ -50,7 +51,7 @@ pub use schemas::{
     all_controller_schemas as all_memory_controller_schemas,
     all_registered_controllers as all_memory_registered_controllers,
 };
-pub use traits::{Memory, MemoryCategory, MemoryEntry, NamespaceSummary, RecallOpts};
+pub use traits::{Memory, MemoryCategory, MemoryEntry, MemoryTaint, NamespaceSummary, RecallOpts};
 
 // Re-export types that external tests and consumers historically imported
 // from `memory::*`. The definitions moved to sibling crates during the

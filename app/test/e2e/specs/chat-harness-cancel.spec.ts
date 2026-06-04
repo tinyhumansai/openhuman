@@ -162,7 +162,7 @@ describe('Chat harness — mid-stream cancel', () => {
     // The textarea must be re-enabled.
     const composerEnabled = await browser.execute(() => {
       const ta = document.querySelector(
-        'textarea[placeholder="Type a message..."]'
+        'textarea[placeholder="How can I help you today?"]'
       ) as HTMLTextAreaElement | null;
       return !!ta && !ta.disabled;
     });

@@ -113,6 +113,37 @@ pub struct WebChannelEvent {
     /// Type of error, if the event represents a failure.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_type: Option<String>,
+    /// Structured rate-limit / error metadata produced by
+    /// `classify_inference_error` (issue #2606). All four fields are
+    /// additive — older FE clients that only read `message`/`error_type`
+    /// keep working; new clients can read these to render countdown,
+    /// retry-button, and fallback-CTA UI without regexing the message.
+    ///
+    /// Where the limit originated:
+    /// `"provider"` | `"openhuman_budget"` | `"agent_loop"`
+    /// | `"openhuman_billing"` | `"transport"` | `"config"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_source: Option<String>,
+    /// Whether the same prompt can be retried in this same thread.
+    /// `false` for non-retryable business 429s, auth, model_unavailable,
+    /// context_overflow, and billing exhaustion.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_retryable: Option<bool>,
+    /// Milliseconds to wait before retrying, as supplied by the upstream
+    /// `Retry-After:` / `retry_after:` header. `None` when the upstream
+    /// didn't supply one or the error class has no retry-after concept.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_retry_after_ms: Option<u64>,
+    /// Provider name extracted from `"<provider> API error (...)"`
+    /// envelopes. `None` for non-provider errors (OpenHuman budget cap,
+    /// agent loop) and for transport failures without a provider prefix.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_provider: Option<String>,
+    /// `Some(false)` once the reliable-provider chain has exhausted
+    /// every configured `model_fallbacks` entry. `None` means "unknown
+    /// — FE should not promise a fallback".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_fallback_available: Option<bool>,
     /// Name of the tool being called.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_name: Option<String>,
@@ -220,6 +251,16 @@ pub struct SubagentProgressDetail {
     /// (on `subagent_tool_result`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_chars: Option<u64>,
+    /// Persistent worker sub-thread id backing the delegation (on
+    /// `subagent_spawned`). The frontend stores it on the subagent row and
+    /// uses it to reopen the full parent↔subagent conversation from memory.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worker_thread_id: Option<String>,
+    /// Human-readable display name from the agent registry (e.g.
+    /// "Researcher", "Coding Agent"). The frontend uses this for
+    /// consistent agent labels across timeline, sub-mascots, and drawer.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -244,6 +285,8 @@ struct ChatStartPayload {
     profile_id: Option<String>,
     #[serde(default)]
     locale: Option<String>,
+    #[serde(default)]
+    queue_mode: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -394,6 +437,7 @@ pub fn attach_socketio() -> (socketioxide::layer::SocketIoLayer, SocketIo) {
                         payload.temperature,
                         payload.profile_id,
                         payload.locale,
+                        payload.queue_mode,
                     )
                     .await
                     {
@@ -510,6 +554,8 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
     let io_auth = io.clone();
     let io_companion = io.clone();
     let io_mcp_setup = io.clone();
+    let io_memory_sync = io.clone();
+    let io_agent_meetings = io.clone();
 
     // 2. Dictation hotkey events → broadcast to all connected clients.
     tokio::spawn(async move {
@@ -777,6 +823,211 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
             }
         }
         log::debug!("[socketio] companion state bridge stopped");
+    });
+
+    // 8. Memory sync stage + tree-build progress → broadcast to all clients
+    //    so the UI can show real-time progress bars and refresh the graph.
+    tokio::spawn(async move {
+        let bus = {
+            const RETRY_INTERVAL_MS: u64 = 250;
+            const MAX_WAIT_SECS: u64 = 30;
+            let max_attempts = (MAX_WAIT_SECS * 1000) / RETRY_INTERVAL_MS;
+            let mut attempts: u64 = 0;
+            loop {
+                if let Some(bus) = crate::core::event_bus::global() {
+                    break bus;
+                }
+                attempts += 1;
+                if attempts > max_attempts {
+                    log::warn!(
+                        "[socketio] event_bus not initialised after {}s — memory_sync bridge giving up",
+                        MAX_WAIT_SECS
+                    );
+                    return;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(RETRY_INTERVAL_MS)).await;
+            }
+        };
+        let mut rx = bus.raw_receiver();
+        loop {
+            let event = match rx.recv().await {
+                Ok(event) => event,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                    log::warn!(
+                        "[socketio] dropped {} event_bus events due to lag (memory_sync bridge)",
+                        skipped
+                    );
+                    continue;
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            };
+            match event {
+                crate::core::event_bus::DomainEvent::MemorySyncStageChanged {
+                    trigger,
+                    stage,
+                    provider,
+                    connection_id,
+                    detail,
+                } => {
+                    let payload = serde_json::json!({
+                        "trigger": trigger,
+                        "stage": stage,
+                        "provider": provider,
+                        "connection_id": connection_id,
+                        "detail": detail,
+                    });
+                    let _ = io_memory_sync.emit("memory:sync_stage", &payload);
+                }
+                crate::core::event_bus::DomainEvent::TreeSummarizerPropagated {
+                    namespace,
+                    node_id,
+                    level,
+                    token_count,
+                } => {
+                    let payload = serde_json::json!({
+                        "namespace": namespace,
+                        "node_id": node_id,
+                        "level": level,
+                        "token_count": token_count,
+                    });
+                    let _ = io_memory_sync.emit("memory:tree_progress", &payload);
+                }
+                crate::core::event_bus::DomainEvent::TreeSummarizerRebuildCompleted {
+                    namespace,
+                    total_nodes,
+                } => {
+                    let payload = serde_json::json!({
+                        "namespace": namespace,
+                        "total_nodes": total_nodes,
+                    });
+                    let _ = io_memory_sync.emit("memory:tree_completed", &payload);
+                }
+                crate::core::event_bus::DomainEvent::MemoryTreeBuildProgress {
+                    phase,
+                    step,
+                    tree_scope,
+                    level,
+                    item_count,
+                    detail,
+                } => {
+                    let payload = serde_json::json!({
+                        "phase": phase,
+                        "step": step,
+                        "tree_scope": tree_scope,
+                        "level": level,
+                        "item_count": item_count,
+                        "detail": detail,
+                    });
+                    let _ = io_memory_sync.emit("memory:build_progress", &payload);
+                }
+                _ => {}
+            }
+        }
+        log::debug!("[socketio] memory_sync bridge stopped");
+    });
+
+    // 9. Backend Meet bot events → broadcast to all connected frontend sockets.
+    tokio::spawn(async move {
+        let bus = {
+            const RETRY_INTERVAL_MS: u64 = 250;
+            const MAX_WAIT_SECS: u64 = 30;
+            let max_attempts = (MAX_WAIT_SECS * 1000) / RETRY_INTERVAL_MS;
+            let mut attempts: u64 = 0;
+            loop {
+                if let Some(bus) = crate::core::event_bus::global() {
+                    break bus;
+                }
+                attempts += 1;
+                if attempts > max_attempts {
+                    log::warn!(
+                        "[socketio] event_bus not initialised after {}s — agent_meetings bridge giving up",
+                        MAX_WAIT_SECS
+                    );
+                    return;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(RETRY_INTERVAL_MS)).await;
+            }
+        };
+        let mut rx = bus.raw_receiver();
+        loop {
+            let event = match rx.recv().await {
+                Ok(event) => event,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                    log::warn!(
+                        "[socketio] dropped {} event_bus events due to lag (agent_meetings bridge)",
+                        skipped
+                    );
+                    continue;
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            };
+            match event {
+                crate::core::event_bus::DomainEvent::BackendMeetJoined { meet_url } => {
+                    let payload = serde_json::json!({ "meet_url": meet_url });
+                    log::debug!("[socketio] broadcast agent_meetings:joined");
+                    let _ = io_agent_meetings.emit("agent_meetings:joined", &payload);
+                }
+                crate::core::event_bus::DomainEvent::BackendMeetLeft { reason } => {
+                    let payload = serde_json::json!({ "reason": reason });
+                    log::debug!("[socketio] broadcast agent_meetings:left reason={}", reason);
+                    let _ = io_agent_meetings.emit("agent_meetings:left", &payload);
+                }
+                crate::core::event_bus::DomainEvent::BackendMeetReply {
+                    transcript,
+                    reply,
+                    emotion,
+                } => {
+                    let payload = serde_json::json!({
+                        "transcript": transcript,
+                        "reply": reply,
+                        "emotion": emotion,
+                    });
+                    log::debug!(
+                        "[socketio] broadcast agent_meetings:reply reply_len={}",
+                        reply.len()
+                    );
+                    let _ = io_agent_meetings.emit("agent_meetings:reply", &payload);
+                }
+                crate::core::event_bus::DomainEvent::BackendMeetHarness {
+                    transcript,
+                    instruction,
+                    emotion,
+                } => {
+                    let payload = serde_json::json!({
+                        "transcript": transcript,
+                        "instruction": instruction,
+                        "emotion": emotion,
+                    });
+                    log::debug!(
+                        "[socketio] broadcast agent_meetings:harness instruction_len={}",
+                        instruction.len()
+                    );
+                    let _ = io_agent_meetings.emit("agent_meetings:harness", &payload);
+                }
+                crate::core::event_bus::DomainEvent::BackendMeetTranscript {
+                    turns,
+                    duration_ms,
+                } => {
+                    let payload = serde_json::json!({
+                        "turns": turns,
+                        "duration_ms": duration_ms,
+                    });
+                    log::debug!(
+                        "[socketio] broadcast agent_meetings:transcript turns={} duration_ms={}",
+                        turns.len(),
+                        duration_ms
+                    );
+                    let _ = io_agent_meetings.emit("agent_meetings:transcript", &payload);
+                }
+                crate::core::event_bus::DomainEvent::BackendMeetError { error } => {
+                    let payload = serde_json::json!({ "error": error });
+                    log::debug!("[socketio] broadcast agent_meetings:error");
+                    let _ = io_agent_meetings.emit("agent_meetings:error", &payload);
+                }
+                _ => {}
+            }
+        }
+        log::debug!("[socketio] agent_meetings bridge stopped");
     });
 }
 

@@ -1,3 +1,4 @@
+use crate::openhuman::file_state;
 use crate::openhuman::security::{CommandClass, GateDecision, SecurityPolicy};
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
 use async_trait::async_trait;
@@ -69,7 +70,7 @@ impl Tool for FileWriteTool {
         let target = if std::path::Path::new(path).is_absolute() {
             std::path::PathBuf::from(path)
         } else {
-            self.security.workspace_dir.join(path)
+            self.security.action_dir.join(path)
         };
         // Sync `stat` — intentionally blocking, since the `Tool` trait makes
         // this method sync. Fast for local paths; would only need
@@ -129,11 +130,36 @@ impl Tool for FileWriteTool {
             ));
         }
 
+        // File-state guard: reject writes based on stale or partial reads.
+        if let Some(agent_id) = file_state::current_file_state_agent_id() {
+            if let Some(msg) = file_state::check_stale_read(&agent_id, &resolved_target) {
+                tracing::debug!(
+                    agent = %agent_id,
+                    path = %resolved_target.display(),
+                    "[file_state] file_write blocked: stale read"
+                );
+                return Ok(ToolResult::error(msg));
+            }
+            if let Some(msg) = file_state::check_partial_read(&agent_id, &resolved_target) {
+                tracing::debug!(
+                    agent = %agent_id,
+                    path = %resolved_target.display(),
+                    "[file_state] file_write blocked: partial read"
+                );
+                return Ok(ToolResult::error(msg));
+            }
+        }
+
         match tokio::fs::write(&resolved_target, content).await {
-            Ok(()) => Ok(ToolResult::success(format!(
-                "Written {} bytes to {path}",
-                content.len()
-            ))),
+            Ok(()) => {
+                if let Some(agent_id) = file_state::current_file_state_agent_id() {
+                    file_state::record_write(&agent_id, resolved_target);
+                }
+                Ok(ToolResult::success(format!(
+                    "Written {} bytes to {path}",
+                    content.len()
+                )))
+            }
             Err(e) => Ok(ToolResult::error(format!("Failed to write file: {e}"))),
         }
     }
@@ -147,7 +173,8 @@ mod tests {
     fn test_security(workspace: std::path::PathBuf) -> Arc<SecurityPolicy> {
         Arc::new(SecurityPolicy {
             autonomy: AutonomyLevel::Supervised,
-            workspace_dir: workspace,
+            workspace_dir: workspace.clone(),
+            action_dir: workspace,
             ..SecurityPolicy::default()
         })
     }
@@ -159,7 +186,8 @@ mod tests {
     ) -> Arc<SecurityPolicy> {
         Arc::new(SecurityPolicy {
             autonomy,
-            workspace_dir: workspace,
+            workspace_dir: workspace.clone(),
+            action_dir: workspace,
             max_actions_per_hour,
             ..SecurityPolicy::default()
         })

@@ -78,12 +78,22 @@ export const UnsubscribeApprovalCard: React.FC<Props> = ({ payload }) => {
 
           {status === 'pending' && (
             <div className="flex gap-2 mt-4">
-              <Button variant="primary" size="sm" onClick={handleApprove} disabled={isProcessing}>
+              <Button
+                variant="primary"
+                size="sm"
+                data-analytics-id="chat-unsubscribe-approve"
+                onClick={handleApprove}
+                disabled={isProcessing}>
                 {isProcessing
                   ? t('chat.unsubscribeApproval.processing')
                   : t('chat.unsubscribeApproval.approve')}
               </Button>
-              <Button variant="secondary" size="sm" onClick={handleDeny} disabled={isProcessing}>
+              <Button
+                variant="secondary"
+                size="sm"
+                data-analytics-id="chat-unsubscribe-deny"
+                onClick={handleDeny}
+                disabled={isProcessing}>
                 {t('chat.unsubscribeApproval.deny')}
               </Button>
             </div>

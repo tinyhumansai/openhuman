@@ -9,15 +9,16 @@
 //!    reflection LLM can disambiguate body-text mentions — "Cyrus said X"
 //!    is the user iff `Cyrus` (or the email/handle) appears in this list.
 //! 3. **Pending Tasks** (kept): subconscious task list from SQLite.
-//! 4. **Hotness deltas** (new): top movers in `mem_tree_entity_hotness`
-//!    since the last tick. Highest signal density. Items tagged `(you)`
-//!    are the user's own identifiers (#1365).
-//! 5. **Recently-sealed summaries** (new): rows from `mem_tree_summaries`
+//! 4. **Recently-sealed summaries** (new): rows from `mem_tree_summaries`
 //!    grouped by tree.
-//! 6. **Latest global L0 digest** (new): most recent daily digest body.
-//! 7. **`query_global` recap window** (new): since `last_tick_at`.
-//! 8. **Recent reflections** (new): the last N reflections from the
+//! 5. **Source-tree recap window** (new): recent source summaries since
+//!    `last_tick_at`.
+//! 6. **Recent reflections** (new): the last N reflections from the
 //!    subconscious store, used by the LLM as anti-double-emit context.
+//!
+//! The hotness-deltas and global-L0-digest sections were removed with the
+//! topic/global trees (the entity-hotness signal was a topic-curator
+//! byproduct, and there is no longer a global digest node).
 //!
 //! Sections are appended in priority order; truncation drops the tail
 //! when `token_budget` is exceeded. The legacy unified-store sections
@@ -32,14 +33,26 @@ use crate::openhuman::config::Config;
 
 use super::reflection::Reflection;
 
-mod digest;
-mod hotness;
 mod query_window;
 pub(crate) mod reflections;
 mod summaries;
 
 /// Rough chars-per-token estimate for budget enforcement.
 const CHARS_PER_TOKEN: usize = 4;
+
+/// Result of building a subconscious situation report.
+///
+/// `has_external_content` is true iff the prompt now contains content
+/// derived from third-party sync sources (Gmail / Slack / Notion / chat
+/// transcripts / sealed source summaries). The subconscious engine uses
+/// this signal to upgrade the tick's `AgentTurnOrigin` to
+/// `TrustedAutomationSource::SubconsciousTainted`, which makes the
+/// approval gate refuse external_effect tools for the rest of the tick.
+#[derive(Debug, Clone)]
+pub struct SituationReport {
+    pub prompt_text: String,
+    pub has_external_content: bool,
+}
 
 /// Build the situation report for one subconscious tick.
 ///
@@ -55,10 +68,11 @@ pub async fn build_situation_report(
     last_tick_at: f64,
     token_budget: u32,
     recent_reflections: &[Reflection],
-) -> String {
+) -> SituationReport {
     let char_budget = (token_budget as usize) * CHARS_PER_TOKEN;
     let mut report = String::with_capacity(char_budget.min(64_000));
     let mut remaining = char_budget;
+    let mut has_external_content = false;
 
     // Section 1: environment anchor.
     let env_section = build_environment_section(workspace_dir);
@@ -74,25 +88,18 @@ pub async fn build_situation_report(
     let tasks_section = build_tasks_section(workspace_dir);
     append_section(&mut report, &mut remaining, &tasks_section);
 
-    // Section 3: hotness deltas (highest priority memory-tree signal).
-    let hotness_section = hotness::build_section(config, workspace_dir, last_tick_at).await;
-    append_section(&mut report, &mut remaining, &hotness_section);
-
-    // Section 4: recently-sealed summaries since last tick.
-    let summaries_section = summaries::build_section(config, last_tick_at).await;
+    // Section 4: recently-sealed source summaries since last tick.
+    let (summaries_section, summaries_tainted) =
+        summaries::build_section(config, last_tick_at).await;
     append_section(&mut report, &mut remaining, &summaries_section);
+    has_external_content |= summaries_tainted;
 
-    // Section 5: latest global L0 digest body — gated by `last_tick_at`
-    // so a digest the previous tick already saw doesn't get re-fed and
-    // re-cited (which was producing duplicate reflections).
-    let digest_section = digest::build_section(config, last_tick_at).await;
-    append_section(&mut report, &mut remaining, &digest_section);
-
-    // Section 6: query_global recap window since last tick.
-    let recap_section = query_window::build_section(config, last_tick_at).await;
+    // Section 5: source-tree recap window since last tick.
+    let (recap_section, recap_tainted) = query_window::build_section(config, last_tick_at).await;
     append_section(&mut report, &mut remaining, &recap_section);
+    has_external_content |= recap_tainted;
 
-    // Section 7: previous reflections (anti-double-emit context).
+    // Section 6: previous reflections (anti-double-emit context).
     let reflections_section = reflections::build_section(recent_reflections);
     append_section(&mut report, &mut remaining, &reflections_section);
 
@@ -100,7 +107,10 @@ pub async fn build_situation_report(
         report.push_str("No state changes detected since last tick.\n");
     }
 
-    report
+    SituationReport {
+        prompt_text: report,
+        has_external_content,
+    }
 }
 
 fn build_environment_section(workspace_dir: &Path) -> String {
@@ -150,24 +160,8 @@ fn build_identifiers_section() -> String {
     out
 }
 
-fn build_tasks_section(workspace_dir: &Path) -> String {
-    use std::fmt::Write;
-    let tasks = match super::store::with_connection(workspace_dir, |conn| {
-        super::store::list_tasks(conn, false)
-    }) {
-        Ok(tasks) => tasks,
-        Err(_) => return "## Pending Tasks\n\nFailed to read tasks.\n".to_string(),
-    };
-
-    if tasks.is_empty() {
-        return "## Pending Tasks\n\nNo tasks defined.\n".to_string();
-    }
-
-    let mut section = String::from("## Pending Tasks\n\n");
-    for task in &tasks {
-        let _ = writeln!(section, "- {}", task.title);
-    }
-    section
+fn build_tasks_section(_workspace_dir: &Path) -> String {
+    String::new()
 }
 
 /// Append a section, truncating at a UTF-8 char boundary if it overflows

@@ -10,6 +10,8 @@ import {
   type ChatIterationStartEvent,
   type ChatSegmentEvent,
   type ChatSubagentDoneEvent,
+  type ChatSubagentTextDeltaEvent,
+  type ChatSubagentThinkingDeltaEvent,
   type ChatTaskBoardUpdatedEvent,
   type ChatToolCallEvent,
   type ChatToolResultEvent,
@@ -19,12 +21,15 @@ import {
 } from '../services/chatService';
 import { store } from '../store';
 import {
+  appendSubagentStreamDelta,
   clearInferenceStatusForThread,
   clearPendingApprovalForThread,
   clearStreamingAssistantForThread,
   endInferenceTurn,
   markInferenceTurnStreaming,
   recordChatTurnUsage,
+  recordSubagentTranscriptTool,
+  resolveSubagentTranscriptTool,
   setInferenceStatusForThread,
   setPendingApprovalForThread,
   setStreamingAssistantForThread,
@@ -33,6 +38,8 @@ import {
   type StreamingAssistantState,
   type ToolTimelineEntry,
   type ToolTimelineEntryStatus,
+  upsertArtifactFailedForThread,
+  upsertArtifactReadyForThread,
 } from '../store/chatRuntimeSlice';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { selectSocketStatus } from '../store/socketSelectors';
@@ -48,7 +55,7 @@ import { formatTimelineEntry, promptFromArgsBuffer } from '../utils/toolTimeline
 
 const logChatRuntime = debug('openhuman:chat-runtime');
 const USER_FACING_AGENT_ERROR_MESSAGE =
-  'Something went wrong. Please try again.\nThis error has been reported. You can also report it on Discord.\n<openhuman-link path="community/discord">Report on Discord</openhuman-link>';
+  'Something went wrong. Please try again.\nThis error has been reported. You can also report it on Discord.\n<openhuman-link path="community/discord-report">Report on Discord</openhuman-link>';
 
 const SEGMENT_DELIVERY_TTL_MS = 5 * 60 * 1000;
 const MAX_SEGMENT_DELIVERIES = 100;
@@ -297,7 +304,7 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
     const findPendingDelegationContext = (
       entries: ToolTimelineEntry[],
       round: number
-    ): { sourceToolName?: string; prompt?: string } => {
+    ): { sourceToolName?: string; prompt?: string; spawnEntryId?: string } => {
       for (let i = entries.length - 1; i >= 0; i -= 1) {
         const entry = entries[i];
         if (entry.status !== 'running' || entry.round !== round) continue;
@@ -305,6 +312,7 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
           return {
             sourceToolName: entry.name,
             prompt: entry.detail ?? promptFromArgsBuffer(entry.argsBuffer),
+            spawnEntryId: entry.id,
           };
         }
       }
@@ -456,11 +464,19 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
 
         const existing = store.getState().chatRuntime.toolTimelineByThread[event.thread_id] ?? [];
         const pendingContext = findPendingDelegationContext(existing, event.round);
+        // Collapse the parent's `spawn_subagent`/`delegate_*` tool-call row into
+        // the subagent row so the timeline shows ONE entry per delegation
+        // instead of "Research" (the tool call) + "Researching" (the child).
+        // The tool call's prompt is carried onto the subagent as the parent's
+        // delegation message, which the drawer renders as the opening turn.
+        const base = pendingContext.spawnEntryId
+          ? existing.filter(e => e.id !== pendingContext.spawnEntryId)
+          : existing;
         dispatch(
           setToolTimelineForThread({
             threadId: event.thread_id,
             entries: [
-              ...existing,
+              ...base,
               decorateEntry({
                 id: `${event.thread_id}:subagent:${event.skill_id}:${event.tool_name}`,
                 name: `subagent:${event.tool_name}`,
@@ -471,14 +487,35 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
                 subagent: {
                   taskId: event.skill_id,
                   agentId: event.tool_name,
+                  displayName: event.subagent?.display_name,
+                  workerThreadId: event.subagent?.worker_thread_id,
                   mode: event.subagent?.mode,
                   dedicatedThread: event.subagent?.dedicated_thread,
+                  prompt: pendingContext.prompt,
                   toolCalls: [],
+                  transcript: [],
                 },
               }),
             ],
           })
         );
+      },
+      onSubagentAwaitingUser: (event: ChatSubagentDoneEvent) => {
+        const subagentRowId = `${event.thread_id}:subagent:${event.skill_id}:${event.tool_name}`;
+        const existing = store.getState().chatRuntime.toolTimelineByThread[event.thread_id] ?? [];
+        if (existing.length > 0) {
+          const entries = existing.map(entry => {
+            if (entry.id !== subagentRowId || entry.status !== 'running') return entry;
+            return decorateEntry({
+              ...entry,
+              status: 'awaiting_user' as ToolTimelineEntryStatus,
+              subagent: entry.subagent
+                ? { ...entry.subagent, status: 'awaiting_user' }
+                : entry.subagent,
+            });
+          });
+          dispatch(setToolTimelineForThread({ threadId: event.thread_id, entries }));
+        }
       },
       onSubagentDone: (event: ChatSubagentDoneEvent) => {
         const subagentRowId = `${event.thread_id}:subagent:${event.skill_id}:${event.tool_name}`;
@@ -562,6 +599,17 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
           },
         };
         dispatch(setToolTimelineForThread({ threadId: event.thread_id, entries: next }));
+        // Mirror the call into the ordered transcript so the drawer renders
+        // it right after the text that triggered it (chronological view).
+        dispatch(
+          recordSubagentTranscriptTool({
+            threadId: event.thread_id,
+            rowId,
+            callId: event.tool_call_id,
+            toolName: event.tool_name,
+            iteration: event.subagent?.child_iteration,
+          })
+        );
       },
       onSubagentToolResult: event => {
         const taskId = event.subagent?.task_id ?? event.skill_id;
@@ -585,6 +633,44 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
         const next = [...existing];
         next[idx] = { ...entry, subagent: { ...entry.subagent, toolCalls: updatedCalls } };
         dispatch(setToolTimelineForThread({ threadId: event.thread_id, entries: next }));
+        dispatch(
+          resolveSubagentTranscriptTool({
+            threadId: event.thread_id,
+            rowId,
+            callId: event.tool_call_id,
+            success: event.success,
+            elapsedMs: event.subagent?.elapsed_ms,
+            outputChars: event.subagent?.output_chars,
+          })
+        );
+      },
+      onSubagentTextDelta: (event: ChatSubagentTextDeltaEvent) => {
+        const taskId = event.subagent?.task_id;
+        const agentId = event.subagent?.agent_id;
+        if (!taskId || !agentId || !event.delta) return;
+        dispatch(
+          appendSubagentStreamDelta({
+            threadId: event.thread_id,
+            rowId: `${event.thread_id}:subagent:${taskId}:${agentId}`,
+            kind: 'text',
+            delta: event.delta,
+            iteration: event.subagent?.child_iteration,
+          })
+        );
+      },
+      onSubagentThinkingDelta: (event: ChatSubagentThinkingDeltaEvent) => {
+        const taskId = event.subagent?.task_id;
+        const agentId = event.subagent?.agent_id;
+        if (!taskId || !agentId || !event.delta) return;
+        dispatch(
+          appendSubagentStreamDelta({
+            threadId: event.thread_id,
+            rowId: `${event.thread_id}:subagent:${taskId}:${agentId}`,
+            kind: 'thinking',
+            delta: event.delta,
+            iteration: event.subagent?.child_iteration,
+          })
+        );
       },
       onSegment: (event: ChatSegmentEvent) => {
         const eventKey = `segment:${event.thread_id}:${event.request_id}:${event.segment_index}`;
@@ -707,6 +793,44 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
             });
           }
         });
+      },
+      onArtifactReady: event => {
+        rtLog('artifact_ready', {
+          thread: event.thread_id,
+          artifact_id: event.artifact_id,
+          kind: event.kind,
+          size_bytes: event.size_bytes,
+        });
+        dispatch(
+          upsertArtifactReadyForThread({
+            threadId: event.thread_id,
+            artifactId: event.artifact_id,
+            kind: event.kind,
+            title: event.title,
+            path: event.path,
+            sizeBytes: event.size_bytes,
+          })
+        );
+      },
+      onArtifactFailed: event => {
+        // Defence-in-depth: producer is expected to pre-truncate the
+        // reason, but cap again here so a leaky producer cannot dump
+        // unbounded provider stderr into client telemetry.
+        rtLog('artifact_failed', {
+          thread: event.thread_id,
+          artifact_id: event.artifact_id,
+          kind: event.kind,
+          error: event.error.slice(0, 80),
+        });
+        dispatch(
+          upsertArtifactFailedForThread({
+            threadId: event.thread_id,
+            artifactId: event.artifact_id,
+            kind: event.kind,
+            title: event.title,
+            error: event.error,
+          })
+        );
       },
       onApprovalRequest: (event: ChatApprovalRequestEvent) => {
         rtLog('approval_request', {
@@ -876,14 +1000,14 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
           const currentState = store.getState();
           const threadMessages = currentState.thread.messagesByThreadId[event.thread_id] ?? [];
           const lastMsg = threadMessages[threadMessages.length - 1];
-          // For the generic 'inference' type the server may send a raw internal error string;
-          // use the safe user-facing constant instead. For all other classified types
-          // (rate_limited, timeout, auth_error, etc.) the message comes from
-          // classify_inference_error() in web.rs and is already user-friendly.
-          const errorContent =
-            event.error_type === 'inference'
-              ? USER_FACING_AGENT_ERROR_MESSAGE
-              : event.message || USER_FACING_AGENT_ERROR_MESSAGE;
+          // Every error_type — including the generic 'inference' fallback — carries a
+          // user-facing `message` produced by classify_inference_error() in web_errors.rs.
+          // For 'inference' that message is the friendly summary PLUS the real, sanitized
+          // upstream provider error appended as a `> quote` block (secret-scrubbed and
+          // length-capped server-side via with_provider_detail()/sanitize_api_error()), so
+          // surfacing it tells the user *why* the turn failed instead of a blanket apology.
+          // The hardcoded constant is only a last-resort fallback for an empty/missing message.
+          const errorContent = event.message || USER_FACING_AGENT_ERROR_MESSAGE;
           if (!(lastMsg?.sender === 'agent' && lastMsg?.content === errorContent)) {
             void dispatch(
               addInferenceResponse({ content: errorContent, threadId: event.thread_id })

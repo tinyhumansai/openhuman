@@ -1,7 +1,9 @@
 import { useEffect, useRef } from 'react';
 
+import { useEscapeKey } from '../../hooks/useEscapeKey';
 import { useT } from '../../lib/i18n/I18nContext';
 import { type AccountProvider, type ProviderDescriptor, PROVIDERS } from '../../types/accounts';
+import { CloseIcon } from '../ui';
 import { ProviderIcon } from './providerIcons';
 
 interface AddAccountModalProps {
@@ -16,15 +18,12 @@ const AddAccountModal = ({ open, onClose, onPick, connectedProviders }: AddAccou
   const { t } = useT();
   const closeBtnRef = useRef<HTMLButtonElement | null>(null);
 
+  useEscapeKey(onClose, open);
+
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
     closeBtnRef.current?.focus();
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
+  }, [open]);
   if (!open) return null;
 
   const available = connectedProviders
@@ -50,17 +49,12 @@ const AddAccountModal = ({ open, onClose, onPick, connectedProviders }: AddAccou
           </h2>
           <button
             ref={closeBtnRef}
+            type="button"
             onClick={onClose}
+            data-analytics-id="add-account-modal-close"
             className="rounded p-1 text-stone-500 dark:text-neutral-400 hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 dark:hover:bg-neutral-800/60"
             aria-label={t('common.close')}>
-            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M6 18L18 6M6 6l12 12"
-              />
-            </svg>
+            <CloseIcon className="h-5 w-5" />
           </button>
         </div>
 
@@ -73,6 +67,8 @@ const AddAccountModal = ({ open, onClose, onPick, connectedProviders }: AddAccou
             available.map(p => (
               <button
                 key={p.id}
+                type="button"
+                data-analytics-id={`add-account-provider-${p.id}`}
                 data-testid={`add-account-provider-${p.id}`}
                 onClick={() => onPick(p)}
                 className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 dark:hover:bg-neutral-800/60">

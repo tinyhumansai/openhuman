@@ -1,6 +1,7 @@
 import { configureStore } from '@reduxjs/toolkit';
 import { createLogger } from 'redux-logger';
 import {
+  createTransform,
   FLUSH,
   PAUSE,
   PERSIST,
@@ -11,9 +12,15 @@ import {
   REHYDRATE,
 } from 'redux-persist';
 
-import { IS_DEV } from '../utils/config';
+import { E2E_RESTART_APP_AS_RELOAD, IS_DEV } from '../utils/config';
 import accountsReducer from './accountsSlice';
 import agentProfileReducer from './agentProfileSlice';
+import {
+  type ArtifactsByThread,
+  filterArtifactsForPersist,
+  rehydrateArtifactsFromPersist,
+} from './artifactsPersistFilter';
+import backendMeetReducer from './backendMeetSlice';
 import channelConnectionsReducer from './channelConnectionsSlice';
 import chatRuntimeReducer from './chatRuntimeSlice';
 import companionReducer from './companionSlice';
@@ -28,6 +35,7 @@ import socketReducer from './socketSlice';
 import themeReducer from './themeSlice';
 import threadReducer from './threadSlice';
 import { userScopedStorage } from './userScopedStorage';
+import workflowsReducer from './workflowsSlice';
 
 // Persisted slices write through `userScopedStorage` so each user's blob
 // lives at `${userId}:persist:<key>` instead of a single per-device blob
@@ -149,12 +157,39 @@ const persistedMascotReducer = persistReducer(mascotPersistConfig, mascotReducer
 const personaPersistConfig = { key: 'persona', storage, whitelist: ['displayName', 'description'] };
 const persistedPersonaReducer = persistReducer(personaPersistConfig, personaReducer);
 
+// chatRuntime is mostly ephemeral (streaming buffers, tool timelines,
+// inference status) — those MUST NOT survive a restart or the UI tries
+// to resume a turn whose live driver has gone. The single exception is
+// `artifactsByThread`: agent-generated files (#3024) survive across
+// restarts so the user can return to a thread and still find a deck
+// they made earlier. Only `status === 'ready'` snapshots are written;
+// in_progress / failed states stay session-scoped via the transform
+// below (a half-written PPT shouldn't reappear as "Generating…" on
+// cold boot).
+// Pure filter/rehydrate logic lives in `artifactsPersistFilter.ts` so it
+// can be exercised by unit tests without instantiating redux-persist's
+// transform machinery (which expects a running store).
+const artifactsReadyOnlyTransform = createTransform<ArtifactsByThread, ArtifactsByThread>(
+  filterArtifactsForPersist,
+  rehydrateArtifactsFromPersist,
+  { whitelist: ['artifactsByThread'] }
+);
+
+const chatRuntimePersistConfig = {
+  key: 'chatRuntime',
+  storage,
+  whitelist: ['artifactsByThread'],
+  transforms: [artifactsReadyOnlyTransform],
+};
+const persistedChatRuntimeReducer = persistReducer(chatRuntimePersistConfig, chatRuntimeReducer);
+
 export const store = configureStore({
   reducer: {
+    backendMeet: backendMeetReducer,
     socket: socketReducer,
     connectivity: connectivityReducer,
     thread: persistedThreadReducer,
-    chatRuntime: chatRuntimeReducer,
+    chatRuntime: persistedChatRuntimeReducer,
     companion: companionReducer,
     agentProfiles: agentProfileReducer,
     channelConnections: persistedChannelConnectionsReducer,
@@ -166,6 +201,7 @@ export const store = configureStore({
     mascot: persistedMascotReducer,
     persona: persistedPersonaReducer,
     theme: persistedThemeReducer,
+    workflows: workflowsReducer,
   },
   middleware: getDefaultMiddleware => {
     const middleware = getDefaultMiddleware({
@@ -183,10 +219,12 @@ export const store = configureStore({
 export const persistor = persistStore(store);
 
 // Expose the store on `window` so WDIO E2E specs can read Redux state directly
-// to assert backing-state changes (see app/test/e2e/specs/*.spec.ts). The store
-// holds no secrets that aren't already in the renderer's memory; this only
-// surfaces the existing handle under a stable, namespaced key.
-if (typeof window !== 'undefined') {
+// to assert backing-state changes (see app/test/e2e/specs/*.spec.ts). Gated on
+// the E2E build flag (`VITE_OPENHUMAN_E2E_RESTART_APP_AS_RELOAD`, baked by
+// `app/scripts/e2e-build.sh`) so shipped production bundles do NOT expose the
+// store handle — denying a same-origin attacker (compromised CDN, supply-chain
+// asset, XSS) a one-call read/mutate path into full Redux state.
+if (typeof window !== 'undefined' && (IS_DEV || E2E_RESTART_APP_AS_RELOAD)) {
   (window as unknown as { __OPENHUMAN_STORE__?: typeof store }).__OPENHUMAN_STORE__ = store;
 }
 

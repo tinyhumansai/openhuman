@@ -37,6 +37,22 @@ const developerItems = [
     ),
   },
   {
+    id: 'notifications-hub',
+    titleKey: 'settings.notificationsHub.title',
+    descriptionKey: 'settings.notificationsHub.menuDesc',
+    route: 'notifications-hub',
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"
+        />
+      </svg>
+    ),
+  },
+  {
     id: 'screen-intelligence',
     titleKey: 'settings.developerMenu.screenAwareness.title',
     descriptionKey: 'settings.developerMenu.screenAwareness.desc',
@@ -70,6 +86,44 @@ const developerItems = [
           strokeLinejoin="round"
           strokeWidth={2}
           d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+        />
+      </svg>
+    ),
+  },
+  // Settings → Developer → Skills Runner is commented out: the same UX
+  // (and more) now lives at /skills (Connections → Runners sub-tab) as
+  // the scheduled-skills dashboard, with /skills/run for ad-hoc runs.
+  // The route + panel component remain wired (Settings.tsx:458 keeps the
+  // /settings/skills-runner route), so deep links and bookmarks still
+  // resolve — only the menu entry is hidden.
+  // {
+  //   id: 'skills-runner',
+  //   titleKey: 'settings.developerMenu.skillsRunner.title',
+  //   descriptionKey: 'settings.developerMenu.skillsRunner.desc',
+  //   route: 'skills-runner',
+  //   icon: (
+  //     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+  //       <path
+  //         strokeLinecap="round"
+  //         strokeLinejoin="round"
+  //         strokeWidth={2}
+  //         d="M13 10V3L4 14h7v7l9-11h-7z"
+  //       />
+  //     </svg>
+  //   ),
+  // },
+  {
+    id: 'dev-workflow',
+    titleKey: 'settings.developerMenu.devWorkflow.title',
+    descriptionKey: 'settings.developerMenu.devWorkflow.desc',
+    route: 'dev-workflow',
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"
         />
       </svg>
     ),
@@ -123,6 +177,38 @@ const developerItems = [
     ),
   },
   {
+    id: 'event-log',
+    titleKey: 'settings.developerMenu.eventLog.title',
+    descriptionKey: 'settings.developerMenu.eventLog.desc',
+    route: 'event-log',
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M4 6h16M4 10h16M4 14h16M4 18h16"
+        />
+      </svg>
+    ),
+  },
+  {
+    id: 'tool-policy-diagnostics',
+    titleKey: 'devOptions.diagnostics',
+    descriptionKey: 'devOptions.toolPolicyDiagnosticsDesc',
+    route: 'tool-policy-diagnostics',
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M9 17v-5a2 2 0 012-2h2a2 2 0 012 2v5m-8 0h8m-8 0H7a2 2 0 01-2-2V7a2 2 0 012-2h10a2 2 0 012 2v8a2 2 0 01-2 2h-2"
+        />
+      </svg>
+    ),
+  },
+  {
     id: 'intelligence',
     titleKey: 'settings.developerMenu.intelligence.title',
     descriptionKey: 'settings.developerMenu.intelligence.desc',
@@ -169,6 +255,22 @@ const developerItems = [
           strokeLinejoin="round"
           strokeWidth={2}
           d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
+        />
+      </svg>
+    ),
+  },
+  {
+    id: 'model-health',
+    titleKey: 'settings.modelHealth.title',
+    descriptionKey: 'settings.modelHealth.desc',
+    route: 'model-health',
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
         />
       </svg>
     ),

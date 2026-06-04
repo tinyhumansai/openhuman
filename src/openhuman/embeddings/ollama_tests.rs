@@ -441,6 +441,184 @@ fn ollama_dimension_mismatch_stays_unexpected() {
     );
 }
 
+// ── embed — NaN-encoding 500 recovery (TAURI-RUST-AZ) ───
+
+#[test]
+fn is_nan_encode_error_matches_ollama_wire_shape() {
+    // Canonical wire shape from Sentry TAURI-RUST-AZ.
+    assert!(is_nan_encode_error(
+        r#"{"error":"failed to encode response: json: unsupported value: NaN"}"#
+    ));
+    // Case-insensitive on the "NaN" token.
+    assert!(is_nan_encode_error("unsupported value: nan"));
+    assert!(is_nan_encode_error("UNSUPPORTED VALUE: NAN"));
+    // Negative: unrelated 500 bodies must not match.
+    assert!(!is_nan_encode_error("model crashed"));
+    assert!(!is_nan_encode_error(
+        r#"{"error":"failed to encode response: json: unsupported value: +Inf"}"#
+    ));
+    assert!(!is_nan_encode_error(""));
+}
+
+#[tokio::test]
+async fn embed_nan_batch_recovers_via_per_text() {
+    // Ollama returns NaN-encoding 500 for any batch > 1, but succeeds on
+    // single-text requests. Recovery should re-issue per-text and assemble
+    // the full result.
+    let app = Router::new().route(
+        "/api/embed",
+        post(|Json(body): Json<serde_json::Value>| async move {
+            let n = body["input"].as_array().unwrap().len();
+            if n > 1 {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    String::from(
+                        r#"{"error":"failed to encode response: json: unsupported value: NaN"}"#,
+                    ),
+                )
+            } else {
+                (
+                    StatusCode::OK,
+                    serde_json::json!({ "embeddings": [[1.0, 2.0]] }).to_string(),
+                )
+            }
+        }),
+    );
+    let url = start_mock(app).await;
+    let p = OllamaEmbedding::new(&url, "m", 2);
+
+    let result = p.embed(&["a", "b", "c"]).await.unwrap();
+    assert_eq!(result.len(), 3);
+    assert_eq!(result[0], vec![1.0, 2.0]);
+    assert_eq!(result[1], vec![1.0, 2.0]);
+    assert_eq!(result[2], vec![1.0, 2.0]);
+}
+
+#[tokio::test]
+async fn embed_nan_persists_per_text_substitutes_empty() {
+    // Every request — batch or single — returns NaN 500. Recovery
+    // substitutes empty vectors for each input rather than bailing.
+    let app = Router::new().route(
+        "/api/embed",
+        post(|| async {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                String::from(
+                    r#"{"error":"failed to encode response: json: unsupported value: NaN"}"#,
+                ),
+            )
+        }),
+    );
+    let url = start_mock(app).await;
+    let p = OllamaEmbedding::new(&url, "m", 2);
+
+    let result = p.embed(&["a", "b"]).await.unwrap();
+    assert_eq!(result.len(), 2);
+    assert!(result[0].is_empty(), "NaN-failed entries must be empty vec");
+    assert!(result[1].is_empty(), "NaN-failed entries must be empty vec");
+}
+
+#[tokio::test]
+async fn embed_nan_single_text_short_circuits_to_empty() {
+    // Single-input NaN should NOT trigger a wasted retry — short-circuit
+    // straight to empty vector.
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    let count = Arc::new(AtomicUsize::new(0));
+    let count_clone = count.clone();
+    let app = Router::new().route(
+        "/api/embed",
+        post(move || {
+            let c = count_clone.clone();
+            async move {
+                c.fetch_add(1, Ordering::SeqCst);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    String::from(
+                        r#"{"error":"failed to encode response: json: unsupported value: NaN"}"#,
+                    ),
+                )
+            }
+        }),
+    );
+    let url = start_mock(app).await;
+    let p = OllamaEmbedding::new(&url, "m", 2);
+
+    let result = p.embed(&["only-text"]).await.unwrap();
+    assert_eq!(result.len(), 1);
+    assert!(result[0].is_empty());
+    assert_eq!(
+        count.load(Ordering::SeqCst),
+        1,
+        "single-text NaN must not retry — exactly one request expected"
+    );
+}
+
+#[tokio::test]
+async fn embed_nan_mixed_per_text_outcomes() {
+    // Batch NaN-fails. Per-text retries: input "bad" returns NaN, others
+    // succeed. Result vector has empty slot for "bad" and embeddings for
+    // the rest, with positions preserved.
+    let app = Router::new().route(
+        "/api/embed",
+        post(|Json(body): Json<serde_json::Value>| async move {
+            let inputs = body["input"].as_array().unwrap();
+            if inputs.len() > 1 {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    String::from(
+                        r#"{"error":"failed to encode response: json: unsupported value: NaN"}"#,
+                    ),
+                );
+            }
+            let text = inputs[0].as_str().unwrap();
+            if text == "bad" {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    String::from(
+                        r#"{"error":"failed to encode response: json: unsupported value: NaN"}"#,
+                    ),
+                )
+            } else {
+                (
+                    StatusCode::OK,
+                    serde_json::json!({ "embeddings": [[9.0, 9.0]] }).to_string(),
+                )
+            }
+        }),
+    );
+    let url = start_mock(app).await;
+    let p = OllamaEmbedding::new(&url, "m", 2);
+
+    let result = p.embed(&["good1", "bad", "good2"]).await.unwrap();
+    assert_eq!(result.len(), 3);
+    assert_eq!(result[0], vec![9.0, 9.0]);
+    assert!(result[1].is_empty(), "NaN entry must be empty vec");
+    assert_eq!(result[2], vec![9.0, 9.0]);
+}
+
+#[tokio::test]
+async fn embed_non_nan_500_still_errors() {
+    // Real ollama 500s (anything that isn't the NaN wire shape) must still
+    // bail loudly — only NaN gets the recovery path.
+    let app = Router::new().route(
+        "/api/embed",
+        post(|| async {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                String::from("model crashed"),
+            )
+        }),
+    );
+    let url = start_mock(app).await;
+    let p = OllamaEmbedding::new(&url, "m", 2);
+
+    let err = p.embed(&["a", "b"]).await.unwrap_err();
+    let msg = err.to_string();
+    assert!(msg.contains("500"));
+    assert!(msg.contains("model crashed"));
+}
+
 // ── embed_one (trait default) ───────────────────────────
 
 #[tokio::test]

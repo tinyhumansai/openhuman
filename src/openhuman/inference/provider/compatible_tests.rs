@@ -1,7 +1,7 @@
 use super::*;
 use sentry::test::TestTransport;
 use std::sync::Arc;
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{body_json, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn make_provider(name: &str, url: &str, key: Option<&str>) -> OpenAiCompatibleProvider {
@@ -65,6 +65,8 @@ fn native_request_emits_thread_id_when_present() {
         tool_choice: None,
         thread_id: Some("thread-abc".to_string()),
         stream_options: None,
+        options: None,
+        frequency_penalty: None,
     };
     let json = serde_json::to_value(&req).unwrap();
     assert_eq!(
@@ -82,12 +84,66 @@ fn native_request_emits_thread_id_when_present() {
         tool_choice: None,
         thread_id: None,
         stream_options: None,
+        options: None,
+        frequency_penalty: None,
     };
     let json_no_thread = serde_json::to_value(&req_no_thread).unwrap();
     assert!(
         json_no_thread.get("thread_id").is_none(),
         "absent thread_id must not be serialized so non-OpenHuman backends don't reject the field"
     );
+}
+
+#[test]
+fn native_request_serializes_frequency_penalty_only_when_set() {
+    let base = super::NativeChatRequest {
+        model: "kimi".to_string(),
+        messages: Vec::new(),
+        temperature: Some(0.7),
+        stream: Some(false),
+        tools: None,
+        tool_choice: None,
+        thread_id: None,
+        stream_options: None,
+        options: None,
+        frequency_penalty: Some(0.3),
+    };
+    let json = serde_json::to_value(&base).unwrap();
+    assert_eq!(
+        json.get("frequency_penalty")
+            .and_then(serde_json::Value::as_f64),
+        Some(0.3),
+        "a set frequency_penalty must be forwarded to damp repetition loops"
+    );
+
+    let none = super::NativeChatRequest {
+        frequency_penalty: None,
+        ..base
+    };
+    let json_none = serde_json::to_value(&none).unwrap();
+    assert!(
+        json_none.get("frequency_penalty").is_none(),
+        "absent frequency_penalty must be omitted so providers that reject it are unaffected"
+    );
+}
+
+#[test]
+fn detects_frequency_penalty_rejection_for_retry() {
+    use super::OpenAiCompatibleProvider as P;
+    // Strict providers that 400 on the field → retry without it.
+    assert!(P::err_indicates_frequency_penalty_unsupported(
+        "400 Bad Request: unknown parameter 'frequency_penalty'"
+    ));
+    assert!(P::err_indicates_frequency_penalty_unsupported(
+        "frequency_penalty is not supported by this model"
+    ));
+    // Unrelated errors, or the field merely mentioned, must NOT trigger a retry.
+    assert!(!P::err_indicates_frequency_penalty_unsupported(
+        "rate limit exceeded"
+    ));
+    assert!(!P::err_indicates_frequency_penalty_unsupported(
+        "applied frequency_penalty 0.3"
+    ));
 }
 
 /// Streaming responses arrive without `usage` unless the request asks
@@ -108,6 +164,8 @@ fn streaming_request_sets_stream_options_include_usage() {
         stream_options: Some(super::compatible_types::OpenAiStreamOptions {
             include_usage: true,
         }),
+        options: None,
+        frequency_penalty: None,
     };
     let json = serde_json::to_value(&req).unwrap();
     assert_eq!(
@@ -129,11 +187,58 @@ fn non_streaming_request_omits_stream_options() {
         tool_choice: None,
         thread_id: None,
         stream_options: None,
+        options: None,
+        frequency_penalty: None,
     };
     let json = serde_json::to_value(&req).unwrap();
     assert!(
         json.get("stream_options").is_none(),
         "non-streaming requests must not emit stream_options (OpenAI rejects it on stream=false)"
+    );
+}
+
+#[test]
+fn ollama_options_num_ctx_serializes_correctly() {
+    let req = super::NativeChatRequest {
+        model: "qwen3:14b".to_string(),
+        messages: Vec::new(),
+        temperature: Some(0.7),
+        stream: Some(false),
+        tools: None,
+        tool_choice: None,
+        thread_id: None,
+        stream_options: None,
+        options: Some(super::compatible_types::OllamaOptions {
+            num_ctx: Some(32768),
+        }),
+        frequency_penalty: None,
+    };
+    let json = serde_json::to_value(&req).unwrap();
+    assert_eq!(
+        json.pointer("/options/num_ctx").and_then(|v| v.as_u64()),
+        Some(32768),
+        "Ollama num_ctx must appear at options.num_ctx in serialized body"
+    );
+}
+
+#[test]
+fn ollama_options_none_is_omitted() {
+    let req = super::NativeChatRequest {
+        model: "gpt-4o".to_string(),
+        messages: Vec::new(),
+        temperature: Some(0.7),
+        stream: Some(false),
+        tools: None,
+        tool_choice: None,
+        thread_id: None,
+        stream_options: None,
+        options: None,
+        frequency_penalty: None,
+    };
+    let json = serde_json::to_value(&req).unwrap();
+    assert!(
+        json.get("options").is_none(),
+        "options field must be omitted when None (non-Ollama providers)"
     );
 }
 
@@ -168,11 +273,11 @@ fn request_serializes_correctly() {
         messages: vec![
             Message {
                 role: "system".to_string(),
-                content: "You are OpenHuman".to_string(),
+                content: "You are OpenHuman".into(),
             },
             Message {
                 role: "user".to_string(),
-                content: "hello".to_string(),
+                content: "hello".into(),
             },
         ],
         temperature: Some(0.4),
@@ -230,6 +335,106 @@ fn parse_responses_response_body_reports_sanitized_snippet() {
     assert!(!msg.contains("sk-another-secret"));
 }
 
+// ── aggregate_responses_sse_body (#3201) ─────────────────────────────────────
+
+/// Per-delta accumulation: the Codex/ChatGPT OAuth stream is a sequence of
+/// `response.output_text.delta` events whose `delta` fields concatenate into
+/// the final assistant text.
+#[test]
+fn aggregate_responses_sse_body_concatenates_text_deltas() {
+    let body = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello \"}\n\n\
+                data: {\"type\":\"response.output_text.delta\",\"delta\":\"world\"}\n\n\
+                data: [DONE]\n";
+    let text =
+        super::compatible_parse::aggregate_responses_sse_body("custom", body).expect("aggregate");
+    assert_eq!(text, "hello world");
+}
+
+/// Some providers (and the Codex endpoint when the model batches its
+/// reply) skip per-token deltas and emit the full text in
+/// `response.completed.response.output_text`. The aggregator must fall
+/// back to that terminal field when no deltas accumulated.
+#[test]
+fn aggregate_responses_sse_body_prefers_terminal_output_text_when_present() {
+    let body = "data: {\"type\":\"response.created\",\"response\":{}}\n\n\
+                data: {\"type\":\"response.completed\",\"response\":{\"output_text\":\"batched final text\"}}\n\n\
+                data: [DONE]\n";
+    let text =
+        super::compatible_parse::aggregate_responses_sse_body("custom", body).expect("aggregate");
+    assert_eq!(text, "batched final text");
+}
+
+/// #3201 CodeRabbit nit: a whitespace-only terminal `output_text` must
+/// behave like the field is absent, so accumulated deltas survive instead
+/// of being silently collapsed into blank output. Mirrors
+/// `extract_responses_text`'s `first_nonempty(...)` policy.
+#[test]
+fn aggregate_responses_sse_body_ignores_whitespace_only_terminal_output_text() {
+    let body = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"good \"}\n\n\
+                data: {\"type\":\"response.output_text.delta\",\"delta\":\"reply\"}\n\n\
+                data: {\"type\":\"response.completed\",\"response\":{\"output_text\":\"   \\n\\t\"}}\n\n\
+                data: [DONE]\n";
+    let text =
+        super::compatible_parse::aggregate_responses_sse_body("custom", body).expect("aggregate");
+    assert_eq!(text, "good reply");
+}
+
+/// Carriage-return line endings (CRLF, common in HTTP/1.1 SSE) parse the
+/// same as LF-only — the trimming is just `\r` stripping.
+#[test]
+fn aggregate_responses_sse_body_tolerates_crlf_line_endings() {
+    let body = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"crlf\"}\r\n\r\n\
+                data: [DONE]\r\n";
+    let text =
+        super::compatible_parse::aggregate_responses_sse_body("custom", body).expect("aggregate");
+    assert_eq!(text, "crlf");
+}
+
+/// `response.failed` / `response.error` / `error` event shapes are
+/// terminal failures — bubble them up so the caller surfaces the upstream
+/// reason instead of returning empty text.
+#[test]
+fn aggregate_responses_sse_body_surfaces_failure_events() {
+    let body = "data: {\"type\":\"response.created\",\"response\":{}}\n\n\
+                data: {\"type\":\"response.failed\",\"error\":\"upstream model unavailable\"}\n\n";
+    let err = super::compatible_parse::aggregate_responses_sse_body("custom", body)
+        .expect_err("failure event should propagate");
+    assert!(
+        err.to_string()
+            .contains("custom Responses API stream reported a failure event"),
+        "unexpected error: {err}"
+    );
+}
+
+/// A stream that produced no usable text events returns a sanitised
+/// "no text events" error so the caller sees something actionable
+/// instead of an empty string.
+#[test]
+fn aggregate_responses_sse_body_errors_when_no_text_events_present() {
+    let body = "data: {\"type\":\"response.created\",\"response\":{}}\n\n\
+                data: [DONE]\n";
+    let err = super::compatible_parse::aggregate_responses_sse_body("custom", body)
+        .expect_err("empty stream should fail");
+    assert!(
+        err.to_string()
+            .contains("custom Responses API SSE stream produced no text events"),
+        "unexpected error: {err}"
+    );
+}
+
+/// Malformed individual events (provider keepalive comments, etc.) must
+/// not abort the whole turn — they're skipped and the good deltas still
+/// aggregate.
+#[test]
+fn aggregate_responses_sse_body_skips_unparseable_events() {
+    let body = "data: {malformed-keepalive\n\n\
+                data: {\"type\":\"response.output_text.delta\",\"delta\":\"good\"}\n\n\
+                data: [DONE]\n";
+    let text =
+        super::compatible_parse::aggregate_responses_sse_body("custom", body).expect("aggregate");
+    assert_eq!(text, "good");
+}
+
 #[test]
 fn x_api_key_auth_style() {
     let p = OpenAiCompatibleProvider::new(
@@ -269,6 +474,185 @@ fn no_auth_style_allows_missing_key() {
         .unwrap();
     assert!(req.headers().get("authorization").is_none());
     assert!(req.headers().get("x-api-key").is_none());
+}
+
+#[test]
+fn extra_headers_are_applied_with_auth_header() {
+    let p = OpenAiCompatibleProvider::new(
+        "openai",
+        "https://chatgpt.com/backend-api/codex",
+        Some("oauth-access-token"),
+        AuthStyle::Bearer,
+    )
+    .with_extra_header("ChatGPT-Account-ID", "acct_123")
+    .with_extra_header("originator", "codex_cli_rs")
+    .with_user_agent("codex_cli_rs/0.0.0 (OpenHuman test)");
+
+    let req = p
+        .apply_auth_header(
+            p.http_client()
+                .post("https://chatgpt.com/backend-api/codex/responses"),
+            Some("oauth-access-token"),
+        )
+        .build()
+        .unwrap();
+
+    assert_eq!(
+        req.headers()
+            .get("authorization")
+            .and_then(|value| value.to_str().ok()),
+        Some("Bearer oauth-access-token")
+    );
+    assert_eq!(
+        req.headers()
+            .get("ChatGPT-Account-ID")
+            .and_then(|value| value.to_str().ok()),
+        Some("acct_123")
+    );
+    assert_eq!(
+        req.headers()
+            .get("originator")
+            .and_then(|value| value.to_str().ok()),
+        Some("codex_cli_rs")
+    );
+    assert_eq!(
+        req.headers()
+            .get(reqwest::header::USER_AGENT)
+            .and_then(|value| value.to_str().ok()),
+        Some("codex_cli_rs/0.0.0 (OpenHuman test)")
+    );
+}
+
+#[test]
+fn openrouter_requests_include_app_attribution_headers() {
+    let p = OpenAiCompatibleProvider::new(
+        "openrouter",
+        "https://openrouter.ai/api/v1",
+        Some("sk-or-test"),
+        AuthStyle::Bearer,
+    );
+
+    let req = p
+        .apply_auth_header(
+            p.http_client()
+                .post("https://openrouter.ai/api/v1/chat/completions"),
+            Some("sk-or-test"),
+        )
+        .build()
+        .unwrap();
+
+    assert_eq!(
+        req.headers()
+            .get("HTTP-Referer")
+            .and_then(|value| value.to_str().ok()),
+        Some("https://openhuman.ai")
+    );
+    assert_eq!(
+        req.headers()
+            .get("X-OpenRouter-Title")
+            .and_then(|value| value.to_str().ok()),
+        Some("OpenHuman")
+    );
+}
+
+#[test]
+fn non_openrouter_requests_do_not_include_openrouter_attribution_headers() {
+    let p = OpenAiCompatibleProvider::new(
+        "custom",
+        "https://api.example.com/v1",
+        Some("test-key"),
+        AuthStyle::Bearer,
+    );
+
+    let req = p
+        .apply_auth_header(
+            p.http_client()
+                .post("https://api.example.com/v1/chat/completions"),
+            Some("test-key"),
+        )
+        .build()
+        .unwrap();
+
+    assert!(req.headers().get("HTTP-Referer").is_none());
+    assert!(req.headers().get("X-OpenRouter-Title").is_none());
+}
+
+#[test]
+fn extra_query_params_are_applied_to_codex_urls() {
+    let p = OpenAiCompatibleProvider::new(
+        "openai",
+        "https://chatgpt.com/backend-api/codex",
+        Some("oauth-access-token"),
+        AuthStyle::Bearer,
+    )
+    .with_extra_query_param("client_version", "0.54.17");
+
+    let chat_url = reqwest::Url::parse(&p.chat_completions_url()).unwrap();
+    assert_eq!(chat_url.path(), "/backend-api/codex/chat/completions");
+    assert_eq!(
+        chat_url
+            .query_pairs()
+            .find(|(key, _)| key == "client_version")
+            .map(|(_, value)| value.into_owned()),
+        Some("0.54.17".to_string())
+    );
+
+    let responses_url = reqwest::Url::parse(&p.responses_url()).unwrap();
+    assert_eq!(responses_url.path(), "/backend-api/codex/responses");
+    assert_eq!(
+        responses_url
+            .query_pairs()
+            .find(|(key, _)| key == "client_version")
+            .map(|(_, value)| value.into_owned()),
+        Some("0.54.17".to_string())
+    );
+}
+
+/// #3201: the Codex/ChatGPT OAuth Responses endpoint rejects
+/// `stream: false` with `{"detail":"Stream must be set to true"}` and
+/// only emits SSE bodies. The non-streaming `chat_via_responses` wrapper
+/// must therefore (a) flip the `stream` flag for `/backend-api/codex`
+/// URLs and (b) aggregate the SSE body back into the same `String`
+/// the caller expects. PR #3192 fixed the sibling `store: false`
+/// requirement; this test pins both wire-shape requirements together.
+#[tokio::test]
+async fn responses_api_primary_posts_directly_to_responses() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/backend-api/codex/responses"))
+        .and(body_json(serde_json::json!({
+            "model": "gpt-5.5",
+            "input": [{
+                "role": "user",
+                "content": [{"type": "input_text", "text": "hello"}]
+            }],
+            "stream": true,
+            "store": false
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello \"}\n\n\
+             data: {\"type\":\"response.output_text.delta\",\"delta\":\"from \"}\n\n\
+             data: {\"type\":\"response.output_text.delta\",\"delta\":\"responses\"}\n\n\
+             data: {\"type\":\"response.completed\",\"response\":{\"output_text\":\"hello from responses\"}}\n\n\
+             data: [DONE]\n\n",
+        ))
+        .mount(&server)
+        .await;
+
+    let provider = OpenAiCompatibleProvider::new(
+        "openai",
+        &format!("{}/backend-api/codex", server.uri()),
+        Some("oauth-access-token"),
+        AuthStyle::Bearer,
+    )
+    .with_responses_api_primary();
+
+    let text = provider
+        .chat_with_history(&[ChatMessage::user("hello")], "gpt-5.5", 0.0)
+        .await
+        .unwrap();
+
+    assert_eq!(text, "hello from responses");
 }
 
 #[test]
@@ -352,13 +736,17 @@ fn build_responses_prompt_preserves_multi_turn_history() {
     assert_eq!(instructions.as_deref(), Some("policy"));
     assert_eq!(input.len(), 4);
     assert_eq!(input[0].role, "user");
-    assert_eq!(input[0].content, "step 1");
+    assert_eq!(input[0].content[0].kind, "input_text");
+    assert_eq!(input[0].content[0].text, "step 1");
     assert_eq!(input[1].role, "assistant");
-    assert_eq!(input[1].content, "ack 1");
+    assert_eq!(input[1].content[0].kind, "output_text");
+    assert_eq!(input[1].content[0].text, "ack 1");
     assert_eq!(input[2].role, "assistant");
-    assert_eq!(input[2].content, "{\"result\":\"ok\"}");
+    assert_eq!(input[2].content[0].kind, "input_text");
+    assert_eq!(input[2].content[0].text, "{\"result\":\"ok\"}");
     assert_eq!(input[3].role, "user");
-    assert_eq!(input[3].content, "step 2");
+    assert_eq!(input[3].content[0].kind, "input_text");
+    assert_eq!(input[3].content[0].text, "step 2");
 }
 
 #[tokio::test]
@@ -412,9 +800,10 @@ async fn streaming_chat_config_rejection_propagates_error_without_sentry_report(
         model: "kimi-k2".to_string(),
         messages: vec![NativeMessage {
             role: "user".to_string(),
-            content: Some("hello".to_string()),
+            content: Some("hello".into()),
             tool_call_id: None,
             tool_calls: None,
+            reasoning_content: None,
         }],
         temperature: Some(0.7),
         stream: Some(true),
@@ -424,6 +813,8 @@ async fn streaming_chat_config_rejection_propagates_error_without_sentry_report(
         stream_options: Some(super::compatible_types::OpenAiStreamOptions {
             include_usage: true,
         }),
+        options: None,
+        frequency_penalty: None,
     };
     let (delta_tx, _delta_rx) = tokio::sync::mpsc::channel(8);
 
@@ -657,6 +1048,49 @@ fn parse_native_response_preserves_tool_call_id() {
     assert_eq!(parsed.tool_calls[0].name, "shell");
 }
 
+/// DeepSeek thinking mode emits the chain-of-thought in `reasoning_content`
+/// alongside the tool call. `parse_native_response` must surface it so the
+/// agent loop can replay it on the follow-up request (Sentry TAURI-RUST-4KB).
+#[test]
+fn parse_native_response_captures_reasoning_content() {
+    let message = ResponseMessage {
+        content: None,
+        tool_calls: Some(vec![ToolCall {
+            id: Some("call_r".to_string()),
+            kind: Some("function".to_string()),
+            function: Some(Function {
+                name: Some("shell".to_string()),
+                arguments: Some(serde_json::Value::String("{}".to_string())),
+            }),
+        }]),
+        function_call: None,
+        reasoning_content: Some("  weighing the options  ".to_string()),
+    };
+
+    let parsed =
+        OpenAiCompatibleProvider::parse_native_response(wrap_message(message), "deepseek").unwrap();
+    assert_eq!(
+        parsed.reasoning_content.as_deref(),
+        Some("weighing the options")
+    );
+}
+
+/// Whitespace-only / empty reasoning is normalised to `None` so it never
+/// produces a spurious `reasoning_content` key on the wire.
+#[test]
+fn parse_native_response_blank_reasoning_is_none() {
+    let message = ResponseMessage {
+        content: Some("hello".to_string()),
+        tool_calls: None,
+        function_call: None,
+        reasoning_content: Some("   ".to_string()),
+    };
+
+    let parsed =
+        OpenAiCompatibleProvider::parse_native_response(wrap_message(message), "deepseek").unwrap();
+    assert!(parsed.reasoning_content.is_none());
+}
+
 #[test]
 fn convert_messages_for_native_maps_tool_result_payload() {
     // A `tool` result must be opened by a preceding `assistant(tool_calls)`,
@@ -673,7 +1107,10 @@ fn convert_messages_for_native_maps_tool_result_payload() {
     assert_eq!(converted.len(), 2);
     assert_eq!(converted[1].role, "tool");
     assert_eq!(converted[1].tool_call_id.as_deref(), Some("call_abc"));
-    assert_eq!(converted[1].content.as_deref(), Some("done"));
+    assert_eq!(
+        serde_json::to_value(&converted[1].content).unwrap(),
+        serde_json::json!("done")
+    );
 }
 
 /// Helper: roles in serialized order.
@@ -778,7 +1215,10 @@ fn tool_invariants_collapse_fully_unanswered_assistant_call() {
         converted[0].tool_calls.is_none(),
         "fully-unanswered tool_calls must be dropped"
     );
-    assert_eq!(converted[0].content.as_deref(), Some("on it"));
+    assert_eq!(
+        serde_json::to_value(&converted[0].content).unwrap(),
+        serde_json::json!("on it")
+    );
 }
 
 /// Regression guard: a well-formed tool cycle is passed through untouched —
@@ -895,6 +1335,123 @@ fn tool_invariants_drop_orphan_but_keep_following_cycle() {
     assert_eq!(roles(&converted), vec!["assistant", "tool", "assistant"]);
     assert_eq!(converted[0].tool_calls.as_ref().unwrap().len(), 1);
     assert_eq!(converted[1].tool_call_id.as_deref(), Some("call_b"));
+}
+
+/// DeepSeek thinking mode (Sentry TAURI-RUST-4KB): an `assistant` turn that
+/// carries `tool_calls` must replay its `reasoning_content` on the follow-up
+/// request, otherwise DeepSeek returns
+/// `400 The reasoning_content in the thinking mode must be passed back to the
+/// API.` The history JSON written by `build_native_assistant_history` carries
+/// `reasoning_content`; `convert_messages_for_native` must lift it back onto
+/// the wire message.
+#[test]
+fn convert_preserves_reasoning_content_on_tool_call_turn() {
+    let input = vec![
+        ChatMessage::assistant(
+            r#"{"content":null,"reasoning_content":"let me think about this","tool_calls":[{"id":"call_x","name":"shell","arguments":"{}"}]}"#,
+        ),
+        ChatMessage::tool(r#"{"tool_call_id":"call_x","content":"result"}"#),
+    ];
+
+    let converted = OpenAiCompatibleProvider::convert_messages_for_native(&input);
+
+    // First message is the assistant with tool_calls + reasoning.
+    assert_eq!(
+        converted[0].reasoning_content.as_deref(),
+        Some("let me think about this")
+    );
+    assert!(converted[0].tool_calls.is_some());
+
+    // The wire payload must actually carry the field for DeepSeek to accept it.
+    let wire = serde_json::to_value(&converted[0]).unwrap();
+    assert_eq!(wire["reasoning_content"], "let me think about this");
+}
+
+/// Assistant tool-call turns from non-reasoning models carry no
+/// `reasoning_content`; it must never appear on the wire for them (most
+/// OpenAI-compatible providers don't recognise the field).
+#[test]
+fn convert_omits_reasoning_content_when_absent() {
+    let input = vec![ChatMessage::assistant(
+        r#"{"content":"sure","tool_calls":[{"id":"call_y","name":"shell","arguments":"{}"}]}"#,
+    )];
+
+    let converted = OpenAiCompatibleProvider::convert_messages_for_native(&input);
+
+    assert_eq!(converted.len(), 1);
+    assert!(converted[0].reasoning_content.is_none());
+
+    let wire = serde_json::to_value(&converted[0]).unwrap();
+    assert!(
+        wire.get("reasoning_content").is_none(),
+        "reasoning_content must be omitted from the wire when absent"
+    );
+}
+
+/// Tool-call assistant messages with no narrative text must emit `"content":""`
+/// on the wire (not omit the key) so providers that validate the presence of a
+/// content field alongside reasoning_content don't reject the request.
+#[test]
+fn convert_tool_call_turn_emits_content_key_even_when_empty() {
+    let input = vec![
+        ChatMessage::assistant(
+            r#"{"content":null,"reasoning_content":"thinking","tool_calls":[{"id":"call_a","name":"web_fetch","arguments":"{}"}]}"#,
+        ),
+        ChatMessage::tool(r#"{"tool_call_id":"call_a","content":"fetched"}"#),
+    ];
+
+    let converted = OpenAiCompatibleProvider::convert_messages_for_native(&input);
+    let wire = serde_json::to_value(&converted[0]).unwrap();
+
+    assert!(
+        wire.get("content").is_some(),
+        "content key must be present on the wire even when the model emitted null/empty content"
+    );
+    assert_eq!(wire["content"], "");
+    assert_eq!(wire["reasoning_content"], "thinking");
+}
+
+/// When `enforce_tool_message_invariants` collapses an assistant tool-call
+/// message to plain text (all tool_calls pruned because no responses matched),
+/// it must also clear `reasoning_content` — leaving stale reasoning on a
+/// non-tool assistant message is a malformed shape for thinking-mode providers.
+#[test]
+fn enforce_invariants_clears_reasoning_when_assistant_collapses_to_text() {
+    let messages = vec![
+        NativeMessage {
+            role: "assistant".to_string(),
+            content: Some("partial thought".into()),
+            tool_call_id: None,
+            tool_calls: Some(vec![ToolCall {
+                id: Some("orphan_call".to_string()),
+                kind: Some("function".to_string()),
+                function: Some(Function {
+                    name: Some("web_fetch".to_string()),
+                    arguments: Some(serde_json::Value::String("{}".to_string())),
+                }),
+            }]),
+            reasoning_content: Some("deep reasoning".to_string()),
+        },
+        // No tool result follows — the tool_calls are orphaned.
+        NativeMessage {
+            role: "user".to_string(),
+            content: Some("next question".into()),
+            tool_call_id: None,
+            tool_calls: None,
+            reasoning_content: None,
+        },
+    ];
+
+    let sanitized = OpenAiCompatibleProvider::enforce_tool_message_invariants(messages);
+
+    // The assistant message should have been collapsed: tool_calls pruned.
+    let assistant = &sanitized[0];
+    assert!(assistant.tool_calls.is_none());
+    // reasoning_content must also be cleared on collapse.
+    assert!(
+        assistant.reasoning_content.is_none(),
+        "reasoning_content must be stripped when tool_calls are pruned to avoid malformed shape"
+    );
 }
 
 #[test]
@@ -1023,6 +1580,69 @@ fn capabilities_reports_native_tool_calling() {
     assert!(caps.native_tool_calling);
 }
 
+// Sub-issue 3 of #3098: Ollama's OpenAI-compat endpoint silently rejects the
+// `tools` parameter for many models, so we must let the factory opt the
+// Ollama provider out of native tool calling. The agent harness then falls
+// back to prompt-guided tool specs (embedded in the system prompt) which
+// any chat model can follow. The builder defaults to enabled so cloud
+// providers (OpenAI, BYOK slugs, OpenHuman backend) are unaffected.
+
+#[test]
+fn with_native_tool_calling_false_disables_capability() {
+    let p = make_provider("test", "https://example.com", None).with_native_tool_calling(false);
+    let caps = <OpenAiCompatibleProvider as Provider>::capabilities(&p);
+    assert!(
+        !caps.native_tool_calling,
+        "capabilities() must mirror the builder override; this is the gate the agent harness uses to decide between native vs prompt-guided tool specs"
+    );
+}
+
+#[test]
+fn with_native_tool_calling_true_preserves_default() {
+    let p = make_provider("test", "https://example.com", None).with_native_tool_calling(true);
+    let caps = <OpenAiCompatibleProvider as Provider>::capabilities(&p);
+    assert!(caps.native_tool_calling);
+}
+
+#[test]
+fn with_native_tool_calling_is_idempotent() {
+    let p = make_provider("test", "https://example.com", None)
+        .with_native_tool_calling(false)
+        .with_native_tool_calling(false);
+    let caps = <OpenAiCompatibleProvider as Provider>::capabilities(&p);
+    assert!(!caps.native_tool_calling);
+}
+
+/// `supports_native_tools()` is the gate the agent harness reads
+/// (`traits.rs:415`) when deciding whether to send tools natively or
+/// inject them into the prompt. It MUST agree with
+/// `capabilities().native_tool_calling`; otherwise
+/// `with_native_tool_calling(false)` silently fails to switch to
+/// prompt-guided and Ollama still receives a `tools` array (the exact
+/// regression sub-issue 3 of #3098 was meant to fix).
+#[test]
+fn supports_native_tools_mirrors_capabilities_flag() {
+    let default = make_provider("test", "https://example.com", None);
+    assert_eq!(
+        default.supports_native_tools(),
+        <OpenAiCompatibleProvider as Provider>::capabilities(&default).native_tool_calling,
+        "default provider: the two capability signals must match"
+    );
+    assert!(default.supports_native_tools(), "default must remain true");
+
+    let opted_out =
+        make_provider("test", "https://example.com", None).with_native_tool_calling(false);
+    assert_eq!(
+        opted_out.supports_native_tools(),
+        <OpenAiCompatibleProvider as Provider>::capabilities(&opted_out).native_tool_calling,
+        "after with_native_tool_calling(false): the two capability signals must match"
+    );
+    assert!(
+        !opted_out.supports_native_tools(),
+        "after with_native_tool_calling(false), supports_native_tools must report false so the harness picks the prompt-guided fallback"
+    );
+}
+
 #[test]
 fn tool_specs_convert_to_openai_format() {
     let specs = vec![crate::openhuman::tools::ToolSpec {
@@ -1063,7 +1683,7 @@ fn request_serializes_with_tools() {
         model: "test-model".to_string(),
         messages: vec![Message {
             role: "user".to_string(),
-            content: "What is the weather?".to_string(),
+            content: "What is the weather?".into(),
         }],
         temperature: Some(0.7),
         stream: Some(false),
@@ -1404,6 +2024,71 @@ fn reasoning_content_ignored_by_normal_models() {
 }
 
 // ----------------------------------------------------------
+// `reasoning` field-name alias (issue #3094)
+//
+// DeepSeek/Qwen3/GLM-4 emit chain-of-thought as `reasoning_content`, but
+// OpenRouter and vLLM/SGLang-backed OpenAI-compatible proxies emit it as
+// `reasoning`. If we only deserialize `reasoning_content`, a third-party
+// thinking-mode provider that uses `reasoning` is captured as `None`, so the
+// CoT is never replayed on the follow-up tool-call turn and the provider
+// rejects the request with `400 The reasoning_content in the thinking mode
+// must be passed back to the API`. The `#[serde(alias = "reasoning")]` makes
+// both field names map to the same captured value.
+// ----------------------------------------------------------
+
+#[test]
+fn reasoning_alias_captured_from_response_message() {
+    let json = r#"{"choices":[{"message":{"content":null,"reasoning":"weighing the options"}}]}"#;
+    let resp: ApiChatResponse = serde_json::from_str(json).unwrap();
+    let msg = &resp.choices[0].message;
+    assert_eq!(
+        msg.reasoning_content.as_deref(),
+        Some("weighing the options")
+    );
+}
+
+#[test]
+fn reasoning_content_canonical_field_still_wins_over_alias_absence() {
+    // The canonical `reasoning_content` field keeps working unchanged.
+    let json = r#"{"choices":[{"message":{"content":null,"reasoning_content":"canonical cot"}}]}"#;
+    let resp: ApiChatResponse = serde_json::from_str(json).unwrap();
+    let msg = &resp.choices[0].message;
+    assert_eq!(msg.reasoning_content.as_deref(), Some("canonical cot"));
+}
+
+#[test]
+fn reasoning_alias_captured_in_stream_delta() {
+    let json = r#"{"choices":[{"delta":{"reasoning":"streamed cot"},"finish_reason":null}]}"#;
+    let chunk: StreamChunkResponse = serde_json::from_str(json).unwrap();
+    assert_eq!(
+        chunk.choices[0].delta.reasoning_content.as_deref(),
+        Some("streamed cot")
+    );
+}
+
+/// End-to-end: a tool-call turn whose reasoning arrived under the `reasoning`
+/// alias must still be surfaced by `parse_native_response` so the agent loop
+/// can replay it on the follow-up request (the issue #3094 failure path).
+#[test]
+fn parse_native_response_captures_reasoning_from_alias() {
+    let json = r#"{
+        "choices":[{"message":{
+            "content":null,
+            "reasoning":"  let me think about this  ",
+            "tool_calls":[{"id":"call_z","type":"function","function":{"name":"web_fetch","arguments":"{}"}}]
+        }}]
+    }"#;
+    let resp: ApiChatResponse = serde_json::from_str(json).unwrap();
+    let parsed = OpenAiCompatibleProvider::parse_native_response(resp, "deepseek").unwrap();
+    assert_eq!(parsed.tool_calls.len(), 1);
+    assert_eq!(
+        parsed.reasoning_content.as_deref(),
+        Some("let me think about this"),
+        "reasoning captured via the `reasoning` alias must be available to replay"
+    );
+}
+
+// ----------------------------------------------------------
 // SSE streaming reasoning_content fallback tests
 // ----------------------------------------------------------
 
@@ -1554,5 +2239,475 @@ fn enrich_404_message_adds_hint_when_no_fallback() {
     assert_eq!(
         result_with_fallback, "openai API error (404 Not Found): model not found",
         "must not add hint when fallback is enabled: {result_with_fallback}"
+    );
+}
+
+// ── reasoning_content round-trip tests (issue #2800 / Sentry TAURI-RUST-4WC) ─
+
+/// `parse_native_response` must capture `reasoning_content` from a non-streaming
+/// `ApiChatResponse` and surface it on `ChatResponse`.
+#[test]
+fn parse_native_response_captures_reasoning_content_from_api_response() {
+    let api_resp = ApiChatResponse {
+        choices: vec![Choice {
+            message: ResponseMessage {
+                content: Some("Here is my answer.".into()),
+                reasoning_content: Some("I thought about it carefully.".into()),
+                tool_calls: None,
+                function_call: None,
+            },
+        }],
+        usage: None,
+        openhuman: None,
+    };
+    let result = OpenAiCompatibleProvider::parse_native_response(api_resp, "deepseek").unwrap();
+    assert_eq!(
+        result.reasoning_content.as_deref(),
+        Some("I thought about it carefully."),
+        "reasoning_content must be propagated to ChatResponse"
+    );
+    assert_eq!(result.text.as_deref(), Some("Here is my answer."));
+}
+
+/// When a response has no `reasoning_content`, `ChatResponse.reasoning_content`
+/// must be `None` (no spurious field emitted on the next turn).
+#[test]
+fn parse_native_response_no_reasoning_content_stays_none() {
+    let api_resp = ApiChatResponse {
+        choices: vec![Choice {
+            message: ResponseMessage {
+                content: Some("Just a plain answer.".into()),
+                reasoning_content: None,
+                tool_calls: None,
+                function_call: None,
+            },
+        }],
+        usage: None,
+        openhuman: None,
+    };
+    let result = OpenAiCompatibleProvider::parse_native_response(api_resp, "gpt-4o").unwrap();
+    assert!(
+        result.reasoning_content.is_none(),
+        "reasoning_content must be None when the provider did not return it"
+    );
+}
+
+/// `convert_messages_for_native` must echo `reasoning_content` back in the
+/// `NativeMessage` for assistant turns that have it stored in `extra_metadata`.
+/// This is the load-bearing contract: without it the API returns HTTP 400.
+#[test]
+fn convert_messages_for_native_echoes_reasoning_content_from_extra_metadata() {
+    let mut assistant_msg = ChatMessage::assistant("Here is my answer.");
+    assistant_msg.extra_metadata =
+        Some(serde_json::json!({ "reasoning_content": "I thought carefully." }));
+
+    let messages = vec![
+        ChatMessage::user("What is 2+2?"),
+        assistant_msg,
+        ChatMessage::user("Are you sure?"),
+    ];
+
+    let native = OpenAiCompatibleProvider::convert_messages_for_native(&messages);
+
+    // User messages must not carry reasoning_content.
+    assert!(
+        native[0].reasoning_content.is_none(),
+        "user message must not have reasoning_content"
+    );
+    // The assistant message with extra_metadata must have reasoning_content echoed.
+    assert_eq!(
+        native[1].reasoning_content.as_deref(),
+        Some("I thought carefully."),
+        "assistant message must echo reasoning_content from extra_metadata"
+    );
+    // Second user message must not carry reasoning_content.
+    assert!(
+        native[2].reasoning_content.is_none(),
+        "second user message must not have reasoning_content"
+    );
+}
+
+/// Assistant messages without `extra_metadata` (or without a `reasoning_content`
+/// key) must produce a `NativeMessage` with `reasoning_content = None` — the
+/// `skip_serializing_if` attribute then omits the field from the JSON body so
+/// standard providers don't reject the request.
+#[test]
+fn convert_messages_for_native_no_reasoning_content_stays_none() {
+    let messages = vec![ChatMessage::user("hello"), ChatMessage::assistant("world")];
+
+    let native = OpenAiCompatibleProvider::convert_messages_for_native(&messages);
+    assert!(
+        native[1].reasoning_content.is_none(),
+        "assistant without extra_metadata must produce reasoning_content = None"
+    );
+}
+
+/// The `reasoning_content` field must be omitted from the JSON serialized wire
+/// payload when it is `None`, so standard providers that do not understand the
+/// field are not broken.
+#[test]
+fn native_message_reasoning_content_omitted_when_none() {
+    let msg = NativeMessage {
+        role: "assistant".to_string(),
+        content: Some("hello".into()),
+        tool_call_id: None,
+        tool_calls: None,
+        reasoning_content: None,
+    };
+    let json = serde_json::to_value(&msg).unwrap();
+    assert!(
+        json.get("reasoning_content").is_none(),
+        "reasoning_content must be absent from the wire payload when None"
+    );
+}
+
+/// When `reasoning_content` is present it must appear in the serialized payload
+/// so thinking-model providers receive it.
+#[test]
+fn native_message_reasoning_content_present_when_some() {
+    let msg = NativeMessage {
+        role: "assistant".to_string(),
+        content: Some("hello".into()),
+        tool_call_id: None,
+        tool_calls: None,
+        reasoning_content: Some("I thought carefully.".to_string()),
+    };
+    let json = serde_json::to_value(&msg).unwrap();
+    assert_eq!(
+        json.get("reasoning_content").and_then(|v| v.as_str()),
+        Some("I thought carefully."),
+        "reasoning_content must be present in the wire payload when Some"
+    );
+}
+
+// ── convert_tool_specs — TAURI-RUST-2E wire-boundary dedup ─────────────
+
+fn spec(name: &str) -> crate::openhuman::tools::ToolSpec {
+    crate::openhuman::tools::ToolSpec {
+        name: name.to_string(),
+        description: format!("{name} desc"),
+        parameters: serde_json::json!({"type": "object"}),
+    }
+}
+
+#[test]
+fn convert_tool_specs_none_input_returns_none() {
+    assert!(OpenAiCompatibleProvider::convert_tool_specs(None).is_none());
+}
+
+#[test]
+fn convert_tool_specs_empty_slice_returns_empty_vec() {
+    let out = OpenAiCompatibleProvider::convert_tool_specs(Some(&[])).unwrap();
+    assert!(out.is_empty());
+}
+
+#[test]
+fn convert_tool_specs_passes_through_unique_names() {
+    let specs = vec![spec("alpha"), spec("beta"), spec("gamma")];
+    let out = OpenAiCompatibleProvider::convert_tool_specs(Some(&specs)).unwrap();
+    assert_eq!(out.len(), 3);
+    let names: Vec<&str> = out
+        .iter()
+        .map(|t| t["function"]["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, vec!["alpha", "beta", "gamma"]);
+}
+
+#[test]
+fn convert_tool_specs_dedups_duplicate_names_first_wins() {
+    // First occurrence of `alpha` (with description "alpha desc") survives;
+    // the second is dropped wholesale even though its `parameters` differ.
+    let mut second_alpha = spec("alpha");
+    second_alpha.description = "should be dropped".to_string();
+    second_alpha.parameters = serde_json::json!({"different": true});
+    let specs = vec![spec("alpha"), spec("beta"), second_alpha, spec("gamma")];
+
+    let out = OpenAiCompatibleProvider::convert_tool_specs(Some(&specs)).unwrap();
+    assert_eq!(
+        out.len(),
+        3,
+        "duplicate `alpha` must be dropped from wire payload"
+    );
+    let names: Vec<&str> = out
+        .iter()
+        .map(|t| t["function"]["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, vec!["alpha", "beta", "gamma"]);
+    assert_eq!(
+        out[0]["function"]["description"].as_str().unwrap(),
+        "alpha desc",
+        "first occurrence's description must survive (first-wins)"
+    );
+}
+
+#[test]
+fn convert_tool_specs_dedups_many_duplicates() {
+    let specs = vec![
+        spec("x"),
+        spec("x"),
+        spec("x"),
+        spec("y"),
+        spec("y"),
+        spec("z"),
+    ];
+    let out = OpenAiCompatibleProvider::convert_tool_specs(Some(&specs)).unwrap();
+    assert_eq!(out.len(), 3);
+    let names: Vec<&str> = out
+        .iter()
+        .map(|t| t["function"]["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, vec!["x", "y", "z"]);
+}
+
+// ── #3193: completion-only model 404 detection + actionable message ──────────
+
+#[test]
+fn completion_only_model_404_detected_from_openai_signature() {
+    // The exact body OpenAI returns when a completion-only/base model is sent
+    // to /v1/chat/completions.
+    let body = "This is not a chat model and thus not supported in the \
+                v1/chat/completions endpoint. Did you mean to use v1/completions?";
+    assert!(OpenAiCompatibleProvider::is_completion_only_model_404(
+        reqwest::StatusCode::NOT_FOUND,
+        body
+    ));
+}
+
+#[test]
+fn completion_only_model_404_ignores_ordinary_not_found() {
+    // A "model does not exist" 404 must NOT be misclassified — it should keep
+    // its existing fallback / enrich behaviour, not get the completion-only
+    // message.
+    let body = "The model `gpt-9o` does not exist or you do not have access to it.";
+    assert!(!OpenAiCompatibleProvider::is_completion_only_model_404(
+        reqwest::StatusCode::NOT_FOUND,
+        body
+    ));
+}
+
+#[test]
+fn completion_only_model_404_requires_404_status() {
+    // Same phrasing under a non-404 status is not the completion-only case.
+    let body = "not a chat model";
+    assert!(!OpenAiCompatibleProvider::is_completion_only_model_404(
+        reqwest::StatusCode::BAD_REQUEST,
+        body
+    ));
+}
+
+#[test]
+fn completion_only_message_names_model_and_remediation() {
+    let p = make_provider("openhuman", "https://api.example.com/v1", Some("k"));
+    let msg = p.completion_only_model_message(
+        "davinci-002",
+        "This is not a chat model ... Did you mean to use v1/completions?",
+    );
+    assert!(
+        msg.contains("davinci-002"),
+        "names the offending model: {msg}"
+    );
+    assert!(
+        msg.contains("completion-only") && msg.contains("chat-completions"),
+        "explains the capability mismatch: {msg}"
+    );
+    assert!(
+        msg.contains("chat-capable model"),
+        "states the remediation: {msg}"
+    );
+}
+
+#[test]
+fn completion_only_404_guard_fires_only_on_signature() {
+    let p = make_provider("openhuman", "https://api.example.com/v1", Some("k"));
+    // Matches → Some(actionable error).
+    let hit = p.completion_only_404_guard(
+        reqwest::StatusCode::NOT_FOUND,
+        "This is not a chat model. Did you mean to use v1/completions?",
+        "davinci-002",
+    );
+    let err = hit.expect("guard should fire on the completion-only signature");
+    assert!(err.to_string().contains("davinci-002"));
+    // Ordinary not-found → None (normal fallback/enrich path is preserved).
+    assert!(p
+        .completion_only_404_guard(
+            reqwest::StatusCode::NOT_FOUND,
+            "The model `gpt-9o` does not exist.",
+            "gpt-9o"
+        )
+        .is_none());
+}
+
+#[tokio::test]
+async fn completion_only_404_fails_fast_without_responses_fallback() {
+    // End-to-end over the wire: a completion-only 404 must short-circuit with
+    // the actionable message and NOT attempt /v1/responses (not mounted here —
+    // if the guard regressed, the error would instead read "responses fallback
+    // failed"). Provider has the fallback ENABLED (default `new`), proving the
+    // guard pre-empts it. #3193.
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(404).set_body_json(serde_json::json!({
+            "error": {
+                "message": "This is not a chat model and thus not supported in the \
+                            v1/chat/completions endpoint. Did you mean to use v1/completions?",
+                "type": "invalid_request_error"
+            }
+        })))
+        .mount(&server)
+        .await;
+
+    let provider = OpenAiCompatibleProvider::new(
+        "openhuman",
+        &format!("{}/v1", server.uri()),
+        Some("key"),
+        AuthStyle::Bearer,
+    );
+
+    let err = provider
+        .chat_with_history(&[ChatMessage::user("write a file")], "davinci-002", 0.0)
+        .await
+        .expect_err("completion-only model must error");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("davinci-002") && msg.contains("chat-capable model"),
+        "expected actionable completion-only message, got: {msg}"
+    );
+    assert!(
+        !msg.contains("responses fallback failed"),
+        "guard must pre-empt the responses fallback, got: {msg}"
+    );
+}
+
+// ── #3205: multimodal [IMAGE:] markers → OpenAI image_url content parts ─────────
+
+const TEST_PNG_DATA_URI: &str = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+
+/// Text with no markers stays the plain-string `content` arm — byte-identical
+/// to the legacy wire shape so every non-attachment turn is unaffected.
+#[test]
+fn message_content_text_only_serializes_as_string() {
+    let content = MessageContent::from_chat_text("just a normal message");
+    let json = serde_json::to_value(&content).unwrap();
+    assert_eq!(json, serde_json::json!("just a normal message"));
+}
+
+/// A user message carrying one `[IMAGE:data-uri]` marker is promoted to the
+/// OpenAI `content` array: a `text` part followed by an `image_url` part.
+#[test]
+fn message_content_text_plus_image_serializes_as_parts() {
+    let raw = format!("what is in this picture? [IMAGE:{TEST_PNG_DATA_URI}]");
+    let json = serde_json::to_value(MessageContent::from_chat_text(&raw)).unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!([
+            { "type": "text", "text": "what is in this picture?" },
+            { "type": "image_url", "image_url": { "url": TEST_PNG_DATA_URI } },
+        ])
+    );
+}
+
+/// An image with no accompanying text emits only the `image_url` part.
+#[test]
+fn message_content_image_only_omits_empty_text_part() {
+    let raw = format!("[IMAGE:{TEST_PNG_DATA_URI}]");
+    let json = serde_json::to_value(MessageContent::from_chat_text(&raw)).unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!([
+            { "type": "image_url", "image_url": { "url": TEST_PNG_DATA_URI } },
+        ])
+    );
+}
+
+/// Multiple markers become multiple `image_url` parts, with the text between
+/// them preserved in authored order (not collapsed before the images).
+#[test]
+fn message_content_multiple_images_serialize_in_order() {
+    let raw = format!("compare [IMAGE:{TEST_PNG_DATA_URI}] and [IMAGE:https://example.com/b.jpg]");
+    let json = serde_json::to_value(MessageContent::from_chat_text(&raw)).unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!([
+            { "type": "text", "text": "compare" },
+            { "type": "image_url", "image_url": { "url": TEST_PNG_DATA_URI } },
+            { "type": "text", "text": "and" },
+            { "type": "image_url", "image_url": { "url": "https://example.com/b.jpg" } },
+        ])
+    );
+}
+
+/// Interleaved order is preserved exactly — an image-first prompt keeps the
+/// image before the trailing text (CodeRabbit #3268).
+#[test]
+fn message_content_preserves_image_first_then_text_order() {
+    let raw = format!("[IMAGE:{TEST_PNG_DATA_URI}] then explain");
+    let json = serde_json::to_value(MessageContent::from_chat_text(&raw)).unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!([
+            { "type": "image_url", "image_url": { "url": TEST_PNG_DATA_URI } },
+            { "type": "text", "text": "then explain" },
+        ])
+    );
+}
+
+/// Request-level: a chat history with an image-bearing user turn serialises the
+/// full body with a string `system` content and an array `user` content.
+#[test]
+fn api_chat_request_mixes_string_and_array_content() {
+    let req = ApiChatRequest {
+        model: "gpt-4o".to_string(),
+        messages: vec![
+            Message {
+                role: "system".to_string(),
+                content: "You are helpful.".into(),
+            },
+            Message {
+                role: "user".to_string(),
+                content: MessageContent::from_chat_text(&format!(
+                    "describe this [IMAGE:{TEST_PNG_DATA_URI}]"
+                )),
+            },
+        ],
+        temperature: None,
+        stream: None,
+        tools: None,
+        tool_choice: None,
+    };
+    let json = serde_json::to_value(&req).unwrap();
+    assert_eq!(
+        json["messages"][0]["content"],
+        serde_json::json!("You are helpful.")
+    );
+    assert_eq!(
+        json["messages"][1]["content"],
+        serde_json::json!([
+            { "type": "text", "text": "describe this" },
+            { "type": "image_url", "image_url": { "url": TEST_PNG_DATA_URI } },
+        ])
+    );
+}
+
+/// The agent streaming path runs history through `convert_messages_for_native`;
+/// an image marker must survive into the `NativeMessage` array content while
+/// plain turns stay strings.
+#[test]
+fn convert_messages_for_native_promotes_image_marker() {
+    let history = vec![
+        ChatMessage::system("be brief"),
+        ChatMessage::user(&format!("look [IMAGE:{TEST_PNG_DATA_URI}]")),
+    ];
+    let native = OpenAiCompatibleProvider::convert_messages_for_native(&history);
+    assert_eq!(
+        serde_json::to_value(&native[0]).unwrap()["content"],
+        serde_json::json!("be brief")
+    );
+    assert_eq!(
+        serde_json::to_value(&native[1]).unwrap()["content"],
+        serde_json::json!([
+            { "type": "text", "text": "look" },
+            { "type": "image_url", "image_url": { "url": TEST_PNG_DATA_URI } },
+        ])
     );
 }

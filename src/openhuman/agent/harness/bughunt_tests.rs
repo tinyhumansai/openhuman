@@ -20,6 +20,10 @@ fn mm() -> crate::openhuman::config::MultimodalConfig {
     crate::openhuman::config::MultimodalConfig::default()
 }
 
+fn mff() -> crate::openhuman::config::MultimodalFileConfig {
+    crate::openhuman::config::MultimodalFileConfig::default()
+}
+
 struct ArgsCapturingTool {
     name_str: String,
     captured: Arc<Mutex<Vec<serde_json::Value>>>,
@@ -78,6 +82,7 @@ async fn native_tool_call_decodes_json_encoded_arguments_string() {
             arguments: "{\"city\":\"Berlin\",\"n\":3}".to_string(),
         }],
         usage: None,
+        reasoning_content: None,
     });
 
     let (tool, captured) = ArgsCapturingTool::new("captured", "captured-ok");
@@ -94,6 +99,7 @@ async fn native_tool_call_decodes_json_encoded_arguments_string() {
         true,
         "channel",
         &mm(),
+        &mff(),
         3,
         None,
         None,
@@ -139,6 +145,7 @@ async fn documents_silent_drop_of_non_json_arguments_string() {
             arguments: "world".to_string(),
         }],
         usage: None,
+        reasoning_content: None,
     });
 
     let (tool, captured) = ArgsCapturingTool::new("captured", "captured-ok");
@@ -155,6 +162,7 @@ async fn documents_silent_drop_of_non_json_arguments_string() {
         true,
         "channel",
         &mm(),
+        &mff(),
         3,
         None,
         None,
@@ -194,6 +202,7 @@ async fn parallel_tool_calls_in_single_iteration_all_execute() {
         ),
         tool_calls: vec![],
         usage: None,
+        reasoning_content: None,
     });
 
     let (a, a_calls) = ArgsCapturingTool::new("tool_a", "tool_a-ok");
@@ -211,6 +220,7 @@ async fn parallel_tool_calls_in_single_iteration_all_execute() {
         true,
         "channel",
         &mm(),
+        &mff(),
         5,
         None,
         None,
@@ -253,6 +263,7 @@ async fn same_named_tool_in_registry_first_match_wins() {
         true,
         "channel",
         &mm(),
+        &mff(),
         5,
         None,
         None,
@@ -289,6 +300,7 @@ async fn markdown_fenced_tool_call_block_is_parsed() {
         ),
         tool_calls: vec![],
         usage: None,
+        reasoning_content: None,
     });
 
     let (a, a_calls) = ArgsCapturingTool::new("tool_a", "tool_a-ok");
@@ -305,6 +317,7 @@ async fn markdown_fenced_tool_call_block_is_parsed() {
         true,
         "channel",
         &mm(),
+        &mff(),
         5,
         None,
         None,
@@ -342,6 +355,7 @@ async fn native_tool_calls_take_precedence_over_xml_in_text() {
             arguments: "{\"src\":\"native\"}".into(),
         }],
         usage: None,
+        reasoning_content: None,
     });
 
     let (a, a_calls) = ArgsCapturingTool::new("tool_a", "tool_a-ok");
@@ -358,6 +372,7 @@ async fn native_tool_calls_take_precedence_over_xml_in_text() {
         true,
         "channel",
         &mm(),
+        &mff(),
         5,
         None,
         None,
@@ -417,6 +432,7 @@ async fn per_tool_max_result_size_caps_history_payload() {
         true,
         "channel",
         &mm(),
+        &mff(),
         5,
         None,
         None,
@@ -453,6 +469,7 @@ async fn empty_response_with_no_tool_calls_terminates_with_empty_text() {
         text: Some(String::new()),
         tool_calls: vec![],
         usage: None,
+        reasoning_content: None,
     });
 
     let tools: Vec<Box<dyn Tool>> = vec![];
@@ -468,6 +485,7 @@ async fn empty_response_with_no_tool_calls_terminates_with_empty_text() {
         true,
         "channel",
         &mm(),
+        &mff(),
         5,
         None,
         None,
@@ -511,6 +529,7 @@ async fn progress_sink_emits_lifecycle_events_in_order() {
         true,
         "channel",
         &mm(),
+        &mff(),
         5,
         None,
         None,

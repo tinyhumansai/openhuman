@@ -1,6 +1,5 @@
 use async_trait::async_trait;
 use once_cell::sync::Lazy;
-use regex::Regex;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use std::collections::{HashMap, HashSet};
@@ -59,6 +58,165 @@ pub fn register_approval_surface_subscriber() {
             log::warn!(
                 "[web-channel] failed to register approval-surface subscriber — bus not initialized"
             );
+        }
+    }
+}
+
+/// Handle for the artifact-surface subscriber. Set once on
+/// [`register_artifact_surface_subscriber`]; subsequent calls no-op.
+static ARTIFACT_SURFACE_HANDLE: OnceLock<SubscriptionHandle> = OnceLock::new();
+
+/// Bridge artifact lifecycle events onto the web channel.
+/// `DomainEvent::ArtifactPending` / `ArtifactReady` / `ArtifactFailed`
+/// (published by `artifacts::store::{create,finalize,fail}_artifact`)
+/// carry the thread_id + client_id when the producing turn ran under an
+/// `APPROVAL_CHAT_CONTEXT`. When present, fan out as an
+/// `artifact_pending` / `artifact_ready` / `artifact_failed` socket
+/// event so the frontend `chatRuntimeSlice` can upsert the snapshot and
+/// the `ArtifactCard` can render in the message timeline:
+///
+/// - `artifact_pending` → render an in-progress "Generating…" card the
+///   moment the producing tool dispatches (#3162).
+/// - `artifact_ready` → swap the same card to a download surface when
+///   the file lands (#2779).
+/// - `artifact_failed` → swap to a retry-hint card on producer error.
+///
+/// The card is keyed on `artifact_id`, so the Pending → Ready/Failed
+/// transition reuses the same surface instead of flickering a new one.
+/// Idempotent. No-op for non-chat events (thread/client id absent).
+pub fn register_artifact_surface_subscriber() {
+    if ARTIFACT_SURFACE_HANDLE.get().is_some() {
+        return;
+    }
+    match crate::core::event_bus::subscribe_global(Arc::new(ArtifactSurfaceSubscriber)) {
+        Some(handle) => {
+            let _ = ARTIFACT_SURFACE_HANDLE.set(handle);
+            log::info!(
+                "[web-channel] artifact-surface subscriber registered (domain=artifact) — will bridge ArtifactPending/Ready/Failed → artifact_pending/artifact_ready/artifact_failed socket events"
+            );
+        }
+        None => {
+            log::warn!(
+                "[web-channel] failed to register artifact-surface subscriber — bus not initialized"
+            );
+        }
+    }
+}
+
+struct ArtifactSurfaceSubscriber;
+
+#[async_trait]
+impl EventHandler for ArtifactSurfaceSubscriber {
+    fn name(&self) -> &str {
+        "channels::web::artifact_surface"
+    }
+
+    fn domains(&self) -> Option<&[&str]> {
+        Some(&["artifact"])
+    }
+
+    async fn handle(&self, event: &DomainEvent) {
+        match event {
+            DomainEvent::ArtifactReady {
+                artifact_id,
+                kind,
+                title,
+                workspace_dir,
+                path,
+                size_bytes,
+                thread_id,
+                client_id,
+            } => {
+                let (Some(thread_id), Some(client_id)) = (thread_id, client_id) else {
+                    log::debug!(
+                        "[web-channel] artifact-surface skip ArtifactReady id={artifact_id}: no chat context"
+                    );
+                    return;
+                };
+                log::info!(
+                    "[web-channel] artifact-surface emitting artifact_ready id={artifact_id} kind={kind} thread_id={thread_id} client_id={client_id}"
+                );
+                publish_web_channel_event(WebChannelEvent {
+                    event: "artifact_ready".to_string(),
+                    client_id: client_id.clone(),
+                    thread_id: thread_id.clone(),
+                    args: Some(serde_json::json!({
+                        "artifact_id": artifact_id,
+                        "kind": kind,
+                        "title": title,
+                        "workspace_dir": workspace_dir,
+                        "path": path,
+                        "size_bytes": size_bytes,
+                    })),
+                    ..Default::default()
+                });
+            }
+            DomainEvent::ArtifactFailed {
+                artifact_id,
+                kind,
+                title,
+                workspace_dir,
+                error,
+                thread_id,
+                client_id,
+            } => {
+                let (Some(thread_id), Some(client_id)) = (thread_id, client_id) else {
+                    log::debug!(
+                        "[web-channel] artifact-surface skip ArtifactFailed id={artifact_id}: no chat context"
+                    );
+                    return;
+                };
+                log::warn!(
+                    "[web-channel] artifact-surface emitting artifact_failed id={artifact_id} kind={kind} thread_id={thread_id} client_id={client_id} error_len={}",
+                    error.len()
+                );
+                publish_web_channel_event(WebChannelEvent {
+                    event: "artifact_failed".to_string(),
+                    client_id: client_id.clone(),
+                    thread_id: thread_id.clone(),
+                    args: Some(serde_json::json!({
+                        "artifact_id": artifact_id,
+                        "kind": kind,
+                        "title": title,
+                        "workspace_dir": workspace_dir,
+                        "error": error,
+                    })),
+                    ..Default::default()
+                });
+            }
+            DomainEvent::ArtifactPending {
+                artifact_id,
+                kind,
+                title,
+                workspace_dir,
+                path,
+                thread_id,
+                client_id,
+            } => {
+                let (Some(thread_id), Some(client_id)) = (thread_id, client_id) else {
+                    log::debug!(
+                        "[web-channel] artifact-surface skip ArtifactPending id={artifact_id}: no chat context"
+                    );
+                    return;
+                };
+                log::info!(
+                    "[web-channel] artifact-surface emitting artifact_pending id={artifact_id} kind={kind} thread_id={thread_id} client_id={client_id}"
+                );
+                publish_web_channel_event(WebChannelEvent {
+                    event: "artifact_pending".to_string(),
+                    client_id: client_id.clone(),
+                    thread_id: thread_id.clone(),
+                    args: Some(serde_json::json!({
+                        "artifact_id": artifact_id,
+                        "kind": kind,
+                        "title": title,
+                        "workspace_dir": workspace_dir,
+                        "path": path,
+                    })),
+                    ..Default::default()
+                });
+            }
+            _ => {}
         }
     }
 }
@@ -195,6 +353,7 @@ fn pick_target_agent_id(_config: &Config, profile: &AgentProfile) -> String {
 struct InFlightEntry {
     request_id: String,
     handle: tokio::task::JoinHandle<()>,
+    run_queue: Arc<crate::openhuman::agent::harness::run_queue::RunQueue>,
 }
 
 #[derive(Debug, Clone)]
@@ -208,21 +367,9 @@ static THREAD_SESSIONS: Lazy<Mutex<HashMap<String, SessionEntry>>> =
 
 static IN_FLIGHT: Lazy<Mutex<HashMap<String, InFlightEntry>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
-#[cfg(test)]
+#[cfg(any(test, debug_assertions))]
 static TEST_FORCED_RUN_CHAT_TASK_ERROR: Lazy<Mutex<Option<String>>> =
     Lazy::new(|| Mutex::new(None));
-static BUDGET_ERROR_NORMALIZE_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"[-_\s]+").expect("budget normalize regex"));
-static BUDGET_ERROR_PATTERNS: Lazy<Vec<Regex>> = Lazy::new(|| {
-    vec![
-        Regex::new(r"budget.*exceed").expect("budget exceeded regex"),
-        Regex::new(r"top up").expect("top up regex"),
-        Regex::new(r"add.*credits").expect("add credits regex"),
-        Regex::new(r"out of credits").expect("out of credits regex"),
-        Regex::new(r"no remaining credits").expect("no remaining credits regex"),
-    ]
-});
-
 /// Key for the per-thread runtime maps (`THREAD_SESSIONS`, `IN_FLIGHT`).
 ///
 /// Keyed by `thread_id` ALONE — the stable, persistent identity of a
@@ -244,292 +391,68 @@ fn event_session_id_for(client_id: &str, thread_id: &str) -> String {
     .to_string()
 }
 
-fn is_inference_budget_exceeded_error(message: &str) -> bool {
-    let normalized = BUDGET_ERROR_NORMALIZE_RE
-        .replace_all(&message.trim().to_ascii_lowercase(), " ")
-        .into_owned();
-    BUDGET_ERROR_PATTERNS
-        .iter()
-        .any(|pattern| pattern.is_match(&normalized))
-}
+#[path = "web_errors.rs"]
+mod web_errors;
+pub(crate) use web_errors::{
+    classify_inference_error, inference_budget_exceeded_user_message,
+    is_inference_budget_exceeded_error,
+};
+#[cfg(any(test, debug_assertions))]
+#[allow(unused_imports)]
+pub(crate) use web_errors::{
+    extract_provider_error_detail, extract_provider_name, generic_inference_error_user_message,
+    is_action_budget_exhausted, is_fallback_chain_exhausted, is_non_retryable_rate_limit_text,
+    parse_retry_after_secs_from_str, retry_after_hint, with_provider_detail, ClassifiedError,
+};
 
-fn inference_budget_exceeded_user_message() -> &'static str {
-    "I don't have any budget available right now. Please top up your credits or choose a plan to continue."
-}
+#[cfg(any(test, debug_assertions))]
+pub mod test_support {
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct ClassifiedErrorSnapshot {
+        pub error_type: &'static str,
+        pub message: String,
+        pub source: &'static str,
+        pub retryable: bool,
+        pub retry_after_ms: Option<u64>,
+        pub provider: Option<String>,
+        pub fallback_available: Option<bool>,
+    }
 
-fn generic_inference_error_user_message() -> &'static str {
-    "Something went wrong. Please try again.\nThis error has been reported. You can also report it on Discord.\n<openhuman-link path=\"community/discord\">Report on Discord</openhuman-link>"
-}
-
-/// Pull the structured provider error message out of a raw error string.
-///
-/// Provider error chains from OpenAI/Anthropic/OpenRouter/etc. arrive looking
-/// like `custom_openai API error (404 Not Found): {"error":{"message":"...","type":"..."}}`.
-/// We extract the `error.message` value so the UI can show the *real* reason
-/// — e.g. "Project ... does not have access to model `gpt-5.5`" — instead of
-/// a generic apology.
-///
-/// Returns `None` for transport-level failures (DNS, TLS, connect refused)
-/// where there is no provider body to quote — those have no actionable
-/// detail and the raw error text can leak internal infrastructure URLs,
-/// which the chat surface deliberately does not expose to end users.
-fn extract_provider_error_detail(err: &str) -> Option<String> {
-    const MAX_DETAIL_CHARS: usize = 300;
-
-    // Find the first `"message"` JSON field anywhere in the error chain.
-    let key = "\"message\"";
-    let idx = err.find(key)?;
-    let after_key = &err[idx + key.len()..];
-    // Skip whitespace and the colon to the opening quote of the value.
-    let after_colon = after_key.trim_start_matches(|c: char| c != '"');
-    let stripped = after_colon.strip_prefix('"')?;
-
-    // Manual unescape — handle `\"` and `\\` only; everything else passes
-    // through. Sufficient for OpenAI/Anthropic/etc. error bodies.
-    let mut out = String::new();
-    let mut chars = stripped.chars();
-    while let Some(c) = chars.next() {
-        match c {
-            '"' => {
-                let trimmed = out.trim();
-                if trimmed.is_empty() {
-                    return None;
-                }
-                let sanitized = crate::openhuman::inference::provider::sanitize_api_error(trimmed);
-                return Some(crate::openhuman::util::truncate_with_ellipsis(
-                    &sanitized,
-                    MAX_DETAIL_CHARS,
-                ));
-            }
-            '\\' => {
-                if let Some(esc) = chars.next() {
-                    match esc {
-                        '"' => out.push('"'),
-                        '\\' => out.push('\\'),
-                        'n' => out.push('\n'),
-                        't' => out.push('\t'),
-                        other => out.push(other),
-                    }
-                }
-            }
-            other => out.push(other),
+    pub fn classify_error_for_test(err: &str) -> ClassifiedErrorSnapshot {
+        let classified = super::classify_inference_error(err);
+        ClassifiedErrorSnapshot {
+            error_type: classified.error_type,
+            message: classified.message,
+            source: classified.source,
+            retryable: classified.retryable,
+            retry_after_ms: classified.retry_after_ms,
+            provider: classified.provider,
+            fallback_available: classified.fallback_available,
         }
     }
 
-    None
-}
-
-/// Append the upstream provider detail to a user-facing message, if a useful
-/// one can be extracted. Keeps the friendly summary first and the verbatim
-/// provider reason below as a quotable block.
-fn with_provider_detail(summary: &str, err: &str) -> String {
-    match extract_provider_error_detail(err) {
-        Some(detail) => format!("{summary}\n\n> {detail}"),
-        None => summary.to_string(),
+    pub fn extracted_provider_detail_for_test(err: &str) -> Option<String> {
+        super::extract_provider_error_detail(err)
     }
-}
 
-/// Extract a Retry-After / retry_after seconds hint from a free-form
-/// error string. Mirrors the typed [`crate::openhuman::inference::
-/// provider::reliable::parse_retry_after_ms`] helper but operates on
-/// the already-flattened `String` that reaches the channel-classifier
-/// layer.
-///
-/// Returns `Some(n)` when a non-negative integer or fractional value
-/// follows one of the canonical headers; fractional values are
-/// rounded up so the user is never told to retry sooner than the
-/// upstream actually allows.
-fn parse_retry_after_secs_from_str(err: &str) -> Option<u64> {
-    // Normalise quoted JSON-key wrappers ("retry_after": 30) by
-    // stripping double quotes before scanning for prefixes
-    // (CodeRabbit review on #2371). A serialised provider body like
-    // `{"retry_after": 30}` would otherwise miss every prefix and
-    // the user would lose the retry hint the provider supplied.
-    let normalized = err.to_ascii_lowercase().replace('"', "");
-    for prefix in &[
-        "retry-after:",
-        "retry_after:",
-        "retry-after ",
-        "retry_after ",
-    ] {
-        if let Some(pos) = normalized.find(prefix) {
-            let after = &normalized[pos + prefix.len()..];
-            let num_str: String = after
-                .trim()
-                .chars()
-                .take_while(|c| c.is_ascii_digit() || *c == '.')
-                .collect();
-            if let Ok(secs) = num_str.parse::<f64>() {
-                if secs.is_finite() && secs >= 0.0 {
-                    return Some(secs.ceil() as u64);
-                }
-            }
-        }
+    pub fn retry_after_secs_for_test(err: &str) -> Option<u64> {
+        super::parse_retry_after_secs_from_str(err)
     }
-    None
-}
 
-/// Format the retry-after hint as a short user-friendly suffix
-/// (`" Try again in 30 seconds."`). Returns an empty string when no
-/// hint is available so callers can `format!("{summary}{hint}")`
-/// without branching on `Option`.
-fn retry_after_hint(secs: Option<u64>) -> String {
-    match secs {
-        Some(0) => " You can retry immediately.".to_string(),
-        Some(1) => " Try again in 1 second.".to_string(),
-        Some(n) if n < 90 => format!(" Try again in {n} seconds."),
-        Some(n) => {
-            // Round UP — never tell the user to retry sooner than
-            // the upstream actually allows. 90–119s used to render
-            // as "about 1 minutes" both because of integer flooring
-            // and missing singular/plural handling (CodeRabbit
-            // review on #2371).
-            let mins = (n / 60) + u64::from(n % 60 != 0);
-            let unit = if mins == 1 { "minute" } else { "minutes" };
-            format!(" Try again in about {mins} {unit}.")
-        }
-        None => String::new(),
+    pub fn is_non_retryable_rate_limit_for_test(lower: &str) -> bool {
+        super::is_non_retryable_rate_limit_text(lower)
     }
-}
 
-/// Detect the SecurityPolicy global hourly action-budget signal
-/// emitted by the built-in tools (`web_fetch`, `curl`, `http_request`,
-/// `polymarket`, `composio`, etc.) — see `src/openhuman/security/
-/// policy.rs::SecurityPolicy::is_rate_limited`.
-///
-/// We match the canonical English strings those tools emit. This is
-/// load-bearing for issue #2364: before this check ran, any string
-/// containing "rate limit" was misclassified as a provider 429 and
-/// the user saw the generic "You're being rate-limited" copy, which
-/// hides that the cap is OpenHuman's own per-hour safety budget,
-/// not the upstream LLM provider.
-fn is_action_budget_exhausted(err_lower: &str) -> bool {
-    err_lower.contains("rate limit exceeded: action budget exhausted")
-        || err_lower.contains("rate limit exceeded: too many actions in the last hour")
-        || err_lower.contains("action blocked: rate limit exceeded")
-}
+    pub fn key_for_test(thread_id: &str) -> String {
+        super::key_for(thread_id)
+    }
 
-fn classify_inference_error(err: &str) -> (&'static str, String) {
-    let lower = err.to_lowercase();
-    // Order matters: the SecurityPolicy hourly cap and the
-    // agent-loop max-iterations error both surface as strings that
-    // contain "rate limit" / "iteration", so they MUST be checked
-    // before the generic provider-429 branch — otherwise users see
-    // a confusing "your AI provider is rate-limiting you" message
-    // for limits OpenHuman itself enforced (issue #2364).
-    if is_action_budget_exhausted(&lower) {
-        (
-            "action_budget_exceeded",
-            with_provider_detail(
-                "You've hit OpenHuman's per-hour action budget — this is a local safety cap, \
-                 not your AI provider. The window decays gradually; you can keep chatting in \
-                 this thread and tool-heavy steps will resume as the budget refills.",
-                err,
-            ),
-        )
-    } else if crate::openhuman::agent::error::is_max_iterations_error(err) {
-        (
-            "max_iterations",
-            with_provider_detail(
-                "The agent ran the maximum number of tool steps for one turn without \
-                 finishing. This usually means a tool kept failing (often a rate limit on a \
-                 web fetch). You can retry the same question in this thread once the \
-                 underlying limit clears.",
-                err,
-            ),
-        )
-    } else if lower.contains("rate limit") || lower.contains("429") {
-        let retry = parse_retry_after_secs_from_str(err);
-        let summary = format!(
-            "Your AI provider is rate-limiting requests. This is a transient upstream \
-             limit, not a thread-level block — you can retry in this thread.{}",
-            retry_after_hint(retry)
-        );
-        ("rate_limited", with_provider_detail(summary.as_str(), err))
-    } else if lower.contains("timeout") || lower.contains("timed out") {
-        (
-            "timeout",
-            with_provider_detail(
-                "The request timed out. Please check your connection and try again.",
-                err,
-            ),
-        )
-    } else if lower.contains("401") || lower.contains("unauthorized") || lower.contains("api key") {
-        (
-            "auth_error",
-            with_provider_detail(
-                "There's an authentication issue with the AI provider. Please check your API key in settings.",
-                err,
-            ),
-        )
-    } else if lower.contains("402")
-        || lower.contains("payment required")
-        || lower.contains("insufficient balance")
-    {
-        (
-            "budget_exhausted",
-            with_provider_detail("Insufficient credits. Please top up to continue.", err),
-        )
-    } else if lower.contains("500")
-        || lower.contains("internal server")
-        || lower.contains("service unavailable")
-        || lower.contains("503")
-    {
-        (
-            "provider_error",
-            with_provider_detail(
-                "The AI provider is temporarily unavailable. Please try again later.",
-                err,
-            ),
-        )
-    } else if lower.contains("context")
-        && (lower.contains("length")
-            || lower.contains("limit")
-            || lower.contains("exceed")
-            || lower.contains("token"))
-    {
-        (
-            "context_overflow",
-            with_provider_detail(
-                "The conversation is too long. Please start a new chat.",
-                err,
-            ),
-        )
-    } else if crate::openhuman::inference::provider::is_provider_config_rejection_message(err) {
-        // #2079 / #2076 / #2202: an OpenHuman abstract tier alias leaked to
-        // a custom provider, a stale model pin, or a model-specific
-        // temperature constraint. Checked BEFORE the generic
-        // model-unavailable arm so config-rejection bodies that also
-        // contain "model"/"does not exist"/"does not have access" get the
-        // specific "Settings → LLM" remediation instead of the generic
-        // copy. Shared predicate keeps this in lockstep with the
-        // Sentry-demotion classifier.
-        (
-            "model_unavailable",
-            with_provider_detail(
-                "Your AI provider rejected the request's model or temperature setting. \
-                 Check your model and routing in Settings → LLM.",
-                err,
-            ),
-        )
-    } else if lower.contains("model")
-        && (lower.contains("not found")
-            || lower.contains("unavailable")
-            || lower.contains("does not exist")
-            || lower.contains("does not have access"))
-    {
-        (
-            "model_unavailable",
-            with_provider_detail(
-                "The selected model isn't available on your provider. Check your model settings.",
-                err,
-            ),
-        )
-    } else {
-        (
-            "inference",
-            with_provider_detail(generic_inference_error_user_message(), err),
-        )
+    pub fn event_session_id_for_test(client_id: &str, thread_id: &str) -> String {
+        super::event_session_id_for(client_id, thread_id)
+    }
+
+    pub async fn set_forced_run_chat_task_error_for_test(message: Option<&str>) {
+        super::set_test_forced_run_chat_task_error(message).await;
     }
 }
 
@@ -545,7 +468,7 @@ fn prompt_guard_user_message(action: PromptEnforcementAction) -> &'static str {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, debug_assertions))]
 pub(super) async fn set_test_forced_run_chat_task_error(message: Option<&str>) {
     let mut slot = TEST_FORCED_RUN_CHAT_TASK_ERROR.lock().await;
     *slot = message.map(str::to_string);
@@ -559,6 +482,7 @@ pub async fn start_chat(
     temperature: Option<f64>,
     profile_id: Option<String>,
     locale: Option<String>,
+    queue_mode: Option<String>,
 ) -> Result<String, String> {
     let client_id = client_id.trim().to_string();
     let thread_id = thread_id.trim().to_string();
@@ -658,10 +582,79 @@ pub async fn start_chat(
 
     let map_key = key_for(&thread_id);
 
+    let parsed_mode = match queue_mode.as_deref() {
+        Some("steer") => crate::openhuman::agent::harness::run_queue::QueueMode::Steer,
+        Some("followup") => crate::openhuman::agent::harness::run_queue::QueueMode::Followup,
+        Some("collect") => crate::openhuman::agent::harness::run_queue::QueueMode::Collect,
+        _ => crate::openhuman::agent::harness::run_queue::QueueMode::Interrupt,
+    };
+
+    // Non-interrupt modes: push into the running turn's queue and return.
+    if !matches!(
+        parsed_mode,
+        crate::openhuman::agent::harness::run_queue::QueueMode::Interrupt
+    ) {
+        let in_flight = IN_FLIGHT.lock().await;
+        if let Some(existing) = in_flight.get(&map_key) {
+            let queued_msg = crate::openhuman::agent::harness::run_queue::QueuedMessage {
+                text: message.clone(),
+                mode: parsed_mode,
+                client_id: client_id.clone(),
+                thread_id: thread_id.clone(),
+                queued_at_ms: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64,
+                model_override: model_override.clone(),
+                temperature,
+                profile_id: profile_id.clone(),
+                locale: locale.clone(),
+            };
+            existing.run_queue.push(queued_msg).await;
+            let status = existing.run_queue.status().await;
+            log::info!(
+                "[web-channel] queued {} message thread_id={} request_id={} queue_depth={}",
+                parsed_mode,
+                thread_id,
+                request_id,
+                status.total
+            );
+            crate::core::event_bus::publish_global(DomainEvent::RunQueueMessageQueued {
+                thread_id: thread_id.clone(),
+                mode: parsed_mode.to_string(),
+                queue_depth: status.total,
+            });
+            return Ok(json!({
+                "queued": true,
+                "queue_mode": parsed_mode.to_string(),
+                "client_id": client_id,
+                "thread_id": thread_id,
+                "request_id": request_id,
+                "queue_depth": status.total,
+            })
+            .to_string());
+        }
+        // No in-flight turn — fall through to start a fresh turn.
+        log::info!(
+            "[web-channel] no in-flight turn for {} mode thread_id={} — starting fresh",
+            parsed_mode,
+            thread_id
+        );
+    }
+
     {
         let mut in_flight = IN_FLIGHT.lock().await;
         if let Some(existing) = in_flight.remove(&map_key) {
             existing.handle.abort();
+            log::info!(
+                "[web-channel] interrupted in-flight turn thread_id={} cancelled_request_id={}",
+                thread_id,
+                existing.request_id
+            );
+            crate::core::event_bus::publish_global(DomainEvent::RunQueueInterrupted {
+                thread_id: thread_id.clone(),
+                cancelled_request_id: existing.request_id.clone(),
+            });
             publish_web_channel_event(WebChannelEvent {
                 event: "chat_error".to_string(),
                 client_id: client_id.clone(),
@@ -670,6 +663,11 @@ pub async fn start_chat(
                 full_response: None,
                 message: Some("Cancelled by newer request".to_string()),
                 error_type: Some("cancelled".to_string()),
+                error_source: None,
+                error_retryable: None,
+                error_retry_after_ms: None,
+                error_provider: None,
+                error_fallback_available: None,
                 tool_name: None,
                 skill_id: None,
                 args: None,
@@ -689,6 +687,9 @@ pub async fn start_chat(
         }
     }
 
+    let turn_run_queue = crate::openhuman::agent::harness::run_queue::RunQueue::new();
+    let turn_run_queue_task = turn_run_queue.clone();
+
     let client_id_task = client_id.clone();
     let thread_id_task = thread_id.clone();
     let request_id_task = request_id.clone();
@@ -705,8 +706,18 @@ pub async fn start_chat(
             thread_id: thread_id_task.clone(),
             client_id: client_id_task.clone(),
         };
-        let result = crate::openhuman::approval::APPROVAL_CHAT_CONTEXT
-            .scope(
+        // Scope the matching `AgentTurnOrigin::WebChat` alongside the chat
+        // context so the approval gate's origin-aware decision tree sees a
+        // web-routable turn. Both task-locals must wrap the same future —
+        // tokio task-locals do not cross `tokio::spawn`, and `intercept`
+        // runs inline within this task.
+        let origin = crate::openhuman::agent::turn_origin::AgentTurnOrigin::WebChat {
+            thread_id: thread_id_task.clone(),
+            client_id: client_id_task.clone(),
+        };
+        let result = crate::openhuman::agent::turn_origin::with_origin(
+            origin,
+            crate::openhuman::approval::APPROVAL_CHAT_CONTEXT.scope(
                 approval_ctx,
                 run_chat_task(
                     &client_id_task,
@@ -717,9 +728,11 @@ pub async fn start_chat(
                     temperature,
                     profile_id,
                     locale,
+                    turn_run_queue_task,
                 ),
-            )
-            .await;
+            ),
+        )
+        .await;
 
         match result {
             Ok(chat_result) => {
@@ -749,7 +762,8 @@ pub async fn start_chat(
                     "run_chat_task failed client_id={} thread_id={} request_id={} error={}",
                     client_id_task, thread_id_task, request_id_task, err
                 );
-                let (classified_type, classified_message) = classify_inference_error(&err);
+                let classified = classify_inference_error(&err);
+                let classified_type = classified.error_type;
                 let classified_type_string = classified_type.to_string();
                 // Max-tool-iterations cap is a deterministic agent-state
                 // outcome surfaced to the user via the existing
@@ -797,8 +811,13 @@ pub async fn start_chat(
                     thread_id: thread_id_task.clone(),
                     request_id: request_id_task.clone(),
                     full_response: None,
-                    message: Some(classified_message),
+                    message: Some(classified.message),
                     error_type: Some(classified_type_string),
+                    error_source: Some(classified.source.to_string()),
+                    error_retryable: Some(classified.retryable),
+                    error_retry_after_ms: classified.retry_after_ms,
+                    error_provider: classified.provider,
+                    error_fallback_available: classified.fallback_available,
                     tool_name: None,
                     skill_id: None,
                     args: None,
@@ -818,11 +837,37 @@ pub async fn start_chat(
             }
         }
 
-        let mut in_flight = IN_FLIGHT.lock().await;
-        if let Some(current) = in_flight.get(&map_key_task) {
-            if current.request_id == request_id_task {
-                in_flight.remove(&map_key_task);
-            }
+        // Drain followup messages queued during this turn.
+        let followups = {
+            let mut in_flight = IN_FLIGHT.lock().await;
+            let followups = if let Some(current) = in_flight.get(&map_key_task) {
+                if current.request_id == request_id_task {
+                    let fups = current.run_queue.drain_followups().await;
+                    in_flight.remove(&map_key_task);
+                    fups
+                } else {
+                    Vec::new()
+                }
+            } else {
+                Vec::new()
+            };
+            followups
+        };
+        if !followups.is_empty() {
+            log::info!(
+                "[web-channel] dispatching {} followup(s) thread_id={}",
+                followups.len(),
+                thread_id_task
+            );
+            crate::core::event_bus::publish_global(
+                crate::core::event_bus::DomainEvent::RunQueueFollowupDispatched {
+                    thread_id: thread_id_task.clone(),
+                    followup_count: followups.len(),
+                },
+            );
+            // Dispatch each followup as a fresh turn on a new task to avoid
+            // Send issues with the nested async closure.
+            dispatch_followups(followups);
         }
     });
 
@@ -833,11 +878,37 @@ pub async fn start_chat(
             InFlightEntry {
                 request_id: request_id.clone(),
                 handle,
+                run_queue: turn_run_queue,
             },
         );
     }
 
     Ok(request_id)
+}
+
+fn dispatch_followups(followups: Vec<crate::openhuman::agent::harness::run_queue::QueuedMessage>) {
+    for fup in followups {
+        tokio::spawn(async move {
+            if let Err(err) = start_chat(
+                &fup.client_id,
+                &fup.thread_id,
+                &fup.text,
+                fup.model_override,
+                fup.temperature,
+                fup.profile_id,
+                fup.locale,
+                Some("followup".to_string()),
+            )
+            .await
+            {
+                log::warn!(
+                    "[web-channel] failed to dispatch followup thread_id={} err={}",
+                    fup.thread_id,
+                    err
+                );
+            }
+        });
+    }
 }
 
 /// Invalidate all cached agent sessions for the given thread ID.
@@ -847,7 +918,7 @@ pub async fn invalidate_thread_sessions(thread_id: &str) {
     let mut sessions = THREAD_SESSIONS.lock().await;
     let keys_to_remove: Vec<String> = sessions
         .keys()
-        .filter(|k| k.ends_with(&format!("::{thread_id}")))
+        .filter(|k| k.as_str() == thread_id || k.ends_with(&format!("::{thread_id}")))
         .cloned()
         .collect();
     for key in &keys_to_remove {
@@ -906,6 +977,11 @@ pub async fn cancel_chat(client_id: &str, thread_id: &str) -> Result<Option<Stri
             full_response: None,
             message: Some("Cancelled".to_string()),
             error_type: Some("cancelled".to_string()),
+            error_source: None,
+            error_retryable: None,
+            error_retry_after_ms: None,
+            error_provider: None,
+            error_fallback_available: None,
             tool_name: None,
             skill_id: None,
             args: None,
@@ -936,8 +1012,9 @@ async fn run_chat_task(
     temperature: Option<f64>,
     profile_id: Option<String>,
     locale: Option<String>,
+    run_queue: Arc<crate::openhuman::agent::harness::run_queue::RunQueue>,
 ) -> Result<WebChatTaskResult, String> {
-    #[cfg(test)]
+    #[cfg(any(test, debug_assertions))]
     {
         let mut slot = TEST_FORCED_RUN_CHAT_TASK_ERROR.lock().await;
         if let Some(forced) = slot.take() {
@@ -1081,6 +1158,7 @@ async fn run_chat_task(
     // (instead of retroactively after the loop finishes).
     let (progress_tx, progress_rx) = tokio::sync::mpsc::channel(64);
     agent.set_on_progress(Some(progress_tx));
+    agent.set_run_queue(Some(run_queue));
     let turn_state_store = TurnStateStore::new(config.workspace_dir.clone());
     spawn_progress_bridge(
         progress_rx,
@@ -1267,6 +1345,11 @@ fn spawn_progress_bridge(
                         full_response: None,
                         message: None,
                         error_type: None,
+                        error_source: None,
+                        error_retryable: None,
+                        error_retry_after_ms: None,
+                        error_provider: None,
+                        error_fallback_available: None,
                         tool_name: None,
                         skill_id: None,
                         args: None,
@@ -1297,6 +1380,11 @@ fn spawn_progress_bridge(
                         full_response: None,
                         message: Some(format!("Iteration {iteration}/{max_iterations}")),
                         error_type: None,
+                        error_source: None,
+                        error_retryable: None,
+                        error_retry_after_ms: None,
+                        error_provider: None,
+                        error_fallback_available: None,
                         tool_name: None,
                         skill_id: None,
                         args: None,
@@ -1364,13 +1452,16 @@ fn spawn_progress_bridge(
                     mode,
                     dedicated_thread,
                     prompt_chars,
+                    worker_thread_id,
+                    display_name,
                 } => {
+                    let label = display_name.as_deref().unwrap_or(&agent_id);
                     publish_web_channel_event(WebChannelEvent {
                         event: "subagent_spawned".to_string(),
                         client_id: client_id.clone(),
                         thread_id: thread_id.clone(),
                         request_id: request_id.clone(),
-                        message: Some(format!("Sub-agent '{agent_id}' spawned")),
+                        message: Some(format!("Sub-agent '{label}' spawned")),
                         tool_name: Some(agent_id),
                         skill_id: Some(task_id),
                         round: Some(round),
@@ -1378,6 +1469,8 @@ fn spawn_progress_bridge(
                             mode: Some(mode),
                             dedicated_thread: Some(dedicated_thread),
                             prompt_chars: Some(prompt_chars as u64),
+                            worker_thread_id,
+                            display_name,
                             ..Default::default()
                         }),
                         ..Default::default()
@@ -1429,26 +1522,64 @@ fn spawn_progress_bridge(
                         ..Default::default()
                     });
                 }
+                AgentProgress::SubagentAwaitingUser {
+                    agent_id,
+                    task_id,
+                    question,
+                    worker_thread_id,
+                } => {
+                    log::debug!(
+                        "[web_channel][bridge] subagent_awaiting_user agent_id={} task_id={} client_id={} thread_id={} request_id={}",
+                        agent_id,
+                        task_id,
+                        client_id,
+                        thread_id,
+                        request_id,
+                    );
+                    publish_web_channel_event(WebChannelEvent {
+                        event: "subagent_awaiting_user".to_string(),
+                        client_id: client_id.clone(),
+                        thread_id: thread_id.clone(),
+                        request_id: request_id.clone(),
+                        message: Some(question),
+                        tool_name: Some(agent_id),
+                        skill_id: Some(task_id),
+                        success: Some(true),
+                        round: Some(round),
+                        subagent: Some(SubagentProgressDetail {
+                            worker_thread_id,
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    });
+                }
                 AgentProgress::SubagentIterationStarted {
                     agent_id,
                     task_id,
                     iteration,
                     max_iterations,
+                    extended_policy,
                 } => {
                     publish_web_channel_event(WebChannelEvent {
                         event: "subagent_iteration_start".to_string(),
                         client_id: client_id.clone(),
                         thread_id: thread_id.clone(),
                         request_id: request_id.clone(),
-                        message: Some(format!(
-                            "Sub-agent '{agent_id}' iteration {iteration}/{max_iterations}"
-                        )),
+                        message: Some(if extended_policy {
+                            format!("Sub-agent '{agent_id}' step {iteration}")
+                        } else {
+                            format!("Sub-agent '{agent_id}' iteration {iteration}/{max_iterations}")
+                        }),
                         tool_name: Some(agent_id),
                         skill_id: Some(task_id),
                         round: Some(round),
                         subagent: Some(SubagentProgressDetail {
                             child_iteration: Some(iteration),
-                            child_max_iterations: Some(max_iterations),
+                            child_max_iterations: if extended_policy {
+                                None
+                            } else {
+                                Some(max_iterations)
+                            },
                             ..Default::default()
                         }),
                         ..Default::default()
@@ -1509,6 +1640,54 @@ fn spawn_progress_bridge(
                             task_id: Some(task_id),
                             elapsed_ms: Some(elapsed_ms),
                             output_chars: Some(output_chars as u64),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    });
+                }
+                AgentProgress::SubagentTextDelta {
+                    agent_id,
+                    task_id,
+                    delta,
+                    iteration,
+                } => {
+                    publish_web_channel_event(WebChannelEvent {
+                        event: "subagent_text_delta".to_string(),
+                        client_id: client_id.clone(),
+                        thread_id: thread_id.clone(),
+                        request_id: request_id.clone(),
+                        round: Some(round),
+                        delta: Some(delta),
+                        delta_kind: Some("text".to_string()),
+                        skill_id: Some(task_id.clone()),
+                        subagent: Some(SubagentProgressDetail {
+                            child_iteration: Some(iteration),
+                            agent_id: Some(agent_id),
+                            task_id: Some(task_id),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    });
+                }
+                AgentProgress::SubagentThinkingDelta {
+                    agent_id,
+                    task_id,
+                    delta,
+                    iteration,
+                } => {
+                    publish_web_channel_event(WebChannelEvent {
+                        event: "subagent_thinking_delta".to_string(),
+                        client_id: client_id.clone(),
+                        thread_id: thread_id.clone(),
+                        request_id: request_id.clone(),
+                        round: Some(round),
+                        delta: Some(delta),
+                        delta_kind: Some("thinking".to_string()),
+                        skill_id: Some(task_id.clone()),
+                        subagent: Some(SubagentProgressDetail {
+                            child_iteration: Some(iteration),
+                            agent_id: Some(agent_id),
+                            task_id: Some(task_id),
                             ..Default::default()
                         }),
                         ..Default::default()
@@ -1796,6 +1975,14 @@ struct WebChatParams {
     /// default language (English) so existing integrations don't
     /// silently change behaviour.
     locale: Option<String>,
+    /// Queue mode for concurrent messages: `interrupt` (default), `steer`,
+    /// `followup`, or `collect`.
+    queue_mode: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WebQueueParams {
+    thread_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1812,8 +1999,9 @@ pub async fn channel_web_chat(
     temperature: Option<f64>,
     profile_id: Option<String>,
     locale: Option<String>,
+    queue_mode: Option<String>,
 ) -> Result<RpcOutcome<Value>, String> {
-    let request_id = start_chat(
+    let result = start_chat(
         client_id,
         thread_id,
         message,
@@ -1821,18 +2009,87 @@ pub async fn channel_web_chat(
         temperature,
         profile_id,
         locale,
+        queue_mode,
     )
     .await?;
+
+    // start_chat returns either a plain request_id string or a JSON string
+    // (for queued messages). Try to parse as JSON first.
+    if let Ok(parsed) = serde_json::from_str::<Value>(&result) {
+        return Ok(RpcOutcome::single_log(parsed, "web channel message queued"));
+    }
 
     Ok(RpcOutcome::single_log(
         json!({
             "accepted": true,
             "client_id": client_id.trim(),
             "thread_id": thread_id.trim(),
-            "request_id": request_id,
+            "request_id": result,
         }),
         "web channel request accepted",
     ))
+}
+
+pub async fn channel_web_queue_status(thread_id: &str) -> Result<RpcOutcome<Value>, String> {
+    let map_key = key_for(thread_id);
+    let in_flight = IN_FLIGHT.lock().await;
+    if let Some(entry) = in_flight.get(&map_key) {
+        let status = entry.run_queue.status().await;
+        Ok(RpcOutcome::single_log(
+            json!({
+                "thread_id": thread_id.trim(),
+                "active": true,
+                "request_id": entry.request_id,
+                "steers": status.steers,
+                "followups": status.followups,
+                "collects": status.collects,
+                "total": status.total,
+            }),
+            "queue status retrieved",
+        ))
+    } else {
+        Ok(RpcOutcome::single_log(
+            json!({
+                "thread_id": thread_id.trim(),
+                "active": false,
+                "steers": 0,
+                "followups": 0,
+                "collects": 0,
+                "total": 0,
+            }),
+            "no active turn for thread",
+        ))
+    }
+}
+
+pub async fn channel_web_queue_clear(thread_id: &str) -> Result<RpcOutcome<Value>, String> {
+    let map_key = key_for(thread_id);
+    let in_flight = IN_FLIGHT.lock().await;
+    if let Some(entry) = in_flight.get(&map_key) {
+        let dropped = entry.run_queue.clear().await;
+        log::info!(
+            "[web-channel] cleared queue thread_id={} dropped={}",
+            thread_id,
+            dropped
+        );
+        Ok(RpcOutcome::single_log(
+            json!({
+                "thread_id": thread_id.trim(),
+                "cleared": true,
+                "dropped": dropped,
+            }),
+            "queue cleared",
+        ))
+    } else {
+        Ok(RpcOutcome::single_log(
+            json!({
+                "thread_id": thread_id.trim(),
+                "cleared": false,
+                "dropped": 0,
+            }),
+            "no active turn for thread",
+        ))
+    }
 }
 
 pub async fn channel_web_cancel(
@@ -1853,7 +2110,12 @@ pub async fn channel_web_cancel(
 }
 
 pub fn all_web_channel_controller_schemas() -> Vec<ControllerSchema> {
-    vec![schemas("chat"), schemas("cancel")]
+    vec![
+        schemas("chat"),
+        schemas("cancel"),
+        schemas("queue_status"),
+        schemas("queue_clear"),
+    ]
 }
 
 pub fn all_web_channel_registered_controllers() -> Vec<RegisteredController> {
@@ -1865,6 +2127,14 @@ pub fn all_web_channel_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("cancel"),
             handler: handle_cancel,
+        },
+        RegisteredController {
+            schema: schemas("queue_status"),
+            handler: handle_queue_status,
+        },
+        RegisteredController {
+            schema: schemas("queue_clear"),
+            handler: handle_queue_clear,
         },
     ]
 }
@@ -1886,6 +2156,10 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     "locale",
                     "Optional BCP-47 UI locale (e.g. 'ar', 'zh-CN'). Drives the \"reply in this language\" system-prompt directive.",
                 ),
+                optional_string(
+                    "queue_mode",
+                    "Queue mode: 'interrupt' (default), 'steer', 'followup', or 'collect'.",
+                ),
             ],
             outputs: vec![json_output("ack", "Acceptance payload.")],
         },
@@ -1898,6 +2172,20 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required_string("thread_id", "Thread identifier."),
             ],
             outputs: vec![json_output("ack", "Cancellation payload.")],
+        },
+        "queue_status" => ControllerSchema {
+            namespace: "channel",
+            function: "web_queue_status",
+            description: "Get the run queue status for a thread.",
+            inputs: vec![required_string("thread_id", "Thread identifier.")],
+            outputs: vec![json_output("status", "Queue status payload.")],
+        },
+        "queue_clear" => ControllerSchema {
+            namespace: "channel",
+            function: "web_queue_clear",
+            description: "Clear the run queue for a thread.",
+            inputs: vec![required_string("thread_id", "Thread identifier.")],
+            outputs: vec![json_output("result", "Queue clear result.")],
         },
         _ => ControllerSchema {
             namespace: "channel",
@@ -1926,9 +2214,24 @@ fn handle_chat(params: Map<String, Value>) -> ControllerFuture {
                 p.temperature,
                 p.profile_id,
                 p.locale,
+                p.queue_mode,
             )
             .await?,
         )
+    })
+}
+
+fn handle_queue_status(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let p = deserialize_params::<WebQueueParams>(params)?;
+        to_json(channel_web_queue_status(&p.thread_id).await?)
+    })
+}
+
+fn handle_queue_clear(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let p = deserialize_params::<WebQueueParams>(params)?;
+        to_json(channel_web_queue_clear(&p.thread_id).await?)
     })
 }
 

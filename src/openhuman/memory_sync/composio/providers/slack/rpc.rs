@@ -110,6 +110,7 @@ pub async fn sync_trigger_rpc(
             config: Arc::clone(&config_arc),
             toolkit: conn.toolkit.clone(),
             connection_id: Some(conn.id.clone()),
+            usage: Default::default(),
         };
         match provider.sync(&ctx, SyncReason::Manual).await {
             Ok(o) => outcomes.push(o),
@@ -218,7 +219,7 @@ pub async fn sync_status_rpc(
 // runner: the existing pattern across this module is to assert factory
 // dispatch + error wrapping rather than mock the upstream HTTP. The
 // network-touching paths are smoke-tested upstream in
-// `composio::client_tests` / `composio::ops_test` and the
+// `composio::client_tests` / `composio::ops_tests` and the
 // direct-mode-toggle test in `action_tool.rs`.
 
 #[cfg(test)]

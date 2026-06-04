@@ -1,4 +1,4 @@
-use serde::de::DeserializeOwned;
+use serde::de::{DeserializeOwned, Deserializer};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
@@ -25,6 +25,11 @@ struct InferenceVisionPromptParams {
     prompt: String,
     image_refs: Vec<String>,
     max_tokens: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct InferenceResolveModelParams {
+    hint: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -92,7 +97,8 @@ struct InferenceUpdateLocalSettingsParams {
     runtime_enabled: Option<bool>,
     opt_in_confirmed: Option<bool>,
     provider: Option<String>,
-    base_url: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_present_json")]
+    base_url: Option<Value>,
     model_id: Option<String>,
     chat_model_id: Option<String>,
     usage_embeddings: Option<bool>,
@@ -119,6 +125,7 @@ struct InferenceOpenAiOAuthCompleteParams {
 
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
+        schemas("resolve_model"),
         schemas("status"),
         schemas("get_client_config"),
         schemas("update_model_settings"),
@@ -130,6 +137,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("diagnostics"),
         schemas("openai_oauth_start"),
         schemas("openai_oauth_complete"),
+        schemas("openai_oauth_import_codex_cli"),
         schemas("openai_oauth_status"),
         schemas("openai_oauth_disconnect"),
         schemas("summarize"),
@@ -138,11 +146,17 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("test_provider_model"),
         schemas("should_react"),
         schemas("analyze_sentiment"),
+        schemas("claude_code_status"),
+        schemas("claude_code_auth_status"),
     ]
 }
 
 pub fn all_registered_controllers() -> Vec<RegisteredController> {
     vec![
+        RegisteredController {
+            schema: schemas("resolve_model"),
+            handler: handle_inference_resolve_model,
+        },
         RegisteredController {
             schema: schemas("status"),
             handler: handle_inference_status,
@@ -188,6 +202,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
             handler: handle_inference_openai_oauth_complete,
         },
         RegisteredController {
+            schema: schemas("openai_oauth_import_codex_cli"),
+            handler: handle_inference_openai_oauth_import_codex_cli,
+        },
+        RegisteredController {
             schema: schemas("openai_oauth_status"),
             handler: handle_inference_openai_oauth_status,
         },
@@ -219,11 +237,26 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
             schema: schemas("analyze_sentiment"),
             handler: handle_inference_analyze_sentiment,
         },
+        RegisteredController {
+            schema: schemas("claude_code_status"),
+            handler: handle_inference_claude_code_status,
+        },
+        RegisteredController {
+            schema: schemas("claude_code_auth_status"),
+            handler: handle_inference_claude_code_auth_status,
+        },
     ]
 }
 
 pub fn schemas(function: &str) -> ControllerSchema {
     match function {
+        "resolve_model" => ControllerSchema {
+            namespace: "inference",
+            function: "resolve_model",
+            description: "Resolve a model hint or tier name to the concrete model the provider router would use.",
+            inputs: vec![required_string("hint", "Model hint (e.g. hint:reasoning) or tier name (e.g. reasoning-v1).")],
+            outputs: vec![json_output("model", "Resolved concrete model id.")],
+        },
         "status" => ControllerSchema {
             namespace: "inference",
             function: "status",
@@ -271,7 +304,10 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 optional_bool("runtime_enabled", "Enable or disable local inference runtime routing."),
                 optional_bool("opt_in_confirmed", "Persist the local inference opt-in flag."),
                 optional_string("provider", "Optional local provider slug, e.g. ollama or lm_studio."),
-                optional_string("base_url", "Optional local provider base URL."),
+                optional_json(
+                    "base_url",
+                    "Optional local provider base URL string, or null to clear.",
+                ),
                 optional_string("model_id", "Optional generic model id override."),
                 optional_string("chat_model_id", "Optional chat model id override."),
                 optional_bool("usage_embeddings", "Whether embeddings workload may use the local provider."),
@@ -340,6 +376,13 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 "Redirect URL after sign-in (http://127.0.0.1:1455/auth/callback?...).",
             )],
             outputs: vec![json_output("result", "OAuth completion payload.")],
+        },
+        "openai_oauth_import_codex_cli" => ControllerSchema {
+            namespace: "inference",
+            function: "openai_oauth_import_codex_cli",
+            description: "Import the existing Codex CLI ChatGPT login from ~/.codex/auth.json.",
+            inputs: vec![],
+            outputs: vec![json_output("result", "OAuth import payload.")],
         },
         "openai_oauth_status" => ControllerSchema {
             namespace: "inference",
@@ -420,6 +463,26 @@ pub fn schemas(function: &str) -> ControllerSchema {
             inputs: vec![required_string("message", "User message content to classify.")],
             outputs: vec![json_output("sentiment", "Sentiment analysis payload.")],
         },
+        "claude_code_status" => ControllerSchema {
+            namespace: "inference",
+            function: "claude_code_status",
+            description: "Probe the local `claude` CLI binary (Claude Code CLI provider) and return install + version status.",
+            inputs: vec![],
+            outputs: vec![json_output(
+                "status",
+                "CliStatus payload: ok | not_installed | outdated | unusable, with version + path when present.",
+            )],
+        },
+        "claude_code_auth_status" => ControllerSchema {
+            namespace: "inference",
+            function: "claude_code_auth_status",
+            description: "Detect Claude Code CLI auth state (Pro/Max subscription via credentials.json, API key env, or none). No CLI spawn, no token round-trip.",
+            inputs: vec![],
+            outputs: vec![json_output(
+                "auth",
+                "AuthStatus payload: source = subscription | api_key_env | none, plus optional account_email + expires_at + last_checked.",
+            )],
+        },
         other => panic!("unknown inference schema: {other}"),
     }
 }
@@ -485,6 +548,20 @@ fn json_output(name: &'static str, comment: &'static str) -> FieldSchema {
         comment,
         required: true,
     }
+}
+
+fn handle_inference_resolve_model(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let p = deserialize_params::<InferenceResolveModelParams>(params)?;
+        let config = config_rpc::load_config_with_timeout().await?;
+        let resolved = crate::openhuman::inference::provider::factory::resolve_model_for_hint(
+            &p.hint, &config,
+        );
+        to_json(RpcOutcome::new(
+            serde_json::json!({ "model": resolved }),
+            vec![],
+        ))
+    })
 }
 
 fn handle_inference_status(_params: Map<String, Value>) -> ControllerFuture {
@@ -617,11 +694,17 @@ fn handle_inference_update_model_settings(params: Map<String, Value>) -> Control
 fn handle_inference_update_local_settings(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let update = deserialize_params::<InferenceUpdateLocalSettingsParams>(params)?;
+        let base_url = match update.base_url {
+            None => None,
+            Some(Value::Null) => Some(None),
+            Some(Value::String(value)) => Some(Some(value)),
+            Some(_) => return Err("invalid params: base_url must be a string or null".to_string()),
+        };
         let patch = config_rpc::LocalAiSettingsPatch {
             runtime_enabled: update.runtime_enabled,
             opt_in_confirmed: update.opt_in_confirmed,
             provider: update.provider,
-            base_url: update.base_url,
+            base_url,
             model_id: update.model_id,
             chat_model_id: update.chat_model_id,
             usage_embeddings: update.usage_embeddings,
@@ -676,6 +759,16 @@ fn handle_inference_openai_oauth_complete(params: Map<String, Value>) -> Control
                 payload.callback_url.trim(),
             )
             .await?,
+        )
+    })
+}
+
+fn handle_inference_openai_oauth_import_codex_cli(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(
+            crate::openhuman::inference::rpc::inference_openai_oauth_import_codex_cli(&config)
+                .await?,
         )
     })
 }
@@ -786,8 +879,37 @@ fn handle_inference_analyze_sentiment(params: Map<String, Value>) -> ControllerF
     })
 }
 
+fn handle_inference_claude_code_status(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let status = tokio::task::spawn_blocking(
+            crate::openhuman::inference::provider::claude_code::version_check::probe,
+        )
+        .await
+        .map_err(|e| format!("claude_code_status join error: {e}"))?;
+        to_json(RpcOutcome::new(status, vec![]))
+    })
+}
+
+fn handle_inference_claude_code_auth_status(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let auth = tokio::task::spawn_blocking(
+            crate::openhuman::inference::provider::claude_code::auth_status::probe,
+        )
+        .await
+        .map_err(|e| format!("claude_code_auth_status join error: {e}"))?;
+        to_json(RpcOutcome::new(auth, vec![]))
+    })
+}
+
 fn deserialize_params<T: DeserializeOwned>(params: Map<String, Value>) -> Result<T, String> {
     serde_json::from_value(Value::Object(params)).map_err(|e| format!("invalid params: {e}"))
+}
+
+fn deserialize_present_json<'de, D>(deserializer: D) -> Result<Option<Value>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Value::deserialize(deserializer).map(Some)
 }
 
 fn to_json<T: serde::Serialize>(outcome: RpcOutcome<T>) -> Result<Value, String> {

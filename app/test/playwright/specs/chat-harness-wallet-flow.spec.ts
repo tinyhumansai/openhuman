@@ -151,7 +151,7 @@ async function waitForSocketConnected(page: Page): Promise<void> {
 async function sendMessage(page: Page, prompt: string): Promise<void> {
   await waitForSocketConnected(page);
   await dismissWalkthroughIfPresent(page);
-  await page.getByPlaceholder('Type a message...').fill(prompt);
+  await page.getByPlaceholder('How can I help you today?').fill(prompt);
   await dismissWalkthroughIfPresent(page);
   await expect(page.getByTestId('send-message-button')).toBeEnabled();
   await page.getByTestId('send-message-button').click();
@@ -194,9 +194,11 @@ test.describe('Chat Harness - Wallet Flow', () => {
     await sendMessage(page, WALLET_PROMPT);
 
     await expect(
-      page.getByText(
-        /Prepared a wallet quote for John\..*wallet-quote-canary-8d13|Done\.\s*wallet-quote-canary-8d13/i
-      )
+      page
+        .getByText(
+          /Prepared a wallet quote for John\..*wallet-quote-canary-8d13|Done\.\s*wallet-quote-canary-8d13/i
+        )
+        .first()
     ).toBeVisible({ timeout: 40_000 });
   });
 });

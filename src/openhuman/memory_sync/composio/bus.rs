@@ -20,7 +20,7 @@
 //!   published as `TriggerEvaluated` / `TriggerEscalated` events on
 //!   the bus.
 //!
-//! [trigger_triage]: crate::openhuman::agent::agents
+//! [trigger_triage]: crate::openhuman::agent_registry::agents
 //!
 //! ## Feature flag
 //!
@@ -352,10 +352,26 @@ impl EventHandler for ComposioTriggerSubscriber {
                     );
                 }
                 Err(e) => {
-                    tracing::error!(
-                        label = %envelope.display_label,
-                        error = %e,
-                        "[composio][triage] run_triage failed"
+                    // Route through the central observability classifier
+                    // so user-config / budget-exhausted / provider-state
+                    // rollups from `reliable.rs` (e.g. `The model
+                    // \`<id>\` may not be available on your provider …`)
+                    // get demoted to info-level breadcrumbs instead of
+                    // surfacing as raw Sentry errors. Previously this
+                    // call used `tracing::error!` directly and bypassed
+                    // the classifier — 10.7k events / 14d on self-hosted
+                    // Sentry TAURI-RUST-1V, dominated by
+                    // ProviderConfigRejection-class rollups whose inner
+                    // attempts the provider layer already demoted.
+                    let detail = format!(
+                        "[composio][triage] run_triage failed (label={}): {e:#}",
+                        envelope.display_label
+                    );
+                    crate::core::observability::report_error_or_expected(
+                        detail.as_str(),
+                        "composio",
+                        "trigger_triage",
+                        &[("label", envelope.display_label.as_str())],
                     );
                 }
             }
@@ -514,10 +530,23 @@ impl EventHandler for ComposioConnectionCreatedSubscriber {
                     // incident triage.
                     match ops::fetch_connected_integrations_status(ctx.config.as_ref()).await {
                         FetchConnectedIntegrationsStatus::Authoritative(entries) => {
+                            let mut toolkits: Vec<String> = entries
+                                .iter()
+                                .filter(|entry| entry.connected)
+                                .map(|entry| entry.toolkit.clone())
+                                .collect();
+                            toolkits.sort();
+                            toolkits.dedup();
+                            crate::core::event_bus::publish_global(
+                                DomainEvent::ComposioIntegrationsChanged {
+                                    toolkits: toolkits.clone(),
+                                },
+                            );
                             tracing::debug!(
                                 toolkit = %toolkit,
                                 connection_id = %connection_id,
                                 cached_entries = entries.len(),
+                                active_toolkits = ?toolkits,
                                 "[composio:bus] eagerly warmed integrations cache after connection became active"
                             );
                         }
@@ -553,28 +582,79 @@ impl EventHandler for ComposioConnectionCreatedSubscriber {
 
             // Optional provider-specific post-OAuth hook (e.g. gmail's
             // inbox ingest). Only fires for toolkits that registered a
-            // provider; the rest just got the cache refresh above and
-            // we're done.
-            let Some(provider) = get_provider(&toolkit) else {
-                tracing::debug!(
+            // provider, and only when the user has completed onboarding.
+            //
+            // Skip the initial sync when onboarding is still in progress
+            // (#3097). Connections made during the setup wizard would otherwise
+            // enqueue embedding/LLM jobs that drain cloud credits before the
+            // user has had a chance to choose their AI routing. The periodic
+            // scheduler (20-min tick) will fire the first real sync after
+            // onboarding completes. The memory_sources auto-register below
+            // still runs unconditionally so the source appears in the unified
+            // sources list immediately.
+            if !ctx.config.onboarding_completed {
+                tracing::info!(
                     toolkit = %toolkit,
-                    "[composio:bus] no provider registered for toolkit; cache refreshed, no provider hook to dispatch"
+                    connection_id = %connection_id,
+                    "[composio:bus] onboarding not yet complete — deferring initial sync to periodic scheduler"
                 );
-                return;
-            };
+            } else {
+                let Some(provider) = get_provider(&toolkit) else {
+                    tracing::debug!(
+                        toolkit = %toolkit,
+                        "[composio:bus] no provider registered for toolkit; cache refreshed, no provider hook to dispatch"
+                    );
+                    // Still fall through to auto-register below.
+                    let label = format!("{toolkit} connection");
+                    if let Err(e) = crate::openhuman::memory_sources::upsert_composio_source(
+                        &toolkit,
+                        &connection_id,
+                        &label,
+                    )
+                    .await
+                    {
+                        tracing::warn!(
+                            toolkit = %toolkit,
+                            connection_id = %connection_id,
+                            error = %e,
+                            "[composio:bus] memory_sources auto-register failed (non-fatal)"
+                        );
+                    }
+                    return;
+                };
 
-            if let Err(e) = provider.on_connection_created(&ctx).await {
+                if let Err(e) = provider.on_connection_created(&ctx).await {
+                    tracing::warn!(
+                        toolkit = %toolkit,
+                        connection_id = %connection_id,
+                        error = %e,
+                        "[composio:bus] provider on_connection_created failed"
+                    );
+                } else {
+                    // Successful connection-created sync — record the
+                    // timestamp so the periodic scheduler doesn't
+                    // immediately re-fire for this connection.
+                    super::periodic::record_sync_success(&toolkit, &connection_id);
+                }
+            }
+
+            // Auto-register this connection in the memory_sources registry so
+            // it appears in the unified sources list regardless of whether the
+            // initial sync ran.
+            let label = format!("{toolkit} connection");
+            if let Err(e) = crate::openhuman::memory_sources::upsert_composio_source(
+                &toolkit,
+                &connection_id,
+                &label,
+            )
+            .await
+            {
                 tracing::warn!(
                     toolkit = %toolkit,
                     connection_id = %connection_id,
                     error = %e,
-                    "[composio:bus] provider on_connection_created failed"
+                    "[composio:bus] memory_sources auto-register failed (non-fatal)"
                 );
-            } else {
-                // Successful connection-created sync — record the
-                // timestamp so the periodic scheduler doesn't
-                // immediately re-fire for this connection.
-                super::periodic::record_sync_success(&toolkit, &connection_id);
             }
         });
     }
@@ -666,11 +746,13 @@ async fn wait_for_connection_active(
 /// (#1710).
 ///
 /// The subscriber is intentionally tiny: it only clears the cache,
-/// which guarantees the very next `fetch_connected_integrations` /
-/// `cached_active_integrations` read hits the new client. We don't
-/// eagerly warm the cache here because we don't have a config handle
-/// in the event payload and `load_config_with_timeout` would race the
-/// concurrent `cfg_mut.save()` call that produced this event.
+/// then attempts a best-effort eager warm + `ComposioIntegrationsChanged`
+/// publish in a detached task so active sessions can refresh their
+/// delegation schema without waiting for the next turn boundary.
+///
+/// The warm/publish step is intentionally opportunistic: if config load
+/// or backend access fails we leave the cache cold and rely on the
+/// existing 5 s UI poll / next-turn fallback path.
 pub struct ComposioConfigChangedSubscriber;
 
 impl ComposioConfigChangedSubscriber {
@@ -706,6 +788,45 @@ impl EventHandler for ComposioConfigChangedSubscriber {
             "[composio-cache] config changed — invalidating integrations cache"
         );
         ops::invalidate_connected_integrations_cache();
+
+        tokio::spawn(async move {
+            let config = match config_rpc::load_config_with_timeout().await {
+                Ok(config) => config,
+                Err(error) => {
+                    tracing::debug!(
+                        error = %error,
+                        "[composio-cache] config changed eager warm skipped: config load failed"
+                    );
+                    return;
+                }
+            };
+
+            match ops::fetch_connected_integrations_status(&config).await {
+                FetchConnectedIntegrationsStatus::Authoritative(entries) => {
+                    let mut toolkits: Vec<String> = entries
+                        .iter()
+                        .filter(|entry| entry.connected)
+                        .map(|entry| entry.toolkit.clone())
+                        .collect();
+                    toolkits.sort();
+                    toolkits.dedup();
+                    crate::core::event_bus::publish_global(
+                        DomainEvent::ComposioIntegrationsChanged {
+                            toolkits: toolkits.clone(),
+                        },
+                    );
+                    tracing::debug!(
+                        active_toolkits = ?toolkits,
+                        "[composio-cache] config changed eager warm complete; published integrations changed"
+                    );
+                }
+                FetchConnectedIntegrationsStatus::Unavailable => {
+                    tracing::debug!(
+                        "[composio-cache] config changed eager warm skipped: backend unavailable"
+                    );
+                }
+            }
+        });
     }
 }
 

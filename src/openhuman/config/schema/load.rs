@@ -133,6 +133,9 @@ pub fn default_root_openhuman_dir() -> Result<PathBuf> {
 /// Environment override for the agent's default projects directory.
 pub const PROJECTS_DIR_ENV_VAR: &str = "OPENHUMAN_PROJECTS_DIR";
 
+/// Environment override for the agent action sandbox directory.
+pub const ACTION_DIR_ENV_VAR: &str = "OPENHUMAN_ACTION_DIR";
+
 /// The agent's default **projects home** — a visible, read-write directory
 /// (`~/OpenHuman/projects`) where the coding agent creates and saves projects,
 /// kept distinct from the hidden internal state dir (`~/.openhuman/workspace`,
@@ -150,6 +153,20 @@ pub fn default_projects_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
         .join("OpenHuman")
         .join("projects")
+}
+
+/// The agent's default **action sandbox** — the directory where shell, file,
+/// and git tools run by default. Separate from the internal workspace state
+/// dir. Defaults to `default_projects_dir()` (`~/OpenHuman/projects`);
+/// overridable via `OPENHUMAN_ACTION_DIR`.
+pub fn default_action_dir() -> PathBuf {
+    if let Ok(p) = std::env::var(ACTION_DIR_ENV_VAR) {
+        let trimmed = p.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed);
+        }
+    }
+    default_projects_dir()
 }
 
 fn active_workspace_state_path(default_dir: &Path) -> PathBuf {
@@ -409,6 +426,10 @@ fn decrypt_optional_secret(
                     log::warn!(
                         "[config] Failed to decrypt {field_name} — field cleared (key inaccessible): {e}"
                     );
+                    crate::openhuman::keyring_consent::policy::notify_decrypt_failure(
+                        field_name,
+                        &e.to_string(),
+                    );
                     *value = None;
                 }
             }
@@ -447,7 +468,7 @@ fn decrypt_config_secrets(config: &mut Config, openhuman_dir: &Path) -> Result<(
 
     decrypt_optional_secret(&store, &mut config.api_key, "api_key")?;
 
-    // Search engines: BYO API keys for Parallel and Brave.
+    // Search engines: BYO API keys for direct providers.
     decrypt_optional_secret(
         &store,
         &mut config.search.parallel.api_key,
@@ -457,6 +478,11 @@ fn decrypt_config_secrets(config: &mut Config, openhuman_dir: &Path) -> Result<(
         &store,
         &mut config.search.brave.api_key,
         "search.brave.api_key",
+    )?;
+    decrypt_optional_secret(
+        &store,
+        &mut config.search.querit.api_key,
+        "search.querit.api_key",
     )?;
 
     // Channels: decrypt every optional secret field.
@@ -566,6 +592,11 @@ fn encrypt_config_secrets(config: &mut Config) -> Result<()> {
         &mut config.search.brave.api_key,
         "search.brave.api_key",
     )?;
+    encrypt_optional_secret(
+        &store,
+        &mut config.search.querit.api_key,
+        "search.querit.api_key",
+    )?;
 
     let ch = &mut config.channels_config;
     if let Some(ref mut tg) = ch.telegram {
@@ -637,101 +668,15 @@ fn encrypt_config_secrets(config: &mut Config) -> Result<()> {
     Ok(())
 }
 
-const ACTIVE_USER_STATE_FILE: &str = "active_user.toml";
+#[path = "load_user_state.rs"]
+mod load_user_state;
+#[cfg(test)]
+pub(crate) use load_user_state::ACTIVE_USER_STATE_FILE;
+pub use load_user_state::{
+    clear_active_user, pre_login_user_dir, read_active_user_id, user_openhuman_dir,
+    write_active_user_id, PRE_LOGIN_USER_ID,
+};
 
-#[derive(Debug, Serialize, Deserialize)]
-struct ActiveUserState {
-    user_id: String,
-}
-
-/// Reads the active user id from `{default_openhuman_dir}/active_user.toml`.
-/// Returns `None` when the file does not exist, is empty, or cannot be parsed.
-pub fn read_active_user_id(default_openhuman_dir: &Path) -> Option<String> {
-    let path = default_openhuman_dir.join(ACTIVE_USER_STATE_FILE);
-    let contents = std::fs::read_to_string(&path).ok()?;
-    let state: ActiveUserState = toml::from_str(&contents).ok()?;
-    let id = state.user_id.trim().to_string();
-    if id.is_empty() {
-        None
-    } else {
-        Some(id)
-    }
-}
-
-/// Writes the active user id to `{default_openhuman_dir}/active_user.toml`.
-pub fn write_active_user_id(default_openhuman_dir: &Path, user_id: &str) -> Result<()> {
-    let path = default_openhuman_dir.join(ACTIVE_USER_STATE_FILE);
-    let state = ActiveUserState {
-        user_id: user_id.to_string(),
-    };
-    let toml_str = toml::to_string_pretty(&state).context("serialize active_user.toml")?;
-    std::fs::write(&path, toml_str)
-        .with_context(|| format!("Failed to write active user state: {}", path.display()))?;
-    tracing::debug!(user_id = %user_id, path = %path.display(), "active user written");
-    Ok(())
-}
-
-/// Removes the active user marker.  After this, the next config load will
-/// use the default (unauthenticated) openhuman directory.
-pub fn clear_active_user(default_openhuman_dir: &Path) -> Result<()> {
-    let path = default_openhuman_dir.join(ACTIVE_USER_STATE_FILE);
-    if path.exists() {
-        std::fs::remove_file(&path)
-            .with_context(|| format!("Failed to remove active user state: {}", path.display()))?;
-        tracing::debug!(path = %path.display(), "active user cleared");
-    }
-    Ok(())
-}
-
-/// Returns the user-scoped openhuman directory for the given user id:
-/// `{default_openhuman_dir}/users/{user_id}`.
-pub fn user_openhuman_dir(default_openhuman_dir: &Path, user_id: &str) -> PathBuf {
-    default_openhuman_dir.join("users").join(user_id)
-}
-
-/// Stable id used to scope the openhuman directory before any user has
-/// logged in.  All memory, state, config, sessions and workspace files
-/// created on first init land under `{root}/users/{PRE_LOGIN_USER_ID}`
-/// so nothing is ever written directly at the root `.openhuman` path.
-///
-/// On first successful login, this directory is migrated into the real
-/// user-scoped directory (see `credentials::ops::store_session`).
-pub const PRE_LOGIN_USER_ID: &str = "local";
-
-/// Returns the pre-login (unauthenticated) user directory:
-/// `{default_openhuman_dir}/users/local`.
-pub fn pre_login_user_dir(default_openhuman_dir: &Path) -> PathBuf {
-    user_openhuman_dir(default_openhuman_dir, PRE_LOGIN_USER_ID)
-}
-
-/// Try to parse config TOML. On failure, try `.bak`, then fall back to `Config::default()`.
-///
-/// Returns `(config, was_corrupted)` where `was_corrupted == true` means the
-/// primary failed to parse and the caller is responsible for archiving the
-/// corrupt primary and persisting the recovered/default config.
-///
-/// This is a standalone async function (not a method on Config) so it can be
-/// called from both `load_or_init` and `load_from_default_paths`.
-///
-/// **Why the parse runs via `spawn_blocking`:** `toml::from_str::<Config>`
-/// is a recursive-descent parser whose serde-monomorphised `Visitor`
-/// frames for our deeply-nested `Config` cost several KB each. When this
-/// function is called from the bottom of a deep async tower — e.g.
-/// `composio_list_tools` reloading the config per call (#1710 Wave 4),
-/// reached via `chat → orchestrator → delegate_to_integrations_agent →
-/// sub-agent → composio_*` — running the parse inline on the tokio
-/// worker thread blows the ~2 MB worker stack and aborts the in-process
-/// core with `SIGBUS / KERN_PROTECTION_FAILURE` (see `crahs.log`,
-/// 2026-05-17, and `tests/composio_list_tools_stack_overflow_regression.rs`).
-/// Moving the parse onto the blocking-pool gives it a *fresh* thread
-/// stack with no async tower above it, so the same parser frames easily
-/// fit. (An earlier draft of this fix also fronted
-/// `config::ops::load_config_with_timeout` with a per-process cache to
-/// skip the parse on repeat calls, but it was reverted — the in-process
-/// integration tests in `tests/json_rpc_e2e.rs` reuse workspace paths
-/// and load config mid-mutation, racing the cache. The spawn_blocking
-/// move is sufficient on its own once paired with the Tauri worker
-/// stack bump in `app/src-tauri/src/lib.rs`.)
 async fn parse_config_with_recovery(config_path: &Path, contents: &str) -> (Config, bool) {
     let parse_err = match parse_toml_off_worker(contents.to_string()).await {
         Ok(config) => {
@@ -1095,6 +1040,7 @@ impl Config {
             let mut config = Config {
                 config_path: config_path.clone(),
                 workspace_dir: workspace_dir.clone(),
+                action_dir: default_action_dir(),
                 ..Default::default()
             };
             config.apply_env_overrides_from(env);
@@ -1161,13 +1107,37 @@ impl Config {
                 }
             }
 
-            let contents = fs::read_to_string(&config_path)
-                .await
-                .context("Failed to read config file")?;
+            // Sentry OPENHUMAN-TAURI-9R (~8k events, Windows): this read can
+            // race the atomic-replace in `Config::save` (temp file →
+            // `fs::rename` over `config_path`). On Windows the in-flight
+            // rename / a transient AV or indexer handle makes the read fail
+            // with ERROR_SHARING_VIOLATION (32) / ERROR_ACCESS_DENIED (5) /
+            // ERROR_DELETE_PENDING (303) even though `config_path.exists()`
+            // just returned true. `inference_status` polls `load_config`
+            // frequently, so each coincidence with a save produced one
+            // "Failed to read config file" event. Retry on the transient
+            // Windows locking codes (the same class `retry_with_backoff_async`
+            // already handles for the auth-profile + team_get_usage paths) so
+            // the read succeeds once the writer releases its handle.
+            // `is_transient_fs_error` is `false` for every non-Windows error
+            // (and for NotFound on Windows), so this is a no-op on
+            // macOS/Linux and never masks a genuinely-unreadable config.
+            let contents = crate::openhuman::util::retry_with_backoff_async(
+                "read config file",
+                5,
+                20,
+                || async {
+                    fs::read_to_string(&config_path).await.with_context(|| {
+                        format!("Failed to read config file: {}", config_path.display())
+                    })
+                },
+            )
+            .await?;
             let (mut config, config_was_corrupted) =
                 parse_config_with_recovery(&config_path, &contents).await;
             config.config_path = config_path.clone();
             config.workspace_dir = workspace_dir;
+            config.action_dir = default_action_dir();
             migrate_legacy_autocomplete_disabled_apps(&mut config);
             migrate_legacy_inference_url(&mut config);
             migrate_cloud_provider_slugs(&mut config);
@@ -1230,6 +1200,7 @@ impl Config {
             let mut config = Config {
                 config_path: config_path.clone(),
                 workspace_dir,
+                action_dir: default_action_dir(),
                 schema_version: crate::openhuman::migrations::CURRENT_SCHEMA_VERSION,
                 ..Default::default()
             };
@@ -1278,6 +1249,7 @@ impl Config {
             let mut config = Config {
                 config_path,
                 workspace_dir,
+                action_dir: default_action_dir(),
                 ..Default::default()
             };
             config.apply_env_overrides();
@@ -1292,6 +1264,7 @@ impl Config {
         let (mut config, _was_corrupted) = parse_config_with_recovery(&config_path, &raw).await;
         config.config_path = config_path;
         config.workspace_dir = workspace_dir;
+        config.action_dir = default_action_dir();
         config.apply_env_overrides();
         decrypt_config_secrets(&mut config, &openhuman_dir)?;
         Ok(config)
@@ -1314,6 +1287,7 @@ impl Config {
             let mut config = Config {
                 config_path,
                 workspace_dir,
+                action_dir: default_action_dir(),
                 ..Default::default()
             };
             config.apply_env_overrides_from(&ProcessEnvWithoutWorkspace);
@@ -1327,6 +1301,7 @@ impl Config {
             parse_config_with_recovery(&config_path, &raw).await;
         config.config_path = config_path;
         config.workspace_dir = workspace_dir;
+        config.action_dir = default_action_dir();
         migrate_legacy_autocomplete_disabled_apps(&mut config);
         migrate_legacy_inference_url(&mut config);
         migrate_cloud_provider_slugs(&mut config);
@@ -1401,6 +1376,13 @@ impl Config {
                 let (_, workspace_dir) =
                     resolve_config_dir_for_workspace(&PathBuf::from(workspace));
                 self.workspace_dir = workspace_dir;
+            }
+        }
+
+        if let Some(v) = env.get("OPENHUMAN_ACTION_DIR") {
+            let trimmed = v.trim();
+            if !trimmed.is_empty() {
+                self.action_dir = PathBuf::from(trimmed);
             }
         }
 
@@ -1504,8 +1486,9 @@ impl Config {
             }
         }
 
-        // Unified search engine selector. `OPENHUMAN_SEARCH_ENGINE` picks
-        // the active engine; per-engine API keys auto-route to BYO once set.
+        // Unified search engine selector. `OPENHUMAN_SEARCH_ENGINE` picks the
+        // active engine (`disabled` suppresses search tools); per-engine API
+        // keys auto-route to BYO once set.
         if let Some(engine) = env.get_any(&["OPENHUMAN_SEARCH_ENGINE", "SEARCH_ENGINE"]) {
             let engine = engine.trim().to_ascii_lowercase();
             if !engine.is_empty() {
@@ -1520,6 +1503,11 @@ impl Config {
         if let Some(key) = env.get_any(&["OPENHUMAN_BRAVE_API_KEY", "BRAVE_API_KEY"]) {
             if !key.trim().is_empty() {
                 self.search.brave.api_key = Some(key);
+            }
+        }
+        if let Some(key) = env.get_any(&["OPENHUMAN_QUERIT_API_KEY", "QUERIT_API_KEY"]) {
+            if !key.trim().is_empty() {
+                self.search.querit.api_key = Some(key);
             }
         }
         if let Some(max) = env.get_any(&["OPENHUMAN_SEARCH_MAX_RESULTS", "SEARCH_MAX_RESULTS"]) {
@@ -1977,6 +1965,21 @@ impl Config {
             } else {
                 Some(trimmed.to_string())
             };
+        }
+
+        if let Some(raw) = env.get("OPENHUMAN_MEMORY_TREE_SMART_WALK_MODEL") {
+            let trimmed = raw.trim();
+            self.memory_tree.smart_walk_model = if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            };
+        }
+
+        if let Some(raw) = env.get("OPENHUMAN_MEMORY_TREE_CLOUD_SUMMARIZATION") {
+            if let Some(val) = parse_env_bool("OPENHUMAN_MEMORY_TREE_CLOUD_SUMMARIZATION", &raw) {
+                self.memory_tree.cloud_summarization_opt_in = val;
+            }
         }
 
         // Auto-update overrides

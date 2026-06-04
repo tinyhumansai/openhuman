@@ -13,6 +13,7 @@ import CommandProvider from './components/commands/CommandProvider';
 import ServiceBlockingGate from './components/daemon/ServiceBlockingGate';
 import DictationHotkeyManager from './components/DictationHotkeyManager';
 import ErrorFallbackScreen from './components/ErrorFallbackScreen';
+import KeyringConsentOverlay from './components/keyring/KeyringConsentOverlay';
 import LocalAIDownloadSnackbar from './components/LocalAIDownloadSnackbar';
 import SecretPromptDialog from './components/mcp-setup/SecretPromptDialog';
 import OpenhumanLinkModal from './components/OpenhumanLinkModal';
@@ -107,6 +108,7 @@ function App() {
                             {!onMobile && <DictationHotkeyManager />}
                             {!onMobile && <LocalAIDownloadSnackbar />}
                             {!onMobile && <AppUpdatePrompt />}
+                            <KeyringConsentOverlay />
                             <SecretPromptDialog />
                           </ServiceBlockingGate>
                         </CommandProvider>

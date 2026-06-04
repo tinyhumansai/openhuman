@@ -76,8 +76,94 @@ pub enum DomainEvent {
         agent_id: String,
         error: String,
     },
+    /// A sub-agent called `ask_user_clarification` and paused, waiting
+    /// for the orchestrator to relay the user's answer via
+    /// `continue_subagent`.
+    SubagentAwaitingUser {
+        parent_session: String,
+        task_id: String,
+        agent_id: String,
+        question: String,
+    },
+    /// High-level orchestration accepted a child agent for execution.
+    AgentOrchestrationSpawned {
+        session_id: String,
+        orchestration_id: String,
+        agent_id: String,
+        parent_agent_id: Option<String>,
+    },
+    /// High-level orchestration observed a child agent completion.
+    AgentOrchestrationCompleted {
+        session_id: String,
+        orchestration_id: String,
+        agent_id: String,
+        elapsed_ms: u64,
+        output_chars: usize,
+        iterations: usize,
+    },
+    /// High-level orchestration observed a child agent failure.
+    AgentOrchestrationFailed {
+        session_id: String,
+        orchestration_id: String,
+        agent_id: String,
+        error: String,
+    },
+    /// High-level orchestration closed or cancelled a child agent.
+    AgentOrchestrationClosed {
+        session_id: String,
+        orchestration_id: String,
+        reason: Option<String>,
+    },
+
+    // ── Run Queue ──────────────────────────────────────────────────────
+    /// A message was queued into the active-run queue instead of interrupting.
+    RunQueueMessageQueued {
+        thread_id: String,
+        mode: String,
+        queue_depth: usize,
+    },
+    /// A queued steer/collect message was delivered to the engine at an
+    /// iteration boundary.
+    RunQueueMessageDelivered {
+        thread_id: String,
+        mode: String,
+        iteration: u32,
+    },
+    /// A queued followup message was dispatched as a fresh turn after the
+    /// current turn completed.
+    RunQueueFollowupDispatched {
+        thread_id: String,
+        followup_count: usize,
+    },
+    /// The active turn was interrupted by a new message (default behavior).
+    RunQueueInterrupted {
+        thread_id: String,
+        cancelled_request_id: String,
+    },
 
     // ── Memory ──────────────────────────────────────────────────────────
+    /// The configured embedding provider is unreachable or the requested model
+    /// is not installed, so the memory pipeline fell back to an alternative.
+    ///
+    /// Published by `memory_store::factories` (once per process via the
+    /// `OLLAMA_HEALTH_REPORTED` latch) so the UI can surface a user-visible
+    /// warning with an actionable fix hint. The `message` field is a
+    /// pre-formatted human-readable string safe to show in a notification.
+    EmbeddingModelUnhealthy {
+        /// Short provider slug, e.g. `"ollama"`.
+        provider: String,
+        /// The model that was intended but could not be reached / found,
+        /// e.g. `"bge-m3"`.
+        model: String,
+        /// The provider that will serve embeddings for this session instead,
+        /// e.g. `"cloud"`.
+        fallback_provider: String,
+        /// Human-readable explanation with an actionable fix,
+        /// e.g. `"Local embedding model unreachable — falling back to cloud
+        /// embeddings. Run \`ollama pull bge-m3\` to fix."`.
+        message: String,
+    },
+
     /// A memory entry was stored.
     MemoryStored {
         key: String,
@@ -258,6 +344,12 @@ pub enum DomainEvent {
     /// Agent attempted a tool call that produces an external side
     /// effect; awaiting user approval. Published by `ApprovalGate`
     /// before parking the tool-call future. Issue #1339.
+    ///
+    /// Note: this variant intentionally does not carry a `session_id`.
+    /// Session provenance is internal to `ApprovalGate`; downstream
+    /// surfaces (frontend approval card, audit log readers, web channel
+    /// bridge) only need the request correlation id plus optional chat
+    /// thread/client routing.
     ApprovalRequested {
         /// Unique id used to correlate the decision back to the
         /// parked future.
@@ -269,9 +361,6 @@ pub enum DomainEvent {
         action_summary: String,
         /// Redacted JSON arguments — also stripped of raw user content.
         args_redacted: serde_json::Value,
-        /// Session id binding the request to the current core launch
-        /// so stale approvals cannot be replayed after restart.
-        session_id: String,
         /// Chat thread the gated call belongs to, when the turn originated
         /// from a chat channel — lets the web channel route a `yes`/`no`
         /// reply back to this request. `None` for non-chat callers.
@@ -287,6 +376,97 @@ pub enum DomainEvent {
         tool_name: String,
         /// `"approve_once"`, `"approve_always_for_tool"`, or `"deny"`.
         decision: String,
+    },
+
+    // ── Artifacts ───────────────────────────────────────────────────────
+    /// An artifact transitioned to [`ArtifactStatus::Ready`] — file
+    /// is on disk and ready to be downloaded. Published by
+    /// [`crate::openhuman::artifacts::store::finalize_artifact`].
+    /// Bridged to the web channel as an `artifact_ready` socket event
+    /// when the publishing turn carries an `APPROVAL_CHAT_CONTEXT`
+    /// (see [`crate::openhuman::approval::ApprovalChatContext`]).
+    /// Sub-task #2779 of #1535.
+    ArtifactReady {
+        /// UUID of the artifact record.
+        artifact_id: String,
+        /// Lowercase variant of `ArtifactKind` (`presentation`,
+        /// `document`, `image`, `other`).
+        kind: String,
+        /// Human-readable title (also the on-disk filename stem).
+        title: String,
+        /// Absolute workspace root the artifact belongs to (matches
+        /// the `workspace_dir` parameter passed to
+        /// `finalize_artifact`). Bound to the event so a subscriber
+        /// firing AFTER the user switched workspaces can detect the
+        /// mismatch and drop the surface — `path` is workspace-
+        /// relative and would otherwise resolve into the wrong
+        /// `<workspace>/artifacts/` tree.
+        workspace_dir: String,
+        /// Relative path under `<workspace>/artifacts/`, e.g.
+        /// `"<uuid>/deck.pptx"`. The absolute path is reachable via
+        /// `ai_get_artifact` so the renderer never needs the
+        /// workspace root.
+        path: String,
+        /// Final on-disk file size in bytes.
+        size_bytes: u64,
+        /// Chat thread the artifact belongs to, when the producing
+        /// turn carried an `APPROVAL_CHAT_CONTEXT`. `None` for CLI /
+        /// cron / sub-agent paths — no client to fan out to.
+        thread_id: Option<String>,
+        /// Socket.IO client id (room) to surface the card to, when
+        /// known. `None` for non-chat callers.
+        client_id: Option<String>,
+    },
+    /// An artifact transitioned to [`ArtifactStatus::Failed`] — the
+    /// producer surfaced a reason and the UI should render a
+    /// retry-hint card instead of a download. Bridged the same way
+    /// as [`Self::ArtifactReady`]. Sub-task #2779 of #1535.
+    ArtifactFailed {
+        artifact_id: String,
+        kind: String,
+        title: String,
+        /// Absolute workspace root the artifact belongs to — see
+        /// [`Self::ArtifactReady::workspace_dir`] for rationale.
+        workspace_dir: String,
+        /// Producer-supplied failure reason. Already truncated by the
+        /// producer (e.g. `PresentationError::truncate_stderr`).
+        error: String,
+        thread_id: Option<String>,
+        client_id: Option<String>,
+    },
+    /// An artifact record has been **created** (`ArtifactStatus::Pending`)
+    /// but no bytes are on disk yet — the producing tool has only just
+    /// reserved the row. Published by
+    /// [`crate::openhuman::artifacts::store::create_artifact`].
+    /// Bridged to the web channel as an `artifact_pending` socket event
+    /// so the frontend can render an in-progress / "Generating…" card the
+    /// moment the tool dispatches, instead of waiting until the file
+    /// arrives via [`Self::ArtifactReady`]. The pending card is replaced
+    /// in place when the matching `ArtifactReady` / `ArtifactFailed`
+    /// event with the same `artifact_id` arrives. Sub-task #3162 of #1535.
+    ArtifactPending {
+        /// UUID of the freshly-created artifact record.
+        artifact_id: String,
+        /// Lowercase variant of `ArtifactKind` (`presentation`,
+        /// `document`, `image`, `other`).
+        kind: String,
+        /// Human-readable title (also the on-disk filename stem).
+        title: String,
+        /// Absolute workspace root the artifact belongs to — see
+        /// [`Self::ArtifactReady::workspace_dir`] for rationale.
+        workspace_dir: String,
+        /// Relative path under `<workspace>/artifacts/` where the file
+        /// *will* land. The frontend uses it to render a stable card key
+        /// so subsequent `ArtifactReady` can swap the same surface in
+        /// place without flicker.
+        path: String,
+        /// Chat thread the artifact belongs to, when the producing turn
+        /// carried an `APPROVAL_CHAT_CONTEXT`. `None` for CLI / cron /
+        /// sub-agent paths — no client to fan out to.
+        thread_id: Option<String>,
+        /// Socket.IO client id (room) to surface the card to, when known.
+        /// `None` for non-chat callers.
+        client_id: Option<String>,
     },
 
     // ── Webhooks ────────────────────────────────────────────────────────
@@ -349,6 +529,11 @@ pub enum DomainEvent {
         toolkit: String,
         connection_id: String,
     },
+    /// The connected Composio toolkit set changed (connect/revoke/config flip).
+    ///
+    /// `toolkits` is the currently-active, sanitised slug list that should
+    /// drive orchestrator delegation schema rebuilds.
+    ComposioIntegrationsChanged { toolkits: Vec<String> },
     /// A Composio action was executed (success or failure) via the backend.
     ComposioActionExecuted {
         tool: String,
@@ -433,6 +618,23 @@ pub enum DomainEvent {
     },
     /// A full tree rebuild completed.
     TreeSummarizerRebuildCompleted { namespace: String, total_nodes: u64 },
+
+    /// Fine-grained progress during the memory tree build pipeline.
+    /// Emitted at each sub-phase so the frontend can show detailed status.
+    MemoryTreeBuildProgress {
+        /// Which phase: "extract", "append", "seal", "flush", "embed"
+        phase: String,
+        /// Sub-step within the phase (e.g. "loading", "summarising", "persisting")
+        step: String,
+        /// Tree scope when available (e.g. "github:org/repo")
+        tree_scope: Option<String>,
+        /// Tree level being processed (0 = leaves, 1+ = summaries)
+        level: Option<u32>,
+        /// Number of items being processed in this step
+        item_count: Option<u32>,
+        /// Human-readable detail
+        detail: Option<String>,
+    },
 
     // ── Notification ────────────────────────────────────────────────────
     /// An integration notification was ingested from an embedded webview.
@@ -573,6 +775,20 @@ pub enum DomainEvent {
         key_name: String,
         prompt: String,
     },
+    /// A remote MCP server returned a tool whose `description` or
+    /// `title` failed the input-validation scan and was dropped from
+    /// the registry before reaching the agent LLM context. Surfaced for
+    /// audit / observability only; carries no payload content because
+    /// the rejected text could itself be a vector.
+    McpToolRejected {
+        /// Registered MCP server name the tool came from.
+        server: String,
+        /// Remote tool name as advertised by the server.
+        tool: String,
+        /// Short pattern / rule code from the validator (e.g.
+        /// `"override.ignore_previous"`). Never the rejected payload.
+        reason: String,
+    },
 
     // ── System lifecycle ────────────────────────────────────────────────
     /// A system component started up.
@@ -598,6 +814,17 @@ pub enum DomainEvent {
     /// A component restart was observed.
     HealthRestarted { component: String },
 
+    // ── Keyring ─────────────────────────────────────────────────────────
+    /// The OS keyring is unavailable and no user consent for local fallback
+    /// has been recorded. Published once (deduplicated) when a secret
+    /// operation hits the consent gate. The frontend surfaces a consent
+    /// dialog in response.
+    KeyringConsentRequired,
+    /// A secret field failed to decrypt (rotated master key, corrupted
+    /// ciphertext, keychain reset). Published so the frontend can surface
+    /// a recovery prompt instead of silently clearing the field.
+    KeyringDecryptFailed { field_name: String, reason: String },
+
     // ── Auth ────────────────────────────────────────────────────────────
     /// The local app session is no longer valid — typically detected when
     /// the backend returns 401 to an LLM inference call or a JSON-RPC
@@ -610,6 +837,81 @@ pub enum DomainEvent {
     /// detection (already redacted by the call site) — surfaced to logs,
     /// never to Sentry or the UI verbatim.
     SessionExpired { source: String, reason: String },
+
+    // ── Task sources ─────────────────────────────────────────────────────
+    /// A task source completed a fetch pass.
+    TaskSourceFetched {
+        source_id: String,
+        provider: String,
+        fetched: usize,
+        routed: usize,
+        skipped: usize,
+    },
+    /// A single external task was ingested and routed onto the board.
+    TaskSourceTaskIngested {
+        source_id: String,
+        provider: String,
+        external_id: String,
+        title: String,
+        urgency: f32,
+    },
+    /// A task source fetch pass failed.
+    TaskSourceFetchFailed {
+        source_id: String,
+        provider: String,
+        error: String,
+    },
+    /// A task-board card needs human plan approval before the dispatcher will
+    /// execute it (emitted when `autonomy.require_task_plan_approval` is on and
+    /// the dispatcher parks a `todo` card at `awaiting_approval`).
+    ///
+    /// Surfacing: the parked card is persisted with status `awaiting_approval`,
+    /// so the kanban board renders it with inline Approve/Reject on the next
+    /// board fetch/refresh — that is the current (poll-based) surface and the
+    /// reason this telemetry event has no dedicated subscriber yet. A realtime
+    /// socket bridge (à la `ApprovalRequested` → `approval_request`) is a
+    /// deliberate follow-up; emitting the event now lets that bridge attach
+    /// without a schema change.
+    TaskPlanAwaitingApproval { card_id: String, thread_id: String },
+    /// A stale or wedged task run was reclaimed — the card moved back to
+    /// `todo` (re-dispatchable) or `blocked` (max reclaim count exceeded).
+    TaskRunReclaimed {
+        run_id: String,
+        card_id: String,
+        thread_id: String,
+        reason: String,
+    },
+
+    // ── Backend Meet Bot ──────────────────────────────────────────────
+    /// Backend gmeet bot successfully joined the meeting.
+    BackendMeetJoined { meet_url: String },
+    /// Backend gmeet bot left the meeting.
+    BackendMeetLeft { reason: String },
+    /// Backend gmeet bot produced a spoken reply.
+    BackendMeetReply {
+        transcript: String,
+        reply: String,
+        emotion: String,
+    },
+    /// Backend gmeet bot needs the harness to execute a tool instruction.
+    BackendMeetHarness {
+        transcript: String,
+        instruction: String,
+        emotion: String,
+    },
+    /// Backend gmeet bot sent the full meeting transcript on close.
+    BackendMeetTranscript {
+        turns: Vec<BackendMeetTurn>,
+        duration_ms: u64,
+    },
+    /// Backend gmeet bot emitted an error.
+    BackendMeetError { error: String },
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct BackendMeetTurn {
+    pub role: String,
+    pub content: String,
 }
 
 impl DomainEvent {
@@ -621,9 +923,19 @@ impl DomainEvent {
             | Self::AgentError { .. }
             | Self::SubagentSpawned { .. }
             | Self::SubagentCompleted { .. }
-            | Self::SubagentFailed { .. } => "agent",
+            | Self::SubagentFailed { .. }
+            | Self::SubagentAwaitingUser { .. }
+            | Self::AgentOrchestrationSpawned { .. }
+            | Self::AgentOrchestrationCompleted { .. }
+            | Self::AgentOrchestrationFailed { .. }
+            | Self::AgentOrchestrationClosed { .. }
+            | Self::RunQueueMessageQueued { .. }
+            | Self::RunQueueMessageDelivered { .. }
+            | Self::RunQueueFollowupDispatched { .. }
+            | Self::RunQueueInterrupted { .. } => "agent",
 
-            Self::MemoryStored { .. }
+            Self::EmbeddingModelUnhealthy { .. }
+            | Self::MemoryStored { .. }
             | Self::MemoryRecalled { .. }
             | Self::MemorySyncRequested { .. }
             | Self::MemorySyncStageChanged { .. }
@@ -662,6 +974,7 @@ impl DomainEvent {
             Self::ComposioTriggerReceived { .. }
             | Self::ComposioConnectionCreated { .. }
             | Self::ComposioConnectionDeleted { .. }
+            | Self::ComposioIntegrationsChanged { .. }
             | Self::ComposioActionExecuted { .. }
             | Self::ComposioConfigChanged { .. } => "composio",
 
@@ -671,7 +984,8 @@ impl DomainEvent {
 
             Self::TreeSummarizerHourCompleted { .. }
             | Self::TreeSummarizerPropagated { .. }
-            | Self::TreeSummarizerRebuildCompleted { .. } => "tree_summarizer",
+            | Self::TreeSummarizerRebuildCompleted { .. }
+            | Self::MemoryTreeBuildProgress { .. } => "tree_summarizer",
 
             Self::NotificationIngested { .. } | Self::NotificationTriaged { .. } => "notification",
 
@@ -694,15 +1008,168 @@ impl DomainEvent {
             | Self::HealthChanged { .. }
             | Self::HealthRestarted { .. } => "system",
 
+            Self::KeyringConsentRequired | Self::KeyringDecryptFailed { .. } => "keyring",
+
             Self::SessionExpired { .. } => "auth",
 
+            Self::TaskSourceFetched { .. }
+            | Self::TaskSourceTaskIngested { .. }
+            | Self::TaskSourceFetchFailed { .. } => "task_sources",
+
+            Self::TaskPlanAwaitingApproval { .. } | Self::TaskRunReclaimed { .. } => "agent",
+
             Self::ApprovalRequested { .. } | Self::ApprovalDecided { .. } => "approval",
+
+            Self::ArtifactReady { .. }
+            | Self::ArtifactFailed { .. }
+            | Self::ArtifactPending { .. } => "artifact",
 
             Self::McpServerInstalled { .. }
             | Self::McpServerConnected { .. }
             | Self::McpServerDisconnected { .. }
             | Self::McpClientToolExecuted { .. }
-            | Self::McpSetupSecretRequested { .. } => "mcp_client",
+            | Self::McpSetupSecretRequested { .. }
+            | Self::McpToolRejected { .. } => "mcp_client",
+
+            Self::BackendMeetJoined { .. }
+            | Self::BackendMeetLeft { .. }
+            | Self::BackendMeetReply { .. }
+            | Self::BackendMeetHarness { .. }
+            | Self::BackendMeetTranscript { .. }
+            | Self::BackendMeetError { .. } => "agent_meetings",
+        }
+    }
+
+    /// Stable variant name without payload (avoids Debug format coupling).
+    pub fn variant_name(&self) -> &'static str {
+        match self {
+            Self::AgentTurnStarted { .. } => "AgentTurnStarted",
+            Self::AgentTurnCompleted { .. } => "AgentTurnCompleted",
+            Self::AgentError { .. } => "AgentError",
+            Self::SubagentSpawned { .. } => "SubagentSpawned",
+            Self::SubagentCompleted { .. } => "SubagentCompleted",
+            Self::SubagentFailed { .. } => "SubagentFailed",
+            Self::SubagentAwaitingUser { .. } => "SubagentAwaitingUser",
+            Self::AgentOrchestrationSpawned { .. } => "AgentOrchestrationSpawned",
+            Self::AgentOrchestrationCompleted { .. } => "AgentOrchestrationCompleted",
+            Self::AgentOrchestrationFailed { .. } => "AgentOrchestrationFailed",
+            Self::AgentOrchestrationClosed { .. } => "AgentOrchestrationClosed",
+            Self::RunQueueMessageQueued { .. } => "RunQueueMessageQueued",
+            Self::RunQueueMessageDelivered { .. } => "RunQueueMessageDelivered",
+            Self::RunQueueFollowupDispatched { .. } => "RunQueueFollowupDispatched",
+            Self::RunQueueInterrupted { .. } => "RunQueueInterrupted",
+            Self::MemoryStored { .. } => "MemoryStored",
+            Self::MemoryRecalled { .. } => "MemoryRecalled",
+            Self::MemorySyncRequested { .. } => "MemorySyncRequested",
+            Self::MemorySyncStageChanged { .. } => "MemorySyncStageChanged",
+            Self::MemoryIngestionStarted { .. } => "MemoryIngestionStarted",
+            Self::MemoryIngestionCompleted { .. } => "MemoryIngestionCompleted",
+            Self::DocumentCanonicalized { .. } => "DocumentCanonicalized",
+            Self::CacheRebuilt { .. } => "CacheRebuilt",
+            Self::ChannelInboundMessage { .. } => "ChannelInboundMessage",
+            Self::ChannelMessageReceived { .. } => "ChannelMessageReceived",
+            Self::ChannelMessageProcessed { .. } => "ChannelMessageProcessed",
+            Self::ChannelReactionReceived { .. } => "ChannelReactionReceived",
+            Self::ChannelReactionSent { .. } => "ChannelReactionSent",
+            Self::ChannelConnected { .. } => "ChannelConnected",
+            Self::ChannelDisconnected { .. } => "ChannelDisconnected",
+            Self::CronJobTriggered { .. } => "CronJobTriggered",
+            Self::CronJobCompleted { .. } => "CronJobCompleted",
+            Self::CronDeliveryRequested { .. } => "CronDeliveryRequested",
+            Self::ProactiveMessageRequested { .. } => "ProactiveMessageRequested",
+            Self::SkillLoaded { .. } => "SkillLoaded",
+            Self::SkillStopped { .. } => "SkillStopped",
+            Self::SkillStartFailed { .. } => "SkillStartFailed",
+            Self::SkillExecuted { .. } => "SkillExecuted",
+            Self::ToolExecutionStarted { .. } => "ToolExecutionStarted",
+            Self::ToolExecutionCompleted { .. } => "ToolExecutionCompleted",
+            Self::WebhookIncomingRequest { .. } => "WebhookIncomingRequest",
+            Self::WebhookReceived { .. } => "WebhookReceived",
+            Self::WebhookRegistered { .. } => "WebhookRegistered",
+            Self::WebhookUnregistered { .. } => "WebhookUnregistered",
+            Self::WebhookProcessed { .. } => "WebhookProcessed",
+            Self::ComposioTriggerReceived { .. } => "ComposioTriggerReceived",
+            Self::ComposioConnectionCreated { .. } => "ComposioConnectionCreated",
+            Self::ComposioConnectionDeleted { .. } => "ComposioConnectionDeleted",
+            Self::ComposioIntegrationsChanged { .. } => "ComposioIntegrationsChanged",
+            Self::ComposioActionExecuted { .. } => "ComposioActionExecuted",
+            Self::ComposioConfigChanged { .. } => "ComposioConfigChanged",
+            Self::TriggerEvaluated { .. } => "TriggerEvaluated",
+            Self::TriggerEscalated { .. } => "TriggerEscalated",
+            Self::TriggerEscalationFailed { .. } => "TriggerEscalationFailed",
+            Self::TreeSummarizerHourCompleted { .. } => "TreeSummarizerHourCompleted",
+            Self::TreeSummarizerPropagated { .. } => "TreeSummarizerPropagated",
+            Self::TreeSummarizerRebuildCompleted { .. } => "TreeSummarizerRebuildCompleted",
+            Self::MemoryTreeBuildProgress { .. } => "MemoryTreeBuildProgress",
+            Self::NotificationIngested { .. } => "NotificationIngested",
+            Self::NotificationTriaged { .. } => "NotificationTriaged",
+            Self::DevicePaired { .. } => "DevicePaired",
+            Self::DeviceRevoked { .. } => "DeviceRevoked",
+            Self::DevicePeerOnline { .. } => "DevicePeerOnline",
+            Self::DevicePeerOffline { .. } => "DevicePeerOffline",
+            Self::DeviceTunnelFrame { .. } => "DeviceTunnelFrame",
+            Self::DeviceTunnelRegistered { .. } => "DeviceTunnelRegistered",
+            Self::CompanionSessionStarted { .. } => "CompanionSessionStarted",
+            Self::CompanionStateChanged { .. } => "CompanionStateChanged",
+            Self::CompanionSessionEnded { .. } => "CompanionSessionEnded",
+            Self::SystemStartup { .. } => "SystemStartup",
+            Self::SystemShutdown { .. } => "SystemShutdown",
+            Self::SystemRestartRequested { .. } => "SystemRestartRequested",
+            Self::SystemShutdownRequested { .. } => "SystemShutdownRequested",
+            Self::AutonomyConfigChanged => "AutonomyConfigChanged",
+            Self::HealthChanged { .. } => "HealthChanged",
+            Self::HealthRestarted { .. } => "HealthRestarted",
+            Self::KeyringConsentRequired => "KeyringConsentRequired",
+            Self::KeyringDecryptFailed { .. } => "KeyringDecryptFailed",
+            Self::SessionExpired { .. } => "SessionExpired",
+            Self::ApprovalRequested { .. } => "ApprovalRequested",
+            Self::ApprovalDecided { .. } => "ApprovalDecided",
+            Self::ArtifactReady { .. } => "ArtifactReady",
+            Self::ArtifactFailed { .. } => "ArtifactFailed",
+            Self::ArtifactPending { .. } => "ArtifactPending",
+            Self::McpServerInstalled { .. } => "McpServerInstalled",
+            Self::McpServerConnected { .. } => "McpServerConnected",
+            Self::McpServerDisconnected { .. } => "McpServerDisconnected",
+            Self::McpClientToolExecuted { .. } => "McpClientToolExecuted",
+            Self::McpSetupSecretRequested { .. } => "McpSetupSecretRequested",
+            Self::McpToolRejected { .. } => "McpToolRejected",
+            Self::EmbeddingModelUnhealthy { .. } => "EmbeddingModelUnhealthy",
+            Self::TaskSourceFetched { .. } => "TaskSourceFetched",
+            Self::TaskSourceTaskIngested { .. } => "TaskSourceTaskIngested",
+            Self::TaskSourceFetchFailed { .. } => "TaskSourceFetchFailed",
+            Self::TaskPlanAwaitingApproval { .. } => "TaskPlanAwaitingApproval",
+            Self::TaskRunReclaimed { .. } => "TaskRunReclaimed",
+            Self::BackendMeetJoined { .. } => "BackendMeetJoined",
+            Self::BackendMeetLeft { .. } => "BackendMeetLeft",
+            Self::BackendMeetReply { .. } => "BackendMeetReply",
+            Self::BackendMeetHarness { .. } => "BackendMeetHarness",
+            Self::BackendMeetTranscript { .. } => "BackendMeetTranscript",
+            Self::BackendMeetError { .. } => "BackendMeetError",
+        }
+    }
+
+    /// Best-effort agent/session hint for display (not all events carry one).
+    pub fn agent_hint(&self) -> Option<&str> {
+        match self {
+            Self::AgentTurnStarted { session_id, .. }
+            | Self::AgentTurnCompleted { session_id, .. }
+            | Self::AgentError { session_id, .. } => Some(session_id.as_str()),
+            Self::SubagentSpawned { agent_id, .. }
+            | Self::SubagentCompleted { agent_id, .. }
+            | Self::SubagentFailed { agent_id, .. }
+            | Self::SubagentAwaitingUser { agent_id, .. }
+            | Self::AgentOrchestrationSpawned { agent_id, .. }
+            | Self::AgentOrchestrationCompleted { agent_id, .. }
+            | Self::AgentOrchestrationFailed { agent_id, .. } => Some(agent_id.as_str()),
+            Self::AgentOrchestrationClosed {
+                orchestration_id, ..
+            } => Some(orchestration_id.as_str()),
+            Self::ChannelMessageReceived { channel, .. }
+            | Self::ChannelConnected { channel, .. }
+            | Self::ChannelDisconnected { channel, .. } => Some(channel.as_str()),
+            Self::ToolExecutionStarted { tool_name, .. }
+            | Self::ToolExecutionCompleted { tool_name, .. } => Some(tool_name.as_str()),
+            _ => None,
         }
     }
 }

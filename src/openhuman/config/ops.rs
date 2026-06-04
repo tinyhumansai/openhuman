@@ -377,6 +377,18 @@ pub struct AutonomySettingsPatch {
     pub max_actions_per_hour: Option<u32>,
     /// "Always allow" allowlist — tool names the gate skips prompting for.
     pub auto_approve: Option<Vec<String>>,
+    pub require_task_plan_approval: Option<bool>,
+}
+
+/// Partial update for the `[agent]` block. Currently carries the single
+/// user-facing `agent_timeout_secs` knob (the tool/action wall-clock timeout);
+/// other `AgentConfig` fields are not yet UI-exposed. `None` leaves the value
+/// unchanged.
+#[derive(Debug, Clone, Default)]
+pub struct AgentSettingsPatch {
+    /// Tool/action wall-clock timeout in seconds. Validated to
+    /// `tool_timeout::MIN_TIMEOUT_SECS..=tool_timeout::MAX_TIMEOUT_SECS`.
+    pub agent_timeout_secs: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -410,8 +422,10 @@ pub struct MeetSettingsPatch {
 
 #[derive(Debug, Clone, Default)]
 pub struct SearchSettingsPatch {
-    /// One of `managed` | `parallel` | `brave`. Empty string / unknown values
-    /// fall back to `managed` at registration time.
+    /// One of `disabled` | `managed` | `parallel` | `brave` | `querit`.
+    /// Empty/unknown values are rejected by `apply_search_settings`.
+    /// Runtime fallback to `managed` applies only to persisted/legacy config
+    /// values resolved by `SearchConfig::effective_engine()`.
     pub engine: Option<String>,
     /// 1..=20. Clamped silently at apply time.
     pub max_results: Option<usize>,
@@ -421,6 +435,8 @@ pub struct SearchSettingsPatch {
     pub parallel_api_key: Option<String>,
     /// Brave Search API key. An empty string clears the stored key.
     pub brave_api_key: Option<String>,
+    /// Querit API key. An empty string clears the stored key.
+    pub querit_api_key: Option<String>,
     /// Websites the assistant may open/read (`web_fetch` / `curl`), as a
     /// host allowlist. Entries are exact hosts (`reuters.com`), which also
     /// match their subdomains, or `"*"` for all public sites. Empty list
@@ -442,7 +458,7 @@ pub struct LocalAiSettingsPatch {
     /// behaviour without needing to apply a preset first.
     pub opt_in_confirmed: Option<bool>,
     pub provider: Option<String>,
-    pub base_url: Option<String>,
+    pub base_url: Option<Option<String>>,
     pub model_id: Option<String>,
     pub chat_model_id: Option<String>,
     pub usage_embeddings: Option<bool>,
@@ -866,6 +882,9 @@ pub async fn apply_autonomy_settings(
     if let Some(auto_approve) = update.auto_approve {
         config.autonomy.auto_approve = auto_approve;
     }
+    if let Some(require_task_plan_approval) = update.require_task_plan_approval {
+        config.autonomy.require_task_plan_approval = require_task_plan_approval;
+    }
 
     config.save().await.map_err(|e| e.to_string())?;
 
@@ -892,6 +911,105 @@ pub async fn load_and_apply_autonomy_settings(
 ) -> Result<RpcOutcome<serde_json::Value>, String> {
     let mut config = load_config_with_timeout().await?;
     apply_autonomy_settings(&mut config, update).await
+}
+
+// ── Agent Activity Level ───────────────────────────────────────────────
+
+/// Partial update for the agent activity level (0–4).
+#[derive(Debug, Clone, Default)]
+pub struct ActivityLevelSettingsPatch {
+    /// "off" | "minimal" | "moderate" | "active" | "always_on" (or "0"-"4").
+    pub level: Option<String>,
+}
+
+/// Returns the current activity level and its derived settings.
+pub async fn get_activity_level_settings() -> Result<RpcOutcome<serde_json::Value>, String> {
+    let config = load_config_with_timeout().await?;
+    let level = config.agent_activity_level;
+    let (cost_min, cost_max) = level.estimated_monthly_cost_range();
+    let value = serde_json::json!({
+        "level": level as u8,
+        "level_label": level.as_str(),
+        "sync_interval_secs": level.sync_interval_secs(),
+        "heartbeat_enabled": level.heartbeat_enabled(),
+        "subconscious_enabled": level.subconscious_enabled(),
+        "token_budget_per_cycle": level.token_budget_per_cycle(),
+        "estimated_monthly_cost_min_usd": cost_min,
+        "estimated_monthly_cost_max_usd": cost_max,
+    });
+    Ok(RpcOutcome::single_log(
+        value,
+        "activity level settings read",
+    ))
+}
+
+/// Updates the agent activity level and pushes it into the scheduler gate.
+pub async fn apply_activity_level_settings(
+    config: &mut Config,
+    update: ActivityLevelSettingsPatch,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    use crate::openhuman::config::schema::activity_level::AgentActivityLevel;
+    use crate::openhuman::config::SchedulerGateMode;
+
+    if let Some(level_str) = update.level {
+        let level = AgentActivityLevel::from_str_opt(&level_str).ok_or_else(|| {
+            format!(
+                "invalid activity level '{}' \
+                 (expected off|minimal|moderate|active|always_on or 0-4)",
+                level_str
+            )
+        })?;
+        config.agent_activity_level = level;
+    }
+
+    // Derive the gate mode from the (possibly updated) activity level and
+    // persist it alongside the level so the saved config is self-consistent.
+    let level = config.agent_activity_level;
+    let gate_mode = match level {
+        AgentActivityLevel::Off => SchedulerGateMode::Off,
+        AgentActivityLevel::Minimal | AgentActivityLevel::Moderate => SchedulerGateMode::Auto,
+        AgentActivityLevel::Active | AgentActivityLevel::AlwaysOn => SchedulerGateMode::AlwaysOn,
+    };
+    config.scheduler_gate.mode = gate_mode;
+
+    config.save().await.map_err(|e| e.to_string())?;
+
+    let gate_cfg = config.scheduler_gate.clone();
+    crate::openhuman::scheduler_gate::gate::update_config(gate_cfg);
+
+    tracing::info!(
+        level = %level.as_str(),
+        gate_mode = %gate_mode.as_str(),
+        "[config:activity_level] activity level updated"
+    );
+
+    let (cost_min, cost_max) = level.estimated_monthly_cost_range();
+    let value = serde_json::json!({
+        "level": level as u8,
+        "level_label": level.as_str(),
+        "sync_interval_secs": level.sync_interval_secs(),
+        "heartbeat_enabled": level.heartbeat_enabled(),
+        "subconscious_enabled": level.subconscious_enabled(),
+        "token_budget_per_cycle": level.token_budget_per_cycle(),
+        "estimated_monthly_cost_min_usd": cost_min,
+        "estimated_monthly_cost_max_usd": cost_max,
+    });
+    Ok(RpcOutcome::new(
+        value,
+        vec![format!(
+            "activity level set to '{}' — saved to {}",
+            level.as_str(),
+            config.config_path.display()
+        )],
+    ))
+}
+
+/// Loads the configuration, applies activity level settings, and saves it.
+pub async fn load_and_apply_activity_level_settings(
+    update: ActivityLevelSettingsPatch,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    let mut config = load_config_with_timeout().await?;
+    apply_activity_level_settings(&mut config, update).await
 }
 
 /// Serializes the load-modify-save in [`add_auto_approve_tool`] so two
@@ -939,6 +1057,82 @@ pub async fn get_autonomy_settings() -> Result<RpcOutcome<serde_json::Value>, St
     let config = load_config_with_timeout().await?;
     let value = serde_json::to_value(&config.autonomy).map_err(|e| e.to_string())?;
     Ok(RpcOutcome::single_log(value, "autonomy settings read"))
+}
+
+/// Updates the `[agent]` block (currently the `agent_timeout_secs` tool/action
+/// wall-clock timeout).
+///
+/// After persisting, pushes the new value into the live
+/// [`crate::openhuman::tool_timeout`] runtime so subsequent tool calls honour
+/// it without a core restart. The `OPENHUMAN_TOOL_TIMEOUT_SECS` env var, when
+/// set, still overrides the config value (the push is a no-op in that case).
+/// Returns the updated config snapshot.
+pub async fn apply_agent_settings(
+    config: &mut Config,
+    update: AgentSettingsPatch,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    use crate::openhuman::tool_timeout::{MAX_TIMEOUT_SECS, MIN_TIMEOUT_SECS};
+
+    if let Some(timeout_secs) = update.agent_timeout_secs {
+        if !(MIN_TIMEOUT_SECS..=MAX_TIMEOUT_SECS).contains(&timeout_secs) {
+            log::warn!(
+                "[config][agent] rejected agent_timeout_secs={timeout_secs} (valid {MIN_TIMEOUT_SECS}..={MAX_TIMEOUT_SECS})"
+            );
+            return Err(format!(
+                "agent_timeout_secs must be between {MIN_TIMEOUT_SECS} and {MAX_TIMEOUT_SECS} seconds (got {timeout_secs})"
+            ));
+        }
+        config.agent.agent_timeout_secs = timeout_secs;
+    }
+
+    config.save().await.map_err(|e| e.to_string())?;
+
+    // Push the persisted value into the live tool-timeout runtime so the change
+    // takes effect on the next tool call without restarting the core. The env
+    // override (if any) still wins inside `set_tool_timeout_secs`.
+    let effective =
+        crate::openhuman::tool_timeout::set_tool_timeout_secs(config.agent.agent_timeout_secs);
+    log::debug!(
+        "[config][agent] agent settings saved; agent_timeout_secs={} effective={}s",
+        config.agent.agent_timeout_secs,
+        effective
+    );
+
+    let snapshot = snapshot_config_json(config)?;
+    Ok(RpcOutcome::new(
+        snapshot,
+        vec![format!(
+            "agent settings saved to {}",
+            config.config_path.display()
+        )],
+    ))
+}
+
+/// Loads the configuration, applies agent settings updates, and saves it.
+pub async fn load_and_apply_agent_settings(
+    update: AgentSettingsPatch,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    let mut config = load_config_with_timeout().await?;
+    apply_agent_settings(&mut config, update).await
+}
+
+/// Returns the agent execution settings (currently the action timeout) plus the
+/// runtime-effective value and whether the `OPENHUMAN_TOOL_TIMEOUT_SECS` env var
+/// is overriding the configured value, so the UI can explain a no-op control.
+pub async fn get_agent_settings() -> Result<RpcOutcome<serde_json::Value>, String> {
+    let config = load_config_with_timeout().await?;
+    // Ensure the runtime timeout is seeded from the persisted config so the
+    // `effective_timeout_secs` field is correct even if startup didn't seed it
+    // (e.g. in CLI invocations or tests that skip the full boot sequence).
+    crate::openhuman::tool_timeout::set_tool_timeout_secs(config.agent.agent_timeout_secs);
+    let value = serde_json::json!({
+        "agent_timeout_secs": config.agent.agent_timeout_secs,
+        "effective_timeout_secs": crate::openhuman::tool_timeout::tool_execution_timeout_secs(),
+        "env_override": crate::openhuman::tool_timeout::env_override_active(),
+        "min_timeout_secs": crate::openhuman::tool_timeout::MIN_TIMEOUT_SECS,
+        "max_timeout_secs": crate::openhuman::tool_timeout::MAX_TIMEOUT_SECS,
+    });
+    Ok(RpcOutcome::single_log(value, "agent settings read"))
 }
 
 /// Updates the analytics-related settings in the configuration.
@@ -1008,12 +1202,12 @@ pub async fn apply_search_settings(
         // time via `effective_engine()`, but failing fast in the writer keeps
         // the TOML clean.
         match trimmed {
-            "managed" | "parallel" | "brave" => {
+            "disabled" | "managed" | "parallel" | "brave" | "querit" => {
                 config.search.engine = trimmed.to_string();
             }
             other => {
                 return Err(format!(
-                    "engine must be one of managed/parallel/brave (got {other:?})"
+                    "engine must be one of disabled/managed/parallel/brave/querit (got {other:?})"
                 ));
             }
         }
@@ -1043,6 +1237,14 @@ pub async fn apply_search_settings(
     if let Some(raw) = update.brave_api_key {
         let trimmed = raw.trim();
         config.search.brave.api_key = if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        };
+    }
+    if let Some(raw) = update.querit_api_key {
+        let trimmed = raw.trim();
+        config.search.querit.api_key = if trimmed.is_empty() {
             None
         } else {
             Some(trimmed.to_string())
@@ -1112,20 +1314,80 @@ pub async fn get_search_settings() -> Result<RpcOutcome<serde_json::Value>, Stri
     let result = serde_json::json!({
         "engine": config.search.requested_engine_str(),
         "effective_engine": match config.search.effective_engine() {
+            crate::openhuman::config::SearchEngine::Disabled => "disabled",
             crate::openhuman::config::SearchEngine::Managed => "managed",
             crate::openhuman::config::SearchEngine::Parallel => "parallel",
             crate::openhuman::config::SearchEngine::Brave => "brave",
+            crate::openhuman::config::SearchEngine::Querit => "querit",
         },
         "max_results": config.search.max_results,
         "timeout_secs": config.search.timeout_secs,
         "parallel_configured": config.search.parallel.has_key(),
         "brave_configured": config.search.brave.has_key(),
+        "querit_configured": config.search.querit.has_key(),
         "allowed_domains": config.http_request.allowed_domains,
         "allow_all": config.http_request.allowed_domains.iter().any(|d| d == "*"),
     });
     Ok(RpcOutcome::new(
         result,
         vec!["search settings read".to_string()],
+    ))
+}
+
+/// Reads dashboard settings exposed to the desktop UI.
+pub async fn get_dashboard_settings() -> Result<RpcOutcome<serde_json::Value>, String> {
+    let request_id = uuid::Uuid::new_v4().to_string();
+    tracing::debug!(
+        target: "openhuman_core::config",
+        request_id = %request_id,
+        method = "openhuman.config_get_dashboard_settings",
+        "OPENHUMAN: get_dashboard_settings entry"
+    );
+    tracing::debug!(
+        target: "openhuman_core::config",
+        request_id = %request_id,
+        method = "openhuman.config_get_dashboard_settings",
+        "OPENHUMAN: get_dashboard_settings loading config"
+    );
+
+    let config = load_config_with_timeout().await.map_err(|error| {
+        tracing::warn!(
+            target: "openhuman_core::config",
+            request_id = %request_id,
+            method = "openhuman.config_get_dashboard_settings",
+            error = %error,
+            "OPENHUMAN: get_dashboard_settings config load failed"
+        );
+        error
+    })?;
+
+    tracing::debug!(
+        target: "openhuman_core::config",
+        request_id = %request_id,
+        method = "openhuman.config_get_dashboard_settings",
+        "OPENHUMAN: get_dashboard_settings serializing dashboard settings"
+    );
+    let result = serde_json::to_value(&config.dashboard).map_err(|error| {
+        let message = error.to_string();
+        tracing::warn!(
+            target: "openhuman_core::config",
+            request_id = %request_id,
+            method = "openhuman.config_get_dashboard_settings",
+            error = %message,
+            "OPENHUMAN: get_dashboard_settings serialization failed"
+        );
+        message
+    })?;
+
+    tracing::debug!(
+        target: "openhuman_core::config",
+        request_id = %request_id,
+        method = "openhuman.config_get_dashboard_settings",
+        "OPENHUMAN: get_dashboard_settings exit"
+    );
+    Ok(RpcOutcome::new(
+        result,
+        vec!["dashboard settings read".to_string()],
     ))
 }
 
@@ -1153,10 +1415,18 @@ pub async fn apply_local_ai_settings(
             crate::openhuman::inference::local::provider::normalize_provider(&provider);
     }
     if let Some(base_url) = update.base_url {
-        config.local_ai.base_url = if base_url.trim().is_empty() {
-            None
-        } else {
-            Some(base_url.trim().to_string())
+        config.local_ai.base_url = match base_url {
+            None => None,
+            Some(base_url) if base_url.trim().is_empty() => None,
+            Some(base_url)
+                if crate::openhuman::inference::local::provider::provider_from_config(config)
+                    == crate::openhuman::inference::local::provider::LocalAiProvider::Ollama =>
+            {
+                Some(crate::openhuman::inference::local::validate_ollama_url(
+                    &base_url,
+                )?)
+            }
+            Some(base_url) => Some(base_url.trim().trim_end_matches('/').to_string()),
         };
     }
     if let Some(model_id) = update.model_id {
@@ -1666,6 +1936,215 @@ pub async fn get_data_paths() -> Result<RpcOutcome<serde_json::Value>, String> {
             default_openhuman_dir.display()
         )],
     ))
+}
+
+/// Reports the agent's filesystem roots so the UI can render them live
+/// instead of hard-coding strings that drift away from `Config`.
+///
+/// Returns three string paths:
+///
+/// * `action_dir` — the agent's read/write root (`Config.action_dir`).
+///   Defaults to `default_action_dir()` (`~/OpenHuman/projects` via
+///   `default_projects_dir()`); overridable via `OPENHUMAN_ACTION_DIR`.
+///   Acting tools (`shell`, `node_exec`, `npm_exec`, `file_write`,
+///   `edit_file`, `apply_patch`, `git_operations`) default their CWD here.
+/// * `workspace_dir` — internal product state (`Config.workspace_dir`,
+///   typically `~/.openhuman/users/<id>/workspace`). Agent-blocked via
+///   [`SecurityPolicy::is_workspace_internal_path`].
+/// * `projects_dir` — the default projects home
+///   (`default_projects_dir()`, `~/OpenHuman/projects`), injected as a
+///   ReadWrite trusted root at startup. Same as `action_dir` when the
+///   user hasn't set `OPENHUMAN_ACTION_DIR`.
+///
+/// Distinct from [`get_data_paths`], which reports the `openhuman_dir`
+/// roots that `reset_local_data` would remove and is consumed only by
+/// the Tauri reset flow.
+pub async fn get_agent_paths() -> Result<RpcOutcome<serde_json::Value>, String> {
+    let config = load_config_with_timeout().await?;
+    let projects_dir = crate::openhuman::config::default_projects_dir();
+    Ok(RpcOutcome::new(
+        json!({
+            "action_dir": config.action_dir.display().to_string(),
+            "workspace_dir": config.workspace_dir.display().to_string(),
+            "projects_dir": projects_dir.display().to_string(),
+        }),
+        vec![format!(
+            "agent paths resolved (action={}, workspace={})",
+            config.action_dir.display(),
+            config.workspace_dir.display(),
+        )],
+    ))
+}
+
+// ── Sandbox settings ─────────────────────────────────────────────────────────
+
+/// Partial update for the `[security.sandbox]` + `[runtime.docker]` blocks.
+#[derive(Debug, Clone, Default)]
+pub struct SandboxSettingsPatch {
+    pub backend: Option<String>,
+    pub enabled: Option<bool>,
+    pub docker_image: Option<String>,
+    pub docker_memory_limit_mb: Option<u64>,
+    pub docker_cpu_limit: Option<f64>,
+    pub env_passthrough: Option<Vec<String>>,
+}
+
+/// Returns the current sandbox and Docker runtime settings merged into a
+/// single JSON object, plus a live status probe for Docker availability.
+pub async fn get_sandbox_settings() -> Result<RpcOutcome<serde_json::Value>, String> {
+    let config = load_config_with_timeout().await?;
+    let sandbox = &config.sandbox;
+    let docker = &config.runtime.docker;
+
+    let docker_available = is_docker_available().await;
+
+    let backend_str = match sandbox.backend {
+        crate::openhuman::config::SandboxBackend::Auto => "auto",
+        crate::openhuman::config::SandboxBackend::Landlock => "landlock",
+        crate::openhuman::config::SandboxBackend::Firejail => "firejail",
+        crate::openhuman::config::SandboxBackend::Bubblewrap => "bubblewrap",
+        crate::openhuman::config::SandboxBackend::Docker => "docker",
+        crate::openhuman::config::SandboxBackend::None => "none",
+    };
+
+    let detected_backend = detect_os_sandbox_backend();
+
+    let value = json!({
+        "enabled": sandbox.enabled.unwrap_or(true),
+        "backend": backend_str,
+        "docker_image": docker.image,
+        "docker_memory_limit_mb": docker.memory_limit_mb,
+        "docker_cpu_limit": docker.cpu_limit,
+        "docker_available": docker_available,
+        "detected_backend": detected_backend,
+        "env_passthrough": crate::openhuman::sandbox::ops::SANDBOX_ENV_PASSTHROUGH,
+    });
+    log::debug!("[config][sandbox] get_sandbox_settings: backend={backend_str}, docker_available={docker_available}");
+    Ok(RpcOutcome::single_log(value, "sandbox settings read"))
+}
+
+/// Updates sandbox and Docker runtime settings, persists to disk.
+pub async fn apply_sandbox_settings(
+    config: &mut Config,
+    update: SandboxSettingsPatch,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    if let Some(ref backend) = update.backend {
+        config.sandbox.backend = match backend.as_str() {
+            "auto" => crate::openhuman::config::SandboxBackend::Auto,
+            "landlock" => crate::openhuman::config::SandboxBackend::Landlock,
+            "firejail" => crate::openhuman::config::SandboxBackend::Firejail,
+            "bubblewrap" => crate::openhuman::config::SandboxBackend::Bubblewrap,
+            "docker" => crate::openhuman::config::SandboxBackend::Docker,
+            "none" => crate::openhuman::config::SandboxBackend::None,
+            other => {
+                log::warn!("[config][sandbox] rejected unknown backend: {other}");
+                return Err(format!(
+                    "unknown sandbox backend '{other}'; valid: auto, landlock, firejail, bubblewrap, docker, none"
+                ));
+            }
+        };
+    }
+    if let Some(enabled) = update.enabled {
+        config.sandbox.enabled = Some(enabled);
+    }
+    if let Some(ref image) = update.docker_image {
+        let trimmed = image.trim();
+        if trimmed.is_empty() {
+            return Err("docker_image must not be blank".into());
+        }
+        config.runtime.docker.image = trimmed.to_string();
+    }
+    if let Some(memory) = update.docker_memory_limit_mb {
+        config.runtime.docker.memory_limit_mb = Some(memory);
+    }
+    if let Some(cpu) = update.docker_cpu_limit {
+        if cpu <= 0.0 {
+            return Err("docker_cpu_limit must be positive".into());
+        }
+        config.runtime.docker.cpu_limit = Some(cpu);
+    }
+    if let Some(ref passthrough) = update.env_passthrough {
+        log::debug!(
+            "[config][sandbox] env_passthrough update: {} vars",
+            passthrough.len()
+        );
+    }
+
+    config.save().await.map_err(|e| e.to_string())?;
+
+    log::debug!(
+        "[config][sandbox] sandbox settings saved to {}",
+        config.config_path.display()
+    );
+    let snapshot = snapshot_config_json(config)?;
+    Ok(RpcOutcome::new(
+        snapshot,
+        vec![format!(
+            "sandbox settings saved to {}",
+            config.config_path.display()
+        )],
+    ))
+}
+
+pub async fn load_and_apply_sandbox_settings(
+    update: SandboxSettingsPatch,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    let mut config = load_config_with_timeout().await?;
+    apply_sandbox_settings(&mut config, update).await
+}
+
+/// Probe Docker daemon availability via `docker info` with a 5s timeout.
+async fn is_docker_available() -> bool {
+    let fut = tokio::process::Command::new("docker")
+        .arg("info")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    match tokio::time::timeout(std::time::Duration::from_secs(5), fut).await {
+        Ok(Ok(status)) => status.success(),
+        _ => false,
+    }
+}
+
+/// Detect which OS-native sandbox backend is available.
+fn detect_os_sandbox_backend() -> &'static str {
+    #[cfg(target_os = "linux")]
+    {
+        if std::path::Path::new("/sys/kernel/security/landlock").exists() {
+            return "landlock";
+        }
+        if std::process::Command::new("firejail")
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok()
+        {
+            return "firejail";
+        }
+        if std::process::Command::new("bwrap")
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok()
+        {
+            return "bubblewrap";
+        }
+        "none"
+    }
+    #[cfg(target_os = "macos")]
+    {
+        "seatbelt"
+    }
+    #[cfg(target_os = "windows")]
+    {
+        "appcontainer"
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+        "none"
+    }
 }
 
 #[cfg(test)]

@@ -393,6 +393,46 @@ async fn apply_search_settings_sets_and_clears_allowed_domains() {
 }
 
 #[tokio::test]
+async fn apply_search_settings_accepts_disabled_engine() {
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+
+    apply_search_settings(
+        &mut cfg,
+        SearchSettingsPatch {
+            engine: Some("disabled".to_string()),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("apply disabled search engine");
+
+    assert_eq!(cfg.search.engine, "disabled");
+    assert_eq!(
+        cfg.search.effective_engine(),
+        crate::openhuman::config::SearchEngine::Disabled
+    );
+}
+
+#[tokio::test]
+async fn apply_search_settings_rejects_unknown_search_engine() {
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+
+    let err = apply_search_settings(
+        &mut cfg,
+        SearchSettingsPatch {
+            engine: Some("unknown".to_string()),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect_err("unknown engine should be rejected");
+
+    assert!(err.contains("disabled/managed/parallel/brave/querit"));
+}
+
+#[tokio::test]
 async fn apply_model_settings_stores_api_key_and_clears_when_empty() {
     // #1342: custom OpenAI-compatible providers — api_key must round-trip
     // through `apply_model_settings` and clear when an empty string is sent.
@@ -762,7 +802,7 @@ async fn apply_local_ai_settings_updates_lm_studio_provider_fields() {
         runtime_enabled: Some(true),
         opt_in_confirmed: Some(true),
         provider: Some("lm-studio".into()),
-        base_url: Some(" http://localhost:1234/v1/ ".into()),
+        base_url: Some(Some(" http://localhost:1234/v1/ ".into())),
         model_id: Some(" local-default ".into()),
         chat_model_id: Some(" local-chat ".into()),
         usage_embeddings: Some(true),
@@ -780,7 +820,7 @@ async fn apply_local_ai_settings_updates_lm_studio_provider_fields() {
     assert_eq!(cfg.local_ai.provider, "lm_studio");
     assert_eq!(
         cfg.local_ai.base_url.as_deref(),
-        Some("http://localhost:1234/v1/")
+        Some("http://localhost:1234/v1")
     );
     assert_eq!(cfg.local_ai.model_id, "local-default");
     assert_eq!(cfg.local_ai.chat_model_id, "local-chat");
@@ -792,7 +832,7 @@ async fn apply_local_ai_settings_updates_lm_studio_provider_fields() {
 
     let clear_and_fallback = LocalAiSettingsPatch {
         provider: Some("unknown-provider".into()),
-        base_url: Some("   ".into()),
+        base_url: Some(Some("   ".into())),
         model_id: Some("   ".into()),
         chat_model_id: Some("".into()),
         ..LocalAiSettingsPatch::default()
@@ -805,6 +845,40 @@ async fn apply_local_ai_settings_updates_lm_studio_provider_fields() {
     assert!(cfg.local_ai.base_url.is_none());
     assert_eq!(cfg.local_ai.model_id, "");
     assert_eq!(cfg.local_ai.chat_model_id, "");
+}
+
+#[tokio::test]
+async fn apply_local_ai_settings_normalizes_ollama_unspecified_host_and_allows_null_clear() {
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+
+    apply_local_ai_settings(
+        &mut cfg,
+        LocalAiSettingsPatch {
+            provider: Some("ollama".into()),
+            base_url: Some(Some("http://0.0.0.0:11434/api/tags".into())),
+            ..LocalAiSettingsPatch::default()
+        },
+    )
+    .await
+    .expect("apply ollama base url");
+
+    assert_eq!(
+        cfg.local_ai.base_url.as_deref(),
+        Some("http://localhost:11434")
+    );
+
+    apply_local_ai_settings(
+        &mut cfg,
+        LocalAiSettingsPatch {
+            base_url: Some(None),
+            ..LocalAiSettingsPatch::default()
+        },
+    )
+    .await
+    .expect("clear ollama base url");
+
+    assert!(cfg.local_ai.base_url.is_none());
 }
 
 #[tokio::test]
@@ -1362,4 +1436,90 @@ async fn add_auto_approve_tool_appends_then_dedupes() {
     unsafe {
         std::env::remove_var("OPENHUMAN_WORKSPACE");
     }
+}
+
+// ── agent settings (action/tool timeout, issue #3100) ───────────────────────
+
+#[tokio::test]
+async fn apply_agent_settings_updates_timeout_and_persists_snapshot() {
+    // ENV_LOCK: `set_tool_timeout_secs` reads OPENHUMAN_TOOL_TIMEOUT_SECS and
+    // mutates the process-global timeout; serialize against other env-touching
+    // tests and ensure no operator override is masking the config value.
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    unsafe {
+        std::env::remove_var("OPENHUMAN_TOOL_TIMEOUT_SECS");
+    }
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+
+    let outcome = apply_agent_settings(
+        &mut cfg,
+        AgentSettingsPatch {
+            agent_timeout_secs: Some(300),
+        },
+    )
+    .await
+    .expect("apply agent settings");
+
+    assert_eq!(cfg.agent.agent_timeout_secs, 300);
+    assert_eq!(
+        outcome.value["config"]["agent"]["agent_timeout_secs"],
+        serde_json::json!(300)
+    );
+    assert!(outcome
+        .logs
+        .iter()
+        .any(|l| l.contains("agent settings saved to")));
+    // With no env override, the live runtime now reflects the saved value.
+    assert_eq!(
+        crate::openhuman::tool_timeout::tool_execution_timeout_secs(),
+        300
+    );
+}
+
+#[tokio::test]
+async fn apply_agent_settings_rejects_out_of_range_timeout() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    let original = cfg.agent.agent_timeout_secs;
+
+    // Zero would disable the timeout — rejected.
+    let err = apply_agent_settings(
+        &mut cfg,
+        AgentSettingsPatch {
+            agent_timeout_secs: Some(0),
+        },
+    )
+    .await
+    .expect_err("zero timeout should be rejected");
+    assert!(err.contains("between"), "unexpected error: {err}");
+
+    // Above the 3600s ceiling — rejected.
+    let err = apply_agent_settings(
+        &mut cfg,
+        AgentSettingsPatch {
+            agent_timeout_secs: Some(99_999),
+        },
+    )
+    .await
+    .expect_err("over-max timeout should be rejected");
+    assert!(err.contains("between"), "unexpected error: {err}");
+
+    // The config value is untouched after a rejected update.
+    assert_eq!(cfg.agent.agent_timeout_secs, original);
+}
+
+#[tokio::test]
+async fn apply_agent_settings_none_leaves_timeout_unchanged() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    cfg.agent.agent_timeout_secs = 250;
+
+    apply_agent_settings(&mut cfg, AgentSettingsPatch::default())
+        .await
+        .expect("apply no-op agent settings");
+
+    assert_eq!(cfg.agent.agent_timeout_secs, 250);
 }

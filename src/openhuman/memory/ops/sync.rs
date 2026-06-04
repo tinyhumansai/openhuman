@@ -168,7 +168,12 @@ async fn spawn_manual_sync(requested_connection: Option<String>) -> Result<(), S
             )
             .await
             {
-                Ok(outcome) => {
+                // `run_connection_sync` returns `(SyncOutcome, ComposioUsage)`
+                // post-#3111; this caller only surfaces the outcome for UI
+                // stage events, so the usage tally is intentionally ignored
+                // here (the sync-audit caller in `memory_sources::sync` is the
+                // one that records it).
+                Ok((outcome, _usage)) => {
                     emit_sync_stage(
                         MemorySyncTrigger::Manual,
                         MemorySyncStage::Completed,
@@ -180,7 +185,7 @@ async fn spawn_manual_sync(requested_connection: Option<String>) -> Result<(), S
                         )),
                     );
                 }
-                Err(error) => {
+                Err((error, _usage)) => {
                     emit_sync_stage(
                         MemorySyncTrigger::Manual,
                         MemorySyncStage::Failed,
@@ -366,6 +371,9 @@ mod tests {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let client = ensure_memory_client();
         let state = client.ingestion_state();
+
+        // Reset any residue from background ingestion left by prior tests.
+        state.reset_for_test();
 
         state.enqueue();
         state.mark_running("doc-sync", "Sync Title", "sync-test");

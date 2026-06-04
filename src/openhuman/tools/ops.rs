@@ -60,7 +60,7 @@ pub fn all_tools(
     memory: Arc<dyn Memory>,
     browser_config: &crate::openhuman::config::BrowserConfig,
     http_config: &crate::openhuman::config::HttpRequestConfig,
-    workspace_dir: &std::path::Path,
+    action_dir: &std::path::Path,
     agents: &HashMap<String, DelegateAgentConfig>,
     root_config: &crate::openhuman::config::Config,
 ) -> Vec<Box<dyn Tool>> {
@@ -72,7 +72,7 @@ pub fn all_tools(
         memory,
         browser_config,
         http_config,
-        workspace_dir,
+        action_dir,
         agents,
         root_config,
     )
@@ -88,7 +88,7 @@ pub fn all_tools_with_runtime(
     memory: Arc<dyn Memory>,
     browser_config: &crate::openhuman::config::BrowserConfig,
     http_config: &crate::openhuman::config::HttpRequestConfig,
-    workspace_dir: &std::path::Path,
+    action_dir: &std::path::Path,
     agents: &HashMap<String, DelegateAgentConfig>,
     root_config: &crate::openhuman::config::Config,
 ) -> Vec<Box<dyn Tool>> {
@@ -104,7 +104,7 @@ pub fn all_tools_with_runtime(
         );
         Some(Arc::new(NodeBootstrap::new(
             root_config.node.clone(),
-            workspace_dir.to_path_buf(),
+            action_dir.to_path_buf(),
             reqwest::Client::new(),
         )))
     } else {
@@ -149,15 +149,42 @@ pub fn all_tools_with_runtime(
         // returns a single text result. See
         // `agent::harness::subagent_runner` for the dispatch path.
         Box::new(SpawnSubagentTool::new()),
+        Box::new(ContinueSubagentTool::new()),
         Box::new(SpawnParallelAgentsTool::new()),
+        Box::new(DelegateToPersonalityTool::new()),
         // Coding-harness control flow (issue #1205): a process-global
         // todo registry the agent can rewrite end-to-end, plus the
         // `plan_exit` marker that hands a plan-mode pass off to a
         // build-mode pass. The plan→build mode switch itself is a
         // follow-up; the tool emits a stable marker today.
         Box::new(TodoTool::new()),
+        // Move/update a specific task card by id on a target board (defaults to
+        // the proactive `task-sources` board) — lets the agent advance the task
+        // it's working (in_progress / done+evidence / blocked+reason) from any
+        // thread, complementing `todo` which only touches the current thread.
+        Box::new(UpdateTaskTool::new()),
         Box::new(PlanExitTool::new()),
+        // Skill chaining: let an in-flight autonomous skill (e.g.
+        // `github-issue-crusher`) kick off another bundled skill_run as a
+        // fresh background job (e.g. `pr-review-shepherd` against the PR it
+        // just opened) so each skill stays narrow + composable. Thin
+        // wrapper over `skills::schemas::spawn_skill_run_background` — the
+        // same helper `openhuman.skills_run` JSON-RPC uses, so RPC callers
+        // and tool callers share one spawn path.
+        Box::new(RunSkillTool::new()),
         Box::new(CurrentTimeTool::new()),
+        Box::new(LaunchAppTool::new()),
+        Box::new(AxInteractTool::new(
+            root_config.computer_control.ax_interact_mutations,
+        )),
+        Box::new(CodegraphIndexTool::new(
+            config.clone(),
+            action_dir.to_path_buf(),
+        )),
+        Box::new(CodegraphSearchTool::new(
+            config.clone(),
+            action_dir.to_path_buf(),
+        )),
         Box::new(DetectToolsTool::new()),
         Box::new(InstallToolTool::new(security.clone())),
         Box::new(CronAddTool::new(config.clone(), security.clone())),
@@ -171,11 +198,18 @@ pub fn all_tools_with_runtime(
         Box::new(WalletStatusTool::new()),
         Box::new(WalletChainStatusTool::new()),
         Box::new(WalletPrepareTransferTool::new()),
+        Box::new(WalletTxStatusTool::new()),
+        Box::new(WalletTxReceiptTool::new()),
+        Box::new(WalletLookupTxTool::new()),
         Box::new(MemoryStoreTool::new(memory.clone(), security.clone())),
         Box::new(MemoryRecallTool::new(memory.clone())),
         Box::new(MemoryForgetTool::new(memory.clone(), security.clone())),
+        // #002: read-only self-diagnosis of the memory pipeline so the agent
+        // can explain an empty/stalled wiki + the fix.
+        Box::new(MemoryDoctorTool::new(config.clone())),
         Box::new(MemoryQueryTool),
         Box::new(MemoryQueryWalkTool),
+        Box::new(SmartMemoryWalkTool),
         // Explicit user-preference pinning — always registered so the model
         // can save user-stated preferences regardless of whether the full
         // inference-based learning subsystem is enabled.  The preference
@@ -202,11 +236,11 @@ pub fn all_tools_with_runtime(
         Box::new(UpdateApplyTool::new(security.clone())),
         Box::new(GitOperationsTool::new(
             security.clone(),
-            workspace_dir.to_path_buf(),
+            action_dir.to_path_buf(),
         )),
         Box::new(PushoverTool::new(
             security.clone(),
-            workspace_dir.to_path_buf(),
+            action_dir.to_path_buf(),
         )),
         Box::new(AudioGeneratePodcastTool::new(
             config.clone(),
@@ -218,7 +252,221 @@ pub fn all_tools_with_runtime(
             security.clone(),
         )),
         Box::new(GmailUnsubscribeTool),
+        // Workflow tools — let the agent load and activate installed agent
+        // workflows (WORKFLOW.md bundles). `workflow_load` is read-only;
+        // `workflow_phase` runs gated scripts and is Execute-class so the
+        // harness routes it through the ApprovalGate identically to `shell`.
+        Box::new(WorkflowLoadTool),
+        Box::new(WorkflowPhaseTool::new(
+            action_dir.to_path_buf(),
+            security.clone(),
+            Arc::clone(&runtime),
+            Arc::clone(&audit),
+        )),
+        // Knowledge & memory tools (agent-tool expansion). Read/bounded-write
+        // ship default-ON; the overextending siblings (people_refresh_address_book —
+        // bulk OS contacts ingest with a permission prompt) ship default-OFF via
+        // `tools::user_filter`. (The vault domain was removed upstream in #3040.)
+        Box::new(PeopleListTool),
+        Box::new(PeopleResolveTool),
+        Box::new(PeopleScoreTool),
+        Box::new(PeopleGetTool),
+        Box::new(PeopleAddAliasTool),
+        Box::new(PeopleRecordInteractionTool),
+        Box::new(PeopleRefreshAddressBookTool),
+        // Skills metadata tools. `skill_run` is already exposed by RunSkillTool
+        // above, so it is not duplicated. Reads ship default-ON; the
+        // create/install/uninstall mutators ship default-OFF via
+        // `tools::user_filter` (install also fetches remote content).
+        Box::new(SkillListTool::new(config.clone())),
+        Box::new(SkillDescribeTool::new(config.clone())),
+        Box::new(SkillReadResourceTool::new(config.clone())),
+        Box::new(SkillRecentRunsTool::new(config.clone())),
+        Box::new(SkillReadRunLogTool::new(config.clone())),
+        Box::new(SkillCreateTool::new(config.clone())),
+        Box::new(SkillInstallFromUrlTool::new(config.clone())),
+        Box::new(SkillUninstallTool),
+        // Threads (conversation) tools. Read/bounded-write ship default-ON;
+        // the destructive thread_delete / thread_purge_all ship default-OFF
+        // via `tools::user_filter` (thread_destructive toggle).
+        Box::new(ThreadListTool),
+        Box::new(ThreadReadTool),
+        Box::new(ThreadCreateTool),
+        Box::new(ThreadUpdateTitleTool),
+        Box::new(ThreadUpdateLabelsTool),
+        Box::new(ThreadMessageListTool),
+        Box::new(ThreadMessageAppendTool),
+        Box::new(ThreadMessageUpdateTool),
+        Box::new(ThreadTitleGenerateTool),
+        Box::new(ThreadTurnStateGetTool),
+        Box::new(ThreadTurnStateListTool),
+        Box::new(ThreadTurnStateClearTool),
+        Box::new(ThreadTaskBoardReadTool::new(config.clone())),
+        Box::new(ThreadTaskBoardWriteTool::new(config.clone())),
+        Box::new(ThreadDeleteTool),
+        Box::new(ThreadPurgeAllTool),
+        // Learning (user-profile facet cache) tools. Reads ship default-ON;
+        // every mutator ships default-OFF via `tools::user_filter`
+        // (learning_manage toggle) — they persistently rewrite the assistant's
+        // model of the user. enrich_profile also flags external_effect.
+        Box::new(LearningListFacetsTool),
+        Box::new(LearningGetFacetTool),
+        Box::new(LearningCacheStatsTool),
+        Box::new(LearningUpdateFacetTool),
+        Box::new(LearningPinFacetTool),
+        Box::new(LearningUnpinFacetTool),
+        Box::new(LearningForgetFacetTool),
+        Box::new(LearningRebuildCacheTool),
+        Box::new(LearningResetCacheTool),
+        Box::new(LearningSaveProfileTool),
+        Box::new(LearningEnrichProfileTool),
+        // Task & workflow productivity tools (issue: agent-tool expansion).
+        // Read/observe + bounded-write tools are registered here; the
+        // destructive/overextending siblings (artifact_delete, todo_remove/
+        // replace/clear, task_source_add/update/remove,
+        // agent_workflow_uninstall) are registered too but ship default-OFF
+        // via `tools::user_filter` (their toggle IDs default off in
+        // onboarding). The per-call permission ladder still gates them.
+        Box::new(AgentWorkflowListTool::new(config.clone())),
+        Box::new(AgentWorkflowReadTool),
+        Box::new(AgentWorkflowPhaseInfoTool),
+        Box::new(AgentWorkflowCreateTool),
+        Box::new(AgentWorkflowUninstallTool),
+        Box::new(ArtifactListTool::new(config.clone())),
+        Box::new(ArtifactGetTool::new(config.clone())),
+        Box::new(ArtifactDeleteTool::new(config.clone())),
+        Box::new(TodoListTool::new(config.clone())),
+        Box::new(TodoAddTool::new(config.clone())),
+        Box::new(TodoEditTool::new(config.clone())),
+        Box::new(TodoUpdateStatusTool::new(config.clone())),
+        Box::new(TodoDecidePlanTool::new(config.clone())),
+        Box::new(TodoRemoveTool::new(config.clone())),
+        Box::new(TodoReplaceTool::new(config.clone())),
+        Box::new(TodoClearTool::new(config.clone())),
+        Box::new(TaskSourceListTool::new(config.clone())),
+        Box::new(TaskSourceGetTool::new(config.clone())),
+        Box::new(TaskSourceFetchTool::new(config.clone())),
+        Box::new(TaskSourceListTasksTool::new(config.clone())),
+        Box::new(TaskSourcePreviewFilterTool::new(config.clone())),
+        Box::new(TaskSourceStatusTool::new(config.clone())),
+        Box::new(TaskSourceAddTool::new(config.clone())),
+        Box::new(TaskSourceUpdateTool::new(config.clone())),
+        Box::new(TaskSourceRemoveTool::new(config.clone())),
+        // System & self-management: observability (default-ON) + service
+        // lifecycle. doctor/health/cost/dashboard/security reads are default-ON.
+        // service_status / daemon_host_prefs_get default-ON; the lifecycle
+        // mutators ship default-OFF via `tools::user_filter` (service_lifecycle).
+        Box::new(DoctorHealthTool::new(config.clone())),
+        Box::new(DoctorModelsTool::new(config.clone())),
+        Box::new(HealthSnapshotTool),
+        Box::new(HealthSystemInfoTool),
+        Box::new(CostDashboardTool::new(config.clone())),
+        Box::new(CostDailyHistoryTool::new(config.clone())),
+        Box::new(CostSummaryTool::new(config.clone())),
+        Box::new(DashboardModelHealthTool::new(config.clone())),
+        Box::new(SecurityPolicyInfoTool::new(config.clone())),
+        Box::new(ServiceStatusTool::new(config.clone())),
+        Box::new(DaemonHostPrefsGetTool::new(config.clone())),
+        Box::new(ServiceStartTool::new(config.clone())),
+        Box::new(ServiceStopTool::new(config.clone())),
+        Box::new(ServiceRestartTool),
+        Box::new(ServiceShutdownTool),
+        Box::new(ServiceInstallTool::new(config.clone())),
+        Box::new(ServiceUninstallTool::new(config.clone())),
+        Box::new(DaemonHostPrefsSetTool::new(config.clone())),
+        // Config: read-only surface (default-ON). The config_update_* mutators
+        // are deferred (their apply fns take non-Deserialize patch structs);
+        // see config/tools.rs.
+        Box::new(ConfigSnapshotTool::new(config.clone())),
+        Box::new(ConfigClientConfigTool),
+        Box::new(ConfigAutonomyTool),
+        Box::new(ConfigSearchTool),
+        Box::new(ConfigRuntimeFlagsTool),
+        Box::new(ConfigResolveApiUrlTool),
+        Box::new(ConfigDataPathsTool),
+        // Account & money. Reads default-ON; billing money-movers (billing_writes)
+        // and team admin ops (team_admin) ship default-OFF via `tools::user_filter`.
+        // credentials exposes only non-secret reads.
+        Box::new(ReferralStatsTool::new(config.clone())),
+        Box::new(ReferralClaimTool::new(config.clone())),
+        Box::new(BillingPlanTool::new(config.clone())),
+        Box::new(BillingBalanceTool::new(config.clone())),
+        Box::new(BillingTransactionsTool::new(config.clone())),
+        Box::new(BillingAutoRechargeTool::new(config.clone())),
+        Box::new(BillingCardsTool::new(config.clone())),
+        Box::new(BillingCouponsTool::new(config.clone())),
+        Box::new(BillingPortalTool::new(config.clone())),
+        Box::new(BillingPurchasePlanTool::new(config.clone())),
+        Box::new(BillingTopUpTool::new(config.clone())),
+        Box::new(BillingCoinbaseChargeTool::new(config.clone())),
+        Box::new(BillingSetupIntentTool::new(config.clone())),
+        Box::new(BillingUpdateCardTool::new(config.clone())),
+        Box::new(BillingDeleteCardTool::new(config.clone())),
+        Box::new(BillingRedeemCouponTool::new(config.clone())),
+        Box::new(BillingUpdateAutoRechargeTool::new(config.clone())),
+        Box::new(TeamListTool::new(config.clone())),
+        Box::new(TeamUsageTool::new(config.clone())),
+        Box::new(TeamGetTool::new(config.clone())),
+        Box::new(TeamListMembersTool::new(config.clone())),
+        Box::new(TeamListInvitesTool::new(config.clone())),
+        Box::new(TeamCreateTool::new(config.clone())),
+        Box::new(TeamUpdateTool::new(config.clone())),
+        Box::new(TeamDeleteTool::new(config.clone())),
+        Box::new(TeamSwitchTool::new(config.clone())),
+        Box::new(TeamJoinTool::new(config.clone())),
+        Box::new(TeamLeaveTool::new(config.clone())),
+        Box::new(TeamCreateInviteTool::new(config.clone())),
+        Box::new(TeamRevokeInviteTool::new(config.clone())),
+        Box::new(TeamRemoveMemberTool::new(config.clone())),
+        Box::new(TeamChangeMemberRoleTool::new(config.clone())),
+        Box::new(CredentialListTool::new(config.clone())),
+        Box::new(SessionStateTool::new(config.clone())),
+        Box::new(SessionGetUserTool::new(config.clone())),
+        Box::new(OAuthConnectUrlTool::new(config.clone())),
+        Box::new(OAuthListTool::new(config.clone())),
+        // Desktop perception, MCP registry, workspace persona. Observe/connect/
+        // call tools default-ON; OS permission prompts (screen_permissions),
+        // MCP install/uninstall (mcp_manage), and persona/workspace writers
+        // (workspace_manage) ship default-OFF via `tools::user_filter`.
+        Box::new(ScreenStatusTool),
+        Box::new(ScreenCaptureImageRefTool),
+        Box::new(ScreenVisionRecentTool),
+        Box::new(ScreenVisionFlushTool),
+        Box::new(ScreenRefreshPermissionsTool),
+        Box::new(ScreenCaptureNowTool),
+        Box::new(ScreenCaptureTestTool),
+        Box::new(ScreenSessionStartTool),
+        Box::new(ScreenSessionStopTool),
+        Box::new(ScreenInputActionTool),
+        Box::new(ScreenGlobeStartTool),
+        Box::new(ScreenGlobePollTool),
+        Box::new(ScreenGlobeStopTool),
+        Box::new(ScreenRequestPermissionsTool),
+        Box::new(ScreenRequestPermissionTool),
+        Box::new(McpRegistrySearchTool::new(config.clone())),
+        Box::new(McpRegistryGetTool::new(config.clone())),
+        Box::new(McpRegistryInstalledListTool::new(config.clone())),
+        Box::new(McpRegistryStatusTool::new(config.clone())),
+        Box::new(McpRegistryConnectTool::new(config.clone())),
+        Box::new(McpRegistryDisconnectTool),
+        Box::new(McpRegistryToolCallTool),
+        Box::new(McpRegistryConfigAssistTool::new(config.clone())),
+        Box::new(McpRegistryInstallTool::new(config.clone())),
+        Box::new(McpRegistryUninstallTool::new(config.clone())),
+        Box::new(WorkspaceReadPersonaTool::new(config.clone())),
+        Box::new(WorkspaceUpdatePersonaTool::new(config.clone())),
+        Box::new(WorkspaceResetPersonaTool::new(config.clone())),
+        Box::new(WorkspaceInitTool),
     ];
+
+    // Presentation generation (#2778). Native-Rust engine (ppt-rs
+    // backed) as of the #2780-follow-up rust-engine refactor — no
+    // managed Python venv, no first-call install latency. Always
+    // registered.
+    tools.push(Box::new(PresentationTool::new(
+        root_config.workspace_dir.clone(),
+        security.clone(),
+    )));
 
     if browser_config.enabled {
         // Unified web-access allowlist (merge fetch + browser firewalls): the
@@ -280,7 +528,7 @@ pub fn all_tools_with_runtime(
     tools.push(Box::new(CurlTool::new(
         security.clone(),
         http_config.allowed_domains.clone(),
-        workspace_dir.to_path_buf(),
+        action_dir.to_path_buf(),
         root_config.curl.dest_subdir.clone(),
         root_config.curl.max_download_bytes,
         root_config.curl.timeout_secs,
@@ -334,122 +582,12 @@ pub fn all_tools_with_runtime(
         tracing::debug!("[mcp_client] no MCP servers registered — bridge tools skipped");
     }
 
-    // ── Unified search engine ───────────────────────────────────────
-    //
-    // Exactly one engine drives `web_search_tool` plus any
-    // engine-specific tools (Parallel research/extract/etc., Brave
-    // news/image/video). Mirrors the LLM-provider API-key model: a
-    // single switch, BYO credentials, layered tool surface.
-    //
-    // Legacy `seltz` / `searxng` config blocks are still parsed but
-    // no longer register tools — they were superseded by this
-    // selector. Use `search.engine = "managed" | "parallel" | "brave"`
-    // instead.
-    {
-        use crate::openhuman::config::SearchEngine;
-        let search = &root_config.search;
-        let max_results = search.max_results.clamp(1, 20);
-        let timeout_secs = search.timeout_secs.max(1);
-        match search.effective_engine() {
-            SearchEngine::Managed => {
-                tracing::debug!(
-                    requested = %search.requested_engine_str(),
-                    "[search] active engine = managed (backend-proxied web_search)"
-                );
-                tools.push(Box::new(WebSearchTool::new(
-                    crate::openhuman::integrations::build_client(root_config),
-                    max_results,
-                    timeout_secs,
-                )));
-            }
-            SearchEngine::Parallel => {
-                tracing::debug!("[search] active engine = parallel (BYO direct API)");
-                // Direct-mode Parallel still goes through the
-                // backend-proxy client today; the BYO key is stored on
-                // the integration client so the upstream tools can
-                // pick it up once direct Parallel routing lands.
-                let client = crate::openhuman::integrations::build_client(root_config);
-                if let Some(client) = client {
-                    tools.push(Box::new(
-                        crate::openhuman::integrations::ParallelSearchTool::new(Arc::clone(
-                            &client,
-                        )),
-                    ));
-                    tools.push(Box::new(
-                        crate::openhuman::integrations::ParallelExtractTool::new(Arc::clone(
-                            &client,
-                        )),
-                    ));
-                    tools.push(Box::new(
-                        crate::openhuman::integrations::ParallelChatTool::new(Arc::clone(&client)),
-                    ));
-                    tools.push(Box::new(
-                        crate::openhuman::integrations::ParallelResearchTool::new(Arc::clone(
-                            &client,
-                        )),
-                    ));
-                    tools.push(Box::new(
-                        crate::openhuman::integrations::ParallelEnrichTool::new(Arc::clone(
-                            &client,
-                        )),
-                    ));
-                    tools.push(Box::new(
-                        crate::openhuman::integrations::ParallelDatasetTool::new(Arc::clone(
-                            &client,
-                        )),
-                    ));
-                    // Layer the unified web_search slot too so the
-                    // agent's default research path keeps working.
-                    tools.push(Box::new(WebSearchTool::new(
-                        Some(Arc::clone(&client)),
-                        max_results,
-                        timeout_secs,
-                    )));
-                } else {
-                    tracing::warn!(
-                        "[search] engine=parallel but no backend client — falling back to managed surface"
-                    );
-                    tools.push(Box::new(WebSearchTool::new(
-                        None,
-                        max_results,
-                        timeout_secs,
-                    )));
-                }
-            }
-            SearchEngine::Brave => {
-                tracing::debug!("[search] active engine = brave (BYO direct API)");
-                let api_key = search.brave.api_key.clone();
-                tools.push(Box::new(
-                    crate::openhuman::integrations::BraveWebSearchTool::new(
-                        api_key.clone(),
-                        max_results,
-                        timeout_secs,
-                    ),
-                ));
-                tools.push(Box::new(
-                    crate::openhuman::integrations::BraveNewsSearchTool::new(
-                        api_key.clone(),
-                        max_results,
-                        timeout_secs,
-                    ),
-                ));
-                tools.push(Box::new(
-                    crate::openhuman::integrations::BraveImageSearchTool::new(
-                        api_key.clone(),
-                        max_results,
-                        timeout_secs,
-                    ),
-                ));
-                tools.push(Box::new(
-                    crate::openhuman::integrations::BraveVideoSearchTool::new(
-                        api_key,
-                        max_results,
-                        timeout_secs,
-                    ),
-                ));
-            }
-        }
-    }
+    tools.extend(crate::openhuman::search::build_search_tools(root_config));
+
+    // High-level web3 tools (swaps / bridges / dapp calls) built on the wallet.
+    // They call the backend deBridge proxy per-invocation and error gracefully
+    // when the user is not signed in, so they register unconditionally.
+    tools.extend(crate::openhuman::web3::all_web3_agent_tools());
 
     // Managed Node.js exec tools — gated on `root_config.node.enabled`.
     // Both share the same `NodeBootstrap` as ShellTool so the download +
@@ -515,14 +653,14 @@ pub fn all_tools_with_runtime(
     if let Some(client) = crate::openhuman::integrations::build_client(root_config) {
         tracing::debug!("[integrations] client built successfully");
         if root_config.integrations.apify.is_active() {
+            tools.push(Box::new(crate::openhuman::tools::ApifyRunActorTool::new(
+                Arc::clone(&client),
+            )));
             tools.push(Box::new(
-                crate::openhuman::integrations::ApifyRunActorTool::new(Arc::clone(&client)),
+                crate::openhuman::tools::ApifyGetRunStatusTool::new(Arc::clone(&client)),
             ));
             tools.push(Box::new(
-                crate::openhuman::integrations::ApifyGetRunStatusTool::new(Arc::clone(&client)),
-            ));
-            tools.push(Box::new(
-                crate::openhuman::integrations::ApifyGetRunResultsTool::new(Arc::clone(&client)),
+                crate::openhuman::tools::ApifyGetRunResultsTool::new(Arc::clone(&client)),
             ));
             tracing::debug!("[integrations] registered apify tools");
         } else {
@@ -530,10 +668,10 @@ pub fn all_tools_with_runtime(
         }
         if root_config.integrations.google_places.is_active() {
             tools.push(Box::new(
-                crate::openhuman::integrations::GooglePlacesSearchTool::new(Arc::clone(&client)),
+                crate::openhuman::tools::GooglePlacesSearchTool::new(Arc::clone(&client)),
             ));
             tools.push(Box::new(
-                crate::openhuman::integrations::GooglePlacesDetailsTool::new(Arc::clone(&client)),
+                crate::openhuman::tools::GooglePlacesDetailsTool::new(Arc::clone(&client)),
             ));
             tracing::debug!("[integrations] registered google_places tools");
         } else {
@@ -548,44 +686,32 @@ pub fn all_tools_with_runtime(
                 "[integrations] parallel toggle is active but tools are governed by search.engine now"
             );
         }
-        if root_config.integrations.tinyfish.is_active() {
-            tools.push(Box::new(
-                crate::openhuman::integrations::TinyFishSearchTool::new(Arc::clone(&client)),
-            ));
-            tools.push(Box::new(
-                crate::openhuman::integrations::TinyFishFetchTool::new(Arc::clone(&client)),
-            ));
-            tools.push(Box::new(
-                crate::openhuman::integrations::TinyFishAgentRunTool::new(Arc::clone(&client)),
-            ));
-            tracing::debug!("[integrations] registered tinyfish tools");
-        } else {
-            tracing::debug!("[integrations] tinyfish disabled — skipping");
-        }
+        // TinyFish is search-owned and registers through the unified search
+        // surface above so `search.engine = "disabled"` suppresses it too.
         if root_config.integrations.stock_prices.is_active() {
+            tools.push(Box::new(crate::openhuman::tools::StockQuoteTool::new(
+                Arc::clone(&client),
+            )));
             tools.push(Box::new(
-                crate::openhuman::integrations::StockQuoteTool::new(Arc::clone(&client)),
+                crate::openhuman::tools::StockExchangeRateTool::new(Arc::clone(&client)),
             ));
+            tools.push(Box::new(crate::openhuman::tools::StockOptionsTool::new(
+                Arc::clone(&client),
+            )));
             tools.push(Box::new(
-                crate::openhuman::integrations::StockExchangeRateTool::new(Arc::clone(&client)),
+                crate::openhuman::tools::StockCryptoSeriesTool::new(Arc::clone(&client)),
             ));
-            tools.push(Box::new(
-                crate::openhuman::integrations::StockOptionsTool::new(Arc::clone(&client)),
-            ));
-            tools.push(Box::new(
-                crate::openhuman::integrations::StockCryptoSeriesTool::new(Arc::clone(&client)),
-            ));
-            tools.push(Box::new(
-                crate::openhuman::integrations::StockCommodityTool::new(Arc::clone(&client)),
-            ));
+            tools.push(Box::new(crate::openhuman::tools::StockCommodityTool::new(
+                Arc::clone(&client),
+            )));
             tracing::debug!("[integrations] registered stock_prices tools");
         } else {
             tracing::debug!("[integrations] stock_prices disabled — skipping");
         }
         if root_config.integrations.twilio.is_active() {
-            tools.push(Box::new(
-                crate::openhuman::integrations::TwilioCallTool::new(Arc::clone(&client)),
-            ));
+            tools.push(Box::new(crate::openhuman::tools::TwilioCallTool::new(
+                Arc::clone(&client),
+            )));
             tracing::debug!("[integrations] registered twilio tools");
         } else {
             tracing::debug!("[integrations] twilio disabled — skipping");

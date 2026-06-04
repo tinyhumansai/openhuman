@@ -6,6 +6,7 @@
 //! before any file is written. If any edit fails validation, no files
 //! are touched.
 
+use crate::openhuman::file_state;
 use crate::openhuman::security::{CommandClass, GateDecision, SecurityPolicy};
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
 use async_trait::async_trait;
@@ -143,12 +144,61 @@ impl Tool for ApplyPatchTool {
             });
         }
 
+        // Acquire per-path locks for all unique paths before any reads.
+        let unique_paths: Vec<String> = {
+            let mut seen = std::collections::HashSet::new();
+            parsed
+                .iter()
+                .filter_map(|e| {
+                    if seen.insert(e.path.clone()) {
+                        Some(e.path.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        };
+        let mut _path_guards = Vec::new();
+        for p in &unique_paths {
+            let full = self.security.action_dir.join(p);
+            if let Ok(resolved) = tokio::fs::canonicalize(&full).await {
+                if let Some(guard) = file_state::acquire_path_lock(&resolved).await {
+                    _path_guards.push(guard);
+                }
+            }
+        }
+
+        // File-state guard: reject edits based on stale or partial reads.
+        if let Some(agent_id) = file_state::current_file_state_agent_id() {
+            for p in &unique_paths {
+                let full = self.security.action_dir.join(p);
+                if let Ok(resolved) = tokio::fs::canonicalize(&full).await {
+                    if let Some(msg) = file_state::check_stale_read(&agent_id, &resolved) {
+                        tracing::debug!(
+                            agent = %agent_id,
+                            path = %resolved.display(),
+                            "[file_state] apply_patch blocked: stale read"
+                        );
+                        return Ok(ToolResult::error(msg));
+                    }
+                    if let Some(msg) = file_state::check_partial_read(&agent_id, &resolved) {
+                        tracing::debug!(
+                            agent = %agent_id,
+                            path = %resolved.display(),
+                            "[file_state] apply_patch blocked: partial read"
+                        );
+                        return Ok(ToolResult::error(msg));
+                    }
+                }
+            }
+        }
+
         // Resolve paths + load file contents (once per file). Apply edits in
         // memory; if any edit fails, return without writing.
         let mut buffers: HashMap<String, FileBuffer> = HashMap::new();
         for edit in &parsed {
             if !buffers.contains_key(&edit.path) {
-                let full = self.security.workspace_dir.join(&edit.path);
+                let full = self.security.action_dir.join(&edit.path);
 
                 // Symlink check must happen on the *unresolved* path —
                 // canonicalize resolves symlinks, so a check after that
@@ -241,6 +291,13 @@ impl Tool for ApplyPatchTool {
             written.push(buf);
             summary.push(format!("{path}: {} replacement(s)", buf.edit_count));
         }
+        // Record writes in the file-state coordinator.
+        if let Some(agent_id) = file_state::current_file_state_agent_id() {
+            for buf in buffers.values() {
+                file_state::record_write(&agent_id, buf.resolved.clone());
+            }
+        }
+
         summary.sort();
         Ok(ToolResult::success(format!(
             "Applied {} edit(s) across {} file(s)\n{}",
@@ -286,7 +343,8 @@ mod tests {
     fn test_security(workspace: std::path::PathBuf) -> Arc<SecurityPolicy> {
         Arc::new(SecurityPolicy {
             autonomy: AutonomyLevel::Supervised,
-            workspace_dir: workspace,
+            workspace_dir: workspace.clone(),
+            action_dir: workspace,
             ..SecurityPolicy::default()
         })
     }

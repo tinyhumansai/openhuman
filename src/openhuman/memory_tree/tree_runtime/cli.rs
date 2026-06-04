@@ -595,16 +595,20 @@ mod tests {
     }
 
     #[test]
-    fn run_summarize_surfaces_local_ai_requirement_before_empty_buffer_skip() {
+    fn run_summarize_errors_cleanly_without_provider() {
+        // With no local AI and no cloud opt-in (default), `run` returns a clean
+        // actionable error rather than panicking or giving an opaque failure.
+        // Users must enable local AI (Ollama) or set cloud_summarization_opt_in
+        // in Settings → AI → Memory (or via OPENHUMAN_MEMORY_TREE_CLOUD_SUMMARIZATION=true).
         let tmp = TempDir::new().unwrap();
         let _workspace = WorkspaceEnvGuard::set(tmp.path());
 
         let err = run_summarize(&["fresh-ns".to_string()])
-            .expect_err("run should still surface the local ai runtime requirement");
+            .expect_err("should error without any summarization provider");
+        let msg = err.to_string();
         assert!(
-            err.to_string()
-                .contains("tree summarizer requires local_ai to be enabled in config"),
-            "unexpected run_summarize error: {err:#}"
+            msg.contains("no summarization provider"),
+            "error should name the missing provider: {msg}"
         );
     }
 
@@ -667,7 +671,14 @@ mod tests {
     }
 
     #[test]
-    fn run_and_rebuild_surface_local_ai_runtime_requirement() {
+    fn run_and_rebuild_no_longer_block_on_local_ai_precondition() {
+        // #002 FR-007: the summarizer used to hard-error "requires local_ai to
+        // be enabled" when local AI was off, which left Build Summary Trees
+        // dead for cloud-only setups. It now builds the configured cloud
+        // provider instead. The commands may still surface a downstream error
+        // (e.g. a network/auth failure when actually calling the cloud model in
+        // a test sandbox), but they must NOT fail on the old local-AI
+        // precondition. This test asserts that specific regression is gone.
         let tmp = TempDir::new().unwrap();
         let _workspace = WorkspaceEnvGuard::set(tmp.path());
 
@@ -680,15 +691,19 @@ mod tests {
         ])
         .is_ok());
 
-        let run_err = run_summarize(&["ns".to_string()]).expect_err("run should require local ai");
-        assert!(run_err
-            .to_string()
-            .contains("requires local_ai to be enabled"));
-
-        let rebuild_err =
-            run_rebuild(&["ns".to_string()]).expect_err("rebuild should require local ai");
-        assert!(rebuild_err
-            .to_string()
-            .contains("requires local_ai to be enabled"));
+        // Whatever the outcome (Ok, or a downstream provider/network error),
+        // it must not be the local-AI precondition error.
+        if let Err(e) = run_summarize(&["ns".to_string()]) {
+            assert!(
+                !e.to_string().contains("requires local_ai to be enabled"),
+                "run should no longer block on the local_ai precondition: {e:#}"
+            );
+        }
+        if let Err(e) = run_rebuild(&["ns".to_string()]) {
+            assert!(
+                !e.to_string().contains("requires local_ai to be enabled"),
+                "rebuild should no longer block on the local_ai precondition: {e:#}"
+            );
+        }
     }
 }

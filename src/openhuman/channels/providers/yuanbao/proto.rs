@@ -599,23 +599,25 @@ mod tests {
         assert_eq!(frame.data, b"payload");
     }
 
+    /// Smoke-test that [`encode_auth_bind`] produces a frame round-trippable
+    /// via [`decode_conn_msg`] and that the `app_version` / `bot_version`
+    /// arguments land in the expected `DeviceInfo` fields (regression guard
+    /// for the plugin_version/bot_version swap).
     #[test]
     fn auth_bind_smoke() {
         let buf = encode_auth_bind(
-            "biz",
-            "uid",
-            "openclaw",
-            "tok",
-            "mid",
-            "1.0",
-            "linux",
-            "openhuman/0.1.0",
-            "",
+            "biz", "uid", "openclaw", "tok", "mid", "0.1.0", "linux", "1.0", "",
         );
         let frame = decode_conn_msg(&buf).unwrap();
         assert_eq!(frame.cmd, cmd::AUTH_BIND);
         assert_eq!(frame.module, module::CONN_ACCESS);
         assert!(!frame.data.is_empty());
+
+        let req_fields = parse_fields(&frame.data).unwrap();
+        let dev_buf = get_bytes(&req_fields, 3);
+        let dev_fields = parse_fields(&dev_buf).unwrap();
+        assert_eq!(get_string(&dev_fields, 1), "0.1.0", "app_version");
+        assert_eq!(get_string(&dev_fields, 24), "1.0", "bot_version");
     }
 
     #[test]

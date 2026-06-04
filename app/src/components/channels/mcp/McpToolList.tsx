@@ -1,5 +1,11 @@
 /**
  * Collapsible list of MCP tools with name and description.
+ *
+ * Optionally renders a per-tool "Try" button when `onTryTool` is
+ * provided — clicking it hands the selected tool back to the parent so
+ * it can open the Tool Execution Playground. When the prop is absent
+ * the list stays purely informational (preserving the original API for
+ * any other call site).
  */
 import { useState } from 'react';
 
@@ -8,9 +14,11 @@ import type { McpTool } from './types';
 
 interface McpToolListProps {
   tools: McpTool[];
+  /** When provided, each tool gets a "Try" button that calls this with that tool. */
+  onTryTool?: (tool: McpTool) => void;
 }
 
-const McpToolList = ({ tools }: McpToolListProps) => {
+const McpToolList = ({ tools, onTryTool }: McpToolListProps) => {
   const { t } = useT();
   const [expanded, setExpanded] = useState(false);
   // Guard against undefined/null passed at runtime (TypeScript can't always prevent this).
@@ -40,9 +48,20 @@ const McpToolList = ({ tools }: McpToolListProps) => {
         <ul className="mt-2 space-y-1 pl-4 border-l-2 border-stone-100 dark:border-neutral-800">
           {safeTools.map(tool => (
             <li key={tool.name} className="space-y-0.5">
-              <p className="text-xs font-mono font-medium text-stone-800 dark:text-neutral-100">
-                {tool.name}
-              </p>
+              <div className="flex items-start justify-between gap-2">
+                <p className="text-xs font-mono font-medium text-stone-800 dark:text-neutral-100 break-words min-w-0">
+                  {tool.name}
+                </p>
+                {onTryTool && (
+                  <button
+                    type="button"
+                    onClick={() => onTryTool(tool)}
+                    aria-label={t('mcp.toolList.tryToolAria').replace('{name}', tool.name)}
+                    className="shrink-0 text-[10px] font-medium text-primary-600 dark:text-primary-300 hover:underline">
+                    {t('mcp.toolList.tryTool')}
+                  </button>
+                )}
+              </div>
               {tool.description && (
                 <p className="text-[11px] text-stone-500 dark:text-neutral-400">
                   {tool.description}

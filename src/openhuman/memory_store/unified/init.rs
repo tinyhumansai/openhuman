@@ -9,6 +9,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use anyhow::Context as _;
 use parking_lot::Mutex;
 use rusqlite::Connection;
 
@@ -20,15 +21,44 @@ use super::UnifiedMemory;
 impl UnifiedMemory {
     /// Open (or create) the unified store rooted at `workspace_dir`.
     ///
-    /// Creates the on-disk layout, runs all `CREATE TABLE` statements, and
-    /// applies idempotent legacy-namespace migrations. Safe to call on every
-    /// boot.
+    /// Delegates to [`Self::new_with_memory_dir`] using the default
+    /// `"memory"` subdirectory name. Safe to call on every boot.
     pub fn new(
         workspace_dir: &Path,
         embedder: Arc<dyn EmbeddingProvider>,
         _open_timeout_secs: Option<u64>,
     ) -> anyhow::Result<Self> {
-        let memory_dir = workspace_dir.join("memory");
+        Self::new_with_memory_dir(workspace_dir, "memory", embedder, _open_timeout_secs)
+    }
+
+    /// Open (or create) a unified store using an explicit memory subdirectory
+    /// name under `workspace_dir`.
+    ///
+    /// This enables multiple independent stores inside the same workspace (e.g.
+    /// per-personality databases) without path collisions. `memory_subdir` is
+    /// joined directly to `workspace_dir`, so `"memory-1"` yields
+    /// `workspace_dir/memory-1/memory.db`.
+    ///
+    /// Creates the on-disk layout, runs all `CREATE TABLE` statements, and
+    /// applies idempotent legacy-namespace migrations. Safe to call on every
+    /// boot.
+    pub fn new_with_memory_dir(
+        workspace_dir: &Path,
+        memory_subdir: &str,
+        embedder: Arc<dyn EmbeddingProvider>,
+        _open_timeout_secs: Option<u64>,
+    ) -> anyhow::Result<Self> {
+        use std::path::Component;
+        anyhow::ensure!(!memory_subdir.is_empty(), "memory_subdir must not be empty");
+        let subdir_path = Path::new(memory_subdir);
+        anyhow::ensure!(
+            subdir_path.components().count() == 1
+                && subdir_path
+                    .components()
+                    .all(|c| matches!(c, Component::Normal(_))),
+            "memory_subdir must be a single relative path component without traversal"
+        );
+        let memory_dir = workspace_dir.join(subdir_path);
         let namespaces_dir = memory_dir.join("namespaces");
         let vectors_dir = memory_dir.join("vectors");
         std::fs::create_dir_all(&namespaces_dir)?;
@@ -43,6 +73,13 @@ impl UnifiedMemory {
         // - graph_global: cross-namespace graph edges used as fallback/shared memory.
         // - kv_namespace: namespace-scoped durable preferences, decisions, and state.
         // - kv_global: global durable key-value memories outside a namespace scope.
+        // Absorb concurrent write contention under cargo-llvm-cov and any other
+        // scenario where background workers hold the write lock while a second
+        // connection attempts a write. Without a timeout the driver returns
+        // SQLITE_BUSY immediately, which causes test flakes and runtime errors.
+        conn.busy_timeout(std::time::Duration::from_secs(15))
+            .context("configure unified memory busy_timeout")?;
+
         conn.execute_batch(
             "PRAGMA journal_mode = WAL;
              PRAGMA synchronous = NORMAL;
@@ -62,6 +99,7 @@ impl UnifiedMemory {
                created_at REAL NOT NULL,
                updated_at REAL NOT NULL,
                markdown_rel_path TEXT NOT NULL,
+               taint TEXT NOT NULL DEFAULT 'internal',
                UNIQUE(namespace, key)
              );
              CREATE INDEX IF NOT EXISTS idx_memory_docs_ns_updated ON memory_docs(namespace, updated_at DESC);
@@ -133,6 +171,21 @@ impl UnifiedMemory {
                 Err(e) => {
                     tracing::trace!("[vector_chunks:init] skipped (probably already exists): {e}")
                 }
+            }
+        }
+
+        // Backfill the `taint` column on existing `memory_docs` databases.
+        // Fresh installs get this via the CREATE TABLE above; older DBs need
+        // the ALTER so retrieval can carry the provenance signal up to the
+        // subconscious gate. Idempotent: a duplicate-column error on
+        // re-application is expected (logged at trace).
+        match conn.execute(
+            "ALTER TABLE memory_docs ADD COLUMN taint TEXT NOT NULL DEFAULT 'internal'",
+            [],
+        ) {
+            Ok(_) => tracing::debug!("[memory_docs:init] applied taint column migration"),
+            Err(e) => {
+                tracing::trace!("[memory_docs:init] taint column already present: {e}")
             }
         }
 
@@ -254,6 +307,7 @@ impl UnifiedMemory {
 
         Ok(Self {
             workspace_dir: workspace_dir.to_path_buf(),
+            memory_dir,
             db_path,
             vectors_dir,
             conn: Arc::new(Mutex::new(conn)),
@@ -301,9 +355,15 @@ impl UnifiedMemory {
             .collect()
     }
 
+    /// Resolved memory subdirectory for this store instance (e.g.
+    /// `workspace_dir/memory` for the default store, or a custom subdir for
+    /// personality-specific stores).
+    pub fn memory_dir(&self) -> &Path {
+        &self.memory_dir
+    }
+
     pub(crate) fn namespace_dir(&self, namespace: &str) -> PathBuf {
-        self.workspace_dir
-            .join("memory")
+        self.memory_dir
             .join("namespaces")
             .join(Self::sanitize_namespace(namespace))
     }
@@ -337,6 +397,47 @@ mod tests {
                 .join("memory")
                 .join("namespaces")
                 .join("team_alpha/_1")
+        );
+    }
+
+    #[test]
+    fn new_with_memory_dir_creates_separate_db() {
+        let tmp = TempDir::new().unwrap();
+        let mem1 = UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).unwrap();
+        let mem2 = UnifiedMemory::new_with_memory_dir(
+            tmp.path(),
+            "memory-1",
+            Arc::new(NoopEmbedding),
+            None,
+        )
+        .unwrap();
+        assert_ne!(mem1.db_path(), mem2.db_path());
+        assert!(
+            mem1.db_path().ends_with("memory/memory.db"),
+            "expected mem1 db under memory/memory.db, got {:?}",
+            mem1.db_path()
+        );
+        assert!(
+            mem2.db_path().ends_with("memory-1/memory.db"),
+            "expected mem2 db under memory-1/memory.db, got {:?}",
+            mem2.db_path()
+        );
+        assert!(mem1.db_path().exists(), "mem1 db file must exist on disk");
+        assert!(mem2.db_path().exists(), "mem2 db file must exist on disk");
+    }
+
+    #[test]
+    fn connection_has_busy_timeout_set() {
+        let tmp = TempDir::new().unwrap();
+        let memory = UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).unwrap();
+        let conn = memory.conn.lock();
+        // SQLite reports busy_timeout as a PRAGMA; 0 means no timeout.
+        let timeout: i64 = conn
+            .query_row("PRAGMA busy_timeout", [], |row| row.get(0))
+            .unwrap();
+        assert!(
+            timeout > 0,
+            "busy_timeout must be non-zero to absorb write contention, got {timeout}"
         );
     }
 }

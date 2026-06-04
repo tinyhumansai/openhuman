@@ -18,8 +18,29 @@ vi.mock('../../../utils/tauriCommands', () => ({
   memoryTreeObsidianVaultStatus: vi.fn(),
 }));
 
-vi.mock('../../../services/memorySyncService', () => ({
-  memorySyncStatusList: vi.fn().mockResolvedValue([]),
+vi.mock('../../../services/memorySourcesService', () => ({
+  listMemorySources: vi.fn().mockResolvedValue([]),
+  memorySourcesStatusList: vi.fn().mockResolvedValue([]),
+  syncMemorySource: vi.fn(),
+  removeMemorySource: vi.fn(),
+  updateMemorySource: vi.fn(),
+  addMemorySource: vi.fn(),
+  SOURCE_KIND_ICONS: {
+    folder: '📁',
+    composio: '🔗',
+    github_repo: '🐙',
+    rss_feed: '📡',
+    web_page: '🌐',
+    twitter_query: '🐦',
+  },
+  SOURCE_KIND_LABEL_KEYS: {
+    folder: 'memorySources.kind.folder',
+    composio: 'memorySources.kind.composio',
+    github_repo: 'memorySources.kind.github_repo',
+    rss_feed: 'memorySources.kind.rss_feed',
+    web_page: 'memorySources.kind.web_page',
+    twitter_query: 'memorySources.kind.twitter_query',
+  },
 }));
 
 vi.mock('../../../lib/composio/composioApi', () => ({
@@ -34,6 +55,11 @@ vi.mock('../../../utils/openUrl', () => ({ openUrl: vi.fn().mockResolvedValue(un
 vi.mock('../../../utils/tauriCommands/workspacePaths', () => ({
   openWorkspacePath: vi.fn().mockResolvedValue(undefined),
   revealWorkspacePath: vi.fn().mockResolvedValue(undefined),
+  // #2492: the Obsidian deep link now resolves the vault's absolute path
+  // through the shared workspace-link layer instead of trusting the
+  // `content_root_abs` field returned from the graph export RPC. Return the
+  // same path the prop carries so the existing `openUrl` assertion is stable.
+  resolveWorkspaceAbsolutePath: vi.fn().mockResolvedValue('/tmp/workspace/memory_tree/content'),
   previewWorkspaceText: vi
     .fn()
     .mockResolvedValue({
@@ -64,6 +90,12 @@ const { listConnections, syncConnection } =
   (await import('../../../lib/composio/composioApi')) as unknown as {
     listConnections: Mock;
     syncConnection: Mock;
+  };
+
+const { listMemorySources, syncMemorySource } =
+  (await import('../../../services/memorySourcesService')) as unknown as {
+    listMemorySources: Mock;
+    syncMemorySource: Mock;
   };
 
 const { openUrl } = (await import('../../../utils/openUrl')) as unknown as { openUrl: Mock };
@@ -235,24 +267,22 @@ describe('MemoryWorkspace (graph view)', () => {
     });
   });
 
-  it('hides toolkits without a memory-tree ingest provider entirely', async () => {
-    listConnections.mockResolvedValue({
-      connections: [
-        { id: 'conn-gmail', toolkit: 'gmail', status: 'ACTIVE', accountEmail: 'a@x' },
-        { id: 'conn-slack', toolkit: 'slack', status: 'ACTIVE', workspace: 'acme' },
-        { id: 'conn-notion', toolkit: 'notion', status: 'ACTIVE' },
-      ],
-    });
+  it('shows sync rows for provider-backed toolkits and hides non-syncable ones', async () => {
+    // The new MemorySourcesRegistry reads from listMemorySources (not listConnections).
+    // Composio connections are auto-seeded into the registry as MemorySourceEntry records.
+    listMemorySources.mockResolvedValue([
+      { id: 'src-gmail', kind: 'composio', toolkit: 'gmail', label: 'Gmail · a@x', enabled: true },
+      { id: 'src-slack', kind: 'composio', toolkit: 'slack', label: 'Slack · acme', enabled: true },
+      { id: 'src-notion', kind: 'composio', toolkit: 'notion', label: 'Notion', enabled: true },
+    ]);
     renderWithProviders(<MemoryWorkspace />);
-    // Gmail row exists with a working Sync button.
+    // Provider-backed toolkits should render actionable Sync rows
     expect(await screen.findByTestId('memory-source-sync-gmail')).toBeInTheDocument();
-    // Non-syncable toolkits are filtered out completely — neither
-    // the row nor the Sync button render. Cleaner than a "no sync
-    // yet" placeholder for an action the user can't take.
-    expect(screen.queryByTestId('memory-source-row-slack')).toBeNull();
-    expect(screen.queryByTestId('memory-source-row-notion')).toBeNull();
-    expect(screen.queryByTestId('memory-source-sync-slack')).toBeNull();
-    expect(screen.queryByTestId('memory-source-sync-notion')).toBeNull();
+    expect(screen.getByTestId('memory-source-sync-slack')).toBeInTheDocument();
+    expect(screen.getByTestId('memory-source-sync-notion')).toBeInTheDocument();
+    // Discord was not added as a source, so no row exists for it.
+    expect(screen.queryAllByTestId('memory-source-row-composio').length).toBeGreaterThan(0); // some composio rows exist
+    expect(screen.queryByTestId('memory-source-sync-discord')).toBeNull();
   });
 
   it('toggling to Contacts mode re-fetches the graph with mode=contacts', async () => {
@@ -345,25 +375,25 @@ describe('MemoryWorkspace (graph view)', () => {
     });
   });
 
-  it('per-connection Sync button dispatches composio.sync with the connection id', async () => {
-    listConnections.mockResolvedValue({
-      connections: [
-        {
-          id: 'conn-gmail-001',
-          toolkit: 'gmail',
-          status: 'ACTIVE',
-          accountEmail: 'alice@example.com',
-        },
-      ],
-    });
+  it('per-source Sync button dispatches memory_sources_sync with the source id', async () => {
+    listMemorySources.mockResolvedValue([
+      {
+        id: 'src-gmail-001',
+        kind: 'composio',
+        toolkit: 'gmail',
+        label: 'Gmail · alice@example.com',
+        enabled: true,
+      },
+    ]);
+    syncMemorySource.mockResolvedValue(undefined);
     const onToast = vi.fn();
     renderWithProviders(<MemoryWorkspace onToast={onToast} />);
     const button = await screen.findByTestId('memory-source-sync-gmail');
-    // Source row title surfaces the account identity, not just the toolkit.
+    // Source row title surfaces the account identity.
     expect(button.closest('li')).toHaveTextContent(/Gmail · alice@example\.com/);
     fireEvent.click(button);
     await waitFor(() => {
-      expect(syncConnection).toHaveBeenCalledWith('conn-gmail-001', 'manual');
+      expect(syncMemorySource).toHaveBeenCalledWith('src-gmail-001');
     });
     await waitFor(() => {
       expect(onToast).toHaveBeenCalledWith(

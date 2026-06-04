@@ -1,0 +1,54 @@
+# pr-review-shepherd — a DEFAULT skill shipped with OpenHuman.
+# Bundled into the binary and seeded into <workspace>/skills/ on first load
+# (idempotent — never clobbers user edits). Parsed as a SkillDefinition:
+# AgentDefinition fields are flattened in, plus the declared [[inputs]]. At
+# skills_run time it runs as the `orchestrator` agent, focused by SKILL.md,
+# with these inputs rendered into the task prompt.
+#
+# The Phase-6 companion to github-issue-crusher: takes a single open PR and
+# iterates check → fix → push → re-check until both gates close (CI green AND
+# every actionable reviewer/bot comment addressed), surfaces a real blocker,
+# or notices the PR was merged / closed.
+id = "pr-review-shepherd"
+when_to_use = "Drive a single open GitHub PR to ready-for-merge — iterate CI failures + reviewer / bot (CodeRabbit, Codecov) comments until every required check is green AND every actionable thread is addressed or explicitly replied-to. Use after a PR is opened (e.g. by `github-issue-crusher`) and stop when both gates close, the PR is merged/closed, or a real blocker needs human review."
+
+# Preflight gate (see src/openhuman/skills/preflight.rs). pr-review-shepherd
+# reads PR state via Composio AND pushes fix-up commits to the fork via
+# local git, so both subsystems must be ready before the orchestrator
+# boots:
+#
+#   * Composio GitHub connection is active
+#   * local `git` is on PATH
+#   * `git config --global user.{name,email}` are both set
+#   * (strict) Composio username == local git user.name (case-insensitive)
+#
+# Mirrors github-issue-crusher's gate: both skills round-trip through
+# the same fork-and-PR boundary, so they share the same identity
+# coherence requirement. A mismatch silently mixes commit authorship
+# (local) with PR ownership (Composio) and is much harder to spot
+# after the fact than at the gate.
+[github]
+required = true
+identity_match = "strict"
+
+[[inputs]]
+name = "repo"
+description = "The UPSTREAM repo the PR lives on, as owner/name (e.g. acme/web)."
+required = true
+
+[[inputs]]
+name = "pr"
+description = "PR number on the upstream repo to shepherd to mergeable state."
+required = true
+type = "integer"
+
+[[inputs]]
+name = "fork"
+description = "Fork that owns the PR's head branch, as owner/name. Omit to derive from the PR's headRepositoryOwner (or default to the authed account)."
+required = false
+
+[[inputs]]
+name = "max_rounds"
+description = "Safety cap on push-and-re-check rounds before surfacing for human review. Default 5."
+required = false
+type = "integer"

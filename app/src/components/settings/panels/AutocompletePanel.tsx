@@ -71,6 +71,12 @@ const AutocompletePanel = () => {
     DEFAULT_CONFIG.disabled_apps.join('\n')
   );
   const [acceptWithTab, setAcceptWithTab] = useState<boolean>(DEFAULT_CONFIG.accept_with_tab);
+  // Tuning fields are kept as raw input strings so the user can clear a field
+  // mid-edit (e.g. 800 → "" → 512) without it snapping to the minimum on every
+  // keystroke; they are parsed and clamped to safe values at save time.
+  const [debounceMs, setDebounceMs] = useState<string>(String(DEFAULT_CONFIG.debounce_ms));
+  const [maxChars, setMaxChars] = useState<string>(String(DEFAULT_CONFIG.max_chars));
+  const [overlayTtlMs, setOverlayTtlMs] = useState<string>(String(DEFAULT_CONFIG.overlay_ttl_ms));
 
   const fullConfigRef = useRef<AutocompleteConfig>(DEFAULT_CONFIG);
   const [configLoaded, setConfigLoaded] = useState(false);
@@ -93,6 +99,9 @@ const AutocompletePanel = () => {
       setStylePreset(config.style_preset);
       setDisabledAppsText(config.disabled_apps.join('\n'));
       setAcceptWithTab(config.accept_with_tab);
+      setDebounceMs(String(config.debounce_ms));
+      setMaxChars(String(config.max_chars));
+      setOverlayTtlMs(String(config.overlay_ttl_ms));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load autocomplete settings');
     }
@@ -127,10 +136,15 @@ const AutocompletePanel = () => {
     setMessage(null);
     try {
       const prev = fullConfigRef.current;
+      // Parse + clamp the raw input strings only at save time so intermediate
+      // empty/partial values are allowed while typing.
+      const parsedDebounce = Math.max(0, Math.trunc(Number(debounceMs)) || 0);
+      const parsedMaxChars = Math.max(1, Math.trunc(Number(maxChars)) || DEFAULT_CONFIG.max_chars);
+      const parsedOverlayTtl = Math.max(0, Math.trunc(Number(overlayTtlMs)) || 0);
       const response = await openhumanAutocompleteSetStyle({
         enabled,
-        debounce_ms: prev.debounce_ms,
-        max_chars: prev.max_chars,
+        debounce_ms: parsedDebounce,
+        max_chars: parsedMaxChars,
         style_preset: stylePreset.trim() || 'balanced',
         style_instructions: prev.style_instructions ?? undefined,
         style_examples: prev.style_examples,
@@ -139,7 +153,7 @@ const AutocompletePanel = () => {
           .map(entry => entry.trim())
           .filter(Boolean),
         accept_with_tab: acceptWithTab,
-        overlay_ttl_ms: prev.overlay_ttl_ms,
+        overlay_ttl_ms: parsedOverlayTtl,
       });
 
       fullConfigRef.current = response.result.config;
@@ -147,6 +161,9 @@ const AutocompletePanel = () => {
       setStylePreset(response.result.config.style_preset);
       setDisabledAppsText(response.result.config.disabled_apps.join('\n'));
       setAcceptWithTab(response.result.config.accept_with_tab);
+      setDebounceMs(String(response.result.config.debounce_ms));
+      setMaxChars(String(response.result.config.max_chars));
+      setOverlayTtlMs(String(response.result.config.overlay_ttl_ms));
       setMessage(t('autocomplete.settingsSaved'));
       await refreshStatus();
     } catch (err) {
@@ -252,6 +269,48 @@ const AutocompletePanel = () => {
               className="w-full rounded border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-2 text-xs text-stone-700 dark:text-neutral-200"
             />
           </div>
+
+          <label className="flex items-center justify-between rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-3 py-2">
+            <span className="text-sm text-stone-700 dark:text-neutral-200">
+              {t('autocomplete.debounceMs')}
+            </span>
+            <input
+              type="number"
+              min={0}
+              value={debounceMs}
+              data-testid="autocomplete-debounce-ms"
+              onChange={event => setDebounceMs(event.target.value)}
+              className="w-24 rounded border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1 text-xs text-stone-700 dark:text-neutral-200"
+            />
+          </label>
+
+          <label className="flex items-center justify-between rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-3 py-2">
+            <span className="text-sm text-stone-700 dark:text-neutral-200">
+              {t('autocomplete.maxChars')}
+            </span>
+            <input
+              type="number"
+              min={1}
+              value={maxChars}
+              data-testid="autocomplete-max-chars"
+              onChange={event => setMaxChars(event.target.value)}
+              className="w-24 rounded border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1 text-xs text-stone-700 dark:text-neutral-200"
+            />
+          </label>
+
+          <label className="flex items-center justify-between rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-3 py-2">
+            <span className="text-sm text-stone-700 dark:text-neutral-200">
+              {t('autocomplete.overlayTtlMs')}
+            </span>
+            <input
+              type="number"
+              min={0}
+              value={overlayTtlMs}
+              data-testid="autocomplete-overlay-ttl-ms"
+              onChange={event => setOverlayTtlMs(event.target.value)}
+              className="w-24 rounded border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1 text-xs text-stone-700 dark:text-neutral-200"
+            />
+          </label>
 
           <button
             type="button"

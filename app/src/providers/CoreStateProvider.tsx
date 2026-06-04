@@ -16,6 +16,7 @@ import {
   setCoreStateSnapshot,
 } from '../lib/coreState/store';
 import { syncAnalyticsConsent } from '../services/analytics';
+import type { AuthExpiredReason } from '../services/coreRpcClient';
 import {
   fetchCoreAppSnapshot,
   getTeamInvites,
@@ -30,6 +31,7 @@ import { loadThreads, resetThreadCachesPreservingSelection } from '../store/thre
 import { getActiveUserId, setActiveUserId } from '../store/userScopedStorage';
 import { isLocalSessionToken } from '../utils/localSession';
 import {
+  getSessionToken,
   openhumanUpdateAnalyticsSettings,
   openhumanUpdateMeetSettings,
   restartApp,
@@ -61,6 +63,53 @@ function sanitizeError(error: unknown): { message?: string; code?: string; statu
     };
   }
   return { message: String(error) };
+}
+
+/**
+ * Positively confirm the on-disk session token is gone before an `auth_expired`
+ * signal is allowed to trigger the *destructive* `clearSession` (which calls
+ * `auth_clear_session` → removes the auth profile from disk).
+ *
+ * Reads the cheap disk-only `auth_get_session_token` RPC — no `auth/me` network
+ * call, not subject to `app_state_snapshot`'s 5s/10s timeouts. Right after the
+ * identity-flip restart the token IS on disk, but a token-gated RPC can briefly
+ * report "session jwt required" before the profile finishes loading; a short
+ * retry rides out that boot-load window.
+ *
+ * Returns `true` ONLY when every attempt reads an empty token. A token that is
+ * present, or an RPC failure (inconclusive), returns `false` — biasing toward
+ * keeping the session rather than destroying a valid one.
+ */
+async function confirmSessionTokenGone(): Promise<boolean> {
+  const ATTEMPTS = 3;
+  const RETRY_DELAY_MS = 300;
+  for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
+    let token: string | null;
+    try {
+      token = await getSessionToken();
+    } catch (err) {
+      log(
+        'auth-expired corroboration inconclusive (attempt %d/%d) — keeping session: %O',
+        attempt,
+        ATTEMPTS,
+        sanitizeError(err)
+      );
+      return false;
+    }
+    if (token && token.trim() !== '') {
+      log(
+        'auth-expired corroboration: session token still on disk (attempt %d/%d) — keeping session',
+        attempt,
+        ATTEMPTS
+      );
+      return false;
+    }
+    if (attempt < ATTEMPTS) {
+      await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
+    }
+  }
+  log('auth-expired corroboration: session token confirmed absent after %d attempts', ATTEMPTS);
+  return true;
 }
 
 export function coreStatePollFailureWarningMessage(failureCount: number): string | null {
@@ -174,6 +223,13 @@ function normalizeSnapshot(
     localState: {
       encryptionKey: result.localState.encryptionKey ?? null,
       onboardingTasks: result.localState.onboardingTasks ?? null,
+      keyringConsent: result.localState.keyringConsent ?? null,
+    },
+    keyringStatus: result.keyringStatus ?? {
+      available: true,
+      failureReason: null,
+      activeMode: 'os_keyring',
+      backendName: 'os',
     },
     runtime: {
       screenIntelligence: result.runtime?.screenIntelligence ?? null,
@@ -250,19 +306,17 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
     // `OPENHUMAN_ACTIVE_USER_ID` localStorage seed read by `userScopedStorage`
     // at module init — that's whose namespace redux-persist hydrated, and
     // it's also what the Rust `prepare_process_cache_path` reads from
-    // `active_user.toml` on each cold launch to pick a CEF cache dir. If the
-    // userId that just authenticated is different (or different from null on
-    // a fresh device), we MUST restart so:
+    // `active_user.toml` on each cold launch to pick a CEF cache dir. When
+    // the seed points at a DIFFERENT prior user, we must restart so:
     //   1. redux-persist re-hydrates from the new user's namespace, and
     //   2. CEF re-initializes with the new user's `users/<id>/cef` profile,
     //      so embedded webviews (Slack, WhatsApp, …) don't see the prior
     //      user's third-party cookies.
-    // This single rule covers every login path uniformly:
-    //   - cold bootstrap on a fresh install (seed is null, nextId is real)
-    //   - direct `storeSessionToken` (Tauri OAuth)
-    //   - deep-link `core-state:session-token-updated`
-    //   - poll-detected flip (core-side user swap)
-    //   - re-login as a different user after sign-out
+    // Fresh-device first login (seed=null) skips the restart — there is no
+    // prior user data or CEF profile to isolate from (#3107).
+    // Restart-requiring paths:
+    //   - auth-to-auth flip (A→B without logout)
+    //   - re-login as a different user after sign-out (A→logout→B)
     const seedUserId = getActiveUserId();
     const isLocalSession = isLocalSessionToken(nextSnapshot.sessionToken);
     const isFlip = Boolean(nextIdentity) && seedUserId !== nextIdentity && !isLocalSession;
@@ -325,9 +379,23 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
     }
 
     if (isFlip && nextIdentity) {
-      await handleIdentityFlip({ reason: 'identity-flip', nextUserId: nextIdentity }).catch(err => {
-        log('handleIdentityFlip failed: %O', sanitizeError(err));
-      });
+      if (!seedUserId) {
+        // First login on a fresh device: no prior user data, no CEF profile
+        // to isolate, no redux-persist namespace to rehydrate from. Just
+        // point writes at the new user's namespace — skip the disruptive
+        // restart that causes the "flash success then snap back" loop (#3107).
+        log(
+          'first-login: setting activeUserId=%s without restart',
+          `****${nextIdentity.slice(-4)}`
+        );
+        setActiveUserId(nextIdentity);
+      } else {
+        await handleIdentityFlip({ reason: 'identity-flip', nextUserId: nextIdentity }).catch(
+          err => {
+            log('handleIdentityFlip failed: %O', sanitizeError(err));
+          }
+        );
+      }
     } else if (isLogout) {
       // Sign-out: keep `OPENHUMAN_ACTIVE_USER_ID` pointing at the last user
       // so the next login can detect via seed comparison whether it's a
@@ -601,6 +669,12 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
   );
 
   const lastReauthAtRef = useRef(0);
+  // Reason that claimed the current debounce slot, and a monotonic attempt id.
+  // Together they let a `confirmed` expiry break through a slot held by an
+  // `unconfirmed` probe, while preventing an in-flight unconfirmed
+  // corroboration from clearing after a newer attempt has superseded it.
+  const lastReauthReasonRef = useRef<AuthExpiredReason | null>(null);
+  const reauthAttemptIdRef = useRef(0);
   const suppressReauthUntilRef = useRef(0);
 
   // Listen for deep-link auth suppression signals so that an in-flight
@@ -664,9 +738,13 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
   // latest closure; `clearSession`'s own deps are stable `useCallback`s,
   // so re-registers are rare.
   useEffect(() => {
-    const runReauth = (method: string, source: string) => {
+    const runReauth = async (method: string, source: string, reason: AuthExpiredReason) => {
       if (isLocalSessionToken(getCoreStateSnapshot().snapshot.sessionToken)) {
         log('auth-expired ignored for local session (method=%s source=%s)', method, source);
+        return;
+      }
+      if (getCoreStateSnapshot().isBootstrapping) {
+        log('auth-expired suppressed during bootstrap (method=%s source=%s)', method, source);
         return;
       }
       const now = Date.now();
@@ -678,20 +756,74 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
         );
         return;
       }
-      if (now - lastReauthAtRef.current < 10_000) {
-        log('auth-expired debounced (method=%s source=%s)', method, source);
+      // Debounce coalesces a burst of auth-expired events. EXCEPTION: a
+      // `confirmed` expiry must NOT be suppressed by a slot claimed by an
+      // earlier `unconfirmed` probe (which may have bailed without clearing) —
+      // otherwise a real 401 / `auth:session_expired` landing right after a
+      // transient boot-race signal would be silently dropped for up to 10s,
+      // keeping an actually-expired session alive.
+      const withinDebounce = now - lastReauthAtRef.current < 10_000;
+      const confirmedOverridesUnconfirmed =
+        reason === 'confirmed' && lastReauthReasonRef.current === 'unconfirmed';
+      if (withinDebounce && !confirmedOverridesUnconfirmed) {
+        log('auth-expired debounced (method=%s source=%s reason=%s)', method, source, reason);
         return;
       }
+      // Claim the debounce slot before the (async) corroboration so a burst of
+      // events in the same frame can't all run the check / clear twice.
+      const attemptId = ++reauthAttemptIdRef.current;
       lastReauthAtRef.current = now;
-      log('auth-expired: clearing session (method=%s source=%s)', method, source);
+      lastReauthReasonRef.current = reason;
+
+      // An `unconfirmed` reason ("session jwt required" / "no backend session
+      // token") means the core has no token *loaded* — which fires transiently
+      // right after the identity-flip restart, before the on-disk auth profile
+      // is read. `clearSession()` is destructive (auth_clear_session removes the
+      // profile from disk), so corroborate first and only sign out if the token
+      // is genuinely gone. A hard 401 / explicit expiry (`confirmed`) skips this.
+      if (reason === 'unconfirmed') {
+        const gone = await confirmSessionTokenGone();
+        // A newer reauth attempt superseded this one while we were awaiting
+        // (e.g. a `confirmed` 401 broke through the debounce) — don't double-
+        // clear or stomp the newer attempt's outcome.
+        if (attemptId !== reauthAttemptIdRef.current) {
+          log(
+            'auth-expired corroboration superseded by a newer attempt — skipping (method=%s source=%s)',
+            method,
+            source
+          );
+          return;
+        }
+        if (!gone) {
+          log(
+            'auth-expired NOT cleared — unconfirmed signal but session token still present (method=%s source=%s)',
+            method,
+            source
+          );
+          return;
+        }
+      }
+
+      // Reaching here means we're committing to a real sign-out. Mark the slot
+      // `confirmed` so a follow-up `confirmed` event inside the debounce window
+      // is coalesced (no double-clear) rather than breaking through again.
+      lastReauthReasonRef.current = 'confirmed';
+      log('auth-expired: clearing session (method=%s source=%s reason=%s)', method, source, reason);
       void clearSession().catch(err => {
         log('clearSession failed after auth-expired: %O', sanitizeError(err));
       });
     };
 
     const onRpcExpired = (event: Event) => {
-      const detail = (event as CustomEvent<{ method?: string; source?: string }>).detail;
-      runReauth(detail?.method ?? 'unknown', detail?.source ?? 'core-rpc-auth-expired');
+      const detail = (
+        event as CustomEvent<{ method?: string; source?: string; reason?: AuthExpiredReason }>
+      ).detail;
+      // Default to 'unconfirmed' (corroborate, don't destroy) when no reason is present.
+      void runReauth(
+        detail?.method ?? 'unknown',
+        detail?.source ?? 'core-rpc-auth-expired',
+        detail?.reason ?? 'unconfirmed'
+      );
     };
 
     const onSocketExpired = (event: Event) => {
@@ -703,7 +835,8 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
         typeof (event.detail as { source?: unknown }).source === 'string'
           ? (event.detail as { source: string }).source
           : 'unknown';
-      runReauth('socket.session_expired', source);
+      // The socket `auth:session_expired` push is an explicit backend expiry → confirmed.
+      void runReauth('socket.session_expired', source, 'confirmed');
     };
 
     window.addEventListener('core-rpc-auth-expired', onRpcExpired as EventListener);

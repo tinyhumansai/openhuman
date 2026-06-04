@@ -186,6 +186,10 @@ pub async fn doc_put(params: PutDocParams) -> Result<RpcOutcome<PutDocResult>, S
             category: params.category,
             session_id: params.session_id,
             document_id: params.document_id,
+            // RPC-driven doc puts come from the user / agent — Internal.
+            // External-sync ingest paths bypass this RPC and call
+            // `store_skill_sync` directly with their own taint label.
+            taint: crate::openhuman::memory::MemoryTaint::Internal,
         })
         .await?;
     Ok(RpcOutcome::single_log(
@@ -213,6 +217,7 @@ pub async fn doc_ingest(
                 category: params.category,
                 session_id: params.session_id,
                 document_id: params.document_id,
+                taint: crate::openhuman::memory::MemoryTaint::Internal,
             },
             config: params.config.unwrap_or_default(),
         })

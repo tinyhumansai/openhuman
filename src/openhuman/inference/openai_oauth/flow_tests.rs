@@ -7,9 +7,11 @@ use crate::openhuman::config::Config;
 use crate::openhuman::credentials::profiles::{
     AuthProfile, AuthProfileKind, AuthProfilesStore, TokenSet,
 };
-use crate::openhuman::inference::openai_oauth::lookup_openai_bearer_token;
 use crate::openhuman::inference::openai_oauth::store::{
-    OPENAI_OAUTH_PROFILE_NAME, OPENAI_PROVIDER_KEY,
+    import_codex_cli_auth_from_path, OPENAI_OAUTH_PROFILE_NAME, OPENAI_PROVIDER_KEY,
+};
+use crate::openhuman::inference::openai_oauth::{
+    lookup_openai_bearer_token, lookup_openai_oauth_credentials,
 };
 use crate::openhuman::inference::provider::factory::lookup_key_for_slug;
 use chrono::{Duration, Utc};
@@ -17,6 +19,30 @@ use motosan_ai_oauth::{OAuthConfig, StateStrategy, TokenBodyFormat};
 use tempfile::tempdir;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
+
+struct EnvVarGuard {
+    key: &'static str,
+    previous: Option<std::ffi::OsString>,
+}
+
+impl EnvVarGuard {
+    fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
+        let previous = std::env::var_os(key);
+        unsafe { std::env::set_var(key, value) };
+        Self { key, previous }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        unsafe {
+            match self.previous.take() {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+}
 
 fn test_config(tmp: &tempfile::TempDir) -> Config {
     Config {
@@ -288,6 +314,159 @@ fn persist_openai_oauth_token_stores_oauth_profile_with_metadata() {
 }
 
 #[test]
+fn persist_openai_oauth_token_rejects_blank_access_token() {
+    let tmp = tempdir().unwrap();
+    let config = test_config(&tmp);
+    let token = motosan_ai_oauth::Token {
+        access_token: "   ".into(),
+        refresh_token: "refresh-token".into(),
+        id_token: Some("id-token".into()),
+        expires_in: 3600,
+        issued_at: 123,
+    };
+
+    let err = persist_openai_oauth_token(&config, &token).unwrap_err();
+    assert!(
+        err.contains("access_token"),
+        "expected missing access_token error, got: {err}"
+    );
+
+    let data = AuthProfilesStore::new(tmp.path(), false).load().unwrap();
+    assert!(
+        data.profiles.is_empty(),
+        "blank-access OAuth token should not be persisted"
+    );
+}
+
+#[test]
+fn import_codex_cli_auth_file_stores_oauth_profile_with_account_metadata() {
+    let tmp = tempdir().unwrap();
+    let config = test_config(&tmp);
+    let access_token = unsigned_jwt(serde_json::json!({
+        "sub": "acct_from_jwt",
+        "exp": (Utc::now() + Duration::hours(1)).timestamp(),
+    }));
+    let auth_path = tmp.path().join("codex-auth.json");
+    std::fs::write(
+        &auth_path,
+        serde_json::json!({
+            "auth_mode": "chatgpt",
+            "tokens": {
+                "access_token": access_token.clone(),
+                "refresh_token": "codex-refresh",
+                "id_token": "codex-id",
+                "account_id": "acct_from_file",
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let profile = import_codex_cli_auth_from_path(&config, &auth_path).unwrap();
+
+    assert_eq!(profile.kind, AuthProfileKind::OAuth);
+    assert_eq!(
+        profile.metadata.get("account_id").map(String::as_str),
+        Some("acct_from_file")
+    );
+    let token_set = profile.token_set.as_ref().unwrap();
+    assert_eq!(token_set.access_token, access_token);
+    assert_eq!(token_set.refresh_token.as_deref(), Some("codex-refresh"));
+    assert_eq!(token_set.id_token.as_deref(), Some("codex-id"));
+    assert!(token_set.expires_at.is_some());
+
+    let credentials = lookup_openai_oauth_credentials(&config)
+        .unwrap()
+        .expect("imported oauth credentials");
+    assert_eq!(credentials.access_token, access_token);
+    assert_eq!(credentials.account_id.as_deref(), Some("acct_from_file"));
+    assert_eq!(
+        lookup_key_for_slug("openai", &config).unwrap(),
+        access_token
+    );
+}
+
+#[test]
+fn import_codex_cli_auth_extracts_nested_chatgpt_account_id() {
+    let tmp = tempdir().unwrap();
+    let config = test_config(&tmp);
+    let access_token = unsigned_jwt(serde_json::json!({
+        "https://api.openai.com/auth": {
+            "chatgpt_account_id": "acct_nested"
+        },
+        "sub": "acct_subject",
+        "exp": (Utc::now() + Duration::hours(1)).timestamp(),
+    }));
+    let auth_path = tmp.path().join("codex-auth.json");
+    std::fs::write(
+        &auth_path,
+        serde_json::json!({
+            "auth_mode": "chatgpt",
+            "tokens": {
+                "access_token": access_token,
+                "refresh_token": "codex-refresh"
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let profile = import_codex_cli_auth_from_path(&config, &auth_path).unwrap();
+
+    assert_eq!(
+        profile.metadata.get("account_id").map(String::as_str),
+        Some("acct_nested")
+    );
+    let credentials = lookup_openai_oauth_credentials(&config)
+        .unwrap()
+        .expect("imported oauth credentials");
+    assert_eq!(credentials.account_id.as_deref(), Some("acct_nested"));
+}
+
+#[test]
+fn import_codex_cli_auth_decodes_padded_base64url_access_token() {
+    let tmp = tempdir().unwrap();
+    let config = test_config(&tmp);
+    let payload = "eyJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF9hY2NvdW50X2lkIjoiYWNjdF9wYWRkZWQifSwibm9uY2UiOiI-In0=";
+    assert!(
+        (payload.contains('-') || payload.contains('_')) && payload.ends_with('='),
+        "test fixture must exercise padded base64url input"
+    );
+    let access_token = format!("e30.{payload}.");
+    let auth_path = tmp.path().join("codex-auth.json");
+    std::fs::write(
+        &auth_path,
+        serde_json::json!({
+            "auth_mode": "chatgpt",
+            "tokens": {
+                "access_token": access_token,
+                "refresh_token": "codex-refresh"
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let profile = import_codex_cli_auth_from_path(&config, &auth_path).unwrap();
+
+    assert_eq!(
+        profile.metadata.get("account_id").map(String::as_str),
+        Some("acct_padded")
+    );
+}
+
+#[test]
+fn import_codex_cli_auth_file_reports_missing_file_with_login_hint() {
+    let tmp = tempdir().unwrap();
+    let config = test_config(&tmp);
+    let err = import_codex_cli_auth_from_path(&config, &tmp.path().join("missing-auth.json"))
+        .unwrap_err();
+
+    assert!(err.contains("Could not read Codex CLI auth"));
+    assert!(err.contains("codex login"));
+}
+
+#[test]
 fn openai_oauth_status_reports_token_profile_as_disconnected() {
     let tmp = tempdir().unwrap();
     let config = test_config(&tmp);
@@ -414,6 +593,66 @@ fn lookup_openai_bearer_token_keeps_expired_token_when_refresh_fails_without_run
 
     let token = lookup_openai_bearer_token(&config).unwrap();
     assert_eq!(token.as_deref(), Some("expired-access"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn lookup_openai_bearer_token_does_not_persist_blank_refreshed_access_token() {
+    let _env_lock = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let tmp = tempdir().unwrap();
+    let config = test_config(&tmp);
+    let store = AuthProfilesStore::new(tmp.path(), false);
+    let original_profile = AuthProfile::new_oauth(
+        OPENAI_PROVIDER_KEY,
+        OPENAI_OAUTH_PROFILE_NAME,
+        TokenSet {
+            access_token: "oauth-access".into(),
+            refresh_token: Some("refresh-token".into()),
+            id_token: None,
+            expires_at: Some(Utc::now() - Duration::minutes(5)),
+            token_type: Some("Bearer".into()),
+            scope: None,
+        },
+    );
+    store.upsert_profile(original_profile, true).unwrap();
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "access_token": "   ",
+            "refresh_token": "refresh-updated",
+            "id_token": "id-updated",
+            "expires_in": 3600,
+        })))
+        .mount(&server)
+        .await;
+
+    let _env_guard = EnvVarGuard::set(
+        "OPENAI_CODEX_OAUTH_TOKEN_URL",
+        format!("{}/token", server.uri()),
+    );
+
+    let token = lookup_openai_bearer_token(&config).unwrap();
+    assert_eq!(
+        token.as_deref(),
+        Some("oauth-access"),
+        "invalid refresh payload should not replace the last known good access token"
+    );
+
+    let reloaded = AuthProfilesStore::new(tmp.path(), false).load().unwrap();
+    let stored = reloaded
+        .profiles
+        .get(&format!(
+            "{OPENAI_PROVIDER_KEY}:{OPENAI_OAUTH_PROFILE_NAME}"
+        ))
+        .expect("oauth profile should still exist after invalid refresh response");
+    let token_set = stored.token_set.as_ref().expect("oauth token_set");
+    assert_eq!(
+        token_set.access_token, "oauth-access",
+        "invalid refresh payload should not be persisted"
+    );
 }
 
 #[test]

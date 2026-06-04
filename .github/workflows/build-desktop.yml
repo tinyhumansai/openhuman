@@ -84,15 +84,6 @@ on:
           the Tauri shell since #1061).
         type: boolean
         default: false
-      skip_pretests:
-        description:
-          Metadata-only flag propagated by caller workflows when they
-          intentionally bypass the upstream pretest phase. This reusable build
-          workflow does not execute pretests itself, but it logs the policy so
-          the build run captures whether the normal release gate was relaxed for
-          this invocation.
-        type: boolean
-        default: false
       with_updater:
         description:
           When true, set `WITH_UPDATER=true` so the Tauri bundler emits the
@@ -124,6 +115,10 @@ jobs:
             args: --target x86_64-unknown-linux-gnu --bundles deb appimage
             target: x86_64-unknown-linux-gnu
             artifact_suffix: ubuntu
+          - platform: ubuntu-24.04-arm
+            args: --target aarch64-unknown-linux-gnu --bundles deb appimage
+            target: aarch64-unknown-linux-gnu
+            artifact_suffix: ubuntu-arm64
           - platform: windows-latest
             args: --target x86_64-pc-windows-msvc
             target: x86_64-pc-windows-msvc
@@ -143,7 +138,7 @@ jobs:
       - name: Log build policy
         shell: bash
         run: |
-          echo "[build-desktop] tag=${{ inputs.tag }} build_ref=${{ inputs.build_ref }} skip_pretests=${{ inputs.skip_pretests }}"
+          echo "[build-desktop] tag=${{ inputs.tag }} build_ref=${{ inputs.build_ref }}"
       - name: Set Xcode version
         if: matrix.settings.platform == 'macos-latest'
         uses: maxim-lobanov/setup-xcode@v1
@@ -162,13 +157,13 @@ jobs:
         with:
           targets: ${{ matrix.settings.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
       - name: Install Tauri dependencies (ubuntu only)
-        if: matrix.settings.platform == 'ubuntu-24.04'
+        if: startsWith(matrix.settings.platform, 'ubuntu-')
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
             patchelf cmake libasound2-dev libxdo-dev libxtst-dev libx11-dev libxi-dev \
-            libevdev-dev libssl-dev libclang-dev \
+            libevdev-dev libssl-dev libclang-dev desktop-file-utils \
             libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
             libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
             libgbm1 libpango-1.0-0 libcairo2 libatspi2.0-0 libxshmfence1 libu2f-udev
@@ -218,20 +213,27 @@ jobs:
       # Upstream @tauri-apps/cli doesn't bundle CEF framework files into the
       # produced installer. Only the fork at vendor/tauri-cef does. Build and
       # install that CLI so `cargo tauri build` invokes the cef-aware bundler.
+      #
+      # The cache key must include runner.arch, not just runner.os: cargo-tauri
+      # is a host-arch binary, and the Linux matrix runs on both x86_64
+      # (ubuntu-24.04) and aarch64 (ubuntu-24.04-arm) runners that share
+      # runner.os == 'Linux'. Keying on runner.os alone lets one arch restore
+      # the other arch's binary, which then fails to exec ("ELF ...: not found"
+      # / "Syntax error: word unexpected") when `cargo tauri build` runs it.
       - name: Cache vendored tauri-cli binary (unix)
         if: matrix.settings.platform != 'windows-latest'
         id: tauri-cli-cache-unix
         uses: actions/cache@v5
         with:
           path: ~/.cargo/bin/cargo-tauri
-          key: vendored-tauri-cli-${{ runner.os }}-${{ hashFiles('app/src-tauri/vendor/tauri-cef/crates/tauri-cli/Cargo.toml') }}
+          key: vendored-tauri-cli-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('app/src-tauri/vendor/tauri-cef/crates/tauri-cli/Cargo.toml') }}
       - name: Cache vendored tauri-cli binary (windows)
         if: matrix.settings.platform == 'windows-latest'
         id: tauri-cli-cache-windows
         uses: actions/cache@v5
         with:
           path: ~/.cargo/bin/cargo-tauri.exe
-          key: vendored-tauri-cli-${{ runner.os }}-${{ hashFiles('app/src-tauri/vendor/tauri-cef/crates/tauri-cli/Cargo.toml') }}
+          key: vendored-tauri-cli-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('app/src-tauri/vendor/tauri-cef/crates/tauri-cli/Cargo.toml') }}
       - name: Install vendored tauri-cli (cef-aware bundler)
         if:
           (matrix.settings.platform == 'windows-latest' && steps.tauri-cli-cache-windows.outputs.cache-hit
@@ -458,7 +460,7 @@ jobs:
       # ensures this still runs when `cargo tauri build` failed at bundling
       # (the binary itself is produced before bundling starts).
       - name: Dump linked libraries of built binary (ubuntu debug)
-        if: always() && matrix.settings.platform == 'ubuntu-24.04'
+        if: always() && startsWith(matrix.settings.platform, 'ubuntu-')
         shell: bash
         env:
           PROFILE: ${{ inputs.build_profile }}
@@ -487,7 +489,7 @@ jobs:
       # untouched. Re-signs the AppImage + updater tarball when signing
       # is enabled.
       - name: Strip host graphics libs from AppImage
-        if: matrix.settings.platform == 'ubuntu-24.04'
+        if: startsWith(matrix.settings.platform, 'ubuntu-')
         shell: bash
         env:
           MATRIX_TARGET: ${{ matrix.settings.target }}

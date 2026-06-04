@@ -256,33 +256,66 @@ impl ReflectionHook {
             );
         }
 
+        // Patterns and raw user-preference facts are independent best-effort
+        // writes with no shared mutable state. Each `store(...)` does a
+        // markdown write + SQLite tx + an embedding round-trip that does NOT
+        // hold the SQLite connection mutex across its `.await` (the lock is
+        // taken after the embed), so overlapping them with `join_all` lets
+        // their network/disk waits run concurrently instead of paying one
+        // document's full latency after another on the post-turn path.
+        //
+        // (`user_preferences` are also handled by `UserProfileHook`; the raw
+        // text is stored here as before.)
+        let mut writes: Vec<(&'static str, String, &str)> =
+            Vec::with_capacity(output.patterns.len() + output.user_preferences.len());
         for pattern in &output.patterns {
-            let slug = slugify(pattern);
-            let key = format!("pat/{slug}");
-            self.memory
-                .store(
-                    "learning_patterns",
-                    &key,
-                    pattern,
-                    MemoryCategory::Custom("learning_patterns".into()),
-                    None,
-                )
-                .await?;
+            writes.push((
+                "learning_patterns",
+                format!("pat/{}", slugify(pattern)),
+                pattern.as_str(),
+            ));
+        }
+        for pref in &output.user_preferences {
+            writes.push((
+                "user_profile",
+                format!("pref/{}", slugify(pref)),
+                pref.as_str(),
+            ));
         }
 
-        // User preferences are handled by UserProfileHook, but store raw if present
-        for pref in &output.user_preferences {
-            let slug = slugify(pref);
-            let key = format!("pref/{slug}");
-            self.memory
-                .store(
-                    "user_profile",
-                    &key,
-                    pref,
-                    MemoryCategory::Custom("user_profile".into()),
-                    None,
-                )
-                .await?;
+        let results =
+            futures::future::join_all(writes.into_iter().map(|(namespace, key, content)| {
+                let memory = &self.memory;
+                async move {
+                    memory
+                        .store(
+                            namespace,
+                            &key,
+                            content,
+                            MemoryCategory::Custom(namespace.into()),
+                            None,
+                        )
+                        .await
+                        .map_err(|e| (key, e))
+                }
+            }))
+            .await;
+
+        // Preserve the previous error contract: surface the first failure so
+        // the caller still rolls back the session counter. Unlike the old
+        // early-`?`, every independent write is now attempted regardless of a
+        // sibling's failure (these are best-effort learning writes).
+        let mut first_err = None;
+        for result in results {
+            if let Err((key, e)) = result {
+                log::warn!("[learning] failed to persist reflection write {key}: {e}");
+                if first_err.is_none() {
+                    first_err = Some(e);
+                }
+            }
+        }
+        if let Some(e) = first_err {
+            return Err(e);
         }
 
         // Reflection persistence is handled by the caller

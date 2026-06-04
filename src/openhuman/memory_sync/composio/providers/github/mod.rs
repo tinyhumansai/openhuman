@@ -12,6 +12,7 @@
 //!
 //! Issue: #2408.
 
+mod ingest;
 mod provider;
 mod sync;
 #[cfg(test)]

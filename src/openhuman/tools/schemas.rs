@@ -11,7 +11,7 @@ use serde_json::{json, Map, Value};
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 use crate::openhuman::config::rpc as config_rpc;
-use crate::openhuman::integrations::searxng::MAX_RESULTS as SEARXNG_MAX_RESULTS;
+use crate::openhuman::search::tools::SEARXNG_MAX_RESULTS;
 use crate::openhuman::tools::traits::Tool;
 use crate::rpc::RpcOutcome;
 
@@ -20,6 +20,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         tools_schemas("tools_composio_execute"),
         tools_schemas("tools_web_search"),
         tools_schemas("tools_seltz_search"),
+        tools_schemas("tools_querit_search"),
         tools_schemas("tools_searxng_search"),
         tools_schemas("tools_apify_linkedin_scrape"),
         tools_schemas("tools_polymarket_execute"),
@@ -39,6 +40,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: tools_schemas("tools_seltz_search"),
             handler: handle_seltz_search,
+        },
+        RegisteredController {
+            schema: tools_schemas("tools_querit_search"),
+            handler: handle_querit_search,
         },
         RegisteredController {
             schema: tools_schemas("tools_searxng_search"),
@@ -197,6 +202,96 @@ pub fn tools_schemas(function: &str) -> ControllerSchema {
                 name: "documents",
                 ty: TypeSchema::Array(Box::new(TypeSchema::Json)),
                 comment: "Each item: {url, content, title?, published_date?}.",
+                required: true,
+            }],
+        },
+        "tools_querit_search" => ControllerSchema {
+            namespace: "tools",
+            function: "querit_search",
+            description: "Web search via the Querit API. Returns current results with URLs, \
+                          snippets, site names, and page age. Supports site filters, \
+                          time ranges, country filters, and language filters.",
+            inputs: vec![
+                FieldSchema {
+                    name: "query",
+                    ty: TypeSchema::String,
+                    comment: "Search query string.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "max_results",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
+                    comment: "Max results (1-20, default 10).",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "count",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
+                    comment: "Querit-native alias for max_results.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "filters",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Json)),
+                    comment:
+                        "Querit-native filters object with sites, timeRange, geo, and languages.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "include_domains",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Array(Box::new(
+                        TypeSchema::String,
+                    )))),
+                    comment: "Only fetch results from these domains.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "exclude_domains",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Array(Box::new(
+                        TypeSchema::String,
+                    )))),
+                    comment: "Exclude results from these domains.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "time_range",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Querit date filter: d7, w2, m6, y1, or YYYY-MM-DDtoYYYY-MM-DD.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "from_date",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Start date for a Querit date-range filter (YYYY-MM-DD).",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "to_date",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "End date for a Querit date-range filter (YYYY-MM-DD).",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "countries",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Array(Box::new(
+                        TypeSchema::String,
+                    )))),
+                    comment: "Country filters, e.g. united states, japan, germany.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "languages",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Array(Box::new(
+                        TypeSchema::String,
+                    )))),
+                    comment: "Language filters, e.g. english, japanese, german.",
+                    required: false,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "results",
+                ty: TypeSchema::String,
+                comment: "Formatted Querit search results.",
                 required: true,
             }],
         },
@@ -422,7 +517,7 @@ fn handle_web_search(params: Map<String, Value>) -> ControllerFuture {
         });
 
         let resp = client
-            .post::<crate::openhuman::integrations::parallel::SearchResponse>(
+            .post::<crate::openhuman::search::tools::SearchResponse>(
                 "/agent-integrations/parallel/search",
                 &body,
             )
@@ -473,7 +568,7 @@ fn handle_seltz_search(params: Map<String, Value>) -> ControllerFuture {
             "[rpc][tools.seltz_search] start"
         );
 
-        let tool = crate::openhuman::integrations::SeltzSearchTool::new(
+        let tool = crate::openhuman::search::tools::SeltzSearchTool::new(
             config.seltz.api_key.clone(),
             config.seltz.api_url.clone(),
             max_results,
@@ -507,6 +602,87 @@ fn handle_seltz_search(params: Map<String, Value>) -> ControllerFuture {
         let payload = json!({ "documents": result.output() });
         let log = vec![format!(
             "[rpc][tools.seltz_search] success query_len={} max_results={}",
+            query.chars().count(),
+            max_results
+        )];
+        RpcOutcome::new(payload, log).into_cli_compatible_json()
+    })
+}
+
+fn handle_querit_search(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let query = params
+            .get("query")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .ok_or_else(|| "missing or empty `query`".to_string())?;
+        let max_results = params
+            .get("max_results")
+            .or_else(|| params.get("count"))
+            .and_then(Value::as_u64)
+            .map(|n| n.clamp(1, 20) as usize)
+            .unwrap_or(10);
+
+        let config = config_rpc::load_config_with_timeout().await?;
+        if !config.search.querit.has_key() {
+            tracing::debug!("[rpc][tools.querit_search] querit not configured — rejecting");
+            return Err("Querit search is not enabled. Set QUERIT_API_KEY to enable.".to_string());
+        }
+
+        let has_include_domains = params.get("include_domains").is_some();
+        let has_exclude_domains = params.get("exclude_domains").is_some();
+        let has_time_range = params.get("time_range").is_some();
+        let has_countries = params.get("countries").is_some();
+        let has_languages = params.get("languages").is_some();
+        let has_native_filters = params.get("filters").is_some();
+
+        tracing::debug!(
+            query_len = query.chars().count(),
+            max_results,
+            has_include_domains,
+            has_exclude_domains,
+            has_time_range,
+            has_countries,
+            has_languages,
+            has_native_filters,
+            "[rpc][tools.querit_search] start"
+        );
+
+        let tool = crate::openhuman::search::tools::QueritSearchTool::new(
+            config.search.querit.api_key.clone(),
+            None,
+            max_results,
+            config.search.timeout_secs,
+        );
+
+        let mut args = json!({ "query": query, "max_results": max_results });
+        let args_map = args.as_object_mut().unwrap();
+        for key in [
+            "count",
+            "filters",
+            "include_domains",
+            "exclude_domains",
+            "time_range",
+            "from_date",
+            "to_date",
+            "countries",
+            "languages",
+        ] {
+            if let Some(v) = params.get(key) {
+                args_map.insert(key.to_string(), v.clone());
+            }
+        }
+
+        let result = tool
+            .execute(args)
+            .await
+            .map_err(|e| format!("querit search failed: {e:#}"))?;
+
+        let payload = json!({ "results": result.output() });
+        let log = vec![format!(
+            "[rpc][tools.querit_search] success query_len={} max_results={}",
             query.chars().count(),
             max_results
         )];
@@ -553,7 +729,7 @@ fn handle_searxng_search(params: Map<String, Value>) -> ControllerFuture {
             "[rpc][tools.searxng_search] start"
         );
 
-        let tool = crate::openhuman::integrations::SearxngSearchTool::new(
+        let tool = crate::openhuman::search::tools::SearxngSearchTool::new(
             config.searxng.base_url.clone(),
             config.searxng.max_results,
             config.searxng.default_language.clone(),
@@ -561,7 +737,7 @@ fn handle_searxng_search(params: Map<String, Value>) -> ControllerFuture {
         );
 
         let response = tool
-            .search(crate::openhuman::integrations::SearxngSearchArgs {
+            .search(crate::openhuman::search::tools::SearxngSearchArgs {
                 query,
                 categories,
                 language,
@@ -713,13 +889,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn all_schemas_returns_six() {
-        assert_eq!(all_controller_schemas().len(), 6);
+    fn all_schemas_returns_seven() {
+        assert_eq!(all_controller_schemas().len(), 7);
     }
 
     #[test]
-    fn all_controllers_returns_six() {
-        assert_eq!(all_registered_controllers().len(), 6);
+    fn all_controllers_returns_seven() {
+        assert_eq!(all_registered_controllers().len(), 7);
     }
 
     #[test]
@@ -749,6 +925,22 @@ mod tests {
         assert!(s.inputs.iter().any(|f| f.name == "query" && f.required));
         assert!(s.inputs.iter().any(|f| f.name == "include_domains"));
         assert!(s.inputs.iter().any(|f| f.name == "scope"));
+    }
+
+    #[test]
+    fn querit_search_schema_shape() {
+        let s = tools_schemas("tools_querit_search");
+        assert_eq!(s.namespace, "tools");
+        assert_eq!(s.function, "querit_search");
+        assert!(s.inputs.iter().any(|f| f.name == "query" && f.required));
+        assert!(s.inputs.iter().any(|f| f.name == "filters"));
+        assert!(s.inputs.iter().any(|f| f.name == "count"));
+        assert!(s.inputs.iter().any(|f| f.name == "include_domains"));
+        assert!(s.inputs.iter().any(|f| f.name == "time_range"));
+        assert!(s.inputs.iter().any(|f| f.name == "from_date"));
+        assert!(s.inputs.iter().any(|f| f.name == "to_date"));
+        assert!(s.inputs.iter().any(|f| f.name == "countries"));
+        assert!(s.inputs.iter().any(|f| f.name == "languages"));
     }
 
     #[test]

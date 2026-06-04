@@ -13,6 +13,11 @@ use crate::openhuman::config::{
 const TIER_LARGE_CONTEXT: u64 = 200_000;
 const TIER_STANDARD_CONTEXT: u64 = 128_000;
 const TIER_LOCAL_CONTEXT: u64 = 8_192;
+/// Summarization tier. `summarization-v1` resolves to a long-context flash
+/// model (currently DeepSeek v4 flash, ~1M tokens). `extract_from_result`
+/// uses this window to single-shot whole oversized payloads instead of
+/// chunking, so it must reflect the real backing model's capacity.
+const TIER_SUMMARIZATION_CONTEXT: u64 = 1_000_000;
 
 /// How a pattern in [`MODEL_CONTEXT_PATTERNS`] is matched against a model id.
 #[derive(Copy, Clone)]
@@ -93,7 +98,8 @@ pub fn context_window_for_model(model: &str) -> Option<u64> {
 fn tier_context_window(model: &str) -> Option<u64> {
     match model {
         MODEL_REASONING_V1 | MODEL_AGENTIC_V1 | MODEL_CODING_V1 => Some(TIER_LARGE_CONTEXT),
-        MODEL_REASONING_QUICK_V1 | "summarization-v1" | "chat" => Some(TIER_STANDARD_CONTEXT),
+        "summarization-v1" => Some(TIER_SUMMARIZATION_CONTEXT),
+        MODEL_REASONING_QUICK_V1 | "chat" => Some(TIER_STANDARD_CONTEXT),
         m if m.starts_with("gemma") || m.contains(":1b") || m.contains("270m") => {
             Some(TIER_LOCAL_CONTEXT)
         }
@@ -101,9 +107,73 @@ fn tier_context_window(model: &str) -> Option<u64> {
     }
 }
 
+/// Resolve context window with local provider profile fallback.
+///
+/// When `context_window_for_model` returns `None` (unknown model name —
+/// common for local models like `qwen3:14b`, `phi3:mini`, etc.) this
+/// function falls back to the provider profile's declared default context
+/// window. This ensures preflight trimming still works for local models
+/// even when the exact model name isn't in the static pattern table.
+pub fn context_window_for_model_with_local_fallback(
+    model: &str,
+    local_kind: Option<crate::openhuman::inference::local::profile::LocalProviderKind>,
+) -> Option<u64> {
+    if let Some(window) = context_window_for_model(model) {
+        return Some(window);
+    }
+    // Fall back to the local provider profile's default context window.
+    if let Some(kind) = local_kind {
+        let profile = crate::openhuman::inference::local::profile::profile_for_kind(kind);
+        if let Some(default_ctx) = profile.default_context_window {
+            tracing::debug!(
+                model,
+                provider = kind.as_str(),
+                context_window = default_ctx,
+                "[model_context] using local provider profile default context window"
+            );
+            return Some(default_ctx);
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::openhuman::inference::local::profile::LocalProviderKind;
+
+    #[test]
+    fn local_fallback_uses_profile_default() {
+        // Unknown model with Ollama profile → 8192 default
+        assert_eq!(
+            context_window_for_model_with_local_fallback(
+                "qwen3:14b",
+                Some(LocalProviderKind::Ollama)
+            ),
+            Some(8_192)
+        );
+        // Unknown model with MLX profile → 4096 default
+        assert_eq!(
+            context_window_for_model_with_local_fallback(
+                "my-custom-model",
+                Some(LocalProviderKind::Mlx)
+            ),
+            Some(4_096)
+        );
+        // Unknown model with no local provider → None
+        assert_eq!(
+            context_window_for_model_with_local_fallback("qwen3:14b", None),
+            None
+        );
+        // Known model ignores local fallback
+        assert_eq!(
+            context_window_for_model_with_local_fallback(
+                "llama3:8b",
+                Some(LocalProviderKind::Ollama)
+            ),
+            Some(128_000)
+        );
+    }
 
     #[test]
     fn tier_aliases_resolve() {
@@ -112,6 +182,12 @@ mod tests {
         assert_eq!(
             context_window_for_model("reasoning-quick-v1"),
             Some(128_000)
+        );
+        // summarization-v1 maps to a ~1M-token flash model so the extractor can
+        // single-shot whole oversized payloads.
+        assert_eq!(
+            context_window_for_model("summarization-v1"),
+            Some(1_000_000)
         );
     }
 

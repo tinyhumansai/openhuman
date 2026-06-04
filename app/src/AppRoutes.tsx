@@ -7,6 +7,7 @@ import PublicRoute from './components/PublicRoute';
 import HumanPage from './features/human/HumanPage';
 import { getIsMobile } from './lib/platform';
 import Accounts from './pages/Accounts';
+import AgentWorkflows from './pages/AgentWorkflows';
 import Channels from './pages/Channels';
 import Home from './pages/Home';
 import Intelligence from './pages/Intelligence';
@@ -14,8 +15,11 @@ import Invites from './pages/Invites';
 import Notifications from './pages/Notifications';
 import Onboarding from './pages/onboarding/Onboarding';
 import Rewards from './pages/Rewards';
+import Routines from './pages/Routines';
 import Settings from './pages/Settings';
+import SkillNew from './pages/SkillNew';
 import Skills from './pages/Skills';
+import SkillsRun from './pages/SkillsRun';
 import WebCallbackPage from './pages/WebCallbackPage';
 import Welcome from './pages/Welcome';
 
@@ -79,6 +83,33 @@ const AppRoutes = () => {
         }
       />
 
+      {/* Skills lives at /skills with its 4 sub-tabs (Composio / Channels /
+          MCP Servers / Runners). The scheduled-skills dashboard concept
+          composes INSIDE the Runners sub-tab, not as a separate top-level
+          page — the bottom-bar "Connections" entry has always pointed at
+          /skills to surface Composio integrations + MCP, and that muscle
+          memory is restored here.
+          `/skills/new` is the create-a-skill authoring page.
+          Order matters: keep `/skills/new` before `/skills` so it wins the
+          prefix match. */}
+      <Route
+        path="/skills/new"
+        element={
+          <ProtectedRoute requireAuth={true}>
+            <SkillNew />
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/skills/run"
+        element={
+          <ProtectedRoute requireAuth={true}>
+            <SkillsRun />
+          </ProtectedRoute>
+        }
+      />
+
       <Route
         path="/skills"
         element={
@@ -127,10 +158,28 @@ const AppRoutes = () => {
       />
 
       <Route
+        path="/routines"
+        element={
+          <ProtectedRoute requireAuth={true}>
+            <Routines />
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
         path="/rewards"
         element={
           <ProtectedRoute requireAuth={true}>
             <Rewards />
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/workflows"
+        element={
+          <ProtectedRoute requireAuth={true}>
+            <AgentWorkflows />
           </ProtectedRoute>
         }
       />

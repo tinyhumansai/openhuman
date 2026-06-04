@@ -122,6 +122,17 @@ pub async fn ingest_document(
     tags: Vec<String>,
     doc: DocumentInput,
 ) -> Result<IngestResult> {
+    ingest_document_with_scope(config, source_id, owner, tags, doc, None).await
+}
+
+pub async fn ingest_document_with_scope(
+    config: &Config,
+    source_id: &str,
+    owner: &str,
+    tags: Vec<String>,
+    doc: DocumentInput,
+    path_scope: Option<String>,
+) -> Result<IngestResult> {
     if already_ingested(config, SourceKind::Document, source_id).await? {
         log::debug!(
             "[memory::ingest_pipeline] skip ingest_document — source_id_hash={} already ingested",
@@ -129,11 +140,12 @@ pub async fn ingest_document(
         );
         return Ok(IngestResult::already_ingested(source_id));
     }
-    let canonical =
-        match document::canonicalise(source_id, owner, &tags, doc).map_err(anyhow::Error::msg)? {
-            Some(c) => c,
-            None => return Ok(IngestResult::empty(source_id)),
-        };
+    let canonical = match document::canonicalise(source_id, owner, &tags, doc, path_scope)
+        .map_err(anyhow::Error::msg)?
+    {
+        Some(c) => c,
+        None => return Ok(IngestResult::empty(source_id)),
+    };
     persist(config, source_id, canonical).await
 }
 
@@ -491,9 +503,15 @@ mod tests {
         );
         let rows = list_chunks(&cfg, &ListChunksQuery::default()).unwrap();
         assert_eq!(rows[0].metadata.source_kind, SourceKind::Chat);
+        // #002 FR-002: `test_config()` configures NO embeddings provider, so the
+        // extract handler correctly SKIPS embedding rather than persisting a
+        // zero-vector that would silently poison semantic recall. The chunk is
+        // written embedding-less and stays re-embeddable once a provider is set
+        // up. (With a provider configured the embedding is present — see the
+        // `build_write_embedder` tests in memory_tree/score/embed/factory.rs.)
         assert!(get_chunk_embedding(&cfg, &out.chunk_ids[0])
             .unwrap()
-            .is_some());
+            .is_none());
     }
 
     #[tokio::test]

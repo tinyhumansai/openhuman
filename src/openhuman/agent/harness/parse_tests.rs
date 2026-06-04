@@ -267,10 +267,25 @@ fn structured_tool_call_and_history_helpers_round_trip_expected_shapes() {
     assert_eq!(parsed.len(), 1);
     assert_eq!(parsed[0].arguments, serde_json::json!({ "value": "hello" }));
 
-    let native = build_native_assistant_history("done", &tool_calls);
+    let native = build_native_assistant_history("done", None, &tool_calls);
     let native_json: serde_json::Value = serde_json::from_str(&native).expect("valid json");
     assert_eq!(native_json["content"], "done");
     assert_eq!(native_json["tool_calls"][0]["id"], "call-1");
+    // No reasoning supplied -> field omitted entirely (non-reasoning models
+    // must not gain a spurious `reasoning_content` key).
+    assert!(native_json.get("reasoning_content").is_none());
+
+    // DeepSeek thinking mode: reasoning must round-trip onto the tool-call
+    // turn (Sentry TAURI-RUST-4KB).
+    let native_reasoning =
+        build_native_assistant_history("done", Some("  step-by-step thoughts  "), &tool_calls);
+    let reasoning_json: serde_json::Value =
+        serde_json::from_str(&native_reasoning).expect("valid json");
+    assert_eq!(reasoning_json["reasoning_content"], "step-by-step thoughts");
+    // Whitespace-only reasoning is treated as absent.
+    let native_blank = build_native_assistant_history("done", Some("   "), &tool_calls);
+    let blank_json: serde_json::Value = serde_json::from_str(&native_blank).expect("valid json");
+    assert!(blank_json.get("reasoning_content").is_none());
 
     let xml_history = build_assistant_history_with_tool_calls("", &tool_calls);
     assert!(xml_history.contains("<tool_call>"));

@@ -38,7 +38,7 @@ describe('Multi-round tool conversation smoke', () => {
     const ok =
       (await textExists('Threads')) ||
       (await textExists('New')) ||
-      (await textExists('Type a message'));
+      (await textExists('How can I help'));
     expect(ok).toBe(true);
   });
 });

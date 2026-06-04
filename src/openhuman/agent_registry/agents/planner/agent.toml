@@ -1,0 +1,66 @@
+id = "planner"
+display_name = "Planner"
+delegate_name = "plan"
+when_to_use = "Architect — break a complex task into a small DAG of subtasks with explicit acceptance criteria. Reads memory and searches the web to ground plans in real context. Read-only; produces JSON, not code."
+temperature = 0.4
+max_iterations = 8
+iteration_policy = "extended"
+max_result_chars = 8000
+sandbox_mode = "read_only"
+omit_identity = true
+omit_memory_context = false
+omit_safety_preamble = true
+omit_skills_catalog = true
+
+# Spawn hierarchy: this is the deep-thinking tier (reasoning model hint).
+# The planner produces a DAG of leaf tasks for downstream workers; it
+# must NOT delegate to another `reasoning` agent. The loader rejects
+# any same-tier entry added to a future `subagents` list.
+agent_tier = "reasoning"
+
+[model]
+hint = "reasoning"
+
+[tools]
+# Read + research only. The planner produces plans — it never mutates
+# the workspace, memory, or state. Any writes the plan requires get
+# executed by downstream agents (code_executor, archivist, …) at the
+# orchestrator's direction.
+#
+# Composio meta-tools are included so the planner can inspect connected
+# integrations, list available actions, and pull data needed to ground
+# a plan. `sandbox_mode = "read_only"` above triggers the agent-level
+# gate in `composio_execute` that rejects Write/Admin-scoped action
+# slugs (#685), so the planner cannot send email / create pages / etc.
+# even though `composio_execute` is on this list. Only `Read`-scoped
+# actions slip past the gate.
+named = [
+    "file_read",
+    # Read-only nav primitives from #1208. `edit`, `apply_patch`, `lsp`
+    # are intentionally NOT included — sandbox_mode = "read_only" above
+    # forbids workspace mutations, and downstream agents do the writing.
+    # `todowrite` + `plan_exit` let the planner emit a structured
+    # todo list and a stable [plan_exit] marker for the orchestrator.
+    "grep",
+    "glob",
+    "list",
+    "todowrite",
+    "plan_exit",
+    "web_fetch",
+    "memory_recall",
+    "web_search_tool",
+    # Grounded research + market-data lookups so plans can be anchored in
+    # real numbers (stock/crypto prices) and current web context, not just
+    # whatever the model happens to remember.
+    "parallel_search",
+    "parallel_chat",
+    "parallel_research",
+    "stock_quote",
+    "stock_exchange_rate",
+    "stock_crypto_series",
+    "stock_commodity",
+    "composio_list_toolkits",
+    "composio_list_connections",
+    "composio_list_tools",
+    "composio_execute",
+]

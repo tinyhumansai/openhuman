@@ -9,23 +9,36 @@ use crate::openhuman::inference::provider::ChatMessage;
 use crate::openhuman::memory::{Memory, MemoryCategory, MemoryEntry, NamespaceSummary, RecallOpts};
 use async_trait::async_trait;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 /// Tiny in-memory `Memory` implementation good enough to drive the
 /// transcript-ingest pipeline. Not exposed outside tests.
 struct InMemory {
     entries: Mutex<Vec<MemoryEntry>>,
+    /// Live count of in-flight `store` calls and the high-water mark observed.
+    /// Used by the bounded-concurrency test to prove ingestion never exceeds
+    /// `PERSIST_CONCURRENCY` simultaneous persists.
+    in_flight: AtomicUsize,
+    peak_in_flight: AtomicUsize,
 }
 
 impl InMemory {
     fn new() -> Self {
         Self {
             entries: Mutex::new(Vec::new()),
+            in_flight: AtomicUsize::new(0),
+            peak_in_flight: AtomicUsize::new(0),
         }
     }
 
     fn snapshot(&self) -> Vec<MemoryEntry> {
         self.entries.lock().unwrap().clone()
+    }
+
+    /// High-water mark of concurrent `store` calls observed so far.
+    fn peak_in_flight(&self) -> usize {
+        self.peak_in_flight.load(Ordering::SeqCst)
     }
 }
 
@@ -43,26 +56,42 @@ impl Memory for InMemory {
         category: MemoryCategory,
         session_id: Option<&str>,
     ) -> anyhow::Result<()> {
-        let mut e = self.entries.lock().unwrap();
-        // Replace-on-collision so re-ingest is idempotent.
-        if let Some(existing) = e
-            .iter_mut()
-            .find(|e| e.namespace.as_deref() == Some(namespace) && e.key == key)
-        {
-            existing.content = content.to_string();
-            existing.timestamp = "2026-05-09T12:00:00Z".to_string();
-            return Ok(());
+        // Track concurrent entry and yield repeatedly *before* taking the
+        // (sync) lock so sibling persist futures genuinely overlap in time —
+        // otherwise a store that completes on first poll would never reveal
+        // concurrency. The lock is never held across an await point.
+        let now_in_flight = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+        self.peak_in_flight
+            .fetch_max(now_in_flight, Ordering::SeqCst);
+        for _ in 0..4 {
+            tokio::task::yield_now().await;
         }
-        e.push(MemoryEntry {
-            id: format!("id-{}-{}", namespace, key),
-            key: key.to_string(),
-            content: content.to_string(),
-            namespace: Some(namespace.to_string()),
-            category,
-            timestamp: "2026-05-09T12:00:00Z".to_string(),
-            session_id: session_id.map(|s| s.to_string()),
-            score: None,
-        });
+
+        {
+            let mut e = self.entries.lock().unwrap();
+            // Replace-on-collision so re-ingest is idempotent.
+            if let Some(existing) = e
+                .iter_mut()
+                .find(|e| e.namespace.as_deref() == Some(namespace) && e.key == key)
+            {
+                existing.content = content.to_string();
+                existing.timestamp = "2026-05-09T12:00:00Z".to_string();
+            } else {
+                e.push(MemoryEntry {
+                    id: format!("id-{}-{}", namespace, key),
+                    key: key.to_string(),
+                    content: content.to_string(),
+                    namespace: Some(namespace.to_string()),
+                    category,
+                    timestamp: "2026-05-09T12:00:00Z".to_string(),
+                    session_id: session_id.map(|s| s.to_string()),
+                    score: None,
+                    taint: Default::default(),
+                });
+            }
+        }
+
+        self.in_flight.fetch_sub(1, Ordering::SeqCst);
         Ok(())
     }
 
@@ -268,4 +297,48 @@ async fn ingest_filters_low_signal_chatter() {
     assert_eq!(report.extracted, 0);
     assert_eq!(report.stored, 0);
     assert!(mem.snapshot().is_empty());
+}
+
+#[tokio::test]
+async fn ingest_persists_candidates_with_bounded_concurrency() {
+    let mem = InMemory::new();
+    // Ten distinct preferences → ten distinct candidate keys (content-hashed),
+    // so all survive dedupe and reach the persist stage. Ten exceeds
+    // PERSIST_CONCURRENCY (8), so an unbounded fan-out would push more than 8
+    // stores in flight at once — the bound assertion below would then fail.
+    let transcript = SessionTranscript {
+        meta: fake_meta(Some("thr_bound")),
+        messages: vec![
+            ChatMessage::user("I prefer Postgres over MySQL for new metadata services."),
+            ChatMessage::user("I prefer tabs over spaces in our Go codebase."),
+            ChatMessage::user("I prefer dark mode in every editor I use."),
+            ChatMessage::user("I prefer trunk-based development over feature branches."),
+            ChatMessage::user("I prefer Rust for systems-level work on this team."),
+            ChatMessage::user("I prefer squash merges when landing pull requests."),
+            ChatMessage::user("I prefer pnpm over npm for all frontend workspaces."),
+            ChatMessage::user("I prefer monorepos for tightly coupled services."),
+            ChatMessage::user("I prefer integration tests over heavy mocking."),
+            ChatMessage::user("I prefer ISO-8601 timestamps in all our logs."),
+        ],
+    };
+
+    let report =
+        ingest_session_transcript(&mem, &transcript, &PathBuf::from("/tmp/500_main.jsonl"))
+            .await
+            .unwrap();
+
+    assert!(
+        report.stored >= 10,
+        "all ten distinct preferences should persist: {report:?}"
+    );
+
+    let peak = mem.peak_in_flight();
+    assert!(
+        peak <= PERSIST_CONCURRENCY,
+        "persist concurrency must stay bounded at {PERSIST_CONCURRENCY}, observed peak {peak}"
+    );
+    assert!(
+        peak >= 2,
+        "persists must actually overlap (else the bound is meaningless), observed peak {peak}"
+    );
 }

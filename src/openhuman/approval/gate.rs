@@ -18,14 +18,17 @@
 //! 5. The parked future wakes with the decision and translates it
 //!    into [`GateOutcome::Allow`] / `Deny`.
 //!
-//! Sessions: the gate is keyed by a per-launch `session_id` (the
-//! per-launch hex bearer the core hands out) for audit grouping.
-//! Rows from prior launches are intentionally preserved on init —
-//! the issue #1339 acceptance criterion requires they survive
-//! restart so the UI can show / dismiss orphans. Decisions on
-//! orphan rows update the DB but cannot resume a parked future
-//! across processes — no side effect can fire across launches, so
-//! the security invariant is preserved without auto-purging.
+//! Sessions: the gate is keyed by an internal per-launch UUID
+//! (`session-<uuid>`) used purely for audit grouping. This value is
+//! generated unconditionally by the caller (see
+//! `bootstrap_core_runtime`) and is never derived from the JSON-RPC
+//! bearer token or any other credential material — it is safe to
+//! persist and to log. Rows from prior launches are intentionally
+//! preserved on init — the issue #1339 acceptance criterion requires
+//! they survive restart so the UI can show / dismiss orphans.
+//! Decisions on orphan rows update the DB but cannot resume a parked
+//! future across processes — no side effect can fire across launches,
+//! so the security invariant is preserved without auto-purging.
 
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
@@ -35,6 +38,7 @@ use parking_lot::Mutex;
 use tokio::sync::oneshot;
 
 use crate::core::event_bus::{publish_global, DomainEvent};
+use crate::openhuman::agent::turn_origin::{self, AgentTurnOrigin, TrustedAutomationSource};
 use crate::openhuman::config::Config;
 use crate::openhuman::security::POLICY_DENIED_MARKER;
 
@@ -120,6 +124,17 @@ impl ApprovalGate {
     }
 
     fn new(config: Config, session_id: String, ttl: Duration) -> Self {
+        // Regression guard: the gate's session_id must be the per-launch
+        // UUID minted by `bootstrap_core_runtime` (shape:
+        // `session-<uuid>`). Any other shape risks re-introducing the
+        // credential leak that was fixed by switching off the RPC bearer
+        // — fail loudly in debug builds the moment a caller wires up a
+        // raw token (or any other ad-hoc string).
+        #[cfg(debug_assertions)]
+        debug_assert!(
+            session_id.starts_with("session-"),
+            "ApprovalGate session_id must be a per-launch UUID prefix, not a credential",
+        );
         Self {
             config,
             session_id,
@@ -196,24 +211,116 @@ impl ApprovalGate {
             return (GateOutcome::Allow, None);
         }
 
+        // Origin tells us who scheduled this turn. Entry points (web channel,
+        // channel runtime, subconscious, cron, CLI) scope a typed
+        // `AgentTurnOrigin` around `run_turn`. Unlabelled callers map to
+        // `Unknown`, which is denied — the gate refuses to execute an
+        // external_effect tool from an unlabelled call site.
+        let origin = turn_origin::current().unwrap_or(AgentTurnOrigin::Unknown);
+
         // Chat context (thread/client id) for routing the yes/no reply — set by
         // the web channel around the agent run; absent for non-chat callers.
         let chat_ctx = APPROVAL_CHAT_CONTEXT.try_with(|c| c.clone()).ok();
         let chat_thread_id = chat_ctx.as_ref().map(|c| c.thread_id.clone());
         let chat_client_id = chat_ctx.as_ref().map(|c| c.client_id.clone());
 
-        // The gate is interactive: it only engages when there's a live chat turn
-        // to surface the prompt to and a human to answer it. Background / triage
-        // / cron turns carry no `ApprovalChatContext` — they are pre-authorized
-        // autonomous automation, and gating them would park with nobody to
-        // answer (→ TTL timeout → deny), stalling the automation. So with no
-        // chat context, allow the call straight through.
-        if chat_ctx.is_none() {
-            tracing::debug!(
-                tool = tool_name,
-                "[approval::gate] no chat context (non-interactive turn) — not gating"
-            );
-            return (GateOutcome::Allow, None);
+        // Branch by origin. Web chat parks for an in-app approval; external
+        // channel persists an audit row and TTL-denies (no routable approval
+        // surface yet); trusted automation (cron, internal-only subconscious)
+        // is allowed through unchanged; tainted subconscious — a tick whose
+        // memory context contains external-sync chunks — is denied because
+        // remote text could otherwise steer it into an external_effect tool;
+        // CLI keeps the legacy allow; Unknown fails closed.
+        match &origin {
+            AgentTurnOrigin::WebChat { .. } => {
+                // Fall through to the existing chat-routed parking flow below.
+            }
+            AgentTurnOrigin::ExternalChannel {
+                channel,
+                reply_target,
+                message_id,
+            } => {
+                tracing::info!(
+                    tool = tool_name,
+                    channel = %channel,
+                    reply_target = %reply_target,
+                    message_id = %message_id,
+                    "[approval::gate] external channel turn — persisting audit row and parking \
+                     (will TTL-deny until a routable channel approval surface ships)"
+                );
+                // Fall through to the parking flow: a `pending_approvals` row
+                // is persisted (audit trail) and the future TTL-denies. We do
+                // NOT short-circuit to Allow here — remote inputs are
+                // untrusted, and there is no UI surface to route a yes/no on
+                // a non-web channel right now.
+            }
+            AgentTurnOrigin::TrustedAutomation {
+                source: TrustedAutomationSource::Cron,
+                job_id,
+            } => {
+                tracing::debug!(
+                    tool = tool_name,
+                    job_id = %job_id,
+                    "[approval::gate] trusted cron automation — allowing without prompt"
+                );
+                return (GateOutcome::Allow, None);
+            }
+            AgentTurnOrigin::TrustedAutomation {
+                source: TrustedAutomationSource::Subconscious,
+                job_id,
+            } => {
+                tracing::debug!(
+                    tool = tool_name,
+                    job_id = %job_id,
+                    "[approval::gate] trusted internal subconscious tick — allowing without prompt"
+                );
+                return (GateOutcome::Allow, None);
+            }
+            AgentTurnOrigin::TrustedAutomation {
+                source: TrustedAutomationSource::SubconsciousTainted,
+                job_id,
+            } => {
+                tracing::warn!(
+                    tool = tool_name,
+                    job_id = %job_id,
+                    "[approval::gate] subconscious tick with external-sync memory in context — \
+                     rejecting external_effect tool"
+                );
+                return (
+                    GateOutcome::Deny {
+                        reason: format!(
+                            "{POLICY_DENIED_MARKER} Tool '{tool_name}' rejected: subconscious turn \
+                             whose memory context includes external-sync chunks may not run \
+                             external_effect tools."
+                        ),
+                    },
+                    None,
+                );
+            }
+            AgentTurnOrigin::Cli => {
+                tracing::debug!(
+                    tool = tool_name,
+                    "[approval::gate] CLI / sub-agent caller — allowing without prompt"
+                );
+                return (GateOutcome::Allow, None);
+            }
+            AgentTurnOrigin::Unknown => {
+                tracing::warn!(
+                    tool = tool_name,
+                    "[approval::gate] agent turn has no origin label — refusing to execute \
+                     external_effect tool from unlabelled call site"
+                );
+                return (
+                    GateOutcome::Deny {
+                        reason: format!(
+                            "{POLICY_DENIED_MARKER} Tool '{tool_name}' rejected: agent turn has \
+                             no origin label. Refusing external_effect tool from unlabelled call \
+                             site."
+                        ),
+                    },
+                    None,
+                );
+            }
         }
 
         let request_id = uuid::Uuid::new_v4().to_string();
@@ -224,7 +331,6 @@ impl ApprovalGate {
             tool_name: tool_name.to_string(),
             action_summary: action_summary.to_string(),
             args_redacted: args_redacted.clone(),
-            session_id: self.session_id.clone(),
             created_at: now,
             expires_at,
         };
@@ -247,7 +353,7 @@ impl ApprovalGate {
                 .insert(thread_id.clone(), request_id.clone());
         }
 
-        if let Err(err) = store::insert_pending(&self.config, &pending) {
+        if let Err(err) = store::insert_pending(&self.config, &pending, &self.session_id) {
             self.evict_waiter(&request_id);
             self.clear_thread(&chat_thread_id);
             tracing::error!(
@@ -278,7 +384,6 @@ impl ApprovalGate {
             tool_name: tool_name.to_string(),
             action_summary: action_summary.to_string(),
             args_redacted,
-            session_id: self.session_id.clone(),
             thread_id: chat_thread_id.clone(),
             client_id: chat_client_id.clone(),
         });
@@ -502,7 +607,11 @@ mod tests {
             workspace_dir: dir.path().to_path_buf(),
             ..Config::default()
         };
-        let session = format!("test-session-{}", uuid::Uuid::new_v4());
+        // Mirrors the `session-<uuid>` shape minted by
+        // `bootstrap_core_runtime` in production so the
+        // `debug_assert!` regression guard in `ApprovalGate::new`
+        // doesn't trip in tests.
+        let session = format!("session-{}", uuid::Uuid::new_v4());
         // 500ms TTL was racing the 50×10ms poll loop on slow CI
         // runners — the row would expire (and get denied by
         // list_pending's lazy-expire) before `decide` could fire,
@@ -522,6 +631,16 @@ mod tests {
         }
     }
 
+    /// A matching web-chat origin for the chat context fixture. Tests
+    /// exercising the parking flow scope BOTH task-locals — production
+    /// callers in `channels/providers/web` do the same.
+    fn web_origin() -> AgentTurnOrigin {
+        AgentTurnOrigin::WebChat {
+            thread_id: "t-test".into(),
+            client_id: "c-test".into(),
+        }
+    }
+
     #[tokio::test]
     async fn approve_once_returns_allow() {
         let (gate, _dir) = test_gate();
@@ -529,12 +648,14 @@ mod tests {
 
         let g = gate.clone();
         let handle = tokio::spawn(async move {
-            APPROVAL_CHAT_CONTEXT
-                .scope(
+            turn_origin::with_origin(
+                web_origin(),
+                APPROVAL_CHAT_CONTEXT.scope(
                     chat_ctx(),
                     g.intercept("composio", "send slack", serde_json::json!({})),
-                )
-                .await
+                ),
+            )
+            .await
         });
 
         // Wait for pending row to land.
@@ -563,12 +684,14 @@ mod tests {
 
         let g = gate.clone();
         let handle = tokio::spawn(async move {
-            APPROVAL_CHAT_CONTEXT
-                .scope(
+            turn_origin::with_origin(
+                web_origin(),
+                APPROVAL_CHAT_CONTEXT.scope(
                     chat_ctx(),
                     g.intercept("pushover", "send push", serde_json::json!({})),
-                )
-                .await
+                ),
+            )
+            .await
         });
 
         let pending = loop {
@@ -610,11 +733,14 @@ mod tests {
         crate::openhuman::security::live_policy::install(
             Arc::new(policy),
             dir.path().to_path_buf(),
+            dir.path().to_path_buf(),
         );
 
         // An allow-listed tool short-circuits the gate to `Allow` immediately —
         // before any parking — even with a live chat context present, and
-        // without persisting a pending row.
+        // without persisting a pending row. The shortcut runs regardless of
+        // origin (it's the user's persisted "Always allow" allowlist), so we
+        // do not need to scope an origin for this case.
         let outcome = APPROVAL_CHAT_CONTEXT
             .scope(
                 chat_ctx(),
@@ -632,12 +758,14 @@ mod tests {
     async fn timeout_returns_deny() {
         let (gate, _dir) = test_gate(); // TTL = 500ms
         let gate = Arc::new(gate);
-        let outcome = APPROVAL_CHAT_CONTEXT
-            .scope(
+        let outcome = turn_origin::with_origin(
+            web_origin(),
+            APPROVAL_CHAT_CONTEXT.scope(
                 chat_ctx(),
                 gate.intercept("composio", "timed out", serde_json::json!({})),
-            )
-            .await;
+            ),
+        )
+        .await;
         match outcome {
             GateOutcome::Deny { reason } => assert!(reason.contains("timed out")),
             other => panic!("expected deny, got {other:?}"),
@@ -658,16 +786,24 @@ mod tests {
         let (gate, _dir) = test_gate();
         let gate = Arc::new(gate);
 
-        // Run intercept inside a scoped chat context (as the web channel does).
+        // Run intercept inside a scoped chat context + matching WebChat
+        // origin (as the web channel does in production).
         let g = gate.clone();
         let ctx = ApprovalChatContext {
             thread_id: "thread-42".into(),
             client_id: "client-1".into(),
         };
+        let origin = AgentTurnOrigin::WebChat {
+            thread_id: "thread-42".into(),
+            client_id: "client-1".into(),
+        };
         let handle = tokio::spawn(async move {
-            APPROVAL_CHAT_CONTEXT
-                .scope(ctx, g.intercept("shell", "run ls", serde_json::json!({})))
-                .await
+            turn_origin::with_origin(
+                origin,
+                APPROVAL_CHAT_CONTEXT
+                    .scope(ctx, g.intercept("shell", "run ls", serde_json::json!({}))),
+            )
+            .await
         });
 
         // While parked, the thread → request mapping is queryable.
@@ -719,16 +855,138 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn no_chat_context_is_allowed_not_gated() {
-        // The gate is interactive: a non-chat caller (background / triage / cron,
-        // no ApprovalChatContext) is allowed straight through — never parked —
-        // so autonomous turns don't stall on an approval no one can answer.
+    async fn intercept_with_unknown_origin_denies() {
+        // Unlabelled call site (no origin scope) maps to `Unknown` and is
+        // rejected. This replaces the previous "no chat context → Allow"
+        // legacy behaviour: the gate now refuses to execute external_effect
+        // tools from unlabelled call sites.
         let (gate, _dir) = test_gate();
         let outcome = gate
             .intercept("shell", "run ls", serde_json::json!({}))
             .await;
-        assert!(matches!(outcome, GateOutcome::Allow));
+        match outcome {
+            GateOutcome::Deny { reason } => assert!(reason.contains("origin label")),
+            other => panic!("expected deny, got {other:?}"),
+        }
         assert!(gate.pending_for_thread("thread-42").is_none());
+    }
+
+    #[tokio::test]
+    async fn intercept_with_trusted_cron_origin_allows_without_prompt() {
+        // Cron jobs the user explicitly authorized run trusted automation;
+        // the gate allows without prompt and does not persist a row.
+        let (gate, _dir) = test_gate();
+        let origin = AgentTurnOrigin::TrustedAutomation {
+            job_id: "cron-42".into(),
+            source: TrustedAutomationSource::Cron,
+        };
+        let outcome = turn_origin::with_origin(
+            origin,
+            gate.intercept("shell", "run ls", serde_json::json!({})),
+        )
+        .await;
+        assert!(matches!(outcome, GateOutcome::Allow));
+        assert!(
+            gate.list_pending().unwrap().is_empty(),
+            "trusted cron must not persist a pending row"
+        );
+    }
+
+    #[tokio::test]
+    async fn intercept_with_trusted_subconscious_origin_allows_without_prompt() {
+        // Subconscious ticks on internal-only memory are trusted automation
+        // and run unprompted (preserves pre-PR behavior for the safe case).
+        let (gate, _dir) = test_gate();
+        let origin = AgentTurnOrigin::TrustedAutomation {
+            job_id: "subconscious-tick".into(),
+            source: TrustedAutomationSource::Subconscious,
+        };
+        let outcome = turn_origin::with_origin(
+            origin,
+            gate.intercept("shell", "run ls", serde_json::json!({})),
+        )
+        .await;
+        assert!(matches!(outcome, GateOutcome::Allow));
+    }
+
+    #[tokio::test]
+    async fn intercept_with_subconscious_tainted_origin_denies() {
+        // A subconscious tick whose memory context contains external-sync
+        // chunks is rejected for external_effect tools — external text in
+        // memory could otherwise steer the tick into a tool call.
+        let (gate, _dir) = test_gate();
+        let origin = AgentTurnOrigin::TrustedAutomation {
+            job_id: "subconscious-tainted".into(),
+            source: TrustedAutomationSource::SubconsciousTainted,
+        };
+        let outcome = turn_origin::with_origin(
+            origin,
+            gate.intercept("send_email", "send", serde_json::json!({})),
+        )
+        .await;
+        match outcome {
+            GateOutcome::Deny { reason } => {
+                assert!(reason.contains("external-sync"), "reason was: {reason}")
+            }
+            other => panic!("expected deny, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn intercept_with_cli_origin_allows_without_prompt() {
+        // CLI / one-off internal callers (sub-agent invocations, scripts)
+        // are allowed through unprompted — there is no chat surface to
+        // park on, and the legacy CLI workflow assumes the operator
+        // authorized the invocation.
+        let (gate, _dir) = test_gate();
+        let outcome = turn_origin::with_origin(
+            AgentTurnOrigin::Cli,
+            gate.intercept("shell", "run ls", serde_json::json!({})),
+        )
+        .await;
+        assert!(matches!(outcome, GateOutcome::Allow));
+    }
+
+    #[tokio::test]
+    async fn intercept_with_external_channel_origin_persists_and_ttl_denies() {
+        // Non-web channel inbound (Telegram / Discord / Slack / etc.):
+        // persist an audit row but TTL-deny — there is no channel-routed
+        // approval surface yet, and the input is remote-attacker text.
+        let (gate, _dir) = test_gate(); // 2s TTL
+        let gate = Arc::new(gate);
+        let origin = AgentTurnOrigin::ExternalChannel {
+            channel: "telegram".into(),
+            reply_target: "tg-chat-1".into(),
+            message_id: "msg-1".into(),
+        };
+
+        let g = gate.clone();
+        let handle = tokio::spawn(async move {
+            turn_origin::with_origin(
+                origin,
+                g.intercept("shell", "run ls", serde_json::json!({})),
+            )
+            .await
+        });
+
+        // The audit row appears while the future is parked.
+        let mut tries = 0;
+        loop {
+            if !gate.list_pending().unwrap().is_empty() {
+                break;
+            }
+            tries += 1;
+            assert!(tries < 50, "audit row never appeared for external channel");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+
+        // Without a routable channel approval surface, the parked future
+        // TTL-denies (2s — matches the test_gate fixture).
+        let outcome = handle.await.unwrap();
+        match outcome {
+            GateOutcome::Deny { reason } => assert!(reason.contains("timed out")),
+            other => panic!("expected deny, got {other:?}"),
+        }
     }
 
     #[tokio::test]
@@ -741,15 +999,18 @@ mod tests {
         // (issue #2135).
         let g = gate.clone();
         let handle = tokio::spawn(async move {
-            // Scope a chat context *inside* the spawned task — task-locals don't
-            // cross `tokio::spawn`, and `intercept` only parks (creates a pending
-            // row) when a chat context is present.
-            APPROVAL_CHAT_CONTEXT
-                .scope(
+            // Scope a chat context + matching WebChat origin *inside* the
+            // spawned task — task-locals don't cross `tokio::spawn`, and
+            // `intercept` only parks (creates a pending row) for a chat
+            // turn whose origin labels it as web-routable.
+            turn_origin::with_origin(
+                web_origin(),
+                APPROVAL_CHAT_CONTEXT.scope(
                     chat_ctx(),
                     g.intercept_audited("composio", "send slack", serde_json::json!({})),
-                )
-                .await
+                ),
+            )
+            .await
         });
         let pending = loop {
             if let Some(p) = gate.list_pending().unwrap().into_iter().next() {
@@ -780,12 +1041,14 @@ mod tests {
         // Deny path → no id (nothing to record afterward).
         let g = gate.clone();
         let denied = tokio::spawn(async move {
-            APPROVAL_CHAT_CONTEXT
-                .scope(
+            turn_origin::with_origin(
+                web_origin(),
+                APPROVAL_CHAT_CONTEXT.scope(
                     chat_ctx(),
                     g.intercept_audited("composio", "send slack", serde_json::json!({})),
-                )
-                .await
+                ),
+            )
+            .await
         });
         let pending = loop {
             if let Some(p) = gate.list_pending().unwrap().into_iter().next() {
@@ -802,12 +1065,14 @@ mod tests {
         // Allowlist-shortcut path → also no id (no row was created).
         let g = gate.clone();
         let first = tokio::spawn(async move {
-            APPROVAL_CHAT_CONTEXT
-                .scope(
+            turn_origin::with_origin(
+                web_origin(),
+                APPROVAL_CHAT_CONTEXT.scope(
                     chat_ctx(),
                     g.intercept_audited("pushover", "first send", serde_json::json!({})),
-                )
-                .await
+                ),
+            )
+            .await
         });
         let pending = loop {
             if let Some(p) = gate

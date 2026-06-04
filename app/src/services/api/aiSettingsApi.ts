@@ -62,6 +62,8 @@ export const BACKGROUND_WORKLOADS: WorkloadId[] = [
   'subconscious',
 ];
 export const ALL_WORKLOADS: WorkloadId[] = [...CHAT_WORKLOADS, ...BACKGROUND_WORKLOADS];
+export const OPENAI_CODEX_OAUTH_MISSING_AUTH_URL = 'OPENAI_CODEX_OAUTH_MISSING_AUTH_URL';
+export const OPENAI_CODEX_OAUTH_MISSING_CALLBACK_URL = 'OPENAI_CODEX_OAUTH_MISSING_CALLBACK_URL';
 
 /** Provider reference parsed from a stored provider-string.
  *
@@ -73,7 +75,8 @@ export type ProviderRef =
   | { kind: 'openhuman' }
   | { kind: 'default' }
   | { kind: 'cloud'; providerSlug: string; model: string; temperature?: number | null }
-  | { kind: 'local'; model: string; temperature?: number | null };
+  | { kind: 'local'; model: string; temperature?: number | null }
+  | { kind: 'claude-code'; model: string; temperature?: number | null };
 
 /** Parse a `<model>[@<temp>]` suffix into `(model, temperature)`. */
 function splitModelAndTemp(raw: string): { model: string; temperature: number | null } {
@@ -116,6 +119,12 @@ export interface ProviderModelTestResult {
   reply: string;
 }
 
+export interface OpenAiCodexOAuthStartResult {
+  authUrl: string;
+  state?: string;
+  redirectUri?: string;
+}
+
 const PROVIDER_MODEL_TEST_TIMEOUT_MS = 120_000;
 
 /** Single in-memory snapshot the AI panel renders against. */
@@ -148,6 +157,12 @@ export function parseProviderString(s: string | null | undefined): ProviderRef {
     const { model, temperature } = splitModelAndTemp(trimmed.slice('ollama:'.length));
     return temperature == null ? { kind: 'local', model } : { kind: 'local', model, temperature };
   }
+  if (trimmed.startsWith('claude-code:')) {
+    const { model, temperature } = splitModelAndTemp(trimmed.slice('claude-code:'.length));
+    return temperature == null
+      ? { kind: 'claude-code', model }
+      : { kind: 'claude-code', model, temperature };
+  }
   const colonIdx = trimmed.indexOf(':');
   if (colonIdx > 0) {
     const slug = trimmed.slice(0, colonIdx).trim();
@@ -174,6 +189,8 @@ export function serializeProviderRef(ref: ProviderRef): string {
       return `${ref.providerSlug}:${joinModelAndTemp(ref.model, ref.temperature)}`;
     case 'local':
       return `ollama:${joinModelAndTemp(ref.model, ref.temperature)}`;
+    case 'claude-code':
+      return `claude-code:${joinModelAndTemp(ref.model, ref.temperature)}`;
   }
 }
 
@@ -207,7 +224,7 @@ export async function loadAISettings(): Promise<AISettings> {
   );
 
   const cloudProviders: CloudProviderView[] = config.cloud_providers
-    .filter(p => !['', 'cloud', 'openhuman', 'ollama', 'pid'].includes(p.slug.trim()))
+    .filter(p => !['', 'cloud', 'openhuman', 'pid'].includes(p.slug.trim()))
     .map(p => {
       const newKey = authKeyForSlug(p.slug).toLowerCase();
       const legacyKey = p.slug.toLowerCase();
@@ -274,7 +291,7 @@ export async function saveAISettings(prev: AISettings, next: AISettings): Promis
     })
   ) {
     patch.cloud_providers = next.cloudProviders
-      .filter(p => !['', 'cloud', 'openhuman', 'ollama', 'pid'].includes(p.slug.trim()))
+      .filter(p => !['', 'cloud', 'openhuman', 'pid'].includes(p.slug.trim()))
       .map(({ id, slug, label, endpoint, auth_style }) => ({
         id,
         slug,
@@ -326,6 +343,33 @@ export async function clearCloudProviderKey(slug: string): Promise<void> {
   // Clear the new-style key. Legacy bare-slug entries are left as-is
   // since we can't be sure they aren't used by other things.
   await authRemoveProviderCredentials({ provider: authKeyForSlug(slug), profile: 'default' });
+}
+
+export async function startOpenAiCodexOAuth(): Promise<OpenAiCodexOAuthStartResult> {
+  const res = await callCoreRpc<{ result: OpenAiCodexOAuthStartResult }>({
+    method: 'openhuman.inference_openai_oauth_start',
+    params: {},
+  });
+  const authUrl = res?.result?.authUrl?.trim();
+  if (!authUrl) {
+    throw new Error(OPENAI_CODEX_OAUTH_MISSING_AUTH_URL);
+  }
+  return res.result;
+}
+
+export async function completeOpenAiCodexOAuth(callbackUrl: string): Promise<void> {
+  const callback = callbackUrl.trim();
+  if (!callback) {
+    throw new Error(OPENAI_CODEX_OAUTH_MISSING_CALLBACK_URL);
+  }
+  await callCoreRpc({
+    method: 'openhuman.inference_openai_oauth_complete',
+    params: { callback_url: callback },
+  });
+}
+
+export async function importOpenAiCodexCliAuth(): Promise<void> {
+  await callCoreRpc({ method: 'openhuman.inference_openai_oauth_import_codex_cli', params: {} });
 }
 
 /**

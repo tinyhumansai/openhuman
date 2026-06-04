@@ -25,7 +25,131 @@ pub(crate) struct ApiChatRequest {
 #[derive(Debug, Serialize)]
 pub(crate) struct Message {
     pub(crate) role: String,
-    pub(crate) content: String,
+    pub(crate) content: MessageContent,
+}
+
+/// OpenAI Chat Completions message `content` — a union of a plain string
+/// (text-only, the overwhelming majority of messages) and an array of typed
+/// parts when the message carries image attachments.
+///
+/// Serialises with `#[serde(untagged)]` so the wire shape matches the OpenAI
+/// contract exactly: a bare JSON string for text, or a
+/// `[{ "type": "text", … }, { "type": "image_url", … }]` array for multimodal
+/// messages. Text-only requests stay byte-identical to the legacy wire shape,
+/// so this change is transparent for every non-attachment turn.
+#[derive(Debug, Clone, Serialize)]
+#[serde(untagged)]
+pub(crate) enum MessageContent {
+    Text(String),
+    Parts(Vec<ContentPart>),
+}
+
+/// One element of a multimodal `content` array.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type")]
+pub(crate) enum ContentPart {
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(rename = "image_url")]
+    ImageUrl { image_url: ImageUrl },
+}
+
+/// OpenAI `image_url` payload. `url` accepts either a base64 `data:` URI (what
+/// the chat composer produces) or a remote `https://` link.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct ImageUrl {
+    pub(crate) url: String,
+}
+
+/// `[IMAGE:<data-uri>]` marker prefix. Mirrors
+/// [`crate::openhuman::agent::multimodal`] — the agent harness embeds image
+/// attachments as these markers inside the message text, and the provider
+/// layer promotes them back into structured `image_url` parts at the wire
+/// boundary. Kept local to avoid a provider→agent dependency cycle.
+const IMAGE_MARKER_PREFIX: &str = "[IMAGE:";
+
+impl MessageContent {
+    /// Build message content from a raw chat-message string, promoting any
+    /// embedded `[IMAGE:<data-uri>]` markers into structured `image_url`
+    /// parts. Returns the plain-string [`MessageContent::Text`] arm when no
+    /// markers are present, so text-only messages are unchanged on the wire.
+    pub(crate) fn from_chat_text(content: &str) -> Self {
+        // Fast path: markerless content stays the plain-string arm, byte-identical.
+        if !content.contains(IMAGE_MARKER_PREFIX) {
+            return MessageContent::Text(content.to_string());
+        }
+
+        // Scan left-to-right, emitting `text` and `image_url` parts in the exact
+        // order they appear so interleaved prompts (`before [IMAGE:a] after`,
+        // `[IMAGE:a] explain`) keep the multimodal sequence the user authored.
+        let mut parts: Vec<ContentPart> = Vec::new();
+        let mut text_buf = String::new();
+        let mut cursor = 0usize;
+
+        while let Some(rel) = content[cursor..].find(IMAGE_MARKER_PREFIX) {
+            let start = cursor + rel;
+            text_buf.push_str(&content[cursor..start]);
+
+            let marker_start = start + IMAGE_MARKER_PREFIX.len();
+            let Some(rel_end) = content[marker_start..].find(']') else {
+                // Unterminated marker — keep the remainder as literal text.
+                text_buf.push_str(&content[start..]);
+                cursor = content.len();
+                break;
+            };
+
+            let end = marker_start + rel_end;
+            let candidate = content[marker_start..end].trim();
+            if candidate.is_empty() {
+                // `[IMAGE:]` with no payload — keep the literal text, no part.
+                text_buf.push_str(&content[start..=end]);
+            } else {
+                flush_text_part(&mut parts, &mut text_buf);
+                parts.push(ContentPart::ImageUrl {
+                    image_url: ImageUrl {
+                        url: candidate.to_string(),
+                    },
+                });
+            }
+            cursor = end + 1;
+        }
+        text_buf.push_str(&content[cursor..]);
+        flush_text_part(&mut parts, &mut text_buf);
+
+        // Only empty/invalid markers were present (no image parts) — fall back to
+        // the plain-string arm rather than emitting a lone text part.
+        if !parts
+            .iter()
+            .any(|p| matches!(p, ContentPart::ImageUrl { .. }))
+        {
+            return MessageContent::Text(content.to_string());
+        }
+        MessageContent::Parts(parts)
+    }
+}
+
+/// Drain `buf` into a trimmed `ContentPart::Text` when it holds non-whitespace,
+/// then clear it. Whitespace-only spans between markers are dropped.
+fn flush_text_part(parts: &mut Vec<ContentPart>, buf: &mut String) {
+    let trimmed = buf.trim();
+    if !trimmed.is_empty() {
+        parts.push(ContentPart::Text {
+            text: trimmed.to_string(),
+        });
+    }
+    buf.clear();
+}
+
+impl From<String> for MessageContent {
+    fn from(value: String) -> Self {
+        MessageContent::Text(value)
+    }
+}
+
+impl From<&str> for MessageContent {
+    fn from(value: &str) -> Self {
+        MessageContent::Text(value.to_string())
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -58,6 +182,27 @@ pub(crate) struct NativeChatRequest {
     /// streamed sessions (typically the orchestrator).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) stream_options: Option<OpenAiStreamOptions>,
+    /// Ollama-specific `options` block (e.g. `{"num_ctx": 32768}`).
+    /// Injected by the factory when the provider profile declares a
+    /// `num_ctx` override. Ignored (skipped) for non-Ollama providers.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) options: Option<OllamaOptions>,
+    /// OpenAI-compatible `frequency_penalty`. Set to a small positive value on
+    /// real requests to damp degenerate repetition loops — without it a model
+    /// that starts repeating a line keeps emitting it until the output-token
+    /// cap (self-reinforcing decoding). Skipped when `None` so providers that
+    /// don't accept it are unaffected.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) frequency_penalty: Option<f64>,
+}
+
+/// Ollama-specific request options passed in the `options` field.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct OllamaOptions {
+    /// Context window size override. Ollama defaults to 2048 for many
+    /// models; setting this ensures the model allocates enough KV-cache.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) num_ctx: Option<u32>,
 }
 
 /// OpenAI-spec `stream_options` payload (sent on the wire). Distinct from
@@ -72,11 +217,17 @@ pub(crate) struct OpenAiStreamOptions {
 pub(crate) struct NativeMessage {
     pub(crate) role: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) content: Option<String>,
+    pub(crate) content: Option<MessageContent>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) tool_call_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) tool_calls: Option<Vec<ToolCall>>,
+    /// Chain-of-thought reasoning returned by thinking models (DeepSeek-R1,
+    /// Qwen3, GLM-4, etc.) in the previous assistant turn. Per the API
+    /// contract it **must** be echoed back verbatim in the next request's
+    /// assistant message, or the provider returns HTTP 400.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) reasoning_content: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -87,12 +238,21 @@ pub(crate) struct ResponsesRequest {
     pub(crate) instructions: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) stream: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) store: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
 pub(crate) struct ResponsesInput {
     pub(crate) role: String,
-    pub(crate) content: String,
+    pub(crate) content: Vec<ResponsesContentPart>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct ResponsesContentPart {
+    #[serde(rename = "type")]
+    pub(crate) kind: String,
+    pub(crate) text: String,
 }
 
 // ── Response bodies ───────────────────────────────────────────────────────────
@@ -160,9 +320,14 @@ pub(crate) struct OpenHumanBilling {
 pub(crate) struct ResponseMessage {
     #[serde(default)]
     pub(crate) content: Option<String>,
-    /// Reasoning/thinking models (e.g. Qwen3, GLM-4) may return their output
-    /// in `reasoning_content` instead of `content`. Used as automatic fallback.
-    #[serde(default)]
+    /// Reasoning/thinking models may return their chain-of-thought in a
+    /// dedicated field instead of (or alongside) `content`. DeepSeek, Qwen3 and
+    /// GLM-4 name it `reasoning_content`; OpenRouter and vLLM/SGLang-backed
+    /// OpenAI-compatible proxies emit it as `reasoning`. Accept both so the CoT
+    /// is captured regardless of the (third-party) provider's field name — it
+    /// must be echoed back verbatim on tool-call turns or thinking models reject
+    /// the follow-up request with HTTP 400.
+    #[serde(default, alias = "reasoning")]
     pub(crate) reasoning_content: Option<String>,
     #[serde(default)]
     pub(crate) tool_calls: Option<Vec<ToolCall>>,
@@ -265,8 +430,10 @@ pub(crate) struct StreamChoice {
 pub(crate) struct StreamDelta {
     #[serde(default)]
     pub(crate) content: Option<String>,
-    /// Reasoning/thinking models may stream output via `reasoning_content`.
-    #[serde(default)]
+    /// Reasoning/thinking models may stream their chain-of-thought via
+    /// `reasoning_content` (DeepSeek/Qwen3/GLM-4) or `reasoning`
+    /// (OpenRouter, vLLM/SGLang proxies). Accept both delta field names.
+    #[serde(default, alias = "reasoning")]
     pub(crate) reasoning_content: Option<String>,
     /// Native tool-call chunks. Each entry is keyed by `index`; the first
     /// chunk for a given index carries `id`/`type`/`function.name`, later
