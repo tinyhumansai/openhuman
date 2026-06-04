@@ -15,7 +15,7 @@
 //! );
 //! ```
 
-use rusqlite::{params, Connection, Result as SqlResult};
+use rusqlite::{params, Connection, OptionalExtension, Result as SqlResult};
 use std::path::{Path, PathBuf};
 
 pub struct WatcherStateStore {
@@ -32,6 +32,7 @@ pub struct FileState {
 impl WatcherStateStore {
     /// Open (or create) the state database at `db_path`.
     pub fn open(db_path: &Path) -> SqlResult<Self> {
+        log::debug!("[watcher::state] open db_path={}", db_path.display());
         let conn = Connection::open(db_path)?;
         conn.execute_batch(
             "PRAGMA journal_mode = WAL;
@@ -42,11 +43,17 @@ impl WatcherStateStore {
                  deleted    INTEGER NOT NULL DEFAULT 0
              );",
         )?;
+        log::debug!("[watcher::state] open ok");
         Ok(Self { conn })
     }
 
     /// Upsert the mtime for `path`, marking it as not-deleted.
     pub fn record_seen(&mut self, path: &Path, mtime_secs: u64) -> SqlResult<()> {
+        log::trace!(
+            "[watcher::state] record_seen file={} mtime={}",
+            path.file_name().unwrap_or_default().to_string_lossy(),
+            mtime_secs
+        );
         self.conn.execute(
             "INSERT INTO vault_watcher_state (path, mtime_secs, deleted)
              VALUES (?1, ?2, 0)
@@ -58,6 +65,10 @@ impl WatcherStateStore {
 
     /// Mark `path` as deleted (keeps the row so we don't re-process on restart).
     pub fn record_deleted(&mut self, path: &Path) -> SqlResult<()> {
+        log::trace!(
+            "[watcher::state] record_deleted file={}",
+            path.file_name().unwrap_or_default().to_string_lossy()
+        );
         self.conn.execute(
             "INSERT INTO vault_watcher_state (path, mtime_secs, deleted)
              VALUES (?1, 0, 1)
@@ -85,9 +96,9 @@ impl WatcherStateStore {
 
     /// Load all non-deleted states — used at startup to seed the in-memory map.
     pub fn load_all(&self) -> SqlResult<Vec<FileState>> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT path, mtime_secs, deleted FROM vault_watcher_state")?;
+        let mut stmt = self.conn.prepare(
+            "SELECT path, mtime_secs, deleted FROM vault_watcher_state WHERE deleted = 0",
+        )?;
         let rows = stmt
             .query_map([], |row| {
                 let path: String = row.get(0)?;
@@ -100,12 +111,10 @@ impl WatcherStateStore {
                 })
             })?
             .collect::<SqlResult<Vec<_>>>()?;
+        log::debug!("[watcher::state] load_all rows={}", rows.len());
         Ok(rows)
     }
 }
-
-// `optional()` is a rusqlite extension trait — re-export for callers.
-use rusqlite::OptionalExtension;
 
 #[cfg(test)]
 mod tests {
@@ -154,17 +163,35 @@ mod tests {
     }
 
     #[test]
-    fn load_all_returns_all_rows() {
+    fn load_all_excludes_deleted() {
         let (mut store, _f) = open_tmp();
-        store
-            .record_seen(Path::new("/vault/a.md"), 1_000)
-            .unwrap();
-        store
-            .record_seen(Path::new("/vault/b.md"), 2_000)
-            .unwrap();
+        store.record_seen(Path::new("/vault/a.md"), 1_000).unwrap();
+        store.record_seen(Path::new("/vault/b.md"), 2_000).unwrap();
         store.record_deleted(Path::new("/vault/c.md")).unwrap();
         let rows = store.load_all().unwrap();
-        assert_eq!(rows.len(), 3);
-        assert_eq!(rows.iter().filter(|r| r.deleted).count(), 1);
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().all(|r| !r.deleted));
+    }
+
+    #[test]
+    fn reopen_persists_state() {
+        let f = NamedTempFile::new().unwrap();
+        let db_path = f.path().to_owned();
+        {
+            let mut store = WatcherStateStore::open(&db_path).unwrap();
+            store
+                .record_seen(Path::new("/vault/persist.md"), 42_000)
+                .unwrap();
+            store.record_deleted(Path::new("/vault/gone.md")).unwrap();
+        }
+        let store = WatcherStateStore::open(&db_path).unwrap();
+        assert_eq!(
+            store.last_mtime(Path::new("/vault/persist.md")).unwrap(),
+            Some(42_000)
+        );
+        assert_eq!(store.last_mtime(Path::new("/vault/gone.md")).unwrap(), None);
+        let all = store.load_all().unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].path, Path::new("/vault/persist.md"));
     }
 }
