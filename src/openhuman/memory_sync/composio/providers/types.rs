@@ -33,6 +33,35 @@ impl SyncReason {
     }
 }
 
+/// What kind of work an ingested task implies. GitHub's issues-and-PRs
+/// search returns both shapes, and the job differs fundamentally —
+/// *resolve* an issue vs *review* a pull request — so providers tag each
+/// task and the `task_sources` enrichment phrases the objective / agent
+/// prompt accordingly (the triage LLM then knows what to do). Providers
+/// that don't distinguish (notion, linear, clickup) leave this `Generic`.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskKind {
+    /// No issue/PR distinction — the default for non-code providers.
+    #[default]
+    Generic,
+    /// A tracker issue: the job is to resolve / implement it.
+    Issue,
+    /// A pull request: the job is to review it (read the diff, give feedback).
+    PullRequest,
+}
+
+impl TaskKind {
+    /// Stable lowercase tag, mirrored into the card's `source_metadata`.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            TaskKind::Generic => "generic",
+            TaskKind::Issue => "issue",
+            TaskKind::PullRequest => "pull_request",
+        }
+    }
+}
+
 /// Normalized user profile shape returned by every provider.
 ///
 /// The shared fields (`display_name`, `email`, `username`, `avatar_url`,
@@ -102,6 +131,10 @@ pub struct NormalizedTask {
     pub source_id: String,
     /// Toolkit slug, e.g. `"github"`.
     pub provider: String,
+    /// Whether this task is an issue, a pull request, or undifferentiated.
+    /// Drives intent-aware objective / prompt phrasing in enrichment.
+    #[serde(default)]
+    pub kind: TaskKind,
     pub title: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub body: Option<String>,
@@ -127,6 +160,19 @@ pub struct NormalizedTask {
     pub raw: serde_json::Value,
 }
 
+/// A selectable upstream task container (board / database / list) used to
+/// populate a picker so the user chooses from a list instead of pasting a
+/// raw id. Today this is a Notion database, later a Linear team or ClickUp
+/// list. Surfaced to the task-source UI as `{ id, title }`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskContainer {
+    /// Provider-native id (e.g. a Notion database id) used as the filter id.
+    pub id: String,
+    /// Human-readable label for the picker.
+    pub title: String,
+}
+
 /// Provider-agnostic filter passed into
 /// [`super::ComposioProvider::fetch_tasks`].
 ///
@@ -136,12 +182,33 @@ pub struct NormalizedTask {
 /// `database_id`; linear/clickup read `team_id`; …) and ignores the
 /// rest. `extra` is a free-form escape hatch surfaced in the UI for
 /// advanced provider-native query fragments.
+/// How the GitHub task-source fetch reaches GitHub. Shipped desktop users
+/// connect GitHub via Composio OAuth (no `gh` on PATH, no `GITHUB_TOKEN`),
+/// while local dev / self-host setups often have the reverse. `Auto` does the
+/// right thing for both; `Composio` / `Local` force a path when the user wants.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GithubFetchMode {
+    /// Try the connected Composio account first; fall back to local `gh`/REST
+    /// only when Composio is unavailable. The safe default — no regression for
+    /// shipped users, still a true fallback for local/dev.
+    #[default]
+    Auto,
+    /// Force the connected Composio account (classic shipped-app behaviour).
+    Composio,
+    /// Force local `gh` CLI / REST with a `GH_TOKEN`/`GITHUB_TOKEN` env token.
+    Local,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskFetchFilter {
     /// Scope to items assigned to (or involving) the authenticated user.
     #[serde(default)]
     pub assignee_is_me: bool,
+    /// GitHub fetch path selector (Composio vs local `gh`/REST). Default `Auto`.
+    #[serde(default)]
+    pub github_fetch_mode: GithubFetchMode,
     /// GitHub `owner/name` repository scope.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repo: Option<String>,

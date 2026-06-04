@@ -342,7 +342,7 @@ fn sample_thread() -> ConversationThread {
         last_message_at: "2026-01-01T00:00:00Z".into(),
         created_at: "2026-01-01T00:00:00Z".into(),
         parent_thread_id: None,
-        labels: vec!["work".to_string()],
+        labels: vec!["general".to_string()],
         personality_id: None,
     }
 }
@@ -368,7 +368,7 @@ fn thread_to_summary_preserves_all_fields() {
     assert_eq!(summary.message_count, 5);
     assert_eq!(summary.last_message_at, "2026-01-01T00:00:00Z");
     assert_eq!(summary.created_at, "2026-01-01T00:00:00Z");
-    assert_eq!(summary.labels, vec!["work".to_string()]);
+    assert_eq!(summary.labels, vec!["general".to_string()]);
 }
 
 #[test]

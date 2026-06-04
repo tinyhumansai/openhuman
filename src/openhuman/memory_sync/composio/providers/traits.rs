@@ -4,7 +4,8 @@ use async_trait::async_trait;
 
 use super::tool_scope::CuratedTool;
 use super::types::{
-    NormalizedTask, ProviderContext, ProviderUserProfile, SyncOutcome, SyncReason, TaskFetchFilter,
+    NormalizedTask, ProviderContext, ProviderUserProfile, SyncOutcome, SyncReason, TaskContainer,
+    TaskFetchFilter,
 };
 
 /// Native provider implementation for a specific Composio toolkit.
@@ -80,6 +81,20 @@ pub trait ComposioProvider: Send + Sync {
         let _ = (ctx, filter);
         Err(format!(
             "[composio:{}] provider has no task-fetch surface",
+            self.toolkit_slug()
+        ))
+    }
+
+    /// List the selectable containers the connected account exposes —
+    /// today Notion databases — so the task-source UI can offer a picker
+    /// instead of a raw-id text field.
+    ///
+    /// Default impl: `Err` — providers without a container surface opt out,
+    /// mirroring [`Self::fetch_tasks`].
+    async fn list_databases(&self, ctx: &ProviderContext) -> Result<Vec<TaskContainer>, String> {
+        let _ = ctx;
+        Err(format!(
+            "[composio:{}] provider has no database/container surface",
             self.toolkit_slug()
         ))
     }

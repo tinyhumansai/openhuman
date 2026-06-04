@@ -346,6 +346,7 @@ async fn web_round19_covers_classifier_variants_and_cancel_cleanup() {
         None,
         None,
         None,
+        None,
     )
     .await
     .expect("start forced web chat");

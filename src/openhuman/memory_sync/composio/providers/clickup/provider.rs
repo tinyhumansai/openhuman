@@ -32,7 +32,7 @@ use crate::openhuman::memory_sync::composio::providers::sync_state::SyncState;
 use crate::openhuman::memory_sync::composio::providers::{
     first_array_str, merge_extra, pick_str, resolve_sync_interval_secs, ComposioProvider,
     CuratedTool, NormalizedTask, ProviderContext, ProviderUserProfile, SyncOutcome, SyncReason,
-    TaskFetchFilter,
+    TaskFetchFilter, TaskKind,
 };
 
 pub(crate) const ACTION_GET_AUTHORIZED_USER: &str = "CLICKUP_GET_AUTHORIZED_USER";
@@ -585,6 +585,7 @@ fn normalize_clickup_task(task: &serde_json::Value) -> Option<NormalizedTask> {
         external_id,
         source_id: String::new(),
         provider: "clickup".to_string(),
+        kind: TaskKind::Generic,
         title,
         body: pick_str(task, &["description", "data.description", "text_content"]),
         url: pick_str(task, &["url", "data.url"]),

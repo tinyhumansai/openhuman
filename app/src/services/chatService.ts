@@ -942,6 +942,8 @@ export function subscribeChatEvents(listeners: ChatEventListeners): () => void {
   };
 }
 
+export type QueueMode = 'interrupt' | 'steer' | 'followup' | 'collect';
+
 export interface ChatSendParams {
   threadId: string;
   message: string;
@@ -954,6 +956,13 @@ export interface ChatSendParams {
    * working unchanged.
    */
   locale?: string | null;
+  /**
+   * Queue mode for concurrent messages. When a turn is already in
+   * flight: `steer` injects at the next iteration boundary, `followup`
+   * queues for after the turn, `collect` adds as context. `interrupt`
+   * (default) aborts the running turn.
+   */
+  queueMode?: QueueMode | null;
 }
 
 /**
@@ -979,6 +988,7 @@ export async function chatSend(params: ChatSendParams): Promise<void> {
       model_override: params.model ?? undefined,
       profile_id: params.profileId ?? undefined,
       locale: params.locale ?? undefined,
+      queue_mode: params.queueMode ?? undefined,
     },
   });
 }

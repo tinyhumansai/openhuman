@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react';
 
 import AddAccountModal from '../components/accounts/AddAccountModal';
 import { AgentIcon, ProviderIcon } from '../components/accounts/providerIcons';
-import RespondQueuePanel from '../components/accounts/RespondQueuePanel';
 import WebviewHost from '../components/accounts/WebviewHost';
 import { usePrewarmMostRecentAccount } from '../hooks/usePrewarmMostRecentAccount';
 import { useT } from '../lib/i18n/I18nContext';
@@ -20,7 +19,6 @@ import {
   setLastActiveAccount,
 } from '../store/accountsSlice';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
-import { fetchRespondQueue } from '../store/providerSurfaceSlice';
 import type { Account, AccountProvider, ProviderDescriptor } from '../types/accounts';
 import { AGENT_ACCOUNT_ID as AGENT_ID } from '../utils/accountsFullscreen';
 import { AgentChatPanel } from './Conversations';
@@ -108,18 +106,8 @@ const Accounts = () => {
   const order = useAppSelector(state => state.accounts.order);
   const activeAccountId = useAppSelector(state => state.accounts.activeAccountId);
   const unreadByAccount = useAppSelector(state => state.accounts.unread);
-  // Respond-queue selectors enabled
-  const respondQueue = useAppSelector(state => state.providerSurfaces.queue);
-  const respondQueueCount = useAppSelector(state => state.providerSurfaces.count);
-  const respondQueueStatus = useAppSelector(state => state.providerSurfaces.status);
-  const respondQueueError = useAppSelector(state => state.providerSurfaces.error);
-
   const [addOpen, setAddOpen] = useState(false);
   const [ctxMenu, setCtxMenu] = useState<ContextMenuState | null>(null);
-  // Respond Queue is a power-user surface (pending replies from connected
-  // accounts). Hidden by default so the agent chat gets full width; users
-  // can toggle it open from the header. (#XXXX)
-  const [respondQueueOpen, setRespondQueueOpen] = useState(false);
 
   useEffect(() => {
     startWebviewAccountService();
@@ -134,14 +122,6 @@ const Accounts = () => {
     [order, accountsById]
   );
   usePrewarmMostRecentAccount({ accounts, accountsById, activeAccountId });
-
-  useEffect(() => {
-    void dispatch(fetchRespondQueue());
-    const id = window.setInterval(() => {
-      void dispatch(fetchRespondQueue({ silent: true }));
-    }, 10_000);
-    return () => window.clearInterval(id);
-  }, [dispatch]);
 
   const connectedProviders = useMemo(
     () => new Set<AccountProvider>(accounts.map(a => a.provider)),
@@ -305,61 +285,7 @@ const Accounts = () => {
       {/* Main pane */}
       <main className="flex min-w-0 flex-1 flex-col">
         {isAgentSelected ? (
-          <div className="flex h-full min-w-0">
-            <div className="relative min-w-0 flex-1">
-              <AgentChatPanel />
-              {/* Floating toggle to reveal the Respond Queue side panel.
-                  Pinned top-right inside the chat pane so it doesn't shift
-                  layout when the panel opens/closes. */}
-              <button
-                type="button"
-                onClick={() => {
-                  trackEvent('tauri_browser_click', {
-                    surface: 'chat_right_sidebar',
-                    action: respondQueueOpen ? 'hide_respond_queue' : 'show_respond_queue',
-                    provider: 'agent',
-                  });
-                  setRespondQueueOpen(prev => !prev);
-                }}
-                data-analytics-id="chat-right-sidebar-respond-queue-toggle"
-                className="absolute right-4 top-4 z-10 inline-flex items-center gap-1 rounded-full border border-stone-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-1 text-[11px] font-medium text-stone-600 dark:text-neutral-300 shadow-soft hover:bg-stone-50 dark:hover:bg-neutral-800/60"
-                title={
-                  respondQueueOpen
-                    ? t('accounts.respondQueue.hide')
-                    : t('accounts.respondQueue.show')
-                }>
-                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"
-                  />
-                </svg>
-                <span>
-                  {t('accounts.respondQueue.title')}
-                  {respondQueueCount > 0 && ` (${respondQueueCount})`}
-                </span>
-              </button>
-            </div>
-            {/* Respond queue side panel — hidden by default; reveals via toggle */}
-            {respondQueueOpen && (
-              <RespondQueuePanel
-                items={respondQueue}
-                count={respondQueueCount}
-                status={respondQueueStatus}
-                error={respondQueueError}
-                onRefresh={() => {
-                  trackEvent('tauri_browser_click', {
-                    surface: 'chat_right_sidebar',
-                    action: 'refresh_respond_queue',
-                    provider: 'agent',
-                  });
-                  void dispatch(fetchRespondQueue());
-                }}
-              />
-            )}
-          </div>
+          <AgentChatPanel />
         ) : active ? (
           <div className="flex-1 py-3 pr-3">
             <WebviewHost accountId={active.id} provider={active.provider} />

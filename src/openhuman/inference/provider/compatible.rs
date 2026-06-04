@@ -41,6 +41,19 @@ use compatible_types::{
     ResponsesRequest, StreamChunkResponse, StreamingToolCall, ToolCall,
 };
 
+/// `frequency_penalty` applied to streaming chat-completions requests.
+///
+/// Autoregressive models have a self-reinforcing bias toward repeating spans
+/// already in their context; with no penalty a momentary repeat can spiral into
+/// the same line emitted until the output-token cap (degenerate decoding). A
+/// small positive penalty damps that loop without harming coherence. Carried on
+/// the streaming path (where those loops occur — long autonomous turns) and
+/// retried without it if a strict provider rejects it; the buffered
+/// non-streaming fallback omits it for maximum compatibility. Skipped in
+/// serialisation when `None` so providers that don't accept the field are
+/// unaffected.
+const CHAT_FREQUENCY_PENALTY: f64 = 0.3;
+
 /// A provider that speaks the OpenAI-compatible chat completions API.
 /// Used by: Venice, Vercel AI Gateway, Cloudflare AI Gateway, Moonshot,
 /// Synthetic, `OpenCode` Zen, `Z.AI`, `GLM`, `MiniMax`, Bedrock, Qianfan, Groq, Mistral, `xAI`, etc.
@@ -927,6 +940,23 @@ impl OpenAiCompatibleProvider {
 
     fn err_supports_no_tools_retry(error: &str) -> bool {
         Self::is_native_tool_schema_unsupported(reqwest::StatusCode::BAD_REQUEST, error)
+    }
+
+    /// Detect a provider rejecting the `frequency_penalty` sampling field. Some
+    /// strict OpenAI-compatible backends 400 on unknown params; when this fires
+    /// the caller retries once with the field omitted (mirrors the no-tools
+    /// retry). String-based because the streamed transport error surfaces the
+    /// API error body.
+    fn err_indicates_frequency_penalty_unsupported(error: &str) -> bool {
+        let lower = error.to_lowercase();
+        lower.contains("frequency_penalty")
+            && (lower.contains("unsupported")
+                || lower.contains("unknown")
+                || lower.contains("unrecognized")
+                || lower.contains("not supported")
+                || lower.contains("does not support")
+                || lower.contains("invalid")
+                || lower.contains("unexpected"))
     }
 
     /// Detect a 404 whose body says the model is completion-only and cannot be
@@ -1914,6 +1944,7 @@ impl Provider for OpenAiCompatibleProvider {
                     include_usage: true,
                 }),
                 options: self.build_ollama_options(),
+                frequency_penalty: Some(CHAT_FREQUENCY_PENALTY),
             };
             let stream_dump_seq = reserve_dump_seq();
             dump_prompt_if_enabled(&self.name, model, stream_dump_seq, &native_request);
@@ -1956,6 +1987,31 @@ impl Provider for OpenAiCompatibleProvider {
                                 );
                             }
                         }
+                    } else if Self::err_indicates_frequency_penalty_unsupported(&err_str) {
+                        // Symmetric to the no-tools retry: a strict provider that
+                        // 400s on `frequency_penalty` should degrade gracefully
+                        // rather than fail the whole chat path.
+                        log::info!(
+                            "[stream] {} rejected frequency_penalty — retrying streaming without it",
+                            self.name,
+                        );
+                        let retry_request = NativeChatRequest {
+                            frequency_penalty: None,
+                            ..native_request.clone()
+                        };
+                        match self
+                            .stream_native_chat(credential, &retry_request, tx, stream_dump_seq)
+                            .await
+                        {
+                            Ok(resp) => return Ok(resp),
+                            Err(retry_err) => {
+                                log::warn!(
+                                    "[stream] {} retry without frequency_penalty also failed, falling back to non-streaming: {}",
+                                    self.name,
+                                    retry_err
+                                );
+                            }
+                        }
                     } else {
                         log::warn!(
                             "[stream] {} streaming chat failed, falling back to non-streaming: {}",
@@ -1963,7 +2019,9 @@ impl Provider for OpenAiCompatibleProvider {
                             err
                         );
                     }
-                    // Fall through to the non-streaming path below.
+                    // Fall through to the non-streaming path below. The
+                    // non-streaming request below omits `frequency_penalty` so a
+                    // provider that rejected it (streaming or not) still succeeds.
                 }
             }
         }
@@ -1985,6 +2043,12 @@ impl Provider for OpenAiCompatibleProvider {
             thread_id,
             stream_options: None,
             options: self.build_ollama_options(),
+            // The buffered (non-streaming) path is the fallback / non-streaming
+            // provider path — omit `frequency_penalty` here for maximum
+            // compatibility (a provider that rejects it still succeeds). The
+            // streaming path above carries it (where degenerate repetition loops
+            // actually occur) and retries without it on rejection.
+            frequency_penalty: None,
         };
         let dump_seq = reserve_dump_seq();
         dump_prompt_if_enabled(&self.name, model, dump_seq, &native_request);
@@ -2182,6 +2246,7 @@ impl Provider for OpenAiCompatibleProvider {
         let client = self.http_client();
         let auth_header = self.auth_header.clone();
         let extra_headers = self.extra_headers.clone();
+        let openrouter_attribution_headers = self.openrouter_attribution_headers();
         let provider_name = self.name.clone();
         let model_owned = model.to_string();
 
@@ -2211,6 +2276,11 @@ impl Provider for OpenAiCompatibleProvider {
 
             for (name, value) in &extra_headers {
                 req_builder = req_builder.header(name.as_str(), value.as_str());
+            }
+            if let Some((referer, title)) = openrouter_attribution_headers {
+                req_builder = req_builder
+                    .header("HTTP-Referer", referer)
+                    .header("X-OpenRouter-Title", title);
             }
 
             // Set accept header for streaming
@@ -2354,6 +2424,8 @@ impl Provider for OpenAiCompatibleProvider {
         let url = self.chat_completions_url();
         let client = self.http_client();
         let auth_header = self.auth_header.clone();
+        let extra_headers = self.extra_headers.clone();
+        let openrouter_attribution_headers = self.openrouter_attribution_headers();
         let provider_name = self.name.clone();
         let model_owned = model.to_string();
 
@@ -2376,6 +2448,14 @@ impl Provider for OpenAiCompatibleProvider {
                     req_builder.header(header, credential)
                 }
             };
+            for (name, value) in &extra_headers {
+                req_builder = req_builder.header(name.as_str(), value.as_str());
+            }
+            if let Some((referer, title)) = openrouter_attribution_headers {
+                req_builder = req_builder
+                    .header("HTTP-Referer", referer)
+                    .header("X-OpenRouter-Title", title);
+            }
             req_builder = req_builder.header("Accept", "text/event-stream");
 
             let response = match req_builder.send().await {

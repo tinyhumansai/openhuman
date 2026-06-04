@@ -1992,6 +1992,7 @@ pub async fn bootstrap_core_runtime(embedded_core: bool) {
     // --- Event bus bootstrap ---
     // Ensure the global event bus is initialized (no-op if already done by start_channels).
     crate::core::event_bus::init_global(crate::core::event_bus::DEFAULT_CAPACITY);
+    crate::openhuman::file_state::init_global();
     // Register domain subscribers for cross-module event handling.
     // Uses a Once guard so repeated calls to bootstrap_core_runtime()
     // cannot double-subscribe.

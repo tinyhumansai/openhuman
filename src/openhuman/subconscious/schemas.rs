@@ -247,7 +247,7 @@ fn handle_reflections_act(params: Map<String, Value>) -> ControllerFuture {
                 title: thread_title,
                 created_at: now_iso.clone(),
                 parent_thread_id: None,
-                labels: Some(vec!["from_reflection".to_string()]),
+                labels: Some(vec!["subconscious".to_string()]),
                 personality_id: None,
             },
         )

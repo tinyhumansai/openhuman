@@ -29,6 +29,12 @@ const log = debug('todosApi');
  */
 export const USER_TASKS_THREAD_ID = 'user-tasks';
 
+/**
+ * Reserved board id used by the task source ingestion flow. Source-backed
+ * tasks land here before they are pulled into an agent workstream.
+ */
+export const TASK_SOURCES_THREAD_ID = 'task-sources';
+
 /** Wire shape returned by every `todos_*` handler (`TodosSnapshot`). */
 interface TodosSnapshotWire {
   threadId?: string | null;
@@ -43,6 +49,8 @@ export interface AddTodoInput {
   status?: TaskBoardCardStatus;
   objective?: string | null;
   notes?: string | null;
+  assignedAgent?: string | null;
+  approvalMode?: TaskApprovalMode | null;
 }
 
 /** Fields accepted when editing a card. Omitted fields are left unchanged. */
@@ -114,6 +122,8 @@ export const todosApi = {
         status: input.status,
         objective: input.objective,
         notes: input.notes,
+        assignedAgent: input.assignedAgent,
+        approvalMode: input.approvalMode,
       }),
     });
     return snapshotToBoard(snap, input.threadId);

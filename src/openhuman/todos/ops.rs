@@ -19,6 +19,15 @@ use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 use uuid::Uuid;
 
+/// Thread id backing the personal "user tasks" kanban board.
+///
+/// Must match the frontend constant in `app/src/services/api/todosApi.ts`.
+/// This is the board the kanban UI renders as the user's working lane and that
+/// the task dispatcher's board poller executes **agent-assigned** cards on
+/// (tasks approved out of the proactive `task-sources` inbox). Manually-created
+/// human cards on this board carry no `assigned_agent` and are never auto-run.
+pub const USER_TASKS_THREAD_ID: &str = "user-tasks";
+
 use super::store::{global_scratch_store, ScratchTodoStore};
 
 /// Serialise scratch CRUD so each public op's load → mutate → save

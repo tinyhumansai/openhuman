@@ -66,6 +66,7 @@ fn native_request_emits_thread_id_when_present() {
         thread_id: Some("thread-abc".to_string()),
         stream_options: None,
         options: None,
+        frequency_penalty: None,
     };
     let json = serde_json::to_value(&req).unwrap();
     assert_eq!(
@@ -84,12 +85,65 @@ fn native_request_emits_thread_id_when_present() {
         thread_id: None,
         stream_options: None,
         options: None,
+        frequency_penalty: None,
     };
     let json_no_thread = serde_json::to_value(&req_no_thread).unwrap();
     assert!(
         json_no_thread.get("thread_id").is_none(),
         "absent thread_id must not be serialized so non-OpenHuman backends don't reject the field"
     );
+}
+
+#[test]
+fn native_request_serializes_frequency_penalty_only_when_set() {
+    let base = super::NativeChatRequest {
+        model: "kimi".to_string(),
+        messages: Vec::new(),
+        temperature: Some(0.7),
+        stream: Some(false),
+        tools: None,
+        tool_choice: None,
+        thread_id: None,
+        stream_options: None,
+        options: None,
+        frequency_penalty: Some(0.3),
+    };
+    let json = serde_json::to_value(&base).unwrap();
+    assert_eq!(
+        json.get("frequency_penalty")
+            .and_then(serde_json::Value::as_f64),
+        Some(0.3),
+        "a set frequency_penalty must be forwarded to damp repetition loops"
+    );
+
+    let none = super::NativeChatRequest {
+        frequency_penalty: None,
+        ..base
+    };
+    let json_none = serde_json::to_value(&none).unwrap();
+    assert!(
+        json_none.get("frequency_penalty").is_none(),
+        "absent frequency_penalty must be omitted so providers that reject it are unaffected"
+    );
+}
+
+#[test]
+fn detects_frequency_penalty_rejection_for_retry() {
+    use super::OpenAiCompatibleProvider as P;
+    // Strict providers that 400 on the field → retry without it.
+    assert!(P::err_indicates_frequency_penalty_unsupported(
+        "400 Bad Request: unknown parameter 'frequency_penalty'"
+    ));
+    assert!(P::err_indicates_frequency_penalty_unsupported(
+        "frequency_penalty is not supported by this model"
+    ));
+    // Unrelated errors, or the field merely mentioned, must NOT trigger a retry.
+    assert!(!P::err_indicates_frequency_penalty_unsupported(
+        "rate limit exceeded"
+    ));
+    assert!(!P::err_indicates_frequency_penalty_unsupported(
+        "applied frequency_penalty 0.3"
+    ));
 }
 
 /// Streaming responses arrive without `usage` unless the request asks
@@ -111,6 +165,7 @@ fn streaming_request_sets_stream_options_include_usage() {
             include_usage: true,
         }),
         options: None,
+        frequency_penalty: None,
     };
     let json = serde_json::to_value(&req).unwrap();
     assert_eq!(
@@ -133,6 +188,7 @@ fn non_streaming_request_omits_stream_options() {
         thread_id: None,
         stream_options: None,
         options: None,
+        frequency_penalty: None,
     };
     let json = serde_json::to_value(&req).unwrap();
     assert!(
@@ -155,6 +211,7 @@ fn ollama_options_num_ctx_serializes_correctly() {
         options: Some(super::compatible_types::OllamaOptions {
             num_ctx: Some(32768),
         }),
+        frequency_penalty: None,
     };
     let json = serde_json::to_value(&req).unwrap();
     assert_eq!(
@@ -176,6 +233,7 @@ fn ollama_options_none_is_omitted() {
         thread_id: None,
         stream_options: None,
         options: None,
+        frequency_penalty: None,
     };
     let json = serde_json::to_value(&req).unwrap();
     assert!(
@@ -466,6 +524,60 @@ fn extra_headers_are_applied_with_auth_header() {
 }
 
 #[test]
+fn openrouter_requests_include_app_attribution_headers() {
+    let p = OpenAiCompatibleProvider::new(
+        "openrouter",
+        "https://openrouter.ai/api/v1",
+        Some("sk-or-test"),
+        AuthStyle::Bearer,
+    );
+
+    let req = p
+        .apply_auth_header(
+            p.http_client()
+                .post("https://openrouter.ai/api/v1/chat/completions"),
+            Some("sk-or-test"),
+        )
+        .build()
+        .unwrap();
+
+    assert_eq!(
+        req.headers()
+            .get("HTTP-Referer")
+            .and_then(|value| value.to_str().ok()),
+        Some("https://openhuman.ai")
+    );
+    assert_eq!(
+        req.headers()
+            .get("X-OpenRouter-Title")
+            .and_then(|value| value.to_str().ok()),
+        Some("OpenHuman")
+    );
+}
+
+#[test]
+fn non_openrouter_requests_do_not_include_openrouter_attribution_headers() {
+    let p = OpenAiCompatibleProvider::new(
+        "custom",
+        "https://api.example.com/v1",
+        Some("test-key"),
+        AuthStyle::Bearer,
+    );
+
+    let req = p
+        .apply_auth_header(
+            p.http_client()
+                .post("https://api.example.com/v1/chat/completions"),
+            Some("test-key"),
+        )
+        .build()
+        .unwrap();
+
+    assert!(req.headers().get("HTTP-Referer").is_none());
+    assert!(req.headers().get("X-OpenRouter-Title").is_none());
+}
+
+#[test]
 fn extra_query_params_are_applied_to_codex_urls() {
     let p = OpenAiCompatibleProvider::new(
         "openai",
@@ -702,6 +814,7 @@ async fn streaming_chat_config_rejection_propagates_error_without_sentry_report(
             include_usage: true,
         }),
         options: None,
+        frequency_penalty: None,
     };
     let (delta_tx, _delta_rx) = tokio::sync::mpsc::channel(8);
 

@@ -209,6 +209,10 @@ const messages: TranslationMap = {
   'home.usageExhaustedBody':
     'Seu uso incluído acabou por enquanto. Inicie uma assinatura para desbloquear mais capacidade contínua.',
   'home.usageExhaustedCta': 'Assinar',
+  'openrouterFree.cta': 'Usar modelos grátis da OpenRouter',
+  'openrouterFree.saving': 'Conectando à OpenRouter...',
+  'openrouterFree.error':
+    'Não foi possível mudar para os modelos grátis da OpenRouter. Verifique seu login da OpenRouter e tente novamente.',
   'home.routinesCard': 'Suas Rotinas',
   'home.routinesActive': '{count} ativas',
   'routines.title': 'Seus Hábitos',
@@ -1748,16 +1752,13 @@ const messages: TranslationMap = {
   'common.enable': 'Ativar',
   'chat.safetyTimeout':
     'Nenhuma resposta do agente após 2 minutos. Tente novamente ou verifique sua conexão.',
-  'chat.filter.all': 'Todos',
-  'chat.filter.work': 'Trabalho',
-  'chat.filter.briefing': 'Resumo',
-  'chat.filter.notification': 'Notificação',
-  'chat.filter.workers': 'Trabalhadores',
+  'chat.filter.general': 'Geral',
+  'chat.filter.subconscious': 'Subconsciente',
+  'chat.filter.tasks': 'Tarefas',
   'chat.selectThread': 'Selecione uma conversa',
   'chat.threads': 'Conversas',
   'chat.noThreads': 'Nenhuma conversa ainda',
   'chat.noLabelThreads': 'Nenhuma conversa "{label}"',
-  'chat.noWorkerThreads': 'Nenhuma thread de worker ainda',
   'chat.deleteThread': 'Excluir conversa',
   'chat.deleteThreadConfirm': 'Tem certeza de que deseja excluir "{title}"?',
   'chat.untitledThread': 'Conversa sem título',
@@ -2563,8 +2564,25 @@ const messages: TranslationMap = {
   'conversations.taskKanban.field.title': 'Título',
   'conversations.taskKanban.saveChanges': 'Salvar alterações',
   'conversations.taskKanban.deleteCard': 'Excluir',
+  'conversations.taskKanban.workTask': 'Trabalhar na tarefa',
+  'conversations.taskKanban.startingTask': 'Iniciando…',
   'conversations.taskKanban.updateFailed':
     'Não foi possível atualizar a tarefa; as alterações não foram salvas.',
+  'conversations.taskKanban.sourcesButton': 'Fontes',
+  'conversations.taskKanban.source.openExternal': 'Abrir tarefa externa',
+  'conversations.taskKanban.source.openExternalShort': 'Abrir',
+  'conversations.taskKanban.source.unknownProvider': 'Fonte desconhecida',
+  'conversations.taskKanban.source.urgencyValue': 'Urgência {percent}%',
+  'conversations.taskKanban.sources.desktopOnly':
+    'Os controles de fontes de tarefas estão disponíveis no app de desktop.',
+  'conversations.taskKanban.sources.title': 'Fontes de tarefas',
+  'conversations.taskKanban.sources.statusEnabled': 'Polling automático ativado',
+  'conversations.taskKanban.sources.manage': 'Gerenciar fontes',
+  'conversations.taskKanban.source.title': 'Fonte',
+  'conversations.taskKanban.source.sourceId': 'ID da fonte',
+  'conversations.taskKanban.source.externalId': 'ID externo',
+  'conversations.taskKanban.source.repo': 'Repositório',
+  'conversations.taskKanban.source.urgency': 'Urgência',
   'conversations.toolTimeline.turn': 'turno',
   'conversations.toolTimeline.step': 'Passo',
   'conversations.toolTimeline.workerThread': 'thread de worker',
@@ -2680,6 +2698,48 @@ const messages: TranslationMap = {
   'intelligence.tasks.composer.create': 'Criar tarefa',
   'intelligence.tasks.composer.creating': 'Criando…',
   'intelligence.tasks.composer.createFailed': 'Não foi possível criar a tarefa',
+  'intelligence.tasks.composer.assignAgentLabel': 'Deixe um agente cuidar disto automaticamente',
+  'intelligence.tasks.composer.assignAgentHint':
+    'O quadro de tarefas o executa por você. Deixe desativado para uma tarefa pessoal simples.',
+  'intelligence.tasks.sourceList.subtitle':
+    'Tarefas de fontes aguardando virar trabalho de agente.',
+  'intelligence.tasks.sourceList.empty': 'Nenhuma tarefa de fonte aguardando.',
+  'intelligence.tasks.sourceList.queued': 'Na fila',
+  'intelligence.tasks.sourceList.workOnTask': 'Trabalhar na tarefa',
+  'intelligence.tasks.sourcePlan.title': 'Refinar tarefa da fonte',
+  'intelligence.tasks.sourcePlan.subtitle':
+    'Revise o rascunho de pesquisa antes de criar uma tarefa de agente.',
+  'intelligence.tasks.sourcePlan.researchAgent': 'Rascunho do agente de pesquisa',
+  'intelligence.tasks.sourcePlan.approve': 'Aprovar plano',
+  'intelligence.tasks.sourcePlan.creating': 'Criando tarefa…',
+  'intelligence.tasks.sourcePlan.createFailed': 'Não foi possível criar a tarefa de agente',
+  'intelligence.tasks.workTaskFailed': 'Não foi possível iniciar o trabalho na tarefa',
+  'intelligence.workTask.sourceTaskHeading': 'Tarefa de origem:',
+  'intelligence.workTask.repositoryLine': '- Repositório: {repo}',
+  'intelligence.workTask.externalIdLine': '- ID externo: {externalId}',
+  'intelligence.workTask.urlLine': '- Endereço: {url}',
+  'intelligence.workTask.closingInstruction':
+    'Comece reformulando brevemente o plano de implementação concreto e depois execute-o. Mantenha o progresso visível neste tópico e atualize o quadro de tarefas quando o estado do trabalho mudar.',
+  'intelligence.refine.objectiveDefault':
+    'Transforme a tarefa de origem em uma tarefa de agente pronta para implementação: {title}',
+  'intelligence.refine.sourceLine': 'Origem: {url}',
+  'intelligence.refine.sourceIntake': 'Origem: recepção de fontes de tarefas',
+  'intelligence.refine.repositoryLine': 'Repositório: {repo}',
+  'intelligence.refine.externalTaskLine': 'Tarefa externa: {externalId}',
+  'intelligence.refine.planStep1':
+    'Leia a tarefa de origem vinculada e confirme o comportamento exato solicitado.',
+  'intelligence.refine.planStep2':
+    'Inspecione os caminhos de código relevantes e identifique o menor limite de implementação.',
+  'intelligence.refine.planStep3':
+    'Implemente a mudança com testes focados no comportamento visível ao usuário.',
+  'intelligence.refine.planStep4':
+    'Execute validação direcionada e registre quaisquer riscos remanescentes ou trabalho de acompanhamento.',
+  'intelligence.refine.acceptance1':
+    'Os requisitos da tarefa de origem estão representados na implementação final.',
+  'intelligence.refine.acceptance2':
+    'Testes unitários ou de integração relevantes cobrem o comportamento alterado.',
+  'intelligence.refine.acceptance3':
+    'Os resultados da validação e qualquer risco não resolvido são registrados na conclusão.',
   'notifications.card.dismiss': 'Dispensar notificação',
   'notifications.card.importanceTitle': 'Importância: {pct}%',
   'notifications.center.empty': 'Nenhuma notificação ainda',
@@ -4198,6 +4258,8 @@ const messages: TranslationMap = {
   'chat.agentProfile.defaultAgentLabel': 'Orquestrador',
   'chat.agentProfile.exists': 'O perfil de agente "{name}" já existe.',
   'chat.agentProfile.label': 'Perfil do agente',
+  'chat.agentProfile.quick': 'Rápido',
+  'chat.agentProfile.reasoning': 'Raciocínio',
   'chat.agentProfile.namePlaceholder': 'Nome do perfil',
   'chat.agentProfile.promptStylePlaceholder': 'Estilo de prompt',
   'chat.agentProfile.allowedToolsPlaceholder': 'Ferramentas permitidas',
@@ -4332,6 +4394,10 @@ const messages: TranslationMap = {
   'settings.taskSources.github.repo': 'Repositório (proprietário/nome, opcional)',
   'settings.taskSources.github.labels': 'Etiquetas (separadas por vírgula)',
   'settings.taskSources.notion.database': 'ID do banco de dados (quadro)',
+  'settings.taskSources.notion.browseDatabases': 'Explorar bancos de dados',
+  'settings.taskSources.notion.loadingDatabases': 'Carregando bancos de dados…',
+  'settings.taskSources.notion.selectDatabase': 'Selecione um banco de dados…',
+  'settings.taskSources.notion.noDatabases': 'Nenhum banco de dados encontrado para esta conexão.',
   'settings.taskSources.linear.team': 'ID da equipe (opcional)',
   'settings.taskSources.clickup.team': 'ID do espaço de trabalho (equipe) (opcional)',
   'settings.taskSources.assignedToMe': 'Apenas itens atribuídos a mim',
@@ -4767,6 +4833,18 @@ const messages: TranslationMap = {
   'memoryData.windowError': 'Janela de memória',
   'memoryData.windowUpdated': 'Janela de memória atualizada',
   'memoryData.windowUpdatedMsg': 'Definida para {window}.',
+
+  // Run queue
+  'runQueue.mode.interrupt': 'Interromper',
+  'runQueue.mode.steer': 'Direcionar',
+  'runQueue.mode.followup': 'Acompanhamento',
+  'runQueue.mode.collect': 'Adicionar contexto',
+  'runQueue.queued': 'Mensagem na fila',
+  'runQueue.steerHint': 'Direcionar o turno atual',
+  'runQueue.followupHint': 'Colocar na fila como acompanhamento',
+  'runQueue.collectHint': 'Adicionar como contexto extra',
+  'runQueue.status': '{total} na fila',
+  'runQueue.cleared': 'Fila limpa',
 };
 
 export default messages;

@@ -11,7 +11,10 @@ use crate::openhuman::memory::sync::{emit_sync_stage, MemorySyncStage, MemorySyn
 use crate::openhuman::memory::tree_source::get_or_create_source_tree;
 use crate::openhuman::memory_sources::readers;
 use crate::openhuman::memory_sources::readers::github;
-use crate::openhuman::memory_sources::types::{MemorySourceEntry, SourceContent, SourceKind};
+use crate::openhuman::memory_sources::readers::SourceReader;
+use crate::openhuman::memory_sources::types::{
+    MemorySourceEntry, SourceContent, SourceItem, SourceKind,
+};
 use crate::openhuman::memory_store::content::raw::{self as raw_store, RawItem};
 use crate::openhuman::memory_store::trees::types::TreeKind;
 use crate::openhuman::memory_store::trees::types::INPUT_TOKEN_BUDGET;
@@ -23,6 +26,8 @@ use crate::openhuman::memory_tree::ingest::{ingest_summary, SummaryIngestInput};
 use crate::openhuman::memory_tree::summarise::{
     fallback_summary, summarise, SummaryContext, SummaryInput,
 };
+use futures::stream::StreamExt;
+use std::path::Path;
 
 pub struct GithubSourcePipeline {
     source: MemorySourceEntry,
@@ -112,71 +117,15 @@ pub async fn run_github_sync(
     );
 
     let content_root = config.memory_tree_content_root();
-    let mut inputs: Vec<SummaryInput> = Vec::with_capacity(total);
-    let mut child_labels: Vec<String> = Vec::with_capacity(total);
-    let mut child_basenames: Vec<Option<String>> = Vec::with_capacity(total);
-
-    for (idx, item) in items.iter().enumerate() {
-        let content = match reader.read_item(source, &item.id, config).await {
-            Ok(c) => c,
-            Err(e) => {
-                tracing::warn!(
-                    item_id = %item.id,
-                    error = %e,
-                    "[memory_sync:github] skipping item — read failed"
-                );
-                continue;
-            }
-        };
-
-        if let Some(ref raw_sid) = raw_source_id {
-            write_raw_archive(
-                raw_sid,
-                &item.id,
-                item.updated_at_ms,
-                &content,
-                &content_root,
-            );
-        }
-
-        // Compute the raw archive relative path for the wikilink.
-        let raw_path = raw_source_id.as_deref().and_then(|raw_sid| {
-            let (kind, uid) = github::raw_archive_coords(&item.id)?;
-            let created_at_ms = item.updated_at_ms.unwrap_or(0);
-            let rel = raw_store::raw_rel_path(raw_sid, kind, created_at_ms, &uid);
-            Some(rel.strip_suffix(".md").unwrap_or(&rel).to_string())
-        });
-
-        let token_count = (content.body.len() / 4).max(1) as u32;
-        let priority = item_is_high_priority(&item.id, &content);
-        let ts = item
-            .updated_at_ms
-            .and_then(chrono::DateTime::from_timestamp_millis)
-            .unwrap_or_else(chrono::Utc::now);
-
-        inputs.push(SummaryInput {
-            id: item.id.clone(),
-            content: content.body,
-            token_count,
-            entities: Vec::new(),
-            topics: vec!["memory_sources".to_string(), kind_str.to_string()],
-            time_range_start: ts,
-            time_range_end: ts,
-            score: if priority { 0.8 } else { 0.5 },
-        });
-        child_labels.push(item.id.clone());
-        child_basenames.push(raw_path);
-
-        if (idx + 1) % 100 == 0 || idx + 1 == total {
-            emit_sync_stage(
-                MemorySyncTrigger::Manual,
-                MemorySyncStage::Ingesting,
-                Some(kind_str),
-                Some(source_id),
-                Some(format!("{}/{total} read", idx + 1)),
-            );
-        }
-    }
+    let (inputs, child_labels, child_basenames) = read_items_buffered(
+        reader.as_ref(),
+        &items,
+        source,
+        config,
+        raw_source_id.as_deref(),
+        &content_root,
+    )
+    .await;
 
     if inputs.is_empty() {
         return Ok(SyncOutcome {
@@ -350,6 +299,129 @@ pub async fn run_github_sync(
     })
 }
 
+/// Max number of `read_item` round-trips kept in flight at once while reading
+/// a transcript's worth of GitHub items. Each read is a GitHub API / `gh` CLI
+/// call (issues/PRs always fetch comments — see `read_issue`/`read_pr` — even
+/// when the body is served from the list cache), so bounding the fan-out keeps
+/// a large repo from opening hundreds of concurrent requests and tripping
+/// GitHub's secondary rate limits.
+const GITHUB_READ_CONCURRENCY: usize = 8;
+
+/// Read every listed item into the parallel `(inputs, labels, basenames)`
+/// vectors used to build the source tree.
+///
+/// Reads run with **bounded concurrency** (`GITHUB_READ_CONCURRENCY`) instead
+/// of one sequential `.await` each: a repo routinely lists 100+ items and every
+/// `read_item` is an independent network round-trip, so overlapping their waits
+/// is a real wall-time win on this background sync job.
+///
+/// Order is **preserved** (`buffered`, not `buffer_unordered`): the three
+/// returned vectors are positionally aligned and consumed in lockstep by
+/// `batch_by_token_budget`, so reordering them would scramble label/basename
+/// provenance. A read failure is logged and the item is skipped (it pushes
+/// nothing), exactly as the previous sequential `continue` did.
+///
+/// The per-item futures are collected into a `Vec` before `buffered` for the
+/// same higher-ranked-lifetime reason as elsewhere in the codebase: mapping
+/// lazily on the stream stores the closure in the polled state and requires it
+/// to hold for any lifetime, which fails once the whole sync future is spawned
+/// (`Send + 'static`). Collecting builds concrete-lifetime futures up front.
+async fn read_items_buffered(
+    reader: &dyn SourceReader,
+    items: &[SourceItem],
+    source: &MemorySourceEntry,
+    config: &Config,
+    raw_source_id: Option<&str>,
+    content_root: &Path,
+) -> (Vec<SummaryInput>, Vec<String>, Vec<Option<String>>) {
+    let total = items.len();
+    let kind_str = source.kind.as_str();
+    let source_id = source.id.as_str();
+
+    let item_futs: Vec<_> = items
+        .iter()
+        .map(|item| async move {
+            let content = match reader.read_item(source, &item.id, config).await {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::warn!(
+                        item_id = %item.id,
+                        error = %e,
+                        "[memory_sync:github] skipping item — read failed"
+                    );
+                    return None;
+                }
+            };
+
+            if let Some(raw_sid) = raw_source_id {
+                write_raw_archive(
+                    raw_sid,
+                    &item.id,
+                    item.updated_at_ms,
+                    &content,
+                    content_root,
+                );
+            }
+
+            // Compute the raw archive relative path for the wikilink.
+            let raw_path = raw_source_id.and_then(|raw_sid| {
+                let (kind, uid) = github::raw_archive_coords(&item.id)?;
+                let created_at_ms = item.updated_at_ms.unwrap_or(0);
+                let rel = raw_store::raw_rel_path(raw_sid, kind, created_at_ms, &uid);
+                Some(rel.strip_suffix(".md").unwrap_or(&rel).to_string())
+            });
+
+            let token_count = (content.body.len() / 4).max(1) as u32;
+            let priority = item_is_high_priority(&item.id, &content);
+            let ts = item
+                .updated_at_ms
+                .and_then(chrono::DateTime::from_timestamp_millis)
+                .unwrap_or_else(chrono::Utc::now);
+
+            Some((
+                SummaryInput {
+                    id: item.id.clone(),
+                    content: content.body,
+                    token_count,
+                    entities: Vec::new(),
+                    topics: vec!["memory_sources".to_string(), kind_str.to_string()],
+                    time_range_start: ts,
+                    time_range_end: ts,
+                    score: if priority { 0.8 } else { 0.5 },
+                },
+                item.id.clone(),
+                raw_path,
+            ))
+        })
+        .collect();
+
+    let mut inputs: Vec<SummaryInput> = Vec::with_capacity(total);
+    let mut child_labels: Vec<String> = Vec::with_capacity(total);
+    let mut child_basenames: Vec<Option<String>> = Vec::with_capacity(total);
+
+    let mut stream = futures::stream::iter(item_futs).buffered(GITHUB_READ_CONCURRENCY);
+    let mut processed = 0usize;
+    while let Some(result) = stream.next().await {
+        if let Some((input, label, raw_path)) = result {
+            inputs.push(input);
+            child_labels.push(label);
+            child_basenames.push(raw_path);
+        }
+        processed += 1;
+        if processed % 100 == 0 || processed == total {
+            emit_sync_stage(
+                MemorySyncTrigger::Manual,
+                MemorySyncStage::Ingesting,
+                Some(kind_str),
+                Some(source_id),
+                Some(format!("{processed}/{total} read")),
+            );
+        }
+    }
+
+    (inputs, child_labels, child_basenames)
+}
+
 /// Group inputs into batches where each batch's total token count is
 /// approximately `budget`. Pairs each batch with its corresponding
 /// child labels and basenames for provenance.
@@ -501,5 +573,186 @@ mod tests {
     fn batch_empty_input() {
         let batches = batch_by_token_budget(&[], &[], &[], 50_000);
         assert!(batches.is_empty());
+    }
+
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// `SourceReader` double that records the high-water mark of concurrent
+    /// `read_item` calls, proving `read_items_buffered` overlaps reads while
+    /// staying within `GITHUB_READ_CONCURRENCY`. Fails reads whose id contains
+    /// "fail" so the skip path is exercised too.
+    struct CountingReader {
+        in_flight: AtomicUsize,
+        peak_in_flight: AtomicUsize,
+        calls: AtomicUsize,
+    }
+
+    impl CountingReader {
+        fn new() -> Self {
+            Self {
+                in_flight: AtomicUsize::new(0),
+                peak_in_flight: AtomicUsize::new(0),
+                calls: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl SourceReader for CountingReader {
+        fn kind(&self) -> SourceKind {
+            SourceKind::GithubRepo
+        }
+
+        async fn list_items(
+            &self,
+            _source: &MemorySourceEntry,
+            _config: &Config,
+        ) -> Result<Vec<SourceItem>, String> {
+            Ok(Vec::new())
+        }
+
+        async fn read_item(
+            &self,
+            _source: &MemorySourceEntry,
+            item_id: &str,
+            _config: &Config,
+        ) -> Result<SourceContent, String> {
+            // Track concurrent entry, then yield repeatedly *before* returning
+            // so sibling reads genuinely overlap in time — otherwise a read
+            // that completes on first poll would never reveal concurrency.
+            let now = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+            self.peak_in_flight.fetch_max(now, Ordering::SeqCst);
+            for _ in 0..4 {
+                tokio::task::yield_now().await;
+            }
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.in_flight.fetch_sub(1, Ordering::SeqCst);
+
+            if item_id.contains("fail") {
+                return Err(format!("simulated read failure for {item_id}"));
+            }
+            Ok(SourceContent {
+                id: item_id.to_string(),
+                title: format!("title {item_id}"),
+                body: format!("body for {item_id}"),
+                content_type: ContentType::Markdown,
+                metadata: serde_json::json!({}),
+            })
+        }
+    }
+
+    fn github_source() -> MemorySourceEntry {
+        MemorySourceEntry {
+            id: "src_gh".into(),
+            kind: SourceKind::GithubRepo,
+            label: "gh".into(),
+            enabled: true,
+            toolkit: None,
+            connection_id: None,
+            path: None,
+            glob: None,
+            url: Some("https://github.com/owner/repo".into()),
+            branch: None,
+            paths: Vec::new(),
+            max_commits: None,
+            max_issues: None,
+            max_prs: None,
+            query: None,
+            since_days: None,
+            max_items: None,
+            selector: None,
+            max_tokens_per_sync: None,
+            max_cost_per_sync_usd: None,
+            sync_depth_days: None,
+        }
+    }
+
+    fn issue_items(n: usize) -> Vec<SourceItem> {
+        (0..n)
+            .map(|i| SourceItem {
+                id: format!("issue:{i}"),
+                title: format!("t{i}"),
+                updated_at_ms: Some(1_700_000_000_000 + i as i64),
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn read_items_buffered_overlaps_and_preserves_order() {
+        // 20 items exceeds GITHUB_READ_CONCURRENCY (8): an unbounded fan-out
+        // would push >8 reads in flight (bound assertion fails), while a fully
+        // sequential read would never exceed peak 1 (overlap assertion fails).
+        let reader = CountingReader::new();
+        let source = github_source();
+        let config = Config::default();
+        let items = issue_items(20);
+
+        let (inputs, labels, basenames) = read_items_buffered(
+            &reader,
+            &items,
+            &source,
+            &config,
+            None,
+            Path::new("/tmp/openhuman-test-unused"),
+        )
+        .await;
+
+        assert_eq!(inputs.len(), 20);
+        assert_eq!(basenames.len(), 20);
+        assert!(
+            basenames.iter().all(Option::is_none),
+            "no raw_source_id → no basenames"
+        );
+
+        // Order preserved: labels and input ids must match input order exactly.
+        let want: Vec<String> = (0..20).map(|i| format!("issue:{i}")).collect();
+        assert_eq!(labels, want, "buffered must preserve input order");
+        assert_eq!(
+            inputs.iter().map(|i| i.id.clone()).collect::<Vec<_>>(),
+            want
+        );
+
+        assert_eq!(reader.calls.load(Ordering::SeqCst), 20);
+        let peak = reader.peak_in_flight.load(Ordering::SeqCst);
+        assert!(
+            peak <= GITHUB_READ_CONCURRENCY,
+            "read concurrency must stay bounded at {GITHUB_READ_CONCURRENCY}, observed peak {peak}"
+        );
+        assert!(
+            peak >= 2,
+            "reads must actually overlap (else the bound is meaningless), observed peak {peak}"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_items_buffered_skips_failed_reads_and_keeps_order() {
+        let reader = CountingReader::new();
+        let source = github_source();
+        let config = Config::default();
+        // Middle item fails its read; it must be skipped without breaking the
+        // positional alignment of the surviving items.
+        let items = vec![
+            SourceItem {
+                id: "issue:0".into(),
+                title: "a".into(),
+                updated_at_ms: Some(1),
+            },
+            SourceItem {
+                id: "issue:fail".into(),
+                title: "b".into(),
+                updated_at_ms: Some(2),
+            },
+            SourceItem {
+                id: "issue:2".into(),
+                title: "c".into(),
+                updated_at_ms: Some(3),
+            },
+        ];
+
+        let (inputs, labels, _basenames) =
+            read_items_buffered(&reader, &items, &source, &config, None, Path::new("/tmp/x")).await;
+
+        assert_eq!(inputs.len(), 2, "failed item skipped");
+        assert_eq!(labels, vec!["issue:0".to_string(), "issue:2".to_string()]);
     }
 }

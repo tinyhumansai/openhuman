@@ -87,6 +87,20 @@ fn extract_error_detail_envelope_blank_error_falls_back() {
     assert_eq!(extract_error_detail(body, 500), body);
 }
 
+#[test]
+fn managed_budget_gate_applies_to_agent_integration_paths() {
+    assert!(managed_budget_applies_to_path(
+        "/agent-integrations/composio/execute"
+    ));
+    assert!(managed_budget_applies_to_path(
+        "/agent-integrations/parallel/search"
+    ));
+    assert!(!managed_budget_applies_to_path(
+        "/agent-integrations/pricing"
+    ));
+    assert!(!managed_budget_applies_to_path("/teams/me/usage"));
+}
+
 // ── Integration: HTTP error propagation through `post`/`get` ──────
 
 async fn start_mock_backend(app: Router) -> String {

@@ -228,6 +228,21 @@ impl Tool for NodeExecTool {
             unreachable!("guarded above")
         };
 
+        // When the agent's sandbox mode is `Sandboxed`, route execution
+        // through the sandbox backend (Docker / OS-level `cwd_jail` /
+        // documented noop) instead of the native runtime path. Mirrors
+        // the wiring in `ShellTool::run_with_security` (PR #3261) so
+        // node_exec gets the same isolation guarantees as shell. The
+        // security/rate-limit checks above still apply.
+        if matches!(
+            crate::openhuman::agent::harness::current_sandbox_mode(),
+            Some(crate::openhuman::agent::harness::definition::SandboxMode::Sandboxed)
+        ) {
+            return Ok(self
+                .run_sandboxed(&command, &resolved.bin_dir, timeout_secs)
+                .await);
+        }
+
         let mut cmd = match self
             .runtime
             .build_shell_command(&command, &self.security.action_dir)
@@ -294,6 +309,108 @@ impl Tool for NodeExecTool {
             Err(_) => Ok(ToolResult::error(format!(
                 "node_exec timed out after {timeout_secs}s and was killed"
             ))),
+        }
+    }
+}
+
+impl NodeExecTool {
+    /// Execute a node command through the sandbox backend. Called from
+    /// `execute()` when the agent's `SandboxMode` is `Sandboxed`.
+    ///
+    /// Mirrors `ShellTool::run_sandboxed`. The sandbox policy is resolved
+    /// from the current `RuntimeConfig` and rooted at
+    /// `security.action_dir`; on platforms without a real `cwd_jail`
+    /// backend the local backend falls back to a documented noop with
+    /// the in-Rust path-hardening guards from `SecurityPolicy` still
+    /// applying (see CLAUDE.md "Action sandbox vs internal workspace").
+    async fn run_sandboxed(
+        &self,
+        command: &str,
+        bin_dir: &std::path::Path,
+        timeout_secs: u64,
+    ) -> ToolResult {
+        use crate::openhuman::sandbox;
+
+        // Load the live `RuntimeConfig` so `resolve_sandbox_policy` derives
+        // the right backend (Docker / local / noop) from the operator's
+        // configuration instead of the unconfigured `RuntimeConfig::default()`.
+        // Falls back to defaults with a warning if the config load fails —
+        // a failed config read shouldn't block tool execution. (CodeRabbit
+        // finding on PR #3309.)
+        let runtime_cfg = match crate::openhuman::config::ops::load_config_with_timeout().await {
+            Ok(cfg) => cfg.runtime,
+            Err(err) => {
+                tracing::warn!(
+                    error = %err,
+                    "[node_exec] failed to load live RuntimeConfig — falling back to defaults"
+                );
+                crate::openhuman::config::RuntimeConfig::default()
+            }
+        };
+        // `is_remote_session = false` matches `ShellTool::run_sandboxed`'s
+        // current behavior (PR #3261). Threading the real session origin
+        // through requires a new `tokio::task_local!` next to
+        // `CURRENT_AGENT_SANDBOX_MODE` and is the same gap across all three
+        // shell-family tools; tracked separately so it can be fixed uniformly.
+        let policy = sandbox::resolve_sandbox_policy(
+            crate::openhuman::agent::harness::definition::SandboxMode::Sandboxed,
+            &self.security.action_dir,
+            &runtime_cfg,
+            false,
+        );
+
+        tracing::debug!(
+            backend = ?policy.backend,
+            runtime_kind = ?runtime_cfg.kind,
+            "[node_exec] routing to sandbox backend"
+        );
+
+        // Forward the managed Node.js bin dir on PATH so the child node
+        // process can resolve `node`, `npm`, `npx`, `corepack` consistently
+        // with the unsandboxed path.
+        let mut extra_env = std::collections::HashMap::new();
+        let host_path = std::env::var("PATH").unwrap_or_default();
+        let sep = if cfg!(windows) { ";" } else { ":" };
+        let prepended = if host_path.is_empty() {
+            bin_dir.to_string_lossy().into_owned()
+        } else {
+            format!("{}{}{}", bin_dir.display(), sep, host_path)
+        };
+        extra_env.insert("PATH".to_string(), prepended);
+
+        match sandbox::execute_in_sandbox(
+            &policy,
+            command,
+            &self.security.action_dir,
+            extra_env,
+            Duration::from_secs(timeout_secs),
+        )
+        .await
+        {
+            Ok(result) => {
+                if result.timed_out {
+                    ToolResult::error(format!(
+                        "node_exec timed out after {timeout_secs}s and was killed"
+                    ))
+                } else if result.success() {
+                    if result.stderr.is_empty() {
+                        ToolResult::success(result.stdout)
+                    } else {
+                        ToolResult::success(format!(
+                            "{}\n[stderr]\n{}",
+                            result.stdout, result.stderr
+                        ))
+                    }
+                } else {
+                    let err_msg = if result.stderr.is_empty() {
+                        result.stdout
+                    } else {
+                        result.stderr
+                    };
+                    ToolResult::error(err_msg)
+                }
+            }
+            Err(e) => ToolResult::error(format!("Sandbox execution failed: {e}")),
         }
     }
 }

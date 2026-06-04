@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 
 use crate::openhuman::config::Config;
 use crate::openhuman::memory_sync::composio::providers::{
-    get_provider, NormalizedTask, ProviderContext,
+    get_provider, NormalizedTask, ProviderContext, TaskContainer,
 };
 use crate::rpc::RpcOutcome;
 
@@ -162,6 +162,34 @@ pub async fn preview_filter(
         .map_err(|e| format!("preview fetch failed: {e}"))?;
     tracing::debug!(count = tasks.len(), "[task_sources:ops] preview_filter");
     Ok(RpcOutcome::new(tasks, vec![]))
+}
+
+/// List the selectable containers (today: Notion databases) a connected
+/// provider exposes, so the UI can offer a picker instead of a raw-id text
+/// field. Mirrors [`preview_filter`]'s context setup.
+pub async fn list_databases(
+    config: &Config,
+    provider: ProviderSlug,
+    connection_id: Option<String>,
+) -> Result<RpcOutcome<Vec<TaskContainer>>, String> {
+    let provider_impl = get_provider(provider.as_str())
+        .ok_or_else(|| format!("no native provider registered for '{}'", provider.as_str()))?;
+    let ctx = ProviderContext {
+        config: Arc::new(config.clone()),
+        toolkit: provider.as_str().to_string(),
+        connection_id: connection_id.filter(|s| !s.trim().is_empty()),
+        usage: Default::default(),
+    };
+    let databases = provider_impl
+        .list_databases(&ctx)
+        .await
+        .map_err(|e| format!("list databases failed: {e}"))?;
+    tracing::debug!(
+        count = databases.len(),
+        provider = provider.as_str(),
+        "[task_sources:ops] list_databases"
+    );
+    Ok(RpcOutcome::new(databases, vec![]))
 }
 
 /// Domain status: enabled flag + source counts.
