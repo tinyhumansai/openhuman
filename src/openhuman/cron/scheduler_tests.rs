@@ -947,14 +947,61 @@ fn classify_agent_anyhow_does_not_leak_when_downcast_succeeds() {
 
 // ── #3312: scheduler auto-recovery ──────────────────────────────────────────
 
-/// Reset the global health registry entry for "scheduler" so tests in this
-/// module start from a clean baseline. The registry is a process-global
-/// `OnceLock`, so neighbouring tests can otherwise leak state into ours.
-fn reset_scheduler_component_state() {
-    // mark_component_ok() initialises the entry if missing and clears
-    // `last_error`. Tests that want to start from "error" will flip it
-    // themselves via `mark_component_error` after this reset.
-    crate::openhuman::health::mark_component_ok("scheduler");
+/// Process-global lock serialising every test in this binary that mutates
+/// the `"scheduler"` row of the health registry. `mark_component_ok`,
+/// `mark_component_error`, and the bus subscriber that translates
+/// `HealthChanged` events all touch the same `OnceLock`-backed map, so
+/// without this lock a parallel test that calls `process_due_jobs` (which
+/// publishes `HealthChanged` for `"scheduler"`) can flip our entry between
+/// the setup line and the assertion. Acquire it for the *whole* test body.
+static SCHEDULER_HEALTH_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn lock_scheduler_health() -> std::sync::MutexGuard<'static, ()> {
+    SCHEDULER_HEALTH_LOCK
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner())
+}
+
+/// RAII guard that snapshots the `"scheduler"` health row on construction
+/// and restores it on drop. Pair with [`lock_scheduler_health`] so the
+/// observed prior state stays valid for the duration of the test.
+struct SchedulerHealthGuard {
+    prior: Option<crate::openhuman::health::ComponentHealth>,
+}
+
+impl SchedulerHealthGuard {
+    fn capture() -> Self {
+        let prior = crate::openhuman::health::snapshot()
+            .components
+            .get("scheduler")
+            .cloned();
+        Self { prior }
+    }
+}
+
+impl Drop for SchedulerHealthGuard {
+    fn drop(&mut self) {
+        match self.prior.as_ref() {
+            Some(entry) if entry.status == "error" => {
+                crate::openhuman::health::mark_component_error(
+                    "scheduler",
+                    entry
+                        .last_error
+                        .clone()
+                        .unwrap_or_else(|| "(restored)".to_string()),
+                );
+            }
+            Some(_) => {
+                crate::openhuman::health::mark_component_ok("scheduler");
+            }
+            None => {
+                // The component didn't exist before this test ran. The
+                // health registry has no public removal API; the
+                // closest benign baseline is "ok".
+                crate::openhuman::health::mark_component_ok("scheduler");
+            }
+        }
+    }
 }
 
 /// Block until the global event-bus subscriber has applied a pending
@@ -983,6 +1030,15 @@ async fn wait_for_scheduler_status(expected: &str, attempts: usize) -> String {
 /// 503.
 #[tokio::test]
 async fn scheduler_tick_once_recovers_component_status_after_prior_error() {
+    // Serialize against every other test in this binary that mutates the
+    // process-global `"scheduler"` health row (e.g.
+    // `scheduler_flow_runs_active_hours_job_and_reschedules_inside_window`
+    // and the rest of the `process_due_jobs`-touching suite). The RAII
+    // guard restores the prior row on drop so we don't leak our error
+    // state into a sibling test that runs after this one.
+    let _serial = lock_scheduler_health();
+    let _restore = SchedulerHealthGuard::capture();
+
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp).await;
 
@@ -993,7 +1049,6 @@ async fn scheduler_tick_once_recovers_component_status_after_prior_error() {
     crate::core::event_bus::init_global(crate::core::event_bus::DEFAULT_CAPACITY);
     crate::openhuman::health::bus::register_health_subscriber();
 
-    reset_scheduler_component_state();
     crate::openhuman::health::mark_component_error("scheduler", "prior transient failure");
     // Sanity: we really did flip the component into the bad state the
     // production bug stays stuck in.

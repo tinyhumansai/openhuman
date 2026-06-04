@@ -179,26 +179,37 @@ pub async fn run(config: Config) -> Result<()> {
 ///   `healthy: true`, exactly the auto-recovery behaviour the Docker
 ///   health check needs.
 pub(crate) async fn tick_once(config: &Config, security: &Arc<SecurityPolicy>) {
+    tracing::debug!("[cron:scheduler] tick poll begin");
     let jobs = match due_jobs(config, Utc::now()) {
         Ok(jobs) => jobs,
         Err(e) => {
+            tracing::warn!("[cron:scheduler] tick poll db_error: {e}");
             publish_global(DomainEvent::HealthChanged {
                 component: "scheduler".to_string(),
                 healthy: false,
                 message: Some(e.to_string()),
             });
-            tracing::warn!("Scheduler query failed: {e}");
             return;
         }
     };
 
+    let due_count = jobs.len();
+    tracing::debug!(
+        "[cron:scheduler] tick poll ok due_count={due_count} (recovery signal: healthy=true)"
+    );
     publish_global(DomainEvent::HealthChanged {
         component: "scheduler".to_string(),
         healthy: true,
         message: None,
     });
 
+    if due_count == 0 {
+        tracing::trace!("[cron:scheduler] tick end (no due jobs)");
+        return;
+    }
+
     process_due_jobs(config, security, jobs).await;
+    tracing::debug!("[cron:scheduler] tick end due_count={due_count} (jobs processed)");
 }
 
 /// Public entry point for delivering a job's output via the configured
