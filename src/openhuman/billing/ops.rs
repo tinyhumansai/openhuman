@@ -41,10 +41,15 @@ async fn get_authed_value(
     let token = require_token(config)?;
     let api_url = effective_backend_api_url(&config.api_url);
     let client = BackendOAuthClient::new(&api_url).map_err(|e| e.to_string())?;
+    // `flatten_authed_error` maps the typed `BackendApiError::Unauthorized`
+    // (expected session-lapse 401) onto the `SESSION_EXPIRED` sentinel so the
+    // JSON-RPC layer classifies it as session expiry and skips Sentry (#3297,
+    // TAURI-RUST-8WZ on `/payments/stripe/currentPlan`); every other error keeps
+    // its full `{e:#}` anyhow chain.
     client
         .authed_json(&token, method, path, body)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(crate::api::flatten_authed_error)
 }
 
 pub async fn get_current_plan(config: &Config) -> Result<RpcOutcome<Value>, String> {
