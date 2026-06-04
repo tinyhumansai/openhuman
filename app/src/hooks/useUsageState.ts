@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 
+import { useCoreState } from '../providers/CoreStateProvider';
 import {
   type AISettings,
   ALL_WORKLOADS,
@@ -114,6 +115,8 @@ async function fetchUsageData(): Promise<{
 }
 
 export function useUsageState(): UsageState {
+  const { snapshot } = useCoreState();
+  const isAuthenticated = snapshot.auth.isAuthenticated;
   const [teamUsage, setTeamUsage] = useState<TeamUsage | null>(null);
   const [currentPlan, setCurrentPlan] = useState<CurrentPlanData | null>(null);
   const [aiSettings, setAiSettings] = useState<AISettings | null>(null);
@@ -128,6 +131,23 @@ export function useUsageState(): UsageState {
   useEffect(() => subscribeUsageRefresh(refresh), [refresh]);
 
   useEffect(() => {
+    // Gate on auth BEFORE dispatching: `team_get_usage` / `billing_get_current_plan`
+    // require a backend session, so polling them while signed out (pre-login, or
+    // after a `SessionExpired` clear) is a guaranteed 401 — the Sentry
+    // TAURI-RUST-8WY (`/teams/me/usage`) / 8WZ (`/payments/stripe/currentPlan`)
+    // flood (#3297). When unauthenticated, skip the fetch and drop any stale view
+    // instead of round-tripping to a doomed call. The core-side
+    // `require_live_session_token` precheck covers the expired-but-still-stored
+    // window (token present so `isAuthenticated` is still true) without a network
+    // call; this gate covers the absent-token windows.
+    if (!isAuthenticated) {
+      _cache = null;
+      setTeamUsage(null);
+      setCurrentPlan(null);
+      setAiSettings(null);
+      setIsLoading(false);
+      return;
+    }
     let cancelled = false;
     setIsLoading(true);
     fetchUsageData()
@@ -151,7 +171,7 @@ export function useUsageState(): UsageState {
     return () => {
       cancelled = true;
     };
-  }, [fetchCount]);
+  }, [fetchCount, isAuthenticated]);
 
   const currentTier: PlanTier = currentPlan?.plan ?? 'FREE';
   const isFreeTier = currentTier === 'FREE';
