@@ -944,3 +944,36 @@ fn classify_agent_anyhow_does_not_leak_when_downcast_succeeds() {
     assert_ne!(msg, AGENT_JOB_USER_FAILURE_MESSAGE);
     assert!(msg.contains("credentials"));
 }
+
+#[test]
+fn cron_retries_exhausted_empty_response_routes_through_expected_kind_classifier() {
+    // Regression guard for Sentry TAURI-RUST-4JX: the agent-layer
+    // `AgentError::skips_sentry()` in `agent::harness::session::runtime::
+    // run_single` suppresses the empty-provider-response leak (PR #2790),
+    // but `run_agent_job` flattens the typed `AgentError` to
+    // `last_agent_error: Option<String>` and `execute_job_with_retry`
+    // re-reports that string after retries are exhausted. Routing the
+    // re-report through `report_error_or_expected` (and NOT `report_error`)
+    // is what closes the regression — this test locks in the contract by
+    // asserting the `Display` body of `AgentError::EmptyProviderResponse`
+    // is classified as `ExpectedErrorKind::EmptyProviderResponse` by the
+    // central classifier. If the variant's `Display` impl, the
+    // `is_empty_provider_response_message` anchor, or the cron emit-site
+    // re-report path drifts apart, this test fails before TAURI-RUST-4JX
+    // can regress again.
+    use crate::core::observability::{expected_error_kind, ExpectedErrorKind};
+
+    let err = AgentError::EmptyProviderResponse { iteration: 1 };
+    let flattened = err.to_string();
+    assert_eq!(
+        flattened,
+        "The model returned an empty response. Please try again."
+    );
+    assert_eq!(
+        expected_error_kind(&flattened),
+        Some(ExpectedErrorKind::EmptyProviderResponse),
+        "AgentError::EmptyProviderResponse must classify as expected user-state \
+         when re-reported under domain=cron operation=agent_job — otherwise \
+         TAURI-RUST-4JX regresses"
+    );
+}

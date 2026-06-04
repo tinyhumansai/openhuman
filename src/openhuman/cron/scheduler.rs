@@ -235,7 +235,23 @@ async fn execute_job_with_retry(
         let report_message = last_agent_error
             .as_deref()
             .unwrap_or_else(|| last_output.as_str());
-        crate::core::observability::report_error(
+        // Route through `report_error_or_expected` so the central
+        // `expected_error_kind` classifier can demote known user-state /
+        // model-degeneracy conditions before they reach Sentry. Without
+        // this, the agent-layer typed `AgentError::skips_sentry()`
+        // suppression in `run_single` is undone here: `run_agent_job`
+        // flattens the typed error to `last_agent_error: Option<String>`
+        // and re-reports it under `domain=cron operation=agent_job
+        // failure=retries_exhausted` — which is how TAURI-RUST-4JX
+        // regressed after PR #2790 closed the agent-layer leak.
+        // The string classifier `is_empty_provider_response_message`
+        // catches the verbatim `"The model returned an empty response.
+        // Please try again."` body emitted by
+        // `AgentError::EmptyProviderResponse`'s `Display` impl, mirroring
+        // how the same condition is demoted at the
+        // `channels::providers::web::run_chat_task` re-report site
+        // (TAURI-RUST-4Z1).
+        crate::core::observability::report_error_or_expected(
             report_message,
             "cron",
             "agent_job",
