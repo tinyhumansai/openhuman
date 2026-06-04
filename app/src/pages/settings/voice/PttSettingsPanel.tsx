@@ -27,6 +27,7 @@ import { useCallback, useState } from 'react';
 import { useT } from '../../../lib/i18n/I18nContext';
 import { useAppDispatch, useAppSelector } from '../../../store/hooks';
 import {
+  selectPttRegistrationError,
   selectPttShortcut,
   selectShowOverlay,
   selectSpeakReplies,
@@ -75,12 +76,40 @@ function eventToShortcut(e: React.KeyboardEvent): string | null {
   return parts.join('+');
 }
 
+/**
+ * Map a raw Tauri error string from `register_ptt_hotkey` to a localized
+ * message. Pattern-matches on well-known substrings so the panel doesn't need
+ * to depend on the exact Rust error wording; falls back to the raw string for
+ * anything unrecognised (still useful to the user for diagnostics).
+ */
+function localizedRegistrationError(
+  raw: string | null,
+  t: (key: string) => string,
+): string | null {
+  if (!raw) return null;
+  const lower = raw.toLowerCase();
+  if (lower.includes('conflict') && lower.includes('dictation')) {
+    return t('pttSettings.errorConflictsWithDictation');
+  }
+  if (lower.includes('wayland')) {
+    return t('pttSettings.errorUnsupportedWayland');
+  }
+  if (lower.includes('accessibility')) {
+    return t('pttSettings.errorAccessibility');
+  }
+  if (lower.includes('in use') || lower.includes('shortcutinuse') || lower.includes('in_use')) {
+    return t('pttSettings.errorShortcutInUse');
+  }
+  return raw;
+}
+
 const PttSettingsPanel = () => {
   const { t } = useT();
   const dispatch = useAppDispatch();
   const shortcut = useAppSelector(selectPttShortcut);
   const speakReplies = useAppSelector(selectSpeakReplies);
   const showOverlay = useAppSelector(selectShowOverlay);
+  const registrationError = useAppSelector(selectPttRegistrationError);
 
   // Inline validation error for the capture input (e.g. modifier-only).
   // Cleared whenever the user retries or focuses the field. Server-side
@@ -172,6 +201,14 @@ const PttSettingsPanel = () => {
               className="text-[11px] text-red-600 dark:text-red-300 mt-0.5"
               data-testid="ptt-shortcut-error">
               {captureError}
+            </p>
+          )}
+          {!captureError && registrationError && (
+            <p
+              role="alert"
+              className="mt-1 text-xs text-red-600 dark:text-red-400"
+              data-testid="ptt-registration-error">
+              {localizedRegistrationError(registrationError, t)}
             </p>
           )}
         </label>

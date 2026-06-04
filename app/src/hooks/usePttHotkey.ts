@@ -13,7 +13,11 @@ import { useEffect } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
 import { registerPttHotkey, unregisterPttHotkey } from '../utils/tauriCommands/ptt';
-import { selectPttShortcut, setIsHeld } from '../store/pttSlice';
+import {
+  selectPttShortcut,
+  setIsHeld,
+  setPttRegistrationError,
+} from '../store/pttSlice';
 
 export function usePttHotkey(): void {
   const dispatch = useDispatch();
@@ -31,12 +35,16 @@ export function usePttHotkey(): void {
       try {
         if (shortcut && shortcut.trim().length > 0) {
           await registerPttHotkey(shortcut);
+          if (!cancelled) dispatch(setPttRegistrationError(null));
         } else {
           await unregisterPttHotkey();
+          if (!cancelled) dispatch(setPttRegistrationError(null));
         }
       } catch (err) {
         if (!cancelled) {
+          const msg = err instanceof Error ? err.message : String(err);
           console.warn('[ptt] hotkey (un)register failed', err);
+          dispatch(setPttRegistrationError(msg));
         }
       }
     };
@@ -44,5 +52,5 @@ export function usePttHotkey(): void {
     return () => {
       cancelled = true;
     };
-  }, [shortcut]);
+  }, [shortcut, dispatch]);
 }

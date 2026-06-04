@@ -85,4 +85,45 @@ describe('PttSettingsPanel', () => {
     expect(screen.getByText('Push-to-talk')).toBeInTheDocument();
     expect(screen.getByText(/Hold a key to talk to OpenHuman/i)).toBeInTheDocument();
   });
+
+  it('renders the localized registration error when the slice has a dictation conflict', () => {
+    renderPanel({
+      shortcut: 'F13',
+      registrationError: "ptt shortcut 'F13' conflicts with the dictation hotkey",
+    });
+    const errEl = screen.getByTestId('ptt-registration-error');
+    expect(errEl).toBeInTheDocument();
+    expect(errEl).toHaveTextContent(/already used by dictation/i);
+  });
+
+  it('renders a localized Wayland error when the slice has one', () => {
+    renderPanel({
+      shortcut: 'F13',
+      registrationError: 'global shortcuts are not supported in this Wayland session',
+    });
+    expect(screen.getByTestId('ptt-registration-error')).toHaveTextContent(/wayland/i);
+  });
+
+  it('renders the raw error string for unrecognised errors', () => {
+    renderPanel({ shortcut: 'F13', registrationError: 'some unexpected Tauri error' });
+    expect(screen.getByTestId('ptt-registration-error')).toHaveTextContent(
+      'some unexpected Tauri error'
+    );
+  });
+
+  it('does not render a registration error when registrationError is null', () => {
+    renderPanel({ shortcut: 'F13', registrationError: null });
+    expect(screen.queryByTestId('ptt-registration-error')).not.toBeInTheDocument();
+  });
+
+  it('hides the registration error when a captureError (modifier-only) is also present', () => {
+    // Both errors at once — captureError wins because it's more immediate.
+    // Trigger captureError by pressing a modifier-only key.
+    renderPanel({ shortcut: 'F13', registrationError: 'some unexpected Tauri error' });
+    const input = screen.getByTestId('ptt-shortcut-input');
+    fireEvent.keyDown(input, { key: 'Shift', code: 'ShiftLeft', shiftKey: true });
+    // captureError is now set — registration error should be hidden.
+    expect(screen.queryByTestId('ptt-registration-error')).not.toBeInTheDocument();
+    expect(screen.getByTestId('ptt-shortcut-error')).toBeInTheDocument();
+  });
 });
