@@ -144,10 +144,7 @@ pub async fn connect(config: &Config, server: &InstalledServer) -> anyhow::Resul
     result
 }
 
-async fn connect_inner(
-    config: &Config,
-    server: &InstalledServer,
-) -> anyhow::Result<Vec<McpTool>> {
+async fn connect_inner(config: &Config, server: &InstalledServer) -> anyhow::Result<Vec<McpTool>> {
     tracing::debug!(
         "[mcp-registry] connect server_id={} qualified_name={} transport={}",
         server.server_id,

@@ -144,14 +144,18 @@ async fn successful_connect_clears_last_error() {
     let mut server = make_installed_server();
     server.command = "/nonexistent".to_string();
     let _ = connections::connect(&cfg, &server).await;
-    assert!(connections::last_error_for(&server.server_id).await.is_some());
+    assert!(connections::last_error_for(&server.server_id)
+        .await
+        .is_some());
 
     server.command = env!("CARGO_BIN_EXE_test-mcp-stub").to_string();
     connections::connect(&cfg, &server)
         .await
         .expect("real connect succeeds");
     assert!(
-        connections::last_error_for(&server.server_id).await.is_none(),
+        connections::last_error_for(&server.server_id)
+            .await
+            .is_none(),
         "successful connect must clear the prior error"
     );
 
@@ -193,7 +197,10 @@ async fn status_reflects_last_connect_error() {
         .unwrap();
     assert_eq!(mine.status.as_str(), "error");
     assert!(
-        mine.last_error.as_deref().map(|s| !s.is_empty()).unwrap_or(false),
+        mine.last_error
+            .as_deref()
+            .map(|s| !s.is_empty())
+            .unwrap_or(false),
         "last_error populated"
     );
 }
@@ -231,7 +238,13 @@ async fn boot_skips_disabled_servers_and_records_errors() {
     // A is connected; B recorded an error; C never attempted (no error
     // recorded despite the bogus command).
     let statuses = connections::all_status(&cfg).await;
-    let by_id = |id: &str| statuses.iter().find(|s| s.server_id == id).cloned().unwrap();
+    let by_id = |id: &str| {
+        statuses
+            .iter()
+            .find(|s| s.server_id == id)
+            .cloned()
+            .unwrap()
+    };
     assert_eq!(by_id(&a.server_id).status.as_str(), "connected");
     assert_eq!(by_id(&b.server_id).status.as_str(), "error");
     assert_eq!(by_id(&c.server_id).status.as_str(), "disabled");
@@ -260,7 +273,10 @@ async fn set_enabled_false_disconnects_running_server() {
     let loaded = store::get_server(&cfg, &server.server_id).unwrap();
     assert!(!loaded.enabled);
     let statuses = connections::all_status(&cfg).await;
-    let mine = statuses.iter().find(|s| s.server_id == server.server_id).unwrap();
+    let mine = statuses
+        .iter()
+        .find(|s| s.server_id == server.server_id)
+        .unwrap();
     assert_eq!(mine.status.as_str(), "disabled");
 }
 
@@ -292,7 +308,10 @@ async fn set_enabled_true_clears_disabled_status_but_does_not_auto_connect() {
         .await
         .expect("set_enabled true ok");
     let statuses = connections::all_status(&cfg).await;
-    let mine = statuses.iter().find(|s| s.server_id == server.server_id).unwrap();
+    let mine = statuses
+        .iter()
+        .find(|s| s.server_id == server.server_id)
+        .unwrap();
     assert_eq!(
         mine.status.as_str(),
         "disconnected",

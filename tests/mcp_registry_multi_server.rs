@@ -13,8 +13,8 @@
 //! or with `mcp_registry_e2e.rs`.
 
 use openhuman_core::openhuman::config::Config;
-use openhuman_core::openhuman::mcp_registry::{connections, ops, store};
 use openhuman_core::openhuman::mcp_registry::types::{CommandKind, InstalledServer, Transport};
+use openhuman_core::openhuman::mcp_registry::{connections, ops, store};
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -104,10 +104,24 @@ async fn two_servers_same_tool_name_no_collision() {
         .filter(|(sid, _, _)| sid == &server_b.server_id)
         .collect();
 
-    assert_eq!(a_tools.len(), 1, "server_a contributes exactly one tool to the aggregate");
-    assert_eq!(b_tools.len(), 1, "server_b contributes exactly one tool to the aggregate");
-    assert_eq!(a_tools[0].2.name, "echo", "server_a's aggregated tool is `echo`");
-    assert_eq!(b_tools[0].2.name, "echo", "server_b's aggregated tool is `echo`");
+    assert_eq!(
+        a_tools.len(),
+        1,
+        "server_a contributes exactly one tool to the aggregate"
+    );
+    assert_eq!(
+        b_tools.len(),
+        1,
+        "server_b contributes exactly one tool to the aggregate"
+    );
+    assert_eq!(
+        a_tools[0].2.name, "echo",
+        "server_a's aggregated tool is `echo`"
+    );
+    assert_eq!(
+        b_tools[0].2.name, "echo",
+        "server_b's aggregated tool is `echo`"
+    );
 
     // Both are `connected` in all_status.
     let statuses = connections::all_status(&cfg).await;
@@ -180,7 +194,10 @@ async fn tool_calls_route_to_the_correct_server() {
     );
 
     // Cross-verify: calling server_b's id echoes server_b's payload — not server_a's.
-    assert_ne!(text_a, text_b, "two servers must not produce identical outputs for different inputs");
+    assert_ne!(
+        text_a, text_b,
+        "two servers must not produce identical outputs for different inputs"
+    );
 
     let _ = connections::disconnect(&server_a.server_id).await;
     let _ = connections::disconnect(&server_b.server_id).await;
@@ -209,7 +226,10 @@ async fn failed_connect_does_not_block_healthy_peer() {
     let connect_err = connections::connect(&cfg, &bad)
         .await
         .expect_err("connect bad server should fail");
-    assert!(!connect_err.to_string().is_empty(), "bad connect error must not be empty");
+    assert!(
+        !connect_err.to_string().is_empty(),
+        "bad connect error must not be empty"
+    );
 
     // Connecting the good server must succeed independently.
     let good_tools = connections::connect(&cfg, &good)
@@ -228,15 +248,30 @@ async fn failed_connect_does_not_block_healthy_peer() {
     };
 
     let bad_status = find(&bad.server_id);
-    assert_eq!(bad_status.status.as_str(), "error", "bad server must report `error`");
+    assert_eq!(
+        bad_status.status.as_str(),
+        "error",
+        "bad server must report `error`"
+    );
     assert!(
-        bad_status.last_error.as_deref().map(|s| !s.is_empty()).unwrap_or(false),
+        bad_status
+            .last_error
+            .as_deref()
+            .map(|s| !s.is_empty())
+            .unwrap_or(false),
         "bad server must have a non-empty last_error"
     );
 
     let good_status = find(&good.server_id);
-    assert_eq!(good_status.status.as_str(), "connected", "good server must be `connected`");
-    assert!(good_status.last_error.is_none(), "good server must have no last_error");
+    assert_eq!(
+        good_status.status.as_str(),
+        "connected",
+        "good server must be `connected`"
+    );
+    assert!(
+        good_status.last_error.is_none(),
+        "good server must have no last_error"
+    );
 
     // The good server is still callable after the peer's failure.
     let result = connections::call_tool(

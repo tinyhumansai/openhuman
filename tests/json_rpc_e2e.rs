@@ -8626,7 +8626,8 @@ async fn mcp_clients_set_enabled_smoke() {
         json!({ "qualified_name": qualified_name, "env": {} }),
     )
     .await;
-    let install_result = assert_no_jsonrpc_error(&install, "mcp_clients_install (set_enabled smoke)");
+    let install_result =
+        assert_no_jsonrpc_error(&install, "mcp_clients_install (set_enabled smoke)");
     let install_body = install_result.get("result").unwrap_or(install_result);
     let server_id = install_body
         .get("server")

@@ -33,10 +33,7 @@ const BASE_SERVER_ENABLED = {
   enabled: true,
 };
 
-const BASE_SERVER_DISABLED = {
-  ...BASE_SERVER_ENABLED,
-  enabled: false,
-};
+const BASE_SERVER_DISABLED = { ...BASE_SERVER_ENABLED, enabled: false };
 
 describe('InstalledServerDetail — enable/disable toggle', () => {
   beforeEach(() => {

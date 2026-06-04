@@ -281,9 +281,7 @@ const McpServersTab = () => {
               server={selectedServer}
               connStatus={selectedConnStatus}
               onUninstalled={serverId => void handleUninstalled(serverId)}
-              onEnabledChange={(serverId, enabled) =>
-                void handleEnabledChange(serverId, enabled)
-              }
+              onEnabledChange={(serverId, enabled) => void handleEnabledChange(serverId, enabled)}
             />
           )}
         </div>
