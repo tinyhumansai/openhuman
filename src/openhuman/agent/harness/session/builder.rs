@@ -864,9 +864,14 @@ impl Agent {
         )?;
 
         let local_embedding = config.workload_local_model("embeddings");
+        let embedding_api_key = crate::openhuman::embeddings::resolve_api_key(
+            config,
+            &config.memory.embedding_provider,
+        );
         let memory: Arc<dyn Memory> = Arc::from(memory_store::create_memory_with_local_ai(
             &config.memory,
             local_embedding.as_deref(),
+            &embedding_api_key,
             &config.embedding_routes,
             Some(&config.storage.provider.config),
             &config.workspace_dir,
