@@ -72,6 +72,25 @@ describe('InstalledServerDetail', () => {
     expect(screen.getByRole('button', { name: 'Connect' })).toBeInTheDocument();
   });
 
+  it('shows Connecting… label and disables the Connect button while status=connecting', () => {
+    render(
+      <InstalledServerDetail
+        server={BASE_SERVER}
+        connStatus={{
+          server_id: 'srv-1',
+          qualified_name: 'acme/test-server',
+          display_name: 'Test Server',
+          status: 'connecting',
+          tool_count: 0,
+        }}
+        onUninstalled={() => {}}
+      />
+    );
+    const btn = screen.getByRole('button', { name: /^connecting/i });
+    expect(btn).toBeInTheDocument();
+    expect(btn).toBeDisabled();
+  });
+
   it('shows Disconnect button when connected', () => {
     render(
       <InstalledServerDetail

@@ -14,6 +14,7 @@ const mockInstall = vi.fn();
 const mockConnect = vi.fn();
 const mockDisconnect = vi.fn();
 const mockUninstall = vi.fn();
+const mockSetEnabled = vi.fn();
 const mockRegistryGet = vi.fn();
 const mockRegistrySearch = vi.fn();
 const mockConfigAssist = vi.fn();
@@ -26,6 +27,7 @@ vi.mock('../../../services/api/mcpClientsApi', () => ({
     connect: (...args: unknown[]) => mockConnect(...args),
     disconnect: (...args: unknown[]) => mockDisconnect(...args),
     uninstall: (...args: unknown[]) => mockUninstall(...args),
+    setEnabled: (...args: unknown[]) => mockSetEnabled(...args),
     registryGet: (...args: unknown[]) => mockRegistryGet(...args),
     registrySearch: (...args: unknown[]) => mockRegistrySearch(...args),
     configAssist: (...args: unknown[]) => mockConfigAssist(...args),
@@ -43,6 +45,7 @@ const SERVERS = [
     args: ['-y', 'acme/fs-server'],
     env_keys: [],
     installed_at: 1_700_000_000,
+    enabled: true,
   },
 ];
 
@@ -86,6 +89,7 @@ describe('McpServersTab', () => {
     mockConnect.mockResolvedValue({ server_id: '', status: 'connected', tools: [] });
     mockDisconnect.mockReset();
     mockUninstall.mockReset();
+    mockSetEnabled.mockReset();
     mockRegistryGet.mockReset();
     mockRegistrySearch.mockReset();
   });
@@ -147,6 +151,33 @@ describe('McpServersTab', () => {
 
     await waitFor(() => screen.getByText('File Server'));
     expect(screen.getByText('Select a server or browse the catalog.')).toBeInTheDocument();
+  });
+
+  it('refreshes installed list + status after a server is disabled from the detail pane', async () => {
+    mockInstalledList.mockResolvedValue(SERVERS);
+    mockStatus.mockResolvedValue(STATUSES_DISCONNECTED);
+    mockSetEnabled.mockResolvedValue({ server_id: 'srv-1', enabled: false });
+
+    render(<McpServersTab />);
+    vi.useRealTimers();
+
+    await waitFor(() => screen.getByText('File Server'));
+    fireEvent.click(screen.getAllByRole('button', { name: /File Server/i })[0]);
+    await waitFor(() => screen.getByText('acme/fs-server'));
+
+    const installedCallsBefore = mockInstalledList.mock.calls.length;
+    const statusCallsBefore = mockStatus.mock.calls.length;
+
+    const disableBtn = await screen.findByRole('button', { name: /^disable$/i });
+    fireEvent.click(disableBtn);
+
+    // After the toggle, handleEnabledChange must re-call both loadInstalled
+    // and fetchStatuses so the parent reflects the new enabled state.
+    await waitFor(() => {
+      expect(mockSetEnabled).toHaveBeenCalledWith('srv-1', false);
+      expect(mockInstalledList.mock.calls.length).toBeGreaterThan(installedCallsBefore);
+      expect(mockStatus.mock.calls.length).toBeGreaterThan(statusCallsBefore);
+    });
   });
 
   it('opens detail pane when a server is clicked', async () => {
