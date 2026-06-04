@@ -15,7 +15,6 @@ use serde::{Deserialize, Serialize};
 /// schema.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-#[non_exhaustive]
 pub enum TreeKind {
     /// One tree per ingest source (e.g. `chat:slack:#eng`, `email:gmail:user`).
     Source,

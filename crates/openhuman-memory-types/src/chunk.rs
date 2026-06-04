@@ -57,11 +57,9 @@ impl SourceKind {
 /// Wire form is snake_case (see `as_str` / `parse`) so it is stable across
 /// DB rows, JSON-RPC payloads, and logs.
 ///
-/// Marked `#[non_exhaustive]` so new providers can be added in later phases
-/// without breaking downstream pattern matches.
+/// The source platform/provider that produced the original data.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-#[non_exhaustive]
 pub enum DataSource {
     // ── Chat transcripts (grouped by channel/group) ────────────────────
     Discord,
