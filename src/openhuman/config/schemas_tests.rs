@@ -454,7 +454,6 @@ async fn handle_get_agent_paths_reflects_openhuman_action_dir_env_override() {
     }
 }
 
-
 #[test]
 fn set_action_dir_rpc_is_registered() {
     let funcs: Vec<&str> = all_controller_schemas()

@@ -1661,7 +1661,6 @@ fn handle_set_action_dir(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-
 fn handle_get_onboarding_completed(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async { to_json(config_rpc::get_onboarding_completed().await?) })
 }

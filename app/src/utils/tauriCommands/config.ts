@@ -464,7 +464,6 @@ export async function openhumanSetActionDir(
   });
 }
 
-
 export async function openhumanUpdateAutonomySettings(
   update: AutonomySettingsUpdate
 ): Promise<CommandResponse<ConfigSnapshot>> {
