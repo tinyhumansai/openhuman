@@ -51,14 +51,6 @@ pub use schema::{
     MODEL_SUMMARIZATION_V1, SEARCH_ENGINE_BRAVE, SEARCH_ENGINE_DISABLED, SEARCH_ENGINE_MANAGED,
     SEARCH_ENGINE_PARALLEL, SEARCH_ENGINE_QUERIT,
 };
-<<<<<<< HEAD
-pub use schema::{
-    clear_active_user, default_action_dir, default_projects_dir, default_root_openhuman_dir,
-    pre_login_user_dir, read_active_user_id, user_openhuman_dir, write_active_user_id,
-    ACTION_DIR_ENV_VAR, PRE_LOGIN_USER_ID,
-};
-=======
->>>>>>> upstream/main
 pub use schemas::{
     all_controller_schemas as all_config_controller_schemas,
     all_registered_controllers as all_config_registered_controllers,
