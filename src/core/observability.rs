@@ -263,9 +263,17 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     // no longer reaches here — but other direct-mode ops the user invokes
     // explicitly (execute / authorize) can still surface it, and it is the
     // same user-config state with no Sentry-actionable signal.
+    //
+    // `"no api key supplied"` is Cohere's exact 401 body wording when the
+    // hosted `/v2/embed` endpoint is called with an empty bearer (the BYO-key
+    // embedding path with no key configured). The `CohereEmbedding::embed`
+    // guard now fast-fails before issuing that request, but this arm demotes
+    // any residual 401 of that shape — older clients, or a present-but-rejected
+    // key — so the flood (TAURI-RUST-52S) stays out of Sentry either way.
     if lower.contains("api key not set")
         || lower.contains("missing api key")
         || lower.contains("no api key is configured")
+        || lower.contains("no api key supplied")
     {
         return Some(ExpectedErrorKind::ApiKeyMissing);
     }
@@ -2043,6 +2051,23 @@ mod tests {
             expected_error_kind(
                 "[composio] list_connections: composio direct mode selected but no api key \
                  is configured (set via composio.set_api_key RPC or config.composio.api_key)"
+            ),
+            Some(ExpectedErrorKind::ApiKeyMissing)
+        );
+    }
+
+    /// Sentry TAURI-RUST-52S: Cohere's hosted `/v2/embed` returns a 401 with
+    /// body `"no api key supplied"` when called with an empty bearer (BYO-key
+    /// embedding path, no key configured). Verbatim wire shape from the embed
+    /// client must classify as `ApiKeyMissing` so the 8.7k-event flood stays
+    /// out of Sentry even from clients that predate the call-site guard.
+    #[test]
+    fn classifies_cohere_missing_api_key_401_as_api_key_missing() {
+        assert_eq!(
+            expected_error_kind(
+                "Cohere embed API error (401 Unauthorized): \
+                 {\"id\":\"3176e92f-d18e-4019-bd43-314821504a61\",\
+                 \"message\":\"no api key supplied\"}"
             ),
             Some(ExpectedErrorKind::ApiKeyMissing)
         );
