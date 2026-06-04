@@ -93,6 +93,7 @@ impl AgentBuilder {
             model_name: None,
             temperature: None,
             workspace_dir: None,
+            action_dir: None,
             skills: None,
             workflows: None,
             auto_save: None,
@@ -197,6 +198,11 @@ impl AgentBuilder {
     /// Sets the workspace directory for the agent.
     pub fn workspace_dir(mut self, workspace_dir: std::path::PathBuf) -> Self {
         self.workspace_dir = Some(workspace_dir);
+        self
+    }
+
+    pub fn action_dir(mut self, action_dir: std::path::PathBuf) -> Self {
+        self.action_dir = Some(action_dir);
         self
     }
 
@@ -454,12 +460,15 @@ impl AgentBuilder {
         let visible_tool_specs: Vec<ToolSpec> =
             dedup_visible_tool_specs(visible_tool_specs_unfiltered);
 
+        let visible_names_list: Vec<&str> =
+            visible_tool_specs.iter().map(|s| s.name.as_str()).collect();
         log::info!(
-            "[agent] tool spec filter: total={} visible={} (filter_active={} policy_restricted={})",
+            "[agent] tool spec filter: total={} visible={} (filter_active={} policy_restricted={}) names=[{}]",
             tool_specs.len(),
             visible_tool_specs.len(),
             !visible_names.is_empty(),
-            tool_policy_session.has_restrictions()
+            tool_policy_session.has_restrictions(),
+            visible_names_list.join(", ")
         );
 
         // Pull the provider out of the builder once. We store it on
@@ -536,6 +545,11 @@ impl AgentBuilder {
             prompt_builder,
         );
 
+        let workspace_dir = self
+            .workspace_dir
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        let action_dir = self.action_dir.unwrap_or_else(|| workspace_dir.clone());
+
         Ok(Agent {
             provider,
             tools: Arc::new(tools),
@@ -556,9 +570,8 @@ impl AgentBuilder {
             config,
             model_name,
             temperature: self.temperature.unwrap_or(0.7),
-            workspace_dir: self
-                .workspace_dir
-                .unwrap_or_else(|| std::path::PathBuf::from(".")),
+            workspace_dir,
+            action_dir,
             skills: self.skills.unwrap_or_default(),
             workflows: self.workflows.unwrap_or_default(),
             auto_save: self.auto_save.unwrap_or(false),
@@ -599,6 +612,7 @@ impl AgentBuilder {
             cached_transcript_messages: None,
             context,
             on_progress: None,
+            run_queue: None,
             connected_integrations: Vec::new(),
             connected_integrations_initialized: false,
             integration_runtime_config: None,
@@ -850,9 +864,14 @@ impl Agent {
         )?;
 
         let local_embedding = config.workload_local_model("embeddings");
+        let embedding_api_key = crate::openhuman::embeddings::resolve_api_key(
+            config,
+            &config.memory.embedding_provider,
+        );
         let memory: Arc<dyn Memory> = Arc::from(memory_store::create_memory_with_local_ai(
             &config.memory,
             local_embedding.as_deref(),
+            &embedding_api_key,
             &config.embedding_routes,
             Some(&config.storage.provider.config),
             &config.workspace_dir,
@@ -1566,6 +1585,7 @@ impl Agent {
             .model_name(model_name)
             .temperature(effective_temperature)
             .workspace_dir(config.workspace_dir.clone())
+            .action_dir(config.action_dir.clone())
             .skills(crate::openhuman::skills::load_skills(&config.workspace_dir))
             .workflows({
                 let wf = crate::openhuman::agent_workflows::load_workflows(&config.workspace_dir);

@@ -236,6 +236,20 @@ pub fn is_provider_config_rejection_message(body: &str) -> bool {
         // harmless (`.any()` short-circuits) and kept so each Sentry
         // family stays self-documenting.
         "does not support tools",
+        // TAURI-RUST-4P6 (~36.6k events / 2 users) — user picked an
+        // *embedding* model (Ollama `bge-m3:latest`, OpenHuman's default
+        // memory-tree embed model) as their chat model. Ollama rejects every
+        // chat turn with `{"error":{"message":"\"bge-m3:latest\" does not
+        // support chat","type":"invalid_request_error",...}}` on a 400. Same
+        // user-state class as `does not support tools`: the model lacks the
+        // chat capability and the user must pick a chat-capable model — Sentry
+        // has no remediation. The 400 status bypasses the
+        // `completion_only_404_guard` (404-only), so without this phrase the
+        // raw body re-reports every turn. The companion `not_chat_capable_guard`
+        // in `compatible.rs` rewrites the opaque upstream JSON into an
+        // actionable "assign a chat-capable model" message that still carries
+        // this substring, so it stays demoted.
+        "does not support chat",
     ];
 
     let lower = body.to_ascii_lowercase();
@@ -357,6 +371,20 @@ mod tests {
             (
                 "TAURI-RUST-2F",
                 r#"cloud streaming API error (400 Bad Request): {"error":{"message":"The `reasoning_content` in the thinking mode must be passed back to the API.","type":"invalid_request_error","param":null,"code":"invalid_request_error"}}"#,
+            ),
+            // TAURI-RUST-4P6 — user picked an embedding model
+            // (`bge-m3:latest`) as their Ollama chat model. Ollama 400s every
+            // chat turn. Verbatim wire body from Sentry issue 5338.
+            (
+                "TAURI-RUST-4P6",
+                r#"ollama API error (400 Bad Request): {"error":{"message":"\"bge-m3:latest\" does not support chat","type":"invalid_request_error","param":null,"code":null}}"#,
+            ),
+            // Same shape after `not_chat_capable_guard` (compatible.rs)
+            // rewrites it into the actionable message — must still classify so
+            // the re-reported error stays demoted.
+            (
+                "TAURI-RUST-4P6-enriched",
+                "ollama API error: model 'bge-m3:latest' does not support chat — it appears to be an embedding or non-chat model. Assign a chat-capable model to this provider (e.g. in Settings → AI), or pick a different model.",
             ),
         ] {
             assert!(

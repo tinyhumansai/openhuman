@@ -85,6 +85,7 @@ fn add_github_source(config: &Config) -> TaskSource {
             labels: vec![],
             assignee_is_me: true,
             state: None,
+            fetch_mode: Default::default(),
             extra: json!({}),
         },
         1800,

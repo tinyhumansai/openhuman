@@ -1,7 +1,7 @@
 //! Static MCP resource catalog for bundled prompt assets.
 //!
 //! Exposes `IDENTITY.md`, `SOUL.md`, `USER.md` and the `prompt.md` template
-//! for each of the 18 built-in subagents as MCP resources. The content is
+//! for each built-in subagent as MCP resources. The content is
 //! embedded at compile time via `include_str!`.
 //!
 //! ## URI scheme
@@ -150,6 +150,24 @@ const RESOURCE_CATALOG: &[PromptResource] = &[
         name: "help",
         description: "Read-only worker that answers questions from documentation.",
         content: include_str!("../agent_registry/agents/help/prompt.md"),
+    },
+    PromptResource {
+        uri: "openhuman://prompts/agents/scheduler_agent",
+        name: "scheduler_agent",
+        description: "Specialist worker for reminders, recurring jobs, and cron inspection.",
+        content: include_str!("../agent_registry/agents/scheduler_agent/prompt.md"),
+    },
+    PromptResource {
+        uri: "openhuman://prompts/agents/presentation_agent",
+        name: "presentation_agent",
+        description: "Specialist worker for evidence-grounded presentation generation.",
+        content: include_str!("../agent_registry/agents/presentation_agent/prompt.md"),
+    },
+    PromptResource {
+        uri: "openhuman://prompts/agents/desktop_control_agent",
+        name: "desktop_control_agent",
+        description: "Specialist worker for desktop app launch and accessibility actions.",
+        content: include_str!("../agent_registry/agents/desktop_control_agent/prompt.md"),
     },
     PromptResource {
         uri: "openhuman://prompts/agents/mcp_setup",

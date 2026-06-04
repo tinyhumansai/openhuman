@@ -353,7 +353,7 @@ fn store_handles_labels_and_inference() {
         })
         .unwrap();
 
-    // 4. Default inferred labels (work)
+    // 4. Default inferred labels (general)
     store
         .ensure_thread(CreateConversationThread {
             parent_thread_id: None,
@@ -361,6 +361,45 @@ fn store_handles_labels_and_inference() {
             title: "User Chat".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),
             labels: None,
+            personality_id: None,
+        })
+        .unwrap();
+
+    // 5. Legacy explicit labels normalize into their canonical buckets.
+    store
+        .ensure_thread(CreateConversationThread {
+            parent_thread_id: None,
+            id: "legacy-work-thread".to_string(),
+            title: "Legacy Work Chat".to_string(),
+            created_at: "2026-04-10T12:00:00Z".to_string(),
+            labels: Some(vec![
+                "work".to_string(),
+                "urgent".to_string(),
+                "work".to_string(),
+            ]),
+            personality_id: None,
+        })
+        .unwrap();
+    store
+        .ensure_thread(CreateConversationThread {
+            parent_thread_id: None,
+            id: "legacy-subconscious-thread".to_string(),
+            title: "Legacy Subconscious Chat".to_string(),
+            created_at: "2026-04-10T12:00:00Z".to_string(),
+            labels: Some(vec![
+                "from_reflection".to_string(),
+                "subconscious_tick".to_string(),
+            ]),
+            personality_id: None,
+        })
+        .unwrap();
+    store
+        .ensure_thread(CreateConversationThread {
+            parent_thread_id: None,
+            id: "legacy-task-thread".to_string(),
+            title: "Legacy Task Chat".to_string(),
+            created_at: "2026-04-10T12:00:00Z".to_string(),
+            labels: Some(vec!["agent-task".to_string(), "worker".to_string()]),
             personality_id: None,
         })
         .unwrap();
@@ -383,10 +422,31 @@ fn store_handles_labels_and_inference() {
     }
     {
         let user = threads.iter().find(|t| t.id == "user-thread").unwrap();
-        assert_eq!(user.labels, vec!["work"]);
+        assert_eq!(user.labels, vec!["general"]);
+    }
+    {
+        let legacy = threads
+            .iter()
+            .find(|t| t.id == "legacy-work-thread")
+            .unwrap();
+        assert_eq!(legacy.labels, vec!["general", "urgent"]);
+    }
+    {
+        let legacy = threads
+            .iter()
+            .find(|t| t.id == "legacy-subconscious-thread")
+            .unwrap();
+        assert_eq!(legacy.labels, vec!["subconscious"]);
+    }
+    {
+        let legacy = threads
+            .iter()
+            .find(|t| t.id == "legacy-task-thread")
+            .unwrap();
+        assert_eq!(legacy.labels, vec!["tasks"]);
     }
 
-    // 5. Update labels
+    // 6. Update labels
     store
         .update_thread_labels("t1", vec!["updated".to_string()], "2026-04-10T12:05:00Z")
         .unwrap();
@@ -396,7 +456,7 @@ fn store_handles_labels_and_inference() {
         assert_eq!(t1.labels, vec!["updated"]);
     }
 
-    // 6. Title update preserves labels
+    // 7. Title update preserves labels
     store
         .update_thread_title("t1", "New Title", "2026-04-10T12:06:00Z")
         .unwrap();

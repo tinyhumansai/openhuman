@@ -490,6 +490,21 @@ async fn try_arm(
         visible_tool_names: None,
         extra_tools: Vec::new(),
         on_progress: None,
+        // Triage processes untrusted inbound channel text. Label it as
+        // ExternalChannel so the approval gate treats any external_effect
+        // tool call originating from this turn as remote-attacker input
+        // (the triage agent doesn't usually invoke such tools — it
+        // classifies and routes — but label correctly for defense in depth).
+        origin: crate::openhuman::agent::turn_origin::AgentTurnOrigin::ExternalChannel {
+            channel: envelope.source.slug().to_string(),
+            // Triage runs over an upstream envelope (composio / webhook /
+            // cron / external caller) that doesn't carry a per-user sender
+            // at this layer. Leave it unset and let the gate apply the
+            // strict per-channel TTL-deny default.
+            sender: None,
+            reply_target: envelope.display_label.clone(),
+            message_id: envelope.external_id.clone(),
+        },
     };
 
     let response = match request_native_global::<AgentTurnRequest, AgentTurnResponse>(

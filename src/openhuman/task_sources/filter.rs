@@ -19,9 +19,11 @@ pub fn to_fetch_filter(spec: &FilterSpec, max: u32) -> TaskFetchFilter {
             labels,
             assignee_is_me,
             state,
+            fetch_mode,
             extra,
         } => TaskFetchFilter {
             assignee_is_me: *assignee_is_me,
+            github_fetch_mode: *fetch_mode,
             repo: repo.clone(),
             labels: labels.clone(),
             state: state.clone(),
@@ -83,6 +85,7 @@ mod tests {
             labels: vec!["bug".into(), "p1".into()],
             assignee_is_me: true,
             state: Some("open".into()),
+            fetch_mode: Default::default(),
             extra: json!({"per_page": 10}),
         };
         let f = to_fetch_filter(&spec, 25);

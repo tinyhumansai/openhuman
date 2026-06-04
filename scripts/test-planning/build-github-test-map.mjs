@@ -29,7 +29,7 @@ Options:
   --prompt-body-chars <count>    Max body chars per item sent to the LLM (default: ${DEFAULT_PROMPT_BODY_CHARS})
   --llm <codex|claude>           Non-interactive CLI to use for synthesis (default: ${DEFAULT_LLM})
   --model <name>                 Optional model override for the LLM CLI
-  --help                         Show this message
+  -h, --help                     Show this message
 
 Examples:
   node scripts/test-planning/build-github-test-map.mjs --max-prs 50 --max-issues 50
@@ -63,7 +63,7 @@ function parseArgs(argv) {
     if (arg === '--') {
       continue;
     }
-    if (arg === '--help') {
+    if (arg === '--help' || arg === '-h') {
       printUsage();
       process.exit(0);
     }

@@ -102,7 +102,15 @@ pub async fn agent_chat(
         config.default_temperature = temp;
     }
     let mut agent = Agent::from_config(config).map_err(|e| e.to_string())?;
-    let response = agent.run_single(message).await.map_err(|e| e.to_string())?;
+    // Direct `agent_chat` RPC — invoked by trusted clients (desktop UI,
+    // operator CLI). Label as CLI so the approval gate doesn't fail
+    // closed on an unlabelled call site.
+    let response = crate::openhuman::agent::turn_origin::with_origin(
+        crate::openhuman::agent::turn_origin::AgentTurnOrigin::Cli,
+        agent.run_single(message),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
     Ok(RpcOutcome::single_log(response, "agent chat completed"))
 }
 

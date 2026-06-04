@@ -14,6 +14,13 @@ pub struct OpenAiEmbedding {
     api_key: String,
     model: String,
     dims: usize,
+    /// When true, send `"dimensions": dims` in the request body. OpenAI's
+    /// `text-embedding-3-*` models honour this (Matryoshka — e.g. 3-large can
+    /// return 1024 instead of its native 3072). Off by default so providers
+    /// that don't accept the field — Voyage (uses `output_dimension`), Cohere,
+    /// LocalAI/Ollama — keep working unchanged. Set via
+    /// [`Self::with_send_dimensions`] for the OpenAI / custom-OpenAI paths.
+    send_dimensions: bool,
 }
 
 impl OpenAiEmbedding {
@@ -24,7 +31,18 @@ impl OpenAiEmbedding {
             api_key: api_key.to_string(),
             model: model.to_string(),
             dims,
+            send_dimensions: false,
         }
+    }
+
+    /// Opt into sending the OpenAI `dimensions` request parameter so a
+    /// reducible model (`text-embedding-3-large` / `-3-small`) returns exactly
+    /// `dims` floats instead of its native size. Only call this for genuine
+    /// OpenAI / OpenAI-compatible endpoints that implement the parameter —
+    /// see [`Self::send_dimensions`]. Returns `self` for builder chaining.
+    pub fn with_send_dimensions(mut self, send: bool) -> Self {
+        self.send_dimensions = send;
+        self
     }
 
     /// Returns the configured base URL.
@@ -111,10 +129,17 @@ impl EmbeddingProvider for OpenAiEmbedding {
             self.model, texts.len(), url
         );
 
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "model": self.model,
             "input": texts,
         });
+        // Request a specific output size on OpenAI 3-* models (Matryoshka) so
+        // the vector matches `dims` (e.g. 3-large → 1024 for the memory tree's
+        // fixed EMBEDDING_DIM). Gated by `send_dimensions` because Voyage /
+        // Cohere / LocalAI don't accept this exact field.
+        if self.send_dimensions && self.dims > 0 {
+            body["dimensions"] = serde_json::json!(self.dims);
+        }
 
         // Retry loop: handles 429 Too Many Requests and 503 Service Unavailable
         // with Retry-After–aware exponential backoff.

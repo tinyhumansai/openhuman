@@ -41,6 +41,42 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+/// How the channels runtime should construct its default chat provider.
+///
+/// Issue #3098 sub-issue 1: the runtime used to ignore the per-workload
+/// `chat_provider` routing and unconditionally build a cloud chain, so
+/// Telegram (and other channels) never honored a user's local-Ollama /
+/// BYOK selection. `resolve_chat_workload` inspects the resolved chat
+/// workload string and chooses between preserving the legacy
+/// `create_intelligent_routing_provider` chain (Cloud) and dispatching
+/// to the unified workload factory (Workload).
+pub(super) enum ChatWorkloadResolution {
+    /// Preserve the existing cloud chain (`ReliableProvider` +
+    /// `IntelligentRoutingProvider`) and `config.default_model`.
+    Cloud,
+    /// Build the channel provider via `create_chat_provider("chat", config)`.
+    Workload {
+        provider_string: String,
+        slug: String,
+    },
+}
+
+pub(super) fn resolve_chat_workload(config: &Config) -> ChatWorkloadResolution {
+    let resolved = provider::provider_for_role("chat", config);
+    let trimmed = resolved.trim();
+    if trimmed.is_empty() || trimmed == "cloud" || trimmed == provider::INFERENCE_BACKEND_ID {
+        return ChatWorkloadResolution::Cloud;
+    }
+    let slug = trimmed
+        .split_once(':')
+        .map(|(s, _)| s.to_string())
+        .unwrap_or_else(|| trimmed.to_string());
+    ChatWorkloadResolution::Workload {
+        provider_string: trimmed.to_string(),
+        slug,
+    }
+}
+
 pub async fn start_channels(mut config: Config) -> Result<()> {
     // Initialize the global event bus singleton and register the tracing
     // subscriber for debug logging of all domain events.
@@ -56,6 +92,10 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
     // Surface parked ApprovalGate requests as chat messages so the user can
     // answer yes/no in the thread (chat-native approval, issue #1339).
     crate::openhuman::channels::providers::web::register_approval_surface_subscriber();
+    // Surface generated-artifact lifecycle events (ArtifactReady /
+    // ArtifactFailed) as `artifact_ready` / `artifact_failed` web-channel
+    // events so the frontend ArtifactCard can render in chat (#2779).
+    crate::openhuman::channels::providers::web::register_artifact_surface_subscriber();
     // Spawn the per-toolkit provider periodic sync scheduler. This is
     // a thin tokio task that ticks every minute and dispatches into
     // any provider whose `sync_interval_secs` has elapsed for an
@@ -174,13 +214,36 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
         secrets_encrypt: config.secrets.encrypt,
         reasoning_enabled: config.runtime.reasoning_enabled,
     };
-    let provider: Arc<dyn Provider> = Arc::from(provider::create_intelligent_routing_provider(
-        config.inference_url.as_deref(),
-        config.api_url.as_deref(),
-        config.api_key.as_deref(),
-        &config,
-        &provider_runtime_options,
-    )?);
+    let (provider, model, provider_name): (Arc<dyn Provider>, String, String) =
+        match resolve_chat_workload(&config) {
+            ChatWorkloadResolution::Cloud => {
+                let p: Arc<dyn Provider> =
+                    Arc::from(provider::create_intelligent_routing_provider(
+                        config.inference_url.as_deref(),
+                        config.api_url.as_deref(),
+                        config.api_key.as_deref(),
+                        &config,
+                        &provider_runtime_options,
+                    )?);
+                let m = config
+                    .default_model
+                    .clone()
+                    .unwrap_or_else(|| crate::openhuman::config::DEFAULT_MODEL.into());
+                (p, m, provider::INFERENCE_BACKEND_ID.to_string())
+            }
+            ChatWorkloadResolution::Workload {
+                provider_string,
+                slug,
+            } => {
+                tracing::info!(
+                    chat_provider = %provider_string,
+                    slug = %slug,
+                    "[channels][startup] chat workload routed to per-workload provider — building dedicated channel provider"
+                );
+                let (boxed, model_id) = provider::create_chat_provider("chat", &config)?;
+                (Arc::from(boxed), model_id, slug)
+            }
+        };
 
     // Warm up the provider connection pool (TLS handshake, DNS, HTTP/2 setup)
     // so the first real message doesn't hit a cold-start timeout.
@@ -264,15 +327,14 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
         crate::openhuman::config::AuditConfig::default(),
         config.workspace_dir.clone(),
     )?;
-    let model = config
-        .default_model
-        .clone()
-        .unwrap_or_else(|| crate::openhuman::config::DEFAULT_MODEL.into());
     let temperature = config.default_temperature;
     let local_embedding = config.workload_local_model("embeddings");
+    let embedding_api_key =
+        crate::openhuman::embeddings::resolve_api_key(&config, &config.memory.embedding_provider);
     let mem: Arc<dyn Memory> = Arc::from(memory_store::create_memory_with_local_ai(
         &config.memory,
         local_embedding.as_deref(),
+        &embedding_api_key,
         &[],
         Some(&config.storage.provider.config),
         &config.workspace_dir,
@@ -670,6 +732,23 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
     } else {
         None
     };
+    // Sub-issue 2 of #3098: when Telegram is enabled, register the
+    // approval-surface subscriber so `Prompt`-class tool calls actually
+    // get gated for the user instead of silently allowed (the legacy
+    // behavior when `ApprovalChatContext` is unset). The dispatch loop
+    // pairs this by scoping each Telegram turn in an `ApprovalChatContext`
+    // and intercepting `yes`/`no` replies for parked approvals.
+    let _telegram_approval_surface_handle = if channels_by_name.contains_key("telegram") {
+        let handle = bus.subscribe(Arc::new(
+            crate::openhuman::channels::providers::telegram::TelegramApprovalSurfaceSubscriber::new(
+                Arc::clone(&channels_by_name),
+            ),
+        ));
+        tracing::debug!("[telegram-approval] registered TelegramApprovalSurfaceSubscriber");
+        Some(handle)
+    } else {
+        None
+    };
     // Register the tree summarizer event subscriber for observability logging.
     let _tree_summarizer_handle = bus.subscribe(Arc::new(
         crate::openhuman::memory_tree::tree_runtime::bus::TreeSummarizerEventSubscriber::new(),
@@ -679,7 +758,6 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
 
     println!("  🚦 In-flight message limit: {max_in_flight_messages}");
 
-    let provider_name = provider::INFERENCE_BACKEND_ID.to_string();
     let mut provider_cache_seed: HashMap<String, Arc<dyn Provider>> = HashMap::new();
     provider_cache_seed.insert(provider_name.clone(), Arc::clone(&provider));
     let message_timeout_secs =
@@ -828,6 +906,10 @@ pub mod test_support {
         resolve_yuanbao_app_secret(yb_cfg, config)
     }
 }
+
+#[cfg(test)]
+#[path = "startup_tests.rs"]
+mod tests;
 
 #[cfg(test)]
 mod yuanbao_secret_tests {

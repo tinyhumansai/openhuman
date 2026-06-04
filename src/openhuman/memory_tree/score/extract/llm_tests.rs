@@ -193,6 +193,10 @@ async fn extract_soft_fallback_on_provider_failure() {
     // Provider always errors. extract() must NOT return Err — it must
     // return an empty ExtractedEntities with a warn log after retry
     // exhaustion.
+    // #002: this path now sets the process-global "structure degraded" flag.
+    // Hold the shared health test-guard so the flag is reset on entry and the
+    // signal doesn't leak into parallel status tests.
+    let _health_guard = crate::openhuman::memory_tree::health::test_guard();
     use crate::openhuman::memory::chat::{ChatPrompt, ChatProvider};
     use async_trait::async_trait;
     use std::sync::Arc;

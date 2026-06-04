@@ -16,7 +16,7 @@ test.describe('Multi-round tool conversation smoke', () => {
 
     const text = await page.locator('#root').innerText();
     expect(
-      ['Threads', 'New thread', 'Type a message', 'Chat'].some(marker => text.includes(marker))
+      ['Threads', 'New thread', 'How can I help', 'Chat'].some(marker => text.includes(marker))
     ).toBe(true);
   });
 });

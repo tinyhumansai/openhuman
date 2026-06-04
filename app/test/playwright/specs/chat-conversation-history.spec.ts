@@ -13,6 +13,7 @@ const SECRET_WORD = 'XYZZY';
 const FIRST_PROMPT = `Remember: the secret word is ${SECRET_WORD}`;
 const SECOND_PROMPT = 'What was the secret word?';
 const TURN_TWO_CANARY = `canary-memory-m1n2o3-${SECRET_WORD}`;
+const FIRST_RESPONSE = `Got it! I will remember that the secret word is ${SECRET_WORD}.`;
 
 interface MockRequest {
   method: string;
@@ -115,7 +116,7 @@ async function waitForSocketConnected(page: Page): Promise<void> {
 async function sendMessage(page: Page, prompt: string): Promise<void> {
   await waitForSocketConnected(page);
   await dismissWalkthroughIfPresent(page);
-  await page.getByPlaceholder('Type a message...').fill(prompt);
+  await page.getByPlaceholder('How can I help you today?').fill(prompt);
   await dismissWalkthroughIfPresent(page);
   await expect(page.getByTestId('send-message-button')).toBeEnabled();
   await page.getByTestId('send-message-button').click();
@@ -126,19 +127,16 @@ test.describe('Chat Conversation History', () => {
     page,
   }) => {
     await resetMock();
-    await setMockBehavior(
-      'llmForcedResponses',
-      JSON.stringify([
-        { content: `Got it! I will remember that the secret word is ${SECRET_WORD}.` },
-      ])
-    );
+    await setMockBehavior('llmForcedResponses', JSON.stringify([{ content: FIRST_RESPONSE }]));
     await setMockBehavior('llmStreamChunkDelayMs', '10');
 
     await openChat(page);
     await createNewThread(page);
 
     await sendMessage(page, FIRST_PROMPT);
-    await expect(page.getByText('Got it!')).toBeVisible({ timeout: 20_000 });
+    await expect(
+      page.locator('div.bg-stone-200').filter({ hasText: FIRST_RESPONSE }).first()
+    ).toBeVisible({ timeout: 20_000 });
 
     await resetMock();
     await setMockBehavior(

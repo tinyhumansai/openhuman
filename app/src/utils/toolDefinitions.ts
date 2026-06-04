@@ -29,6 +29,32 @@ export const TOOL_CATALOG: ToolDefinition[] = [
     rustToolNames: ['shell'],
   },
   {
+    id: 'launch_app',
+    displayName: 'Launch Applications',
+    description: 'Open apps on your desktop by name (e.g. Music, Spotify, Safari).',
+    category: 'System',
+    defaultEnabled: true,
+    rustToolNames: ['launch_app'],
+  },
+  {
+    id: 'ax_interact',
+    displayName: 'App UI Control',
+    description:
+      'Interact with desktop app UI by element label via the platform accessibility API — click buttons, type in fields, without needing screen coordinates.',
+    category: 'System',
+    defaultEnabled: true,
+    rustToolNames: ['ax_interact'],
+  },
+  {
+    id: 'automate',
+    displayName: 'App Automation',
+    description:
+      'Accomplish a multi-step goal in an app in one go (e.g. "play a song in Music", "message someone in Slack") — the agent drives the UI step by step.',
+    category: 'System',
+    defaultEnabled: true,
+    rustToolNames: ['automate'],
+  },
+  {
     id: 'git_operations',
     displayName: 'Git Operations',
     description: 'Run git commands in your workspace.',

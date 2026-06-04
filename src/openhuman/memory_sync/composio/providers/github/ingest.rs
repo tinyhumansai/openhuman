@@ -15,12 +15,10 @@
 //!
 //! ## Source-id scope
 //!
-//! Source id is `github:{connection_id}:{issue_id}` — one source per
-//! GitHub issue or pull request per connection. Issue and PR are the
-//! natural GitHub grouping ("one issue/PR = one document") so per-item
-//! ingest keeps the canonical `SourceKind::Document` semantics and
-//! matches how the Gmail per-message / Slack per-channel paths scope
-//! their sources.
+//! Source id is `github:{connection_id}:{issue_id}` — one document identity
+//! per GitHub issue or pull request per connection. The source tree / raw
+//! archive scope is `github:{connection_id}`, so selector-backed issue lists
+//! do not create one graph source per issue.
 //!
 //! ## Re-ingest of edited issues
 //!
@@ -73,6 +71,16 @@ pub const DEFAULT_TAGS: &[&str] = &["github", "ingested"];
 /// the source id.
 pub(crate) fn github_source_id(connection_id: &str, issue_id: &str) -> String {
     format!("github:{connection_id}:{issue_id}")
+}
+
+/// Build the source tree / raw archive scope for one GitHub connection.
+///
+/// Keep this deliberately item-free. Issue/PR ids belong in
+/// [`github_source_id`] for document dedupe, not in the user-visible source
+/// graph. Repo-archive ingestion has its own repo-level scope in
+/// `memory_sync::sources::github`.
+pub(crate) fn github_source_scope(connection_id: &str) -> String {
+    format!("github:{connection_id}")
 }
 
 /// Pretty-printed JSON body for one GitHub issue/PR. We persist the *full*
@@ -184,9 +192,14 @@ pub async fn ingest_issue_into_memory_tree(
         source_ref,
     };
     let tags: Vec<String> = DEFAULT_TAGS.iter().map(|s| s.to_string()).collect();
-    let owner = format!("github:{connection_id}");
+    let owner = github_source_scope(connection_id);
+    let path_scope = Some(owner.clone());
 
-    match ingest_pipeline::ingest_document(config, &source_id, &owner, tags, doc).await {
+    match ingest_pipeline::ingest_document_with_scope(
+        config, &source_id, &owner, tags, doc, path_scope,
+    )
+    .await
+    {
         Ok(IngestResult {
             chunks_written,
             already_ingested,
@@ -283,6 +296,17 @@ mod tests {
         );
     }
 
+    #[test]
+    fn github_source_scope_is_connection_level() {
+        assert_eq!(github_source_scope("conn-1"), "github:conn-1");
+        assert_eq!(github_source_scope("conn-2"), "github:conn-2");
+        assert_eq!(
+            github_source_scope("conn-1"),
+            github_source_scope("conn-1"),
+            "scope must stay stable across issues in one connection"
+        );
+    }
+
     /// `parse_updated_at` accepts valid ISO 8601 / RFC 3339 and falls
     /// back to `Utc::now()` on bad input rather than failing the ingest.
     /// We don't assert the now-fallback timestamp value (it's
@@ -352,11 +376,15 @@ mod tests {
     /// `composio::providers::notion::ingest` (#2887).
     #[tokio::test]
     async fn ingest_issue_writes_to_memory_tree() {
-        use crate::openhuman::memory_store::chunks::store::{count_chunks, is_source_ingested};
+        use crate::openhuman::memory_store::chunks::store::{
+            count_chunks, is_source_ingested, list_chunks, ListChunksQuery,
+        };
 
         let (_tmp, cfg) = test_config();
         let connection_id = "conn-test";
         let issue_id = "987654321";
+        let expected = github_source_id(connection_id, issue_id);
+        let expected_scope = github_source_scope(connection_id);
         let issue = sample_issue(987654321, "2026-05-28T10:00:00Z", "Fix flaky test", "Repro");
 
         let chunks_before = count_chunks(&cfg).expect("count_chunks before");
@@ -384,11 +412,29 @@ mod tests {
             "ingest must populate mem_tree_chunks (#2885): {chunks_before} → {chunks_after}"
         );
 
+        let rows = list_chunks(
+            &cfg,
+            &ListChunksQuery {
+                source_kind: Some(SourceKind::Document),
+                source_id: Some(expected.clone()),
+                limit: Some(1),
+                ..Default::default()
+            },
+        )
+        .expect("list chunks for github issue");
+        let chunk = rows.first().expect("github chunk should be listed");
+        assert_eq!(chunk.metadata.source_id, expected.as_str());
+        assert_eq!(
+            chunk.metadata.path_scope.as_deref(),
+            Some(expected_scope.as_str())
+        );
+
         // Source registration.
         let cfg_for_blocking = cfg.clone();
-        let expected = github_source_id(connection_id, issue_id);
+        let expected_for_task = expected.clone();
         let registered = tokio::task::spawn_blocking(move || {
-            is_source_ingested(&cfg_for_blocking, SourceKind::Document, &expected).unwrap_or(false)
+            is_source_ingested(&cfg_for_blocking, SourceKind::Document, &expected_for_task)
+                .unwrap_or(false)
         })
         .await
         .expect("source-check task join");

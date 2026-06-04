@@ -226,6 +226,29 @@ pub enum ExpectedErrorKind {
     /// `is_network_unreachable_message` anchors miss the inner OS message.
     ChannelSupervisorRestart,
     ConfigLoadTimedOut,
+    /// The subconscious engine's SQLite schema init couldn't open its database
+    /// file at all — a host-filesystem condition, not a code bug. Two canonical
+    /// renderings, both bound to the user's local FS:
+    ///
+    /// - `SQLITE_CANTOPEN` (14): `unable to open the database file` — the
+    ///   `subconscious/` dir or DB file isn't writable/openable (permissions,
+    ///   a vanished mount, a read-only volume).
+    /// - `SQLITE_IOERR_SHMMAP` (4618): `I/O error within the xShmMap method` —
+    ///   the filesystem can't back WAL's mmap'd `-shm` segment (network mounts,
+    ///   FUSE, some sandboxed/synced macOS paths).
+    ///
+    /// The `xShmMap` case is now *prevented* at the source by
+    /// `subconscious::store::apply_journal_mode`, which degrades WAL to a
+    /// rollback journal that needs no shared memory (issue #3231). This kind
+    /// demotes the *residual* genuine `CANTOPEN` failures — where even opening
+    /// the file fails — which the user must resolve locally (fix permissions,
+    /// remount, free the volume) and which Sentry has no remediation path for.
+    ///
+    /// Anchored to the subconscious schema/open envelope plus the SQLite
+    /// cant-open / shared-memory IO text, so transient `database is locked`
+    /// contention (handled by the store's busy-retry loop) and unrelated DB
+    /// failures in other domains still reach Sentry.
+    SubconsciousSchemaUnavailable,
 }
 
 pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
@@ -233,7 +256,25 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     if lower.contains("local ai is disabled") {
         return Some(ExpectedErrorKind::LocalAiDisabled);
     }
-    if lower.contains("api key not set") || lower.contains("missing api key") {
+    // `"no api key is configured"` covers the composio direct-mode factory
+    // bail (`client.rs`: "composio direct mode selected but no api key is
+    // configured"). `composio_list_connections` now short-circuits that
+    // state to an empty list, so the dominant 5 s-poll leak (TAURI-RUST-R4)
+    // no longer reaches here — but other direct-mode ops the user invokes
+    // explicitly (execute / authorize) can still surface it, and it is the
+    // same user-config state with no Sentry-actionable signal.
+    //
+    // `"no api key supplied"` is Cohere's exact 401 body wording when the
+    // hosted `/v2/embed` endpoint is called with an empty bearer (the BYO-key
+    // embedding path with no key configured). The `CohereEmbedding::embed`
+    // guard now fast-fails before issuing that request, but this arm demotes
+    // any residual 401 of that shape — older clients, or a present-but-rejected
+    // key — so the flood (TAURI-RUST-52S) stays out of Sentry either way.
+    if lower.contains("api key not set")
+        || lower.contains("missing api key")
+        || lower.contains("no api key is configured")
+        || lower.contains("no api key supplied")
+    {
         return Some(ExpectedErrorKind::ApiKeyMissing);
     }
     // Check `ChannelSupervisorRestart` BEFORE `is_loopback_unavailable` and
@@ -334,6 +375,9 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     if is_whatsapp_data_sqlite_busy_message(&lower) {
         return Some(ExpectedErrorKind::WhatsAppDataSqliteBusy);
     }
+    if is_subconscious_schema_unavailable_message(&lower) {
+        return Some(ExpectedErrorKind::SubconsciousSchemaUnavailable);
+    }
     if is_disk_full_message(&lower) {
         return Some(ExpectedErrorKind::DiskFull);
     }
@@ -397,6 +441,26 @@ fn is_whatsapp_data_sqlite_busy_message(lower: &str) -> bool {
         || lower.contains("database table is locked")
         || lower.contains("database file is locked")
         || lower.contains("error code 5")
+}
+
+/// Match subconscious-engine SQLite schema-init failures caused by the host
+/// filesystem being unable to open the DB file (`SQLITE_CANTOPEN` /
+/// `SQLITE_IOERR_SHMMAP`). Anchored to the subconscious open/DDL envelope so it
+/// can't demote unrelated DB failures, and deliberately scoped to cant-open /
+/// shared-memory IO text — *not* `database is locked`, which the store retries
+/// and which (if persistent) is a real contention signal worth surfacing.
+///
+/// See [`ExpectedErrorKind::SubconsciousSchemaUnavailable`].
+fn is_subconscious_schema_unavailable_message(lower: &str) -> bool {
+    let in_subconscious_envelope = lower.contains("subconscious schema ddl")
+        || lower.contains("failed to open subconscious db");
+    if !in_subconscious_envelope {
+        return false;
+    }
+    lower.contains("unable to open the database file")
+        || lower.contains("xshmmap")
+        || lower.contains("error code 14")
+        || lower.contains("error code 4618")
 }
 
 fn is_embedding_backend_auth_failure(lower: &str) -> bool {
@@ -1493,6 +1557,26 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
                 "[observability] {domain}.{operation} skipped expected config-load timeout: {message}"
             );
         }
+        ExpectedErrorKind::SubconsciousSchemaUnavailable => {
+            // Host-filesystem condition: SQLite couldn't open the subconscious
+            // DB file (CANTOPEN / xShmMap). The WAL-fallback in
+            // `subconscious::store` already prevents the shared-memory variant;
+            // what reaches here is a genuine local open failure the user must
+            // fix on their machine (permissions, remount, free the volume) —
+            // Sentry has no remediation path. Demote at `warn!` so a sustained
+            // spike still shows in operator dashboards without turning every
+            // affected session into a Sentry error event. Drops TAURI-RUST-8WM.
+            // Do not include the raw `message`: it can embed the absolute
+            // subconscious DB path (home dir / username). Mirror the
+            // metadata-only demotions (`DiskFull`, `FilesystemUserPathInvalid`)
+            // and log only domain/operation/kind — no PII in the breadcrumb.
+            tracing::warn!(
+                domain = domain,
+                operation = operation,
+                kind = "subconscious_schema_unavailable",
+                "[observability] {domain}.{operation} skipped expected subconscious schema DB-unavailable error"
+            );
+        }
     }
 }
 
@@ -1953,6 +2037,50 @@ mod tests {
         );
         assert_eq!(
             expected_error_kind("ollama embed failed with status 500"),
+            None
+        );
+    }
+
+    /// Sentry TAURI-RUST-R4: the composio direct-mode factory bail must
+    /// classify as `ApiKeyMissing` so any residual emit (explicit
+    /// execute/authorize call with no key) stays out of Sentry. Uses the
+    /// verbatim wire shape from `client.rs`.
+    #[test]
+    fn classifies_composio_direct_no_api_key_as_api_key_missing() {
+        assert_eq!(
+            expected_error_kind(
+                "[composio] list_connections: composio direct mode selected but no api key \
+                 is configured (set via composio.set_api_key RPC or config.composio.api_key)"
+            ),
+            Some(ExpectedErrorKind::ApiKeyMissing)
+        );
+    }
+
+    /// Sentry TAURI-RUST-52S: Cohere's hosted `/v2/embed` returns a 401 with
+    /// body `"no api key supplied"` when called with an empty bearer (BYO-key
+    /// embedding path, no key configured). Verbatim wire shape from the embed
+    /// client must classify as `ApiKeyMissing` so the 8.7k-event flood stays
+    /// out of Sentry even from clients that predate the call-site guard.
+    #[test]
+    fn classifies_cohere_missing_api_key_401_as_api_key_missing() {
+        assert_eq!(
+            expected_error_kind(
+                "Cohere embed API error (401 Unauthorized): \
+                 {\"id\":\"3176e92f-d18e-4019-bd43-314821504a61\",\
+                 \"message\":\"no api key supplied\"}"
+            ),
+            Some(ExpectedErrorKind::ApiKeyMissing)
+        );
+    }
+
+    /// Guard against over-suppression: a genuine BYO-key auth failure
+    /// (wrong/expired key the upstream rejected) is an actionable bug
+    /// shape and MUST still reach Sentry (stay `None`), not get demoted by
+    /// the new "no api key is configured" substring.
+    #[test]
+    fn does_not_classify_invalid_api_key_401_as_missing() {
+        assert_eq!(
+            expected_error_kind("OpenAI API error (401 Unauthorized): invalid_api_key"),
             None
         );
     }
@@ -2487,6 +2615,46 @@ mod tests {
                 expected_error_kind(raw),
                 Some(ExpectedErrorKind::WhatsAppDataSqliteBusy),
                 "should classify whatsapp_data sqlite busy/locked: {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn classifies_subconscious_schema_unavailable_errors() {
+        for raw in [
+            // SQLITE_IOERR_SHMMAP (4618) — the original escalating issue (#3231).
+            "failed to run subconscious schema DDL: disk I/O error: Error code 4618: I/O error within the xShmMap method (trying to open a new shared-memory segment)",
+            // SQLITE_CANTOPEN (14) — sibling variant from the user report.
+            "failed to run subconscious schema DDL: unable to open database file: Error code 14: Unable to open the database file",
+            // Failure surfaced at the open step rather than the DDL step.
+            "failed to open subconscious DB: /home/u/.openhuman/subconscious/subconscious.db: unable to open the database file",
+            // Wrapped in outer RPC context — classifier runs on the full chain.
+            "rpc.invoke_method failed: failed to run subconscious schema DDL: disk I/O error: Error code 4618",
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::SubconsciousSchemaUnavailable),
+                "should classify subconscious schema DB-unavailable: {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn does_not_classify_subconscious_lock_or_unrelated_open_failures() {
+        for raw in [
+            // Transient busy/locked is retried by the store and, if persistent,
+            // is a real contention signal — must NOT be demoted here.
+            "failed to run subconscious schema DDL: database is locked",
+            // Cant-open text without the subconscious envelope must not match.
+            "failed to open memory DB: unable to open the database file",
+            // Subconscious envelope but a non-FS error (e.g. malformed SQL) stays
+            // a real bug worth reporting.
+            "failed to run subconscious schema DDL: near \"CREAT\": syntax error",
+        ] {
+            assert_ne!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::SubconsciousSchemaUnavailable),
+                "must not classify as subconscious schema unavailable: {raw}"
             );
         }
     }

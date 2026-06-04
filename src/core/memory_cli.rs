@@ -132,6 +132,7 @@ fn run_ingest(args: &[String]) -> Result<()> {
             category: "core".to_string(),
             session_id: None,
             document_id: None,
+            taint: crate::openhuman::memory::MemoryTaint::Internal,
         };
 
         let ingestion_config = MemoryIngestionConfig::default();

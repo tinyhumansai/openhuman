@@ -1,5 +1,6 @@
 //! Telegram channel — long-polls the Bot API for updates.
 
+mod approval_surface;
 mod attachments;
 mod bus;
 mod channel;
@@ -12,6 +13,7 @@ pub mod remote_control;
 mod session_store;
 mod text;
 
+pub use approval_surface::{TelegramApprovalSurfaceSubscriber, TELEGRAM_APPROVAL_CLIENT_ID};
 pub use bus::TelegramRemoteSubscriber;
 pub use channel_types::TelegramChannel;
 pub use remote_control::TelegramRemoteCommand;

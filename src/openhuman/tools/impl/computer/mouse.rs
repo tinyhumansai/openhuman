@@ -5,6 +5,7 @@
 //! SendInput on Windows, X11/libxdo on Linux).
 
 use super::human_path::{human_path, HumanPathOptions};
+use super::main_thread::run_input_on_main;
 use crate::openhuman::security::SecurityPolicy;
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
 use async_trait::async_trait;
@@ -151,6 +152,16 @@ impl Tool for MouseTool {
         PermissionLevel::Dangerous
     }
 
+    /// Route every call through the ApprovalGate. Raw coordinate input has no
+    /// app/element scoping (nothing to denylist), so the gate is the only real
+    /// boundary — and the gate fires on `external_effect_with_args`, NOT on
+    /// `PermissionLevel::Dangerous` (which is just a static channel-capability
+    /// filter). Without this, blind clicks could run unattended on an
+    /// auto-approved turn once `computer_control.enabled`.
+    fn external_effect(&self) -> bool {
+        true
+    }
+
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -226,69 +237,57 @@ impl Tool for MouseTool {
             "move" => {
                 let (x, y) = require_xy(&args)?;
                 let human_like = human_like_enabled(&args)?;
-                tokio::task::spawn_blocking(move || {
-                    let mut enigo = Enigo::new(&Settings::default())
-                        .map_err(|e| anyhow::anyhow!("Failed to create enigo instance: {e}"))?;
-                    humanized_move(&mut enigo, x, y, human_like)?;
-                    info!(
-                        tool = "mouse",
-                        action = "move",
-                        x = x,
-                        y = y,
-                        "[computer] cursor moved"
-                    );
-                    Ok(ToolResult::success(format!("Moved cursor to ({x}, {y})")))
-                })
-                .await?
+                into_result(
+                    "move",
+                    run_input_on_main(move || {
+                        let mut enigo = Enigo::new(&Settings::default())
+                            .map_err(|e| format!("Failed to create enigo instance: {e}"))?;
+                        humanized_move(&mut enigo, x, y, human_like).map_err(|e| e.to_string())?;
+                        Ok(format!("Moved cursor to ({x}, {y})"))
+                    })
+                    .await,
+                )
             }
 
             "click" => {
                 let (x, y) = require_xy(&args)?;
                 let button = parse_button(&args)?;
                 let human_like = human_like_enabled(&args)?;
-                tokio::task::spawn_blocking(move || {
-                    let mut enigo = Enigo::new(&Settings::default())
-                        .map_err(|e| anyhow::anyhow!("Failed to create enigo instance: {e}"))?;
-                    humanized_move(&mut enigo, x, y, human_like)?;
-                    enigo
-                        .button(button, Direction::Click)
-                        .map_err(|e| anyhow::anyhow!("button click failed: {e}"))?;
-                    info!(
-                        tool = "mouse", action = "click",
-                        x = x, y = y, button = ?button,
-                        "[computer] clicked"
-                    );
-                    Ok(ToolResult::success(format!(
-                        "Clicked {button:?} at ({x}, {y})"
-                    )))
-                })
-                .await?
+                into_result(
+                    "click",
+                    run_input_on_main(move || {
+                        let mut enigo = Enigo::new(&Settings::default())
+                            .map_err(|e| format!("Failed to create enigo instance: {e}"))?;
+                        humanized_move(&mut enigo, x, y, human_like).map_err(|e| e.to_string())?;
+                        enigo
+                            .button(button, Direction::Click)
+                            .map_err(|e| format!("button click failed: {e}"))?;
+                        Ok(format!("Clicked {button:?} at ({x}, {y})"))
+                    })
+                    .await,
+                )
             }
 
             "double_click" => {
                 let (x, y) = require_xy(&args)?;
                 let button = parse_button(&args)?;
                 let human_like = human_like_enabled(&args)?;
-                tokio::task::spawn_blocking(move || {
-                    let mut enigo = Enigo::new(&Settings::default())
-                        .map_err(|e| anyhow::anyhow!("Failed to create enigo instance: {e}"))?;
-                    humanized_move(&mut enigo, x, y, human_like)?;
-                    enigo
-                        .button(button, Direction::Click)
-                        .map_err(|e| anyhow::anyhow!("button click failed: {e}"))?;
-                    enigo
-                        .button(button, Direction::Click)
-                        .map_err(|e| anyhow::anyhow!("button click failed: {e}"))?;
-                    info!(
-                        tool = "mouse", action = "double_click",
-                        x = x, y = y, button = ?button,
-                        "[computer] double-clicked"
-                    );
-                    Ok(ToolResult::success(format!(
-                        "Double-clicked {button:?} at ({x}, {y})"
-                    )))
-                })
-                .await?
+                into_result(
+                    "double_click",
+                    run_input_on_main(move || {
+                        let mut enigo = Enigo::new(&Settings::default())
+                            .map_err(|e| format!("Failed to create enigo instance: {e}"))?;
+                        humanized_move(&mut enigo, x, y, human_like).map_err(|e| e.to_string())?;
+                        enigo
+                            .button(button, Direction::Click)
+                            .map_err(|e| format!("button click failed: {e}"))?;
+                        enigo
+                            .button(button, Direction::Click)
+                            .map_err(|e| format!("button click failed: {e}"))?;
+                        Ok(format!("Double-clicked {button:?} at ({x}, {y})"))
+                    })
+                    .await,
+                )
             }
 
             "drag" => {
@@ -308,44 +307,40 @@ impl Tool for MouseTool {
                 let sx = start_x as i32;
                 let sy = start_y as i32;
 
-                tokio::task::spawn_blocking(move || {
-                    let mut enigo = Enigo::new(&Settings::default())
-                        .map_err(|e| anyhow::anyhow!("Failed to create enigo instance: {e}"))?;
-                    humanized_move(&mut enigo, sx, sy, human_like)?;
-                    enigo
-                        .button(button, Direction::Press)
-                        .map_err(|e| anyhow::anyhow!("button press failed: {e}"))?;
+                into_result(
+                    "drag",
+                    run_input_on_main(move || {
+                        let mut enigo = Enigo::new(&Settings::default())
+                            .map_err(|e| format!("Failed to create enigo instance: {e}"))?;
+                        humanized_move(&mut enigo, sx, sy, human_like)
+                            .map_err(|e| e.to_string())?;
+                        enigo
+                            .button(button, Direction::Press)
+                            .map_err(|e| format!("button press failed: {e}"))?;
 
-                    // After press succeeds, guarantee release even on error.
-                    let drag_result: Result<(), anyhow::Error> = (|| {
-                        humanized_move(&mut enigo, end_x, end_y, human_like)?;
-                        Ok(())
-                    })();
+                        // After press succeeds, guarantee release even on error.
+                        let drag_result: Result<(), String> = (|| {
+                            humanized_move(&mut enigo, end_x, end_y, human_like)
+                                .map_err(|e| e.to_string())?;
+                            Ok(())
+                        })();
 
-                    // Always release — best-effort cleanup.
-                    if let Err(e) = enigo.button(button, Direction::Release) {
-                        warn!(
-                            tool = "mouse",
-                            button = ?button,
-                            error = %e,
-                            "[computer] best-effort button release failed during drag cleanup"
-                        );
-                    }
-
-                    // Propagate the drag error if the move failed.
-                    drag_result?;
-
-                    info!(
-                        tool = "mouse", action = "drag",
-                        start_x = sx, start_y = sy,
-                        end_x = end_x, end_y = end_y, button = ?button,
-                        "[computer] dragged"
-                    );
-                    Ok(ToolResult::success(format!(
-                        "Dragged {button:?} from ({sx}, {sy}) to ({end_x}, {end_y})"
-                    )))
-                })
-                .await?
+                        // Always release — best-effort cleanup.
+                        if let Err(e) = enigo.button(button, Direction::Release) {
+                            warn!(
+                                tool = "mouse",
+                                button = ?button,
+                                error = %e,
+                                "[computer] best-effort button release failed during drag cleanup"
+                            );
+                        }
+                        drag_result?;
+                        Ok(format!(
+                            "Dragged {button:?} from ({sx}, {sy}) to ({end_x}, {end_y})"
+                        ))
+                    })
+                    .await,
+                )
             }
 
             "scroll" => {
@@ -373,36 +368,44 @@ impl Tool for MouseTool {
                     ));
                 }
 
-                tokio::task::spawn_blocking(move || {
-                    let mut enigo = Enigo::new(&Settings::default())
-                        .map_err(|e| anyhow::anyhow!("Failed to create enigo instance: {e}"))?;
-                    if scroll_y != 0 {
-                        enigo
-                            .scroll(scroll_y, enigo::Axis::Vertical)
-                            .map_err(|e| anyhow::anyhow!("vertical scroll failed: {e}"))?;
-                    }
-                    if scroll_x != 0 {
-                        enigo
-                            .scroll(scroll_x, enigo::Axis::Horizontal)
-                            .map_err(|e| anyhow::anyhow!("horizontal scroll failed: {e}"))?;
-                    }
-                    info!(
-                        tool = "mouse",
-                        action = "scroll",
-                        scroll_x = scroll_x,
-                        scroll_y = scroll_y,
-                        "[computer] scrolled"
-                    );
-                    Ok(ToolResult::success(format!(
-                        "Scrolled (x={scroll_x}, y={scroll_y})"
-                    )))
-                })
-                .await?
+                into_result(
+                    "scroll",
+                    run_input_on_main(move || {
+                        let mut enigo = Enigo::new(&Settings::default())
+                            .map_err(|e| format!("Failed to create enigo instance: {e}"))?;
+                        if scroll_y != 0 {
+                            enigo
+                                .scroll(scroll_y, enigo::Axis::Vertical)
+                                .map_err(|e| format!("vertical scroll failed: {e}"))?;
+                        }
+                        if scroll_x != 0 {
+                            enigo
+                                .scroll(scroll_x, enigo::Axis::Horizontal)
+                                .map_err(|e| format!("horizontal scroll failed: {e}"))?;
+                        }
+                        Ok(format!("Scrolled (x={scroll_x}, y={scroll_y})"))
+                    })
+                    .await,
+                )
             }
 
             other => Ok(ToolResult::error(format!(
                 "Unknown mouse action '{other}'. Use: move, click, double_click, drag, scroll"
             ))),
+        }
+    }
+}
+
+/// Map a main-thread input op result to a `ToolResult`, logging the outcome.
+fn into_result(action: &str, r: Result<String, String>) -> anyhow::Result<ToolResult> {
+    match r {
+        Ok(msg) => {
+            info!(tool = "mouse", action, "[computer] {msg}");
+            Ok(ToolResult::success(msg))
+        }
+        Err(e) => {
+            warn!(tool = "mouse", action, "[computer] failed: {e}");
+            Ok(ToolResult::error(e))
         }
     }
 }

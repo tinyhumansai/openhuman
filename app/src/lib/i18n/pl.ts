@@ -165,6 +165,7 @@ const messages: TranslationMap = {
   'clearData.failedLogout': 'Nie udało się wylogować. Spróbuj ponownie.',
   'clearData.failedPersist':
     'Nie udało się wyczyścić utrwalonego stanu aplikacji. Spróbuj ponownie.',
+  'welcome.logoAlt': 'OpenHuman',
   'welcome.title': 'Witaj w OpenHuman',
   'welcome.subtitle': 'Twoja osobista superinteligencja AI. Prywatna, prosta i niezwykle potężna.',
   'welcome.connectPrompt': 'Skonfiguruj URL RPC (zaawansowane)',
@@ -205,6 +206,10 @@ const messages: TranslationMap = {
   'home.usageExhaustedBody':
     'Twój limit użycia na ten moment został wyczerpany. Wykup subskrypcję, aby odblokować większą ciągłą pojemność.',
   'home.usageExhaustedCta': 'Wykup subskrypcję',
+  'openrouterFree.cta': 'Użyj darmowych modeli OpenRouter',
+  'openrouterFree.saving': 'Łączenie z OpenRouter...',
+  'openrouterFree.error':
+    'Nie udało się przełączyć na darmowe modele OpenRouter. Sprawdź logowanie do OpenRouter i spróbuj ponownie.',
   'home.routinesCard': 'Twoje Rutyny',
   'home.routinesActive': '{count} aktywnych',
   'routines.title': 'Twoje rutyny',
@@ -233,7 +238,7 @@ const messages: TranslationMap = {
   'routines.typeCommand': 'Polecenie',
   'nav.routines': 'Routines',
   'chat.newThread': 'Nowy wątek',
-  'chat.typeMessage': 'Napisz wiadomość...',
+  'chat.typeMessage': 'Jak mogę ci dziś pomóc?',
   'chat.send': 'Wyślij wiadomość',
   'chat.thinking': 'Myślę...',
   'chat.noMessages': 'Brak wiadomości',
@@ -443,6 +448,11 @@ const messages: TranslationMap = {
   'memoryTree.status.hoursAgo': '{count} godz. temu',
   'memoryTree.status.dayAgo': '1 dzień temu',
   'memoryTree.status.daysAgo': '{count} dni temu',
+  'memoryTree.status.integrationsTitle': 'Stan poszczególnych integracji',
+  'memoryTree.status.integrationsEmpty': 'Brak podłączonych integracji',
+  'memoryTree.status.integrationActive': 'Aktywna',
+  'memoryTree.status.integrationStale': 'Nieaktualna',
+  'memoryTree.status.integrationChunks': 'Liczba fragmentów: {count}',
   'alerts.title': 'Alerty',
   'alerts.empty': 'Brak alertów',
   'alerts.markAllRead': 'Oznacz wszystkie jako przeczytane',
@@ -496,6 +506,7 @@ const messages: TranslationMap = {
   'onboarding.runtimeChoice.continueCloud': 'Kontynuuj w trybie Prosto',
   'onboarding.runtimeChoice.continueCustom': 'Kontynuuj w trybie Niestandardowo',
   'onboarding.runtimeChoice.recommended': 'Polecane',
+  'onboarding.runtimeChoice.exitError': 'Nie udało się zakończyć wdrożenia. Spróbuj ponownie.',
   'onboarding.apiKeys.title': 'Dodajmy Twoje klucze API',
   'onboarding.apiKeys.subtitle':
     'Możesz wkleić je teraz lub pominąć i dodać później w Ustawieniach › AI. Klucze są przechowywane na tym urządzeniu, zaszyfrowane w spoczynku.',
@@ -1727,16 +1738,13 @@ const messages: TranslationMap = {
   'common.enable': 'Włącz',
   'chat.safetyTimeout':
     'Brak odpowiedzi agenta po 2 minutach. Spróbuj ponownie lub sprawdź połączenie.',
-  'chat.filter.all': 'Wszystkie',
-  'chat.filter.work': 'Praca',
-  'chat.filter.briefing': 'Briefing',
-  'chat.filter.notification': 'Powiadomienia',
-  'chat.filter.workers': 'Workery',
+  'chat.filter.general': 'Ogólne',
+  'chat.filter.subconscious': 'Podświadomość',
+  'chat.filter.tasks': 'Zadania',
   'chat.selectThread': 'Wybierz wątek',
   'chat.threads': 'Wątki',
   'chat.noThreads': 'Brak wątków',
   'chat.noLabelThreads': 'Brak wątków „{label}”',
-  'chat.noWorkerThreads': 'Brak wątków workerów',
   'chat.deleteThread': 'Usuń wątek',
   'chat.deleteThreadConfirm': 'Czy na pewno chcesz usunąć „{title}”?',
   'chat.untitledThread': 'Wątek bez tytułu',
@@ -1982,6 +1990,7 @@ const messages: TranslationMap = {
   'memorySources.loadingConnections': 'Wczytywanie połączeń…',
   'memorySources.noConnections':
     'Nie znaleziono aktywnych połączeń Composio. Najpierw połącz integrację.',
+  'memorySources.connectionAccount': 'Konto',
   'memorySources.pickConnection': 'Wybierz połączenie',
   'memorySources.selectConnection': '— Wybierz połączenie —',
   'memorySources.composioListFailed': 'Nie udało się wczytać połączeń Composio.',
@@ -2285,6 +2294,9 @@ const messages: TranslationMap = {
   'app.openhumanLink.discord.perk2': 'Wczesny dostęp do nowych funkcji',
   'app.openhumanLink.discord.perk3': 'Wymiana skryptów i przepisów',
   'app.openhumanLink.discord.perk4': 'Możliwość wpływu na priorytety',
+  'app.openhumanLink.discordReport.intro':
+    'Przepraszamy — coś poszło nie tak po naszej stronie. Staramy się rejestrować takie błędy automatycznie, ale udostępnienie szczegółów na Discord pomaga nam szybciej je naprawić.',
+  'app.openhumanLink.discordReport.openDiscord': 'Otwórz Discord',
   'app.openhumanLink.done': 'Gotowe',
   'app.openhumanLink.loadingChannelSetup': 'Wczytywanie konfiguracji kanału',
   'app.openhumanLink.maybeLater': 'Może później',
@@ -2306,6 +2318,7 @@ const messages: TranslationMap = {
   'app.openhumanLink.title.accounts': 'Podłącz swoje aplikacje',
   'app.openhumanLink.title.billing': 'Rozliczenia i kredyty',
   'app.openhumanLink.title.discord': 'Dołącz do społeczności',
+  'app.openhumanLink.title.discordReport': 'Zgłoś ten błąd',
   'app.openhumanLink.title.messaging': 'Podłącz kanał komunikacji',
   'app.openhumanLink.title.notifications': 'Zezwól na powiadomienia',
   'app.persistRehydration.body':
@@ -2540,8 +2553,25 @@ const messages: TranslationMap = {
   'conversations.taskKanban.field.title': 'Tytuł',
   'conversations.taskKanban.saveChanges': 'Zapisz zmiany',
   'conversations.taskKanban.deleteCard': 'Usuń',
+  'conversations.taskKanban.workTask': 'Pracuj nad zadaniem',
+  'conversations.taskKanban.startingTask': 'Uruchamianie…',
   'conversations.taskKanban.updateFailed':
     'Nie udało się zaktualizować zadania; zmian nie zapisano.',
+  'conversations.taskKanban.sourcesButton': 'Źródła',
+  'conversations.taskKanban.source.openExternal': 'Otwórz zadanie zewnętrzne',
+  'conversations.taskKanban.source.openExternalShort': 'Otwórz',
+  'conversations.taskKanban.source.unknownProvider': 'Nieznane źródło',
+  'conversations.taskKanban.source.urgencyValue': 'Pilność {percent}%',
+  'conversations.taskKanban.sources.desktopOnly':
+    'Kontrolki źródeł zadań są dostępne w aplikacji desktopowej.',
+  'conversations.taskKanban.sources.title': 'Źródła zadań',
+  'conversations.taskKanban.sources.statusEnabled': 'Automatyczne odpytywanie włączone',
+  'conversations.taskKanban.sources.manage': 'Zarządzaj źródłami',
+  'conversations.taskKanban.source.title': 'Źródło',
+  'conversations.taskKanban.source.sourceId': 'ID źródła',
+  'conversations.taskKanban.source.externalId': 'ID zewnętrzne',
+  'conversations.taskKanban.source.repo': 'Repozytorium',
+  'conversations.taskKanban.source.urgency': 'Pilność',
   'conversations.toolTimeline.turn': 'tura',
   'conversations.toolTimeline.step': 'Krok',
   'conversations.toolTimeline.workerThread': 'wątek workera',
@@ -2659,6 +2689,48 @@ const messages: TranslationMap = {
   'intelligence.tasks.composer.create': 'Utwórz zadanie',
   'intelligence.tasks.composer.creating': 'Tworzenie…',
   'intelligence.tasks.composer.createFailed': 'Nie udało się utworzyć zadania',
+  'intelligence.tasks.composer.assignAgentLabel': 'Pozwól agentowi zająć się tym automatycznie',
+  'intelligence.tasks.composer.assignAgentHint':
+    'Tablica zadań przejmie je i wykona za Ciebie. Wyłącz dla zwykłego zadania osobistego.',
+  'intelligence.tasks.sourceList.subtitle':
+    'Zadania ze źródeł czekające na przekształcenie w pracę agenta.',
+  'intelligence.tasks.sourceList.empty': 'Brak oczekujących zadań ze źródeł.',
+  'intelligence.tasks.sourceList.queued': 'W kolejce',
+  'intelligence.tasks.sourceList.workOnTask': 'Pracuj nad zadaniem',
+  'intelligence.tasks.sourcePlan.title': 'Dopracuj zadanie źródłowe',
+  'intelligence.tasks.sourcePlan.subtitle':
+    'Sprawdź szkic badawczy przed utworzeniem zadania agenta.',
+  'intelligence.tasks.sourcePlan.researchAgent': 'Szkic agenta badawczego',
+  'intelligence.tasks.sourcePlan.approve': 'Zatwierdź plan',
+  'intelligence.tasks.sourcePlan.creating': 'Tworzenie zadania…',
+  'intelligence.tasks.sourcePlan.createFailed': 'Nie udało się utworzyć zadania agenta',
+  'intelligence.tasks.workTaskFailed': 'Nie udało się rozpocząć pracy nad zadaniem',
+  'intelligence.workTask.sourceTaskHeading': 'Zadanie źródłowe:',
+  'intelligence.workTask.repositoryLine': '- Repozytorium: {repo}',
+  'intelligence.workTask.externalIdLine': '- Identyfikator zewnętrzny: {externalId}',
+  'intelligence.workTask.urlLine': '- Adres: {url}',
+  'intelligence.workTask.closingInstruction':
+    'Zacznij od krótkiego powtórzenia konkretnego planu wdrożenia, a następnie go zrealizuj. Utrzymuj widoczność postępów w tym wątku i aktualizuj tablicę zadań, gdy zmienia się stan pracy.',
+  'intelligence.refine.objectiveDefault':
+    'Przekształć zadanie źródłowe w gotowe do wdrożenia zadanie agenta: {title}',
+  'intelligence.refine.sourceLine': 'Źródło: {url}',
+  'intelligence.refine.sourceIntake': 'Źródło: przyjęcie źródła zadań',
+  'intelligence.refine.repositoryLine': 'Repozytorium: {repo}',
+  'intelligence.refine.externalTaskLine': 'Zadanie zewnętrzne: {externalId}',
+  'intelligence.refine.planStep1':
+    'Przeczytaj powiązane zadanie źródłowe i potwierdź dokładnie żądane zachowanie.',
+  'intelligence.refine.planStep2':
+    'Przejrzyj odpowiednie ścieżki kodu i wskaż najmniejszą granicę wdrożenia.',
+  'intelligence.refine.planStep3':
+    'Wdróż zmianę z ukierunkowanymi testami wokół zachowania widocznego dla użytkownika.',
+  'intelligence.refine.planStep4':
+    'Uruchom ukierunkowaną walidację i zapisz wszelkie pozostałe ryzyka lub prace następcze.',
+  'intelligence.refine.acceptance1':
+    'Wymagania zadania źródłowego są odzwierciedlone w ostatecznym wdrożeniu.',
+  'intelligence.refine.acceptance2':
+    'Odpowiednie testy jednostkowe lub integracyjne obejmują zmienione zachowanie.',
+  'intelligence.refine.acceptance3':
+    'Wyniki walidacji i wszelkie nierozwiązane ryzyka są zapisywane po zakończeniu.',
   'notifications.card.dismiss': 'Odrzuć powiadomienie',
   'notifications.card.importanceTitle': 'Ważność: {pct}%',
   'notifications.center.empty': 'Brak powiadomień',
@@ -3712,6 +3784,13 @@ const messages: TranslationMap = {
   'settings.agentAccess.readWriteAccess': 'odczyt + zapis',
   'settings.agentAccess.actionSandboxDesc':
     'Domyślny katalog roboczy dla narzędzi shell, plików i git.',
+  'settings.agentAccess.actionDir.edit': 'Edytuj',
+  'settings.agentAccess.actionDir.save': 'Zapisz',
+  'settings.agentAccess.actionDir.cancel': 'Anuluj',
+  'settings.agentAccess.actionDir.placeholder': 'Ścieżka bezwzględna, np. /Users/you/Projects',
+  'settings.agentAccess.actionDir.envLocked':
+    'Ustawione przez OPENHUMAN_ACTION_DIR. Zmień zmienną środowiskową, aby zastąpić.',
+  'settings.agentAccess.actionDir.saved': 'Zaktualizowano katalog akcji.',
   'settings.agentAccess.internalState': 'Stan wewnętrzny',
   'settings.agentAccess.agentBlocked': 'zablokowane dla agenta',
   'settings.agentAccess.internalStateDesc':
@@ -3719,7 +3798,42 @@ const messages: TranslationMap = {
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',
-  'settings.agentAccess.viewApprovalHistory': 'View approval history',
+  'settings.agentAccess.viewApprovalHistory': 'Wyświetl historię zatwierdzeń',
+  'settings.sandbox.title': 'Wykonanie w piaskownicy',
+  'settings.sandbox.menuDesc': 'Konfiguruj backendy piaskownicy do izolacji narzędzi agenta.',
+  'settings.sandbox.loading': 'Ładowanie…',
+  'settings.sandbox.desktopOnly':
+    'Ustawienia piaskownicy są dostępne tylko w aplikacji desktopowej.',
+  'settings.sandbox.loadError': 'Nie udało się załadować ustawień piaskownicy.',
+  'settings.sandbox.saveError': 'Nie udało się zapisać ustawień piaskownicy.',
+  'settings.sandbox.saved': 'Zapisano — dotyczy nowych sesji agenta.',
+  'settings.sandbox.saving': 'Zapisywanie…',
+  'settings.sandbox.status': 'Status',
+  'settings.sandbox.dockerStatus': 'Docker',
+  'settings.sandbox.available': 'Dostępny',
+  'settings.sandbox.unavailable': 'Niedostępny',
+  'settings.sandbox.detectedBackend': 'Backend systemu operacyjnego',
+  'settings.sandbox.enableLabel': 'Włącz wykonanie w piaskownicy',
+  'settings.sandbox.enableDesc': 'Uruchamiaj narzędzia agenta w izolowanym środowisku piaskownicy.',
+  'settings.sandbox.backendLabel': 'Backend',
+  'settings.sandbox.backendDesc':
+    'Wybierz backend izolacji do użycia przy wykonaniu w piaskownicy.',
+  'settings.sandbox.backend.auto': 'Automatyczny (wykryj najlepszy dostępny)',
+  'settings.sandbox.backend.docker': 'Docker',
+  'settings.sandbox.backend.landlock': 'Landlock (Linux)',
+  'settings.sandbox.backend.firejail': 'Firejail (Linux)',
+  'settings.sandbox.backend.bubblewrap': 'Bubblewrap (Linux)',
+  'settings.sandbox.backend.none': 'Brak (bez piaskownicy)',
+  'settings.sandbox.dockerSettings': 'Ustawienia Docker',
+  'settings.sandbox.dockerImage': 'Obraz',
+  'settings.sandbox.dockerImagePlaceholder': 'alpine:3.20',
+  'settings.sandbox.memoryLimit': 'Limit pamięci',
+  'settings.sandbox.memoryUnit': 'MB',
+  'settings.sandbox.cpuLimit': 'Limit CPU',
+  'settings.sandbox.cpuUnit': 'rdzenie',
+  'settings.sandbox.envPassthrough': 'Przekazywanie zmiennych środowiskowych',
+  'settings.sandbox.envPassthroughDesc': 'Zmienne środowiskowe przekazywane do piaskownicy.',
+  'settings.sandbox.noEnvVars': 'Nie skonfigurowano żadnych zmiennych środowiskowych.',
   'settings.approvalHistory.title': 'Approval history',
   'settings.approvalHistory.subtitle': 'Recent tool-approval decisions, newest first.',
   'settings.approvalHistory.refresh': 'Refresh',
@@ -4154,6 +4268,8 @@ const messages: TranslationMap = {
   'chat.agentProfile.defaultAgentLabel': 'Orchestrator',
   'chat.agentProfile.exists': 'Profil agenta „{name}” już istnieje.',
   'chat.agentProfile.label': 'Profil agenta',
+  'chat.agentProfile.quick': 'Szybki',
+  'chat.agentProfile.reasoning': 'Rozumowanie',
   'chat.agentProfile.namePlaceholder': 'Nazwa profilu',
   'chat.agentProfile.promptStylePlaceholder': 'Styl promptu',
   'chat.agentProfile.allowedToolsPlaceholder': 'Dozwolone narzędzia',
@@ -4285,6 +4401,10 @@ const messages: TranslationMap = {
   'settings.taskSources.github.repo': 'Repozytorium (właściciel/nazwa, opcjonalnie)',
   'settings.taskSources.github.labels': 'Etykiety (rozdzielone przecinkami)',
   'settings.taskSources.notion.database': 'ID bazy danych (tablicy)',
+  'settings.taskSources.notion.browseDatabases': 'Przeglądaj bazy danych',
+  'settings.taskSources.notion.loadingDatabases': 'Ładowanie baz danych…',
+  'settings.taskSources.notion.selectDatabase': 'Wybierz bazę danych…',
+  'settings.taskSources.notion.noDatabases': 'Nie znaleziono baz danych dla tego połączenia.',
   'settings.taskSources.linear.team': 'ID zespołu (opcjonalnie)',
   'settings.taskSources.clickup.team': 'ID przestrzeni roboczej (zespołu, opcjonalnie)',
   'settings.taskSources.assignedToMe': 'Tylko elementy przypisane do mnie',
@@ -4498,6 +4618,42 @@ const messages: TranslationMap = {
   'graphCohesion.title': 'Spójność grafu',
   'memory.tab.cohesion': 'Cohesion',
 
+  // Chat — agent-generated artifacts (#2779)
+  'chat.artifact.aria': 'Artefakt: {title}',
+  'chat.artifact.generating': 'Generowanie: {kind}…',
+  'chat.artifact.ready': 'Gotowe',
+  'chat.artifact.failed': 'Generowanie nie powiodło się',
+  'chat.artifact.download': 'Pobierz',
+  'chat.artifact.downloading': 'Pobieranie…',
+  'chat.artifact.downloaded': 'Zapisano w {path}',
+  'chat.artifact.download_failed': 'Pobieranie nie powiodło się: {reason}',
+  'chat.artifact.retry': 'Spróbuj ponownie',
+  'chat.artifact.reveal': 'Pokaż w folderze',
+  'chat.artifact.show_more': 'Pokaż więcej',
+  'chat.artifact.show_less': 'Pokaż mniej',
+
+  // Chat — files panel (#3024)
+  'chat.files.chip.aria.one': '{count} plik w tej rozmowie',
+  'chat.files.chip.aria.other': '{count} plików w tej rozmowie',
+  'chat.files.panel.aria': 'Pliki w tej rozmowie',
+  'chat.files.panel.title': 'Pliki ({count})',
+  'chat.files.panel.empty': 'Brak plików. Poproś agenta o wygenerowanie pliku.',
+  'chat.files.panel.close': 'Zamknij panel plików',
+  'chat.files.delete.aria': 'Usuń: {title}',
+  'chat.files.delete.confirm': 'Usunąć ten plik?',
+  'chat.files.delete.cancel': 'Anuluj',
+  'chat.files.delete.action': 'Usuń',
+  'chat.files.delete.failed': 'Nie udało się usunąć pliku. Spróbuj ponownie.',
+  // Etykiety błędów dla pobrania/usunięcia (#3024). Powiązane z
+  // `ArtifactErrorCode` zwracanym przez artifactDownloadService.
+  'chat.files.error.not_desktop': 'Pobieranie jest dostępne tylko w aplikacji desktopowej.',
+  'chat.files.error.missing_artifact_id': 'Brak identyfikatora artefaktu.',
+  'chat.files.error.missing_artifact_path': 'W odpowiedzi rdzenia brakuje ścieżki artefaktu.',
+  'chat.files.error.resolve_failed':
+    'Nie udało się odnaleźć artefaktu. Prosimy spróbować ponownie.',
+  'chat.files.error.download_failed': 'Pobieranie nie powiodło się. Prosimy spróbować ponownie.',
+  'chat.files.error.delete_failed': 'Nie udało się usunąć pliku. Prosimy spróbować ponownie.',
+
   'keyring.consent.title': 'Bezpieczne przechowywanie niedostępne',
   'keyring.consent.description':
     'Pęk kluczy systemu operacyjnego jest niedostępny. OpenHuman potrzebuje Twojej zgody na przechowywanie sekretów w lokalnym zaszyfrowanym magazynie.',
@@ -4533,7 +4689,38 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Odmów lokalnego przechowywania',
   'pages.settings.account.security': 'Bezpieczeństwo',
   'pages.settings.account.securityDesc': 'Tryb przechowywania sekretów i stan pęku kluczy',
+  // #002 memory-pipeline-hardening: degraded badges + typed remediation.
+  'memoryTree.status.statusDegraded': 'Ograniczony',
+  'memoryTree.status.degradedRecall': 'Wyszukiwanie semantyczne wyłączone',
+  'memoryTree.status.degradedStructure': 'Struktura wiki niekompletna',
+  'memoryTree.status.extractionCoverage': 'Pokrycie ekstrakcji: {pct}% fragmentów ma strukturę',
+  'memory.health.remediation.budget_exhausted':
+    'Osadzenia pamięci wyczerpały zarządzany budżet. Skonfiguruj lokalne osadzenia Ollama (Ustawienia → AI → Embeddings) lub dodaj własny klucz API osadzeń, aby kontynuować budowanie pamięci.',
+  'memory.health.remediation.auth_missing':
+    'Nie znaleziono poświadczeń osadzeń. Zaloguj się do OpenHuman lub skonfiguruj lokalne osadzenia Ollama w Ustawienia → AI → Embeddings.',
+  'memory.health.remediation.auth_invalid':
+    'Twoje poświadczenia osadzeń zostały odrzucone. Uwierzytelnij się ponownie lub przełącz na lokalne osadzenia Ollama w Ustawienia → AI → Embeddings.',
+  'memory.health.remediation.embeddings_unconfigured':
+    'Nie skonfigurowano dostawcy osadzeń, więc wyszukiwanie semantyczne jest wyłączone. Skonfiguruj lokalne osadzenia Ollama (zalecane) lub dodaj klucz osadzeń w Ustawienia → AI → Embeddings.',
+  'memory.health.remediation.embedding_dim_mismatch':
+    'Model osadzeń zwraca nieprawidłowy rozmiar wektora (pamięć oczekuje 1024 wymiarów). Wybierz model o 1024 wymiarach lub poproś dostawcę o 1024 wymiary.',
+  'memory.health.remediation.local_model_unavailable':
+    'Wymagany model lokalny jest niedostępny. Zainstaluj/uruchom Ollama i pobierz model albo przełącz to zadanie na dostawcę chmurowego w Ustawienia → AI.',
+  'memory.health.remediation.extraction_timeout':
+    'Model ekstrakcji pamięci przekracza limit czasu, więc wiki ma niewielką strukturę. Zmień model ekstrakcji pamięci na szybszy w Ustawienia → AI.',
+  'memory.health.remediation.summarizer_unavailable':
+    'Brak dostępnego dostawcy podsumowań dla funkcji Twórz drzewa podsumowań. Włącz lokalną AI (Ollama) lub włącz podsumowywanie w chmurze w Ustawienia → AI → Pamięć.',
+  'memory.health.remediation.transient':
+    'Tymczasowy błąd przerwał przetwarzanie pamięci. Ponowna próba nastąpi automatycznie.',
+  'memory.health.remediation.unknown':
+    'Przetwarzanie pamięci napotkało problem. Sprawdź Ustawienia → AI w celu konfiguracji.',
+  // Chat — agent-generated artifacts (#2779)
 
+  // Chat composer toolbar
+  'composer.attachFile': 'Dołącz plik',
+  'composer.modelSelector': 'Model',
+  'composer.voiceMode': 'Tryb głosowy',
+  'composer.qualityHigh': 'Wysoka',
   // Agent activity level
   'activityLevel.title': 'Poziom aktywności agenta',
   'activityLevel.description':
@@ -4650,6 +4837,25 @@ const messages: TranslationMap = {
   'memoryData.windowError': 'Okno pamięci',
   'memoryData.windowUpdated': 'Okno pamięci zaktualizowane',
   'memoryData.windowUpdatedMsg': 'Ustawiono na {window}.',
+  // Security banner (approval-gate host-aware boot state)
+  'security.approvalGateDisabled.title': 'Bramka zatwierdzania wyłączona',
+  'security.approvalGateDisabled.body':
+    'W twoim środowisku ustawiono OPENHUMAN_APPROVAL_GATE=0. Narzędzia o zewnętrznym wpływie będą działać bez pytania o potwierdzenie.',
+  'security.approvalGateOverrideIgnored.title': 'Nadpisanie zablokowane',
+  'security.approvalGateOverrideIgnored.body':
+    'Wykryto nadpisanie OPENHUMAN_APPROVAL_GATE=0, ale je zignorowano: aplikacja desktopowa zawsze utrzymuje bramkę zatwierdzania włączoną.',
+
+  // Run queue
+  'runQueue.mode.interrupt': 'Przerwij',
+  'runQueue.mode.steer': 'Kieruj',
+  'runQueue.mode.followup': 'Kontynuacja',
+  'runQueue.mode.collect': 'Dodaj kontekst',
+  'runQueue.queued': 'Wiadomość w kolejce',
+  'runQueue.steerHint': 'Kieruj bieżącą turą',
+  'runQueue.followupHint': 'Dodaj do kolejki jako kontynuację',
+  'runQueue.collectHint': 'Dodaj jako dodatkowy kontekst',
+  'runQueue.status': '{total} w kolejce',
+  'runQueue.cleared': 'Kolejka wyczyszczona',
 };
 
 export default messages;

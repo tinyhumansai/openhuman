@@ -2,10 +2,13 @@ import { useEffect, useRef, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
 import {
+  type AgentPaths,
   type AutonomyLevel,
   isTauri,
+  openhumanGetAgentPaths,
   openhumanGetAgentSettings,
   openhumanGetAutonomySettings,
+  openhumanUpdateAgentPaths,
   openhumanUpdateAgentSettings,
   openhumanUpdateAutonomySettings,
   type TrustedAccess,
@@ -77,6 +80,17 @@ const AgentAccessPanel = () => {
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedNote, setSavedNote] = useState<string | null>(null);
+  // Live agent filesystem roots fetched from the core. `null` while the
+  // RPC is pending or when not running under Tauri — the JSX falls back to
+  // the documented defaults so the section never renders empty.
+  const [agentPaths, setAgentPaths] = useState<AgentPaths | null>(null);
+  // Editable action_dir (issue #3240). `actionDirEditing` toggles the input;
+  // `actionDirInput` holds the in-progress value; error/saved are inline status.
+  const [actionDirEditing, setActionDirEditing] = useState(false);
+  const [actionDirInput, setActionDirInput] = useState('');
+  const [actionDirError, setActionDirError] = useState<string | null>(null);
+  const [actionDirSaved, setActionDirSaved] = useState<string | null>(null);
+  const [actionDirSaving, setActionDirSaving] = useState(false);
   // Monotonic guard so out-of-order auto-save responses can't clobber UI state
   // with a stale result (last write wins).
   const persistSeqRef = useRef(0);
@@ -99,8 +113,6 @@ const AgentAccessPanel = () => {
       } catch (e) {
         if (!cancelled)
           setError(e instanceof Error ? e.message : t('settings.agentAccess.loadError'));
-      } finally {
-        if (!cancelled) setIsLoading(false);
       }
       try {
         const agentResp = await openhumanGetAgentSettings();
@@ -113,6 +125,16 @@ const AgentAccessPanel = () => {
       } catch {
         // Non-fatal: autonomy controls still render; timeout section
         // stays at defaults and the user can try saving manually.
+      }
+      try {
+        const pathsResp = await openhumanGetAgentPaths();
+        if (cancelled) return;
+        setAgentPaths(pathsResp.result);
+      } catch {
+        // Non-fatal: the Directories section falls back to the documented
+        // defaults below. We don't gate the rest of the panel on this.
+      } finally {
+        if (!cancelled) setIsLoading(false);
       }
     };
     void load();
@@ -162,6 +184,39 @@ const AgentAccessPanel = () => {
       if (persistSeqRef.current === seq) {
         setIsSaving(false);
       }
+    }
+  };
+
+  // True when the env var pins action_dir — the input must be disabled.
+  const actionDirEnvLocked = agentPaths?.action_dir_source === 'env';
+
+  const startEditActionDir = () => {
+    setActionDirInput(agentPaths?.action_dir ?? '');
+    setActionDirError(null);
+    setActionDirSaved(null);
+    setActionDirEditing(true);
+  };
+
+  const cancelEditActionDir = () => {
+    setActionDirEditing(false);
+    setActionDirError(null);
+    setActionDirInput('');
+  };
+
+  const saveActionDir = async () => {
+    if (!isTauri()) return;
+    setActionDirSaving(true);
+    setActionDirError(null);
+    setActionDirSaved(null);
+    try {
+      const resp = await openhumanUpdateAgentPaths({ action_dir: actionDirInput.trim() });
+      setAgentPaths(resp.result);
+      setActionDirEditing(false);
+      setActionDirSaved(t('settings.agentAccess.actionDir.saved'));
+    } catch (e) {
+      setActionDirError(e instanceof Error ? e.message : t('settings.agentAccess.saveError'));
+    } finally {
+      setActionDirSaving(false);
     }
   };
 
@@ -335,9 +390,75 @@ const AgentAccessPanel = () => {
                       {t('settings.agentAccess.readWriteAccess')}
                     </span>
                   </div>
-                  <p className="mt-0.5 text-xs text-stone-600 dark:text-neutral-400 font-mono">
-                    ~/OpenHuman/projects
-                  </p>
+                  {actionDirEditing ? (
+                    <div className="mt-1 space-y-1">
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          className="flex-1 rounded border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1 text-xs font-mono text-stone-900 dark:text-neutral-100"
+                          value={actionDirInput}
+                          onChange={e => setActionDirInput(e.target.value)}
+                          placeholder={t('settings.agentAccess.actionDir.placeholder')}
+                          disabled={actionDirSaving}
+                          data-testid="agent-access-action-dir-input"
+                        />
+                        <button
+                          type="button"
+                          className="rounded bg-ocean px-2 py-1 text-xs font-medium text-white disabled:opacity-50"
+                          onClick={() => void saveActionDir()}
+                          disabled={actionDirSaving}
+                          data-testid="agent-access-action-dir-save">
+                          {t('settings.agentAccess.actionDir.save')}
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded border border-stone-300 dark:border-neutral-700 px-2 py-1 text-xs font-medium text-stone-700 dark:text-neutral-300 disabled:opacity-50"
+                          onClick={cancelEditActionDir}
+                          disabled={actionDirSaving}
+                          data-testid="agent-access-action-dir-cancel">
+                          {t('settings.agentAccess.actionDir.cancel')}
+                        </button>
+                      </div>
+                      {actionDirError && (
+                        <p
+                          className="text-xs text-coral-600 dark:text-coral-400"
+                          data-testid="agent-access-action-dir-error">
+                          {actionDirError}
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="mt-0.5 flex items-center gap-2">
+                      <p
+                        className="text-xs text-stone-600 dark:text-neutral-400 font-mono"
+                        data-testid="agent-access-action-dir">
+                        {agentPaths?.action_dir ?? '~/OpenHuman/projects'}
+                      </p>
+                      {!actionDirEnvLocked && (
+                        <button
+                          type="button"
+                          className="text-xs font-medium text-ocean hover:underline"
+                          onClick={startEditActionDir}
+                          data-testid="agent-access-action-dir-edit">
+                          {t('settings.agentAccess.actionDir.edit')}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  {actionDirEnvLocked && (
+                    <p
+                      className="text-xs text-amber-600 dark:text-amber-400"
+                      data-testid="agent-access-action-dir-env-locked">
+                      {t('settings.agentAccess.actionDir.envLocked')}
+                    </p>
+                  )}
+                  {actionDirSaved && !actionDirEditing && (
+                    <p
+                      className="text-xs text-sage-600 dark:text-sage-400"
+                      data-testid="agent-access-action-dir-saved">
+                      {actionDirSaved}
+                    </p>
+                  )}
                   <p className="text-xs text-stone-500 dark:text-neutral-500">
                     {t('settings.agentAccess.actionSandboxDesc')}
                   </p>
@@ -352,8 +473,10 @@ const AgentAccessPanel = () => {
                       {t('settings.agentAccess.agentBlocked')}
                     </span>
                   </div>
-                  <p className="mt-0.5 text-xs text-stone-600 dark:text-neutral-400 font-mono">
-                    ~/.openhuman/workspace
+                  <p
+                    className="mt-0.5 text-xs text-stone-600 dark:text-neutral-400 font-mono"
+                    data-testid="agent-access-workspace-dir">
+                    {agentPaths?.workspace_dir ?? '~/.openhuman/workspace'}
                   </p>
                   <p className="text-xs text-stone-500 dark:text-neutral-500">
                     {t('settings.agentAccess.internalStateDesc')}

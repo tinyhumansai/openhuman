@@ -85,6 +85,7 @@ CREATE TABLE IF NOT EXISTS mem_tree_chunks (
     id                     TEXT PRIMARY KEY,
     source_kind            TEXT NOT NULL,
     source_id              TEXT NOT NULL,
+    path_scope             TEXT,
     source_ref             TEXT,
     owner                  TEXT NOT NULL,
     timestamp_ms           INTEGER NOT NULL,
@@ -322,7 +323,9 @@ CREATE TABLE IF NOT EXISTS mem_tree_jobs (
     last_error             TEXT,
     created_at_ms          INTEGER NOT NULL,
     started_at_ms          INTEGER,
-    completed_at_ms        INTEGER
+    completed_at_ms        INTEGER,
+    failure_reason         TEXT,
+    failure_class          TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_mem_tree_jobs_ready
@@ -386,13 +389,14 @@ pub fn upsert_chunks(config: &Config, chunks: &[Chunk]) -> Result<usize> {
         {
             let mut stmt = tx.prepare(
                 "INSERT INTO mem_tree_chunks (
-                    id, source_kind, source_id, source_ref, owner,
+                    id, source_kind, source_id, path_scope, source_ref, owner,
                     timestamp_ms, time_range_start_ms, time_range_end_ms,
                     tags_json, content, token_count, seq_in_source, created_at_ms
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
                 ON CONFLICT(id) DO UPDATE SET
                     source_kind = excluded.source_kind,
                     source_id = excluded.source_id,
+                    path_scope = excluded.path_scope,
                     source_ref = excluded.source_ref,
                     owner = excluded.owner,
                     timestamp_ms = excluded.timestamp_ms,
@@ -418,13 +422,14 @@ pub(crate) fn upsert_chunks_tx(tx: &Transaction<'_>, chunks: &[Chunk]) -> Result
     }
     let mut stmt = tx.prepare(
         "INSERT INTO mem_tree_chunks (
-            id, source_kind, source_id, source_ref, owner,
+            id, source_kind, source_id, path_scope, source_ref, owner,
             timestamp_ms, time_range_start_ms, time_range_end_ms,
             tags_json, content, token_count, seq_in_source, created_at_ms
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
         ON CONFLICT(id) DO UPDATE SET
             source_kind = excluded.source_kind,
             source_id = excluded.source_id,
+            path_scope = excluded.path_scope,
             source_ref = excluded.source_ref,
             owner = excluded.owner,
             timestamp_ms = excluded.timestamp_ms,
@@ -454,14 +459,15 @@ pub(crate) fn upsert_staged_chunks_tx(
     }
     let mut stmt = tx.prepare(
         "INSERT INTO mem_tree_chunks (
-            id, source_kind, source_id, source_ref, owner,
+            id, source_kind, source_id, path_scope, source_ref, owner,
             timestamp_ms, time_range_start_ms, time_range_end_ms,
             tags_json, content, token_count, seq_in_source, created_at_ms,
             content_path, content_sha256
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
         ON CONFLICT(id) DO UPDATE SET
             source_kind = excluded.source_kind,
             source_id = excluded.source_id,
+            path_scope = excluded.path_scope,
             source_ref = excluded.source_ref,
             owner = excluded.owner,
             timestamp_ms = excluded.timestamp_ms,
@@ -486,6 +492,7 @@ pub(crate) fn upsert_staged_chunks_tx(
             chunk.id,
             chunk.metadata.source_kind.as_str(),
             chunk.metadata.source_id,
+            chunk.metadata.path_scope,
             chunk.metadata.source_ref.as_ref().map(|r| r.value.as_str()),
             chunk.metadata.owner,
             chunk.metadata.timestamp.timestamp_millis(),
@@ -512,6 +519,7 @@ fn upsert_chunks_with_statement(
             chunk.id,
             chunk.metadata.source_kind.as_str(),
             chunk.metadata.source_id,
+            chunk.metadata.path_scope,
             chunk.metadata.source_ref.as_ref().map(|r| r.value.as_str()),
             chunk.metadata.owner,
             chunk.metadata.timestamp.timestamp_millis(),
@@ -531,7 +539,7 @@ fn upsert_chunks_with_statement(
 pub fn get_chunk(config: &Config, id: &str) -> Result<Option<Chunk>> {
     with_connection(config, |conn| {
         let mut stmt = conn.prepare(
-            "SELECT id, source_kind, source_id, source_ref, owner,
+            "SELECT id, source_kind, source_id, path_scope, source_ref, owner,
                     timestamp_ms, time_range_start_ms, time_range_end_ms,
                     tags_json, content, token_count, seq_in_source, created_at_ms
                FROM mem_tree_chunks WHERE id = ?1",
@@ -591,7 +599,7 @@ pub fn get_chunks_batch(config: &Config, chunk_ids: &[String]) -> Result<HashMap
                 .collect::<Vec<_>>()
                 .join(",");
             let sql = format!(
-                "SELECT id, source_kind, source_id, source_ref, owner,
+                "SELECT id, source_kind, source_id, path_scope, source_ref, owner,
                         timestamp_ms, time_range_start_ms, time_range_end_ms,
                         tags_json, content, token_count, seq_in_source, created_at_ms
                    FROM mem_tree_chunks WHERE id IN ({placeholders})"
@@ -635,7 +643,7 @@ pub struct ListChunksQuery {
 pub fn list_chunks(config: &Config, query: &ListChunksQuery) -> Result<Vec<Chunk>> {
     with_connection(config, |conn| {
         let mut sql = String::from(
-            "SELECT id, source_kind, source_id, source_ref, owner,
+            "SELECT id, source_kind, source_id, path_scope, source_ref, owner,
                     timestamp_ms, time_range_start_ms, time_range_end_ms,
                     tags_json, content, token_count, seq_in_source, created_at_ms
                FROM mem_tree_chunks WHERE 1=1",
@@ -684,6 +692,34 @@ pub fn count_chunks(config: &Config) -> Result<u64> {
     with_connection(config, |conn| {
         let n: i64 = conn.query_row("SELECT COUNT(*) FROM mem_tree_chunks", [], |r| r.get(0))?;
         Ok(n.max(0) as u64)
+    })
+}
+
+/// #002 (FR-010 / US5): extraction coverage — the fraction of chunks that have
+/// at least one indexed entity in `mem_tree_entity_index`, in `[0.0, 1.0]`.
+///
+/// Turns "wiki built / not built" into a quality signal: a value near 0 with a
+/// non-zero chunk count means extraction is producing nothing (the model is
+/// timing out / failing), even though chunks exist — the "empty-but-built
+/// wiki" symptom. Joins the entity index against `mem_tree_chunks.id` so the
+/// numerator is node-kind-agnostic (we only count entity rows whose `node_id`
+/// is an actual chunk). Returns `0.0` when there are no chunks.
+pub fn extraction_coverage(config: &Config) -> Result<f32> {
+    with_connection(config, |conn| {
+        let total: i64 =
+            conn.query_row("SELECT COUNT(*) FROM mem_tree_chunks", [], |r| r.get(0))?;
+        if total <= 0 {
+            return Ok(0.0);
+        }
+        let covered: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM mem_tree_chunks c
+              WHERE EXISTS (
+                  SELECT 1 FROM mem_tree_entity_index e WHERE e.node_id = c.id
+              )",
+            [],
+            |r| r.get(0),
+        )?;
+        Ok((covered.max(0) as f32) / (total as f32))
     })
 }
 
@@ -1075,16 +1111,17 @@ fn row_to_chunk(row: &rusqlite::Row<'_>) -> rusqlite::Result<Chunk> {
     let id: String = row.get(0)?;
     let source_kind_s: String = row.get(1)?;
     let source_id: String = row.get(2)?;
-    let source_ref: Option<String> = row.get(3)?;
-    let owner: String = row.get(4)?;
-    let ts_ms: i64 = row.get(5)?;
-    let trs_ms: i64 = row.get(6)?;
-    let tre_ms: i64 = row.get(7)?;
-    let tags_json: String = row.get(8)?;
-    let content: String = row.get(9)?;
-    let token_count: i64 = row.get(10)?;
-    let seq: i64 = row.get(11)?;
-    let created_ms: i64 = row.get(12)?;
+    let path_scope: Option<String> = row.get(3)?;
+    let source_ref: Option<String> = row.get(4)?;
+    let owner: String = row.get(5)?;
+    let ts_ms: i64 = row.get(6)?;
+    let trs_ms: i64 = row.get(7)?;
+    let tre_ms: i64 = row.get(8)?;
+    let tags_json: String = row.get(9)?;
+    let content: String = row.get(10)?;
+    let token_count: i64 = row.get(11)?;
+    let seq: i64 = row.get(12)?;
+    let created_ms: i64 = row.get(13)?;
 
     let source_kind = SourceKind::parse(&source_kind_s).map_err(|e| {
         rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, e.into())
@@ -1107,7 +1144,7 @@ fn row_to_chunk(row: &rusqlite::Row<'_>) -> rusqlite::Result<Chunk> {
             time_range,
             tags,
             source_ref: source_ref.map(SourceRef::new),
-            path_scope: None,
+            path_scope,
         },
         token_count: token_count.max(0) as u32,
         seq_in_source: seq.max(0) as u32,

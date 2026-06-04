@@ -25,13 +25,16 @@
 //! and avoids accidentally ingesting other teammates' private tasks.
 
 use async_trait::async_trait;
-use serde_json::json;
+use futures::StreamExt;
+use serde_json::{json, Value};
 
 use super::{ingest::ingest_task_into_memory_tree, sync};
-use crate::openhuman::memory_sync::composio::providers::sync_state::SyncState;
+use crate::openhuman::config::Config;
+use crate::openhuman::memory_sync::composio::providers::sync_state::{extract_item_id, SyncState};
 use crate::openhuman::memory_sync::composio::providers::{
-    first_array_str, merge_extra, pick_str, ComposioProvider, CuratedTool, NormalizedTask,
-    ProviderContext, ProviderUserProfile, SyncOutcome, SyncReason, TaskFetchFilter,
+    first_array_str, merge_extra, pick_str, resolve_sync_interval_secs, ComposioProvider,
+    CuratedTool, NormalizedTask, ProviderContext, ProviderUserProfile, SyncOutcome, SyncReason,
+    TaskFetchFilter, TaskKind,
 };
 
 pub(crate) const ACTION_GET_AUTHORIZED_USER: &str = "CLICKUP_GET_AUTHORIZED_USER";
@@ -56,6 +59,10 @@ const MAX_PAGES_PER_WORKSPACE: u32 = 20;
 /// Paths for extracting a task's unique ID. Composio sometimes wraps
 /// the upstream payload under `data`, so we check both shapes.
 const TASK_ID_PATHS: &[&str] = &["id", "data.id", "task_id", "data.task_id"];
+
+/// Max in-flight ingests per page. DB writes serialize anyway and the
+/// cloud embedder has rate limits, so keep this small.
+const INGEST_CONCURRENCY: usize = 8;
 
 pub struct ClickUpProvider;
 
@@ -85,7 +92,7 @@ impl ComposioProvider for ClickUpProvider {
         // 30 minutes — same cadence as Notion. ClickUp tasks change
         // more slowly than chat but faster than email, so this is in
         // the middle.
-        Some(30 * 60)
+        Some(resolve_sync_interval_secs("clickup", 30 * 60))
     }
 
     async fn fetch_user_profile(
@@ -319,80 +326,21 @@ impl ComposioProvider for ClickUpProvider {
                     break;
                 }
 
-                // ── Per-item dedup + persist ────────────────────────
-                let mut hit_cursor_boundary = false;
-                for task in &tasks {
-                    let Some(task_id) =
-                        crate::openhuman::memory_sync::composio::providers::sync_state::extract_item_id(
-                            task,
-                            TASK_ID_PATHS,
-                        )
-                    else {
-                        tracing::debug!("[composio:clickup] task missing ID, skipping");
-                        continue;
-                    };
+                // ── Per-item dedup + bounded-concurrency ingest ─────
+                let (pending, hit_cursor_boundary) =
+                    select_pending(&tasks, &state, &mut newest_updated);
 
-                    let updated = sync::extract_task_updated(task);
-
-                    // Track newest `date_updated` for cursor advancement.
-                    if let Some(ref ts) = updated {
-                        if newest_updated.as_ref().is_none_or(|existing| ts > existing) {
-                            newest_updated = Some(ts.clone());
-                        }
-                    }
-
-                    // Use a composite (task_id, date_updated) key so that
-                    // a task edited *after* its last sync is re-persisted.
-                    // Same trick the Notion provider uses for
-                    // `last_edited_time`.
-                    let sync_key = match &updated {
-                        Some(ts) => format!("{task_id}@{ts}"),
-                        None => task_id.clone(),
-                    };
-
-                    // If `date_updated` is at or older than our cursor
-                    // *and* we've already synced this composite key, the
-                    // rest of the page is by definition older too — we
-                    // can stop this workspace early.
-                    if let (Some(ref cursor), Some(ref ts)) = (&state.cursor, &updated) {
-                        if ts <= cursor && state.is_synced(&sync_key) {
-                            hit_cursor_boundary = true;
-                            continue;
-                        }
-                    }
-
-                    if state.is_synced(&sync_key) {
-                        continue;
-                    }
-
-                    let title_text = sync::extract_task_name(task)
-                        .unwrap_or_else(|| format!("ClickUp task {task_id}"));
-                    let title = format!("ClickUp: {title_text}");
-
-                    match ingest_task_into_memory_tree(
-                        &ctx.config,
-                        &connection_id,
-                        &task_id,
-                        &title,
-                        updated.as_deref(),
-                        task,
-                    )
-                    .await
-                    {
-                        Ok(_) => {
-                            state.mark_synced(&sync_key);
-                            total_persisted += 1;
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                task_id = %task_id,
-                                workspace_id = %workspace_id,
-                                error = %e,
-                                "[composio:clickup] ingest failed (continuing)"
-                            );
-                        }
-                    }
+                let ingestor = MemoryTreeIngestor {
+                    config: ctx.config.as_ref(),
+                    connection_id: &connection_id,
+                };
+                let outcome =
+                    ingest_pending_buffered(&ingestor, pending, workspace_id, INGEST_CONCURRENCY)
+                        .await;
+                for key in &outcome.synced_keys {
+                    state.mark_synced(key);
                 }
+                total_persisted += outcome.persisted;
 
                 if hit_cursor_boundary {
                     tracing::debug!(
@@ -584,6 +532,7 @@ fn normalize_clickup_task(task: &serde_json::Value) -> Option<NormalizedTask> {
         external_id,
         source_id: String::new(),
         provider: "clickup".to_string(),
+        kind: TaskKind::Generic,
         title,
         body: pick_str(task, &["description", "data.description", "text_content"]),
         url: pick_str(task, &["url", "data.url"]),
@@ -665,5 +614,308 @@ impl ClickUpProvider {
         }
 
         Ok(sync::extract_workspace_ids(&resp.data))
+    }
+}
+
+/// One task that passed dedupe in pass 1 and is queued for concurrent
+/// ingest in pass 2. Borrows the raw task `Value` out of the current
+/// page's `tasks` (same scope — no clone needed).
+struct PendingIngest<'a> {
+    sync_key: String,
+    task_id: String,
+    title: String,
+    updated: Option<String>,
+    task: &'a Value,
+}
+
+/// Folded result of [`ingest_pending_buffered`]. Both fields are
+/// order-independent, so the concurrent stage can accumulate into it
+/// regardless of the order ingests complete.
+#[derive(Default)]
+struct BufferedIngestOutcome {
+    /// `sync_key`s whose ingest succeeded — the caller marks each synced.
+    synced_keys: Vec<String>,
+    /// Number of tasks persisted (equals `synced_keys.len()`).
+    persisted: usize,
+}
+
+/// Seam over "ingest one ClickUp task", so the bounded-concurrency driver
+/// can be unit-tested with a fake that records peak in-flight calls
+/// without a real memory tree or embedder.
+#[async_trait]
+trait TaskIngestor {
+    async fn ingest(
+        &self,
+        task_id: &str,
+        title: &str,
+        updated: Option<&str>,
+        task: &Value,
+    ) -> anyhow::Result<usize>;
+}
+
+/// Production ingestor: routes into the memory-tree pipeline via
+/// [`ingest_task_into_memory_tree`].
+struct MemoryTreeIngestor<'c> {
+    config: &'c Config,
+    connection_id: &'c str,
+}
+
+#[async_trait]
+impl TaskIngestor for MemoryTreeIngestor<'_> {
+    async fn ingest(
+        &self,
+        task_id: &str,
+        title: &str,
+        updated: Option<&str>,
+        task: &Value,
+    ) -> anyhow::Result<usize> {
+        ingest_task_into_memory_tree(
+            self.config,
+            self.connection_id,
+            task_id,
+            title,
+            updated,
+            task,
+        )
+        .await
+    }
+}
+
+/// Pass 1 (pure, no I/O): scan one page of `tasks`, advance
+/// `newest_updated`, skip already-synced items, and collect the tasks
+/// still needing ingest. Returns the queued items and whether we crossed
+/// the persistent cursor boundary (the signal to stop paginating this
+/// workspace). All order-dependent decisions (cursor/timestamp) live here
+/// — never in the concurrent stage.
+fn select_pending<'a>(
+    tasks: &'a [Value],
+    state: &SyncState,
+    newest_updated: &mut Option<String>,
+) -> (Vec<PendingIngest<'a>>, bool) {
+    let mut hit_cursor_boundary = false;
+    let mut pending: Vec<PendingIngest> = Vec::new();
+    for task in tasks {
+        let Some(task_id) = extract_item_id(task, TASK_ID_PATHS) else {
+            tracing::debug!("[composio:clickup] task missing ID, skipping");
+            continue;
+        };
+
+        let updated = sync::extract_task_updated(task);
+
+        // Track newest `date_updated` for cursor advancement.
+        if let Some(ref ts) = updated {
+            if newest_updated.as_ref().is_none_or(|existing| ts > existing) {
+                *newest_updated = Some(ts.clone());
+            }
+        }
+
+        // Composite (task_id, date_updated) key so a task edited *after*
+        // its last sync is re-persisted. Same trick Notion uses for
+        // `last_edited_time`.
+        let sync_key = match &updated {
+            Some(ts) => format!("{task_id}@{ts}"),
+            None => task_id.clone(),
+        };
+
+        // Older than cursor AND already synced → caught up.
+        if let (Some(ref cursor), Some(ref ts)) = (&state.cursor, &updated) {
+            if ts <= cursor && state.is_synced(&sync_key) {
+                hit_cursor_boundary = true;
+                continue;
+            }
+        }
+
+        if state.is_synced(&sync_key) {
+            continue;
+        }
+
+        let title_text =
+            sync::extract_task_name(task).unwrap_or_else(|| format!("ClickUp task {task_id}"));
+        let title = format!("ClickUp: {title_text}");
+
+        pending.push(PendingIngest {
+            sync_key,
+            task_id,
+            title,
+            updated,
+            task,
+        });
+    }
+    (pending, hit_cursor_boundary)
+}
+
+/// Pass 2: ingest the queued tasks with bounded concurrency. Overlaps the
+/// per-item embedding RTT (`buffer_unordered`, up to `concurrency` in
+/// flight) and folds results into an order-independent
+/// [`BufferedIngestOutcome`]. Unordered is correct here: nothing
+/// downstream depends on completion order — successes are keyed by
+/// `sync_key`. A failed ingest is logged and skipped (parity with the
+/// previous sequential `continue`); ClickUp advances its cursor regardless
+/// of per-item failures.
+async fn ingest_pending_buffered<I: TaskIngestor + Sync>(
+    ingestor: &I,
+    pending: Vec<PendingIngest<'_>>,
+    workspace_id: &str,
+    concurrency: usize,
+) -> BufferedIngestOutcome {
+    // Materialize the per-item futures into a Vec before `buffer_unordered`
+    // so the spawned sync future keeps concrete lifetimes / `Send`.
+    let ingest_futs = pending
+        .into_iter()
+        .map(|p| async move {
+            let res = ingestor
+                .ingest(&p.task_id, &p.title, p.updated.as_deref(), p.task)
+                .await;
+            (p.sync_key, p.task_id, res)
+        })
+        .collect::<Vec<_>>();
+
+    let mut outcome = BufferedIngestOutcome::default();
+    let mut ingest_stream = futures::stream::iter(ingest_futs).buffer_unordered(concurrency);
+    while let Some((sync_key, task_id, res)) = ingest_stream.next().await {
+        match res {
+            Ok(_chunks_written) => {
+                outcome.synced_keys.push(sync_key);
+                outcome.persisted += 1;
+            }
+            Err(e) => {
+                tracing::warn!(
+                    task_id = %task_id,
+                    workspace_id = %workspace_id,
+                    error = %e,
+                    "[composio:clickup] ingest failed (continuing)"
+                );
+            }
+        }
+    }
+    outcome
+}
+
+#[cfg(test)]
+mod buffered_tests {
+    use super::*;
+    use serde_json::json;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    /// Fake ingestor: records the peak number of concurrent in-flight
+    /// `ingest` calls and can be told to fail one specific `task_id`. No
+    /// memory tree or embedder involved — lets us assert the concurrency
+    /// bound and overlap deterministically.
+    struct CountingIngestor {
+        in_flight: AtomicUsize,
+        peak: AtomicUsize,
+        fail_task: Option<String>,
+    }
+
+    impl CountingIngestor {
+        fn new(fail_task: Option<&str>) -> Arc<Self> {
+            Arc::new(Self {
+                in_flight: AtomicUsize::new(0),
+                peak: AtomicUsize::new(0),
+                fail_task: fail_task.map(str::to_string),
+            })
+        }
+    }
+
+    #[async_trait]
+    impl TaskIngestor for CountingIngestor {
+        async fn ingest(
+            &self,
+            task_id: &str,
+            _title: &str,
+            _updated: Option<&str>,
+            _task: &Value,
+        ) -> anyhow::Result<usize> {
+            let now = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+            self.peak.fetch_max(now, Ordering::SeqCst);
+            // Yield a few times so futures genuinely interleave and the
+            // peak counter reflects real overlap, not accidental serial run.
+            for _ in 0..4 {
+                tokio::task::yield_now().await;
+            }
+            self.in_flight.fetch_sub(1, Ordering::SeqCst);
+            if self.fail_task.as_deref() == Some(task_id) {
+                Err(anyhow::anyhow!("forced failure for {task_id}"))
+            } else {
+                Ok(1)
+            }
+        }
+    }
+
+    fn make_tasks(n: usize) -> Vec<Value> {
+        (0..n).map(|i| json!({ "id": format!("t{i}") })).collect()
+    }
+
+    fn make_pending(tasks: &[Value]) -> Vec<PendingIngest<'_>> {
+        tasks
+            .iter()
+            .enumerate()
+            .map(|(i, task)| PendingIngest {
+                sync_key: format!("k{i}"),
+                task_id: format!("t{i}"),
+                title: format!("ClickUp: task {i}"),
+                updated: None,
+                task,
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn ingest_pending_buffered_bounds_and_overlaps() {
+        let ingestor = CountingIngestor::new(None);
+        let tasks = make_tasks(20);
+        let pending = make_pending(&tasks);
+
+        let outcome = ingest_pending_buffered(ingestor.as_ref(), pending, "ws1", 8).await;
+
+        assert_eq!(outcome.persisted, 20, "all tasks persisted");
+        assert_eq!(outcome.synced_keys.len(), 20);
+
+        let peak = ingestor.peak.load(Ordering::SeqCst);
+        assert!(peak <= 8, "peak in-flight {peak} exceeded the bound of 8");
+        assert!(peak >= 2, "peak in-flight {peak} shows no real overlap");
+    }
+
+    #[tokio::test]
+    async fn ingest_pending_buffered_skips_failures_order_independent() {
+        let ingestor = CountingIngestor::new(Some("t2"));
+        let tasks = make_tasks(5);
+        let pending = make_pending(&tasks);
+
+        let outcome = ingest_pending_buffered(ingestor.as_ref(), pending, "ws1", 4).await;
+
+        assert_eq!(outcome.persisted, 4, "the one failed ingest is not counted");
+        assert_eq!(outcome.synced_keys.len(), 4);
+        assert!(
+            !outcome.synced_keys.contains(&"k2".to_string()),
+            "the failed task's sync_key must not be marked synced"
+        );
+    }
+
+    #[test]
+    fn select_pending_tracks_newest_skips_synced_and_detects_boundary() {
+        let mut state = SyncState::new("clickup", "conn1");
+        state.cursor = Some("2026-04-15T00:00:00Z".to_string());
+        // Task B is already synced and older than the cursor.
+        state.mark_synced("b@2026-04-01T00:00:00Z");
+
+        let tasks = vec![
+            json!({ "id": "a", "date_updated": "2026-05-01T00:00:00Z" }),
+            json!({ "id": "b", "date_updated": "2026-04-01T00:00:00Z" }),
+            json!({ "date_updated": "2026-03-01T00:00:00Z" }), // no id → skipped
+        ];
+
+        let mut newest: Option<String> = None;
+        let (pending, hit_boundary) = select_pending(&tasks, &state, &mut newest);
+
+        assert_eq!(pending.len(), 1, "only the new task A is queued");
+        assert_eq!(pending[0].task_id, "a");
+        assert_eq!(pending[0].sync_key, "a@2026-05-01T00:00:00Z");
+        assert!(
+            hit_boundary,
+            "older synced task B trips the cursor boundary"
+        );
+        assert_eq!(newest.as_deref(), Some("2026-05-01T00:00:00Z"));
     }
 }

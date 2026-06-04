@@ -1,3 +1,4 @@
+import createDebug from 'debug';
 import { type ReactNode, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
@@ -12,6 +13,10 @@ import {
   useOnboardingContext,
 } from '../OnboardingContext';
 import CustomWizardStep from '../steps/CustomWizardStep';
+
+const log = createDebug('app:onboarding:custom');
+
+const describeError = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
 const LOCAL_DEFAULT_DISABLED_REASON =
   'Managed setup requires OpenHuman sign-in and is unavailable in local mode.';
@@ -29,7 +34,7 @@ export default function CustomWizardConfigPage({
 }: CustomWizardConfigPageProps) {
   const { t } = useT();
   const navigate = useNavigate();
-  const { snapshot } = useCoreState();
+  const { snapshot, clearSession } = useCoreState();
   const { draft, setDraft, completeAndExit } = useOnboardingContext();
   const isLocalSession = isLocalSessionToken(snapshot.sessionToken);
   const stepIndex = CUSTOM_WIZARD_STEPS.indexOf(stepKey);
@@ -52,7 +57,25 @@ export default function CustomWizardConfigPage({
   };
 
   const isLast = stepIndex === CUSTOM_WIZARD_STEPS.length - 1;
+  const isFirst = stepIndex === 0;
   const namespace = `onboarding.custom.${stepKey}`;
+
+  const handleBack = async () => {
+    // Going back from the first step returns to the welcome/login screen.
+    // A session is always present here (OAuth or "Continue Locally"), so we
+    // must clear it first — otherwise PublicRoute bounces "/" to /home.
+    if (isFirst) {
+      try {
+        await clearSession();
+      } catch (err) {
+        // Navigating to "/" with a live session would just bounce back to /home
+        // via PublicRoute — so stay on the step and surface a dev-only diagnostic.
+        log('[onboarding:custom-%s] clearSession on back failed: %s', stepKey, describeError(err));
+        return;
+      }
+    }
+    navigate(backRoute ?? CUSTOM_WIZARD_ROUTES[CUSTOM_WIZARD_STEPS[stepIndex - 1]]);
+  };
 
   return (
     <CustomWizardStep
@@ -69,7 +92,7 @@ export default function CustomWizardConfigPage({
       hideChoiceCards={isLocalSession}
       choice={choice}
       onChoiceChange={persistChoice}
-      onBack={() => navigate(backRoute ?? CUSTOM_WIZARD_ROUTES[CUSTOM_WIZARD_STEPS[stepIndex - 1]])}
+      onBack={() => void handleBack()}
       onContinue={async () => {
         trackEvent('onboarding_step_complete', {
           step_name: `custom_${stepKey}`,
@@ -79,7 +102,7 @@ export default function CustomWizardConfigPage({
           try {
             await completeAndExit();
           } catch (err) {
-            console.error(`[onboarding:custom-${stepKey}] completeAndExit failed`, err);
+            log('[onboarding:custom-%s] completeAndExit failed: %s', stepKey, describeError(err));
           }
           return;
         }

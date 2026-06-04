@@ -4,7 +4,7 @@ import CustomWizardConfigPage from './CustomWizardConfigPage';
 const CustomInferencePage = () => (
   <CustomWizardConfigPage
     stepKey="inference"
-    backRoute="/onboarding/runtime-choice"
+    backRoute="/"
     configureContent={<AIPanel embedded />}
   />
 );

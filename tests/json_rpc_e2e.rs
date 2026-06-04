@@ -1825,7 +1825,8 @@ async fn json_rpc_thread_labels_create_and_update() {
         "created thread should have labels=[\"custom\"]"
     );
 
-    // 2. Update labels on the thread.
+    // 2. Update labels on the thread. Legacy "work" input normalizes to
+    // "general" for backward compatibility with older callers.
     let update = post_json_rpc(
         &rpc_base,
         9002,
@@ -1846,8 +1847,8 @@ async fn json_rpc_thread_labels_create_and_update() {
             .iter()
             .map(|v| v.as_str().unwrap_or(""))
             .collect::<Vec<_>>(),
-        vec!["work", "briefing"],
-        "updated thread should have labels=[\"work\", \"briefing\"]"
+        vec!["general", "briefing"],
+        "updated thread should normalize legacy work label to general"
     );
 
     // 3. Verify the updated labels are reflected in threads_list.
@@ -1873,7 +1874,7 @@ async fn json_rpc_thread_labels_create_and_update() {
             .iter()
             .map(|v| v.as_str().unwrap_or(""))
             .collect::<Vec<_>>(),
-        vec!["work", "briefing"],
+        vec!["general", "briefing"],
         "threads_list must reflect the updated labels"
     );
 
@@ -9849,5 +9850,89 @@ async fn json_rpc_workflows_lifecycle_round_trip() {
     );
 
     api_join.abort();
+    rpc_join.abort();
+}
+
+/// E2E: voice-server settings round-trip over JSON-RPC — Phase 2 always-on
+/// toggle + "Hey Tiny" wake word. Regression guard for the bug where the
+/// Settings toggle silently did nothing because `always_on_enabled` was absent
+/// from the `update_voice_server_settings` controller param schema (rejected as
+/// "unknown param 'always_on_enabled'" before reaching the handler).
+#[tokio::test]
+async fn json_rpc_voice_server_settings_roundtrip_always_on_and_wake_word() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    write_min_config(&openhuman_home, "http://127.0.0.1:9");
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // GET defaults — wake_word "Hey Tiny", always-on off.
+    let initial = post_json_rpc(
+        &rpc_base,
+        7401,
+        "openhuman.config_get_voice_server_settings",
+        json!({}),
+    )
+    .await;
+    let initial_outer = assert_no_jsonrpc_error(&initial, "get_voice_server_settings initial");
+    assert_eq!(
+        initial_outer
+            .get("result")
+            .and_then(|r| r.get("always_on_enabled"))
+            .and_then(Value::as_bool),
+        Some(false),
+        "default always_on_enabled should be false, envelope: {initial_outer}"
+    );
+    assert_eq!(
+        initial_outer
+            .get("result")
+            .and_then(|r| r.get("wake_word"))
+            .and_then(Value::as_str),
+        Some("Hey Tiny"),
+        "default wake_word should be 'Hey Tiny', envelope: {initial_outer}"
+    );
+
+    // UPDATE — change the wake word and pass `always_on_enabled` (the param that
+    // used to be rejected). Kept false so the test never opens a real mic.
+    let update = post_json_rpc(
+        &rpc_base,
+        7402,
+        "openhuman.config_update_voice_server_settings",
+        json!({ "always_on_enabled": false, "wake_word": "Computer" }),
+    )
+    .await;
+    assert_no_jsonrpc_error(
+        &update,
+        "update_voice_server_settings (always_on_enabled + wake_word)",
+    );
+
+    // GET again — wake word persisted, no error.
+    let after = post_json_rpc(
+        &rpc_base,
+        7403,
+        "openhuman.config_get_voice_server_settings",
+        json!({}),
+    )
+    .await;
+    let after_outer = assert_no_jsonrpc_error(&after, "get_voice_server_settings after update");
+    assert_eq!(
+        after_outer
+            .get("result")
+            .and_then(|r| r.get("wake_word"))
+            .and_then(Value::as_str),
+        Some("Computer"),
+        "wake_word should persist, envelope: {after_outer}"
+    );
+
     rpc_join.abort();
 }

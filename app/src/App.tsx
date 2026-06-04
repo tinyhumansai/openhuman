@@ -18,6 +18,7 @@ import LocalAIDownloadSnackbar from './components/LocalAIDownloadSnackbar';
 import SecretPromptDialog from './components/mcp-setup/SecretPromptDialog';
 import OpenhumanLinkModal from './components/OpenhumanLinkModal';
 import PersistRehydrationScreen from './components/PersistRehydrationScreen';
+import SecurityBanner from './components/SecurityBanner';
 import GlobalUpsellBanner from './components/upsell/GlobalUpsellBanner';
 import AppWalkthrough from './components/walkthrough/AppWalkthrough';
 import { MascotFrameProducer } from './features/meet/MascotFrameProducer';
@@ -105,6 +106,7 @@ function App() {
                         <CommandProvider>
                           <ServiceBlockingGate>
                             <AppShell />
+                            <SecurityBanner />
                             {!onMobile && <DictationHotkeyManager />}
                             {!onMobile && <LocalAIDownloadSnackbar />}
                             {!onMobile && <AppUpdatePrompt />}

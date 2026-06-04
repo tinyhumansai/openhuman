@@ -94,6 +94,21 @@ pub const BUILTINS: &[BuiltinAgent] = &[
         prompt_fn: super::tools_agent::prompt::build,
     },
     BuiltinAgent {
+        id: "scheduler_agent",
+        toml: include_str!("scheduler_agent/agent.toml"),
+        prompt_fn: super::scheduler_agent::prompt::build,
+    },
+    BuiltinAgent {
+        id: "presentation_agent",
+        toml: include_str!("presentation_agent/agent.toml"),
+        prompt_fn: super::presentation_agent::prompt::build,
+    },
+    BuiltinAgent {
+        id: "desktop_control_agent",
+        toml: include_str!("desktop_control_agent/agent.toml"),
+        prompt_fn: super::desktop_control_agent::prompt::build,
+    },
+    BuiltinAgent {
         id: "tool_maker",
         toml: include_str!("tool_maker/agent.toml"),
         prompt_fn: super::tool_maker::prompt::build,
@@ -341,6 +356,41 @@ mod tests {
         }
     }
 
+    /// Regression guard for #3236.
+    ///
+    /// PR #3074 introduced the `Config.action_dir` / `Config.workspace_dir`
+    /// split: acting tools resolve to `action_dir` (default
+    /// `~/OpenHuman/projects`), and `workspace_dir` is reserved for
+    /// internal product state (memory / sessions / vault / etc.) that is
+    /// denied to agent tools. The coding-agent prompts must reflect that
+    /// split — saying "in a sandboxed environment" or "the workspace has
+    /// code …" without anchoring contradicts the new model and steers
+    /// the model toward paths that hit the internal-state denylist.
+    ///
+    /// If a future edit reintroduces stale phrasing, this assertion fires
+    /// at `cargo test` time before the bad prompt ships.
+    #[test]
+    fn coding_agent_prompts_reference_action_sandbox_not_stale_workspace() {
+        let code_executor = include_str!("code_executor/prompt.md");
+        assert!(
+            !code_executor.contains("sandboxed environment"),
+            "code_executor/prompt.md still says 'sandboxed environment' \
+             generically — anchor in the action sandbox path (see #3236)"
+        );
+        assert!(
+            code_executor.contains("action sandbox") || code_executor.contains("action_dir"),
+            "code_executor/prompt.md must reference the action sandbox or action_dir (see #3236)"
+        );
+
+        let planner = include_str!("planner/prompt.md");
+        assert!(
+            !planner.contains("the workspace has code"),
+            "planner/prompt.md still says 'the workspace has code …' — \
+             use 'the project tree' or similar to avoid colliding with \
+             `Config.workspace_dir` (internal product state). See #3236."
+        );
+    }
+
     #[test]
     fn every_builtin_has_a_prompt_body() {
         use crate::openhuman::context::prompt::{
@@ -523,6 +573,49 @@ mod tests {
     fn tools_agent_is_registered() {
         let def = find("tools_agent");
         assert!(matches!(def.tools, ToolScope::Wildcard));
+    }
+
+    #[test]
+    fn specialist_agents_are_registered_with_narrow_tools() {
+        let scheduler = find("scheduler_agent");
+        match &scheduler.tools {
+            ToolScope::Named(names) => {
+                for required in ["current_time", "cron_add", "cron_list", "cron_remove"] {
+                    assert!(
+                        names.iter().any(|name| name == required),
+                        "scheduler_agent missing `{required}`"
+                    );
+                }
+            }
+            other => panic!("scheduler_agent must use Named tool scope, got {other:?}"),
+        }
+
+        let presentation = find("presentation_agent");
+        match &presentation.tools {
+            ToolScope::Named(names) => {
+                assert!(names.iter().any(|name| name == "generate_presentation"));
+                assert!(names.iter().any(|name| name == "memory_tree"));
+                assert!(names.iter().any(|name| name == "web_search_tool"));
+            }
+            other => panic!("presentation_agent must use Named tool scope, got {other:?}"),
+        }
+
+        let desktop = find("desktop_control_agent");
+        match &desktop.tools {
+            ToolScope::Named(names) => {
+                for required in [
+                    "launch_app",
+                    "ax_interact",
+                    "automate",
+                    "screenshot",
+                    "mouse",
+                    "keyboard",
+                ] {
+                    assert!(names.iter().any(|name| name == required));
+                }
+            }
+            other => panic!("desktop_control_agent must use Named tool scope, got {other:?}"),
+        }
     }
 
     #[test]

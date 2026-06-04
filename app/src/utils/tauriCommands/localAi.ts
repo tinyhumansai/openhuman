@@ -190,6 +190,13 @@ export interface InstalledModelInfo {
   /** Native context window in tokens, or null when `/api/show` didn't report it. */
   context_length?: number | null;
   eligibility?: ModelContextEligibility | null;
+  /**
+   * Whether the model can serve chat/completions (from Ollama `/api/show`
+   * `capabilities`). `false` = embedding-only model that must be hidden from
+   * the chat-model picker; `null` = unknown (older Ollama / `/api/show` miss),
+   * treated as visible (fail-open). See Sentry TAURI-RUST-4P6.
+   */
+  chat_capable?: boolean | null;
 }
 
 export interface LocalAiDiagnostics {

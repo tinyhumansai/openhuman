@@ -21,6 +21,11 @@ pub use daemon::DaemonConfig;
 pub use ops as rpc;
 pub use ops::*;
 
+pub use schema::{
+    action_dir_env_override, clear_active_user, default_action_dir, default_projects_dir,
+    default_root_openhuman_dir, pre_login_user_dir, read_active_user_id, resolve_action_dir,
+    user_openhuman_dir, write_active_user_id, PRE_LOGIN_USER_ID,
+};
 #[allow(unused_imports)]
 pub use schema::{
     apply_runtime_proxy_to_builder, build_runtime_proxy_client,
@@ -45,11 +50,6 @@ pub use schema::{
     MODEL_CHAT_V1, MODEL_CODING_V1, MODEL_REASONING_QUICK_V1, MODEL_REASONING_V1,
     MODEL_SUMMARIZATION_V1, SEARCH_ENGINE_BRAVE, SEARCH_ENGINE_DISABLED, SEARCH_ENGINE_MANAGED,
     SEARCH_ENGINE_PARALLEL, SEARCH_ENGINE_QUERIT,
-};
-pub use schema::{
-    clear_active_user, default_action_dir, default_projects_dir, default_root_openhuman_dir,
-    pre_login_user_dir, read_active_user_id, user_openhuman_dir, write_active_user_id,
-    PRE_LOGIN_USER_ID,
 };
 pub use schemas::{
     all_controller_schemas as all_config_controller_schemas,

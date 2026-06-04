@@ -164,6 +164,7 @@ const messages: TranslationMap = {
   'clearData.failed': 'Не удалось очистить данные и выйти. Попробуй ещё раз.',
   'clearData.failedLogout': 'Не удалось выйти. Попробуй ещё раз.',
   'clearData.failedPersist': 'Не удалось сбросить состояние приложения. Попробуй ещё раз.',
+  'welcome.logoAlt': 'OpenHuman',
   'welcome.title': 'Добро пожаловать в OpenHuman',
   'welcome.subtitle': 'Твой персональный суперинтеллект. Приватный, простой и невероятно мощный.',
   'welcome.connectPrompt': 'Настроить RPC URL (дополнительно)',
@@ -203,6 +204,10 @@ const messages: TranslationMap = {
   'home.usageExhaustedBody':
     'Включённый объём использования пока исчерпан. Оформите подписку, чтобы получить больше постоянной мощности.',
   'home.usageExhaustedCta': 'Оформить подписку',
+  'openrouterFree.cta': 'Использовать бесплатные модели OpenRouter',
+  'openrouterFree.saving': 'Подключение OpenRouter...',
+  'openrouterFree.error':
+    'Не удалось переключиться на бесплатные модели OpenRouter. Проверьте вход в OpenRouter и повторите попытку.',
   'home.routinesCard': 'Ваши подпрограммы',
   'home.routinesActive': '{count} активных',
   'routines.title': 'Ваши рутины',
@@ -231,7 +236,7 @@ const messages: TranslationMap = {
   'routines.typeCommand': 'Команда',
   'nav.routines': 'Routines',
   'chat.newThread': 'Новый чат',
-  'chat.typeMessage': 'Введи сообщение...',
+  'chat.typeMessage': 'Чем я могу помочь тебе сегодня?',
   'chat.send': 'Отправить сообщение',
   'chat.thinking': 'Думаю...',
   'chat.noMessages': 'Сообщений пока нет',
@@ -441,6 +446,11 @@ const messages: TranslationMap = {
   'memoryTree.status.hoursAgo': '{count} час назад',
   'memoryTree.status.dayAgo': '1 день назад',
   'memoryTree.status.daysAgo': '{count} дней назад',
+  'memoryTree.status.integrationsTitle': 'Состояние интеграций',
+  'memoryTree.status.integrationsEmpty': 'Нет подключённых интеграций',
+  'memoryTree.status.integrationActive': 'Активна',
+  'memoryTree.status.integrationStale': 'Устарела',
+  'memoryTree.status.integrationChunks': 'Куски: {count}',
   'alerts.title': 'Оповещения',
   'alerts.empty': 'Оповещений пока нет',
   'alerts.markAllRead': 'Отметить всё прочитанным',
@@ -493,6 +503,8 @@ const messages: TranslationMap = {
   'onboarding.runtimeChoice.continueCloud': 'Продолжить с простым режимом',
   'onboarding.runtimeChoice.continueCustom': 'Продолжить со своими настройками',
   'onboarding.runtimeChoice.recommended': 'Рекомендуется',
+  'onboarding.runtimeChoice.exitError':
+    'Не удалось завершить настройку. Пожалуйста, попробуйте ещё раз.',
   'onboarding.apiKeys.title': 'Добавь свои API-ключи',
   'onboarding.apiKeys.subtitle':
     'Вставь их сейчас или пропусти и добавь позже в Настройки › AI. Ключи хранятся на этом устройстве в зашифрованном виде.',
@@ -1718,16 +1730,13 @@ const messages: TranslationMap = {
   'common.enable': 'Включить',
   'chat.safetyTimeout':
     'Агент не ответил в течение 2 минут. Попробуй снова или проверь соединение.',
-  'chat.filter.all': 'Все',
-  'chat.filter.work': 'Работа',
-  'chat.filter.briefing': 'Брифинг',
-  'chat.filter.notification': 'Уведомление',
-  'chat.filter.workers': 'Воркеры',
+  'chat.filter.general': 'Общее',
+  'chat.filter.subconscious': 'Подсознание',
+  'chat.filter.tasks': 'Задачи',
   'chat.selectThread': 'Выбери чат',
   'chat.threads': 'Чаты',
   'chat.noThreads': 'Чатов пока нет',
   'chat.noLabelThreads': 'Нет чатов «{label}»',
-  'chat.noWorkerThreads': 'Чатов воркеров пока нет',
   'chat.deleteThread': 'Удалить чат',
   'chat.deleteThreadConfirm': 'Удалить «{title}»?',
   'chat.untitledThread': 'Чат без названия',
@@ -1973,6 +1982,7 @@ const messages: TranslationMap = {
   'memorySources.loadingConnections': 'Загрузка подключений…',
   'memorySources.noConnections':
     'Активных соединений Composio не ​​найдено. Сначала подключите интеграцию.',
+  'memorySources.connectionAccount': 'Аккаунт',
   'memorySources.pickConnection': 'Выберите соединение',
   'memorySources.selectConnection': '— Выберите соединение —',
   'memorySources.composioListFailed': 'Не удалось загрузить соединения Composio.',
@@ -2274,6 +2284,9 @@ const messages: TranslationMap = {
   'app.openhumanLink.discord.perk2': 'Преимущество 2',
   'app.openhumanLink.discord.perk3': 'Преимущество 3',
   'app.openhumanLink.discord.perk4': 'Преимущество 4',
+  'app.openhumanLink.discordReport.intro':
+    'Приносим извинения — что-то пошло не так с нашей стороны. Мы стараемся фиксировать такие ошибки автоматически, но если вы поделитесь подробностями в Discord, мы исправим их быстрее.',
+  'app.openhumanLink.discordReport.openDiscord': 'Открыть Discord',
   'app.openhumanLink.done': 'Готово',
   'app.openhumanLink.loadingChannelSetup': 'Загрузка настроек канала',
   'app.openhumanLink.maybeLater': 'Может, потом',
@@ -2294,6 +2307,7 @@ const messages: TranslationMap = {
   'app.openhumanLink.title.accounts': 'Подключи свои приложения',
   'app.openhumanLink.title.billing': 'Оплата и кредиты',
   'app.openhumanLink.title.discord': 'Вступи в сообщество',
+  'app.openhumanLink.title.discordReport': 'Сообщить об ошибке',
   'app.openhumanLink.title.messaging': 'Подключи канал связи',
   'app.openhumanLink.title.notifications': 'Разрешить уведомления',
   'app.persistRehydration.body': 'Текст',
@@ -2526,7 +2540,24 @@ const messages: TranslationMap = {
   'conversations.taskKanban.field.title': 'Заголовок',
   'conversations.taskKanban.saveChanges': 'Сохранить изменения',
   'conversations.taskKanban.deleteCard': 'Удалить',
+  'conversations.taskKanban.workTask': 'Работать над задачей',
+  'conversations.taskKanban.startingTask': 'Запуск…',
   'conversations.taskKanban.updateFailed': 'Не удалось обновить задачу; изменения не сохранились.',
+  'conversations.taskKanban.sourcesButton': 'Источники',
+  'conversations.taskKanban.source.openExternal': 'Открыть внешнюю задачу',
+  'conversations.taskKanban.source.openExternalShort': 'Открыть',
+  'conversations.taskKanban.source.unknownProvider': 'Неизвестный источник',
+  'conversations.taskKanban.source.urgencyValue': 'Срочность {percent}%',
+  'conversations.taskKanban.sources.desktopOnly':
+    'Управление источниками задач доступно в настольном приложении.',
+  'conversations.taskKanban.sources.title': 'Источники задач',
+  'conversations.taskKanban.sources.statusEnabled': 'Автоматический опрос включен',
+  'conversations.taskKanban.sources.manage': 'Управлять источниками',
+  'conversations.taskKanban.source.title': 'Источник',
+  'conversations.taskKanban.source.sourceId': 'ID источника',
+  'conversations.taskKanban.source.externalId': 'Внешний ID',
+  'conversations.taskKanban.source.repo': 'Репозиторий',
+  'conversations.taskKanban.source.urgency': 'Срочность',
   'conversations.toolTimeline.turn': 'ход',
   'conversations.toolTimeline.step': 'Шаг',
   'conversations.toolTimeline.workerThread': 'чат воркера',
@@ -2641,6 +2672,47 @@ const messages: TranslationMap = {
   'intelligence.tasks.composer.create': 'Создать задачу',
   'intelligence.tasks.composer.creating': 'Создание…',
   'intelligence.tasks.composer.createFailed': 'Не удалось создать задачу',
+  'intelligence.tasks.composer.assignAgentLabel': 'Поручить агенту выполнить это автоматически',
+  'intelligence.tasks.composer.assignAgentHint':
+    'Доска задач возьмёт её и выполнит за вас. Оставьте выключенным для обычной личной задачи.',
+  'intelligence.tasks.sourceList.subtitle':
+    'Задачи из источников, ожидающие превращения в работу агента.',
+  'intelligence.tasks.sourceList.empty': 'Нет ожидающих задач из источников.',
+  'intelligence.tasks.sourceList.queued': 'В очереди',
+  'intelligence.tasks.sourceList.workOnTask': 'Работать над задачей',
+  'intelligence.tasks.sourcePlan.title': 'Уточнить задачу из источника',
+  'intelligence.tasks.sourcePlan.subtitle':
+    'Проверьте черновик исследования перед созданием задачи агента.',
+  'intelligence.tasks.sourcePlan.researchAgent': 'Черновик исследовательского агента',
+  'intelligence.tasks.sourcePlan.approve': 'Утвердить план',
+  'intelligence.tasks.sourcePlan.creating': 'Создание задачи…',
+  'intelligence.tasks.sourcePlan.createFailed': 'Не удалось создать задачу агента',
+  'intelligence.tasks.workTaskFailed': 'Не удалось начать работу над задачей',
+  'intelligence.workTask.sourceTaskHeading': 'Исходная задача:',
+  'intelligence.workTask.repositoryLine': '- Репозиторий: {repo}',
+  'intelligence.workTask.externalIdLine': '- Внешний ID: {externalId}',
+  'intelligence.workTask.urlLine': '- Ссылка: {url}',
+  'intelligence.workTask.closingInstruction':
+    'Начните с краткого повторения конкретного плана реализации, затем выполните его. Поддерживайте видимость прогресса в этой ветке и обновляйте доску задач при изменении состояния работы.',
+  'intelligence.refine.objectiveDefault':
+    'Превратите исходную задачу в готовую к реализации задачу агента: {title}',
+  'intelligence.refine.sourceLine': 'Источник: {url}',
+  'intelligence.refine.sourceIntake': 'Источник: приём источников задач',
+  'intelligence.refine.repositoryLine': 'Репозиторий: {repo}',
+  'intelligence.refine.externalTaskLine': 'Внешняя задача: {externalId}',
+  'intelligence.refine.planStep1':
+    'Прочитайте связанную исходную задачу и подтвердите точно запрошенное поведение.',
+  'intelligence.refine.planStep2':
+    'Изучите соответствующие пути кода и определите наименьшую границу реализации.',
+  'intelligence.refine.planStep3':
+    'Реализуйте изменение с целевыми тестами вокруг видимого пользователю поведения.',
+  'intelligence.refine.planStep4':
+    'Запустите целевую проверку и зафиксируйте оставшиеся риски или последующую работу.',
+  'intelligence.refine.acceptance1': 'Требования исходной задачи отражены в итоговой реализации.',
+  'intelligence.refine.acceptance2':
+    'Соответствующие модульные или интеграционные тесты покрывают изменённое поведение.',
+  'intelligence.refine.acceptance3':
+    'Результаты проверки и любые нерешённые риски фиксируются при завершении.',
   'notifications.card.dismiss': 'Закрыть уведомление',
   'notifications.card.importanceTitle': 'Важность: {pct}%',
   'notifications.center.empty': 'Уведомлений пока нет',
@@ -3679,6 +3751,13 @@ const messages: TranslationMap = {
   'settings.agentAccess.readWriteAccess': 'чтение + запись',
   'settings.agentAccess.actionSandboxDesc':
     'Рабочий каталог по умолчанию для инструментов оболочки, файлов и git.',
+  'settings.agentAccess.actionDir.edit': 'Изменить',
+  'settings.agentAccess.actionDir.save': 'Сохранить',
+  'settings.agentAccess.actionDir.cancel': 'Отмена',
+  'settings.agentAccess.actionDir.placeholder': 'Абсолютный путь, напр. /Users/you/Projects',
+  'settings.agentAccess.actionDir.envLocked':
+    'Задано переменной OPENHUMAN_ACTION_DIR. Измените переменную окружения, чтобы переопределить.',
+  'settings.agentAccess.actionDir.saved': 'Каталог действий обновлён.',
   'settings.agentAccess.internalState': 'Внутреннее состояние',
   'settings.agentAccess.agentBlocked': 'заблокировано для агента',
   'settings.agentAccess.internalStateDesc':
@@ -3686,7 +3765,40 @@ const messages: TranslationMap = {
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',
-  'settings.agentAccess.viewApprovalHistory': 'View approval history',
+  'settings.agentAccess.viewApprovalHistory': 'Просмотреть историю утверждений',
+  'settings.sandbox.title': 'Выполнение в песочнице',
+  'settings.sandbox.menuDesc': 'Настройте бэкенды песочницы для изоляции инструментов агента.',
+  'settings.sandbox.loading': 'Загрузка…',
+  'settings.sandbox.desktopOnly': 'Настройки песочницы доступны только в десктопном приложении.',
+  'settings.sandbox.loadError': 'Не удалось загрузить настройки песочницы.',
+  'settings.sandbox.saveError': 'Не удалось сохранить настройки песочницы.',
+  'settings.sandbox.saved': 'Сохранено — применяется к новым сессиям агента.',
+  'settings.sandbox.saving': 'Сохранение…',
+  'settings.sandbox.status': 'Статус',
+  'settings.sandbox.dockerStatus': 'Docker',
+  'settings.sandbox.available': 'Доступен',
+  'settings.sandbox.unavailable': 'Недоступен',
+  'settings.sandbox.detectedBackend': 'Бэкенд ОС',
+  'settings.sandbox.enableLabel': 'Включить выполнение в песочнице',
+  'settings.sandbox.enableDesc': 'Запускать инструменты агента в изолированной среде песочницы.',
+  'settings.sandbox.backendLabel': 'Бэкенд',
+  'settings.sandbox.backendDesc': 'Выберите бэкенд изоляции для выполнения в песочнице.',
+  'settings.sandbox.backend.auto': 'Автоматически (определить лучший доступный)',
+  'settings.sandbox.backend.docker': 'Docker',
+  'settings.sandbox.backend.landlock': 'Landlock (Linux)',
+  'settings.sandbox.backend.firejail': 'Firejail (Linux)',
+  'settings.sandbox.backend.bubblewrap': 'Bubblewrap (Linux)',
+  'settings.sandbox.backend.none': 'Нет (без песочницы)',
+  'settings.sandbox.dockerSettings': 'Настройки Docker',
+  'settings.sandbox.dockerImage': 'Образ',
+  'settings.sandbox.dockerImagePlaceholder': 'alpine:3.20',
+  'settings.sandbox.memoryLimit': 'Ограничение памяти',
+  'settings.sandbox.memoryUnit': 'MB',
+  'settings.sandbox.cpuLimit': 'Ограничение CPU',
+  'settings.sandbox.cpuUnit': 'ядра',
+  'settings.sandbox.envPassthrough': 'Проброс переменных окружения',
+  'settings.sandbox.envPassthroughDesc': 'Переменные окружения, передаваемые в песочницу.',
+  'settings.sandbox.noEnvVars': 'Переменные окружения не настроены.',
   'settings.approvalHistory.title': 'Approval history',
   'settings.approvalHistory.subtitle': 'Recent tool-approval decisions, newest first.',
   'settings.approvalHistory.refresh': 'Refresh',
@@ -4118,6 +4230,8 @@ const messages: TranslationMap = {
   'chat.agentProfile.defaultAgentLabel': 'Оркестратор',
   'chat.agentProfile.exists': 'Профиль агента «{name}» уже существует.',
   'chat.agentProfile.label': 'Профиль агента',
+  'chat.agentProfile.quick': 'Быстрый',
+  'chat.agentProfile.reasoning': 'Рассуждение',
   'chat.agentProfile.namePlaceholder': 'Имя профиля',
   'chat.agentProfile.promptStylePlaceholder': 'Стиль подсказки',
   'chat.agentProfile.allowedToolsPlaceholder': 'Разрешенные инструменты',
@@ -4253,6 +4367,10 @@ const messages: TranslationMap = {
   'settings.taskSources.github.repo': 'Репозиторий (владелец/имя, необязательно)',
   'settings.taskSources.github.labels': 'Ярлыки (через запятую)',
   'settings.taskSources.notion.database': 'Идентификатор базы данных (доски)',
+  'settings.taskSources.notion.browseDatabases': 'Обзор баз данных',
+  'settings.taskSources.notion.loadingDatabases': 'Загрузка баз данных…',
+  'settings.taskSources.notion.selectDatabase': 'Выберите базу данных…',
+  'settings.taskSources.notion.noDatabases': 'Базы данных для этого подключения не найдены.',
   'settings.taskSources.linear.team': 'Идентификатор команды (необязательно)',
   'settings.taskSources.clickup.team': 'Идентификатор рабочей области (команды) (необязательно)',
   'settings.taskSources.assignedToMe': 'Только элементы, назначенные мне',
@@ -4414,6 +4532,38 @@ const messages: TranslationMap = {
   'settings.agents.editor.toolsDone': 'Done',
   'settings.agents.editor.builtInReadonly':
     'Встроенные агенты нельзя редактировать. Вы можете включить, отключить или сбросить их в списке агентов.',
+  // Chat — agent-generated artifacts (#2779)
+  'chat.artifact.aria': 'Артефакт: {title}',
+  'chat.artifact.generating': 'Создание {kind}…',
+  'chat.artifact.ready': 'Готово',
+  'chat.artifact.failed': 'Сбой генерации',
+  'chat.artifact.download': 'Скачать',
+  'chat.artifact.downloading': 'Скачивание…',
+  'chat.artifact.downloaded': 'Сохранено в {path}',
+  'chat.artifact.download_failed': 'Сбой скачивания: {reason}',
+  'chat.artifact.retry': 'Повторить',
+  'chat.artifact.reveal': 'Показать в папке',
+  'chat.artifact.show_more': 'Показать больше',
+  'chat.artifact.show_less': 'Свернуть',
+
+  // Chat — files panel (#3024)
+  'chat.files.chip.aria.one': '{count} файл в этом чате',
+  'chat.files.chip.aria.other': '{count} файлов в этом чате',
+  'chat.files.panel.aria': 'Файлы в этом чате',
+  'chat.files.panel.title': 'Файлы ({count})',
+  'chat.files.panel.empty': 'Файлов пока нет. Попросите агента создать один.',
+  'chat.files.panel.close': 'Закрыть панель файлов',
+  'chat.files.delete.aria': 'Удалить {title}',
+  'chat.files.delete.confirm': 'Удалить этот файл?',
+  'chat.files.delete.cancel': 'Отмена',
+  'chat.files.delete.action': 'Удалить',
+  'chat.files.delete.failed': 'Не удалось удалить файл. Попробуйте ещё раз.',
+  'chat.files.error.not_desktop': 'Загрузки доступны только в настольном приложении.',
+  'chat.files.error.missing_artifact_id': 'Отсутствует идентификатор артефакта.',
+  'chat.files.error.missing_artifact_path': 'В ответе ядра отсутствует путь к артефакту.',
+  'chat.files.error.resolve_failed': 'Не удалось получить артефакт. Попробуйте ещё раз.',
+  'chat.files.error.download_failed': 'Не удалось загрузить файл. Попробуйте ещё раз.',
+  'chat.files.error.delete_failed': 'Не удалось удалить файл. Попробуйте ещё раз.',
   'autocomplete.debounceMs': 'Задержка (мс)',
   'autocomplete.maxChars': 'Макс. символов контекста',
   'autocomplete.overlayTtlMs': 'Тайм-аут наложения (мс)',
@@ -4502,7 +4652,38 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Отклонить локальное хранилище',
   'pages.settings.account.security': 'Безопасность',
   'pages.settings.account.securityDesc': 'Режим хранения секретов и статус связки ключей',
+  // #002 memory-pipeline-hardening: degraded badges + typed remediation.
+  'memoryTree.status.statusDegraded': 'Ухудшено',
+  'memoryTree.status.degradedRecall': 'Семантический поиск отключён',
+  'memoryTree.status.degradedStructure': 'Структура вики неполная',
+  'memoryTree.status.extractionCoverage': 'Охват извлечения: {pct}% фрагментов имеют структуру',
+  'memory.health.remediation.budget_exhausted':
+    'Эмбеддинги памяти исчерпали управляемый бюджет. Настройте локальные эмбеддинги Ollama (Настройки → ИИ → Эмбеддинги) или добавьте свой ключ API для эмбеддингов, чтобы продолжить построение памяти.',
+  'memory.health.remediation.auth_missing':
+    'Учётные данные для эмбеддингов не найдены. Войдите в OpenHuman или настройте локальные эмбеддинги Ollama в разделе Настройки → ИИ → Эмбеддинги.',
+  'memory.health.remediation.auth_invalid':
+    'Ваши учётные данные для эмбеддингов отклонены. Пройдите аутентификацию заново или переключитесь на локальные эмбеддинги Ollama в разделе Настройки → ИИ → Эмбеддинги.',
+  'memory.health.remediation.embeddings_unconfigured':
+    'Поставщик эмбеддингов не настроен, поэтому семантический поиск отключён. Настройте локальные эмбеддинги Ollama (рекомендуется) или добавьте ключ эмбеддингов в разделе Настройки → ИИ → Эмбеддинги.',
+  'memory.health.remediation.embedding_dim_mismatch':
+    'Модель эмбеддингов возвращает неверный размер вектора (память ожидает 1024 измерения). Выберите модель с 1024 измерениями или запросите 1024 измерения у своего поставщика.',
+  'memory.health.remediation.local_model_unavailable':
+    'Требуемая локальная модель недоступна. Установите/запустите Ollama и загрузите модель либо переключите эту задачу на облачного поставщика в разделе Настройки → ИИ.',
+  'memory.health.remediation.extraction_timeout':
+    'Модель извлечения памяти превышает время ожидания, поэтому в вики мало структуры. Выберите более быструю модель извлечения памяти в разделе Настройки → ИИ.',
+  'memory.health.remediation.summarizer_unavailable':
+    'Нет доступного поставщика суммаризации для «Построить деревья сводок». Включите локальный ИИ (Ollama) или включите облачную суммаризацию в разделе Настройки → ИИ → Память.',
+  'memory.health.remediation.transient':
+    'Временная ошибка прервала обработку памяти. Повтор произойдёт автоматически.',
+  'memory.health.remediation.unknown':
+    'При обработке памяти возникла проблема. Проверьте конфигурацию в разделе Настройки → ИИ.',
+  // Chat — agent-generated artifacts (#2779)
 
+  // Chat composer toolbar
+  'composer.attachFile': 'Прикрепить файл',
+  'composer.modelSelector': 'Модель',
+  'composer.voiceMode': 'Голосовой режим',
+  'composer.qualityHigh': 'Высокое',
   // Agent activity level
   'activityLevel.title': 'Уровень активности агента',
   'activityLevel.description':
@@ -4621,6 +4802,25 @@ const messages: TranslationMap = {
   'memoryData.windowError': 'Окно памяти',
   'memoryData.windowUpdated': 'Окно памяти обновлено',
   'memoryData.windowUpdatedMsg': 'Установлено значение {window}.',
+  // Security banner (approval-gate host-aware boot state)
+  'security.approvalGateDisabled.title': 'Шлюз одобрения отключён',
+  'security.approvalGateDisabled.body':
+    'В вашей среде установлено OPENHUMAN_APPROVAL_GATE=0. Инструменты с внешним эффектом будут запускаться без запроса подтверждения.',
+  'security.approvalGateOverrideIgnored.title': 'Переопределение заблокировано',
+  'security.approvalGateOverrideIgnored.body':
+    'Обнаружено переопределение OPENHUMAN_APPROVAL_GATE=0, но оно проигнорировано: настольное приложение всегда держит шлюз одобрения включённым.',
+
+  // Run queue
+  'runQueue.mode.interrupt': 'Прервать',
+  'runQueue.mode.steer': 'Направить',
+  'runQueue.mode.followup': 'Продолжение',
+  'runQueue.mode.collect': 'Добавить контекст',
+  'runQueue.queued': 'Сообщение в очереди',
+  'runQueue.steerHint': 'Направить текущий ход',
+  'runQueue.followupHint': 'Добавить в очередь как продолжение',
+  'runQueue.collectHint': 'Добавить как дополнительный контекст',
+  'runQueue.status': '{total} в очереди',
+  'runQueue.cleared': 'Очередь очищена',
 };
 
 export default messages;

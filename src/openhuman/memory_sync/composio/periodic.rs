@@ -52,11 +52,12 @@ use crate::openhuman::config::rpc as config_rpc;
 use crate::openhuman::scheduler_gate::gate::current_policy;
 use crate::openhuman::scheduler_gate::policy::PauseReason;
 
-use super::providers::{get_provider, ProviderContext, SyncReason};
+use super::providers::{get_provider, ComposioUsage, ProviderContext, SyncReason};
 use crate::openhuman::composio::client::{
     create_composio_client, direct_list_connections, ComposioClientKind,
 };
 use crate::openhuman::composio::ops;
+use crate::openhuman::memory_sync::sources::audit::{append_audit_entry, SyncAuditEntry};
 
 /// How often the scheduler wakes up to look for due syncs. Independent
 /// from per-provider `sync_interval_secs` — this just bounds how long
@@ -330,15 +331,38 @@ pub(crate) async fn run_one_tick() -> Result<(), String> {
             interval_secs,
             "[composio:periodic] firing sync"
         );
-        match provider.sync(&ctx, SyncReason::Periodic).await {
+        let sync_started = Instant::now();
+        let result = provider.sync(&ctx, SyncReason::Periodic).await;
+        let duration_ms = sync_started.elapsed().as_millis() as u64;
+
+        // Read the Composio billable-action tally the sync accumulated at the
+        // `execute` chokepoint (#3111). Periodic is where most Composio cost
+        // accrues (this loop fires every 20 min per connection vs. rare manual
+        // syncs), but periodic ticks weren't recorded in the sync audit at all
+        // — so the audit under-counted real cost. Record each tick that ran a
+        // fetch, success or failure, so the Sync History panel reflects the
+        // background spend too (#3111 follow-up; raised in the #3138 review).
+        let usage = ctx.usage.lock().map(|u| u.clone()).unwrap_or_default();
+
+        match result {
             Ok(outcome) => {
                 tracing::debug!(
                     toolkit = %conn.toolkit,
                     connection_id = %conn.id,
                     items = outcome.items_ingested,
                     elapsed_ms = outcome.elapsed_ms(),
+                    composio_actions = usage.actions_called,
                     "[composio:periodic] sync ok"
                 );
+                let entry = build_periodic_audit_entry(
+                    &toolkit,
+                    &conn.id,
+                    &usage,
+                    outcome.items_ingested,
+                    duration_ms,
+                    None,
+                );
+                append_audit_entry(&config, &entry);
                 record_sync_success(&conn.toolkit, &conn.id);
                 fired += 1;
             }
@@ -349,6 +373,11 @@ pub(crate) async fn run_one_tick() -> Result<(), String> {
                     error = %e,
                     "[composio:periodic] sync failed (will retry next tick)"
                 );
+                // A failed tick may still have fired billable fetch actions
+                // before erroring — audit the partial cost so it isn't lost.
+                let entry =
+                    build_periodic_audit_entry(&toolkit, &conn.id, &usage, 0, duration_ms, Some(e));
+                append_audit_entry(&config, &entry);
                 // Intentionally do NOT update last_sync_at on failure
                 // so the next tick retries immediately.
             }
@@ -357,6 +386,43 @@ pub(crate) async fn run_one_tick() -> Result<(), String> {
 
     tracing::debug!(considered, fired, "[composio:periodic] tick complete");
     Ok(())
+}
+
+/// Build a [`SyncAuditEntry`] for one periodic Composio sync tick (#3111
+/// follow-up).
+///
+/// Periodic syncs only fetch + ingest; summarisation runs later in the async
+/// job worker, so the LLM-cost columns (tokens, estimated / actual charge)
+/// are zero here. The meaningful spend is the Composio billable actions the
+/// fetch fired, carried in `usage`. `scope` is `{toolkit}:{connection_id}` to
+/// match the owner shape the per-source memory-tree ingest uses, and
+/// `source_kind` is `"composio"` so the Sync History panel groups periodic
+/// rows alongside the manual-sync rows the dispatcher already writes.
+fn build_periodic_audit_entry(
+    toolkit: &str,
+    connection_id: &str,
+    usage: &ComposioUsage,
+    items_ingested: usize,
+    duration_ms: u64,
+    error: Option<String>,
+) -> SyncAuditEntry {
+    SyncAuditEntry {
+        timestamp: chrono::Utc::now(),
+        source_id: connection_id.to_string(),
+        source_kind: "composio".to_string(),
+        scope: format!("{toolkit}:{connection_id}"),
+        items_fetched: items_ingested as u32,
+        batches: 0,
+        input_tokens: 0,
+        output_tokens: 0,
+        estimated_cost_usd: 0.0,
+        composio_actions_called: usage.actions_called,
+        composio_cost_usd: usage.cost_usd,
+        actual_charged_usd: None,
+        duration_ms,
+        success: error.is_none(),
+        error,
+    }
 }
 
 #[cfg(test)]
@@ -370,6 +436,60 @@ mod tests {
         // Sanity check: don't accidentally ship a 1-second tick.
         assert!(TICK_SECONDS >= 30);
         assert!(TICK_SECONDS <= 3600);
+    }
+
+    /// A successful periodic tick produces a Composio-kind audit entry that
+    /// carries the billable-action tally + cost and zeroes the LLM-cost
+    /// columns (summarisation happens later in the job worker). Pins the
+    /// shape the Sync History panel reads (#3111 follow-up).
+    #[test]
+    fn periodic_audit_entry_records_composio_cost_on_success() {
+        let usage = ComposioUsage {
+            actions_called: 3,
+            cost_usd: 0.042,
+        };
+        let entry = build_periodic_audit_entry("gmail", "cmp-123", &usage, 17, 1234, None);
+
+        assert_eq!(entry.source_kind, "composio");
+        assert_eq!(entry.source_id, "cmp-123");
+        assert_eq!(entry.scope, "gmail:cmp-123");
+        assert_eq!(entry.items_fetched, 17);
+        assert_eq!(entry.composio_actions_called, 3);
+        assert!((entry.composio_cost_usd - 0.042).abs() < f64::EPSILON);
+        assert!(entry.success);
+        assert!(entry.error.is_none());
+        // Periodic fetch does no summarisation — LLM cost columns stay zero,
+        // and the Composio spend is the whole combined cost.
+        assert_eq!(entry.input_tokens, 0);
+        assert_eq!(entry.estimated_cost_usd, 0.0);
+        assert!((entry.combined_cost_usd() - 0.042).abs() < f64::EPSILON);
+    }
+
+    /// A failed periodic tick still records the partial billable cost it
+    /// incurred before erroring (the fetch may have fired actions), with
+    /// `success = false` and the error message preserved.
+    #[test]
+    fn periodic_audit_entry_preserves_partial_cost_on_failure() {
+        let usage = ComposioUsage {
+            actions_called: 1,
+            cost_usd: 0.01,
+        };
+        let entry = build_periodic_audit_entry(
+            "notion",
+            "cmp-9",
+            &usage,
+            0,
+            500,
+            Some("fetch timed out".to_string()),
+        );
+
+        assert!(!entry.success);
+        assert_eq!(entry.error.as_deref(), Some("fetch timed out"));
+        assert_eq!(entry.items_fetched, 0);
+        // The billable action it managed to fire before failing is still
+        // recorded so cost isn't under-reported on failures.
+        assert_eq!(entry.composio_actions_called, 1);
+        assert!((entry.composio_cost_usd - 0.01).abs() < f64::EPSILON);
     }
 
     #[test]

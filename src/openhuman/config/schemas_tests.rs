@@ -352,3 +352,104 @@ async fn handle_update_autonomy_settings_rejects_invalid_value() {
         std::env::remove_var("OPENHUMAN_WORKSPACE");
     }
 }
+
+// ── agent paths handler (#3237) ──────────────────────────────
+
+#[test]
+fn agent_paths_rpc_is_registered() {
+    let funcs: Vec<&str> = all_controller_schemas()
+        .iter()
+        .map(|s| s.function)
+        .collect();
+    assert!(
+        funcs.contains(&"get_agent_paths"),
+        "get_agent_paths must be registered for the AgentAccessPanel to read live paths (#3237)"
+    );
+}
+
+#[tokio::test]
+async fn handle_get_agent_paths_returns_action_workspace_and_projects() {
+    // Regression guard for #3237. AgentAccessPanel calls this RPC to render
+    // the action sandbox / internal workspace paths instead of the hard-coded
+    // `~/OpenHuman/projects` / `~/.openhuman/workspace` strings that drift
+    // when an operator sets OPENHUMAN_ACTION_DIR.
+    let _g = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let tmp = tempfile::tempdir().unwrap();
+    unsafe {
+        std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
+    }
+
+    let out = super::handle_get_agent_paths(serde_json::Map::new())
+        .await
+        .expect("get_agent_paths handler must succeed");
+    // into_cli_compatible_json wraps data under "result" when logs are present.
+    let inner = out.get("result").unwrap_or(&out);
+
+    let action_dir = inner
+        .get("action_dir")
+        .and_then(|v| v.as_str())
+        .expect("action_dir field must be a string");
+    let workspace_dir = inner
+        .get("workspace_dir")
+        .and_then(|v| v.as_str())
+        .expect("workspace_dir field must be a string");
+    let projects_dir = inner
+        .get("projects_dir")
+        .and_then(|v| v.as_str())
+        .expect("projects_dir field must be a string");
+
+    assert!(
+        !action_dir.is_empty(),
+        "action_dir must resolve to a non-empty path"
+    );
+    assert!(
+        !workspace_dir.is_empty(),
+        "workspace_dir must resolve to a non-empty path"
+    );
+    assert!(
+        !projects_dir.is_empty(),
+        "projects_dir must resolve to a non-empty path"
+    );
+
+    unsafe {
+        std::env::remove_var("OPENHUMAN_WORKSPACE");
+    }
+}
+
+#[tokio::test]
+async fn handle_get_agent_paths_reflects_openhuman_action_dir_env_override() {
+    // #3237 acceptance criterion: setting OPENHUMAN_ACTION_DIR and restarting
+    // must show that override in the panel. The override is honoured by
+    // default_action_dir() at Config load time; this test verifies the RPC
+    // surface forwards the loaded value unchanged.
+    let _g = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let tmp = tempfile::tempdir().unwrap();
+    let custom_actions = tmp.path().join("custom-actions-3237");
+    std::fs::create_dir_all(&custom_actions).expect("create custom action dir");
+
+    unsafe {
+        std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
+        std::env::set_var("OPENHUMAN_ACTION_DIR", &custom_actions);
+    }
+
+    let out = super::handle_get_agent_paths(serde_json::Map::new())
+        .await
+        .expect("get_agent_paths handler must succeed");
+    let inner = out.get("result").unwrap_or(&out);
+    let action_dir = inner
+        .get("action_dir")
+        .and_then(|v| v.as_str())
+        .expect("action_dir field must be a string")
+        .to_string();
+
+    assert_eq!(
+        action_dir,
+        custom_actions.display().to_string(),
+        "OPENHUMAN_ACTION_DIR override must propagate through get_agent_paths so the UI displays the actual sandbox path"
+    );
+
+    unsafe {
+        std::env::remove_var("OPENHUMAN_ACTION_DIR");
+        std::env::remove_var("OPENHUMAN_WORKSPACE");
+    }
+}

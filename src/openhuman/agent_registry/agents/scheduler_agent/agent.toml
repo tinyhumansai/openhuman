@@ -1,0 +1,19 @@
+id = "scheduler_agent"
+display_name = "Scheduler Agent"
+delegate_name = "schedule_task"
+when_to_use = "Scheduling specialist — owns reminders, recurring jobs, cron listing/removal, relative-time grounding, and confirmation-before-create flows. Use for any request to remind, schedule, repeat, pause, remove, or inspect scheduled jobs."
+temperature = 0.2
+max_iterations = 8
+agent_tier = "worker"
+omit_identity = true
+omit_memory_context = true
+omit_safety_preamble = false
+omit_skills_catalog = true
+omit_profile = true
+omit_memory_md = true
+
+[model]
+hint = "agentic"
+
+[tools]
+named = ["current_time", "cron_add", "cron_list", "cron_remove", "ask_user_clarification"]

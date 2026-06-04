@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use axum::extract::{Query, State, WebSocketUpgrade};
+use axum::extract::{DefaultBodyLimit, Query, State, WebSocketUpgrade};
 use axum::http::{header, HeaderValue, Method, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -846,6 +846,14 @@ async fn dictation_ws_handler(ws: WebSocketUpgrade) -> Response {
     })
 }
 
+/// Maximum accepted request-body size for the core HTTP server (64 MiB).
+///
+/// Sized to comfortably hold a `channel_web_chat` turn carrying the composer's
+/// maximum image payload — 4 × 8 MiB raw ≈ 43 MiB once base64-encoded into
+/// `[IMAGE:data:…]` markers — plus message text and JSON-RPC envelope overhead.
+/// Axum's 2 MiB default would otherwise reject any image attachment (#3205).
+const MAX_RPC_BODY_BYTES: usize = 64 * 1024 * 1024;
+
 /// Builds the main Axum router for the core HTTP server.
 ///
 /// Includes routes for health, schema, SSE events, JSON-RPC, and Telegram auth.
@@ -863,7 +871,20 @@ pub fn build_core_http_router(socketio_enabled: bool) -> Router {
         .route("/events", get(events_handler))
         .route("/events/webhooks", get(webhook_events_handler))
         .route("/events/domain", get(domain_events_handler))
-        .route("/rpc", post(rpc_handler))
+        // Raise the request-body cap above Axum's 2 MiB default — scoped to
+        // `/rpc` only so other routes keep the default. Chat image attachments
+        // are inlined into the `channel_web_chat` JSON-RPC body as base64
+        // `data:` URIs, and the composer permits up to ATTACHMENT_MAX_IMAGES (4)
+        // × ATTACHMENT_MAX_SIZE_BYTES (8 MiB) of raw image ≈ 43 MiB once
+        // base64-encoded. Without this the whole turn was rejected at the local
+        // RPC boundary with "failed to buffer the request body: length limit
+        // exceeded" before anything reached the provider (issue #3205). The
+        // server binds to 127.0.0.1 behind a per-launch bearer, so a generous
+        // localhost cap is safe.
+        .route(
+            "/rpc",
+            post(rpc_handler).route_layer(DefaultBodyLimit::max(MAX_RPC_BODY_BYTES)),
+        )
         .route("/ws/dictation", get(dictation_ws_handler))
         .route("/auth", get(desktop_auth_handler))
         .route("/auth/telegram", get(telegram_auth_handler))
@@ -1631,7 +1652,15 @@ async fn run_server_inner(
     let app = build_core_http_router(socketio_enabled);
 
     // --- Core runtime bootstrap --------------------------------------------
-    bootstrap_core_runtime(embedded_core).await;
+    // Map the legacy `embedded_core` boolean to the typed [`HostKind`] the
+    // bootstrap path now takes. Embedded == Tauri shell; standalone splits
+    // CLI / Docker via `HostKind::detect_standalone`.
+    let host_kind = if embedded_core {
+        crate::core::types::HostKind::TauriShell
+    } else {
+        crate::core::types::HostKind::detect_standalone()
+    };
+    bootstrap_core_runtime(host_kind).await;
 
     log::info!(
         "[core] OpenHuman core is ready — listening on http://{bind_addr} (version {})",
@@ -1956,9 +1985,20 @@ fn register_domain_subscribers(
 }
 
 /// Initializes long-lived socket/event-bus infrastructure.
-pub async fn bootstrap_core_runtime(embedded_core: bool) {
+///
+/// `host_kind` identifies the embedding process (Tauri desktop shell vs
+/// standalone CLI / Docker). It drives the approval-gate's host-aware
+/// decision tree: under the Tauri shell, the `OPENHUMAN_APPROVAL_GATE=0`
+/// env override is ignored and a domain event is published so the UI can
+/// surface a banner; under CLI / Docker the override is honored (with a
+/// noisy log + a domain event so any connected dashboard can flag it).
+pub async fn bootstrap_core_runtime(host_kind: crate::core::types::HostKind) {
+    use crate::core::types::HostKind;
     use crate::openhuman::socket::{set_global_socket_manager, SocketManager};
     use std::sync::Arc;
+    // `embedded_core` derived from host_kind so the rest of the function (which
+    // already keys behavior off the boolean) stays unchanged.
+    let embedded_core = host_kind.is_desktop_shell();
     let cfg = match crate::openhuman::config::Config::load_or_init().await {
         Ok(cfg) => cfg,
         Err(e) => {
@@ -1971,6 +2011,7 @@ pub async fn bootstrap_core_runtime(embedded_core: bool) {
     // --- Event bus bootstrap ---
     // Ensure the global event bus is initialized (no-op if already done by start_channels).
     crate::core::event_bus::init_global(crate::core::event_bus::DEFAULT_CAPACITY);
+    crate::openhuman::file_state::init_global();
     // Register domain subscribers for cross-module event handling.
     // Uses a Once guard so repeated calls to bootstrap_core_runtime()
     // cannot double-subscribe.
@@ -2046,13 +2087,51 @@ pub async fn bootstrap_core_runtime(embedded_core: bool) {
     // OS access panel) AND only *interactive chat* turns park — background /
     // triage / cron turns carry no chat context and pass straight through, so
     // autonomous automation is never blocked.
-    if std::env::var("OPENHUMAN_APPROVAL_GATE")
+    //
+    // Host-aware override evaluation: under the Tauri desktop shell the env
+    // override is treated as advisory only — the gate ALWAYS installs and a
+    // `DomainEvent::ApprovalGateOverrideIgnored` is published so the UI can
+    // surface a one-shot banner explaining the override was rejected. Under
+    // standalone CLI / Docker (env-as-config is the operator's chosen
+    // surface) the override is honored, but a `DomainEvent::ApprovalGateDisabled`
+    // is still published so any connected dashboard / log shipper can
+    // surface the elevated-privilege state.
+    let env_override_requested = std::env::var("OPENHUMAN_APPROVAL_GATE")
         .map(|v| {
             let t = v.trim();
-            !(t == "0" || t.eq_ignore_ascii_case("false"))
+            t == "0" || t.eq_ignore_ascii_case("false")
         })
-        .unwrap_or(true)
-    {
+        .unwrap_or(false);
+    let decision =
+        crate::core::types::approval_gate_boot_decision(host_kind, env_override_requested);
+    // Record the boot decision before publishing the warning event so the
+    // first poll of `approval_get_gate_state` after boot reflects the same
+    // host-aware verdict the event itself describes — no race.
+    crate::openhuman::approval::gate::record_boot_state(
+        crate::openhuman::approval::gate::ApprovalGateBootState {
+            installed: decision.install_gate,
+            disabled_by_env: decision.gate_disabled_by_override,
+            override_ignored: decision.override_ignored,
+            host: match host_kind {
+                crate::core::types::HostKind::TauriShell => "tauri-shell",
+                crate::core::types::HostKind::Cli => "cli",
+                crate::core::types::HostKind::Docker => "docker",
+            },
+        },
+    );
+    if decision.override_ignored {
+        log::warn!(
+            "[runtime] OPENHUMAN_APPROVAL_GATE=0 IGNORED under desktop shell — \
+             gate is always on for the Tauri host (host={})",
+            host_kind.tag()
+        );
+        crate::core::event_bus::publish_global(
+            crate::core::event_bus::DomainEvent::ApprovalGateOverrideIgnored {
+                host: host_kind.tag().to_string(),
+            },
+        );
+    }
+    if decision.install_gate {
         // Per-launch correlation token for the approval gate. This is
         // a fresh UUID every boot — it is NOT derived from the
         // JSON-RPC bearer (`OPENHUMAN_CORE_TOKEN` / the in-memory
@@ -2075,12 +2154,27 @@ pub async fn bootstrap_core_runtime(embedded_core: bool) {
         // case. Without this, the gate parks and publishes but nothing reaches the
         // frontend → every prompt dies at the TTL. Idempotent (Once-guarded).
         crate::openhuman::channels::providers::web::register_approval_surface_subscriber();
+        crate::openhuman::channels::providers::web::register_artifact_surface_subscriber();
     } else {
-        log::info!(
-            "[runtime] approval gate disabled (OPENHUMAN_APPROVAL_GATE=0) — \
-             Prompt-class external-effect tool calls run unprompted"
+        log::error!(
+            "[runtime] approval gate DISABLED (OPENHUMAN_APPROVAL_GATE=0 honored on host={}) — \
+             Prompt-class external-effect tool calls run unprompted",
+            host_kind.tag()
+        );
+        crate::core::event_bus::publish_global(
+            crate::core::event_bus::DomainEvent::ApprovalGateDisabled {
+                host: host_kind.tag().to_string(),
+                reason: "env-override".to_string(),
+            },
         );
     }
+    // Artifact surface bridges DomainEvent::ArtifactReady/Failed onto the web
+    // channel ("Files in this chat" panel + ArtifactCard updates). This is
+    // independent of the approval-gate config — keep it outside the
+    // `if approval_gate` block so artifact events still publish when the user
+    // sets OPENHUMAN_APPROVAL_GATE=0 (CR #3328947323 on PR #3026). Idempotent
+    // (OnceLock-guarded inside register_artifact_surface_subscriber).
+    crate::openhuman::channels::providers::web::register_artifact_surface_subscriber();
 
     // --- Workspace migrations --------------------------------------------
     crate::openhuman::startup::run_workspace_migrations(&workspace_dir);

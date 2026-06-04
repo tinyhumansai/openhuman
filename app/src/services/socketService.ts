@@ -4,6 +4,14 @@ import { type Socket } from 'socket.io-client';
 import { getCoreStateSnapshot } from '../lib/coreState/store';
 import { SocketIOMCPTransportImpl } from '../lib/mcp';
 import { store } from '../store';
+import {
+  setBackendMeetError,
+  setBackendMeetHarness,
+  setBackendMeetJoined,
+  setBackendMeetLeft,
+  setBackendMeetReply,
+  setBackendMeetTranscript,
+} from '../store/backendMeetSlice';
 import { upsertChannelConnection } from '../store/channelConnectionsSlice';
 import { type CompanionStateChangedEvent, setCompanionState } from '../store/companionSlice';
 import { setBackend } from '../store/connectivitySlice';
@@ -414,6 +422,61 @@ class SocketService {
       }
       socketLog('companion:state_changed → %s', event.state);
       store.dispatch(setCompanionState(event));
+    });
+
+    // Backend Meet bot events — forwarded from core's DomainEvent bus
+    this.socket.on('agent_meetings:joined', (data: unknown) => {
+      const obj = data as Record<string, unknown> | null;
+      const meetUrl = typeof obj?.meet_url === 'string' ? obj.meet_url : '';
+      socketLog('agent_meetings:joined meet_url_len=%d', meetUrl.length);
+      store.dispatch(setBackendMeetJoined({ meetUrl }));
+    });
+    this.socket.on('agent_meetings:left', (data: unknown) => {
+      const obj = data as Record<string, unknown> | null;
+      const reason = typeof obj?.reason === 'string' ? obj.reason : 'unknown';
+      socketLog('agent_meetings:left reason=%s', reason);
+      store.dispatch(setBackendMeetLeft({ reason }));
+    });
+    this.socket.on('agent_meetings:reply', (data: unknown) => {
+      const obj = data as Record<string, unknown> | null;
+      if (!obj) return;
+      socketLog('agent_meetings:reply');
+      store.dispatch(
+        setBackendMeetReply({
+          transcript: typeof obj.transcript === 'string' ? obj.transcript : '',
+          reply: typeof obj.reply === 'string' ? obj.reply : '',
+          emotion: typeof obj.emotion === 'string' ? obj.emotion : 'neutral',
+        })
+      );
+    });
+    this.socket.on('agent_meetings:harness', (data: unknown) => {
+      const obj = data as Record<string, unknown> | null;
+      if (!obj) return;
+      socketLog('agent_meetings:harness');
+      store.dispatch(
+        setBackendMeetHarness({
+          transcript: typeof obj.transcript === 'string' ? obj.transcript : '',
+          instruction: typeof obj.instruction === 'string' ? obj.instruction : '',
+          emotion: typeof obj.emotion === 'string' ? obj.emotion : 'neutral',
+        })
+      );
+    });
+    this.socket.on('agent_meetings:transcript', (data: unknown) => {
+      const obj = data as Record<string, unknown> | null;
+      if (!obj) return;
+      socketLog('agent_meetings:transcript');
+      store.dispatch(
+        setBackendMeetTranscript({
+          turns: Array.isArray(obj.turns) ? obj.turns : [],
+          duration_ms: typeof obj.duration_ms === 'number' ? obj.duration_ms : 0,
+        })
+      );
+    });
+    this.socket.on('agent_meetings:error', (data: unknown) => {
+      const obj = data as Record<string, unknown> | null;
+      const error = typeof obj?.error === 'string' ? obj.error : 'Unknown error';
+      socketError('agent_meetings:error %s', error);
+      store.dispatch(setBackendMeetError({ error }));
     });
 
     this.socket.connect();

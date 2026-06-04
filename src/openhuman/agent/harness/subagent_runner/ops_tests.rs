@@ -162,6 +162,10 @@ fn append_subagent_role_contract_adds_role_and_brevity_rules() {
     assert!(rendered.contains("## Sub-agent Role Contract"));
     assert!(rendered.contains("You are a sub-agent working for a parent OpenHuman agent"));
     assert!(rendered.contains("Keep your final response concise and synthesis-ready"));
+    assert!(rendered.contains("## Sub-agent Result Contract"));
+    assert!(rendered.contains("Evidence used"));
+    assert!(rendered.contains("Do not include facts in Answer that are not supported"));
+    assert!(rendered.contains("truncated, partial, or too large"));
 }
 
 #[test]

@@ -106,9 +106,18 @@ fn permission_for_channel(
     channel: &str,
 ) -> PermissionLevel {
     if channel_permissions.is_empty() {
+        // Empty map means "operator hasn't configured a per-channel
+        // policy yet" — keep the legacy unrestricted surface so existing
+        // installs (and unit fixtures that don't seed the map) keep
+        // working. The hardening lands at the config layer:
+        // [`AgentConfig::migrate_channel_permissions_if_legacy`] runs at
+        // startup on legacy installs and seeds the map with safe
+        // per-channel defaults so the cap actually engages on the very
+        // first boot after upgrade. Once any entry exists, unknown
+        // channels fall back to ReadOnly (the `None` arm below).
         log::debug!(
             target: "openhuman::agent_tool_policy",
-            "[tool-policy] channel permissions empty; preserving legacy unrestricted surface channel={}",
+            "[tool-policy] channel permissions empty; preserving legacy unrestricted surface channel={} (config migration seeds per-channel defaults on first boot)",
             channel
         );
         return PermissionLevel::Dangerous;
@@ -243,6 +252,13 @@ mod tests {
 
     #[test]
     fn empty_channel_config_preserves_legacy_full_tool_surface() {
+        // Empty channel_permissions preserves the legacy unrestricted
+        // tool surface (channel cap returns Dangerous). The real-world
+        // hardening landed at the config layer: legacy installs are
+        // migrated via `AgentConfig::migrate_channel_permissions_if_legacy`
+        // on first boot, which seeds per-channel defaults so the cap
+        // actually engages. Tests that don't exercise that migration
+        // path keep their legacy behavior.
         let session = ToolPolicyEngine::build_session(
             "orchestrator",
             "web",

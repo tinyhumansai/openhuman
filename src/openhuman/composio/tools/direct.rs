@@ -362,10 +362,22 @@ impl ComposioTool {
         entity_id: Option<&str>,
         connected_account_ref: Option<&str>,
     ) -> anyhow::Result<serde_json::Value> {
-        let tool_slug = normalize_tool_slug(action_name);
+        // The Composio v3 action-execute contract keys off the UPPERCASE_SNAKE
+        // *action* slug (e.g. `GMAIL_SEND_EMAIL`) at `/tools/execute/{slug}`.
+        // The previous code lowercased + dashed it into the *toolkit* slug
+        // (`gmail-send-email`) and posted to the wrong `/tools/{slug}/execute`
+        // path, so every direct-mode execute 404'd (issue #3219). Pass the
+        // action slug through verbatim (trimmed only); the v2 fallback already
+        // used the same untransformed name.
+        let action_slug = action_name.trim();
 
         match self
-            .execute_action_v3(&tool_slug, params.clone(), entity_id, connected_account_ref)
+            .execute_action_v3(
+                action_slug,
+                params.clone(),
+                entity_id,
+                connected_account_ref,
+            )
             .await
         {
             Ok(result) => Ok(result),
@@ -379,12 +391,15 @@ impl ComposioTool {
     }
 
     fn build_execute_action_v3_request(
-        tool_slug: &str,
+        action_slug: &str,
         params: serde_json::Value,
         entity_id: Option<&str>,
         connected_account_ref: Option<&str>,
     ) -> (String, serde_json::Value) {
-        let url = format!("{COMPOSIO_API_BASE_V3}/tools/{tool_slug}/execute");
+        // POST /api/v3/tools/execute/{ACTION_SLUG} — the action slug stays
+        // UPPERCASE_SNAKE (see `execute_action`). Path is `/tools/execute/{slug}`,
+        // NOT `/tools/{slug}/execute` (issue #3219).
+        let url = format!("{COMPOSIO_API_BASE_V3}/tools/execute/{action_slug}");
         let account_ref = connected_account_ref.and_then(|candidate| {
             let trimmed_candidate = candidate.trim();
             (!trimmed_candidate.is_empty()).then_some(trimmed_candidate)
@@ -406,18 +421,18 @@ impl ComposioTool {
 
     async fn execute_action_v3(
         &self,
-        tool_slug: &str,
+        action_slug: &str,
         params: serde_json::Value,
         entity_id: Option<&str>,
         connected_account_ref: Option<&str>,
     ) -> anyhow::Result<serde_json::Value> {
         let (_default_url, body) = Self::build_execute_action_v3_request(
-            tool_slug,
+            action_slug,
             params,
             entity_id,
             connected_account_ref,
         );
-        let url = format!("{}/tools/{tool_slug}/execute", self.base_v3);
+        let url = format!("{}/tools/execute/{action_slug}", self.base_v3);
 
         self.ensure_request_url(&url)?;
 
@@ -883,10 +898,6 @@ fn normalize_entity_id(entity_id: &str) -> String {
     } else {
         trimmed.to_string()
     }
-}
-
-fn normalize_tool_slug(action_name: &str) -> String {
-    action_name.trim().replace('_', "-").to_ascii_lowercase()
 }
 
 fn map_v3_tools_to_actions(items: Vec<ComposioV3Tool>) -> Vec<ComposioAction> {

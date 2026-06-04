@@ -14,11 +14,11 @@
 //!
 //! ## Source-id scope
 //!
-//! Source id is `notion:{connection_id}:{page_id}` — one source per
-//! Notion page per connection. Page is the natural Notion grouping
-//! ("one page = one document") so per-page ingest keeps the canonical
-//! `SourceKind::Document` semantics and matches how the Gmail per-message
-//! / Slack per-channel paths scope their sources.
+//! Source id is `notion:{connection_id}:{page_id}` — one document identity
+//! per Notion page per connection. The source tree / raw archive scope is
+//! `notion:{connection_id}`, so all pages selected by one Notion connection
+//! accumulate under one source folder and one source tree instead of creating
+//! one graph source per page.
 //!
 //! ## Re-ingest of edited pages
 //!
@@ -39,7 +39,7 @@
 //! duplicate chunks across syncs.
 
 use anyhow::Result;
-use chrono::{DateTime, TimeZone, Utc};
+use chrono::{DateTime, Utc};
 use serde_json::Value;
 
 use crate::openhuman::config::Config;
@@ -64,6 +64,14 @@ pub const DEFAULT_TAGS: &[&str] = &["notion", "ingested"];
 /// path can map back to the prior chunks for cleanup before re-ingest.
 pub(crate) fn notion_source_id(connection_id: &str, page_id: &str) -> String {
     format!("notion:{connection_id}:{page_id}")
+}
+
+/// Build the source tree / raw archive scope for one Notion connection.
+///
+/// Keep this deliberately item-free. Page ids belong in [`notion_source_id`]
+/// for document dedupe, not in the user-visible source graph.
+pub(crate) fn notion_source_scope(connection_id: &str) -> String {
+    format!("notion:{connection_id}")
 }
 
 /// Pretty-printed JSON body for one Notion page. We persist the *full*
@@ -159,9 +167,14 @@ pub async fn ingest_page_into_memory_tree(
         source_ref,
     };
     let tags: Vec<String> = DEFAULT_TAGS.iter().map(|s| s.to_string()).collect();
-    let owner = format!("notion:{connection_id}");
+    let owner = notion_source_scope(connection_id);
+    let path_scope = Some(owner.clone());
 
-    match ingest_pipeline::ingest_document(config, &source_id, &owner, tags, doc).await {
+    match ingest_pipeline::ingest_document_with_scope(
+        config, &source_id, &owner, tags, doc, path_scope,
+    )
+    .await
+    {
         Ok(IngestResult {
             chunks_written,
             already_ingested,
@@ -245,6 +258,17 @@ mod tests {
         );
     }
 
+    #[test]
+    fn notion_source_scope_is_connection_level() {
+        assert_eq!(notion_source_scope("conn-1"), "notion:conn-1");
+        assert_eq!(notion_source_scope("conn-2"), "notion:conn-2");
+        assert_eq!(
+            notion_source_scope("conn-1"),
+            notion_source_scope("conn-1"),
+            "scope must stay stable across pages in one connection"
+        );
+    }
+
     /// `parse_edited_time` accepts valid ISO 8601 / RFC 3339 and falls
     /// back to `Utc::now()` on bad input rather than failing the ingest.
     /// We don't assert the now-fallback timestamp value (it's
@@ -291,11 +315,15 @@ mod tests {
     /// `sync_writes_to_memory_tree` regression in `vault::sync` (#2720).
     #[tokio::test]
     async fn ingest_page_writes_to_memory_tree() {
-        use crate::openhuman::memory_store::chunks::store::{count_chunks, is_source_ingested};
+        use crate::openhuman::memory_store::chunks::store::{
+            count_chunks, get_chunk_content_path, is_source_ingested, list_chunks, ListChunksQuery,
+        };
 
         let (_tmp, cfg) = test_config();
         let connection_id = "conn-test";
         let page_id = "page-phoenix";
+        let expected = notion_source_id(connection_id, page_id);
+        let expected_scope = notion_source_scope(connection_id);
         let page = sample_page(page_id, "2026-05-28T10:00:00.000Z");
 
         let chunks_before = count_chunks(&cfg).expect("count_chunks before");
@@ -323,11 +351,43 @@ mod tests {
             "ingest must populate mem_tree_chunks (#2885): {chunks_before} → {chunks_after}"
         );
 
+        let rows = list_chunks(
+            &cfg,
+            &ListChunksQuery {
+                source_kind: Some(SourceKind::Document),
+                source_id: Some(expected.clone()),
+                limit: Some(1),
+                ..Default::default()
+            },
+        )
+        .expect("list chunks for notion page");
+        let chunk = rows.first().expect("notion chunk should be listed");
+        assert_eq!(chunk.metadata.source_id, expected.as_str());
+        assert_eq!(
+            chunk.metadata.path_scope.as_deref(),
+            Some(expected_scope.as_str())
+        );
+        let content_path = get_chunk_content_path(&cfg, &chunk.id)
+            .expect("get chunk content path")
+            .expect("document chunk should have content path");
+        assert!(
+            content_path.starts_with("document/notion-conn-test/"),
+            "content path should use connection-level scope, got {content_path}"
+        );
+        let body = std::fs::read_to_string(cfg.memory_tree_content_root().join(&content_path))
+            .expect("read chunk file");
+        assert!(body.contains("source/notion-conn-test"), "{body}");
+        assert!(
+            !body.contains("source/notion-conn-test-page-phoenix"),
+            "source tag must not include page id: {body}"
+        );
+
         // Source registration.
         let cfg_for_blocking = cfg.clone();
-        let expected = notion_source_id(connection_id, page_id);
+        let expected_for_task = expected.clone();
         let registered = tokio::task::spawn_blocking(move || {
-            is_source_ingested(&cfg_for_blocking, SourceKind::Document, &expected).unwrap_or(false)
+            is_source_ingested(&cfg_for_blocking, SourceKind::Document, &expected_for_task)
+                .unwrap_or(false)
         })
         .await
         .expect("source-check task join");

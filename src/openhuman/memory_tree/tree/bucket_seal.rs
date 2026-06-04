@@ -46,7 +46,7 @@ use crate::openhuman::memory_store::content::{atomic::stage_summary, SummaryComp
 use crate::openhuman::memory_store::trees::types::{
     Buffer, SummaryNode, Tree, TreeKind, INPUT_TOKEN_BUDGET, OUTPUT_TOKEN_BUDGET, SUMMARY_FANOUT,
 };
-use crate::openhuman::memory_tree::score::embed::build_embedder_from_config;
+use crate::openhuman::memory_tree::score::embed::build_write_embedder;
 use crate::openhuman::memory_tree::score::extract::EntityExtractor;
 use crate::openhuman::memory_tree::score::resolver::canonicalise;
 use crate::openhuman::memory_tree::summarise::{
@@ -446,39 +446,66 @@ pub(crate) async fn seal_one_level(
         },
     );
 
-    let embedding: Option<Vec<f32>> = match build_embedder_from_config(config) {
-        Ok(embedder) => {
-            let embed_input = truncate_for_embed(&output.content, 1_000);
-            log::info!(
-                "[tree::bucket_seal] embed input: original_chars={} truncated_chars={}",
-                output.content.len(),
-                embed_input.len()
-            );
-            match embedder.embed(&embed_input).await {
-                Ok(vector) => {
-                    log::debug!(
-                        "[tree::bucket_seal] embedded summary tree_id={} level={}→{} provider={}",
-                        tree.id,
-                        level,
-                        target_level,
-                        embedder.name()
-                    );
-                    Some(vector)
-                }
-                Err(e) => {
-                    log::warn!(
-                        "[tree::bucket_seal] embed failed during seal tree_id={} level={}: {e:#} — sealing without embedding",
-                        tree.id, level
-                    );
-                    None
-                }
-            }
-        }
-        Err(e) => {
+    // Conservative cap. Slack-style chat content (URLs, mentions,
+    // emoji) tokenizes 2-4× higher than the 4-chars/token heuristic.
+    // 1000 approx-tokens (~4000 chars) is comfortably under 8192
+    // even at 4× tokenizer ratio.
+    let embed_input = truncate_for_embed(&output.content, 1_000);
+    log::info!(
+        "[tree::bucket_seal] embed input: original_chars={} truncated_chars={}",
+        output.content.len(),
+        embed_input.len()
+    );
+    // #002 (FR-002): skip embedding when no usable provider is configured
+    // (build_write_embedder returns None) rather than writing a fake all-zero
+    // vector. The summary is sealed embedding-less (re-embeddable later) and
+    // the semantic-recall degraded flag is already set with a typed cause.
+    let embedding: Option<Vec<f32>> = match build_write_embedder(config)
+        .context("build embedder during seal")?
+    {
+        None => {
             log::warn!(
-                "[tree::bucket_seal] build embedder failed during seal: {e:#} — sealing without embedding"
+                "[tree::bucket_seal] embeddings unavailable for tree_id={} level={}→{} \
+                     — sealing summary without embedding (semantic recall degraded)",
+                tree.id,
+                level,
+                target_level
             );
             None
+        }
+        Some(embedder) => {
+            let v = match embedder.embed(&embed_input).await {
+                Ok(v) => v,
+                Err(e) => {
+                    // #002: classify so the seal job fails fast on
+                    // unrecoverable embed causes (budget/auth/dim) with a
+                    // typed reason instead of retrying; original chain
+                    // preserved as context.
+                    let failure = crate::openhuman::memory_tree::health::classify_embed_error(&e);
+                    return Err(anyhow::Error::new(failure).context(format!(
+                        "embed summary during seal tree_id={} level={}: {e:#}",
+                        tree.id, level
+                    )));
+                }
+            };
+            // Dimension guard: reject wrong-dimensionality vectors before
+            // they reach the store — same contract as handle_extract's
+            // pack_checked. Without this a provider returning the wrong
+            // shape slips into the summary sidecar silently.
+            crate::openhuman::memory_tree::score::embed::pack_checked(&v).context(format!(
+                "seal embed dim check tree_id={} level={}",
+                tree.id, level
+            ))?;
+            log::debug!(
+                "[tree::bucket_seal] embedded summary tree_id={} level={}→{} bytes={} provider={}",
+                tree.id,
+                level,
+                target_level,
+                output.content.len(),
+                embedder.name()
+            );
+            crate::openhuman::memory_tree::health::clear_semantic_recall_degraded();
+            Some(v)
         }
     };
 

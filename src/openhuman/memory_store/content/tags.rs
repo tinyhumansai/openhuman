@@ -270,7 +270,7 @@ fn capitalise(s: &str) -> String {
     }
 }
 
-/// Read `source_id:` out of a chunk file's existing frontmatter and
+/// Read `path_scope:` / `source_id:` out of a chunk file's existing frontmatter and
 /// return `[source/<slug>, ...tags]` (deduped). Falls back to `tags`
 /// unchanged if the frontmatter can't be parsed — better to keep the
 /// caller's tags than to error out a best-effort rewrite path.
@@ -281,10 +281,12 @@ fn augment_with_source_tag_for_chunk(file_bytes: &[u8], tags: &[String]) -> Vec<
     let Some((fm, _body)) = split_front_matter(text) else {
         return tags.to_vec();
     };
-    let Some(source_id) = scan_fm_field(fm, "source_id") else {
+    let Some(source_scope) =
+        scan_fm_field(fm, "path_scope").or_else(|| scan_fm_field(fm, "source_id"))
+    else {
         return tags.to_vec();
     };
-    let st = source_tag(&source_id);
+    let st = source_tag(&source_scope);
     let mut out = Vec::with_capacity(tags.len() + 1);
     out.push(st.clone());
     for t in tags {
@@ -384,6 +386,25 @@ mod tests {
         assert!(updated.contains("  - source/slack-eng"));
         // Body unchanged.
         assert!(updated.ends_with("hello from tags test"));
+    }
+
+    #[test]
+    fn update_chunk_tags_prefers_path_scope_for_source_tag() {
+        let dir = TempDir::new().unwrap();
+        let mut chunk = sample_chunk();
+        chunk.metadata.source_id = "notion:conn-1:page-123".into();
+        chunk.metadata.path_scope = Some("notion:conn-1".into());
+        let (full, _) = compose_chunk_file(&chunk);
+        let path = dir.path().join("0.md");
+        write_if_new(&path, &full).unwrap();
+
+        update_chunk_tags(&path, &["project/Phoenix".into()]).unwrap();
+
+        let updated = std::fs::read_to_string(&path).unwrap();
+        assert!(updated.contains("path_scope: \"notion:conn-1\""));
+        assert!(updated.contains("  - source/notion-conn-1"));
+        assert!(!updated.contains("  - source/notion-conn-1-page-123"));
+        assert!(updated.contains("  - project/Phoenix"));
     }
 
     #[test]

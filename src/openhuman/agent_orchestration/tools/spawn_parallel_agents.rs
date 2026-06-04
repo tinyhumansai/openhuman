@@ -5,6 +5,7 @@ use crate::openhuman::agent::harness::definition::{AgentDefinition, AgentDefinit
 use crate::openhuman::agent::harness::fork_context::current_parent;
 use crate::openhuman::agent::harness::subagent_runner::{run_subagent, SubagentRunOptions};
 use crate::openhuman::agent::progress::AgentProgress;
+use crate::openhuman::file_state;
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
 use async_trait::async_trait;
 use futures::future::join_all;
@@ -51,6 +52,8 @@ struct ParallelAgentResult {
     ownership: Option<String>,
     elapsed_ms: u64,
     iterations: u32,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    stale_parent_reads: Vec<String>,
 }
 
 #[async_trait]
@@ -191,6 +194,7 @@ impl Tool for SpawnParallelAgentsTool {
                     ownership: task.ownership,
                     elapsed_ms: 0,
                     iterations: 0,
+                    stale_parent_reads: Vec::new(),
                 });
                 continue;
             }
@@ -211,6 +215,7 @@ impl Tool for SpawnParallelAgentsTool {
                     ownership: task.ownership,
                     elapsed_ms: 0,
                     iterations: 0,
+                    stale_parent_reads: Vec::new(),
                 });
                 continue;
             };
@@ -237,6 +242,7 @@ impl Tool for SpawnParallelAgentsTool {
                     ownership: task.ownership,
                     elapsed_ms: 0,
                     iterations: 0,
+                    stale_parent_reads: Vec::new(),
                 });
                 continue;
             }
@@ -391,6 +397,25 @@ impl Tool for SpawnParallelAgentsTool {
             results.push(result);
         }
 
+        // Parent reminder: check if any child wrote to files the parent
+        // had previously read, and annotate the result.
+        if let Some(parent_agent_id) = file_state::current_file_state_agent_id() {
+            let child_ids: Vec<String> = results.iter().map(|r| r.task_id.clone()).collect();
+            let stale = file_state::parent_stale_files(&parent_agent_id, &child_ids);
+            if !stale.is_empty() {
+                let stale_strings: Vec<String> =
+                    stale.iter().map(|p| p.display().to_string()).collect();
+                tracing::debug!(
+                    parent = %parent_agent_id,
+                    stale_count = stale.len(),
+                    "[file_state] parent reads stale after child writes"
+                );
+                for result in &mut results {
+                    result.stale_parent_reads = stale_strings.clone();
+                }
+            }
+        }
+
         let failures = results.iter().filter(|r| !r.success).count();
         tracing::debug!(
             parent_session = %parent_session,
@@ -457,6 +482,7 @@ async fn run_one_parallel_task(
                 ownership: task.ownership,
                 elapsed_ms: outcome.elapsed.as_millis() as u64,
                 iterations: outcome.iterations as u32,
+                stale_parent_reads: Vec::new(),
             }
         }
         Err(err) => {
@@ -476,6 +502,7 @@ async fn run_one_parallel_task(
                 ownership: task.ownership,
                 elapsed_ms: started.elapsed().as_millis() as u64,
                 iterations: 0,
+                stale_parent_reads: Vec::new(),
             }
         }
     }

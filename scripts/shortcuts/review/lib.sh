@@ -42,23 +42,24 @@ agent_exec() {
   local prompt="$2"
   if [ "${REVIEW_AGENT_SAFE:-0}" = "1" ]; then
     case "$agent" in
-      codex) codex exec "$prompt" ;;
-      *) "$agent" "$prompt" ;;
+      codex) exec codex "$prompt" ;;
+      claude) exec claude "$prompt" ;;
+      *) exec "$agent" "$prompt" ;;
     esac
     return
   fi
   case "$agent" in
     claude)
-      claude --dangerously-skip-permissions "$prompt"
+      exec claude --dangerously-skip-permissions "$prompt"
       ;;
     codex)
-      codex exec --dangerously-bypass-approvals-and-sandbox "$prompt"
+      exec codex --dangerously-bypass-approvals-and-sandbox "$prompt"
       ;;
     cursor|cursor-agent)
-      cursor-agent --yolo "$prompt"
+      exec cursor-agent --yolo "$prompt"
       ;;
     *)
-      "$agent" "$prompt"
+      exec "$agent" "$prompt"
       ;;
   esac
 }

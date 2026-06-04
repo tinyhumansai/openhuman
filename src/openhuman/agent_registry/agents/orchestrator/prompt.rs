@@ -237,6 +237,19 @@ mod tests {
         );
     }
 
+    // Regression for issue #3102: orchestrator reads files via a worker
+    // (or directly) and then sits idle instead of delegating to the
+    // code executor. The fix is the same shape as the live-facts fix —
+    // a positive "do not stall after reading" sentence in the prompt.
+    #[test]
+    fn build_routes_code_repo_work_to_run_code_tool() {
+        let body = build(&ctx_with(&[])).unwrap();
+        assert!(body.contains("Do not stall after reading code-repo files"));
+        assert!(body.contains("Re-issue the entire task as one `delegate_run_code` call"));
+        assert!(body.contains("reading is step zero of execution"));
+        assert!(body.contains("The user does not need to write \"use the code executor\""));
+    }
+
     #[test]
     fn build_emits_delegation_guide_with_collapsed_tool() {
         let integrations = vec![ConnectedIntegration {
@@ -323,6 +336,37 @@ mod tests {
         let body = build(&ctx_with(&integrations)).unwrap();
         assert!(body.contains("- **gmail**"));
         assert!(!body.contains("- **linear**"));
+    }
+
+    #[test]
+    fn build_routes_prompt_heavy_domains_to_specialists() {
+        let body = build(&ctx_with(&[])).unwrap();
+        assert!(body.contains("use `ask_docs`"));
+        assert!(body.contains("use `schedule_task`"));
+        assert!(body.contains("use `make_presentation`"));
+        assert!(body.contains("use `delegate_desktop_control`"));
+        assert!(
+            !body.contains("## Presentation generation"),
+            "presentation-specific grounding policy belongs in presentation_agent"
+        );
+        assert!(
+            !body.contains("Before calling `generate_presentation`"),
+            "orchestrator prompt should not carry generate_presentation tool policy"
+        );
+        assert!(
+            !body.contains("## Presentations with images"),
+            "image policy belongs in presentation_agent"
+        );
+    }
+
+    #[test]
+    fn build_includes_evidence_aware_synthesis_contract() {
+        let body = build(&ctx_with(&[])).unwrap();
+        assert!(body.contains("## Evidence-aware synthesis"));
+        assert!(body.contains("Evidence used"));
+        assert!(body.contains("Failed tool calls"));
+        assert!(body.contains("Do not introduce facts"));
+        assert!(body.contains("truncated, oversized, partial, or unavailable"));
     }
 
     #[test]

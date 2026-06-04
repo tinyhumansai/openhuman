@@ -52,6 +52,19 @@ subagents = [
     "skill_creator",
     "critic",
     "archivist",
+    # Product docs/help specialist. Route OpenHuman docs, settings,
+    # setup, and feature questions here before guessing from priors.
+    "help",
+    # Scheduling/reminder specialist. Owns current_time + cron tools and
+    # confirmation-before-create policy so the chat prompt does not carry
+    # cron-specific instructions on every turn.
+    "scheduler_agent",
+    # Deck specialist. Owns presentation grounding, citations, image
+    # verification, and generate_presentation warning handling.
+    "presentation_agent",
+    # Desktop-control specialist. Owns launch_app and accessibility
+    # interaction policy, including list-before-press behavior.
+    "desktop_control_agent",
     # Crypto wallet & market specialist (#1397). Synthesised into a
     # `delegate_do_crypto` tool at agent-build time. Route any wallet,
     # transfer, swap, contract-call, or exchange trading request here —
@@ -108,24 +121,12 @@ hint = "chat"
 # / composio_execute directly.
 named = [
     "query_memory",
-    "memory_store",
-    "save_preference",
-    "memory_forget",
     "memory_tree",
     "read_workspace_state",
     "ask_user_clarification",
     "spawn_worker_thread",
     "spawn_parallel_agents",
     "composio_list_connections",
-    # Time + scheduling — lets the orchestrator answer "what time is it",
-    # "remind me in 10 minutes", "every morning at 8" directly rather than
-    # delegating or telling the user it can't. `current_time` grounds
-    # relative-time parsing; `cron_add` / `cron_list` / `cron_remove`
-    # manage recurring + one-shot agent/shell jobs.
-    "current_time",
-    "cron_add",
-    "cron_list",
-    "cron_remove",
     # Coding-harness coordination primitives from #1208. `todowrite`
     # gives the orchestrator a shared todo store to track multi-step
     # work across delegations; `plan_exit` is the stable marker that
@@ -135,16 +136,13 @@ named = [
     # downstream agents — the orchestrator coordinates, it doesn't
     # touch files itself.
     "todowrite",
+    # `update_task` moves/updates a specific task card by id on a target board
+    # (defaults to the proactive `task-sources` board) — so the orchestrator can
+    # advance the task it's working: → in_progress when it starts, → done with
+    # evidence when finished, or → blocked with a reason when stuck. Complements
+    # `todowrite`, which only touches the current thread's board.
+    "update_task",
     "plan_exit",
-    # Skill chaining: let an in-flight autonomous skill (e.g.
-    # `github-issue-crusher` after the draft PR is open) spawn another
-    # bundled skill_run (e.g. `pr-review-shepherd` against that PR) as a
-    # fresh background job, so each skill stays narrow + composable.
-    # Thin wrapper over `skills::schemas::spawn_skill_run_background` — the
-    # same helper the `openhuman.skills_run` JSON-RPC controller uses, so
-    # RPC callers and tool callers share one spawn path (iter cap,
-    # transcript isolation, degenerate-response detector all apply).
-    "run_skill",
     # Self-update — lets the orchestrator answer "am I up to date" /
     # "update OpenHuman" without sending the user to Settings →
     # Developer Options. `update_check` is read-only; `update_apply`

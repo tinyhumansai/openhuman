@@ -28,6 +28,36 @@ const TOOL_FAMILIES: &[ToolFamily] = &[
         rust_names: &["shell"],
         default_enabled: true,
     },
+    // Dedicated app-launcher: always-allow, no shell exposure, no workspace_only concern.
+    ToolFamily {
+        id: "launch_app",
+        rust_names: &["launch_app"],
+        default_enabled: true,
+    },
+    // AXUIElement interaction: semantic UI control via macOS Accessibility API.
+    // No CGEventPost, no coordinate dependency, no CEF crash risk.
+    ToolFamily {
+        id: "ax_interact",
+        rust_names: &["ax_interact"],
+        default_enabled: true,
+    },
+    // Multi-step UI automation (one call → whole flow). Same opt-in as
+    // ax_interact; surfaced as its own catalog toggle.
+    ToolFamily {
+        id: "automate",
+        rust_names: &["automate"],
+        default_enabled: true,
+    },
+    // Computer control — mouse and keyboard. Gated by computer_control.enabled
+    // in config (tools only register when that flag is true). Each tool also
+    // overrides `external_effect` → true so the ApprovalGate fires per-action —
+    // `PermissionLevel::Dangerous` alone does NOT trigger the gate (it's only a
+    // static channel-capability filter); the gate keys off `external_effect_with_args`.
+    ToolFamily {
+        id: "computer_control",
+        rust_names: &["mouse", "keyboard"],
+        default_enabled: true,
+    },
     // detect_tools / install_tool are filterable but not surfaced in the
     // default-ON catalog, so they stay opt-in (default-OFF).
     ToolFamily {

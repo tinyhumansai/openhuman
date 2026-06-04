@@ -41,6 +41,10 @@ pub async fn start_login_gated_services(config: &Config) {
         crate::openhuman::voice::dictation_listener::start_if_enabled(config).await;
     }
 
+    // 3b. Always-on listening (Phase 2): continuous mic + VAD → STT → agent,
+    //     no hotkey. Opt-in via config.voice_server.always_on_enabled.
+    crate::openhuman::voice::always_on::start_if_enabled(config).await;
+
     // 4. Screen intelligence (capture + vision analysis)
     crate::openhuman::screen_intelligence::server::start_if_enabled(config).await;
 
@@ -87,6 +91,11 @@ pub async fn stop_login_gated_services(config: &Config) {
     // 5. Dictation listener — abort the hotkey forwarder task so it doesn't
     //    accumulate duplicate rdev listeners across logout → login cycles.
     crate::openhuman::voice::dictation_listener::stop();
+
+    // 6. Always-on listening — disable the runtime gate so the mic capture loop
+    //    stops transcribing/delivering after logout (no audio processed while
+    //    logged out). Symmetric with start_login_gated_services step 3b.
+    crate::openhuman::voice::always_on::stop();
 
     log::info!("[services] all login-gated services stopped");
 }

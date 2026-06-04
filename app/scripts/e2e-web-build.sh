@@ -14,6 +14,7 @@ export VITE_OPENHUMAN_TARGET="web"
 export VITE_OPENHUMAN_E2E_DEFAULT_CORE_MODE="cloud"
 export VITE_OPENHUMAN_E2E_RESTART_APP_AS_RELOAD="true"
 export VITE_OPENHUMAN_CORE_RPC_URL="http://127.0.0.1:${OPENHUMAN_CORE_PORT:-17788}/rpc"
+export VITE_CHAT_ATTACHMENTS="true"
 
 if [ -f "$REPO_ROOT/.env" ]; then
   # shellcheck source=/dev/null

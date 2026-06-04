@@ -61,6 +61,10 @@ pub enum FilterSpec {
         assignee_is_me: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         state: Option<String>,
+        /// How to fetch: Composio connection, local `gh`/REST, or `auto`
+        /// (Composio-first with local fallback). Defaults to `auto`.
+        #[serde(default)]
+        fetch_mode: crate::openhuman::memory_sync::composio::providers::GithubFetchMode,
         #[serde(default)]
         extra: Value,
     },
@@ -216,6 +220,10 @@ pub struct EnrichedTask {
     pub linked_memory_ids: Vec<String>,
     /// Actionable prompt handed to the agent turn.
     pub agent_prompt: String,
+    /// Intent-framed goal for the card (`"Review pull request: …"` /
+    /// `"Resolve issue: …"`), or the bare title for undifferentiated tasks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub objective: Option<String>,
     pub enriched_at: DateTime<Utc>,
 }
 
@@ -270,6 +278,7 @@ mod tests {
             labels: vec!["bug".into()],
             assignee_is_me: true,
             state: Some("open".into()),
+            fetch_mode: Default::default(),
             extra: json!({}),
         };
         let s = serde_json::to_value(&f).unwrap();

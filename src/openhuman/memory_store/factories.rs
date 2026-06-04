@@ -298,7 +298,10 @@ pub fn create_memory(
     config: &MemoryConfig,
     workspace_dir: &Path,
 ) -> anyhow::Result<Box<dyn Memory>> {
-    create_memory_full(config, &[], None, None, workspace_dir)
+    // No `Config` in scope here (tests + migration), so no credential store to
+    // read — pass an empty key. Callers that select a keyed BYO provider must
+    // use `create_memory_with_local_ai`, which resolves the stored credential.
+    create_memory_full(config, &[], None, None, "", workspace_dir)
 }
 
 /// Create a memory instance honouring the unified per-workload embedding
@@ -309,9 +312,17 @@ pub fn create_memory(
 /// `None`. Used by top-level entry points (agent harness, channels runtime)
 /// that have the full `Config` in scope. The local-AI opt-in flips the
 /// embedder to Ollama when `Some`.
+///
+/// `embedding_api_key` is the user's stored credential for the selected BYO
+/// embedding provider, resolved by the caller via
+/// [`crate::openhuman::embeddings::resolve_api_key`] (empty string when none is
+/// configured). It is threaded into the keyed providers (cohere/openai/voyage/
+/// custom) so they authenticate instead of sending an empty bearer; cloud /
+/// managed / ollama / none ignore it.
 pub fn create_memory_with_local_ai(
     memory: &MemoryConfig,
     local_embedding_model: Option<&str>,
+    embedding_api_key: &str,
     embedding_routes: &[EmbeddingRouteConfig],
     storage_provider: Option<&StorageProviderConfig>,
     workspace_dir: &Path,
@@ -321,6 +332,7 @@ pub fn create_memory_with_local_ai(
         embedding_routes,
         storage_provider,
         local_embedding_model,
+        embedding_api_key,
         workspace_dir,
     )
 }
@@ -370,6 +382,7 @@ fn create_memory_full(
     _embedding_routes: &[EmbeddingRouteConfig],
     _storage_provider: Option<&StorageProviderConfig>,
     local_embedding_model: Option<&str>,
+    embedding_api_key: &str,
     workspace_dir: &Path,
 ) -> anyhow::Result<Box<dyn Memory>> {
     // 1. Resolve the intended provider from config.
@@ -413,11 +426,29 @@ fn create_memory_full(
          (local_ai_opt_in={local_ai_opt_in} gate_triggered={gate_triggered})",
     );
 
-    // 3. Create the embedding provider.
+    // 3. Create the embedding provider, threading the user's stored BYO
+    //    credential. The keyless `create_embedding_provider` left the API key
+    //    empty for *every* provider, so a user who selected Cohere — even with
+    //    a valid key configured — sent an empty `Bearer ` and got a guaranteed
+    //    401 "no api key supplied" on every embed (TAURI-RUST-52S), and the
+    //    same gap silently broke BYO OpenAI / Voyage memory embeddings.
+    //    cloud/managed/ollama/none ignore the key; the keyed providers now
+    //    actually receive it. `embedding_api_key` is "" when no credential is
+    //    stored, which the per-provider guards reject fast. A `custom:<url>`
+    //    provider keeps its inline endpoint (the factory's `custom:` arm strips
+    //    the prefix), so `custom_endpoint` stays `None` here. The key is never
+    //    logged — the warning carries only provider/model/dims.
     let embedder: Arc<dyn EmbeddingProvider> = Arc::from(
-        embeddings::create_embedding_provider(&provider, &model, dims).inspect_err(|err| {
+        embeddings::create_embedding_provider_with_credentials(
+            &provider,
+            &model,
+            dims,
+            embedding_api_key,
+            None,
+        )
+        .inspect_err(|err| {
             log::warn!(
-                "[memory::factory] create_embedding_provider failed provider={provider} model={model} dims={dims}: {err}",
+                "[memory::factory] create_embedding_provider_with_credentials failed provider={provider} model={model} dims={dims}: {err}",
             );
         })?,
     );

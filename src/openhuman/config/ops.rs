@@ -913,6 +913,174 @@ pub async fn load_and_apply_autonomy_settings(
     apply_autonomy_settings(&mut config, update).await
 }
 
+// ── Agent filesystem paths (editable action_dir) ──────────────────────────────
+
+/// Partial update for the agent's editable filesystem roots.
+///
+/// Only `action_dir` is editable today (issue #3240). `workspace_dir` and
+/// `projects_dir` are intentionally read-only and not part of this patch.
+#[derive(Debug, Clone, Default)]
+pub struct AgentPathsPatch {
+    /// New action sandbox root. `Some("")`/whitespace clears the override and
+    /// reverts to the default; `Some(path)` sets it; `None` leaves it unchanged.
+    pub action_dir: Option<String>,
+}
+
+/// Expand a leading `~/` to the user's home directory. Mirrors
+/// `SecurityPolicy::expand_tilde` so UI-entered paths behave consistently.
+fn expand_tilde_path(path: &str) -> String {
+    if let Some(rest) = path.strip_prefix("~/") {
+        if let Some(home) = dirs::home_dir() {
+            return format!("{}/{rest}", home.display());
+        }
+    }
+    path.to_string()
+}
+
+/// Source of the currently-effective `action_dir`, so the UI can gate
+/// editability honestly:
+///
+/// * `"env"` — pinned by `OPENHUMAN_ACTION_DIR`; the override is ignored and the
+///   input must be disabled.
+/// * `"override"` — a persisted user choice (`action_dir_override`) is in effect.
+/// * `"default"` — falling back to the default projects dir.
+fn action_dir_source(config: &Config) -> &'static str {
+    if crate::openhuman::config::action_dir_env_override().is_some() {
+        "env"
+    } else if config.action_dir_override.is_some() {
+        "override"
+    } else {
+        "default"
+    }
+}
+
+/// Build the agent-paths JSON payload (shared by `get_agent_paths` and
+/// `apply_agent_paths_settings` so both return an identical shape).
+fn agent_paths_payload(config: &Config) -> serde_json::Value {
+    let projects_dir = crate::openhuman::config::default_projects_dir();
+    json!({
+        "action_dir": config.action_dir.display().to_string(),
+        "workspace_dir": config.workspace_dir.display().to_string(),
+        "projects_dir": projects_dir.display().to_string(),
+        "action_dir_source": action_dir_source(config),
+    })
+}
+
+/// Applies an edit to the agent's `action_dir` sandbox root.
+///
+/// Validation (fail-closed): the path is trimmed and `~`-expanded; it must be
+/// **absolute**; it must not be an existing *file*; and it must not equal
+/// `workspace_dir` (which holds memory DBs / tokens and must never become the
+/// agent-writable root). A missing directory is auto-created (mirroring the
+/// startup auto-create in `channels/runtime/startup.rs`). An empty input clears
+/// the override and reverts `action_dir` to the default.
+///
+/// On success the override is persisted (`action_dir_override`), `action_dir` is
+/// recomputed from the precedence chain, the live `SecurityPolicy` is hot-swapped
+/// (`live_policy::set_action_dir`), and `DomainEvent::AgentPathsChanged` is
+/// published. Returns the same payload shape as [`get_agent_paths`].
+///
+/// When `OPENHUMAN_ACTION_DIR` is set the env var wins: the override is still
+/// persisted, but the effective `action_dir` (and the returned `action_dir`)
+/// continues to reflect the env value, and `action_dir_source` reports `"env"`.
+pub async fn apply_agent_paths_settings(
+    config: &mut Config,
+    update: AgentPathsPatch,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    let mut notes: Vec<String> = Vec::new();
+
+    if let Some(raw) = update.action_dir {
+        let trimmed = raw.trim();
+        log::debug!(
+            "[config][agent_paths] apply action_dir edit (input_len={})",
+            trimmed.len()
+        );
+
+        if trimmed.is_empty() {
+            // Empty input clears the override → revert to the default.
+            config.action_dir_override = None;
+            notes.push("action_dir override cleared (reverted to default)".to_string());
+        } else {
+            let expanded = expand_tilde_path(trimmed);
+            let candidate = PathBuf::from(&expanded);
+
+            if !candidate.is_absolute() {
+                return Err(format!(
+                    "action_dir must be an absolute path (got '{expanded}')"
+                ));
+            }
+
+            // Reject if the target is an existing *file* (a directory or a
+            // not-yet-existing path are both fine — the latter is auto-created).
+            if candidate.is_file() {
+                return Err(format!(
+                    "action_dir must be a directory, not a file: {expanded}"
+                ));
+            }
+
+            // The internal workspace holds memory DBs, sessions, tokens — it must
+            // never become the agent-writable sandbox root. Compare canonicalised
+            // forms when both resolve so symlinks can't sneak past the check.
+            if paths_equal(&candidate, &config.workspace_dir) {
+                return Err(
+                    "action_dir must not equal the internal workspace directory".to_string()
+                );
+            }
+
+            // Auto-create the directory if it doesn't exist (mirrors startup).
+            if !candidate.exists() {
+                tokio::fs::create_dir_all(&candidate)
+                    .await
+                    .map_err(|e| format!("failed to create action_dir {expanded}: {e}"))?;
+                notes.push(format!("created action_dir {expanded}"));
+            }
+
+            config.action_dir_override = Some(candidate);
+            notes.push(format!("action_dir override set to {expanded}"));
+        }
+
+        // Recompute the effective action_dir from the precedence chain
+        // (env > override > default) so the env var still wins at runtime.
+        config.action_dir =
+            crate::openhuman::config::resolve_action_dir(&config.action_dir_override);
+
+        config.save().await.map_err(|e| e.to_string())?;
+
+        // Hot-swap the process-global live policy so new sessions pick up the
+        // new sandbox root without a core restart, then broadcast.
+        crate::openhuman::security::live_policy::set_action_dir(config.action_dir.clone());
+        crate::core::event_bus::publish_global(
+            crate::core::event_bus::DomainEvent::AgentPathsChanged,
+        );
+
+        log::debug!(
+            "[config][agent_paths] action_dir now '{}' (source={})",
+            config.action_dir.display(),
+            action_dir_source(config)
+        );
+    }
+
+    Ok(RpcOutcome::new(agent_paths_payload(config), notes))
+}
+
+/// Loads the configuration, applies agent-paths updates, and saves it.
+pub async fn load_and_apply_agent_paths_settings(
+    update: AgentPathsPatch,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    let mut config = load_config_with_timeout().await?;
+    apply_agent_paths_settings(&mut config, update).await
+}
+
+/// True when two paths refer to the same location. Compares canonicalised forms
+/// when both paths exist (defeats symlink/`.`/`..` evasion); otherwise falls back
+/// to a lexical comparison so a not-yet-created target is still checked.
+fn paths_equal(a: &Path, b: &Path) -> bool {
+    match (a.canonicalize(), b.canonicalize()) {
+        (Ok(ca), Ok(cb)) => ca == cb,
+        _ => a == b,
+    }
+}
+
 // ── Agent Activity Level ───────────────────────────────────────────────
 
 /// Partial update for the agent activity level (0–4).
@@ -1806,6 +1974,8 @@ pub struct VoiceServerSettingsPatch {
     pub min_duration_secs: Option<f32>,
     pub silence_threshold: Option<f32>,
     pub custom_dictionary: Option<Vec<String>>,
+    pub always_on_enabled: Option<bool>,
+    pub wake_word: Option<String>,
 }
 
 /// Returns the current voice server settings as a JSON object.
@@ -1819,6 +1989,8 @@ pub async fn get_voice_server_settings() -> Result<RpcOutcome<serde_json::Value>
         "min_duration_secs": config.voice_server.min_duration_secs,
         "silence_threshold": config.voice_server.silence_threshold,
         "custom_dictionary": config.voice_server.custom_dictionary,
+        "always_on_enabled": config.voice_server.always_on_enabled,
+        "wake_word": config.voice_server.wake_word,
     });
     Ok(RpcOutcome::new(
         result,
@@ -1865,6 +2037,14 @@ pub async fn load_and_apply_voice_server_settings(
     }
     if let Some(custom_dictionary) = update.custom_dictionary {
         config.voice_server.custom_dictionary = custom_dictionary;
+    }
+    if let Some(always_on_enabled) = update.always_on_enabled {
+        config.voice_server.always_on_enabled = always_on_enabled;
+    }
+    if let Some(wake_word) = update.wake_word {
+        // Trim so a whitespace-only value collapses to the documented
+        // "empty = no wake word" case rather than a non-empty no-match token.
+        config.voice_server.wake_word = wake_word.trim().to_string();
     }
     config.save().await.map_err(|e| e.to_string())?;
     let snapshot = snapshot_config_json(&config)?;
@@ -1936,6 +2116,213 @@ pub async fn get_data_paths() -> Result<RpcOutcome<serde_json::Value>, String> {
             default_openhuman_dir.display()
         )],
     ))
+}
+
+/// Reports the agent's filesystem roots so the UI can render them live
+/// instead of hard-coding strings that drift away from `Config`.
+///
+/// Returns three string paths:
+///
+/// * `action_dir` — the agent's read/write root (`Config.action_dir`).
+///   Defaults to `default_action_dir()` (`~/OpenHuman/projects` via
+///   `default_projects_dir()`); overridable via `OPENHUMAN_ACTION_DIR`.
+///   Acting tools (`shell`, `node_exec`, `npm_exec`, `file_write`,
+///   `edit_file`, `apply_patch`, `git_operations`) default their CWD here.
+/// * `workspace_dir` — internal product state (`Config.workspace_dir`,
+///   typically `~/.openhuman/users/<id>/workspace`). Agent-blocked via
+///   [`SecurityPolicy::is_workspace_internal_path`].
+/// * `projects_dir` — the default projects home
+///   (`default_projects_dir()`, `~/OpenHuman/projects`), injected as a
+///   ReadWrite trusted root at startup. Same as `action_dir` when the
+///   user hasn't set `OPENHUMAN_ACTION_DIR`.
+/// * `action_dir_source` — `"env"` / `"override"` / `"default"`, so the UI can
+///   gate editability (env-pinned ⇒ read-only).
+///
+/// Distinct from [`get_data_paths`], which reports the `openhuman_dir`
+/// roots that `reset_local_data` would remove and is consumed only by
+/// the Tauri reset flow.
+pub async fn get_agent_paths() -> Result<RpcOutcome<serde_json::Value>, String> {
+    let config = load_config_with_timeout().await?;
+    Ok(RpcOutcome::new(
+        agent_paths_payload(&config),
+        vec![format!(
+            "agent paths resolved (action={}, workspace={}, source={})",
+            config.action_dir.display(),
+            config.workspace_dir.display(),
+            action_dir_source(&config),
+        )],
+    ))
+}
+
+// ── Sandbox settings ─────────────────────────────────────────────────────────
+
+/// Partial update for the `[security.sandbox]` + `[runtime.docker]` blocks.
+#[derive(Debug, Clone, Default)]
+pub struct SandboxSettingsPatch {
+    pub backend: Option<String>,
+    pub enabled: Option<bool>,
+    pub docker_image: Option<String>,
+    pub docker_memory_limit_mb: Option<u64>,
+    pub docker_cpu_limit: Option<f64>,
+    pub env_passthrough: Option<Vec<String>>,
+}
+
+/// Returns the current sandbox and Docker runtime settings merged into a
+/// single JSON object, plus a live status probe for Docker availability.
+pub async fn get_sandbox_settings() -> Result<RpcOutcome<serde_json::Value>, String> {
+    let config = load_config_with_timeout().await?;
+    let sandbox = &config.sandbox;
+    let docker = &config.runtime.docker;
+
+    let docker_available = is_docker_available().await;
+
+    let backend_str = match sandbox.backend {
+        crate::openhuman::config::SandboxBackend::Auto => "auto",
+        crate::openhuman::config::SandboxBackend::Landlock => "landlock",
+        crate::openhuman::config::SandboxBackend::Firejail => "firejail",
+        crate::openhuman::config::SandboxBackend::Bubblewrap => "bubblewrap",
+        crate::openhuman::config::SandboxBackend::Docker => "docker",
+        crate::openhuman::config::SandboxBackend::None => "none",
+    };
+
+    let detected_backend = detect_os_sandbox_backend();
+
+    let value = json!({
+        "enabled": sandbox.enabled.unwrap_or(true),
+        "backend": backend_str,
+        "docker_image": docker.image,
+        "docker_memory_limit_mb": docker.memory_limit_mb,
+        "docker_cpu_limit": docker.cpu_limit,
+        "docker_available": docker_available,
+        "detected_backend": detected_backend,
+        "env_passthrough": crate::openhuman::sandbox::ops::SANDBOX_ENV_PASSTHROUGH,
+    });
+    log::debug!("[config][sandbox] get_sandbox_settings: backend={backend_str}, docker_available={docker_available}");
+    Ok(RpcOutcome::single_log(value, "sandbox settings read"))
+}
+
+/// Updates sandbox and Docker runtime settings, persists to disk.
+pub async fn apply_sandbox_settings(
+    config: &mut Config,
+    update: SandboxSettingsPatch,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    if let Some(ref backend) = update.backend {
+        config.sandbox.backend = match backend.as_str() {
+            "auto" => crate::openhuman::config::SandboxBackend::Auto,
+            "landlock" => crate::openhuman::config::SandboxBackend::Landlock,
+            "firejail" => crate::openhuman::config::SandboxBackend::Firejail,
+            "bubblewrap" => crate::openhuman::config::SandboxBackend::Bubblewrap,
+            "docker" => crate::openhuman::config::SandboxBackend::Docker,
+            "none" => crate::openhuman::config::SandboxBackend::None,
+            other => {
+                log::warn!("[config][sandbox] rejected unknown backend: {other}");
+                return Err(format!(
+                    "unknown sandbox backend '{other}'; valid: auto, landlock, firejail, bubblewrap, docker, none"
+                ));
+            }
+        };
+    }
+    if let Some(enabled) = update.enabled {
+        config.sandbox.enabled = Some(enabled);
+    }
+    if let Some(ref image) = update.docker_image {
+        let trimmed = image.trim();
+        if trimmed.is_empty() {
+            return Err("docker_image must not be blank".into());
+        }
+        config.runtime.docker.image = trimmed.to_string();
+    }
+    if let Some(memory) = update.docker_memory_limit_mb {
+        config.runtime.docker.memory_limit_mb = Some(memory);
+    }
+    if let Some(cpu) = update.docker_cpu_limit {
+        if cpu <= 0.0 {
+            return Err("docker_cpu_limit must be positive".into());
+        }
+        config.runtime.docker.cpu_limit = Some(cpu);
+    }
+    if let Some(ref passthrough) = update.env_passthrough {
+        log::debug!(
+            "[config][sandbox] env_passthrough update: {} vars",
+            passthrough.len()
+        );
+    }
+
+    config.save().await.map_err(|e| e.to_string())?;
+
+    log::debug!(
+        "[config][sandbox] sandbox settings saved to {}",
+        config.config_path.display()
+    );
+    let snapshot = snapshot_config_json(config)?;
+    Ok(RpcOutcome::new(
+        snapshot,
+        vec![format!(
+            "sandbox settings saved to {}",
+            config.config_path.display()
+        )],
+    ))
+}
+
+pub async fn load_and_apply_sandbox_settings(
+    update: SandboxSettingsPatch,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    let mut config = load_config_with_timeout().await?;
+    apply_sandbox_settings(&mut config, update).await
+}
+
+/// Probe Docker daemon availability via `docker info` with a 5s timeout.
+async fn is_docker_available() -> bool {
+    let fut = tokio::process::Command::new("docker")
+        .arg("info")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    match tokio::time::timeout(std::time::Duration::from_secs(5), fut).await {
+        Ok(Ok(status)) => status.success(),
+        _ => false,
+    }
+}
+
+/// Detect which OS-native sandbox backend is available.
+fn detect_os_sandbox_backend() -> &'static str {
+    #[cfg(target_os = "linux")]
+    {
+        if std::path::Path::new("/sys/kernel/security/landlock").exists() {
+            return "landlock";
+        }
+        if std::process::Command::new("firejail")
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok()
+        {
+            return "firejail";
+        }
+        if std::process::Command::new("bwrap")
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok()
+        {
+            return "bubblewrap";
+        }
+        "none"
+    }
+    #[cfg(target_os = "macos")]
+    {
+        "seatbelt"
+    }
+    #[cfg(target_os = "windows")]
+    {
+        "appcontainer"
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+        "none"
+    }
 }
 
 #[cfg(test)]

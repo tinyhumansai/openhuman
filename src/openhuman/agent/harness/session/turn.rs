@@ -485,6 +485,12 @@ impl Agent {
                 .as_ref()
                 .map(|c| c.multimodal_files.clone())
                 .unwrap_or_default();
+            let artifact_store = Some(
+                crate::openhuman::agent::harness::tool_result_artifacts::ToolResultArtifactStore::new(
+                    self.action_dir.clone(),
+                    self.session_key.clone(),
+                ),
+            );
             let mut tool_source = AgentToolSource {
                 tools: self.tools.clone(),
                 visible_tool_names: self.visible_tool_names.clone(),
@@ -496,6 +502,7 @@ impl Agent {
                 agent_definition_id: self.agent_definition_id.clone(),
                 prefer_markdown: self.context.prefer_markdown_tool_output(),
                 budget_bytes: self.context.tool_result_budget_bytes(),
+                artifact_store: artifact_store.clone(),
                 should_send_specs: self.tool_dispatcher.should_send_tool_specs(),
                 advertised_specs: self.visible_tool_specs.as_ref().clone(),
                 records: Vec::new(),
@@ -513,9 +520,11 @@ impl Agent {
                 user_message: user_message.to_string(),
                 max_iterations,
             };
+            let turn_run_queue = self.run_queue.clone();
             let cached_prefix = self.cached_transcript_messages.take();
             let mut observer = AgentObserver {
                 agent: self,
+                artifact_store,
                 effective_model: effective_model.clone(),
                 cumulative_input: 0,
                 cumulative_output: 0,
@@ -556,6 +565,7 @@ impl Agent {
                 max_iterations,
                 None, // the web bridge streams via on_progress deltas, not on_delta
                 &[],
+                turn_run_queue,
             ))
             .await?;
 
@@ -748,6 +758,11 @@ impl Agent {
         // `TurnProgress` over this agent's sink. Legacy `run_skill`-wrapped
         // built-in cron tool calls are normalized to direct calls first.
         let progress = super::super::engine::TurnProgress::new(self.on_progress.clone());
+        let artifact_store =
+            crate::openhuman::agent::harness::tool_result_artifacts::ToolResultArtifactStore::new(
+                self.action_dir.clone(),
+                self.session_key.clone(),
+            );
         let ctx = super::agent_tool_exec::AgentToolExecCtx {
             tools: &self.tools,
             visible_tool_names: &self.visible_tool_names,
@@ -759,6 +774,7 @@ impl Agent {
             agent_definition_id: &self.agent_definition_id,
             prefer_markdown: self.context.prefer_markdown_tool_output(),
             budget_bytes: self.context.tool_result_budget_bytes(),
+            artifact_store: Some(&artifact_store),
         };
         super::agent_tool_exec::run_agent_tool_call(&ctx, &progress, call, iteration).await
     }

@@ -15,6 +15,7 @@ fn sample_input() -> NamespaceDocumentInput {
         category: "core".into(),
         session_id: Some("session-1".into()),
         document_id: Some("doc-id-1".into()),
+        taint: crate::openhuman::memory::MemoryTaint::Internal,
     }
 }
 

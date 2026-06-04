@@ -259,6 +259,7 @@ mod tests {
                 document_ids: vec!["doc-1".into()],
                 chunk_ids: vec!["chunk-1".into()],
             }],
+            taint: crate::openhuman::memory::MemoryTaint::Internal,
         }
     }
 

@@ -51,5 +51,15 @@ export RUST_MIN_STACK="${RUST_MIN_STACK:-16777216}"
 
 echo "Running Rust tests with BACKEND_URL=$BACKEND_URL and RUST_MIN_STACK=$RUST_MIN_STACK"
 cd "$REPO_ROOT"
-source "$HOME/.cargo/env" 2>/dev/null || true
+# Only source rustup's env if it actually exists. With `set -e`, sourcing a
+# *missing* file is a fatal error in a non-interactive shell and the trailing
+# `|| true` does NOT catch it — the shell exits before the `||` is evaluated.
+# On machines where Rust came from Homebrew/system packages (no rustup) there is
+# no ~/.cargo/env, so the old unconditional `source` silently aborted the script
+# *before* `cargo test` ever ran — and looked like a green "OK" while no tests
+# actually executed.
+if [ -f "$HOME/.cargo/env" ]; then
+  # shellcheck disable=SC1091
+  source "$HOME/.cargo/env"
+fi
 cargo test --manifest-path Cargo.toml --workspace "$@"

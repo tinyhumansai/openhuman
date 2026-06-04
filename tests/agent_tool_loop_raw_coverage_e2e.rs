@@ -235,6 +235,7 @@ impl Memory for NoopMemory {
             timestamp: "2026-05-29T00:00:00Z".to_string(),
             session_id: session_id.map(str::to_string),
             score: Some(1.0),
+            taint: Default::default(),
         });
         Ok(())
     }
@@ -379,6 +380,7 @@ async fn run_bus_turn(
             visible_tool_names,
             extra_tools: Vec::new(),
             on_progress: None,
+            origin: openhuman_core::openhuman::agent::turn_origin::AgentTurnOrigin::Cli,
         },
     )
     .await

@@ -80,6 +80,81 @@ fn true_gateway_stays_gateway_class() {
     );
 }
 
+// ── HTTP 404/410 action-not-found vs auth (issue #3219) ────────────────
+
+#[test]
+fn classifies_http_404_with_auth_phrase_as_action_not_found_not_platform() {
+    // The exact #3219 shape: a 404 whose body carries the misleading
+    // "connection error, try to authenticate" phrase. Status must win.
+    let msg = "HTTP 404: connection error, try to authenticate";
+    assert_eq!(
+        classify_composio_error("GMAIL_SEND_EMAIL", msg),
+        ComposioErrorClass::ActionNotFound
+    );
+}
+
+#[test]
+fn classifies_http_410_gone_as_action_not_found() {
+    let msg = "HTTP 410: This endpoint is deprecated";
+    assert_eq!(
+        classify_composio_error("GOOGLEDOCS_UPDATE_DOCUMENT", msg),
+        ComposioErrorClass::ActionNotFound
+    );
+}
+
+#[test]
+fn action_not_found_message_does_not_recommend_reauth() {
+    let mapped = format_provider_error(
+        "GMAIL_SEND_EMAIL",
+        "HTTP 404: connection error, try to authenticate",
+    );
+    let lower = mapped.to_lowercase();
+    assert!(mapped.contains("[composio:error:action_not_found]"));
+    assert!(lower.contains("still connected"));
+    // Must NOT echo the misleading provider phrase or nudge re-auth/reconnect.
+    assert!(
+        !lower.contains("authenticate"),
+        "must not surface the re-auth phrase: {mapped}"
+    );
+    assert!(
+        !lower.contains("reconnect"),
+        "must not tell the user to reconnect a healthy connection: {mapped}"
+    );
+    assert!(
+        !mapped.contains("Settings → Connections"),
+        "must not show the re-auth CTA: {mapped}"
+    );
+}
+
+#[test]
+fn genuine_auth_phrase_without_http_status_stays_platform() {
+    // Same phrase, but with NO 4xx status — a real platform/connection issue
+    // must still classify as ComposioPlatform.
+    let msg = "connection error, try to authenticate";
+    assert_eq!(
+        classify_composio_error("GMAIL_SEND_EMAIL", msg),
+        ComposioErrorClass::ComposioPlatform
+    );
+}
+
+#[test]
+fn wrapped_v3_v2_404_fallback_classifies_as_action_not_found() {
+    // The real transport string after both v3 and v2 fail — the wrapped form
+    // produced by `execute_action`, fed through `remap_transport_error`.
+    let raw = "Composio execute failed on v3 (Composio v3 action execution failed: \
+               HTTP 404: connection error, try to authenticate) and v2 fallback \
+               (Composio v2 action execution failed: HTTP 410: Gone)";
+    let mapped = remap_transport_error("GMAIL_SEND_EMAIL", raw);
+    assert!(
+        mapped.contains("[composio:error:action_not_found]"),
+        "wrapped 404/410 must map to action_not_found, got: {mapped}"
+    );
+    assert!(
+        !mapped.to_lowercase().contains("authenticate"),
+        "wrapped path must not surface the re-auth phrase: {mapped}"
+    );
+}
+
 // ── Trigger-permission denial (issue #2913) ───────────────────────────
 
 #[test]

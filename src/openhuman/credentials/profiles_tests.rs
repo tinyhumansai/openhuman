@@ -689,3 +689,102 @@ fn auth_profile_kind_serde_roundtrip() {
     let json = serde_json::to_string(&AuthProfileKind::Token).unwrap();
     assert_eq!(json, "\"token\"");
 }
+
+// ── Regression coverage for Sentry TAURI-RUST-92J / #3355 ─────────────────
+//
+// `write_persisted_locked` retries transient Windows FS errors
+// (`is_transient_fs_error` family — `ERROR_SHARING_VIOLATION` (32),
+// `ERROR_ACCESS_DENIED` (5), `ERROR_DELETE_PENDING` (303), etc.) via
+// `retry_with_backoff`. Matches the sibling `.lock`-create retry that
+// already closed OPENHUMAN-TAURI-H1 / H8 — the JSON `fs::write` +
+// `fs::rename` path was the missing partial.
+//
+// `force_next_transient_failures` is the `#[cfg(test)]`-only injection point
+// — it consumes one queued failure per retry attempt and returns an error
+// whose chain contains `__TEST_TRANSIENT__`, which `is_transient_fs_error`
+// recognises as retryable on every platform (see `src/openhuman/util.rs`).
+
+#[test]
+fn write_persisted_locked_retries_one_shot_transient() {
+    let tmp = TempDir::new().unwrap();
+    let store = AuthProfilesStore::new(tmp.path(), false);
+
+    // Queue one forced transient FS failure — the first retry attempt
+    // returns `__TEST_TRANSIENT__`, the second runs the real `fs::write` and
+    // succeeds. `upsert_profile` therefore returns Ok and the queue drains.
+    store.force_next_transient_failures(1);
+
+    let profile = AuthProfile::new_token("anthropic", "default", "tok-1".into());
+    store
+        .upsert_profile(profile.clone(), true)
+        .expect("retry should absorb the single transient failure");
+
+    assert_eq!(
+        store.remaining_forced_failures(),
+        0,
+        "retry helper must have consumed the queued forced failure"
+    );
+
+    // Round-trip the profile to prove the store wrote real bytes after the retry.
+    let data = store.load().unwrap();
+    assert!(data.profiles.contains_key(&profile.id));
+}
+
+#[test]
+fn write_persisted_locked_absorbs_burst_of_transients() {
+    let tmp = TempDir::new().unwrap();
+    let store = AuthProfilesStore::new(tmp.path(), false);
+
+    // Queue 5 forced transient failures — fewer than the retry budget
+    // (PERSIST_RETRY_ATTEMPTS = 6) so the 6th attempt succeeds. Covers the
+    // common "AV holds destination for a few hundred ms" case which was the
+    // root cause of TAURI-RUST-92J — the file genuinely lands on disk after
+    // the helper waits out the transient.
+    store.force_next_transient_failures(5);
+
+    let profile = AuthProfile::new_token("anthropic", "default", "tok-burst".into());
+    store
+        .upsert_profile(profile.clone(), true)
+        .expect("retry must absorb a burst of transient failures within budget");
+
+    assert_eq!(
+        store.remaining_forced_failures(),
+        0,
+        "retry helper must drain every queued failure before succeeding"
+    );
+
+    let data = store.load().unwrap();
+    let loaded = data
+        .profiles
+        .get(&profile.id)
+        .expect("profile must round-trip after retry");
+    assert_eq!(loaded.token.as_deref(), Some("tok-burst"));
+}
+
+#[test]
+fn write_persisted_locked_exhausts_retries_on_persistent_transient() {
+    let tmp = TempDir::new().unwrap();
+    let store = AuthProfilesStore::new(tmp.path(), false);
+
+    // Queue more forced failures than the retry budget for the write stage
+    // (PERSIST_RETRY_ATTEMPTS = 6) — every retry returns the test sentinel,
+    // so `retry_with_backoff` ultimately surfaces the failed-after-N-attempts
+    // error. Genuinely unrecoverable failures still surface to Sentry as
+    // honest signal; this is not a noise-suppression layer.
+    store.force_next_transient_failures(6);
+
+    let profile = AuthProfile::new_token("anthropic", "default", "tok-2".into());
+    let err = store
+        .upsert_profile(profile, true)
+        .expect_err("persistent transient must exhaust retries and surface as Err");
+
+    let chain = format!("{err:?}");
+    assert!(
+        chain.contains("Failed to write temporary auth profile file"),
+        "outer with_context must be preserved for Sentry fingerprint stability: {chain}"
+    );
+    assert!(
+        chain.contains("write auth profile tmp failed after"),
+        "retry helper must annotate the exhausted attempts count: {chain}"
+    );
+}

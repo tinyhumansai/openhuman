@@ -55,8 +55,21 @@ pub struct Config {
     /// Kept separate from `workspace_dir` (which holds internal state like
     /// memory DBs, sessions, tokens). Defaults to `~/OpenHuman/projects`
     /// (`default_action_dir()`); overridable via `OPENHUMAN_ACTION_DIR`.
+    ///
+    /// This is the **resolved runtime value** and is `#[serde(skip)]` — it is
+    /// recomputed on every load from the precedence chain
+    /// (env `OPENHUMAN_ACTION_DIR` > [`Self::action_dir_override`] > default).
+    /// To persist a user choice, write [`Self::action_dir_override`] instead.
     #[serde(skip)]
     pub action_dir: PathBuf,
+    /// Persisted user override for [`Self::action_dir`], set via the Settings UI
+    /// (`config.update_agent_paths` RPC). Unlike `action_dir`, this field **is**
+    /// serialized so the choice survives restarts. Resolution precedence on load:
+    /// env `OPENHUMAN_ACTION_DIR` wins, then this override (when `Some`), then the
+    /// default projects dir. `None` means "use the default" — the env var still
+    /// overrides at runtime so existing env-driven deployments are unaffected.
+    #[serde(default)]
+    pub action_dir_override: Option<PathBuf>,
     #[serde(skip)]
     pub config_path: PathBuf,
     /// Workspace data-schema version. Bumped each time a one-shot data
@@ -102,6 +115,9 @@ pub struct Config {
     pub autonomy: AutonomyConfig,
 
     #[serde(default)]
+    pub sandbox: SandboxConfig,
+
+    #[serde(default)]
     pub runtime: RuntimeConfig,
 
     #[serde(default)]
@@ -141,7 +157,7 @@ pub struct Config {
     /// Optional per-team model pins for delegated swarms.
     ///
     /// Example:
-    /// `[teams.research] lead_model = "minimax/m2" agent_model = "deepseek/v3.2"`.
+    /// `[teams.research] lead_model = "minimax/m3" agent_model = "deepseek/v3.2"`.
     #[serde(default)]
     pub teams: HashMap<String, TeamModelConfig>,
 
@@ -641,6 +657,7 @@ impl Default for Config {
         Self {
             workspace_dir: openhuman_dir.join("workspace"),
             action_dir: crate::openhuman::config::default_action_dir(),
+            action_dir_override: None,
             config_path: openhuman_dir.join("config.toml"),
             schema_version: 0,
             api_url: None,
@@ -653,6 +670,7 @@ impl Default for Config {
             observability: ObservabilityConfig::default(),
             dashboard: DashboardConfig::default(),
             autonomy: AutonomyConfig::default(),
+            sandbox: SandboxConfig::default(),
             runtime: RuntimeConfig::default(),
             screen_intelligence: ScreenIntelligenceConfig::default(),
             autocomplete: AutocompleteConfig::default(),
@@ -766,7 +784,7 @@ mod model_pin_tests {
                 model = "deepseek/deepseek-r2"
 
                 [teams.research]
-                lead_model = "minimax/m2"
+                lead_model = "minimax/m3"
                 agent_model = "deepseek/v3.2"
 
                 [teams.code]
@@ -785,7 +803,7 @@ mod model_pin_tests {
         );
         assert_eq!(
             config.configured_agent_model("researcher", true),
-            Some("minimax/m2")
+            Some("minimax/m3")
         );
         assert_eq!(
             config.configured_agent_model("code_executor", false),

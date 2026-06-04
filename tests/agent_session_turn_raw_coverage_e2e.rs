@@ -190,6 +190,7 @@ impl Memory for StaticMemory {
             timestamp: "2026-05-29T00:00:00Z".to_string(),
             session_id: session_id.map(str::to_string),
             score: Some(0.95),
+            taint: Default::default(),
         });
         Ok(())
     }
@@ -755,6 +756,7 @@ async fn turn_xml_failures_checkpoint_policy_visibility_and_hooks_are_publicly_e
                 timestamp: "2026-05-29T00:00:00Z".to_string(),
                 session_id: None,
                 score: Some(0.9),
+                taint: Default::default(),
             }]),
             fail_recall: true,
         }))

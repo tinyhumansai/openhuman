@@ -91,7 +91,7 @@ async fn round24_composio_direct_covers_v3_v2_fallbacks_and_account_shapes() {
         .iter()
         .find(|request| {
             request.method == Method::POST
-                && request.path == "/api/v3/tools/gmail-send-email/execute"
+                && request.path == "/api/v3/tools/execute/GMAIL_SEND_EMAIL"
         })
         .expect("v3 execute request");
     assert_eq!(v3_execute.body["connected_account_id"], "conn-secret");
@@ -267,7 +267,7 @@ async fn composio_handler(State(state): State<MockState>, request: Request) -> R
             ]
         }))
         .into_response(),
-        (Method::POST, "/api/v3/tools/gmail-send-email/execute") => (
+        (Method::POST, "/api/v3/tools/execute/GMAIL_SEND_EMAIL") => (
             StatusCode::BAD_REQUEST,
             Json(json!({
                 "error": {

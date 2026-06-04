@@ -582,32 +582,65 @@ impl EventHandler for ComposioConnectionCreatedSubscriber {
 
             // Optional provider-specific post-OAuth hook (e.g. gmail's
             // inbox ingest). Only fires for toolkits that registered a
-            // provider; the rest just got the cache refresh above and
-            // we're done.
-            let Some(provider) = get_provider(&toolkit) else {
-                tracing::debug!(
-                    toolkit = %toolkit,
-                    "[composio:bus] no provider registered for toolkit; cache refreshed, no provider hook to dispatch"
-                );
-                return;
-            };
-
-            if let Err(e) = provider.on_connection_created(&ctx).await {
-                tracing::warn!(
+            // provider, and only when the user has completed onboarding.
+            //
+            // Skip the initial sync when onboarding is still in progress
+            // (#3097). Connections made during the setup wizard would otherwise
+            // enqueue embedding/LLM jobs that drain cloud credits before the
+            // user has had a chance to choose their AI routing. The periodic
+            // scheduler (20-min tick) will fire the first real sync after
+            // onboarding completes. The memory_sources auto-register below
+            // still runs unconditionally so the source appears in the unified
+            // sources list immediately.
+            if !ctx.config.onboarding_completed {
+                tracing::info!(
                     toolkit = %toolkit,
                     connection_id = %connection_id,
-                    error = %e,
-                    "[composio:bus] provider on_connection_created failed"
+                    "[composio:bus] onboarding not yet complete — deferring initial sync to periodic scheduler"
                 );
             } else {
-                // Successful connection-created sync — record the
-                // timestamp so the periodic scheduler doesn't
-                // immediately re-fire for this connection.
-                super::periodic::record_sync_success(&toolkit, &connection_id);
+                let Some(provider) = get_provider(&toolkit) else {
+                    tracing::debug!(
+                        toolkit = %toolkit,
+                        "[composio:bus] no provider registered for toolkit; cache refreshed, no provider hook to dispatch"
+                    );
+                    // Still fall through to auto-register below.
+                    let label = format!("{toolkit} connection");
+                    if let Err(e) = crate::openhuman::memory_sources::upsert_composio_source(
+                        &toolkit,
+                        &connection_id,
+                        &label,
+                    )
+                    .await
+                    {
+                        tracing::warn!(
+                            toolkit = %toolkit,
+                            connection_id = %connection_id,
+                            error = %e,
+                            "[composio:bus] memory_sources auto-register failed (non-fatal)"
+                        );
+                    }
+                    return;
+                };
+
+                if let Err(e) = provider.on_connection_created(&ctx).await {
+                    tracing::warn!(
+                        toolkit = %toolkit,
+                        connection_id = %connection_id,
+                        error = %e,
+                        "[composio:bus] provider on_connection_created failed"
+                    );
+                } else {
+                    // Successful connection-created sync — record the
+                    // timestamp so the periodic scheduler doesn't
+                    // immediately re-fire for this connection.
+                    super::periodic::record_sync_success(&toolkit, &connection_id);
+                }
             }
 
-            // Auto-register this connection in the memory_sources
-            // registry so it appears in the unified sources list.
+            // Auto-register this connection in the memory_sources registry so
+            // it appears in the unified sources list regardless of whether the
+            // initial sync ran.
             let label = format!("{toolkit} connection");
             if let Err(e) = crate::openhuman::memory_sources::upsert_composio_source(
                 &toolkit,

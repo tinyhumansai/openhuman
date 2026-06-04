@@ -12,6 +12,7 @@ use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 use crate::openhuman::agent::task_board::{TaskApprovalMode, TaskBoardCard};
 
 use super::ops::{self, BoardLocation, CardPatch, TodosSnapshot};
+use super::runs;
 
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
@@ -23,6 +24,9 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("remove"),
         schemas("replace"),
         schemas("clear"),
+        schemas("run_list"),
+        schemas("run_get"),
+        schemas("reclaim_stale"),
     ]
 }
 
@@ -59,6 +63,18 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("clear"),
             handler: handle_clear,
+        },
+        RegisteredController {
+            schema: schemas("run_list"),
+            handler: handle_run_list,
+        },
+        RegisteredController {
+            schema: schemas("run_get"),
+            handler: handle_run_get,
+        },
+        RegisteredController {
+            schema: schemas("reclaim_stale"),
+            handler: handle_reclaim_stale,
         },
     ]
 }
@@ -194,6 +210,70 @@ pub fn schemas(function: &str) -> ControllerSchema {
             description: "Empty the todo list for a thread.",
             inputs: vec![thread_id_input()],
             outputs: vec![snapshot_output()],
+        },
+        "run_list" => ControllerSchema {
+            namespace: "todos",
+            function: "run_list",
+            description: "List durable run records for a thread, optionally filtered by card id.",
+            inputs: vec![
+                thread_id_input(),
+                optional_string("cardId", "Filter runs by card identifier."),
+            ],
+            outputs: vec![FieldSchema {
+                name: "runs",
+                ty: TypeSchema::Json,
+                comment: "Array of TaskRun objects.",
+                required: true,
+            }],
+        },
+        "run_get" => ControllerSchema {
+            namespace: "todos",
+            function: "run_get",
+            description: "Get a single run record by its run id.",
+            inputs: vec![
+                thread_id_input(),
+                required_string("runId", "Run identifier."),
+            ],
+            outputs: vec![FieldSchema {
+                name: "run",
+                ty: TypeSchema::Json,
+                comment: "TaskRun object or null if not found.",
+                required: true,
+            }],
+        },
+        "reclaim_stale" => ControllerSchema {
+            namespace: "todos",
+            function: "reclaim_stale",
+            description: "Scan for stale/wedged runs and reclaim their cards. \
+                 Cards are moved back to todo (re-dispatchable) or blocked \
+                 (max reclaim count exceeded).",
+            inputs: vec![
+                thread_id_input(),
+                FieldSchema {
+                    name: "heartbeatStaleSecs",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
+                    comment: "Heartbeat staleness threshold in seconds (default 300).",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "claimTtlSecs",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
+                    comment: "Claim TTL in seconds (default 3600).",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "maxReclaimCount",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
+                    comment: "Max reclaims before parking as blocked (default 3).",
+                    required: false,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Json,
+                comment: "Object with reclaimedCount, blockedCount, and details array.",
+                required: true,
+            }],
         },
         _ => ControllerSchema {
             namespace: "todos",
@@ -442,6 +522,84 @@ fn handle_clear(params: Map<String, Value>) -> ControllerFuture {
         let loc = thread_location(&p.thread_id).await?;
         tracing::debug!(thread_id = %p.thread_id, "[rpc][todos] clear entry");
         snapshot_to_json(ops::clear(&loc)?)
+    })
+}
+
+// ── run handlers ────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct RunListParams {
+    thread_id: String,
+    #[serde(default, alias = "cardId")]
+    card_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RunGetParams {
+    thread_id: String,
+    #[serde(alias = "runId")]
+    run_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ReclaimStaleParams {
+    thread_id: String,
+    #[serde(default, alias = "heartbeatStaleSecs")]
+    heartbeat_stale_secs: Option<u64>,
+    #[serde(default, alias = "claimTtlSecs")]
+    claim_ttl_secs: Option<u64>,
+    #[serde(default, alias = "maxReclaimCount")]
+    max_reclaim_count: Option<u32>,
+}
+
+fn handle_run_list(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let p = parse::<RunListParams>(params)?;
+        let loc = thread_location(&p.thread_id).await?;
+        tracing::debug!(
+            thread_id = %p.thread_id,
+            card_id = ?p.card_id,
+            "[rpc][todos] run_list entry"
+        );
+        let run_list = runs::list_runs(&loc, p.card_id.as_deref())?;
+        serde_json::to_value(&run_list).map_err(|e| format!("serialize runs: {e}"))
+    })
+}
+
+fn handle_run_get(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let p = parse::<RunGetParams>(params)?;
+        let loc = thread_location(&p.thread_id).await?;
+        tracing::debug!(
+            thread_id = %p.thread_id,
+            run_id = %p.run_id,
+            "[rpc][todos] run_get entry"
+        );
+        let run = runs::get_run(&loc, &p.run_id)?;
+        serde_json::to_value(&run).map_err(|e| format!("serialize run: {e}"))
+    })
+}
+
+fn handle_reclaim_stale(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let p = parse::<ReclaimStaleParams>(params)?;
+        let loc = thread_location(&p.thread_id).await?;
+        let limits = runs::RunLimits {
+            heartbeat_stale_secs: p
+                .heartbeat_stale_secs
+                .unwrap_or(runs::DEFAULT_HEARTBEAT_STALE_SECS),
+            claim_ttl_secs: p.claim_ttl_secs.unwrap_or(runs::DEFAULT_CLAIM_TTL_SECS),
+            max_reclaim_count: p
+                .max_reclaim_count
+                .unwrap_or(runs::DEFAULT_MAX_RECLAIM_COUNT),
+        };
+        tracing::debug!(
+            thread_id = %p.thread_id,
+            ?limits,
+            "[rpc][todos] reclaim_stale entry"
+        );
+        let result = runs::reclaim_stale(&loc, &limits)?;
+        serde_json::to_value(&result).map_err(|e| format!("serialize reclaim result: {e}"))
     })
 }
 

@@ -6,6 +6,7 @@ interface ImportMetaEnv {
   readonly VITE_OPENHUMAN_E2E_DEFAULT_CORE_MODE?: string;
   readonly VITE_OPENHUMAN_E2E_RESTART_APP_AS_RELOAD?: string;
   readonly VITE_BACKEND_URL?: string;
+  readonly VITE_CHAT_ATTACHMENTS?: string;
   readonly VITE_SKILLS_GITHUB_REPO?: string;
   readonly VITE_SENTRY_DSN?: string;
   readonly VITE_SENTRY_SMOKE_TEST?: string;

@@ -9,6 +9,7 @@
 //! `crate::openhuman::inference::voice` so all inference concerns share a
 //! single domain root.
 
+pub mod always_on;
 pub mod audio_capture;
 pub(crate) mod cli;
 pub mod dictation_listener;
