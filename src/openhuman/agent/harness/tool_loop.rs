@@ -140,6 +140,10 @@ impl RepeatFailureGuard {
         // success). See [`BACKEND_USER_STATE_MARKER`] for the TAURI-RUST-5KG
         // background.
         if result.contains(BACKEND_USER_STATE_MARKER) {
+            let clean_reason = result
+                .replace(BACKEND_USER_STATE_MARKER, "")
+                .trim()
+                .to_string();
             return Some(format!(
                 "Stopping: the `{tool}` call returned a backend user-state error \
                  — this is a deterministic condition that requires user action \
@@ -147,7 +151,7 @@ impl RepeatFailureGuard {
                  with different arguments or a different paid tool will not \
                  help. Reason:\n{}\n\nReport this back to the user instead of \
                  trying alternative tools.",
-                truncate_for_halt(result),
+                truncate_for_halt(&clean_reason),
             ));
         }
         // Hard policy rejections trip on the first verbatim repeat; everything

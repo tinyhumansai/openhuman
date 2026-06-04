@@ -1148,6 +1148,10 @@ fn backend_user_state_marker_halts_on_first_occurrence() {
         msg.contains("Insufficient balance"),
         "halt summary should preserve the actionable root cause; got: {msg}"
     );
+    assert!(
+        !msg.contains(BACKEND_USER_STATE_MARKER),
+        "internal routing token must not leak into user-visible halt message; got: {msg}"
+    );
 }
 
 #[test]
