@@ -944,3 +944,92 @@ fn classify_agent_anyhow_does_not_leak_when_downcast_succeeds() {
     assert_ne!(msg, AGENT_JOB_USER_FAILURE_MESSAGE);
     assert!(msg.contains("credentials"));
 }
+
+// ── #3312: scheduler auto-recovery ──────────────────────────────────────────
+
+/// Reset the global health registry entry for "scheduler" so tests in this
+/// module start from a clean baseline. The registry is a process-global
+/// `OnceLock`, so neighbouring tests can otherwise leak state into ours.
+fn reset_scheduler_component_state() {
+    // mark_component_ok() initialises the entry if missing and clears
+    // `last_error`. Tests that want to start from "error" will flip it
+    // themselves via `mark_component_error` after this reset.
+    crate::openhuman::health::mark_component_ok("scheduler");
+}
+
+/// Block until the global event-bus subscriber has applied a pending
+/// `HealthChanged` event for the scheduler component. The bus is async,
+/// so a synchronous snapshot taken too soon after `publish_global` can
+/// race the subscriber's `handle()` callback.
+async fn wait_for_scheduler_status(expected: &str, attempts: usize) -> String {
+    let mut last = String::new();
+    for _ in 0..attempts {
+        let snap = crate::openhuman::health::snapshot();
+        if let Some(entry) = snap.components.get("scheduler") {
+            last = entry.status.clone();
+            if last == expected {
+                return last;
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    last
+}
+
+/// #3312: a single transient cron job failure must not permanently brick
+/// the scheduler component. The next tick with no due work should
+/// re-emit `HealthChanged { healthy: true }` and the health registry
+/// should clear back to "ok" so the Docker health probe stops returning
+/// 503.
+#[tokio::test]
+async fn scheduler_tick_once_recovers_component_status_after_prior_error() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp).await;
+
+    // Make sure the bus + the health subscriber that translates
+    // `HealthChanged` events into registry mutations are both wired up
+    // for this test run — `run()` does this at boot, but we're calling
+    // `tick_once` directly.
+    crate::core::event_bus::init_global(crate::core::event_bus::DEFAULT_CAPACITY);
+    crate::openhuman::health::bus::register_health_subscriber();
+
+    reset_scheduler_component_state();
+    crate::openhuman::health::mark_component_error("scheduler", "prior transient failure");
+    // Sanity: we really did flip the component into the bad state the
+    // production bug stays stuck in.
+    assert_eq!(
+        crate::openhuman::health::snapshot()
+            .components
+            .get("scheduler")
+            .map(|c| c.status.clone())
+            .unwrap_or_default(),
+        "error"
+    );
+
+    let security = Arc::new(SecurityPolicy::from_config(
+        &config.autonomy,
+        &config.workspace_dir,
+        &config.action_dir,
+    ));
+
+    // No jobs are due — this is exactly the scenario from the bug
+    // report after the failing cron job: the queue stays empty for a
+    // long stretch while the existing error sits in the registry.
+    tick_once(&config, &security).await;
+
+    let status = wait_for_scheduler_status("ok", 50).await;
+    assert_eq!(
+        status, "ok",
+        "tick_once with an empty queue must recover the scheduler component to ok"
+    );
+    let snap = crate::openhuman::health::snapshot();
+    let entry = snap
+        .components
+        .get("scheduler")
+        .expect("scheduler component present");
+    assert!(
+        entry.last_error.is_none(),
+        "recovery must clear last_error, got {:?}",
+        entry.last_error
+    );
+}

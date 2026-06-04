@@ -155,22 +155,50 @@ pub async fn run(config: Config) -> Result<()> {
 
     loop {
         interval.tick().await;
-
-        let jobs = match due_jobs(&config, Utc::now()) {
-            Ok(jobs) => jobs,
-            Err(e) => {
-                publish_global(DomainEvent::HealthChanged {
-                    component: "scheduler".to_string(),
-                    healthy: false,
-                    message: Some(e.to_string()),
-                });
-                tracing::warn!("Scheduler query failed: {e}");
-                continue;
-            }
-        };
-
-        process_due_jobs(&config, &security, jobs).await;
+        tick_once(&config, &security).await;
     }
+}
+
+/// Single poll cycle of the scheduler loop, extracted so tests can drive
+/// it without owning `tokio::time::interval`.
+///
+/// Emits a `scheduler` health signal in three cases:
+/// - Poll itself failed (DB read) → `healthy: false` with the DB error.
+/// - Poll succeeded, queue empty or not → `healthy: true` (#3312
+///   recovery signal). Without this, a single transient job failure
+///   that flipped the component to `error` via [`process_due_jobs`]
+///   would stay there indefinitely while the queue was idle — no later
+///   event would clear it, the health endpoint would keep returning
+///   503, and Docker would mark the container `unhealthy` for hours
+///   until a manual restart. Tick-level "still polling" beats
+///   job-level success as the recovery signal because the queue is
+///   empty most of the time.
+/// - Per-job results (handled inside `process_due_jobs`) continue to
+///   flip the component back to `healthy: false` on a failure; the
+///   next tick that survives the DB read will re-flip it to
+///   `healthy: true`, exactly the auto-recovery behaviour the Docker
+///   health check needs.
+pub(crate) async fn tick_once(config: &Config, security: &Arc<SecurityPolicy>) {
+    let jobs = match due_jobs(config, Utc::now()) {
+        Ok(jobs) => jobs,
+        Err(e) => {
+            publish_global(DomainEvent::HealthChanged {
+                component: "scheduler".to_string(),
+                healthy: false,
+                message: Some(e.to_string()),
+            });
+            tracing::warn!("Scheduler query failed: {e}");
+            return;
+        }
+    };
+
+    publish_global(DomainEvent::HealthChanged {
+        component: "scheduler".to_string(),
+        healthy: true,
+        message: None,
+    });
+
+    process_due_jobs(config, security, jobs).await;
 }
 
 /// Public entry point for delivering a job's output via the configured
