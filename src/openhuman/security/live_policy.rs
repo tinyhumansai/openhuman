@@ -102,7 +102,11 @@ pub fn update_action_dir(new_action_dir: PathBuf) -> Result<u64, String> {
         .map_err(|e| format!("[security:live_policy] policy lock poisoned: {e}"))?;
     let mut rebuilt: SecurityPolicy = (*current_policy).clone();
     rebuilt.action_dir = new_action_dir;
-    if let Ok(mut guard) = state.policy.write() {
+    {
+        let mut guard = state
+            .policy
+            .write()
+            .map_err(|e| format!("[security:live_policy] policy write lock poisoned: {e}"))?;
         *guard = Arc::new(rebuilt);
     }
     let gen = state.generation.fetch_add(1, Ordering::Relaxed) + 1;
