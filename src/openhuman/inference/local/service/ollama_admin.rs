@@ -11,9 +11,9 @@ use crate::openhuman::inference::local::model_requirements::{
     evaluate_context, ContextEligibility, MIN_CONTEXT_TOKENS,
 };
 use crate::openhuman::inference::local::ollama::{
-    ollama_base_url, ollama_base_url_from_config, validate_ollama_url, OllamaModelTag,
-    OllamaPullEvent, OllamaPullProgress, OllamaPullRequest, OllamaShowRequest, OllamaShowResponse,
-    OllamaTagsResponse,
+    ollama_base_url, ollama_base_url_from_config, validate_ollama_url, OllamaModelShow,
+    OllamaModelTag, OllamaPullEvent, OllamaPullProgress, OllamaPullRequest, OllamaShowRequest,
+    OllamaShowResponse, OllamaTagsResponse,
 };
 use crate::openhuman::inference::local::process_util::apply_no_window;
 use crate::openhuman::inference::local::provider::{provider_from_config, LocalAiProvider};
@@ -890,22 +890,24 @@ impl LocalAiService {
         let embedding_found = has(&expected_embedding);
         let vision_found = has(&expected_vision);
 
-        // Per-model native context window vs the memory-layer minimum.
-        // `/api/show` is one bounded round-trip per installed model,
-        // fetched concurrently and only on this diagnostics path.
-        let model_eligibilities: Vec<ContextEligibility> = if healthy {
+        // Per-model native context window (vs the memory-layer minimum) and
+        // chat-capability. `/api/show` is one bounded round-trip per installed
+        // model, fetched concurrently and only on this diagnostics path; the
+        // single call yields both signals.
+        let model_shows: Vec<OllamaModelShow> = if healthy {
             futures_util::future::join_all(
                 models
                     .iter()
-                    .map(|m| self.fetch_model_context_at(&base_url, &m.name)),
+                    .map(|m| self.fetch_model_show_at(&base_url, &m.name)),
             )
             .await
-            .into_iter()
-            .map(evaluate_context)
-            .collect()
         } else {
             Vec::new()
         };
+        let model_eligibilities: Vec<ContextEligibility> = model_shows
+            .iter()
+            .map(|s| evaluate_context(s.context_length))
+            .collect();
 
         let installed_models: Vec<serde_json::Value> = models
             .iter()
@@ -919,12 +921,17 @@ impl LocalAiService {
                     }
                     _ => None,
                 };
+                // `chat_capable: false` → embedding-only model the chat picker
+                // must hide; `null`/`true` → keep visible (fail-open).
+                // TAURI-RUST-4P6.
+                let chat_capable = model_shows.get(i).and_then(|s| s.chat_capable);
                 serde_json::json!({
                     "name": m.name,
                     "size": m.size,
                     "modified_at": m.modified_at,
                     "context_length": context_length,
                     "eligibility": eligibility,
+                    "chat_capable": chat_capable,
                 })
             })
             .collect();
@@ -1127,15 +1134,19 @@ impl LocalAiService {
         Ok(payload.models)
     }
 
-    /// Fetch a model's native context window via Ollama `POST /api/show`.
+    /// Fetch a model's native context window and chat-capability via Ollama
+    /// `POST /api/show`.
     ///
-    /// Returns `None` on any failure (unreachable, non-2xx, parse error, or
-    /// the metadata key is absent) — the caller maps that to an `Unknown`
-    /// eligibility verdict rather than a hard rejection. One bounded HTTP
-    /// round-trip per model; only ever invoked from the diagnostics path.
-    async fn fetch_model_context_at(&self, base_url: &str, model: &str) -> Option<u64> {
+    /// Both fields default to `None` on any failure (unreachable, non-2xx,
+    /// parse error, or the metadata key is absent) — the caller maps a `None`
+    /// context to an `Unknown` eligibility verdict, and a `None` chat-capable
+    /// to "keep visible" (fail-open). One bounded HTTP round-trip per model;
+    /// only ever invoked from the diagnostics path. The single round-trip
+    /// yields both signals (context for the memory-layer gate, capability for
+    /// the chat-picker filter — TAURI-RUST-4P6).
+    async fn fetch_model_show_at(&self, base_url: &str, model: &str) -> OllamaModelShow {
         let url = format!("{}/api/show", base_url.trim_end_matches('/'));
-        let resp = self
+        let resp = match self
             .http
             .post(&url)
             .json(&OllamaShowRequest {
@@ -1144,41 +1155,49 @@ impl LocalAiService {
             .timeout(std::time::Duration::from_secs(5))
             .send()
             .await
-            .inspect_err(|e| {
+        {
+            Ok(resp) => resp,
+            Err(e) => {
                 tracing::debug!(
                     target: "local_ai::ollama_admin",
                     %url, model, error = %e,
-                    "[local_ai:ollama_admin] fetch_model_context: request failed"
+                    "[local_ai:ollama_admin] fetch_model_show: request failed"
                 );
-            })
-            .ok()?;
+                return OllamaModelShow::default();
+            }
+        };
         let status = resp.status();
         if !status.is_success() {
             tracing::debug!(
                 target: "local_ai::ollama_admin",
                 %url, model, %status,
-                "[local_ai:ollama_admin] fetch_model_context: non-success response"
+                "[local_ai:ollama_admin] fetch_model_show: non-success response"
             );
-            return None;
+            return OllamaModelShow::default();
         }
-        let parsed: OllamaShowResponse = resp
-            .json()
-            .await
-            .inspect_err(|e| {
+        let parsed: OllamaShowResponse = match resp.json().await {
+            Ok(parsed) => parsed,
+            Err(e) => {
                 tracing::debug!(
                     target: "local_ai::ollama_admin",
                     %url, model, error = %e,
-                    "[local_ai:ollama_admin] fetch_model_context: JSON parse failed"
+                    "[local_ai:ollama_admin] fetch_model_show: JSON parse failed"
                 );
-            })
-            .ok()?;
-        let ctx = parsed.context_length();
+                return OllamaModelShow::default();
+            }
+        };
+        let show = OllamaModelShow {
+            context_length: parsed.context_length(),
+            chat_capable: parsed.chat_capability(),
+        };
         tracing::debug!(
             target: "local_ai::ollama_admin",
-            model, context_length = ?ctx,
-            "[local_ai:ollama_admin] fetch_model_context: resolved"
+            model,
+            context_length = ?show.context_length,
+            chat_capable = ?show.chat_capable,
+            "[local_ai:ollama_admin] fetch_model_show: resolved"
         );
-        ctx
+        show
     }
 
     async fn lm_studio_diagnostics(&self, config: &Config) -> Result<serde_json::Value, String> {
