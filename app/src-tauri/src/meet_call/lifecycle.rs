@@ -25,7 +25,18 @@ pub enum Phase {
 /// `InvalidUrl` / `WindowBuildFailed` / `Cancelled` are reserved for
 /// log-symmetry — they surface via the rejected `meet_call_open_window`
 /// RPC promise or via `meet-call:closed`, **not** as `meet-call:failed`
-/// events. The other four are the event-emitted set.
+/// events.
+///
+/// `AudioBindFailed` is reserved for log-symmetry as well: the audio
+/// bridge start runs in a spawned task that races the frontend
+/// listener registration in `subscribeToMeetCallEvents`, so emitting
+/// `meet-call:failed` from that path would race the subscriber AND
+/// poison the per-`request_id` dedup, suppressing any later (genuine)
+/// scanner-side failure. The audio failure is logged with the
+/// `[meet-lifecycle] audio_bind_failed` prefix instead.
+///
+/// The event-emitted set is therefore: `NameInputTimeout`,
+/// `AskToJoinTimeout`, `AdmissionTimeout`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReasonCode {

@@ -29,7 +29,7 @@ Alternatives considered and rejected:
 
 Two Tauri events, both keyed by `request_id` (existing per-call correlation key):
 
-```
+```text
 meet-call:phase   { request_id, phase, detail? }
 meet-call:failed  { request_id, phase, reason_code, message }
 ```
@@ -49,14 +49,14 @@ meet-call:failed  { request_id, phase, reason_code, message }
 | `name_input_timeout` | `meet_scanner` Phase 2 (`type_into_named_input("Your name", ...)`) timed out |
 | `ask_to_join_timeout` | `meet_scanner` Phase 3 (`wait_and_click_text(["Ask to join", "Join now"])`) timed out |
 | `admission_timeout` | `meet_scanner` Phase 4 (`wait_for_admission`) timed out |
-| `audio_bind_failed` | `meet_audio::start` returned Err in the spawned task |
 
-`reason_code` (reserved for log/grep symmetry only — surfaced via RPC return, not as an event):
+`reason_code` (reserved for log/grep symmetry only — surfaced via RPC return or logs, not as an event):
 
 | Code | Source |
 |---|---|
 | `invalid_url` | `meet_call_open_window` rejects the URL |
 | `window_build_failed` | `WebviewWindowBuilder::build()` fails |
+| `audio_bind_failed` | `meet_audio::start` returned Err in the spawned task. Logged with `[meet-lifecycle] audio_bind_failed` — **not** emitted as a `meet-call:failed` event because that path races the frontend `subscribeToMeetCallEvents` registration (the spawn fires before `listen()` resolves) and emitting there would poison the per-`request_id` dedup, suppressing the later scanner-side failure that has a guaranteed subscriber. |
 | `cancelled` | Reserved for future; user-close already surfaces as `meet-call:closed` |
 
 ## Architecture

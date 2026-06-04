@@ -297,13 +297,17 @@ pub async fn meet_call_open_window<R: Runtime>(
             )
             .await
             {
-                let message = format!("Audio bridge failed to bind: {err}");
-                crate::meet_call::lifecycle::emit_failed(
-                    &app_for_audio,
-                    &request_id_for_audio,
-                    crate::meet_call::lifecycle::Phase::Joined,
-                    crate::meet_call::lifecycle::ReasonCode::AudioBindFailed,
-                    &message,
+                // Do NOT call lifecycle::emit_failed here. This spawn races
+                // the frontend listener registration: `joinMeetCall` resolves
+                // before `subscribeToMeetCallEvents` finishes installing its
+                // Tauri `listen()` handlers, so a fast audio bind failure
+                // would emit `meet-call:failed` to no subscriber AND mark
+                // `request_id` terminated — suppressing any later scanner
+                // failure for the same call and recreating the silent-failure
+                // path this slice is meant to remove. Log only; the scanner
+                // path emits terminal failures once subscribers are in place.
+                log::warn!(
+                    "[meet-lifecycle] audio_bind_failed (log-only, no event) request_id={request_id_for_audio} err={err}"
                 );
             }
         });

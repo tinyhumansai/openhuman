@@ -226,14 +226,17 @@ export function MeetingBotsModal({ onClose, onToast }: ModalProps) {
       // Subscribe to lifecycle events so a scanner / audio-bind failure
       // later in the join lifecycle surfaces as a clear toast — without
       // this, the user only sees the success toast below and then silence.
-      const unsubscribe = subscribeToMeetCallEvents(result.requestId, {
+      // The helper self-disposes on `meet-call:failed` (terminal event)
+      // and on `meet-call:closed` (window close), so we don't need to
+      // hold onto the disposer past this point — the modal can close on
+      // the happy path without leaking listeners.
+      subscribeToMeetCallEvents(result.requestId, {
         onFailed: (_phase: MeetCallPhase, reason: MeetCallReasonCode, message: string) => {
           onToast?.({
             type: 'error',
             title: t('skills.meetingBots.failedTitle'),
             message: message || t(`skills.meetingBots.failed.${reasonKey(reason)}`),
           });
-          unsubscribe();
         },
       });
 

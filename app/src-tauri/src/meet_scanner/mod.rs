@@ -95,8 +95,11 @@ pub fn spawn<R: Runtime>(
                 // via Tauri set_position rather than orderOut:).
             }
             Err(err) => {
+                // `aborted=false` here: this arm runs for normal scanner
+                // timeouts/errors. `AbortHandle::abort()` cancels the task
+                // before this match executes, so it never reaches this log.
                 log::warn!(
-                    "[meet-lifecycle] phase=failed request_id={request_id} aborted=true err={err}"
+                    "[meet-lifecycle] phase=failed request_id={request_id} aborted=false err={err}"
                 )
             }
         }
@@ -364,6 +367,10 @@ async fn run<R: Runtime>(
                 "OpenHuman never reached the in-call screen. The host may not have admitted the bot.",
             );
             log::info!("[meet-lifecycle] admission wait skipped request_id={request_id} err={err}");
+            // Propagate the admission failure so the caller logs
+            // `scanner_completed=false` (aborted=false) instead of
+            // misreporting completion after a terminal failure event.
+            return Err(err);
         }
         Ok(()) => {
             crate::meet_call::lifecycle::emit_phase(

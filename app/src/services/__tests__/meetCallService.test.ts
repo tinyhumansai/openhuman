@@ -228,7 +228,7 @@ describe('subscribeToMeetCallEvents', () => {
     listenMock.mockReset();
   });
 
-  it('registers listeners for meet-call:phase and meet-call:failed', async () => {
+  it('registers listeners for meet-call:phase, meet-call:failed, and meet-call:closed', async () => {
     const unlisten = vi.fn();
     listenMock.mockResolvedValue(unlisten);
 
@@ -240,11 +240,101 @@ describe('subscribeToMeetCallEvents', () => {
     const events = listenMock.mock.calls.map(c => c[0]);
     expect(events).toContain('meet-call:phase');
     expect(events).toContain('meet-call:failed');
+    // meet-call:closed is registered so the helper can self-dispose on
+    // the success path (window closes without ever firing a failure).
+    expect(events).toContain('meet-call:closed');
 
     disposer();
-    // Listeners were registered, so both unlisten callbacks should be called.
+    // All three listeners were registered, so all three unlisten
+    // callbacks should be called.
     await Promise.resolve();
-    expect(unlisten).toHaveBeenCalledTimes(2);
+    expect(unlisten).toHaveBeenCalledTimes(3);
+  });
+
+  it('self-disposes after meet-call:failed for the matching request_id', async () => {
+    // Self-cleanup on terminal events lets callers drop the disposer
+    // immediately and not leak listeners past the failure toast.
+    const unlisten = vi.fn();
+    let failedHandler: (e: { payload: unknown }) => void = () => {};
+    listenMock.mockImplementation(async (name: string, cb: (e: { payload: unknown }) => void) => {
+      if (name === 'meet-call:failed') failedHandler = cb;
+      return unlisten;
+    });
+
+    subscribeToMeetCallEvents('req-1', { onFailed: vi.fn() });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    failedHandler({
+      payload: {
+        request_id: 'req-1',
+        phase: 'joined' as MeetCallPhase,
+        reason_code: 'admission_timeout' as MeetCallReasonCode,
+        message: 'msg',
+      },
+    });
+
+    // All three listeners must be torn down by the terminal event.
+    expect(unlisten).toHaveBeenCalledTimes(3);
+  });
+
+  it('self-disposes after meet-call:closed for the matching request_id', async () => {
+    // Closed event = happy-path window close. Without auto-cleanup the
+    // listener leaks for the lifetime of the app — the leak case
+    // CodeRabbit flagged in MeetingBotsCard.
+    const unlisten = vi.fn();
+    let closedHandler: (e: { payload: unknown }) => void = () => {};
+    listenMock.mockImplementation(async (name: string, cb: (e: { payload: unknown }) => void) => {
+      if (name === 'meet-call:closed') closedHandler = cb;
+      return unlisten;
+    });
+
+    subscribeToMeetCallEvents('req-1', {});
+    await Promise.resolve();
+    await Promise.resolve();
+
+    closedHandler({ payload: { request_id: 'req-1', label: 'meet-call-req-1' } });
+    expect(unlisten).toHaveBeenCalledTimes(3);
+  });
+
+  it('ignores meet-call:closed for a different request_id', async () => {
+    // Two concurrent calls share the same global event stream; the
+    // closed event for one call must not tear down the other's
+    // listeners.
+    const unlisten = vi.fn();
+    let closedHandler: (e: { payload: unknown }) => void = () => {};
+    listenMock.mockImplementation(async (name: string, cb: (e: { payload: unknown }) => void) => {
+      if (name === 'meet-call:closed') closedHandler = cb;
+      return unlisten;
+    });
+
+    subscribeToMeetCallEvents('req-1', {});
+    await Promise.resolve();
+    await Promise.resolve();
+
+    closedHandler({ payload: { request_id: 'req-other', label: 'meet-call-req-other' } });
+    expect(unlisten).not.toHaveBeenCalled();
+  });
+
+  it('swallows listen() registration rejections', async () => {
+    // Tauri v2 `listen()` is promise-based and can reject if the
+    // underlying plugin:event|listen invocation fails. Without
+    // `.catch()` this would surface as an unhandled promise rejection
+    // and noisy test output. The helper logs + no-ops.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    listenMock.mockRejectedValue(new Error('plugin:event|listen failed'));
+
+    // Must not throw synchronously and must not produce an unhandled
+    // rejection — Vitest fails the test on unhandled rejections.
+    const disposer = subscribeToMeetCallEvents('req-1', {});
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(warn).toHaveBeenCalled();
+    // Disposer is still safe to invoke even when nothing registered.
+    expect(() => disposer()).not.toThrow();
+    warn.mockRestore();
   });
 
   it('invokes onPhase only for events matching the request_id', async () => {

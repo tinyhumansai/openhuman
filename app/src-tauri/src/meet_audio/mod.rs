@@ -90,8 +90,14 @@ pub async fn start<R: Runtime>(
     owner_display_name: String,
     bot_display_name: String,
 ) -> Result<(), String> {
+    // Audio start runs immediately after the CEF window builds, before
+    // the scanner has clicked "Ask to join" or waited for admission — we
+    // are still in the `joining` phase here. Earlier versions logged
+    // `phase=joined`, which made the `[meet-lifecycle]` trail show
+    // `joined` before the later `awaiting_admission` / `admitted`
+    // beacons — confusing when triaging failed joins.
     log::info!(
-        "[meet-lifecycle] phase=joined request_id={request_id} audio_start=true url_prefix={} \
+        "[meet-lifecycle] phase=joining request_id={request_id} audio_start=true url_prefix={} \
          owner_chars={} bot_chars={}",
         truncate_for_log(&meet_url, 64),
         owner_display_name.chars().count(),

@@ -330,13 +330,25 @@ export interface MeetCallEventHandlers {
   onFailed?: (phase: MeetCallPhase, reason: MeetCallReasonCode, message: string) => void;
 }
 
+interface MeetCallClosedPayload {
+  request_id: string;
+  label: string;
+}
+
 /**
  * Subscribe to `meet-call:phase` and `meet-call:failed` events for one
- * `request_id`. Returns a disposer that unregisters both listeners.
+ * `request_id`. Returns a disposer that unregisters all listeners.
  *
  * Listeners are registered asynchronously via Tauri's `listen()`; the
- * disposer is safe to call before the listen() promises resolve — pending
- * unlistens are awaited internally.
+ * disposer is safe to call before the listen() promises resolve —
+ * pending unlistens are awaited internally and disposed once they
+ * arrive.
+ *
+ * Self-disposes on terminal signals so callers don't have to track the
+ * disposer past a happy-path window close: any `meet-call:failed` for
+ * this `request_id` and any `meet-call:closed` for this `request_id`
+ * trigger an internal cleanup pass. Calling the returned disposer is
+ * idempotent and remains safe (e.g. for early teardown).
  */
 export function subscribeToMeetCallEvents(
   requestId: string,
@@ -345,31 +357,8 @@ export function subscribeToMeetCallEvents(
   let disposed = false;
   const unlistens: Array<() => void> = [];
 
-  void listen<MeetCallPhasePayload>('meet-call:phase', evt => {
+  const disposeAll = () => {
     if (disposed) return;
-    if (evt.payload.request_id !== requestId) return;
-    handlers.onPhase?.(evt.payload.phase, evt.payload.detail ?? undefined);
-  }).then(u => {
-    if (disposed) {
-      u();
-    } else {
-      unlistens.push(u);
-    }
-  });
-
-  void listen<MeetCallFailedPayload>('meet-call:failed', evt => {
-    if (disposed) return;
-    if (evt.payload.request_id !== requestId) return;
-    handlers.onFailed?.(evt.payload.phase, evt.payload.reason_code, evt.payload.message);
-  }).then(u => {
-    if (disposed) {
-      u();
-    } else {
-      unlistens.push(u);
-    }
-  });
-
-  return () => {
     disposed = true;
     for (const u of unlistens) {
       try {
@@ -378,5 +367,66 @@ export function subscribeToMeetCallEvents(
         // Unlisten can throw if the channel is already closed; ignore.
       }
     }
+    unlistens.length = 0;
   };
+
+  // `listen()` in @tauri-apps/api/event v2 is promise-based and can
+  // reject during registration (the underlying `plugin:event|listen`
+  // invocation can fail). Without explicit `.catch()` handlers the
+  // failure surfaces as an unhandled promise rejection — log + no-op.
+  void listen<MeetCallPhasePayload>('meet-call:phase', evt => {
+    if (disposed) return;
+    if (evt.payload.request_id !== requestId) return;
+    handlers.onPhase?.(evt.payload.phase, evt.payload.detail ?? undefined);
+  })
+    .then(u => {
+      if (disposed) {
+        u();
+      } else {
+        unlistens.push(u);
+      }
+    })
+    .catch(err => {
+      console.warn('[meet-call] listen(meet-call:phase) registration failed:', err);
+    });
+
+  void listen<MeetCallFailedPayload>('meet-call:failed', evt => {
+    if (disposed) return;
+    if (evt.payload.request_id !== requestId) return;
+    handlers.onFailed?.(evt.payload.phase, evt.payload.reason_code, evt.payload.message);
+    // Terminal event for this call — auto-clean so callers don't have
+    // to track the disposer past the failure toast.
+    disposeAll();
+  })
+    .then(u => {
+      if (disposed) {
+        u();
+      } else {
+        unlistens.push(u);
+      }
+    })
+    .catch(err => {
+      console.warn('[meet-call] listen(meet-call:failed) registration failed:', err);
+    });
+
+  // Also auto-clean when the CEF window closes — covers the success
+  // path where no `meet-call:failed` ever fires. Without this, the
+  // listeners outlive the call indefinitely.
+  void listen<MeetCallClosedPayload>('meet-call:closed', evt => {
+    if (disposed) return;
+    if (evt.payload.request_id !== requestId) return;
+    disposeAll();
+  })
+    .then(u => {
+      if (disposed) {
+        u();
+      } else {
+        unlistens.push(u);
+      }
+    })
+    .catch(err => {
+      console.warn('[meet-call] listen(meet-call:closed) registration failed:', err);
+    });
+
+  return disposeAll;
 }
