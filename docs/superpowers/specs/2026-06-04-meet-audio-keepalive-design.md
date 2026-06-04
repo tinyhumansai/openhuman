@@ -37,7 +37,7 @@ Alternatives considered and rejected:
 
 ### Signal chain after the change
 
-```
+```text
 Brain PCM (when speaking) ──┐
                             ├──→ MediaStreamDestinationNode ──→ MediaStream
 silenceLoop (always)     ───┘                                    │

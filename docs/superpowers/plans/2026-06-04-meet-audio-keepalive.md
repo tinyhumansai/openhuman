@@ -262,7 +262,7 @@ git log --oneline origin/main..HEAD
 
 Expected output (3 commits):
 
-```
+```text
 <sha>  fix(meet-audio): add zero-PCM keepalive so Meet keeps the bot in the call (#2945)
 <sha>  test(meet-audio): assert audio bridge ships keepalive code (#2945)
 bc6eab26c docs(meet): design — meet bot audio keepalive (#2945)
