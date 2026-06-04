@@ -2801,6 +2801,7 @@ async fn worker_a_controller_schemas_are_fully_exposed() {
                 "openhuman.config_get_voice_server_settings",
                 "openhuman.config_reset_local_data",
                 "openhuman.config_resolve_api_url",
+                "openhuman.config_set_action_dir",
                 "openhuman.config_set_browser_allow_all",
                 "openhuman.config_set_onboarding_completed",
                 "openhuman.config_update_activity_level_settings",
