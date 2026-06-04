@@ -454,7 +454,7 @@ async fn round20_direct_composio_tool_covers_fallback_sanitizing_and_account_edg
     }));
     assert!(requests.iter().any(|request| {
         request.method == Method::POST
-            && request.path == "/api/v3/tools/gmail-fetch-emails/execute"
+            && request.path == "/api/v3/tools/execute/GMAIL_FETCH_EMAILS"
             && request.body.pointer("/connected_account_id") == Some(&json!("acct-gmail"))
     }));
 }
@@ -780,13 +780,13 @@ async fn composio_direct_handler(State(state): State<MockState>, request: Reques
             StatusCode::BAD_REQUEST,
             "v2 broken list mentions connected_account_id and user_id",
         ),
-        (Method::POST, "/api/v3/tools/gmail-fetch-emails/execute") => Json(json!({
+        (Method::POST, "/api/v3/tools/execute/GMAIL_FETCH_EMAILS") => Json(json!({
             "successful": true,
             "data": { "messages": [{ "id": "msg-round20" }] },
             "error": null
         }))
         .into_response(),
-        (Method::POST, "/api/v3/tools/broken-action/execute") => message_fail(
+        (Method::POST, "/api/v3/tools/execute/BROKEN_ACTION") => message_fail(
             StatusCode::BAD_REQUEST,
             "bad execute connected_account_id user_id entity_id",
         ),

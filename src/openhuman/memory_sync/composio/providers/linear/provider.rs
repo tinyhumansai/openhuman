@@ -25,7 +25,7 @@ use super::{ingest::ingest_issue_into_memory_tree, sync};
 use crate::openhuman::memory_sync::composio::providers::sync_state::{extract_item_id, SyncState};
 use crate::openhuman::memory_sync::composio::providers::{
     merge_extra, pick_str, ComposioProvider, CuratedTool, NormalizedTask, ProviderContext,
-    ProviderUserProfile, SyncOutcome, SyncReason, TaskFetchFilter,
+    ProviderUserProfile, SyncOutcome, SyncReason, TaskFetchFilter, TaskKind,
 };
 
 const ACTION_LIST_USERS: &str = "LINEAR_LIST_LINEAR_USERS";
@@ -479,6 +479,7 @@ fn normalize_linear_issue(issue: &serde_json::Value) -> Option<NormalizedTask> {
         external_id,
         source_id: String::new(),
         provider: "linear".to_string(),
+        kind: TaskKind::Generic,
         title,
         body: pick_str(issue, &["description", "data.description"]),
         url: pick_str(issue, &["url", "data.url"]),

@@ -211,6 +211,10 @@ const messages: TranslationMap = {
   'home.usageExhaustedBody':
     'Ya no te queda uso incluido por ahora. Inicia una suscripción para desbloquear más capacidad continua.',
   'home.usageExhaustedCta': 'Obtener una suscripción',
+  'openrouterFree.cta': 'Usar modelos gratis de OpenRouter',
+  'openrouterFree.saving': 'Conectando OpenRouter...',
+  'openrouterFree.error':
+    'No se pudo cambiar a los modelos gratis de OpenRouter. Revisa tu inicio de sesión de OpenRouter e inténtalo de nuevo.',
   'home.routinesCard': 'Tus rutinas',
   'home.routinesActive': '{count} activas',
   'routines.title': 'Tus rutinas',
@@ -1750,16 +1754,13 @@ const messages: TranslationMap = {
   'common.enable': 'Activar',
   'chat.safetyTimeout':
     'Sin respuesta del agente después de 2 minutos. Intenta de nuevo o verifica tu conexión.',
-  'chat.filter.all': 'Todos',
-  'chat.filter.work': 'Trabajo',
-  'chat.filter.briefing': 'Resumen',
-  'chat.filter.notification': 'Notificación',
-  'chat.filter.workers': 'Trabajadores',
+  'chat.filter.general': 'General',
+  'chat.filter.subconscious': 'Subconsciente',
+  'chat.filter.tasks': 'Tareas',
   'chat.selectThread': 'Selecciona un hilo',
   'chat.threads': 'Hilos',
   'chat.noThreads': 'Sin hilos aún',
   'chat.noLabelThreads': 'Sin hilos "{label}"',
-  'chat.noWorkerThreads': 'Sin hilos de worker aún',
   'chat.deleteThread': 'Eliminar hilo',
   'chat.deleteThreadConfirm': '¿Seguro que quieres eliminar "{title}"?',
   'chat.untitledThread': 'Hilo sin título',
@@ -2565,8 +2566,25 @@ const messages: TranslationMap = {
   'conversations.taskKanban.field.title': 'Título',
   'conversations.taskKanban.saveChanges': 'Guardar cambios',
   'conversations.taskKanban.deleteCard': 'Borrar',
+  'conversations.taskKanban.workTask': 'Trabajar tarea',
+  'conversations.taskKanban.startingTask': 'Iniciando…',
   'conversations.taskKanban.updateFailed':
     'No se pudo actualizar la tarea; los cambios no se guardaron.',
+  'conversations.taskKanban.sourcesButton': 'Fuentes',
+  'conversations.taskKanban.source.openExternal': 'Abrir tarea externa',
+  'conversations.taskKanban.source.openExternalShort': 'Abrir',
+  'conversations.taskKanban.source.unknownProvider': 'Fuente desconocida',
+  'conversations.taskKanban.source.urgencyValue': 'Urgencia {percent}%',
+  'conversations.taskKanban.sources.desktopOnly':
+    'Los controles de fuentes de tareas están disponibles en la app de escritorio.',
+  'conversations.taskKanban.sources.title': 'Fuentes de tareas',
+  'conversations.taskKanban.sources.statusEnabled': 'Sondeo automático activado',
+  'conversations.taskKanban.sources.manage': 'Gestionar fuentes',
+  'conversations.taskKanban.source.title': 'Fuente',
+  'conversations.taskKanban.source.sourceId': 'ID de fuente',
+  'conversations.taskKanban.source.externalId': 'ID externo',
+  'conversations.taskKanban.source.repo': 'Repositorio',
+  'conversations.taskKanban.source.urgency': 'Urgencia',
   'conversations.toolTimeline.turn': 'turno',
   'conversations.toolTimeline.step': 'Paso',
   'conversations.toolTimeline.workerThread': 'hilo de worker',
@@ -2682,6 +2700,49 @@ const messages: TranslationMap = {
   'intelligence.tasks.composer.create': 'Crear tarea',
   'intelligence.tasks.composer.creating': 'Creando…',
   'intelligence.tasks.composer.createFailed': 'No se pudo crear la tarea',
+  'intelligence.tasks.composer.assignAgentLabel':
+    'Deja que un agente se encargue de esto automáticamente',
+  'intelligence.tasks.composer.assignAgentHint':
+    'El tablero de tareas la toma y la ejecuta por ti. Déjalo desactivado para una tarea personal simple.',
+  'intelligence.tasks.sourceList.subtitle':
+    'Tareas de fuentes esperando convertirse en trabajo del agente.',
+  'intelligence.tasks.sourceList.empty': 'No hay tareas de fuentes en espera.',
+  'intelligence.tasks.sourceList.queued': 'En cola',
+  'intelligence.tasks.sourceList.workOnTask': 'Trabajar en la tarea',
+  'intelligence.tasks.sourcePlan.title': 'Refinar tarea de fuente',
+  'intelligence.tasks.sourcePlan.subtitle':
+    'Revisa el borrador de investigación antes de crear una tarea de agente.',
+  'intelligence.tasks.sourcePlan.researchAgent': 'Borrador del agente investigador',
+  'intelligence.tasks.sourcePlan.approve': 'Aprobar plan',
+  'intelligence.tasks.sourcePlan.creating': 'Creando tarea…',
+  'intelligence.tasks.sourcePlan.createFailed': 'No se pudo crear la tarea del agente',
+  'intelligence.tasks.workTaskFailed': 'No se pudo iniciar el trabajo en la tarea',
+  'intelligence.workTask.sourceTaskHeading': 'Tarea de origen:',
+  'intelligence.workTask.repositoryLine': '- Repositorio: {repo}',
+  'intelligence.workTask.externalIdLine': '- ID externo: {externalId}',
+  'intelligence.workTask.urlLine': '- Dirección: {url}',
+  'intelligence.workTask.closingInstruction':
+    'Empieza reformulando brevemente el plan de implementación concreto y luego ejecútalo. Mantén el progreso visible en este hilo y actualiza el tablero de tareas cuando cambie el estado del trabajo.',
+  'intelligence.refine.objectiveDefault':
+    'Convierte la tarea de origen en una tarea de agente lista para implementar: {title}',
+  'intelligence.refine.sourceLine': 'Origen: {url}',
+  'intelligence.refine.sourceIntake': 'Origen: recepción de fuentes de tareas',
+  'intelligence.refine.repositoryLine': 'Repositorio: {repo}',
+  'intelligence.refine.externalTaskLine': 'Tarea externa: {externalId}',
+  'intelligence.refine.planStep1':
+    'Lee la tarea de origen vinculada y confirma el comportamiento exacto solicitado.',
+  'intelligence.refine.planStep2':
+    'Inspecciona las rutas de código relevantes e identifica el límite de implementación más pequeño.',
+  'intelligence.refine.planStep3':
+    'Implementa el cambio con pruebas centradas en el comportamiento visible para el usuario.',
+  'intelligence.refine.planStep4':
+    'Ejecuta una validación específica y registra los riesgos residuales o el trabajo de seguimiento.',
+  'intelligence.refine.acceptance1':
+    'Los requisitos de la tarea de origen están representados en la implementación final.',
+  'intelligence.refine.acceptance2':
+    'Las pruebas unitarias o de integración relevantes cubren el comportamiento modificado.',
+  'intelligence.refine.acceptance3':
+    'Los resultados de la validación y cualquier riesgo sin resolver se registran al finalizar.',
   'notifications.card.dismiss': 'Descartar notificación',
   'notifications.card.importanceTitle': 'Importancia: {pct}%',
   'notifications.center.empty': 'Sin notificaciones aún',
@@ -4206,6 +4267,8 @@ const messages: TranslationMap = {
   'chat.agentProfile.defaultAgentLabel': 'orquestador',
   'chat.agentProfile.exists': 'El perfil del agente "{name}" ya existe.',
   'chat.agentProfile.label': 'Perfil del agente',
+  'chat.agentProfile.quick': 'Rápido',
+  'chat.agentProfile.reasoning': 'Razonamiento',
   'chat.agentProfile.namePlaceholder': 'Nombre del perfil',
   'chat.agentProfile.promptStylePlaceholder': 'estilo rápido',
   'chat.agentProfile.allowedToolsPlaceholder': 'Herramientas permitidas',
@@ -4342,6 +4405,10 @@ const messages: TranslationMap = {
   'settings.taskSources.github.repo': 'Repositorio (propietario/nombre, opcional)',
   'settings.taskSources.github.labels': 'Etiquetas (separadas por comas)',
   'settings.taskSources.notion.database': 'ID de la base de datos (tablero)',
+  'settings.taskSources.notion.browseDatabases': 'Explorar bases de datos',
+  'settings.taskSources.notion.loadingDatabases': 'Cargando bases de datos…',
+  'settings.taskSources.notion.selectDatabase': 'Selecciona una base de datos…',
+  'settings.taskSources.notion.noDatabases': 'No se encontraron bases de datos para esta conexión.',
   'settings.taskSources.linear.team': 'ID del equipo (opcional)',
   'settings.taskSources.clickup.team': 'ID del espacio de trabajo (equipo) (opcional)',
   'settings.taskSources.assignedToMe': 'Solo los elementos asignados a mí',
@@ -4788,6 +4855,18 @@ const messages: TranslationMap = {
   'security.approvalGateOverrideIgnored.body':
     'Se detectó una anulación OPENHUMAN_APPROVAL_GATE=0, pero se ignoró: la aplicación de escritorio mantiene siempre activa la puerta de aprobación.',
 
+
+  // Run queue
+  'runQueue.mode.interrupt': 'Interrumpir',
+  'runQueue.mode.steer': 'Dirigir',
+  'runQueue.mode.followup': 'Seguimiento',
+  'runQueue.mode.collect': 'Añadir contexto',
+  'runQueue.queued': 'Mensaje en cola',
+  'runQueue.steerHint': 'Dirigir el turno actual',
+  'runQueue.followupHint': 'Poner en cola como seguimiento',
+  'runQueue.collectHint': 'Añadir como contexto adicional',
+  'runQueue.status': '{total} en cola',
+  'runQueue.cleared': 'Cola vaciada',
 };
 
 export default messages;

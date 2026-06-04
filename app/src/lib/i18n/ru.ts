@@ -203,6 +203,10 @@ const messages: TranslationMap = {
   'home.usageExhaustedBody':
     'Включённый объём использования пока исчерпан. Оформите подписку, чтобы получить больше постоянной мощности.',
   'home.usageExhaustedCta': 'Оформить подписку',
+  'openrouterFree.cta': 'Использовать бесплатные модели OpenRouter',
+  'openrouterFree.saving': 'Подключение OpenRouter...',
+  'openrouterFree.error':
+    'Не удалось переключиться на бесплатные модели OpenRouter. Проверьте вход в OpenRouter и повторите попытку.',
   'home.routinesCard': 'Ваши подпрограммы',
   'home.routinesActive': '{count} активных',
   'routines.title': 'Ваши рутины',
@@ -1725,16 +1729,13 @@ const messages: TranslationMap = {
   'common.enable': 'Включить',
   'chat.safetyTimeout':
     'Агент не ответил в течение 2 минут. Попробуй снова или проверь соединение.',
-  'chat.filter.all': 'Все',
-  'chat.filter.work': 'Работа',
-  'chat.filter.briefing': 'Брифинг',
-  'chat.filter.notification': 'Уведомление',
-  'chat.filter.workers': 'Воркеры',
+  'chat.filter.general': 'Общее',
+  'chat.filter.subconscious': 'Подсознание',
+  'chat.filter.tasks': 'Задачи',
   'chat.selectThread': 'Выбери чат',
   'chat.threads': 'Чаты',
   'chat.noThreads': 'Чатов пока нет',
   'chat.noLabelThreads': 'Нет чатов «{label}»',
-  'chat.noWorkerThreads': 'Чатов воркеров пока нет',
   'chat.deleteThread': 'Удалить чат',
   'chat.deleteThreadConfirm': 'Удалить «{title}»?',
   'chat.untitledThread': 'Чат без названия',
@@ -2537,7 +2538,24 @@ const messages: TranslationMap = {
   'conversations.taskKanban.field.title': 'Заголовок',
   'conversations.taskKanban.saveChanges': 'Сохранить изменения',
   'conversations.taskKanban.deleteCard': 'Удалить',
+  'conversations.taskKanban.workTask': 'Работать над задачей',
+  'conversations.taskKanban.startingTask': 'Запуск…',
   'conversations.taskKanban.updateFailed': 'Не удалось обновить задачу; изменения не сохранились.',
+  'conversations.taskKanban.sourcesButton': 'Источники',
+  'conversations.taskKanban.source.openExternal': 'Открыть внешнюю задачу',
+  'conversations.taskKanban.source.openExternalShort': 'Открыть',
+  'conversations.taskKanban.source.unknownProvider': 'Неизвестный источник',
+  'conversations.taskKanban.source.urgencyValue': 'Срочность {percent}%',
+  'conversations.taskKanban.sources.desktopOnly':
+    'Управление источниками задач доступно в настольном приложении.',
+  'conversations.taskKanban.sources.title': 'Источники задач',
+  'conversations.taskKanban.sources.statusEnabled': 'Автоматический опрос включен',
+  'conversations.taskKanban.sources.manage': 'Управлять источниками',
+  'conversations.taskKanban.source.title': 'Источник',
+  'conversations.taskKanban.source.sourceId': 'ID источника',
+  'conversations.taskKanban.source.externalId': 'Внешний ID',
+  'conversations.taskKanban.source.repo': 'Репозиторий',
+  'conversations.taskKanban.source.urgency': 'Срочность',
   'conversations.toolTimeline.turn': 'ход',
   'conversations.toolTimeline.step': 'Шаг',
   'conversations.toolTimeline.workerThread': 'чат воркера',
@@ -2652,6 +2670,47 @@ const messages: TranslationMap = {
   'intelligence.tasks.composer.create': 'Создать задачу',
   'intelligence.tasks.composer.creating': 'Создание…',
   'intelligence.tasks.composer.createFailed': 'Не удалось создать задачу',
+  'intelligence.tasks.composer.assignAgentLabel': 'Поручить агенту выполнить это автоматически',
+  'intelligence.tasks.composer.assignAgentHint':
+    'Доска задач возьмёт её и выполнит за вас. Оставьте выключенным для обычной личной задачи.',
+  'intelligence.tasks.sourceList.subtitle':
+    'Задачи из источников, ожидающие превращения в работу агента.',
+  'intelligence.tasks.sourceList.empty': 'Нет ожидающих задач из источников.',
+  'intelligence.tasks.sourceList.queued': 'В очереди',
+  'intelligence.tasks.sourceList.workOnTask': 'Работать над задачей',
+  'intelligence.tasks.sourcePlan.title': 'Уточнить задачу из источника',
+  'intelligence.tasks.sourcePlan.subtitle':
+    'Проверьте черновик исследования перед созданием задачи агента.',
+  'intelligence.tasks.sourcePlan.researchAgent': 'Черновик исследовательского агента',
+  'intelligence.tasks.sourcePlan.approve': 'Утвердить план',
+  'intelligence.tasks.sourcePlan.creating': 'Создание задачи…',
+  'intelligence.tasks.sourcePlan.createFailed': 'Не удалось создать задачу агента',
+  'intelligence.tasks.workTaskFailed': 'Не удалось начать работу над задачей',
+  'intelligence.workTask.sourceTaskHeading': 'Исходная задача:',
+  'intelligence.workTask.repositoryLine': '- Репозиторий: {repo}',
+  'intelligence.workTask.externalIdLine': '- Внешний ID: {externalId}',
+  'intelligence.workTask.urlLine': '- Ссылка: {url}',
+  'intelligence.workTask.closingInstruction':
+    'Начните с краткого повторения конкретного плана реализации, затем выполните его. Поддерживайте видимость прогресса в этой ветке и обновляйте доску задач при изменении состояния работы.',
+  'intelligence.refine.objectiveDefault':
+    'Превратите исходную задачу в готовую к реализации задачу агента: {title}',
+  'intelligence.refine.sourceLine': 'Источник: {url}',
+  'intelligence.refine.sourceIntake': 'Источник: приём источников задач',
+  'intelligence.refine.repositoryLine': 'Репозиторий: {repo}',
+  'intelligence.refine.externalTaskLine': 'Внешняя задача: {externalId}',
+  'intelligence.refine.planStep1':
+    'Прочитайте связанную исходную задачу и подтвердите точно запрошенное поведение.',
+  'intelligence.refine.planStep2':
+    'Изучите соответствующие пути кода и определите наименьшую границу реализации.',
+  'intelligence.refine.planStep3':
+    'Реализуйте изменение с целевыми тестами вокруг видимого пользователю поведения.',
+  'intelligence.refine.planStep4':
+    'Запустите целевую проверку и зафиксируйте оставшиеся риски или последующую работу.',
+  'intelligence.refine.acceptance1': 'Требования исходной задачи отражены в итоговой реализации.',
+  'intelligence.refine.acceptance2':
+    'Соответствующие модульные или интеграционные тесты покрывают изменённое поведение.',
+  'intelligence.refine.acceptance3':
+    'Результаты проверки и любые нерешённые риски фиксируются при завершении.',
   'notifications.card.dismiss': 'Закрыть уведомление',
   'notifications.card.importanceTitle': 'Важность: {pct}%',
   'notifications.center.empty': 'Уведомлений пока нет',
@@ -4162,6 +4221,8 @@ const messages: TranslationMap = {
   'chat.agentProfile.defaultAgentLabel': 'Оркестратор',
   'chat.agentProfile.exists': 'Профиль агента «{name}» уже существует.',
   'chat.agentProfile.label': 'Профиль агента',
+  'chat.agentProfile.quick': 'Быстрый',
+  'chat.agentProfile.reasoning': 'Рассуждение',
   'chat.agentProfile.namePlaceholder': 'Имя профиля',
   'chat.agentProfile.promptStylePlaceholder': 'Стиль подсказки',
   'chat.agentProfile.allowedToolsPlaceholder': 'Разрешенные инструменты',
@@ -4297,6 +4358,10 @@ const messages: TranslationMap = {
   'settings.taskSources.github.repo': 'Репозиторий (владелец/имя, необязательно)',
   'settings.taskSources.github.labels': 'Ярлыки (через запятую)',
   'settings.taskSources.notion.database': 'Идентификатор базы данных (доски)',
+  'settings.taskSources.notion.browseDatabases': 'Обзор баз данных',
+  'settings.taskSources.notion.loadingDatabases': 'Загрузка баз данных…',
+  'settings.taskSources.notion.selectDatabase': 'Выберите базу данных…',
+  'settings.taskSources.notion.noDatabases': 'Базы данных для этого подключения не найдены.',
   'settings.taskSources.linear.team': 'Идентификатор команды (необязательно)',
   'settings.taskSources.clickup.team': 'Идентификатор рабочей области (команды) (необязательно)',
   'settings.taskSources.assignedToMe': 'Только элементы, назначенные мне',
@@ -4736,6 +4801,18 @@ const messages: TranslationMap = {
   'security.approvalGateOverrideIgnored.body':
     'Обнаружено переопределение OPENHUMAN_APPROVAL_GATE=0, но оно проигнорировано: настольное приложение всегда держит шлюз одобрения включённым.',
 
+
+  // Run queue
+  'runQueue.mode.interrupt': 'Прервать',
+  'runQueue.mode.steer': 'Направить',
+  'runQueue.mode.followup': 'Продолжение',
+  'runQueue.mode.collect': 'Добавить контекст',
+  'runQueue.queued': 'Сообщение в очереди',
+  'runQueue.steerHint': 'Направить текущий ход',
+  'runQueue.followupHint': 'Добавить в очередь как продолжение',
+  'runQueue.collectHint': 'Добавить как дополнительный контекст',
+  'runQueue.status': '{total} в очереди',
+  'runQueue.cleared': 'Очередь очищена',
 };
 
 export default messages;

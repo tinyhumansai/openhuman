@@ -333,7 +333,7 @@ async fn round24_threads_public_ops_cover_crud_and_error_branches() {
     .value
     .data
     .expect("labels data");
-    assert_eq!(relabeled.labels, vec!["work"]);
+    assert_eq!(relabeled.labels, vec!["general"]);
 
     let empty_title = thread_update_title(UpdateConversationThreadTitleRequest {
         thread_id: created.id.clone(),

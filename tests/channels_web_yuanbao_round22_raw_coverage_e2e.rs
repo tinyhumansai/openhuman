@@ -189,13 +189,13 @@ fn isolated_config() -> (tempfile::TempDir, Config) {
 #[tokio::test]
 async fn web_start_chat_validation_forced_error_and_cancel_paths_are_structured() {
     assert_eq!(
-        start_chat(" ", "thread", "hello", None, None, None, None)
+        start_chat(" ", "thread", "hello", None, None, None, None, None)
             .await
             .unwrap_err(),
         "client_id is required"
     );
     assert_eq!(
-        start_chat("client", " ", "hello", None, None, None, None)
+        start_chat("client", " ", "hello", None, None, None, None, None)
             .await
             .unwrap_err(),
         "thread_id is required"
@@ -212,6 +212,7 @@ async fn web_start_chat_validation_forced_error_and_cancel_paths_are_structured(
         "Please respond through the forced error seam.",
         Some(" ".to_string()),
         Some(0.4),
+        None,
         None,
         None,
     )

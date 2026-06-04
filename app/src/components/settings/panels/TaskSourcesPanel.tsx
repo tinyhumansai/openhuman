@@ -5,10 +5,12 @@ import {
   openhumanTaskSourcesAdd,
   openhumanTaskSourcesFetch,
   openhumanTaskSourcesList,
+  openhumanTaskSourcesListDatabases,
   openhumanTaskSourcesPreviewFilter,
   openhumanTaskSourcesRemove,
   openhumanTaskSourcesStatus,
   openhumanTaskSourcesUpdate,
+  type TaskContainer,
   type TaskSource,
   type TaskSourceFilter,
   type TaskSourceProvider,
@@ -91,6 +93,14 @@ const TaskSourcesPanel = () => {
   const [primary, setPrimary] = useState('');
   const [labels, setLabels] = useState('');
   const [assignedToMe, setAssignedToMe] = useState(true);
+  // Notion database picker: populated on demand via `browseDatabases`.
+  const [databases, setDatabases] = useState<TaskContainer[]>([]);
+
+  // Clear any loaded database picker when the provider changes — the list is
+  // provider-specific (today only Notion exposes one).
+  useEffect(() => {
+    setDatabases([]);
+  }, [provider]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -161,6 +171,25 @@ const TaskSourcesPanel = () => {
         buildFilter(provider, { primary, labels, assignedToMe })
       );
       setNotice(t('settings.taskSources.previewResult').replace('{count}', String(tasks.length)));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyKey(null);
+    }
+  };
+
+  // Fetch the databases the connected account exposes (Notion) so the user can
+  // pick one instead of pasting a raw id.
+  const browseDatabases = async () => {
+    setBusyKey('databases');
+    setError(null);
+    setNotice(null);
+    try {
+      const dbs = await openhumanTaskSourcesListDatabases(provider);
+      setDatabases(dbs);
+      if (dbs.length === 0) {
+        setNotice(t('settings.taskSources.notion.noDatabases'));
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -296,6 +325,33 @@ const TaskSourcesPanel = () => {
               onChange={e => setPrimary(e.target.value)}
             />
           </label>
+
+          {provider === 'notion' && (
+            <div className="space-y-1">
+              <button
+                type="button"
+                className="btn btn-outline btn-sm"
+                disabled={busyKey === 'databases'}
+                onClick={() => void browseDatabases()}>
+                {busyKey === 'databases'
+                  ? t('settings.taskSources.notion.loadingDatabases')
+                  : t('settings.taskSources.notion.browseDatabases')}
+              </button>
+              {databases.length > 0 && (
+                <select
+                  className="mt-1 w-full rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100"
+                  value={primary}
+                  onChange={e => setPrimary(e.target.value)}>
+                  <option value="">{t('settings.taskSources.notion.selectDatabase')}</option>
+                  {databases.map(db => (
+                    <option key={db.id} value={db.id}>
+                      {db.title}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+          )}
 
           {provider === 'github' && (
             <label className="block text-xs text-stone-500 dark:text-neutral-400">

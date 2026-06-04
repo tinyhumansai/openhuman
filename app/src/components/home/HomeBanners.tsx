@@ -12,12 +12,16 @@ export function UsageLimitBanner({
   title,
   message,
   ctaLabel,
+  secondaryCtaLabel,
+  onSecondaryCtaClick,
 }: {
   tone: 'warning' | 'danger';
   icon: string;
   title: string;
   message: string;
   ctaLabel: string;
+  secondaryCtaLabel?: string;
+  onSecondaryCtaClick?: () => void;
 }) {
   const styles =
     tone === 'danger'
@@ -54,6 +58,17 @@ export function UsageLimitBanner({
               className={`cursor-pointer border-b border-dashed font-bold ${styles.button}`}>
               {ctaLabel}
             </button>
+            {secondaryCtaLabel && onSecondaryCtaClick && (
+              <>
+                {' '}
+                <button
+                  type="button"
+                  onClick={onSecondaryCtaClick}
+                  className={`cursor-pointer border-b border-dashed font-bold ${styles.button}`}>
+                  {secondaryCtaLabel}
+                </button>
+              </>
+            )}
           </p>
         </div>
       </div>

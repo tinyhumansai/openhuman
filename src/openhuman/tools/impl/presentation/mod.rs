@@ -28,17 +28,20 @@
 //! continue to work without change.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
 use crate::openhuman::artifacts::{
-    create_artifact, fail_artifact, finalize_artifact, ArtifactKind,
+    create_artifact, fail_artifact, finalize_artifact, read_artifact_bytes, ArtifactKind,
 };
+use crate::openhuman::security::SecurityPolicy;
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
 
 mod engine;
+mod image_util;
 mod types;
 
 #[cfg(test)]
@@ -46,7 +49,8 @@ mod types;
 mod tests;
 
 use self::types::{
-    validate_input, GeneratePresentationInput, GeneratePresentationOutput, PresentationError,
+    validate_input, GeneratePresentationInput, GeneratePresentationOutput, ResolvedSlideImage,
+    SlideImage, SlideImageSource, MAX_IMAGE_BYTES,
 };
 
 /// Generation timeout. `ppt-rs` typically completes the full 64-slide
@@ -63,14 +67,23 @@ pub const TOOL_NAME: &str = "generate_presentation";
 /// One-shot `.pptx` generator. See module docs for the request flow.
 pub struct PresentationTool {
     workspace_dir: PathBuf,
+    /// Security policy used to validate agent-supplied `File` image paths
+    /// before any filesystem read — an image path must pass the same
+    /// `validate_path` checks (allowed-location, symlink-escape, forbidden
+    /// dirs) as any other file-read operation.
+    security: Arc<SecurityPolicy>,
 }
 
 impl PresentationTool {
     /// Production constructor. The engine is stateless — no runtime
     /// resolution, venv setup, or cache directory needed. Pass the
-    /// workspace directory the artifact pipeline writes into.
-    pub fn new(workspace_dir: PathBuf) -> Self {
-        Self { workspace_dir }
+    /// workspace directory the artifact pipeline writes into, plus the
+    /// active [`SecurityPolicy`] for validating `File`-source image paths.
+    pub fn new(workspace_dir: PathBuf, security: Arc<SecurityPolicy>) -> Self {
+        Self {
+            workspace_dir,
+            security,
+        }
     }
 }
 
@@ -95,6 +108,57 @@ impl Tool for PresentationTool {
     }
 
     fn parameters_schema(&self) -> Value {
+        // Built as separate `json!` bindings (rather than one deeply-nested
+        // literal) to keep macro expansion within the crate's default
+        // recursion limit — the per-slide `images` sub-schema adds enough
+        // depth to overflow a single combined literal.
+        let image_item_schema = json!({
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["source"],
+            "properties": {
+                "source": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["type"],
+                    "description": "Image data source. Use `{type:'artifact', artifact_id}` for a prior tool's output, or `{type:'file', path}` for a readable local file.",
+                    "properties": {
+                        "type": { "type": "string", "enum": ["artifact", "file"] },
+                        "artifact_id": { "type": "string", "description": "Required when type='artifact'." },
+                        "path": { "type": "string", "description": "Required when type='file'. Absolute or action-dir-relative path." }
+                    }
+                },
+                "caption": {
+                    "type": "string",
+                    "maxLength": types::MAX_TEXT_CHARS,
+                    "description": "Optional caption rendered as a text bullet beneath the image."
+                }
+            }
+        });
+
+        let images_schema = json!({
+            "type": "array",
+            "maxItems": types::MAX_IMAGES_PER_SLIDE,
+            "description": "Images to embed beneath the slide text, single-column. PNG or JPEG only (≤5 MB each, ≤8 per deck). Each image's bytes come from a workspace artifact or a local file path the agent can read. Only attach an image whose content you have actually inspected — do not claim an image shows something you have not verified.",
+            "items": image_item_schema,
+        });
+
+        let slide_item_schema = json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "title": { "type": "string", "maxLength": types::MAX_TEXT_CHARS },
+                "body": { "type": "string", "maxLength": types::MAX_TEXT_CHARS },
+                "bullets": {
+                    "type": "array",
+                    "maxItems": types::MAX_BULLETS_PER_SLIDE,
+                    "items": { "type": "string", "maxLength": types::MAX_TEXT_CHARS }
+                },
+                "speaker_notes": { "type": "string", "maxLength": types::MAX_TEXT_CHARS },
+                "images": images_schema,
+            }
+        });
+
         json!({
             "type": "object",
             "additionalProperties": false,
@@ -120,20 +184,7 @@ impl Tool for PresentationTool {
                     "minItems": 1,
                     "maxItems": types::MAX_SLIDES,
                     "description": "Slide specs in display order. At least one entry required; hard cap to bound generation time + output size.",
-                    "items": {
-                        "type": "object",
-                        "additionalProperties": false,
-                        "properties": {
-                            "title": { "type": "string", "maxLength": types::MAX_TEXT_CHARS },
-                            "body": { "type": "string", "maxLength": types::MAX_TEXT_CHARS },
-                            "bullets": {
-                                "type": "array",
-                                "maxItems": types::MAX_BULLETS_PER_SLIDE,
-                                "items": { "type": "string", "maxLength": types::MAX_TEXT_CHARS }
-                            },
-                            "speaker_notes": { "type": "string", "maxLength": types::MAX_TEXT_CHARS }
-                        }
-                    }
+                    "items": slide_item_schema,
                 }
             }
         })
@@ -172,6 +223,18 @@ impl Tool for PresentationTool {
             "[presentation] generation request accepted"
         );
 
+        // Resolve + validate per-slide images at the async boundary. A
+        // bad image is skipped with a warning (partial success) rather
+        // than failing the whole deck — mirrors the #3076 ethos.
+        let (resolved_images, image_warnings) = self.resolve_images(&input).await;
+        if !image_warnings.is_empty() {
+            tracing::info!(
+                target: "presentation",
+                warning_count = image_warnings.len(),
+                "[presentation] some images skipped with warnings"
+            );
+        }
+
         let (meta, output_path) = create_artifact(
             &self.workspace_dir,
             ArtifactKind::Presentation,
@@ -181,7 +244,7 @@ impl Tool for PresentationTool {
         .await
         .map_err(anyhow::Error::msg)?;
 
-        let bytes = match engine::generate(&input, GENERATION_TIMEOUT).await {
+        let bytes = match engine::generate(&input, &resolved_images, GENERATION_TIMEOUT).await {
             Ok(bytes) => bytes,
             Err(err) => {
                 let _ = fail_artifact(&self.workspace_dir, &meta.id, &err.to_string()).await;
@@ -246,12 +309,120 @@ impl Tool for PresentationTool {
             artifact_path: output_path.display().to_string(),
             slide_count: input.slides.len(),
             size_bytes,
+            image_warnings,
         };
         let payload = serde_json::to_value(&out)?;
-        let markdown = format!(
+        let mut markdown = format!(
             "Generated {}-slide presentation at `{}` (artifact `{}`, {} bytes).",
             out.slide_count, out.artifact_path, out.artifact_id, out.size_bytes
         );
+        if !out.image_warnings.is_empty() {
+            markdown.push_str("\n\n⚠️ Some images were skipped:");
+            for warning in &out.image_warnings {
+                markdown.push_str(&format!("\n- {warning}"));
+            }
+        }
         Ok(ToolResult::success_with_markdown(payload, markdown))
+    }
+}
+
+impl PresentationTool {
+    /// Resolve + validate every slide's images at the async boundary,
+    /// returning a per-slide vec of embeddable images (aligned 1:1 with
+    /// `input.slides`) plus a flat list of human-readable warnings for
+    /// images that were skipped.
+    ///
+    /// A skip is never fatal: a deck with one bad image still renders,
+    /// minus that image, and the agent is told why via the warning list.
+    async fn resolve_images(
+        &self,
+        input: &GeneratePresentationInput,
+    ) -> (Vec<Vec<ResolvedSlideImage>>, Vec<String>) {
+        let mut per_slide: Vec<Vec<ResolvedSlideImage>> = Vec::with_capacity(input.slides.len());
+        let mut warnings: Vec<String> = Vec::new();
+
+        for (slide_idx, spec) in input.slides.iter().enumerate() {
+            let mut resolved = Vec::with_capacity(spec.images.len());
+            for (img_idx, image) in spec.images.iter().enumerate() {
+                match self.resolve_one_image(image).await {
+                    Ok(r) => resolved.push(r),
+                    Err(reason) => {
+                        // 1-based indices in the message (matches how the
+                        // agent thinks about "slide 2, image 1").
+                        warnings.push(format!(
+                            "slide {} image {}: {reason}",
+                            slide_idx + 1,
+                            img_idx + 1
+                        ));
+                    }
+                }
+            }
+            per_slide.push(resolved);
+        }
+
+        (per_slide, warnings)
+    }
+
+    /// Resolve a single [`SlideImage`] to validated, embeddable bytes.
+    /// Returns `Err(reason)` (a short human-readable string) when the
+    /// image cannot be embedded — the caller turns that into a skip
+    /// warning.
+    async fn resolve_one_image(&self, image: &SlideImage) -> Result<ResolvedSlideImage, String> {
+        let bytes = match &image.source {
+            SlideImageSource::Artifact { artifact_id } => {
+                read_artifact_bytes(&self.workspace_dir, artifact_id)
+                    .await
+                    .map_err(|e| format!("artifact {artifact_id} unreadable: {e}"))?
+            }
+            SlideImageSource::File { path } => {
+                // Validate the agent-supplied path against the security
+                // policy BEFORE touching the filesystem. This enforces the
+                // same allowed-location / symlink-escape / forbidden-dir
+                // checks as every other file-read tool — without it an
+                // agent could embed `/etc/shadow` or `~/.ssh/id_rsa`.
+                // `validate_path` returns the canonical, in-policy path.
+                let resolved = self
+                    .security
+                    .validate_path(path)
+                    .await
+                    .map_err(|e| format!("file {path} not allowed: {e}"))?;
+                // Stat first so a pathologically large file is rejected
+                // before we pull it into memory.
+                let meta = tokio::fs::metadata(&resolved)
+                    .await
+                    .map_err(|e| format!("file {path} unreadable: {e}"))?;
+                if meta.len() as usize > MAX_IMAGE_BYTES {
+                    return Err(format!(
+                        "file {path} is {} bytes, exceeds {MAX_IMAGE_BYTES}-byte cap",
+                        meta.len()
+                    ));
+                }
+                tokio::fs::read(&resolved)
+                    .await
+                    .map_err(|e| format!("file {path} unreadable: {e}"))?
+            }
+        };
+
+        if bytes.len() > MAX_IMAGE_BYTES {
+            return Err(format!(
+                "image is {} bytes, exceeds {MAX_IMAGE_BYTES}-byte cap",
+                bytes.len()
+            ));
+        }
+
+        let format = image_util::sniff_format(&bytes).ok_or_else(|| {
+            "unsupported image type (only PNG and JPEG are embeddable)".to_string()
+        })?;
+
+        let (width_px, height_px) = image_util::pixel_dimensions(&bytes, format)
+            .ok_or_else(|| format!("could not read {format} dimensions (corrupt header?)"))?;
+
+        Ok(ResolvedSlideImage {
+            bytes,
+            format,
+            width_px,
+            height_px,
+            caption: image.caption.clone(),
+        })
     }
 }

@@ -71,3 +71,49 @@ fn default_impl_matches_new() {
     let _a = NotionProvider::new();
     let _b = NotionProvider::default();
 }
+
+// ── parse_database_results (list_databases parser) ───────────────────────────
+
+#[test]
+fn parse_database_results_keeps_databases_and_extracts_title() {
+    use super::provider::parse_database_results;
+    let data = json!({
+        "results": [
+            {
+                "object": "database",
+                "id": "db-1",
+                "title": [{ "plain_text": "Engineering " }, { "plain_text": "Tasks" }]
+            },
+            // A page hit must be filtered out — list_databases is databases only.
+            { "object": "page", "id": "pg-9", "title": [{ "plain_text": "Some page" }] },
+            // Newest API exposes databases as `data_source`.
+            { "object": "data_source", "id": "db-2", "title": [{ "plain_text": "Roadmap" }] },
+            // Untitled database falls back to a synthesized label.
+            { "object": "database", "id": "db-3", "title": [] }
+        ]
+    });
+    let dbs = parse_database_results(&data);
+    assert_eq!(
+        dbs.len(),
+        3,
+        "two named databases + one data_source, page dropped"
+    );
+    assert_eq!(dbs[0].id, "db-1");
+    assert_eq!(dbs[0].title, "Engineering Tasks");
+    assert_eq!(dbs[1].id, "db-2");
+    assert_eq!(dbs[1].title, "Roadmap");
+    assert_eq!(dbs[2].title, "Notion database db-3");
+}
+
+#[test]
+fn parse_database_results_handles_data_wrapper_and_empty() {
+    use super::provider::parse_database_results;
+    let wrapped = json!({ "data": { "results": [
+        { "object": "database", "id": "x", "title": [{ "plain_text": "Wrapped" }] }
+    ] } });
+    let dbs = parse_database_results(&wrapped);
+    assert_eq!(dbs.len(), 1);
+    assert_eq!(dbs[0].title, "Wrapped");
+
+    assert!(parse_database_results(&json!({ "results": [] })).is_empty());
+}

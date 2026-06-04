@@ -161,7 +161,7 @@ async fn spawn_worker_thread_tool_persists_worker_thread_e2e() {
         conversations::list_threads(workspace.path().to_path_buf()).expect("worker threads");
     let worker = threads
         .iter()
-        .find(|thread| thread.labels.contains(&"worker".to_string()))
+        .find(|thread| thread.labels.contains(&"tasks".to_string()))
         .expect("worker thread was persisted");
     assert_eq!(worker.title, "Long delegated task");
 

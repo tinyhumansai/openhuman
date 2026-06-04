@@ -286,3 +286,124 @@ pub(crate) fn extract_responses_text(response: ResponsesResponse) -> Option<Stri
 
     None
 }
+
+/// Aggregate an OpenAI Responses-API **SSE** body into the final assistant
+/// text (#3201).
+///
+/// The Codex/ChatGPT OAuth Responses endpoint
+/// (`https://chatgpt.com/backend-api/codex/responses`) rejects requests with
+/// `stream: false` (`Stream must be set to true`), so callers that target it
+/// must send `stream: true` and parse the resulting Server-Sent Event
+/// stream instead of the single JSON envelope `parse_responses_response_body`
+/// handles.
+///
+/// SSE shape (simplified — only the parts we depend on):
+///
+/// ```text
+/// event: response.output_text.delta
+/// data: {"type":"response.output_text.delta","delta":"Hello"}
+///
+/// event: response.output_text.delta
+/// data: {"type":"response.output_text.delta","delta":" world"}
+///
+/// event: response.completed
+/// data: {"type":"response.completed","response":{"output_text":"Hello world", ...}}
+///
+/// data: [DONE]
+/// ```
+///
+/// Strategy:
+///
+/// - Walk every `data: …` line (the `event:` line is informational; we route
+///   off the `type` field inside the JSON payload for resilience to the
+///   sentinel-style endings some providers emit).
+/// - `[DONE]` and empty data lines terminate the loop cleanly.
+/// - `response.output_text.delta` → push `delta` onto the accumulator.
+/// - `response.completed` → if we have a non-empty terminal
+///   `response.output_text`, prefer it (covers providers that batch the full
+///   text in the completion event and omit deltas).
+/// - Unrecognized `type` values are ignored — the spec is open-ended (tool
+///   calls, reasoning summaries, …) and we only need the assistant text here.
+///
+/// Returns the joined text on success. The error path returns the
+/// snippet-sanitised body just like [`parse_responses_response_body`] so a
+/// genuinely malformed stream is debuggable without leaking arbitrary chunk
+/// payloads.
+pub(crate) fn aggregate_responses_sse_body(
+    provider_name: &str,
+    body: &str,
+) -> anyhow::Result<String> {
+    let mut accumulated = String::new();
+    let mut terminal_text: Option<String> = None;
+
+    for raw_line in body.split('\n') {
+        let line = raw_line.trim_end_matches('\r');
+        let Some(data) = line.strip_prefix("data:") else {
+            continue;
+        };
+        let data = data.trim();
+        if data.is_empty() || data == "[DONE]" {
+            continue;
+        }
+
+        let value: serde_json::Value = match serde_json::from_str(data) {
+            Ok(v) => v,
+            Err(error) => {
+                // Skip individual unparseable events rather than failing the
+                // whole turn — providers occasionally emit comments/keepalives
+                // shaped like `data: {ping}` that aren't strict JSON.
+                log::debug!(
+                    "[providers][{provider_name}] Responses SSE: skipping unparseable event ({error})"
+                );
+                continue;
+            }
+        };
+
+        let event_type = value.get("type").and_then(serde_json::Value::as_str);
+        match event_type {
+            Some("response.output_text.delta") => {
+                if let Some(delta) = value.get("delta").and_then(serde_json::Value::as_str) {
+                    accumulated.push_str(delta);
+                }
+            }
+            Some("response.completed") => {
+                // Use the same "non-empty-after-trim" policy as
+                // `extract_responses_text` / `first_nonempty` so a
+                // whitespace-only terminal `output_text` doesn't override
+                // a non-empty accumulated delta stream and collapse a
+                // valid streamed reply to blank output.
+                terminal_text = value
+                    .get("response")
+                    .and_then(|response| response.get("output_text"))
+                    .and_then(serde_json::Value::as_str)
+                    .and_then(|text| first_nonempty(Some(text)));
+            }
+            // Treat error-shaped events as a hard failure so the caller
+            // surfaces the upstream reason instead of an empty completion.
+            Some("response.failed") | Some("response.error") | Some("error") => {
+                let snippet = compact_sanitized_body_snippet(data);
+                anyhow::bail!(
+                    "{provider_name} Responses API stream reported a failure event: {snippet}"
+                );
+            }
+            _ => {}
+        }
+    }
+
+    // Prefer the terminal `response.output_text` when it carries a non-empty
+    // string — some providers batch full text in `response.completed` and
+    // skip per-token deltas, and others repeat what we accumulated. Either
+    // way the terminal text is the authoritative version on the wire.
+    // (`first_nonempty` in the match arm above already filtered whitespace.)
+    if let Some(text) = terminal_text {
+        return Ok(text);
+    }
+    if !accumulated.is_empty() {
+        return Ok(accumulated);
+    }
+
+    let snippet = compact_sanitized_body_snippet(body);
+    anyhow::bail!(
+        "{provider_name} Responses API SSE stream produced no text events; body={snippet}"
+    )
+}

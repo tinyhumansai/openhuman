@@ -1,3 +1,4 @@
+use crate::openhuman::file_state;
 use crate::openhuman::security::{CommandClass, GateDecision, SecurityPolicy};
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
 use async_trait::async_trait;
@@ -129,11 +130,36 @@ impl Tool for FileWriteTool {
             ));
         }
 
+        // File-state guard: reject writes based on stale or partial reads.
+        if let Some(agent_id) = file_state::current_file_state_agent_id() {
+            if let Some(msg) = file_state::check_stale_read(&agent_id, &resolved_target) {
+                tracing::debug!(
+                    agent = %agent_id,
+                    path = %resolved_target.display(),
+                    "[file_state] file_write blocked: stale read"
+                );
+                return Ok(ToolResult::error(msg));
+            }
+            if let Some(msg) = file_state::check_partial_read(&agent_id, &resolved_target) {
+                tracing::debug!(
+                    agent = %agent_id,
+                    path = %resolved_target.display(),
+                    "[file_state] file_write blocked: partial read"
+                );
+                return Ok(ToolResult::error(msg));
+            }
+        }
+
         match tokio::fs::write(&resolved_target, content).await {
-            Ok(()) => Ok(ToolResult::success(format!(
-                "Written {} bytes to {path}",
-                content.len()
-            ))),
+            Ok(()) => {
+                if let Some(agent_id) = file_state::current_file_state_agent_id() {
+                    file_state::record_write(&agent_id, resolved_target);
+                }
+                Ok(ToolResult::success(format!(
+                    "Written {} bytes to {path}",
+                    content.len()
+                )))
+            }
             Err(e) => Ok(ToolResult::error(format!("Failed to write file: {e}"))),
         }
     }

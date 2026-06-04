@@ -82,7 +82,11 @@ impl Tool for ArtifactListTool {
         log::debug!("[tool][artifacts] list invoked");
         let offset = read_opt_usize(&args, "offset");
         let limit = read_opt_usize(&args, "limit");
-        let outcome = ops::ai_list_artifacts(&self.config, offset, limit)
+        // The agent-facing tool surface lists everything in the workspace;
+        // the per-chat filter is an RPC-only knob used by the React panel
+        // (#3226). Keep the tool path unchanged so existing agent flows
+        // (orchestrator artifact reasoning) still see the full set.
+        let outcome = ops::ai_list_artifacts(&self.config, offset, limit, None)
             .await
             .map_err(|e| anyhow::anyhow!("artifact_list: {e}"))?;
         Ok(ToolResult::success(serde_json::to_string(&outcome.value)?))

@@ -937,4 +937,50 @@ mod tests {
             result.output()
         );
     }
+
+    /// Regression guard for #3235 (cwd_jail wiring for shell-family tools).
+    ///
+    /// PR #3261 wired `ShellTool` to route through `sandbox::execute_in_sandbox`
+    /// (which uses `cwd_jail` for the local-OS-jail backend) when the
+    /// active agent's `SandboxMode::Sandboxed` is set. This PR extends the
+    /// same wiring to `NodeExecTool` and `NpmExecTool`. The behavioural
+    /// `shell_sandboxed_mode_routes_through_sandbox_backend` test above
+    /// proves the contract end-to-end for `shell` (no managed-Node
+    /// dependency); `node_exec` and `npm_exec` cannot run end-to-end in
+    /// unit tests without a resolved `NodeBootstrap`, so this source-grep
+    /// guard catches refactors that drop the sandbox check from either
+    /// tool's `execute()` body.
+    #[test]
+    fn shell_family_tools_route_to_sandbox_when_sandboxed_mode_active() {
+        const SHELL_SRC: &str = include_str!("shell.rs");
+        const NODE_EXEC_SRC: &str = include_str!("node_exec.rs");
+        const NPM_EXEC_SRC: &str = include_str!("npm_exec.rs");
+
+        for (name, src) in [
+            ("shell.rs", SHELL_SRC),
+            ("node_exec.rs", NODE_EXEC_SRC),
+            ("npm_exec.rs", NPM_EXEC_SRC),
+        ] {
+            assert!(
+                src.contains("current_sandbox_mode()"),
+                "{name} must check `current_sandbox_mode()` to detect SandboxMode::Sandboxed \
+                 sessions and route through the sandbox backend (see #3235)"
+            );
+            assert!(
+                src.contains("SandboxMode::Sandboxed"),
+                "{name} must compare against `SandboxMode::Sandboxed` to opt in to the \
+                 sandbox routing path (see #3235)"
+            );
+            // Use the call-site pattern `.run_sandboxed(` so the assertion
+            // doesn't trivially pass on the helper definition itself
+            // (`fn run_sandboxed(...)`). If `execute()` / `run_with_security()`
+            // stop delegating, this fires even though the helper still exists.
+            assert!(
+                src.contains(".run_sandboxed("),
+                "{name} must delegate to a `run_sandboxed` helper when the sandbox mode is \
+                 active (see #3235). Whitespace before `.run_sandboxed` is tolerated; the \
+                 helper call must appear in the source — *not* just the helper definition."
+            );
+        }
+    }
 }

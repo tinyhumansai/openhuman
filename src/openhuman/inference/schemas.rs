@@ -28,6 +28,11 @@ struct InferenceVisionPromptParams {
 }
 
 #[derive(Debug, Deserialize)]
+struct InferenceResolveModelParams {
+    hint: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct InferenceTestProviderModelParams {
     workload: String,
     provider: String,
@@ -120,6 +125,7 @@ struct InferenceOpenAiOAuthCompleteParams {
 
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
+        schemas("resolve_model"),
         schemas("status"),
         schemas("get_client_config"),
         schemas("update_model_settings"),
@@ -147,6 +153,10 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
 
 pub fn all_registered_controllers() -> Vec<RegisteredController> {
     vec![
+        RegisteredController {
+            schema: schemas("resolve_model"),
+            handler: handle_inference_resolve_model,
+        },
         RegisteredController {
             schema: schemas("status"),
             handler: handle_inference_status,
@@ -240,6 +250,13 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
 
 pub fn schemas(function: &str) -> ControllerSchema {
     match function {
+        "resolve_model" => ControllerSchema {
+            namespace: "inference",
+            function: "resolve_model",
+            description: "Resolve a model hint or tier name to the concrete model the provider router would use.",
+            inputs: vec![required_string("hint", "Model hint (e.g. hint:reasoning) or tier name (e.g. reasoning-v1).")],
+            outputs: vec![json_output("model", "Resolved concrete model id.")],
+        },
         "status" => ControllerSchema {
             namespace: "inference",
             function: "status",
@@ -531,6 +548,20 @@ fn json_output(name: &'static str, comment: &'static str) -> FieldSchema {
         comment,
         required: true,
     }
+}
+
+fn handle_inference_resolve_model(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let p = deserialize_params::<InferenceResolveModelParams>(params)?;
+        let config = config_rpc::load_config_with_timeout().await?;
+        let resolved = crate::openhuman::inference::provider::factory::resolve_model_for_hint(
+            &p.hint, &config,
+        );
+        to_json(RpcOutcome::new(
+            serde_json::json!({ "model": resolved }),
+            vec![],
+        ))
+    })
 }
 
 fn handle_inference_status(_params: Map<String, Value>) -> ControllerFuture {

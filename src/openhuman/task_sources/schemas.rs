@@ -55,6 +55,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("fetch"),
         schemas("list_tasks"),
         schemas("preview_filter"),
+        schemas("list_databases"),
         schemas("status"),
     ]
 }
@@ -92,6 +93,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("preview_filter"),
             handler: handle_preview_filter,
+        },
+        RegisteredController {
+            schema: schemas("list_databases"),
+            handler: handle_list_databases,
         },
         RegisteredController {
             schema: schemas("status"),
@@ -292,6 +297,26 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "list_databases" => ControllerSchema {
+            namespace: "task_sources",
+            function: "list_databases",
+            description: "List selectable containers (e.g. Notion databases) for a provider/connection so the UI can offer a picker.",
+            inputs: vec![
+                provider_input(),
+                FieldSchema {
+                    name: "connection_id",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Optional Composio connection id.",
+                    required: false,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "databases",
+                ty: TypeSchema::Array(Box::new(TypeSchema::Json)),
+                comment: "Selectable containers, each `{ id, title }`.",
+                required: true,
+            }],
+        },
         "status" => ControllerSchema {
             namespace: "task_sources",
             function: "status",
@@ -445,6 +470,15 @@ fn handle_preview_filter(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+fn handle_list_databases(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let provider = read_provider(&params)?;
+        let connection_id = read_optional::<String>(&params, "connection_id")?;
+        to_json(ops::list_databases(&config, provider, connection_id).await?)
+    })
+}
+
 fn handle_status(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async {
         let config = config_rpc::load_config_with_timeout().await?;
@@ -518,6 +552,7 @@ mod tests {
                 "fetch",
                 "list_tasks",
                 "preview_filter",
+                "list_databases",
                 "status"
             ]
         );
@@ -526,7 +561,7 @@ mod tests {
     #[test]
     fn all_registered_controllers_has_handler_per_schema() {
         let controllers = all_registered_controllers();
-        assert_eq!(controllers.len(), 9);
+        assert_eq!(controllers.len(), 10);
         assert!(controllers
             .iter()
             .all(|c| c.schema.namespace == "task_sources"));

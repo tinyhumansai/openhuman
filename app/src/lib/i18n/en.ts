@@ -220,6 +220,10 @@ const en: TranslationMap = {
   'home.usageExhaustedBody':
     "You're out of included usage for now. Start a subscription to unlock more ongoing capacity.",
   'home.usageExhaustedCta': 'Get a subscription',
+  'openrouterFree.cta': 'Use OpenRouter free models',
+  'openrouterFree.saving': 'Connecting OpenRouter...',
+  'openrouterFree.error':
+    'Could not switch to OpenRouter free models. Check your OpenRouter sign-in and try again.',
   'home.routinesCard': 'Your Routines',
   'home.routinesActive': '{count} active',
 
@@ -1959,16 +1963,13 @@ const en: TranslationMap = {
   // Chat (additional)
   'chat.safetyTimeout':
     'No response from the agent after 2 minutes. Try again or check your connection.',
-  'chat.filter.all': 'All',
-  'chat.filter.work': 'Work',
-  'chat.filter.briefing': 'Briefing',
-  'chat.filter.notification': 'Notification',
-  'chat.filter.workers': 'Workers',
+  'chat.filter.general': 'General',
+  'chat.filter.subconscious': 'Subconscious',
+  'chat.filter.tasks': 'Tasks',
   'chat.selectThread': 'Select a thread',
   'chat.threads': 'Threads',
   'chat.noThreads': 'No threads yet',
   'chat.noLabelThreads': 'No "{label}" threads',
-  'chat.noWorkerThreads': 'No worker threads yet',
   'chat.deleteThread': 'Delete thread',
   'chat.deleteThreadConfirm': 'Are you sure you want to delete "{title}"?',
   'chat.untitledThread': 'Untitled thread',
@@ -2900,7 +2901,24 @@ const en: TranslationMap = {
   'conversations.taskKanban.field.title': 'Title',
   'conversations.taskKanban.saveChanges': 'Save changes',
   'conversations.taskKanban.deleteCard': 'Delete',
+  'conversations.taskKanban.workTask': 'Work task',
+  'conversations.taskKanban.startingTask': 'Starting…',
   'conversations.taskKanban.updateFailed': 'Could not update task; changes were not saved.',
+  'conversations.taskKanban.sourcesButton': 'Sources',
+  'conversations.taskKanban.source.openExternal': 'Open external task',
+  'conversations.taskKanban.source.openExternalShort': 'Open',
+  'conversations.taskKanban.source.unknownProvider': 'Unknown source',
+  'conversations.taskKanban.source.urgencyValue': 'Urgency {percent}%',
+  'conversations.taskKanban.sources.desktopOnly':
+    'Task source controls are available in the desktop app.',
+  'conversations.taskKanban.sources.title': 'Task sources',
+  'conversations.taskKanban.sources.statusEnabled': 'Automatic polling enabled',
+  'conversations.taskKanban.sources.manage': 'Manage sources',
+  'conversations.taskKanban.source.title': 'Source',
+  'conversations.taskKanban.source.sourceId': 'Source ID',
+  'conversations.taskKanban.source.externalId': 'External ID',
+  'conversations.taskKanban.source.repo': 'Repository',
+  'conversations.taskKanban.source.urgency': 'Urgency',
   'conversations.toolTimeline.turn': 'turn',
   'conversations.toolTimeline.step': 'step',
   'conversations.toolTimeline.workerThread': 'worker thread',
@@ -3018,6 +3036,47 @@ const en: TranslationMap = {
   'intelligence.tasks.composer.create': 'Create task',
   'intelligence.tasks.composer.creating': 'Creating…',
   'intelligence.tasks.composer.createFailed': "Couldn't create the task",
+  'intelligence.tasks.composer.assignAgentLabel': 'Let an agent work on this automatically',
+  'intelligence.tasks.composer.assignAgentHint':
+    'The task board picks it up and runs it for you. Leave off for a plain personal to-do.',
+  'intelligence.tasks.sourceList.subtitle': 'Source tasks waiting to become agent work.',
+  'intelligence.tasks.sourceList.empty': 'No source tasks waiting.',
+  'intelligence.tasks.sourceList.queued': 'Queued',
+  'intelligence.tasks.sourceList.workOnTask': 'Work on task',
+  'intelligence.tasks.sourcePlan.title': 'Refine source task',
+  'intelligence.tasks.sourcePlan.subtitle':
+    'Review the research draft before creating an agent task.',
+  'intelligence.tasks.sourcePlan.researchAgent': 'Research agent draft',
+  'intelligence.tasks.sourcePlan.approve': 'Approve Plan',
+  'intelligence.tasks.sourcePlan.creating': 'Creating task…',
+  'intelligence.tasks.sourcePlan.createFailed': "Couldn't create the agent task",
+  'intelligence.tasks.workTaskFailed': "Couldn't start work on the task",
+  'intelligence.workTask.sourceTaskHeading': 'Source task:',
+  'intelligence.workTask.repositoryLine': '- Repository: {repo}',
+  'intelligence.workTask.externalIdLine': '- External ID: {externalId}',
+  'intelligence.workTask.urlLine': '- URL: {url}',
+  'intelligence.workTask.closingInstruction':
+    'Start by restating the concrete implementation plan briefly, then execute it. Keep progress visible in this thread and update the task board when the work state changes.',
+  'intelligence.refine.objectiveDefault':
+    'Turn the source task into an implementation-ready agent task: {title}',
+  'intelligence.refine.sourceLine': 'Source: {url}',
+  'intelligence.refine.sourceIntake': 'Source: task source intake',
+  'intelligence.refine.repositoryLine': 'Repository: {repo}',
+  'intelligence.refine.externalTaskLine': 'External task: {externalId}',
+  'intelligence.refine.planStep1':
+    'Read the linked source task and confirm the exact requested behavior.',
+  'intelligence.refine.planStep2':
+    'Inspect the relevant code paths and identify the smallest implementation boundary.',
+  'intelligence.refine.planStep3':
+    'Implement the change with focused tests around the user-visible behavior.',
+  'intelligence.refine.planStep4':
+    'Run targeted validation and capture any residual risks or follow-up work.',
+  'intelligence.refine.acceptance1':
+    'The source task requirements are represented in the final implementation.',
+  'intelligence.refine.acceptance2':
+    'Relevant unit or integration tests cover the changed behavior.',
+  'intelligence.refine.acceptance3':
+    'Validation results and any unresolved risk are recorded on completion.',
   'notifications.card.dismiss': 'Dismiss notification',
   'notifications.card.importanceTitle': 'Importance: {pct}%',
   'notifications.center.empty': 'No notifications yet',
@@ -4523,6 +4582,8 @@ const en: TranslationMap = {
   'chat.agentProfile.defaultAgentLabel': 'Orchestrator',
   'chat.agentProfile.exists': 'Agent profile "{name}" already exists.',
   'chat.agentProfile.label': 'Agent profile',
+  'chat.agentProfile.quick': 'Quick',
+  'chat.agentProfile.reasoning': 'Reasoning',
   'chat.agentProfile.namePlaceholder': 'Profile name',
   'chat.agentProfile.promptStylePlaceholder': 'Prompt style',
   'chat.agentProfile.allowedToolsPlaceholder': 'Allowed tools',
@@ -4656,6 +4717,10 @@ const en: TranslationMap = {
   'settings.taskSources.github.repo': 'Repository (owner/name, optional)',
   'settings.taskSources.github.labels': 'Labels (comma-separated)',
   'settings.taskSources.notion.database': 'Database (board) ID',
+  'settings.taskSources.notion.browseDatabases': 'Browse databases',
+  'settings.taskSources.notion.loadingDatabases': 'Loading databases…',
+  'settings.taskSources.notion.selectDatabase': 'Select a database…',
+  'settings.taskSources.notion.noDatabases': 'No databases found for this connection.',
   'settings.taskSources.linear.team': 'Team ID (optional)',
   'settings.taskSources.clickup.team': 'Workspace (team) ID (optional)',
   'settings.taskSources.assignedToMe': 'Only items assigned to me',
@@ -4934,6 +4999,18 @@ const en: TranslationMap = {
   'security.approvalGateOverrideIgnored.title': 'Override blocked',
   'security.approvalGateOverrideIgnored.body':
     'An OPENHUMAN_APPROVAL_GATE=0 override was detected but ignored: the desktop app always keeps the approval gate on.',
+
+  // Run queue
+  'runQueue.mode.interrupt': 'Interrupt',
+  'runQueue.mode.steer': 'Steer',
+  'runQueue.mode.followup': 'Follow-up',
+  'runQueue.mode.collect': 'Add context',
+  'runQueue.queued': 'Message queued',
+  'runQueue.steerHint': 'Steer the current turn',
+  'runQueue.followupHint': 'Queue as follow-up',
+  'runQueue.collectHint': 'Add as extra context',
+  'runQueue.status': '{total} queued',
+  'runQueue.cleared': 'Queue cleared',
 };
 
 export default en;

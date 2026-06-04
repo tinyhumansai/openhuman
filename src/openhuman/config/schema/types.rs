@@ -144,7 +144,7 @@ pub struct Config {
     /// Optional per-team model pins for delegated swarms.
     ///
     /// Example:
-    /// `[teams.research] lead_model = "minimax/m2" agent_model = "deepseek/v3.2"`.
+    /// `[teams.research] lead_model = "minimax/m3" agent_model = "deepseek/v3.2"`.
     #[serde(default)]
     pub teams: HashMap<String, TeamModelConfig>,
 
@@ -770,7 +770,7 @@ mod model_pin_tests {
                 model = "deepseek/deepseek-r2"
 
                 [teams.research]
-                lead_model = "minimax/m2"
+                lead_model = "minimax/m3"
                 agent_model = "deepseek/v3.2"
 
                 [teams.code]
@@ -789,7 +789,7 @@ mod model_pin_tests {
         );
         assert_eq!(
             config.configured_agent_model("researcher", true),
-            Some("minimax/m2")
+            Some("minimax/m3")
         );
         assert_eq!(
             config.configured_agent_model("code_executor", false),

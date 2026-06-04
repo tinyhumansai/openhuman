@@ -89,6 +89,44 @@ pub async fn get_usage(config: &Config) -> Result<RpcOutcome<Value>, String> {
     ))
 }
 
+fn usage_number(data: &Value, key: &str) -> f64 {
+    data.get(key).and_then(Value::as_f64).unwrap_or(0.0)
+}
+
+/// Returns true when backend usage says OpenHuman-managed spend should stop.
+///
+/// A brand-new free account can legitimately have `remainingUsd == 0` and no
+/// recurring budget; that should not disable managed tools on its own. We only
+/// gate once there is an actual cycle budget/spend signal, matching the
+/// frontend's exhausted-budget semantics while covering spend-only payloads.
+pub fn usage_budget_exhausted(data: &Value) -> bool {
+    let remaining = usage_number(data, "remainingUsd");
+    let cycle_budget = usage_number(data, "cycleBudgetUsd");
+    let cycle_spent = usage_number(data, "cycleSpentUsd");
+    let cycle_limit_7day = usage_number(data, "cycleLimit7day");
+    let bypass = data
+        .get("bypassCycleLimit")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
+    !bypass
+        && remaining <= 0.01
+        && (cycle_budget > 0.01 || cycle_spent > 0.01 || cycle_limit_7day > 0.01)
+}
+
+pub async fn managed_tool_budget_exhausted(config: &Config) -> bool {
+    match get_usage(config).await {
+        Ok(outcome) => usage_budget_exhausted(&outcome.value),
+        Err(err) => {
+            tracing::debug!(
+                error = %err,
+                "[budget-gate] usage probe failed; allowing managed tool to defer to backend"
+            );
+            false
+        }
+    }
+}
+
 pub async fn list_members(config: &Config, team_id: &str) -> Result<RpcOutcome<Value>, String> {
     let team_id = normalize_id(team_id, "teamId")?;
     let path = build_api_path(&["teams", &team_id, "members"])?;
@@ -329,6 +367,38 @@ mod tests {
         // Only leading/trailing whitespace is stripped — interior is preserved
         // so we don't silently corrupt caller-provided identifiers.
         assert_eq!(normalize_id("a b", "x").unwrap(), "a b");
+    }
+
+    #[test]
+    fn usage_budget_exhausted_requires_real_cycle_signal() {
+        assert!(!usage_budget_exhausted(&json!({
+            "remainingUsd": 0,
+            "cycleBudgetUsd": 0,
+            "cycleSpentUsd": 0,
+        })));
+        assert!(usage_budget_exhausted(&json!({
+            "remainingUsd": 0,
+            "cycleBudgetUsd": 10,
+            "cycleSpentUsd": 10,
+        })));
+        assert!(usage_budget_exhausted(&json!({
+            "remainingUsd": 0,
+            "cycleBudgetUsd": 0,
+            "cycleSpentUsd": 2,
+        })));
+    }
+
+    #[test]
+    fn usage_budget_exhausted_honors_remaining_and_bypass() {
+        assert!(!usage_budget_exhausted(&json!({
+            "remainingUsd": 0.25,
+            "cycleBudgetUsd": 10,
+        })));
+        assert!(!usage_budget_exhausted(&json!({
+            "remainingUsd": 0,
+            "cycleBudgetUsd": 10,
+            "bypassCycleLimit": true,
+        })));
     }
 
     // --- pre-HTTP input validation (no network) -----------------------------
