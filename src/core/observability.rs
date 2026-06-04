@@ -1795,6 +1795,48 @@ fn event_has_updater_transient_message(event: &sentry::protocol::Event<'_>) -> b
         })
 }
 
+/// Matches Tauri-shell `[app-update]` failure log lines whose underlying cause
+/// is a transient reqwest body-decode or transport error. The shell logs at
+/// `log::error!` in `download_app_update` / `apply_app_update` /
+/// `install_app_update` (`app/src-tauri/src/lib.rs`); these events are
+/// captured by `sentry-log` and carry no `domain=update` tag, so the
+/// tag-based branch of [`is_updater_transient_event`] cannot reach them.
+///
+/// Anchored on both the `[app-update]` prefix AND a failure-line marker so
+/// arbitrary `[app-update]` info/debug lines never get silenced, and on a
+/// transient transport phrase or `error decoding response body` so signature
+/// / install / deserialize failures still reach Sentry (TAURI-RUST-4JR).
+pub fn is_app_update_shell_transient_message(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    if !lower.contains("[app-update]") {
+        return false;
+    }
+    let is_failure_line = lower.contains("download failed:")
+        || lower.contains("download/install failed:")
+        || lower.contains("install failed:");
+    if !is_failure_line {
+        return false;
+    }
+    lower.contains("error decoding response body") || contains_transient_transport_phrase(&lower)
+}
+
+fn event_has_app_update_shell_transient_message(event: &sentry::protocol::Event<'_>) -> bool {
+    event
+        .message
+        .as_deref()
+        .is_some_and(is_app_update_shell_transient_message)
+        || event
+            .logentry
+            .as_ref()
+            .is_some_and(|log| is_app_update_shell_transient_message(&log.message))
+        || event.exception.values.iter().any(|exception| {
+            exception
+                .value
+                .as_deref()
+                .is_some_and(is_app_update_shell_transient_message)
+        })
+}
+
 fn event_has_updater_domain(event: &sentry::protocol::Event<'_>) -> bool {
     matches!(
         event.tags.get("domain").map(String::as_str),
@@ -1847,10 +1889,19 @@ pub fn is_transient_integrations_failure(event: &sentry::protocol::Event<'_>) ->
 /// `operation=check_releases`, plus `failure/status`). Tauri's updater plugin
 /// can also emit message-only events such as
 /// `"failed to check for updates: error sending request for url (...latest.json)"`.
-/// Match both shapes, but never drop an arbitrary update-domain event unless
-/// it also has a transient status/transport marker.
+/// The Tauri shell itself logs `[app-update] download failed: ...` /
+/// `[app-update] install failed: ...` via `log::error!` (captured by
+/// `sentry-log`, no `domain` tag) when `tauri_plugin_updater::Update::download`
+/// returns a reqwest body-decode or transport error — that branch is matched
+/// by [`is_app_update_shell_transient_message`] (TAURI-RUST-4JR).
+/// Match all three shapes, but never drop an arbitrary update-domain event
+/// unless it also has a transient status/transport marker.
 pub fn is_updater_transient_event(event: &sentry::protocol::Event<'_>) -> bool {
     if event_has_updater_transient_message(event) {
+        return true;
+    }
+
+    if event_has_app_update_shell_transient_message(event) {
         return true;
     }
 
@@ -4542,6 +4593,72 @@ mod tests {
             assert!(
                 !is_updater_transient_event(&event),
                 "unrelated/actionable error must still reach Sentry: {msg}"
+            );
+        }
+    }
+
+    #[test]
+    fn app_update_shell_transient_body_decode_is_dropped() {
+        // TAURI-RUST-4JR (~1.2k events / 8 days, win/macOS/linux):
+        // `app/src-tauri/src/lib.rs::download_app_update` logs
+        // `log::error!("[app-update] download failed: error decoding response body")`
+        // when `tauri_plugin_updater::Update::download()` surfaces a reqwest
+        // body-decode failure (truncated body / Content-Length mismatch /
+        // mid-stream connection drop). The event has no `domain=update` tag —
+        // sentry-log captures it from `log::error!` — so the message-only
+        // shell branch must catch it.
+        for msg in [
+            "[app-update] download failed: error decoding response body",
+            "[app-update] download/install failed: error decoding response body",
+            "[app-update] install failed: error decoding response body",
+        ] {
+            assert!(
+                is_app_update_shell_transient_message(msg),
+                "{msg} must be classified as transient app-update noise"
+            );
+            let event = event_with_tags_and_message(&[("logger", "log")], msg);
+            assert!(
+                is_updater_transient_event(&event),
+                "shell [app-update] body-decode failures must be filtered: {msg}"
+            );
+        }
+    }
+
+    #[test]
+    fn app_update_shell_transient_transport_is_dropped() {
+        // The same shell error paths also surface plain reqwest transport
+        // failures (`error sending request`, `connection closed before
+        // message completed`, …). Those reuse `TRANSIENT_TRANSPORT_PHRASES`
+        // via `contains_transient_transport_phrase`.
+        let event = event_with_tags_and_message(
+            &[("logger", "log")],
+            "[app-update] download failed: error sending request for url (https://github.com/tinyhumansai/openhuman/releases/download/v0.57.5/openhuman_0.57.5_aarch64.app.tar.gz)",
+        );
+        assert!(
+            is_updater_transient_event(&event),
+            "shell [app-update] transport failures must be filtered"
+        );
+    }
+
+    #[test]
+    fn app_update_shell_actionable_failures_still_reported() {
+        // Signature verification / install failures / missing-asset errors
+        // are real bugs and must still reach Sentry even though they share
+        // the `[app-update] ... failed:` prefix. Pin the rejection contract.
+        for msg in [
+            "[app-update] download failed: signature verification failed",
+            "[app-update] install failed: failed to write to /Applications/OpenHuman.app (permission denied)",
+            "[app-update] download/install failed: invalid update manifest",
+            "[app-update] check requested (current: 0.57.5)", // info line, not a failure
+        ] {
+            assert!(
+                !is_app_update_shell_transient_message(msg),
+                "{msg} must NOT be classified as transient"
+            );
+            let event = event_with_tags_and_message(&[("logger", "log")], msg);
+            assert!(
+                !is_updater_transient_event(&event),
+                "actionable / non-failure shell log MUST still reach Sentry: {msg}"
             );
         }
     }
