@@ -221,16 +221,7 @@ const AgentAccessPanel = () => {
     try {
       const resp = await openhumanSetActionDir(trimmed);
       if (actionDirSeqRef.current !== seq) return;
-      setAgentPaths(prev =>
-        prev
-          ? { ...prev, action_dir: resp.result.action_dir }
-          : {
-              action_dir: resp.result.action_dir,
-              workspace_dir: '',
-              projects_dir: '',
-              action_dir_env_override: false,
-            }
-      );
+      setAgentPaths(prev => (prev ? { ...prev, action_dir: resp.result.action_dir } : prev));
       setActionDirInput(resp.result.action_dir);
       setActionDirSavedNote(t('settings.agentAccess.actionDirSaved'));
     } catch (e) {
