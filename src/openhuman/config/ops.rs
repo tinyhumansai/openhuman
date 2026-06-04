@@ -2011,21 +2011,27 @@ pub async fn set_action_dir(
             "action_dir must be an absolute path; got {trimmed:?}"
         ));
     }
+    // Normalize `..` segments so traversal can't bypass overlap checks.
+    let expanded = normalize_path(&expanded);
 
     let mut config = load_config_with_timeout().await?;
 
-    if expanded == config.workspace_dir || expanded.starts_with(&config.workspace_dir) {
+    let workspace = normalize_path(&config.workspace_dir);
+    if expanded == workspace || expanded.starts_with(&workspace) || workspace.starts_with(&expanded)
+    {
         return Err(format!(
-            "action_dir cannot be inside workspace_dir ({}). The internal workspace is \
+            "action_dir cannot overlap workspace_dir ({}). The internal workspace is \
              reserved for product state (memory, sessions, vault) and is denied to agent tools.",
             config.workspace_dir.display()
         ));
     }
 
     for fp in &config.autonomy.forbidden_paths {
-        let fp_path = std::path::PathBuf::from(fp);
-        if !fp_path.as_os_str().is_empty() && expanded.starts_with(&fp_path) {
-            return Err(format!("action_dir cannot be inside forbidden path {fp:?}"));
+        let fp_path = normalize_path(std::path::Path::new(fp));
+        if !fp_path.as_os_str().is_empty()
+            && (expanded.starts_with(&fp_path) || fp_path.starts_with(&expanded))
+        {
+            return Err(format!("action_dir cannot overlap forbidden path {fp:?}"));
         }
     }
 
@@ -2044,16 +2050,22 @@ pub async fn set_action_dir(
     config.action_dir = expanded.clone();
     config.save().await.map_err(|e| e.to_string())?;
 
-    let live_policy_generation =
-        match crate::openhuman::security::live_policy::update_action_dir(expanded.clone()) {
-            Ok(gen) => Some(gen),
-            Err(e) => {
-                log::warn!(
-                    "[config][action_dir] persisted to config.toml but live policy not updated: {e}"
+    let live_policy_generation = match crate::openhuman::security::live_policy::update_action_dir(
+        expanded.clone(),
+    ) {
+        Ok(gen) => Some(gen),
+        Err(e) if e.contains("no policy installed") => {
+            log::info!(
+                    "[config][action_dir] persisted to config.toml; live policy not yet installed (CLI-only): {e}"
                 );
-                None
-            }
-        };
+            None
+        }
+        Err(e) => {
+            return Err(format!(
+                "action_dir persisted to config.toml but live policy swap failed: {e}"
+            ));
+        }
+    };
 
     Ok(RpcOutcome::new(
         json!({
@@ -2066,6 +2078,21 @@ pub async fn set_action_dir(
             live_policy_generation,
         )],
     ))
+}
+
+fn normalize_path(path: &std::path::Path) -> std::path::PathBuf {
+    use std::path::{Component, PathBuf};
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::ParentDir => {
+                out.pop();
+            }
+            Component::CurDir => {}
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 fn expand_tilde(path: &str) -> std::path::PathBuf {
