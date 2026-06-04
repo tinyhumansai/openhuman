@@ -1,4 +1,5 @@
 use crate::openhuman::keyring::SecretStore;
+use crate::openhuman::util::retry_with_backoff;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -8,6 +9,11 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
+
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
+#[cfg(test)]
+use std::sync::Arc;
 
 const CURRENT_SCHEMA_VERSION: u32 = 1;
 
@@ -50,6 +56,15 @@ const MALFORMED_LOCK_GRACE_MS: u64 = 2_000;
 /// Wait long enough for a fresh leaked lock to cross the stale threshold
 /// and be reclaimed before surfacing a lock timeout to the caller.
 const LOCK_TIMEOUT_MS: u64 = STALE_LOCK_AGE_MS + 5_000;
+
+/// Retry budget for the JSON write + rename in `write_persisted_locked`.
+/// Same shape as the lock-create call at the bottom of `acquire_lock` (which
+/// is what closed Sentry OPENHUMAN-TAURI-H1 / H8 in #1641 / #2085). 6 attempts
+/// at base 100ms doubles up to ~6.3s worst-case before surfacing. Sized to
+/// stay well inside `LOCK_TIMEOUT_MS` so concurrent acquire_lock callers
+/// never time out behind a single retry-loop owner.
+const PERSIST_RETRY_ATTEMPTS: u32 = 6;
+const PERSIST_RETRY_BASE_MS: u64 = 100;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -199,6 +214,13 @@ pub struct AuthProfilesStore {
     /// Whether the OS keychain is available on this machine.
     /// Cached at construction time to avoid repeated probes.
     use_keychain: bool,
+    /// `#[cfg(test)]` failure injection — when non-zero, the next retryable
+    /// FS call inside `write_persisted_locked` consumes one count and returns
+    /// a `__TEST_TRANSIENT__` error so the `is_transient_fs_error` classifier
+    /// treats it as retryable (`src/openhuman/util.rs:618`). Production
+    /// binaries never see this field.
+    #[cfg(test)]
+    force_transient_failures: Arc<AtomicUsize>,
 }
 
 impl AuthProfilesStore {
@@ -240,6 +262,8 @@ impl AuthProfilesStore {
             secret_store: SecretStore::new(state_dir, encrypt_secrets),
             user_id,
             use_keychain,
+            #[cfg(test)]
+            force_transient_failures: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -928,14 +952,41 @@ impl AuthProfilesStore {
         );
         let tmp_path = self.path.with_file_name(tmp_name);
 
-        fs::write(&tmp_path, &json).with_context(|| {
+        // Windows AV / Search-Indexer / Defender may briefly hold a handle on
+        // the destination, returning transient `ERROR_SHARING_VIOLATION (32)`,
+        // `ERROR_ACCESS_DENIED (5)`, or `ERROR_DELETE_PENDING (303)` —
+        // recognised as retryable by `is_transient_fs_error`. Mirror the
+        // lock-create retry budget at the bottom of `acquire_lock` so the
+        // JSON write+rename path absorbs the same transient family that
+        // closed Sentry OPENHUMAN-TAURI-H1 / H8 for the lock path. Outer
+        // `with_context` preserved so the Sentry fingerprint shape is stable
+        // across releases. (Sentry TAURI-RUST-92J / #3355.)
+        retry_with_backoff(
+            "write auth profile tmp",
+            PERSIST_RETRY_ATTEMPTS,
+            PERSIST_RETRY_BASE_MS,
+            || {
+                self.consume_test_transient_failure()?;
+                fs::write(&tmp_path, &json).context("write auth profile tmp")
+            },
+        )
+        .with_context(|| {
             format!(
                 "Failed to write temporary auth profile file at {}",
                 tmp_path.display()
             )
         })?;
 
-        fs::rename(&tmp_path, &self.path).with_context(|| {
+        retry_with_backoff(
+            "replace auth profile store",
+            PERSIST_RETRY_ATTEMPTS,
+            PERSIST_RETRY_BASE_MS,
+            || {
+                self.consume_test_transient_failure()?;
+                fs::rename(&tmp_path, &self.path).context("rename auth profile tmp -> store")
+            },
+        )
+        .with_context(|| {
             format!(
                 "Failed to replace auth profile store at {}",
                 self.path.display()
@@ -943,6 +994,42 @@ impl AuthProfilesStore {
         })?;
 
         Ok(())
+    }
+
+    /// Consume one test-injected transient FS failure if any are queued.
+    /// No-op in production builds.
+    #[cfg(test)]
+    fn consume_test_transient_failure(&self) -> Result<()> {
+        let remaining = self.force_transient_failures.load(Ordering::SeqCst);
+        if remaining == 0 {
+            return Ok(());
+        }
+        self.force_transient_failures.fetch_sub(1, Ordering::SeqCst);
+        Err(anyhow::anyhow!(
+            "__TEST_TRANSIENT__ injected transient FS failure"
+        ))
+    }
+
+    #[cfg(not(test))]
+    #[inline(always)]
+    fn consume_test_transient_failure(&self) -> Result<()> {
+        Ok(())
+    }
+
+    /// Queue `n` test-only forced transient FS failures. The next `n`
+    /// retryable calls inside `write_persisted_locked` return a
+    /// `__TEST_TRANSIENT__` error before the underlying FS op runs; the
+    /// retry helper treats them as retryable.
+    #[cfg(test)]
+    pub(super) fn force_next_transient_failures(&self, n: usize) {
+        self.force_transient_failures.store(n, Ordering::SeqCst);
+    }
+
+    /// Test introspection: how many forced transient failures are still
+    /// queued. Lets tests verify the retry helper drained the queue.
+    #[cfg(test)]
+    pub(super) fn remaining_forced_failures(&self) -> usize {
+        self.force_transient_failures.load(Ordering::SeqCst)
     }
 
     fn encrypt_optional(&self, value: Option<&str>) -> Result<Option<String>> {
