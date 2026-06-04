@@ -66,6 +66,7 @@ fn native_request_emits_thread_id_when_present() {
         thread_id: Some("thread-abc".to_string()),
         stream_options: None,
         options: None,
+        frequency_penalty: None,
     };
     let json = serde_json::to_value(&req).unwrap();
     assert_eq!(
@@ -84,12 +85,65 @@ fn native_request_emits_thread_id_when_present() {
         thread_id: None,
         stream_options: None,
         options: None,
+        frequency_penalty: None,
     };
     let json_no_thread = serde_json::to_value(&req_no_thread).unwrap();
     assert!(
         json_no_thread.get("thread_id").is_none(),
         "absent thread_id must not be serialized so non-OpenHuman backends don't reject the field"
     );
+}
+
+#[test]
+fn native_request_serializes_frequency_penalty_only_when_set() {
+    let base = super::NativeChatRequest {
+        model: "kimi".to_string(),
+        messages: Vec::new(),
+        temperature: Some(0.7),
+        stream: Some(false),
+        tools: None,
+        tool_choice: None,
+        thread_id: None,
+        stream_options: None,
+        options: None,
+        frequency_penalty: Some(0.3),
+    };
+    let json = serde_json::to_value(&base).unwrap();
+    assert_eq!(
+        json.get("frequency_penalty")
+            .and_then(serde_json::Value::as_f64),
+        Some(0.3),
+        "a set frequency_penalty must be forwarded to damp repetition loops"
+    );
+
+    let none = super::NativeChatRequest {
+        frequency_penalty: None,
+        ..base
+    };
+    let json_none = serde_json::to_value(&none).unwrap();
+    assert!(
+        json_none.get("frequency_penalty").is_none(),
+        "absent frequency_penalty must be omitted so providers that reject it are unaffected"
+    );
+}
+
+#[test]
+fn detects_frequency_penalty_rejection_for_retry() {
+    use super::OpenAiCompatibleProvider as P;
+    // Strict providers that 400 on the field → retry without it.
+    assert!(P::err_indicates_frequency_penalty_unsupported(
+        "400 Bad Request: unknown parameter 'frequency_penalty'"
+    ));
+    assert!(P::err_indicates_frequency_penalty_unsupported(
+        "frequency_penalty is not supported by this model"
+    ));
+    // Unrelated errors, or the field merely mentioned, must NOT trigger a retry.
+    assert!(!P::err_indicates_frequency_penalty_unsupported(
+        "rate limit exceeded"
+    ));
+    assert!(!P::err_indicates_frequency_penalty_unsupported(
+        "applied frequency_penalty 0.3"
+    ));
 }
 
 /// Streaming responses arrive without `usage` unless the request asks
@@ -111,6 +165,7 @@ fn streaming_request_sets_stream_options_include_usage() {
             include_usage: true,
         }),
         options: None,
+        frequency_penalty: None,
     };
     let json = serde_json::to_value(&req).unwrap();
     assert_eq!(
@@ -133,6 +188,7 @@ fn non_streaming_request_omits_stream_options() {
         thread_id: None,
         stream_options: None,
         options: None,
+        frequency_penalty: None,
     };
     let json = serde_json::to_value(&req).unwrap();
     assert!(
@@ -155,6 +211,7 @@ fn ollama_options_num_ctx_serializes_correctly() {
         options: Some(super::compatible_types::OllamaOptions {
             num_ctx: Some(32768),
         }),
+        frequency_penalty: None,
     };
     let json = serde_json::to_value(&req).unwrap();
     assert_eq!(
@@ -176,6 +233,7 @@ fn ollama_options_none_is_omitted() {
         thread_id: None,
         stream_options: None,
         options: None,
+        frequency_penalty: None,
     };
     let json = serde_json::to_value(&req).unwrap();
     assert!(
@@ -277,6 +335,106 @@ fn parse_responses_response_body_reports_sanitized_snippet() {
     assert!(!msg.contains("sk-another-secret"));
 }
 
+// ── aggregate_responses_sse_body (#3201) ─────────────────────────────────────
+
+/// Per-delta accumulation: the Codex/ChatGPT OAuth stream is a sequence of
+/// `response.output_text.delta` events whose `delta` fields concatenate into
+/// the final assistant text.
+#[test]
+fn aggregate_responses_sse_body_concatenates_text_deltas() {
+    let body = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello \"}\n\n\
+                data: {\"type\":\"response.output_text.delta\",\"delta\":\"world\"}\n\n\
+                data: [DONE]\n";
+    let text =
+        super::compatible_parse::aggregate_responses_sse_body("custom", body).expect("aggregate");
+    assert_eq!(text, "hello world");
+}
+
+/// Some providers (and the Codex endpoint when the model batches its
+/// reply) skip per-token deltas and emit the full text in
+/// `response.completed.response.output_text`. The aggregator must fall
+/// back to that terminal field when no deltas accumulated.
+#[test]
+fn aggregate_responses_sse_body_prefers_terminal_output_text_when_present() {
+    let body = "data: {\"type\":\"response.created\",\"response\":{}}\n\n\
+                data: {\"type\":\"response.completed\",\"response\":{\"output_text\":\"batched final text\"}}\n\n\
+                data: [DONE]\n";
+    let text =
+        super::compatible_parse::aggregate_responses_sse_body("custom", body).expect("aggregate");
+    assert_eq!(text, "batched final text");
+}
+
+/// #3201 CodeRabbit nit: a whitespace-only terminal `output_text` must
+/// behave like the field is absent, so accumulated deltas survive instead
+/// of being silently collapsed into blank output. Mirrors
+/// `extract_responses_text`'s `first_nonempty(...)` policy.
+#[test]
+fn aggregate_responses_sse_body_ignores_whitespace_only_terminal_output_text() {
+    let body = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"good \"}\n\n\
+                data: {\"type\":\"response.output_text.delta\",\"delta\":\"reply\"}\n\n\
+                data: {\"type\":\"response.completed\",\"response\":{\"output_text\":\"   \\n\\t\"}}\n\n\
+                data: [DONE]\n";
+    let text =
+        super::compatible_parse::aggregate_responses_sse_body("custom", body).expect("aggregate");
+    assert_eq!(text, "good reply");
+}
+
+/// Carriage-return line endings (CRLF, common in HTTP/1.1 SSE) parse the
+/// same as LF-only — the trimming is just `\r` stripping.
+#[test]
+fn aggregate_responses_sse_body_tolerates_crlf_line_endings() {
+    let body = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"crlf\"}\r\n\r\n\
+                data: [DONE]\r\n";
+    let text =
+        super::compatible_parse::aggregate_responses_sse_body("custom", body).expect("aggregate");
+    assert_eq!(text, "crlf");
+}
+
+/// `response.failed` / `response.error` / `error` event shapes are
+/// terminal failures — bubble them up so the caller surfaces the upstream
+/// reason instead of returning empty text.
+#[test]
+fn aggregate_responses_sse_body_surfaces_failure_events() {
+    let body = "data: {\"type\":\"response.created\",\"response\":{}}\n\n\
+                data: {\"type\":\"response.failed\",\"error\":\"upstream model unavailable\"}\n\n";
+    let err = super::compatible_parse::aggregate_responses_sse_body("custom", body)
+        .expect_err("failure event should propagate");
+    assert!(
+        err.to_string()
+            .contains("custom Responses API stream reported a failure event"),
+        "unexpected error: {err}"
+    );
+}
+
+/// A stream that produced no usable text events returns a sanitised
+/// "no text events" error so the caller sees something actionable
+/// instead of an empty string.
+#[test]
+fn aggregate_responses_sse_body_errors_when_no_text_events_present() {
+    let body = "data: {\"type\":\"response.created\",\"response\":{}}\n\n\
+                data: [DONE]\n";
+    let err = super::compatible_parse::aggregate_responses_sse_body("custom", body)
+        .expect_err("empty stream should fail");
+    assert!(
+        err.to_string()
+            .contains("custom Responses API SSE stream produced no text events"),
+        "unexpected error: {err}"
+    );
+}
+
+/// Malformed individual events (provider keepalive comments, etc.) must
+/// not abort the whole turn — they're skipped and the good deltas still
+/// aggregate.
+#[test]
+fn aggregate_responses_sse_body_skips_unparseable_events() {
+    let body = "data: {malformed-keepalive\n\n\
+                data: {\"type\":\"response.output_text.delta\",\"delta\":\"good\"}\n\n\
+                data: [DONE]\n";
+    let text =
+        super::compatible_parse::aggregate_responses_sse_body("custom", body).expect("aggregate");
+    assert_eq!(text, "good");
+}
+
 #[test]
 fn x_api_key_auth_style() {
     let p = OpenAiCompatibleProvider::new(
@@ -366,6 +524,60 @@ fn extra_headers_are_applied_with_auth_header() {
 }
 
 #[test]
+fn openrouter_requests_include_app_attribution_headers() {
+    let p = OpenAiCompatibleProvider::new(
+        "openrouter",
+        "https://openrouter.ai/api/v1",
+        Some("sk-or-test"),
+        AuthStyle::Bearer,
+    );
+
+    let req = p
+        .apply_auth_header(
+            p.http_client()
+                .post("https://openrouter.ai/api/v1/chat/completions"),
+            Some("sk-or-test"),
+        )
+        .build()
+        .unwrap();
+
+    assert_eq!(
+        req.headers()
+            .get("HTTP-Referer")
+            .and_then(|value| value.to_str().ok()),
+        Some("https://openhuman.ai")
+    );
+    assert_eq!(
+        req.headers()
+            .get("X-OpenRouter-Title")
+            .and_then(|value| value.to_str().ok()),
+        Some("OpenHuman")
+    );
+}
+
+#[test]
+fn non_openrouter_requests_do_not_include_openrouter_attribution_headers() {
+    let p = OpenAiCompatibleProvider::new(
+        "custom",
+        "https://api.example.com/v1",
+        Some("test-key"),
+        AuthStyle::Bearer,
+    );
+
+    let req = p
+        .apply_auth_header(
+            p.http_client()
+                .post("https://api.example.com/v1/chat/completions"),
+            Some("test-key"),
+        )
+        .build()
+        .unwrap();
+
+    assert!(req.headers().get("HTTP-Referer").is_none());
+    assert!(req.headers().get("X-OpenRouter-Title").is_none());
+}
+
+#[test]
 fn extra_query_params_are_applied_to_codex_urls() {
     let p = OpenAiCompatibleProvider::new(
         "openai",
@@ -396,6 +608,13 @@ fn extra_query_params_are_applied_to_codex_urls() {
     );
 }
 
+/// #3201: the Codex/ChatGPT OAuth Responses endpoint rejects
+/// `stream: false` with `{"detail":"Stream must be set to true"}` and
+/// only emits SSE bodies. The non-streaming `chat_via_responses` wrapper
+/// must therefore (a) flip the `stream` flag for `/backend-api/codex`
+/// URLs and (b) aggregate the SSE body back into the same `String`
+/// the caller expects. PR #3192 fixed the sibling `store: false`
+/// requirement; this test pins both wire-shape requirements together.
 #[tokio::test]
 async fn responses_api_primary_posts_directly_to_responses() {
     let server = MockServer::start().await;
@@ -407,13 +626,16 @@ async fn responses_api_primary_posts_directly_to_responses() {
                 "role": "user",
                 "content": [{"type": "input_text", "text": "hello"}]
             }],
-            "stream": false,
+            "stream": true,
             "store": false
         })))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "output_text": "hello from responses",
-            "output": []
-        })))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello \"}\n\n\
+             data: {\"type\":\"response.output_text.delta\",\"delta\":\"from \"}\n\n\
+             data: {\"type\":\"response.output_text.delta\",\"delta\":\"responses\"}\n\n\
+             data: {\"type\":\"response.completed\",\"response\":{\"output_text\":\"hello from responses\"}}\n\n\
+             data: [DONE]\n\n",
+        ))
         .mount(&server)
         .await;
 
@@ -592,6 +814,7 @@ async fn streaming_chat_config_rejection_propagates_error_without_sentry_report(
             include_usage: true,
         }),
         options: None,
+        frequency_penalty: None,
     };
     let (delta_tx, _delta_rx) = tokio::sync::mpsc::channel(8);
 

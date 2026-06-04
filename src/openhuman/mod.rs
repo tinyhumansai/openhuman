@@ -46,6 +46,7 @@ pub mod devices;
 pub mod doctor;
 pub mod embeddings;
 pub mod encryption;
+pub mod file_state;
 pub mod health;
 pub mod heartbeat;
 pub mod http_host;

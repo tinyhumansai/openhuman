@@ -36,6 +36,9 @@ use crate::openhuman::agent::harness::engine::{
 };
 use crate::openhuman::agent::harness::parse::ParsedToolCall;
 use crate::openhuman::agent::harness::payload_summarizer::PayloadSummarizer;
+use crate::openhuman::agent::harness::tool_result_artifacts::{
+    spill_aggregate_tool_results, ToolResultArtifactStore,
+};
 use crate::openhuman::agent::hooks::ToolCallRecord;
 use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::agent::tool_policy::ToolPolicy;
@@ -94,6 +97,7 @@ pub(super) struct AgentToolSource {
     pub agent_definition_id: String,
     pub prefer_markdown: bool,
     pub budget_bytes: usize,
+    pub artifact_store: Option<ToolResultArtifactStore>,
     pub should_send_specs: bool,
     pub advertised_specs: Vec<ToolSpec>,
     /// Collected per-call records, drained by the post-loop epilogue for hooks.
@@ -135,6 +139,7 @@ impl ToolSource for AgentToolSource {
             agent_definition_id: &self.agent_definition_id,
             prefer_markdown: self.prefer_markdown,
             budget_bytes: self.budget_bytes,
+            artifact_store: self.artifact_store.as_ref(),
         };
         let (exec_result, record) =
             run_agent_tool_call(&ctx, progress, &dispatcher_call, iteration).await;
@@ -171,6 +176,7 @@ impl ToolSource for AgentToolSource {
 /// management, usage accounting, and transcript persistence.
 pub(super) struct AgentObserver<'a> {
     pub agent: &'a mut Agent,
+    pub artifact_store: Option<ToolResultArtifactStore>,
     pub effective_model: String,
     pub cumulative_input: u64,
     pub cumulative_output: u64,
@@ -307,7 +313,7 @@ impl TurnObserver for AgentObserver<'_> {
         });
     }
 
-    fn on_assistant(
+    async fn on_assistant(
         &mut self,
         display_text: &str,
         _response_text: &str,
@@ -361,7 +367,13 @@ impl TurnObserver for AgentObserver<'_> {
                     .filter(|s| !s.is_empty())
                     .map(ToString::to_string),
             });
-        let results = std::mem::take(&mut self.pending_results);
+        let mut results = std::mem::take(&mut self.pending_results);
+        spill_aggregate_tool_results(
+            &mut results,
+            self.artifact_store.as_ref(),
+            self.agent.context.tool_result_budget_bytes(),
+        )
+        .await;
         let formatted = self.agent.tool_dispatcher.format_results(&results);
         self.agent.history.push(formatted);
         self.agent.trim_history();

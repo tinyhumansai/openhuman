@@ -285,6 +285,8 @@ struct ChatStartPayload {
     profile_id: Option<String>,
     #[serde(default)]
     locale: Option<String>,
+    #[serde(default)]
+    queue_mode: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -435,6 +437,7 @@ pub fn attach_socketio() -> (socketioxide::layer::SocketIoLayer, SocketIo) {
                         payload.temperature,
                         payload.profile_id,
                         payload.locale,
+                        payload.queue_mode,
                     )
                     .await
                     {

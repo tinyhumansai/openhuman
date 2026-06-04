@@ -51,6 +51,15 @@ pub fn schemas(function: &str) -> ControllerSchema {
                         "Maximum number of artifacts to return; defaults to 50, capped at 200.",
                     required: false,
                 },
+                FieldSchema {
+                    name: "thread_id",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment:
+                        "When set, return only artifacts whose meta.json was written for this \
+                         chat thread (#3226). Lets ChatFilesPanel repopulate from disk on a \
+                         fresh redux slice / new device. Absent (or null) returns all artifacts.",
+                    required: false,
+                },
             ],
             outputs: vec![
                 FieldSchema {
@@ -202,7 +211,16 @@ fn handle_list_artifacts(params: Map<String, Value>) -> ControllerFuture {
         let limit = read_optional_u64(&params, "limit")?
             .map(|raw| usize::try_from(raw).map_err(|_| "limit is too large for usize".to_string()))
             .transpose()?;
-        to_json(crate::openhuman::artifacts::ops::ai_list_artifacts(&config, offset, limit).await?)
+        let thread_id = read_optional_string(&params, "thread_id")?;
+        to_json(
+            crate::openhuman::artifacts::ops::ai_list_artifacts(
+                &config,
+                offset,
+                limit,
+                thread_id.as_deref(),
+            )
+            .await?,
+        )
     })
 }
 
@@ -233,6 +251,27 @@ fn read_required<T: DeserializeOwned>(params: &Map<String, Value>, key: &str) ->
         .cloned()
         .ok_or_else(|| format!("missing required param '{key}'"))?;
     serde_json::from_value(value).map_err(|e| format!("invalid '{key}': {e}"))
+}
+
+fn read_optional_string(params: &Map<String, Value>, key: &str) -> Result<Option<String>, String> {
+    match params.get(key) {
+        None => Ok(None),
+        Some(Value::Null) => Ok(None),
+        Some(Value::String(s)) => {
+            let trimmed = s.trim();
+            // Treat whitespace-only input as absent so the handler doesn't
+            // try to match an artifact against an unfilterable empty string.
+            if trimmed.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(trimmed.to_string()))
+            }
+        }
+        Some(other) => Err(format!(
+            "invalid '{key}': expected string, got {}",
+            type_name(other)
+        )),
+    }
 }
 
 fn read_optional_u64(params: &Map<String, Value>, key: &str) -> Result<Option<u64>, String> {

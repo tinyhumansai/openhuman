@@ -379,7 +379,7 @@ impl SubconsciousEngine {
                 title: thread_title,
                 created_at: now_iso.clone(),
                 parent_thread_id: None,
-                labels: Some(vec!["subconscious_tick".to_string()]),
+                labels: Some(vec!["subconscious".to_string()]),
                 personality_id: None,
             },
         ) {

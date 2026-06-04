@@ -57,6 +57,37 @@ fn all_variants_have_correct_domain() {
             },
             "agent",
         ),
+        // Run Queue
+        (
+            DomainEvent::RunQueueMessageQueued {
+                thread_id: "t".into(),
+                mode: "steer".into(),
+                queue_depth: 1,
+            },
+            "agent",
+        ),
+        (
+            DomainEvent::RunQueueMessageDelivered {
+                thread_id: "t".into(),
+                mode: "steer".into(),
+                iteration: 2,
+            },
+            "agent",
+        ),
+        (
+            DomainEvent::RunQueueFollowupDispatched {
+                thread_id: "t".into(),
+                followup_count: 1,
+            },
+            "agent",
+        ),
+        (
+            DomainEvent::RunQueueInterrupted {
+                thread_id: "t".into(),
+                cancelled_request_id: "req-1".into(),
+            },
+            "agent",
+        ),
         // Memory
         (
             DomainEvent::MemoryStored {

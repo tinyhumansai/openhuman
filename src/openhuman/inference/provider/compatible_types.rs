@@ -187,6 +187,13 @@ pub(crate) struct NativeChatRequest {
     /// `num_ctx` override. Ignored (skipped) for non-Ollama providers.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) options: Option<OllamaOptions>,
+    /// OpenAI-compatible `frequency_penalty`. Set to a small positive value on
+    /// real requests to damp degenerate repetition loops — without it a model
+    /// that starts repeating a line keeps emitting it until the output-token
+    /// cap (self-reinforcing decoding). Skipped when `None` so providers that
+    /// don't accept it are unaffected.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) frequency_penalty: Option<f64>,
 }
 
 /// Ollama-specific request options passed in the `options` field.

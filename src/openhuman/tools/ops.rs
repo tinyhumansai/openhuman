@@ -158,6 +158,11 @@ pub fn all_tools_with_runtime(
         // build-mode pass. The plan→build mode switch itself is a
         // follow-up; the tool emits a stable marker today.
         Box::new(TodoTool::new()),
+        // Move/update a specific task card by id on a target board (defaults to
+        // the proactive `task-sources` board) — lets the agent advance the task
+        // it's working (in_progress / done+evidence / blocked+reason) from any
+        // thread, complementing `todo` which only touches the current thread.
+        Box::new(UpdateTaskTool::new()),
         Box::new(PlanExitTool::new()),
         // Skill chaining: let an in-flight autonomous skill (e.g.
         // `github-issue-crusher`) kick off another bundled skill_run as a
@@ -460,6 +465,7 @@ pub fn all_tools_with_runtime(
     // registered.
     tools.push(Box::new(PresentationTool::new(
         root_config.workspace_dir.clone(),
+        security.clone(),
     )));
 
     if browser_config.enabled {

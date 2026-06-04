@@ -242,7 +242,18 @@ interface ChatRuntimeState {
    * download / retry affordances (#2779).
    */
   artifactsByThread: Record<string, ArtifactSnapshot[]>;
+  /** Per-thread run queue status. Updated from queue_status RPC responses. */
+  queueStatusByThread: Record<string, QueueStatus>;
   sessionTokenUsage: SessionTokenUsage;
+}
+
+/** Snapshot of the active-run queue depth per lane. */
+export interface QueueStatus {
+  active: boolean;
+  steers: number;
+  followups: number;
+  collects: number;
+  total: number;
 }
 
 const initialState: ChatRuntimeState = {
@@ -253,6 +264,7 @@ const initialState: ChatRuntimeState = {
   inferenceTurnLifecycleByThread: {},
   pendingApprovalByThread: {},
   artifactsByThread: {},
+  queueStatusByThread: {},
   sessionTokenUsage: { inputTokens: 0, outputTokens: 0, turns: 0, lastUpdated: 0 },
 };
 
@@ -582,6 +594,15 @@ const chatRuntimeSlice = createSlice({
         state.artifactsByThread[action.payload.threadId] = next;
       }
     },
+    setQueueStatusForThread: (
+      state,
+      action: PayloadAction<{ threadId: string; status: QueueStatus }>
+    ) => {
+      state.queueStatusByThread[action.payload.threadId] = action.payload.status;
+    },
+    clearQueueStatusForThread: (state, action: PayloadAction<{ threadId: string }>) => {
+      delete state.queueStatusByThread[action.payload.threadId];
+    },
     beginInferenceTurn: (state, action: PayloadAction<{ threadId: string }>) => {
       state.inferenceTurnLifecycleByThread[action.payload.threadId] = 'started';
     },
@@ -600,6 +621,7 @@ const chatRuntimeSlice = createSlice({
       delete state.taskBoardByThread[action.payload.threadId];
       delete state.inferenceTurnLifecycleByThread[action.payload.threadId];
       delete state.pendingApprovalByThread[action.payload.threadId];
+      delete state.queueStatusByThread[action.payload.threadId];
       // Note: artifactsByThread intentionally NOT cleared here. The
       // ArtifactCard renders inline in the message timeline, so the
       // snapshot needs to survive turn boundaries — historic artifacts
@@ -614,6 +636,7 @@ const chatRuntimeSlice = createSlice({
       state.inferenceTurnLifecycleByThread = {};
       state.pendingApprovalByThread = {};
       state.artifactsByThread = {};
+      state.queueStatusByThread = {};
     },
     recordChatTurnUsage: (
       state,
@@ -708,6 +731,8 @@ export const {
   upsertArtifactFailedForThread,
   clearArtifactsForThread,
   removeArtifactForThread,
+  setQueueStatusForThread,
+  clearQueueStatusForThread,
   beginInferenceTurn,
   markInferenceTurnStreaming,
   endInferenceTurn,

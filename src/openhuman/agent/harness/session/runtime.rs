@@ -215,6 +215,14 @@ impl Agent {
         self.on_progress = tx;
     }
 
+    /// Attach an active-run queue for mid-turn steering.
+    pub fn set_run_queue(
+        &mut self,
+        rq: Option<std::sync::Arc<crate::openhuman::agent::harness::run_queue::RunQueue>>,
+    ) {
+        self.run_queue = rq;
+    }
+
     /// Restrict which tools the main agent can see and call for this
     /// session. An empty set restores the default "all visible" behavior,
     /// still subject to the configured channel permission policy.

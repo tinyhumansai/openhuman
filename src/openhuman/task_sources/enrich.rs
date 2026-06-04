@@ -12,7 +12,7 @@
 use chrono::Utc;
 
 use super::types::EnrichedTask;
-use super::NormalizedTask;
+use super::{NormalizedTask, TaskKind};
 
 /// Maximum length of the derived summary, in characters.
 const SUMMARY_MAX_CHARS: usize = 200;
@@ -30,6 +30,7 @@ pub fn enrich_task(task: NormalizedTask) -> EnrichedTask {
         .map(|s| vec![s.to_string()])
         .unwrap_or_default();
     let agent_prompt = build_agent_prompt(&task, &summary, urgency);
+    let objective = derive_objective(&task);
 
     EnrichedTask {
         task,
@@ -38,8 +39,46 @@ pub fn enrich_task(task: NormalizedTask) -> EnrichedTask {
         linked_people,
         linked_memory_ids: Vec::new(),
         agent_prompt,
+        objective,
         enriched_at: Utc::now(),
     }
+}
+
+/// Intent-aware phrasing for an issue vs a pull request.
+///
+/// Returns `(objective_verb, prompt_directive)`. The job differs
+/// fundamentally — *resolve* an issue vs *review* a PR — so this is what
+/// makes the ingested card self-describe what the picking agent (and the
+/// triage LLM) should actually do. `Generic` returns `None`; generic
+/// phrasing is used.
+pub(crate) fn intent_phrasing(kind: TaskKind) -> Option<(&'static str, &'static str)> {
+    match kind {
+        TaskKind::Issue => Some((
+            "Resolve issue",
+            "This is an issue — investigate the root cause, implement and validate a fix, \
+             then update the card with evidence.",
+        )),
+        TaskKind::PullRequest => Some((
+            "Review pull request",
+            "This is a pull request — read the diff and assess correctness, risk, and test \
+             coverage, then post review feedback (approve or request changes). Do not merge.",
+        )),
+        TaskKind::Generic => None,
+    }
+}
+
+/// The card objective: an intent-framed goal for the executing agent
+/// (`"Review pull request: <title>"` / `"Resolve issue: <title>"`), or the
+/// bare title for undifferentiated tasks. `None` when the title is empty.
+pub(crate) fn derive_objective(task: &NormalizedTask) -> Option<String> {
+    let title = task.title.trim();
+    if title.is_empty() {
+        return None;
+    }
+    Some(match intent_phrasing(task.kind) {
+        Some((verb, _)) => format!("{verb}: {title}"),
+        None => title.to_string(),
+    })
 }
 
 /// One- to two-line summary: the first non-empty line of the body, else
@@ -104,10 +143,21 @@ fn derive_urgency(task: &NormalizedTask) -> f32 {
 }
 
 fn build_agent_prompt(task: &NormalizedTask, summary: &str, urgency: f32) -> String {
-    let mut lines = vec![format!(
-        "A task was ingested from {} and needs your attention.",
-        task.provider
-    )];
+    let opener = match task.kind {
+        TaskKind::Issue => format!(
+            "An issue was ingested from {} and needs to be resolved.",
+            task.provider
+        ),
+        TaskKind::PullRequest => format!(
+            "A pull request was ingested from {} and needs review.",
+            task.provider
+        ),
+        TaskKind::Generic => format!(
+            "A task was ingested from {} and needs your attention.",
+            task.provider
+        ),
+    };
+    let mut lines = vec![opener];
     lines.push(format!("Title: {}", task.title));
     if !summary.is_empty() && summary != task.title.trim() {
         lines.push(format!("Summary: {summary}"));
@@ -125,10 +175,13 @@ fn build_agent_prompt(task: &NormalizedTask, summary: &str, urgency: f32) -> Str
         lines.push(format!("Link: {url}"));
     }
     lines.push(format!("Estimated urgency: {:.0}%.", urgency * 100.0));
-    lines.push(
-        "Decide whether this is actionable now; if so, make progress and update the todo card."
-            .to_string(),
-    );
+    lines.push(match intent_phrasing(task.kind) {
+        Some((_, directive)) => directive.to_string(),
+        None => {
+            "Decide whether this is actionable now; if so, make progress and update the todo card."
+                .to_string()
+        }
+    });
     lines.join("\n")
 }
 
@@ -220,5 +273,39 @@ mod tests {
         assert!(e.agent_prompt.contains("github"));
         assert!(e.agent_prompt.contains("Fix login bug"));
         assert!(e.agent_prompt.contains("https://example.com/1"));
+    }
+
+    #[test]
+    fn pull_request_objective_and_prompt_say_review() {
+        let mut t = task();
+        t.kind = TaskKind::PullRequest;
+        let e = enrich_task(t);
+        assert_eq!(
+            e.objective.as_deref(),
+            Some("Review pull request: Fix login bug")
+        );
+        assert!(e.agent_prompt.contains("needs review"));
+        assert!(e.agent_prompt.contains("Do not merge"));
+    }
+
+    #[test]
+    fn issue_objective_and_prompt_say_resolve() {
+        let mut t = task();
+        t.kind = TaskKind::Issue;
+        let e = enrich_task(t);
+        assert_eq!(e.objective.as_deref(), Some("Resolve issue: Fix login bug"));
+        assert!(e.agent_prompt.contains("needs to be resolved"));
+        assert!(e.agent_prompt.contains("implement and validate a fix"));
+    }
+
+    #[test]
+    fn generic_objective_is_bare_title_and_prompt_is_neutral() {
+        // notion/linear/clickup default to Generic — no review/resolve framing.
+        let e = enrich_task(task());
+        assert_eq!(e.objective.as_deref(), Some("Fix login bug"));
+        assert!(e.agent_prompt.contains("needs your attention"));
+        assert!(e
+            .agent_prompt
+            .contains("make progress and update the todo card"));
     }
 }

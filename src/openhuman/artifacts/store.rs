@@ -110,15 +110,24 @@ pub(crate) async fn save_artifact_meta(
 /// List artifacts in the workspace, sorted by `created_at` descending.
 ///
 /// Corrupt or unreadable `meta.json` files are skipped with a `warn!` log.
+/// When `thread_id` is `Some(_)` the listing is filtered to entries whose
+/// persisted `meta.thread_id` matches verbatim (#3226); legacy meta.json
+/// files without a `thread_id` field are excluded from the filtered set
+/// because they have no addressable owning thread. The returned `total`
+/// reflects the filtered count so the caller's pagination is per-thread,
+/// not workspace-global.
+///
 /// Returns `(page, total)` where `page` is the requested slice and `total` is
-/// the count before pagination.
+/// the count before pagination (but after filtering).
 pub(crate) async fn list_artifacts(
     workspace_dir: &Path,
     offset: usize,
     limit: usize,
+    thread_id: Option<&str>,
 ) -> Result<(Vec<ArtifactMeta>, usize), String> {
     log::debug!(
-        "[artifacts] list_artifacts: offset={offset} limit={limit} workspace={:?}",
+        "[artifacts] list_artifacts: offset={offset} limit={limit} thread_id={:?} workspace={:?}",
+        thread_id,
         workspace_dir
     );
     let root = artifacts_root(workspace_dir).await?;
@@ -185,6 +194,13 @@ pub(crate) async fn list_artifacts(
     // Sort descending by created_at (newest first)
     all.sort_by(|a, b| b.created_at.cmp(&a.created_at));
 
+    // Apply thread filter BEFORE pagination so `total` reflects the
+    // per-thread count the UI surfaces, and so a small page doesn't get
+    // silently emptied by filtering after the slice (#3226).
+    if let Some(tid) = thread_id {
+        all.retain(|m| m.thread_id.as_deref() == Some(tid));
+    }
+
     let total = all.len();
     let page = all.into_iter().skip(offset).take(limit).collect::<Vec<_>>();
 
@@ -213,6 +229,40 @@ pub(crate) async fn get_artifact(
         .map_err(|e| format!("[artifacts] corrupt meta.json for id={artifact_id}: {e}"))?;
     log::debug!("[artifacts] get_artifact: found id={artifact_id}");
     Ok(meta)
+}
+
+/// Read the raw bytes of a finalized artifact's output file.
+///
+/// Single source of truth for resolving an artifact id → on-disk bytes:
+/// callers (e.g. the presentation image pipeline) must not reconstruct
+/// the `<root>/<id>/<filename>` path scheme themselves. Validates the id,
+/// confirms the resolved path stays under the artifacts root, and refuses
+/// artifacts that are not yet [`ArtifactStatus::Ready`] (a `Pending` /
+/// `Failed` record may have no bytes — or partial bytes — on disk).
+pub async fn read_artifact_bytes(
+    workspace_dir: &Path,
+    artifact_id: &str,
+) -> Result<Vec<u8>, String> {
+    log::debug!("[artifacts] read_artifact_bytes: id={artifact_id}");
+    let meta = get_artifact(workspace_dir, artifact_id).await?;
+    if !matches!(meta.status, ArtifactStatus::Ready) {
+        return Err(format!(
+            "[artifacts] artifact id={artifact_id} is not ready (status={:?})",
+            meta.status
+        ));
+    }
+    let root = artifacts_root(workspace_dir).await?;
+    // `meta.path` is the store-internal `<id>/<filename>` relative path.
+    let file_path = root.join(&meta.path);
+    assert_within_root(&root, &file_path)?;
+    let bytes = tokio::fs::read(&file_path)
+        .await
+        .map_err(|e| format!("[artifacts] failed to read artifact bytes id={artifact_id}: {e}"))?;
+    log::debug!(
+        "[artifacts] read_artifact_bytes: id={artifact_id} read {} bytes",
+        bytes.len()
+    );
+    Ok(bytes)
 }
 
 /// Delete an artifact directory and all its contents.
@@ -288,6 +338,17 @@ fn sanitize_filename_stem(title: &str) -> String {
 /// `extension` is the file extension WITHOUT the leading dot
 /// (e.g. `"pptx"`, `"pdf"`). Used to build the rendered filename
 /// under the artifact directory.
+///
+/// Publishes [`DomainEvent::ArtifactPending`] on the global bus the
+/// moment the row is reserved so the chat surface can render an
+/// in-progress / "Generating…" card immediately (#3162). When the
+/// matching [`finalize_artifact`] / [`fail_artifact`] later fires it
+/// reuses the same `artifact_id`, so the card swaps in place without
+/// flicker. Same chat-context routing rules as the Ready/Failed pair —
+/// `thread_id` / `client_id` come from the
+/// [`crate::openhuman::approval::ApprovalChatContext`] task-local and
+/// are `None` for CLI / cron / sub-agent paths, in which case the web
+/// bridge silently drops the event for lack of a routing target.
 pub async fn create_artifact(
     workspace_dir: &Path,
     kind: super::types::ArtifactKind,
@@ -325,6 +386,13 @@ pub async fn create_artifact(
         })?;
     let absolute_path = artifact_dir.join(&filename);
 
+    // Capture the originating chat thread (if any) at create-time so the
+    // panel can repopulate from disk after a redux-persist purge — see
+    // #3226. `finalize_artifact` / `fail_artifact` already read the same
+    // task-local for event publication; persisting it here means the
+    // routing target survives a process restart.
+    let (thread_id, _) = current_chat_context();
+
     let meta = ArtifactMeta {
         id: id.clone(),
         kind,
@@ -334,14 +402,33 @@ pub async fn create_artifact(
         status: ArtifactStatus::Pending,
         created_at: chrono::Utc::now(),
         error: None,
+        thread_id,
     };
     save_artifact_meta(workspace_dir, &meta).await?;
 
     log::debug!(
-        "[artifacts] create_artifact: id={id} kind={} path={:?}",
+        "[artifacts] create_artifact: id={id} kind={} path={:?} thread_id={:?}",
         meta.kind.as_str(),
-        absolute_path
+        absolute_path,
+        meta.thread_id,
     );
+
+    // Surface the "Generating…" card the moment the row is reserved so
+    // the user doesn't stare at an empty composer until the tool finishes
+    // (#3162). When `finalize_artifact` / `fail_artifact` later fires the
+    // matching Ready/Failed event with the same `artifact_id`, the
+    // frontend can swap the card in place.
+    let (thread_id, client_id) = current_chat_context();
+    crate::core::event_bus::publish_global(crate::core::event_bus::DomainEvent::ArtifactPending {
+        artifact_id: meta.id.clone(),
+        kind: meta.kind.as_str().to_string(),
+        title: meta.title.clone(),
+        workspace_dir: workspace_dir.to_string_lossy().into_owned(),
+        path: meta.path.clone(),
+        thread_id,
+        client_id,
+    });
+
     Ok((meta, absolute_path))
 }
 

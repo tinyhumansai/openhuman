@@ -32,6 +32,7 @@ use crate::openhuman::agent::harness::{
 use crate::openhuman::context::prompt::{
     render_subagent_system_prompt, PromptContext, PromptTool, SubagentRenderOptions,
 };
+use crate::openhuman::file_state::with_file_state_agent_id;
 use crate::openhuman::inference::provider::{ChatMessage, ChatRequest, Provider};
 use crate::openhuman::memory_conversations::ConversationMessage;
 use crate::openhuman::tools::{Tool, ToolCategory, ToolSpec};
@@ -363,14 +364,17 @@ pub async fn run_subagent(
         // state machine lives on the heap (#2234 CI failure under
         // `cargo-llvm-cov`).
         let mut outcome = with_spawn_depth(attempted_depth, async {
-            with_current_sandbox_mode(definition.sandbox_mode, async {
-                Box::pin(run_typed_mode(
-                    definition,
-                    task_prompt,
-                    &options,
-                    &parent,
-                    &task_id,
-                ))
+            with_file_state_agent_id(task_id.clone(), async {
+                with_current_sandbox_mode(definition.sandbox_mode, async {
+                    Box::pin(run_typed_mode(
+                        definition,
+                        task_prompt,
+                        &options,
+                        &parent,
+                        &task_id,
+                    ))
+                    .await
+                })
                 .await
             })
             .await
@@ -1473,6 +1477,7 @@ async fn run_inner_loop(
         max_iterations,
         None, // sub-agents don't stream a draft
         &["ask_user_clarification"],
+        None, // sub-agents don't support run-queue steering
     ))
     .await?;
 
@@ -1751,7 +1756,7 @@ impl super::super::engine::TurnObserver for SubagentObserver {
         self.usage.charged_amount_usd += usage.charged_amount_usd;
     }
 
-    fn on_assistant(
+    async fn on_assistant(
         &mut self,
         _display_text: &str,
         response_text: &str,
