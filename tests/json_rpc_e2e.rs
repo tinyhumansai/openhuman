@@ -9961,7 +9961,9 @@ async fn json_rpc_channel_web_chat_with_speak_reply_invokes_reply_speech() {
         "expected at least one non-empty text passed to synthesize_reply; observed={observed:?}"
     );
     assert!(
-        observed.iter().any(|t| t.contains("Hello from e2e mock agent")),
+        observed
+            .iter()
+            .any(|t| t.contains("Hello from e2e mock agent")),
         "expected the observed seam text to include the mock reply phrase; got {observed:?}"
     );
 

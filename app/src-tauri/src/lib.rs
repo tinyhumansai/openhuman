@@ -752,9 +752,7 @@ async fn register_dictation_hotkey(
         let guard = state.shortcut.lock().unwrap();
         guard.clone()
     };
-    if let Some(conflict) =
-        ptt_hotkeys::first_conflict_with(&expanded_shortcuts, &ptt_current)
-    {
+    if let Some(conflict) = ptt_hotkeys::first_conflict_with(&expanded_shortcuts, &ptt_current) {
         return Err(format!(
             "dictation shortcut '{conflict}' conflicts with the push-to-talk hotkey"
         ));
@@ -858,14 +856,10 @@ async fn unregister_dictation_hotkey(app: AppHandle<AppRuntime>) -> Result<(), S
 /// `ptt://start { session_id }` on press and `ptt://stop { session_id }`
 /// on release.
 #[tauri::command]
-async fn register_ptt_hotkey(
-    app: AppHandle<AppRuntime>,
-    shortcut: String,
-) -> Result<(), String> {
+async fn register_ptt_hotkey(app: AppHandle<AppRuntime>, shortcut: String) -> Result<(), String> {
     log::info!("[ptt] register_ptt_hotkey: shortcut={shortcut}");
 
-    let expanded = ptt_hotkeys::expand_ptt_shortcuts(&shortcut)
-        .map_err(|e| e.to_string())?;
+    let expanded = ptt_hotkeys::expand_ptt_shortcuts(&shortcut).map_err(|e| e.to_string())?;
 
     // Reject overlap with the currently-registered dictation hotkey.
     let dictation_current = {
@@ -873,9 +867,7 @@ async fn register_ptt_hotkey(
         let guard = state.0.lock().unwrap();
         guard.clone()
     };
-    if let Some(conflict) =
-        ptt_hotkeys::first_conflict_with(&expanded, &dictation_current)
-    {
+    if let Some(conflict) = ptt_hotkeys::first_conflict_with(&expanded, &dictation_current) {
         return Err(ptt_hotkeys::PttError::ConflictsWithDictation(conflict).to_string());
     }
 
@@ -910,7 +902,9 @@ async fn register_ptt_hotkey(
                             )
                             .is_err()
                         {
-                            log::trace!("[ptt] press dropped (already held) shortcut={variant_owned}");
+                            log::trace!(
+                                "[ptt] press dropped (already held) shortcut={variant_owned}"
+                            );
                             return;
                         }
                         let session_id = state
@@ -920,18 +914,24 @@ async fn register_ptt_hotkey(
                         log::debug!(
                             "[ptt] pressed shortcut={variant_owned} session_id={session_id}"
                         );
-                        if let Err(e) =
-                            app_pressed.emit("ptt://start", serde_json::json!({
+                        if let Err(e) = app_pressed.emit(
+                            "ptt://start",
+                            serde_json::json!({
                                 "session_id": session_id,
-                            }))
-                        {
+                            }),
+                        ) {
                             log::warn!("[ptt] emit start failed: {e}");
                         }
                     }
                     ShortcutState::Released => {
-                        if !state.is_held.swap(false, std::sync::atomic::Ordering::AcqRel) {
+                        if !state
+                            .is_held
+                            .swap(false, std::sync::atomic::Ordering::AcqRel)
+                        {
                             // No corresponding Pressed in our state — stale event, drop.
-                            log::trace!("[ptt] release dropped (not held) shortcut={variant_owned}");
+                            log::trace!(
+                                "[ptt] release dropped (not held) shortcut={variant_owned}"
+                            );
                             return;
                         }
                         let session_id = state
@@ -940,11 +940,12 @@ async fn register_ptt_hotkey(
                         log::debug!(
                             "[ptt] released shortcut={variant_owned} session_id={session_id}"
                         );
-                        if let Err(e) =
-                            app_released.emit("ptt://stop", serde_json::json!({
+                        if let Err(e) = app_released.emit(
+                            "ptt://stop",
+                            serde_json::json!({
                                 "session_id": session_id,
-                            }))
-                        {
+                            }),
+                        ) {
                             log::warn!("[ptt] emit stop failed: {e}");
                         }
                     }
@@ -963,7 +964,9 @@ async fn register_ptt_hotkey(
                     log::warn!("[ptt] rollback failed for '{r}': {re}");
                 }
             }
-            return Err(format!("Failed to unregister previous ptt shortcut '{old}': {e}"));
+            return Err(format!(
+                "Failed to unregister previous ptt shortcut '{old}': {e}"
+            ));
         }
         unregistered.push(old.clone());
     }

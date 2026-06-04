@@ -59,13 +59,7 @@ mod tests {
         let events = capture.events.clone();
         let _sub = subscribe_global(Arc::new(capture));
 
-        publish_ptt_transcript_committed(
-            "thread-1".to_string(),
-            42,
-            17,
-            850,
-            false,
-        );
+        publish_ptt_transcript_committed("thread-1".to_string(), 42, 17, 850, false);
 
         // Give the broadcaster a tick to deliver.
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;

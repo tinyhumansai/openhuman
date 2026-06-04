@@ -12,12 +12,8 @@
 import { useEffect } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
+import { selectPttShortcut, setIsHeld, setPttRegistrationError } from '../store/pttSlice';
 import { registerPttHotkey, unregisterPttHotkey } from '../utils/tauriCommands/ptt';
-import {
-  selectPttShortcut,
-  setIsHeld,
-  setPttRegistrationError,
-} from '../store/pttSlice';
 
 export function usePttHotkey(): void {
   const dispatch = useDispatch();

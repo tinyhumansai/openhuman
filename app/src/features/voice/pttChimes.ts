@@ -16,11 +16,7 @@ import openSrc from '../../assets/audio/ptt-open.wav';
 
 export type ChimeKind = 'open' | 'close' | 'error';
 
-const sources: Record<ChimeKind, string> = {
-  open: openSrc,
-  close: closeSrc,
-  error: errorSrc,
-};
+const sources: Record<ChimeKind, string> = { open: openSrc, close: closeSrc, error: errorSrc };
 
 const cache: Partial<Record<ChimeKind, HTMLAudioElement>> = {};
 

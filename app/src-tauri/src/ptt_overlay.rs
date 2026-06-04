@@ -71,21 +71,15 @@ pub(crate) async fn show_ptt_overlay<R: Runtime>(
     active: bool,
     session_id: u64,
 ) -> Result<(), String> {
-    let window = app
-        .get_webview_window(OVERLAY_LABEL)
-        .ok_or_else(|| {
-            "[ptt-overlay] window not ready (register_ptt_hotkey must succeed before show_ptt_overlay)"
-                .to_string()
-        })?;
+    let window = app.get_webview_window(OVERLAY_LABEL).ok_or_else(|| {
+        "[ptt-overlay] window not ready (register_ptt_hotkey must succeed before show_ptt_overlay)"
+            .to_string()
+    })?;
 
     if active {
-        window
-            .show()
-            .map_err(|e| format!("show overlay: {e}"))?;
+        window.show().map_err(|e| format!("show overlay: {e}"))?;
     } else {
-        window
-            .hide()
-            .map_err(|e| format!("hide overlay: {e}"))?;
+        window.hide().map_err(|e| format!("hide overlay: {e}"))?;
     }
 
     if let Err(e) = window.emit(

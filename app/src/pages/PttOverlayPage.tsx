@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { useEffect, useState } from 'react';
+
 import { useT } from '../lib/i18n/I18nContext';
 
 export function PttOverlayPage() {
@@ -9,10 +10,10 @@ export function PttOverlayPage() {
   useEffect(() => {
     let off: UnlistenFn | undefined;
     let cancelled = false;
-    listen<{ active: boolean }>('ptt-overlay://active', (e) => {
+    listen<{ active: boolean }>('ptt-overlay://active', e => {
       setActive(Boolean(e.payload?.active));
     })
-      .then((fn) => {
+      .then(fn => {
         if (cancelled) fn();
         else off = fn;
       })
@@ -41,8 +42,7 @@ export function PttOverlayPage() {
         fontSize: 12,
         userSelect: 'none',
         pointerEvents: 'none',
-      }}
-    >
+      }}>
       <span
         aria-hidden
         style={{

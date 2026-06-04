@@ -2073,7 +2073,13 @@ async fn web_channel_public_paths_cover_event_delivery_and_validation_errors() {
 
     assert_eq!(
         openhuman_core::openhuman::channels::web::start_chat(
-            "", "thread-1", "hello", None, None, None, None,
+            "",
+            "thread-1",
+            "hello",
+            None,
+            None,
+            None,
+            None,
             openhuman_core::openhuman::channels::web::ChatRequestMetadata::default(),
         )
         .await
@@ -2082,7 +2088,13 @@ async fn web_channel_public_paths_cover_event_delivery_and_validation_errors() {
     );
     assert_eq!(
         openhuman_core::openhuman::channels::web::start_chat(
-            "client-1", "", "hello", None, None, None, None,
+            "client-1",
+            "",
+            "hello",
+            None,
+            None,
+            None,
+            None,
             openhuman_core::openhuman::channels::web::ChatRequestMetadata::default(),
         )
         .await
@@ -2091,7 +2103,13 @@ async fn web_channel_public_paths_cover_event_delivery_and_validation_errors() {
     );
     assert_eq!(
         openhuman_core::openhuman::channels::web::start_chat(
-            "client-1", "thread-1", "   ", None, None, None, None,
+            "client-1",
+            "thread-1",
+            "   ",
+            None,
+            None,
+            None,
+            None,
             openhuman_core::openhuman::channels::web::ChatRequestMetadata::default(),
         )
         .await

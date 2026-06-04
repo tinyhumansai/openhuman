@@ -52,9 +52,7 @@ describe('pttService state machine', () => {
   });
 
   it('falls back to a new "Voice" thread when no active thread exists', async () => {
-    const deps = makeDeps({
-      resolveActiveThreadId: vi.fn().mockResolvedValue(null),
-    });
+    const deps = makeDeps({ resolveActiveThreadId: vi.fn().mockResolvedValue(null) });
     const svc = createPttService(deps);
 
     await svc.onStart(2);
@@ -62,7 +60,7 @@ describe('pttService state machine', () => {
 
     expect(deps.createNewVoiceThread).toHaveBeenCalled();
     expect(deps.sendMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ threadId: 'thread-new' }),
+      expect.objectContaining({ threadId: 'thread-new' })
     );
   });
 
@@ -85,9 +83,7 @@ describe('pttService state machine', () => {
   });
 
   it('drops the session when the transcript is empty', async () => {
-    const deps = makeDeps({
-      transcribe: vi.fn().mockResolvedValue('   '),
-    });
+    const deps = makeDeps({ transcribe: vi.fn().mockResolvedValue('   ') });
     const svc = createPttService(deps);
 
     await svc.onStart(4);
@@ -108,9 +104,7 @@ describe('pttService state machine', () => {
 
     expect(deps.audioCapture.finalize).toHaveBeenCalled();
     expect(deps.sendMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        metadata: expect.objectContaining({ session_id: 5 }),
-      }),
+      expect.objectContaining({ metadata: expect.objectContaining({ session_id: 5 }) })
     );
   });
 
@@ -126,17 +120,13 @@ describe('pttService state machine', () => {
   });
 
   it('honours the speakReplies setting when forwarding to sendMessage', async () => {
-    const deps = makeDeps({
-      getSettings: () => ({ speakReplies: false, showOverlay: true }),
-    });
+    const deps = makeDeps({ getSettings: () => ({ speakReplies: false, showOverlay: true }) });
     const svc = createPttService(deps);
 
     await svc.onStart(8);
     await svc.onStop(8);
 
-    expect(deps.sendMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ speakReply: false }),
-    );
+    expect(deps.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ speakReply: false }));
   });
 
   it('mismatched session_id on onStop is ignored', async () => {
@@ -184,9 +174,7 @@ describe('pttService state machine', () => {
   });
 
   it('posts a "[Voice — transcription failed]" breadcrumb when transcribe throws', async () => {
-    const deps = makeDeps({
-      transcribe: vi.fn().mockRejectedValue(new Error('stt timeout')),
-    });
+    const deps = makeDeps({ transcribe: vi.fn().mockRejectedValue(new Error('stt timeout')) });
     const svc = createPttService(deps);
 
     await svc.onStart(12);
@@ -196,7 +184,7 @@ describe('pttService state machine', () => {
       expect.objectContaining({
         body: '[Voice — transcription failed]',
         metadata: { source: 'ptt', session_id: 12 },
-      }),
+      })
     );
   });
 });

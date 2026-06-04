@@ -3,12 +3,12 @@ import { describe, expect, it } from 'vitest';
 import {
   initialPttState,
   pttReducer,
-  setPttShortcut,
-  setSpeakReplies,
-  setShowOverlay,
+  type PttState,
   setIsHeld,
   setPttRegistrationError,
-  type PttState,
+  setPttShortcut,
+  setShowOverlay,
+  setSpeakReplies,
 } from '../pttSlice';
 import { resetUserScopedState } from '../resetActions';
 

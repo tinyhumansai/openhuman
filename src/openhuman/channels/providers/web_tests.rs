@@ -25,19 +25,46 @@ static FORCED_ERROR_TEST_LOCK: Lazy<TokioMutex<()>> = Lazy::new(|| TokioMutex::n
 
 #[tokio::test]
 async fn start_chat_validates_required_fields() {
-    let err = start_chat("", "thread", "hello", None, None, None, None, ChatRequestMetadata::default())
-        .await
-        .expect_err("client id should be required");
+    let err = start_chat(
+        "",
+        "thread",
+        "hello",
+        None,
+        None,
+        None,
+        None,
+        ChatRequestMetadata::default(),
+    )
+    .await
+    .expect_err("client id should be required");
     assert!(err.contains("client_id is required"));
 
-    let err = start_chat("client", "", "hello", None, None, None, None, ChatRequestMetadata::default())
-        .await
-        .expect_err("thread id should be required");
+    let err = start_chat(
+        "client",
+        "",
+        "hello",
+        None,
+        None,
+        None,
+        None,
+        ChatRequestMetadata::default(),
+    )
+    .await
+    .expect_err("thread id should be required");
     assert!(err.contains("thread_id is required"));
 
-    let err = start_chat("client", "thread", "   ", None, None, None, None, ChatRequestMetadata::default())
-        .await
-        .expect_err("message should be required");
+    let err = start_chat(
+        "client",
+        "thread",
+        "   ",
+        None,
+        None,
+        None,
+        None,
+        ChatRequestMetadata::default(),
+    )
+    .await
+    .expect_err("message should be required");
     assert!(err.contains("message is required"));
 }
 
@@ -1201,8 +1228,7 @@ fn compose_system_prompt_suffix_combines_locale_and_profile() {
 fn web_chat_schema_accepts_optional_ptt_fields() {
     // Locate the `chat` schema via the public accessor.
     let schema = schemas("chat");
-    let names: std::collections::HashSet<&str> =
-        schema.inputs.iter().map(|f| f.name).collect();
+    let names: std::collections::HashSet<&str> = schema.inputs.iter().map(|f| f.name).collect();
     assert!(
         names.contains("speak_reply"),
         "channel.web_chat schema must include optional speak_reply field"
@@ -1225,7 +1251,11 @@ fn web_chat_schema_accepts_optional_ptt_fields() {
         assert!(!f.required, "{field} must be optional");
     }
     // Type assertions: ensure each field has the correct wire type.
-    let speak_reply = schema.inputs.iter().find(|f| f.name == "speak_reply").unwrap();
+    let speak_reply = schema
+        .inputs
+        .iter()
+        .find(|f| f.name == "speak_reply")
+        .unwrap();
     assert_eq!(
         speak_reply.ty,
         TypeSchema::Option(Box::new(TypeSchema::Bool)),
@@ -1237,7 +1267,11 @@ fn web_chat_schema_accepts_optional_ptt_fields() {
         TypeSchema::Option(Box::new(TypeSchema::String)),
         "source must be Option<String>"
     );
-    let session_id = schema.inputs.iter().find(|f| f.name == "session_id").unwrap();
+    let session_id = schema
+        .inputs
+        .iter()
+        .find(|f| f.name == "session_id")
+        .unwrap();
     assert_eq!(
         session_id.ty,
         TypeSchema::Option(Box::new(TypeSchema::U64)),

@@ -19,16 +19,9 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { useEffect, useMemo, useRef } from 'react';
 import { useDispatch, useStore } from 'react-redux';
 
-import {
-  cancelPttAudio,
-  finalizePttAudio,
-  startPttAudio,
-} from '../features/voice/pttAudio';
+import { cancelPttAudio, finalizePttAudio, startPttAudio } from '../features/voice/pttAudio';
 import { playPttChime } from '../features/voice/pttChimes';
-import {
-  createNewVoiceThread,
-  resolveActiveThreadId,
-} from '../features/voice/pttThread';
+import { createNewVoiceThread, resolveActiveThreadId } from '../features/voice/pttThread';
 import { transcribePttAudio } from '../features/voice/pttTranscribe';
 import { usePttHotkey } from '../hooks/usePttHotkey';
 import { chatSend } from '../services/chatService';
@@ -57,11 +50,7 @@ export default function PttHotkeyManager(): null {
   const service = useMemo(
     () =>
       createPttService({
-        audioCapture: {
-          start: startPttAudio,
-          finalize: finalizePttAudio,
-          cancel: cancelPttAudio,
-        },
+        audioCapture: { start: startPttAudio, finalize: finalizePttAudio, cancel: cancelPttAudio },
         transcribe: transcribePttAudio,
         sendMessage: async ({ threadId, body, speakReply, metadata }) => {
           await chatSend({
@@ -85,10 +74,7 @@ export default function PttHotkeyManager(): null {
         },
         getSettings: () => {
           const ptt = store.getState().ptt;
-          return {
-            speakReplies: ptt.speakReplies,
-            showOverlay: ptt.showOverlay,
-          };
+          return { speakReplies: ptt.speakReplies, showOverlay: ptt.showOverlay };
         },
         now: monotonicNow,
         // 10 s ceiling on a single PTT recording — matches the spec; if the
@@ -107,7 +93,7 @@ export default function PttHotkeyManager(): null {
     // store updates would orphan in-flight sessions. The closures above read
     // the latest store state on every call, so a stable identity is correct.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [],
+    []
   );
 
   useEffect(() => {

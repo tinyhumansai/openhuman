@@ -107,9 +107,18 @@ async fn web_controllers_validate_inputs_and_emit_structured_forced_errors() {
     assert_eq!(all_web_channel_registered_controllers().len(), 2);
     assert_eq!(schemas("missing").function, "unknown");
 
-    let err = channel_web_chat("client", "thread", "   ", None, None, None, None, ChatRequestMetadata::default())
-        .await
-        .expect_err("blank messages are rejected");
+    let err = channel_web_chat(
+        "client",
+        "thread",
+        "   ",
+        None,
+        None,
+        None,
+        None,
+        ChatRequestMetadata::default(),
+    )
+    .await
+    .expect_err("blank messages are rejected");
     assert!(err.contains("message is required"));
 
     let cancel = channel_web_cancel("client", "missing-thread")

@@ -24,10 +24,10 @@ import mascotReducer from './mascotSlice';
 import notificationReducer from './notificationSlice';
 import personaReducer from './personaSlice';
 import providerSurfacesReducer from './providerSurfaceSlice';
+import { pttReducer } from './pttSlice';
 import socketReducer from './socketSlice';
 import themeReducer from './themeSlice';
 import threadReducer from './threadSlice';
-import { pttReducer } from './pttSlice';
 import { userScopedStorage } from './userScopedStorage';
 import workflowsReducer from './workflowsSlice';
 

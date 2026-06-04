@@ -204,10 +204,13 @@ export function createPttService(deps: PttDeps): PttService {
       // Re-check after the audio.start await.
       if (active !== claimed) {
         // Concurrent preempt replaced our claim mid-flight; we already started
-        // audio for an orphan session. Best-effort cancel and exit.
+        // audio for an orphan session. Best-effort cancel and exit — cancellation
+        // failure here is non-actionable (the orphan session is already detached).
         try {
           await deps.audioCapture.cancel();
-        } catch (_) {}
+        } catch (_) {
+          // ignore: orphan-session cleanup is best-effort
+        }
         return;
       }
 

@@ -556,9 +556,18 @@ async fn web_channel_public_paths_cover_validation_cancel_schema_and_event_bus()
     assert_eq!(web_channel_schema("cancel").function, "web_cancel");
     assert_eq!(web_channel_schema("missing").function, "unknown");
 
-    let missing_client = start_chat(" ", "thread", "hello", None, None, None, None, ChatRequestMetadata::default())
-        .await
-        .expect_err("blank client");
+    let missing_client = start_chat(
+        " ",
+        "thread",
+        "hello",
+        None,
+        None,
+        None,
+        None,
+        ChatRequestMetadata::default(),
+    )
+    .await
+    .expect_err("blank client");
     assert_contains(&missing_client, "client_id is required");
     let missing_thread = cancel_chat("client", " ").await.expect_err("blank thread");
     assert_contains(&missing_thread, "thread_id is required");

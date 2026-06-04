@@ -229,20 +229,45 @@ async fn dispatch_harness_covers_error_context_compaction_and_timeout_paths() {
 
 #[tokio::test]
 async fn web_channel_validation_cancel_and_classifier_snapshots_are_publicly_exercised() {
-    assert!(start_chat("", "thread", "hello", None, None, None, None, ChatRequestMetadata::default())
-        .await
-        .expect_err("empty client rejected")
-        .contains("client_id"));
-    assert!(start_chat("client", "", "hello", None, None, None, None, ChatRequestMetadata::default())
-        .await
-        .expect_err("empty thread rejected")
-        .contains("thread_id"));
-    assert!(
-        start_chat("client", "thread", "   ", None, None, None, None, ChatRequestMetadata::default())
-            .await
-            .expect_err("empty message rejected")
-            .contains("message")
-    );
+    assert!(start_chat(
+        "",
+        "thread",
+        "hello",
+        None,
+        None,
+        None,
+        None,
+        ChatRequestMetadata::default()
+    )
+    .await
+    .expect_err("empty client rejected")
+    .contains("client_id"));
+    assert!(start_chat(
+        "client",
+        "",
+        "hello",
+        None,
+        None,
+        None,
+        None,
+        ChatRequestMetadata::default()
+    )
+    .await
+    .expect_err("empty thread rejected")
+    .contains("thread_id"));
+    assert!(start_chat(
+        "client",
+        "thread",
+        "   ",
+        None,
+        None,
+        None,
+        None,
+        ChatRequestMetadata::default()
+    )
+    .await
+    .expect_err("empty message rejected")
+    .contains("message"));
 
     let mut rx = subscribe_web_channel_events();
     assert_eq!(

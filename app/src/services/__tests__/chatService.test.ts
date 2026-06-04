@@ -245,7 +245,7 @@ describe('chatService.subscribeChatEvents', () => {
           source: 'ptt',
           session_id: 42,
         }),
-      }),
+      })
     );
   });
 

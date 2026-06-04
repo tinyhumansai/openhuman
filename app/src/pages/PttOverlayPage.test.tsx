@@ -1,5 +1,5 @@
+import { act, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen, act } from '@testing-library/react';
 
 import { PttOverlayPage } from './PttOverlayPage';
 
@@ -11,8 +11,7 @@ vi.mock('@tauri-apps/api/event', () => {
       handlers[name] = handler;
       return () => delete handlers[name];
     }),
-    __dispatch: (name: string, payload: unknown) =>
-      handlers[name]?.({ payload }),
+    __dispatch: (name: string, payload: unknown) => handlers[name]?.({ payload }),
   };
 });
 
@@ -28,7 +27,7 @@ describe('PttOverlayPage', () => {
     await act(async () => {
       (evt as unknown as { __dispatch: (n: string, p: unknown) => void }).__dispatch(
         'ptt-overlay://active',
-        { active: true, session_id: 1 },
+        { active: true, session_id: 1 }
       );
     });
     expect(screen.getByTestId('ptt-overlay-root')).toHaveAttribute('data-active', 'true');

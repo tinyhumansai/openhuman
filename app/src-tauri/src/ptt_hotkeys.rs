@@ -196,10 +196,7 @@ mod tests {
 
 /// Returns `Some(conflicting_variant)` if any expanded PTT variant overlaps
 /// any expanded dictation variant. Comparison is case-insensitive.
-pub(crate) fn first_conflict_with(
-    ptt: &[String],
-    dictation: &[String],
-) -> Option<String> {
+pub(crate) fn first_conflict_with(ptt: &[String], dictation: &[String]) -> Option<String> {
     for p in ptt {
         let p_lc = p.to_ascii_lowercase();
         for d in dictation {
@@ -236,10 +233,7 @@ mod conflict_tests {
     fn only_one_variant_overlaps_returns_first() {
         let ptt = vec!["Cmd+P".into(), "Ctrl+P".into()];
         let dict = vec!["Ctrl+P".into()];
-        assert_eq!(
-            first_conflict_with(&ptt, &dict),
-            Some("Ctrl+P".to_string())
-        );
+        assert_eq!(first_conflict_with(&ptt, &dict), Some("Ctrl+P".to_string()));
     }
 }
 
@@ -273,8 +267,14 @@ mod state_tests {
             "repeat press CAS should fail (already held)"
         );
         // Release: swap true → false returns the old true.
-        assert!(s.is_held.swap(false, Ordering::AcqRel), "swap should return prior true");
+        assert!(
+            s.is_held.swap(false, Ordering::AcqRel),
+            "swap should return prior true"
+        );
         // Subsequent stale release: swap returns the current false.
-        assert!(!s.is_held.swap(false, Ordering::AcqRel), "stale swap should return false");
+        assert!(
+            !s.is_held.swap(false, Ordering::AcqRel),
+            "stale swap should return false"
+        );
     }
 }

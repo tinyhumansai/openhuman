@@ -82,10 +82,7 @@ function eventToShortcut(e: React.KeyboardEvent): string | null {
  * to depend on the exact Rust error wording; falls back to the raw string for
  * anything unrecognised (still useful to the user for diagnostics).
  */
-function localizedRegistrationError(
-  raw: string | null,
-  t: (key: string) => string,
-): string | null {
+function localizedRegistrationError(raw: string | null, t: (key: string) => string): string | null {
   if (!raw) return null;
   const lower = raw.toLowerCase();
   if (lower.includes('conflict') && lower.includes('dictation')) {

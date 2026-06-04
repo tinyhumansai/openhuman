@@ -14,13 +14,13 @@ import Intelligence from './pages/Intelligence';
 import Invites from './pages/Invites';
 import Notifications from './pages/Notifications';
 import Onboarding from './pages/onboarding/Onboarding';
+import { PttOverlayPage } from './pages/PttOverlayPage';
 import Rewards from './pages/Rewards';
 import Routines from './pages/Routines';
 import Settings from './pages/Settings';
 import SkillNew from './pages/SkillNew';
 import Skills from './pages/Skills';
 import SkillsRun from './pages/SkillsRun';
-import { PttOverlayPage } from './pages/PttOverlayPage';
 import WebCallbackPage from './pages/WebCallbackPage';
 import Welcome from './pages/Welcome';
 
