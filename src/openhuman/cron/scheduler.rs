@@ -153,9 +153,18 @@ pub async fn run(config: Config) -> Result<()> {
         component: "scheduler".to_string(),
     });
 
+    // Track the most recently *emitted* scheduler health so we only
+    // publish `HealthChanged` on a state transition. Without this the
+    // bus would carry a steady `healthy: true` event every poll
+    // interval — typically 30 s, forever — churn for any subscriber
+    // that logs / persists / reacts to health events. `None` means
+    // "nothing emitted yet for this run", so the first successful tick
+    // is treated as a transition and emits.
+    let mut last_emitted_health: Option<bool> = None;
+
     loop {
         interval.tick().await;
-        tick_once(&config, &security).await;
+        tick_once(&config, &security, &mut last_emitted_health).await;
     }
 }
 
@@ -178,30 +187,55 @@ pub async fn run(config: Config) -> Result<()> {
 ///   next tick that survives the DB read will re-flip it to
 ///   `healthy: true`, exactly the auto-recovery behaviour the Docker
 ///   health check needs.
-pub(crate) async fn tick_once(config: &Config, security: &Arc<SecurityPolicy>) {
+pub(crate) async fn tick_once(
+    config: &Config,
+    security: &Arc<SecurityPolicy>,
+    last_emitted_health: &mut Option<bool>,
+) {
     tracing::debug!("[cron:scheduler] tick poll begin");
     let jobs = match due_jobs(config, Utc::now()) {
         Ok(jobs) => jobs,
         Err(e) => {
             tracing::warn!("[cron:scheduler] tick poll db_error: {e}");
-            publish_global(DomainEvent::HealthChanged {
-                component: "scheduler".to_string(),
-                healthy: false,
-                message: Some(e.to_string()),
-            });
+            // Transition-only emission: only publish on the first
+            // failure after a previous healthy (or unknown) state.
+            // Repeat DB failures stay quiet so subscribers don't see
+            // an event-storm during a long outage.
+            if *last_emitted_health != Some(false) {
+                publish_global(DomainEvent::HealthChanged {
+                    component: "scheduler".to_string(),
+                    healthy: false,
+                    message: Some(e.to_string()),
+                });
+                *last_emitted_health = Some(false);
+            }
             return;
         }
     };
 
     let due_count = jobs.len();
-    tracing::debug!(
-        "[cron:scheduler] tick poll ok due_count={due_count} (recovery signal: healthy=true)"
-    );
-    publish_global(DomainEvent::HealthChanged {
-        component: "scheduler".to_string(),
-        healthy: true,
-        message: None,
-    });
+    // Transition-only emission for the recovery / healthy signal: a
+    // long idle stretch with no transitions stays silent on the bus,
+    // so subscribers don't pay per-poll work for a steady `healthy:
+    // true` event every poll interval — the nit oxoxDev caught on
+    // #3329. The very first successful tick after boot (or after a
+    // failure) is the one that fires; subsequent successful ticks
+    // are no-ops on the wire.
+    if *last_emitted_health != Some(true) {
+        tracing::debug!(
+            "[cron:scheduler] tick poll ok due_count={due_count} (recovery signal: healthy=true)"
+        );
+        publish_global(DomainEvent::HealthChanged {
+            component: "scheduler".to_string(),
+            healthy: true,
+            message: None,
+        });
+        *last_emitted_health = Some(true);
+    } else {
+        tracing::trace!(
+            "[cron:scheduler] tick poll ok due_count={due_count} (steady state, no event)"
+        );
+    }
 
     if due_count == 0 {
         tracing::trace!("[cron:scheduler] tick end (no due jobs)");
@@ -210,6 +244,13 @@ pub(crate) async fn tick_once(config: &Config, security: &Arc<SecurityPolicy>) {
 
     process_due_jobs(config, security, jobs).await;
     tracing::debug!("[cron:scheduler] tick end due_count={due_count} (jobs processed)");
+
+    // `process_due_jobs` itself may have published `healthy: false` on
+    // a job failure, but it does so directly on the bus without
+    // touching our local tracker. Reset so the next successful tick
+    // is again treated as a transition and re-emits `healthy: true` —
+    // exactly the auto-recovery behaviour #3312 requires.
+    *last_emitted_health = None;
 }
 
 /// Public entry point for delivering a job's output via the configured

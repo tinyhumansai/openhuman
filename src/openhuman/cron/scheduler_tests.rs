@@ -1018,7 +1018,11 @@ async fn scheduler_tick_once_publishes_health_recovery_signal_on_empty_queue() {
     // while a prior error sits in the registry. The fix is verified by
     // observing that the tick still emits the recovery signal.
     let before = events.lock().unwrap().len();
-    tick_once(&config, &security).await;
+    // Start with `None` so the very first tick is treated as a
+    // transition and fires the recovery event — same shape as `run()`
+    // immediately after boot.
+    let mut last_emitted_health: Option<bool> = None;
+    tick_once(&config, &security, &mut last_emitted_health).await;
 
     // Bus delivery is async — wait briefly for the subscriber to drain.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
@@ -1046,5 +1050,54 @@ async fn scheduler_tick_once_publishes_health_recovery_signal_on_empty_queue() {
             );
         }
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+}
+
+/// #3329 review nit (oxoxDev): a successful empty poll must only emit a
+/// `HealthChanged` event on a **transition**, not every tick. Once the
+/// recovery signal is on the wire, subsequent steady-state ticks should
+/// stay silent so subscribers don't see an event-storm on a 30 s poll
+/// interval.
+///
+/// We assert on the local `last_emitted_health` tracker rather than the
+/// global bus to stay race-free against the many sibling tests in this
+/// binary that publish `HealthChanged { component: "scheduler", ... }`
+/// for unrelated reasons. The tracker's transitions are 1:1 with the
+/// `publish_global` calls inside `tick_once` by construction (every
+/// emit-branch updates it, every no-emit branch doesn't), so a stable
+/// `Some(true)` across multiple successful ticks is a sufficient proxy
+/// for "no event hit the wire".
+#[tokio::test]
+async fn scheduler_tick_once_does_not_re_emit_recovery_signal_on_steady_state() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp).await;
+    let security = Arc::new(SecurityPolicy::from_config(
+        &config.autonomy,
+        &config.workspace_dir,
+        &config.action_dir,
+    ));
+
+    let mut last_emitted_health: Option<bool> = None;
+
+    // First tick: transition from None → Some(true), publishes once.
+    tick_once(&config, &security, &mut last_emitted_health).await;
+    assert_eq!(
+        last_emitted_health,
+        Some(true),
+        "first successful tick must flip the local tracker to Some(true) \
+         (and publish HealthChanged on the bus)"
+    );
+
+    // Second + third ticks: steady-state, no transition. The tracker
+    // must stay Some(true) — meaning the `if *last_emitted_health !=
+    // Some(true)` guard inside `tick_once` short-circuited and no
+    // `publish_global` call ran on those ticks.
+    for tick in 2..=5 {
+        tick_once(&config, &security, &mut last_emitted_health).await;
+        assert_eq!(
+            last_emitted_health,
+            Some(true),
+            "tick #{tick} must leave the tracker at Some(true) (steady state, no publish)"
+        );
     }
 }
