@@ -19,12 +19,10 @@ describe('McpStatusBadge', () => {
     expect(screen.getByRole('status')).toHaveTextContent(expectedLabel);
   });
 
-  it('renders the disabled status badge with the mcp.status.disabled i18n key', () => {
+  it('renders the disabled status badge with label and italic style', () => {
     render(<McpStatusBadge status="disabled" />);
-    // The i18n key 'mcp.status.disabled' will be added in Task 9; until then
-    // the runtime falls back to the key string itself.
     const badge = screen.getByRole('status');
-    // The badge renders without crashing and carries the italic style.
+    expect(badge).toHaveTextContent('Disabled');
     expect(badge.className).toContain('italic');
   });
 

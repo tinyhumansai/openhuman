@@ -318,3 +318,32 @@ async fn set_enabled_true_clears_disabled_status_but_does_not_auto_connect() {
         "re-enabling alone must not bring up the subprocess; the user calls connect explicitly"
     );
 }
+
+#[tokio::test]
+async fn update_env_on_disabled_server_persists_but_does_not_reconnect() {
+    use openhuman_core::openhuman::mcp_registry::ops;
+    use std::collections::HashMap;
+
+    let (_tmp, cfg) = fresh_workspace_config();
+    let mut server = make_installed_server();
+    server.enabled = false;
+    store::insert_server(&cfg, &server).expect("insert");
+
+    let mut env = HashMap::new();
+    env.insert("API_KEY".to_string(), "deadbeef".to_string());
+
+    let outcome = ops::mcp_clients_update_env(&cfg, server.server_id.clone(), env)
+        .await
+        .expect("update_env on disabled server returns Ok");
+    assert_eq!(
+        outcome.value["status"], "disabled",
+        "disabled server reports status=disabled instead of reconnecting"
+    );
+
+    let statuses = connections::all_status(&cfg).await;
+    let mine = statuses
+        .iter()
+        .find(|s| s.server_id == server.server_id)
+        .unwrap();
+    assert_eq!(mine.status.as_str(), "disabled");
+}

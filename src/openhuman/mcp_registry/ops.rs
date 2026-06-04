@@ -424,6 +424,24 @@ pub async fn mcp_clients_update_env(
             .map_err(|e| e.to_string())?;
     }
 
+    // A disabled server must not be auto-reconnected even when its env is
+    // reconfigured — `enabled` is the user-visible "should this be live" gate
+    // and the same disabled rule that blocks `mcp_clients_connect` applies
+    // here. The new values are already persisted so a later `set_enabled(true)`
+    // + `connect` round-trip will pick them up.
+    if !server.enabled {
+        return Ok(RpcOutcome::new(
+            json!({
+                "server_id": server_id,
+                "status": "disabled",
+                "env_keys": server.env_keys,
+            }),
+            vec![format!(
+                "update_env persisted env for server_id={server_id} but did not reconnect: server is disabled"
+            )],
+        ));
+    }
+
     match connections::connect(config, &server).await {
         Ok(tools) => {
             let tool_count = tools.len() as u32;
