@@ -55,6 +55,12 @@ const DANGEROUS_ENV_PREFIXES: &[&str] = &[
 /// Returns true if `s` starts with one or more inline env assignments and any
 /// of the assigned names are in [`DANGEROUS_ENV_PREFIXES`].
 ///
+/// Now superseded by [`has_leading_env_assignment`] for the
+/// allowlist check (which rejects ANY leading env assignment), but kept
+/// for callers that specifically want the dangerous-only signal —
+/// notably tests that pin the old DANGEROUS_ENV_PREFIXES rejection
+/// shape.
+///
 /// The allowlist validation in [`SecurityPolicy::is_command_allowed`] uses
 /// [`skip_env_assignments`] to look past the env prefix before matching the
 /// command name. That leaves a class of attacks where the bare command (e.g.
@@ -90,6 +96,44 @@ pub(super) fn has_dangerous_env_prefix(s: &str) -> bool {
         }
         rest = rest[word.len()..].trim_start();
     }
+}
+
+/// Returns true if `s` starts with at least one inline env-var
+/// assignment of the shape `NAME=...`, where `NAME` begins with an ASCII
+/// letter or underscore. Catches the entire `GIT_SSH=…`, `SSH_ASKPASS=…`,
+/// `LD_PRELOAD=…`, `IFS=…` family — including names we haven't enumerated
+/// in [`DANGEROUS_ENV_PREFIXES`] — by treating ANY leading assignment as
+/// suspect. The allowlist already names every command we want to permit;
+/// nothing in that list needs the operator to set an env var at invoke
+/// time, so the broader gate has no false-positive surface on the
+/// approved path.
+///
+/// Used by [`SecurityPolicy::is_command_allowed`] as a structural guard
+/// alongside the existing dangerous-prefix check.
+pub(super) fn has_leading_env_assignment(s: &str) -> bool {
+    let Some(word) = s.split_whitespace().next() else {
+        return false;
+    };
+    let Some((name, _value)) = word.split_once('=') else {
+        return false;
+    };
+    if name.is_empty() {
+        return false;
+    }
+    // Identifier shape: first char letter or `_`, the rest alphanumeric
+    // or `_`. Anything else (e.g. `foo[bar]=`) is not a shell assignment.
+    let mut chars = name.chars();
+    let first = match chars.next() {
+        Some(c) => c,
+        None => return false,
+    };
+    if !(first.is_ascii_alphabetic() || first == '_') {
+        return false;
+    }
+    if !chars.all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return false;
+    }
+    true
 }
 
 /// Skip leading environment variable assignments (e.g. `FOO=bar cmd args`).

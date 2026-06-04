@@ -29,6 +29,13 @@ fn test_config() -> (TempDir, Config) {
     cfg.memory_tree.embedding_endpoint = None;
     cfg.memory_tree.embedding_model = None;
     cfg.memory_tree.embedding_strict = false;
+    // #002 (FR-002): the write path now SKIPS embedding (returns None) when no
+    // provider is configured, instead of silently using a zero-vector inert
+    // embedder. These integration tests assert embeddings ARE populated
+    // end-to-end, so opt into the inert embedder explicitly — `provider=none`
+    // is the deterministic "vector search by choice" path that
+    // `build_write_embedder` returns as Some(inert).
+    cfg.embeddings_provider = Some("none".into());
     (tmp, cfg)
 }
 

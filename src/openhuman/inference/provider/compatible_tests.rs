@@ -65,6 +65,8 @@ fn native_request_emits_thread_id_when_present() {
         tool_choice: None,
         thread_id: Some("thread-abc".to_string()),
         stream_options: None,
+        options: None,
+        frequency_penalty: None,
     };
     let json = serde_json::to_value(&req).unwrap();
     assert_eq!(
@@ -82,12 +84,66 @@ fn native_request_emits_thread_id_when_present() {
         tool_choice: None,
         thread_id: None,
         stream_options: None,
+        options: None,
+        frequency_penalty: None,
     };
     let json_no_thread = serde_json::to_value(&req_no_thread).unwrap();
     assert!(
         json_no_thread.get("thread_id").is_none(),
         "absent thread_id must not be serialized so non-OpenHuman backends don't reject the field"
     );
+}
+
+#[test]
+fn native_request_serializes_frequency_penalty_only_when_set() {
+    let base = super::NativeChatRequest {
+        model: "kimi".to_string(),
+        messages: Vec::new(),
+        temperature: Some(0.7),
+        stream: Some(false),
+        tools: None,
+        tool_choice: None,
+        thread_id: None,
+        stream_options: None,
+        options: None,
+        frequency_penalty: Some(0.3),
+    };
+    let json = serde_json::to_value(&base).unwrap();
+    assert_eq!(
+        json.get("frequency_penalty")
+            .and_then(serde_json::Value::as_f64),
+        Some(0.3),
+        "a set frequency_penalty must be forwarded to damp repetition loops"
+    );
+
+    let none = super::NativeChatRequest {
+        frequency_penalty: None,
+        ..base
+    };
+    let json_none = serde_json::to_value(&none).unwrap();
+    assert!(
+        json_none.get("frequency_penalty").is_none(),
+        "absent frequency_penalty must be omitted so providers that reject it are unaffected"
+    );
+}
+
+#[test]
+fn detects_frequency_penalty_rejection_for_retry() {
+    use super::OpenAiCompatibleProvider as P;
+    // Strict providers that 400 on the field → retry without it.
+    assert!(P::err_indicates_frequency_penalty_unsupported(
+        "400 Bad Request: unknown parameter 'frequency_penalty'"
+    ));
+    assert!(P::err_indicates_frequency_penalty_unsupported(
+        "frequency_penalty is not supported by this model"
+    ));
+    // Unrelated errors, or the field merely mentioned, must NOT trigger a retry.
+    assert!(!P::err_indicates_frequency_penalty_unsupported(
+        "rate limit exceeded"
+    ));
+    assert!(!P::err_indicates_frequency_penalty_unsupported(
+        "applied frequency_penalty 0.3"
+    ));
 }
 
 /// Streaming responses arrive without `usage` unless the request asks
@@ -108,6 +164,8 @@ fn streaming_request_sets_stream_options_include_usage() {
         stream_options: Some(super::compatible_types::OpenAiStreamOptions {
             include_usage: true,
         }),
+        options: None,
+        frequency_penalty: None,
     };
     let json = serde_json::to_value(&req).unwrap();
     assert_eq!(
@@ -129,11 +187,58 @@ fn non_streaming_request_omits_stream_options() {
         tool_choice: None,
         thread_id: None,
         stream_options: None,
+        options: None,
+        frequency_penalty: None,
     };
     let json = serde_json::to_value(&req).unwrap();
     assert!(
         json.get("stream_options").is_none(),
         "non-streaming requests must not emit stream_options (OpenAI rejects it on stream=false)"
+    );
+}
+
+#[test]
+fn ollama_options_num_ctx_serializes_correctly() {
+    let req = super::NativeChatRequest {
+        model: "qwen3:14b".to_string(),
+        messages: Vec::new(),
+        temperature: Some(0.7),
+        stream: Some(false),
+        tools: None,
+        tool_choice: None,
+        thread_id: None,
+        stream_options: None,
+        options: Some(super::compatible_types::OllamaOptions {
+            num_ctx: Some(32768),
+        }),
+        frequency_penalty: None,
+    };
+    let json = serde_json::to_value(&req).unwrap();
+    assert_eq!(
+        json.pointer("/options/num_ctx").and_then(|v| v.as_u64()),
+        Some(32768),
+        "Ollama num_ctx must appear at options.num_ctx in serialized body"
+    );
+}
+
+#[test]
+fn ollama_options_none_is_omitted() {
+    let req = super::NativeChatRequest {
+        model: "gpt-4o".to_string(),
+        messages: Vec::new(),
+        temperature: Some(0.7),
+        stream: Some(false),
+        tools: None,
+        tool_choice: None,
+        thread_id: None,
+        stream_options: None,
+        options: None,
+        frequency_penalty: None,
+    };
+    let json = serde_json::to_value(&req).unwrap();
+    assert!(
+        json.get("options").is_none(),
+        "options field must be omitted when None (non-Ollama providers)"
     );
 }
 
@@ -168,11 +273,11 @@ fn request_serializes_correctly() {
         messages: vec![
             Message {
                 role: "system".to_string(),
-                content: "You are OpenHuman".to_string(),
+                content: "You are OpenHuman".into(),
             },
             Message {
                 role: "user".to_string(),
-                content: "hello".to_string(),
+                content: "hello".into(),
             },
         ],
         temperature: Some(0.4),
@@ -228,6 +333,106 @@ fn parse_responses_response_body_reports_sanitized_snippet() {
     assert!(msg.contains("body="));
     assert!(msg.contains("[REDACTED]"));
     assert!(!msg.contains("sk-another-secret"));
+}
+
+// ── aggregate_responses_sse_body (#3201) ─────────────────────────────────────
+
+/// Per-delta accumulation: the Codex/ChatGPT OAuth stream is a sequence of
+/// `response.output_text.delta` events whose `delta` fields concatenate into
+/// the final assistant text.
+#[test]
+fn aggregate_responses_sse_body_concatenates_text_deltas() {
+    let body = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello \"}\n\n\
+                data: {\"type\":\"response.output_text.delta\",\"delta\":\"world\"}\n\n\
+                data: [DONE]\n";
+    let text =
+        super::compatible_parse::aggregate_responses_sse_body("custom", body).expect("aggregate");
+    assert_eq!(text, "hello world");
+}
+
+/// Some providers (and the Codex endpoint when the model batches its
+/// reply) skip per-token deltas and emit the full text in
+/// `response.completed.response.output_text`. The aggregator must fall
+/// back to that terminal field when no deltas accumulated.
+#[test]
+fn aggregate_responses_sse_body_prefers_terminal_output_text_when_present() {
+    let body = "data: {\"type\":\"response.created\",\"response\":{}}\n\n\
+                data: {\"type\":\"response.completed\",\"response\":{\"output_text\":\"batched final text\"}}\n\n\
+                data: [DONE]\n";
+    let text =
+        super::compatible_parse::aggregate_responses_sse_body("custom", body).expect("aggregate");
+    assert_eq!(text, "batched final text");
+}
+
+/// #3201 CodeRabbit nit: a whitespace-only terminal `output_text` must
+/// behave like the field is absent, so accumulated deltas survive instead
+/// of being silently collapsed into blank output. Mirrors
+/// `extract_responses_text`'s `first_nonempty(...)` policy.
+#[test]
+fn aggregate_responses_sse_body_ignores_whitespace_only_terminal_output_text() {
+    let body = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"good \"}\n\n\
+                data: {\"type\":\"response.output_text.delta\",\"delta\":\"reply\"}\n\n\
+                data: {\"type\":\"response.completed\",\"response\":{\"output_text\":\"   \\n\\t\"}}\n\n\
+                data: [DONE]\n";
+    let text =
+        super::compatible_parse::aggregate_responses_sse_body("custom", body).expect("aggregate");
+    assert_eq!(text, "good reply");
+}
+
+/// Carriage-return line endings (CRLF, common in HTTP/1.1 SSE) parse the
+/// same as LF-only — the trimming is just `\r` stripping.
+#[test]
+fn aggregate_responses_sse_body_tolerates_crlf_line_endings() {
+    let body = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"crlf\"}\r\n\r\n\
+                data: [DONE]\r\n";
+    let text =
+        super::compatible_parse::aggregate_responses_sse_body("custom", body).expect("aggregate");
+    assert_eq!(text, "crlf");
+}
+
+/// `response.failed` / `response.error` / `error` event shapes are
+/// terminal failures — bubble them up so the caller surfaces the upstream
+/// reason instead of returning empty text.
+#[test]
+fn aggregate_responses_sse_body_surfaces_failure_events() {
+    let body = "data: {\"type\":\"response.created\",\"response\":{}}\n\n\
+                data: {\"type\":\"response.failed\",\"error\":\"upstream model unavailable\"}\n\n";
+    let err = super::compatible_parse::aggregate_responses_sse_body("custom", body)
+        .expect_err("failure event should propagate");
+    assert!(
+        err.to_string()
+            .contains("custom Responses API stream reported a failure event"),
+        "unexpected error: {err}"
+    );
+}
+
+/// A stream that produced no usable text events returns a sanitised
+/// "no text events" error so the caller sees something actionable
+/// instead of an empty string.
+#[test]
+fn aggregate_responses_sse_body_errors_when_no_text_events_present() {
+    let body = "data: {\"type\":\"response.created\",\"response\":{}}\n\n\
+                data: [DONE]\n";
+    let err = super::compatible_parse::aggregate_responses_sse_body("custom", body)
+        .expect_err("empty stream should fail");
+    assert!(
+        err.to_string()
+            .contains("custom Responses API SSE stream produced no text events"),
+        "unexpected error: {err}"
+    );
+}
+
+/// Malformed individual events (provider keepalive comments, etc.) must
+/// not abort the whole turn — they're skipped and the good deltas still
+/// aggregate.
+#[test]
+fn aggregate_responses_sse_body_skips_unparseable_events() {
+    let body = "data: {malformed-keepalive\n\n\
+                data: {\"type\":\"response.output_text.delta\",\"delta\":\"good\"}\n\n\
+                data: [DONE]\n";
+    let text =
+        super::compatible_parse::aggregate_responses_sse_body("custom", body).expect("aggregate");
+    assert_eq!(text, "good");
 }
 
 #[test]
@@ -319,6 +524,60 @@ fn extra_headers_are_applied_with_auth_header() {
 }
 
 #[test]
+fn openrouter_requests_include_app_attribution_headers() {
+    let p = OpenAiCompatibleProvider::new(
+        "openrouter",
+        "https://openrouter.ai/api/v1",
+        Some("sk-or-test"),
+        AuthStyle::Bearer,
+    );
+
+    let req = p
+        .apply_auth_header(
+            p.http_client()
+                .post("https://openrouter.ai/api/v1/chat/completions"),
+            Some("sk-or-test"),
+        )
+        .build()
+        .unwrap();
+
+    assert_eq!(
+        req.headers()
+            .get("HTTP-Referer")
+            .and_then(|value| value.to_str().ok()),
+        Some("https://openhuman.ai")
+    );
+    assert_eq!(
+        req.headers()
+            .get("X-OpenRouter-Title")
+            .and_then(|value| value.to_str().ok()),
+        Some("OpenHuman")
+    );
+}
+
+#[test]
+fn non_openrouter_requests_do_not_include_openrouter_attribution_headers() {
+    let p = OpenAiCompatibleProvider::new(
+        "custom",
+        "https://api.example.com/v1",
+        Some("test-key"),
+        AuthStyle::Bearer,
+    );
+
+    let req = p
+        .apply_auth_header(
+            p.http_client()
+                .post("https://api.example.com/v1/chat/completions"),
+            Some("test-key"),
+        )
+        .build()
+        .unwrap();
+
+    assert!(req.headers().get("HTTP-Referer").is_none());
+    assert!(req.headers().get("X-OpenRouter-Title").is_none());
+}
+
+#[test]
 fn extra_query_params_are_applied_to_codex_urls() {
     let p = OpenAiCompatibleProvider::new(
         "openai",
@@ -349,6 +608,13 @@ fn extra_query_params_are_applied_to_codex_urls() {
     );
 }
 
+/// #3201: the Codex/ChatGPT OAuth Responses endpoint rejects
+/// `stream: false` with `{"detail":"Stream must be set to true"}` and
+/// only emits SSE bodies. The non-streaming `chat_via_responses` wrapper
+/// must therefore (a) flip the `stream` flag for `/backend-api/codex`
+/// URLs and (b) aggregate the SSE body back into the same `String`
+/// the caller expects. PR #3192 fixed the sibling `store: false`
+/// requirement; this test pins both wire-shape requirements together.
 #[tokio::test]
 async fn responses_api_primary_posts_directly_to_responses() {
     let server = MockServer::start().await;
@@ -360,13 +626,16 @@ async fn responses_api_primary_posts_directly_to_responses() {
                 "role": "user",
                 "content": [{"type": "input_text", "text": "hello"}]
             }],
-            "stream": false,
+            "stream": true,
             "store": false
         })))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "output_text": "hello from responses",
-            "output": []
-        })))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello \"}\n\n\
+             data: {\"type\":\"response.output_text.delta\",\"delta\":\"from \"}\n\n\
+             data: {\"type\":\"response.output_text.delta\",\"delta\":\"responses\"}\n\n\
+             data: {\"type\":\"response.completed\",\"response\":{\"output_text\":\"hello from responses\"}}\n\n\
+             data: [DONE]\n\n",
+        ))
         .mount(&server)
         .await;
 
@@ -531,7 +800,7 @@ async fn streaming_chat_config_rejection_propagates_error_without_sentry_report(
         model: "kimi-k2".to_string(),
         messages: vec![NativeMessage {
             role: "user".to_string(),
-            content: Some("hello".to_string()),
+            content: Some("hello".into()),
             tool_call_id: None,
             tool_calls: None,
             reasoning_content: None,
@@ -544,6 +813,8 @@ async fn streaming_chat_config_rejection_propagates_error_without_sentry_report(
         stream_options: Some(super::compatible_types::OpenAiStreamOptions {
             include_usage: true,
         }),
+        options: None,
+        frequency_penalty: None,
     };
     let (delta_tx, _delta_rx) = tokio::sync::mpsc::channel(8);
 
@@ -836,7 +1107,10 @@ fn convert_messages_for_native_maps_tool_result_payload() {
     assert_eq!(converted.len(), 2);
     assert_eq!(converted[1].role, "tool");
     assert_eq!(converted[1].tool_call_id.as_deref(), Some("call_abc"));
-    assert_eq!(converted[1].content.as_deref(), Some("done"));
+    assert_eq!(
+        serde_json::to_value(&converted[1].content).unwrap(),
+        serde_json::json!("done")
+    );
 }
 
 /// Helper: roles in serialized order.
@@ -941,7 +1215,10 @@ fn tool_invariants_collapse_fully_unanswered_assistant_call() {
         converted[0].tool_calls.is_none(),
         "fully-unanswered tool_calls must be dropped"
     );
-    assert_eq!(converted[0].content.as_deref(), Some("on it"));
+    assert_eq!(
+        serde_json::to_value(&converted[0].content).unwrap(),
+        serde_json::json!("on it")
+    );
 }
 
 /// Regression guard: a well-formed tool cycle is passed through untouched —
@@ -1143,7 +1420,7 @@ fn enforce_invariants_clears_reasoning_when_assistant_collapses_to_text() {
     let messages = vec![
         NativeMessage {
             role: "assistant".to_string(),
-            content: Some("partial thought".to_string()),
+            content: Some("partial thought".into()),
             tool_call_id: None,
             tool_calls: Some(vec![ToolCall {
                 id: Some("orphan_call".to_string()),
@@ -1158,7 +1435,7 @@ fn enforce_invariants_clears_reasoning_when_assistant_collapses_to_text() {
         // No tool result follows — the tool_calls are orphaned.
         NativeMessage {
             role: "user".to_string(),
-            content: Some("next question".to_string()),
+            content: Some("next question".into()),
             tool_call_id: None,
             tool_calls: None,
             reasoning_content: None,
@@ -1406,7 +1683,7 @@ fn request_serializes_with_tools() {
         model: "test-model".to_string(),
         messages: vec![Message {
             role: "user".to_string(),
-            content: "What is the weather?".to_string(),
+            content: "What is the weather?".into(),
         }],
         temperature: Some(0.7),
         stream: Some(false),
@@ -2072,7 +2349,7 @@ fn convert_messages_for_native_no_reasoning_content_stays_none() {
 fn native_message_reasoning_content_omitted_when_none() {
     let msg = NativeMessage {
         role: "assistant".to_string(),
-        content: Some("hello".to_string()),
+        content: Some("hello".into()),
         tool_call_id: None,
         tool_calls: None,
         reasoning_content: None,
@@ -2090,7 +2367,7 @@ fn native_message_reasoning_content_omitted_when_none() {
 fn native_message_reasoning_content_present_when_some() {
     let msg = NativeMessage {
         role: "assistant".to_string(),
-        content: Some("hello".to_string()),
+        content: Some("hello".into()),
         tool_call_id: None,
         tool_calls: None,
         reasoning_content: Some("I thought carefully.".to_string()),
@@ -2299,5 +2576,138 @@ async fn completion_only_404_fails_fast_without_responses_fallback() {
     assert!(
         !msg.contains("responses fallback failed"),
         "guard must pre-empt the responses fallback, got: {msg}"
+    );
+}
+
+// ── #3205: multimodal [IMAGE:] markers → OpenAI image_url content parts ─────────
+
+const TEST_PNG_DATA_URI: &str = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+
+/// Text with no markers stays the plain-string `content` arm — byte-identical
+/// to the legacy wire shape so every non-attachment turn is unaffected.
+#[test]
+fn message_content_text_only_serializes_as_string() {
+    let content = MessageContent::from_chat_text("just a normal message");
+    let json = serde_json::to_value(&content).unwrap();
+    assert_eq!(json, serde_json::json!("just a normal message"));
+}
+
+/// A user message carrying one `[IMAGE:data-uri]` marker is promoted to the
+/// OpenAI `content` array: a `text` part followed by an `image_url` part.
+#[test]
+fn message_content_text_plus_image_serializes_as_parts() {
+    let raw = format!("what is in this picture? [IMAGE:{TEST_PNG_DATA_URI}]");
+    let json = serde_json::to_value(MessageContent::from_chat_text(&raw)).unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!([
+            { "type": "text", "text": "what is in this picture?" },
+            { "type": "image_url", "image_url": { "url": TEST_PNG_DATA_URI } },
+        ])
+    );
+}
+
+/// An image with no accompanying text emits only the `image_url` part.
+#[test]
+fn message_content_image_only_omits_empty_text_part() {
+    let raw = format!("[IMAGE:{TEST_PNG_DATA_URI}]");
+    let json = serde_json::to_value(MessageContent::from_chat_text(&raw)).unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!([
+            { "type": "image_url", "image_url": { "url": TEST_PNG_DATA_URI } },
+        ])
+    );
+}
+
+/// Multiple markers become multiple `image_url` parts, with the text between
+/// them preserved in authored order (not collapsed before the images).
+#[test]
+fn message_content_multiple_images_serialize_in_order() {
+    let raw = format!("compare [IMAGE:{TEST_PNG_DATA_URI}] and [IMAGE:https://example.com/b.jpg]");
+    let json = serde_json::to_value(MessageContent::from_chat_text(&raw)).unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!([
+            { "type": "text", "text": "compare" },
+            { "type": "image_url", "image_url": { "url": TEST_PNG_DATA_URI } },
+            { "type": "text", "text": "and" },
+            { "type": "image_url", "image_url": { "url": "https://example.com/b.jpg" } },
+        ])
+    );
+}
+
+/// Interleaved order is preserved exactly — an image-first prompt keeps the
+/// image before the trailing text (CodeRabbit #3268).
+#[test]
+fn message_content_preserves_image_first_then_text_order() {
+    let raw = format!("[IMAGE:{TEST_PNG_DATA_URI}] then explain");
+    let json = serde_json::to_value(MessageContent::from_chat_text(&raw)).unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!([
+            { "type": "image_url", "image_url": { "url": TEST_PNG_DATA_URI } },
+            { "type": "text", "text": "then explain" },
+        ])
+    );
+}
+
+/// Request-level: a chat history with an image-bearing user turn serialises the
+/// full body with a string `system` content and an array `user` content.
+#[test]
+fn api_chat_request_mixes_string_and_array_content() {
+    let req = ApiChatRequest {
+        model: "gpt-4o".to_string(),
+        messages: vec![
+            Message {
+                role: "system".to_string(),
+                content: "You are helpful.".into(),
+            },
+            Message {
+                role: "user".to_string(),
+                content: MessageContent::from_chat_text(&format!(
+                    "describe this [IMAGE:{TEST_PNG_DATA_URI}]"
+                )),
+            },
+        ],
+        temperature: None,
+        stream: None,
+        tools: None,
+        tool_choice: None,
+    };
+    let json = serde_json::to_value(&req).unwrap();
+    assert_eq!(
+        json["messages"][0]["content"],
+        serde_json::json!("You are helpful.")
+    );
+    assert_eq!(
+        json["messages"][1]["content"],
+        serde_json::json!([
+            { "type": "text", "text": "describe this" },
+            { "type": "image_url", "image_url": { "url": TEST_PNG_DATA_URI } },
+        ])
+    );
+}
+
+/// The agent streaming path runs history through `convert_messages_for_native`;
+/// an image marker must survive into the `NativeMessage` array content while
+/// plain turns stay strings.
+#[test]
+fn convert_messages_for_native_promotes_image_marker() {
+    let history = vec![
+        ChatMessage::system("be brief"),
+        ChatMessage::user(&format!("look [IMAGE:{TEST_PNG_DATA_URI}]")),
+    ];
+    let native = OpenAiCompatibleProvider::convert_messages_for_native(&history);
+    assert_eq!(
+        serde_json::to_value(&native[0]).unwrap()["content"],
+        serde_json::json!("be brief")
+    );
+    assert_eq!(
+        serde_json::to_value(&native[1]).unwrap()["content"],
+        serde_json::json!([
+            { "type": "text", "text": "look" },
+            { "type": "image_url", "image_url": { "url": TEST_PNG_DATA_URI } },
+        ])
     );
 }

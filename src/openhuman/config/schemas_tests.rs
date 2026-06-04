@@ -454,7 +454,6 @@ async fn handle_get_agent_paths_reflects_openhuman_action_dir_env_override() {
     }
 }
 
-// ── set_action_dir handler (#3240) ───────────────────────────
 
 #[test]
 fn set_action_dir_rpc_is_registered() {
@@ -464,20 +463,12 @@ fn set_action_dir_rpc_is_registered() {
         .collect();
     assert!(
         funcs.contains(&"set_action_dir"),
-        "set_action_dir must be registered for the AgentAccessPanel to push a new action_dir (#3240)"
+        "set_action_dir must be registered"
     );
 }
 
 #[tokio::test]
 async fn handle_set_action_dir_persists_valid_path_and_updates_config() {
-    // Happy path for #3240. The handler should accept a fresh, valid
-    // absolute path, persist it, and return it under `result.action_dir`.
-    //
-    // The default `forbidden_paths` list includes `/var` and `/tmp` (see
-    // `autonomy::default_forbidden_paths`), which on macOS contains
-    // `tempfile::tempdir()` output (`/var/folders/...`). Clear the
-    // forbidden list for this test so the platform's tempdir location
-    // doesn't accidentally trip the validation we're trying to test.
     let _g = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let tmp = tempfile::tempdir().unwrap();
     let new_action_dir = tmp.path().join("new-action-3240");
@@ -527,9 +518,6 @@ async fn handle_set_action_dir_persists_valid_path_and_updates_config() {
 
 #[tokio::test]
 async fn handle_set_action_dir_rejects_when_openhuman_action_dir_env_is_set() {
-    // Defense-in-depth for #3240. The UI disables the input when
-    // OPENHUMAN_ACTION_DIR is set, but a CLI / scripted caller could
-    // still attempt the RPC. The handler must refuse.
     let _g = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let tmp = tempfile::tempdir().unwrap();
     let attempted = tmp.path().join("attempt-when-env-set");
@@ -562,9 +550,6 @@ async fn handle_set_action_dir_rejects_when_openhuman_action_dir_env_is_set() {
 
 #[tokio::test]
 async fn handle_set_action_dir_rejects_path_under_workspace_dir() {
-    // Validation per #3240 criterion: action_dir cannot overlap
-    // workspace_dir (internal product state). The handler must refuse
-    // even if the path is otherwise valid (createable, not a system dir).
     let _g = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let tmp = tempfile::tempdir().unwrap();
     unsafe {
@@ -572,8 +557,6 @@ async fn handle_set_action_dir_rejects_path_under_workspace_dir() {
         std::env::remove_var("OPENHUMAN_ACTION_DIR");
     }
 
-    // Resolve workspace_dir from a config load, then attempt to put
-    // action_dir inside it.
     let cfg = crate::openhuman::config::ops::load_config_with_timeout()
         .await
         .expect("config must load");
@@ -625,9 +608,6 @@ async fn handle_set_action_dir_rejects_empty_path() {
 
 #[tokio::test]
 async fn handle_get_agent_paths_reports_action_dir_env_override_flag() {
-    // Companion to the set_action_dir RPC: the UI needs the
-    // `action_dir_env_override` boolean to disable the input. This pins
-    // that the field is populated correctly.
     let _g = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let tmp = tempfile::tempdir().unwrap();
     let env_value = tmp.path().join("env-action-3240");

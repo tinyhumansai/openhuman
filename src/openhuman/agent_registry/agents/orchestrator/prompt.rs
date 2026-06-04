@@ -339,6 +339,74 @@ mod tests {
     }
 
     #[test]
+    fn build_requires_grounding_before_generate_presentation() {
+        // #2780 grounding rule: orchestrator must ground a topical/factual
+        // deck via `memory_tree` / `research` / `query_memory` before
+        // dispatching `generate_presentation`. The rule is expressed in
+        // `prompt.md` and must reach the assembled body verbatim — the
+        // test pins both the section header and the load-bearing "do
+        // not skip" instruction so a future prompt refactor can't
+        // quietly drop the guardrail. The live-web grounding option is
+        // named `research` (the researcher agent's `delegate_name`
+        // override, not the default `delegate_researcher` /
+        // `delegate_research`); it must match the actual tool name the
+        // orchestrator exposes so the model can dispatch it instead of
+        // hallucinating a non-tool.
+        let body = build(&ctx_with(&[])).unwrap();
+        assert!(
+            body.contains("## Presentation generation"),
+            "presentation section header missing from orchestrator prompt"
+        );
+        assert!(
+            body.contains("Grounding rule (do not skip)"),
+            "grounding rule missing from presentation section"
+        );
+        assert!(
+            body.contains("Before calling `generate_presentation`"),
+            "grounding pre-condition phrasing missing from presentation section"
+        );
+        // Each of the three permitted grounding tools must be named so
+        // the model knows the menu, not just the constraint.
+        assert!(body.contains("`memory_tree`"));
+        assert!(
+            body.contains("`research`"),
+            "grounding rule must name the researcher tool by its actual \
+             delegate_name (`research`), not `delegate_research`"
+        );
+        assert!(
+            !body.contains("`delegate_research`"),
+            "stale `delegate_research` reference — researcher's \
+             delegate_name override is `research`"
+        );
+        assert!(body.contains("`query_memory`"));
+        // All four waiver escape hatches must reach the assembled body
+        // verbatim — without each one the rule blocks a legitimate
+        // dispatch case. Per graycyrus on #3029: pinning only one waiver
+        // lets a future prompt edit silently drop or expand the list and
+        // the safety-critical guardrail decays unnoticed.
+        // (1) user pasted source material in the same turn.
+        assert!(
+            body.contains("user pasted source material"),
+            "waiver clause for pasted-source decks missing"
+        );
+        // (2) prior turn in same thread already established source material.
+        assert!(
+            body.contains("prior turn in this same thread"),
+            "waiver clause for prior-turn established material missing"
+        );
+        // (3) structural / content-free deck (blank template, layout-only).
+        assert!(
+            body.contains("content-free or structural"),
+            "waiver clause for structural / content-free decks missing"
+        );
+        // (4) explicit user waiver ("don't research, just generate…").
+        assert!(
+            body.contains("explicitly waived grounding"),
+            "waiver clause for explicit user waiver missing"
+        );
+    }
+
+    #[test]
     fn build_omits_guide_when_no_integrations_connected() {
         let integrations = vec![ConnectedIntegration {
             toolkit: "linear".into(),

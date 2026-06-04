@@ -215,6 +215,7 @@ mod tests {
                 category: "core".into(),
                 session_id: None,
                 document_id: None,
+                taint: crate::openhuman::memory::MemoryTaint::Internal,
             })
             .await
             .expect("seed namespace doc");

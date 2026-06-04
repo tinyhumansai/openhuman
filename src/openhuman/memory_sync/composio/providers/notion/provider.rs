@@ -23,12 +23,14 @@ use super::sync;
 use crate::openhuman::memory_sync::composio::providers::sync_state::{extract_item_id, SyncState};
 use crate::openhuman::memory_sync::composio::providers::{
     first_array_str, merge_extra, pick_str, ComposioProvider, CuratedTool, NormalizedTask,
-    ProviderContext, ProviderUserProfile, SyncOutcome, SyncReason, TaskFetchFilter,
+    ProviderContext, ProviderUserProfile, SyncOutcome, SyncReason, TaskContainer, TaskFetchFilter,
+    TaskKind,
 };
 
 pub(crate) const ACTION_GET_ABOUT_ME: &str = "NOTION_GET_ABOUT_ME";
 pub(crate) const ACTION_FETCH_DATA: &str = "NOTION_FETCH_DATA";
 pub(crate) const ACTION_QUERY_DATABASE: &str = "NOTION_QUERY_DATABASE";
+pub(crate) const ACTION_SEARCH_NOTION_PAGE: &str = "NOTION_SEARCH_NOTION_PAGE";
 
 /// Page size per API call.
 const PAGE_SIZE: u32 = 25;
@@ -473,6 +475,53 @@ impl ComposioProvider for NotionProvider {
         Ok(out)
     }
 
+    /// List the Notion databases (tables) the connected integration can see,
+    /// via `NOTION_SEARCH_NOTION_PAGE` filtered to database objects, so the
+    /// task-source UI can offer a picker for `database_id`. Only databases the
+    /// integration has been *shared with* in Notion are returned.
+    async fn list_databases(&self, ctx: &ProviderContext) -> Result<Vec<TaskContainer>, String> {
+        tracing::debug!(
+            connection_id = ?ctx.connection_id,
+            "[composio:notion] list_databases via {ACTION_SEARCH_NOTION_PAGE}"
+        );
+        // Composio's NOTION_SEARCH_NOTION_PAGE *flattens* Notion's native
+        // `filter: { value, property }` into top-level `filter_value` /
+        // `filter_property` params and silently drops the nested form (which
+        // returned only pages). We send the flat params here; the nested
+        // `filter` is kept too as a belt-and-braces hint for any variant that
+        // honours it, and the parser still drops any stray `page` items.
+        let args = json!({
+            "query": "",
+            "filter_value": "database",
+            "filter_property": "object",
+            "filter": { "value": "database", "property": "object" },
+            "page_size": 100,
+        });
+        let resp = ctx
+            .execute(ACTION_SEARCH_NOTION_PAGE, Some(args))
+            .await
+            .map_err(|e| format!("[composio:notion] {ACTION_SEARCH_NOTION_PAGE}: {e:#}"))?;
+        if !resp.successful {
+            return Err(format!(
+                "[composio:notion] {ACTION_SEARCH_NOTION_PAGE}: {}",
+                resp.error.unwrap_or_else(|| "provider failure".into())
+            ));
+        }
+
+        tracing::info!(
+            successful = resp.successful,
+            data_is_array = resp.data.is_array(),
+            data_keys = ?resp.data.as_object().map(|o| o.keys().cloned().collect::<Vec<_>>()),
+            "[composio:notion] list_databases raw response shape"
+        );
+        let out = parse_database_results(&resp.data);
+        tracing::info!(
+            count = out.len(),
+            "[composio:notion] list_databases complete"
+        );
+        Ok(out)
+    }
+
     async fn on_trigger(
         &self,
         ctx: &ProviderContext,
@@ -508,6 +557,7 @@ fn normalize_notion_page(page: &serde_json::Value) -> Option<NormalizedTask> {
         external_id,
         source_id: String::new(),
         provider: "notion".to_string(),
+        kind: TaskKind::Generic,
         title,
         body: None,
         url: pick_str(page, &["url", "data.url"]),
@@ -545,4 +595,64 @@ fn normalize_notion_page(page: &serde_json::Value) -> Option<NormalizedTask> {
         updated_at: extract_item_id(page, PAGE_EDITED_PATHS),
         raw: page.clone(),
     })
+}
+
+/// Map a `NOTION_SEARCH_NOTION_PAGE` response into the database containers
+/// the UI picker needs.
+///
+/// We send a server-side `object: database` filter, so the response is
+/// already scoped — we therefore *trust* it and only drop items explicitly
+/// typed as `page`. This is intentional: Composio's response items don't
+/// always carry a top-level `object` field, and an over-strict
+/// "keep only object==database" check silently dropped every database.
+/// Pure (no I/O) so it is unit-testable.
+pub(super) fn parse_database_results(data: &serde_json::Value) -> Vec<TaskContainer> {
+    let results = sync::extract_results(data);
+    let mut kinds: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    let mut out: Vec<TaskContainer> = Vec::new();
+    for item in &results {
+        let object = pick_str(item, &["object", "data.object"]);
+        *kinds
+            .entry(object.clone().unwrap_or_else(|| "<none>".to_string()))
+            .or_default() += 1;
+        // Trust the server-side database filter: keep databases / data_sources
+        // *and* objectless items; only drop items explicitly typed as pages.
+        if object.as_deref() == Some("page") {
+            continue;
+        }
+        let Some(id) = extract_item_id(item, PAGE_ID_PATHS) else {
+            continue;
+        };
+        let title = extract_database_title(item).unwrap_or_else(|| format!("Notion database {id}"));
+        out.push(TaskContainer { id, title });
+    }
+    tracing::info!(
+        raw = results.len(),
+        kept = out.len(),
+        object_kinds = ?kinds,
+        "[composio:notion] parse_database_results"
+    );
+    out
+}
+
+/// Extract a Notion database's display title from its top-level `title`
+/// rich-text array (`title[].plain_text`), tolerant of the Composio `data`
+/// wrapper. Returns `None` for an untitled / shapeless database.
+fn extract_database_title(db: &serde_json::Value) -> Option<String> {
+    let arr = db
+        .get("title")
+        .or_else(|| db.get("data").and_then(|d| d.get("title")))
+        .and_then(|v| v.as_array())?;
+    let text: String = arr
+        .iter()
+        .filter_map(|t| {
+            t.get("plain_text").and_then(|p| p.as_str()).or_else(|| {
+                t.get("text")
+                    .and_then(|x| x.get("content"))
+                    .and_then(|c| c.as_str())
+            })
+        })
+        .collect();
+    let text = text.trim();
+    (!text.is_empty()).then(|| text.to_string())
 }

@@ -189,7 +189,11 @@ export function useUsageState(): UsageState {
 
   const isAtLimit = isBudgetExhausted;
 
-  const isNearLimit = !isAtLimit && teamUsage !== null && usagePct >= 0.8;
+  // Mirror the isAtLimit guard: when every chat workload is routed away from
+  // OpenHuman the included-budget cycle does not gate the user, so the
+  // near-limit warning is equally irrelevant (#3097 — top-up banner shown
+  // despite custom provider).
+  const isNearLimit = !isAtLimit && !isFullyRoutedAway && teamUsage !== null && usagePct >= 0.8;
 
   return {
     teamUsage,

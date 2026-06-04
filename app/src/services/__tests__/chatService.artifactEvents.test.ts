@@ -59,6 +59,7 @@ describe('chatService — artifact_ready / artifact_failed handlers (#2779)', ()
         artifact_id: 'a-1',
         kind: 'presentation',
         title: 'Deck',
+        workspace_dir: '/workspace',
         path: 'a-1/deck.pptx',
         size_bytes: 4096,
       },
@@ -71,6 +72,7 @@ describe('chatService — artifact_ready / artifact_failed handlers (#2779)', ()
       artifact_id: 'a-1',
       kind: 'presentation',
       title: 'Deck',
+      workspace_dir: '/workspace',
       path: 'a-1/deck.pptx',
       size_bytes: 4096,
     });
@@ -136,7 +138,14 @@ describe('chatService — artifact_ready / artifact_failed handlers (#2779)', ()
     for (const kind of ['presentation', 'document', 'image', 'other'] as const) {
       socket.emit('artifact_ready', {
         thread_id: 'thread-1',
-        args: { artifact_id: `a-${kind}`, kind, title: 'X', path: `a-${kind}/file`, size_bytes: 1 },
+        args: {
+          artifact_id: `a-${kind}`,
+          kind,
+          title: 'X',
+          workspace_dir: '/workspace',
+          path: `a-${kind}/file`,
+          size_bytes: 1,
+        },
       });
     }
 
@@ -163,7 +172,8 @@ describe('chatService — artifact_ready / artifact_failed handlers (#2779)', ()
         artifact_id: 'a-1',
         kind: 'presentation',
         title: 'Deck',
-        error: 'pip install failed',
+        workspace_dir: '/workspace',
+        error: 'engine failed: validation rejected slides[0]',
       },
     });
 
@@ -174,7 +184,8 @@ describe('chatService — artifact_ready / artifact_failed handlers (#2779)', ()
       artifact_id: 'a-1',
       kind: 'presentation',
       title: 'Deck',
-      error: 'pip install failed',
+      workspace_dir: '/workspace',
+      error: 'engine failed: validation rejected slides[0]',
     });
   });
 
@@ -230,7 +241,13 @@ describe('chatService — artifact_ready / artifact_failed handlers (#2779)', ()
     const huge = 'x'.repeat(500);
     socket.emit('artifact_failed', {
       thread_id: 'thread-1',
-      args: { artifact_id: 'a-1', kind: 'presentation', title: 'Deck', error: huge },
+      args: {
+        artifact_id: 'a-1',
+        kind: 'presentation',
+        title: 'Deck',
+        workspace_dir: '/workspace',
+        error: huge,
+      },
     });
 
     expect(onArtifactFailed).toHaveBeenCalledTimes(1);

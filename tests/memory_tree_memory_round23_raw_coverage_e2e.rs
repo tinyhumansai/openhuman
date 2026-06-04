@@ -133,6 +133,7 @@ Bob Builder will review the memory tree recap.
                 category: "coverage".into(),
                 session_id: Some("round23-session".into()),
                 document_id: None,
+                taint: openhuman_core::openhuman::memory::MemoryTaint::Internal,
             },
             config: MemoryIngestionConfig {
                 model_name: "round23-heuristic".into(),
@@ -221,7 +222,7 @@ async fn tree_runtime_engine_summarizes_preserves_buffer_and_rebuilds() {
     )
     .expect("buffer second entry");
 
-    let hour = engine::run_summarization(&config, &provider, namespace, ts)
+    let hour = engine::run_summarization(&config, &provider, "test-model", namespace, ts)
         .await
         .expect("run summarization")
         .expect("hour node");
@@ -239,10 +240,12 @@ async fn tree_runtime_engine_summarizes_preserves_buffer_and_rebuilds() {
         assert!(node.summary.contains("round23 summary") || node.summary.contains("##"));
     }
 
-    assert!(engine::run_summarization(&config, &provider, namespace, ts)
-        .await
-        .expect("empty run")
-        .is_none());
+    assert!(
+        engine::run_summarization(&config, &provider, "test-model", namespace, ts)
+            .await
+            .expect("empty run")
+            .is_none()
+    );
 
     tree_runtime_store::buffer_write(
         &config,
@@ -253,7 +256,7 @@ async fn tree_runtime_engine_summarizes_preserves_buffer_and_rebuilds() {
     )
     .expect("buffer pending entry");
 
-    let status = engine::rebuild_tree(&config, &provider, namespace)
+    let status = engine::rebuild_tree(&config, &provider, "test-model", namespace)
         .await
         .expect("rebuild tree");
     assert!(status.total_nodes >= 5);

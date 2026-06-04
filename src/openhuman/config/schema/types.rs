@@ -102,6 +102,9 @@ pub struct Config {
     pub autonomy: AutonomyConfig,
 
     #[serde(default)]
+    pub sandbox: SandboxConfig,
+
+    #[serde(default)]
     pub runtime: RuntimeConfig,
 
     #[serde(default)]
@@ -653,6 +656,7 @@ impl Default for Config {
             observability: ObservabilityConfig::default(),
             dashboard: DashboardConfig::default(),
             autonomy: AutonomyConfig::default(),
+            sandbox: SandboxConfig::default(),
             runtime: RuntimeConfig::default(),
             screen_intelligence: ScreenIntelligenceConfig::default(),
             autocomplete: AutocompleteConfig::default(),

@@ -149,7 +149,12 @@ pub async fn connect(config: &Config, server: &InstalledServer) -> anyhow::Resul
     };
 
     let remote_tools = client.list_tools().await?;
-    let tools: Vec<McpTool> = remote_tools.into_iter().map(into_registry_tool).collect();
+    let safe_remote_tools =
+        crate::openhuman::mcp_client::apply_safety_filter(&server.server_id, remote_tools);
+    let tools: Vec<McpTool> = safe_remote_tools
+        .into_iter()
+        .map(into_registry_tool)
+        .collect();
 
     let conn = Arc::new(Connection {
         client,
@@ -270,9 +275,13 @@ pub async fn all_connected_tools() -> Vec<(String, String, McpTool)> {
 // ── Boundary conversion ──────────────────────────────────────────────────────
 
 fn into_registry_tool(remote: McpRemoteTool) -> McpTool {
+    // Read through the sanitized display accessor so remote
+    // description content is always bounded + scrubbed before reaching
+    // the agent LLM context downstream.
+    let description = remote.display_description();
     McpTool {
         name: remote.name,
-        description: remote.description,
+        description,
         input_schema: remote.input_schema,
     }
 }

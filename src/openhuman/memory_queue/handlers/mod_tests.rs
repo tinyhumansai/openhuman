@@ -38,6 +38,8 @@ fn mk_running_job(kind: JobKind, payload_json: String) -> Job {
         created_at_ms: now_ms,
         started_at_ms: Some(now_ms),
         completed_at_ms: None,
+        failure_reason: None,
+        failure_class: None,
     }
 }
 
@@ -132,7 +134,12 @@ async fn reembed_backfill_repopulates_then_completes() {
         chunk_id, Chunk, Metadata, SourceKind, SourceRef,
     };
 
-    let (_tmp, cfg) = test_config();
+    let (_tmp, mut cfg) = test_config();
+    // Deliberate "none" opt-out → build_write_embedder yields an InertEmbedder
+    // (correct-dim zero vectors, no network). This test pins backfill
+    // *mechanics* (worklist → sidecar write → Defer/Done), not embed quality;
+    // the no-provider skip path is covered separately.
+    cfg.embeddings_provider = Some("none".to_string());
     let ts = chrono::Utc.timestamp_millis_opt(1_700_000_000_000).unwrap();
     let chunk = Chunk {
         id: chunk_id(SourceKind::Chat, "slack:#eng", 0, "reembed-seed"),
@@ -212,6 +219,85 @@ async fn reembed_backfill_repopulates_then_completes() {
     );
 }
 
+/// #002 (FR-002) regression gate: when NO usable embeddings provider is
+/// configured, the re-embed backfill must SKIP (return `Done`) instead of
+/// falling back to an `InertEmbedder` and persisting all-zero vectors that
+/// would silently poison semantic recall — the same hazard the extract and
+/// seal write paths already guard against. The chunk stays embedding-less at
+/// the active signature (re-embeddable once a provider is configured).
+#[tokio::test]
+async fn reembed_backfill_skips_when_no_provider() {
+    use crate::openhuman::memory_store::chunks::store::{
+        get_chunk_embedding_for_signature, tree_active_signature, upsert_chunks,
+        upsert_staged_chunks_tx,
+    };
+    use crate::openhuman::memory_store::chunks::types::{
+        chunk_id, Chunk, Metadata, SourceKind, SourceRef,
+    };
+
+    // Default test config leaves embeddings unconfigured (no endpoint/model,
+    // provider unset) — the no-provider path build_write_embedder guards.
+    //
+    // Hold the shared health test-guard: the no-provider path marks the
+    // process-global semantic-recall degraded flag, so the guard resets it on
+    // entry and keeps the signal from leaking into parallel status tests.
+    let _health_guard = crate::openhuman::memory_tree::health::test_guard();
+    let (_tmp, cfg) = test_config();
+    let ts = chrono::Utc.timestamp_millis_opt(1_700_000_000_000).unwrap();
+    let chunk = Chunk {
+        id: chunk_id(SourceKind::Chat, "slack:#eng", 0, "no-provider-seed"),
+        content: "memory content with no embeddings provider configured".into(),
+        metadata: Metadata {
+            source_kind: SourceKind::Chat,
+            source_id: "slack:#eng".into(),
+            owner: "alice".into(),
+            timestamp: ts,
+            time_range: (ts, ts),
+            tags: vec![],
+            source_ref: Some(SourceRef::new("slack://x")),
+            path_scope: None,
+        },
+        token_count: 12,
+        seq_in_source: 0,
+        created_at: ts,
+        partial_message: false,
+    };
+    upsert_chunks(&cfg, &[chunk.clone()]).unwrap();
+    let content_root = cfg.memory_tree_content_root();
+    std::fs::create_dir_all(&content_root).unwrap();
+    let staged = content_store::stage_chunks(&content_root, &[chunk.clone()]).unwrap();
+    with_connection(&cfg, |conn| {
+        let tx = conn.unchecked_transaction()?;
+        upsert_staged_chunks_tx(&tx, &staged)?;
+        tx.commit()?;
+        Ok(())
+    })
+    .unwrap();
+
+    let sig = tree_active_signature(&cfg);
+    let job = mk_running_job(
+        JobKind::ReembedBackfill,
+        serde_json::to_string(&ReembedBackfillPayload {
+            signature: sig.clone(),
+        })
+        .unwrap(),
+    );
+
+    // No provider → skip the whole backfill (Done), do NOT write a vector.
+    let out = handle_reembed_backfill(&cfg, &job).await.unwrap();
+    assert_eq!(
+        out,
+        JobOutcome::Done,
+        "no usable provider must skip the backfill, not Defer/embed"
+    );
+    assert!(
+        get_chunk_embedding_for_signature(&cfg, &chunk.id, &sig)
+            .unwrap()
+            .is_none(),
+        "no zero/inert vector may be persisted when no provider is configured"
+    );
+}
+
 /// #1574 §6 regression gate: a terminal-failure chunk (its body file is
 /// missing on disk, despite the metadata row staying staged) is
 /// persistently tombstoned by `mark_chunk_reembed_skipped` on the first
@@ -237,7 +323,11 @@ async fn reembed_backfill_tombstones_orphan_and_terminates() {
         chunk_id, Chunk, Metadata, SourceKind, SourceRef,
     };
 
-    let (_tmp, cfg) = test_config();
+    let (_tmp, mut cfg) = test_config();
+    // Deliberate "none" opt-out → InertEmbedder (zero vectors, no network) so
+    // the backfill reaches the orphan body-read and tombstones it; this test
+    // pins the tombstone-and-terminate mechanics, not embed quality.
+    cfg.embeddings_provider = Some("none".to_string());
     let ts = chrono::Utc.timestamp_millis_opt(1_700_000_000_000).unwrap();
     let chunk = Chunk {
         id: chunk_id(SourceKind::Chat, "slack:#eng", 0, "orphan-seed"),

@@ -577,6 +577,26 @@ describe('trackEvent (OpenPanel)', () => {
     expect(openPanelPayload().payload.properties.__timestamp).toEqual(expect.any(String));
   });
 
+  test('allows dedicated Tauri browser click events with provider-level metadata', async () => {
+    const { initGA, trackEvent } = await freshAnalytics();
+    initGA();
+    trackEvent('tauri_browser_click', {
+      surface: 'chat_right_sidebar',
+      action: 'select_account',
+      provider: 'slack',
+      account_status: 'open',
+    });
+
+    expect(openPanelPayload().payload.name).toBe('tauri_browser_click');
+    expect(openPanelPayload().payload.properties).toMatchObject({
+      surface: 'chat_right_sidebar',
+      action: 'select_account',
+      provider: 'slack',
+      account_status: 'open',
+      user_id: '',
+    });
+  });
+
   test('redacts user_id from event debug logs', async () => {
     const debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
     hoisted.currentUserId = 'user-123';

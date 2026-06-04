@@ -284,8 +284,8 @@ pub use scope_lookup::{curated_scope_for, toolkit_has_scope};
 pub use tool_scope::{classify_unknown, find_curated, toolkit_from_slug, CuratedTool, ToolScope};
 pub use traits::ComposioProvider;
 pub use types::{
-    ComposioUsage, ComposioUsageHandle, NormalizedTask, ProviderContext, ProviderUserProfile,
-    SyncOutcome, SyncReason, TaskFetchFilter,
+    ComposioUsage, ComposioUsageHandle, GithubFetchMode, NormalizedTask, ProviderContext,
+    ProviderUserProfile, SyncOutcome, SyncReason, TaskContainer, TaskFetchFilter, TaskKind,
 };
 pub use user_scopes::{load_or_default as load_user_scope_or_default, UserScopePref};
 

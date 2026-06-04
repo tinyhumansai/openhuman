@@ -154,6 +154,71 @@ export async function listMeetCalls(limit = 20): Promise<MeetCallRecord[]> {
   return result.calls ?? [];
 }
 
+// ---------------------------------------------------------------------------
+// Backend Meet Bot via Core Socket.IO bridge
+// ---------------------------------------------------------------------------
+
+export type MeetingPlatform = 'gmeet' | 'zoom' | 'teams' | 'webex';
+
+export type BackendMeetJoinInput = {
+  meetUrl: string;
+  displayName?: string;
+  platform?: MeetingPlatform;
+};
+
+type CoreBackendMeetJoinResponse = { ok: boolean; meet_url: string; platform: string };
+
+/**
+ * Join a meeting via the backend's Recall.ai bot. Supports Google Meet,
+ * Zoom, Microsoft Teams, and Webex.
+ *
+ * Calls the core RPC `openhuman.agent_meetings_join`, which emits `bot:join`
+ * over the core's persistent Socket.IO connection to the backend. The backend
+ * streams events back (`bot:reply`, `bot:harness`, `bot:transcript`, `bot:left`)
+ * which the core bridges to the frontend as `agent_meetings:*` socket events.
+ */
+export async function joinMeetViaBackendBot(
+  input: BackendMeetJoinInput
+): Promise<{ meetUrl: string; platform: string }> {
+  const meetUrl = input.meetUrl.trim();
+  if (!meetUrl) throw new Error('Please paste a meeting link.');
+
+  const result = await callCoreRpc<CoreBackendMeetJoinResponse>({
+    method: 'openhuman.agent_meetings_join',
+    params: {
+      meet_url: meetUrl,
+      display_name: input.displayName?.trim() || undefined,
+      platform: input.platform || undefined,
+    },
+  });
+
+  if (!result?.ok) {
+    throw new Error('Core rejected the agent_meetings_join request.');
+  }
+
+  return { meetUrl: result.meet_url, platform: result.platform };
+}
+
+/**
+ * Ask the backend bot to leave the current meeting.
+ */
+export async function leaveBackendMeetBot(reason?: string): Promise<void> {
+  await callCoreRpc<{ ok: boolean }>({
+    method: 'openhuman.agent_meetings_leave',
+    params: { reason: reason || 'requested' },
+  });
+}
+
+/**
+ * Send a tool execution result back to the backend's meeting LLM.
+ */
+export async function sendHarnessResponse(result: string): Promise<void> {
+  await callCoreRpc<{ ok: boolean }>({
+    method: 'openhuman.agent_meetings_harness_response',
+    params: { result },
+  });
+}
+
 /**
  * Backend-driven meet bot join (PR tinyhumansai/backend#773).
  *

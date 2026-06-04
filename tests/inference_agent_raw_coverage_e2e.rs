@@ -567,6 +567,7 @@ fn memory_entry(
         timestamp: "2026-05-29T12:00:00Z".to_string(),
         session_id: session_id.map(ToOwned::to_owned),
         score,
+        taint: Default::default(),
     }
 }
 
@@ -2866,6 +2867,7 @@ async fn agent_triage_evaluator_covers_native_dispatch_decision_and_deferred_pat
             visible_tool_names: Some(HashSet::new()),
             extra_tools: Vec::new(),
             on_progress: None,
+            origin: openhuman_core::openhuman::agent::turn_origin::AgentTurnOrigin::Cli,
         },
     )
     .await

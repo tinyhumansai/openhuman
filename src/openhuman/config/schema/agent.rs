@@ -199,9 +199,28 @@ pub struct AgentConfig {
     /// Keys are channel names (e.g., "telegram", "discord", "web", "cli").
     /// Values are permission levels: "none", "readonly" (or "read_only"),
     /// "write", "execute", "dangerous".
-    /// When this map is empty, the agent preserves the legacy unrestricted
-    /// channel surface. Once configured, channels not listed here default to
-    /// "readonly".
+    ///
+    /// Runtime semantics (see
+    /// [`crate::openhuman::agent_tool_policy::engine::ToolPolicyEngine`]):
+    ///
+    /// * **Empty map** — the policy engine preserves the legacy
+    ///   unrestricted surface and returns `PermissionLevel::Dangerous`
+    ///   for every channel. This branch only matters before the
+    ///   one-time migration runs.
+    /// * **Non-empty map, channel present** — the configured level is
+    ///   used.
+    /// * **Non-empty map, channel absent** — the engine falls back to
+    ///   `PermissionLevel::ReadOnly` (the fail-closed default for an
+    ///   already-policy-managed install).
+    ///
+    /// [`AgentConfig::migrate_channel_permissions_if_legacy`] seeds the
+    /// map with `web=Execute` + each configured channel = `Execute` on
+    /// first boot after upgrade, so legacy installs land in the
+    /// non-empty branch before any tool dispatch happens. New installs
+    /// ship with an explicit map. The empty-map "Dangerous" branch is
+    /// effectively reachable only by an operator manually wiping the
+    /// map in their on-disk config; if you change that branch's
+    /// behavior, update `AGENTS.md` and the engine docstring in lock-step.
     #[serde(default)]
     pub channel_permissions: std::collections::HashMap<String, String>,
 
@@ -255,6 +274,60 @@ fn default_max_memory_context_chars() -> usize {
 }
 
 impl AgentConfig {
+    /// Seed legacy installs whose channel-permissions map is empty and
+    /// that already have at least one non-web channel configured,
+    /// writing explicit per-channel execute entries.
+    ///
+    /// The engine layer keeps its legacy empty-map shortcut; this
+    /// migration replaces it with an explicit policy so the
+    /// per-channel cap engages on the very first boot after upgrade.
+    /// `known_channels` is the set of channels the user has configured
+    /// in `channels::ChannelsConfig`. The web channel is always added
+    /// on top so the desktop UI stays usable.
+    ///
+    /// Returns `true` when a migration write is required so the caller
+    /// can save and reload; returns `false` when the map was already
+    /// populated, no non-web channels were configured (fresh install,
+    /// engine's legacy unrestricted shortcut continues), or the
+    /// migration is otherwise a no-op. Idempotent.
+    pub fn migrate_channel_permissions_if_legacy<I, S>(&mut self, known_channels: I) -> bool
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        if !self.channel_permissions.is_empty() {
+            return false;
+        }
+        let extra: Vec<String> = known_channels
+            .into_iter()
+            .map(|s| s.as_ref().to_string())
+            .filter(|s| !s.is_empty() && s != "web")
+            .collect();
+        if extra.is_empty() {
+            // No channels configured yet — leave the map empty so the
+            // engine's legacy "empty == unrestricted" shortcut keeps
+            // ruling fresh installs the same way it did pre-PR. The
+            // migration is for installs that already have channels
+            // active under the legacy unrestricted surface.
+            return false;
+        }
+        // Seed web + every known channel = execute so the engine's
+        // per-channel cap evaluates against an explicit policy instead
+        // of the legacy unrestricted default.
+        let names: Vec<String> = std::iter::once("web".to_string()).chain(extra).collect();
+        for name in &names {
+            self.channel_permissions
+                .insert(name.clone(), "execute".to_string());
+        }
+        log::info!(
+            target: "openhuman::config",
+            "[agent-config] channel_permissions: migrated {} legacy channels to execute (preserved pre-PR behavior): {:?}",
+            names.len(),
+            names
+        );
+        true
+    }
+
     /// Resolve the active memory-context budgets for this agent config.
     ///
     /// Two cases:
@@ -458,5 +531,46 @@ mod memory_window_tests {
         assert_eq!(json, "\"extended\"");
         let back: MemoryContextWindow = serde_json::from_str("\"minimal\"").unwrap();
         assert_eq!(back, MemoryContextWindow::Minimal);
+    }
+
+    #[test]
+    fn empty_channel_permissions_with_existing_channels_migrates_to_execute() {
+        // Legacy install: channel_permissions empty but the user has two
+        // channels configured. The migration seeds web + each existing
+        // channel = execute so the new fail-closed default doesn't
+        // regress them.
+        let mut cfg = AgentConfig::default();
+        assert!(cfg.channel_permissions.is_empty());
+
+        let known = vec!["telegram".to_string(), "discord".to_string()];
+        let migrated = cfg.migrate_channel_permissions_if_legacy(known.iter());
+
+        assert!(migrated, "legacy install must migrate");
+        assert_eq!(cfg.channel_permissions.len(), 3);
+        for ch in ["web", "telegram", "discord"] {
+            assert_eq!(
+                cfg.channel_permissions.get(ch).map(String::as_str),
+                Some("execute"),
+                "expected execute for channel {ch}"
+            );
+        }
+    }
+
+    #[test]
+    fn migrate_channel_permissions_idempotent() {
+        let mut cfg = AgentConfig::default();
+        cfg.migrate_channel_permissions_if_legacy(vec!["telegram".to_string()].iter());
+        let again = cfg.migrate_channel_permissions_if_legacy(vec!["telegram".to_string()].iter());
+        assert!(!again, "second migration call must be a no-op");
+    }
+
+    #[test]
+    fn migrate_channel_permissions_with_no_channels_is_noop() {
+        // Fresh install with no configured channels and an empty map —
+        // no migration needed (the engine fails closed on lookup).
+        let mut cfg = AgentConfig::default();
+        let migrated = cfg.migrate_channel_permissions_if_legacy(Vec::<String>::new());
+        assert!(!migrated);
+        assert!(cfg.channel_permissions.is_empty());
     }
 }

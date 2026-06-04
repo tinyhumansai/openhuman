@@ -310,6 +310,7 @@ pub(crate) async fn run_tool_call_loop(
         max_iterations,
         on_delta,
         &[],
+        None,
     )
     .await
     .map(|outcome| outcome.text)

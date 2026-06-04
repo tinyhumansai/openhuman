@@ -32,6 +32,7 @@ pub(crate) mod memory_context;
 pub(crate) mod memory_context_safety;
 mod parse;
 pub(crate) mod payload_summarizer;
+pub mod run_queue;
 pub mod sandbox_context;
 pub(crate) mod self_healing;
 pub mod session;
@@ -41,6 +42,7 @@ pub mod subagent_runner;
 mod token_budget;
 pub(crate) mod tool_filter;
 mod tool_loop;
+pub(crate) mod tool_result_artifacts;
 
 pub use definition::{
     AgentDefinition, AgentDefinitionRegistry, DefinitionSource, ModelSpec, PromptSource,

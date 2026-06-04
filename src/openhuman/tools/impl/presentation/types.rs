@@ -90,6 +90,19 @@ pub enum PresentationError {
 
     #[error("presentation generation exceeded {timeout_secs}s timeout")]
     GenerationTimeout { timeout_secs: u64 },
+
+    /// Reserved for the planned `format` selector that will let callers
+    /// request alternative deck formats (`.pdf` / `.key` / image
+    /// strips). Today the tool only emits `.pptx`, so this variant is
+    /// not constructed by `execute` — it exists ahead of #2780's
+    /// follow-up wiring so downstream error-handling sites can pattern-
+    /// match exhaustively without a churn-y enum bump later.
+    #[allow(dead_code)]
+    #[error("unsupported file type '{extension}'; supported: {supported}")]
+    UnsupportedFileType {
+        extension: String,
+        supported: String,
+    },
 }
 
 impl PresentationError {
@@ -111,9 +124,9 @@ impl PresentationError {
     }
 }
 
-/// Validate the input early — before spawning Python — so the agent
-/// gets a structured `InvalidInput` it can self-correct on instead of
-/// a generic Python traceback.
+/// Validate the input early — before invoking the `ppt-rs` engine — so
+/// the agent gets a structured `InvalidInput` it can self-correct on
+/// instead of a generic engine error.
 pub(super) fn validate_input(input: &GeneratePresentationInput) -> Result<(), PresentationError> {
     if input.title.trim().is_empty() {
         return Err(PresentationError::InvalidInput {

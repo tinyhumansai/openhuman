@@ -186,6 +186,45 @@ async fn embed_sends_auth_header() {
     p.embed(&["test"]).await.unwrap();
 }
 
+// #002: the OpenAI `dimensions` request param. Off by default (so Voyage /
+// Cohere / Ollama, which don't accept this exact field, keep working); on when
+// the OpenAI / custom factory branch opts in via `with_send_dimensions(true)`.
+
+#[tokio::test]
+async fn embed_sends_dimensions_when_opted_in() {
+    let app = Router::new().route(
+        "/v1/embeddings",
+        post(|Json(body): Json<serde_json::Value>| async move {
+            assert_eq!(
+                body["dimensions"], 1024,
+                "dimensions must be sent so 3-large returns 1024, not its native 3072"
+            );
+            Json(serde_json::json!({ "data": [{ "embedding": vec![0.0_f32; 1024] }] }))
+        }),
+    );
+    let url = start_mock(app).await;
+    let p =
+        OpenAiEmbedding::new(&url, "k", "text-embedding-3-large", 1024).with_send_dimensions(true);
+    p.embed(&["test"]).await.unwrap();
+}
+
+#[tokio::test]
+async fn embed_omits_dimensions_by_default() {
+    let app = Router::new().route(
+        "/v1/embeddings",
+        post(|Json(body): Json<serde_json::Value>| async move {
+            assert!(
+                body.get("dimensions").is_none(),
+                "dimensions must NOT be sent by default (Voyage/Cohere/Ollama reject it)"
+            );
+            Json(serde_json::json!({ "data": [{ "embedding": [1.0] }] }))
+        }),
+    );
+    let url = start_mock(app).await;
+    let p = OpenAiEmbedding::new(&url, "k", "m", 1); // no with_send_dimensions
+    p.embed(&["test"]).await.unwrap();
+}
+
 #[tokio::test]
 async fn embed_skips_auth_header_when_key_empty() {
     let app = Router::new().route(

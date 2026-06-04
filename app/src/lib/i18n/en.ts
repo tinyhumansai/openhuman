@@ -220,6 +220,10 @@ const en: TranslationMap = {
   'home.usageExhaustedBody':
     "You're out of included usage for now. Start a subscription to unlock more ongoing capacity.",
   'home.usageExhaustedCta': 'Get a subscription',
+  'openrouterFree.cta': 'Use OpenRouter free models',
+  'openrouterFree.saving': 'Connecting OpenRouter...',
+  'openrouterFree.error':
+    'Could not switch to OpenRouter free models. Check your OpenRouter sign-in and try again.',
   'home.routinesCard': 'Your Routines',
   'home.routinesActive': '{count} active',
 
@@ -504,7 +508,34 @@ const en: TranslationMap = {
   'memoryTree.status.statusSyncing': 'Syncing',
   'memoryTree.status.statusError': 'Error',
   'memoryTree.status.statusIdle': 'Idle',
+  'memoryTree.status.statusDegraded': 'Degraded',
   'memoryTree.status.never': 'Never',
+  // #002: degraded badges + typed remediation strings. The Rust core sends a
+  // `remediation_key` (one of memory.health.remediation.*) which the status
+  // panel resolves verbatim, so the cause + fix come from one source of truth.
+  'memoryTree.status.degradedRecall': 'Semantic recall disabled',
+  'memoryTree.status.degradedStructure': 'Wiki structure incomplete',
+  'memoryTree.status.extractionCoverage': 'Extraction coverage: {pct}% of chunks have structure',
+  'memory.health.remediation.budget_exhausted':
+    'Memory embeddings hit the managed budget. Set up local Ollama embeddings (Settings → AI → Embeddings) or add your own embeddings API key to keep building memory.',
+  'memory.health.remediation.auth_missing':
+    'No embeddings credentials found. Log in to OpenHuman, or set up local Ollama embeddings in Settings → AI → Embeddings.',
+  'memory.health.remediation.auth_invalid':
+    'Your embeddings credentials were rejected. Re-authenticate, or switch to local Ollama embeddings in Settings → AI → Embeddings.',
+  'memory.health.remediation.embeddings_unconfigured':
+    'No embeddings provider is configured, so semantic recall is off. Set up local Ollama embeddings (recommended) or add an embeddings key in Settings → AI → Embeddings.',
+  'memory.health.remediation.embedding_dim_mismatch':
+    'The embedding model returns the wrong vector size (memory expects 1024 dimensions). Pick a 1024-dim model, or request 1024 dimensions for your provider.',
+  'memory.health.remediation.local_model_unavailable':
+    'A required local model is not available. Install/run Ollama and pull the model, or switch this workload to a cloud provider in Settings → AI.',
+  'memory.health.remediation.extraction_timeout':
+    'The memory extraction model is timing out, so the wiki has little structure. Switch the Memory extraction model to a faster one in Settings → AI.',
+  'memory.health.remediation.summarizer_unavailable':
+    'No summarization provider is available for Build Summary Trees. Enable local AI (Ollama), or enable cloud summarization in Settings → AI → Memory.',
+  'memory.health.remediation.transient':
+    'A temporary error interrupted memory processing. It will retry automatically.',
+  'memory.health.remediation.unknown':
+    'Memory processing encountered an issue. Check Settings → AI for configuration.',
   'memoryTree.status.fetchError': "Couldn't fetch Memory Tree status",
   'memoryTree.status.retry': 'Retry',
   'memoryTree.status.toggleFailed': "Couldn't toggle auto-sync",
@@ -586,6 +617,7 @@ const en: TranslationMap = {
   'onboarding.runtimeChoice.continueCloud': 'Continue with Simple',
   'onboarding.runtimeChoice.continueCustom': 'Continue with Custom',
   'onboarding.runtimeChoice.recommended': 'Recommended',
+  'onboarding.runtimeChoice.exitError': 'Could not finish onboarding. Please try again.',
 
   // Onboarding: API keys step (only when Custom is picked)
   'onboarding.apiKeys.title': "Let's Add Your API Keys",
@@ -1931,16 +1963,13 @@ const en: TranslationMap = {
   // Chat (additional)
   'chat.safetyTimeout':
     'No response from the agent after 2 minutes. Try again or check your connection.',
-  'chat.filter.all': 'All',
-  'chat.filter.work': 'Work',
-  'chat.filter.briefing': 'Briefing',
-  'chat.filter.notification': 'Notification',
-  'chat.filter.workers': 'Workers',
+  'chat.filter.general': 'General',
+  'chat.filter.subconscious': 'Subconscious',
+  'chat.filter.tasks': 'Tasks',
   'chat.selectThread': 'Select a thread',
   'chat.threads': 'Threads',
   'chat.noThreads': 'No threads yet',
   'chat.noLabelThreads': 'No "{label}" threads',
-  'chat.noWorkerThreads': 'No worker threads yet',
   'chat.deleteThread': 'Delete thread',
   'chat.deleteThreadConfirm': 'Are you sure you want to delete "{title}"?',
   'chat.untitledThread': 'Untitled thread',
@@ -2872,7 +2901,24 @@ const en: TranslationMap = {
   'conversations.taskKanban.field.title': 'Title',
   'conversations.taskKanban.saveChanges': 'Save changes',
   'conversations.taskKanban.deleteCard': 'Delete',
+  'conversations.taskKanban.workTask': 'Work task',
+  'conversations.taskKanban.startingTask': 'Starting…',
   'conversations.taskKanban.updateFailed': 'Could not update task; changes were not saved.',
+  'conversations.taskKanban.sourcesButton': 'Sources',
+  'conversations.taskKanban.source.openExternal': 'Open external task',
+  'conversations.taskKanban.source.openExternalShort': 'Open',
+  'conversations.taskKanban.source.unknownProvider': 'Unknown source',
+  'conversations.taskKanban.source.urgencyValue': 'Urgency {percent}%',
+  'conversations.taskKanban.sources.desktopOnly':
+    'Task source controls are available in the desktop app.',
+  'conversations.taskKanban.sources.title': 'Task sources',
+  'conversations.taskKanban.sources.statusEnabled': 'Automatic polling enabled',
+  'conversations.taskKanban.sources.manage': 'Manage sources',
+  'conversations.taskKanban.source.title': 'Source',
+  'conversations.taskKanban.source.sourceId': 'Source ID',
+  'conversations.taskKanban.source.externalId': 'External ID',
+  'conversations.taskKanban.source.repo': 'Repository',
+  'conversations.taskKanban.source.urgency': 'Urgency',
   'conversations.toolTimeline.turn': 'turn',
   'conversations.toolTimeline.step': 'step',
   'conversations.toolTimeline.workerThread': 'worker thread',
@@ -2990,6 +3036,47 @@ const en: TranslationMap = {
   'intelligence.tasks.composer.create': 'Create task',
   'intelligence.tasks.composer.creating': 'Creating…',
   'intelligence.tasks.composer.createFailed': "Couldn't create the task",
+  'intelligence.tasks.composer.assignAgentLabel': 'Let an agent work on this automatically',
+  'intelligence.tasks.composer.assignAgentHint':
+    'The task board picks it up and runs it for you. Leave off for a plain personal to-do.',
+  'intelligence.tasks.sourceList.subtitle': 'Source tasks waiting to become agent work.',
+  'intelligence.tasks.sourceList.empty': 'No source tasks waiting.',
+  'intelligence.tasks.sourceList.queued': 'Queued',
+  'intelligence.tasks.sourceList.workOnTask': 'Work on task',
+  'intelligence.tasks.sourcePlan.title': 'Refine source task',
+  'intelligence.tasks.sourcePlan.subtitle':
+    'Review the research draft before creating an agent task.',
+  'intelligence.tasks.sourcePlan.researchAgent': 'Research agent draft',
+  'intelligence.tasks.sourcePlan.approve': 'Approve Plan',
+  'intelligence.tasks.sourcePlan.creating': 'Creating task…',
+  'intelligence.tasks.sourcePlan.createFailed': "Couldn't create the agent task",
+  'intelligence.tasks.workTaskFailed': "Couldn't start work on the task",
+  'intelligence.workTask.sourceTaskHeading': 'Source task:',
+  'intelligence.workTask.repositoryLine': '- Repository: {repo}',
+  'intelligence.workTask.externalIdLine': '- External ID: {externalId}',
+  'intelligence.workTask.urlLine': '- URL: {url}',
+  'intelligence.workTask.closingInstruction':
+    'Start by restating the concrete implementation plan briefly, then execute it. Keep progress visible in this thread and update the task board when the work state changes.',
+  'intelligence.refine.objectiveDefault':
+    'Turn the source task into an implementation-ready agent task: {title}',
+  'intelligence.refine.sourceLine': 'Source: {url}',
+  'intelligence.refine.sourceIntake': 'Source: task source intake',
+  'intelligence.refine.repositoryLine': 'Repository: {repo}',
+  'intelligence.refine.externalTaskLine': 'External task: {externalId}',
+  'intelligence.refine.planStep1':
+    'Read the linked source task and confirm the exact requested behavior.',
+  'intelligence.refine.planStep2':
+    'Inspect the relevant code paths and identify the smallest implementation boundary.',
+  'intelligence.refine.planStep3':
+    'Implement the change with focused tests around the user-visible behavior.',
+  'intelligence.refine.planStep4':
+    'Run targeted validation and capture any residual risks or follow-up work.',
+  'intelligence.refine.acceptance1':
+    'The source task requirements are represented in the final implementation.',
+  'intelligence.refine.acceptance2':
+    'Relevant unit or integration tests cover the changed behavior.',
+  'intelligence.refine.acceptance3':
+    'Validation results and any unresolved risk are recorded on completion.',
   'notifications.card.dismiss': 'Dismiss notification',
   'notifications.card.importanceTitle': 'Importance: {pct}%',
   'notifications.center.empty': 'No notifications yet',
@@ -4036,6 +4123,42 @@ const en: TranslationMap = {
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',
   'settings.agentAccess.viewApprovalHistory': 'View approval history',
+
+  // ── Sandbox execution backend ─────────────────────────────────────
+  'settings.sandbox.title': 'Sandbox execution',
+  'settings.sandbox.menuDesc': 'Configure sandbox backends for agent tool isolation.',
+  'settings.sandbox.loading': 'Loading…',
+  'settings.sandbox.desktopOnly': 'Sandbox settings are only available in the desktop app.',
+  'settings.sandbox.loadError': 'Failed to load sandbox settings.',
+  'settings.sandbox.saveError': 'Failed to save sandbox settings.',
+  'settings.sandbox.saved': 'Saved — applies to new agent sessions.',
+  'settings.sandbox.saving': 'Saving…',
+  'settings.sandbox.status': 'Status',
+  'settings.sandbox.dockerStatus': 'Docker',
+  'settings.sandbox.available': 'Available',
+  'settings.sandbox.unavailable': 'Unavailable',
+  'settings.sandbox.detectedBackend': 'OS backend',
+  'settings.sandbox.enableLabel': 'Enable sandbox execution',
+  'settings.sandbox.enableDesc': 'Run agent tools inside an isolated sandbox environment.',
+  'settings.sandbox.backendLabel': 'Backend',
+  'settings.sandbox.backendDesc': 'Choose which isolation backend to use for sandboxed execution.',
+  'settings.sandbox.backend.auto': 'Auto (detect best available)',
+  'settings.sandbox.backend.docker': 'Docker',
+  'settings.sandbox.backend.landlock': 'Landlock (Linux)',
+  'settings.sandbox.backend.firejail': 'Firejail (Linux)',
+  'settings.sandbox.backend.bubblewrap': 'Bubblewrap (Linux)',
+  'settings.sandbox.backend.none': 'None (no sandbox)',
+  'settings.sandbox.dockerSettings': 'Docker settings',
+  'settings.sandbox.dockerImage': 'Image',
+  'settings.sandbox.dockerImagePlaceholder': 'alpine:3.20',
+  'settings.sandbox.memoryLimit': 'Memory limit',
+  'settings.sandbox.memoryUnit': 'MB',
+  'settings.sandbox.cpuLimit': 'CPU limit',
+  'settings.sandbox.cpuUnit': 'cores',
+  'settings.sandbox.envPassthrough': 'Environment passthrough',
+  'settings.sandbox.envPassthroughDesc': 'Environment variables forwarded into the sandbox.',
+  'settings.sandbox.noEnvVars': 'No environment variables configured.',
+
   'settings.approvalHistory.title': 'Approval history',
   'settings.approvalHistory.subtitle': 'Recent tool-approval decisions, newest first.',
   'settings.approvalHistory.refresh': 'Refresh',
@@ -4469,6 +4592,8 @@ const en: TranslationMap = {
   'chat.agentProfile.defaultAgentLabel': 'Orchestrator',
   'chat.agentProfile.exists': 'Agent profile "{name}" already exists.',
   'chat.agentProfile.label': 'Agent profile',
+  'chat.agentProfile.quick': 'Quick',
+  'chat.agentProfile.reasoning': 'Reasoning',
   'chat.agentProfile.namePlaceholder': 'Profile name',
   'chat.agentProfile.promptStylePlaceholder': 'Prompt style',
   'chat.agentProfile.allowedToolsPlaceholder': 'Allowed tools',
@@ -4602,6 +4727,10 @@ const en: TranslationMap = {
   'settings.taskSources.github.repo': 'Repository (owner/name, optional)',
   'settings.taskSources.github.labels': 'Labels (comma-separated)',
   'settings.taskSources.notion.database': 'Database (board) ID',
+  'settings.taskSources.notion.browseDatabases': 'Browse databases',
+  'settings.taskSources.notion.loadingDatabases': 'Loading databases…',
+  'settings.taskSources.notion.selectDatabase': 'Select a database…',
+  'settings.taskSources.notion.noDatabases': 'No databases found for this connection.',
   'settings.taskSources.linear.team': 'Team ID (optional)',
   'settings.taskSources.clickup.team': 'Workspace (team) ID (optional)',
   'settings.taskSources.assignedToMe': 'Only items assigned to me',
@@ -4769,6 +4898,41 @@ const en: TranslationMap = {
   'settings.agents.editor.builtInReadonly':
     "Built-in agents can't be edited. You can enable, disable, or reset them from the agents list.",
 
+  // Chat — agent-generated artifacts (#2779)
+  'chat.artifact.aria': 'Artifact: {title}',
+  'chat.artifact.generating': 'Generating {kind}…',
+  'chat.artifact.ready': 'Ready',
+  'chat.artifact.failed': 'Generation failed',
+  'chat.artifact.download': 'Download',
+  'chat.artifact.downloading': 'Downloading…',
+  'chat.artifact.downloaded': 'Saved to {path}',
+  'chat.artifact.download_failed': 'Download failed: {reason}',
+  'chat.artifact.retry': 'Retry',
+  'chat.artifact.reveal': 'Show in folder',
+  'chat.artifact.show_more': 'Show more',
+  'chat.artifact.show_less': 'Show less',
+
+  // Chat — files panel (#3024)
+  'chat.files.chip.aria.one': '{count} file in this chat',
+  'chat.files.chip.aria.other': '{count} files in this chat',
+  'chat.files.panel.aria': 'Files in this chat',
+  'chat.files.panel.title': 'Files ({count})',
+  'chat.files.panel.empty': 'No files yet. Ask the agent to generate one.',
+  'chat.files.panel.close': 'Close files panel',
+  'chat.files.delete.aria': 'Delete {title}',
+  'chat.files.delete.confirm': 'Delete this file?',
+  'chat.files.delete.cancel': 'Cancel',
+  'chat.files.delete.action': 'Delete',
+  'chat.files.delete.failed': 'Couldn’t delete the file. Try again.',
+  // Error labels for download/delete outcomes (#3024). Keyed off
+  // `ArtifactErrorCode` returned by artifactDownloadService.
+  'chat.files.error.not_desktop': 'Downloads are only available in the desktop app.',
+  'chat.files.error.missing_artifact_id': 'Missing artifact id.',
+  'chat.files.error.missing_artifact_path': 'The artifact path is missing from the core response.',
+  'chat.files.error.resolve_failed': 'Couldn’t resolve the artifact. Please try again.',
+  'chat.files.error.download_failed': 'Download failed. Please try again.',
+  'chat.files.error.delete_failed': 'Couldn’t delete the file. Please try again.',
+
   // Keyring consent & security
   'keyring.consent.title': 'Secure Storage Unavailable',
   'keyring.consent.description':
@@ -4806,18 +4970,6 @@ const en: TranslationMap = {
   'pages.settings.account.securityDesc': 'Secret storage mode and keychain status',
 
   // Chat — agent-generated artifacts (#2779)
-  'chat.artifact.aria': 'Artifact: {title}',
-  'chat.artifact.generating': 'Generating {kind}…',
-  'chat.artifact.ready': 'Ready',
-  'chat.artifact.failed': 'Generation failed',
-  'chat.artifact.download': 'Download',
-  'chat.artifact.downloading': 'Downloading…',
-  'chat.artifact.downloaded': 'Saved to {path}',
-  'chat.artifact.download_failed': 'Download failed: {reason}',
-  'chat.artifact.retry': 'Retry',
-  'chat.artifact.reveal': 'Show in folder',
-  'chat.artifact.show_more': 'Show more',
-  'chat.artifact.show_less': 'Show less',
   // Chat composer toolbar
   'composer.attachFile': 'Attach file',
   'composer.modelSelector': 'Model',
@@ -4849,6 +5001,18 @@ const en: TranslationMap = {
   // Monthly cost badge
   'monthlyCost.badge': '${amount} this month',
   'monthlyCost.noData': 'No syncs this month',
+
+  // Run queue
+  'runQueue.mode.interrupt': 'Interrupt',
+  'runQueue.mode.steer': 'Steer',
+  'runQueue.mode.followup': 'Follow-up',
+  'runQueue.mode.collect': 'Add context',
+  'runQueue.queued': 'Message queued',
+  'runQueue.steerHint': 'Steer the current turn',
+  'runQueue.followupHint': 'Queue as follow-up',
+  'runQueue.collectHint': 'Add as extra context',
+  'runQueue.status': '{total} queued',
+  'runQueue.cleared': 'Queue cleared',
 };
 
 export default en;

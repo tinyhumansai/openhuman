@@ -30,6 +30,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type WheelEvent as ReactWheelEvent,
   useCallback,
+  useEffect,
   useMemo,
   useReducer,
   useRef,
@@ -53,6 +54,8 @@ import {
 } from './memoryGraphLayout';
 import { summaryWorkspacePath } from './memoryWorkspacePaths';
 import { PixiGraph } from './PixiGraph';
+import { seedSvgLayout } from './seedSvgLayout';
+import { useSvgForceLayout, WORKER_SUPPORTED } from './useSvgForceLayout';
 
 /** Use WebGL (Pixi) in production; fall back to SVG in test (jsdom). */
 const HAS_WEBGL =
@@ -73,6 +76,21 @@ interface SimNode extends GraphNode {
   vx: number;
   vy: number;
 }
+
+interface SimState {
+  sim: SimNode[];
+  edges: Array<[number, number]>;
+  radii: number[];
+  alpha: number;
+}
+
+// Stable empties so the worker-layout effect's deps don't change every render
+// when there's no graph yet.
+const NO_NODES: SimNode[] = [];
+const NO_RADII: number[] = [];
+const NO_EDGES: Array<[number, number]> = [];
+// Stable centre the SVG worker layout settles around (matches the viewBox).
+const SVG_CENTER: readonly [number, number] = [VIEWPORT_W / 2, VIEWPORT_H / 2];
 
 interface MemoryGraphProps {
   /** Pre-fetched summary / chunk / contact nodes. */
@@ -196,6 +214,18 @@ export function MemoryGraph({ nodes, edges, mode, emptyHint }: MemoryGraphProps)
   // True once the pointer moved during the current gesture — guards the
   // node click so a drag doesn't also open the summary file.
   const movedRef = useRef(false);
+  // Halts the SVG layout worker once the user grabs a node/background, so its
+  // streamed positions stop fighting the manual drag. Set after the hook below.
+  const stopLayoutRef = useRef<() => void>(() => {});
+  // Set once the user grabs the camera, so the settle-time auto-fit doesn't
+  // yank the view out from under them.
+  const userInteractedRef = useRef(false);
+  // Re-frame the SVG graph from "Reset view" (set after fitToView below).
+  const fitRef = useRef<() => void>(() => {});
+  // Holds the current sim across renders; during the next build it still points
+  // at the OUTGOING sim, whose nodes carry the latest live coordinates (the
+  // worker / a drag mutate them in place) — read for position carry-over.
+  const liveSimRef = useRef<SimState | null>(null);
 
   const clientToGraph = useCallback(
     (clientX: number, clientY: number) => {
@@ -236,6 +266,12 @@ export function MemoryGraph({ nodes, edges, mode, emptyHint }: MemoryGraphProps)
     (e: ReactPointerEvent) => {
       const d = dragRef.current;
       if (!d) return;
+      // On the first real movement (not a plain click), hand the camera to the
+      // user: freeze the worker layout and suppress the settle-time auto-fit.
+      if (!movedRef.current) {
+        stopLayoutRef.current();
+        userInteractedRef.current = true;
+      }
       if (d.kind === 'node') {
         const g = clientToGraph(e.clientX, e.clientY);
         if (!g) return;
@@ -261,6 +297,7 @@ export function MemoryGraph({ nodes, edges, mode, emptyHint }: MemoryGraphProps)
   const onWheelZoom = useCallback((e: ReactWheelEvent) => {
     const vb = clientToViewBox(svgRef.current, e.clientX, e.clientY);
     if (!vb) return;
+    userInteractedRef.current = true;
     setView(v => {
       const factor = Math.exp(-e.deltaY * 0.0015);
       const scale = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, v.scale * factor));
@@ -272,9 +309,10 @@ export function MemoryGraph({ nodes, edges, mode, emptyHint }: MemoryGraphProps)
   }, []);
 
   const resetView = useCallback(() => {
-    // SVG fallback resets its transform; the Pixi canvas listens on the
-    // reset signal. Both are bumped so the button works in either path.
-    setView({ tx: 0, ty: 0, scale: 1 });
+    // SVG re-frames the whole graph; the Pixi canvas listens on the reset
+    // signal. Both are triggered so the button works in either path.
+    userInteractedRef.current = false;
+    fitRef.current();
     bumpReset();
   }, []);
 
@@ -309,45 +347,166 @@ export function MemoryGraph({ nodes, edges, mode, emptyHint }: MemoryGraphProps)
     }
   }, []);
 
-  // Build edges and (for the SVG fallback) seed positions + relax. The
-  // O(n²) relax only runs when WebGL is unavailable; the Pixi path runs
-  // its own d3-force simulation instead.
-  const sim = useMemo(() => {
+  // Build edges + seed positions, carrying over the last positions of any
+  // surviving node so a live data update doesn't reshuffle the whole graph
+  // (seedSvgLayout). The O(n²) relax only runs as the no-worker fallback (test
+  // env); the worker settles otherwise; the Pixi path runs its own sim.
+  const sim = useMemo<SimState | null>(() => {
     if (!nodes || nodes.length === 0) return null;
-    const idIndex = new Map<string, number>();
-    nodes.forEach((n, i) => idIndex.set(n.id, i));
-    const sim: SimNode[] = nodes.map((n, i) => {
-      const angle = (i / nodes.length) * Math.PI * 2;
-      const r = 200 + (i % 7) * 12;
-      return {
-        ...n,
-        x: VIEWPORT_W / 2 + Math.cos(angle) * r,
-        y: VIEWPORT_H / 2 + Math.sin(angle) * r,
-        vx: 0,
-        vy: 0,
-      };
-    });
-    const edgeIndices: Array<[number, number]> = [];
-    if (mode === 'tree') {
-      // Tree mode: each summary's parent_id is the edge.
-      for (const n of nodes) {
-        if (!n.parent_id) continue;
-        const childIdx = idIndex.get(n.id);
-        const parentIdx = idIndex.get(n.parent_id);
-        if (childIdx == null || parentIdx == null) continue;
-        edgeIndices.push([childIdx, parentIdx]);
-      }
-    } else {
-      for (const e of edges) {
-        const a = idIndex.get(e.from);
-        const b = idIndex.get(e.to);
-        if (a == null || b == null) continue;
-        edgeIndices.push([a, b]);
+    // Snapshot the OUTGOING graph's live coordinates so survivors carry over
+    // from where they actually are now — not a stale init/settle snapshot —
+    // even mid-settle or after a drag.
+    const prev = liveSimRef.current;
+    const prevPos = new Map<string, { x: number; y: number }>();
+    if (prev) for (const n of prev.sim) prevPos.set(n.id, { x: n.x, y: n.y });
+    const seed = seedSvgLayout(nodes, edges, mode, prevPos);
+    const sim: SimNode[] = nodes.map((n, i) => ({
+      ...n,
+      x: seed.positions[i].x,
+      y: seed.positions[i].y,
+      vx: 0,
+      vy: 0,
+    }));
+    const radii = sim.map(n => nodeRadius(n));
+    if (!useWebGL && !WORKER_SUPPORTED) relaxLayout(sim, seed.edges);
+    return { sim, edges: seed.edges, radii, alpha: seed.reheatAlpha };
+  }, [nodes, edges, mode, useWebGL]);
+  // Becomes the "previous" sim on the next build (above).
+  liveSimRef.current = sim;
+
+  // Element refs for imperative position updates: while the worker streams
+  // positions we write cx/cy (and line endpoints) straight to the DOM instead
+  // of re-rendering up to 10k elements through React every frame.
+  const circleEls = useRef<(SVGCircleElement | null)[]>([]);
+  const lineEls = useRef<(SVGLineElement | null)[]>([]);
+
+  // Progressive DOM mount for the SVG path: reveal nodes in per-frame batches
+  // so a large graph never blocks building thousands of elements in one commit.
+  // WebGL draws to one canvas, so it shows everything at once.
+  const FIRST_BATCH = 800;
+  const [svgVisible, setSvgVisible] = useState(() =>
+    sim ? Math.min(sim.sim.length, FIRST_BATCH) : 0
+  );
+  // Reset the reveal window + element refs during render when the graph data
+  // changes (the recommended alternative to setState-in-effect).
+  const simIdRef = useRef(sim);
+  if (simIdRef.current !== sim) {
+    simIdRef.current = sim;
+    circleEls.current = [];
+    lineEls.current = [];
+    setSvgVisible(sim ? Math.min(sim.sim.length, FIRST_BATCH) : 0);
+  }
+
+  // Latest visible count read by the stable imperative applier without
+  // re-subscribing the worker every render.
+  const latestVisibleRef = useRef(svgVisible);
+  latestVisibleRef.current = svgVisible;
+
+  // Write current positions straight to the mounted SVG elements.
+  const applyPositions = useCallback(() => {
+    const s = liveSimRef.current;
+    if (!s) return;
+    const vis = latestVisibleRef.current;
+    const ns = s.sim;
+    for (let i = 0; i < vis && i < ns.length; i++) {
+      const el = circleEls.current[i];
+      if (el) {
+        el.setAttribute('cx', String(ns[i].x));
+        el.setAttribute('cy', String(ns[i].y));
       }
     }
-    if (!useWebGL) relaxLayout(sim, edgeIndices);
-    return { sim, edges: edgeIndices };
-  }, [nodes, edges, mode, useWebGL]);
+    for (let e = 0; e < s.edges.length; e++) {
+      const [ai, bi] = s.edges[e];
+      if (ai >= vis || bi >= vis) continue;
+      const el = lineEls.current[e];
+      if (el) {
+        el.setAttribute('x1', String(ns[ai].x));
+        el.setAttribute('y1', String(ns[ai].y));
+        el.setAttribute('x2', String(ns[bi].x));
+        el.setAttribute('y2', String(ns[bi].y));
+      }
+    }
+  }, []);
+
+  // Frame the whole cloud in the viewport. d3-force spreads a large graph far
+  // past the viewBox, so without this most nodes sit off-screen. Committed to
+  // `view` state (single source) so pan/zoom keep working; called once the
+  // worker settles, unless the user already grabbed the camera.
+  const fitToView = useCallback(() => {
+    const s = liveSimRef.current;
+    if (!s || userInteractedRef.current) return;
+    const ns = s.sim;
+    if (ns.length === 0) return;
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const n of ns) {
+      if (n.x < minX) minX = n.x;
+      if (n.y < minY) minY = n.y;
+      if (n.x > maxX) maxX = n.x;
+      if (n.y > maxY) maxY = n.y;
+    }
+    if (!Number.isFinite(minX)) return;
+    const pad = 48;
+    const w = Math.max(1, maxX - minX);
+    const h = Math.max(1, maxY - minY);
+    const scale = Math.min(
+      ZOOM_MAX,
+      Math.max(ZOOM_MIN, Math.min((VIEWPORT_W - pad) / w, (VIEWPORT_H - pad) / h))
+    );
+    setView({
+      scale,
+      tx: VIEWPORT_W / 2 - ((minX + maxX) / 2) * scale,
+      ty: VIEWPORT_H / 2 - ((minY + maxY) / 2) * scale,
+    });
+  }, []);
+  fitRef.current = fitToView;
+
+  // Coalesce worker ticks to one DOM write per frame.
+  const applyPendingRef = useRef(false);
+  const scheduleApply = useCallback(() => {
+    if (applyPendingRef.current) return;
+    applyPendingRef.current = true;
+    const run = () => {
+      applyPendingRef.current = false;
+      applyPositions();
+    };
+    if (typeof window.requestAnimationFrame === 'function') window.requestAnimationFrame(run);
+    else run();
+  }, [applyPositions]);
+
+  // SVG fallback layout runs in a worker (off the main thread); positions
+  // stream back and are applied imperatively. No-op on WebGL and where workers
+  // are unavailable (the synchronous relaxLayout above covers that case).
+  const svgLayout = useSvgForceLayout(
+    !useWebGL && !!sim,
+    sim?.sim ?? NO_NODES,
+    sim?.radii ?? NO_RADII,
+    sim?.edges ?? NO_EDGES,
+    SVG_CENTER,
+    sim?.alpha ?? 1,
+    scheduleApply,
+    fitToView
+  );
+  stopLayoutRef.current = svgLayout.stop;
+
+  // Ramp the rest in per-frame batches (setState only inside the rAF callback).
+  useEffect(() => {
+    if (useWebGL || !sim) return;
+    const total = sim.sim.length;
+    if (total <= FIRST_BATCH || typeof window.requestAnimationFrame !== 'function') return;
+    let raf = 0;
+    const step = () => {
+      setSvgVisible(c => {
+        const next = Math.min(total, c + 1200);
+        if (next < total) raf = window.requestAnimationFrame(step);
+        return next;
+      });
+    };
+    raf = window.requestAnimationFrame(step);
+    return () => window.cancelAnimationFrame(raf);
+  }, [useWebGL, sim]);
 
   if (nodes.length === 0) {
     return (
@@ -454,13 +613,26 @@ export function MemoryGraph({ nodes, edges, mode, emptyHint }: MemoryGraphProps)
           <g transform={`translate(${view.tx} ${view.ty}) scale(${view.scale})`}>
             <g stroke="#cbd5e1" strokeWidth={0.6} opacity={0.7}>
               {sim.edges.map(([ai, bi], idx) => {
+                // Only draw edges whose endpoints are both mounted yet.
+                if (ai >= svgVisible || bi >= svgVisible) return null;
                 const a = sim.sim[ai];
                 const b = sim.sim[bi];
-                return <line key={idx} x1={a.x} y1={a.y} x2={b.x} y2={b.y} />;
+                return (
+                  <line
+                    key={idx}
+                    ref={el => {
+                      lineEls.current[idx] = el;
+                    }}
+                    x1={a.x}
+                    y1={a.y}
+                    x2={b.x}
+                    y2={b.y}
+                  />
+                );
               })}
             </g>
             <g>
-              {sim.sim.map(n => {
+              {sim.sim.slice(0, svgVisible).map((n, i) => {
                 const r = nodeRadius(n);
                 const fill = nodeColor(n);
                 const isHover = hovered?.id === n.id;
@@ -471,6 +643,9 @@ export function MemoryGraph({ nodes, edges, mode, emptyHint }: MemoryGraphProps)
                 return (
                   <circle
                     key={n.id}
+                    ref={el => {
+                      circleEls.current[i] = el;
+                    }}
                     cx={n.x}
                     cy={n.y}
                     r={isHover ? r + 2 : r}

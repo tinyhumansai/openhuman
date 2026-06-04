@@ -158,6 +158,11 @@ pub fn all_tools_with_runtime(
         // build-mode pass. The plan→build mode switch itself is a
         // follow-up; the tool emits a stable marker today.
         Box::new(TodoTool::new()),
+        // Move/update a specific task card by id on a target board (defaults to
+        // the proactive `task-sources` board) — lets the agent advance the task
+        // it's working (in_progress / done+evidence / blocked+reason) from any
+        // thread, complementing `todo` which only touches the current thread.
+        Box::new(UpdateTaskTool::new()),
         Box::new(PlanExitTool::new()),
         // Skill chaining: let an in-flight autonomous skill (e.g.
         // `github-issue-crusher`) kick off another bundled skill_run as a
@@ -199,6 +204,9 @@ pub fn all_tools_with_runtime(
         Box::new(MemoryStoreTool::new(memory.clone(), security.clone())),
         Box::new(MemoryRecallTool::new(memory.clone())),
         Box::new(MemoryForgetTool::new(memory.clone(), security.clone())),
+        // #002: read-only self-diagnosis of the memory pipeline so the agent
+        // can explain an empty/stalled wiki + the fix.
+        Box::new(MemoryDoctorTool::new(config.clone())),
         Box::new(MemoryQueryTool),
         Box::new(MemoryQueryWalkTool),
         Box::new(SmartMemoryWalkTool),

@@ -2,6 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::openhuman::memory::MemoryTaint;
+
 pub(crate) const GLOBAL_NAMESPACE: &str = "global";
 
 /// Input payload for upserting a namespace-scoped memory document.
@@ -9,6 +11,11 @@ pub(crate) const GLOBAL_NAMESPACE: &str = "global";
 /// Used by `MemoryClient::put_doc` and the ingestion pipeline. `document_id`
 /// is optional — when omitted, an existing row keyed by `(namespace, key)` is
 /// reused, otherwise a new id is generated.
+///
+/// `taint` carries the provenance signal through the persistence layer so
+/// downstream recall paths can drive the subconscious origin-escalation
+/// decision. Legacy JSON without the field decodes as
+/// [`MemoryTaint::Internal`] (see the serde tests below).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NamespaceDocumentInput {
     pub namespace: String,
@@ -26,6 +33,13 @@ pub struct NamespaceDocumentInput {
     pub session_id: Option<String>,
     #[serde(default)]
     pub document_id: Option<String>,
+    /// Provenance — `Internal` for user-driven writes, `ExternalSync` for
+    /// memory_sync ingest paths (Gmail / Slack / Notion / Composio / etc.).
+    /// Defaults via `#[serde(default)]` so legacy callers and on-disk JSON
+    /// missing this field decode as the conservative
+    /// [`MemoryTaint::Internal`].
+    #[serde(default)]
+    pub taint: MemoryTaint,
 }
 
 /// One ranked retrieval result for a namespace text query.
@@ -36,6 +50,12 @@ pub struct NamespaceQueryResult {
     pub score: f64,
     /// Stored category string (e.g. `core`, `daily`, or custom label).
     pub category: String,
+    /// Provenance taint carried back from the persistence layer so the
+    /// recall caller can surface it on [`crate::openhuman::memory::MemoryEntry`].
+    /// Defaults to [`MemoryTaint::Internal`] for legacy rows that predate
+    /// the column.
+    #[serde(default)]
+    pub taint: MemoryTaint,
 }
 
 /// Discriminator for the kind of stored memory item a hit refers to.
@@ -66,6 +86,10 @@ pub struct StoredMemoryDocument {
     pub created_at: f64,
     pub updated_at: f64,
     pub markdown_rel_path: String,
+    /// Provenance taint round-tripped from the `memory_docs.taint` column.
+    /// Defaults to [`MemoryTaint::Internal`] for legacy rows.
+    #[serde(default)]
+    pub taint: MemoryTaint,
 }
 
 /// A single KV row, namespace-scoped or global (when `namespace` is `None`).
@@ -128,6 +152,12 @@ pub struct NamespaceMemoryHit {
     pub chunk_id: Option<String>,
     #[serde(default)]
     pub supporting_relations: Vec<GraphRelationRecord>,
+    /// Provenance taint surfaced from the source row so retrieval consumers
+    /// (subconscious tick, context builder, …) can drive origin-escalation
+    /// without re-querying the underlying document. Defaults to
+    /// [`MemoryTaint::Internal`] for legacy hits / KV / episodic rows.
+    #[serde(default)]
+    pub taint: MemoryTaint,
 }
 
 /// Aggregated retrieval result for a namespace: rendered context text plus
@@ -210,6 +240,110 @@ mod tests {
             assert_eq!(decoded.value, record.value);
             assert_eq!(decoded.updated_at, record.updated_at);
         }
+    }
+
+    #[test]
+    fn namespace_document_input_taint_defaults_internal_for_legacy_json() {
+        // Legacy callers serialised before the taint field existed must
+        // still decode — `#[serde(default)]` makes the field optional and
+        // falls back to the conservative `Internal` provenance.
+        let value = json!({
+            "namespace": "skill-gmail",
+            "key": "thread-1",
+            "title": "Subject",
+            "content": "Body",
+            "source_type": "composio-sync",
+            "priority": "medium",
+            "metadata": {},
+            "category": "core"
+        });
+        let parsed: NamespaceDocumentInput = serde_json::from_value(value).unwrap();
+        assert_eq!(parsed.taint, MemoryTaint::Internal);
+    }
+
+    #[test]
+    fn namespace_document_input_taint_roundtrips_external_sync() {
+        let input = NamespaceDocumentInput {
+            namespace: "skill-gmail".into(),
+            key: "thread-1".into(),
+            title: "Subject".into(),
+            content: "Body".into(),
+            source_type: "composio-sync".into(),
+            priority: "medium".into(),
+            tags: Vec::new(),
+            metadata: json!({}),
+            category: "core".into(),
+            session_id: None,
+            document_id: None,
+            taint: MemoryTaint::ExternalSync,
+        };
+        let value = serde_json::to_value(&input).unwrap();
+        assert_eq!(
+            value.get("taint").and_then(|v| v.as_str()),
+            Some("external_sync")
+        );
+        let parsed: NamespaceDocumentInput = serde_json::from_value(value).unwrap();
+        assert_eq!(parsed.taint, MemoryTaint::ExternalSync);
+    }
+
+    #[test]
+    fn namespace_query_result_taint_defaults_internal_for_legacy_json() {
+        let value = json!({
+            "key": "k",
+            "content": "c",
+            "score": 0.5,
+            "category": "core"
+        });
+        let parsed: NamespaceQueryResult = serde_json::from_value(value).unwrap();
+        assert_eq!(parsed.taint, MemoryTaint::Internal);
+    }
+
+    #[test]
+    fn stored_memory_document_taint_defaults_internal_for_legacy_json() {
+        let value = json!({
+            "document_id": "d",
+            "namespace": "n",
+            "key": "k",
+            "title": "t",
+            "content": "c",
+            "source_type": "chat",
+            "priority": "medium",
+            "tags": [],
+            "metadata": {},
+            "category": "core",
+            "session_id": null,
+            "created_at": 1.0,
+            "updated_at": 2.0,
+            "markdown_rel_path": ""
+        });
+        let parsed: StoredMemoryDocument = serde_json::from_value(value).unwrap();
+        assert_eq!(parsed.taint, MemoryTaint::Internal);
+    }
+
+    #[test]
+    fn namespace_memory_hit_taint_defaults_internal_for_legacy_json() {
+        let hit: NamespaceMemoryHit = serde_json::from_value(json!({
+            "id": "hit-1",
+            "kind": "document",
+            "namespace": "global",
+            "key": "note-1",
+            "title": "Title",
+            "content": "Body",
+            "category": "core",
+            "source_type": "manual",
+            "updated_at": 3.5,
+            "score": 0.8,
+            "score_breakdown": {
+                "keyword_relevance": 0.5,
+                "vector_similarity": 0.2,
+                "graph_relevance": 0.0,
+                "episodic_relevance": 0.0,
+                "freshness": 0.1,
+                "final_score": 0.8
+            }
+        }))
+        .unwrap();
+        assert_eq!(hit.taint, MemoryTaint::Internal);
     }
 
     #[test]

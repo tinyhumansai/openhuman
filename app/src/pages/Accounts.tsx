@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react';
 
 import AddAccountModal from '../components/accounts/AddAccountModal';
 import { AgentIcon, ProviderIcon } from '../components/accounts/providerIcons';
-import RespondQueuePanel from '../components/accounts/RespondQueuePanel';
 import WebviewHost from '../components/accounts/WebviewHost';
 import { usePrewarmMostRecentAccount } from '../hooks/usePrewarmMostRecentAccount';
 import { useT } from '../lib/i18n/I18nContext';
@@ -20,7 +19,6 @@ import {
   setLastActiveAccount,
 } from '../store/accountsSlice';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
-import { fetchRespondQueue } from '../store/providerSurfaceSlice';
 import type { Account, AccountProvider, ProviderDescriptor } from '../types/accounts';
 import { AGENT_ACCOUNT_ID as AGENT_ID } from '../utils/accountsFullscreen';
 import { AgentChatPanel } from './Conversations';
@@ -42,6 +40,7 @@ interface RailButtonProps {
   onClick: () => void;
   onContextMenu?: (e: React.MouseEvent) => void;
   tooltip: string;
+  analyticsId: string;
   badge?: number;
   children: React.ReactNode;
 }
@@ -51,12 +50,15 @@ const RailButton = ({
   onClick,
   onContextMenu,
   tooltip,
+  analyticsId,
   badge,
   children,
 }: RailButtonProps) => (
   <button
+    type="button"
     onClick={onClick}
     onContextMenu={onContextMenu}
+    data-analytics-id={analyticsId}
     // Issue #1284 — `hover:z-50` lifts the entire button (and its tooltip
     // child) above sibling rail buttons during hover. Without it, the
     // `hover:scale-105` transform on a non-active button establishes its
@@ -104,18 +106,8 @@ const Accounts = () => {
   const order = useAppSelector(state => state.accounts.order);
   const activeAccountId = useAppSelector(state => state.accounts.activeAccountId);
   const unreadByAccount = useAppSelector(state => state.accounts.unread);
-  // Respond-queue selectors enabled
-  const respondQueue = useAppSelector(state => state.providerSurfaces.queue);
-  const respondQueueCount = useAppSelector(state => state.providerSurfaces.count);
-  const respondQueueStatus = useAppSelector(state => state.providerSurfaces.status);
-  const respondQueueError = useAppSelector(state => state.providerSurfaces.error);
-
   const [addOpen, setAddOpen] = useState(false);
   const [ctxMenu, setCtxMenu] = useState<ContextMenuState | null>(null);
-  // Respond Queue is a power-user surface (pending replies from connected
-  // accounts). Hidden by default so the agent chat gets full width; users
-  // can toggle it open from the header. (#XXXX)
-  const [respondQueueOpen, setRespondQueueOpen] = useState(false);
 
   useEffect(() => {
     startWebviewAccountService();
@@ -130,14 +122,6 @@ const Accounts = () => {
     [order, accountsById]
   );
   usePrewarmMostRecentAccount({ accounts, accountsById, activeAccountId });
-
-  useEffect(() => {
-    void dispatch(fetchRespondQueue());
-    const id = window.setInterval(() => {
-      void dispatch(fetchRespondQueue({ silent: true }));
-    }, 10_000);
-    return () => window.clearInterval(id);
-  }, [dispatch]);
 
   const connectedProviders = useMemo(
     () => new Set<AccountProvider>(accounts.map(a => a.provider)),
@@ -183,8 +167,24 @@ const Accounts = () => {
     dispatch(setLastActiveAccount(id));
   };
 
-  const selectAgent = () => dispatch(setActiveAccount(AGENT_ID));
+  const selectAgent = () => {
+    trackEvent('tauri_browser_click', {
+      surface: 'chat_right_sidebar',
+      action: 'select_agent',
+      provider: 'agent',
+    });
+    dispatch(setActiveAccount(AGENT_ID));
+  };
   const selectAccount = (id: string) => {
+    const account = accountsById[id];
+    if (account) {
+      trackEvent('tauri_browser_click', {
+        surface: 'chat_right_sidebar',
+        action: 'select_account',
+        provider: account.provider,
+        account_status: account.status ?? 'unknown',
+      });
+    }
     dispatch(setActiveAccount(id));
     dispatch(setLastActiveAccount(id));
   };
@@ -196,6 +196,15 @@ const Accounts = () => {
 
   const handleLogout = async (accountId: string) => {
     setCtxMenu(null);
+    const account = accountsById[accountId];
+    if (account) {
+      trackEvent('tauri_browser_click', {
+        surface: 'chat_right_sidebar',
+        action: 'disconnect_account',
+        provider: account.provider,
+        account_status: account.status ?? 'unknown',
+      });
+    }
     try {
       await purgeWebviewAccount(accountId);
     } catch {
@@ -221,10 +230,17 @@ const Accounts = () => {
   }, [ctxMenu]);
 
   return (
-    <div className="relative flex h-full gap-3 overflow-hidden" data-testid="accounts-page">
+    <div
+      className="relative flex h-full gap-3 overflow-hidden"
+      data-testid="accounts-page"
+      data-analytics-id="chat-right-sidebar">
       {/* Narrow icon rail — always rendered. */}
       <aside className="z-30 flex w-16 flex-none flex-col items-center gap-2 bg-white/60 dark:bg-neutral-900/60 py-3 backdrop-blur-md my-3 ml-3 rounded-2xl border border-stone-200/70 dark:border-neutral-800/70 shadow-soft">
-        <RailButton active={isAgentSelected} onClick={selectAgent} tooltip={t('accounts.agent')}>
+        <RailButton
+          active={isAgentSelected}
+          onClick={selectAgent}
+          tooltip={t('accounts.agent')}
+          analyticsId="chat-right-sidebar-agent">
           <AgentIcon className="h-9 w-9 rounded-lg bg-white dark:bg-neutral-200" />
         </RailButton>
 
@@ -235,13 +251,23 @@ const Accounts = () => {
             onClick={() => selectAccount(acct.id)}
             onContextMenu={e => openContextMenu(acct.id, e)}
             tooltip={acct.label}
+            analyticsId={`chat-right-sidebar-account-${acct.provider}`}
             badge={unreadByAccount[acct.id]}>
             <ProviderIcon provider={acct.provider} className="h-8 w-8 rounded-md" />
           </RailButton>
         ))}
 
         <button
-          onClick={() => setAddOpen(true)}
+          type="button"
+          onClick={() => {
+            trackEvent('tauri_browser_click', {
+              surface: 'chat_right_sidebar',
+              action: 'open_add_account',
+              provider: 'none',
+            });
+            setAddOpen(true);
+          }}
+          data-analytics-id="chat-right-sidebar-add-account"
           data-testid="accounts-add-button"
           className="group relative mt-2 flex h-11 w-11 items-center justify-center rounded-xl border border-dashed border-stone-300 dark:border-neutral-700 text-stone-400 dark:text-neutral-500 hover:z-50 hover:bg-stone-50 dark:hover:bg-neutral-800/60 hover:text-stone-600 dark:hover:text-neutral-300"
           aria-label={t('accounts.addAccount')}>
@@ -259,48 +285,7 @@ const Accounts = () => {
       {/* Main pane */}
       <main className="flex min-w-0 flex-1 flex-col">
         {isAgentSelected ? (
-          <div className="flex h-full min-w-0">
-            <div className="relative min-w-0 flex-1">
-              <AgentChatPanel />
-              {/* Floating toggle to reveal the Respond Queue side panel.
-                  Pinned top-right inside the chat pane so it doesn't shift
-                  layout when the panel opens/closes. */}
-              <button
-                type="button"
-                onClick={() => setRespondQueueOpen(prev => !prev)}
-                className="absolute right-4 top-4 z-10 inline-flex items-center gap-1 rounded-full border border-stone-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-1 text-[11px] font-medium text-stone-600 dark:text-neutral-300 shadow-soft hover:bg-stone-50 dark:hover:bg-neutral-800/60"
-                title={
-                  respondQueueOpen
-                    ? t('accounts.respondQueue.hide')
-                    : t('accounts.respondQueue.show')
-                }>
-                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"
-                  />
-                </svg>
-                <span>
-                  {t('accounts.respondQueue.title')}
-                  {respondQueueCount > 0 && ` (${respondQueueCount})`}
-                </span>
-              </button>
-            </div>
-            {/* Respond queue side panel — hidden by default; reveals via toggle */}
-            {respondQueueOpen && (
-              <RespondQueuePanel
-                items={respondQueue}
-                count={respondQueueCount}
-                status={respondQueueStatus}
-                error={respondQueueError}
-                onRefresh={() => {
-                  void dispatch(fetchRespondQueue());
-                }}
-              />
-            )}
-          </div>
+          <AgentChatPanel />
         ) : active ? (
           <div className="flex-1 py-3 pr-3">
             <WebviewHost accountId={active.id} provider={active.provider} />
@@ -325,6 +310,8 @@ const Accounts = () => {
           style={{ left: ctxMenu.x, top: ctxMenu.y }}
           onMouseDown={e => e.stopPropagation()}>
           <button
+            type="button"
+            data-analytics-id="chat-right-sidebar-disconnect-account"
             onClick={() => void handleLogout(ctxMenu.accountId)}
             className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-coral-600 hover:bg-stone-100 dark:hover:bg-neutral-800/60">
             <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

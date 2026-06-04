@@ -36,6 +36,7 @@
 
 mod client;
 mod registry;
+pub mod sanitize;
 mod stdio;
 
 pub use client::{
@@ -43,5 +44,6 @@ pub use client::{
     McpHttpClient, McpInitializeResult, McpRemoteTool, McpServerToolResult, McpSseEvent,
     ProtectedResourceMetadata,
 };
+pub(crate) use registry::apply_safety_filter;
 pub use registry::{McpRegistrySource, McpServerDefinition, McpServerRegistry, McpTransportClient};
 pub use stdio::McpStdioClient;

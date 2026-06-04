@@ -80,6 +80,7 @@ describe('ChatRuntimeProvider — artifact event dispatch (#2779)', () => {
         artifact_id: 'a-1',
         kind: 'presentation',
         title: 'Deck',
+        workspace_dir: '/workspace',
         path: 'a-1/deck.pptx',
         size_bytes: 4096,
       });
@@ -106,6 +107,7 @@ describe('ChatRuntimeProvider — artifact event dispatch (#2779)', () => {
         artifact_id: 'a-2',
         kind: 'document',
         title: 'Notes',
+        workspace_dir: '/workspace',
         error: 'producer crashed',
       });
     });
@@ -134,6 +136,7 @@ describe('ChatRuntimeProvider — artifact event dispatch (#2779)', () => {
         artifact_id: 'a-3',
         kind: 'presentation',
         title: 'Deck',
+        workspace_dir: '/workspace',
         error: huge,
       });
     });
@@ -152,6 +155,7 @@ describe('ChatRuntimeProvider — artifact event dispatch (#2779)', () => {
         artifact_id: 'a-4',
         kind: 'presentation',
         title: 'Deck',
+        workspace_dir: '/workspace',
         error: 'boom',
       });
     });
@@ -161,6 +165,7 @@ describe('ChatRuntimeProvider — artifact event dispatch (#2779)', () => {
         artifact_id: 'a-4',
         kind: 'presentation',
         title: 'Deck',
+        workspace_dir: '/workspace',
         path: 'a-4/deck.pptx',
         size_bytes: 1024,
       });
@@ -181,6 +186,7 @@ describe('ChatRuntimeProvider — artifact event dispatch (#2779)', () => {
         artifact_id: 'a-1',
         kind: 'image',
         title: 'Pic',
+        workspace_dir: '/workspace',
         path: 'a-1/pic.png',
         size_bytes: 1,
       });
@@ -189,6 +195,7 @@ describe('ChatRuntimeProvider — artifact event dispatch (#2779)', () => {
         artifact_id: 'a-2',
         kind: 'document',
         title: 'Doc',
+        workspace_dir: '/workspace',
         error: 'denied',
       });
     });

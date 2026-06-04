@@ -158,13 +158,15 @@ impl Tool for SpawnWorkerThreadTool {
         let threads = conversations::list_threads(parent.workspace_dir.clone())
             .map_err(|e| anyhow::anyhow!(e))?;
         if let Some(current_thread) = threads.iter().find(|t| t.id == current_thread_id) {
-            if current_thread.labels.contains(&"worker".to_string())
-                || current_thread.parent_thread_id.is_some()
-            {
+            let is_delegated_label = current_thread
+                .labels
+                .iter()
+                .any(|label| label == "tasks" || label == "worker" || label == "agent-task");
+            if is_delegated_label || current_thread.parent_thread_id.is_some() {
                 tracing::warn!(
                     agent_id = %agent_id,
                     current_thread_id = %current_thread_id,
-                    is_worker_label = current_thread.labels.contains(&"worker".to_string()),
+                    is_delegated_label,
                     has_parent_thread_id = current_thread.parent_thread_id.is_some(),
                     elapsed_ms = started.elapsed().as_millis() as u64,
                     "[spawn_worker_thread] depth guard blocked spawn from worker thread"
@@ -385,7 +387,7 @@ mod tests {
                 title: "Worker".into(),
                 created_at: "now".into(),
                 parent_thread_id: None,
-                labels: Some(vec!["worker".to_string()]),
+                labels: Some(vec!["tasks".to_string()]),
                 personality_id: None,
             },
         )

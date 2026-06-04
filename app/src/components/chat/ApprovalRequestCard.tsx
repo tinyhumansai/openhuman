@@ -87,6 +87,7 @@ export const ApprovalRequestCard: React.FC<Props> = ({ threadId, approval }) => 
             <Button
               variant="primary"
               size="sm"
+              data-analytics-id="chat-approval-approve-once"
               onClick={() => void decide('approve_once')}
               disabled={deciding !== null}>
               {deciding === 'approve_once'
@@ -96,6 +97,7 @@ export const ApprovalRequestCard: React.FC<Props> = ({ threadId, approval }) => 
             <Button
               variant="secondary"
               size="sm"
+              data-analytics-id="chat-approval-approve-always"
               onClick={() => void decide('approve_always_for_tool')}
               disabled={deciding !== null}
               title={t('chat.approval.alwaysAllowHint')}>
@@ -106,6 +108,7 @@ export const ApprovalRequestCard: React.FC<Props> = ({ threadId, approval }) => 
             <Button
               variant="secondary"
               size="sm"
+              data-analytics-id="chat-approval-deny"
               onClick={() => void decide('deny')}
               disabled={deciding !== null}>
               {deciding === 'deny' ? t('chat.approval.deciding') : t('chat.approval.deny')}

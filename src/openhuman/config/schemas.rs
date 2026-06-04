@@ -275,6 +275,8 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("get_search_settings"),
         schemas("get_activity_level_settings"),
         schemas("update_activity_level_settings"),
+        schemas("get_sandbox_settings"),
+        schemas("update_sandbox_settings"),
     ]
 }
 
@@ -435,6 +437,14 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("update_activity_level_settings"),
             handler: handle_update_activity_level_settings,
+        },
+        RegisteredController {
+            schema: schemas("get_sandbox_settings"),
+            handler: handle_get_sandbox_settings,
+        },
+        RegisteredController {
+            schema: schemas("update_sandbox_settings"),
+            handler: handle_update_sandbox_settings,
         },
     ]
 }
@@ -951,6 +961,42 @@ pub fn schemas(function: &str) -> ControllerSchema {
             description: "Set the agent activity level. Immediately updates the scheduler gate mode and persists the change.",
             inputs: vec![optional_string("level", "Activity level: off | minimal | moderate | active | always_on (or 0–4).")],
             outputs: vec![json_output("settings", "Updated activity level settings with cost estimates.")],
+        },
+        "get_sandbox_settings" => ControllerSchema {
+            namespace: "config",
+            function: "get_sandbox_settings",
+            description: "Get sandbox execution backend settings: selected backend, Docker image/limits, env passthrough, Docker availability, and detected OS backend.",
+            inputs: vec![],
+            outputs: vec![json_output("settings", "Sandbox settings with status.")],
+        },
+        "update_sandbox_settings" => ControllerSchema {
+            namespace: "config",
+            function: "update_sandbox_settings",
+            description: "Update sandbox execution backend settings: backend selection, Docker image, memory/CPU limits, and env passthrough. Applies to new agent sessions.",
+            inputs: vec![
+                optional_string("backend", "Sandbox backend: auto | landlock | firejail | bubblewrap | docker | none."),
+                optional_bool("enabled", "Enable or disable sandbox execution."),
+                optional_string("docker_image", "Docker image for sandboxed execution (e.g. alpine:3.20)."),
+                FieldSchema {
+                    name: "docker_memory_limit_mb",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
+                    comment: "Docker container memory limit in MB.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "docker_cpu_limit",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::F64)),
+                    comment: "Docker container CPU limit (e.g. 1.0 = one core).",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "env_passthrough",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Array(Box::new(TypeSchema::String)))),
+                    comment: "Environment variables to pass through into the sandbox.",
+                    required: false,
+                },
+            ],
+            outputs: vec![json_output("snapshot", "Updated config snapshot.")],
         },
         "agent_server_status" => ControllerSchema {
             namespace: "config",
@@ -1615,6 +1661,7 @@ fn handle_set_action_dir(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+
 fn handle_get_onboarding_completed(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async { to_json(config_rpc::get_onboarding_completed().await?) })
 }
@@ -1768,6 +1815,35 @@ fn handle_update_activity_level_settings(params: Map<String, Value>) -> Controll
             level: update.level,
         };
         to_json(config_rpc::load_and_apply_activity_level_settings(patch).await?)
+    })
+}
+
+#[derive(Debug, Deserialize)]
+struct SandboxSettingsUpdate {
+    backend: Option<String>,
+    enabled: Option<bool>,
+    docker_image: Option<String>,
+    docker_memory_limit_mb: Option<u64>,
+    docker_cpu_limit: Option<f64>,
+    env_passthrough: Option<Vec<String>>,
+}
+
+fn handle_get_sandbox_settings(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move { to_json(config_rpc::get_sandbox_settings().await?) })
+}
+
+fn handle_update_sandbox_settings(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let update = deserialize_params::<SandboxSettingsUpdate>(params)?;
+        let patch = config_rpc::SandboxSettingsPatch {
+            backend: update.backend,
+            enabled: update.enabled,
+            docker_image: update.docker_image,
+            docker_memory_limit_mb: update.docker_memory_limit_mb,
+            docker_cpu_limit: update.docker_cpu_limit,
+            env_passthrough: update.env_passthrough,
+        };
+        to_json(config_rpc::load_and_apply_sandbox_settings(patch).await?)
     })
 }
 

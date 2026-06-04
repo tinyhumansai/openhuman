@@ -233,7 +233,7 @@ fn persist_channel_turn(
             title,
             created_at: created_at.clone(),
             parent_thread_id: None,
-            labels: Some(vec!["work".to_string()]),
+            labels: Some(vec!["general".to_string()]),
             personality_id: None,
         },
     )?;

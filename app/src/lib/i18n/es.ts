@@ -211,6 +211,10 @@ const messages: TranslationMap = {
   'home.usageExhaustedBody':
     'Ya no te queda uso incluido por ahora. Inicia una suscripción para desbloquear más capacidad continua.',
   'home.usageExhaustedCta': 'Obtener una suscripción',
+  'openrouterFree.cta': 'Usar modelos gratis de OpenRouter',
+  'openrouterFree.saving': 'Conectando OpenRouter...',
+  'openrouterFree.error':
+    'No se pudo cambiar a los modelos gratis de OpenRouter. Revisa tu inicio de sesión de OpenRouter e inténtalo de nuevo.',
   'home.routinesCard': 'Tus rutinas',
   'home.routinesActive': '{count} activas',
   'routines.title': 'Tus rutinas',
@@ -506,6 +510,8 @@ const messages: TranslationMap = {
   'onboarding.runtimeChoice.continueCloud': 'Continuar con Simple',
   'onboarding.runtimeChoice.continueCustom': 'Continuar con Personalizado',
   'onboarding.runtimeChoice.recommended': 'Recomendado',
+  'onboarding.runtimeChoice.exitError':
+    'No se pudo completar el proceso de incorporación. Por favor, inténtalo de nuevo.',
   'onboarding.apiKeys.title': 'Agreguemos tus claves API',
   'onboarding.apiKeys.subtitle':
     'Puedes pegarlas ahora u omitir y agregarlas luego en Configuración › IA. Las claves se guardan en este dispositivo, cifradas en reposo.',
@@ -1748,16 +1754,13 @@ const messages: TranslationMap = {
   'common.enable': 'Activar',
   'chat.safetyTimeout':
     'Sin respuesta del agente después de 2 minutos. Intenta de nuevo o verifica tu conexión.',
-  'chat.filter.all': 'Todos',
-  'chat.filter.work': 'Trabajo',
-  'chat.filter.briefing': 'Resumen',
-  'chat.filter.notification': 'Notificación',
-  'chat.filter.workers': 'Trabajadores',
+  'chat.filter.general': 'General',
+  'chat.filter.subconscious': 'Subconsciente',
+  'chat.filter.tasks': 'Tareas',
   'chat.selectThread': 'Selecciona un hilo',
   'chat.threads': 'Hilos',
   'chat.noThreads': 'Sin hilos aún',
   'chat.noLabelThreads': 'Sin hilos "{label}"',
-  'chat.noWorkerThreads': 'Sin hilos de worker aún',
   'chat.deleteThread': 'Eliminar hilo',
   'chat.deleteThreadConfirm': '¿Seguro que quieres eliminar "{title}"?',
   'chat.untitledThread': 'Hilo sin título',
@@ -2563,8 +2566,25 @@ const messages: TranslationMap = {
   'conversations.taskKanban.field.title': 'Título',
   'conversations.taskKanban.saveChanges': 'Guardar cambios',
   'conversations.taskKanban.deleteCard': 'Borrar',
+  'conversations.taskKanban.workTask': 'Trabajar tarea',
+  'conversations.taskKanban.startingTask': 'Iniciando…',
   'conversations.taskKanban.updateFailed':
     'No se pudo actualizar la tarea; los cambios no se guardaron.',
+  'conversations.taskKanban.sourcesButton': 'Fuentes',
+  'conversations.taskKanban.source.openExternal': 'Abrir tarea externa',
+  'conversations.taskKanban.source.openExternalShort': 'Abrir',
+  'conversations.taskKanban.source.unknownProvider': 'Fuente desconocida',
+  'conversations.taskKanban.source.urgencyValue': 'Urgencia {percent}%',
+  'conversations.taskKanban.sources.desktopOnly':
+    'Los controles de fuentes de tareas están disponibles en la app de escritorio.',
+  'conversations.taskKanban.sources.title': 'Fuentes de tareas',
+  'conversations.taskKanban.sources.statusEnabled': 'Sondeo automático activado',
+  'conversations.taskKanban.sources.manage': 'Gestionar fuentes',
+  'conversations.taskKanban.source.title': 'Fuente',
+  'conversations.taskKanban.source.sourceId': 'ID de fuente',
+  'conversations.taskKanban.source.externalId': 'ID externo',
+  'conversations.taskKanban.source.repo': 'Repositorio',
+  'conversations.taskKanban.source.urgency': 'Urgencia',
   'conversations.toolTimeline.turn': 'turno',
   'conversations.toolTimeline.step': 'Paso',
   'conversations.toolTimeline.workerThread': 'hilo de worker',
@@ -2680,6 +2700,49 @@ const messages: TranslationMap = {
   'intelligence.tasks.composer.create': 'Crear tarea',
   'intelligence.tasks.composer.creating': 'Creando…',
   'intelligence.tasks.composer.createFailed': 'No se pudo crear la tarea',
+  'intelligence.tasks.composer.assignAgentLabel':
+    'Deja que un agente se encargue de esto automáticamente',
+  'intelligence.tasks.composer.assignAgentHint':
+    'El tablero de tareas la toma y la ejecuta por ti. Déjalo desactivado para una tarea personal simple.',
+  'intelligence.tasks.sourceList.subtitle':
+    'Tareas de fuentes esperando convertirse en trabajo del agente.',
+  'intelligence.tasks.sourceList.empty': 'No hay tareas de fuentes en espera.',
+  'intelligence.tasks.sourceList.queued': 'En cola',
+  'intelligence.tasks.sourceList.workOnTask': 'Trabajar en la tarea',
+  'intelligence.tasks.sourcePlan.title': 'Refinar tarea de fuente',
+  'intelligence.tasks.sourcePlan.subtitle':
+    'Revisa el borrador de investigación antes de crear una tarea de agente.',
+  'intelligence.tasks.sourcePlan.researchAgent': 'Borrador del agente investigador',
+  'intelligence.tasks.sourcePlan.approve': 'Aprobar plan',
+  'intelligence.tasks.sourcePlan.creating': 'Creando tarea…',
+  'intelligence.tasks.sourcePlan.createFailed': 'No se pudo crear la tarea del agente',
+  'intelligence.tasks.workTaskFailed': 'No se pudo iniciar el trabajo en la tarea',
+  'intelligence.workTask.sourceTaskHeading': 'Tarea de origen:',
+  'intelligence.workTask.repositoryLine': '- Repositorio: {repo}',
+  'intelligence.workTask.externalIdLine': '- ID externo: {externalId}',
+  'intelligence.workTask.urlLine': '- Dirección: {url}',
+  'intelligence.workTask.closingInstruction':
+    'Empieza reformulando brevemente el plan de implementación concreto y luego ejecútalo. Mantén el progreso visible en este hilo y actualiza el tablero de tareas cuando cambie el estado del trabajo.',
+  'intelligence.refine.objectiveDefault':
+    'Convierte la tarea de origen en una tarea de agente lista para implementar: {title}',
+  'intelligence.refine.sourceLine': 'Origen: {url}',
+  'intelligence.refine.sourceIntake': 'Origen: recepción de fuentes de tareas',
+  'intelligence.refine.repositoryLine': 'Repositorio: {repo}',
+  'intelligence.refine.externalTaskLine': 'Tarea externa: {externalId}',
+  'intelligence.refine.planStep1':
+    'Lee la tarea de origen vinculada y confirma el comportamiento exacto solicitado.',
+  'intelligence.refine.planStep2':
+    'Inspecciona las rutas de código relevantes e identifica el límite de implementación más pequeño.',
+  'intelligence.refine.planStep3':
+    'Implementa el cambio con pruebas centradas en el comportamiento visible para el usuario.',
+  'intelligence.refine.planStep4':
+    'Ejecuta una validación específica y registra los riesgos residuales o el trabajo de seguimiento.',
+  'intelligence.refine.acceptance1':
+    'Los requisitos de la tarea de origen están representados en la implementación final.',
+  'intelligence.refine.acceptance2':
+    'Las pruebas unitarias o de integración relevantes cubren el comportamiento modificado.',
+  'intelligence.refine.acceptance3':
+    'Los resultados de la validación y cualquier riesgo sin resolver se registran al finalizar.',
   'notifications.card.dismiss': 'Descartar notificación',
   'notifications.card.importanceTitle': 'Importancia: {pct}%',
   'notifications.center.empty': 'Sin notificaciones aún',
@@ -3742,7 +3805,44 @@ const messages: TranslationMap = {
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',
-  'settings.agentAccess.viewApprovalHistory': 'View approval history',
+  'settings.agentAccess.viewApprovalHistory': 'Ver historial de aprobaciones',
+  'settings.sandbox.title': 'Ejecución en sandbox',
+  'settings.sandbox.menuDesc':
+    'Configurar backends de sandbox para el aislamiento de herramientas del agente.',
+  'settings.sandbox.loading': 'Cargando…',
+  'settings.sandbox.desktopOnly':
+    'La configuración de sandbox solo está disponible en la aplicación de escritorio.',
+  'settings.sandbox.loadError': 'Error al cargar la configuración de sandbox.',
+  'settings.sandbox.saveError': 'Error al guardar la configuración de sandbox.',
+  'settings.sandbox.saved': 'Guardado — se aplica a las nuevas sesiones del agente.',
+  'settings.sandbox.saving': 'Guardando…',
+  'settings.sandbox.status': 'Estado',
+  'settings.sandbox.dockerStatus': 'Docker',
+  'settings.sandbox.available': 'Disponible',
+  'settings.sandbox.unavailable': 'No disponible',
+  'settings.sandbox.detectedBackend': 'Backend del SO',
+  'settings.sandbox.enableLabel': 'Habilitar ejecución en sandbox',
+  'settings.sandbox.enableDesc':
+    'Ejecutar las herramientas del agente dentro de un entorno sandbox aislado.',
+  'settings.sandbox.backendLabel': 'Backend',
+  'settings.sandbox.backendDesc':
+    'Elige qué backend de aislamiento usar para la ejecución en sandbox.',
+  'settings.sandbox.backend.auto': 'Automático (detectar el mejor disponible)',
+  'settings.sandbox.backend.docker': 'Docker',
+  'settings.sandbox.backend.landlock': 'Landlock (Linux)',
+  'settings.sandbox.backend.firejail': 'Firejail (Linux)',
+  'settings.sandbox.backend.bubblewrap': 'Bubblewrap (Linux)',
+  'settings.sandbox.backend.none': 'Ninguno (sin sandbox)',
+  'settings.sandbox.dockerSettings': 'Configuración de Docker',
+  'settings.sandbox.dockerImage': 'Imagen',
+  'settings.sandbox.dockerImagePlaceholder': 'alpine:3.20',
+  'settings.sandbox.memoryLimit': 'Límite de memoria',
+  'settings.sandbox.memoryUnit': 'MB',
+  'settings.sandbox.cpuLimit': 'Límite de CPU',
+  'settings.sandbox.cpuUnit': 'núcleos',
+  'settings.sandbox.envPassthrough': 'Reenvío de variables de entorno',
+  'settings.sandbox.envPassthroughDesc': 'Variables de entorno reenviadas al sandbox.',
+  'settings.sandbox.noEnvVars': 'No hay variables de entorno configuradas.',
   'settings.approvalHistory.title': 'Approval history',
   'settings.approvalHistory.subtitle': 'Recent tool-approval decisions, newest first.',
   'settings.approvalHistory.refresh': 'Refresh',
@@ -4177,6 +4277,8 @@ const messages: TranslationMap = {
   'chat.agentProfile.defaultAgentLabel': 'orquestador',
   'chat.agentProfile.exists': 'El perfil del agente "{name}" ya existe.',
   'chat.agentProfile.label': 'Perfil del agente',
+  'chat.agentProfile.quick': 'Rápido',
+  'chat.agentProfile.reasoning': 'Razonamiento',
   'chat.agentProfile.namePlaceholder': 'Nombre del perfil',
   'chat.agentProfile.promptStylePlaceholder': 'estilo rápido',
   'chat.agentProfile.allowedToolsPlaceholder': 'Herramientas permitidas',
@@ -4313,6 +4415,10 @@ const messages: TranslationMap = {
   'settings.taskSources.github.repo': 'Repositorio (propietario/nombre, opcional)',
   'settings.taskSources.github.labels': 'Etiquetas (separadas por comas)',
   'settings.taskSources.notion.database': 'ID de la base de datos (tablero)',
+  'settings.taskSources.notion.browseDatabases': 'Explorar bases de datos',
+  'settings.taskSources.notion.loadingDatabases': 'Cargando bases de datos…',
+  'settings.taskSources.notion.selectDatabase': 'Selecciona una base de datos…',
+  'settings.taskSources.notion.noDatabases': 'No se encontraron bases de datos para esta conexión.',
   'settings.taskSources.linear.team': 'ID del equipo (opcional)',
   'settings.taskSources.clickup.team': 'ID del espacio de trabajo (equipo) (opcional)',
   'settings.taskSources.assignedToMe': 'Solo los elementos asignados a mí',
@@ -4474,6 +4580,39 @@ const messages: TranslationMap = {
   'settings.agents.editor.toolsDone': 'Done',
   'settings.agents.editor.builtInReadonly':
     'Los agentes integrados no se pueden editar. Puedes activarlos, desactivarlos o restablecerlos desde la lista de agentes.',
+  // Chat — agent-generated artifacts (#2779)
+  'chat.artifact.aria': 'Artefacto: {title}',
+  'chat.artifact.generating': 'Generando {kind}…',
+  'chat.artifact.ready': 'Listo',
+  'chat.artifact.failed': 'Error al generar',
+  'chat.artifact.download': 'Descargar',
+  'chat.artifact.downloading': 'Descargando…',
+  'chat.artifact.downloaded': 'Guardado en {path}',
+  'chat.artifact.download_failed': 'Error al descargar: {reason}',
+  'chat.artifact.retry': 'Reintentar',
+  'chat.artifact.reveal': 'Mostrar en la carpeta',
+  'chat.artifact.show_more': 'Ver más',
+  'chat.artifact.show_less': 'Ver menos',
+
+  // Chat — files panel (#3024)
+  'chat.files.chip.aria.one': '{count} archivo en este chat',
+  'chat.files.chip.aria.other': '{count} archivos en este chat',
+  'chat.files.panel.aria': 'Archivos en este chat',
+  'chat.files.panel.title': 'Archivos ({count})',
+  'chat.files.panel.empty': 'Aún no hay archivos. Pídele al agente que genere uno.',
+  'chat.files.panel.close': 'Cerrar panel de archivos',
+  'chat.files.delete.aria': 'Eliminar {title}',
+  'chat.files.delete.confirm': '¿Eliminar este archivo?',
+  'chat.files.delete.cancel': 'Cancelar',
+  'chat.files.delete.action': 'Eliminar',
+  'chat.files.delete.failed': 'No se pudo eliminar el archivo. Inténtalo de nuevo.',
+  'chat.files.error.not_desktop': 'Las descargas solo están disponibles en la app de escritorio.',
+  'chat.files.error.missing_artifact_id': 'Falta el id del artefacto.',
+  'chat.files.error.missing_artifact_path':
+    'Falta la ruta del artefacto en la respuesta del núcleo.',
+  'chat.files.error.resolve_failed': 'No se pudo resolver el artefacto. Inténtalo de nuevo.',
+  'chat.files.error.download_failed': 'La descarga falló. Inténtalo de nuevo.',
+  'chat.files.error.delete_failed': 'No se pudo eliminar el archivo. Inténtalo de nuevo.',
   'autocomplete.debounceMs': 'Retardo (ms)',
   'autocomplete.maxChars': 'Máximo de caracteres de contexto',
   'autocomplete.overlayTtlMs': 'Tiempo de espera de superposición (ms)',
@@ -4561,19 +4700,33 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Rechazar almacenamiento local',
   'pages.settings.account.security': 'Seguridad',
   'pages.settings.account.securityDesc': 'Modo de almacenamiento de secretos y estado del llavero',
+  // #002 memory-pipeline-hardening: degraded badges + typed remediation.
+  'memoryTree.status.statusDegraded': 'Degradado',
+  'memoryTree.status.degradedRecall': 'Recuperación semántica desactivada',
+  'memoryTree.status.degradedStructure': 'Estructura de la wiki incompleta',
+  'memoryTree.status.extractionCoverage':
+    'Cobertura de extracción: {pct}% de los fragmentos tienen estructura',
+  'memory.health.remediation.budget_exhausted':
+    'Los embeddings de memoria agotaron el presupuesto gestionado. Configura embeddings locales de Ollama (Configuración → IA → Incrustaciones) o añade tu propia clave de API de embeddings para seguir construyendo la memoria.',
+  'memory.health.remediation.auth_missing':
+    'No se encontraron credenciales de embeddings. Inicia sesión en OpenHuman o configura embeddings locales de Ollama en Configuración → IA → Incrustaciones.',
+  'memory.health.remediation.auth_invalid':
+    'Tus credenciales de embeddings fueron rechazadas. Vuelve a autenticarte o cambia a embeddings locales de Ollama en Configuración → IA → Incrustaciones.',
+  'memory.health.remediation.embeddings_unconfigured':
+    'No hay ningún proveedor de embeddings configurado, por lo que la recuperación semántica está desactivada. Configura embeddings locales de Ollama (recomendado) o añade una clave de embeddings en Configuración → IA → Incrustaciones.',
+  'memory.health.remediation.embedding_dim_mismatch':
+    'El modelo de embeddings devuelve un tamaño de vector incorrecto (la memoria espera 1024 dimensiones). Elige un modelo de 1024 dimensiones o solicita 1024 dimensiones a tu proveedor.',
+  'memory.health.remediation.local_model_unavailable':
+    'No hay disponible un modelo local requerido. Instala/ejecuta Ollama y descarga el modelo, o cambia esta carga de trabajo a un proveedor en la nube en Configuración → IA.',
+  'memory.health.remediation.extraction_timeout':
+    'El modelo de extracción de memoria está agotando el tiempo de espera, por lo que la wiki tiene poca estructura. Cambia el modelo de extracción de memoria por uno más rápido en Configuración → IA.',
+  'memory.health.remediation.summarizer_unavailable':
+    'No hay ningún proveedor de resúmenes disponible para Crear árboles de resumen. Activa la IA local (Ollama) o activa el resumen en la nube en Configuración → IA → Memoria.',
+  'memory.health.remediation.transient':
+    'Un error temporal interrumpió el procesamiento de la memoria. Se reintentará automáticamente.',
+  'memory.health.remediation.unknown':
+    'El procesamiento de la memoria encontró un problema. Comprueba Configuración → IA para la configuración.',
   // Chat — agent-generated artifacts (#2779)
-  'chat.artifact.aria': 'Artefacto: {title}',
-  'chat.artifact.generating': 'Generando {kind}…',
-  'chat.artifact.ready': 'Listo',
-  'chat.artifact.failed': 'Error al generar',
-  'chat.artifact.download': 'Descargar',
-  'chat.artifact.downloading': 'Descargando…',
-  'chat.artifact.downloaded': 'Guardado en {path}',
-  'chat.artifact.download_failed': 'Error al descargar: {reason}',
-  'chat.artifact.retry': 'Reintentar',
-  'chat.artifact.reveal': 'Mostrar en la carpeta',
-  'chat.artifact.show_more': 'Ver más',
-  'chat.artifact.show_less': 'Ver menos',
 
   // Chat composer toolbar
   'composer.attachFile': 'Adjuntar archivo',
@@ -4704,6 +4857,18 @@ const messages: TranslationMap = {
   'memoryData.windowError': 'Ventana de memoria',
   'memoryData.windowUpdated': 'Ventana de memoria actualizada',
   'memoryData.windowUpdatedMsg': 'Establecida en {window}.',
+
+  // Run queue
+  'runQueue.mode.interrupt': 'Interrumpir',
+  'runQueue.mode.steer': 'Dirigir',
+  'runQueue.mode.followup': 'Seguimiento',
+  'runQueue.mode.collect': 'Añadir contexto',
+  'runQueue.queued': 'Mensaje en cola',
+  'runQueue.steerHint': 'Dirigir el turno actual',
+  'runQueue.followupHint': 'Poner en cola como seguimiento',
+  'runQueue.collectHint': 'Añadir como contexto adicional',
+  'runQueue.status': '{total} en cola',
+  'runQueue.cleared': 'Cola vaciada',
 };
 
 export default messages;

@@ -13,7 +13,6 @@ import { Provider } from 'react-redux';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { agentProfilesApi } from '../../services/api/agentProfilesApi';
 import { threadApi } from '../../services/api/threadApi';
 import { chatSend } from '../../services/chatService';
 import { CoreRpcError } from '../../services/coreRpcClient';
@@ -50,6 +49,7 @@ const { mockGetThreads, mockGetThreadMessages, mockUseUsageState } = vi.hoisted(
     refresh: vi.fn(),
   })),
 }));
+const mockUseOpenRouterFreeModels = vi.hoisted(() => vi.fn());
 
 // ── Module mocks ───────────────────────────────────────────────────────────
 
@@ -118,6 +118,10 @@ vi.mock('../../services/api/agentProfilesApi', () => ({
   },
 }));
 
+vi.mock('../../services/api/openrouterFreeModels', () => ({
+  applyOpenRouterFreeModels: () => mockUseOpenRouterFreeModels(),
+}));
+
 vi.mock('../../hooks/useUsageState', () => ({ useUsageState: mockUseUsageState }));
 
 vi.mock('../../store/socketSelectors', () => ({
@@ -181,7 +185,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     messageCount: 0,
     lastMessageAt: '2026-01-01T00:00:00.000Z',
     createdAt: '2026-01-01T00:00:00.000Z',
-    labels: [],
+    labels: ['general'],
     ...overrides,
   };
 }
@@ -322,15 +326,15 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
   });
 
   // Covers line 941 empty branch
-  it('shows "No threads yet" when thread list is empty', async () => {
+  it('shows the General empty message when the default bucket has no threads', async () => {
     await act(async () => {
       await renderConversations({ thread: emptyThreadState });
     });
 
     // Sidebar is hidden by default — open it first.
     await openSidebar();
-
-    expect(screen.getByText('No threads yet')).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'General' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByText('No "General" threads')).toBeInTheDocument();
   });
 
   // Covers lines 1002-1004, 1007, 1011-1012, 1014: thread list items rendered unconditionally
@@ -428,6 +432,7 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
 
     // Budget-exceeded banner (lines 1417-1439) — cycleBudgetUsd=0 gives "included budget" message
     expect(screen.getByText(/Your included budget is complete/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Use OpenRouter free models/i })).toBeInTheDocument();
 
     // LimitPill renders with the cycle label
     expect(screen.getByText('Cycle')).toBeInTheDocument();
@@ -623,6 +628,37 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     });
 
     expect(openUrl).toHaveBeenCalled();
+  });
+
+  it('clicking OpenRouter free models in the budget banner routes chat workloads', async () => {
+    const teamUsage = { cycleBudgetUsd: 10, remainingUsd: 0, cycleSpentUsd: 10, cycleEndsAt: null };
+    mockUseOpenRouterFreeModels.mockResolvedValueOnce(undefined);
+
+    mockUseUsageState.mockReturnValue({
+      teamUsage,
+      currentPlan: null,
+      currentTier: 'PRO' as const,
+      isFreeTier: false,
+      usagePct: 1.0,
+      isNearLimit: true,
+      isAtLimit: true,
+      isBudgetExhausted: true,
+      shouldShowBudgetCompletedMessage: true,
+      isLoading: false,
+      refresh: vi.fn(),
+    });
+
+    await act(async () => {
+      await renderConversations({ thread: emptyThreadState });
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Use OpenRouter free models/i }));
+    });
+
+    await waitFor(() => {
+      expect(mockUseOpenRouterFreeModels).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('handles /new from the composer without a selected thread or sending chat text', async () => {
@@ -991,76 +1027,6 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     });
   });
 
-  it('creates a custom agent profile from the header draft form', async () => {
-    const thread = makeThread({ id: 'profile-thread', title: 'Profile Thread' });
-    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
-    mockGetThreadMessages.mockResolvedValue({ messages: [], count: 0 });
-    vi.mocked(agentProfilesApi.upsert).mockResolvedValueOnce({
-      activeProfileId: 'custom',
-      profiles: [
-        {
-          id: 'custom',
-          name: 'Custom',
-          description: 'Custom agent profile',
-          agentId: 'orchestrator',
-          builtIn: false,
-        },
-      ],
-    });
-    vi.mocked(agentProfilesApi.select).mockResolvedValueOnce({
-      activeProfileId: 'custom',
-      profiles: [
-        {
-          id: 'custom',
-          name: 'Custom',
-          description: 'Custom agent profile',
-          agentId: 'orchestrator',
-          builtIn: false,
-        },
-      ],
-    });
-
-    await act(async () => {
-      await renderConversations({
-        thread: selectedThreadState(thread),
-        socket: socketState('connected'),
-      });
-    });
-
-    fireEvent.click(await screen.findByLabelText('Create agent profile'));
-    fireEvent.change(screen.getByPlaceholderText('Profile name'), { target: { value: 'Custom' } });
-    fireEvent.change(screen.getByPlaceholderText('Prompt style'), {
-      target: { value: 'Be concise' },
-    });
-    fireEvent.change(screen.getByPlaceholderText('Allowed tools'), {
-      target: { value: 'todowrite, spawn_parallel_agents' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-
-    await waitFor(() => expect(agentProfilesApi.upsert).toHaveBeenCalledTimes(1));
-    expect(agentProfilesApi.upsert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'Custom',
-        systemPromptSuffix: 'Be concise',
-        allowedTools: ['todowrite', 'spawn_parallel_agents'],
-      })
-    );
-    expect(agentProfilesApi.select).toHaveBeenCalled();
-  });
-
-  it('shows validation when creating a duplicate profile name', async () => {
-    await act(async () => {
-      await renderConversations({ thread: emptyThreadState, socket: socketState('connected') });
-    });
-
-    fireEvent.click(await screen.findByLabelText('Create agent profile'));
-    fireEvent.change(screen.getByPlaceholderText('Profile name'), { target: { value: 'Default' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-
-    expect(await screen.findByText('Agent profile "Default" already exists.')).toBeInTheDocument();
-    expect(agentProfilesApi.upsert).not.toHaveBeenCalled();
-  });
-
   it('rolls back and shows feedback when task board move persistence fails', async () => {
     const thread = makeThread({ id: 'board-thread', title: 'Board Thread' });
     const board = {
@@ -1266,7 +1232,7 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
   //
   // The tab set is fixed so categories do not disappear when the thread list
   // is empty, and the active-filter state remains unambiguous.
-  it('renders all four fixed category tabs with stable labels', async () => {
+  it('renders the fixed chat bucket tabs with stable labels', async () => {
     await act(async () => {
       await renderConversations({ thread: emptyThreadState });
     });
@@ -1274,14 +1240,18 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     // Sidebar is hidden by default — open it first.
     await openSidebar();
 
-    // All four tabs must be present regardless of thread count.
-    expect(screen.getByRole('tab', { name: 'All' })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: 'Work' })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: 'Briefing' })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: 'Notification' })).toBeInTheDocument();
+    // Bucket tabs must be present regardless of thread count.
+    expect(screen.getByRole('tab', { name: 'General' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Subconscious' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Tasks' })).toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'All' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'Briefing' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'Notification' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'Workers' })).not.toBeInTheDocument();
+    expect(screen.getByRole('tablist')).toHaveClass('flex-wrap');
   });
 
-  it('starts with the "All" tab selected', async () => {
+  it('starts with the "General" tab selected', async () => {
     await act(async () => {
       await renderConversations({ thread: emptyThreadState });
     });
@@ -1289,19 +1259,11 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     // Sidebar is hidden by default — open it first.
     await openSidebar();
 
-    expect(screen.getByRole('tab', { name: 'All' })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByRole('tab', { name: 'Work' })).toHaveAttribute('aria-selected', 'false');
-  });
-
-  it('shows "No threads yet" placeholder when All tab is active and list is empty', async () => {
-    await act(async () => {
-      await renderConversations({ thread: emptyThreadState });
-    });
-
-    // Sidebar is hidden by default — open it first.
-    await openSidebar();
-
-    expect(screen.getByText('No threads yet')).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'General' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'Subconscious' })).toHaveAttribute(
+      'aria-selected',
+      'false'
+    );
   });
 
   it('shows category-specific empty message when a label tab is selected and no threads match', async () => {
@@ -1312,18 +1274,14 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     // Sidebar is hidden by default — open it first.
     await openSidebar();
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Work' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'General' }));
 
     await waitFor(() => {
-      expect(screen.getByText(/"work" threads/i)).toBeInTheDocument();
+      expect(screen.getByText(/"General" threads/i)).toBeInTheDocument();
     });
   });
 
-  // #1624 — Workers tab is the dedicated entry-point for sub-agent threads.
-  // When the active workspace has no worker threads (parentThreadId set), the
-  // empty state must use the friendly "No worker threads yet" copy rather
-  // than `No "workers" threads`.
-  it('shows the worker-specific empty message when the Workers tab is selected', async () => {
+  it('shows a category-specific empty message when the Tasks tab is selected', async () => {
     await act(async () => {
       await renderConversations({ thread: emptyThreadState });
     });
@@ -1331,10 +1289,10 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     // Sidebar is hidden by default — open it first.
     await openSidebar();
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Workers' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Tasks' }));
 
     await waitFor(() => {
-      expect(screen.getByText('No worker threads yet')).toBeInTheDocument();
+      expect(screen.getByText(/"Tasks" threads/i)).toBeInTheDocument();
     });
   });
 });
@@ -1367,10 +1325,9 @@ describe('Conversations — worker thread back-to-parent navigation (#1624)', ()
       });
     });
 
-    // The mount effect resumes onto a *visible* (non-worker) thread, so even
-    // though the preloaded state pointed at the child, the page auto-selects
-    // the parent. Re-select the worker thread now that mount has settled to
-    // mimic the user clicking through to a worker from the Workers tab.
+    // The mount effect resumes onto the first visible General thread. Re-select
+    // the worker thread now that mount has settled to mimic opening it from the
+    // Tasks bucket or parent reference card.
     await act(async () => {
       store!.dispatch(setSelectedThread('t-child'));
     });
@@ -1568,10 +1525,10 @@ describe('Conversations — thread title editing', () => {
     expect(editBtn).toBeInTheDocument();
 
     await act(async () => {
-      fireEvent.click(editBtn);
+      fireEvent.mouseDown(editBtn);
     });
 
-    const input = screen.getByLabelText('Edit thread title');
+    const input = screen.getByRole('textbox', { name: 'Edit thread title' });
     expect(input).toBeInTheDocument();
     expect(input).toHaveValue('Original Title');
   });
@@ -1593,10 +1550,10 @@ describe('Conversations — thread title editing', () => {
 
     const editBtn = screen.getByRole('button', { name: 'Edit thread title' });
     await act(async () => {
-      fireEvent.click(editBtn);
+      fireEvent.mouseDown(editBtn);
     });
 
-    const input = screen.getByLabelText('Edit thread title');
+    const input = screen.getByRole('textbox', { name: 'Edit thread title' });
     await act(async () => {
       fireEvent.change(input, { target: { value: 'New Title' } });
     });

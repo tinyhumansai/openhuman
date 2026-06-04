@@ -11,6 +11,9 @@
 //! "cloud" / missing              → primary_cloud; legacy custom inference_url wins when
 //!                                  primary still points at OpenHuman after migration
 //! "ollama:<model>[@<temp>]"      → local Ollama at config.local_ai.base_url
+//! "lmstudio:<model>[@<temp>]"    → local LM Studio
+//! "mlx:<model>[@<temp>]"         → local MLX-compatible server
+//! "local-openai:<model>[@<temp>]"→ generic local OpenAI-compatible
 //! "<slug>:<model>[@<temp>]"      → cloud_providers entry keyed by slug;
 //!                                  builds OpenAiCompatibleProvider (Bearer) or
 //!                                  Anthropic flavour depending on auth_style.
@@ -42,6 +45,10 @@ pub const PROVIDER_OPENHUMAN: &str = "openhuman";
 pub const OLLAMA_PROVIDER_PREFIX: &str = "ollama:";
 /// Prefix for LM Studio-local providers: `"lmstudio:<model>"`.
 pub const LM_STUDIO_PROVIDER_PREFIX: &str = "lmstudio:";
+/// Prefix for MLX-compatible local providers: `"mlx:<model>"`.
+pub const MLX_PROVIDER_PREFIX: &str = "mlx:";
+/// Prefix for generic local OpenAI-compatible providers: `"local-openai:<model>"`.
+pub const LOCAL_OPENAI_PROVIDER_PREFIX: &str = "local-openai:";
 /// Prefix for the Claude Agent SDK subprocess provider: `"claude_agent_sdk:<model>"`.
 pub const CLAUDE_AGENT_SDK_PREFIX: &str = "claude_agent_sdk:";
 /// Sentinel for the Claude Agent SDK provider without a model suffix.
@@ -74,6 +81,63 @@ fn is_abstract_tier_model(model: &str) -> bool {
 /// as a legacy fallback (old configs stored keys as e.g. `"openai:default"`).
 pub fn auth_key_for_slug(slug: &str) -> String {
     format!("provider:{slug}")
+}
+
+/// Resolve a model hint (e.g. `"hint:reasoning"`) or tier name to the
+/// concrete model string that the provider router would use — without
+/// constructing the actual provider.  Returns the provider-string prefix
+/// (e.g. `"openai"`) concatenated with the model when a BYOK provider is
+/// active, or the bare tier name for the managed OpenHuman backend.
+pub fn resolve_model_for_hint(hint_or_tier: &str, config: &Config) -> String {
+    let hint_to_tier: &[(&str, &str)] = &[
+        ("reasoning", crate::openhuman::config::MODEL_REASONING_V1),
+        ("chat", crate::openhuman::config::MODEL_REASONING_QUICK_V1),
+        ("agentic", crate::openhuman::config::MODEL_AGENTIC_V1),
+        ("coding", crate::openhuman::config::MODEL_CODING_V1),
+        ("summarization", "summarization-v1"),
+    ];
+    let tier_to_role: &[(&str, &str)] = &[
+        (crate::openhuman::config::MODEL_REASONING_V1, "reasoning"),
+        (crate::openhuman::config::MODEL_REASONING_QUICK_V1, "chat"),
+        (crate::openhuman::config::MODEL_AGENTIC_V1, "agentic"),
+        (crate::openhuman::config::MODEL_CODING_V1, "coding"),
+        ("chat-v1", "chat"),
+        ("summarization-v1", "summarization"),
+    ];
+
+    let (tier, role) = if let Some(hint_key) = hint_or_tier.strip_prefix("hint:") {
+        let tier = hint_to_tier
+            .iter()
+            .find(|(k, _)| *k == hint_key)
+            .map(|(_, v)| *v)
+            .unwrap_or(hint_or_tier);
+        let role = tier_to_role
+            .iter()
+            .find(|(k, _)| *k == tier)
+            .map(|(_, v)| *v)
+            .unwrap_or(hint_key);
+        (tier, role)
+    } else {
+        let role = tier_to_role
+            .iter()
+            .find(|(k, _)| *k == hint_or_tier)
+            .map(|(_, v)| *v)
+            .unwrap_or("chat");
+        (hint_or_tier, role)
+    };
+
+    let provider_string = provider_for_role(role, config);
+    let ps = provider_string.trim();
+    if ps.is_empty() || ps == "cloud" || ps == PROVIDER_OPENHUMAN || ps == BYOK_INCOMPLETE_SENTINEL
+    {
+        tier.to_string()
+    } else if let Some(idx) = ps.find(':') {
+        let model_with_temp = &ps[idx + 1..];
+        let (model, _) = split_model_and_temperature(model_with_temp);
+        model
+    } else {
+        ps.to_string()
+    }
 }
 
 /// Return whether `model` is a recognized OpenHuman backend tier name.
@@ -158,6 +222,25 @@ pub fn provider_for_role(role: &str, config: &Config) -> String {
                 return byok;
             }
         }
+
+        // Diagnostic: when the user has a local provider configured for chat
+        // but this background workload is falling through to cloud, emit a
+        // warning so it's visible in logs (no silent fallback).
+        if !matches!(role, "chat" | "reasoning" | "coding") {
+            if let Some(chat) = config.chat_provider.as_deref() {
+                if crate::openhuman::inference::local::profile::is_local_provider_string(chat) {
+                    log::info!(
+                        "[providers][local-fallback] role={} using managed backend (chat is \
+                         local '{}' but background workloads require cloud — set \
+                         {}_provider explicitly to override)",
+                        role,
+                        chat,
+                        role
+                    );
+                }
+            }
+        }
+
         resolve_primary_cloud_provider_string(config)
     } else {
         s.to_string()
@@ -187,7 +270,11 @@ pub(crate) fn resolve_byok_fallback_provider_string(config: &Config) -> Option<S
         }
         // Skip local providers — they are not suitable fallbacks for agentic
         // or background workloads that run on the managed backend.
-        if s.starts_with(OLLAMA_PROVIDER_PREFIX) || s.starts_with(LM_STUDIO_PROVIDER_PREFIX) {
+        if s.starts_with(OLLAMA_PROVIDER_PREFIX)
+            || s.starts_with(LM_STUDIO_PROVIDER_PREFIX)
+            || s.starts_with(MLX_PROVIDER_PREFIX)
+            || s.starts_with(LOCAL_OPENAI_PROVIDER_PREFIX)
+        {
             continue;
         }
         // Any remaining non-empty string with a colon is a BYOK cloud slug.
@@ -274,6 +361,47 @@ pub fn create_chat_provider_from_string(
         verify_session_active(config)?;
     }
 
+    if let Some(model_with_temp) =
+        p.strip_prefix(crate::openhuman::inference::provider::claude_code::PROVIDER_PREFIX)
+    {
+        let (model, temperature_override) = split_model_and_temperature(model_with_temp);
+        if temperature_override.is_some() {
+            log::warn!(
+                "[providers][chat-factory] claude-code provider: per-model temperature override \
+                 is accepted but not yet wired through to the CLI — the @<temp> suffix is ignored"
+            );
+        }
+        if model.is_empty() {
+            anyhow::bail!(
+                "[chat-factory] provider string '{}' for role '{}' has an empty model — \
+                 use 'claude-code:<model-id>'",
+                p,
+                role
+            );
+        }
+        let workspace = config
+            .config_path
+            .parent()
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                directories::UserDirs::new()
+                    .map(|d| d.home_dir().join(".openhuman"))
+                    .unwrap_or_else(|| std::path::PathBuf::from(".openhuman"))
+            });
+        log::debug!(
+            "[providers][chat-factory] building claude-code CLI provider model={} workspace={}",
+            model,
+            workspace.display()
+        );
+        let provider =
+            crate::openhuman::inference::provider::claude_code::ClaudeCodeProvider::from_env(
+                model.clone(),
+                workspace,
+            )?;
+        let p_box: Box<dyn Provider> = Box::new(provider);
+        return Ok((p_box, model));
+    }
+
     if let Some(model_with_temp) = p.strip_prefix(OLLAMA_PROVIDER_PREFIX) {
         let (model, temperature_override) = split_model_and_temperature(model_with_temp);
         if model.is_empty() {
@@ -298,6 +426,32 @@ pub fn create_chat_provider_from_string(
             );
         }
         return make_lm_studio_provider(&model, temperature_override, config);
+    }
+
+    if let Some(model_with_temp) = p.strip_prefix(MLX_PROVIDER_PREFIX) {
+        let (model, temperature_override) = split_model_and_temperature(model_with_temp);
+        if model.is_empty() {
+            anyhow::bail!(
+                "[chat-factory] provider string '{}' for role '{}' has an empty model — \
+                 use 'mlx:<model-id>'",
+                p,
+                role
+            );
+        }
+        return make_mlx_provider(&model, temperature_override, config);
+    }
+
+    if let Some(model_with_temp) = p.strip_prefix(LOCAL_OPENAI_PROVIDER_PREFIX) {
+        let (model, temperature_override) = split_model_and_temperature(model_with_temp);
+        if model.is_empty() {
+            anyhow::bail!(
+                "[chat-factory] provider string '{}' for role '{}' has an empty model — \
+                 use 'local-openai:<model-id>'",
+                p,
+                role
+            );
+        }
+        return make_local_openai_provider(&model, temperature_override, config);
     }
 
     if p == CLAUDE_AGENT_SDK_PROVIDER || p.starts_with(CLAUDE_AGENT_SDK_PREFIX) {
@@ -335,8 +489,8 @@ pub fn create_chat_provider_from_string(
     // than an opaque parse failure.
     anyhow::bail!(
         "[chat-factory] unrecognised provider string '{}' for role '{}'. \
-         Valid forms: openhuman, ollama:<model>, lmstudio:<model>, claude_agent_sdk, \
-         claude_agent_sdk:<model>, <slug>:<model>. \
+         Valid forms: openhuman, ollama:<model>, lmstudio:<model>, mlx:<model>, \
+         local-openai:<model>, claude_agent_sdk, claude_agent_sdk:<model>, <slug>:<model>. \
          Configured slugs: [{}]",
         p,
         role,
@@ -396,8 +550,31 @@ pub(crate) fn create_local_chat_provider_from_string(
         return make_lm_studio_provider(&model, temperature_override, config);
     }
 
+    if let Some(model_with_temp) = p.strip_prefix(MLX_PROVIDER_PREFIX) {
+        let (model, temperature_override) = split_model_and_temperature(model_with_temp);
+        if model.is_empty() {
+            anyhow::bail!(
+                "[chat-factory] provider string '{}' has an empty model — use 'mlx:<model-id>'",
+                p
+            );
+        }
+        return make_mlx_provider(&model, temperature_override, config);
+    }
+
+    if let Some(model_with_temp) = p.strip_prefix(LOCAL_OPENAI_PROVIDER_PREFIX) {
+        let (model, temperature_override) = split_model_and_temperature(model_with_temp);
+        if model.is_empty() {
+            anyhow::bail!(
+                "[chat-factory] provider string '{}' has an empty model — use 'local-openai:<model-id>'",
+                p
+            );
+        }
+        return make_local_openai_provider(&model, temperature_override, config);
+    }
+
     anyhow::bail!(
-        "[chat-factory] '{}' is not a supported local provider string. Valid local forms: ollama:<model>, lmstudio:<model>",
+        "[chat-factory] '{}' is not a supported local provider string. Valid local forms: \
+         ollama:<model>, lmstudio:<model>, mlx:<model>, local-openai:<model>",
         p
     );
 }
@@ -718,15 +895,20 @@ fn make_ollama_provider(
     temperature_override: Option<f64>,
     config: &Config,
 ) -> anyhow::Result<(Box<dyn Provider>, String)> {
+    use crate::openhuman::inference::local::profile::LocalProviderKind;
+
     let base_url = crate::openhuman::inference::local::ollama_base_url_from_config(config);
     let normalized_base_url = base_url.trim_end_matches('/').trim_end_matches("/v1");
     // Ollama exposes an OpenAI-compatible endpoint at /v1.
     let endpoint = format!("{normalized_base_url}/v1");
+    let num_ctx = config.local_ai.num_ctx;
     log::info!(
-        "[providers][chat-factory] building ollama provider model={} endpoint_host={} temp_override={:?}",
+        "[providers][chat-factory] building ollama provider model={} endpoint_host={} \
+         temp_override={:?} num_ctx={:?}",
         model,
         redact_endpoint(&endpoint),
-        temperature_override
+        temperature_override,
+        num_ctx,
     );
     // Ollama does not expose the Responses API (/v1/responses) — passing
     // `false` prevents a guaranteed-404 fallback attempt and the Sentry
@@ -747,7 +929,9 @@ fn make_ollama_provider(
     )
     .with_temperature_unsupported_models(config.temperature_unsupported_models.clone())
     .with_temperature_override(temperature_override)
-    .with_native_tool_calling(false);
+    .with_native_tool_calling(false)
+    .with_ollama_num_ctx(num_ctx)
+    .with_local_provider_kind(LocalProviderKind::Ollama);
     Ok((Box::new(provider), model.to_string()))
 }
 
@@ -757,6 +941,8 @@ fn make_lm_studio_provider(
     temperature_override: Option<f64>,
     config: &Config,
 ) -> anyhow::Result<(Box<dyn Provider>, String)> {
+    use crate::openhuman::inference::local::profile::LocalProviderKind;
+
     let endpoint = crate::openhuman::inference::local::lm_studio::lm_studio_base_url(config);
     let api_key = config.local_ai.api_key.as_deref().unwrap_or("");
     log::info!(
@@ -766,20 +952,109 @@ fn make_lm_studio_provider(
         temperature_override
     );
     // LM Studio does not expose the Responses API — same rationale as Ollama.
-    let p = make_openai_compatible_provider_with_config(
+    let auth = if api_key.trim().is_empty() {
+        CompatAuthStyle::None
+    } else {
+        CompatAuthStyle::Bearer
+    };
+    let provider = OpenAiCompatibleProvider::new_no_responses_fallback(
         "lmstudio",
         &endpoint,
-        api_key,
         if api_key.trim().is_empty() {
-            CompatAuthStyle::None
+            None
         } else {
-            CompatAuthStyle::Bearer
+            Some(api_key)
         },
-        &config.temperature_unsupported_models,
-        temperature_override,
-        false,
-    )?;
-    Ok((p, model.to_string()))
+        auth,
+    )
+    .with_temperature_unsupported_models(config.temperature_unsupported_models.clone())
+    .with_temperature_override(temperature_override)
+    .with_native_tool_calling(false)
+    .with_local_provider_kind(LocalProviderKind::LmStudio);
+    Ok((Box::new(provider), model.to_string()))
+}
+
+/// Build an MLX-compatible local provider.
+///
+/// MLX servers (e.g. `mlx_lm.server`) expose an OpenAI-compatible endpoint.
+/// Default URL: `http://127.0.0.1:8080/v1` (override via `MLX_SERVER_URL` env
+/// or `local_ai.base_url` when provider is set to "mlx").
+fn make_mlx_provider(
+    model: &str,
+    temperature_override: Option<f64>,
+    config: &Config,
+) -> anyhow::Result<(Box<dyn Provider>, String)> {
+    use crate::openhuman::inference::local::profile::{LocalProviderKind, MLX_PROFILE};
+
+    let endpoint = std::env::var("MLX_SERVER_URL")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| config.local_ai.base_url.clone())
+        .unwrap_or_else(|| MLX_PROFILE.default_base_url.to_string());
+    log::info!(
+        "[providers][chat-factory] building mlx provider model={} endpoint_host={} temp_override={:?}",
+        model,
+        redact_endpoint(&endpoint),
+        temperature_override
+    );
+    let provider = OpenAiCompatibleProvider::new_no_responses_fallback(
+        "mlx",
+        &endpoint,
+        None,
+        CompatAuthStyle::None,
+    )
+    .with_temperature_unsupported_models(config.temperature_unsupported_models.clone())
+    .with_temperature_override(temperature_override)
+    .with_native_tool_calling(false)
+    .with_local_provider_kind(LocalProviderKind::Mlx);
+    Ok((Box::new(provider), model.to_string()))
+}
+
+/// Build a generic local OpenAI-compatible provider.
+///
+/// Points at any local server that speaks the OpenAI chat-completions API
+/// (llama.cpp, vLLM, text-generation-inference, etc.).
+/// Default URL: `http://127.0.0.1:8080/v1` (override via `LOCAL_OPENAI_URL`
+/// env or `local_ai.base_url`).
+fn make_local_openai_provider(
+    model: &str,
+    temperature_override: Option<f64>,
+    config: &Config,
+) -> anyhow::Result<(Box<dyn Provider>, String)> {
+    use crate::openhuman::inference::local::profile::{LocalProviderKind, LOCAL_OPENAI_PROFILE};
+
+    let endpoint = std::env::var("LOCAL_OPENAI_URL")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| config.local_ai.base_url.clone())
+        .unwrap_or_else(|| LOCAL_OPENAI_PROFILE.default_base_url.to_string());
+    let api_key = config.local_ai.api_key.as_deref().unwrap_or("");
+    log::info!(
+        "[providers][chat-factory] building local-openai provider model={} endpoint_host={} temp_override={:?}",
+        model,
+        redact_endpoint(&endpoint),
+        temperature_override
+    );
+    let auth = if api_key.trim().is_empty() {
+        CompatAuthStyle::None
+    } else {
+        CompatAuthStyle::Bearer
+    };
+    let provider = OpenAiCompatibleProvider::new_no_responses_fallback(
+        "local-openai",
+        &endpoint,
+        if api_key.trim().is_empty() {
+            None
+        } else {
+            Some(api_key)
+        },
+        auth,
+    )
+    .with_temperature_unsupported_models(config.temperature_unsupported_models.clone())
+    .with_temperature_override(temperature_override)
+    .with_native_tool_calling(false)
+    .with_local_provider_kind(LocalProviderKind::LocalOpenai);
+    Ok((Box::new(provider), model.to_string()))
 }
 
 /// Look up a `cloud_providers` entry by slug and build the provider.

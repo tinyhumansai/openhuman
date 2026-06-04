@@ -182,13 +182,35 @@ Reach for `memory_tree` when the user asks about prior context that's already be
 Modes:
 
 - `mode: "search_entities"` — resolve a name to a canonical id (e.g. "alice" → `email:alice@example.com`). Call this first when the user mentions someone by name *and* you've decided memory_tree is the right tool.
-- `mode: "query_topic"` — all cross-source mentions of an `entity_id` from `search_entities`.
 - `mode: "query_source"` — filter by `source_kind` (chat/email/document) and `time_window_days`. Use for retrospective "in my email last week…" intents — **not** for live "check my inbox" intents.
-- `mode: "query_global"` — cross-source daily digest over `time_window_days` (7-day digest is pre-loaded into context on session start — only call for a different window or to force refresh).
+- `mode: "smart_walk"` — multi-strategy retrieval (vector + keyword + entity lookup + tree browsing across raw files, wiki summaries, documents, and episodic memories). Best default for an open-ended natural-language question like "what did Alice and I decide on Q2".
+- `mode: "walk"` — agentic multi-turn walk: the LLM navigates summaries and returns a synthesized answer for a natural-language query. Use when you want a guided traversal rather than broad retrieval.
 - `mode: "drill_down"` — expand a coarse `node_id` summary one level.
 - `mode: "fetch_leaves"` — pull raw `chunk_ids` for citation.
+- `mode: "ingest_document"` — write a document into the tree for future retrieval.
 
-Start cheap (query_* summaries), only drill_down/fetch_leaves when you need verbatim content.
+Start cheap (`query_source` / `smart_walk` summaries), only drill_down/fetch_leaves when you need verbatim content.
+
+## Presentation generation
+
+`generate_presentation` builds a `.pptx` deck from a structured slide spec via a native Rust engine (`ppt-rs`) running in-process — no Python subprocess, no managed venv. Use it for any "make slides", "build a deck", "draft a presentation", "create a pitch" request.
+
+**Grounding rule (do not skip).** Before calling `generate_presentation` on a topical or factual deck — anything where the slides need real-world facts, current events, statistics, names, dates, quotes, or domain context — you MUST first establish a grounding context. Pick at least one:
+
+- `memory_tree` (`query_source` / `smart_walk`) — when the topic plausibly lives in the user's ingested history (their notes, prior chats, emails on the subject).
+- `research` — when the topic needs live web facts (current events, recent stats, comparative product data, anything time-sensitive).
+- `query_memory` — when the user has previously summarised the exact topic in this thread or in a saved memory.
+
+Only after the grounding tool returns may you call `generate_presentation`, and the slide bullets / body / speaker_notes you pass MUST be drawn from the grounding output — not invented from priors.
+
+**When to skip grounding.** You may dispatch `generate_presentation` directly when:
+
+- The user pasted source material in the same turn (text, doc summary, bullet list to convert).
+- A prior turn in this same thread already established the source material (and you can quote from it).
+- The deck is content-free or structural (e.g. "make me a 3-slide blank template titled 'Q3 Review'", "an empty deck with a title slide and two body slides").
+- The user explicitly waived grounding ("don't research, just generate from your priors", "I know it'll be approximate").
+
+**Why this rule exists.** Without grounding, the model invents slide bullets and speaker notes from training-data priors. That confabulates statistics, misattributes quotes, and ages out fast. A single `research` or `memory_tree` call up front grounds the deck in verifiable sources and lets the slides cite real material instead of fabricated text.
 
 ## Citations
 

@@ -20,6 +20,7 @@ use tokio::sync::mpsc;
 
 use crate::core::event_bus::register_native_global;
 use crate::openhuman::agent::progress::AgentProgress;
+use crate::openhuman::agent::turn_origin::{self, AgentTurnOrigin};
 use crate::openhuman::config::MultimodalConfig;
 use crate::openhuman::inference::provider::{ChatMessage, Provider};
 use crate::openhuman::prompt_injection::{
@@ -29,16 +30,11 @@ use crate::openhuman::tools::Tool;
 
 use super::harness::definition::{AgentDefinitionRegistry, SandboxMode};
 use super::harness::{run_tool_call_loop, with_current_sandbox_mode};
+use crate::openhuman::file_state::with_file_state_agent_id;
 
 /// Method name used to dispatch an agentic turn through the native bus.
 pub const AGENT_RUN_TURN_METHOD: &str = "agent.run_turn";
 
-/// Full owned payload for a single agentic turn executed through the bus.
-///
-/// All fields are either owned values, [`Arc`]s, or channel handles — the
-/// bus carries them by value without touching serialization. Consumers can
-/// therefore pass trait objects (`Arc<dyn Provider>`, tool trait-object
-/// registries) and streaming senders (`on_delta`) through unchanged.
 /// Full owned payload for a single agentic turn executed through the bus.
 ///
 /// All fields are either owned values, [`Arc`]s, or channel handles — the
@@ -128,6 +124,20 @@ pub struct AgentTurnRequest {
     /// progressively edit outbound messages. `None` disables streaming
     /// status updates for this turn.
     pub on_progress: Option<mpsc::Sender<AgentProgress>>,
+
+    /// Trust/routing label for this turn. The bus handler scopes
+    /// [`AGENT_TURN_ORIGIN`](crate::openhuman::agent::turn_origin::AGENT_TURN_ORIGIN)
+    /// around the tool loop so the approval gate (and any other
+    /// origin-aware policy) sees the same value the caller intended.
+    ///
+    /// Native-bus dispatch crosses a `tokio::spawn` boundary inside the
+    /// registry, so callers cannot rely on `AGENT_TURN_ORIGIN` propagating
+    /// implicitly — the origin must travel as an owned field.
+    ///
+    /// Defaults to [`AgentTurnOrigin::Unknown`] so any caller that fails
+    /// to populate this fails closed at the gate rather than silently
+    /// inheriting trusted-automation semantics.
+    pub origin: AgentTurnOrigin,
 }
 
 /// Final response from an agentic turn.
@@ -163,6 +173,7 @@ pub fn register_agent_handlers() {
                 visible_tool_names,
                 extra_tools,
                 on_progress,
+                origin,
             } = req;
 
             tracing::debug!(
@@ -239,35 +250,53 @@ pub fn register_agent_handlers() {
                 .map(|def| def.sandbox_mode)
                 .unwrap_or(SandboxMode::None);
 
-            let text = with_current_sandbox_mode(sandbox_mode, async {
-                run_tool_call_loop(
-                    provider.as_ref(),
-                    &mut history,
-                    tools_registry.as_ref(),
-                    &provider_name,
-                    &model,
-                    temperature,
-                    silent,
-                    &channel_name,
-                    &multimodal,
-                    &multimodal_files,
-                    max_tool_iterations,
-                    on_delta,
-                    visible_tool_names.as_ref(),
-                    &extra_tools,
-                    on_progress,
-                    // Bus path runs ad-hoc agent turns without an Agent
-                    // handle, so we pass None — payload summarization is
-                    // wired into the orchestrator session via Agent::turn,
-                    // not the bus dispatcher.
-                    None,
-                    // Use the default (allow-all) tool policy. Custom
-                    // policies can be wired in via AgentTurnRequest when
-                    // per-channel policy configuration is added (#2134).
-                    &crate::openhuman::tools::policy::DefaultToolPolicy,
-                )
-                .await
-            })
+            // Scope the caller-supplied origin around the tool loop so
+            // the approval gate (and any other origin-aware policy) sees
+            // the same trust label the entry point intended. Native-bus
+            // dispatch crosses a `tokio::spawn` boundary inside the
+            // registry, so re-scoping here is mandatory — the
+            // task-local does NOT propagate across that boundary
+            // implicitly.
+            let file_state_id = format!(
+                "bus:{}:{}",
+                channel_name,
+                target_agent_id.as_deref().unwrap_or("root")
+            );
+            let text = turn_origin::with_origin(
+                origin,
+                with_file_state_agent_id(
+                    file_state_id,
+                    with_current_sandbox_mode(sandbox_mode, async {
+                        run_tool_call_loop(
+                            provider.as_ref(),
+                            &mut history,
+                            tools_registry.as_ref(),
+                            &provider_name,
+                            &model,
+                            temperature,
+                            silent,
+                            &channel_name,
+                            &multimodal,
+                            &multimodal_files,
+                            max_tool_iterations,
+                            on_delta,
+                            visible_tool_names.as_ref(),
+                            &extra_tools,
+                            on_progress,
+                            // Bus path runs ad-hoc agent turns without an Agent
+                            // handle, so we pass None — payload summarization is
+                            // wired into the orchestrator session via Agent::turn,
+                            // not the bus dispatcher.
+                            None,
+                            // Use the default (allow-all) tool policy. Custom
+                            // policies can be wired in via AgentTurnRequest when
+                            // per-channel policy configuration is added (#2134).
+                            &crate::openhuman::tools::policy::DefaultToolPolicy,
+                        )
+                        .await
+                    }),
+                ),
+            )
             .await
             .map_err(|e| e.to_string())?;
 
@@ -415,6 +444,7 @@ mod tests {
             visible_tool_names: None,
             extra_tools: Vec::new(),
             on_progress: None,
+            origin: AgentTurnOrigin::Cli,
         }
     }
 

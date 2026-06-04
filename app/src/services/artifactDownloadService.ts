@@ -21,12 +21,51 @@ import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { safeInvoke as invoke, isTauri } from '../utils/tauriCommands/common';
 import { callCoreRpc } from './coreRpcClient';
 
+/**
+ * Stable, machine-readable failure reasons surfaced by the artifact
+ * download/delete flows. UI layers should branch on `code` and route to
+ * their own `t(...)` strings — `error` is kept as a diagnostic detail
+ * (RPC text, transport error) and MUST NOT be the sole label shown to a
+ * non-English locale. Codes are intentionally narrow so adding a new
+ * arm requires a deliberate change here, not a free-form string.
+ */
+export type ArtifactErrorCode =
+  | 'NOT_DESKTOP'
+  | 'MISSING_ARTIFACT_ID'
+  | 'MISSING_ARTIFACT_PATH'
+  | 'RESOLVE_FAILED'
+  | 'DOWNLOAD_FAILED'
+  | 'DELETE_FAILED';
+
 /** Outcome surfaced to the UI for a single download attempt. */
 export interface DownloadArtifactOutcome {
   ok: boolean;
   /** Absolute destination path when `ok === true`. */
   path?: string;
-  /** Short, user-facing error string when `ok === false`. */
+  /**
+   * Stable failure code when `ok === false`. Pair with `error` (raw
+   * detail) — UI maps `code` to a localized string via `t(...)`.
+   */
+  code?: ArtifactErrorCode;
+  /**
+   * Diagnostic detail (RPC text, transport error). Not localized; the
+   * UI should treat this as a developer-facing hint, not the headline.
+   */
+  error?: string;
+}
+
+/** Outcome surfaced to the UI for a single delete attempt (#3024). */
+export interface DeleteArtifactOutcome {
+  ok: boolean;
+  /**
+   * Stable failure code when `ok === false`. Pair with `error` (raw
+   * detail) — UI maps `code` to a localized string via `t(...)`.
+   */
+  code?: ArtifactErrorCode;
+  /**
+   * Diagnostic detail (RPC text, transport error). Not localized; the
+   * UI should treat this as a developer-facing hint, not the headline.
+   */
   error?: string;
 }
 
@@ -54,10 +93,14 @@ export async function downloadArtifact(
   extension: string
 ): Promise<DownloadArtifactOutcome> {
   if (!isTauri()) {
-    return { ok: false, error: 'Downloads are only available in the desktop app' };
+    return {
+      ok: false,
+      code: 'NOT_DESKTOP',
+      error: 'Downloads are only available in the desktop app',
+    };
   }
   if (!artifactId.trim()) {
-    return { ok: false, error: 'artifact id missing' };
+    return { ok: false, code: 'MISSING_ARTIFACT_ID', error: 'artifact id missing' };
   }
 
   let resolved: AiGetArtifactData;
@@ -69,26 +112,36 @@ export async function downloadArtifact(
     resolved = raw ?? {};
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
-    return { ok: false, error: `failed to resolve artifact: ${reason}` };
+    return { ok: false, code: 'RESOLVE_FAILED', error: reason };
   }
 
   const sourcePath = resolved.absolute_path;
   if (!sourcePath) {
-    return { ok: false, error: 'artifact path missing from core response' };
+    return {
+      ok: false,
+      code: 'MISSING_ARTIFACT_PATH',
+      error: 'artifact path missing from core response',
+    };
   }
 
   // Prefer the persisted title (came from create_artifact's
   // sanitized stem) but fall back to the caller-supplied hint.
   const title = resolved.meta?.title?.trim() || fallbackTitle.trim() || 'artifact';
   const ext = extension.trim().replace(/^\.+/, '');
-  const filename = ext ? `${title}.${ext}` : title;
+  // Guard against double extensions: if `title` already ends in the
+  // requested extension (case-insensitive, with any other extension also
+  // tolerated), don't append again. Prevents `deck.pptx.pptx` when the
+  // persisted title is `deck.pptx` and the caller passes `'pptx'`.
+  const titleHasExtension = /\.[^./\\]+$/.test(title);
+  const titleHasSameExt = ext.length > 0 && title.toLowerCase().endsWith(`.${ext.toLowerCase()}`);
+  const filename = ext && !titleHasExtension && !titleHasSameExt ? `${title}.${ext}` : title;
 
   try {
     const dest = await invoke<string>('download_artifact_to_downloads', { sourcePath, filename });
     return { ok: true, path: dest };
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
-    return { ok: false, error: reason };
+    return { ok: false, code: 'DOWNLOAD_FAILED', error: reason };
   }
 }
 
@@ -98,6 +151,33 @@ export async function downloadArtifact(
  * no new permission needed. Returns `false` when not in Tauri or the
  * invoke fails (caller usually ignores the result).
  */
+/**
+ * Delete the artifact and its on-disk blob via the core RPC (#3024).
+ * Caller is expected to optimistically remove the slice row first and
+ * re-insert on `{ ok: false }`. Distinct from the runtime in-memory
+ * slice ledger — this drops the file on disk and the persistent
+ * `ArtifactMeta` row in the workspace registry.
+ *
+ * Returns `{ ok: false, error }` on any transport or RPC error
+ * (network drop, core gone, unknown id, file vanished). The core
+ * treats "missing meta" / "file already gone" as success.
+ */
+export async function deleteArtifact(artifactId: string): Promise<DeleteArtifactOutcome> {
+  if (!artifactId.trim()) {
+    return { ok: false, code: 'MISSING_ARTIFACT_ID', error: 'artifact id missing' };
+  }
+  try {
+    await callCoreRpc<unknown>({
+      method: 'openhuman.ai_delete_artifact',
+      params: { artifact_id: artifactId },
+    });
+    return { ok: true };
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    return { ok: false, code: 'DELETE_FAILED', error: reason };
+  }
+}
+
 export async function revealArtifactInFileManager(absolutePath: string): Promise<boolean> {
   if (!isTauri()) return false;
   if (!absolutePath.trim()) return false;
@@ -110,7 +190,6 @@ export async function revealArtifactInFileManager(absolutePath: string): Promise
     return true;
   } catch (err) {
     // Swallow — reveal is best-effort, the file is already saved.
-    // eslint-disable-next-line no-console
     console.warn('[artifact] revealItemInDir failed:', err);
     return false;
   }

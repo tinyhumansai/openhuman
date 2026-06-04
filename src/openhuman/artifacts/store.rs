@@ -288,6 +288,17 @@ fn sanitize_filename_stem(title: &str) -> String {
 /// `extension` is the file extension WITHOUT the leading dot
 /// (e.g. `"pptx"`, `"pdf"`). Used to build the rendered filename
 /// under the artifact directory.
+///
+/// Publishes [`DomainEvent::ArtifactPending`] on the global bus the
+/// moment the row is reserved so the chat surface can render an
+/// in-progress / "Generating…" card immediately (#3162). When the
+/// matching [`finalize_artifact`] / [`fail_artifact`] later fires it
+/// reuses the same `artifact_id`, so the card swaps in place without
+/// flicker. Same chat-context routing rules as the Ready/Failed pair —
+/// `thread_id` / `client_id` come from the
+/// [`crate::openhuman::approval::ApprovalChatContext`] task-local and
+/// are `None` for CLI / cron / sub-agent paths, in which case the web
+/// bridge silently drops the event for lack of a routing target.
 pub async fn create_artifact(
     workspace_dir: &Path,
     kind: super::types::ArtifactKind,
@@ -342,6 +353,23 @@ pub async fn create_artifact(
         meta.kind.as_str(),
         absolute_path
     );
+
+    // Surface the "Generating…" card the moment the row is reserved so
+    // the user doesn't stare at an empty composer until the tool finishes
+    // (#3162). When `finalize_artifact` / `fail_artifact` later fires the
+    // matching Ready/Failed event with the same `artifact_id`, the
+    // frontend can swap the card in place.
+    let (thread_id, client_id) = current_chat_context();
+    crate::core::event_bus::publish_global(crate::core::event_bus::DomainEvent::ArtifactPending {
+        artifact_id: meta.id.clone(),
+        kind: meta.kind.as_str().to_string(),
+        title: meta.title.clone(),
+        workspace_dir: workspace_dir.to_string_lossy().into_owned(),
+        path: meta.path.clone(),
+        thread_id,
+        client_id,
+    });
+
     Ok((meta, absolute_path))
 }
 
@@ -364,11 +392,7 @@ pub async fn finalize_artifact(
     size_bytes: u64,
 ) -> Result<ArtifactMeta, String> {
     let mut meta = get_artifact(workspace_dir, artifact_id).await?;
-    if matches!(meta.status, ArtifactStatus::Ready) {
-        // Idempotent on status alone: a second finalize with a different
-        // size_bytes shouldn't re-emit ArtifactReady and flap the UI card
-        // — once an artifact is Ready, callers should not be redefining
-        // its size. Per graycyrus on PR #3017.
+    if matches!(meta.status, ArtifactStatus::Ready) && meta.size_bytes == size_bytes {
         log::debug!("[artifacts] finalize_artifact: id={artifact_id} already Ready, no-op");
         return Ok(meta);
     }
@@ -383,6 +407,7 @@ pub async fn finalize_artifact(
         artifact_id: meta.id.clone(),
         kind: meta.kind.as_str().to_string(),
         title: meta.title.clone(),
+        workspace_dir: workspace_dir.to_string_lossy().into_owned(),
         path: meta.path.clone(),
         size_bytes: meta.size_bytes,
         thread_id,
@@ -422,6 +447,7 @@ pub async fn fail_artifact(
         artifact_id: meta.id.clone(),
         kind: meta.kind.as_str().to_string(),
         title: meta.title.clone(),
+        workspace_dir: workspace_dir.to_string_lossy().into_owned(),
         error: reason.to_string(),
         thread_id,
         client_id,

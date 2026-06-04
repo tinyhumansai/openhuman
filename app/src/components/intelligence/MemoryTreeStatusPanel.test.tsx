@@ -345,6 +345,69 @@ describe('<MemoryTreeStatusPanel />', () => {
       );
     });
   });
+
+  // ── #002 (T018): degraded status + first-blocking-cause banner ──────────
+
+  it('renders the first-blocking-cause remediation banner with a degraded recall badge', async () => {
+    mockPipelineStatus.mockResolvedValueOnce(
+      payload({
+        status: 'degraded',
+        reason: 'semantic recall disabled',
+        first_blocking_cause: {
+          code: 'embeddings_unconfigured',
+          class: 'unrecoverable',
+          remediation_key: 'memory.health.remediation.embeddings_unconfigured',
+        },
+        degraded: { semantic_recall: true, structure: false },
+      })
+    );
+    render(<MemoryTreeStatusPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('memory-tree-status-label')).toHaveTextContent(/degraded/i);
+    });
+
+    // The remediation text comes from the i18n key the core supplied.
+    const remediation = screen.getByTestId('memory-tree-blocking-cause-remediation');
+    expect(remediation).toHaveTextContent(/embeddings provider is configured/i);
+    // Recall badge present, structure badge absent.
+    expect(screen.getByTestId('memory-tree-badge-recall')).toBeInTheDocument();
+    expect(screen.queryByTestId('memory-tree-badge-structure')).not.toBeInTheDocument();
+  });
+
+  it('shows the structure badge when only extraction is degraded', async () => {
+    mockPipelineStatus.mockResolvedValueOnce(
+      payload({
+        status: 'degraded',
+        first_blocking_cause: {
+          code: 'extraction_timeout',
+          class: 'unrecoverable',
+          remediation_key: 'memory.health.remediation.extraction_timeout',
+        },
+        degraded: { semantic_recall: false, structure: true },
+      })
+    );
+    render(<MemoryTreeStatusPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('memory-tree-blocking-cause')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('memory-tree-badge-structure')).toBeInTheDocument();
+    expect(screen.queryByTestId('memory-tree-badge-recall')).not.toBeInTheDocument();
+    expect(screen.getByTestId('memory-tree-blocking-cause-remediation')).toHaveTextContent(
+      /extraction model is timing out/i
+    );
+  });
+
+  it('does not render the blocking-cause banner on a healthy pipeline', async () => {
+    mockPipelineStatus.mockResolvedValueOnce(payload({ status: 'running' }));
+    render(<MemoryTreeStatusPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('memory-tree-status-label')).toHaveTextContent(/running/i);
+    });
+    expect(screen.queryByTestId('memory-tree-blocking-cause')).not.toBeInTheDocument();
+  });
 });
 
 describe('integration health helpers', () => {

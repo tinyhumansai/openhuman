@@ -84,9 +84,6 @@ const AgentAccessPanel = () => {
   // RPC is pending or when not running under Tauri — the JSX falls back to
   // the documented defaults so the section never renders empty.
   const [agentPaths, setAgentPaths] = useState<AgentPaths | null>(null);
-  // Editable action_dir input (issue #3240). Held as a raw string so the
-  // field can be typed freely; validated on blur / Save click. Empty until
-  // the initial `getAgentPaths` RPC resolves.
   const [actionDirInput, setActionDirInput] = useState('');
   const [actionDirError, setActionDirError] = useState<string | null>(null);
   const [actionDirSavedNote, setActionDirSavedNote] = useState<string | null>(null);
@@ -114,8 +111,6 @@ const AgentAccessPanel = () => {
       } catch (e) {
         if (!cancelled)
           setError(e instanceof Error ? e.message : t('settings.agentAccess.loadError'));
-      } finally {
-        if (!cancelled) setIsLoading(false);
       }
       try {
         const agentResp = await openhumanGetAgentSettings();
@@ -137,6 +132,8 @@ const AgentAccessPanel = () => {
       } catch {
         // Non-fatal: the Directories section falls back to the documented
         // defaults below. We don't gate the rest of the panel on this.
+      } finally {
+        if (!cancelled) setIsLoading(false);
       }
     };
     void load();

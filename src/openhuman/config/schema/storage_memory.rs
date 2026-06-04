@@ -347,6 +347,16 @@ pub struct MemoryTreeConfig {
     /// Env override: `OPENHUMAN_MEMORY_TREE_SMART_WALK_MODEL`.
     #[serde(default)]
     pub smart_walk_model: Option<String>,
+
+    /// Explicit opt-in to cloud-based summarization when local AI is disabled.
+    ///
+    /// Default `false` — "Build Summary Trees" was local-only before #002.
+    /// Enabling this routes workspace memory summaries to the configured cloud
+    /// provider. Set to `true` via Settings → AI → Memory or the env var
+    /// `OPENHUMAN_MEMORY_TREE_CLOUD_SUMMARIZATION=true` to acknowledge that
+    /// memory content will be sent to an external service.
+    #[serde(default)]
+    pub cloud_summarization_opt_in: bool,
 }
 
 /// Returns `None` so that existing installs that never opted into Phase 4
@@ -448,6 +458,7 @@ impl Default for MemoryTreeConfig {
             llm_backend: default_llm_backend(),
             cloud_llm_model: default_cloud_llm_model(),
             smart_walk_model: None,
+            cloud_summarization_opt_in: false,
         }
     }
 }

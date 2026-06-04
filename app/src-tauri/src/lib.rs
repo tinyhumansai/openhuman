@@ -13,6 +13,12 @@ mod cdp;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod cef_preflight;
 mod cef_profile;
+// Windows-only pre-CEF wait for a dying prior instance to release the cache
+// lock (Sentry TAURI-RUST-F). Compiled under `test` too so the pure decision
+// logic is unit-tested on any host; the Win32 glue is windows-only.
+#[cfg(any(target_os = "windows", test))]
+mod cef_singleton_wait;
+mod claude_code;
 mod companion_commands;
 mod core_process;
 mod core_rpc;
@@ -2147,6 +2153,18 @@ pub fn run() {
     #[cfg(target_os = "macos")]
     process_recovery::reap_stale_openhuman_processes();
 
+    // ── Windows pre-CEF cache-lock wait (Sentry TAURI-RUST-F) ─────────────
+    // The Win32 mutex above stops a *concurrent* second launch, but on a
+    // *sequential* relaunch (auto-update, fast quit+reopen, restart) the prior
+    // instance can still hold the CEF cache lock for a short teardown window
+    // after releasing the mutex. Calling `cef::initialize()` into that live
+    // lock returns 0 and the vendored runtime asserts `== 1` → panic. Wait
+    // (bounded) for the prior instance to exit before proceeding; this never
+    // suppresses a crash — it prevents `cef::initialize()` from running
+    // against a locked cache. Analogous to the macOS reap above.
+    #[cfg(target_os = "windows")]
+    cef_singleton_wait::wait_for_cache_release();
+
     // ── Linux pre-CEF deep-link forwarding guard (issue #2359) ────────────
     // On Linux, a secondary instance with an openhuman:// URL in argv exits
     // at the CEF preflight check before Builder::setup() runs, silently
@@ -3149,7 +3167,8 @@ pub fn run() {
             mcp_commands::mcp_resolve_binary_path,
             mcp_commands::mcp_open_client_config,
             loopback_oauth::start_loopback_oauth_listener,
-            loopback_oauth::stop_loopback_oauth_listener
+            loopback_oauth::stop_loopback_oauth_listener,
+            claude_code::claude_code_login_launch
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

@@ -42,7 +42,7 @@ pub(crate) fn create_worker_thread(
             title: title.to_string(),
             created_at: now.clone(),
             parent_thread_id: Some(parent_thread_id.to_string()),
-            labels: Some(vec!["worker".to_string()]),
+            labels: Some(vec!["tasks".to_string()]),
             personality_id: None,
         },
     )?;
@@ -94,15 +94,15 @@ mod tests {
         )
         .expect("thread should be created");
 
-        // The new thread is labelled `worker` and linked to the parent — that
-        // link is what hides it from the main sidebar (Workers tab only).
+        // The new thread is labelled `tasks` and linked to the parent so it
+        // stays grouped with delegated task work in the chat sidebar.
         let threads = conversations::list_threads(dir.clone()).unwrap();
         let thread = threads
             .iter()
             .find(|t| t.id == id)
             .expect("thread persisted");
         assert_eq!(thread.parent_thread_id.as_deref(), Some("parent-thread-1"));
-        assert!(thread.labels.contains(&"worker".to_string()));
+        assert!(thread.labels.contains(&"tasks".to_string()));
 
         // It opens with the delegation prompt as the user message, so the
         // drawer can render the parent↔subagent chat from memory on reopen.

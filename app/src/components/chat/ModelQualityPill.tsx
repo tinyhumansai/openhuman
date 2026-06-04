@@ -14,6 +14,7 @@ export default function ModelQualityPill({ className }: ModelQualityPillProps) {
   return (
     <button
       type="button"
+      data-analytics-id="chat-model-quality-pill"
       aria-label={t('composer.modelSelector')}
       title={t('composer.modelSelector')}
       disabled

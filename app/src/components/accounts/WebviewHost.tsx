@@ -2,6 +2,7 @@ import debug from 'debug';
 import { useEffect, useRef, useState } from 'react';
 
 import { useT } from '../../lib/i18n/I18nContext';
+import { trackEvent } from '../../services/analytics';
 import {
   hideWebviewAccount,
   openWebviewAccount,
@@ -254,8 +255,15 @@ const WebviewHost = ({ accountId, provider }: WebviewHostProps) => {
           </div>
           <button
             type="button"
+            data-analytics-id={`webview-host-retry-${provider}`}
             onClick={() => {
               log('retry clicked account=%s provider=%s', accountId, provider);
+              trackEvent('tauri_browser_click', {
+                surface: 'chat_right_sidebar',
+                action: 'retry_browser_load',
+                provider,
+                account_status: status ?? 'unknown',
+              });
               retryWebviewAccountLoad(accountId, provider).catch(() => {
                 // Same contract as the initial open (OPENHUMAN-REACT-K):
                 // service-layer dispatched error status + breadcrumb; absorbing

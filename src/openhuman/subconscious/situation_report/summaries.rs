@@ -14,7 +14,16 @@ const MAX_SUMMARIES: usize = 8;
 /// Per-summary content cap — keep prompts compact.
 const SUMMARY_CONTENT_PREVIEW: usize = 320;
 
-pub async fn build_section(config: &Config, last_tick_at: f64) -> String {
+/// Build the recently-sealed-summaries section.
+///
+/// Returns `(section_markdown, has_external_content)` — the bool is
+/// `true` iff at least one summary row was actually rendered (i.e. the
+/// section contains third-party sync content, not the empty
+/// "No new sealed summaries" placeholder). The caller uses the flag to
+/// upgrade the subconscious turn origin to
+/// [`crate::openhuman::agent::turn_origin::TrustedAutomationSource::SubconsciousTainted`]
+/// so external_effect tools are refused for the rest of the tick.
+pub async fn build_section(config: &Config, last_tick_at: f64) -> (String, bool) {
     log::debug!(
         "[subconscious::situation_report::summaries] building section last_tick_at={last_tick_at}"
     );
@@ -30,12 +39,18 @@ pub async fn build_section(config: &Config, last_tick_at: f64) -> String {
         Ok(rows) => rows,
         Err(e) => {
             log::warn!("[subconscious::situation_report::summaries] read failed: {e}");
-            return "## Recent summaries\n\nSummaries unavailable.\n".to_string();
+            return (
+                "## Recent summaries\n\nSummaries unavailable.\n".to_string(),
+                false,
+            );
         }
     };
 
     if rows.is_empty() {
-        return "## Recent summaries\n\nNo new sealed summaries since last tick.\n".to_string();
+        return (
+            "## Recent summaries\n\nNo new sealed summaries since last tick.\n".to_string(),
+            false,
+        );
     }
 
     let mut section = String::from("## Recent summaries\n\n");
@@ -53,7 +68,7 @@ pub async fn build_section(config: &Config, last_tick_at: f64) -> String {
             row.tree_scope, row.level, row.summary_id, preview
         );
     }
-    section
+    (section, true)
 }
 
 #[derive(Debug)]

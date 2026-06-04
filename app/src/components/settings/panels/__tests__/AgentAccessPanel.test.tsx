@@ -299,8 +299,6 @@ describe('AgentAccessPanel', () => {
     );
   });
 
-  // ── Editable action_dir (#3240) ────────────────────────────────────────────
-
   it('renders the action_dir input prepopulated with the live value', async () => {
     mockGetAgentPaths.mockResolvedValue({
       result: agentPaths({ action_dir: '/Users/sample/OpenHuman/projects' }),
@@ -330,8 +328,6 @@ describe('AgentAccessPanel', () => {
 
     await waitFor(() => expect(mockSetActionDir).toHaveBeenCalledWith('/Users/sample/work/repos'));
     expect(await screen.findByTestId('agent-access-action-dir-saved')).toBeInTheDocument();
-    // The action_dir row updates to reflect the persisted value (live render
-    // contract from #3237) once the panel state replaces the AgentPaths cache.
     await waitFor(() =>
       expect(screen.getByTestId('agent-access-action-dir')).toHaveTextContent(
         '/Users/sample/work/repos'
@@ -356,8 +352,6 @@ describe('AgentAccessPanel', () => {
 
     const errorNode = await screen.findByTestId('agent-access-action-dir-error');
     expect(errorNode).toHaveTextContent('workspace_dir');
-    // The rendered path stays at the previously-loaded value — no optimistic
-    // update on failure.
     expect(screen.getByTestId('agent-access-action-dir')).toHaveTextContent(
       '/Users/sample/OpenHuman/projects'
     );
@@ -372,7 +366,6 @@ describe('AgentAccessPanel', () => {
     const input = (await screen.findByTestId('agent-access-action-dir-input')) as HTMLInputElement;
     await waitFor(() => expect(input.disabled).toBe(true));
     expect(screen.getByTestId('agent-access-action-dir-env-note')).toBeInTheDocument();
-    // Save button is also disabled — the user cannot fire the RPC.
     expect((screen.getByTestId('agent-access-action-dir-save') as HTMLButtonElement).disabled).toBe(
       true
     );
@@ -388,12 +381,9 @@ describe('AgentAccessPanel', () => {
     const input = (await screen.findByTestId('agent-access-action-dir-input')) as HTMLInputElement;
     await waitFor(() => expect(input.value).toBe('/Users/sample/OpenHuman/projects'));
     const saveButton = screen.getByTestId('agent-access-action-dir-save') as HTMLButtonElement;
-    // No edit yet → save is disabled.
     expect(saveButton.disabled).toBe(true);
-    // Type something different → save becomes available.
     fireEvent.change(input, { target: { value: '/Users/sample/work/repos' } });
     expect(saveButton.disabled).toBe(false);
-    // Revert to the loaded value → save disables again.
     fireEvent.change(input, { target: { value: '/Users/sample/OpenHuman/projects' } });
     expect(saveButton.disabled).toBe(true);
   });

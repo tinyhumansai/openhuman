@@ -416,6 +416,75 @@ fn analyze_prompt(input: &str) -> (PromptInjectionVerdict, f32, Vec<PromptInject
     (verdict, score, reasons)
 }
 
+/// Outcome of [`scan_tool_definition`] — present when the input tripped
+/// at least one detector rule, absent when the input is clean.
+///
+/// `verdict` mirrors the user-message path so the caller can apply the
+/// same `Allow` / `Review` / `Block` semantics if it wishes; current
+/// registry-side code rejects on any hit regardless of severity.
+#[derive(Debug, Clone)]
+pub struct ToolDefinitionScanHit {
+    /// Short pattern / rule code from the detector. Safe to publish
+    /// in audit events — never includes the raw rejected text.
+    pub code: String,
+    /// Human-readable summary of the rule that fired.
+    pub message: String,
+    /// Aggregate score (same scale as the user-message detector).
+    pub score: f32,
+    /// Detector verdict — `Review` or `Block` when the score crosses
+    /// the corresponding threshold, `Allow` otherwise (which means
+    /// this struct will be `None`, not `Some(verdict=Allow)`).
+    pub verdict: PromptInjectionVerdict,
+}
+
+/// Scan a remote-tool definition string (description or title) for
+/// prompt-injection patterns. Reuses the same detection rules as the
+/// user-message path; reports under a separate origin tag so audit
+/// consumers can distinguish where a hit came from.
+///
+/// Returns `Some(ToolDefinitionScanHit)` for any non-`Allow` verdict
+/// (`Review` or `Block`) and `None` when the input is clean. The
+/// registry rejects a remote tool on any `Some` return; this entry
+/// point intentionally does not differentiate between `Review` and
+/// `Block` for the tool-definition surface because there is no
+/// review-and-approve UX for tool metadata.
+///
+/// `field` is a short label such as `"description"` / `"title"` used
+/// only in the audit log; it MUST NOT contain the input text.
+pub fn scan_tool_definition(field: &str, text: &str) -> Option<ToolDefinitionScanHit> {
+    let (verdict, score, reasons) = analyze_prompt(text);
+    if matches!(verdict, PromptInjectionVerdict::Allow) {
+        return None;
+    }
+    // Pick the first accumulated reason for the audit code (the
+    // `reasons` vec is appended to in heuristics-then-regex order in
+    // `analyze_prompt`, with no score sort). The aggregate confidence
+    // is captured in `score` on the returned hit; this code field is
+    // a representative rule tag, not the maximum-scoring one. Fall
+    // back to a generic `tool_definition.flagged` if (somehow) the
+    // verdict is non-allow with no concrete reason attached.
+    let top = reasons.into_iter().next().unwrap_or(PromptInjectionReason {
+        code: "tool_definition.flagged".to_string(),
+        message: "Remote tool definition tripped the prompt-injection scan.".to_string(),
+    });
+    tracing::warn!(
+        target: "[prompt_injection]",
+        origin = "remote_tool_definition",
+        field = field,
+        verdict = verdict.as_str(),
+        score = score,
+        code = %top.code,
+        chars = text.chars().count(),
+        "remote tool definition flagged"
+    );
+    Some(ToolDefinitionScanHit {
+        code: top.code,
+        message: top.message,
+        score,
+        verdict,
+    })
+}
+
 pub fn enforce_prompt_input(
     input: &str,
     context: PromptEnforcementContext<'_>,

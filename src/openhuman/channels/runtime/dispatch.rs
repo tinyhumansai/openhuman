@@ -1008,6 +1008,17 @@ pub(crate) async fn process_channel_message(
         set
     });
 
+    // Non-web channel turns label themselves as `ExternalChannel` so the
+    // approval gate's origin-aware decision tree treats the inbound text
+    // as untrusted (remote-attacker-controlled). Cron-driven channel
+    // deliveries get a `TrustedAutomation { Cron }` label from the
+    // scheduler instead and never reach this dispatch path.
+    let turn_origin = crate::openhuman::agent::turn_origin::AgentTurnOrigin::ExternalChannel {
+        channel: msg.channel.clone(),
+        reply_target: msg.reply_target.clone(),
+        message_id: msg.id.clone(),
+    };
+
     let turn_request = AgentTurnRequest {
         provider: Arc::clone(&active_provider),
         history: std::mem::take(&mut history),
@@ -1040,6 +1051,7 @@ pub(crate) async fn process_channel_message(
         visible_tool_names,
         extra_tools: scoping.extra_tools,
         on_progress: progress_tx,
+        origin: turn_origin,
     };
     tracing::debug!(
         channel = %msg.channel,

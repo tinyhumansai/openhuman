@@ -314,6 +314,9 @@ fn apply_schema(conn: &Connection) -> Result<()> {
          ON mem_tree_chunks(lifecycle_status);",
     )
     .context("Failed to create mem_tree_chunks lifecycle index")?;
+    // Source grouping scope. Documents can keep item-level source_id for
+    // dedupe while grouping chunk files and source trees under this scope.
+    add_column_if_missing(conn, "mem_tree_chunks", "path_scope", "TEXT")?;
     // Phase MD-content (#TBD): pointer + integrity hash.
     add_column_if_missing(conn, "mem_tree_chunks", "content_path", "TEXT")?;
     add_column_if_missing(conn, "mem_tree_chunks", "content_sha256", "TEXT")?;
@@ -329,6 +332,12 @@ fn apply_schema(conn: &Connection) -> Result<()> {
         "is_user",
         "INTEGER NOT NULL DEFAULT 0",
     )?;
+    // #002 memory-pipeline-hardening: typed failure metadata on jobs so the
+    // worker can fail-fast on unrecoverable errors and the status/doctor
+    // surface can show an actionable cause. Both nullable; only set when a
+    // job is marked `failed` with a classified reason.
+    add_column_if_missing(conn, "mem_tree_jobs", "failure_reason", "TEXT")?;
+    add_column_if_missing(conn, "mem_tree_jobs", "failure_class", "TEXT")?;
     Ok(())
 }
 

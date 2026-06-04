@@ -230,6 +230,15 @@ impl MemoryClient {
     /// Specialized method for syncing skill data into memory.
     ///
     /// Maps generic skill/integration fields into the `NamespaceDocumentInput` structure.
+    ///
+    /// Every write goes in as
+    /// [`MemoryTaint::ExternalSync`](crate::openhuman::memory::MemoryTaint::ExternalSync)
+    /// — this entry point exists specifically for memory_sync providers
+    /// (Gmail / Slack / Notion / Composio / etc.) that ingest text from
+    /// third-party services. Routing the call through here is what lets
+    /// the subconscious gate refuse external_effect tools when these
+    /// chunks land in a tick's context window. Internal / user-driven
+    /// writes must use the regular `put_doc` / `Memory::store` paths.
     #[allow(clippy::too_many_arguments)]
     pub async fn store_skill_sync(
         &self,
@@ -257,6 +266,10 @@ impl MemoryClient {
             category: "core".to_string(),
             session_id: None,
             document_id,
+            // Every sync entry point is by definition ingesting third-
+            // party content; mark it so the subconscious gate can see
+            // the provenance through the persistence layer.
+            taint: crate::openhuman::memory::MemoryTaint::ExternalSync,
         };
 
         let doc_id = self.inner.upsert_document(input.clone()).await?;

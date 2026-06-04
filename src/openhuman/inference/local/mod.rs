@@ -36,6 +36,7 @@ pub(crate) mod lm_studio;
 pub(crate) mod model_requirements;
 mod ollama;
 mod process_util;
+pub mod profile;
 pub(crate) mod provider;
 pub(crate) use model_requirements::{evaluate_context, ContextEligibility, MIN_CONTEXT_TOKENS};
 pub(crate) use ollama::{

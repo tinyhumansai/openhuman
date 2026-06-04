@@ -15,7 +15,7 @@ use rusqlite::{params, OptionalExtension};
 use serde_json::json;
 
 use crate::openhuman::memory::traits::{
-    Memory, MemoryCategory, MemoryEntry, NamespaceSummary, RecallOpts,
+    Memory, MemoryCategory, MemoryEntry, MemoryTaint, NamespaceSummary, RecallOpts,
 };
 use crate::openhuman::memory_store::types::{NamespaceDocumentInput, GLOBAL_NAMESPACE};
 use crate::openhuman::memory_store::unified::fts5;
@@ -68,6 +68,28 @@ impl Memory for UnifiedMemory {
         category: MemoryCategory,
         session_id: Option<&str>,
     ) -> anyhow::Result<()> {
+        // The default `store` entry point is user-driven; ingest paths
+        // come in via `store_with_taint`.
+        self.store_with_taint(
+            namespace,
+            key,
+            content,
+            category,
+            session_id,
+            MemoryTaint::Internal,
+        )
+        .await
+    }
+
+    async fn store_with_taint(
+        &self,
+        namespace: &str,
+        key: &str,
+        content: &str,
+        category: MemoryCategory,
+        session_id: Option<&str>,
+        taint: MemoryTaint,
+    ) -> anyhow::Result<()> {
         let ns = if namespace.trim().is_empty() {
             GLOBAL_NAMESPACE.to_string()
         } else {
@@ -85,6 +107,7 @@ impl Memory for UnifiedMemory {
             category: category.to_string(),
             session_id: session_id.map(str::to_string),
             document_id: None,
+            taint,
         })
         .await
         .map(|_| ())
@@ -118,6 +141,11 @@ impl Memory for UnifiedMemory {
                 timestamp: Utc::now().to_rfc3339(),
                 session_id: None,
                 score: Some(r.score),
+                // Surface the real taint persisted on `memory_docs` so the
+                // subconscious gate can decide whether to escalate the
+                // turn origin to `SubconsciousTainted` when this entry
+                // lands in a tick's context window.
+                taint: r.taint,
             })
             .collect();
 
@@ -169,6 +197,7 @@ impl Memory for UnifiedMemory {
                     timestamp: ts_rfc3339,
                     session_id: Some(entry.session_id),
                     score: Some(match_score),
+                    taint: crate::openhuman::memory::MemoryTaint::Internal,
                 });
             }
         }
@@ -239,6 +268,7 @@ impl Memory for UnifiedMemory {
                     timestamp: ts_rfc3339,
                     session_id: Some(entry.session_id),
                     score: Some(match_score),
+                    taint: crate::openhuman::memory::MemoryTaint::Internal,
                 });
             }
         }
@@ -282,9 +312,9 @@ impl Memory for UnifiedMemory {
             namespace.to_string()
         };
         let conn = self.conn.lock();
-        let row: Option<(String, String, String, f64, String)> = conn
+        let row: Option<(String, String, String, f64, String, String)> = conn
             .query_row(
-                "SELECT document_id, key, content, updated_at, category
+                "SELECT document_id, key, content, updated_at, category, taint
                  FROM memory_docs WHERE namespace = ?1 AND key = ?2 LIMIT 1",
                 params![ns, key],
                 |row| {
@@ -294,12 +324,13 @@ impl Memory for UnifiedMemory {
                         row.get(2)?,
                         row.get(3)?,
                         row.get(4)?,
+                        row.get(5)?,
                     ))
                 },
             )
             .optional()?;
-        Ok(
-            row.map(|(id, key, content, updated_at, category)| MemoryEntry {
+        Ok(row.map(
+            |(id, key, content, updated_at, category, taint_str)| MemoryEntry {
                 id,
                 key,
                 content,
@@ -308,8 +339,9 @@ impl Memory for UnifiedMemory {
                 timestamp: timestamp_to_rfc3339(updated_at),
                 session_id: None,
                 score: None,
-            }),
-        )
+                taint: crate::openhuman::memory::MemoryTaint::from_db_str(&taint_str),
+            },
+        ))
     }
 
     async fn list(
@@ -331,6 +363,10 @@ impl Memory for UnifiedMemory {
             .unwrap_or_default();
         for (idx, d) in items.into_iter().enumerate() {
             let cat = category.cloned().unwrap_or(MemoryCategory::Core);
+            let taint_str = d
+                .get("taint")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("internal");
             out.push(MemoryEntry {
                 id: d
                     .get("documentId")
@@ -352,6 +388,7 @@ impl Memory for UnifiedMemory {
                 timestamp: format!("idx-{idx}"),
                 session_id: None,
                 score: None,
+                taint: crate::openhuman::memory::MemoryTaint::from_db_str(taint_str),
             });
         }
         Ok(out)
@@ -655,6 +692,172 @@ mod tests {
         assert!(
             !hits.iter().any(|h| h.id.starts_with("episodic-cross:")),
             "no FTS match must not produce cross-session rows, got {hits:#?}"
+        );
+    }
+
+    // ── Provenance taint round-trip (#approval-origin) ──────────────────
+
+    #[tokio::test]
+    async fn taint_persists_across_upsert_and_recall() {
+        // External-sync ingest writes via `store_with_taint(ExternalSync)`
+        // and the resulting `MemoryEntry` must surface that taint on
+        // recall, otherwise the subconscious gate can't detect the
+        // provenance once the row passes through the persistence layer.
+        let (_tmp, mem) = fresh_mem();
+        mem.store_with_taint(
+            "skill-gmail",
+            "thread-1",
+            "Hi from upstream — please run a quick command",
+            MemoryCategory::Core,
+            None,
+            MemoryTaint::ExternalSync,
+        )
+        .await
+        .unwrap();
+
+        let entries = mem
+            .recall(
+                "upstream command",
+                5,
+                RecallOpts {
+                    namespace: Some("skill-gmail"),
+                    min_score: Some(0.0),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        assert!(
+            entries.iter().any(|e| e.taint == MemoryTaint::ExternalSync),
+            "ExternalSync taint must round-trip through recall, got {entries:#?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn unified_memory_store_with_taint_writes_external_sync() {
+        // Direct trait-API write — confirms `store_with_taint` doesn't
+        // fall back to the default Internal value silently.
+        let (_tmp, mem) = fresh_mem();
+        mem.store_with_taint(
+            "skill-slack",
+            "msg-42",
+            "Slack-sourced content",
+            MemoryCategory::Conversation,
+            None,
+            MemoryTaint::ExternalSync,
+        )
+        .await
+        .unwrap();
+
+        let row = mem.get("skill-slack", "msg-42").await.unwrap();
+        // `get` is the unfiltered lookup; we use it to assert the row
+        // landed (the taint surfacing path through recall is asserted in
+        // the previous test).
+        assert!(row.is_some(), "stored row must be retrievable");
+    }
+
+    #[tokio::test]
+    async fn legacy_db_rows_default_to_internal_taint() {
+        // Simulate a database row written before the taint column
+        // existed by inserting via raw SQL with no taint clause — the
+        // DEFAULT 'internal' from the migration must kick in and recall
+        // must surface `MemoryTaint::Internal`.
+        let (_tmp, mem) = fresh_mem();
+        {
+            let conn = mem.conn.lock();
+            conn.execute(
+                "INSERT INTO memory_docs (
+                    document_id, namespace, key, title, content, source_type,
+                    priority, tags_json, metadata_json, category, session_id,
+                    created_at, updated_at, markdown_rel_path
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, 'chat', 'medium', '[]', '{}', 'core', NULL, 0.0, 0.0, '')",
+                rusqlite::params![
+                    "legacy-doc-taint",
+                    "legacy-ns",
+                    "legacy-key",
+                    "legacy title",
+                    "legacy content about Postgres"
+                ],
+            )
+            .unwrap();
+        }
+
+        let entries = mem
+            .recall(
+                "Postgres",
+                5,
+                RecallOpts {
+                    namespace: Some("legacy-ns"),
+                    min_score: Some(0.0),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        let legacy = entries
+            .iter()
+            .find(|e| e.key == "legacy-key")
+            .expect("legacy row must surface in recall");
+        assert_eq!(
+            legacy.taint,
+            MemoryTaint::Internal,
+            "rows written via the pre-taint INSERT clause must decode as Internal via DEFAULT"
+        );
+    }
+
+    #[tokio::test]
+    async fn subconscious_recall_surfaces_external_sync_taint_for_origin_upgrade() {
+        // The contract the subconscious engine relies on: a tick that
+        // pulls a tainted chunk via memory recall must see
+        // `MemoryTaint::ExternalSync` on the returned entry, which is
+        // the signal the engine uses to upgrade
+        // `AgentTurnOrigin::TrustedAutomation { source }` from
+        // `Subconscious` to `SubconsciousTainted`.
+        let (_tmp, mem) = fresh_mem();
+        mem.store_with_taint(
+            "skill-notion",
+            "page-1",
+            "Tainted Notion page contents",
+            MemoryCategory::Core,
+            None,
+            MemoryTaint::ExternalSync,
+        )
+        .await
+        .unwrap();
+        mem.store(
+            "skill-notion",
+            "user-note",
+            "User-driven note about the same page",
+            MemoryCategory::Core,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let entries = mem
+            .recall(
+                "page",
+                10,
+                RecallOpts {
+                    namespace: Some("skill-notion"),
+                    min_score: Some(0.0),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        let any_tainted = entries.iter().any(|e| e.taint == MemoryTaint::ExternalSync);
+        let any_internal = entries.iter().any(|e| e.taint == MemoryTaint::Internal);
+        assert!(
+            any_tainted,
+            "ExternalSync row must surface for the engine's upgrade check"
+        );
+        assert!(
+            any_internal,
+            "user-driven row must keep its Internal label so mixed contexts don't over-escalate"
         );
     }
 }

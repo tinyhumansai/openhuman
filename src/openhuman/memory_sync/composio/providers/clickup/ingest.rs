@@ -31,6 +31,11 @@ pub(crate) fn clickup_source_id(connection_id: &str, task_id: &str) -> String {
     format!("clickup:{connection_id}:{task_id}")
 }
 
+/// Build the source tree / raw archive scope for one ClickUp connection.
+pub(crate) fn clickup_source_scope(connection_id: &str) -> String {
+    format!("clickup:{connection_id}")
+}
+
 /// Render the raw ClickUp task payload as a markdown document body.
 fn render_task_body(title: &str, task: &Value) -> String {
     let pretty = serde_json::to_string_pretty(task).unwrap_or_else(|_| "{}".to_string());
@@ -99,9 +104,14 @@ pub async fn ingest_task_into_memory_tree(
         source_ref,
     };
     let tags: Vec<String> = DEFAULT_TAGS.iter().map(|s| s.to_string()).collect();
-    let owner = format!("clickup:{connection_id}");
+    let owner = clickup_source_scope(connection_id);
+    let path_scope = Some(owner.clone());
 
-    match ingest_pipeline::ingest_document(config, &source_id, &owner, tags, doc).await {
+    match ingest_pipeline::ingest_document_with_scope(
+        config, &source_id, &owner, tags, doc, path_scope,
+    )
+    .await
+    {
         Ok(IngestResult {
             chunks_written,
             already_ingested,
@@ -164,6 +174,17 @@ mod tests {
     }
 
     #[test]
+    fn clickup_source_scope_is_connection_level() {
+        assert_eq!(clickup_source_scope("conn-1"), "clickup:conn-1");
+        assert_eq!(clickup_source_scope("conn-2"), "clickup:conn-2");
+        assert_eq!(
+            clickup_source_scope("conn-1"),
+            clickup_source_scope("conn-1"),
+            "scope must stay stable across tasks in one connection"
+        );
+    }
+
+    #[test]
     fn parse_updated_time_handles_epoch_millis_and_invalid_inputs() {
         // ClickUp sends epoch milliseconds as a string. Build the expected
         // instant and round-trip through its millisecond representation so we
@@ -204,11 +225,15 @@ mod tests {
 
     #[tokio::test]
     async fn ingest_task_writes_to_memory_tree() {
-        use crate::openhuman::memory_store::chunks::store::{count_chunks, is_source_ingested};
+        use crate::openhuman::memory_store::chunks::store::{
+            count_chunks, is_source_ingested, list_chunks, ListChunksQuery,
+        };
 
         let (_tmp, cfg) = test_config();
         let connection_id = "conn-clickup";
         let task_id = "task-routing";
+        let expected = clickup_source_id(connection_id, task_id);
+        let expected_scope = clickup_source_scope(connection_id);
         let task = sample_task(task_id, "1779962400000");
         let chunks_before = count_chunks(&cfg).expect("count_chunks before");
 
@@ -230,10 +255,28 @@ mod tests {
             "ingest must populate mem_tree_chunks (#2885)"
         );
 
+        let rows = list_chunks(
+            &cfg,
+            &ListChunksQuery {
+                source_kind: Some(SourceKind::Document),
+                source_id: Some(expected.clone()),
+                limit: Some(1),
+                ..Default::default()
+            },
+        )
+        .expect("list chunks for clickup task");
+        let chunk = rows.first().expect("clickup chunk should be listed");
+        assert_eq!(chunk.metadata.source_id, expected.as_str());
+        assert_eq!(
+            chunk.metadata.path_scope.as_deref(),
+            Some(expected_scope.as_str())
+        );
+
         let cfg_for_blocking = cfg.clone();
-        let expected = clickup_source_id(connection_id, task_id);
+        let expected_for_task = expected.clone();
         let registered = tokio::task::spawn_blocking(move || {
-            is_source_ingested(&cfg_for_blocking, SourceKind::Document, &expected).unwrap_or(false)
+            is_source_ingested(&cfg_for_blocking, SourceKind::Document, &expected_for_task)
+                .unwrap_or(false)
         })
         .await
         .expect("source-check task join");
