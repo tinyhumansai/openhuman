@@ -67,18 +67,28 @@ impl fmt::Display for CefLockError {
                 pid,
                 host,
                 cache_path,
-            } => write!(
-                f,
-                "CEF cache at {} is held by another OpenHuman instance \
-                 (host {}, pid {}).\n\
-                 Quit the running instance and try again.\n\
-                 Workaround:\n  \
-                 pkill -f \"OpenHuman.app/Contents\"\n  \
-                 pkill -f \"openhuman-core\"",
-                cache_path.display(),
-                host,
-                pid,
-            ),
+            } => {
+                // The force-quit hint is platform-specific: macOS runs from an
+                // `.app` bundle, Linux from a plain binary. `cef_preflight` is
+                // compiled for both (`cfg(any(macos, linux))`), so a hardcoded
+                // macOS `pkill` pattern would mislead Linux users.
+                let workaround = if cfg!(target_os = "macos") {
+                    "pkill -f \"OpenHuman.app/Contents\"\n  pkill -f \"openhuman-core\""
+                } else {
+                    "pkill -f openhuman\n  pkill -f openhuman-core"
+                };
+                write!(
+                    f,
+                    "CEF cache at {} is held by another OpenHuman instance \
+                     (host {}, pid {}).\n\
+                     Quit the running instance and try again.\n\
+                     Workaround:\n  {}",
+                    cache_path.display(),
+                    host,
+                    pid,
+                    workaround,
+                )
+            }
             Self::NoHomeDir => write!(
                 f,
                 "$HOME not set — cannot resolve CEF cache path for preflight"
@@ -286,7 +296,8 @@ pub fn wait_for_cache_release() {
                 return;
             }
             Err(held) => {
-                if start.elapsed() >= WAIT_BUDGET {
+                let elapsed = start.elapsed();
+                if elapsed >= WAIT_BUDGET {
                     log::error!(
                         "[cef-preflight] CEF cache still held after {} ms budget; exiting cleanly instead of initializing into a locked cache (TAURI-RUST-F)",
                         WAIT_BUDGET.as_millis()
@@ -294,11 +305,15 @@ pub fn wait_for_cache_release() {
                     eprintln!("\n[openhuman] {held}\n");
                     std::process::exit(0);
                 }
-                let delay = backoff_delay(attempt);
+                // Clamp the backoff to the remaining budget so the final sleep
+                // can't overshoot WAIT_BUDGET (the documented total-wait
+                // contract) by up to BACKOFF_CAP.
+                let remaining = WAIT_BUDGET.checked_sub(elapsed).unwrap_or_default();
+                let delay = backoff_delay(attempt).min(remaining);
                 log::warn!(
                     "[cef-preflight] CEF cache held by another instance; waiting {} ms before re-check (elapsed {} ms, TAURI-RUST-F)",
                     delay.as_millis(),
-                    start.elapsed().as_millis()
+                    elapsed.as_millis()
                 );
                 std::thread::sleep(delay);
                 attempt = attempt.saturating_add(1);
