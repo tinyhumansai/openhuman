@@ -207,7 +207,7 @@ fn openai_codex_models_url_includes_client_version_query() {
     let url = append_query_param(
         "https://chatgpt.com/backend-api/codex/models",
         "client_version",
-        openai_codex_client_version(),
+        &openai_codex_client_version(),
     );
     let parsed = reqwest::Url::parse(&url).expect("url");
 
