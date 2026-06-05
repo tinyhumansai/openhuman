@@ -2,7 +2,12 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { callCoreRpc } from '../coreRpcClient';
-import { closeMeetCall, joinMeetCall, listMeetCalls } from '../meetCallService';
+import {
+  closeMeetCall,
+  joinMeetCall,
+  joinMeetViaBackendBot,
+  listMeetCalls,
+} from '../meetCallService';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(), isTauri: vi.fn() }));
 
@@ -182,6 +187,51 @@ describe('listMeetCalls', () => {
       method: 'openhuman.meet_agent_list_calls',
       params: { limit: 20 },
     });
+  });
+});
+
+describe('joinMeetViaBackendBot', () => {
+  beforeEach(() => {
+    vi.mocked(callCoreRpc).mockReset();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('emits the backend Recall bot join RPC with camelCase colors', async () => {
+    vi.mocked(callCoreRpc).mockResolvedValueOnce({
+      ok: true,
+      meet_url: 'https://meet.google.com/abc-defg-hij',
+      platform: 'gmeet',
+    } as never);
+
+    const result = await joinMeetViaBackendBot({
+      meetUrl: ' https://meet.google.com/abc-defg-hij ',
+      displayName: 'OpenHuman',
+      platform: 'gmeet',
+      agentName: 'OpenHuman',
+      systemPrompt: 'Answer only when addressed.',
+      riveColors: { primaryColor: '#ffcc00', secondaryColor: '#112233' },
+    });
+
+    expect(callCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.agent_meetings_join',
+      params: {
+        meet_url: 'https://meet.google.com/abc-defg-hij',
+        display_name: 'OpenHuman',
+        platform: 'gmeet',
+        agent_name: 'OpenHuman',
+        system_prompt: 'Answer only when addressed.',
+        rive_colors: { primary_color: '#ffcc00', secondary_color: '#112233' },
+      },
+    });
+    expect(result).toEqual({ meetUrl: 'https://meet.google.com/abc-defg-hij', platform: 'gmeet' });
+  });
+
+  it('rejects an empty meeting link before contacting core', async () => {
+    await expect(joinMeetViaBackendBot({ meetUrl: '   ' })).rejects.toThrow(/meeting link/i);
+    expect(callCoreRpc).not.toHaveBeenCalled();
   });
 });
 

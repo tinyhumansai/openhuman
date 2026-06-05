@@ -568,6 +568,29 @@ fn env_overlay_autonomy_max_actions_per_hour_accepts_valid_u32() {
 }
 
 #[test]
+fn env_overlay_memory_sync_interval_parses_and_honours_zero() {
+    let mut cfg = Config::default();
+    assert!(cfg.memory_sync_interval_secs.is_none());
+
+    // A positive value is stored verbatim.
+    cfg.apply_env_overlay_with(&HashMapEnv::new().with(MEMORY_SYNC_INTERVAL_SECS_ENV_VAR, "14400"));
+    assert_eq!(cfg.memory_sync_interval_secs, Some(14_400));
+
+    // `0` is honoured as the "Manual only" sentinel (unlike the per-provider
+    // override which rejects it).
+    cfg.apply_env_overlay_with(&HashMapEnv::new().with(MEMORY_SYNC_INTERVAL_SECS_ENV_VAR, "0"));
+    assert_eq!(cfg.memory_sync_interval_secs, Some(0));
+
+    // A non-numeric value is ignored, leaving the previous value intact.
+    cfg.apply_env_overlay_with(&HashMapEnv::new().with(MEMORY_SYNC_INTERVAL_SECS_ENV_VAR, "nope"));
+    assert_eq!(cfg.memory_sync_interval_secs, Some(0));
+
+    // A blank value is ignored too.
+    cfg.apply_env_overlay_with(&HashMapEnv::new().with(MEMORY_SYNC_INTERVAL_SECS_ENV_VAR, "  "));
+    assert_eq!(cfg.memory_sync_interval_secs, Some(0));
+}
+
+#[test]
 fn env_overlay_output_language_accepts_non_empty_value() {
     let mut cfg = Config::default();
     assert!(cfg.output_language.is_none());

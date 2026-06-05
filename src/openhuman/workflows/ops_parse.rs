@@ -2,7 +2,9 @@
 
 use std::path::{Path, PathBuf};
 
-use super::ops_types::{extract_author, extract_tags, extract_version};
+use super::ops_types::{
+    detect_source_format, extract_author, extract_related_skills, extract_tags, extract_version,
+};
 use super::ops_types::{
     LegacyWorkflowManifest, Workflow, WorkflowFrontmatter, WorkflowScope, MAX_DESCRIPTION_LEN,
     MAX_NAME_LEN, RESOURCE_DIRS,
@@ -199,6 +201,9 @@ pub(crate) fn load_from_workflow_md(
     let version = extract_version(&frontmatter, &mut warnings);
     let author = extract_author(&frontmatter, &mut warnings);
     let tags = extract_tags(&frontmatter, &mut warnings);
+    let platforms = frontmatter.platforms.clone();
+    let related_skills = extract_related_skills(&frontmatter);
+    let source_format = detect_source_format(&frontmatter);
     let tools = frontmatter.allowed_tools.clone();
 
     Workflow {
@@ -208,6 +213,9 @@ pub(crate) fn load_from_workflow_md(
         version,
         author,
         tags,
+        platforms,
+        related_skills,
+        source_format,
         tools,
         prompts: Vec::new(),
         location: Some(skill_md.to_path_buf()),
@@ -272,6 +280,9 @@ pub(crate) fn load_from_legacy_manifest(
         version: manifest.version,
         author: manifest.author,
         tags: manifest.tags,
+        platforms: Vec::new(),
+        related_skills: Vec::new(),
+        source_format: "legacy".to_string(),
         tools: manifest.tools,
         prompts: manifest.prompts,
         location,

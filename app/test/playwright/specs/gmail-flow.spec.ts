@@ -69,6 +69,7 @@ async function bootSkillsPage(page: Page, userId: string) {
   });
   await waitForAppReady(page);
   await dismissWalkthroughIfPresent(page);
+  await page.getByRole('tab', { name: 'Composio' }).click();
   const heading = page.getByRole('heading', { name: 'Composio Integrations' });
   if (!(await heading.isVisible().catch(() => false))) {
     const connectionsButton = page.getByRole('button', { name: 'Connections' });
@@ -102,6 +103,7 @@ test.describe('Gmail Integration Flows', () => {
     await page.reload();
     await waitForAppReady(page);
     await dismissWalkthroughIfPresent(page);
+    await page.getByRole('tab', { name: 'Composio' }).click();
 
     await page.getByTestId('skill-install-composio-gmail').click();
     await expect(page.getByRole('dialog', { name: /Connect Gmail/i })).toBeVisible();
@@ -127,11 +129,13 @@ test.describe('Gmail Integration Flows', () => {
     await seedConnector('FAILED');
     await page.reload();
     await waitForAppReady(page);
+    await page.getByRole('tab', { name: 'Composio' }).click();
     await expect(page.getByTestId('skill-install-composio-gmail')).toContainText(CONNECTOR_NAME);
 
     await seedConnector('EXPIRED');
     await page.reload();
     await waitForAppReady(page);
+    await page.getByRole('tab', { name: 'Composio' }).click();
     await expect(page.getByTestId(`skill-install-composio-${TOOLKIT_SLUG}`)).toContainText(
       /Auth expired|Reconnect/i
     );
@@ -139,6 +143,7 @@ test.describe('Gmail Integration Flows', () => {
 
   test('execute and disconnect routes do not blank the skills page', async ({ page }) => {
     await callCoreRpc('openhuman.composio_execute', { tool: ACTION, arguments: {} });
+    await page.getByRole('tab', { name: 'Composio' }).click();
     await expect(page.getByRole('heading', { name: 'Composio Integrations' })).toBeVisible();
 
     await callCoreRpc('openhuman.composio_delete_connection', { connection_id: CONNECTION_ID });

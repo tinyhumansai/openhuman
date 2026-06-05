@@ -111,6 +111,9 @@ struct WorkflowSummary {
     version: String,
     author: Option<String>,
     tags: Vec<String>,
+    platforms: Vec<String>,
+    related_skills: Vec<String>,
+    source_format: String,
     tools: Vec<String>,
     prompts: Vec<String>,
     location: Option<String>,
@@ -138,6 +141,17 @@ impl From<Workflow> for WorkflowSummary {
             version: s.version,
             author: s.author,
             tags: s.tags,
+            platforms: s.platforms,
+            related_skills: s.related_skills,
+            source_format: if s.source_format.is_empty() {
+                if s.legacy {
+                    "legacy".to_string()
+                } else {
+                    "openhuman".to_string()
+                }
+            } else {
+                s.source_format
+            },
             tools: s.tools,
             prompts: s.prompts,
             location: s.location.as_ref().map(|p| p.display().to_string()),

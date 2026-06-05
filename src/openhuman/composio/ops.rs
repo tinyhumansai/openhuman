@@ -1539,7 +1539,15 @@ fn enrich_connections_with_identity(
     // (normalized_toolkit, normalized_conn_id) → identity
     let lookup: HashMap<(String, String), _> = identities
         .iter()
-        .map(|id| ((id.source.clone(), id.identifier.clone()), id))
+        .map(|id| {
+            (
+                (
+                    normalize_connection_identifier(&id.source),
+                    normalize_connection_identifier(&id.identifier),
+                ),
+                id,
+            )
+        })
         .collect();
 
     tracing::debug!(

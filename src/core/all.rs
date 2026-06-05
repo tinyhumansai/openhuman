@@ -169,6 +169,9 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::service::all_service_registered_controllers());
     // Data migration utilities
     controllers.extend(crate::openhuman::migration::all_migration_registered_controllers());
+    // Saved council definitions for the desktop Model Council surface.
+    controllers
+        .extend(crate::openhuman::council_registry::all_council_registry_registered_controllers());
     // Model Council: multi-model deliberation (parallel members + chair synthesis)
     controllers.extend(crate::openhuman::model_council::all_model_council_registered_controllers());
     // Background command monitors for agent-scoped event sources
@@ -336,6 +339,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::credentials::all_credentials_controller_schemas());
     schemas.extend(crate::openhuman::service::all_service_controller_schemas());
     schemas.extend(crate::openhuman::migration::all_migration_controller_schemas());
+    schemas.extend(crate::openhuman::council_registry::all_council_registry_controller_schemas());
     schemas.extend(crate::openhuman::model_council::all_model_council_controller_schemas());
     schemas.extend(crate::openhuman::monitor::all_monitor_controller_schemas());
     schemas.extend(crate::openhuman::inference::all_inference_controller_schemas());

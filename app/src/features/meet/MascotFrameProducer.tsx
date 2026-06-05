@@ -13,6 +13,48 @@ interface BusSession {
   port: number;
 }
 
+export function sampleCanvasPixels(
+  ctx: OffscreenCanvasRenderingContext2D,
+  width: number,
+  height: number
+) {
+  const cols = 7;
+  const rows = 5;
+  let sum = 0;
+  let min = 255;
+  let max = 0;
+  let count = 0;
+  let dark = 0;
+  let bright = 0;
+
+  try {
+    for (let y = 0; y < rows; y++) {
+      for (let x = 0; x < cols; x++) {
+        const px = Math.max(0, Math.min(width - 1, Math.floor(((x + 0.5) * width) / cols)));
+        const py = Math.max(0, Math.min(height - 1, Math.floor(((y + 0.5) * height) / rows)));
+        const [r, g, b] = ctx.getImageData(px, py, 1, 1).data;
+        const luma = Math.round(r * 0.299 + g * 0.587 + b * 0.114);
+        sum += luma;
+        min = Math.min(min, luma);
+        max = Math.max(max, luma);
+        if (luma < 8) dark++;
+        if (luma > 32) bright++;
+        count++;
+      }
+    }
+    return {
+      avgLuma: Math.round(sum / Math.max(1, count)),
+      minLuma: min,
+      maxLuma: max,
+      darkSamples: dark,
+      brightSamples: bright,
+      sampleCount: count,
+    };
+  } catch (err) {
+    return { error: String(err instanceof Error ? err.message : err) };
+  }
+}
+
 export const MascotFrameProducer: FC = () => {
   const [session, setSession] = useState<BusSession | null>(null);
 
@@ -60,12 +102,18 @@ const ProducerSession: FC<{ session: BusSession }> = ({ session }) => {
   const wsReadyRef = useRef(false);
   const stoppedRef = useRef(false);
   const inflightRef = useRef(false);
+  const lastDiagAtRef = useRef(0);
+  const isSpeakingRef = useRef(false);
   // True while the bot is actively producing PCM into the Meet call.
   // Drives the mascot face so the mouth animates in time with the audio
   // participants hear. Source of truth is the Rust speak_pump (edge-detected
   // from the RPC poll loop). Same requestId guards against stale events from
   // a previous session bleeding into this session's mascot state.
   const [isSpeaking, setIsSpeaking] = useState(false);
+
+  useEffect(() => {
+    isSpeakingRef.current = isSpeaking;
+  }, [isSpeaking]);
 
   const captureFrame = useCallback(async () => {
     if (stoppedRef.current || !wsReadyRef.current || inflightRef.current) return;
@@ -103,10 +151,28 @@ const ProducerSession: FC<{ session: BusSession }> = ({ session }) => {
       const dy = (FRAME_H - dh) / 2;
       ctx.drawImage(canvas, dx, dy, dw, dh);
 
+      const probe = sampleCanvasPixels(ctx, FRAME_W, FRAME_H);
       const blob = await offscreen.convertToBlob({ type: 'image/jpeg', quality: JPEG_QUALITY });
       const buffer = await blob.arrayBuffer();
       const ws = wsRef.current;
       if (ws && ws.readyState === WebSocket.OPEN) {
+        const now = Date.now();
+        if (now - lastDiagAtRef.current > 2000) {
+          lastDiagAtRef.current = now;
+          ws.send(
+            JSON.stringify({
+              kind: 'producer-pixel-probe',
+              requestId: session.requestId,
+              canvasWidth: canvas.width,
+              canvasHeight: canvas.height,
+              frameWidth: FRAME_W,
+              frameHeight: FRAME_H,
+              jpegBytes: blob.size,
+              isSpeaking: isSpeakingRef.current,
+              probe,
+            })
+          );
+        }
         ws.send(buffer);
       }
     } catch (err) {
@@ -114,7 +180,7 @@ const ProducerSession: FC<{ session: BusSession }> = ({ session }) => {
     } finally {
       inflightRef.current = false;
     }
-  }, []);
+  }, [session.requestId]);
 
   useEffect(() => {
     stoppedRef.current = false;

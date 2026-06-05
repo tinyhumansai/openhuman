@@ -897,6 +897,38 @@ enabled = false
         toml::from_str(&cfg).expect("config toml must match Config schema");
 }
 
+fn write_model_council_unreachable_inference_config(openhuman_dir: &Path, api_origin: &str) {
+    let cfg = format!(
+        r#"api_url = "{api_origin}"
+inference_url = "http://127.0.0.1:9/v1"
+api_key = "test-key"
+default_model = "e2e-unreachable-model"
+default_temperature = 0.7
+chat_onboarding_completed = true
+
+[secrets]
+encrypt = false
+"#
+    );
+    fn write_config_file(config_dir: &Path, cfg: &str) {
+        std::fs::create_dir_all(config_dir).expect("mkdir openhuman");
+        let path = config_dir.join("config.toml");
+        std::fs::write(&path, cfg).expect("write config");
+    }
+
+    write_config_file(openhuman_dir, &cfg);
+
+    if openhuman_dir
+        .file_name()
+        .is_some_and(|name| name == std::ffi::OsStr::new(".openhuman"))
+    {
+        write_config_file(&openhuman_dir.join("users").join("local"), &cfg);
+    }
+
+    let _: openhuman_core::openhuman::config::Config =
+        toml::from_str(&cfg).expect("config toml must match Config schema");
+}
+
 fn ensure_test_rpc_auth() {
     JSON_RPC_AUTH_INIT.get_or_init(|| {
         // SAFETY: set_var is inside get_or_init so it runs exactly once across
@@ -1749,6 +1781,323 @@ async fn json_rpc_protocol_auth_and_agent_hello() {
             .len()
             > 0,
         "expected non-empty chat_done response payload: {sse_event}"
+    );
+
+    mock_join.abort();
+    rpc_join.abort();
+}
+
+#[tokio::test]
+async fn json_rpc_model_council_runs_with_default_sentinel_and_repeated_jury_seats() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+    let _api_url_guard = EnvVarGuard::unset("OPENHUMAN_API_URL");
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+    write_min_config(&openhuman_home, &mock_origin);
+    let user_scoped_dir = openhuman_home.join("users").join("e2e-user");
+    write_min_config(&user_scoped_dir, &mock_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+
+    let store = post_json_rpc(
+        &rpc_base,
+        18_000,
+        "openhuman.auth_store_session",
+        json!({
+            "token": "e2e-test-jwt",
+            "user_id": "e2e-user"
+        }),
+    )
+    .await;
+    assert_no_jsonrpc_error(&store, "store_session");
+
+    with_chat_completion_models(|models| models.clear());
+    with_chat_completion_requests(|requests| requests.clear());
+
+    let council_question = [
+        "Council workspace: shared_reasoning.md",
+        "Council roster:",
+        "1. Analyst (default) — Evidence and risk.",
+        "2. Builder (default) — Implementation path.",
+        "3. Critic (critic-model) — Missing context.",
+        "",
+        "shared_reasoning.md:",
+        "# Shared reasoning",
+        "- Claims the council agrees on:",
+        "",
+        "User question:",
+        "What should the council decide?",
+    ]
+    .join("\n");
+
+    let council = post_json_rpc(
+        &rpc_base,
+        18_001,
+        "openhuman.model_council_run",
+        json!({
+            "question": council_question,
+            "member_models": ["default", "default", "critic-model"],
+            "chair_model": "default",
+            "temperature": 0.2
+        }),
+    )
+    .await;
+    let outer = assert_no_jsonrpc_error(&council, "model_council_run");
+    let result = outer.get("result").unwrap_or(outer);
+    assert_eq!(
+        result.get("question").and_then(Value::as_str),
+        Some(council_question.as_str())
+    );
+    let members = result
+        .get("members")
+        .and_then(Value::as_array)
+        .expect("members array");
+    assert_eq!(members.len(), 3, "repeated default seats must not dedupe");
+    assert_eq!(
+        members
+            .iter()
+            .map(|member| member.get("model").and_then(Value::as_str).unwrap_or(""))
+            .collect::<Vec<_>>(),
+        vec!["e2e-mock-model", "e2e-mock-model", "critic-model"]
+    );
+    assert!(members.iter().all(|member| {
+        member.get("response").and_then(Value::as_str).is_some()
+            && member.get("error").is_some_and(Value::is_null)
+    }));
+    assert_eq!(
+        result.get("chair_model").and_then(Value::as_str),
+        Some("e2e-mock-model")
+    );
+    assert!(
+        result
+            .get("synthesis")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .contains("e2e mock"),
+        "mock chair synthesis should be returned: {result}"
+    );
+
+    let captured_models = with_chat_completion_models(|models| models.clone());
+    assert_eq!(
+        captured_models,
+        vec![
+            "e2e-mock-model",
+            "e2e-mock-model",
+            "critic-model",
+            "e2e-mock-model"
+        ],
+        "three member calls plus one default chair call should be made"
+    );
+    let captured_requests = with_chat_completion_requests(|requests| requests.clone());
+    assert_eq!(captured_requests.len(), 4);
+    assert!(
+        captured_requests[3]
+            .pointer("/body/messages")
+            .and_then(Value::as_array)
+            .is_some_and(|messages| messages.iter().any(|message| {
+                message
+                    .get("content")
+                    .and_then(Value::as_str)
+                    .is_some_and(|content| {
+                        content.contains("shared_reasoning.md")
+                            && content.contains("Model A")
+                            && content.contains("Model C")
+                    })
+            })),
+        "chair prompt should include shared reasoning and all member labels: {:?}",
+        captured_requests[3]
+    );
+
+    mock_join.abort();
+    rpc_join.abort();
+}
+
+#[tokio::test]
+async fn json_rpc_model_council_progressive_member_answers_then_synthesizes() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+    let _api_url_guard = EnvVarGuard::unset("OPENHUMAN_API_URL");
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+    write_min_config(&openhuman_home, &mock_origin);
+    let user_scoped_dir = openhuman_home.join("users").join("e2e-user");
+    write_min_config(&user_scoped_dir, &mock_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+
+    let store = post_json_rpc(
+        &rpc_base,
+        18_050,
+        "openhuman.auth_store_session",
+        json!({
+            "token": "e2e-test-jwt",
+            "user_id": "e2e-user"
+        }),
+    )
+    .await;
+    assert_no_jsonrpc_error(&store, "store_session");
+
+    with_chat_completion_models(|models| models.clear());
+    with_chat_completion_requests(|requests| requests.clear());
+
+    let question =
+        "Council workspace: shared_reasoning.md\n\nUser question:\nStream juror thoughts";
+    let first = post_json_rpc(
+        &rpc_base,
+        18_051,
+        "openhuman.model_council_answer_member",
+        json!({
+            "question": question,
+            "model": "default",
+            "temperature": 0.2
+        }),
+    )
+    .await;
+    let first_outer = assert_no_jsonrpc_error(&first, "model_council_answer_member first");
+    let first_member = first_outer.get("result").unwrap_or(first_outer).clone();
+    assert_eq!(
+        first_member.get("model").and_then(Value::as_str),
+        Some("e2e-mock-model")
+    );
+    assert!(first_member
+        .get("response")
+        .and_then(Value::as_str)
+        .is_some_and(|response| response.contains("e2e mock")));
+
+    let second = post_json_rpc(
+        &rpc_base,
+        18_052,
+        "openhuman.model_council_answer_member",
+        json!({
+            "question": question,
+            "model": "critic-model"
+        }),
+    )
+    .await;
+    let second_outer = assert_no_jsonrpc_error(&second, "model_council_answer_member second");
+    let second_member = second_outer.get("result").unwrap_or(second_outer).clone();
+    assert_eq!(
+        second_member.get("model").and_then(Value::as_str),
+        Some("critic-model")
+    );
+
+    let synthesis = post_json_rpc(
+        &rpc_base,
+        18_053,
+        "openhuman.model_council_synthesize",
+        json!({
+            "question": question,
+            "members": [first_member, second_member],
+            "chair_model": "default"
+        }),
+    )
+    .await;
+    let outer = assert_no_jsonrpc_error(&synthesis, "model_council_synthesize");
+    let result = outer.get("result").unwrap_or(outer);
+    assert_eq!(
+        result.get("chair_model").and_then(Value::as_str),
+        Some("e2e-mock-model")
+    );
+    assert_eq!(
+        result
+            .get("members")
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(2)
+    );
+    assert!(result
+        .get("synthesis")
+        .and_then(Value::as_str)
+        .is_some_and(|text| text.contains("e2e mock")));
+
+    let captured_models = with_chat_completion_models(|models| models.clone());
+    assert_eq!(
+        captured_models,
+        vec!["e2e-mock-model", "critic-model", "e2e-mock-model"],
+        "two progressive member calls plus one default chair call should be made"
+    );
+
+    mock_join.abort();
+    rpc_join.abort();
+}
+
+#[tokio::test]
+async fn json_rpc_model_council_reports_total_member_failure_before_synthesis() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+    let _api_url_guard = EnvVarGuard::unset("OPENHUMAN_API_URL");
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+    write_model_council_unreachable_inference_config(&openhuman_home, &mock_origin);
+    let user_scoped_dir = openhuman_home.join("users").join("e2e-user");
+    write_model_council_unreachable_inference_config(&user_scoped_dir, &mock_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+
+    let store = post_json_rpc(
+        &rpc_base,
+        18_100,
+        "openhuman.auth_store_session",
+        json!({
+            "token": "e2e-test-jwt",
+            "user_id": "e2e-user"
+        }),
+    )
+    .await;
+    assert_no_jsonrpc_error(&store, "store_session");
+
+    with_chat_completion_requests(|requests| requests.clear());
+
+    let council = post_json_rpc(
+        &rpc_base,
+        18_101,
+        "openhuman.model_council_run",
+        json!({
+            "question": "Council workspace: shared_reasoning.md\n\nUser question:\nFail deterministically",
+            "member_models": ["default", "default"],
+            "chair_model": "default"
+        }),
+    )
+    .await;
+    let err = assert_jsonrpc_error(&council, "model_council_run all failed");
+    assert!(
+        err.get("message")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .contains("model council: all member models failed to respond"),
+        "unexpected model council error: {err}"
+    );
+    assert!(
+        with_chat_completion_requests(|requests| requests.is_empty()),
+        "unreachable direct inference should not hit mock backend"
     );
 
     mock_join.abort();
@@ -10217,6 +10566,190 @@ async fn json_rpc_voice_server_settings_roundtrip_always_on_and_wake_word() {
             .and_then(Value::as_str),
         Some("Computer"),
         "wake_word should persist, envelope: {after_outer}"
+    );
+
+    rpc_join.abort();
+}
+
+/// Memory-sync schedule (#3302): get defaults → set a 4h cadence → confirm it
+/// persists → switch to Manual only → confirm the flag flips.
+#[tokio::test]
+async fn json_rpc_memory_sync_settings_roundtrip_interval_and_manual() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+    // The global override would mask the persisted value; keep it unset here.
+    let _interval_guard = EnvVarGuard::unset("OPENHUMAN_MEMORY_SYNC_INTERVAL_SECS");
+
+    write_min_config(&openhuman_home, "http://127.0.0.1:9");
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // GET defaults — unset stored value, but a resolved 24h selected cadence.
+    let initial = post_json_rpc(
+        &rpc_base,
+        7501,
+        "openhuman.config_get_memory_sync_settings",
+        json!({}),
+    )
+    .await;
+    let initial_outer = assert_no_jsonrpc_error(&initial, "get_memory_sync_settings initial");
+    let initial_result = initial_outer.get("result").unwrap_or(&initial_outer);
+    assert!(
+        initial_result.get("sync_interval_secs").map(Value::is_null) == Some(true),
+        "default stored value should be null, envelope: {initial_outer}"
+    );
+    assert_eq!(
+        initial_result.get("is_default").and_then(Value::as_bool),
+        Some(true),
+        "fresh config should report is_default=true, envelope: {initial_outer}"
+    );
+    assert_eq!(
+        initial_result.get("selected_secs").and_then(Value::as_u64),
+        Some(86_400),
+        "selected cadence should resolve to the 24h default, envelope: {initial_outer}"
+    );
+
+    // UPDATE — pick the 4h preset.
+    let update = post_json_rpc(
+        &rpc_base,
+        7502,
+        "openhuman.config_update_memory_sync_settings",
+        json!({ "sync_interval_secs": 14400 }),
+    )
+    .await;
+    let update_outer = assert_no_jsonrpc_error(&update, "update_memory_sync_settings 4h");
+    let update_result = update_outer.get("result").unwrap_or(&update_outer);
+    assert_eq!(
+        update_result
+            .get("sync_interval_secs")
+            .and_then(Value::as_u64),
+        Some(14_400),
+        "4h cadence should be stored, envelope: {update_outer}"
+    );
+    assert_eq!(
+        update_result.get("is_manual").and_then(Value::as_bool),
+        Some(false)
+    );
+
+    // GET again — the 4h cadence persists across the round-trip.
+    let after = post_json_rpc(
+        &rpc_base,
+        7503,
+        "openhuman.config_get_memory_sync_settings",
+        json!({}),
+    )
+    .await;
+    let after_outer = assert_no_jsonrpc_error(&after, "get_memory_sync_settings after 4h");
+    let after_result = after_outer.get("result").unwrap_or(&after_outer);
+    assert_eq!(
+        after_result
+            .get("sync_interval_secs")
+            .and_then(Value::as_u64),
+        Some(14_400),
+        "4h cadence should persist, envelope: {after_outer}"
+    );
+
+    // UPDATE — switch to Manual only (0).
+    let manual = post_json_rpc(
+        &rpc_base,
+        7504,
+        "openhuman.config_update_memory_sync_settings",
+        json!({ "sync_interval_secs": 0 }),
+    )
+    .await;
+    let manual_outer = assert_no_jsonrpc_error(&manual, "update_memory_sync_settings manual");
+    let manual_result = manual_outer.get("result").unwrap_or(&manual_outer);
+    assert_eq!(
+        manual_result.get("is_manual").and_then(Value::as_bool),
+        Some(true),
+        "0 should flip is_manual, envelope: {manual_outer}"
+    );
+
+    // GET once more — manual mode persisted (stored value 0, is_manual true).
+    let manual_get = post_json_rpc(
+        &rpc_base,
+        7505,
+        "openhuman.config_get_memory_sync_settings",
+        json!({}),
+    )
+    .await;
+    let manual_get_outer = assert_no_jsonrpc_error(&manual_get, "get_memory_sync_settings manual");
+    let manual_get_result = manual_get_outer.get("result").unwrap_or(&manual_get_outer);
+    assert_eq!(
+        manual_get_result.get("is_manual").and_then(Value::as_bool),
+        Some(true),
+        "manual mode should persist across a GET, envelope: {manual_get_outer}"
+    );
+    assert_eq!(
+        manual_get_result
+            .get("sync_interval_secs")
+            .and_then(Value::as_u64),
+        Some(0),
+        "manual stored value should be 0, envelope: {manual_get_outer}"
+    );
+
+    rpc_join.abort();
+}
+
+/// Ops / headless path (#3302): a fleet operator sets
+/// `OPENHUMAN_MEMORY_SYNC_INTERVAL_SECS` in the environment, and the running
+/// core surfaces that cadence through `config_get_memory_sync_settings` with no
+/// UI interaction. Verifies the env override flows all the way through the RPC.
+/// (The `0` = "Manual only" sentinel on the env path is covered at the parse
+/// layer by `env_overlay_memory_sync_interval_parses_and_honours_zero`.)
+#[tokio::test]
+async fn json_rpc_memory_sync_settings_env_override_is_reflected() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+    // Operator sets an 8h cadence via the environment (not a UI write).
+    let _interval_guard = EnvVarGuard::set("OPENHUMAN_MEMORY_SYNC_INTERVAL_SECS", "28800");
+
+    write_min_config(&openhuman_home, "http://127.0.0.1:9");
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // GET reflects the env-provided cadence even though config.toml never set it.
+    let resp = post_json_rpc(
+        &rpc_base,
+        7601,
+        "openhuman.config_get_memory_sync_settings",
+        json!({}),
+    )
+    .await;
+    let outer = assert_no_jsonrpc_error(&resp, "get_memory_sync_settings env-override");
+    let result = outer.get("result").unwrap_or(&outer);
+    assert_eq!(
+        result.get("sync_interval_secs").and_then(Value::as_u64),
+        Some(28_800),
+        "env override should surface via RPC, envelope: {outer}"
+    );
+    assert_eq!(
+        result.get("selected_secs").and_then(Value::as_u64),
+        Some(28_800),
+        "selected cadence should match the env override, envelope: {outer}"
+    );
+    assert_eq!(
+        result.get("is_default").and_then(Value::as_bool),
+        Some(false),
+        "an env-provided value is not the default, envelope: {outer}"
     );
 
     rpc_join.abort();

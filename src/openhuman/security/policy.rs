@@ -799,13 +799,12 @@ impl SecurityPolicy {
         }
     }
 
+    /// Expand a leading `~/` to the user's home directory. Delegates to
+    /// [`crate::openhuman::config::expand_tilde`] — the single source of truth —
+    /// so policy and config expand paths byte-for-byte identically (and both
+    /// produce platform-native separators; see issue #3353).
     fn expand_tilde(&self, path: &str) -> String {
-        if let Some(rest) = path.strip_prefix("~/") {
-            if let Some(home) = dirs::home_dir() {
-                return format!("{}/{rest}", home.display());
-            }
-        }
-        path.to_string()
+        crate::openhuman::config::expand_tilde(path)
     }
 
     /// String-only path check. Does NOT resolve symlinks.

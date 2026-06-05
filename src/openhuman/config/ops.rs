@@ -926,15 +926,130 @@ pub struct AgentPathsPatch {
     pub action_dir: Option<String>,
 }
 
-/// Expand a leading `~/` to the user's home directory. Mirrors
-/// `SecurityPolicy::expand_tilde` so UI-entered paths behave consistently.
-fn expand_tilde_path(path: &str) -> String {
-    if let Some(rest) = path.strip_prefix("~/") {
-        if let Some(home) = dirs::home_dir() {
-            return format!("{}/{rest}", home.display());
+/// Expand a leading `~/` to the user's home directory, building the path
+/// component-by-component so the result uses the platform-native separator
+/// throughout. A naive `format!("{}/{rest}", home)` — or even `home.join(rest)`
+/// — leaves the embedded `/` inside `rest`, yielding a mixed-separator path like
+/// `C:\Users\Harry/OpenHuman/projects` on Windows, which `CreateProcessW`
+/// rejects with `ERROR_DIRECTORY` (os error 267) when used as a process CWD.
+/// See issue #3353 (RC-B).
+///
+/// This is the single source of truth for `~/` expansion; `SecurityPolicy::
+/// expand_tilde` delegates here so policy and config stay byte-for-byte
+/// consistent.
+pub fn expand_tilde(path: &str) -> String {
+    let Some(rest) = path.strip_prefix("~/") else {
+        return path.to_string();
+    };
+    let Some(home) = dirs::home_dir() else {
+        return path.to_string();
+    };
+    let mut out = home;
+    for part in rest.split('/') {
+        if !part.is_empty() {
+            out.push(part);
         }
     }
-    path.to_string()
+    out.to_string_lossy().into_owned()
+}
+
+/// Redact a path for logging by replacing the user's home-directory prefix with
+/// `~`. Keeps the path *shape* (e.g. `~/OpenHuman/projects`) useful for
+/// diagnosis while not leaking the OS username / full home path (PII). Paths
+/// outside the home dir are returned unchanged.
+pub(crate) fn redact_home(path: &Path) -> String {
+    let s = path.to_string_lossy();
+    if let Some(home) = dirs::home_dir() {
+        let home = home.to_string_lossy();
+        if !home.is_empty() {
+            if let Some(rest) = s.strip_prefix(home.as_ref()) {
+                return format!("~{rest}");
+            }
+        }
+    }
+    s.into_owned()
+}
+
+/// Ensure the agent's action sandbox + default projects home exist and the
+/// projects dir is registered as a `ReadWrite` trusted root. Idempotent — safe
+/// to call from every boot path (web-chat-only `bootstrap_core_runtime` **and**
+/// `start_channels`).
+///
+/// Without this on the always-run boot, a fresh desktop install with no
+/// messaging integrations leaves `~/OpenHuman/projects` uncreated (the only
+/// other creation lived inside the integration-gated `start_channels`), so the
+/// shell tool's `current_dir` fails with `ERROR_DIRECTORY` (os error 267) on
+/// Windows / `ENOENT` on Unix. See issue #3353 (RC-A).
+pub async fn ensure_agent_dirs(config: &mut Config) {
+    use crate::openhuman::security::{TrustedAccess, TrustedRoot};
+
+    // Ensure the agent's default projects home (~/OpenHuman/projects) exists and
+    // is a read-write trusted root, so the coding agent creates/edits projects
+    // there freely — distinct from the hidden internal workspace dir. A user who
+    // has already granted it (or any other root) is left untouched.
+    let projects_dir = crate::openhuman::config::default_projects_dir();
+    if let Err(e) = tokio::fs::create_dir_all(&projects_dir).await {
+        tracing::warn!(
+            dir = %redact_home(&projects_dir),
+            error = %e,
+            "[startup] could not create default projects dir"
+        );
+    }
+    let projects_path = projects_dir.to_string_lossy().to_string();
+    if !config
+        .autonomy
+        .trusted_roots
+        .iter()
+        .any(|r| r.path == projects_path)
+    {
+        config.autonomy.trusted_roots.push(TrustedRoot {
+            path: projects_path,
+            access: TrustedAccess::ReadWrite,
+        });
+    }
+
+    // Ensure the action sandbox directory exists (defaults to ~/OpenHuman/projects).
+    let action_dir = config.action_dir.clone();
+    if let Err(e) = tokio::fs::create_dir_all(&action_dir).await {
+        tracing::warn!(
+            dir = %redact_home(&action_dir),
+            error = %e,
+            "[startup] could not create action sandbox dir"
+        );
+    }
+    tracing::info!(
+        workspace = %redact_home(&config.workspace_dir),
+        action = %redact_home(&action_dir),
+        "[startup] workspace (internal state) and action sandbox (tool cwd) directories configured"
+    );
+}
+
+/// Ensure `dir` is usable as a process working directory: it must exist (we
+/// attempt to create it if missing — covers a dir deleted after launch) and
+/// resolve to a directory. Returns a descriptive error naming the path and the
+/// Settings location to fix it, instead of letting the OS surface an opaque
+/// `ERROR_DIRECTORY` (os error 267) from `CreateProcessW`. See issue #3353
+/// (Fix 2). Cheap stat-only calls on the happy path.
+pub fn ensure_usable_cwd(dir: &Path) -> anyhow::Result<()> {
+    if !dir.exists() {
+        // Defensive auto-create (mirrors startup) — covers a dir deleted after
+        // launch or an override whose parent later disappeared.
+        std::fs::create_dir_all(dir).map_err(|e| {
+            anyhow::anyhow!(
+                "Working directory '{}' does not exist and could not be created: {e}. \
+                 Set a valid path in Settings → Agent access → Working directory.",
+                dir.display()
+            )
+        })?;
+    }
+    if !dir.is_dir() {
+        anyhow::bail!(
+            "Working directory '{}' is not a directory. \
+             Set a valid path in Settings → Agent access → Working directory.",
+            dir.display()
+        );
+    }
+    Ok(())
 }
 
 /// Source of the currently-effective `action_dir`, so the UI can gate
@@ -1001,7 +1116,7 @@ pub async fn apply_agent_paths_settings(
             config.action_dir_override = None;
             notes.push("action_dir override cleared (reverted to default)".to_string());
         } else {
-            let expanded = expand_tilde_path(trimmed);
+            let expanded = expand_tilde(trimmed);
             let candidate = PathBuf::from(&expanded);
 
             if !candidate.is_absolute() {
@@ -1178,6 +1293,81 @@ pub async fn load_and_apply_activity_level_settings(
 ) -> Result<RpcOutcome<serde_json::Value>, String> {
     let mut config = load_config_with_timeout().await?;
     apply_activity_level_settings(&mut config, update).await
+}
+
+/// Patch for the global memory-sync cadence (#3302).
+///
+/// `sync_interval_secs` carries the new value to store in
+/// [`Config::memory_sync_interval_secs`]:
+/// - omitted / `null` → reset to "use the default cadence" (`None`)
+/// - `0` → "Manual only" (periodic auto-sync disabled)
+/// - `n > 0` → sync every `n` seconds (applied per source as a floor over the
+///   provider default by the scheduler)
+#[derive(Debug, Default)]
+pub struct MemorySyncSettingsPatch {
+    pub sync_interval_secs: Option<u64>,
+}
+
+/// Build the JSON view of the memory-sync settings shared by get + apply.
+fn memory_sync_settings_value(stored: Option<u64>) -> serde_json::Value {
+    let is_manual = stored == Some(0);
+    let is_default = stored.is_none();
+    // The cadence the UI should highlight: the stored value when set, else the
+    // resolved 24h default. `0` (manual) is surfaced verbatim so the UI can
+    // select the "Manual only" option.
+    let selected_secs =
+        stored.unwrap_or(crate::openhuman::config::DEFAULT_MEMORY_SYNC_INTERVAL_SECS);
+    json!({
+        "sync_interval_secs": stored,
+        "selected_secs": selected_secs,
+        "is_manual": is_manual,
+        "is_default": is_default,
+        "default_secs": crate::openhuman::config::DEFAULT_MEMORY_SYNC_INTERVAL_SECS,
+        "presets": crate::openhuman::config::MEMORY_SYNC_INTERVAL_PRESETS_SECS,
+    })
+}
+
+/// Returns the current global memory-sync cadence and its derived view.
+pub async fn get_memory_sync_settings() -> Result<RpcOutcome<serde_json::Value>, String> {
+    let config = load_config_with_timeout().await?;
+    let value = memory_sync_settings_value(config.memory_sync_interval_secs);
+    Ok(RpcOutcome::single_log(value, "memory sync settings read"))
+}
+
+/// Updates the global memory-sync cadence and persists it. The running
+/// scheduler reads `config.memory_sync_interval_secs` fresh on each tick, so
+/// the new cadence takes effect from the next tick without a restart.
+pub async fn apply_memory_sync_settings(
+    config: &mut Config,
+    update: MemorySyncSettingsPatch,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    config.memory_sync_interval_secs = update.sync_interval_secs;
+    config.save().await.map_err(|e| e.to_string())?;
+
+    tracing::info!(
+        sync_interval_secs = ?config.memory_sync_interval_secs,
+        "[config:memory_sync] memory sync interval updated"
+    );
+
+    let stored = config.memory_sync_interval_secs;
+    let value = memory_sync_settings_value(stored);
+    let msg = match stored {
+        Some(0) => "memory sync set to Manual only".to_string(),
+        Some(n) => format!("memory sync interval set to {n}s"),
+        None => "memory sync interval reset to default".to_string(),
+    };
+    Ok(RpcOutcome::new(
+        value,
+        vec![format!("{msg} — saved to {}", config.config_path.display())],
+    ))
+}
+
+/// Loads the configuration, applies memory-sync settings, and saves it.
+pub async fn load_and_apply_memory_sync_settings(
+    update: MemorySyncSettingsPatch,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    let mut config = load_config_with_timeout().await?;
+    apply_memory_sync_settings(&mut config, update).await
 }
 
 /// Serializes the load-modify-save in [`add_auto_approve_tool`] so two

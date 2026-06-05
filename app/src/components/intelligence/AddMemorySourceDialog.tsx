@@ -544,16 +544,14 @@ function statusRank(conn: ComposioConnection): number {
  * - Connections sharing the same toolkit + identity (accountEmail / workspace /
  *   username) OR the same raw connection id are collapsed to the first
  *   occurrence, preventing both labeled and identity-less duplicates.
- * - Connections with no identity field get a numbered "Account N" suffix
- *   scoped per toolkit, so users can distinguish them without seeing raw IDs.
+ * - Connections with no identity field fall back to showing the raw connection ID
+ *   so users can unambiguously distinguish accounts.
  */
 export function deduplicateConnections(
-  connections: ComposioConnection[],
-  accountLabel: string
+  connections: ComposioConnection[]
 ): Array<{ conn: ComposioConnection; label: string }> {
   const sorted = [...connections].sort((a, b) => statusRank(a) - statusRank(b));
   const seen = new Set<string>();
-  const unidentifiedCount: Record<string, number> = {};
   const result: Array<{ conn: ComposioConnection; label: string }> = [];
 
   for (const conn of sorted) {
@@ -574,9 +572,9 @@ export function deduplicateConnections(
       seen.add(key);
       result.push({ conn, label: `${conn.toolkit} · ${identity}` });
     } else {
-      unidentifiedCount[conn.toolkit] = (unidentifiedCount[conn.toolkit] ?? 0) + 1;
-      const n = unidentifiedCount[conn.toolkit];
-      result.push({ conn, label: `${conn.toolkit} · ${accountLabel} ${n}` });
+      // Fall back to the raw connection ID so the user can unambiguously
+      // distinguish accounts when no identity data is available.
+      result.push({ conn, label: `${conn.toolkit} · ${conn.id}` });
     }
   }
   return result;
@@ -612,9 +610,8 @@ function ComposioPicker({
   const listboxRef = useRef<HTMLUListElement>(null);
 
   // useMemo must be declared before any early returns (Rules of Hooks).
-  const accountLabel = t('memorySources.connectionAccount');
   const entries = useMemo<PickerEntry[]>(() => {
-    const deduped = deduplicateConnections(connections, accountLabel).map(({ conn, label }) => ({
+    const deduped = deduplicateConnections(connections).map(({ conn, label }) => ({
       conn,
       label,
       supported: isToolkitSupported(conn.toolkit, supportedToolkits),
@@ -622,7 +619,7 @@ function ComposioPicker({
     // Supported connections first so the actionable ones surface at the top;
     // stable within each partition (dedup already ranked by health/status).
     return [...deduped.filter(e => e.supported), ...deduped.filter(e => !e.supported)];
-  }, [connections, accountLabel, supportedToolkits]);
+  }, [connections, supportedToolkits]);
 
   // Indexes of keyboard-selectable (supported) options — unsupported rows are
   // skipped during arrow navigation, mirroring a native <select>'s disabled opts.

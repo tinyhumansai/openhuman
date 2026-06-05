@@ -34,7 +34,11 @@ test.describe('Skills registry flow', () => {
     await expect(page.getByRole('tab', { name: 'Composio' })).toBeVisible();
     await expect(page.getByRole('tab', { name: 'Channels' })).toBeVisible();
     await expect(page.getByRole('tab', { name: 'MCP Servers' })).toBeVisible();
+    await page.getByRole('tab', { name: 'Composio' }).click();
     await expect(page.getByRole('heading', { name: 'Composio Integrations' })).toBeVisible();
+    await expect(
+      page.getByText(/Gmail|Notion|Telegram|GitHub|Google Drive/, { exact: false }).first()
+    ).toBeVisible();
   });
 
   test('shows at least one known Composio integration name', async ({ page }) => {

@@ -10,6 +10,7 @@ import { MemoryRouter } from 'react-router-dom';
 
 import { getCoreStateSnapshot } from '../lib/coreState/store';
 import { CoreStateContext } from '../providers/coreStateContext';
+import backendMeetReducer from '../store/backendMeetSlice';
 import channelConnectionsReducer from '../store/channelConnectionsSlice';
 import companionReducer from '../store/companionSlice';
 import connectivityReducer from '../store/connectivitySlice';
@@ -28,10 +29,11 @@ import themeReducer from '../store/themeSlice';
  * VoicePanel reads + dispatches against this slice, and useSelector
  * would throw on a missing reducer without a stub here. `persona` is wired
  * in for the same reason (issue #2345): PersonaPanel reads + dispatches
- * against it. `theme` is wired in for the appearance controls (issue #3120):
- * AppearancePanel reads + dispatches theme mode, font size and tab-bar labels.
+ * against it. `backendMeet` is wired in for MeetingBotsCard which reads
+ * meeting status from this slice.
  */
 const testRootReducer = combineReducers({
+  backendMeet: backendMeetReducer,
   channelConnections: channelConnectionsReducer,
   companion: companionReducer,
   connectivity: connectivityReducer,

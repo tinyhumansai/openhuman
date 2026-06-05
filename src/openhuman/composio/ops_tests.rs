@@ -2270,14 +2270,12 @@ fn composio_direct_500_does_not_demote() {
 /// isolated profile storage. The returned guard prevents concurrent tests from
 /// rebinding the singleton while the calling test is running — hold it with
 /// `let _guard = init_memory_client(tmp.path());`.
-fn init_memory_client(workspace: &std::path::Path) -> std::sync::MutexGuard<'static, ()> {
-    static ENRICH_IDENTITY_TEST_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> =
-        std::sync::OnceLock::new();
-    let guard = ENRICH_IDENTITY_TEST_LOCK
-        .get_or_init(|| std::sync::Mutex::new(()))
+async fn init_memory_client(workspace: &std::path::Path) -> tokio::sync::MutexGuard<'static, ()> {
+    let guard = crate::openhuman::memory::ops::GLOBAL_MEMORY_TEST_LOCK
         .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    let _ = crate::openhuman::memory::global::init(workspace.to_path_buf());
+        .await;
+    crate::openhuman::memory::global::init(workspace.to_path_buf())
+        .expect("global memory client should initialize for enrichment test");
     guard
 }
 
@@ -2298,7 +2296,7 @@ async fn enrich_does_nothing_when_no_cached_identities() {
     // profiles, so load_connected_identities returns Vec::new() and the
     // connection is returned unchanged.
     let tmp = tempfile::tempdir().unwrap();
-    let _guard = init_memory_client(tmp.path());
+    let _guard = init_memory_client(tmp.path()).await;
     let resp = make_connections_response(&[("c1", "gmail", "ACTIVE")]);
     let enriched = enrich_connections_with_identity(resp);
     assert_eq!(enriched.connections.len(), 1);
@@ -2313,7 +2311,7 @@ async fn enrich_populates_email_from_cached_profile() {
         profile::persist_provider_profile, ProviderUserProfile,
     };
     let tmp = tempfile::tempdir().unwrap();
-    let _guard = init_memory_client(tmp.path());
+    let _guard = init_memory_client(tmp.path()).await;
 
     persist_provider_profile(&ProviderUserProfile {
         toolkit: "gmail".to_string(),
@@ -2348,7 +2346,7 @@ async fn enrich_populates_handle_for_github() {
         profile::persist_provider_profile, ProviderUserProfile,
     };
     let tmp = tempfile::tempdir().unwrap();
-    let _guard = init_memory_client(tmp.path());
+    let _guard = init_memory_client(tmp.path()).await;
 
     persist_provider_profile(&ProviderUserProfile {
         toolkit: "github".to_string(),
@@ -2391,7 +2389,7 @@ async fn enrich_handles_multiple_connections_same_toolkit() {
         profile::persist_provider_profile, ProviderUserProfile,
     };
     let tmp = tempfile::tempdir().unwrap();
-    let _guard = init_memory_client(tmp.path());
+    let _guard = init_memory_client(tmp.path()).await;
 
     persist_provider_profile(&ProviderUserProfile {
         toolkit: "gmail".to_string(),
@@ -2427,12 +2425,12 @@ async fn enrich_handles_multiple_connections_same_toolkit() {
 #[tokio::test]
 async fn enrich_leaves_unmatched_connection_unchanged() {
     // Connection whose id has no cached profile row is returned with all
-    // identity fields as None — the UI falls back to "Account N".
+    // identity fields as None — the UI falls back to "toolkit · connection_id".
     use crate::openhuman::memory_sync::composio::providers::{
         profile::persist_provider_profile, ProviderUserProfile,
     };
     let tmp = tempfile::tempdir().unwrap();
-    let _guard = init_memory_client(tmp.path());
+    let _guard = init_memory_client(tmp.path()).await;
 
     // Persist a profile for a DIFFERENT connection id.
     persist_provider_profile(&ProviderUserProfile {

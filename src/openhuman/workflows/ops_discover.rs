@@ -10,6 +10,23 @@ use super::ops_types::{
     WORKFLOW_MD,
 };
 
+const EXCLUDED_SKILL_DIRS: &[&str] = &[
+    ".git",
+    ".github",
+    ".hub",
+    ".archive",
+    ".venv",
+    "venv",
+    "node_modules",
+    "site-packages",
+    "__pycache__",
+    ".tox",
+    ".nox",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+];
+
 /// Initialize the legacy skills directory in the specified workspace.
 ///
 /// Creates `<workspace>/skills/` and a placeholder `README.md` so the folder
@@ -179,9 +196,16 @@ fn precedence(scope: WorkflowScope) -> u8 {
 }
 
 fn scan_root(root: &Path, scope: WorkflowScope) -> Vec<Workflow> {
+    let mut out = Vec::new();
+    scan_root_inner(root, scope, &mut out);
+    out.sort_by(|a, b| a.dir_name.cmp(&b.dir_name));
+    out
+}
+
+fn scan_root_inner(root: &Path, scope: WorkflowScope, out: &mut Vec<Workflow>) {
     let entries = match std::fs::read_dir(root) {
         Ok(entries) => entries,
-        Err(_) => return Vec::new(),
+        Err(_) => return,
     };
 
     // `read_dir` order is unspecified. When two sibling directories declare
@@ -192,7 +216,6 @@ fn scan_root(root: &Path, scope: WorkflowScope) -> Vec<Workflow> {
     let mut entries: Vec<_> = entries.flatten().collect();
     entries.sort_by_key(|entry| entry.file_name());
 
-    let mut out = Vec::new();
     for entry in entries {
         // Use `file_type()` rather than `path.is_dir()` so a symlinked
         // child cannot be loaded as a skill. `is_dir()` dereferences
@@ -209,14 +232,15 @@ fn scan_root(root: &Path, scope: WorkflowScope) -> Vec<Workflow> {
         }
         let path = entry.path();
         let dir_name = entry.file_name().to_string_lossy().to_string();
-        if dir_name.starts_with('.') {
+        if dir_name.starts_with('.') || EXCLUDED_SKILL_DIRS.contains(&dir_name.as_str()) {
             continue;
         }
         if let Some(skill) = load_skill_dir(&path, &dir_name, scope) {
             out.push(skill);
+            continue;
         }
+        scan_root_inner(&path, scope, out);
     }
-    out
 }
 
 fn load_skill_dir(dir: &Path, dir_name: &str, scope: WorkflowScope) -> Option<Workflow> {
@@ -257,8 +281,9 @@ fn load_skill_dir(dir: &Path, dir_name: &str, scope: WorkflowScope) -> Option<Wo
 /// Read a bundled skill resource as UTF-8 text, hardened against directory
 /// traversal, symlink escape, and oversized payloads.
 ///
-/// `skill_id` identifies the skill by its discovered `name` — the same field
-/// surfaced on [`Workflow::name`]. The skill is resolved by running the standard
+/// `skill_id` identifies the skill by its discovered `name` or its on-disk
+/// `dir_name` slug — the same identifiers surfaced in the UI summary. The
+/// skill is resolved by running the standard
 /// discovery pipeline (`dirs::home_dir()` + `workspace_dir`, honoring the
 /// `.openhuman/trust` marker) and locating the matching entry; this keeps the
 /// read scoped to legitimately installed skills and reuses all the symlink /
@@ -320,11 +345,7 @@ pub fn read_workflow_resource(
     // `load_workflow_metadata` (which honors both user and workspace roots plus the
     // trust marker) so the resource read is scoped to the exact same set of
     // skills the UI would already have shown the user.
-    let skills = load_workflow_metadata(workspace_dir);
-    let skill = skills
-        .into_iter()
-        .find(|s| s.name == skill_id)
-        .ok_or_else(|| format!("skill '{skill_id}' not found"))?;
+    let skill = resolve_workflow_for_resource(load_workflow_metadata(workspace_dir), skill_id)?;
     let skill_root = skill
         .location
         .as_deref()
@@ -399,4 +420,47 @@ pub fn read_workflow_resource(
     );
 
     Ok(content)
+}
+
+fn resolve_workflow_for_resource(
+    workflows: Vec<Workflow>,
+    skill_id: &str,
+) -> Result<Workflow, String> {
+    let mut dir_match: Option<Workflow> = None;
+    let mut name_match: Option<Workflow> = None;
+
+    for workflow in workflows {
+        if workflow.dir_name == skill_id {
+            if dir_match.is_some() {
+                return Err(format!(
+                    "skill id '{skill_id}' is ambiguous across multiple skill directories"
+                ));
+            }
+            dir_match = Some(workflow);
+            continue;
+        }
+
+        if workflow.name == skill_id {
+            if name_match.is_some() {
+                return Err(format!(
+                    "skill name '{skill_id}' is ambiguous; use the directory id"
+                ));
+            }
+            name_match = Some(workflow);
+        }
+    }
+
+    match (dir_match, name_match) {
+        (Some(dir_skill), Some(name_skill)) => {
+            if dir_skill.location == name_skill.location {
+                Ok(dir_skill)
+            } else {
+                Err(format!(
+                    "skill id '{skill_id}' matches both a directory id and a different skill name"
+                ))
+            }
+        }
+        (Some(skill), None) | (None, Some(skill)) => Ok(skill),
+        (None, None) => Err(format!("skill '{skill_id}' not found")),
+    }
 }

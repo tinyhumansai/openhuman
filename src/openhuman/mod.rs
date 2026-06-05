@@ -35,6 +35,7 @@ pub mod config;
 pub mod connectivity;
 pub mod context;
 pub mod cost;
+pub mod council_registry;
 pub mod credentials;
 pub mod cron;
 pub mod cwd_jail;

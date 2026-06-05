@@ -79,7 +79,7 @@ async function openListbox() {
 
 describe('deduplicateConnections', () => {
   it('returns an empty array for empty input', () => {
-    expect(deduplicateConnections([], 'Account')).toEqual([]);
+    expect(deduplicateConnections([])).toEqual([]);
   });
 
   it('uses accountEmail as the identity label', () => {
@@ -89,7 +89,7 @@ describe('deduplicateConnections', () => {
       status: 'ACTIVE',
       accountEmail: 'user@example.com',
     };
-    const result = deduplicateConnections([conn], 'Account');
+    const result = deduplicateConnections([conn]);
     expect(result).toHaveLength(1);
     expect(result[0].label).toBe('Gmail · user@example.com');
     expect(result[0].conn.id).toBe('conn-1');
@@ -97,31 +97,31 @@ describe('deduplicateConnections', () => {
 
   it('falls back to workspace when accountEmail is absent', () => {
     const conn = { id: 'conn-2', toolkit: 'Slack', status: 'ACTIVE', workspace: 'my-workspace' };
-    const result = deduplicateConnections([conn], 'Account');
+    const result = deduplicateConnections([conn]);
     expect(result[0].label).toBe('Slack · my-workspace');
   });
 
   it('falls back to username when neither email nor workspace is present', () => {
     const conn = { id: 'conn-3', toolkit: 'GitHub', status: 'ACTIVE', username: 'octocat' };
-    const result = deduplicateConnections([conn], 'Account');
+    const result = deduplicateConnections([conn]);
     expect(result[0].label).toBe('GitHub · octocat');
   });
 
-  it('uses numbered Account label when no identity field is available', () => {
+  it('uses connection ID as label when no identity field is available', () => {
     const conn = { id: 'conn-x', toolkit: 'Notion', status: 'ACTIVE' };
-    const result = deduplicateConnections([conn], 'Account');
-    expect(result[0].label).toBe('Notion · Account 1');
+    const result = deduplicateConnections([conn]);
+    expect(result[0].label).toBe('Notion · conn-x');
   });
 
-  it('numbers multiple no-identity connections per toolkit', () => {
+  it('shows each connection ID for multiple no-identity connections', () => {
     const conns = [
       { id: 'conn-a', toolkit: 'Notion', status: 'ACTIVE' },
       { id: 'conn-b', toolkit: 'Notion', status: 'ACTIVE' },
     ];
-    const result = deduplicateConnections(conns, 'Account');
+    const result = deduplicateConnections(conns);
     expect(result).toHaveLength(2);
-    expect(result[0].label).toBe('Notion · Account 1');
-    expect(result[1].label).toBe('Notion · Account 2');
+    expect(result[0].label).toBe('Notion · conn-a');
+    expect(result[1].label).toBe('Notion · conn-b');
   });
 
   it('deduplicates connections with the same toolkit and identity', () => {
@@ -129,7 +129,7 @@ describe('deduplicateConnections', () => {
       { id: 'conn-1', toolkit: 'Gmail', status: 'ACTIVE', accountEmail: 'a@example.com' },
       { id: 'conn-2', toolkit: 'Gmail', status: 'ACTIVE', accountEmail: 'a@example.com' },
     ];
-    const result = deduplicateConnections(conns, 'Account');
+    const result = deduplicateConnections(conns);
     expect(result).toHaveLength(1);
     expect(result[0].conn.id).toBe('conn-1');
     expect(result[0].label).toBe('Gmail · a@example.com');
@@ -140,32 +140,31 @@ describe('deduplicateConnections', () => {
       { id: 'conn-1', toolkit: 'Gmail', status: 'ACTIVE', accountEmail: 'a@example.com' },
       { id: 'conn-2', toolkit: 'Gmail', status: 'ACTIVE', accountEmail: 'b@example.com' },
     ];
-    const result = deduplicateConnections(conns, 'Account');
+    const result = deduplicateConnections(conns);
     expect(result).toHaveLength(2);
   });
 
-  it('does not expose raw connection IDs in any label', () => {
+  it('uses the connection ID in the label when no identity is available', () => {
     const conns = [
       { id: 'raw-uuid-abc123', toolkit: 'Linear', status: 'ACTIVE' },
       { id: 'raw-uuid-def456', toolkit: 'Linear', status: 'ACTIVE' },
     ];
-    const result = deduplicateConnections(conns, 'Account');
-    for (const { label } of result) {
-      expect(label).not.toContain('raw-uuid');
-    }
+    const result = deduplicateConnections(conns);
+    expect(result[0].label).toBe('Linear · raw-uuid-abc123');
+    expect(result[1].label).toBe('Linear · raw-uuid-def456');
   });
 
-  it('numbers no-identity connections per toolkit independently', () => {
+  it('shows connection IDs for no-identity connections across toolkits', () => {
     const conns = [
       { id: 'n-1', toolkit: 'Notion', status: 'ACTIVE' },
       { id: 's-1', toolkit: 'Slack', status: 'ACTIVE' },
       { id: 'n-2', toolkit: 'Notion', status: 'ACTIVE' },
     ];
-    const result = deduplicateConnections(conns, 'Account');
+    const result = deduplicateConnections(conns);
     expect(result).toHaveLength(3);
-    expect(result.find(r => r.conn.id === 'n-1')?.label).toBe('Notion · Account 1');
-    expect(result.find(r => r.conn.id === 'n-2')?.label).toBe('Notion · Account 2');
-    expect(result.find(r => r.conn.id === 's-1')?.label).toBe('Slack · Account 1');
+    expect(result.find(r => r.conn.id === 'n-1')?.label).toBe('Notion · n-1');
+    expect(result.find(r => r.conn.id === 'n-2')?.label).toBe('Notion · n-2');
+    expect(result.find(r => r.conn.id === 's-1')?.label).toBe('Slack · s-1');
   });
 
   it('prefers ACTIVE over EXPIRED when deduplicating same toolkit+identity', () => {
@@ -174,7 +173,7 @@ describe('deduplicateConnections', () => {
       { id: 'conn-expired', toolkit: 'Gmail', status: 'EXPIRED', accountEmail: 'x@example.com' },
       { id: 'conn-active', toolkit: 'Gmail', status: 'ACTIVE', accountEmail: 'x@example.com' },
     ];
-    const result = deduplicateConnections(conns, 'Account');
+    const result = deduplicateConnections(conns);
     expect(result).toHaveLength(1);
     expect(result[0].conn.id).toBe('conn-active');
   });
@@ -185,7 +184,7 @@ describe('deduplicateConnections', () => {
       { id: 'conn-same', toolkit: 'Notion', status: 'ACTIVE' },
       { id: 'conn-same', toolkit: 'Notion', status: 'ACTIVE' },
     ];
-    const result = deduplicateConnections(conns, 'Account');
+    const result = deduplicateConnections(conns);
     expect(result).toHaveLength(1);
     expect(result[0].conn.id).toBe('conn-same');
   });
@@ -196,7 +195,7 @@ describe('deduplicateConnections', () => {
       { id: 'pending', toolkit: 'Linear', status: 'PENDING', accountEmail: 'a@b.com' },
       { id: 'connected', toolkit: 'Linear', status: 'CONNECTED', accountEmail: 'a@b.com' },
     ];
-    const result = deduplicateConnections(conns, 'Account');
+    const result = deduplicateConnections(conns);
     expect(result).toHaveLength(1);
     // CONNECTED ranks same as ACTIVE — must win over EXPIRED and PENDING
     expect(result[0].conn.id).toBe('connected');
@@ -260,7 +259,7 @@ describe('AddMemorySourceDialog — Composio picker', () => {
     });
   });
 
-  it('shows numbered Account labels for connections without identity fields', async () => {
+  it('shows connection IDs for connections without identity fields', async () => {
     mockListConnections.mockResolvedValue({
       connections: [
         { id: 'conn-a', toolkit: 'Notion', status: 'ACTIVE' },
@@ -270,12 +269,9 @@ describe('AddMemorySourceDialog — Composio picker', () => {
     await openComposioStep();
     await openListbox();
     await waitFor(() => {
-      expect(screen.queryByText('Notion · Account 1')).toBeTruthy();
-      expect(screen.queryByText('Notion · Account 2')).toBeTruthy();
+      expect(screen.queryByText('Notion · conn-a')).toBeTruthy();
+      expect(screen.queryByText('Notion · conn-b')).toBeTruthy();
     });
-    // Raw IDs must not appear
-    expect(screen.queryByText('conn-a')).toBeNull();
-    expect(screen.queryByText('conn-b')).toBeNull();
   });
 
   it('auto-fills the source label when a connection is selected', async () => {

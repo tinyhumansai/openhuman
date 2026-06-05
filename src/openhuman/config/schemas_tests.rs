@@ -183,6 +183,23 @@ fn autonomy_settings_rpc_is_registered() {
 }
 
 #[test]
+fn memory_sync_settings_rpc_is_registered() {
+    let funcs: Vec<&str> = all_controller_schemas()
+        .iter()
+        .map(|s| s.function)
+        .collect();
+    assert!(funcs.contains(&"get_memory_sync_settings"));
+    assert!(funcs.contains(&"update_memory_sync_settings"));
+    // The handler registry must stay in lockstep with the schema list.
+    let handlers: Vec<&str> = all_registered_controllers()
+        .iter()
+        .map(|h| h.schema.function)
+        .collect();
+    assert!(handlers.contains(&"get_memory_sync_settings"));
+    assert!(handlers.contains(&"update_memory_sync_settings"));
+}
+
+#[test]
 fn deserialize_params_parses_memory_settings_update() {
     let mut m = Map::new();
     m.insert("backend".into(), Value::String("sqlite".into()));

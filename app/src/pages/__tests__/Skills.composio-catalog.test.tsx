@@ -73,8 +73,13 @@ describe('Skills page — Composio catalog fallback', () => {
     agentReadyState = { agentReady: new Set<string>(), loading: true, error: null };
   });
 
+  function openComposioTab() {
+    fireEvent.click(screen.getByRole('tab', { name: 'Composio' }));
+  }
+
   it('shows known composio integrations in the integrations icon grid when the live toolkit list is empty', () => {
     renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
+    openComposioTab();
 
     expect(screen.getByRole('heading', { name: 'Composio Integrations' })).toBeInTheDocument();
     expect(screen.getByText('Discord')).toBeInTheDocument();
@@ -104,6 +109,7 @@ describe('Skills page — Composio catalog fallback', () => {
     composioError = 'Backend unavailable';
 
     renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
+    openComposioTab();
 
     expect(screen.getByText('Connections are showing stale status')).toBeInTheDocument();
     expect(screen.getByText('Backend unavailable')).toBeInTheDocument();
@@ -129,6 +135,7 @@ describe('Skills page — Composio catalog fallback', () => {
     ]);
 
     renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
+    openComposioTab();
 
     const integrationsSection = screen
       .getByRole('heading', { name: 'Composio Integrations' })
@@ -157,6 +164,7 @@ describe('Skills page — Composio catalog fallback', () => {
     agentReadyState = { agentReady: new Set<string>(), loading: false, error: 'rpc unavailable' };
 
     renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
+    openComposioTab();
 
     const integrationsSection = screen
       .getByRole('heading', { name: 'Composio Integrations' })
@@ -180,6 +188,7 @@ describe('Skills page — Composio catalog fallback', () => {
     agentReadyState = { agentReady: new Set<string>(['gmail']), loading: false, error: null };
 
     renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
+    openComposioTab();
 
     const integrationsSection = screen
       .getByRole('heading', { name: 'Composio Integrations' })
@@ -204,6 +213,7 @@ describe('Skills page — Composio catalog fallback', () => {
     composioModeStatus = { result: { mode: 'direct', api_key_set: false }, logs: [] };
 
     renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
+    openComposioTab();
 
     await waitFor(() => {
       expect(screen.getByText(/No Composio API Key Configured/i)).toBeInTheDocument();

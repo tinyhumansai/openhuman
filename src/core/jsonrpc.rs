@@ -2002,7 +2002,7 @@ pub async fn bootstrap_core_runtime(host_kind: crate::core::types::HostKind) {
     // `embedded_core` derived from host_kind so the rest of the function (which
     // already keys behavior off the boolean) stays unchanged.
     let embedded_core = host_kind.is_desktop_shell();
-    let cfg = match crate::openhuman::config::Config::load_or_init().await {
+    let mut cfg = match crate::openhuman::config::Config::load_or_init().await {
         Ok(cfg) => cfg,
         Err(e) => {
             log::error!("[runtime] Failed to load config for socket manager: {e}");
@@ -2059,6 +2059,17 @@ pub async fn bootstrap_core_runtime(host_kind: crate::core::types::HostKind) {
              spawn_subagent will be unavailable until restart"
         );
     }
+
+    // --- Agent sandbox + projects dirs ---
+    // Create the action sandbox + default projects home and register the
+    // projects dir as a ReadWrite trusted root BEFORE building the live policy
+    // below (so the trusted root is reflected in `from_config`). This is the
+    // always-run boot for web-chat-only desktop cores; without it a fresh
+    // install with no messaging integrations leaves `~/OpenHuman/projects`
+    // uncreated and every shell-tool `current_dir` fails with ERROR_DIRECTORY
+    // (os error 267) on Windows / ENOENT on Unix (#3353, RC-A). Idempotent — a
+    // later `start_channels` calls the same helper.
+    crate::openhuman::config::ensure_agent_dirs(&mut cfg).await;
 
     // --- Live SecurityPolicy ---
     // Install the process-global live policy on the always-run serve boot, not

@@ -446,7 +446,17 @@ pub async fn inference_openai_oauth_import_codex_cli(
             .map(|payload| RpcOutcome::single_log(payload, "openai oauth imported from codex cli"));
     match &result {
         Ok(_) => debug!("{LOG_PREFIX} openai_oauth_import_codex_cli:ok"),
-        Err(err) => error!(error = %err, "{LOG_PREFIX} openai_oauth_import_codex_cli:error"),
+        // Most failures here are expected user-state (no `~/.codex/auth.json`,
+        // user never ran `codex login`, stale/empty file) — the UI already
+        // surfaces the actionable error, so route through the observability
+        // classifier to keep that flood out of Sentry (TAURI-RUST-83A) while a
+        // genuine keyring/persist defect still falls through to a real event.
+        Err(err) => crate::core::observability::report_error_or_expected(
+            err,
+            "inference",
+            "openai_oauth_import_codex_cli",
+            &[],
+        ),
     }
     result
 }

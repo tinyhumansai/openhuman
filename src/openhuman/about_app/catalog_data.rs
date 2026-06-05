@@ -385,6 +385,25 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         privacy: LOCAL_RAW,
     },
     Capability {
+        id: "intelligence.memory_sync_schedule",
+        name: "Memory Sync Schedule",
+        domain: "config",
+        category: CapabilityCategory::Intelligence,
+        description: "Pick a single global cadence for how often all opted-in memory sources \
+            auto-sync, presented like a backup schedule (\"Last synced … · Sync every …\"). \
+            Presets are every 4h / 12h / 24h, plus \"Manual only\" which disables background \
+            auto-sync entirely (you can still sync on demand). The chosen interval overrides each \
+            provider's built-in cadence but is floored at it, so syncs never run more often than \
+            the provider intends — handy for keeping credit spend predictable. Unset defaults to \
+            every 24h.",
+        how_to: "Intelligence > Memory Sources — choose a Sync every… preset or Manual only. \
+            Programmatic: openhuman.config_get_memory_sync_settings / \
+            openhuman.config_update_memory_sync_settings (RPC); ops override via the \
+            OPENHUMAN_MEMORY_SYNC_INTERVAL_SECS env var (0 = manual).",
+        status: CapabilityStatus::Beta,
+        privacy: LOCAL_RAW,
+    },
+    Capability {
         id: "intelligence.embedding_provider_config",
         name: "Configure Embedding Provider",
         domain: "embeddings",

@@ -72,6 +72,45 @@ fn schema_join() -> ControllerSchema {
                 comment: "Platform: gmeet, zoom, teams, or webex. Auto-detected from URL if omitted.",
                 required: false,
             },
+            FieldSchema {
+                name: "agent_name",
+                ty: TypeSchema::String,
+                comment: "Optional AI agent display name forwarded to the backend bot.",
+                required: false,
+            },
+            FieldSchema {
+                name: "system_prompt",
+                ty: TypeSchema::String,
+                comment: "Optional custom meeting system prompt forwarded to the backend bot.",
+                required: false,
+            },
+            FieldSchema {
+                name: "mascot_id",
+                ty: TypeSchema::String,
+                comment: "Optional mascot ID selecting which Rive character appears in the meeting (e.g. \"yellow\").",
+                required: false,
+            },
+            FieldSchema {
+                name: "rive_colors",
+                ty: TypeSchema::Json,
+                comment: "Optional Rive mascot color overrides forwarded to the backend bot.",
+                required: false,
+            },
+            FieldSchema {
+                name: "respond_to_participant",
+                ty: TypeSchema::String,
+                comment: "Only respond to this participant's messages. Case-insensitive substring match \
+                          against the speaker name in the transcript. Omit to respond to everyone.",
+                required: false,
+            },
+            FieldSchema {
+                name: "wake_phrase",
+                ty: TypeSchema::String,
+                comment: "Wake phrase the participant must say before the bot responds. \
+                          When set, captions without this phrase are silently dropped. \
+                          The phrase is stripped before the text reaches the LLM.",
+                required: false,
+            },
         ],
         outputs: vec![
             FieldSchema {

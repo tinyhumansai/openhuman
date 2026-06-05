@@ -234,6 +234,60 @@ fn inventory_resources_lists_scripts_and_assets() {
 }
 
 #[test]
+fn inventory_resources_lists_hermes_resource_dirs() {
+    let dir = tempfile::tempdir().unwrap();
+    let skill = dir.path().join("s");
+    write(
+        &skill.join("SKILL.md"),
+        "---\nname: s\ndescription: d\n---\n",
+    );
+    write(&skill.join("templates").join("page.html"), "<html></html>");
+    write(&skill.join("examples").join("demo.md"), "demo");
+    write(&skill.join("prompts").join("system.md"), "prompt");
+
+    let mut res = inventory_resources(&skill);
+    res.sort();
+    assert_eq!(res.len(), 3);
+    assert!(res.iter().any(|p| p.ends_with("page.html")));
+    assert!(res.iter().any(|p| p.ends_with("demo.md")));
+    assert!(res.iter().any(|p| p.ends_with("system.md")));
+}
+
+#[test]
+fn nested_hermes_skill_tree_discovers_metadata_and_resources() {
+    let dir = tempfile::tempdir().unwrap();
+    let ws = dir.path();
+    write(&ws.join(".openhuman").join("trust"), "");
+    let skill_dir = ws
+        .join(".openhuman")
+        .join("skills")
+        .join("creative")
+        .join("concept-diagrams");
+    write(
+        &skill_dir.join("SKILL.md"),
+        "---\nname: concept-diagrams\ndescription: Generate diagrams\nversion: 0.1.0\nauthor: Nous\nplatforms: [linux, macos, windows]\nmetadata:\n  hermes:\n    tags: [diagrams, svg]\n    related_skills: [architecture-diagram]\n---\n",
+    );
+    write(
+        &skill_dir.join("templates").join("template.html"),
+        "<html></html>",
+    );
+    write(&skill_dir.join("examples").join("flow.md"), "flow");
+
+    let skills = load_skills_ws(ws);
+    assert_eq!(skills.len(), 1);
+    let s = &skills[0];
+    assert_eq!(s.name, "concept-diagrams");
+    assert_eq!(s.version, "0.1.0");
+    assert_eq!(s.author.as_deref(), Some("Nous"));
+    assert_eq!(s.platforms, vec!["linux", "macos", "windows"]);
+    assert_eq!(s.tags, vec!["diagrams", "svg"]);
+    assert_eq!(s.related_skills, vec!["architecture-diagram"]);
+    assert_eq!(s.source_format, "hermes");
+    assert!(s.resources.iter().any(|p| p.ends_with("template.html")));
+    assert!(s.resources.iter().any(|p| p.ends_with("flow.md")));
+}
+
+#[test]
 fn parse_skill_md_without_frontmatter_returns_body() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("SKILL.md");
@@ -382,6 +436,49 @@ fn read_skill_resource_happy_path() {
     let got = read_workflow_resource(ws, "demo", Path::new("scripts/hello.sh"))
         .expect("read should succeed");
     assert_eq!(got, "#!/bin/sh\necho hi\n");
+}
+
+#[test]
+fn read_skill_resource_uses_directory_id_when_display_name_differs() {
+    let dir = tempfile::tempdir().unwrap();
+    let ws = dir.path();
+    let skill_dir = ws.join("skills").join("demo-slug");
+    write(
+        &skill_dir.join("SKILL.md"),
+        "---\nname: Demo Display\ndescription: test skill\n---\n",
+    );
+    write(&skill_dir.join("references").join("note.md"), "slug read");
+
+    let got = read_workflow_resource(ws, "demo-slug", Path::new("references/note.md"))
+        .expect("directory id should resolve");
+    assert_eq!(got, "slug read");
+}
+
+#[test]
+fn read_skill_resource_rejects_directory_name_collision() {
+    let dir = tempfile::tempdir().unwrap();
+    let ws = dir.path();
+
+    let named_demo = ws.join("skills").join("alpha");
+    write(
+        &named_demo.join("SKILL.md"),
+        "---\nname: demo\ndescription: display-name collision\n---\n",
+    );
+    write(&named_demo.join("references").join("note.md"), "alpha");
+
+    let slug_demo = ws.join("skills").join("demo");
+    write(
+        &slug_demo.join("SKILL.md"),
+        "---\nname: slug-demo\ndescription: slug collision\n---\n",
+    );
+    write(&slug_demo.join("references").join("note.md"), "demo");
+
+    let err = read_workflow_resource(ws, "demo", Path::new("references/note.md"))
+        .expect_err("ambiguous directory/name collision must be rejected");
+    assert!(
+        err.to_lowercase().contains("matches both"),
+        "unexpected error: {err}"
+    );
 }
 
 #[test]

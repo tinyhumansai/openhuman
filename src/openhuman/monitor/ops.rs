@@ -384,7 +384,7 @@ mod tests {
         store.clear().await;
         let response = start(
             MonitorStartRequest {
-                command: "printf '%1049600s\\n' x".into(),
+                command: "head -c 1200000 /dev/zero | tr '\\0' x".into(),
                 description: None,
                 timeout_ms: Some(2_000),
                 persistent: false,
@@ -413,7 +413,10 @@ mod tests {
         assert!(snapshot.output_bytes <= MAX_OUTPUT_BYTES);
         assert!(
             snapshot.dropped_bytes > 0,
-            "large monitor output should be dropped after the bound"
+            "large monitor output should be dropped after the bound (output_bytes={}, dropped_bytes={}, status={:?})",
+            snapshot.output_bytes,
+            snapshot.dropped_bytes,
+            snapshot.status
         );
     }
 }

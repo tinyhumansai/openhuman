@@ -96,3 +96,60 @@ describe('modelCouncilApi.runCouncil', () => {
     ).rejects.toThrow('all member models failed');
   });
 });
+
+describe('modelCouncilApi.answerMember', () => {
+  beforeEach(() => {
+    mockCallCoreRpc.mockReset();
+  });
+
+  it('calls openhuman.model_council_answer_member with a long timeout', async () => {
+    const member = { model: 'reasoning-v1', response: 'Paris.', error: null };
+    mockCallCoreRpc.mockResolvedValueOnce({ result: member, logs: ['answered'] });
+
+    await expect(
+      modelCouncilApi.answerMember({
+        question: 'What is the capital of France?',
+        model: 'reasoning-v1',
+        temperature: 0.2,
+      })
+    ).resolves.toEqual(member);
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.model_council_answer_member',
+      params: {
+        question: 'What is the capital of France?',
+        model: 'reasoning-v1',
+        temperature: 0.2,
+      },
+      timeoutMs: 180_000,
+    });
+  });
+});
+
+describe('modelCouncilApi.synthesizeCouncil', () => {
+  beforeEach(() => {
+    mockCallCoreRpc.mockReset();
+  });
+
+  it('calls openhuman.model_council_synthesize and unwraps the result', async () => {
+    mockCallCoreRpc.mockResolvedValueOnce({ result: RESULT, logs: ['synthesized'] });
+
+    await expect(
+      modelCouncilApi.synthesizeCouncil({
+        question: 'What is the capital of France?',
+        members: RESULT.members,
+        chair_model: 'chair-model',
+        temperature: 0.1,
+      })
+    ).resolves.toEqual(RESULT);
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.model_council_synthesize',
+      params: {
+        question: 'What is the capital of France?',
+        members: RESULT.members,
+        chair_model: 'chair-model',
+        temperature: 0.1,
+      },
+      timeoutMs: 180_000,
+    });
+  });
+});

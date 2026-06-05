@@ -284,6 +284,8 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("get_search_settings"),
         schemas("get_activity_level_settings"),
         schemas("update_activity_level_settings"),
+        schemas("get_memory_sync_settings"),
+        schemas("update_memory_sync_settings"),
         schemas("get_sandbox_settings"),
         schemas("update_sandbox_settings"),
     ]
@@ -446,6 +448,14 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("update_activity_level_settings"),
             handler: handle_update_activity_level_settings,
+        },
+        RegisteredController {
+            schema: schemas("get_memory_sync_settings"),
+            handler: handle_get_memory_sync_settings,
+        },
+        RegisteredController {
+            schema: schemas("update_memory_sync_settings"),
+            handler: handle_update_memory_sync_settings,
         },
         RegisteredController {
             schema: schemas("get_sandbox_settings"),
@@ -970,6 +980,25 @@ pub fn schemas(function: &str) -> ControllerSchema {
             description: "Set the agent activity level. Immediately updates the scheduler gate mode and persists the change.",
             inputs: vec![optional_string("level", "Activity level: off | minimal | moderate | active | always_on (or 0–4).")],
             outputs: vec![json_output("settings", "Updated activity level settings with cost estimates.")],
+        },
+        "get_memory_sync_settings" => ControllerSchema {
+            namespace: "config",
+            function: "get_memory_sync_settings",
+            description: "Get the global memory-sync cadence applied to all opted-in sources: stored value, resolved selected cadence, manual/default flags, the 24h default, and the preset options (4h/12h/24h).",
+            inputs: vec![],
+            outputs: vec![json_output("settings", "Memory sync schedule settings.")],
+        },
+        "update_memory_sync_settings" => ControllerSchema {
+            namespace: "config",
+            function: "update_memory_sync_settings",
+            description: "Set the global memory-sync cadence. Omit/null resets to the default; 0 means Manual only (auto-sync disabled); a positive value is seconds between syncs. Takes effect on the next scheduler tick.",
+            inputs: vec![FieldSchema {
+                name: "sync_interval_secs",
+                ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
+                comment: "Seconds between auto-syncs. null = default (24h); 0 = Manual only; n>0 = sync every n seconds.",
+                required: false,
+            }],
+            outputs: vec![json_output("settings", "Updated memory sync schedule settings.")],
         },
         "get_sandbox_settings" => ControllerSchema {
             namespace: "config",
@@ -1859,6 +1888,25 @@ fn handle_update_activity_level_settings(params: Map<String, Value>) -> Controll
             level: update.level,
         };
         to_json(config_rpc::load_and_apply_activity_level_settings(patch).await?)
+    })
+}
+
+#[derive(Debug, Deserialize)]
+struct MemorySyncSettingsUpdate {
+    sync_interval_secs: Option<u64>,
+}
+
+fn handle_get_memory_sync_settings(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move { to_json(config_rpc::get_memory_sync_settings().await?) })
+}
+
+fn handle_update_memory_sync_settings(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let update = deserialize_params::<MemorySyncSettingsUpdate>(params)?;
+        let patch = config_rpc::MemorySyncSettingsPatch {
+            sync_interval_secs: update.sync_interval_secs,
+        };
+        to_json(config_rpc::load_and_apply_memory_sync_settings(patch).await?)
     })
 }
 

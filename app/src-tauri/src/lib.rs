@@ -2239,16 +2239,18 @@ pub fn run() {
         deep_link_ipc::bind_and_listen()
     };
 
-    // CEF cache-lock preflight: if another OpenHuman instance holds the CEF
-    // user-data-dir SingletonLock, `cef_initialize` returns 0 and the vendored
-    // runtime panics (`left: 0, right: 1`). Catch the collision here and exit
-    // cleanly. Stale locks (PID dead) are removed so crashed processes don't
-    // block subsequent launches. macOS: issue #864. Linux: OPENHUMAN-TAURI-K1.
+    // CEF cache-lock preflight (macOS + Linux): if another OpenHuman instance
+    // holds the CEF user-data-dir SingletonLock, `cef_initialize` returns 0 and
+    // the vendored runtime used to panic (`left: 0, right: 1`). The common
+    // cause is a *sequential relaunch race* where the prior instance is still
+    // tearing down, so rather than exit on the first collision we wait
+    // (bounded, exponential backoff — the macOS/Linux analogue of the Windows
+    // pre-CEF wait) for the lock to clear, then proceed. If it is still held
+    // after the budget we exit cleanly (code 0). Stale locks (PID dead) are
+    // removed so crashed processes don't block launches. macOS: issue #864.
+    // Linux: OPENHUMAN-TAURI-K1. Sentry: TAURI-RUST-F.
     #[cfg(any(target_os = "macos", target_os = "linux"))]
-    if let Err(e) = cef_preflight::check_default_cache() {
-        eprintln!("\n[openhuman] {e}\n");
-        std::process::exit(1);
-    }
+    cef_preflight::wait_for_cache_release();
 
     let builder = {
         // Bypass macOS Keychain. Without this, every embedded service that

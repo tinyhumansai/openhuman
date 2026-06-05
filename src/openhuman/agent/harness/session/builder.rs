@@ -739,7 +739,7 @@ impl Agent {
                 .unwrap_or(config.default_temperature)
         );
 
-        Self::build_session_agent_inner(config, agent_id, target_def.as_ref(), None, None)
+        Self::build_session_agent_inner(config, agent_id, target_def.as_ref(), None, None, false)
     }
 
     /// Same as [`Self::from_config_for_agent`] but also appends a
@@ -771,6 +771,7 @@ impl Agent {
             target_def.as_ref(),
             Some(reflection_chunks),
             None,
+            false,
         )
     }
 
@@ -813,7 +814,58 @@ impl Agent {
             target_def.as_ref(),
             reflection_chunks,
             profile_prompt_suffix,
+            false,
         )
+    }
+
+    /// Constructs a council juror that runs the normal agent tool loop with
+    /// only read-only tools visible/executable.
+    ///
+    /// Model council calls need research/memory/search before a juror writes a
+    /// turn, but they must not mutate files, memory, schedules, wallets, or the
+    /// host. This constructor reuses the standard harness and provider wiring
+    /// while filtering the registry before tool specs and policy are built.
+    pub fn from_config_for_read_only_council_juror(
+        config: &Config,
+        juror_name: &str,
+        model_override: Option<String>,
+        temperature: Option<f64>,
+        prompt_suffix: String,
+    ) -> Result<Self> {
+        let mut agent = Self::build_session_agent_inner(
+            config,
+            "orchestrator",
+            None,
+            None,
+            Some(prompt_suffix),
+            true,
+        )?;
+        let safe_name: String = juror_name
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        agent.set_event_context(
+            format!("model-council-{safe_name}"),
+            "model_council_readonly",
+        );
+        agent.set_agent_definition_name(format!("model_council_{safe_name}"));
+        if let Some(model) = model_override
+            .map(|m| m.trim().to_string())
+            .filter(|m| !m.is_empty())
+        {
+            agent.model_name = model;
+        }
+        if let Some(temp) = temperature {
+            agent.temperature = temp;
+        }
+        agent.auto_save = false;
+        Ok(agent)
     }
 
     /// Internal constructor that consumes the optionally-resolved agent
@@ -833,6 +885,7 @@ impl Agent {
         target_def: Option<&crate::openhuman::agent::harness::definition::AgentDefinition>,
         reflection_chunks: Option<Vec<crate::openhuman::subconscious::SourceChunk>>,
         profile_prompt_suffix: Option<String>,
+        read_only_tools_only: bool,
     ) -> Result<Self> {
         let runtime: Arc<dyn host_runtime::RuntimeAdapter> =
             Arc::from(host_runtime::create_runtime(&config.runtime)?);
@@ -894,6 +947,19 @@ impl Agent {
                     );
                 }
             }
+        }
+
+        if read_only_tools_only {
+            let before = tools.len();
+            tools.retain(|tool| {
+                tool.permission_level() <= tools::PermissionLevel::ReadOnly
+                    && !matches!(tool.scope(), tools::ToolScope::CliRpcOnly)
+            });
+            log::info!(
+                "[agent::builder] read-only tool filter applied: before={} after={}",
+                before,
+                tools.len()
+            );
         }
 
         // Route the main agent's chat through the unified per-workload

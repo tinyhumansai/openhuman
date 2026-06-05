@@ -136,6 +136,11 @@ pub const PROJECTS_DIR_ENV_VAR: &str = "OPENHUMAN_PROJECTS_DIR";
 /// Environment override for the agent action sandbox directory.
 pub const ACTION_DIR_ENV_VAR: &str = "OPENHUMAN_ACTION_DIR";
 
+/// Environment override for the global memory-sync cadence (seconds).
+/// `0` means "Manual only". See issue #3302 and
+/// [`Config::memory_sync_interval_secs`].
+pub const MEMORY_SYNC_INTERVAL_SECS_ENV_VAR: &str = "OPENHUMAN_MEMORY_SYNC_INTERVAL_SECS";
+
 /// The agent's default **projects home** — a visible, read-write directory
 /// (`~/OpenHuman/projects`) where the coding agent creates and saves projects,
 /// kept distinct from the hidden internal state dir (`~/.openhuman/workspace`,
@@ -1439,6 +1444,24 @@ impl Config {
                     Err(_) => tracing::warn!(
                         value = %raw,
                         "invalid OPENHUMAN_MAX_ACTIONS_PER_HOUR ignored; expected an unsigned integer"
+                    ),
+                }
+            }
+        }
+
+        // Global memory-sync cadence override (#3302). `0` is honoured here
+        // (unlike the per-provider `OPENHUMAN_COMPOSIO_*_SYNC_INTERVAL_SECS`)
+        // because it carries the "Manual only" meaning. A non-numeric value
+        // is warned-and-ignored, leaving the persisted/None value intact.
+        if let Some(raw) = env.get(MEMORY_SYNC_INTERVAL_SECS_ENV_VAR) {
+            let trimmed = raw.trim();
+            if !trimmed.is_empty() {
+                match trimmed.parse::<u64>() {
+                    Ok(secs) => self.memory_sync_interval_secs = Some(secs),
+                    Err(_) => tracing::warn!(
+                        env = %MEMORY_SYNC_INTERVAL_SECS_ENV_VAR,
+                        value = %raw,
+                        "invalid memory-sync interval ignored; expected an unsigned integer (0 = manual)"
                     ),
                 }
             }

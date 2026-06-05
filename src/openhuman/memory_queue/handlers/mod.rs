@@ -23,7 +23,7 @@ use crate::openhuman::memory_store::content::{
     self as content_store, read as content_read, tags as content_tags,
 };
 use crate::openhuman::memory_tree::score;
-use crate::openhuman::memory_tree::score::embed::{build_write_embedder, pack_checked};
+use crate::openhuman::memory_tree::score::embed::{build_write_embedder, pack_checked, Embedder};
 use crate::openhuman::memory_tree::score::store as score_store;
 use crate::openhuman::memory_tree::tree::store as summary_store;
 use crate::openhuman::memory_tree::tree::{LeafRef, TreeFactory};
@@ -703,6 +703,89 @@ fn try_mark_summary_reembed_skipped(
     }
 }
 
+/// Read each row's stored source text, embed the readable bodies in **one
+/// batched call**, and classify per position exactly as the legacy per-row
+/// loop did. Generic over the chunk vs summary read/tombstone functions so
+/// both Phase-2 passes share one implementation.
+///
+/// Failure semantics are preserved verbatim from #1574 §6:
+/// - body read failure → log + persistent tombstone (`"body read failed: {e}"`)
+/// - embed wrong dim → log + tombstone (`"embed wrong dim"`)
+/// - embed error → log + tombstone (`"embed failed: {e}"`)
+///
+/// The single difference vs the old code is the embed call shape: one
+/// `embed_batch` (which collapses N provider round-trips into one for batch-
+/// capable providers, falling back to per-text internally) instead of N
+/// sequential `embed` awaits. Ordering is irrelevant — results are zipped
+/// back to their ids by position and folded into order-independent state.
+async fn reembed_collect(
+    config: &Config,
+    embedder: &dyn Embedder,
+    active_sig: &str,
+    ids: &[String],
+    label: &str,
+    read_body: impl Fn(&Config, &str) -> Result<String>,
+    mark_skipped: impl Fn(&Config, &str, &str, &str),
+) -> Result<Vec<(String, Vec<f32>)>> {
+    // Phase A: read bodies; persistently tombstone read failures so an
+    // unreadable row is attempted at most once per signature.
+    let mut readable: Vec<(&String, String)> = Vec::with_capacity(ids.len());
+    for id in ids {
+        match read_body(config, id) {
+            Ok(body) => readable.push((id, body)),
+            Err(e) => {
+                log::warn!(
+                    "[memory::jobs] reembed_backfill: {label} {id} body read failed: {e}; skipping (sig={active_sig})"
+                );
+                mark_skipped(config, id, active_sig, &format!("body read failed: {e}"));
+            }
+        }
+    }
+    if readable.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Phase B: one batched embed call. Scope `texts` so its borrow on
+    // `readable` ends before we consume `readable` below.
+    let results = {
+        let texts: Vec<&str> = readable.iter().map(|(_, body)| body.as_str()).collect();
+        embedder.embed_batch(&texts).await
+    };
+    if results.len() != readable.len() {
+        // `embed_batch`'s contract is one result per input position. A
+        // violation means we can't attribute results to ids. Returning an
+        // empty Vec here would make the handler write nothing yet still
+        // `Defer`, re-selecting the same ids forever — a non-converging
+        // chain. Surface it as an error so the chain terminates instead.
+        anyhow::bail!(
+            "reembed_backfill: {label} embed_batch returned {} results for {} texts (sig={active_sig})",
+            results.len(),
+            readable.len()
+        );
+    }
+
+    // Phase C: classify per position exactly as the legacy loop did.
+    let mut out: Vec<(String, Vec<f32>)> = Vec::with_capacity(readable.len());
+    for ((id, _body), result) in readable.into_iter().zip(results) {
+        match result {
+            Ok(v) if pack_checked(&v).is_ok() => out.push((id.clone(), v)),
+            Ok(_) => {
+                log::warn!(
+                    "[memory::jobs] reembed_backfill: {label} {id} embed wrong dim, skipping (sig={active_sig})"
+                );
+                mark_skipped(config, id, active_sig, "embed wrong dim");
+            }
+            Err(e) => {
+                log::warn!(
+                    "[memory::jobs] reembed_backfill: {label} {id} embed failed: {e}; skipping (sig={active_sig})"
+                );
+                mark_skipped(config, id, active_sig, &format!("embed failed: {e}"));
+            }
+        }
+    }
+    Ok(out)
+}
+
 async fn handle_reembed_backfill(config: &Config, job: &Job) -> Result<JobOutcome> {
     let payload: ReembedBackfillPayload =
         serde_json::from_str(&job.payload_json).context("parse ReembedBackfill payload")?;
@@ -820,78 +903,26 @@ async fn handle_reembed_backfill(config: &Config, job: &Job) -> Result<JobOutcom
                 return Ok(JobOutcome::Done);
             }
         };
-    let mut chunk_vecs: Vec<(String, Vec<f32>)> = Vec::new();
-    for id in &chunk_ids {
-        match content_read::read_chunk_body(config, id) {
-            Ok(body) => match embedder.embed(&body).await {
-                Ok(v) if pack_checked(&v).is_ok() => chunk_vecs.push((id.clone(), v)),
-                Ok(_) => {
-                    log::warn!(
-                        "[memory::jobs] reembed_backfill: chunk {id} embed wrong dim, skipping (sig={active_sig})"
-                    );
-                    try_mark_chunk_reembed_skipped(config, id, &active_sig, "embed wrong dim");
-                }
-                Err(e) => {
-                    log::warn!(
-                        "[memory::jobs] reembed_backfill: chunk {id} embed failed: {e}; skipping (sig={active_sig})"
-                    );
-                    try_mark_chunk_reembed_skipped(
-                        config,
-                        id,
-                        &active_sig,
-                        &format!("embed failed: {e}"),
-                    );
-                }
-            },
-            Err(e) => {
-                log::warn!(
-                    "[memory::jobs] reembed_backfill: chunk {id} body read failed: {e}; skipping (sig={active_sig})"
-                );
-                try_mark_chunk_reembed_skipped(
-                    config,
-                    id,
-                    &active_sig,
-                    &format!("body read failed: {e}"),
-                );
-            }
-        }
-    }
-    let mut summary_vecs: Vec<(String, Vec<f32>)> = Vec::new();
-    for id in &summary_ids {
-        match content_read::read_summary_body(config, id) {
-            Ok(body) => match embedder.embed(&body).await {
-                Ok(v) if pack_checked(&v).is_ok() => summary_vecs.push((id.clone(), v)),
-                Ok(_) => {
-                    log::warn!(
-                        "[memory::jobs] reembed_backfill: summary {id} embed wrong dim, skipping (sig={active_sig})"
-                    );
-                    try_mark_summary_reembed_skipped(config, id, &active_sig, "embed wrong dim");
-                }
-                Err(e) => {
-                    log::warn!(
-                        "[memory::jobs] reembed_backfill: summary {id} embed failed: {e}; skipping (sig={active_sig})"
-                    );
-                    try_mark_summary_reembed_skipped(
-                        config,
-                        id,
-                        &active_sig,
-                        &format!("embed failed: {e}"),
-                    );
-                }
-            },
-            Err(e) => {
-                log::warn!(
-                    "[memory::jobs] reembed_backfill: summary {id} body read failed: {e}; skipping (sig={active_sig})"
-                );
-                try_mark_summary_reembed_skipped(
-                    config,
-                    id,
-                    &active_sig,
-                    &format!("body read failed: {e}"),
-                );
-            }
-        }
-    }
+    let chunk_vecs = reembed_collect(
+        config,
+        embedder.as_ref(),
+        &active_sig,
+        &chunk_ids,
+        "chunk",
+        content_read::read_chunk_body,
+        try_mark_chunk_reembed_skipped,
+    )
+    .await?;
+    let summary_vecs = reembed_collect(
+        config,
+        embedder.as_ref(),
+        &active_sig,
+        &summary_ids,
+        "summary",
+        content_read::read_summary_body,
+        try_mark_summary_reembed_skipped,
+    )
+    .await?;
 
     // Phase 3 (one short tx): persist all collected vectors to the sidecar.
     chunk_store::with_connection(config, |conn| {
