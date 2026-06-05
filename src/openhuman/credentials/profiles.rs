@@ -59,10 +59,13 @@ const LOCK_TIMEOUT_MS: u64 = STALE_LOCK_AGE_MS + 5_000;
 
 /// Retry budget for the JSON write + rename in `write_persisted_locked`.
 /// Same shape as the lock-create call at the bottom of `acquire_lock` (which
-/// is what closed Sentry OPENHUMAN-TAURI-H1 / H8 in #1641 / #2085). 6 attempts
-/// at base 100ms doubles up to ~6.3s worst-case before surfacing. Sized to
-/// stay well inside `LOCK_TIMEOUT_MS` so concurrent acquire_lock callers
-/// never time out behind a single retry-loop owner.
+/// is what closed Sentry OPENHUMAN-TAURI-H1 / H8 in #1641 / #2085). With
+/// `attempts = 6`, `retry_with_backoff` issues at most 6 calls and sleeps
+/// 5 times between them (last failure breaks without sleeping):
+/// `100+200+400+800+1600 ≈ 3.1s per stage`, so the write and rename stages
+/// together sit at `≈6.2s` worst case. Sized to stay well inside
+/// `LOCK_TIMEOUT_MS = 35_000` so concurrent acquire_lock callers never time
+/// out behind a single retry-loop owner.
 const PERSIST_RETRY_ATTEMPTS: u32 = 6;
 const PERSIST_RETRY_BASE_MS: u64 = 100;
 
@@ -214,13 +217,22 @@ pub struct AuthProfilesStore {
     /// Whether the OS keychain is available on this machine.
     /// Cached at construction time to avoid repeated probes.
     use_keychain: bool,
-    /// `#[cfg(test)]` failure injection — when non-zero, the next retryable
-    /// FS call inside `write_persisted_locked` consumes one count and returns
-    /// a `__TEST_TRANSIENT__` error so the `is_transient_fs_error` classifier
-    /// treats it as retryable (`src/openhuman/util.rs:618`). Production
-    /// binaries never see this field.
+    /// `#[cfg(test)]` failure injection for the **write** stage of
+    /// `write_persisted_locked`. When non-zero, the next call inside the
+    /// `fs::write(tmp)` retry loop consumes one count and returns a
+    /// `__TEST_TRANSIENT__` error so `is_transient_fs_error` treats it as
+    /// retryable (`src/openhuman/util.rs:618`). Production binaries never
+    /// see this field.
     #[cfg(test)]
-    force_transient_failures: Arc<AtomicUsize>,
+    force_transient_failures_write: Arc<AtomicUsize>,
+    /// `#[cfg(test)]` failure injection for the **rename** stage of
+    /// `write_persisted_locked`. Separate counter from the write stage so a
+    /// test can exercise the rename retry loop without first having to drain
+    /// failures through the write stage (see PR #3364 review feedback —
+    /// the headline retry path was line-covered but not behaviour-covered
+    /// before this split).
+    #[cfg(test)]
+    force_transient_failures_rename: Arc<AtomicUsize>,
 }
 
 impl AuthProfilesStore {
@@ -263,7 +275,9 @@ impl AuthProfilesStore {
             user_id,
             use_keychain,
             #[cfg(test)]
-            force_transient_failures: Arc::new(AtomicUsize::new(0)),
+            force_transient_failures_write: Arc::new(AtomicUsize::new(0)),
+            #[cfg(test)]
+            force_transient_failures_rename: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -966,7 +980,7 @@ impl AuthProfilesStore {
             PERSIST_RETRY_ATTEMPTS,
             PERSIST_RETRY_BASE_MS,
             || {
-                self.consume_test_transient_failure()?;
+                self.consume_test_transient_failure_write()?;
                 fs::write(&tmp_path, &json).context("write auth profile tmp")
             },
         )
@@ -977,12 +991,12 @@ impl AuthProfilesStore {
             )
         })?;
 
-        retry_with_backoff(
+        let rename_result = retry_with_backoff(
             "replace auth profile store",
             PERSIST_RETRY_ATTEMPTS,
             PERSIST_RETRY_BASE_MS,
             || {
-                self.consume_test_transient_failure()?;
+                self.consume_test_transient_failure_rename()?;
                 fs::rename(&tmp_path, &self.path).context("rename auth profile tmp -> store")
             },
         )
@@ -991,45 +1005,79 @@ impl AuthProfilesStore {
                 "Failed to replace auth profile store at {}",
                 self.path.display()
             )
-        })?;
+        });
 
-        Ok(())
+        if rename_result.is_err() {
+            // Best-effort orphan cleanup: `tmp_path` is `…tmp.{pid}.{nanos}`
+            // — unique per call — so a permanently-failing rename otherwise
+            // leaks one tmp file per `app_state_snapshot` poll (~2s cadence)
+            // under sustained Windows AV / Search-Indexer holds. Cleaning
+            // here keeps the directory tidy; the cleanup itself can fail
+            // (the same AV that blocked the rename may block the unlink),
+            // which is why we deliberately drop the result.
+            let _ = fs::remove_file(&tmp_path);
+        }
+
+        rename_result
     }
 
-    /// Consume one test-injected transient FS failure if any are queued.
-    /// No-op in production builds.
+    /// Consume one test-injected transient FS failure for the **write**
+    /// stage if any are queued. No-op in production builds.
     #[cfg(test)]
-    fn consume_test_transient_failure(&self) -> Result<()> {
-        let remaining = self.force_transient_failures.load(Ordering::SeqCst);
-        if remaining == 0 {
-            return Ok(());
-        }
-        self.force_transient_failures.fetch_sub(1, Ordering::SeqCst);
-        Err(anyhow::anyhow!(
-            "__TEST_TRANSIENT__ injected transient FS failure"
-        ))
+    fn consume_test_transient_failure_write(&self) -> Result<()> {
+        consume_one(&self.force_transient_failures_write)
+    }
+
+    /// Consume one test-injected transient FS failure for the **rename**
+    /// stage if any are queued. No-op in production builds.
+    #[cfg(test)]
+    fn consume_test_transient_failure_rename(&self) -> Result<()> {
+        consume_one(&self.force_transient_failures_rename)
     }
 
     #[cfg(not(test))]
     #[inline(always)]
-    fn consume_test_transient_failure(&self) -> Result<()> {
+    fn consume_test_transient_failure_write(&self) -> Result<()> {
         Ok(())
     }
 
-    /// Queue `n` test-only forced transient FS failures. The next `n`
-    /// retryable calls inside `write_persisted_locked` return a
-    /// `__TEST_TRANSIENT__` error before the underlying FS op runs; the
-    /// retry helper treats them as retryable.
-    #[cfg(test)]
-    pub(super) fn force_next_transient_failures(&self, n: usize) {
-        self.force_transient_failures.store(n, Ordering::SeqCst);
+    #[cfg(not(test))]
+    #[inline(always)]
+    fn consume_test_transient_failure_rename(&self) -> Result<()> {
+        Ok(())
     }
 
-    /// Test introspection: how many forced transient failures are still
-    /// queued. Lets tests verify the retry helper drained the queue.
+    /// Queue `n` test-only forced transient FS failures for the write
+    /// stage. The next `n` calls inside the `fs::write(tmp)` retry loop
+    /// return a `__TEST_TRANSIENT__` error before the underlying FS op
+    /// runs; the retry helper treats them as retryable.
     #[cfg(test)]
-    pub(super) fn remaining_forced_failures(&self) -> usize {
-        self.force_transient_failures.load(Ordering::SeqCst)
+    pub(super) fn force_next_write_failures(&self, n: usize) {
+        self.force_transient_failures_write
+            .store(n, Ordering::SeqCst);
+    }
+
+    /// Queue `n` test-only forced transient FS failures for the rename
+    /// stage. Separate from the write counter so tests can exercise the
+    /// rename retry loop in isolation (PR #3364 review feedback).
+    #[cfg(test)]
+    pub(super) fn force_next_rename_failures(&self, n: usize) {
+        self.force_transient_failures_rename
+            .store(n, Ordering::SeqCst);
+    }
+
+    /// Test introspection: how many forced write-stage failures are still
+    /// queued.
+    #[cfg(test)]
+    pub(super) fn remaining_forced_write_failures(&self) -> usize {
+        self.force_transient_failures_write.load(Ordering::SeqCst)
+    }
+
+    /// Test introspection: how many forced rename-stage failures are still
+    /// queued.
+    #[cfg(test)]
+    pub(super) fn remaining_forced_rename_failures(&self) -> usize {
+        self.force_transient_failures_rename.load(Ordering::SeqCst)
     }
 
     fn encrypt_optional(&self, value: Option<&str>) -> Result<Option<String>> {
@@ -1407,6 +1455,21 @@ fn default_schema_version() -> u32 {
 
 fn default_now_rfc3339() -> String {
     Utc::now().to_rfc3339()
+}
+
+/// Decrement an `AtomicUsize` failure-injection counter by one if it is
+/// non-zero, returning a `__TEST_TRANSIENT__` error so `is_transient_fs_error`
+/// classifies the failure as retryable. Used by both per-stage consumers in
+/// `write_persisted_locked` (test-only).
+#[cfg(test)]
+fn consume_one(counter: &AtomicUsize) -> Result<()> {
+    if counter.load(Ordering::SeqCst) == 0 {
+        return Ok(());
+    }
+    counter.fetch_sub(1, Ordering::SeqCst);
+    Err(anyhow::anyhow!(
+        "__TEST_TRANSIENT__ injected transient FS failure"
+    ))
 }
 
 fn parse_profile_kind(value: &str) -> Result<AuthProfileKind> {
