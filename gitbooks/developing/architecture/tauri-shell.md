@@ -158,6 +158,20 @@ From **`workspace_paths.rs`** (closes `#1402`). These commands accept workspace-
 | `reveal_workspace_path`  | Reveal an existing workspace file or directory in the OS file manager. |
 | `preview_workspace_text` | Read a capped UTF-8 text preview from an existing workspace file.      |
 
+### Push-to-talk (PTT) hotkey + overlay
+
+Registered in **`lib.rs`** (`ptt_hotkeys.rs` + `ptt_overlay.rs`). These commands manage the global push-to-talk shortcut and the floating overlay window.
+
+| Command                | Signature                                      | Purpose                                                                                                                                                            |
+| ---------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `register_ptt_hotkey`  | `(shortcut: String) -> Result<(), String>`     | Register (or re-register) a global hotkey for push-to-talk. Emits Tauri events `ptt://start { session_id }` (key pressed) and `ptt://stop { session_id }` (key released). Returns an error string if the shortcut conflicts with dictation or if the OS rejects it (e.g. Wayland, Accessibility permission required on macOS). |
+| `unregister_ptt_hotkey`| `() -> Result<(), String>`                     | Unregister the current PTT hotkey and tear down the overlay window.                                                                                                |
+| `show_ptt_overlay`     | `(active: bool, session_id: u64) -> ()`        | Show (`active: true`) or hide (`active: false`) the floating PTT overlay window. The window is focus-stealing-free (`focus: false`). Called by `PttHotkeyManager.tsx` via `app/src/utils/tauriCommands/ptt.ts`. |
+
+**Event flow:** `register_ptt_hotkey` wires the OS hotkey to fire `ptt://start` / `ptt://stop` Tauri events that `PttHotkeyManager.tsx` subscribes to via `@tauri-apps/api/event`. The manager forwards them into the `pttService` state machine which drives the audio capture → transcribe → chat-send pipeline.
+
+**Conflict detection:** `register_ptt_hotkey` checks for overlap with the active dictation shortcuts before registering. If a conflict is detected it returns `"ConflictsWithDictation(<shortcut>)"` without registering anything, and the settings panel surfaces this as `pttSettings.errorConflictsWithDictation`.
+
 ### Synthetic input main-thread executor (native registry, not `invoke`)
 
 Registered in **`lib.rs`** at startup under the event-bus native-request method

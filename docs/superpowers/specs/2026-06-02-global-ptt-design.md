@@ -293,7 +293,7 @@ LUFS-normalized to roughly match the existing in-app notification sound. Played 
 
 #### i18n
 
-New keys under a `pttSettings` / `pttOverlay` namespace in `app/src/lib/i18n/en.ts`, real translations added to all 12 non-English locale files (`ar`, `bn`, `de`, `es`, `fr`, `hi`, `id`, `it`, `ko`, `pl`, `pt`, `ru`, `zh-CN`). `pnpm i18n:check` and `pnpm i18n:english:check` gate this.
+New keys under a `pttSettings` / `pttOverlay` namespace in `app/src/lib/i18n/en.ts`, real translations added to all 13 non-English locale files (`ar`, `bn`, `de`, `es`, `fr`, `hi`, `id`, `it`, `ko`, `pl`, `pt`, `ru`, `zh-CN`). `pnpm i18n:check` and `pnpm i18n:english:check` gate this.
 
 ---
 
