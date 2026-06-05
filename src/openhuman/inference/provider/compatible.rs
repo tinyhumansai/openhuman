@@ -1124,6 +1124,11 @@ impl OpenAiCompatibleProvider {
             native_request.tools.as_ref().map_or(0, |t| t.len()),
         );
 
+        // Captured at request send so the empty-2xx-stream diagnostic
+        // below can report elapsed_ms — a fast empty stream points at a
+        // backend reject, a slow one at an upstream stall / timeout.
+        let stream_started_at = std::time::Instant::now();
+
         let response = self
             .apply_auth_header(
                 self.http_client()
@@ -1245,9 +1250,15 @@ impl OpenAiCompatibleProvider {
         let mut buffer = String::new();
         let mut repeat_detector = StreamRepeatDetector::new();
         let mut degenerate_repeat = false;
+        // Forensic counters for the empty-2xx-stream diagnostic below
+        // (issue #3335 / #3386). Both are append-only, never read by
+        // request path logic — strictly observability.
+        let mut sse_chunks_parsed: usize = 0;
+        let mut raw_bytes_received: usize = 0;
 
         'stream: while let Some(item) = bytes_stream.next().await {
             let bytes = item?;
+            raw_bytes_received += bytes.len();
             buffer.push_str(&String::from_utf8_lossy(&bytes));
 
             // SSE events are separated by "\n\n"; lines within an event
@@ -1270,7 +1281,10 @@ impl OpenAiCompatibleProvider {
                     }
 
                     let chunk: StreamChunkResponse = match serde_json::from_str(data) {
-                        Ok(v) => v,
+                        Ok(v) => {
+                            sse_chunks_parsed += 1;
+                            v
+                        }
                         Err(e) => {
                             log::debug!(
                                 "[stream] {} skipping unparseable chunk: {} — data={}",
@@ -1466,6 +1480,42 @@ impl OpenAiCompatibleProvider {
             thinking_accum.chars().count(),
             tool_call_count,
         );
+
+        // Issue #3335 / #3386 forensic signal. The streaming chat call
+        // completed with HTTP 2xx but delivered zero visible text, zero
+        // thinking, and zero tool calls. This is the upstream shape that
+        // collapses to `AgentError::EmptyProviderResponse` and gets
+        // rendered to the user as "The model returned an empty
+        // response" with the wrong remediation. Most likely causes:
+        //   (a) backend closed the SSE cleanly under credit exhaustion
+        //       (no `[stream] streaming API error` breadcrumb fires
+        //       because status was 200) — common on the OpenHuman
+        //       managed route under #3386,
+        //   (b) backend's upstream LLM provider stalled / timed out
+        //       and the backend forwarded an empty stream instead of
+        //       propagating the upstream error,
+        //   (c) a genuine degenerate model output (rare on hosted
+        //       reasoning models; more common on community quants).
+        // Logged at warn so it lands in Sentry breadcrumbs even after
+        // `AgentError::skips_sentry()` (PR #2790) silences the parent
+        // event. Correlate by elapsed_ms (fast == reject, slow ==
+        // stall), sse_chunks (0 == no SSE at all, >0 == backend
+        // streamed metadata-only chunks), has_usage (the upstream
+        // counted tokens but delivered no content), and
+        // has_openhuman_meta (managed backend reported routing info).
+        if text_accum.is_empty() && thinking_accum.is_empty() && tool_call_count == 0 {
+            let elapsed_ms = stream_started_at.elapsed().as_millis() as u64;
+            log::warn!(
+                "[stream] {} empty 2xx stream — model={} elapsed_ms={} sse_chunks={} raw_bytes={} has_usage={} has_openhuman_meta={}",
+                self.name,
+                native_request.model,
+                elapsed_ms,
+                sse_chunks_parsed,
+                raw_bytes_received,
+                last_usage.is_some(),
+                last_openhuman.is_some(),
+            );
+        }
 
         // Aggregate the collected tool calls into the unified response
         // shape. We reuse `parse_native_response` by building an

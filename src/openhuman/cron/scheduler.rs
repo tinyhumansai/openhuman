@@ -52,7 +52,16 @@ fn agent_error_to_user_message(err: &AgentError) -> &'static str {
             "The agent stopped after too many tool iterations. Raise the iteration cap in Settings \u{2192} AI \u{2192} LLM or simplify the task."
         }
         AgentError::EmptyProviderResponse { .. } => {
-            "The model returned an empty response. Try a different model or check your local provider in Settings \u{2192} AI \u{2192} LLM."
+            // Issue #3335: the prior copy named a "local provider"
+            // remedy that doesn't exist on the Managed route. This
+            // shorter form (≤120 chars per the
+            // `agent_error_to_user_message_canned_strings_are_short`
+            // contract, for clean notification-drawer rendering) names
+            // the two highest-signal remedies — credits and model
+            // configuration. The richer three-remedy copy lives on the
+            // chat-surface side (`channels/providers/web_errors.rs`'s
+            // empty_response arm) where there's no drawer-width limit.
+            "Empty model response. Out of credits (Settings \u{2192} Billing) or try a different model in Settings \u{2192} AI \u{2192} LLM."
         }
         AgentError::CompactionFailed { .. } => {
             "Automatic history compaction failed. The next run will start with a fresh context."

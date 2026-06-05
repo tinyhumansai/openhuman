@@ -811,6 +811,33 @@ fn agent_error_to_user_message_classifies_max_iterations() {
 }
 
 #[test]
+fn agent_error_to_user_message_classifies_empty_provider_response_for_3335() {
+    // Issue #3335: the cron-path copy must stay in lock-step with the
+    // web-channel `empty_response` arm — names the credits / billing
+    // remedy explicitly and drops the misleading "local provider"
+    // misdirect that broke remediation for Managed users.
+    let err = AgentError::EmptyProviderResponse { iteration: 1 };
+    let msg = agent_error_to_user_message(&err);
+    assert!(
+        msg.contains("Settings \u{2192} Billing"),
+        "must point at billing for credit exhaustion: {msg}"
+    );
+    assert!(
+        !msg.contains("local provider"),
+        "must not claim a local provider exists: {msg}"
+    );
+    assert!(
+        msg.contains("different model"),
+        "must keep the model-switch remedy: {msg}"
+    );
+    assert!(
+        msg.contains("Settings \u{2192} AI \u{2192} LLM"),
+        "must keep the provider-config deep link: {msg}"
+    );
+    assert_ne!(msg, AGENT_JOB_USER_FAILURE_MESSAGE);
+}
+
+#[test]
 fn agent_error_to_user_message_classifies_compaction_failed() {
     let err = AgentError::CompactionFailed {
         message: "summary failed".into(),
@@ -885,6 +912,13 @@ fn agent_error_to_user_message_canned_strings_are_short() {
             required_level: "x".into(),
             channel_max_level: "x".into(),
         },
+        // Issue #3335: EmptyProviderResponse was historically absent from
+        // this variants list — its old copy happened to fit, but nothing
+        // enforced it. The fix shipped a new copy that explicitly names
+        // the credits / billing remedy, which makes the length tradeoff
+        // active rather than incidental. Lock it in so a future copy
+        // change can't quietly grow past the drawer-render budget.
+        AgentError::EmptyProviderResponse { iteration: 0 },
     ];
     for v in &variants {
         let msg = agent_error_to_user_message(v);
