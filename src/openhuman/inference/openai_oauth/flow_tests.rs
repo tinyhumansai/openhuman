@@ -512,6 +512,9 @@ fn codex_import_user_state_errors_classify_as_expected() {
 /// RPC surfaces the actionable error.
 #[tokio::test]
 async fn inference_import_codex_cli_surfaces_error_when_auth_missing() {
+    let _env_lock = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let tmp = tempdir().unwrap();
     let config = test_config(&tmp);
     let _env_guard = EnvVarGuard::set("CODEX_HOME", tmp.path());
