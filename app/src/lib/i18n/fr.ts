@@ -1586,8 +1586,8 @@ const messages: TranslationMap = {
   'voice.externalProviders.apiKeyPlaceholder': 'sk-…',
   'voice.externalProviders.add': 'Add',
   'pttSettings.title': 'Appuyer pour parler',
-  'pttSettings.description':
-    'Maintiens une touche pour parler à OpenHuman pendant que tu utilises une autre application. Relâcher envoie l’enregistrement ; OpenHuman lit la réponse à voix haute.',
+  ‘pttSettings.description’:
+    ‘Maintiens une touche pour parler à OpenHuman pendant que tu utilises une autre application. Relâcher envoie l’enregistrement ; si « Lire les réponses » est activé, OpenHuman lit la réponse à voix haute.’,
   'pttSettings.shortcutLabel': 'Raccourci',
   'pttSettings.shortcutPlaceholder': 'Appuie sur une touche (par exemple F13)',
   'pttSettings.shortcutUnsetHint':

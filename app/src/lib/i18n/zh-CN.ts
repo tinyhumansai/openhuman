@@ -1466,7 +1466,7 @@ const messages: TranslationMap = {
   'voice.externalProviders.add': 'Add',
   'pttSettings.title': '按住说话',
   'pttSettings.description':
-    '在其他应用中时，按住按键即可与 OpenHuman 对话。松开按键发送录音；OpenHuman 会用语音读出回复。',
+    '在其他应用中时，按住按键即可与 OpenHuman 对话。松开按键发送录音；若已开启「朗读回复」，OpenHuman 会用语音读出回复。',
   'pttSettings.shortcutLabel': '快捷键',
   'pttSettings.shortcutPlaceholder': '按下一个键（例如 F13）',
   'pttSettings.shortcutUnsetHint': '按住说话已关闭 — 请选择一个快捷键来启用。',

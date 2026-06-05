@@ -1589,7 +1589,7 @@ const messages: TranslationMap = {
   'voice.externalProviders.add': 'Add',
   'pttSettings.title': 'Push-to-Talk',
   'pttSettings.description':
-    'Halte eine Taste gedrückt, um mit OpenHuman zu sprechen, während du eine andere App nutzt. Loslassen sendet die Aufnahme; OpenHuman antwortet per Sprachausgabe.',
+    'Halte eine Taste gedrückt, um mit OpenHuman zu sprechen, während du eine andere App nutzt. Loslassen sendet die Aufnahme; wenn „Antworten vorlesen" aktiviert ist, antwortet OpenHuman per Sprachausgabe.',
   'pttSettings.shortcutLabel': 'Tastenkürzel',
   'pttSettings.shortcutPlaceholder': 'Taste drücken (z. B. F13)',
   'pttSettings.shortcutUnsetHint':

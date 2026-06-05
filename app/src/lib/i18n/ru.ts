@@ -1561,7 +1561,7 @@ const messages: TranslationMap = {
   'voice.externalProviders.add': 'Add',
   'pttSettings.title': 'Нажми и говори',
   'pttSettings.description':
-    'Удерживайте клавишу, чтобы говорить с OpenHuman, пока вы находитесь в другом приложении. При отпускании запись отправляется; OpenHuman озвучит ответ.',
+    'Удерживайте клавишу, чтобы говорить с OpenHuman, пока вы находитесь в другом приложении. При отпускании запись отправляется; если включён параметр «Озвучивать ответы», OpenHuman озвучит ответ.',
   'pttSettings.shortcutLabel': 'Сочетание клавиш',
   'pttSettings.shortcutPlaceholder': 'Нажмите клавишу (например, F13)',
   'pttSettings.shortcutUnsetHint':

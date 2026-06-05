@@ -1553,7 +1553,7 @@ const messages: TranslationMap = {
   'voice.externalProviders.add': 'Add',
   'pttSettings.title': 'Tekan untuk bicara',
   'pttSettings.description':
-    'Tahan sebuah tombol untuk berbicara dengan OpenHuman saat kamu sedang di aplikasi lain. Lepas tombol untuk mengirim; OpenHuman akan menyuarakan balasannya.',
+    'Tahan sebuah tombol untuk berbicara dengan OpenHuman saat kamu sedang di aplikasi lain. Lepas tombol untuk mengirim; jika «Bacakan balasan» aktif, OpenHuman akan menyuarakan balasannya.',
   'pttSettings.shortcutLabel': 'Pintasan',
   'pttSettings.shortcutPlaceholder': 'Tekan sebuah tombol (mis. F13)',
   'pttSettings.shortcutUnsetHint':

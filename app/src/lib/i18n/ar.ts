@@ -1518,7 +1518,7 @@ const messages: TranslationMap = {
   'voice.externalProviders.add': 'Add',
   'pttSettings.title': 'اضغط للتحدث',
   'pttSettings.description':
-    'اضغط مفتاحًا باستمرار للتحدث إلى OpenHuman أثناء وجودك في تطبيق آخر. تحرير المفتاح يُرسل التسجيل، ثم ينطق OpenHuman الرد.',
+    'اضغط مفتاحًا باستمرار للتحدث إلى OpenHuman أثناء وجودك في تطبيق آخر. تحرير المفتاح يُرسل التسجيل؛ إذا كان «قراءة الردود» مفعَّلًا، ينطق OpenHuman الرد بصوت عالٍ.',
   'pttSettings.shortcutLabel': 'اختصار المفتاح',
   'pttSettings.shortcutPlaceholder': 'اضغط مفتاحًا (مثل F13)',
   'pttSettings.shortcutUnsetHint': 'اضغط للتحدث متوقف — اختر اختصارًا لتفعيله.',

@@ -1548,7 +1548,7 @@ const messages: TranslationMap = {
   'voice.externalProviders.add': 'Add',
   'pttSettings.title': 'दबाकर बोलें',
   'pttSettings.description':
-    'जब आप किसी दूसरे ऐप में हों तब OpenHuman से बात करने के लिए कोई कुंजी दबाए रखें। कुंजी छोड़ने पर रिकॉर्डिंग भेजी जाती है; OpenHuman उत्तर को बोलकर सुनाता है।',
+    'जब आप किसी दूसरे ऐप में हों तब OpenHuman से बात करने के लिए कोई कुंजी दबाए रखें। कुंजी छोड़ने पर रिकॉर्डिंग भेजी जाती है; अगर «उत्तर बोलकर सुनाएँ» चालू है तो OpenHuman उत्तर बोलकर सुनाता है।',
   'pttSettings.shortcutLabel': 'हॉटकी',
   'pttSettings.shortcutPlaceholder': 'कोई कुंजी दबाएँ (जैसे F13)',
   'pttSettings.shortcutUnsetHint': 'दबाकर बोलें बंद है — चालू करने के लिए कोई हॉटकी चुनें।',

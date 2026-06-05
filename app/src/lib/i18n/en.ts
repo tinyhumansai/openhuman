@@ -1901,7 +1901,7 @@ const en: TranslationMap = {
   // Push-to-talk (PTT)
   'pttSettings.title': 'Push-to-talk',
   'pttSettings.description':
-    "Hold a key to talk to OpenHuman while you're in another app. Releases the key to send; OpenHuman speaks the reply back.",
+    "Hold a key to talk to OpenHuman while you're in another app. Release the key to send; OpenHuman speaks the reply if 'Speak agent replies' is on.",
   'pttSettings.shortcutLabel': 'Hotkey',
   'pttSettings.shortcutPlaceholder': 'Press a key (e.g. F13)',
   'pttSettings.shortcutUnsetHint': 'Push-to-talk is off — pick a hotkey to enable.',

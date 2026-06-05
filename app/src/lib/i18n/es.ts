@@ -1583,7 +1583,7 @@ const messages: TranslationMap = {
   'voice.externalProviders.add': 'Add',
   'pttSettings.title': 'Pulsa para hablar',
   'pttSettings.description':
-    'Mantén pulsada una tecla para hablar con OpenHuman mientras estás en otra aplicación. Al soltarla se envía la grabación; OpenHuman dice la respuesta en voz alta.',
+    'Mantén pulsada una tecla para hablar con OpenHuman mientras estás en otra aplicación. Al soltarla se envía la grabación; si tienes activada la opción «Leer las respuestas», OpenHuman las dice en voz alta.',
   'pttSettings.shortcutLabel': 'Atajo de teclado',
   'pttSettings.shortcutPlaceholder': 'Pulsa una tecla (p. ej. F13)',
   'pttSettings.shortcutUnsetHint':

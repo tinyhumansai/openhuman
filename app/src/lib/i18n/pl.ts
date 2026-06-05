@@ -1569,7 +1569,7 @@ const messages: TranslationMap = {
   'voice.externalProviders.add': 'Dodaj',
   'pttSettings.title': 'Naciśnij, aby mówić',
   'pttSettings.description':
-    'Przytrzymaj klawisz, aby mówić do OpenHuman, gdy korzystasz z innej aplikacji. Zwolnienie klawisza wysyła nagranie; OpenHuman odczyta odpowiedź na głos.',
+    'Przytrzymaj klawisz, aby mówić do OpenHuman, gdy korzystasz z innej aplikacji. Zwolnienie klawisza wysyła nagranie; jeśli opcja „Czytaj odpowiedzi" jest włączona, OpenHuman odczyta odpowiedź na głos.',
   'pttSettings.shortcutLabel': 'Skrót klawiszowy',
   'pttSettings.shortcutPlaceholder': 'Naciśnij klawisz (np. F13)',
   'pttSettings.shortcutUnsetHint':

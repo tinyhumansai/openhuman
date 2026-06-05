@@ -1549,7 +1549,7 @@ const messages: TranslationMap = {
   'voice.externalProviders.add': 'Add',
   'pttSettings.title': 'চাপ দিয়ে কথা বলুন',
   'pttSettings.description':
-    'অন্য একটি অ্যাপে থাকার সময় OpenHuman-এর সাথে কথা বলতে একটি কী চেপে ধরে রাখুন। কী ছেড়ে দিলে রেকর্ডিং পাঠানো হয়; OpenHuman উত্তরটি জোরে পড়ে শোনায়।',
+    'অন্য একটি অ্যাপে থাকার সময় OpenHuman-এর সাথে কথা বলতে একটি কী চেপে ধরে রাখুন। কী ছেড়ে দিলে রেকর্ডিং পাঠানো হয়; «উত্তর পড়ে শোনাও» চালু থাকলে OpenHuman উত্তরটি জোরে পড়ে শোনায়।',
   'pttSettings.shortcutLabel': 'হটকি',
   'pttSettings.shortcutPlaceholder': 'একটি কী চাপুন (যেমন F13)',
   'pttSettings.shortcutUnsetHint':
