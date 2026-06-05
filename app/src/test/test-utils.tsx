@@ -10,6 +10,7 @@ import { MemoryRouter } from 'react-router-dom';
 
 import { getCoreStateSnapshot } from '../lib/coreState/store';
 import { CoreStateContext } from '../providers/coreStateContext';
+import backendMeetReducer from '../store/backendMeetSlice';
 import channelConnectionsReducer from '../store/channelConnectionsSlice';
 import companionReducer from '../store/companionSlice';
 import connectivityReducer from '../store/connectivitySlice';
@@ -19,6 +20,7 @@ import mascotReducer from '../store/mascotSlice';
 import personaReducer from '../store/personaSlice';
 import { pttReducer } from '../store/pttSlice';
 import socketReducer from '../store/socketSlice';
+import themeReducer from '../store/themeSlice';
 
 /**
  * Creates a fresh Redux store for testing.
@@ -28,9 +30,11 @@ import socketReducer from '../store/socketSlice';
  * VoicePanel reads + dispatches against this slice, and useSelector
  * would throw on a missing reducer without a stub here. `persona` is wired
  * in for the same reason (issue #2345): PersonaPanel reads + dispatches
- * against it.
+ * against it. `backendMeet` is wired in for MeetingBotsCard which reads
+ * meeting status from this slice.
  */
 const testRootReducer = combineReducers({
+  backendMeet: backendMeetReducer,
   channelConnections: channelConnectionsReducer,
   companion: companionReducer,
   connectivity: connectivityReducer,
@@ -40,6 +44,7 @@ const testRootReducer = combineReducers({
   persona: personaReducer,
   ptt: pttReducer,
   socket: socketReducer,
+  theme: themeReducer,
 });
 
 export function createTestStore(preloadedState?: Record<string, unknown>) {

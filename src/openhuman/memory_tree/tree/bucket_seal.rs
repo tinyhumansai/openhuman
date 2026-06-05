@@ -41,8 +41,13 @@ use chrono::{DateTime, Utc};
 use rusqlite::Transaction;
 
 use crate::openhuman::config::Config;
+use crate::openhuman::memory::util::redact::redact;
 use crate::openhuman::memory_store::chunks::store::with_connection;
-use crate::openhuman::memory_store::content::{atomic::stage_summary, SummaryComposeInput};
+use crate::openhuman::memory_store::content::{
+    atomic::stage_summary_with_layout,
+    paths::{slugify_source_id, SummaryDiskLayout},
+    SummaryComposeInput,
+};
 use crate::openhuman::memory_store::trees::types::{
     Buffer, SummaryNode, Tree, TreeKind, INPUT_TOKEN_BUDGET, OUTPUT_TOKEN_BUDGET, SUMMARY_FANOUT,
 };
@@ -50,7 +55,7 @@ use crate::openhuman::memory_tree::score::embed::build_write_embedder;
 use crate::openhuman::memory_tree::score::extract::EntityExtractor;
 use crate::openhuman::memory_tree::score::resolver::canonicalise;
 use crate::openhuman::memory_tree::summarise::{
-    fallback_summary, summarise, SummaryContext, SummaryInput,
+    fallback_summary, summarise, SummaryContext, SummaryInput, SummaryOutput,
 };
 use crate::openhuman::memory_tree::tree::factory::TreeFactory;
 use crate::openhuman::memory_tree::tree::registry::new_summary_id;
@@ -533,6 +538,11 @@ pub(crate) async fn seal_one_level(
         sealed_at: now,
         deleted: false,
         embedding,
+        // Generic seal path (chat/email source trees + the cross-document
+        // merge tier) is document-agnostic. The per-document subtree seal
+        // (Notion) sets these via its own seal entrypoint in Task #2.
+        doc_id: None,
+        version_ms: None,
     };
 
     crate::core::event_bus::publish_global(
@@ -651,12 +661,22 @@ pub(crate) async fn seal_one_level(
              continuing seal without vault defaults"
         );
     }
-    let staged = stage_summary(&content_root, &compose_input, &scope_slug).with_context(|| {
-        format!(
-            "stage_summary failed for {}; seal aborted, buffer stays unsealed for retry",
-            node.id
-        )
-    })?;
+    // Merge-tier nodes (document source trees, level ≥ MERGE_LEVEL_BASE) land
+    // under `source-<scope>/merge/`; everything else (chat/email + the
+    // per-doc subtree is sealed via seal_explicit_children, not here) uses the
+    // flat layout.
+    let layout = if node.level >= MERGE_LEVEL_BASE {
+        SummaryDiskLayout::Merge
+    } else {
+        SummaryDiskLayout::Standard
+    };
+    let staged = stage_summary_with_layout(&content_root, &compose_input, &scope_slug, layout)
+        .with_context(|| {
+            format!(
+                "stage_summary failed for {}; seal aborted, buffer stays unsealed for retry",
+                node.id
+            )
+        })?;
     log::debug!(
         "[tree::bucket_seal] staged summary {} → {}",
         node.id,
@@ -923,6 +943,438 @@ fn hydrate_summary_inputs(config: &Config, summary_ids: &[String]) -> Result<Vec
         });
     }
     Ok(out)
+}
+
+// ── Document-aware sealing (Notion etc.) ────────────────────────────────
+//
+// Document source trees keep ONE physical `mem_tree_trees` row per
+// connection (e.g. `notion:{connection_id}`), but inside it each document
+// rolls up to its own **doc-root** summary, and those doc-roots merge into
+// the connection root. To get that shape without re-keying the shared
+// `(tree, level)` buffer — the exact path chat/email seal through — the
+// per-document subtree is built as an **isolated side-cascade**
+// ([`seal_document_subtree`]) that never touches a shared buffer or the
+// tree root. Only the cross-document **merge tier** uses the shared buffer
+// + the existing [`cascade_all_from`] engine, starting at
+// [`MERGE_LEVEL_BASE`].
+//
+// Versioning is forward-only: editing a Notion page calls
+// [`seal_document_subtree`] again with a higher `version_ms`, producing a
+// *new* doc-root that is appended to the merge buffer alongside the old
+// one. Nothing is rewritten or tombstoned; retrieval keeps `max(version_ms)`
+// per `doc_id` at read time (see the retrieval layer).
+
+/// Level offset where the cross-document merge tier lives inside a document
+/// source tree.
+///
+/// Per-document subtrees occupy small levels (1, 2, …) and are built by
+/// [`seal_document_subtree`] as a side-cascade that never enters a shared
+/// `(tree, level)` buffer. The merge tier — which summarises *across*
+/// documents — uses the shared buffer and the existing cascade engine,
+/// starting here. The wide gap guarantees per-doc nodes (small levels) and
+/// merge nodes (≥ `MERGE_LEVEL_BASE`) can never collide on `(tree, level)`,
+/// and keeps `Tree.root_id` / `max_level` pointing at a merge node.
+pub const MERGE_LEVEL_BASE: u32 = 1_000;
+
+/// Hard cap on how many children one per-document summary fans in, so a
+/// single huge document can't produce a doc-root with thousands of direct
+/// children. Independent of [`SUMMARY_FANOUT`] (which gates the merge tier).
+const DOC_SUBTREE_MAX_FANIN: usize = 32;
+
+/// Build (or re-build, for a new version) one document's subtree and merge
+/// its doc-root into the connection tree.
+///
+/// `doc_id` is the document identity (the chunk `source_id`, e.g.
+/// `notion:{conn}:{page_id}`); `version_ms` is the document version
+/// (`last_edited_time` epoch-ms). `chunk_ids` are this version's leaf chunk
+/// ids, already persisted in `mem_tree_chunks`.
+///
+/// Steps:
+/// 1. Cascade `chunk_ids` upward (token-budget batches at L0, count batches
+///    above) until a **single doc-root** remains — force-sealed even for a
+///    one-chunk document so it always surfaces as a doc-root, never loose
+///    leaves. Every node is tagged `(doc_id, version_ms)`.
+/// 2. Append the doc-root to the connection tree's merge buffer at
+///    [`MERGE_LEVEL_BASE`] and run the existing cascade so it folds into the
+///    connection root once `SUMMARY_FANOUT` doc-roots accumulate.
+///
+/// Returns the doc-root summary id. Idempotent re-runs for the *same*
+/// `(doc_id, version_ms, chunk_ids)` produce a new doc-root (new ids); the
+/// caller (Notion sync) only invokes this when a new revision is admitted.
+pub async fn seal_document_subtree(
+    config: &Config,
+    tree: &Tree,
+    doc_id: &str,
+    version_ms: Option<i64>,
+    chunk_ids: &[String],
+    strategy: &LabelStrategy,
+) -> Result<String> {
+    if chunk_ids.is_empty() {
+        anyhow::bail!(
+            "[tree::bucket_seal] seal_document_subtree: empty chunk set tree_id={} doc_id_hash={}",
+            tree.id,
+            redact(doc_id)
+        );
+    }
+    log::debug!(
+        "[tree::bucket_seal] seal_document_subtree tree_id={} doc_id_hash={} version_ms={:?} chunks={}",
+        tree.id,
+        redact(doc_id),
+        version_ms,
+        chunk_ids.len()
+    );
+
+    // 1. Per-document side-cascade to a single doc-root.
+    let mut current_level: u32 = 0;
+    let mut current_ids: Vec<String> = chunk_ids.to_vec();
+    let mut doc_root: Option<SummaryNode> = None;
+
+    loop {
+        let batches = if current_level == 0 {
+            batch_leaves_by_token_budget(config, &current_ids)?
+        } else {
+            batch_by_count(&current_ids, DOC_SUBTREE_MAX_FANIN)
+        };
+
+        let mut next_ids: Vec<String> = Vec::with_capacity(batches.len());
+        for batch in &batches {
+            let node = seal_explicit_children(
+                config,
+                tree,
+                current_level,
+                batch,
+                Some(doc_id),
+                version_ms,
+                strategy,
+            )
+            .await?;
+            next_ids.push(node.id.clone());
+            doc_root = Some(node);
+        }
+
+        current_level += 1;
+        current_ids = next_ids;
+        if current_ids.len() <= 1 {
+            break;
+        }
+    }
+
+    let doc_root = doc_root.ok_or_else(|| {
+        anyhow::anyhow!(
+            "[tree::bucket_seal] seal_document_subtree produced no doc-root tree_id={} doc_id_hash={}",
+            tree.id,
+            redact(doc_id)
+        )
+    })?;
+    log::debug!(
+        "[tree::bucket_seal] doc-root sealed tree_id={} doc_id_hash={} root_id={} level={}",
+        tree.id,
+        redact(doc_id),
+        doc_root.id,
+        doc_root.level
+    );
+
+    // 2. Feed the doc-root into the cross-document merge tier and cascade
+    //    using the untouched shared engine.
+    append_to_buffer(
+        config,
+        &tree.id,
+        MERGE_LEVEL_BASE,
+        &doc_root.id,
+        doc_root.token_count as i64,
+        doc_root.time_range_start,
+    )?;
+    let merge_sealed = cascade_all_from(config, tree, MERGE_LEVEL_BASE, None, strategy).await?;
+    log::debug!(
+        "[tree::bucket_seal] merge cascade tree_id={} doc_id_hash={} merge_sealed={}",
+        tree.id,
+        redact(doc_id),
+        merge_sealed.len()
+    );
+
+    Ok(doc_root.id)
+}
+
+/// Greedily batch leaf chunk ids so each batch stays under
+/// [`INPUT_TOKEN_BUDGET`] (and at most [`DOC_SUBTREE_MAX_FANIN`] children).
+/// A single oversized chunk forms its own batch.
+fn batch_leaves_by_token_budget(config: &Config, chunk_ids: &[String]) -> Result<Vec<Vec<String>>> {
+    use crate::openhuman::memory_store::chunks::store::get_chunk;
+
+    let mut batches: Vec<Vec<String>> = Vec::new();
+    let mut current: Vec<String> = Vec::new();
+    let mut token_sum: i64 = 0;
+
+    for id in chunk_ids {
+        let tokens = match get_chunk(config, id)? {
+            Some(c) => c.token_count as i64,
+            None => {
+                log::warn!(
+                    "[tree::bucket_seal] batch_leaves_by_token_budget: missing chunk {id} — skipping"
+                );
+                continue;
+            }
+        };
+        let would_exceed = token_sum + tokens > INPUT_TOKEN_BUDGET as i64
+            || current.len() >= DOC_SUBTREE_MAX_FANIN;
+        if would_exceed && !current.is_empty() {
+            batches.push(std::mem::take(&mut current));
+            token_sum = 0;
+        }
+        current.push(id.clone());
+        token_sum += tokens;
+    }
+    if !current.is_empty() {
+        batches.push(current);
+    }
+    if batches.is_empty() {
+        // All chunks were missing — surface as one empty batch caller rejects.
+        anyhow::bail!("[tree::bucket_seal] batch_leaves_by_token_budget: no resolvable chunks");
+    }
+    Ok(batches)
+}
+
+/// Split ids into fixed-size batches of at most `max` (used above L0 in the
+/// per-document cascade).
+fn batch_by_count(ids: &[String], max: usize) -> Vec<Vec<String>> {
+    ids.chunks(max.max(1)).map(|c| c.to_vec()).collect()
+}
+
+/// Seal an **explicit** set of child ids into one summary at `level + 1`,
+/// tagging it with `doc_id` / `version_ms`. Unlike [`seal_one_level`] this
+/// does NOT touch any shared `(tree, level)` buffer and does NOT advance the
+/// tree root/max_level — it is the per-document side-cascade primitive. It
+/// reuses the same hydrate → summarise → label → embed → stage → persist
+/// pipeline so doc-subtree summaries are indistinguishable from regular
+/// summaries except for their `doc_id` / `version_ms` tags.
+async fn seal_explicit_children(
+    config: &Config,
+    tree: &Tree,
+    level: u32,
+    child_ids: &[String],
+    doc_id: Option<&str>,
+    version_ms: Option<i64>,
+    strategy: &LabelStrategy,
+) -> Result<SummaryNode> {
+    let target_level = level + 1;
+    let inputs = hydrate_inputs(config, level, child_ids)?;
+    if inputs.is_empty() {
+        anyhow::bail!(
+            "[tree::bucket_seal] seal_explicit_children: empty inputs tree_id={} level={}",
+            tree.id,
+            level
+        );
+    }
+
+    let time_range_start = inputs
+        .iter()
+        .map(|i| i.time_range_start)
+        .min()
+        .unwrap_or_else(Utc::now);
+    let time_range_end = inputs
+        .iter()
+        .map(|i| i.time_range_end)
+        .max()
+        .unwrap_or_else(Utc::now);
+    let score = inputs
+        .iter()
+        .map(|i| i.score)
+        .fold(f32::NEG_INFINITY, f32::max)
+        .max(0.0);
+
+    let ctx = SummaryContext {
+        tree_id: &tree.id,
+        tree_kind: tree.kind,
+        target_level,
+        token_budget: OUTPUT_TOKEN_BUDGET,
+    };
+    // Single-input passthrough: if a doc rolls up from exactly one node that
+    // already fits the summary budget (the common case — a Notion page that is
+    // a single chunk), there is nothing to summarise. Emit the input verbatim
+    // as the doc-root content and SKIP the LLM call entirely. The doc-root is
+    // still a real summary node (so versioning, the merge tier, and the
+    // read-time latest-version filter all keep working uniformly) — it just
+    // isn't a redundant paraphrase of one chunk, and costs no inference.
+    // A single oversized input still goes through the summariser (it genuinely
+    // needs compression).
+    let output = if inputs.len() == 1 && inputs[0].token_count <= OUTPUT_TOKEN_BUDGET {
+        log::debug!(
+            "[tree::bucket_seal] doc-subtree passthrough (1 input, no LLM) tree_id={} doc_id_hash={} level={}",
+            tree.id,
+            doc_id.map(redact).unwrap_or_default(),
+            level
+        );
+        let only = &inputs[0];
+        SummaryOutput {
+            content: only.content.clone(),
+            token_count: only.token_count,
+            entities: Vec::new(),
+            topics: Vec::new(),
+            input_tokens: 0,
+            output_tokens: 0,
+            charged_amount_usd: None,
+        }
+    } else {
+        match summarise(config, &inputs, &ctx).await {
+            Ok(o) => o,
+            Err(e) => {
+                log::warn!(
+                    "[tree::bucket_seal] doc-subtree summarise failed tree_id={} doc_id_hash={} level={}: {e:#} — fallback",
+                    tree.id, doc_id.map(redact).unwrap_or_default(), level,
+                );
+                fallback_summary(&inputs, ctx.token_budget)
+            }
+        }
+    };
+
+    let (node_entities, node_topics) = resolve_labels(strategy, &inputs, &output.content).await?;
+
+    // Embed before any write so a failure aborts cleanly — same contract as
+    // seal_one_level. No-provider configs seal embedding-less.
+    let embed_input = truncate_for_embed(&output.content, 1_000);
+    let embedding: Option<Vec<f32>> =
+        match build_write_embedder(config).context("build embedder during doc-subtree seal")? {
+            None => None,
+            Some(embedder) => {
+                let v = embedder.embed(&embed_input).await.map_err(|e| {
+                    let failure = crate::openhuman::memory_tree::health::classify_embed_error(&e);
+                    anyhow::Error::new(failure).context(format!(
+                        "embed doc-subtree summary tree_id={} level={}: {e:#}",
+                        tree.id, level
+                    ))
+                })?;
+                crate::openhuman::memory_tree::score::embed::pack_checked(&v).context(format!(
+                    "doc-subtree embed dim check tree_id={} level={}",
+                    tree.id, level
+                ))?;
+                Some(v)
+            }
+        };
+
+    let now = Utc::now();
+    let summary_id = new_summary_id(target_level);
+    let node = SummaryNode {
+        id: summary_id.clone(),
+        tree_id: tree.id.clone(),
+        tree_kind: tree.kind,
+        level: target_level,
+        parent_id: None,
+        child_ids: child_ids.to_vec(),
+        content: output.content,
+        token_count: output.token_count,
+        entities: node_entities,
+        topics: node_topics,
+        time_range_start,
+        time_range_end,
+        score,
+        sealed_at: now,
+        deleted: false,
+        embedding,
+        doc_id: doc_id.map(|s| s.to_string()),
+        version_ms,
+    };
+
+    // Stage the .md file before opening the write tx (same fail-fast as
+    // seal_one_level). Doc-subtree nodes land under
+    // `source-<scope>/docs/<doc_slug>/v-<version_ms>/…` so the vault mirrors
+    // the logical shape. Wikilink overrides are left unset.
+    let tree_factory = TreeFactory::from_tree(tree);
+    let summary_tree_kind = tree_factory.summary_tree_kind();
+    let scope_slug = tree_factory.scope_slug();
+    let compose_input = SummaryComposeInput {
+        summary_id: &node.id,
+        tree_kind: summary_tree_kind,
+        tree_id: &node.tree_id,
+        tree_scope: &tree.scope,
+        level: node.level,
+        child_ids: &node.child_ids,
+        child_basenames: None,
+        child_count: node.child_ids.len(),
+        time_range_start: node.time_range_start,
+        time_range_end: node.time_range_end,
+        sealed_at: node.sealed_at,
+        body: &node.content,
+    };
+    let content_root = config.memory_tree_content_root();
+    if let Err(err) =
+        crate::openhuman::memory_store::content::obsidian::ensure_obsidian_defaults(&content_root)
+    {
+        log::warn!(
+            "[tree::bucket_seal] ensure_obsidian_defaults failed during doc-subtree seal: {err:#}"
+        );
+    }
+    let doc_slug = doc_id.map(slugify_source_id);
+    let layout = match doc_slug.as_deref() {
+        Some(slug) => SummaryDiskLayout::DocSubtree {
+            doc_slug: slug,
+            version_ms,
+        },
+        None => SummaryDiskLayout::Standard,
+    };
+    let staged = stage_summary_with_layout(&content_root, &compose_input, &scope_slug, layout)
+        .with_context(|| {
+            format!(
+                "stage_summary failed for doc-subtree node {}; seal aborted",
+                node.id
+            )
+        })?;
+
+    // Persist the summary row + backlink children — NO buffer / tree-root
+    // mutation (those belong to the merge tier).
+    let node_for_tx = node.clone();
+    let level_for_tx = level;
+    let summary_id_for_tx = summary_id.clone();
+    let signature = crate::openhuman::memory_store::chunks::store::tree_active_signature(config);
+    with_connection(config, move |conn| {
+        let tx = conn.unchecked_transaction()?;
+        store::insert_summary_tx(&tx, &node_for_tx, Some(&staged), &signature)?;
+        crate::openhuman::memory_tree::score::store::index_summary_entity_ids_tx(
+            &tx,
+            &node_for_tx.entities,
+            &node_for_tx.id,
+            node_for_tx.score,
+            now.timestamp_millis(),
+            Some(&node_for_tx.tree_id),
+        )?;
+        for child_id in &node_for_tx.child_ids {
+            if level_for_tx == 0 {
+                // Unconditional re-point (no `IS NULL` guard): a byte-identical
+                // body chunk reused across doc versions upserts to the SAME row
+                // (content-addressed id), so its single `parent_summary_id` must
+                // follow the newest version. Doc subtrees seal newest-last, so
+                // last-write-wins leaves the backlink on the latest doc-root —
+                // the version retrieval surfaces — instead of stranding it on
+                // the first (now-superseded) version's summary.
+                tx.execute(
+                    "UPDATE mem_tree_chunks SET parent_summary_id = ?1 \
+                       WHERE id = ?2",
+                    rusqlite::params![&summary_id_for_tx, child_id],
+                )
+                .context("backlink chunk to doc-subtree summary")?;
+            } else {
+                tx.execute(
+                    "UPDATE mem_tree_summaries SET parent_id = ?1 \
+                       WHERE id = ?2 AND parent_id IS NULL",
+                    rusqlite::params![&summary_id_for_tx, child_id],
+                )
+                .context("backlink summary to doc-subtree parent")?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    })?;
+
+    log::info!(
+        "[tree::bucket_seal] doc-subtree sealed tree_id={} doc_id_hash={} level={}→{} summary_id={} children={}",
+        tree.id,
+        doc_id.map(redact).unwrap_or_default(),
+        level,
+        target_level,
+        summary_id,
+        child_ids.len()
+    );
+
+    Ok(node)
 }
 
 #[cfg(test)]

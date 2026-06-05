@@ -18,6 +18,7 @@ const SERVER_1: InstalledServer = {
   args: ['-y', 'acme/fs-server'],
   env_keys: [],
   installed_at: 1_700_000_000,
+  enabled: true,
 };
 
 const SERVER_2: InstalledServer = {
@@ -30,6 +31,7 @@ const SERVER_2: InstalledServer = {
   args: ['-y', 'acme/db-server'],
   env_keys: ['DB_URL'],
   installed_at: 1_700_000_001,
+  enabled: true,
 };
 
 const STATUS_CONNECTED: ConnStatus = {

@@ -334,7 +334,6 @@ fn prompt_context<'a>(
         personality_soul_md: None,
         personality_memory_md: None,
         personality_roster: Vec::new(),
-        workflows: &[],
     }
 }
 
@@ -390,6 +389,7 @@ fn parent_context(workspace: PathBuf, provider: Arc<ScriptedProvider>) -> Parent
         session_key: "1700000000_parent".to_string(),
         session_parent_prefix: Some("root-chain".to_string()),
         on_progress: None,
+        run_queue: None,
     }
 }
 

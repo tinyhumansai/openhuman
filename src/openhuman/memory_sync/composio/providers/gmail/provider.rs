@@ -258,7 +258,7 @@ impl ComposioProvider for GmailProvider {
         // legitimately want the larger ceiling — and the cap only
         // kicks in when we have a prior `last_sync_at_ms` to compare
         // against, so first-ever syncs are unaffected.
-        let max_pages = match reason {
+        let base_max_pages = match reason {
             SyncReason::ConnectionCreated => MAX_PAGES_PER_SYNC,
             _ => match state.last_sync_at_ms {
                 Some(last_ms) if sync::now_ms().saturating_sub(last_ms) < RECENT_SYNC_WINDOW_MS => {
@@ -274,6 +274,36 @@ impl ComposioProvider for GmailProvider {
             },
         };
 
+        // ctx.max_items: route through ItemCap so the page ceiling, mid-page
+        // clamp, and post-page hard stop all share one source of truth.
+        let mut cap = super::super::helpers::ItemCap::new(ctx.max_items);
+        let max_pages = cap.max_pages(page_size, base_max_pages);
+        if ctx.max_items.is_some() && max_pages < base_max_pages {
+            tracing::debug!(
+                connection_id = %connection_id,
+                max_items = ?ctx.max_items,
+                page_size,
+                effective_max_pages = max_pages,
+                "[composio:gmail] [memory_sync] applying max_items page cap from source config"
+            );
+        }
+
+        // ctx.sync_depth_days: on first sync (no cursor), add an after:<epoch> floor.
+        let depth_floor_filter: Option<String> = if state.cursor.is_none() {
+            ctx.sync_depth_days.map(|days| {
+                let floor_secs = super::super::helpers::epoch_floor_from_depth(days);
+                tracing::debug!(
+                    connection_id = %connection_id,
+                    sync_depth_days = days,
+                    floor_epoch_secs = floor_secs,
+                    "[composio:gmail] [memory_sync] applying sync_depth_days floor on first sync"
+                );
+                floor_secs.to_string()
+            })
+        } else {
+            None
+        };
+
         let mut total_fetched: usize = 0;
         let mut total_persisted: usize = 0;
         let mut total_requests: u32 = 0;
@@ -281,6 +311,7 @@ impl ComposioProvider for GmailProvider {
         let mut newest_id: Option<String> = None;
         let mut page_token: Option<String> = None;
         let mut stop_reason: &'static str = "max_pages";
+        let mut hit_cap_boundary = false;
 
         for page_num in 0..max_pages {
             if state.budget_exhausted() {
@@ -321,6 +352,9 @@ impl ComposioProvider for GmailProvider {
                         "[composio:gmail] using day-level filter from cursor (epoch parse failed)"
                     );
                 }
+            } else if let Some(ref floor) = depth_floor_filter {
+                // First sync with sync_depth_days: apply the epoch floor.
+                query.push_str(&format!(" after:{floor}"));
             }
 
             let mut args = json!({
@@ -453,6 +487,11 @@ impl ComposioProvider for GmailProvider {
                 new_messages.push(msg.clone());
             }
 
+            // ctx.max_items precise cap: clamp the per-page batch before ingest
+            // so a single page larger than the budget is never over-persisted.
+            cap.clamp_batch(&mut new_messages);
+            cap.clamp_batch(&mut pending_synced_ids);
+
             // Single batched ingest into memory_tree. Chunk IDs are
             // content-hashed so re-ingest of the same message is an
             // idempotent UPSERT at the SQL layer; per-message dedup above
@@ -483,6 +522,7 @@ impl ComposioProvider for GmailProvider {
                         // persist path. n is the chunk count which we log
                         // for diagnostic purposes only.
                         total_persisted += new_messages.len();
+                        cap.record(new_messages.len());
                         tracing::debug!(
                             page = page_num,
                             new_messages = new_messages.len(),
@@ -512,6 +552,18 @@ impl ComposioProvider for GmailProvider {
                 break;
             }
 
+            // ctx.max_items hard stop: break once the per-source cap is reached.
+            if cap.is_reached() {
+                tracing::debug!(
+                    page = page_num,
+                    total_persisted,
+                    "[composio:gmail] [memory_sync] max_items reached, stopping pagination"
+                );
+                stop_reason = "max_items";
+                hit_cap_boundary = true;
+                break;
+            }
+
             // Check for next page token.
             page_token = sync::extract_page_token(&resp.data);
             if page_token.is_none() {
@@ -522,8 +574,17 @@ impl ComposioProvider for GmailProvider {
         }
 
         // ── Step 5: advance cursor and save state ───────────────────
-        if let Some(new_cursor) = newest_date {
-            state.advance_cursor(&new_cursor);
+        // Hold the cursor on a cap-truncated pass so the next sync re-scans the unseen tail.
+        if !hit_cap_boundary {
+            if let Some(new_cursor) = newest_date {
+                state.advance_cursor(&new_cursor);
+            }
+        } else {
+            tracing::warn!(
+                connection_id = %connection_id,
+                "[composio:gmail] holding cursor — cap-truncated pass; next sync will re-scan \
+                 the unseen tail"
+            );
         }
         if let Some(ref freshest) = newest_id {
             state.set_last_seen_id(freshest);
@@ -616,3 +677,7 @@ impl ComposioProvider for GmailProvider {
         Ok(())
     }
 }
+
+// Cap/date-floor math lives in the shared `super::super::helpers` module
+// (`ItemCap`, `pages_for_max_items`, `epoch_floor_from_depth`) so every provider
+// shares one implementation — see that module for the unit tests.

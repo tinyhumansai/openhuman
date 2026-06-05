@@ -8,7 +8,7 @@ fn test_client() -> Arc<IntegrationClient> {
 fn search_tool_metadata_and_schema() {
     let tool = TinyFishSearchTool::new(test_client());
     assert_eq!(tool.name(), "tinyfish_search");
-    assert_eq!(tool.category(), ToolCategory::Skill);
+    assert_eq!(tool.category(), ToolCategory::Workflow);
     assert_eq!(tool.permission_level(), PermissionLevel::ReadOnly);
     assert!(tool.description().contains("TinyFish"));
 
@@ -37,7 +37,7 @@ async fn search_rejects_empty_query() {
 fn fetch_tool_metadata_and_schema() {
     let tool = TinyFishFetchTool::new(test_client());
     assert_eq!(tool.name(), "tinyfish_fetch");
-    assert_eq!(tool.category(), ToolCategory::Skill);
+    assert_eq!(tool.category(), ToolCategory::Workflow);
     assert_eq!(tool.permission_level(), PermissionLevel::ReadOnly);
     assert!(tool.description().contains("JavaScript-heavy"));
 
@@ -75,7 +75,7 @@ async fn fetch_rejects_non_string_url() {
 fn agent_run_tool_metadata_and_schema() {
     let tool = TinyFishAgentRunTool::new(test_client());
     assert_eq!(tool.name(), "tinyfish_agent_run");
-    assert_eq!(tool.category(), ToolCategory::Skill);
+    assert_eq!(tool.category(), ToolCategory::Workflow);
     assert_eq!(tool.permission_level(), PermissionLevel::Execute);
     assert!(tool.description().contains("browser automation"));
 

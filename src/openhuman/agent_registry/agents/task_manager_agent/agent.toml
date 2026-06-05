@@ -1,0 +1,55 @@
+id = "task_manager_agent"
+display_name = "Task Manager Agent"
+delegate_name = "manage_tasks"
+when_to_use = "Task-board and task-source specialist — owns todo cards, proactive task-source feeds, workflow bundles, artifacts, task evidence, and status updates. Use when the user asks the agent to create, edit, route, fetch, approve, reject, clear, remove, or summarize tasks/workflows/sources."
+temperature = 0.2
+max_iterations = 8
+iteration_policy = "extended"
+sandbox_mode = "none"
+agent_tier = "worker"
+omit_identity = true
+omit_memory_context = false
+omit_safety_preamble = false
+omit_skills_catalog = true
+omit_profile = false
+omit_memory_md = false
+
+[model]
+hint = "agentic"
+
+[tools]
+named = [
+    "todo_list",
+    "todo_add",
+    "todo_edit",
+    "todo_update_status",
+    "todo_decide_plan",
+    "todo_remove",
+    "todo_replace",
+    "todo_clear",
+    "todowrite",
+    "update_task",
+    "thread_task_board_read",
+    "thread_task_board_write",
+    "task_source_list",
+    "task_source_get",
+    "task_source_fetch",
+    "task_source_list_tasks",
+    "task_source_preview_filter",
+    "task_source_status",
+    "task_source_add",
+    "task_source_update",
+    "task_source_remove",
+    "agent_workflow_list",
+    "agent_workflow_read",
+    "agent_workflow_phase_info",
+    "agent_workflow_create",
+    "agent_workflow_uninstall",
+    "workflow_load",
+    "workflow_phase",
+    "artifact_list",
+    "artifact_get",
+    "artifact_delete",
+    "current_time",
+    "ask_user_clarification",
+]

@@ -20,11 +20,14 @@ const hoisted = vi.hoisted(() => ({
   updateTitle: vi.fn(),
   appendMessage: vi.fn(),
   chatSend: vi.fn(),
+  listAgentDefinitions: vi.fn(),
   todosList: vi.fn(),
   todosAdd: vi.fn(),
   todosEdit: vi.fn(),
   todosUpdateStatus: vi.fn(),
+  todosSetSessionThread: vi.fn(),
   todosRemove: vi.fn(),
+  navigate: vi.fn(),
   selectorResult: {
     chatRuntime: { taskBoardByThread: {} as Record<string, unknown> },
     thread: { threads: [] as unknown[] },
@@ -44,6 +47,10 @@ vi.mock('../../../services/api/threadApi', () => ({
 
 vi.mock('../../../services/chatService', () => ({ chatSend: hoisted.chatSend }));
 
+vi.mock('../../../services/api/agentLibraryApi', () => ({
+  agentLibraryApi: { listDefinitions: hoisted.listAgentDefinitions },
+}));
+
 vi.mock('../../../services/api/todosApi', () => ({
   TASK_SOURCES_THREAD_ID: 'task-sources',
   USER_TASKS_THREAD_ID: 'user-tasks',
@@ -52,6 +59,7 @@ vi.mock('../../../services/api/todosApi', () => ({
     add: hoisted.todosAdd,
     edit: hoisted.todosEdit,
     updateStatus: hoisted.todosUpdateStatus,
+    setSessionThread: hoisted.todosSetSessionThread,
     remove: hoisted.todosRemove,
   },
 }));
@@ -64,7 +72,7 @@ vi.mock('../../../store/hooks', () => ({
 
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
-  return { ...actual, useNavigate: () => vi.fn() };
+  return { ...actual, useNavigate: () => hoisted.navigate };
 });
 
 // Stub the composer so we can drive its `onCreated` callback without
@@ -104,12 +112,17 @@ vi.mock('../../../pages/conversations/components/TaskKanbanBoard', () => ({
     onMove,
     onDeleteCard,
     onWorkTask,
+    onViewSession,
   }: {
-    board: { threadId: string; cards: { id: string; title: string; status: string }[] };
+    board: {
+      threadId: string;
+      cards: { id: string; title: string; status: string; sessionThreadId?: string }[];
+    };
     headerTitleKey?: string;
     onMove?: (card: unknown, status: string) => void;
     onDeleteCard?: (card: unknown) => void;
     onWorkTask?: (card: unknown) => void;
+    onViewSession?: (card: unknown) => void;
   }) => (
     <div data-testid="kanban-stub">
       <span>{board.threadId}</span>
@@ -130,6 +143,11 @@ vi.mock('../../../pages/conversations/components/TaskKanbanBoard', () => ({
       {onWorkTask && (
         <button type="button" onClick={() => onWorkTask(board.cards[0])}>
           stub-work-task
+        </button>
+      )}
+      {onViewSession && (
+        <button type="button" onClick={() => onViewSession(board.cards[0])}>
+          stub-view-session
         </button>
       )}
     </div>
@@ -168,11 +186,14 @@ describe('IntelligenceTasksTab', () => {
     hoisted.updateTitle.mockReset();
     hoisted.appendMessage.mockReset();
     hoisted.chatSend.mockReset();
+    hoisted.listAgentDefinitions.mockReset();
     hoisted.todosList.mockReset();
     hoisted.todosAdd.mockReset();
     hoisted.todosEdit.mockReset();
     hoisted.todosUpdateStatus.mockReset();
+    hoisted.todosSetSessionThread.mockReset();
     hoisted.todosRemove.mockReset();
+    hoisted.navigate.mockReset();
     hoisted.selectorResult.chatRuntime.taskBoardByThread = {};
     hoisted.selectorResult.thread.threads = [];
     hoisted.selectorResult.agentProfiles.activeProfileId = 'agent-profile-1';
@@ -208,6 +229,30 @@ describe('IntelligenceTasksTab', () => {
       createdAt: '2026-01-01T00:00:00Z',
     });
     hoisted.chatSend.mockResolvedValue(undefined);
+    // The "Work" flow links the card to its session thread after starting it
+    // (`todosApi.setSessionThread(...).catch(...)`), so resolve it to a board
+    // by default — otherwise the awaited `.catch()` chain stalls the handler
+    // before it reaches chatSend.
+    hoisted.todosSetSessionThread.mockResolvedValue(makeBoard('user-tasks', []));
+    hoisted.listAgentDefinitions.mockResolvedValue([
+      {
+        id: 'researcher',
+        display_name: 'Researcher',
+        when_to_use: 'Use for focused research.',
+        tier: 'worker',
+        model: { kind: 'hint', value: 'reasoning' },
+        direct_tool_count: 1,
+        direct_tool_names: ['web_search'],
+        uses_wildcard_tools: false,
+        subagent_ids: [],
+        includes_profile: false,
+        includes_memory_md: false,
+        includes_memory_context: false,
+        can_run_as_user_facing_worker: true,
+        write_capable: false,
+        source: 'builtin',
+      },
+    ]);
     hoisted.todosList.mockImplementation((threadId: string) =>
       Promise.resolve(makeBoard(threadId, []))
     );
@@ -251,6 +296,10 @@ describe('IntelligenceTasksTab', () => {
     });
     expect(screen.getByText('No source tasks waiting.')).toBeInTheDocument();
     expect(hoisted.todosList).toHaveBeenCalledWith('task-sources');
+
+    // "Manage sources" jumps to the dedicated settings page.
+    fireEvent.click(screen.getByText('Manage sources'));
+    expect(hoisted.navigate).toHaveBeenCalledWith('/settings/task-sources');
   });
 
   test('refines a source task and approves it into the personal agent board', async () => {
@@ -341,6 +390,74 @@ describe('IntelligenceTasksTab', () => {
       })
     );
     expect(hoisted.todosUpdateStatus).toHaveBeenCalledWith('task-sources', 'source-1', 'done');
+  });
+
+  test('work flow still completes when linking the session thread fails', async () => {
+    hoisted.todosList.mockImplementation((threadId: string) =>
+      Promise.resolve(
+        threadId === 'user-tasks'
+          ? {
+              threadId,
+              cards: [
+                {
+                  id: 'personal-1',
+                  title: 'Linkless task',
+                  status: 'todo',
+                  order: 0,
+                  updatedAt: '2026-01-01T00:00:00Z',
+                },
+              ],
+              updatedAt: '2026-01-01T00:00:00Z',
+            }
+          : makeBoard(threadId, [])
+      )
+    );
+    // The session-thread link rejects; the work flow must fall back and still
+    // dispatch the agent turn.
+    hoisted.todosSetSessionThread.mockRejectedValue(new Error('link offline'));
+
+    vi.resetModules();
+    const Tab = await importTab();
+    renderTab(Tab);
+
+    await waitFor(() => expect(screen.getByText('Linkless task')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('stub-work-task'));
+
+    await waitFor(() => expect(hoisted.chatSend).toHaveBeenCalledTimes(1));
+  });
+
+  test('View work on a personal card opens its exact session thread', async () => {
+    hoisted.todosList.mockImplementation((threadId: string) =>
+      Promise.resolve(
+        threadId === 'user-tasks'
+          ? {
+              threadId,
+              cards: [
+                {
+                  id: 'personal-1',
+                  title: 'Worked card',
+                  status: 'in_progress',
+                  sessionThreadId: 'task-session-99',
+                  order: 0,
+                  updatedAt: '2026-01-01T00:00:00Z',
+                },
+              ],
+              updatedAt: '2026-01-01T00:00:00Z',
+            }
+          : makeBoard(threadId, [])
+      )
+    );
+
+    vi.resetModules();
+    const Tab = await importTab();
+    renderTab(Tab);
+
+    await waitFor(() => expect(screen.getByText('Worked card')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('stub-view-session'));
+
+    expect(hoisted.navigate).toHaveBeenCalledWith('/chat', {
+      state: { openThreadId: 'task-session-99' },
+    });
   });
 
   test('renders persisted agent boards from the turn-state list', async () => {
@@ -466,13 +583,55 @@ describe('IntelligenceTasksTab', () => {
       'personal-1',
       'in_progress'
     );
+    // chatSend is the last call in the work flow, after an extra `await`
+    // (session-thread link), so wait for it rather than asserting synchronously.
+    await waitFor(() =>
+      expect(hoisted.chatSend).toHaveBeenCalledWith(
+        expect.objectContaining({
+          threadId: 'thread-agent-task',
+          message: expect.stringContaining('Acceptance criteria:'),
+          model: 'reasoning-v1',
+          profileId: 'agent-profile-1',
+          locale: 'en',
+        })
+      )
+    );
+  });
+
+  test('starts a labeled task thread from an explicit library agent selection', async () => {
+    hoisted.todosUpdateStatus.mockResolvedValue(makeBoard('user-tasks', []));
+
+    vi.resetModules();
+    const Tab = await importTab();
+    renderTab(Tab);
+    await waitFor(() => {
+      expect(screen.getByText('Researcher')).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByPlaceholderText(/task for this agent/i), {
+      target: { value: 'Find the current API docs' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Run task/i }));
+
+    await waitFor(() =>
+      expect(hoisted.createNewThread).toHaveBeenCalledWith(['tasks', 'agent-library'])
+    );
+    expect(hoisted.appendMessage).toHaveBeenCalledWith(
+      'thread-agent-task',
+      expect.objectContaining({
+        content: expect.stringContaining('@agent:researcher'),
+        extraMetadata: expect.objectContaining({
+          source: 'agent-library',
+          explicitAgentId: 'researcher',
+        }),
+      })
+    );
     expect(hoisted.chatSend).toHaveBeenCalledWith(
       expect.objectContaining({
         threadId: 'thread-agent-task',
-        message: expect.stringContaining('Acceptance criteria:'),
+        message: expect.stringContaining('Find the current API docs'),
         model: 'reasoning-v1',
         profileId: 'agent-profile-1',
-        locale: 'en',
       })
     );
   });

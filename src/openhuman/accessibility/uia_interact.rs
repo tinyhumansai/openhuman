@@ -217,6 +217,9 @@ pub fn list(app_name: &str, filter: &str) -> Result<Vec<AXElement>, String> {
         out.push(AXElement {
             role: format!("{ct:?}"),
             label,
+            // TODO(windows): populate from UIA `IsEnabled` once verified on a
+            // Windows box; `None` = "assume enabled" (current behaviour).
+            enabled: None,
         });
     }
 

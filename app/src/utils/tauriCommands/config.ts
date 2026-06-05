@@ -452,18 +452,9 @@ export async function openhumanGetAgentPaths(): Promise<CommandResponse<AgentPat
 
 /** Partial update for the agent's editable filesystem roots (issue #3240). */
 export interface AgentPathsUpdate {
-  /**
-   * New absolute action sandbox path. An empty string clears the override and
-   * reverts to the default; omit the field to leave it unchanged.
-   */
   action_dir?: string;
 }
 
-/**
- * Update the agent's `action_dir` sandbox root. The backend validates the path
- * (must be absolute; auto-creates a missing directory; rejects the internal
- * workspace dir) and returns the refreshed {@link AgentPaths} payload.
- */
 export async function openhumanUpdateAgentPaths(
   update: AgentPathsUpdate
 ): Promise<CommandResponse<AgentPaths>> {
@@ -531,6 +522,53 @@ export async function openhumanUpdateSandboxSettings(
   }
   return await callCoreRpc<CommandResponse<ConfigSnapshot>>({
     method: CORE_RPC_METHODS.configUpdateSandboxSettings,
+    params: update,
+  });
+}
+
+// ── Memory sync schedule (#3302) ─────────────────────────────────────────────
+
+/** Global memory-sync schedule returned by config_get_memory_sync_settings. */
+export interface MemorySyncSettings {
+  /** Stored value: null = use the default cadence, 0 = Manual only, n>0 = seconds. */
+  sync_interval_secs: number | null;
+  /** Resolved cadence to highlight in the UI (the default when unset; 0 for manual). */
+  selected_secs: number;
+  /** True when the user picked "Manual only" (stored value is 0). */
+  is_manual: boolean;
+  /** True when no explicit choice is stored (falls back to `default_secs`). */
+  is_default: boolean;
+  /** The effective default cadence (seconds) applied when unset (24h). */
+  default_secs: number;
+  /** Preset cadences (seconds) offered in the UI: 4h / 12h / 24h. */
+  presets: number[];
+}
+
+/** Partial update — set `sync_interval_secs` to `null` to reset to default. */
+export interface MemorySyncSettingsUpdate {
+  /** null = default, 0 = Manual only, n>0 = sync every n seconds. */
+  sync_interval_secs?: number | null;
+}
+
+export async function openhumanGetMemorySyncSettings(): Promise<
+  CommandResponse<MemorySyncSettings>
+> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<MemorySyncSettings>>({
+    method: CORE_RPC_METHODS.configGetMemorySyncSettings,
+  });
+}
+
+export async function openhumanUpdateMemorySyncSettings(
+  update: MemorySyncSettingsUpdate
+): Promise<CommandResponse<MemorySyncSettings>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<MemorySyncSettings>>({
+    method: CORE_RPC_METHODS.configUpdateMemorySyncSettings,
     params: update,
   });
 }

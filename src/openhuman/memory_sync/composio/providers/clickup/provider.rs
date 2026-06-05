@@ -261,12 +261,42 @@ impl ComposioProvider for ClickUpProvider {
             _ => PAGE_SIZE,
         };
 
+        // ctx.max_items: route through ItemCap — page ceiling, mid-page
+        // per-item break, and post-page hard stop all share one source of truth.
+        let mut cap = super::super::helpers::ItemCap::new(ctx.max_items);
+        let effective_max_pages = cap.max_pages(page_size, MAX_PAGES_PER_WORKSPACE);
+        if ctx.max_items.is_some() && effective_max_pages < MAX_PAGES_PER_WORKSPACE {
+            tracing::debug!(
+                connection_id = %connection_id,
+                max_items = ?ctx.max_items,
+                effective_max_pages,
+                "[composio:clickup] [memory_sync] applying max_items page cap"
+            );
+        }
+
+        // ctx.sync_depth_days: oldest allowed date_updated for client-side skip.
+        // ClickUp's `date_updated` field is a millisecond-epoch string, so the
+        // floor must also be epoch-millis (not RFC3339) for the lexicographic
+        // compare in `select_pending` to work correctly.
+        let oldest_allowed_time: Option<String> = ctx.sync_depth_days.map(|days| {
+            let floor = chrono::Utc::now() - chrono::Duration::days(days as i64);
+            let s = floor.timestamp_millis().to_string();
+            tracing::debug!(
+                connection_id = %connection_id,
+                sync_depth_days = days,
+                oldest_allowed_ms = %s,
+                "[composio:clickup] [memory_sync] applying sync_depth_days floor"
+            );
+            s
+        });
+
         let mut total_fetched: usize = 0;
         let mut total_persisted: usize = 0;
         let mut newest_updated: Option<String> = None;
+        let mut hit_cap_boundary = false;
 
         'workspaces: for workspace_id in &workspaces {
-            for page_num in 0..MAX_PAGES_PER_WORKSPACE {
+            for page_num in 0..effective_max_pages {
                 if state.budget_exhausted() {
                     tracing::info!(
                         workspace_id = %workspace_id,
@@ -327,8 +357,26 @@ impl ComposioProvider for ClickUpProvider {
                 }
 
                 // ── Per-item dedup + bounded-concurrency ingest ─────
-                let (pending, hit_cursor_boundary) =
+                let (mut pending, mut hit_cursor_boundary) =
                     select_pending(&tasks, &state, &mut newest_updated);
+
+                // ctx.sync_depth_days: drop items updated before the depth floor. `pending` is
+                // in descending timestamp order, so truncate at the first item below the floor
+                // and signal cursor-boundary so pagination stops.
+                if let Some(ref floor) = oldest_allowed_time {
+                    if let Some(cut) = pending.iter().position(|p| {
+                        p.updated
+                            .as_deref()
+                            .map(|t| t < floor.as_str())
+                            .unwrap_or(false)
+                    }) {
+                        pending.truncate(cut);
+                        hit_cursor_boundary = true;
+                    }
+                }
+
+                // ctx.max_items: clamp the dedup'd batch to the remaining budget before ingest.
+                cap.clamp_batch(&mut pending);
 
                 let ingestor = MemoryTreeIngestor {
                     config: ctx.config.as_ref(),
@@ -341,6 +389,13 @@ impl ComposioProvider for ClickUpProvider {
                     state.mark_synced(key);
                 }
                 total_persisted += outcome.persisted;
+                cap.record(outcome.persisted);
+
+                // ctx.max_items precise cap: once the per-source cap is hit, stop paginating.
+                if cap.is_reached() {
+                    hit_cap_boundary = true;
+                    break 'workspaces;
+                }
 
                 if hit_cursor_boundary {
                     tracing::debug!(
@@ -349,6 +404,18 @@ impl ComposioProvider for ClickUpProvider {
                         "[composio:clickup] reached cursor boundary, stopping workspace"
                     );
                     break;
+                }
+
+                // ctx.max_items hard stop.
+                if cap.is_reached() {
+                    tracing::debug!(
+                        workspace_id = %workspace_id,
+                        page = page_num,
+                        total_persisted,
+                        "[composio:clickup] [memory_sync] max_items reached, stopping pagination"
+                    );
+                    hit_cap_boundary = true;
+                    break 'workspaces;
                 }
 
                 // ClickUp's filtered-team-tasks endpoint signals the last
@@ -367,8 +434,17 @@ impl ComposioProvider for ClickUpProvider {
         }
 
         // ── Step 6: advance cursor and save state ───────────────────
-        if let Some(new_cursor) = newest_updated {
-            state.advance_cursor(&new_cursor);
+        // Hold the cursor on a cap-truncated pass so the next sync re-scans the unseen tail.
+        if !hit_cap_boundary {
+            if let Some(new_cursor) = newest_updated {
+                state.advance_cursor(&new_cursor);
+            }
+        } else {
+            tracing::warn!(
+                connection_id = %connection_id,
+                "[composio:clickup] holding cursor — cap-truncated pass; next sync will re-scan \
+                 the unseen tail"
+            );
         }
         state.set_last_sync_at_ms(sync::now_ms());
         state.save(&memory).await?;

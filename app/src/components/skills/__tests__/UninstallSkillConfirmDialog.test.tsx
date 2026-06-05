@@ -29,6 +29,9 @@ const fixture: SkillSummary = {
   version: '',
   author: null,
   tags: [],
+  platforms: [],
+  relatedSkills: [],
+  sourceFormat: 'openhuman',
   tools: [],
   prompts: [],
   location: '/Users/me/.openhuman/skills/weather-helper/SKILL.md',
@@ -52,11 +55,11 @@ describe('UninstallSkillConfirmDialog', () => {
         onUninstalled={vi.fn()}
       />
     );
-    expect(screen.getByText(/Uninstall weather-helper\?/)).toBeInTheDocument();
+    expect(screen.getByText(/Delete weather-helper\?/)).toBeInTheDocument();
     expect(screen.getByText(/permanently deletes/i)).toBeInTheDocument();
     expect(screen.getByText('/Users/me/.openhuman/skills/weather-helper')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Cancel/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^Uninstall$/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Delete$/ })).toBeInTheDocument();
   });
 
   it('Confirm uses skill.id (slug), not skill.name (display), when they diverge', async () => {
@@ -163,7 +166,7 @@ describe('UninstallSkillConfirmDialog', () => {
     fireEvent.click(screen.getByTestId('uninstall-skill-confirm'));
 
     await waitFor(() => {
-      expect(screen.getByText(/Could not uninstall/)).toBeInTheDocument();
+      expect(screen.getByText(/Failed to delete workflow/)).toBeInTheDocument();
     });
     expect(screen.getByText(/is not installed/)).toBeInTheDocument();
     expect(onClose).not.toHaveBeenCalled();
@@ -205,7 +208,7 @@ describe('UninstallSkillConfirmDialog', () => {
       const confirm = screen.getByTestId('uninstall-skill-confirm') as HTMLButtonElement;
       expect(cancel.disabled).toBe(true);
       expect(confirm.disabled).toBe(true);
-      expect(confirm.textContent).toMatch(/Uninstalling/);
+      expect(confirm.textContent).toMatch(/Deleting/);
     });
 
     deferred.resolve?.({

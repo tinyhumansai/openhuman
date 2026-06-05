@@ -18,7 +18,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 
 use crate::openhuman::config::{
-    MODEL_AGENTIC_V1, MODEL_CODING_V1, MODEL_REASONING_QUICK_V1, MODEL_REASONING_V1,
+    MODEL_AGENTIC_V1, MODEL_CHAT_V1, MODEL_CODING_V1, MODEL_REASONING_V1,
 };
 use crate::openhuman::inference::provider::traits::{
     ChatMessage, ChatRequest, ChatResponse, Provider, ProviderCapabilities, StreamChunk,
@@ -96,10 +96,8 @@ impl IntelligentRoutingProvider {
         // Keep remote model naming aligned with backend modelRegistry.
         match requested_model.strip_prefix("hint:") {
             Some("reasoning") => MODEL_REASONING_V1.to_string(),
-            // Orchestrator's low-TTFT chat tier — Kimi K2.6 Turbo on the
-            // backend's `reasoning-quick-v1`. Backend support added in
-            // tinyhumansai/backend#760.
-            Some("chat") => MODEL_REASONING_QUICK_V1.to_string(),
+            // Orchestrator's low-TTFT chat tier.
+            Some("chat") => MODEL_CHAT_V1.to_string(),
             Some("agentic") => MODEL_AGENTIC_V1.to_string(),
             Some("coding") => MODEL_CODING_V1.to_string(),
             _ => requested_model.to_string(),

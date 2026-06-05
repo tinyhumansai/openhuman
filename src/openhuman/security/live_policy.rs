@@ -70,6 +70,53 @@ pub fn generation() -> u64 {
         .map_or(0, |s| s.generation.load(Ordering::Relaxed))
 }
 
+/// Swap in a new `action_dir` and rebuild the live policy around it,
+/// bumping the generation counter. Used by
+/// [`config_set_action_dir`](crate::openhuman::config::ops::set_action_dir)
+/// (issue #3240) so a Settings-driven change of the agent's writable root
+/// takes effect immediately instead of waiting for the next session.
+///
+/// Returns the new generation on success, or `Err` if no policy is
+/// installed yet (typically a CLI-only invocation that never started a
+/// session runtime).
+pub fn update_action_dir(new_action_dir: PathBuf) -> Result<u64, String> {
+    let Some(state) = STATE.get() else {
+        return Err(
+            "[security:live_policy] no policy installed yet — cannot update action_dir".into(),
+        );
+    };
+    {
+        let mut guard = state
+            .action_dir
+            .write()
+            .map_err(|e| format!("[security:live_policy] action_dir lock poisoned: {e}"))?;
+        *guard = new_action_dir.clone();
+    }
+    // Rebuild the policy by cloning the current one and swapping the
+    // action_dir field. This preserves the entire autonomy + trusted_roots
+    // + forbidden_paths state — the only thing changing is the sandbox root.
+    let current_policy = state
+        .policy
+        .read()
+        .map(|g| Arc::clone(&g))
+        .map_err(|e| format!("[security:live_policy] policy lock poisoned: {e}"))?;
+    let mut rebuilt: SecurityPolicy = (*current_policy).clone();
+    rebuilt.action_dir = new_action_dir;
+    {
+        let mut guard = state
+            .policy
+            .write()
+            .map_err(|e| format!("[security:live_policy] policy write lock poisoned: {e}"))?;
+        *guard = Arc::new(rebuilt);
+    }
+    let gen = state.generation.fetch_add(1, Ordering::Relaxed) + 1;
+    tracing::info!(
+        generation = gen,
+        "[security:live_policy] SecurityPolicy reloaded after action_dir change"
+    );
+    Ok(gen)
+}
+
 /// Rebuild the policy from `autonomy_config` against the stored workspace dir
 /// and swap it in, bumping the generation counter. No-op if nothing has been
 /// installed yet (e.g. a CLI invocation that never started a session runtime).

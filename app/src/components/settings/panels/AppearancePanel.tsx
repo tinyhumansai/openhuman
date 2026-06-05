@@ -3,6 +3,8 @@ import type { ReactElement } from 'react';
 import { useT } from '../../../lib/i18n/I18nContext';
 import { useAppDispatch, useAppSelector } from '../../../store/hooks';
 import {
+  type FontSize,
+  setFontSize,
   setTabBarLabels,
   setThemeMode,
   type TabBarLabels,
@@ -16,6 +18,14 @@ interface ModeOption {
   label: string;
   description: string;
   icon: ReactElement;
+}
+
+interface FontSizeOption {
+  id: FontSize;
+  label: string;
+  description: string;
+  /** Sample "A" glyph sized to preview the option inline. */
+  glyphClass: string;
 }
 
 const SunIcon = (
@@ -56,6 +66,7 @@ const AppearancePanel = () => {
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
   const dispatch = useAppDispatch();
   const mode = useAppSelector(state => state.theme.mode);
+  const fontSize = useAppSelector(state => state.theme.fontSize);
   const tabBarLabels = useAppSelector(state => state.theme.tabBarLabels);
   const labelsAlwaysVisible = tabBarLabels === 'always';
   const toggleTabBarLabels = () => {
@@ -84,6 +95,33 @@ const AppearancePanel = () => {
       label: t('settings.appearance.modeSystem'),
       description: t('settings.appearance.modeSystemDesc'),
       icon: SystemIcon,
+    },
+  ];
+
+  const FONT_SIZE_OPTIONS: FontSizeOption[] = [
+    {
+      id: 'small',
+      label: t('settings.appearance.fontSizeSmall'),
+      description: t('settings.appearance.fontSizeSmallDesc'),
+      glyphClass: 'text-xs',
+    },
+    {
+      id: 'medium',
+      label: t('settings.appearance.fontSizeMedium'),
+      description: t('settings.appearance.fontSizeMediumDesc'),
+      glyphClass: 'text-sm',
+    },
+    {
+      id: 'large',
+      label: t('settings.appearance.fontSizeLarge'),
+      description: t('settings.appearance.fontSizeLargeDesc'),
+      glyphClass: 'text-base',
+    },
+    {
+      id: 'xlarge',
+      label: t('settings.appearance.fontSizeXLarge'),
+      description: t('settings.appearance.fontSizeXLargeDesc'),
+      glyphClass: 'text-lg',
     },
   ];
 
@@ -158,6 +196,72 @@ const AppearancePanel = () => {
           </div>
           <p className="text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed px-1 mt-2">
             {t('settings.appearance.helperText')}
+          </p>
+        </div>
+
+        <div>
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-neutral-400 dark:text-neutral-500 mb-2 px-1">
+            {t('settings.appearance.fontSizeHeading')}
+          </h3>
+          <div
+            className="bg-white dark:bg-neutral-900 rounded-xl border border-neutral-200 dark:border-neutral-800 overflow-hidden"
+            role="radiogroup"
+            aria-label={t('settings.appearance.fontSizeAria')}>
+            {FONT_SIZE_OPTIONS.map((opt, idx) => {
+              const selected = opt.id === fontSize;
+              return (
+                <button
+                  key={opt.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  onClick={() => dispatch(setFontSize(opt.id))}
+                  className={`w-full flex items-center gap-3 px-4 py-3 text-left transition-colors focus:outline-none focus-visible:bg-primary-50 dark:bg-primary-500/10 dark:focus-visible:bg-primary-900/30 ${
+                    idx !== 0 ? 'border-t border-neutral-100 dark:border-neutral-800' : ''
+                  } ${
+                    selected
+                      ? 'bg-primary-50 dark:bg-primary-500/10'
+                      : 'hover:bg-neutral-50 dark:hover:bg-neutral-800/60'
+                  }`}>
+                  <span
+                    className={`flex items-center justify-center w-9 h-9 rounded-lg ${
+                      selected
+                        ? 'bg-primary-500 text-white'
+                        : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300'
+                    }`}>
+                    <span className={`font-semibold leading-none ${opt.glyphClass}`} aria-hidden>
+                      A
+                    </span>
+                  </span>
+                  <span className="flex-1 min-w-0">
+                    <span className="block text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                      {opt.label}
+                    </span>
+                    <span className="block text-xs text-neutral-500 dark:text-neutral-400">
+                      {opt.description}
+                    </span>
+                  </span>
+                  {selected && (
+                    <svg
+                      className="w-5 h-5 text-primary-500"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                      aria-hidden>
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M5 13l4 4L19 7"
+                      />
+                    </svg>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+          <p className="text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed px-1 mt-2">
+            {t('settings.appearance.fontSizeHelperText')}
           </p>
         </div>
 

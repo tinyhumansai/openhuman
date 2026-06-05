@@ -5,7 +5,7 @@ The single source of truth for the OpenHuman desktop app's **user-facing capabil
 ## Responsibilities
 
 - Define the canonical, hard-coded list of user-facing capabilities (`CAPABILITIES` in `catalog.rs`).
-- Classify each capability by `CapabilityCategory` (conversation, intelligence, skills, local_ai, team, settings, auth, screen_intelligence, channels, automation, mobile) and `CapabilityStatus`.
+- Classify each capability by `CapabilityCategory` (conversation, intelligence, workflows, local_ai, team, settings, auth, screen_intelligence, channels, automation, mobile) and `CapabilityStatus`.
 - Attach optional `CapabilityPrivacy` disclosures (`leaves_device`, `data_kind`, `destinations`) so the in-app Privacy surface can render "what leaves my computer".
 - Provide read APIs: list all (optionally filtered by category), look up one by stable id, keyword search across id/name/domain/category/description/how_to/status.
 - Validate catalog integrity at first access (no empty ids, no duplicate ids) via a `OnceLock` guard.

@@ -123,14 +123,27 @@ pub async fn execute_in_sandbox(
     extra_env: HashMap<String, String>,
     timeout: Duration,
 ) -> anyhow::Result<SandboxExecResult> {
+    // Validate the working directory up front so a missing/bad action_dir
+    // surfaces an actionable, path-naming error here rather than an opaque OS
+    // error 267 (ERROR_DIRECTORY) at spawn time — parity with the unsandboxed
+    // `NativeRuntime::build_shell_command` guard. (#3353, Fix 2)
+    //
+    // The validation is host-side, so it is applied per-backend: for None/Local
+    // `working_dir` *is* a host path; for Docker `working_dir` is the
+    // container-side mount target (e.g. `/workspace`) which must NOT be
+    // stat'd/created on the host — there we validate the host-side mount source
+    // (`policy.workspace_root`) instead.
     match policy.backend {
         SandboxBackendKind::None => {
+            crate::openhuman::config::ensure_usable_cwd(working_dir)?;
             execute_unsandboxed(command, working_dir, &extra_env, timeout).await
         }
         SandboxBackendKind::Local => {
+            crate::openhuman::config::ensure_usable_cwd(working_dir)?;
             execute_local_jail(policy, command, working_dir, &extra_env, timeout).await
         }
         SandboxBackendKind::Docker => {
+            crate::openhuman::config::ensure_usable_cwd(&policy.workspace_root)?;
             let request = SandboxExecRequest {
                 command: command.to_string(),
                 working_dir: working_dir.to_path_buf(),

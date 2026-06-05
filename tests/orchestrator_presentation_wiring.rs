@@ -1,21 +1,12 @@
-//! Pins the orchestrator's `generate_presentation` wiring contract
-//! (#2780 — companion to the tool itself shipped in #2778).
+//! Pins presentation delegation wiring.
 //!
 //! Two invariants:
 //!
-//! 1. The orchestrator's `agent.toml` MUST list `generate_presentation`
-//!    in `[tools].named`. Without this entry the orchestrator's
-//!    function-calling schema does not include the tool and the
-//!    "create slides" routing case from parent epic #1535 silently
-//!    falls back to refusing the request.
+//! 1. The orchestrator must expose `presentation_agent` as a subagent and
+//!    must not directly list `generate_presentation`.
 //!
-//! 2. The `code_executor` agent MUST NOT list `generate_presentation`.
-//!    Presentation rendering is not a code-exec task: it runs in-process
-//!    via the native Rust `ppt-rs` engine (no Python, no subprocess,
-//!    distinct from code_executor's `node_exec` / shell surface), and
-//!    exposing the tool to code_executor would create a second,
-//!    duplicate dispatch path that bypasses the orchestrator's
-//!    grounding-rule prompt.
+//! 2. The `presentation_agent` must list `generate_presentation` and
+//!    grounding tools, while `code_executor` still must not list it.
 //!
 //! Exact-line matching (not substring) so commented-out entries or
 //! prefixed names (`generate_presentation_v2`, `generate_presentation_legacy`)
@@ -23,6 +14,9 @@
 
 const ORCHESTRATOR_TOML: &str =
     include_str!("../src/openhuman/agent_registry/agents/orchestrator/agent.toml");
+
+const PRESENTATION_AGENT_TOML: &str =
+    include_str!("../src/openhuman/agent_registry/agents/presentation_agent/agent.toml");
 
 const CODE_EXECUTOR_TOML: &str =
     include_str!("../src/openhuman/agent_registry/agents/code_executor/agent.toml");
@@ -38,11 +32,32 @@ fn lists_named_tool(toml: &str, name: &str) -> bool {
 }
 
 #[test]
-fn orchestrator_lists_generate_presentation() {
+fn orchestrator_delegates_presentation_generation() {
     assert!(
-        lists_named_tool(ORCHESTRATOR_TOML, TOOL_NAME),
-        "orchestrator agent.toml must list '{TOOL_NAME}' as a named tool entry — \
-         removing it silently disables the 'create slides' routing case (#1535)"
+        lists_named_tool(ORCHESTRATOR_TOML, "presentation_agent"),
+        "orchestrator must expose presentation_agent through subagents"
+    );
+    assert!(
+        !lists_named_tool(ORCHESTRATOR_TOML, TOOL_NAME),
+        "orchestrator must not list '{TOOL_NAME}' directly; deck policy belongs to presentation_agent"
+    );
+}
+
+#[test]
+fn presentation_agent_lists_generate_presentation_and_grounding_tools() {
+    assert!(
+        lists_named_tool(PRESENTATION_AGENT_TOML, TOOL_NAME),
+        "presentation_agent must list '{TOOL_NAME}'"
+    );
+    for grounding_tool in ["memory_tree", "query_memory", "web_search_tool"] {
+        assert!(
+            lists_named_tool(PRESENTATION_AGENT_TOML, grounding_tool),
+            "presentation_agent must list grounding tool '{grounding_tool}'"
+        );
+    }
+    assert!(
+        PRESENTATION_AGENT_TOML.contains("delegate_name = \"make_presentation\""),
+        "presentation_agent must expose the make_presentation delegate tool"
     );
 }
 

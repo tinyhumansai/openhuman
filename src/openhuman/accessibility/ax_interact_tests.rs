@@ -165,3 +165,24 @@ fn test_ax_press_nonexistent_app() {
     let result = ax_press_element("NonExistentApp12345", "Play");
     assert!(result.is_err());
 }
+
+/// Env-driven AX dump probe: `AX_PROBE_APP="Slack" cargo test ax_probe_app -- --ignored --nocapture`.
+/// Lists interactive elements an app exposes via the macOS Accessibility API —
+/// used to diagnose Electron apps (Slack/Discord) whose tree may be empty
+/// unless accessibility is enabled.
+#[test]
+#[ignore = "manual AX probe — set AX_PROBE_APP"]
+fn ax_probe_app() {
+    let app = std::env::var("AX_PROBE_APP").unwrap_or_else(|_| "Slack".to_string());
+    let _ = Command::new("open").arg("-a").arg(&app).status();
+    sleep(Duration::from_secs(4));
+    match ax_list_elements(&app) {
+        Ok(els) => {
+            println!("[ax_probe] {app}: {} interactive elements", els.len());
+            for e in els.iter().take(80) {
+                println!("   [{}] {}", e.role, e.label);
+            }
+        }
+        Err(e) => println!("[ax_probe] {app}: ERROR {e}"),
+    }
+}

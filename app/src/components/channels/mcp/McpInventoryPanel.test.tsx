@@ -22,6 +22,7 @@ const SERVER_FS: InstalledServer = {
   args: ['-y', 'acme/fs-server'],
   env_keys: ['ROOT_DIR'],
   installed_at: 1_700_000_000,
+  enabled: true,
 };
 
 const SERVER_DB: InstalledServer = {
@@ -33,6 +34,7 @@ const SERVER_DB: InstalledServer = {
   args: ['-y', 'acme/db-server'],
   env_keys: ['DB_URL'],
   installed_at: 1_700_000_500,
+  enabled: true,
 };
 
 const renderPanel = (overrides?: {

@@ -113,7 +113,7 @@ fn fake_config_arc() -> Arc<crate::openhuman::config::Config> {
     Arc::new(config)
 }
 
-/// Every composio tool must report `ToolCategory::Skill` so the
+/// Every composio tool must report `ToolCategory::Workflow` so the
 /// skills sub-agent (`category_filter = "skill"`) picks them up.
 ///
 /// If someone removes the override on any tool, this test flips to
@@ -132,8 +132,8 @@ fn all_composio_tools_are_in_skill_category() {
     for t in &tools {
         assert_eq!(
             t.category(),
-            ToolCategory::Skill,
-            "composio tool `{}` should be in Skill category so the \
+            ToolCategory::Workflow,
+            "composio tool `{}` should be in Workflow category so the \
              skills sub-agent picks it up via category_filter",
             t.name()
         );

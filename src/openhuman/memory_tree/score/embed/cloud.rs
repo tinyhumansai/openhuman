@@ -76,6 +76,14 @@ impl Embedder for CloudEmbedder {
         }
         Ok(v)
     }
+
+    /// Collapse N per-text round-trips into a single batched Voyage request by
+    /// delegating to the inner provider's native batch `embed`. Falls back to
+    /// per-text embedding (preserving per-position error attribution) on a
+    /// whole-batch failure or a length mismatch.
+    async fn embed_batch(&self, texts: &[&str]) -> Vec<Result<Vec<f32>>> {
+        super::embed_batch_via_provider(&self.inner, "cloud", texts).await
+    }
 }
 
 #[cfg(test)]

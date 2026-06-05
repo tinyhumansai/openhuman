@@ -137,6 +137,25 @@ pub struct SummaryNode {
     /// dropping those rows to the bottom of semantic rerank results.
     #[serde(default)]
     pub embedding: Option<Vec<f32>>,
+    /// Document identity this node belongs to, for document source trees
+    /// (Notion etc.). `Some(source_id)` for nodes that live inside a single
+    /// document's per-doc subtree (its L1…doc-root chain); `None` for
+    /// merge-tier nodes (which summarise *across* documents) and for
+    /// chat/email source trees (which have no per-document structure).
+    ///
+    /// Together with [`Self::version_ms`] this lets retrieval resolve
+    /// "latest version per document" at read time: when a Notion page is
+    /// edited a new per-doc subtree is sealed with a higher `version_ms`,
+    /// and the older one is filtered out on traversal without ever being
+    /// rewritten or tombstoned.
+    #[serde(default)]
+    pub doc_id: Option<String>,
+    /// Document version this node was sealed for, as epoch-milliseconds
+    /// (Notion `last_edited_time`). `Some(_)` on per-doc subtree nodes,
+    /// `None` on merge-tier and non-document nodes. Read-time latest-wins
+    /// keeps `max(version_ms)` per [`Self::doc_id`].
+    #[serde(default)]
+    pub version_ms: Option<i64>,
 }
 
 /// Unsealed frontier at a given `(tree_id, level)`. One row per level per

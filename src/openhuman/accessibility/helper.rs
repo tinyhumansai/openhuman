@@ -693,14 +693,25 @@ func axListElements(appName: String, id: String?) -> [String: Any] {
         "AXCheckBox", "AXRadioButton", "AXSlider", "AXPopUpButton",
         "AXComboBox", "AXLink", "AXTab"
     ]
-    var elements: [[String: String]] = []
-    axWalk(axApp, maxDepth: 10) { _, role, label in
+    var elements: [[String: Any]] = []
+    axWalk(axApp, maxDepth: 10) { el, role, label in
         if interactiveRoles.contains(role) && !label.isEmpty {
-            elements.append(["role": role, "label": label])
+            elements.append(["role": role, "label": label, "enabled": axEnabled(el)])
         }
         return false
     }
     return ["type": "ax_list", "id": id ?? "", "ok": true, "error": NSNull(), "elements": elements]
+}
+
+/// Read the AXEnabled attribute; default to `true` when the attribute is absent
+/// (most static/text elements don't expose it, and we don't want to hide them).
+func axEnabled(_ element: AXUIElement) -> Bool {
+    var ref: AnyObject?
+    if AXUIElementCopyAttributeValue(element, kAXEnabledAttribute as CFString, &ref) == .success,
+       let b = ref as? Bool {
+        return b
+    }
+    return true
 }
 
 /// Collect all AX elements whose label contains `label` (case-insensitive).

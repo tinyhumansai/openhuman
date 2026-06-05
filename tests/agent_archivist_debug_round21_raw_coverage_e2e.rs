@@ -281,6 +281,7 @@ fn parent_context(workspace: &Path, provider: Arc<ScriptedProvider>) -> ParentEx
         session_key: "1700000000_round21_parent".to_string(),
         session_parent_prefix: None,
         on_progress: None,
+        run_queue: None,
     }
 }
 

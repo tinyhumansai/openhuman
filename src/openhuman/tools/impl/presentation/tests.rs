@@ -163,7 +163,7 @@ async fn execute_happy_path_returns_artifact_metadata() {
     );
 
     let payload = match result.content.first().expect("at least one content block") {
-        crate::openhuman::skills::types::ToolContent::Json { data } => data.clone(),
+        crate::openhuman::workflows::types::ToolContent::Json { data } => data.clone(),
         other => panic!("expected Json content block, got {other:?}"),
     };
     assert_eq!(payload["slide_count"].as_u64(), Some(1));
@@ -206,7 +206,7 @@ fn png_1x1() -> Vec<u8> {
 /// Pull the JSON payload out of a tool result.
 fn payload_of(result: &ToolResult) -> serde_json::Value {
     match result.content.first().expect("a content block") {
-        crate::openhuman::skills::types::ToolContent::Json { data } => data.clone(),
+        crate::openhuman::workflows::types::ToolContent::Json { data } => data.clone(),
         other => panic!("expected Json content block, got {other:?}"),
     }
 }

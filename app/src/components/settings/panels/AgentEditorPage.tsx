@@ -39,8 +39,8 @@ const MODEL_HINTS = [
 ];
 const MODEL_TIERS = [
   'reasoning-v1',
-  'reasoning-quick-v1',
   'chat-v1',
+  'reasoning-quick-v1',
   'agentic-v1',
   'coding-v1',
   'summarization-v1',

@@ -142,6 +142,43 @@ fn all_tools_includes_spawn_subagent() {
 }
 
 #[test]
+fn all_tools_includes_spawn_async_subagent() {
+    let tmp = TempDir::new().unwrap();
+    let security = Arc::new(SecurityPolicy::default());
+    let mem_cfg = MemoryConfig {
+        backend: "markdown".into(),
+        ..MemoryConfig::default()
+    };
+    let mem: Arc<dyn Memory> =
+        Arc::from(crate::openhuman::memory_store::create_memory(&mem_cfg, tmp.path()).unwrap());
+    let browser = BrowserConfig {
+        enabled: false,
+        allowed_domains: vec![],
+        session_name: None,
+        ..BrowserConfig::default()
+    };
+    let http = crate::openhuman::config::HttpRequestConfig::default();
+    let cfg = test_config(&tmp);
+
+    let tools = all_tools(
+        Arc::new(Config::default()),
+        &security,
+        AuditLogger::disabled(),
+        mem,
+        &browser,
+        &http,
+        tmp.path(),
+        &HashMap::new(),
+        &cfg,
+    );
+    let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
+    assert!(
+        names.contains(&"spawn_async_subagent"),
+        "spawn_async_subagent must be registered for fire-and-forget background orchestration; got: {names:?}"
+    );
+}
+
+#[test]
 fn all_tools_includes_spawn_parallel_agents() {
     let tmp = TempDir::new().unwrap();
     let security = Arc::new(SecurityPolicy::default());
@@ -390,6 +427,7 @@ fn all_tools_default_registry_contains_expected_baseline_surface() {
             "apply_patch",
             "csv_export",
             "spawn_subagent",
+            "spawn_async_subagent",
             "spawn_parallel_agents",
             "todo",
             "plan_exit",
@@ -404,6 +442,10 @@ fn all_tools_default_registry_contains_expected_baseline_surface() {
             "memory_recall",
             "memory_forget",
             "memory_tree",
+            "monitor",
+            "monitor_list",
+            "monitor_stop",
+            "monitor_read",
             "whatsapp_data_list_chats",
             "whatsapp_data_list_messages",
             "whatsapp_data_search_messages",
@@ -1514,11 +1556,10 @@ fn expansion_tools_for(tmp: &TempDir) -> Vec<Box<dyn Tool>> {
 // ── Theme: Task & workflow productivity ─────────────────────────────────────
 
 const PRODUCTIVITY_TOOLS: &[&str] = &[
-    "agent_workflow_list",
-    "agent_workflow_read",
-    "agent_workflow_phase_info",
-    "agent_workflow_create",
-    "agent_workflow_uninstall",
+    // NOTE: the old `agent_workflow_*` tools were removed when the
+    // `agent_workflows` domain was dissolved into `workflows`; workflow
+    // discovery/run tools now live under the Knowledge theme
+    // (`list_workflows`, `run_workflow`, …).
     "artifact_list",
     "artifact_get",
     "artifact_delete",
@@ -1542,7 +1583,6 @@ const PRODUCTIVITY_TOOLS: &[&str] = &[
 ];
 
 const PRODUCTIVITY_DEFAULT_OFF: &[&str] = &[
-    "agent_workflow_uninstall",
     "artifact_delete",
     "todo_remove",
     "todo_replace",
@@ -1553,8 +1593,6 @@ const PRODUCTIVITY_DEFAULT_OFF: &[&str] = &[
 ];
 
 const PRODUCTIVITY_ALWAYS_ON: &[&str] = &[
-    "agent_workflow_list",
-    "agent_workflow_create",
     "artifact_list",
     "artifact_get",
     "todo_list",
@@ -1600,7 +1638,6 @@ fn productivity_default_off_tools_retained_when_opted_in() {
             "todo_destructive".to_string(),
             "task_source_manage".to_string(),
             "artifact_delete".to_string(),
-            "agent_workflow_uninstall".to_string(),
         ],
     );
     let names = tool_names(&tools);
@@ -1659,14 +1696,14 @@ const KNOWLEDGE_TOOLS: &[&str] = &[
     "people_add_alias",
     "people_record_interaction",
     "people_refresh_address_book",
-    "skill_list",
-    "skill_describe",
-    "skill_read_resource",
-    "skill_recent_runs",
-    "skill_read_run_log",
-    "skill_create",
-    "skill_install_from_url",
-    "skill_uninstall",
+    "list_workflows",
+    "describe_workflow",
+    "read_workflow_resource",
+    "list_workflow_runs",
+    "read_workflow_run_log",
+    "create_workflow",
+    "install_workflow_from_url",
+    "uninstall_workflow",
     "thread_list",
     "thread_read",
     "thread_create",
@@ -1698,9 +1735,9 @@ const KNOWLEDGE_TOOLS: &[&str] = &[
 
 const KNOWLEDGE_DEFAULT_OFF: &[&str] = &[
     "people_refresh_address_book",
-    "skill_create",
-    "skill_install_from_url",
-    "skill_uninstall",
+    "create_workflow",
+    "install_workflow_from_url",
+    "uninstall_workflow",
     "thread_delete",
     "thread_purge_all",
     "learning_update_facet",
@@ -1716,8 +1753,8 @@ const KNOWLEDGE_DEFAULT_OFF: &[&str] = &[
 const KNOWLEDGE_ALWAYS_ON: &[&str] = &[
     "people_list",
     "people_resolve",
-    "skill_list",
-    "skill_recent_runs",
+    "list_workflows",
+    "list_workflow_runs",
     "thread_list",
     "thread_create",
     "learning_list_facets",
@@ -1759,7 +1796,7 @@ fn knowledge_default_off_tools_retained_when_opted_in() {
         &mut tools,
         &[
             "people_refresh_address_book".to_string(),
-            "skill_manage".to_string(),
+            "workflow_manage".to_string(),
             "thread_destructive".to_string(),
             "learning_manage".to_string(),
         ],

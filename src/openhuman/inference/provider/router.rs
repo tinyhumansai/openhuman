@@ -3,13 +3,14 @@ use super::Provider;
 use async_trait::async_trait;
 use std::collections::HashMap;
 
-/// Maps OpenHuman's abstract tier model names (`reasoning-v1`,
+/// Maps OpenHuman's abstract tier model names (`reasoning-v1`, `chat-v1`,
 /// `reasoning-quick-v1`, `agentic-v1`, `coding-v1`, `summarization-v1`)
 /// to the hint slot in `model_routes`. Returns `None` for any model the
 /// router shouldn't rewrite.
 fn openhuman_tier_to_hint(model: &str) -> Option<&'static str> {
     match model {
         "reasoning-v1" => Some("reasoning"),
+        "chat-v1" => Some("chat"),
         "reasoning-quick-v1" => Some("chat"),
         "agentic-v1" => Some("agentic"),
         "coding-v1" => Some("coding"),
@@ -90,8 +91,8 @@ impl RouterProvider {
     ///
     /// Resolution order:
     /// 1. `hint:<name>` — direct hint lookup (e.g. `hint:reasoning`).
-    /// 2. OpenHuman abstract tier names — `reasoning-v1`, `agentic-v1`,
-    ///    `coding-v1`, `summarization-v1` map onto the corresponding hints
+    /// 2. OpenHuman abstract tier names — `reasoning-v1`, `chat-v1`,
+    ///    `agentic-v1`, `coding-v1`, `summarization-v1` map onto the corresponding hints
     ///    so a custom provider gets the user-configured model id instead of
     ///    the literal tier name (which is only meaningful to the OpenHuman
     ///    backend and would 404 on OpenAI/Anthropic/etc.).

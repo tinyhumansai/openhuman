@@ -11,6 +11,7 @@ export const THREAD_NOT_FOUND_MESSAGE = 'This thread is no longer available.';
 interface ThreadState {
   threads: Thread[];
   selectedThreadId: string | null;
+  threadSidebarVisible: boolean;
   activeThreadId: string | null;
   /**
    * @deprecated — welcome-agent replaced by Joyride walkthrough. Always null
@@ -27,6 +28,7 @@ interface ThreadState {
 const initialState: ThreadState = {
   threads: [],
   selectedThreadId: null,
+  threadSidebarVisible: false,
   activeThreadId: null,
   welcomeThreadId: null,
   messagesByThreadId: {},
@@ -337,6 +339,9 @@ const threadSlice = createSlice({
     setActiveThread: (state, action: { payload: string | null }) => {
       state.activeThreadId = action.payload;
     },
+    setThreadSidebarVisible: (state, action: PayloadAction<boolean>) => {
+      state.threadSidebarVisible = action.payload;
+    },
     clearStaleThread: (state, action: PayloadAction<string>) => {
       const threadId = action.payload;
       state.threads = state.threads.filter(thread => thread.id !== threadId);
@@ -459,6 +464,7 @@ export const {
   setSelectedThread,
   clearSelectedThread,
   setActiveThread,
+  setThreadSidebarVisible,
   clearStaleThread,
   clearAllThreads,
   resetThreadCachesPreservingSelection,

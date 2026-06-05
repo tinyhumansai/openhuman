@@ -114,10 +114,13 @@ pub fn schemas(function: &str) -> ControllerSchema {
         "list_definitions" => ControllerSchema {
             namespace: "agent",
             function: "list_definitions",
-            description: "List all sub-agent definitions in the global registry \
-                          (built-ins + custom TOML files under <workspace>/agents/).",
+            description:
+                "List safe display metadata for sub-agent definitions in the global registry.",
             inputs: vec![],
-            outputs: vec![json_output("definitions", "Array of AgentDefinition.")],
+            outputs: vec![json_output(
+                "definitions",
+                "Array of safe AgentDefinitionDisplay payloads; prompt bodies are omitted.",
+            )],
         },
         "get_definition" => ControllerSchema {
             namespace: "agent",
@@ -273,9 +276,7 @@ fn handle_server_status(_params: Map<String, Value>) -> ControllerFuture {
 
 fn handle_list_definitions(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async {
-        let registry = crate::openhuman::agent::harness::AgentDefinitionRegistry::global()
-            .ok_or_else(|| "AgentDefinitionRegistry not initialised".to_string())?;
-        let defs: Vec<&crate::openhuman::agent::harness::AgentDefinition> = registry.list();
+        let defs = crate::openhuman::agent::library::list_definition_metadata().await?;
         Ok(serde_json::json!({ "definitions": defs }))
     })
 }

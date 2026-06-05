@@ -3,7 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { callCoreRpc } from './coreRpcClient';
 import {
   addMemorySource,
+  applyAllIn,
   listMemorySources,
+  type MemorySourceEntry,
   removeMemorySource,
   SOURCE_KIND_ICONS,
   SOURCE_KIND_LABEL_KEYS,
@@ -95,5 +97,74 @@ describe('memorySourcesService', () => {
       expect(SOURCE_KIND_LABEL_KEYS[kind]).toBeTruthy();
       expect(SOURCE_KIND_ICONS[kind]).toBeTruthy();
     }
+  });
+
+  // ---------------------------------------------------------------------------
+  // applyAllIn
+  // ---------------------------------------------------------------------------
+
+  it('applyAllIn calls the correct RPC method', async () => {
+    mockedCall.mockResolvedValue({
+      result: {
+        sources: [{ id: 'src_1', kind: 'github_repo', label: 'All Repos', enabled: true }],
+        sync_triggered: 1,
+      },
+      logs: [],
+    } as never);
+
+    const result = await applyAllIn();
+
+    expect(mockedCall).toHaveBeenCalledWith({ method: 'openhuman.memory_sources_apply_all_in' });
+    expect(result.sync_triggered).toBe(1);
+    expect(result.sources).toHaveLength(1);
+    expect(result.sources[0].id).toBe('src_1');
+  });
+
+  it('applyAllIn handles envelope-wrapped response', async () => {
+    mockedCall.mockResolvedValue({ result: { sources: [], sync_triggered: 0 }, logs: [] } as never);
+
+    const result = await applyAllIn();
+    expect(result.sources).toEqual([]);
+    expect(result.sync_triggered).toBe(0);
+  });
+
+  it('applyAllIn handles flat (un-wrapped) response', async () => {
+    mockedCall.mockResolvedValue({
+      sources: [{ id: 'src_2', kind: 'folder', label: 'Docs', enabled: true }],
+      sync_triggered: 1,
+    } as never);
+
+    const result = await applyAllIn();
+    expect(result.sources).toHaveLength(1);
+  });
+
+  // ---------------------------------------------------------------------------
+  // MemorySourceEntry interface includes all limit fields
+  // ---------------------------------------------------------------------------
+
+  it('MemorySourceEntry interface accepts all limit fields at compile-time', () => {
+    // This test is a type-level assertion: if the fields are missing from the
+    // interface the assignment below would fail TypeScript compilation.
+    const entry: MemorySourceEntry = {
+      id: 'src_1',
+      kind: 'github_repo',
+      label: 'Test',
+      enabled: true,
+      max_commits: 100,
+      max_issues: 200,
+      max_prs: 50,
+      max_items: 500,
+      since_days: 30,
+      sync_depth_days: 90,
+      max_tokens_per_sync: 100_000,
+      max_cost_per_sync_usd: 1.5,
+    };
+    expect(entry.max_commits).toBe(100);
+    expect(entry.max_issues).toBe(200);
+    expect(entry.max_prs).toBe(50);
+    expect(entry.since_days).toBe(30);
+    expect(entry.sync_depth_days).toBe(90);
+    expect(entry.max_tokens_per_sync).toBe(100_000);
+    expect(entry.max_cost_per_sync_usd).toBe(1.5);
   });
 });

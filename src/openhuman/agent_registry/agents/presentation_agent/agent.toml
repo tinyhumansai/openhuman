@@ -1,0 +1,26 @@
+id = "presentation_agent"
+display_name = "Presentation Agent"
+delegate_name = "make_presentation"
+when_to_use = "Presentation specialist — creates decks from supplied or retrieved evidence. Owns factual grounding, source citation, image verification, and generate_presentation warnings. Use for make slides, build a deck, pitch deck, or presentation requests."
+temperature = 0.2
+max_iterations = 10
+agent_tier = "worker"
+omit_identity = true
+omit_memory_context = false
+omit_safety_preamble = false
+omit_skills_catalog = true
+omit_profile = true
+omit_memory_md = true
+
+[model]
+hint = "agentic"
+
+[tools]
+named = [
+    "generate_presentation",
+    "memory_tree",
+    "query_memory",
+    "web_search_tool",
+    "web_fetch",
+    "http_request",
+]

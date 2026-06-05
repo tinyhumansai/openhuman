@@ -1,5 +1,5 @@
 use crate::openhuman::config::{McpAuthConfig, McpClientIdentityConfig};
-use crate::openhuman::skills::types::ToolResult;
+use crate::openhuman::workflows::types::ToolResult;
 use anyhow::Context;
 use base64::Engine;
 use parking_lot::Mutex;

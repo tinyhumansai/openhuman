@@ -4,7 +4,6 @@ import { useNavigate } from 'react-router-dom';
 
 import OAuthProviderButton from '../components/oauth/OAuthProviderButton';
 import { oauthProviderConfigs } from '../components/oauth/providerConfigs';
-import RotatingTetrahedronCanvas from '../components/RotatingTetrahedronCanvas';
 import Button from '../components/ui/Button';
 import { useT } from '../lib/i18n/I18nContext';
 import { useCoreState } from '../providers/CoreStateProvider';
@@ -127,9 +126,11 @@ const Welcome = () => {
             </button>
           </div>
           <div className="flex justify-center mb-6">
-            <div className="h-20 w-20">
-              <RotatingTetrahedronCanvas />
-            </div>
+            <img
+              src={isDark ? '/brand/OpenhumanLogo-white.svg' : '/brand/OpenhumanLogo-Black.svg'}
+              alt={t('welcome.logoAlt')}
+              className="h-20 w-20"
+            />
           </div>
 
           <h1 className="text-2xl font-bold text-stone-900 dark:text-neutral-100 text-center mb-2">

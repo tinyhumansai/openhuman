@@ -83,7 +83,7 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
     let bus = event_bus::init_global(DEFAULT_CAPACITY);
     let _tracing_handle = bus.subscribe(Arc::new(TracingSubscriber));
     crate::openhuman::health::bus::register_health_subscriber();
-    crate::openhuman::skills::bus::register_skill_cleanup_subscriber();
+    crate::openhuman::workflows::bus::register_workflow_cleanup_subscriber();
     crate::openhuman::memory_conversations::register_conversation_persistence_subscriber(
         config.workspace_dir.clone(),
     );
@@ -253,47 +253,11 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
 
     let runtime: Arc<dyn host_runtime::RuntimeAdapter> =
         Arc::from(host_runtime::create_runtime(&config.runtime)?);
-    // Ensure the agent's default projects home (~/OpenHuman/projects) exists and
-    // is a read-write trusted root, so the coding agent creates/edits projects
-    // there freely — distinct from the hidden internal workspace dir. A user who
-    // has already granted it (or any other root) is left untouched.
-    {
-        use crate::openhuman::security::{TrustedAccess, TrustedRoot};
-        let projects_dir = crate::openhuman::config::default_projects_dir();
-        if let Err(e) = tokio::fs::create_dir_all(&projects_dir).await {
-            tracing::warn!(
-                dir = %projects_dir.display(),
-                error = %e,
-                "[startup] could not create default projects dir"
-            );
-        }
-        let projects_path = projects_dir.to_string_lossy().to_string();
-        if !config
-            .autonomy
-            .trusted_roots
-            .iter()
-            .any(|r| r.path == projects_path)
-        {
-            config.autonomy.trusted_roots.push(TrustedRoot {
-                path: projects_path,
-                access: TrustedAccess::ReadWrite,
-            });
-        }
-    }
-    // Ensure the action sandbox directory exists (defaults to ~/OpenHuman/projects).
-    let action_dir = config.action_dir.clone();
-    if let Err(e) = tokio::fs::create_dir_all(&action_dir).await {
-        tracing::warn!(
-            dir = %action_dir.display(),
-            error = %e,
-            "[startup] could not create action sandbox dir"
-        );
-    }
-    tracing::info!(
-        workspace = %config.workspace_dir.display(),
-        action = %action_dir.display(),
-        "[startup] workspace (internal state) and action sandbox (tool cwd) directories configured"
-    );
+    // Create the agent's action sandbox + default projects home and register the
+    // projects dir as a ReadWrite trusted root. Shared with the always-run
+    // `bootstrap_core_runtime` boot so a fresh install gets these dirs even with
+    // no messaging integrations connected (#3353, RC-A).
+    crate::openhuman::config::ensure_agent_dirs(&mut config).await;
     // Install as the process-global live policy so runtime autonomy changes
     // (config.update_autonomy_settings) are reflected by `live_policy::current()`
     // and picked up by the next session.
@@ -329,9 +293,12 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
     )?;
     let temperature = config.default_temperature;
     let local_embedding = config.workload_local_model("embeddings");
+    let embedding_api_key =
+        crate::openhuman::embeddings::resolve_api_key(&config, &config.memory.embedding_provider);
     let mem: Arc<dyn Memory> = Arc::from(memory_store::create_memory_with_local_ai(
         &config.memory,
         local_embedding.as_deref(),
+        &embedding_api_key,
         &[],
         Some(&config.storage.provider.config),
         &config.workspace_dir,
@@ -346,12 +313,25 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
         Arc::clone(&mem),
         &config.browser,
         &config.http_request,
-        &action_dir,
+        &config.action_dir,
         &config.agents,
         &config,
     ));
 
-    let skills = crate::openhuman::skills::load_skills(&workspace);
+    let skills = crate::openhuman::workflows::load_workflow_metadata(&workspace);
+
+    // Install the triggered-workflow subscriber now that workflows are
+    // discovered — otherwise any workflow declaring `triggers:` is silently
+    // ignored in the channel runtime. The handle is parked in a process static
+    // so the RAII SubscriptionHandle isn't dropped (which would cancel it).
+    {
+        use crate::core::event_bus::SubscriptionHandle;
+        use std::sync::OnceLock;
+        static TRIGGERED_WORKFLOW_HANDLE: OnceLock<Option<SubscriptionHandle>> = OnceLock::new();
+        TRIGGERED_WORKFLOW_HANDLE.get_or_init(|| {
+            crate::openhuman::workflows::bus::register_triggered_workflow_subscriber(&skills)
+        });
+    }
 
     // Collect tool descriptions for the prompt
     let mut tool_descs: Vec<(&str, &str)> = vec![
@@ -424,12 +404,12 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
         bootstrap_max_chars,
         None,
     );
-    // Filter out Skill-category tools (e.g. Composio, Apify) from the
+    // Filter out Workflow-category tools (e.g. Composio, Apify) from the
     // main agent prompt — those are only available to the integrations_agent
     // subagent via category_filter = "skill".
     let non_skill_tools: Vec<&Box<dyn crate::openhuman::tools::Tool>> = tools_registry
         .iter()
-        .filter(|t| t.category() != crate::openhuman::tools::traits::ToolCategory::Skill)
+        .filter(|t| t.category() != crate::openhuman::tools::traits::ToolCategory::Workflow)
         .collect();
     let non_skill_refs: Vec<&dyn crate::openhuman::tools::Tool> =
         non_skill_tools.iter().map(|t| t.as_ref()).collect();

@@ -884,7 +884,6 @@ mod tests {
             personality_soul_md: None,
             personality_memory_md: None,
             personality_roster: vec![],
-            workflows: &[],
         };
         let rendered = section.build(&ctx).expect("render profile section");
         assert!(rendered.starts_with("## Agent profile"));

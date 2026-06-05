@@ -12,7 +12,7 @@ use std::io::Write;
 use std::path::Path;
 
 use super::compose::{compose_summary_md, split_front_matter, SummaryComposeInput};
-use super::paths::{summary_abs_path, summary_rel_path};
+use super::paths::{summary_rel_path_with_layout, SummaryDiskLayout};
 
 /// Write `bytes` atomically to `abs_path` if the file does not already exist.
 ///
@@ -124,14 +124,37 @@ pub fn stage_summary(
     input: &SummaryComposeInput<'_>,
     scope_slug: &str,
 ) -> anyhow::Result<StagedSummary> {
-    let rel_path = summary_rel_path(input.tree_kind, scope_slug, input.level, input.summary_id);
-    let abs_path = summary_abs_path(
-        content_root,
+    stage_summary_with_layout(content_root, input, scope_slug, SummaryDiskLayout::Standard)
+}
+
+/// Layout-aware variant of [`stage_summary`]. Document source trees pass a
+/// [`SummaryDiskLayout::DocSubtree`] (per-document, versioned) or
+/// [`SummaryDiskLayout::Merge`] (cross-document merge tier) so the on-disk
+/// vault mirrors the logical tree (`notion` → `docs/<page>/v-<ms>` →
+/// `merge`). All other callers use [`stage_summary`] (`Standard`) unchanged.
+pub fn stage_summary_with_layout(
+    content_root: &Path,
+    input: &SummaryComposeInput<'_>,
+    scope_slug: &str,
+    layout: SummaryDiskLayout<'_>,
+) -> anyhow::Result<StagedSummary> {
+    let rel_path = summary_rel_path_with_layout(
         input.tree_kind,
         scope_slug,
         input.level,
         input.summary_id,
+        layout,
     );
+    // Derive the absolute path by joining the relative path components onto
+    // the content root (same join `summary_abs_path` does internally) so the
+    // two stay consistent regardless of layout.
+    let abs_path = {
+        let mut abs = content_root.to_path_buf();
+        for component in rel_path.split('/') {
+            abs.push(component);
+        }
+        abs
+    };
 
     let composed = compose_summary_md(input);
     let body_bytes = composed.body.as_bytes();

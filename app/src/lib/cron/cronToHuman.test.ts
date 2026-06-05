@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { cronToHuman } from './cronToHuman';
 
 describe('cronToHuman', () => {
-  describe('SkillsRunnerBody / DevWorkflowPanel preset expressions', () => {
+  describe('WorkflowRunnerBody / DevWorkflowPanel preset expressions', () => {
     it('every 30 minutes', () => {
       expect(cronToHuman('*/30 * * * *')).toBe('Every 30 minutes');
     });

@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-use crate::openhuman::skills::types::ToolResult;
+use crate::openhuman::workflows::types::ToolResult;
 
 /// Agent-callable tool metadata exposed through `javascript.list_tools`.
 #[derive(Debug, Clone, Serialize)]

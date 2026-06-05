@@ -799,13 +799,12 @@ impl SecurityPolicy {
         }
     }
 
+    /// Expand a leading `~/` to the user's home directory. Delegates to
+    /// [`crate::openhuman::config::expand_tilde`] — the single source of truth —
+    /// so policy and config expand paths byte-for-byte identically (and both
+    /// produce platform-native separators; see issue #3353).
     fn expand_tilde(&self, path: &str) -> String {
-        if let Some(rest) = path.strip_prefix("~/") {
-            if let Some(home) = dirs::home_dir() {
-                return format!("{}/{rest}", home.display());
-            }
-        }
-        path.to_string()
+        crate::openhuman::config::expand_tilde(path)
     }
 
     /// String-only path check. Does NOT resolve symlinks.
@@ -1147,7 +1146,7 @@ impl SecurityPolicy {
     /// through. Gray-area dirs (`/usr`, `/opt`, `/var`, `~/Library`) stay in the
     /// user-overridable `forbidden_paths` instead, so a grant can still reach
     /// e.g. `/usr/local/...`.
-    fn is_always_forbidden(path: &Path) -> bool {
+    pub(crate) fn is_always_forbidden(path: &Path) -> bool {
         // Normalize separators + case BEFORE splitting: a Windows backslash
         // path is a single component on POSIX (and vice-versa), so we segment
         // the normalized string rather than rely on `Path::components()`.

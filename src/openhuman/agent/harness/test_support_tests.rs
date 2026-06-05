@@ -1612,7 +1612,6 @@ async fn orchestrator_prompt_drives_composio_call_via_delegation_chain() {
             personality_soul_md: None,
             personality_memory_md: None,
             personality_roster: vec![],
-            workflows: &[],
         }
     };
     let system_prompt = orch_prompt::build(&ctx).expect("build orchestrator prompt");

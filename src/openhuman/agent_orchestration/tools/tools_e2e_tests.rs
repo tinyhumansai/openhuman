@@ -197,6 +197,7 @@ fn parent_context(
         session_key: "tools-e2e".into(),
         session_parent_prefix: None,
         on_progress: None,
+        run_queue: None,
     }
 }
 

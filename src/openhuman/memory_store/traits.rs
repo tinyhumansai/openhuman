@@ -232,6 +232,8 @@ mod tests {
             sealed_at: Utc::now(),
             deleted: false,
             embedding: None,
+            doc_id: None,
+            version_ms: None,
         };
         assert_eq!(node.memory_kind(), MemoryKind::Tree);
         assert_eq!(node.embeddable_text(), "summary body");

@@ -323,6 +323,17 @@ fn apply_schema(conn: &Connection) -> Result<()> {
     // Phase MD-content (summaries).
     add_column_if_missing(conn, "mem_tree_summaries", "content_path", "TEXT")?;
     add_column_if_missing(conn, "mem_tree_summaries", "content_sha256", "TEXT")?;
+    // Document source-tree versioning: per-doc subtree nodes (Notion etc.)
+    // carry the document identity + version they sealed for, so retrieval can
+    // keep `max(version_ms)` per `doc_id` at read time (latest-wins) without
+    // ever rewriting older subtrees. NULL on merge-tier and chat/email nodes.
+    add_column_if_missing(conn, "mem_tree_summaries", "doc_id", "TEXT")?;
+    add_column_if_missing(conn, "mem_tree_summaries", "version_ms", "INTEGER")?;
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_mem_tree_summaries_doc_version \
+         ON mem_tree_summaries(tree_id, doc_id, version_ms);",
+    )
+    .context("Failed to create mem_tree_summaries doc/version index")?;
     // Raw-archive pointer column.
     add_column_if_missing(conn, "mem_tree_chunks", "raw_refs_json", "TEXT")?;
     // #1365: is_user flag on indexed entity rows.

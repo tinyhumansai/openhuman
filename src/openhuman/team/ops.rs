@@ -14,22 +14,15 @@ use serde::Serialize;
 use serde_json::{json, Value};
 
 use crate::api::config::effective_backend_api_url;
-use crate::api::jwt::get_session_token;
 use crate::api::BackendOAuthClient;
 use crate::openhuman::config::Config;
 use crate::rpc::RpcOutcome;
 
+/// Canonical authed-session guard. Delegates to `require_live_session_token`,
+/// which rejects an expired token locally (publishing `SessionExpired`) instead
+/// of firing a doomed backend 401 — see #3297 / `session_support`.
 fn require_token(config: &Config) -> Result<String, String> {
-    get_session_token(config)?
-        .and_then(|v| {
-            let t = v.trim().to_string();
-            if t.is_empty() {
-                None
-            } else {
-                Some(t)
-            }
-        })
-        .ok_or_else(|| "no backend session token; run auth_store_session first".to_string())
+    crate::openhuman::credentials::session_support::require_live_session_token(config)
 }
 
 fn normalize_id(input: &str, field: &str) -> Result<String, String> {
@@ -64,21 +57,24 @@ async fn get_authed_value(
     let token = require_token(config)?;
     let api_url = effective_backend_api_url(&config.api_url);
     let client = BackendOAuthClient::new(&api_url).map_err(|e| format!("{e:#}"))?;
-    // `{e:#}` renders the full anyhow chain. `authed_json` wraps the
-    // underlying reqwest error with `.context(format!("backend request {} {}", …))`
-    // (`api/rest.rs::authed_json`), so plain `e.to_string()` only emits
-    // the outer "backend request GET /teams" label and drops the cause
-    // (connect timeout, DNS failure, TLS handshake, non-2xx status, …)
-    // before the JSON-RPC layer reports it to Sentry. OPENHUMAN-TAURI-AD
-    // is the canonical instance: 2 events on `0.53.35` from a Russia
-    // user, all with the truncated label and elapsed_ms=49 — far too
-    // short for a real timeout, so the underlying cause is the only
-    // signal worth surfacing. Same failure mode the `report_error`
-    // doc-string in `core/observability.rs` calls out (TAURI-B2).
+    // `flatten_authed_error` maps the typed `BackendApiError::Unauthorized`
+    // (expected session-lapse 401) onto the `SESSION_EXPIRED` sentinel so the
+    // JSON-RPC layer classifies it as session expiry and skips Sentry (#3297,
+    // TAURI-RUST-8WY on `/teams/me/usage`); every other error keeps its full
+    // `{e:#}` anyhow chain. `authed_json` wraps the underlying reqwest error
+    // with `.context(format!("backend request {} {}", …))`
+    // (`api/rest.rs::authed_json`), so `{e:#}` (not `e.to_string()`) is required
+    // to surface the cause (connect timeout, DNS failure, TLS handshake, non-2xx
+    // status, …) before the JSON-RPC layer reports it to Sentry.
+    // OPENHUMAN-TAURI-AD is the canonical instance: 2 events on `0.53.35` from a
+    // Russia user, all with the truncated label and elapsed_ms=49 — far too
+    // short for a real timeout, so the underlying cause is the only signal worth
+    // surfacing. Same failure mode the `report_error` doc-string in
+    // `core/observability.rs` calls out (TAURI-B2).
     client
         .authed_json(&token, method, path, body)
         .await
-        .map_err(|e| format!("{e:#}"))
+        .map_err(crate::api::flatten_authed_error)
 }
 
 pub async fn get_usage(config: &Config) -> Result<RpcOutcome<Value>, String> {

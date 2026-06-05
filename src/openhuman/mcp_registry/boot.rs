@@ -36,6 +36,14 @@ pub async fn spawn_installed_servers(config: &Config) {
     );
 
     for server in servers {
+        if !server.enabled {
+            tracing::info!(
+                "[mcp-registry] boot: skipping disabled server_id={} qualified={}",
+                server.server_id,
+                server.qualified_name
+            );
+            continue;
+        }
         let server_id = server.server_id.clone();
         let qualified = server.qualified_name.clone();
         match connections::connect(config, &server).await {

@@ -1626,6 +1626,7 @@ fn agent_task_board_and_dispatcher_public_paths_cover_storage_and_prompt_shapes(
         acceptance_criteria: vec!["Focused tests pass".into()],
         evidence: vec![],
         notes: Some("Keep scope narrow".into()),
+        session_thread_id: None,
         blocker: None,
         source_metadata: Some(json!({
             "provider": "github",
@@ -1664,6 +1665,7 @@ fn agent_task_board_and_dispatcher_public_paths_cover_storage_and_prompt_shapes(
     let title_prompt = build_task_prompt(&TaskBoardCard {
         objective: Some("   ".into()),
         source_metadata: Some(json!({ "external_id": "123" })),
+        session_thread_id: None,
         ..loaded.cards[0].clone()
     });
     assert!(title_prompt.contains("Fallback title"));
@@ -3321,7 +3323,6 @@ fn agent_pformat_and_prompt_renderers_cover_public_paths() {
         personality_soul_md: None,
         personality_memory_md: None,
         personality_roster: vec![],
-        workflows: &[],
     };
 
     let tools_md = render_tools(&ctx).expect("render tools");
@@ -3436,7 +3437,6 @@ fn agent_builtin_prompt_builders_cover_all_registered_archetypes() {
                 description: "Default assistant".into(),
                 memory_summary: Some("Recent planner context".into()),
             }],
-            workflows: &[],
         };
         let body = (builtin.prompt_fn)(&ctx)
             .unwrap_or_else(|err| panic!("built-in prompt {} should render: {err}", builtin.id));
@@ -3451,8 +3451,8 @@ fn agent_builtin_prompt_builders_cover_all_registered_archetypes() {
 #[tokio::test]
 async fn agent_public_tools_cover_validation_and_metadata_paths() {
     use openhuman_core::openhuman::agent::tools::{
-        AskClarificationTool, DelegateToPersonalityTool, DelegateTool, RunSkillTool, TodoTool,
-        RUN_SKILL_TOOL_NAME,
+        AskClarificationTool, DelegateToPersonalityTool, DelegateTool, RunWorkflowTool, TodoTool,
+        RUN_WORKFLOW_TOOL_NAME,
     };
     use openhuman_core::openhuman::tools::{ArchetypeDelegationTool, SkillDelegationTool};
 
@@ -3468,18 +3468,18 @@ async fn agent_public_tools_cover_validation_and_metadata_paths() {
     assert!(clarification.output().contains("Which target?"));
     assert!(clarification.output().contains("unit, coverage"));
 
-    let run_skill = RunSkillTool::new();
-    assert_eq!(run_skill.name(), RUN_SKILL_TOOL_NAME);
+    let run_workflow = RunWorkflowTool;
+    assert_eq!(run_workflow.name(), RUN_WORKFLOW_TOOL_NAME);
     assert_eq!(
-        run_skill.parameters_schema().pointer("/required/0"),
-        Some(&json!("skill_id"))
+        run_workflow.parameters_schema().pointer("/required/0"),
+        Some(&json!("workflow_id"))
     );
-    let missing_skill = run_skill
+    let missing_workflow = run_workflow
         .execute(json!({ "inputs": {} }))
         .await
-        .expect("missing skill id returns tool error");
-    assert!(missing_skill.is_error);
-    assert!(missing_skill.output().contains("skill_id"));
+        .expect("missing workflow id returns tool error");
+    assert!(missing_workflow.is_error);
+    assert!(missing_workflow.output().contains("workflow_id"));
 
     let delegate_personality = DelegateToPersonalityTool::new();
     assert_eq!(delegate_personality.name(), "delegate_to_personality");
@@ -4384,7 +4384,7 @@ async fn inference_router_provider_covers_hint_tier_and_passthrough_routing() {
     assert!(routed_hint.contains("model=fast-chat"));
 
     let routed_tier = router
-        .chat_with_history(&[ChatMessage::user("tier")], "reasoning-quick-v1", 0.3)
+        .chat_with_history(&[ChatMessage::user("tier")], "chat-v1", 0.3)
         .await
         .expect("tier route");
     assert!(routed_tier.contains("model=fast-chat"));

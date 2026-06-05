@@ -9,7 +9,7 @@ pub enum ExperienceSource {
     ToolLoop,
     AgentReflection,
     Manual,
-    SkillCandidate,
+    WorkflowCandidate,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

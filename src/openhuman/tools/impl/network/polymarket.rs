@@ -1134,7 +1134,7 @@ impl Tool for PolymarketTool {
     }
 
     fn category(&self) -> ToolCategory {
-        ToolCategory::Skill
+        ToolCategory::Workflow
     }
 
     fn is_concurrency_safe(&self, args: &Value) -> bool {

@@ -12,14 +12,15 @@
 //! - the **proactive triage** arm (`agent::triage::apply_decision`), once it has
 //!   decided to act on a task-board card.
 //!
-//! The runner mirrors `skills::spawn_skill_run_background`: build the
+//! The runner mirrors `skills::spawn_workflow_run_background`: build the
 //! `orchestrator` agent fresh inside a detached task, cap tool iterations, and
 //! run `agent.run_single` under `with_autonomous_iter_cap`. PR-4 generalises the
 //! executor from the default agent to a resolved personality/skill; this module
 //! keeps the default-agent path so the pipeline runs end-to-end first.
 
+use std::collections::HashMap;
 use std::path::Path;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use crate::openhuman::agent::harness::definition::{AgentDefinitionRegistry, PromptSource};
@@ -27,6 +28,7 @@ use crate::openhuman::agent::harness::session::Agent;
 use crate::openhuman::agent::harness::subagent_runner::with_autonomous_iter_cap;
 use crate::openhuman::agent::personality_paths::PersonalityContext;
 use crate::openhuman::agent::task_board::{TaskApprovalMode, TaskBoardCard, TaskCardStatus};
+use crate::openhuman::agent::task_session;
 use crate::openhuman::config::Config;
 use crate::openhuman::todos::ops::{self, BoardLocation, CardPatch, USER_TASKS_THREAD_ID};
 use crate::openhuman::todos::runs::{self, RunLimits, RunOutcome};
@@ -41,6 +43,85 @@ const TASK_RUN_MAX_ITERATIONS: usize = 200;
 
 /// Max chars of the agent's final output retained as board `evidence`.
 const EVIDENCE_MAX_CHARS: usize = 2_000;
+
+/// Handle to an in-flight autonomous run, keyed by its session `thread_id`.
+///
+/// Autonomous runs are detached `tokio` tasks, not web-channel turns, so they
+/// are invisible to the web channel's own in-flight registry — which is why the
+/// chat **Cancel** button (which calls `channel_web_cancel`) couldn't stop them.
+/// Registering the run's [`AbortHandle`](tokio::task::AbortHandle) here lets
+/// [`cancel_session`] abort it from that same cancel path.
+struct ActiveRun {
+    abort: tokio::task::AbortHandle,
+    hb_cancel: tokio::sync::watch::Sender<bool>,
+    location: BoardLocation,
+    card_id: String,
+    run_id: String,
+}
+
+static ACTIVE_RUNS: OnceLock<Mutex<HashMap<String, ActiveRun>>> = OnceLock::new();
+
+fn active_runs() -> &'static Mutex<HashMap<String, ActiveRun>> {
+    ACTIVE_RUNS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn register_active_run(thread_id: String, run: ActiveRun) {
+    active_runs()
+        .lock()
+        .expect("active_runs mutex poisoned")
+        .insert(thread_id, run);
+}
+
+/// Remove and return the active-run entry for `thread_id`. The naturally
+/// completing run and a concurrent [`cancel_session`] race on this — whoever
+/// gets `Some` "owns" the terminal board write-back, so it happens exactly once.
+fn take_active_run(thread_id: &str) -> Option<ActiveRun> {
+    active_runs()
+        .lock()
+        .expect("active_runs mutex poisoned")
+        .remove(thread_id)
+}
+
+/// Cancel the in-flight autonomous run streaming into session `thread_id`.
+///
+/// Aborts the detached run task, stops its heartbeat, marks the card `blocked`
+/// (user-cancelled) so it doesn't dangle `in_progress`, and emits the terminal
+/// chat event (broadcast as `"system"`) so the session UI stops "processing".
+/// Returns `true` if a run was found and cancelled. Wired into the web channel's
+/// `channel_web_cancel` as the fallback when the thread has no web-channel turn.
+pub async fn cancel_session(thread_id: &str) -> bool {
+    let Some(run) = take_active_run(thread_id) else {
+        return false;
+    };
+    run.abort.abort();
+    let _ = run.hb_cancel.send(true);
+    // The aborted task never reaches its own write-back — do it here so the
+    // card lands in a terminal state instead of a stale `in_progress`.
+    write_back(
+        &run.location,
+        &run.card_id,
+        &run.run_id,
+        Err("Cancelled by user".to_string()),
+    );
+    crate::openhuman::channels::providers::web::publish_web_channel_event(
+        crate::core::socketio::WebChannelEvent {
+            event: "chat_error".to_string(),
+            client_id: "system".to_string(),
+            thread_id: thread_id.to_string(),
+            request_id: run.run_id.clone(),
+            message: Some("Cancelled".to_string()),
+            error_type: Some("cancelled".to_string()),
+            ..Default::default()
+        },
+    );
+    tracing::info!(
+        thread_id = %thread_id,
+        card_id = %run.card_id,
+        run_id = %run.run_id,
+        "[task_dispatcher] cancelled autonomous run via chat cancel"
+    );
+    true
+}
 
 /// Render a card into the goal prompt handed to the autonomous run.
 ///
@@ -270,13 +351,76 @@ pub async fn dispatch_card(
     let (hb_cancel_tx, hb_cancel_rx) = tokio::sync::watch::channel(false);
     runs::spawn_heartbeat_task(location.clone(), run_id.clone(), hb_cancel_rx);
 
+    // Materialise this autonomous run as a top-level task-session thread so it
+    // surfaces in Conversations → Tasks like a manually-run todo. Best-effort:
+    // `None` just means the run streams nowhere (headless), exactly as before.
+    let session_thread_id = task_session::create_session_thread(
+        config.workspace_dir.clone(),
+        &fresh_card,
+        &run_id,
+        &prompt,
+    );
+
+    // Stamp the session thread onto the card so the board UI can offer a
+    // "View session" jump into Conversations. Best-effort: a failure here just
+    // means the link is unavailable; the run proceeds regardless.
+    if let Some(thread_id) = session_thread_id.as_deref() {
+        if let Err(e) = ops::set_session_thread(&location, &card_id, Some(thread_id.to_string())) {
+            tracing::warn!(
+                card_id = %card_id,
+                thread_id = %thread_id,
+                error = %e,
+                "[task_dispatcher] failed to stamp session thread on card (View session link unavailable)"
+            );
+        }
+    }
+
     let run_id_for_return = run_id.clone();
     let location_for_run = location.clone();
-    tokio::spawn(async move {
-        let outcome = run_autonomous(config, &executor, &prompt, &run_id).await;
-        let _ = hb_cancel_tx.send(true);
-        write_back(&location_for_run, &card_id, &run_id, outcome);
+    // Clones for the active-run registry (the originals move into the task).
+    let reg_thread = session_thread_id.clone();
+    let reg_location = location.clone();
+    let reg_card_id = card_id.clone();
+    let reg_run_id = run_id.clone();
+    let hb_cancel_for_task = hb_cancel_tx.clone();
+    let task_thread = session_thread_id.clone();
+    // Gate the task on registration: a fast-finishing run could otherwise reach
+    // its terminal `take_active_run` before `register_active_run` below has run,
+    // see no entry, and skip `write_back` — leaving card/run state inconsistent.
+    // The task parks on `start_rx` until we release it after registration.
+    let (start_tx, start_rx) = tokio::sync::oneshot::channel::<()>();
+    let join = tokio::spawn(async move {
+        let _ = start_rx.await;
+        let outcome = run_autonomous(config, &executor, &prompt, &run_id, session_thread_id).await;
+        let _ = hb_cancel_for_task.send(true);
+        // Race with a concurrent cancel: whoever removes the registry entry owns
+        // the write-back, so it runs exactly once. No entry (no session thread,
+        // or a cancel already took it) → we skip it.
+        let still_ours = match &task_thread {
+            Some(tid) => take_active_run(tid).is_some(),
+            None => true,
+        };
+        if still_ours {
+            write_back(&location_for_run, &card_id, &run_id, outcome);
+        }
     });
+
+    // Register the run so the chat Cancel (web `channel_web_cancel` →
+    // `cancel_session`) can abort it — task threads aren't web-channel turns.
+    if let Some(tid) = reg_thread {
+        register_active_run(
+            tid,
+            ActiveRun {
+                abort: join.abort_handle(),
+                hb_cancel: hb_cancel_tx,
+                location: reg_location,
+                card_id: reg_card_id,
+                run_id: reg_run_id,
+            },
+        );
+    }
+    // Registration (if any) is in place — release the task to start running.
+    let _ = start_tx.send(());
 
     Ok(DispatchOutcome::Running {
         run_id: run_id_for_return,
@@ -341,8 +485,9 @@ fn resolve_executor(workspace_dir: &Path, assigned: Option<&str>) -> ResolvedExe
         }
     }
 
-    // 2) Skill (#2824): the same autonomous run, seeded with SKILL.md.
-    if let Some(skill) = crate::openhuman::skills::registry::get_skill(workspace_dir, handle) {
+    // 2) Workflow (#2824): the same autonomous run, seeded with SKILL.md.
+    if let Some(skill) = crate::openhuman::workflows::registry::get_workflow(workspace_dir, handle)
+    {
         let guidelines = match &skill.definition.system_prompt {
             PromptSource::Inline(s) => truncate_chars(s, EXECUTOR_PREAMBLE_MAX_CHARS),
             _ => String::new(),
@@ -404,6 +549,7 @@ async fn run_autonomous(
     executor: &ResolvedExecutor,
     prompt: &str,
     run_id: &str,
+    session_thread_id: Option<String>,
 ) -> Result<String, String> {
     config.agent.max_tool_iterations = TASK_RUN_MAX_ITERATIONS;
     // Match skill-run egress handling: only widen to the permissive default
@@ -427,16 +573,87 @@ async fn run_autonomous(
         run_id.get(..8).unwrap_or(run_id)
     ));
 
+    // Stream this autonomous run into its task-session thread exactly like a
+    // chat turn: wire the agent's progress into the web-channel bridge with the
+    // broadcast client id "system" — the same mechanism cron/welcome agents use.
+    // The bridge (a) emits live text/tool socket events that any client viewing
+    // the thread renders in real time (the frontend keys by thread_id), and
+    // (b) persists a TurnStateMirror so the tool timeline replays when the
+    // session is opened mid/after run. Best-effort — with no session thread the
+    // run is headless, exactly as before this feature.
+    let workspace_dir = config.workspace_dir.clone();
+    if let Some(thread_id) = session_thread_id.as_deref() {
+        let (progress_tx, progress_rx) = tokio::sync::mpsc::channel(64);
+        agent.set_on_progress(Some(progress_tx));
+        crate::openhuman::channels::providers::web::spawn_progress_bridge(
+            progress_rx,
+            "system".to_string(),
+            thread_id.to_string(),
+            run_id.to_string(),
+            crate::openhuman::threads::turn_state::TurnStateStore::new(workspace_dir.clone()),
+            crate::openhuman::channels::providers::web::ChatRequestMetadata::default(),
+            config.clone(),
+        );
+    }
+
     // Sub-agent task runs are internal to the agent harness — the user
     // already authorized the parent turn that dispatched this task. Label
     // as CLI so the approval gate doesn't fail closed on internal
     // sub-agent invocations.
-    crate::openhuman::agent::turn_origin::with_origin(
+    let run = crate::openhuman::agent::turn_origin::with_origin(
         crate::openhuman::agent::turn_origin::AgentTurnOrigin::Cli,
         with_autonomous_iter_cap(TASK_RUN_MAX_ITERATIONS, agent.run_single(prompt)),
-    )
-    .await
-    .map_err(|e| format!("{e:#}"))
+    );
+    let result = match session_thread_id.as_deref() {
+        Some(thread_id) => {
+            crate::openhuman::inference::provider::thread_context::with_thread_id(
+                thread_id.to_string(),
+                run,
+            )
+            .await
+        }
+        None => run.await,
+    }
+    .map_err(|e| format!("{e:#}"));
+
+    // Emit the terminal chat event so a client viewing the session stops
+    // "processing" and finalizes the assistant bubble — the SAME chat_done /
+    // chat_error the web channel emits at the end of a normal turn. The
+    // progress bridge only streams intermediate deltas; without this terminal
+    // signal the live-streamed session spins forever. Broadcast as "system" so
+    // any viewer of the thread receives it (frontend keys by thread_id).
+    if let Some(thread_id) = session_thread_id.as_deref() {
+        match &result {
+            Ok(response) => {
+                crate::openhuman::channels::providers::presentation::deliver_response(
+                    "system",
+                    thread_id,
+                    run_id,
+                    response,
+                    prompt,
+                    &[],
+                )
+                .await;
+            }
+            Err(err) => {
+                crate::openhuman::channels::providers::web::publish_web_channel_event(
+                    crate::core::socketio::WebChannelEvent {
+                        event: "chat_error".to_string(),
+                        client_id: "system".to_string(),
+                        thread_id: thread_id.to_string(),
+                        request_id: run_id.to_string(),
+                        message: Some(err.clone()),
+                        error_type: Some("agent_error".to_string()),
+                        ..Default::default()
+                    },
+                );
+            }
+        }
+        // Persist the final response as the closing assistant message so a
+        // reopened session shows the outcome like a finished manual run.
+        task_session::append_final(workspace_dir, thread_id, &result);
+    }
+    result
 }
 
 /// Deterministic board write-back: the dispatcher owns the card lifecycle.
@@ -747,6 +964,31 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    #[tokio::test]
+    async fn active_run_registry_take_is_once() {
+        // Race-safety: the completing run and a concurrent cancel both call
+        // `take_active_run`; exactly one gets `Some` (and owns the write-back).
+        let (tx, _rx) = tokio::sync::watch::channel(false);
+        let handle = tokio::spawn(async { std::future::pending::<()>().await });
+        let key = "task-cancel-registry-test";
+        register_active_run(
+            key.to_string(),
+            ActiveRun {
+                abort: handle.abort_handle(),
+                hb_cancel: tx,
+                location: BoardLocation::Scratch,
+                card_id: "c1".to_string(),
+                run_id: "r1".to_string(),
+            },
+        );
+        assert!(take_active_run(key).is_some(), "first take owns the run");
+        assert!(
+            take_active_run(key).is_none(),
+            "second take gets nothing — write-back happens exactly once"
+        );
+        handle.abort();
+    }
+
     fn card(objective: Option<&str>) -> TaskBoardCard {
         TaskBoardCard {
             id: "task-1".into(),
@@ -761,6 +1003,7 @@ mod tests {
             evidence: vec![],
             notes: None,
             blocker: None,
+            session_thread_id: None,
             source_metadata: None,
             order: 0,
             updated_at: String::new(),

@@ -2,7 +2,7 @@
 // user's Composio-connected GitHub account via
 // `composio_execute(GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER)`.
 //
-// Used by SkillsRunnerBody for any skill input whose name matches the
+// Used by WorkflowRunnerBody for any skill input whose name matches the
 // repo-shaped conventions (`repo`, `repository`, `upstream`, `fork`,
 // `fork_owner`). Replaces the plain text input with this picker so users
 // don't have to type `owner/name` manually for skills like
@@ -112,7 +112,7 @@ const RepoPicker = ({ value, onChange, id, placeholder, disabled }: RepoPickerPr
     void loadRepos();
   }, [loadRepos]);
 
-  // Common <select> classes — match the plain inputs in SkillsRunnerBody
+  // Common <select> classes — match the plain inputs in WorkflowRunnerBody
   // so the picker visually blends with the surrounding form.
   const selectClass =
     'w-full rounded border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-800 px-3 py-2 text-sm text-stone-900 dark:text-stone-100';

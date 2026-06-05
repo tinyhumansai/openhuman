@@ -590,6 +590,8 @@ async fn composio_delete_connection_clear_memory_cascades_source_tree_and_conten
                 sealed_at: ts,
                 deleted: false,
                 embedding: None,
+                doc_id: None,
+                version_ms: None,
             },
             None,
             "test/model@3",
@@ -2253,5 +2255,196 @@ fn composio_direct_500_does_not_demote() {
         crate::core::observability::expected_error_kind(msg),
         None,
         "composio-direct 500 with no auth body must remain an unclassified bug shape"
+    );
+}
+
+// ── enrich_connections_with_identity ──────────────────────────────────
+
+/// Helper: bind the process-global memory client to a fresh temp workspace.
+///
+/// Initialise the global memory client to an isolated temp workspace and return
+/// a serialisation lock that must be held for the duration of the test.
+///
+/// The global rebinds whenever the workspace path changes (see
+/// `memory::global::init`), so each test that passes a unique `TempDir` gets
+/// isolated profile storage. The returned guard prevents concurrent tests from
+/// rebinding the singleton while the calling test is running — hold it with
+/// `let _guard = init_memory_client(tmp.path());`.
+async fn init_memory_client(workspace: &std::path::Path) -> tokio::sync::MutexGuard<'static, ()> {
+    let guard = crate::openhuman::memory::ops::GLOBAL_MEMORY_TEST_LOCK
+        .lock()
+        .await;
+    crate::openhuman::memory::global::init(workspace.to_path_buf())
+        .expect("global memory client should initialize for enrichment test");
+    guard
+}
+
+fn make_connections_response(
+    conns: &[(&str, &str, &str)],
+) -> super::super::types::ComposioConnectionsResponse {
+    let connections = conns
+        .iter()
+        .map(|(id, toolkit, status)| conn(id, toolkit, status))
+        .collect();
+    super::super::types::ComposioConnectionsResponse { connections }
+}
+
+#[tokio::test]
+async fn enrich_does_nothing_when_no_cached_identities() {
+    // Hold the lock so no sibling test can rebind the global to a workspace
+    // that has a profile row matching "c1".  The fresh temp workspace has no
+    // profiles, so load_connected_identities returns Vec::new() and the
+    // connection is returned unchanged.
+    let tmp = tempfile::tempdir().unwrap();
+    let _guard = init_memory_client(tmp.path()).await;
+    let resp = make_connections_response(&[("c1", "gmail", "ACTIVE")]);
+    let enriched = enrich_connections_with_identity(resp);
+    assert_eq!(enriched.connections.len(), 1);
+    assert!(enriched.connections[0].account_email.is_none());
+    assert!(enriched.connections[0].workspace.is_none());
+    assert!(enriched.connections[0].username.is_none());
+}
+
+#[tokio::test]
+async fn enrich_populates_email_from_cached_profile() {
+    use crate::openhuman::memory_sync::composio::providers::{
+        profile::persist_provider_profile, ProviderUserProfile,
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let _guard = init_memory_client(tmp.path()).await;
+
+    persist_provider_profile(&ProviderUserProfile {
+        toolkit: "gmail".to_string(),
+        connection_id: Some("conn-gmail-1".to_string()),
+        email: Some("alice@example.com".to_string()),
+        display_name: Some("Alice Smith".to_string()),
+        ..Default::default()
+    });
+
+    let resp = make_connections_response(&[("conn-gmail-1", "gmail", "ACTIVE")]);
+    let enriched = enrich_connections_with_identity(resp);
+
+    assert_eq!(
+        enriched.connections[0].account_email.as_deref(),
+        Some("alice@example.com"),
+        "email should be populated from cached gmail profile"
+    );
+    assert_eq!(
+        enriched.connections[0].workspace.as_deref(),
+        Some("Alice Smith"),
+        "workspace (display_name) should be populated"
+    );
+    assert!(
+        enriched.connections[0].username.is_none(),
+        "username (handle) should be absent for gmail"
+    );
+}
+
+#[tokio::test]
+async fn enrich_populates_handle_for_github() {
+    use crate::openhuman::memory_sync::composio::providers::{
+        profile::persist_provider_profile, ProviderUserProfile,
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let _guard = init_memory_client(tmp.path()).await;
+
+    persist_provider_profile(&ProviderUserProfile {
+        toolkit: "github".to_string(),
+        connection_id: Some("conn-gh-1".to_string()),
+        username: Some("octocat".to_string()),
+        ..Default::default()
+    });
+
+    let resp = make_connections_response(&[("conn-gh-1", "github", "ACTIVE")]);
+    let enriched = enrich_connections_with_identity(resp);
+
+    // GitHub uses `handle` kind (the catch-all branch in expand_identity_rows).
+    assert_eq!(
+        enriched.connections[0].username.as_deref(),
+        Some("octocat"),
+        "username (handle) should be populated for github"
+    );
+    assert!(enriched.connections[0].account_email.is_none());
+}
+
+#[tokio::test]
+async fn enrich_skips_connection_already_having_identity() {
+    // If the backend-proxied path already populated account_email, the
+    // enricher must NOT overwrite it with a potentially stale cached value.
+    let mut resp = make_connections_response(&[("c-preloaded", "gmail", "ACTIVE")]);
+    resp.connections[0].account_email = Some("preloaded@example.com".to_string());
+
+    let enriched = enrich_connections_with_identity(resp);
+    assert_eq!(
+        enriched.connections[0].account_email.as_deref(),
+        Some("preloaded@example.com"),
+        "pre-populated identity must not be overwritten"
+    );
+}
+
+#[tokio::test]
+async fn enrich_handles_multiple_connections_same_toolkit() {
+    // Two Gmail accounts — each gets its own identity label, not "Account N".
+    use crate::openhuman::memory_sync::composio::providers::{
+        profile::persist_provider_profile, ProviderUserProfile,
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let _guard = init_memory_client(tmp.path()).await;
+
+    persist_provider_profile(&ProviderUserProfile {
+        toolkit: "gmail".to_string(),
+        connection_id: Some("g1".to_string()),
+        email: Some("alice@example.com".to_string()),
+        ..Default::default()
+    });
+    persist_provider_profile(&ProviderUserProfile {
+        toolkit: "gmail".to_string(),
+        connection_id: Some("g2".to_string()),
+        email: Some("bob@example.com".to_string()),
+        ..Default::default()
+    });
+
+    let resp = make_connections_response(&[("g1", "gmail", "ACTIVE"), ("g2", "gmail", "ACTIVE")]);
+    let enriched = enrich_connections_with_identity(resp);
+
+    let emails: Vec<_> = enriched
+        .connections
+        .iter()
+        .map(|c| c.account_email.as_deref())
+        .collect();
+    assert!(
+        emails.contains(&Some("alice@example.com")),
+        "first gmail account should carry alice's email"
+    );
+    assert!(
+        emails.contains(&Some("bob@example.com")),
+        "second gmail account should carry bob's email"
+    );
+}
+
+#[tokio::test]
+async fn enrich_leaves_unmatched_connection_unchanged() {
+    // Connection whose id has no cached profile row is returned with all
+    // identity fields as None — the UI falls back to "toolkit · connection_id".
+    use crate::openhuman::memory_sync::composio::providers::{
+        profile::persist_provider_profile, ProviderUserProfile,
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let _guard = init_memory_client(tmp.path()).await;
+
+    // Persist a profile for a DIFFERENT connection id.
+    persist_provider_profile(&ProviderUserProfile {
+        toolkit: "gmail".to_string(),
+        connection_id: Some("other-conn".to_string()),
+        email: Some("other@example.com".to_string()),
+        ..Default::default()
+    });
+
+    let resp = make_connections_response(&[("no-profile-conn", "gmail", "ACTIVE")]);
+    let enriched = enrich_connections_with_identity(resp);
+
+    assert!(
+        enriched.connections[0].account_email.is_none(),
+        "connection with no cached profile must remain unenriched"
     );
 }

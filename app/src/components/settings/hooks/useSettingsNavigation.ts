@@ -45,6 +45,7 @@ export type SettingsRoute =
   | 'webhooks-triggers'
   | 'composio-triggers'
   | 'composio-routing'
+  | 'task-sources'
   | 'mcp-server'
   | 'dev-workflow'
   | 'sandbox-settings'
@@ -115,6 +116,7 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
     if (path.includes('/settings/webhooks-triggers')) return 'webhooks-triggers';
     if (path.includes('/settings/composio-triggers')) return 'composio-triggers';
     if (path.includes('/settings/composio-routing')) return 'composio-routing';
+    if (path.includes('/settings/task-sources')) return 'task-sources';
     if (path.includes('/settings/intelligence')) return 'intelligence';
     if (path.includes('/settings/crypto')) return 'crypto';
     if (path.includes('/settings/recovery-phrase')) return 'recovery-phrase';

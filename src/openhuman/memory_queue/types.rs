@@ -23,6 +23,11 @@ pub enum JobKind {
     /// vector at the active embedding signature (post model-switch, or the
     /// §7 dim-mismatch slice), then self-continue until none remain.
     ReembedBackfill,
+    /// Build one document version's per-doc subtree (Notion) and merge its
+    /// doc-root into the connection tree. Replaces the per-chunk
+    /// extract→append_buffer tree path for document sources that opt into
+    /// per-document rollup + versioning.
+    SealDocument,
 }
 
 impl JobKind {
@@ -34,6 +39,7 @@ impl JobKind {
             JobKind::Seal => "seal",
             JobKind::FlushStale => "flush_stale",
             JobKind::ReembedBackfill => "reembed_backfill",
+            JobKind::SealDocument => "seal_document",
         }
     }
 
@@ -54,6 +60,7 @@ impl JobKind {
                 ))
             }
             "reembed_backfill" => JobKind::ReembedBackfill,
+            "seal_document" => JobKind::SealDocument,
             other => return Err(anyhow!("unknown JobKind '{other}'")),
         })
     }
@@ -63,7 +70,10 @@ impl JobKind {
     pub fn is_llm_bound(&self) -> bool {
         matches!(
             self,
-            JobKind::ExtractChunk | JobKind::Seal | JobKind::ReembedBackfill
+            JobKind::ExtractChunk
+                | JobKind::Seal
+                | JobKind::ReembedBackfill
+                | JobKind::SealDocument
         )
     }
 }
@@ -269,6 +279,37 @@ impl ReembedBackfillPayload {
     }
 }
 
+/// Build (or re-build for a new version) one document's per-doc subtree and
+/// merge its doc-root into the connection tree. Carries the full leaf chunk
+/// set for the version so the seal handler can run the per-document
+/// side-cascade in one shot (see
+/// [`crate::openhuman::memory_tree::tree::seal_document_subtree`]).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SealDocumentPayload {
+    /// Connection-level source-tree scope, e.g. `notion:{connection_id}`.
+    /// All of a connection's documents share this one tree.
+    pub tree_scope: String,
+    /// Document identity (the chunk `source_id`, e.g.
+    /// `notion:{connection_id}:{page_id}`).
+    pub doc_id: String,
+    /// Document version as epoch-ms (`last_edited_time`). `None` for sources
+    /// that don't carry a version.
+    pub version_ms: Option<i64>,
+    /// Leaf chunk ids for this version, in document order.
+    pub chunk_ids: Vec<String>,
+}
+
+impl SealDocumentPayload {
+    /// Stable dedupe key — one in-flight seal per (doc, version). A new
+    /// version gets a distinct key so it isn't suppressed by an older one.
+    pub fn dedupe_key(&self) -> String {
+        match self.version_ms {
+            Some(v) => format!("seal_doc:{}@{}", self.doc_id, v),
+            None => format!("seal_doc:{}", self.doc_id),
+        }
+    }
+}
+
 /// One row in `mem_tree_jobs`. `payload_json` is left as a raw string so
 /// callers parse it lazily based on `kind`.
 #[derive(Clone, Debug)]
@@ -367,6 +408,17 @@ impl NewJob {
             max_attempts: None,
         })
     }
+
+    /// Build a [`JobKind::SealDocument`] enqueue request.
+    pub fn seal_document(p: &SealDocumentPayload) -> Result<Self> {
+        Ok(Self {
+            kind: JobKind::SealDocument,
+            payload_json: serde_json::to_string(p)?,
+            dedupe_key: Some(p.dedupe_key()),
+            available_at_ms: None,
+            max_attempts: None,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -381,12 +433,52 @@ mod tests {
             JobKind::Seal,
             JobKind::FlushStale,
             JobKind::ReembedBackfill,
+            JobKind::SealDocument,
         ] {
             assert_eq!(JobKind::parse(k.as_str()).unwrap(), k);
         }
         // Retired kinds parse to an error (global/topic trees removed).
         assert!(JobKind::parse("topic_route").is_err());
         assert!(JobKind::parse("digest_daily").is_err());
+    }
+
+    #[test]
+    fn seal_document_dedupe_key_is_per_version() {
+        let v1 = SealDocumentPayload {
+            tree_scope: "notion:conn1".into(),
+            doc_id: "notion:conn1:pageA".into(),
+            version_ms: Some(1717000000000),
+            chunk_ids: vec!["c0".into()],
+        };
+        let v2 = SealDocumentPayload {
+            version_ms: Some(1717500000000),
+            ..v1.clone()
+        };
+        // Distinct versions of the same doc get distinct keys, so a newer
+        // revision is never suppressed by an in-flight older one.
+        assert_ne!(v1.dedupe_key(), v2.dedupe_key());
+        assert_eq!(v1.dedupe_key(), "seal_doc:notion:conn1:pageA@1717000000000");
+        // Unversioned falls back to the bare doc id.
+        let unversioned = SealDocumentPayload {
+            version_ms: None,
+            ..v1.clone()
+        };
+        assert_eq!(unversioned.dedupe_key(), "seal_doc:notion:conn1:pageA");
+    }
+
+    #[test]
+    fn seal_document_roundtrips_through_newjob() {
+        let p = SealDocumentPayload {
+            tree_scope: "notion:conn1".into(),
+            doc_id: "notion:conn1:pageA".into(),
+            version_ms: Some(42),
+            chunk_ids: vec!["c0".into(), "c1".into()],
+        };
+        let job = NewJob::seal_document(&p).unwrap();
+        assert_eq!(job.kind, JobKind::SealDocument);
+        let back: SealDocumentPayload = serde_json::from_str(&job.payload_json).unwrap();
+        assert_eq!(back.chunk_ids, vec!["c0".to_string(), "c1".to_string()]);
+        assert_eq!(back.version_ms, Some(42));
     }
 
     #[test]
@@ -458,6 +550,7 @@ mod tests {
     fn llm_bound_kinds() {
         assert!(JobKind::ExtractChunk.is_llm_bound());
         assert!(JobKind::Seal.is_llm_bound());
+        assert!(JobKind::SealDocument.is_llm_bound());
         assert!(JobKind::ReembedBackfill.is_llm_bound());
         assert!(!JobKind::AppendBuffer.is_llm_bound());
         assert!(!JobKind::FlushStale.is_llm_bound());

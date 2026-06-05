@@ -25,6 +25,11 @@ const STATUS_META: Record<ServerStatus, { i18nKey: string; className: string }> 
     i18nKey: 'channels.status.error',
     className: 'bg-coral-500/10 text-coral-700 border-coral-500/30 dark:text-coral-300',
   },
+  disabled: {
+    i18nKey: 'mcp.status.disabled',
+    className:
+      'bg-stone-100 dark:bg-neutral-800 text-stone-400 dark:text-neutral-500 border-stone-200 dark:border-neutral-700 italic',
+  },
 };
 
 interface McpStatusBadgeProps {

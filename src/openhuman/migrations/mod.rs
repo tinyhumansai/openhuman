@@ -147,10 +147,9 @@ pub async fn run_pending(config: &mut Config) {
         }
     }
 
-    // 2 -> 3: retire `chat-v1` as the default model. The backend removed
-    // `chat-v1` from its strict model registry; sub-agent spawns (new
-    // threads) that sent this literal model ID received a 400. Remap any
-    // persisted `default_model = "chat-v1"` to `"reasoning-quick-v1"`.
+    // 2 -> 3: legacy chat-v1 migration hook retained for schema-version
+    // progression. `chat-v1` is now the canonical low-latency chat slug, so
+    // the migration no longer rewrites default_model.
     // Guard on `== 2` so a failed 1→2 migration doesn't skip this step.
     if config.schema_version == 2 {
         match retire_chat_v1_model::run(config) {

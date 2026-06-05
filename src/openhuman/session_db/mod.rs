@@ -9,6 +9,7 @@
 //! Database path: `{workspace}/session_db/sessions.db`.
 
 mod ops;
+pub mod run_ledger;
 mod schemas;
 mod store;
 pub mod types;

@@ -253,7 +253,7 @@ describe('Guided tour — gates and resume behaviour (#1215)', function () {
     // GP-1: Skills gate is not implemented in the current walkthrough.
     // The tour advances to the next step regardless of whether the user has
     // actually connected a skill. A real gating implementation would need to
-    // hold the "Next" button disabled until a `openhuman.skills_list` RPC
+    // hold the "Next" button disabled until a `openhuman.workflows_list` RPC
     // call confirms at least one skill is connected, then re-enable it.
     it.skip('GP-1 (NOT IMPLEMENTED): tour Next button is disabled until user connects a skill', async () => {
       // Expected product behaviour: the Next button on the /skills step

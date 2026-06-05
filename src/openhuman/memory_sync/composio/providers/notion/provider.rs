@@ -31,6 +31,11 @@ use futures::StreamExt;
 
 pub(crate) const ACTION_GET_ABOUT_ME: &str = "NOTION_GET_ABOUT_ME";
 pub(crate) const ACTION_FETCH_DATA: &str = "NOTION_FETCH_DATA";
+/// Per-page action that returns the page's rendered **body** as markdown
+/// (paragraphs, headings, lists, body tables). `FETCH_DATA` only returns
+/// metadata + properties; this fills in the actual document content for
+/// free-form pages. One request per page (budget-counted).
+pub(crate) const ACTION_GET_PAGE_MARKDOWN: &str = "NOTION_GET_PAGE_MARKDOWN";
 pub(crate) const ACTION_QUERY_DATABASE: &str = "NOTION_QUERY_DATABASE";
 pub(crate) const ACTION_SEARCH_NOTION_PAGE: &str = "NOTION_SEARCH_NOTION_PAGE";
 
@@ -186,6 +191,33 @@ impl ComposioProvider for NotionProvider {
             _ => PAGE_SIZE,
         };
 
+        // ctx.max_items: route through ItemCap — page ceiling, mid-page
+        // per-item break, and post-page hard stop all share one source of truth.
+        let mut cap = super::super::helpers::ItemCap::new(ctx.max_items);
+        let effective_max_pages = cap.max_pages(page_size, MAX_PAGES_PER_SYNC);
+        if ctx.max_items.is_some() && effective_max_pages < MAX_PAGES_PER_SYNC {
+            tracing::debug!(
+                connection_id = %connection_id,
+                max_items = ?ctx.max_items,
+                effective_max_pages,
+                "[composio:notion] [memory_sync] applying max_items page cap"
+            );
+        }
+
+        // ctx.sync_depth_days: compute the oldest allowed edited_time string
+        // for client-side skipping of stale results.
+        let oldest_allowed_time: Option<String> = ctx.sync_depth_days.map(|days| {
+            let floor = chrono::Utc::now() - chrono::Duration::days(days as i64);
+            let s = floor.to_rfc3339();
+            tracing::debug!(
+                connection_id = %connection_id,
+                sync_depth_days = days,
+                oldest_allowed = %s,
+                "[composio:notion] [memory_sync] applying sync_depth_days floor"
+            );
+            s
+        });
+
         let mut total_fetched: usize = 0;
         let mut total_persisted: usize = 0;
         let mut newest_edited_time: Option<String> = None;
@@ -198,8 +230,9 @@ impl ComposioProvider for NotionProvider {
         // its next edit. Already-synced items are skipped cheaply via
         // `is_synced` on the re-fetch, so the cost of holding is minimal.
         let mut had_ingest_failures = false;
+        let mut hit_cap_boundary = false;
 
-        for page_num in 0..MAX_PAGES_PER_SYNC {
+        for page_num in 0..effective_max_pages {
             if state.budget_exhausted() {
                 tracing::info!(
                     page = page_num,
@@ -249,8 +282,98 @@ impl ComposioProvider for NotionProvider {
             }
 
             // ── Step 4a: dedupe + decide which pages to ingest ──────
-            let (pending, hit_cursor_boundary) =
+            let (mut pending, mut hit_cursor_boundary) =
                 select_pending(&results, &state, &mut newest_edited_time);
+
+            // ctx.sync_depth_days: drop items edited before the depth floor. `pending` is
+            // in descending timestamp order, so truncate at the first item below the floor
+            // and signal cursor-boundary so pagination stops.
+            if let Some(ref floor) = oldest_allowed_time {
+                if let Some(cut) = pending.iter().position(|p| {
+                    p.edited_time
+                        .as_deref()
+                        .map(|t| t < floor.as_str())
+                        .unwrap_or(false)
+                }) {
+                    pending.truncate(cut);
+                    hit_cursor_boundary = true;
+                }
+            }
+
+            // ctx.max_items: clamp the dedup'd batch to the remaining budget before ingest.
+            cap.clamp_batch(&mut pending);
+
+            // ── Step 4a.5: fetch each pending page's BODY markdown ──
+            // FETCH_DATA only returned metadata + properties. Pull the
+            // rendered page body (paragraphs, lists, body tables) per page so
+            // free-form documents ingest as real content (multi-chunk) rather
+            // than a single metadata chunk. One request per page — budget
+            // counted. Runs AFTER the depth-floor + max-items cap so we only
+            // fetch bodies for pages we'll actually ingest. On budget
+            // exhaustion or error we leave `markdown_body` None and ingest
+            // falls back to the metadata-only body.
+            for (idx, p) in pending.iter_mut().enumerate() {
+                if state.budget_exhausted() {
+                    tracing::info!(
+                        page = page_num,
+                        "[composio:notion] budget exhausted before body fetch — \
+                         remaining pages ingest metadata-only"
+                    );
+                    break;
+                }
+                match ctx
+                    .execute(
+                        ACTION_GET_PAGE_MARKDOWN,
+                        Some(json!({ "page_id": p.page_id })),
+                    )
+                    .await
+                {
+                    Ok(resp) => {
+                        state.record_requests(1);
+                        if resp.successful {
+                            p.markdown_body = sync::extract_page_markdown(&resp.data);
+                            // Empirical visibility (INFO so it shows at default
+                            // log level): on the first body fetch, log the
+                            // markdown length + the raw envelope keys so we can
+                            // confirm the response field / arg name on a live
+                            // run and refine if needed.
+                            if page_num == 0 && idx == 0 {
+                                tracing::info!(
+                                    page_id = %p.page_id,
+                                    markdown_chars =
+                                        p.markdown_body.as_ref().map(|s| s.len()).unwrap_or(0),
+                                    raw_keys = ?resp
+                                        .data
+                                        .as_object()
+                                        .map(|o| o.keys().cloned().collect::<Vec<_>>()),
+                                    "[composio:notion] GET_PAGE_MARKDOWN sample (empirical check)"
+                                );
+                            }
+                            if p.markdown_body.is_none() {
+                                tracing::warn!(
+                                    page_id = %p.page_id,
+                                    "[composio:notion] GET_PAGE_MARKDOWN returned no markdown \
+                                     field — metadata-only fallback"
+                                );
+                            }
+                        } else {
+                            tracing::warn!(
+                                page_id = %p.page_id,
+                                error = ?resp.error,
+                                "[composio:notion] GET_PAGE_MARKDOWN failed — metadata-only fallback"
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            page_id = %p.page_id,
+                            error = %e,
+                            "[composio:notion] GET_PAGE_MARKDOWN execute error — \
+                             metadata-only fallback"
+                        );
+                    }
+                }
+            }
 
             // ── Step 4b: ingest queued pages (bounded concurrency) ──
             let ingestor = MemoryTreeIngestor {
@@ -262,8 +385,15 @@ impl ComposioProvider for NotionProvider {
                 state.mark_synced(key);
             }
             total_persisted += outcome.persisted;
+            cap.record(outcome.persisted);
             if outcome.had_failures {
                 had_ingest_failures = true;
+            }
+
+            // ctx.max_items precise cap: once the per-source cap is hit, stop paginating.
+            if cap.is_reached() {
+                hit_cap_boundary = true;
+                break;
             }
 
             if hit_cursor_boundary {
@@ -271,6 +401,17 @@ impl ComposioProvider for NotionProvider {
                     page = page_num,
                     "[composio:notion] reached cursor boundary, stopping"
                 );
+                break;
+            }
+
+            // ctx.max_items hard stop.
+            if cap.is_reached() {
+                tracing::debug!(
+                    page = page_num,
+                    total_persisted,
+                    "[composio:notion] [memory_sync] max_items reached, stopping pagination"
+                );
+                hit_cap_boundary = true;
                 break;
             }
 
@@ -287,15 +428,18 @@ impl ComposioProvider for NotionProvider {
         // Hold the cursor when any item failed to ingest this pass. See the
         // `had_ingest_failures` declaration above for why this matters under
         // the delete-first memory-tree pipeline (#2885).
-        if !had_ingest_failures {
+        // Hold the cursor on a cap-truncated pass so the next sync re-scans the unseen tail.
+        if !had_ingest_failures && !hit_cap_boundary {
             if let Some(new_cursor) = newest_edited_time {
                 state.advance_cursor(&new_cursor);
             }
         } else {
             tracing::warn!(
                 connection_id = %connection_id,
-                "[composio:notion] holding cursor — ingest failures this pass; next sync will \
-                 re-fetch the failed range"
+                had_ingest_failures,
+                hit_cap_boundary,
+                "[composio:notion] holding cursor — ingest failures or cap-truncated pass; next \
+                 sync will re-fetch the failed range"
             );
         }
         state.save(&memory).await?;
@@ -611,6 +755,11 @@ struct PendingIngest<'a> {
     title: String,
     edited_time: Option<String>,
     page: &'a Value,
+    /// Rendered page body (markdown) fetched per-page via
+    /// `NOTION_GET_PAGE_MARKDOWN` after dedupe, before ingest. `None` when the
+    /// body fetch was skipped (budget) or failed — ingest falls back to the
+    /// metadata-only body.
+    markdown_body: Option<String>,
 }
 
 /// Folded result of [`ingest_pending_buffered`]. Every field is
@@ -637,6 +786,7 @@ trait PageIngestor {
         title: &str,
         edited_time: Option<&str>,
         page: &Value,
+        markdown_body: Option<&str>,
     ) -> anyhow::Result<usize>;
 }
 
@@ -655,6 +805,7 @@ impl PageIngestor for MemoryTreeIngestor<'_> {
         title: &str,
         edited_time: Option<&str>,
         page: &Value,
+        markdown_body: Option<&str>,
     ) -> anyhow::Result<usize> {
         ingest_page_into_memory_tree(
             self.config,
@@ -663,6 +814,7 @@ impl PageIngestor for MemoryTreeIngestor<'_> {
             title,
             edited_time,
             page,
+            markdown_body,
         )
         .await
     }
@@ -726,6 +878,7 @@ fn select_pending<'a>(
             title,
             edited_time,
             page,
+            markdown_body: None,
         });
     }
     (pending, hit_cursor_boundary)
@@ -748,7 +901,13 @@ async fn ingest_pending_buffered<I: PageIngestor + Sync>(
         .into_iter()
         .map(|p| async move {
             let res = ingestor
-                .ingest(&p.page_id, &p.title, p.edited_time.as_deref(), p.page)
+                .ingest(
+                    &p.page_id,
+                    &p.title,
+                    p.edited_time.as_deref(),
+                    p.page,
+                    p.markdown_body.as_deref(),
+                )
                 .await;
             (p.sync_key, p.page_id, res)
         })
@@ -810,6 +969,7 @@ mod buffered_tests {
             _title: &str,
             _edited_time: Option<&str>,
             _page: &Value,
+            _markdown_body: Option<&str>,
         ) -> anyhow::Result<usize> {
             let now = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
             self.peak.fetch_max(now, Ordering::SeqCst);
@@ -841,6 +1001,7 @@ mod buffered_tests {
                 title: format!("Notion: page {i}"),
                 edited_time: None,
                 page,
+                markdown_body: None,
             })
             .collect()
     }

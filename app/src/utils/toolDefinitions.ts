@@ -46,6 +46,15 @@ export const TOOL_CATALOG: ToolDefinition[] = [
     rustToolNames: ['ax_interact'],
   },
   {
+    id: 'automate',
+    displayName: 'App Automation',
+    description:
+      'Accomplish a multi-step goal in an app in one go (e.g. "play a song in Music", "message someone in Slack") — the agent drives the UI step by step.',
+    category: 'System',
+    defaultEnabled: true,
+    rustToolNames: ['automate'],
+  },
+  {
     id: 'git_operations',
     displayName: 'Git Operations',
     description: 'Run git commands in your workspace.',

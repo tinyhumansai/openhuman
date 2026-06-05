@@ -20,8 +20,10 @@ import {
 } from '../../../services/api/voiceSettingsApi';
 import {
   openhumanGetVoiceServerSettings,
+  openhumanUpdateVoiceServerSettings,
   openhumanVoiceSetProviders,
   openhumanVoiceStatus,
+  syncNotchVisibility,
   type VoiceProvidersSnapshot,
   type VoiceServerSettings,
   type VoiceStatus,
@@ -486,6 +488,60 @@ const VoicePanel = ({ embedded = false }: VoicePanelProps = {}) => {
       )}
 
       <div className={embedded ? 'space-y-4' : 'p-4 space-y-4'}>
+        {/* ─── Always-on listening (Phase 2) ──────────────────────────── */}
+        {settings && (
+          <section className="space-y-3">
+            <div className="bg-stone-50 dark:bg-neutral-800/60 rounded-lg border border-stone-200 dark:border-neutral-800 p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+                    {t('voice.debug.alwaysOn')}
+                  </h3>
+                  <p className="text-xs text-stone-500 dark:text-neutral-400 mt-1">
+                    {t('voice.debug.alwaysOnDesc')}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={settings.always_on_enabled}
+                  aria-label={t('voice.debug.alwaysOn')}
+                  data-testid="voice-always-on-toggle"
+                  onClick={async () => {
+                    const next = !settings.always_on_enabled;
+                    setSettings(current =>
+                      current ? { ...current, always_on_enabled: next } : current
+                    );
+                    try {
+                      await openhumanUpdateVoiceServerSettings({ always_on_enabled: next });
+                      // The notch pill is the always-on listening HUD: show it
+                      // when listening is enabled, drop it when disabled.
+                      await syncNotchVisibility(next);
+                    } catch (err) {
+                      // Revert on failure so the UI reflects the persisted value.
+                      setSettings(current =>
+                        current ? { ...current, always_on_enabled: !next } : current
+                      );
+                      console.error('[VoicePanel] failed to toggle always-on', err);
+                    }
+                  }}
+                  className={`relative mt-0.5 inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors ${
+                    settings.always_on_enabled
+                      ? 'bg-primary-500'
+                      : 'bg-stone-300 dark:bg-neutral-600'
+                  }`}>
+                  <span
+                    aria-hidden
+                    className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${
+                      settings.always_on_enabled ? 'translate-x-3.5' : 'translate-x-0.5'
+                    }`}
+                  />
+                </button>
+              </div>
+            </div>
+          </section>
+        )}
+
         {/* ─── Section 1: Voice Provider Chips ─────────────────────────── */}
         <section className="space-y-3">
           <div

@@ -7,6 +7,7 @@ import MeetingBotsCard, { MeetingBotsModal } from '../MeetingBotsCard';
 
 const joinMock = vi.fn();
 const listMock = vi.fn();
+const leaveMock = vi.fn();
 
 vi.mock('../../../services/meetCallService', async () => {
   const actual = await vi.importActual<typeof import('../../../services/meetCallService')>(
@@ -14,12 +15,9 @@ vi.mock('../../../services/meetCallService', async () => {
   );
   return {
     ...actual,
-    // Flow A: the modal submit calls joinMeetCall (CEF webview), not the
-    // Flow B backend joinMeetingViaMascotBot. Switched in the
-    // mascot-meet-flowA revival commits — kept the mock variable name
-    // `joinMock` to keep the diff focused on the call site swap.
-    joinMeetCall: (...args: unknown[]) => joinMock(...args),
+    joinMeetViaBackendBot: (...args: unknown[]) => joinMock(...args),
     listMeetCalls: (...args: unknown[]) => listMock(...args),
+    leaveBackendMeetBot: (...args: unknown[]) => leaveMock(...args),
   };
 });
 
@@ -58,8 +56,11 @@ describe('MeetingBotsCard', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
-  it('submits to joinMeetCall and fires a success toast', async () => {
-    joinMock.mockResolvedValueOnce({ requestId: 'req-1' });
+  it('submits to joinMeetViaBackendBot and fires a success toast', async () => {
+    joinMock.mockResolvedValueOnce({
+      meetUrl: 'https://meet.google.com/abc-defg-hij',
+      platform: 'gmeet',
+    });
     const onToast = vi.fn();
     renderWithProviders(<MeetingBotsCard onToast={onToast} />);
 
@@ -67,25 +68,16 @@ describe('MeetingBotsCard', () => {
     fireEvent.change(screen.getByLabelText(/meeting link/i), {
       target: { value: 'https://meet.google.com/abc-defg-hij' },
     });
-    // Owner display name is now required — the wake-word gate refuses
-    // every caption when this is empty (privacy lock), so the submit
-    // button stays disabled and the test would hang on form submit
-    // without typing a value here.
-    fireEvent.change(screen.getByLabelText(/your name in the call/i), {
-      target: { value: 'Alice' },
-    });
     const form = screen.getByRole('dialog').querySelector('form')!;
     fireEvent.submit(form);
 
-    // Flow A's joinMeetCall takes { meetUrl, displayName, ownerDisplayName }.
-    // Assert on the owner name (the new privacy-lock contract) and meetUrl;
-    // the bot displayName is a UI-supplied default and not contract-load-
-    // bearing for this assertion.
     await vi.waitFor(() => {
       expect(joinMock).toHaveBeenCalledWith(
         expect.objectContaining({
           meetUrl: 'https://meet.google.com/abc-defg-hij',
-          ownerDisplayName: 'Alice',
+          displayName: 'OpenHuman',
+          platform: 'gmeet',
+          agentName: 'OpenHuman',
         })
       );
     });
@@ -100,9 +92,6 @@ describe('MeetingBotsCard', () => {
     });
   });
 
-  // Flow A's joinMeetCall has no capacity-gated concept — any throw maps
-  // to the single "could not start" toast + inline alert with the error
-  // message. Two error cases collapsed into one in the Flow A model.
   it('surfaces a join error inline + as an error toast', async () => {
     joinMock.mockRejectedValueOnce(new Error('Bad URL'));
     const onToast = vi.fn();
@@ -111,9 +100,6 @@ describe('MeetingBotsCard', () => {
     fireEvent.click(screen.getByTestId('meeting-bots-banner'));
     fireEvent.change(screen.getByLabelText(/meeting link/i), {
       target: { value: 'https://meet.google.com/x' },
-    });
-    fireEvent.change(screen.getByLabelText(/your name in the call/i), {
-      target: { value: 'Alice' },
     });
     fireEvent.submit(screen.getByRole('dialog').querySelector('form')!);
 
@@ -125,57 +111,116 @@ describe('MeetingBotsCard', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('Bad URL');
   });
 
-  it('disables the submit when the active platform is coming-soon', () => {
+  it('Zoom is a live platform — submit is labelled "Send to Zoom", not "coming soon"', () => {
     renderWithProviders(<MeetingBotsCard />);
     fireEvent.click(screen.getByTestId('meeting-bots-banner'));
-    // Pick Zoom (coming soon)
+    // Zoom is fully supported via Recall.ai; submit should not say "coming soon".
     fireEvent.click(screen.getByRole('button', { name: /Zoom/ }));
-    const submit = screen.getByRole('button', { name: /coming soon/i });
-    expect(submit).toBeDisabled();
+    expect(screen.queryByRole('button', { name: /coming soon/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /send to zoom/i })).toBeInTheDocument();
   });
 
-  // Issue #2945: users were being asked to retype "your name in the call"
-  // every meeting. When the Persona display name (Settings → Persona) is
-  // set, the owner-name field pre-fills from it so the user can submit
-  // without retyping.
-  it('pre-fills the owner display name from the Persona slice', () => {
-    const { store } = renderWithProviders(<MeetingBotsCard />, {
-      preloadedState: { persona: { displayName: 'Hemanth', description: '' } },
-    });
-    fireEvent.click(screen.getByTestId('meeting-bots-banner'));
-    const ownerInput = screen.getByLabelText(/your name in the call/i) as HTMLInputElement;
-    expect(ownerInput.value).toBe('Hemanth');
-    // Sanity: the slice is wired so the assertion above isn't a no-op.
-    expect(store.getState().persona.displayName).toBe('Hemanth');
-  });
-
-  it('leaves the owner display name empty when no Persona name is set', () => {
-    // Default preloadedState — persona slice initial state is
-    // { displayName: '', description: '' } (see personaSlice.ts).
+  it('does not require the old owner-name field for backend Recall joins', () => {
     renderWithProviders(<MeetingBotsCard />);
     fireEvent.click(screen.getByTestId('meeting-bots-banner'));
-    const ownerInput = screen.getByLabelText(/your name in the call/i) as HTMLInputElement;
-    expect(ownerInput.value).toBe('');
+    expect(screen.queryByLabelText(/your name in the call/i)).not.toBeInTheDocument();
+  });
+});
+
+// ── ActiveMeetingView tests ───────────────────────────────────────────────────
+// Exercises the live-meeting banner rendered when Redux status is active/joining.
+
+const activeMeetState = {
+  backendMeet: {
+    status: 'active' as const,
+    meetUrl: 'https://meet.google.com/abc-defg-hij',
+    lastReply: null,
+    lastHarness: null,
+    transcript: null,
+    error: null,
+  },
+};
+
+describe('MeetingBotsCard — ActiveMeetingView', () => {
+  beforeEach(() => {
+    leaveMock.mockReset();
+    leaveMock.mockResolvedValue(undefined);
+  });
+  afterEach(() => cleanup());
+
+  it('shows the LIVE badge and meeting code when status is active', () => {
+    renderWithProviders(<MeetingBotsCard />, { preloadedState: activeMeetState });
+    // Both "Live" (badge) and "Live in meeting" (status text) are present
+    expect(screen.getAllByText(/live/i).length).toBeGreaterThan(0);
+    // Pathname stripped: shows "abc-defg-hij" not the full URL
+    expect(screen.getByText('abc-defg-hij')).toBeInTheDocument();
   });
 
-  // Dirty-flag contract: once the user has typed into the field, a
-  // subsequent Persona update from the slice must NOT overwrite their
-  // input. The pre-edit case is covered by the "pre-fills" test above.
-  it('does not overwrite user-typed owner name when Persona slice updates later', () => {
-    const { store } = renderWithProviders(<MeetingBotsCard />, {
-      preloadedState: { persona: { displayName: 'Hemanth', description: '' } },
+  it('shows Leave button when status is active', () => {
+    renderWithProviders(<MeetingBotsCard />, { preloadedState: activeMeetState });
+    expect(screen.getByRole('button', { name: /leave/i })).toBeInTheDocument();
+  });
+
+  it('calls leaveBackendMeetBot when Leave is clicked', async () => {
+    renderWithProviders(<MeetingBotsCard />, { preloadedState: activeMeetState });
+    fireEvent.click(screen.getByRole('button', { name: /leave/i }));
+    await waitFor(() => expect(leaveMock).toHaveBeenCalledWith('user-requested'));
+  });
+
+  it('Leave button is disabled during in-flight leave call', async () => {
+    // Hang the leave call so we can inspect intermediate disabled state
+    leaveMock.mockReturnValue(new Promise(() => {}));
+    renderWithProviders(<MeetingBotsCard />, { preloadedState: activeMeetState });
+    const btn = screen.getByRole('button', { name: /leave/i });
+    fireEvent.click(btn);
+    await waitFor(() => expect(btn).toBeDisabled());
+  });
+
+  it('shows last reply text when lastReply is set', () => {
+    renderWithProviders(<MeetingBotsCard />, {
+      preloadedState: {
+        backendMeet: {
+          ...activeMeetState.backendMeet,
+          lastReply: { transcript: 'hello', reply: 'Hi there!', emotion: 'happy' },
+        },
+      },
     });
-    fireEvent.click(screen.getByTestId('meeting-bots-banner'));
-    const ownerInput = screen.getByLabelText(/your name in the call/i) as HTMLInputElement;
-    // Sanity: pre-fill landed.
-    expect(ownerInput.value).toBe('Hemanth');
-    // User types over it.
-    fireEvent.change(ownerInput, { target: { value: 'Alice' } });
-    expect(ownerInput.value).toBe('Alice');
-    // Persona name changes underneath (e.g. user edits Settings in another window).
-    store.dispatch({ type: 'persona/setPersonaDisplayName', payload: 'Nova' });
-    // User's typed value wins — does NOT flip to 'Nova'.
-    expect(ownerInput.value).toBe('Alice');
+    expect(screen.getByText(/hi there/i)).toBeInTheDocument();
+  });
+
+  it('shows joining status text when status is joining', () => {
+    renderWithProviders(<MeetingBotsCard />, {
+      preloadedState: {
+        backendMeet: { ...activeMeetState.backendMeet, status: 'joining' as const },
+      },
+    });
+    expect(screen.getByText(/joining/i)).toBeInTheDocument();
+  });
+
+  it('shows banner (not ActiveMeetingView) when status is ended', () => {
+    // MeetingBotsCard only shows ActiveMeetingView for active/joining.
+    // When ended the banner is rendered so the user can start a new call.
+    renderWithProviders(<MeetingBotsCard />, {
+      preloadedState: {
+        backendMeet: { ...activeMeetState.backendMeet, status: 'ended' as const },
+      },
+    });
+    expect(screen.getByTestId('meeting-bots-banner')).toBeInTheDocument();
+    expect(screen.queryByText(/live in meeting/i)).not.toBeInTheDocument();
+  });
+
+  it('shows error toast when leave call fails', async () => {
+    leaveMock.mockRejectedValueOnce(new Error('Network error'));
+    const onToast = vi.fn();
+    renderWithProviders(<MeetingBotsCard onToast={onToast} />, {
+      preloadedState: activeMeetState,
+    });
+    fireEvent.click(screen.getByRole('button', { name: /leave/i }));
+    await waitFor(() =>
+      expect(onToast).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'error' })
+      )
+    );
   });
 });
 

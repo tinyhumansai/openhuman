@@ -20,6 +20,14 @@ vi.mock('../services/api/aiSettingsApi', async () => {
   return { ...actual, loadAISettings: () => mockLoadAISettings() };
 });
 
+// useUsageState gates polling on auth (#3297). Default authenticated so every
+// existing budget-gating assertion keeps exercising the fetch path; the gating
+// test below flips it false.
+const { mockAuthState } = vi.hoisted(() => ({ mockAuthState: { isAuthenticated: true } }));
+vi.mock('../providers/CoreStateProvider', () => ({
+  useCoreState: () => ({ snapshot: { auth: { isAuthenticated: mockAuthState.isAuthenticated } } }),
+}));
+
 // All chat workloads routed to OpenHuman — the default for every existing
 // test case (matches the legacy "you have a hosted-backend budget" world).
 const ALL_OPENHUMAN_AI_SETTINGS = {
@@ -123,6 +131,8 @@ describe('useUsageState', () => {
     mockGetCurrentPlan.mockReset();
     mockGetTeamUsage.mockReset();
     mockLoadAISettings.mockReset();
+    // Default authenticated; the auth-gating test opts out explicitly.
+    mockAuthState.isAuthenticated = true;
     // Default: keep the OpenHuman-routed world so every legacy assertion
     // about budget gating stays identical until a test opts into the
     // routed-away scenarios below.
@@ -657,5 +667,31 @@ describe('useUsageState', () => {
     } finally {
       window.removeEventListener('unhandledrejection', unhandled);
     }
+  });
+
+  // -- #3297 — auth gating before dispatch (TAURI-RUST-8WY / 8WZ) -----------
+
+  it('does not dispatch usage/plan RPCs while unauthenticated (#3297, TAURI-RUST-8WY/8WZ)', async () => {
+    // Signed out (pre-login, or after a SessionExpired clear): these RPCs
+    // require a backend session, so dispatching them is a guaranteed 401 at
+    // the backend — the flood this fix removes. The hook must skip the fetch
+    // entirely rather than round-trip to a doomed call.
+    mockAuthState.isAuthenticated = false;
+    const { useUsageState } = await import('./useUsageState');
+    mockGetCurrentPlan.mockRejectedValue(new Error('plan must not be fetched while signed out'));
+    mockGetTeamUsage.mockRejectedValue(new Error('usage must not be fetched while signed out'));
+    mockLoadAISettings.mockRejectedValue(new Error('settings must not load while signed out'));
+
+    const { result } = renderHook(() => useUsageState());
+    // Let any (incorrectly-scheduled) async fetch microtasks flush.
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(mockLoadAISettings).not.toHaveBeenCalled();
+    expect(mockGetTeamUsage).not.toHaveBeenCalled();
+    expect(mockGetCurrentPlan).not.toHaveBeenCalled();
+    expect(result.current.teamUsage).toBeNull();
+    expect(result.current.currentPlan).toBeNull();
+    expect(result.current.isLoading).toBe(false);
   });
 });

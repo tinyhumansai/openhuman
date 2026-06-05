@@ -202,6 +202,7 @@ fn parent_context_with_provider(
         session_key: "0_test".into(),
         session_parent_prefix: None,
         on_progress: None,
+        run_queue: None,
     }
 }
 

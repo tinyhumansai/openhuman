@@ -151,6 +151,7 @@ async fn single_batch_sync_to_tree() {
         Some("gmail"),
         Some("conn-1"),
         None,
+        None, // channel-level — not a memory-source row
     );
     emit_sync_stage(
         MemorySyncTrigger::Manual,
@@ -158,6 +159,7 @@ async fn single_batch_sync_to_tree() {
         Some("gmail"),
         Some("conn-1"),
         None,
+        None, // channel-level — not a memory-source row
     );
 
     let source_id = "gmail:alice-thread-1";
@@ -209,6 +211,7 @@ async fn single_batch_sync_to_tree() {
         Some("gmail"),
         Some("conn-1"),
         None,
+        None, // channel-level — not a memory-source row
     );
 
     tokio::task::yield_now().await;

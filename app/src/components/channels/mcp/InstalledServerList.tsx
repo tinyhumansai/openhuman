@@ -29,6 +29,7 @@ const STATUS_DOT: Record<ServerStatus, string> = {
   connecting: 'bg-amber-400',
   disconnected: 'bg-stone-300 dark:bg-neutral-600',
   error: 'bg-coral-500',
+  disabled: 'bg-stone-200 dark:bg-neutral-700',
 };
 
 // i18n keys for the per-status tooltip on the status dot. Reuses the
@@ -40,6 +41,7 @@ const STATUS_I18N_KEYS: Record<ServerStatus, string> = {
   connecting: 'channels.status.connecting',
   disconnected: 'channels.status.disconnected',
   error: 'channels.status.error',
+  disabled: 'mcp.status.disabled',
 };
 
 const InstalledServerList = ({

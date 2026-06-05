@@ -909,6 +909,7 @@ async fn subagent_runner_parent_context_filters_tools_caps_output_and_reports_er
         session_key: "123_parent".to_string(),
         session_parent_prefix: Some("root_ancestor".to_string()),
         on_progress: None,
+        run_queue: None,
     };
 
     let outcome = with_parent_context(parent.clone(), async {

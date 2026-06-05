@@ -19,8 +19,10 @@ import {
 import { renderWithProviders } from '../../../../test/test-utils';
 import {
   openhumanGetVoiceServerSettings,
+  openhumanUpdateVoiceServerSettings,
   openhumanVoiceSetProviders,
   openhumanVoiceStatus,
+  syncNotchVisibility,
   type VoiceServerSettings,
   type VoiceStatus,
 } from '../../../../utils/tauriCommands';
@@ -28,8 +30,10 @@ import VoicePanel from '../VoicePanel';
 
 vi.mock('../../../../utils/tauriCommands', () => ({
   openhumanGetVoiceServerSettings: vi.fn(),
+  openhumanUpdateVoiceServerSettings: vi.fn(),
   openhumanVoiceSetProviders: vi.fn(),
   openhumanVoiceStatus: vi.fn(),
+  syncNotchVisibility: vi.fn(),
 }));
 
 vi.mock('../../../../services/api/voiceInstallApi', () => ({
@@ -111,6 +115,7 @@ describe('VoicePanel', () => {
         min_duration_secs: 0.3,
         silence_threshold: 0.002,
         custom_dictionary: [],
+        always_on_enabled: false,
       },
       voiceStatus: {
         stt_available: true,
@@ -136,6 +141,13 @@ describe('VoicePanel', () => {
       logs: [],
     }));
     vi.mocked(openhumanVoiceStatus).mockImplementation(async () => ({ ...runtime.voiceStatus }));
+    // The toggle handler ignores the resolved value (it updates React state
+    // optimistically before awaiting), so a minimal cast is enough here.
+    vi.mocked(openhumanUpdateVoiceServerSettings).mockResolvedValue({
+      result: {},
+      logs: [],
+    } as never);
+    vi.mocked(syncNotchVisibility).mockResolvedValue(undefined);
     vi.mocked(openhumanVoiceSetProviders).mockImplementation(async update => {
       if (update.stt_provider) runtime.voiceStatus.stt_provider = update.stt_provider;
       if (update.tts_provider) runtime.voiceStatus.tts_provider = update.tts_provider;
@@ -495,5 +507,48 @@ describe('VoicePanel', () => {
     renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
 
     await waitFor(() => expect(screen.getByText('core offline')).toBeInTheDocument());
+  });
+
+  // ─── Always-on listening toggle ↔ notch indicator ───────────────────────
+
+  it('shows the notch when always-on listening is enabled and hides it when disabled', async () => {
+    renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+
+    const toggle = await screen.findByTestId('voice-always-on-toggle');
+    await waitFor(() => expect(toggle).toHaveAttribute('aria-checked', 'false'));
+
+    // Turn always-on ON → persists the flag and shows the notch HUD.
+    fireEvent.click(toggle);
+    await waitFor(() =>
+      expect(vi.mocked(openhumanUpdateVoiceServerSettings)).toHaveBeenCalledWith({
+        always_on_enabled: true,
+      })
+    );
+    await waitFor(() => expect(vi.mocked(syncNotchVisibility)).toHaveBeenCalledWith(true));
+
+    // Turn always-on OFF → hides the notch HUD.
+    fireEvent.click(toggle);
+    await waitFor(() =>
+      expect(vi.mocked(openhumanUpdateVoiceServerSettings)).toHaveBeenCalledWith({
+        always_on_enabled: false,
+      })
+    );
+    await waitFor(() => expect(vi.mocked(syncNotchVisibility)).toHaveBeenCalledWith(false));
+  });
+
+  it('does not touch the notch and reverts the toggle when the update RPC fails', async () => {
+    vi.mocked(openhumanUpdateVoiceServerSettings).mockRejectedValueOnce(new Error('rpc down'));
+
+    renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+
+    const toggle = await screen.findByTestId('voice-always-on-toggle');
+    await waitFor(() => expect(toggle).toHaveAttribute('aria-checked', 'false'));
+
+    fireEvent.click(toggle);
+
+    // The optimistic flip is reverted back to off after the RPC rejects, and
+    // the notch is never shown because the persist failed.
+    await waitFor(() => expect(toggle).toHaveAttribute('aria-checked', 'false'));
+    expect(vi.mocked(syncNotchVisibility)).not.toHaveBeenCalled();
   });
 });

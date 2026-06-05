@@ -41,10 +41,15 @@ describe('memoryGraphLayout', () => {
     expect(nodeColor(contact())).toBe(CONTACT_COLOR);
   });
 
-  it('nodeRadius grows with level and is fixed for chunk/contact', () => {
+  it('nodeRadius grows with level (capped) and is fixed for chunk/contact', () => {
     expect(nodeRadius(summary({ level: 0 }))).toBe(5);
     expect(nodeRadius(summary({ level: 3 }))).toBe(12.5);
-    expect(nodeRadius(summary({ level: 99 }))).toBe(252.5);
+    // Capped at 14: document merge-tier nodes live at a large synthetic level
+    // (MERGE_LEVEL_BASE = 1000+), so the raw `5 + level*2.5` is clamped to keep
+    // the d3 layout/collision sane instead of rendering giant discs.
+    expect(nodeRadius(summary({ level: 4 }))).toBe(14); // 5 + 4*2.5 = 15 → capped
+    expect(nodeRadius(summary({ level: 99 }))).toBe(14);
+    expect(nodeRadius(summary({ level: 1001 }))).toBe(14);
     expect(nodeRadius(contact())).toBe(9);
     expect(nodeRadius(chunk())).toBe(3);
   });

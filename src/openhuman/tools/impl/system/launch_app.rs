@@ -176,7 +176,11 @@ impl Tool for LaunchAppTool {
 }
 
 /// Platform-specific launch dispatch. Returns a human-readable success message.
-async fn launch_platform(app_name: &str) -> Result<String, String> {
+///
+/// `pub(crate)` so the `automate` inner loop (`accessibility::automate`) can
+/// launch an app as one of its steps without duplicating the platform branches
+/// or routing back through the full tool surface.
+pub(crate) async fn launch_platform(app_name: &str) -> Result<String, String> {
     log::info!(
         "[launch_app] platform={} dispatching launch for app_name={app_name:?}",
         std::env::consts::OS

@@ -599,6 +599,8 @@ async fn default_composio_provider_hooks_return_expected_noop_shapes() {
         toolkit: "round14".into(),
         connection_id: Some("conn-round14".into()),
         usage: Default::default(),
+        max_items: None,
+        sync_depth_days: None,
     };
     let provider = MinimalProvider;
     assert_eq!(provider.sync_interval_secs(), None);

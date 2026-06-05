@@ -32,6 +32,7 @@
     "mascot:render": "pnpm --dir remotion render:runtime-assets",
     "merge-pr": "bash scripts/shortcuts/review/merge.sh",
     "mock:api": "node scripts/mock-api-server.mjs",
+    "council:seed": "node scripts/seed-councils.mjs",
     "pr:checklist": "node scripts/check-pr-checklist.mjs",
     "pr:sync-main": "node scripts/merge-main-into-open-prs.mjs",
     "rabbit": "bash scripts/rabbit/cli.sh",

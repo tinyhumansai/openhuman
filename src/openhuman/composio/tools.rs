@@ -376,9 +376,9 @@ impl Tool for ComposioListToolkitsTool {
     }
     fn category(&self) -> ToolCategory {
         // Composio proxies to external SaaS (Gmail, Notion, …), so it
-        // lives in the Skill category and is picked up by sub-agents
+        // lives in the Workflow category and is picked up by sub-agents
         // with `category_filter = "skill"`.
-        ToolCategory::Skill
+        ToolCategory::Workflow
     }
     async fn execute(&self, _args: Value) -> anyhow::Result<ToolResult> {
         tracing::debug!("[composio] tool list_toolkits.execute");
@@ -470,7 +470,7 @@ impl Tool for ComposioListConnectionsTool {
         PermissionLevel::ReadOnly
     }
     fn category(&self) -> ToolCategory {
-        ToolCategory::Skill
+        ToolCategory::Workflow
     }
     async fn execute(&self, _args: Value) -> anyhow::Result<ToolResult> {
         tracing::debug!("[composio] tool list_connections.execute");
@@ -588,7 +588,7 @@ impl Tool for ComposioAuthorizeTool {
         PermissionLevel::Write
     }
     fn category(&self) -> ToolCategory {
-        ToolCategory::Skill
+        ToolCategory::Workflow
     }
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         let toolkit = args
@@ -729,7 +729,7 @@ impl Tool for ComposioListToolsTool {
         PermissionLevel::ReadOnly
     }
     fn category(&self) -> ToolCategory {
-        ToolCategory::Skill
+        ToolCategory::Workflow
     }
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         self.execute_with_options(args, ToolCallOptions::default())
@@ -960,7 +960,7 @@ impl Tool for ComposioExecuteTool {
         PermissionLevel::Write
     }
     fn category(&self) -> ToolCategory {
-        ToolCategory::Skill
+        ToolCategory::Workflow
     }
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         let tool = args

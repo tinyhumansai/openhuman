@@ -65,7 +65,7 @@ async fn generated_tool_executes_through_adapter() {
 
     assert_eq!(tool.name(), "send_update");
     assert_eq!(tool.permission_level(), PermissionLevel::Write);
-    assert_eq!(tool.category(), ToolCategory::Skill);
+    assert_eq!(tool.category(), ToolCategory::Workflow);
     assert!(result.output().contains("send_update"));
     assert!(result.output().contains("hello"));
 }

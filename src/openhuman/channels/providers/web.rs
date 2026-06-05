@@ -645,7 +645,10 @@ pub async fn start_chat(
 
     {
         let mut in_flight = IN_FLIGHT.lock().await;
+
+        // Interrupt path: abort any in-flight turn (existing behavior).
         if let Some(existing) = in_flight.remove(&map_key) {
+            let cancelled_id = existing.request_id.clone();
             existing.handle.abort();
             log::info!(
                 "[web-channel] interrupted in-flight turn thread_id={} cancelled_request_id={}",
@@ -660,7 +663,7 @@ pub async fn start_chat(
                 event: "chat_error".to_string(),
                 client_id: client_id.clone(),
                 thread_id: thread_id.clone(),
-                request_id: existing.request_id,
+                request_id: cancelled_id,
                 full_response: None,
                 message: Some("Cancelled by newer request".to_string()),
                 error_type: Some("cancelled".to_string()),
@@ -1171,6 +1174,7 @@ async fn run_chat_task(
         request_id.to_string(),
         turn_state_store,
         metadata.clone(),
+        config.clone(),
     );
 
     // Make `thread_id` ambient for any outbound provider call inside
@@ -1297,15 +1301,20 @@ async fn run_chat_task(
 /// `publish_ptt_transcript_committed`) is owned by `run_chat_task`, which
 /// sees the full assistant response even when the provider falls back to
 /// non-streaming.
-fn spawn_progress_bridge(
+pub(crate) fn spawn_progress_bridge(
     mut rx: tokio::sync::mpsc::Receiver<crate::openhuman::agent::progress::AgentProgress>,
     client_id: String,
     thread_id: String,
     request_id: String,
     turn_state_store: TurnStateStore,
     metadata: ChatRequestMetadata,
+    config: crate::openhuman::config::Config,
 ) {
     use crate::openhuman::agent::progress::AgentProgress;
+    use crate::openhuman::session_db::run_ledger::{
+        AgentRunKind, AgentRunStatus, AgentRunUpsert, RunEventAppend, RunTelemetryUpsert,
+    };
+    use std::collections::HashMap;
 
     tokio::spawn(async move {
         log::debug!(
@@ -1319,6 +1328,9 @@ fn spawn_progress_bridge(
         );
         let mut round: u32 = 0;
         let mut events_seen: u64 = 0;
+        let mut parent_completed = false;
+        let mut parent_tool_count: u64 = 0;
+        let mut child_tool_counts: HashMap<String, u64> = HashMap::new();
         let mut turn_state =
             TurnStateMirror::new(turn_state_store, thread_id.clone(), request_id.clone());
         while let Some(event) = rx.recv().await {
@@ -1412,6 +1424,40 @@ fn spawn_progress_bridge(
             }
             match event {
                 AgentProgress::TurnStarted => {
+                    ledger_upsert_agent_run(
+                        &config,
+                        AgentRunUpsert {
+                            id: request_id.clone(),
+                            kind: AgentRunKind::BackgroundAgent,
+                            parent_run_id: None,
+                            parent_thread_id: Some(thread_id.clone()),
+                            agent_id: Some("orchestrator".to_string()),
+                            status: AgentRunStatus::Running,
+                            prompt_ref: Some(format!("thread:{thread_id}:request:{request_id}")),
+                            worker_thread_id: None,
+                            task_board_id: Some(thread_id.clone()),
+                            task_card_id: None,
+                            checkpoint_path: None,
+                            checkpoint: None,
+                            summary: None,
+                            error: None,
+                            metadata: json!({
+                                "clientId": client_id,
+                                "source": "web_channel",
+                                "schemaVersion": 1
+                            }),
+                            started_at: None,
+                            completed_at: None,
+                        },
+                    );
+                    ledger_append_event(
+                        &config,
+                        RunEventAppend {
+                            run_id: request_id.clone(),
+                            event_type: "turn_started".to_string(),
+                            payload: json!({ "threadId": thread_id, "clientId": client_id }),
+                        },
+                    );
                     publish_web_channel_event(WebChannelEvent {
                         event: "inference_start".to_string(),
                         client_id: client_id.clone(),
@@ -1483,6 +1529,27 @@ fn spawn_progress_bridge(
                     arguments,
                     iteration,
                 } => {
+                    parent_tool_count += 1;
+                    ledger_append_event(
+                        &config,
+                        RunEventAppend {
+                            run_id: request_id.clone(),
+                            event_type: "tool_call_started".to_string(),
+                            payload: json!({
+                                "callId": call_id,
+                                "toolName": tool_name,
+                                "iteration": iteration
+                            }),
+                        },
+                    );
+                    ledger_upsert_telemetry(
+                        &config,
+                        RunTelemetryUpsert {
+                            run_id: request_id.clone(),
+                            tool_count: Some(parent_tool_count),
+                            ..Default::default()
+                        },
+                    );
                     publish_web_channel_event(WebChannelEvent {
                         event: "tool_call".to_string(),
                         client_id: client_id.clone(),
@@ -1504,6 +1571,21 @@ fn spawn_progress_bridge(
                     elapsed_ms,
                     iteration,
                 } => {
+                    ledger_append_event(
+                        &config,
+                        RunEventAppend {
+                            run_id: request_id.clone(),
+                            event_type: "tool_call_completed".to_string(),
+                            payload: json!({
+                                "callId": call_id,
+                                "toolName": tool_name,
+                                "success": success,
+                                "outputChars": output_chars,
+                                "elapsedMs": elapsed_ms,
+                                "iteration": iteration
+                            }),
+                        },
+                    );
                     publish_web_channel_event(WebChannelEvent {
                         event: "tool_result".to_string(),
                         client_id: client_id.clone(),
@@ -1531,6 +1613,59 @@ fn spawn_progress_bridge(
                     display_name,
                 } => {
                     let label = display_name.as_deref().unwrap_or(&agent_id);
+                    let kind = if worker_thread_id.is_some() {
+                        AgentRunKind::WorkerThread
+                    } else {
+                        AgentRunKind::Subagent
+                    };
+                    ledger_upsert_agent_run(
+                        &config,
+                        AgentRunUpsert {
+                            id: task_id.clone(),
+                            kind,
+                            parent_run_id: Some(request_id.clone()),
+                            parent_thread_id: Some(thread_id.clone()),
+                            agent_id: Some(agent_id.clone()),
+                            status: AgentRunStatus::Running,
+                            prompt_ref: worker_thread_id
+                                .as_ref()
+                                .map(|id| format!("thread:{id}:message:seed")),
+                            worker_thread_id: worker_thread_id.clone(),
+                            task_board_id: Some(thread_id.clone()),
+                            task_card_id: None,
+                            checkpoint_path: None,
+                            checkpoint: None,
+                            summary: None,
+                            error: None,
+                            metadata: json!({
+                                "mode": mode,
+                                "dedicatedThread": dedicated_thread,
+                                "promptChars": prompt_chars,
+                                "displayName": display_name,
+                                "source": "agent_progress",
+                                "schemaVersion": 1
+                            }),
+                            started_at: None,
+                            completed_at: None,
+                        },
+                    );
+                    ledger_append_event(
+                        &config,
+                        RunEventAppend {
+                            run_id: task_id.clone(),
+                            event_type: "subagent_spawned".to_string(),
+                            payload: json!({
+                                "agentId": agent_id,
+                                "parentRunId": request_id,
+                                "threadId": thread_id,
+                                "workerThreadId": worker_thread_id,
+                                "mode": mode,
+                                "dedicatedThread": dedicated_thread,
+                                "promptChars": prompt_chars,
+                                "displayName": display_name
+                            }),
+                        },
+                    );
                     publish_web_channel_event(WebChannelEvent {
                         event: "subagent_spawned".to_string(),
                         client_id: client_id.clone(),
@@ -1558,6 +1693,53 @@ fn spawn_progress_bridge(
                     iterations,
                     output_chars,
                 } => {
+                    let completed_at = chrono::Utc::now();
+                    ledger_upsert_agent_run(
+                        &config,
+                        AgentRunUpsert {
+                            id: task_id.clone(),
+                            kind: AgentRunKind::Subagent,
+                            parent_run_id: Some(request_id.clone()),
+                            parent_thread_id: Some(thread_id.clone()),
+                            agent_id: Some(agent_id.clone()),
+                            status: AgentRunStatus::Completed,
+                            prompt_ref: None,
+                            worker_thread_id: None,
+                            task_board_id: Some(thread_id.clone()),
+                            task_card_id: None,
+                            checkpoint_path: None,
+                            checkpoint: None,
+                            summary: Some(format!(
+                                "Completed in {iterations} iteration(s), {output_chars} output chars"
+                            )),
+                            error: None,
+                            metadata: json!({}),
+                            started_at: None,
+                            completed_at: Some(completed_at),
+                        },
+                    );
+                    ledger_upsert_telemetry(
+                        &config,
+                        RunTelemetryUpsert {
+                            run_id: task_id.clone(),
+                            elapsed_ms: Some(elapsed_ms),
+                            tool_count: child_tool_counts.get(&task_id).copied(),
+                            ..Default::default()
+                        },
+                    );
+                    ledger_append_event(
+                        &config,
+                        RunEventAppend {
+                            run_id: task_id.clone(),
+                            event_type: "subagent_completed".to_string(),
+                            payload: json!({
+                                "agentId": agent_id,
+                                "elapsedMs": elapsed_ms,
+                                "iterations": iterations,
+                                "outputChars": output_chars
+                            }),
+                        },
+                    );
                     publish_web_channel_event(WebChannelEvent {
                         event: "subagent_completed".to_string(),
                         client_id: client_id.clone(),
@@ -1584,6 +1766,46 @@ fn spawn_progress_bridge(
                     task_id,
                     error,
                 } => {
+                    let completed_at = chrono::Utc::now();
+                    ledger_upsert_agent_run(
+                        &config,
+                        AgentRunUpsert {
+                            id: task_id.clone(),
+                            kind: AgentRunKind::Subagent,
+                            parent_run_id: Some(request_id.clone()),
+                            parent_thread_id: Some(thread_id.clone()),
+                            agent_id: Some(agent_id.clone()),
+                            status: AgentRunStatus::Failed,
+                            prompt_ref: None,
+                            worker_thread_id: None,
+                            task_board_id: Some(thread_id.clone()),
+                            task_card_id: None,
+                            checkpoint_path: None,
+                            checkpoint: None,
+                            summary: None,
+                            error: Some(error.clone()),
+                            metadata: json!({}),
+                            started_at: None,
+                            completed_at: Some(completed_at),
+                        },
+                    );
+                    ledger_upsert_telemetry(
+                        &config,
+                        RunTelemetryUpsert {
+                            run_id: task_id.clone(),
+                            tool_count: child_tool_counts.get(&task_id).copied(),
+                            error: Some(error.clone()),
+                            ..Default::default()
+                        },
+                    );
+                    ledger_append_event(
+                        &config,
+                        RunEventAppend {
+                            run_id: task_id.clone(),
+                            event_type: "subagent_failed".to_string(),
+                            payload: json!({ "agentId": agent_id, "error": error }),
+                        },
+                    );
                     publish_web_channel_event(WebChannelEvent {
                         event: "subagent_failed".to_string(),
                         client_id: client_id.clone(),
@@ -1610,6 +1832,54 @@ fn spawn_progress_bridge(
                         client_id,
                         thread_id,
                         request_id,
+                    );
+                    let checkpoint_path = config
+                        .workspace_dir
+                        .join(".openhuman/subagent_checkpoints")
+                        .join(format!("{task_id}.json"));
+                    ledger_upsert_agent_run(
+                        &config,
+                        AgentRunUpsert {
+                            id: task_id.clone(),
+                            kind: if worker_thread_id.is_some() {
+                                AgentRunKind::WorkerThread
+                            } else {
+                                AgentRunKind::Subagent
+                            },
+                            parent_run_id: Some(request_id.clone()),
+                            parent_thread_id: Some(thread_id.clone()),
+                            agent_id: Some(agent_id.clone()),
+                            status: AgentRunStatus::AwaitingUser,
+                            prompt_ref: None,
+                            worker_thread_id: worker_thread_id.clone(),
+                            task_board_id: Some(thread_id.clone()),
+                            task_card_id: None,
+                            checkpoint_path: Some(checkpoint_path.to_string_lossy().to_string()),
+                            checkpoint: Some(json!({
+                                "resumeTool": "continue_subagent",
+                                "taskId": task_id,
+                                "agentId": agent_id,
+                                "question": question,
+                                "workerThreadId": worker_thread_id
+                            })),
+                            summary: Some(question.clone()),
+                            error: None,
+                            metadata: json!({}),
+                            started_at: None,
+                            completed_at: None,
+                        },
+                    );
+                    ledger_append_event(
+                        &config,
+                        RunEventAppend {
+                            run_id: task_id.clone(),
+                            event_type: "subagent_awaiting_user".to_string(),
+                            payload: json!({
+                                "agentId": agent_id,
+                                "question": question,
+                                "workerThreadId": worker_thread_id
+                            }),
+                        },
                     );
                     publish_web_channel_event(WebChannelEvent {
                         event: "subagent_awaiting_user".to_string(),
@@ -1667,6 +1937,29 @@ fn spawn_progress_bridge(
                     tool_name,
                     iteration,
                 } => {
+                    let count = child_tool_counts.entry(task_id.clone()).or_insert(0);
+                    *count += 1;
+                    ledger_upsert_telemetry(
+                        &config,
+                        RunTelemetryUpsert {
+                            run_id: task_id.clone(),
+                            tool_count: Some(*count),
+                            ..Default::default()
+                        },
+                    );
+                    ledger_append_event(
+                        &config,
+                        RunEventAppend {
+                            run_id: task_id.clone(),
+                            event_type: "subagent_tool_call_started".to_string(),
+                            payload: json!({
+                                "agentId": agent_id,
+                                "callId": call_id,
+                                "toolName": tool_name,
+                                "iteration": iteration
+                            }),
+                        },
+                    );
                     publish_web_channel_event(WebChannelEvent {
                         event: "subagent_tool_call".to_string(),
                         client_id: client_id.clone(),
@@ -1695,6 +1988,22 @@ fn spawn_progress_bridge(
                     elapsed_ms,
                     iteration,
                 } => {
+                    ledger_append_event(
+                        &config,
+                        RunEventAppend {
+                            run_id: task_id.clone(),
+                            event_type: "subagent_tool_call_completed".to_string(),
+                            payload: json!({
+                                "agentId": agent_id,
+                                "callId": call_id,
+                                "toolName": tool_name,
+                                "success": success,
+                                "outputChars": output_chars,
+                                "elapsedMs": elapsed_ms,
+                                "iteration": iteration
+                            }),
+                        },
+                    );
                     publish_web_channel_event(WebChannelEvent {
                         event: "subagent_tool_result".to_string(),
                         client_id: client_id.clone(),
@@ -1836,6 +2145,38 @@ fn spawn_progress_bridge(
                     });
                 }
                 AgentProgress::TurnCompleted { iterations } => {
+                    parent_completed = true;
+                    let completed_at = chrono::Utc::now();
+                    ledger_upsert_agent_run(
+                        &config,
+                        AgentRunUpsert {
+                            id: request_id.clone(),
+                            kind: AgentRunKind::BackgroundAgent,
+                            parent_run_id: None,
+                            parent_thread_id: Some(thread_id.clone()),
+                            agent_id: Some("orchestrator".to_string()),
+                            status: AgentRunStatus::Completed,
+                            prompt_ref: Some(format!("thread:{thread_id}:request:{request_id}")),
+                            worker_thread_id: None,
+                            task_board_id: Some(thread_id.clone()),
+                            task_card_id: None,
+                            checkpoint_path: None,
+                            checkpoint: None,
+                            summary: Some(format!("Completed in {iterations} iteration(s)")),
+                            error: None,
+                            metadata: json!({}),
+                            started_at: None,
+                            completed_at: Some(completed_at),
+                        },
+                    );
+                    ledger_append_event(
+                        &config,
+                        RunEventAppend {
+                            run_id: request_id.clone(),
+                            event_type: "turn_completed".to_string(),
+                            payload: json!({ "iterations": iterations }),
+                        },
+                    );
                     log::debug!(
                         "[web_channel] turn completed after {iterations} iteration(s) \
                          client_id={client_id} thread_id={thread_id} request_id={request_id} \
@@ -1853,6 +2194,18 @@ fn spawn_progress_bridge(
                     cached_input_tokens,
                     total_usd,
                 } => {
+                    ledger_upsert_telemetry(
+                        &config,
+                        RunTelemetryUpsert {
+                            run_id: request_id.clone(),
+                            input_tokens: Some(input_tokens),
+                            output_tokens: Some(output_tokens),
+                            cached_input_tokens: Some(cached_input_tokens),
+                            cost_usd: Some(total_usd),
+                            model: Some(model.clone()),
+                            ..Default::default()
+                        },
+                    );
                     // Cost telemetry — not surfaced to the UI yet, but
                     // logged at debug for now and ready for a future
                     // socket payload.
@@ -1865,6 +2218,38 @@ fn spawn_progress_bridge(
             }
         }
         turn_state.finish();
+        if !parent_completed {
+            ledger_upsert_agent_run(
+                &config,
+                AgentRunUpsert {
+                    id: request_id.clone(),
+                    kind: AgentRunKind::BackgroundAgent,
+                    parent_run_id: None,
+                    parent_thread_id: Some(thread_id.clone()),
+                    agent_id: Some("orchestrator".to_string()),
+                    status: AgentRunStatus::Interrupted,
+                    prompt_ref: Some(format!("thread:{thread_id}:request:{request_id}")),
+                    worker_thread_id: None,
+                    task_board_id: Some(thread_id.clone()),
+                    task_card_id: None,
+                    checkpoint_path: None,
+                    checkpoint: None,
+                    summary: None,
+                    error: Some("progress bridge exited before turn completion".to_string()),
+                    metadata: json!({}),
+                    started_at: None,
+                    completed_at: Some(chrono::Utc::now()),
+                },
+            );
+            ledger_append_event(
+                &config,
+                RunEventAppend {
+                    run_id: request_id.clone(),
+                    event_type: "turn_interrupted".to_string(),
+                    payload: json!({ "eventsSeen": events_seen }),
+                },
+            );
+        }
         log::debug!(
             "[web_channel][bridge] exit client_id={} thread_id={} request_id={} round={} events_seen={}",
             client_id,
@@ -1874,6 +2259,35 @@ fn spawn_progress_bridge(
             events_seen,
         );
     });
+}
+
+fn ledger_upsert_agent_run(
+    config: &crate::openhuman::config::Config,
+    upsert: crate::openhuman::session_db::run_ledger::AgentRunUpsert,
+) {
+    if let Err(err) = crate::openhuman::session_db::run_ledger::upsert_agent_run(config, upsert) {
+        log::warn!("[run_ledger][web_channel] failed to upsert run: {err}");
+    }
+}
+
+fn ledger_append_event(
+    config: &crate::openhuman::config::Config,
+    event: crate::openhuman::session_db::run_ledger::RunEventAppend,
+) {
+    if let Err(err) = crate::openhuman::session_db::run_ledger::append_run_event(config, event) {
+        log::warn!("[run_ledger][web_channel] failed to append event: {err}");
+    }
+}
+
+fn ledger_upsert_telemetry(
+    config: &crate::openhuman::config::Config,
+    telemetry: crate::openhuman::session_db::run_ledger::RunTelemetryUpsert,
+) {
+    if let Err(err) =
+        crate::openhuman::session_db::run_ledger::upsert_run_telemetry(config, telemetry)
+    {
+        log::warn!("[run_ledger][web_channel] failed to upsert telemetry: {err}");
+    }
 }
 
 fn normalize_model_override(model_override: Option<String>) -> Option<String> {
@@ -2202,9 +2616,19 @@ pub async fn channel_web_cancel(
 ) -> Result<RpcOutcome<Value>, String> {
     let cancelled_request_id = cancel_chat(client_id, thread_id).await?;
 
+    // No web-channel turn for this thread → it may be an autonomous task run
+    // streaming into a task session. Those are detached dispatcher tasks (not in
+    // IN_FLIGHT), so cancel them via the dispatcher's registry instead — this is
+    // what makes the chat Cancel button work on task threads.
+    let cancelled = if cancelled_request_id.is_some() {
+        true
+    } else {
+        crate::openhuman::agent::task_dispatcher::cancel_session(thread_id.trim()).await
+    };
+
     Ok(RpcOutcome::single_log(
         json!({
-            "cancelled": cancelled_request_id.is_some(),
+            "cancelled": cancelled,
             "client_id": client_id.trim(),
             "thread_id": thread_id.trim(),
             "request_id": cancelled_request_id,

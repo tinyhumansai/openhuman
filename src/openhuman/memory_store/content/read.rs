@@ -415,6 +415,8 @@ mod tests {
             sealed_at: ts,
             deleted: false,
             embedding: None,
+            doc_id: None,
+            version_ms: None,
         }
     }
 

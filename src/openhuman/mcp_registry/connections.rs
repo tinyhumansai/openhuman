@@ -85,10 +85,34 @@ fn connections() -> &'static RwLock<HashMap<String, Arc<Connection>>> {
     CONNECTIONS.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
+// ── Per-server last connect error ────────────────────────────────────────────
+
+static LAST_ERRORS: OnceLock<RwLock<HashMap<String, String>>> = OnceLock::new();
+
+fn last_errors() -> &'static RwLock<HashMap<String, String>> {
+    LAST_ERRORS.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+/// Read the most recent connect-failure message for `server_id`. `None` when
+/// the server has never failed, or when the most recent connect succeeded.
+pub async fn last_error_for(server_id: &str) -> Option<String> {
+    last_errors().read().await.get(server_id).cloned()
+}
+
+/// Drop any recorded error for `server_id`. Called on successful connect,
+/// explicit disconnect, uninstall, and enable→disable transitions.
+pub async fn clear_last_error(server_id: &str) {
+    last_errors().write().await.remove(server_id);
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /// Bring up a new MCP client for `server`, run `initialize`, cache the
 /// tool list, and store the connection in the global registry.
+///
+/// On success the prior error (if any) for this `server_id` is cleared.
+/// On failure the error message is recorded in [`LAST_ERRORS`] so callers
+/// can surface it in status polling without re-attempting the connect.
 ///
 /// Dispatches on `server.transport`:
 /// - [`Transport::Stdio`] — spawn `command` + `args` as a subprocess and
@@ -97,6 +121,30 @@ fn connections() -> &'static RwLock<HashMap<String, Arc<Connection>>> {
 ///   directly with [`McpHttpClient`]. No subprocess. Needed for the
 ///   `~99%` of Smithery listings that are HTTP-remote.
 pub async fn connect(config: &Config, server: &InstalledServer) -> anyhow::Result<Vec<McpTool>> {
+    let result = connect_inner(config, server).await;
+    match &result {
+        Ok(_) => {
+            last_errors().write().await.remove(&server.server_id);
+            tracing::debug!(
+                "[mcp-registry] last_error cleared server_id={}",
+                server.server_id
+            );
+        }
+        Err(err) => {
+            last_errors()
+                .write()
+                .await
+                .insert(server.server_id.clone(), err.to_string());
+            tracing::debug!(
+                "[mcp-registry] last_error recorded server_id={} err={err}",
+                server.server_id
+            );
+        }
+    }
+    result
+}
+
+async fn connect_inner(config: &Config, server: &InstalledServer) -> anyhow::Result<Vec<McpTool>> {
     tracing::debug!(
         "[mcp-registry] connect server_id={} qualified_name={} transport={}",
         server.server_id,
@@ -177,13 +225,15 @@ pub async fn connect(config: &Config, server: &InstalledServer) -> anyhow::Resul
     Ok(tools)
 }
 
-/// Disconnect and remove from the registry.
+/// Disconnect and remove from the registry. Also clears any recorded
+/// connect error so the next status poll starts from a clean slate.
 pub async fn disconnect(server_id: &str) -> bool {
     tracing::debug!("[mcp-registry] disconnect server_id={server_id}");
     let conn = {
         let mut map = connections().write().await;
         map.remove(server_id)
     };
+    last_errors().write().await.remove(server_id);
     if let Some(c) = conn {
         let _ = c.client.close_session().await;
         tracing::debug!("[mcp-registry] disconnected server_id={server_id}");
@@ -216,6 +266,12 @@ pub async fn call_tool(
 }
 
 /// Return status summaries for all installed servers.
+///
+/// Priority order: `Disabled` > `Connected` > `Error` > `Disconnected`.
+/// - `!s.enabled` → `Disabled` (suppresses tool count and last_error).
+/// - connected (id in live registry) → `Connected` + tool count.
+/// - recorded connect failure in `LAST_ERRORS` → `Error` + last_error message.
+/// - otherwise → `Disconnected`.
 pub async fn all_status(config: &Config) -> Vec<ConnStatus> {
     let installed = store::list_servers(config).unwrap_or_default();
     let connected_ids: Vec<String> = {
@@ -223,29 +279,34 @@ pub async fn all_status(config: &Config) -> Vec<ConnStatus> {
         map.keys().cloned().collect()
     };
 
+    let errors_snapshot = last_errors().read().await.clone();
+
     let mut out = Vec::with_capacity(installed.len());
     for s in installed {
         let is_connected = connected_ids.iter().any(|id| id == &s.server_id);
-        let tool_count = if is_connected {
+
+        let (status, tool_count, last_error) = if !s.enabled {
+            (ServerStatus::Disabled, 0u32, None)
+        } else if is_connected {
             let map = connections().read().await;
-            match map.get(&s.server_id) {
+            let tool_count = match map.get(&s.server_id) {
                 Some(c) => c.tools_snapshot().await.len() as u32,
                 None => 0,
-            }
+            };
+            (ServerStatus::Connected, tool_count, None)
+        } else if let Some(err) = errors_snapshot.get(&s.server_id).cloned() {
+            (ServerStatus::Error, 0u32, Some(err))
         } else {
-            0
+            (ServerStatus::Disconnected, 0u32, None)
         };
+
         out.push(ConnStatus {
             server_id: s.server_id,
             qualified_name: s.qualified_name,
             display_name: s.display_name,
-            status: if is_connected {
-                ServerStatus::Connected
-            } else {
-                ServerStatus::Disconnected
-            },
+            status,
             tool_count,
-            last_error: None,
+            last_error,
         });
     }
     out

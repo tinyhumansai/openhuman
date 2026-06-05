@@ -23,10 +23,6 @@ vi.mock('../../providers/CoreStateProvider', () => ({
 const oauthButtonSpy = vi.fn();
 const oauthOverrideSpy = vi.fn();
 
-vi.mock('../../components/RotatingTetrahedronCanvas', () => ({
-  default: () => <div data-testid="welcome-logo" />,
-}));
-
 vi.mock('../../components/oauth/OAuthProviderButton', () => ({
   default: ({
     provider,

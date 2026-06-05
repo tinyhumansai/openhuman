@@ -46,6 +46,8 @@ mod meet_call;
 mod meet_scanner;
 mod meet_video;
 mod native_notifications;
+#[cfg(target_os = "macos")]
+mod notch_window;
 mod notification_settings;
 mod process_kill;
 mod process_recovery;
@@ -1113,6 +1115,61 @@ fn mascot_native_window_is_open() -> bool {
 #[cfg(not(target_os = "macos"))]
 fn mascot_native_window_is_open() -> bool {
     false
+}
+
+/// Dispatch a notch-panel mutation onto the app main thread.
+///
+/// The notch is a native NSPanel + WKWebView; AppKit requires it to be built
+/// and torn down on the main thread (and its `thread_local` storage lives
+/// there). Tauri runs these IPC command handlers on a worker thread, so we hop
+/// to the main thread via `run_on_main_thread`. Fire-and-forget: notch
+/// visibility is cosmetic (the frontend swallows errors), so we log the result
+/// on the main thread rather than blocking the command to propagate it back.
+#[cfg(target_os = "macos")]
+fn dispatch_notch_on_main(
+    app: AppHandle<AppRuntime>,
+    op: impl FnOnce(&AppHandle<AppRuntime>) + Send + 'static,
+) -> Result<(), String> {
+    app.clone()
+        .run_on_main_thread(move || op(&app))
+        .map_err(|e| format!("run_on_main_thread dispatch failed: {e}"))
+}
+
+/// Show the notch activity indicator. macOS only — transparent NSPanel + WKWebView
+/// anchored to the top-centre of the primary screen. Displays live voice and
+/// agent status (listening, thinking, executing) in a pill that emerges from
+/// the physical notch on supported MacBook Pros.
+#[tauri::command]
+fn notch_window_show(app: AppHandle<AppRuntime>) -> Result<(), String> {
+    log::info!("[notch-window] show requested");
+    #[cfg(target_os = "macos")]
+    {
+        return dispatch_notch_on_main(app, |app| {
+            if let Err(e) = notch_window::show(app) {
+                log::warn!("[notch-window] show failed: {e}");
+            }
+        });
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+        Ok(()) // No-op on non-macOS
+    }
+}
+
+/// Hide the notch activity indicator.
+#[tauri::command]
+fn notch_window_hide(app: AppHandle<AppRuntime>) -> Result<(), String> {
+    log::info!("[notch-window] hide requested");
+    #[cfg(target_os = "macos")]
+    {
+        return dispatch_notch_on_main(app, |_app| notch_window::hide());
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+        Ok(())
+    }
 }
 
 /// Hide or show the OS top-level main-window frame on Windows by enumerating
@@ -2370,16 +2427,18 @@ pub fn run() {
         deep_link_ipc::bind_and_listen()
     };
 
-    // CEF cache-lock preflight: if another OpenHuman instance holds the CEF
-    // user-data-dir SingletonLock, `cef_initialize` returns 0 and the vendored
-    // runtime panics (`left: 0, right: 1`). Catch the collision here and exit
-    // cleanly. Stale locks (PID dead) are removed so crashed processes don't
-    // block subsequent launches. macOS: issue #864. Linux: OPENHUMAN-TAURI-K1.
+    // CEF cache-lock preflight (macOS + Linux): if another OpenHuman instance
+    // holds the CEF user-data-dir SingletonLock, `cef_initialize` returns 0 and
+    // the vendored runtime used to panic (`left: 0, right: 1`). The common
+    // cause is a *sequential relaunch race* where the prior instance is still
+    // tearing down, so rather than exit on the first collision we wait
+    // (bounded, exponential backoff — the macOS/Linux analogue of the Windows
+    // pre-CEF wait) for the lock to clear, then proceed. If it is still held
+    // after the budget we exit cleanly (code 0). Stale locks (PID dead) are
+    // removed so crashed processes don't block launches. macOS: issue #864.
+    // Linux: OPENHUMAN-TAURI-K1. Sentry: TAURI-RUST-F.
     #[cfg(any(target_os = "macos", target_os = "linux"))]
-    if let Err(e) = cef_preflight::check_default_cache() {
-        eprintln!("\n[openhuman] {e}\n");
-        std::process::exit(1);
-    }
+    cef_preflight::wait_for_cache_release();
 
     let builder = {
         // Bypass macOS Keychain. Without this, every embedded service that
@@ -2989,6 +3048,60 @@ pub fn run() {
             //       let _ = window.show();
             //   }
 
+            // Notch activity indicator: transparent pill at the top-centre of
+            // the primary screen. Shows live voice / agent state. macOS only
+            // (physical notch or menu-bar HUD on older hardware).
+            //
+            // It is NOT auto-shown here: the notch is the always-on listening
+            // HUD, so its visibility is owned by the frontend, which calls
+            // `notch_window_show` / `notch_window_hide` (via `syncNotchVisibility`)
+            // to mirror `voice_server.always_on_enabled` — once on boot and
+            // whenever the Settings toggle flips. Showing it unconditionally
+            // here would flash the pill on every launch even with always-on
+            // listening disabled (the default).
+
+            // Synthetic-input main-thread executor. enigo's macOS keyboard-layout
+            // lookup (TSMGetInputSourceProperty) MUST run on the app main thread
+            // or it traps (`_dispatch_assert_queue_fail`/EXC_BREAKPOINT) and
+            // crashes the CEF host (Change 1.15, confirmed via crash report). The
+            // keyboard/mouse tools run on tokio workers, so they dispatch their
+            // enigo ops here via the native registry; we run each on the real
+            // main thread through `run_on_main_thread`.
+            {
+                use openhuman_core::core::event_bus::register_native_global;
+                use openhuman_core::openhuman::tools::{
+                    MainThreadInputOp, INPUT_ON_MAIN_THREAD_METHOD,
+                };
+                let input_app = app.handle().clone();
+                register_native_global::<MainThreadInputOp, Result<String, String>, _, _>(
+                    INPUT_ON_MAIN_THREAD_METHOD,
+                    move |req| {
+                        let input_app = input_app.clone();
+                        async move {
+                            let (tx, rx) = tokio::sync::oneshot::channel();
+                            let run = req.run;
+                            input_app
+                                .run_on_main_thread(move || {
+                                    // Catch an enigo FFI panic so it can't unwind
+                                    // across the app main thread (which would be
+                                    // UB / abort). Convert it to a clean Err.
+                                    let result = std::panic::catch_unwind(
+                                        std::panic::AssertUnwindSafe(run),
+                                    )
+                                    .unwrap_or_else(|_| {
+                                        Err("synthetic input panicked on the main thread".to_string())
+                                    });
+                                    let _ = tx.send(result);
+                                })
+                                .map_err(|e| format!("run_on_main_thread dispatch failed: {e}"))?;
+                            rx.await
+                                .map_err(|_| "main-thread input op was cancelled".to_string())
+                        }
+                    },
+                );
+                log::info!("[computer] registered main-thread synthetic-input executor");
+            }
+
             // Tray icon setup moved to RunEvent::Ready (see below) — GTK is only
             // initialized after the event loop starts, so we must delay tray creation
             // until the Ready event fires. Creating the tray here would panic on
@@ -3345,6 +3458,8 @@ pub fn run() {
             native_notifications::show_native_notification,
             mascot_window_show,
             mascot_window_hide,
+            notch_window_show,
+            notch_window_hide,
             file_logging::reveal_logs_folder,
             file_logging::logs_folder_path,
             workspace_paths::open_workspace_path,

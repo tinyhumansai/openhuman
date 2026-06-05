@@ -1,11 +1,13 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use openhuman_core::openhuman::agent::dispatcher::NativeToolDispatcher;
+use openhuman_core::openhuman::agent::harness::definition::AgentDefinitionRegistry;
 use openhuman_core::openhuman::agent::harness::session::Agent;
 use openhuman_core::openhuman::agent::harness::{
     run_subagent, with_parent_context, AgentDefinition, ParentExecutionContext, PromptSource,
     SandboxMode, SubagentRunOptions, ToolScope,
 };
+use openhuman_core::openhuman::agent::progress::AgentProgress;
 use openhuman_core::openhuman::config::AgentConfig;
 use openhuman_core::openhuman::context::prompt::ToolCallFormat;
 use openhuman_core::openhuman::inference::provider::traits::ProviderCapabilities;
@@ -13,6 +15,7 @@ use openhuman_core::openhuman::inference::provider::{
     ChatMessage, ChatRequest, ChatResponse, Provider, ToolCall, UsageInfo,
 };
 use openhuman_core::openhuman::memory::{Memory, MemoryCategory, MemoryEntry, NamespaceSummary};
+use openhuman_core::openhuman::tools::SpawnSubagentTool;
 use openhuman_core::openhuman::tools::{Tool, ToolResult};
 use parking_lot::Mutex;
 use serde_json::json;
@@ -166,11 +169,15 @@ impl Tool for EchoTool {
 }
 
 fn usage(input_tokens: u64, output_tokens: u64) -> UsageInfo {
+    usage_with_cached(input_tokens, output_tokens, input_tokens / 2)
+}
+
+fn usage_with_cached(input_tokens: u64, output_tokens: u64, cached_input_tokens: u64) -> UsageInfo {
     UsageInfo {
         input_tokens,
         output_tokens,
         context_window: 8_192,
-        cached_input_tokens: input_tokens / 2,
+        cached_input_tokens,
         charged_amount_usd: 0.001,
     }
 }
@@ -197,6 +204,21 @@ fn response(
     }
 }
 
+fn response_with_cached(
+    text: Option<&str>,
+    tool_calls: Vec<ToolCall>,
+    input: u64,
+    output: u64,
+    cached: u64,
+) -> ChatResponse {
+    ChatResponse {
+        text: text.map(str::to_string),
+        tool_calls,
+        usage: Some(usage_with_cached(input, output, cached)),
+        reasoning_content: None,
+    }
+}
+
 fn agent_config() -> AgentConfig {
     AgentConfig {
         max_tool_iterations: 4,
@@ -210,9 +232,18 @@ fn build_agent(
     provider: Arc<ScriptedProvider>,
     agent_name: &str,
 ) -> Result<Agent> {
+    build_agent_with_tools(workspace, provider, agent_name, vec![Box::new(EchoTool)])
+}
+
+fn build_agent_with_tools(
+    workspace: &Path,
+    provider: Arc<ScriptedProvider>,
+    agent_name: &str,
+    tools: Vec<Box<dyn Tool>>,
+) -> Result<Agent> {
     let mut agent = Agent::builder()
         .provider_arc(provider)
-        .tools(vec![Box::new(EchoTool)])
+        .tools(tools)
         .memory(Arc::new(StubMemory))
         .tool_dispatcher(Box::new(NativeToolDispatcher))
         .config(agent_config())
@@ -251,6 +282,7 @@ fn parent_context(workspace: PathBuf, provider: Arc<ScriptedProvider>) -> Parent
         session_key: "1700000000_parent".to_string(),
         session_parent_prefix: Some("root-chain".to_string()),
         on_progress: None,
+        run_queue: None,
     }
 }
 
@@ -407,6 +439,210 @@ async fn run_subagent_filters_tools_runs_inner_loop_and_writes_child_transcript(
     assert!(transcript.contains("\"agent\":\"coverage_worker\""));
     assert!(transcript.contains("echoed:beta"));
     assert!(transcript.contains("\"input_tokens\":191"));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn repeated_subagent_spawns_keep_cacheable_prefix_and_record_provider_cache_hit() -> Result<()>
+{
+    let workspace = tempfile::tempdir()?;
+    let provider = Arc::new(ScriptedProvider::new(vec![
+        response_with_cached(Some("first"), Vec::new(), 100, 5, 0),
+        response_with_cached(Some("second"), Vec::new(), 100, 5, 88),
+    ]));
+    let parent = parent_context(workspace.path().to_path_buf(), provider.clone());
+    let definition = coverage_definition();
+
+    let (first, second) = with_parent_context(parent, async {
+        let first = run_subagent(
+            &definition,
+            "Answer the stable cache probe.",
+            SubagentRunOptions {
+                task_id: Some("cache-probe-a".to_string()),
+                ..SubagentRunOptions::default()
+            },
+        )
+        .await?;
+        let second = run_subagent(
+            &definition,
+            "Answer the stable cache probe.",
+            SubagentRunOptions {
+                task_id: Some("cache-probe-b".to_string()),
+                ..SubagentRunOptions::default()
+            },
+        )
+        .await?;
+        Ok::<_, openhuman_core::openhuman::agent::harness::SubagentRunError>((first, second))
+    })
+    .await?;
+
+    assert_eq!(first.output, "first");
+    assert_eq!(second.output, "second");
+
+    let requests = provider.requests();
+    assert_eq!(requests.len(), 2);
+    let first_system = requests[0]
+        .iter()
+        .find(|message| message.role == "system")
+        .expect("first subagent request should include a system prompt");
+    let second_system = requests[1]
+        .iter()
+        .find(|message| message.role == "system")
+        .expect("second subagent request should include a system prompt");
+    assert_eq!(
+        first_system.content, second_system.content,
+        "repeated subagent spawns of the same definition must preserve the byte-identical \
+         system prefix the backend can cache"
+    );
+
+    let transcripts = transcript_jsonl_files(workspace.path());
+    assert_eq!(
+        transcripts.len(),
+        2,
+        "each subagent run should persist its own raw transcript: {transcripts:?}"
+    );
+    let joined = transcripts
+        .iter()
+        .map(std::fs::read_to_string)
+        .collect::<std::io::Result<Vec<_>>>()?
+        .join("\n");
+    assert!(
+        joined.contains("\"cached_input_tokens\":88"),
+        "provider-reported cached input tokens from the second child run should be preserved \
+         in subagent transcript accounting:\n{joined}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn orchestrator_spawn_subagent_round_trip_streams_child_events_and_returns_result(
+) -> Result<()> {
+    let workspace = tempfile::tempdir()?;
+    let agents_dir = workspace.path().join("agents");
+    std::fs::create_dir_all(&agents_dir)?;
+    std::fs::write(
+        agents_dir.join("cache_probe_child.toml"),
+        r#"
+id = "cache_probe_child"
+display_name = "Cache Probe Child"
+when_to_use = "Deterministic child agent used by harness cache tests."
+temperature = 0.0
+max_iterations = 3
+omit_identity = true
+omit_memory_context = true
+omit_safety_preamble = true
+omit_skills_catalog = true
+omit_profile = true
+omit_memory_md = true
+
+[system_prompt]
+inline = "Answer the delegated cache probe directly."
+"#,
+    )?;
+    let _ = AgentDefinitionRegistry::init_global(workspace.path());
+
+    let child_answer = "child-cache-observation: prefix was reusable";
+    let parent_final = "orchestrator final: child-cache-observation accepted";
+    let provider = Arc::new(ScriptedProvider::new(vec![
+        response(
+            Some("delegating to child"),
+            vec![tool_call(
+                "spawn-child-1",
+                "spawn_subagent",
+                json!({
+                    "agent_id": "cache_probe_child",
+                    "prompt": "Inspect whether the child turn can answer a cache probe.",
+                    "context": "Parent observed request id cache-42.",
+                }),
+            )],
+            140,
+            9,
+        ),
+        response_with_cached(Some(child_answer), Vec::new(), 96, 7, 64),
+        response(Some(parent_final), Vec::new(), 120, 10),
+    ]));
+    let mut agent = build_agent_with_tools(
+        workspace.path(),
+        provider.clone(),
+        "coverage_orchestrator",
+        vec![Box::new(SpawnSubagentTool::new())],
+    )?;
+    let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel(1024);
+    agent.set_on_progress(Some(progress_tx));
+
+    let answer = agent
+        .turn("Ask a child agent for the cache observation, then respond.")
+        .await?;
+    assert_eq!(
+        answer, parent_final,
+        "orchestrator should synthesize after receiving the child result"
+    );
+
+    let mut progress = Vec::new();
+    while let Ok(event) = progress_rx.try_recv() {
+        progress.push(event);
+    }
+    assert!(
+        progress.iter().any(|event| matches!(
+            event,
+            AgentProgress::SubagentSpawned { agent_id, task_id, .. }
+                if agent_id == "cache_probe_child" && task_id.starts_with("sub-")
+        )),
+        "parent progress should announce the child spawn: {progress:#?}"
+    );
+    assert!(
+        progress.iter().any(|event| matches!(
+            event,
+            AgentProgress::SubagentCompleted { agent_id, output_chars, .. }
+                if agent_id == "cache_probe_child" && *output_chars == child_answer.chars().count()
+        )),
+        "parent progress should announce child completion: {progress:#?}"
+    );
+
+    let requests = provider.requests();
+    assert_eq!(
+        requests.len(),
+        3,
+        "expected parent request, child request, then parent synthesis request"
+    );
+    assert!(
+        requests[0]
+            .iter()
+            .any(|message| message.role == "user" && message.content.contains("Ask a child agent")),
+        "first request should be the orchestrator turn: {:#?}",
+        requests[0]
+    );
+    assert!(
+        requests[1].iter().any(|message| message.role == "system"
+            && message.content.contains("Sub-agent Role Contract"))
+            && requests[1].iter().any(|message| message.role == "user"
+                && message
+                    .content
+                    .contains("Parent observed request id cache-42")),
+        "second request should be the child subagent turn with parent-supplied context: {:#?}",
+        requests[1]
+    );
+    assert!(
+        requests[2]
+            .iter()
+            .any(|message| message.role == "tool" && message.content.contains(child_answer)),
+        "third request should return the child result to the orchestrator as a tool result: {:#?}",
+        requests[2]
+    );
+    let transcripts = transcript_jsonl_files(workspace.path());
+    let joined = transcripts
+        .iter()
+        .map(std::fs::read_to_string)
+        .collect::<std::io::Result<Vec<_>>>()?
+        .join("\n");
+    assert!(
+        joined.contains("\"agent\":\"cache_probe_child\"")
+            && joined.contains(child_answer)
+            && joined.contains("\"cached_input_tokens\":64"),
+        "child transcript should be persisted alongside the parent turn:\n{joined}"
+    );
 
     Ok(())
 }

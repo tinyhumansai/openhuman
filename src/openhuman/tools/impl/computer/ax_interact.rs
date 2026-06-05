@@ -48,7 +48,9 @@ const SENSITIVE_APPS: &[&str] = &[
     "rio",
 ];
 
-fn is_sensitive_app(app_name: &str) -> bool {
+/// True when `app_name` is on the never-actuate denylist. `pub(crate)` so the
+/// `automate` tool shares the exact same boundary as `ax_interact`.
+pub(crate) fn is_sensitive_app(app_name: &str) -> bool {
     let lower = app_name.to_lowercase();
     SENSITIVE_APPS.iter().any(|s| lower.contains(s))
 }
@@ -56,8 +58,10 @@ fn is_sensitive_app(app_name: &str) -> bool {
 pub struct AxInteractTool {
     /// When false, the mutating actions (`press` / `set_value`) are refused
     /// with guidance to enable `computer_control.ax_interact_mutations`. The
-    /// read-only `list` action is always available. Mirrors the opt-in posture
-    /// of the mouse/keyboard tools (`computer_control.enabled`).
+    /// read-only `list` action is always available. Like the mouse/keyboard
+    /// tools (`computer_control.enabled`), this is opt-in **and** approval-gated:
+    /// the mutating actions return `external_effect_with_args == true` so they
+    /// route through the ApprovalGate.
     allow_mutations: bool,
 }
 
@@ -229,10 +233,10 @@ impl Tool for AxInteractTool {
         if mutating && !self.allow_mutations {
             log::warn!("[ax_interact] refused: mutations disabled (action={action})");
             return Ok(ToolResult::error(
-                "ax_interact mutations (press/set_value) are disabled. They actuate arbitrary \
-                 app controls and type into arbitrary fields, so they require explicit opt-in: \
-                 set `computer_control.ax_interact_mutations = true`. The read-only 'list' \
-                 action remains available.",
+                "App control isn't enabled yet, so I can't press buttons or type into \
+                 this app. Turn on App UI Control / App Automation in Settings → Agent \
+                 Access, then ask again. (Reading the UI still works without it; sets \
+                 computer_control.ax_interact_mutations = true.)",
             ));
         }
 

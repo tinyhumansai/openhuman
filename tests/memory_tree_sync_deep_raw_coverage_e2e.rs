@@ -194,6 +194,8 @@ fn seed_topic_summary(
         sealed_at: ts,
         deleted: false,
         embedding: None,
+        doc_id: None,
+        version_ms: None,
     };
 
     with_connection(cfg, |conn| {

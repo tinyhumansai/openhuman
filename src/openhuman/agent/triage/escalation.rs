@@ -297,6 +297,7 @@ async fn dispatch_target_agent(agent_id: &str, prompt: &str) -> anyhow::Result<S
         // back to a UI; the runner skips child-progress emission when this
         // is `None`.
         on_progress: None,
+        run_queue: None,
     };
 
     tracing::debug!(

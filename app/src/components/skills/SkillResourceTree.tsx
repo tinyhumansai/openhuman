@@ -29,6 +29,9 @@ const KNOWN_GROUPS: Array<{ prefix: string; key: string }> = [
   { prefix: 'scripts/', key: 'scripts' },
   { prefix: 'references/', key: 'references' },
   { prefix: 'assets/', key: 'assets' },
+  { prefix: 'templates/', key: 'templates' },
+  { prefix: 'examples/', key: 'examples' },
+  { prefix: 'prompts/', key: 'prompts' },
 ];
 
 function groupResources(resources: string[]): ResourceGroup[] {
@@ -74,6 +77,9 @@ const GROUP_LABEL_KEYS: Record<string, string> = {
   scripts: 'skills.resource.tree.scripts',
   references: 'skills.resource.tree.references',
   assets: 'skills.resource.tree.assets',
+  templates: 'skills.resource.tree.templates',
+  examples: 'skills.resource.tree.examples',
+  prompts: 'skills.resource.tree.prompts',
   other: 'skills.resource.tree.other',
 };
 

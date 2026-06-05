@@ -102,6 +102,8 @@ async fn run_inner(
         toolkit: source.provider.as_str().to_string(),
         connection_id: source.connection_id.clone(),
         usage: Default::default(),
+        max_items: None,
+        sync_depth_days: None,
     };
 
     let fetch_filter = filter::to_fetch_filter(&source.filter, source.max_tasks_per_fetch);
@@ -116,6 +118,16 @@ async fn run_inner(
         if store::is_ingested(config, &source.id, &task.external_id, &hash)
             .map_err(|e| format!("dedup check failed: {e}"))?
         {
+            // Dedup is scoped to THIS source (`WHERE source_id AND external_id`),
+            // so the same external_id under a different source would NOT hit
+            // here — it dedups per-source, never cross-source.
+            tracing::debug!(
+                source_id = %source.id,
+                provider = %source.provider.as_str(),
+                external_id = %task.external_id,
+                content_hash = %hash,
+                "[task_sources:dedup] skip — already ingested under THIS source with same content_hash (per-source, unchanged)"
+            );
             outcome.skipped_dupe += 1;
             continue;
         }
@@ -124,6 +136,20 @@ async fn run_inner(
         // remove the old board card when re-routing an edited upstream task.
         let stale_card_id = store::get_card_id(config, &source.id, &task.external_id)
             .map_err(|e| format!("get_card_id failed: {e}"))?;
+
+        tracing::debug!(
+            source_id = %source.id,
+            provider = %source.provider.as_str(),
+            external_id = %task.external_id,
+            content_hash = %hash,
+            edited = stale_card_id.is_some(),
+            "[task_sources:dedup] route — not a dupe for this source ({})",
+            if stale_card_id.is_some() {
+                "content changed since last ingest → re-route, replace stale card"
+            } else {
+                "new external_id for this source"
+            }
+        );
 
         let enriched = enrich::enrich_task(task);
 

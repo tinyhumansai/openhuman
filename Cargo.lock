@@ -5130,7 +5130,7 @@ dependencies = [
 
 [[package]]
 name = "openhuman"
-version = "0.57.14"
+version = "0.57.18"
 dependencies = [
  "aes-gcm",
  "aho-corasick",
@@ -5171,6 +5171,7 @@ dependencies = [
  "futures-util",
  "glob",
  "hex",
+ "hkdf",
  "hmac 0.12.1",
  "hostname",
  "hound",

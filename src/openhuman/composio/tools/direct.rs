@@ -748,9 +748,9 @@ impl Tool for ComposioTool {
 
     fn category(&self) -> ToolCategory {
         // Composio proxies to external SaaS (Gmail, Notion, …) — surface
-        // it in the Skill category so the skills sub-agent
+        // it in the Workflow category so the skills sub-agent
         // (`category_filter = "skill"`) can see and call it.
-        ToolCategory::Skill
+        ToolCategory::Workflow
     }
 
     fn external_effect(&self) -> bool {

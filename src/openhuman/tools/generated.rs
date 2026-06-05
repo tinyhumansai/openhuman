@@ -54,7 +54,7 @@ impl GeneratedToolDefinition {
             description: description.into(),
             parameters_schema,
             permission_level: PermissionLevel::ReadOnly,
-            category: ToolCategory::Skill,
+            category: ToolCategory::Workflow,
             scope: ToolScope::All,
             adapter_id: adapter_id.into(),
             provider_id: None,

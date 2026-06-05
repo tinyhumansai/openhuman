@@ -1,7 +1,7 @@
 // Reusable GitHub branch picker — dropdown sourced from
 // `composio_execute(GITHUB_LIST_BRANCHES)` for the linked repo input.
 //
-// Used by SkillsRunnerBody for any skill input whose name matches the
+// Used by WorkflowRunnerBody for any skill input whose name matches the
 // branch-shaped conventions (`branch`, `target_branch`, `base_branch`,
 // `pr_base`, `head_branch`). Depends on a sibling `repo`-shaped input
 // for which repo to list branches for; if that sibling is empty, the

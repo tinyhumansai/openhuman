@@ -1349,3 +1349,39 @@ async fn auto_approved_external_effect_tool_runs_through_loop_without_parking() 
         "auto-approved external-effect tool must execute (gate must not park it)"
     );
 }
+
+#[test]
+fn repeat_output_guard_trips_at_threshold() {
+    let mut g = RepeatOutputGuard::new();
+    // The first THRESHOLD-1 identical signatures must NOT trip.
+    for _ in 1..REPEAT_OUTPUT_THRESHOLD {
+        assert!(g.record("same-narration|run_code|{args}").is_none());
+    }
+    // The THRESHOLD-th identical signature trips with a no-progress summary.
+    let halt = g
+        .record("same-narration|run_code|{args}")
+        .expect("identical streak at threshold must trip");
+    assert!(
+        halt.contains("IDENTICAL") || halt.contains("stuck") || halt.contains("progress"),
+        "halt summary should explain the no-progress loop: {halt}"
+    );
+}
+
+#[test]
+fn repeat_output_guard_resets_on_changed_signature() {
+    let mut g = RepeatOutputGuard::new();
+    assert!(g.record("a").is_none());
+    assert!(g.record("a").is_none());
+    // A different signature = real progress; the streak resets.
+    assert!(g.record("b").is_none());
+    // It then takes a FULL fresh streak of the new signature to trip — so
+    // interleaved/varied work never trips it.
+    let mut last = None;
+    for _ in 1..REPEAT_OUTPUT_THRESHOLD {
+        last = g.record("b");
+    }
+    assert!(
+        last.is_some(),
+        "a fresh THRESHOLD-long identical streak should trip after a reset"
+    );
+}

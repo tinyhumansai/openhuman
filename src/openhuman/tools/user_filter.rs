@@ -41,9 +41,18 @@ const TOOL_FAMILIES: &[ToolFamily] = &[
         rust_names: &["ax_interact"],
         default_enabled: true,
     },
+    // Multi-step UI automation (one call → whole flow). Same opt-in as
+    // ax_interact; surfaced as its own catalog toggle.
+    ToolFamily {
+        id: "automate",
+        rust_names: &["automate"],
+        default_enabled: true,
+    },
     // Computer control — mouse and keyboard. Gated by computer_control.enabled
-    // in config (tools only register when that flag is true). PermissionLevel::Dangerous
-    // so the approval gate fires per-action; user opts in explicitly.
+    // in config (tools only register when that flag is true). Each tool also
+    // overrides `external_effect` → true so the ApprovalGate fires per-action —
+    // `PermissionLevel::Dangerous` alone does NOT trigger the gate (it's only a
+    // static channel-capability filter); the gate keys off `external_effect_with_args`.
     ToolFamily {
         id: "computer_control",
         rust_names: &["mouse", "keyboard"],
@@ -156,8 +165,25 @@ const TOOL_FAMILIES: &[ToolFamily] = &[
         default_enabled: false,
     },
     ToolFamily {
+        id: "workflow_manage",
+        rust_names: &[
+            "create_workflow",
+            "install_workflow_from_url",
+            "uninstall_workflow",
+        ],
+        default_enabled: false,
+    },
+    // Legacy alias: pre-rename `enabled_tool_names` snapshots stored this
+    // family as `skill_manage`. Retain it (same rust_names) so users who had
+    // already opted in keep these default-OFF tools enabled after the
+    // skills→workflows rename instead of silently losing them.
+    ToolFamily {
         id: "skill_manage",
-        rust_names: &["skill_create", "skill_install_from_url", "skill_uninstall"],
+        rust_names: &[
+            "create_workflow",
+            "install_workflow_from_url",
+            "uninstall_workflow",
+        ],
         default_enabled: false,
     },
     ToolFamily {
@@ -300,10 +326,17 @@ fn family_for_rust_name(name: &str) -> Option<&'static ToolFamily> {
 /// - UI toggle IDs (legacy / partial-rollout format)
 ///
 /// Unknown entries are ignored.
+const LEGACY_ALIASES: &[(&str, &str)] = &[("skill_manage", "workflow_manage")];
+
 fn expand_enabled_tool_names(enabled_tool_names: &[String]) -> HashSet<String> {
     let mut expanded = HashSet::new();
     for entry in enabled_tool_names {
-        if let Some(fam) = TOOL_FAMILIES.iter().find(|fam| fam.id == entry) {
+        let resolved = LEGACY_ALIASES
+            .iter()
+            .find(|(old, _)| *old == entry.as_str())
+            .map(|(_, new)| *new)
+            .unwrap_or(entry.as_str());
+        if let Some(fam) = TOOL_FAMILIES.iter().find(|fam| fam.id == resolved) {
             for name in fam.rust_names {
                 expanded.insert((*name).to_string());
             }

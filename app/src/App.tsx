@@ -19,9 +19,11 @@ import SecretPromptDialog from './components/mcp-setup/SecretPromptDialog';
 import OpenhumanLinkModal from './components/OpenhumanLinkModal';
 import PersistRehydrationScreen from './components/PersistRehydrationScreen';
 import PttHotkeyManager from './components/PttHotkeyManager';
+import SecurityBanner from './components/SecurityBanner';
 import GlobalUpsellBanner from './components/upsell/GlobalUpsellBanner';
 import AppWalkthrough from './components/walkthrough/AppWalkthrough';
 import { MascotFrameProducer } from './features/meet/MascotFrameProducer';
+import { useNotchBootSync } from './hooks/useNotchBootSync';
 import { I18nProvider } from './lib/i18n/I18nContext';
 import {
   startNativeNotificationsService,
@@ -106,6 +108,7 @@ function App() {
                         <CommandProvider>
                           <ServiceBlockingGate>
                             <AppShell />
+                            <SecurityBanner />
                             {!onMobile && <DictationHotkeyManager />}
                             {!onMobile && <PttHotkeyManager />}
                             {!onMobile && <LocalAIDownloadSnackbar />}
@@ -192,6 +195,10 @@ function AppShellDesktop() {
   useEffect(() => {
     trackPageView(location.pathname);
   }, [location.pathname]);
+
+  // Sync the notch indicator to the persisted always-on listening state once
+  // the core is ready (once per boot). Extracted to a hook so it's testable.
+  useNotchBootSync(isBootstrapping);
 
   return (
     <div className="relative h-screen flex flex-col overflow-hidden">

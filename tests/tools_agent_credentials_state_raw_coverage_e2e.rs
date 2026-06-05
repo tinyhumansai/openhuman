@@ -370,6 +370,7 @@ fn parent_context(workspace: PathBuf, provider: Arc<ScriptedProvider>) -> Parent
         session_key: "1710000000_parent".to_string(),
         session_parent_prefix: Some("root".to_string()),
         on_progress: None,
+        run_queue: None,
     }
 }
 

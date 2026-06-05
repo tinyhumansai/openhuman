@@ -12,6 +12,7 @@ import reducer, {
   clearTaskBoardForThread,
   clearToolTimelineForThread,
   endInferenceTurn,
+  hydrateRuntimeFromRunLedger,
   hydrateRuntimeFromSnapshot,
   markInferenceTurnStreaming,
   removeArtifactForThread,
@@ -210,6 +211,185 @@ describe('chatRuntimeSlice', () => {
     expect(next.inferenceStatusByThread['thread-i']).toBeUndefined();
     expect(next.streamingAssistantByThread['thread-i']).toBeUndefined();
     expect(next.toolTimelineByThread['thread-i']).toEqual([]);
+  });
+
+  it('rehydrates historical subagent rows without live streamed prose', () => {
+    const snapshot: PersistedTurnState = {
+      threadId: 'thread-subagent',
+      requestId: 'req-subagent',
+      lifecycle: 'interrupted',
+      iteration: 2,
+      maxIterations: 25,
+      streamingText: '',
+      thinking: '',
+      toolTimeline: [
+        {
+          id: 'subagent:sub-1',
+          name: 'subagent:researcher',
+          round: 2,
+          status: 'running',
+          subagent: {
+            taskId: 'sub-1',
+            agentId: 'researcher',
+            status: 'awaiting_user',
+            mode: 'typed',
+            workerThreadId: 'worker-1',
+            toolCalls: [
+              {
+                callId: 'child-tool-1',
+                toolName: 'search_web',
+                status: 'success',
+                iteration: 1,
+                elapsedMs: 44,
+                outputChars: 128,
+              },
+            ],
+          },
+        },
+      ],
+      startedAt: '2026-06-04T12:00:00Z',
+      updatedAt: '2026-06-04T12:00:08Z',
+    };
+
+    const next = reducer(undefined, hydrateRuntimeFromSnapshot({ snapshot }));
+    const row = next.toolTimelineByThread['thread-subagent'][0];
+
+    expect(row.subagent?.status).toBe('awaiting_user');
+    expect(row.subagent?.workerThreadId).toBe('worker-1');
+    expect(row.subagent?.toolCalls).toHaveLength(1);
+    expect(row.subagent?.transcript).toEqual([
+      {
+        kind: 'tool',
+        iteration: 1,
+        callId: 'child-tool-1',
+        toolName: 'search_web',
+        status: 'success',
+        elapsedMs: 44,
+        outputChars: 128,
+      },
+    ]);
+  });
+
+  it('hydrates compact historical subagent rows from durable run ledger rows', () => {
+    const next = reducer(
+      undefined,
+      hydrateRuntimeFromRunLedger({
+        threadId: 'thread-runs',
+        runs: [
+          {
+            id: 'sub-run-1',
+            kind: 'worker_thread',
+            parentRunId: 'req-run-1',
+            parentThreadId: 'thread-runs',
+            agentId: 'researcher',
+            status: 'awaiting_user',
+            workerThreadId: 'worker-1',
+            checkpoint: { resumeTool: 'continue_subagent' },
+            summary: 'Which repository should I inspect?',
+            metadata: { mode: 'typed', dedicatedThread: true, displayName: 'Researcher' },
+            telemetry: {
+              runId: 'sub-run-1',
+              inputTokens: 0,
+              outputTokens: 0,
+              cachedInputTokens: 0,
+              costUsd: 0,
+              elapsedMs: 1200,
+              toolCount: 2,
+            },
+            startedAt: '2026-06-04T12:00:00Z',
+            updatedAt: '2026-06-04T12:00:04Z',
+          },
+        ],
+      })
+    );
+
+    const row = next.toolTimelineByThread['thread-runs'][0];
+    expect(row).toMatchObject({
+      id: 'subagent:sub-run-1',
+      name: 'subagent:researcher',
+      status: 'awaiting_user',
+      displayName: 'Researcher',
+      detail: 'Which repository should I inspect?',
+      sourceToolName: 'run_ledger',
+    });
+    expect(row.subagent).toMatchObject({
+      taskId: 'sub-run-1',
+      agentId: 'researcher',
+      status: 'awaiting_user',
+      displayName: 'Researcher',
+      workerThreadId: 'worker-1',
+      mode: 'typed',
+      dedicatedThread: true,
+      elapsedMs: 1200,
+    });
+    expect(row.subagent?.transcript).toEqual([]);
+  });
+
+  it('maps durable run ledger status, kind, and optional metadata into timeline rows', () => {
+    const next = reducer(
+      undefined,
+      hydrateRuntimeFromRunLedger({
+        threadId: 'thread-runs',
+        runs: [
+          {
+            id: 'done-run',
+            kind: 'subagent',
+            parentThreadId: 'thread-runs',
+            agentId: 'writer',
+            status: 'completed',
+            metadata: {},
+            startedAt: '2026-06-04T12:00:00Z',
+            updatedAt: '2026-06-04T12:00:04Z',
+          },
+          {
+            id: 'failed-run',
+            kind: 'workflow_child',
+            parentThreadId: 'thread-runs',
+            agentId: 'reviewer',
+            status: 'failed',
+            error: 'Tool failed',
+            metadata: {},
+            startedAt: '2026-06-04T12:00:05Z',
+            updatedAt: '2026-06-04T12:00:07Z',
+          },
+          {
+            id: 'pending-run',
+            kind: 'team_member',
+            parentThreadId: 'thread-runs',
+            status: 'pending',
+            metadata: {},
+            startedAt: '2026-06-04T12:00:08Z',
+            updatedAt: '2026-06-04T12:00:09Z',
+          },
+          {
+            id: 'background-run',
+            kind: 'background_agent',
+            parentThreadId: 'thread-runs',
+            status: 'running',
+            metadata: {},
+            startedAt: '2026-06-04T12:00:10Z',
+            updatedAt: '2026-06-04T12:00:11Z',
+          },
+        ],
+      })
+    );
+
+    const rows = next.toolTimelineByThread['thread-runs'];
+    expect(rows).toHaveLength(3);
+    expect(rows.map(row => row.status)).toEqual(['success', 'error', 'running']);
+    expect(rows[1].detail).toBe('Tool failed');
+    expect(rows[2]).toMatchObject({
+      id: 'subagent:pending-run',
+      name: 'subagent:agent',
+      displayName: 'agent',
+      detail: undefined,
+    });
+    expect(rows[2].subagent).toMatchObject({
+      agentId: 'agent',
+      workerThreadId: undefined,
+      mode: undefined,
+      dedicatedThread: undefined,
+    });
   });
 
   it('interrupted snapshot must NOT resurrect inferenceStatus / streamingAssistant from stale fields', () => {

@@ -19,9 +19,9 @@ use openhuman_core::openhuman::inference::provider::{
 use openhuman_core::openhuman::memory::{
     Memory, MemoryCategory, MemoryEntry, NamespaceSummary, RecallOpts,
 };
-use openhuman_core::openhuman::skills::Skill;
 use openhuman_core::openhuman::subconscious::SourceChunk;
 use openhuman_core::openhuman::tools::{PermissionLevel, Tool, ToolResult};
+use openhuman_core::openhuman::workflows::ops_types::Workflow;
 use parking_lot::Mutex;
 use serde_json::json;
 use std::collections::{HashSet, VecDeque};
@@ -240,7 +240,7 @@ fn prompt_context<'a>(
         model_name: "round26-model",
         agent_id: "round26-agent",
         tools,
-        skills: &[] as &[Skill],
+        skills: &[] as &[Workflow],
         dispatcher_instructions: "round26 dispatcher instructions",
         learned: LearnedContextData {
             reflections: vec![
@@ -284,7 +284,6 @@ fn prompt_context<'a>(
             description: "Checks cold prompt paths".to_string(),
             memory_summary: Some("x".repeat(240)),
         }],
-        workflows: &[],
     }
 }
 

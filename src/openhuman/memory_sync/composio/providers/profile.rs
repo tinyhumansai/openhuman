@@ -157,7 +157,7 @@ pub fn persist_provider_profile(profile: &ProviderUserProfile) -> usize {
         if let Err(e) = profile::profile_upsert(
             &conn,
             &facet_id,
-            &FacetType::Skill,
+            &FacetType::Workflow,
             &key,
             &value,
             kind.confidence(),
@@ -285,7 +285,7 @@ pub fn load_connected_identities() -> Vec<ConnectedIdentity> {
         return Vec::new();
     };
     let conn = client.profile_conn();
-    let facets = match profile::profile_facets_by_type(&conn, &FacetType::Skill) {
+    let facets = match profile::profile_facets_by_type(&conn, &FacetType::Workflow) {
         Ok(f) => f,
         Err(error) => {
             tracing::warn!(
@@ -452,7 +452,7 @@ pub fn delete_connected_identity_facets(source: &str, identifier: &str) -> usize
         return 0;
     };
     let conn = client.profile_conn();
-    let Ok(facets) = profile::profile_facets_by_type(&conn, &FacetType::Skill) else {
+    let Ok(facets) = profile::profile_facets_by_type(&conn, &FacetType::Workflow) else {
         return 0;
     };
     let mut deleted = 0usize;
@@ -738,7 +738,7 @@ mod tests {
         profile::profile_upsert(
             &conn,
             "skill-slack-conn-1-user_id",
-            &FacetType::Skill,
+            &FacetType::Workflow,
             "skill:slack:conn-1:user_id",
             "U123ABC",
             IdentityKind::UserId.confidence(),
@@ -764,7 +764,7 @@ mod tests {
             profile::profile_upsert(
                 &conn,
                 "skill-notion-default-email",
-                &FacetType::Skill,
+                &FacetType::Workflow,
                 "skill:notion:default:email",
                 "user@workspace.com",
                 IdentityKind::Email.confidence(),

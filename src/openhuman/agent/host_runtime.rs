@@ -93,6 +93,13 @@ impl RuntimeAdapter for NativeRuntime {
             c.arg("-lc").arg(command);
             c
         };
+        // Validate the CWD up front so a missing/bad action_dir produces an
+        // actionable message naming the path, instead of an opaque OS error 267
+        // (ERROR_DIRECTORY) from CreateProcessW on Windows / a raw ENOENT on
+        // Unix when the process is spawned. Covers all three shell-family tools
+        // (shell / node_exec / npm_exec) since they all route through here.
+        // (#3353, Fix 2)
+        crate::openhuman::config::ensure_usable_cwd(workspace_dir)?;
         cmd.current_dir(workspace_dir);
         Ok(cmd)
     }
@@ -323,5 +330,47 @@ mod tests {
         // A clean pipeline still succeeds.
         let mut ok = rt.build_shell_command("true | true", &dir).unwrap();
         assert!(ok.status().await.unwrap().success());
+    }
+
+    /// #3353: a CWD that can't be made usable (here: a path *under an existing
+    /// file*, which `create_dir_all` cannot create) must yield a descriptive,
+    /// path-naming error from `build_shell_command` instead of an opaque OS
+    /// error 267 (ERROR_DIRECTORY) at spawn time.
+    #[test]
+    fn native_shell_command_rejects_uncreatable_cwd_with_clear_error() {
+        let rt = NativeRuntime::new();
+        let tmp = tempfile::tempdir().unwrap();
+        let parent_file = tmp.path().join("a-file");
+        std::fs::write(&parent_file, b"x").unwrap();
+        let bad_cwd = parent_file.join("child"); // parent is a file → uncreatable
+
+        let err = rt
+            .build_shell_command("echo hi", &bad_cwd)
+            .expect_err("an uncreatable CWD must be rejected up front");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("could not be created"),
+            "expected an actionable message, got: {msg}"
+        );
+        assert!(
+            msg.contains(&bad_cwd.to_string_lossy().to_string()),
+            "error should name the offending path: {msg}"
+        );
+    }
+
+    /// A valid-but-missing CWD is defensively created (covers a dir deleted
+    /// after launch), so the command builds successfully and runs there.
+    #[test]
+    fn native_shell_command_creates_missing_cwd() {
+        let rt = NativeRuntime::new();
+        let tmp = tempfile::tempdir().unwrap();
+        let missing = tmp.path().join("nested").join("workdir");
+        assert!(!missing.exists());
+
+        let command = rt
+            .build_shell_command("echo hi", &missing)
+            .expect("missing CWD should be auto-created");
+        assert!(missing.is_dir(), "CWD should have been created");
+        assert_eq!(command.as_std().get_current_dir(), Some(missing.as_path()));
     }
 }

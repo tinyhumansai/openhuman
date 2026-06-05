@@ -154,6 +154,68 @@ impl RepeatFailureGuard {
     }
 }
 
+/// If the model emits the IDENTICAL assistant output (narrative text + the same
+/// tool-call name/args) this many times in a row, it's stuck in a no-progress
+/// narration loop — halt. Set low enough to bail early (the observed
+/// degeneration repeated ~195×) but above any legitimate short retry.
+pub(crate) const REPEAT_OUTPUT_THRESHOLD: u32 = 4;
+
+/// Repeat-OUTPUT circuit breaker — distinct from [`RepeatFailureGuard`], which
+/// only counts tool *failures* and resets on every success.
+///
+/// This catches the degenerate case where each iteration re-emits the SAME
+/// narration + SAME tool call and the call nominally "succeeds" yet nothing
+/// advances (e.g. the model narrating "now let me create the files…" and
+/// re-issuing the same `run_code` forever). That loop is invisible to two
+/// things people reach for first:
+///   * `frequency_penalty` — per-generation only; each iteration is a fresh,
+///     individually non-repetitive generation, so it has nothing to penalise
+///     and no memory across turns.
+///   * [`RepeatFailureGuard`] — resets on success, so a repeated *successful*
+///     no-op never trips it.
+///
+/// Trips on `REPEAT_OUTPUT_THRESHOLD` consecutive identical signatures; a
+/// different signature (real progress) resets the run, so interleaved varied
+/// work never trips it.
+#[derive(Default)]
+pub(crate) struct RepeatOutputGuard {
+    last_hash: Option<u64>,
+    consecutive: u32,
+}
+
+impl RepeatOutputGuard {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    /// Record one iteration's output signature (assistant text + tool-call
+    /// name/args). Returns `Some(halt summary)` once the identical signature has
+    /// repeated [`REPEAT_OUTPUT_THRESHOLD`] times back-to-back.
+    pub(crate) fn record(&mut self, signature: &str) -> Option<String> {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        signature.hash(&mut hasher);
+        let h = hasher.finish();
+        if self.last_hash == Some(h) {
+            self.consecutive += 1;
+        } else {
+            self.last_hash = Some(h);
+            self.consecutive = 1;
+        }
+        if self.consecutive >= REPEAT_OUTPUT_THRESHOLD {
+            return Some(format!(
+                "Stopping: the last {} iterations produced the IDENTICAL response and tool call \
+                 with no change — the run is stuck repeating the same step without making \
+                 progress. Re-issuing it will not help. Summarise what (if anything) was actually \
+                 accomplished and report that the task could not progress, or take a genuinely \
+                 different approach.",
+                self.consecutive,
+            ));
+        }
+        None
+    }
+}
+
 /// Clamp the last-error text embedded in a circuit-breaker halt summary so a huge
 /// tool error (already capped at 1MB upstream) can't blow up the agent's result.
 pub(crate) fn truncate_for_halt(s: &str) -> String {

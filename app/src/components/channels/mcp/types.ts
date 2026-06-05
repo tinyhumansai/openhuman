@@ -40,11 +40,12 @@ export type InstalledServer = {
   config?: unknown;
   installed_at: number;
   last_connected_at?: number;
+  enabled: boolean;
 };
 
 export type McpTool = { name: string; description?: string; input_schema: unknown };
 
-export type ServerStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
+export type ServerStatus = 'disconnected' | 'connecting' | 'connected' | 'error' | 'disabled';
 
 export type ConnStatus = {
   server_id: string;

@@ -106,7 +106,7 @@ impl Tool for ComposioActionTool {
     }
 
     fn category(&self) -> ToolCategory {
-        ToolCategory::Skill
+        ToolCategory::Workflow
     }
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {

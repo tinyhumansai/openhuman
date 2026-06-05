@@ -43,6 +43,8 @@ fn sample_summary(id: &str, tree_id: &str, level: u32) -> SummaryNode {
         sealed_at: ts,
         deleted: false,
         embedding: None,
+        doc_id: None,
+        version_ms: None,
     }
 }
 

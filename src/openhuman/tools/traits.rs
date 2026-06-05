@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::openhuman::agent::tool_policy::GeneratedToolRuntimeContext;
 
 // Re-export the unified ToolResult from the lightweight skills types module so all tools use one type.
-pub use crate::openhuman::skills::types::{ToolContent, ToolResult};
+pub use crate::openhuman::workflows::types::{ToolContent, ToolResult};
 
 /// Controls where a tool is available.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,11 +26,11 @@ pub enum ToolScope {
 /// - **System tools** are built-in Rust implementations (shell, file_read,
 ///   file_write, cron_*, memory_*, …) that run inside the core process
 ///   with direct host access.
-/// - **Skill tools** are integration-facing tools that talk to external
+/// - **Workflow tools** are integration-facing tools that talk to external
 ///   services (for example Composio-backed SaaS actions).
 ///
 /// The orchestrator uses this category to spawn dedicated tool-execution
-/// sub-agents: one scoped to `Skill` for service integrations (running
+/// sub-agents: one scoped to `Workflow` for service integrations (running
 /// with the backend's `agentic` model hint), and others scoped to
 /// `System` for code/file/host work.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -39,15 +39,23 @@ pub enum ToolCategory {
     /// Built-in Rust tools with direct host access.
     #[default]
     System,
-    /// Integration-facing tools that reach external services.
-    Skill,
+    /// Integration-facing tools that reach external services (Composio-backed
+    /// SaaS actions, "runners"). The Rust ident was swept to `Workflow` during
+    /// the skills→workflows unification, but this category is NOT a WORKFLOW.md
+    /// bundle — it's the integration-tool class the integrations subagent
+    /// filters on via `category_filter = "skill"`. The wire format is pinned to
+    /// `"skill"` so existing agent definitions keep parsing; the ident is
+    /// provisional and gets revisited when the integrations_agent is reworked
+    /// (Phase 4 / "runners → Intelligence").
+    #[serde(rename = "skill")]
+    Workflow,
 }
 
 impl std::fmt::Display for ToolCategory {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::System => write!(f, "system"),
-            Self::Skill => write!(f, "skill"),
+            Self::Workflow => write!(f, "skill"),
         }
     }
 }
@@ -189,7 +197,7 @@ pub trait Tool: Send + Sync {
     }
 
     /// Category of this tool — `System` for built-in Rust tools (default)
-    /// or `Skill` for integration-facing tools.
+    /// or `Workflow` for integration-facing tools.
     fn category(&self) -> ToolCategory {
         ToolCategory::System
     }
@@ -447,7 +455,7 @@ mod tests {
     #[test]
     fn tool_category_display_is_lowercase() {
         assert_eq!(ToolCategory::System.to_string(), "system");
-        assert_eq!(ToolCategory::Skill.to_string(), "skill");
+        assert_eq!(ToolCategory::Workflow.to_string(), "skill");
     }
 
     #[test]
@@ -457,10 +465,10 @@ mod tests {
         // definition files.
         let s = serde_json::to_string(&ToolCategory::System).unwrap();
         assert_eq!(s, "\"system\"");
-        let s = serde_json::to_string(&ToolCategory::Skill).unwrap();
+        let s = serde_json::to_string(&ToolCategory::Workflow).unwrap();
         assert_eq!(s, "\"skill\"");
         let back: ToolCategory = serde_json::from_str("\"skill\"").unwrap();
-        assert_eq!(back, ToolCategory::Skill);
+        assert_eq!(back, ToolCategory::Workflow);
     }
 
     // ── ToolScope ──────────────────────────────────────────────────

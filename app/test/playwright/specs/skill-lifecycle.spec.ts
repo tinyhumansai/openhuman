@@ -21,7 +21,7 @@ test.describe('Skill lifecycle smoke', () => {
       )
     ).toBe(true);
 
-    const rpcResult = await callCoreRpc<unknown>('openhuman.skills_list', {});
+    const rpcResult = await callCoreRpc<unknown>('openhuman.workflows_list', {});
     const root = (rpcResult ?? {}) as Record<string, unknown>;
     const payload =
       root && typeof root === 'object' && 'result' in root

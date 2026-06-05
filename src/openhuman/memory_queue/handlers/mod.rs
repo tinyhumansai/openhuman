@@ -16,14 +16,14 @@ use crate::openhuman::memory::tree_source::get_or_create_source_tree;
 use crate::openhuman::memory_queue::store;
 use crate::openhuman::memory_queue::types::{
     AppendBufferPayload, AppendTarget, ExtractChunkPayload, FlushStalePayload, Job, JobKind,
-    JobOutcome, NewJob, NodeRef, ReembedBackfillPayload, SealPayload,
+    JobOutcome, NewJob, NodeRef, ReembedBackfillPayload, SealDocumentPayload, SealPayload,
 };
 use crate::openhuman::memory_store::chunks::store as chunk_store;
 use crate::openhuman::memory_store::content::{
     self as content_store, read as content_read, tags as content_tags,
 };
 use crate::openhuman::memory_tree::score;
-use crate::openhuman::memory_tree::score::embed::{build_write_embedder, pack_checked};
+use crate::openhuman::memory_tree::score::embed::{build_write_embedder, pack_checked, Embedder};
 use crate::openhuman::memory_tree::score::store as score_store;
 use crate::openhuman::memory_tree::tree::store as summary_store;
 use crate::openhuman::memory_tree::tree::{LeafRef, TreeFactory};
@@ -43,6 +43,25 @@ fn derive_tree_scope(source_id: &str) -> String {
         }
     }
     source_id.to_string()
+}
+
+/// Whether a chunk's source uses the per-document rollup + versioning path
+/// (Notion). These chunks are deliberately **not** pushed into the flat L0
+/// buffer by `handle_extract` — their tree is built per document-version by
+/// a `SealDocument` job enqueued at ingest time, which rolls each document's
+/// chunks up to a single doc-root and merges it into the connection tree.
+/// Scoped to Notion for now; other `SourceKind::Document` sources
+/// (GitHub/Linear/ClickUp/vault) keep the existing flat behaviour.
+pub(crate) fn uses_document_subtree(
+    chunk: &crate::openhuman::memory_store::chunks::types::Chunk,
+) -> bool {
+    const DOC_SUBTREE_PREFIX: &str = "notion:";
+    chunk.metadata.source_id.starts_with(DOC_SUBTREE_PREFIX)
+        || chunk
+            .metadata
+            .path_scope
+            .as_deref()
+            .is_some_and(|s| s.starts_with(DOC_SUBTREE_PREFIX))
 }
 
 fn emit_build_progress(
@@ -78,7 +97,74 @@ pub async fn handle_job(config: &Config, job: &Job) -> Result<JobOutcome> {
         JobKind::Seal => handle_seal(config, job).await,
         JobKind::FlushStale => handle_flush_stale(config, job).await,
         JobKind::ReembedBackfill => handle_reembed_backfill(config, job).await,
+        JobKind::SealDocument => handle_seal_document(config, job).await,
     }
+}
+
+/// Build (or re-build for a new version) one document's per-doc subtree and
+/// merge its doc-root into the connection tree. See
+/// [`crate::openhuman::memory_tree::tree::seal_document_subtree`].
+async fn handle_seal_document(config: &Config, job: &Job) -> Result<JobOutcome> {
+    use crate::openhuman::memory::util::redact::redact;
+    use crate::openhuman::memory_tree::tree::seal_document_subtree;
+
+    let payload: SealDocumentPayload =
+        serde_json::from_str(&job.payload_json).context("parse SealDocument payload")?;
+
+    // doc_id (notion:{conn}:{page}) and tree_scope (notion:{conn}) are
+    // recoverable source identifiers — redact them in all logs / error chains.
+    if payload.chunk_ids.is_empty() {
+        log::debug!(
+            "[memory::jobs] seal_document: empty chunk set doc_id={} — nothing to seal",
+            redact(&payload.doc_id)
+        );
+        return Ok(JobOutcome::Done);
+    }
+
+    // One physical tree per connection scope (e.g. notion:{connection_id}).
+    let tree = get_or_create_source_tree(config, &payload.tree_scope)?;
+    let strategy = TreeFactory::from_tree(&tree).label_strategy(config);
+
+    emit_build_progress(
+        "seal_document",
+        "started",
+        Some(&tree.scope),
+        None,
+        Some(payload.chunk_ids.len() as u32),
+        Some(format!(
+            "doc {} v={:?} ({} chunks)",
+            redact(&payload.doc_id),
+            payload.version_ms,
+            payload.chunk_ids.len()
+        )),
+    );
+
+    let doc_root_id = seal_document_subtree(
+        config,
+        &tree,
+        &payload.doc_id,
+        payload.version_ms,
+        &payload.chunk_ids,
+        &strategy,
+    )
+    .await
+    .with_context(|| {
+        format!(
+            "seal_document_subtree failed tree_scope={} doc_id={}",
+            redact(&payload.tree_scope),
+            redact(&payload.doc_id)
+        )
+    })?;
+
+    log::info!(
+        "[memory::jobs] seal_document done tree_scope={} doc_id={} version_ms={:?} doc_root_id={}",
+        redact(&payload.tree_scope),
+        redact(&payload.doc_id),
+        payload.version_ms,
+        doc_root_id
+    );
+    super::worker::wake_workers();
+    Ok(JobOutcome::Done)
 }
 
 async fn handle_extract(config: &Config, job: &Job) -> Result<JobOutcome> {
@@ -176,7 +262,11 @@ async fn handle_extract(config: &Config, job: &Job) -> Result<JobOutcome> {
     // enqueued inside the SAME transaction that commits the lifecycle update,
     // so a crash anywhere rolls everything back together and prevents the
     // "lifecycle committed but job lost" crash window.
-    let source_job = if result.kept {
+    // Per-document-versioned sources (Notion) skip the flat L0 buffer: their
+    // tree is built by a `SealDocument` job enqueued at ingest, not chunk by
+    // chunk here. We still score + embed the chunk above so chunk-level
+    // semantic search and the entity index stay populated.
+    let source_job = if result.kept && !uses_document_subtree(&chunk) {
         Some(NewJob::append_buffer(&AppendBufferPayload {
             node: NodeRef::Leaf {
                 chunk_id: chunk.id.clone(),
@@ -613,6 +703,89 @@ fn try_mark_summary_reembed_skipped(
     }
 }
 
+/// Read each row's stored source text, embed the readable bodies in **one
+/// batched call**, and classify per position exactly as the legacy per-row
+/// loop did. Generic over the chunk vs summary read/tombstone functions so
+/// both Phase-2 passes share one implementation.
+///
+/// Failure semantics are preserved verbatim from #1574 §6:
+/// - body read failure → log + persistent tombstone (`"body read failed: {e}"`)
+/// - embed wrong dim → log + tombstone (`"embed wrong dim"`)
+/// - embed error → log + tombstone (`"embed failed: {e}"`)
+///
+/// The single difference vs the old code is the embed call shape: one
+/// `embed_batch` (which collapses N provider round-trips into one for batch-
+/// capable providers, falling back to per-text internally) instead of N
+/// sequential `embed` awaits. Ordering is irrelevant — results are zipped
+/// back to their ids by position and folded into order-independent state.
+async fn reembed_collect(
+    config: &Config,
+    embedder: &dyn Embedder,
+    active_sig: &str,
+    ids: &[String],
+    label: &str,
+    read_body: impl Fn(&Config, &str) -> Result<String>,
+    mark_skipped: impl Fn(&Config, &str, &str, &str),
+) -> Result<Vec<(String, Vec<f32>)>> {
+    // Phase A: read bodies; persistently tombstone read failures so an
+    // unreadable row is attempted at most once per signature.
+    let mut readable: Vec<(&String, String)> = Vec::with_capacity(ids.len());
+    for id in ids {
+        match read_body(config, id) {
+            Ok(body) => readable.push((id, body)),
+            Err(e) => {
+                log::warn!(
+                    "[memory::jobs] reembed_backfill: {label} {id} body read failed: {e}; skipping (sig={active_sig})"
+                );
+                mark_skipped(config, id, active_sig, &format!("body read failed: {e}"));
+            }
+        }
+    }
+    if readable.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Phase B: one batched embed call. Scope `texts` so its borrow on
+    // `readable` ends before we consume `readable` below.
+    let results = {
+        let texts: Vec<&str> = readable.iter().map(|(_, body)| body.as_str()).collect();
+        embedder.embed_batch(&texts).await
+    };
+    if results.len() != readable.len() {
+        // `embed_batch`'s contract is one result per input position. A
+        // violation means we can't attribute results to ids. Returning an
+        // empty Vec here would make the handler write nothing yet still
+        // `Defer`, re-selecting the same ids forever — a non-converging
+        // chain. Surface it as an error so the chain terminates instead.
+        anyhow::bail!(
+            "reembed_backfill: {label} embed_batch returned {} results for {} texts (sig={active_sig})",
+            results.len(),
+            readable.len()
+        );
+    }
+
+    // Phase C: classify per position exactly as the legacy loop did.
+    let mut out: Vec<(String, Vec<f32>)> = Vec::with_capacity(readable.len());
+    for ((id, _body), result) in readable.into_iter().zip(results) {
+        match result {
+            Ok(v) if pack_checked(&v).is_ok() => out.push((id.clone(), v)),
+            Ok(_) => {
+                log::warn!(
+                    "[memory::jobs] reembed_backfill: {label} {id} embed wrong dim, skipping (sig={active_sig})"
+                );
+                mark_skipped(config, id, active_sig, "embed wrong dim");
+            }
+            Err(e) => {
+                log::warn!(
+                    "[memory::jobs] reembed_backfill: {label} {id} embed failed: {e}; skipping (sig={active_sig})"
+                );
+                mark_skipped(config, id, active_sig, &format!("embed failed: {e}"));
+            }
+        }
+    }
+    Ok(out)
+}
+
 async fn handle_reembed_backfill(config: &Config, job: &Job) -> Result<JobOutcome> {
     let payload: ReembedBackfillPayload =
         serde_json::from_str(&job.payload_json).context("parse ReembedBackfill payload")?;
@@ -730,78 +903,26 @@ async fn handle_reembed_backfill(config: &Config, job: &Job) -> Result<JobOutcom
                 return Ok(JobOutcome::Done);
             }
         };
-    let mut chunk_vecs: Vec<(String, Vec<f32>)> = Vec::new();
-    for id in &chunk_ids {
-        match content_read::read_chunk_body(config, id) {
-            Ok(body) => match embedder.embed(&body).await {
-                Ok(v) if pack_checked(&v).is_ok() => chunk_vecs.push((id.clone(), v)),
-                Ok(_) => {
-                    log::warn!(
-                        "[memory::jobs] reembed_backfill: chunk {id} embed wrong dim, skipping (sig={active_sig})"
-                    );
-                    try_mark_chunk_reembed_skipped(config, id, &active_sig, "embed wrong dim");
-                }
-                Err(e) => {
-                    log::warn!(
-                        "[memory::jobs] reembed_backfill: chunk {id} embed failed: {e}; skipping (sig={active_sig})"
-                    );
-                    try_mark_chunk_reembed_skipped(
-                        config,
-                        id,
-                        &active_sig,
-                        &format!("embed failed: {e}"),
-                    );
-                }
-            },
-            Err(e) => {
-                log::warn!(
-                    "[memory::jobs] reembed_backfill: chunk {id} body read failed: {e}; skipping (sig={active_sig})"
-                );
-                try_mark_chunk_reembed_skipped(
-                    config,
-                    id,
-                    &active_sig,
-                    &format!("body read failed: {e}"),
-                );
-            }
-        }
-    }
-    let mut summary_vecs: Vec<(String, Vec<f32>)> = Vec::new();
-    for id in &summary_ids {
-        match content_read::read_summary_body(config, id) {
-            Ok(body) => match embedder.embed(&body).await {
-                Ok(v) if pack_checked(&v).is_ok() => summary_vecs.push((id.clone(), v)),
-                Ok(_) => {
-                    log::warn!(
-                        "[memory::jobs] reembed_backfill: summary {id} embed wrong dim, skipping (sig={active_sig})"
-                    );
-                    try_mark_summary_reembed_skipped(config, id, &active_sig, "embed wrong dim");
-                }
-                Err(e) => {
-                    log::warn!(
-                        "[memory::jobs] reembed_backfill: summary {id} embed failed: {e}; skipping (sig={active_sig})"
-                    );
-                    try_mark_summary_reembed_skipped(
-                        config,
-                        id,
-                        &active_sig,
-                        &format!("embed failed: {e}"),
-                    );
-                }
-            },
-            Err(e) => {
-                log::warn!(
-                    "[memory::jobs] reembed_backfill: summary {id} body read failed: {e}; skipping (sig={active_sig})"
-                );
-                try_mark_summary_reembed_skipped(
-                    config,
-                    id,
-                    &active_sig,
-                    &format!("body read failed: {e}"),
-                );
-            }
-        }
-    }
+    let chunk_vecs = reembed_collect(
+        config,
+        embedder.as_ref(),
+        &active_sig,
+        &chunk_ids,
+        "chunk",
+        content_read::read_chunk_body,
+        try_mark_chunk_reembed_skipped,
+    )
+    .await?;
+    let summary_vecs = reembed_collect(
+        config,
+        embedder.as_ref(),
+        &active_sig,
+        &summary_ids,
+        "summary",
+        content_read::read_summary_body,
+        try_mark_summary_reembed_skipped,
+    )
+    .await?;
 
     // Phase 3 (one short tx): persist all collected vectors to the sidecar.
     chunk_store::with_connection(config, |conn| {

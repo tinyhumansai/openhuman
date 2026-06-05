@@ -24,9 +24,21 @@
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use nix::sys::signal::kill;
 use nix::unistd::Pid;
+
+/// Maximum time to wait for a live lock-holder to release the CEF cache before
+/// giving up. Mirrors the Windows `cef_singleton_wait` budget so the
+/// relaunch-race behaviour is symmetric across platforms — kept short so a
+/// genuinely stuck holder can't hang startup; the common race clears well
+/// under a second.
+const WAIT_BUDGET: Duration = Duration::from_secs(5);
+/// First poll backoff; doubles each attempt up to [`BACKOFF_CAP`].
+const BACKOFF_BASE: Duration = Duration::from_millis(100);
+/// Upper bound on a single backoff sleep so we keep polling responsively.
+const BACKOFF_CAP: Duration = Duration::from_millis(500);
 
 /// Bundle identifier from `tauri.conf.json`. Must match `bundle.identifier` —
 /// the vendored `tauri-runtime-cef` derives the cache directory as
@@ -55,18 +67,28 @@ impl fmt::Display for CefLockError {
                 pid,
                 host,
                 cache_path,
-            } => write!(
-                f,
-                "CEF cache at {} is held by another OpenHuman instance \
-                 (host {}, pid {}).\n\
-                 Quit the running instance and try again.\n\
-                 Workaround:\n  \
-                 pkill -f \"OpenHuman.app/Contents\"\n  \
-                 pkill -f \"openhuman-core\"",
-                cache_path.display(),
-                host,
-                pid,
-            ),
+            } => {
+                // The force-quit hint is platform-specific: macOS runs from an
+                // `.app` bundle, Linux from a plain binary. `cef_preflight` is
+                // compiled for both (`cfg(any(macos, linux))`), so a hardcoded
+                // macOS `pkill` pattern would mislead Linux users.
+                let workaround = if cfg!(target_os = "macos") {
+                    "pkill -f \"OpenHuman.app/Contents\"\n  pkill -f \"openhuman-core\""
+                } else {
+                    "pkill -f openhuman\n  pkill -f openhuman-core"
+                };
+                write!(
+                    f,
+                    "CEF cache at {} is held by another OpenHuman instance \
+                     (host {}, pid {}).\n\
+                     Quit the running instance and try again.\n\
+                     Workaround:\n  {}",
+                    cache_path.display(),
+                    host,
+                    pid,
+                    workaround,
+                )
+            }
             Self::NoHomeDir => write!(
                 f,
                 "$HOME not set — cannot resolve CEF cache path for preflight"
@@ -218,6 +240,88 @@ pub fn is_pid_alive(pid: i32) -> bool {
     matches!(kill(Pid::from_raw(pid), None), Ok(()))
 }
 
+/// Exponential backoff for poll `attempt` (0-based), capped at [`BACKOFF_CAP`].
+/// Pure + saturating so it never overflows on a high attempt count. Mirrors
+/// the Windows `cef_singleton_wait` backoff.
+fn backoff_delay(attempt: u32) -> Duration {
+    let factor = 1u32.checked_shl(attempt).unwrap_or(u32::MAX);
+    BACKOFF_BASE
+        .checked_mul(factor)
+        .unwrap_or(BACKOFF_CAP)
+        .min(BACKOFF_CAP)
+}
+
+/// Bounded wait for the CEF cache lock to clear (macOS + Linux).
+///
+/// The one-shot [`check_default_cache`] used to `exit(1)` the moment it saw a
+/// live lock-holder. But the dominant TAURI-RUST-F cause is a *sequential
+/// relaunch race*: the prior instance is mid-teardown and releases the lock
+/// within a second (auto-update relaunch, fast quit+reopen, a restart flow).
+/// Polling for a short budget lets that resolve seamlessly instead of killing
+/// the relaunch — the macOS/Linux analogue of the Windows pre-CEF wait.
+///
+/// Outcomes:
+///   * lock clears (or is stale and removed) → return; caller proceeds to
+///     `cef::initialize()`.
+///   * cache path unresolved ([`CefLockError::NoHomeDir`]) → nothing to wait
+///     on; proceed best-effort (matches the prior behaviour).
+///   * lock still held by a live process after [`WAIT_BUDGET`] → a genuine
+///     "another instance is running" situation: print the actionable message
+///     and exit cleanly with code **0** (not a crash; `exit(1)` previously
+///     made relaunch wrappers treat it as a failure).
+///
+/// This is defense-in-depth, never the only guard: any failure that still
+/// reaches `cef::initialize()` (lock freed then re-acquired between the check
+/// and init, or a GPU/sandbox/permission failure) is caught by the runtime's
+/// `cef_init_guard`, which shows a dialog and exits cleanly. Together they make
+/// the `assertion left == right` panic impossible regardless of cause.
+pub fn wait_for_cache_release() {
+    let start = Instant::now();
+    let mut attempt: u32 = 0;
+
+    loop {
+        match check_default_cache() {
+            Ok(()) => {
+                if attempt > 0 {
+                    log::info!(
+                        "[cef-preflight] CEF cache lock released after {} poll(s) ({} ms); proceeding to CEF init",
+                        attempt,
+                        start.elapsed().as_millis()
+                    );
+                }
+                return;
+            }
+            Err(CefLockError::NoHomeDir) => {
+                log::warn!("[cef-preflight] {}", CefLockError::NoHomeDir);
+                return;
+            }
+            Err(held) => {
+                let elapsed = start.elapsed();
+                if elapsed >= WAIT_BUDGET {
+                    log::error!(
+                        "[cef-preflight] CEF cache still held after {} ms budget; exiting cleanly instead of initializing into a locked cache (TAURI-RUST-F)",
+                        WAIT_BUDGET.as_millis()
+                    );
+                    eprintln!("\n[openhuman] {held}\n");
+                    std::process::exit(0);
+                }
+                // Clamp the backoff to the remaining budget so the final sleep
+                // can't overshoot WAIT_BUDGET (the documented total-wait
+                // contract) by up to BACKOFF_CAP.
+                let remaining = WAIT_BUDGET.checked_sub(elapsed).unwrap_or_default();
+                let delay = backoff_delay(attempt).min(remaining);
+                log::warn!(
+                    "[cef-preflight] CEF cache held by another instance; waiting {} ms before re-check (elapsed {} ms, TAURI-RUST-F)",
+                    delay.as_millis(),
+                    elapsed.as_millis()
+                );
+                std::thread::sleep(delay);
+                attempt = attempt.saturating_add(1);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -235,6 +339,22 @@ mod tests {
             parse_lock_target("myhost-12345"),
             Some(("myhost".into(), 12345))
         );
+    }
+
+    #[test]
+    fn backoff_is_exponential_then_capped() {
+        assert_eq!(backoff_delay(0), BACKOFF_BASE); // 100ms
+        assert_eq!(backoff_delay(1), Duration::from_millis(200));
+        assert_eq!(backoff_delay(2), Duration::from_millis(400));
+        // 800ms would exceed the cap → clamped.
+        assert_eq!(backoff_delay(3), BACKOFF_CAP); // 500ms
+        assert_eq!(backoff_delay(10), BACKOFF_CAP);
+    }
+
+    #[test]
+    fn backoff_saturates_on_huge_attempt() {
+        // Must not panic/overflow on an absurd attempt count.
+        assert_eq!(backoff_delay(u32::MAX), BACKOFF_CAP);
     }
 
     #[test]

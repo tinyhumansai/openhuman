@@ -62,7 +62,8 @@ pub const BYOK_INCOMPLETE_SENTINEL: &str = "__byok_incomplete__";
 
 fn is_abstract_tier_model(model: &str) -> bool {
     use crate::openhuman::config::{
-        MODEL_AGENTIC_V1, MODEL_CODING_V1, MODEL_REASONING_QUICK_V1, MODEL_REASONING_V1,
+        MODEL_AGENTIC_V1, MODEL_CHAT_V1, MODEL_CODING_V1, MODEL_REASONING_QUICK_V1,
+        MODEL_REASONING_V1,
     };
     // No dedicated constant for the summarization tier yet; keep the literal
     // in sync with the tier name used by the summarizer sub-agent.
@@ -70,6 +71,7 @@ fn is_abstract_tier_model(model: &str) -> bool {
     let trimmed = model.trim();
     trimmed == MODEL_REASONING_V1
         || trimmed == MODEL_REASONING_QUICK_V1
+        || trimmed == MODEL_CHAT_V1
         || trimmed == MODEL_AGENTIC_V1
         || trimmed == MODEL_CODING_V1
         || trimmed == MODEL_SUMMARIZATION_V1
@@ -91,17 +93,17 @@ pub fn auth_key_for_slug(slug: &str) -> String {
 pub fn resolve_model_for_hint(hint_or_tier: &str, config: &Config) -> String {
     let hint_to_tier: &[(&str, &str)] = &[
         ("reasoning", crate::openhuman::config::MODEL_REASONING_V1),
-        ("chat", crate::openhuman::config::MODEL_REASONING_QUICK_V1),
+        ("chat", crate::openhuman::config::MODEL_CHAT_V1),
         ("agentic", crate::openhuman::config::MODEL_AGENTIC_V1),
         ("coding", crate::openhuman::config::MODEL_CODING_V1),
         ("summarization", "summarization-v1"),
     ];
     let tier_to_role: &[(&str, &str)] = &[
         (crate::openhuman::config::MODEL_REASONING_V1, "reasoning"),
+        (crate::openhuman::config::MODEL_CHAT_V1, "chat"),
         (crate::openhuman::config::MODEL_REASONING_QUICK_V1, "chat"),
         (crate::openhuman::config::MODEL_AGENTIC_V1, "agentic"),
         (crate::openhuman::config::MODEL_CODING_V1, "coding"),
-        ("chat-v1", "chat"),
         ("summarization-v1", "summarization"),
     ];
 
@@ -289,11 +291,95 @@ pub(crate) fn resolve_byok_fallback_provider_string(config: &Config) -> Option<S
     None
 }
 
+/// Test-only seam: inject a mock chat `Provider` so e2e tests can drive the
+/// autonomous run paths (`spawn_workflow_run_background`, the task dispatcher)
+/// with a scripted LLM and no network. Process-global because those runs are
+/// detached `tokio::spawn`s — a thread/task-local would not reach them.
+///
+/// Because it is global, tests that install an override MUST run serially
+/// (hold the shared lock in [`crate::openhuman::workflows::e2e_run_tests`])
+/// and clear it via the returned guard. Inert in production: the check below
+/// is `#[cfg(test)]`, so the override is never consulted in release builds.
+#[cfg(test)]
+pub(crate) mod test_provider_override {
+    use super::Provider;
+    use crate::openhuman::inference::provider::traits::{
+        ChatRequest, ChatResponse, ProviderCapabilities,
+    };
+    use async_trait::async_trait;
+    use std::sync::{Arc, Mutex, OnceLock};
+
+    static OVERRIDE: OnceLock<Mutex<Option<Arc<dyn Provider>>>> = OnceLock::new();
+    fn cell() -> &'static Mutex<Option<Arc<dyn Provider>>> {
+        OVERRIDE.get_or_init(|| Mutex::new(None))
+    }
+
+    pub(crate) fn current() -> Option<Arc<dyn Provider>> {
+        cell().lock().unwrap().clone()
+    }
+
+    /// Install a mock provider; the returned guard clears it on drop.
+    #[must_use]
+    pub(crate) fn install(provider: Arc<dyn Provider>) -> InstallGuard {
+        *cell().lock().unwrap() = Some(provider);
+        InstallGuard
+    }
+    pub(crate) struct InstallGuard;
+    impl Drop for InstallGuard {
+        fn drop(&mut self) {
+            *cell().lock().unwrap() = None;
+        }
+    }
+
+    /// Thin delegating wrapper so the factory can hand out a fresh
+    /// `Box<dyn Provider>` backed by the shared mock `Arc` — one mock instance
+    /// serves the orchestrator AND the inner workflow run, routing by prompt
+    /// content. Forwards the methods the turn engine actually calls; the rest
+    /// use the trait defaults (which read back through `capabilities`).
+    pub(crate) struct ProviderHandle(pub Arc<dyn Provider>);
+
+    #[async_trait]
+    impl Provider for ProviderHandle {
+        fn capabilities(&self) -> ProviderCapabilities {
+            self.0.capabilities()
+        }
+        async fn chat_with_system(
+            &self,
+            system_prompt: Option<&str>,
+            message: &str,
+            model: &str,
+            temperature: f64,
+        ) -> anyhow::Result<String> {
+            self.0
+                .chat_with_system(system_prompt, message, model, temperature)
+                .await
+        }
+        async fn chat(
+            &self,
+            request: ChatRequest<'_>,
+            model: &str,
+            temperature: f64,
+        ) -> anyhow::Result<ChatResponse> {
+            self.0.chat(request, model, temperature).await
+        }
+    }
+}
+
 /// Build a `(Provider, model)` for the given workload role.
 pub fn create_chat_provider(
     role: &str,
     config: &Config,
 ) -> anyhow::Result<(Box<dyn Provider>, String)> {
+    // Test-only: a scripted mock provider injected by an e2e test wins over
+    // anything config-derived. Never compiled into release builds.
+    #[cfg(test)]
+    if let Some(p) = test_provider_override::current() {
+        return Ok((
+            Box::new(test_provider_override::ProviderHandle(p)),
+            "mock-model".to_string(),
+        ));
+    }
+
     let s = provider_for_role(role, config);
     log::debug!(
         "[providers][chat-factory] create_chat_provider role={} resolved_string={}",
@@ -616,7 +702,7 @@ fn make_openhuman_backend(config: &Config) -> anyhow::Result<(Box<dyn Provider>,
     // "deepseek-v4-pro", "claude-opus-4-7") fall back to the platform default.
     let model = match model.strip_prefix("hint:") {
         Some("reasoning") => crate::openhuman::config::MODEL_REASONING_V1.to_string(),
-        Some("chat") => crate::openhuman::config::MODEL_REASONING_QUICK_V1.to_string(),
+        Some("chat") => crate::openhuman::config::MODEL_CHAT_V1.to_string(),
         Some("agentic") => crate::openhuman::config::MODEL_AGENTIC_V1.to_string(),
         Some("coding") => crate::openhuman::config::MODEL_CODING_V1.to_string(),
         Some("summarization") => crate::openhuman::config::MODEL_SUMMARIZATION_V1.to_string(),

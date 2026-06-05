@@ -58,6 +58,8 @@ export interface VoiceServerSettings {
   silence_threshold: number;
   /** Custom vocabulary words to bias whisper toward (names, technical terms). */
   custom_dictionary: string[];
+  /** Phase 2: continuous always-on listening (no hotkey). Opt-in. */
+  always_on_enabled: boolean;
 }
 
 export async function openhumanVoiceStatus(): Promise<VoiceStatus> {
@@ -106,6 +108,7 @@ export async function openhumanUpdateVoiceServerSettings(update: {
   min_duration_secs?: number;
   silence_threshold?: number;
   custom_dictionary?: string[];
+  always_on_enabled?: boolean;
 }): Promise<CommandResponse<ConfigSnapshot>> {
   return await callCoreRpc<CommandResponse<ConfigSnapshot>>({
     method: 'openhuman.config_update_voice_server_settings',

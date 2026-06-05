@@ -1,27 +1,31 @@
 //! System prompt builder for the `integrations_agent` built-in agent.
 //!
 //! `integrations_agent` is the one sub-agent that executes Composio actions
-//! directly — every other agent delegates to it via `spawn_subagent`.
-//! That means the prompt owns two blocks nobody else renders:
+//! directly — every other agent delegates to it via `spawn_subagent`. It is
+//! composio-only: it drives a single Composio toolkit per spawn.
 //!
-//! * `## Available Skills` — the QuickJS skill catalogue it can invoke
-//!   through the runtime.
+//! That means the prompt owns one block nobody else renders:
+//!
 //! * `## Connected Integrations` — the list of Composio toolkits the
 //!   user has connected, framed as "you have direct access to the
 //!   action tools in your tool list" rather than "delegate to integrations_agent".
 //!
-//! Both blocks live here (not in the shared prompts module) so the
-//! delegator agents stay lean and the integrations_agent-specific wording
-//! isn't a branch on `agent_id` somewhere else.
+//! (It used to also render an `## Available Skills` workflow catalogue, but
+//! workflow discovery + execution moved to the orchestrator with the
+//! skills→workflows unification — `list_workflows` / `run_workflow`. The
+//! integrations_agent has no run_workflow tool, so advertising that catalogue
+//! here only promised capabilities it couldn't use.)
+//!
+//! This block lives here (not in the shared prompts module) so the delegator
+//! agents stay lean and the integrations_agent-specific wording isn't a branch
+//! on `agent_id` somewhere else.
 
 use crate::openhuman::context::prompt::{
     render_safety, render_tools, render_user_files, render_workspace, ConnectedIntegration,
     PromptContext,
 };
-use crate::openhuman::skills::Skill;
 use anyhow::Result;
 use std::fmt::Write;
-use std::path::Path;
 
 const ARCHETYPE: &str = include_str!("prompt.md");
 
@@ -39,22 +43,6 @@ pub fn build(ctx: &PromptContext<'_>) -> Result<String> {
     let identities = ctx.connected_identities_md.as_str();
     if !identities.trim().is_empty() {
         out.push_str(identities.trim_end());
-        out.push_str("\n\n");
-    }
-
-    let skills = render_available_skills(ctx.skills, ctx.workspace_dir);
-    if !skills.trim().is_empty() {
-        out.push_str(skills.trim_end());
-        out.push_str("\n\n");
-    }
-
-    let workflows = crate::openhuman::agent_workflows::render_available_workflows(ctx.workflows);
-    if !workflows.trim().is_empty() {
-        log::debug!(
-            "[workflows][phase] injecting {} workflow(s) into integrations_agent prompt",
-            ctx.workflows.len()
-        );
-        out.push_str(workflows.trim_end());
         out.push_str("\n\n");
     }
 
@@ -81,51 +69,6 @@ pub fn build(ctx: &PromptContext<'_>) -> Result<String> {
     }
 
     Ok(out)
-}
-
-/// Render the `## Available Skills` XML catalogue of QuickJS skills
-/// this agent can invoke through the host runtime. Empty when no skills
-/// are registered.
-fn render_available_skills(skills: &[Skill], workspace_dir: &Path) -> String {
-    if skills.is_empty() {
-        return String::new();
-    }
-    let mut out = String::from("## Available Skills\n\n<available_skills>\n");
-    for skill in skills {
-        let location = skill.location.clone().unwrap_or_else(|| {
-            workspace_dir
-                .join("skills")
-                .join(&skill.name)
-                .join("SKILL.md")
-        });
-        let _ = writeln!(
-            out,
-            "  <skill>\n    <name>{}</name>\n    <description>{}</description>\n    <location>{}</location>\n  </skill>",
-            xml_escape(&skill.name),
-            xml_escape(&skill.description),
-            xml_escape(&location.display().to_string()),
-        );
-    }
-    out.push_str("</available_skills>");
-    out
-}
-
-/// Escape XML-sensitive characters so skill metadata can't break the
-/// surrounding `<available_skills>` block if a name or description
-/// contains `<`, `>`, or `&`.
-fn xml_escape(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for ch in s.chars() {
-        match ch {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '"' => out.push_str("&quot;"),
-            '\'' => out.push_str("&apos;"),
-            _ => out.push(ch),
-        }
-    }
-    out
 }
 
 /// Render the skill-executor-flavoured `## Connected Integrations`
@@ -213,10 +156,7 @@ mod tests {
     use crate::openhuman::context::prompt::{LearnedContextData, ToolCallFormat};
     use std::collections::HashSet;
 
-    fn ctx_with<'a>(
-        integrations: &'a [ConnectedIntegration],
-        skills: &'a [Skill],
-    ) -> PromptContext<'a> {
+    fn ctx_with<'a>(integrations: &'a [ConnectedIntegration]) -> PromptContext<'a> {
         // Leak a HashSet so the returned context borrows a 'static-ish
         // reference — the test owns the value for its lifetime.
         use std::sync::OnceLock;
@@ -226,7 +166,7 @@ mod tests {
             model_name: "test",
             agent_id: "integrations_agent",
             tools: &[],
-            skills,
+            skills: &[],
             dispatcher_instructions: "",
             learned: LearnedContextData::default(),
             visible_tool_names: EMPTY_VISIBLE.get_or_init(HashSet::new),
@@ -240,13 +180,12 @@ mod tests {
             personality_soul_md: None,
             personality_memory_md: None,
             personality_roster: vec![],
-            workflows: &[],
         }
     }
 
     #[test]
     fn build_returns_nonempty_body() {
-        let body = build(&ctx_with(&[], &[])).unwrap();
+        let body = build(&ctx_with(&[])).unwrap();
         assert!(!body.is_empty());
         assert!(!body.contains("## Connected Integrations"));
         assert!(!body.contains("## Available Skills"));
@@ -262,7 +201,7 @@ mod tests {
             connected: true,
             non_active_status: None,
         }];
-        let body = build(&ctx_with(&integrations, &[])).unwrap();
+        let body = build(&ctx_with(&integrations)).unwrap();
         assert!(body.contains("## Connected Integrations"));
         assert!(body.contains("You have direct access"));
         assert!(body.contains("- **gmail** — Email access."));
@@ -274,7 +213,7 @@ mod tests {
 
     #[test]
     fn build_distinguishes_scope_errors_from_disconnected_auth() {
-        let body = build(&ctx_with(&[], &[])).unwrap();
+        let body = build(&ctx_with(&[])).unwrap();
         assert!(body.contains("[composio:error:insufficient_scope]"));
         assert!(body.contains("Scope errors are not disconnections"));
         assert!(body.contains("Never say the toolkit is disconnected"));
@@ -292,7 +231,7 @@ mod tests {
             connected: false,
             non_active_status: None,
         }];
-        let body = build(&ctx_with(&integrations, &[])).unwrap();
+        let body = build(&ctx_with(&integrations)).unwrap();
         assert!(!body.contains("## Connected Integrations"));
     }
 }

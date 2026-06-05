@@ -153,6 +153,8 @@ pub async fn preview_filter(
         toolkit: provider.as_str().to_string(),
         connection_id: connection_id.filter(|s| !s.trim().is_empty()),
         usage: Default::default(),
+        max_items: None,
+        sync_depth_days: None,
     };
     let max = max.unwrap_or(config.task_sources.max_tasks_per_fetch);
     let fetch_filter = filter::to_fetch_filter(&filter_spec, max);
@@ -179,6 +181,8 @@ pub async fn list_databases(
         toolkit: provider.as_str().to_string(),
         connection_id: connection_id.filter(|s| !s.trim().is_empty()),
         usage: Default::default(),
+        max_items: None,
+        sync_depth_days: None,
     };
     let databases = provider_impl
         .list_databases(&ctx)

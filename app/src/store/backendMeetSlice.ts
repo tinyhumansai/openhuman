@@ -26,7 +26,7 @@ export interface BackendMeetTranscriptEvent {
   duration_ms: number;
 }
 
-interface BackendMeetState {
+export interface BackendMeetState {
   status: BackendMeetStatus;
   meetUrl: string | null;
   lastReply: BackendMeetReplyEvent | null;
@@ -95,5 +95,15 @@ export const {
   setBackendMeetError,
   resetBackendMeet,
 } = backendMeetSlice.actions;
+
+export const selectBackendMeetStatus = (state: {
+  backendMeet: BackendMeetState;
+}): BackendMeetStatus => state.backendMeet.status;
+export const selectBackendMeetUrl = (state: { backendMeet: BackendMeetState }): string | null =>
+  state.backendMeet.meetUrl;
+export const selectBackendMeetLastReply = (state: { backendMeet: BackendMeetState }) =>
+  state.backendMeet.lastReply;
+export const selectBackendMeetLastHarness = (state: { backendMeet: BackendMeetState }) =>
+  state.backendMeet.lastHarness;
 
 export default backendMeetSlice.reducer;

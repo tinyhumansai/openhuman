@@ -10,7 +10,7 @@ Intelligent model routing — a policy-driven layer that sits between callers (a
 - Probe and cache local model-server health (`GET {base}/api/tags` for Ollama, `GET {base}/models` for OpenAI-compat backends) with a 30 s TTL and 3 s probe timeout.
 - On a local primary: dispatch locally, and on error **or** low-quality output retry on remote — unless `privacy_required` forbids leaving the device.
 - Heuristically score local responses for low quality (length floor, empty-noise utterances, refusal phrases) to drive fallback.
-- Normalize heavy `hint:*` model strings to backend-valid model IDs (`reasoning` → `MODEL_REASONING_V1`, `chat` → `MODEL_REASONING_QUICK_V1`, `agentic` → `MODEL_AGENTIC_V1`, `coding` → `MODEL_CODING_V1`).
+- Normalize heavy `hint:*` model strings to backend-valid model IDs (`reasoning` -> `MODEL_REASONING_V1`, `chat` -> `MODEL_CHAT_V1`, `agentic` -> `MODEL_AGENTIC_V1`, `coding` -> `MODEL_CODING_V1`).
 - Force remote when native tool-calling is required (tools present) and refuse to silently bypass local routing for streaming.
 - Emit a structured `RoutingRecord` (category, target, resolved model, health, fallback flag, latency, tokens, cost) per completed call.
 
@@ -60,7 +60,7 @@ None (no `store.rs`). The only state is the in-memory, TTL'd health cache inside
 
 - `LocalAiConfig` (`openhuman::config`): `runtime_enabled`, `provider`, `base_url`, `api_key`, `chat_model_id` drive local-provider selection and whether local routing is active at all.
 - `OPENHUMAN_LOCAL_INFERENCE_URL` (env): full `/v1` base URL of a local OpenAI-compatible server; when set, takes precedence over `config.base_url` and switches the health probe to `GET {base}/models`.
-- Model-ID constants from `openhuman::config`: `MODEL_REASONING_V1`, `MODEL_REASONING_QUICK_V1`, `MODEL_AGENTIC_V1`, `MODEL_CODING_V1`.
+- Model-ID constants from `openhuman::config`: `MODEL_REASONING_V1`, `MODEL_CHAT_V1`, `MODEL_REASONING_QUICK_V1` (legacy), `MODEL_AGENTIC_V1`, `MODEL_CODING_V1`.
 
 ## Dependencies
 

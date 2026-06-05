@@ -4,6 +4,61 @@ import { skillsApi } from '../skillsApi';
 
 vi.mock('../../coreRpcClient', () => ({ callCoreRpc: vi.fn() }));
 
+describe('skillsApi.listSkills', () => {
+  beforeEach(async () => {
+    const { callCoreRpc } = await import('../../coreRpcClient');
+    vi.mocked(callCoreRpc).mockReset();
+  });
+
+  it('normalizes snake_case and legacy discovered skill fields', async () => {
+    const { callCoreRpc } = await import('../../coreRpcClient');
+    vi.mocked(callCoreRpc).mockResolvedValueOnce({
+      skills: [
+        {
+          id: 'hermes-demo',
+          name: 'Hermes Demo',
+          description: 'Reads Hermes metadata.',
+          version: '',
+          author: null,
+          tags: [],
+          related_skills: ['browser-automation'],
+          source_format: 'hermes',
+          tools: [],
+          prompts: [],
+          location: null,
+          resources: [],
+          scope: 'user',
+          legacy: false,
+          warnings: [],
+        },
+        {
+          id: 'legacy-demo',
+          name: 'Legacy Demo',
+          description: 'Old package.',
+          version: '',
+          author: null,
+          tags: [],
+          tools: [],
+          prompts: [],
+          location: null,
+          resources: [],
+          scope: 'user',
+          legacy: true,
+          warnings: [],
+        },
+      ],
+    });
+
+    const result = await skillsApi.listSkills();
+
+    expect(callCoreRpc).toHaveBeenCalledWith({ method: 'openhuman.workflows_list' });
+    expect(result[0].relatedSkills).toEqual(['browser-automation']);
+    expect(result[0].sourceFormat).toBe('hermes');
+    expect(result[0].platforms).toEqual([]);
+    expect(result[1].sourceFormat).toBe('legacy');
+  });
+});
+
 describe('skillsApi.createSkill', () => {
   beforeEach(async () => {
     const { callCoreRpc } = await import('../../coreRpcClient');
@@ -39,7 +94,7 @@ describe('skillsApi.createSkill', () => {
     });
 
     expect(callCoreRpc).toHaveBeenCalledWith({
-      method: 'openhuman.skills_create',
+      method: 'openhuman.workflows_create',
       params: {
         name: 'My Skill',
         description: 'does stuff',
@@ -126,7 +181,7 @@ describe('skillsApi.installSkillFromUrl', () => {
     });
 
     expect(callCoreRpc).toHaveBeenCalledWith({
-      method: 'openhuman.skills_install_from_url',
+      method: 'openhuman.workflows_install_from_url',
       params: { url: 'https://example.com/my-skill.tgz', timeout_secs: 120 },
     });
     expect(result.newSkills).toEqual(['my-skill']);

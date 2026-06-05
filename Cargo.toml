@@ -1,6 +1,6 @@
 [package]
 name = "openhuman"
-version = "0.57.14"
+version = "0.57.18"
 edition = "2021"
 description = "OpenHuman core business logic and RPC server"
 autobins = false
@@ -83,6 +83,7 @@ anyhow = "1.0"
 async-trait = "0.1"
 chacha20poly1305 = "0.10"
 x25519-dalek = { version = "2", features = ["static_secrets"] }
+hkdf = "0.12"
 hex = "0.4"
 tokio-util = { version = "0.7", features = ["rt", "io"] }
 # tokio-tungstenite is declared per-target below so the TLS backend

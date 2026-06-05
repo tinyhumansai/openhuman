@@ -506,6 +506,9 @@ mod tests {
             toolkit: toolkit.to_string(),
             status: status.to_string(),
             created_at: None,
+            account_email: None,
+            workspace: None,
+            username: None,
         }
     }
 

@@ -275,6 +275,18 @@ pub(crate) struct OllamaModelTag {
     pub modified_at: Option<String>,
 }
 
+/// Resolved per-model signals from one Ollama `POST /api/show` round-trip.
+///
+/// Both fields are `None` when `/api/show` failed or omitted the data:
+/// `context_length` → an `Unknown` memory-layer eligibility verdict;
+/// `chat_capable` → "keep visible" in the chat picker (fail-open). See
+/// [`OllamaShowResponse::chat_capability`] and Sentry TAURI-RUST-4P6.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct OllamaModelShow {
+    pub context_length: Option<u64>,
+    pub chat_capable: Option<bool>,
+}
+
 /// Request body for Ollama `POST /api/show`.
 #[derive(Debug, Serialize)]
 pub(crate) struct OllamaShowRequest {
@@ -294,9 +306,11 @@ pub(crate) struct OllamaShowRequest {
 pub(crate) struct OllamaShowResponse {
     #[serde(default)]
     pub model_info: serde_json::Map<String, serde_json::Value>,
-    // Present in the Ollama API response; retained to document the wire shape, not yet consumed.
+    /// Capability tags Ollama advertises for the model (e.g. `"completion"`,
+    /// `"tools"`, `"vision"`, `"embedding"`, `"insert"`). Consumed by
+    /// [`OllamaShowResponse::chat_capability`] to keep embedding-only models
+    /// out of the chat-model picker (Sentry TAURI-RUST-4P6).
     #[serde(default)]
-    #[allow(dead_code)]
     pub capabilities: Vec<String>,
 }
 
@@ -305,6 +319,43 @@ impl OllamaShowResponse {
     /// metadata, or `None` when the server did not report it.
     pub(crate) fn context_length(&self) -> Option<u64> {
         context_length_from_model_info(&self.model_info)
+    }
+
+    /// Whether this model can serve chat/completions, from its `capabilities`.
+    pub(crate) fn chat_capability(&self) -> Option<bool> {
+        ollama_chat_capability(&self.capabilities)
+    }
+}
+
+/// Classify whether an Ollama model can serve chat/completions from its
+/// `/api/show` `capabilities` list.
+///
+/// Ollama tags text-generation models with `"completion"` (and newer builds
+/// also `"chat"`); embedding models are tagged `"embedding"` only. We only
+/// declare a model **not** chat-capable when we are confident it is
+/// embedding-only — capabilities is non-empty, carries an embedding marker,
+/// and carries no completion/chat marker. Anything ambiguous returns `None`
+/// (unknown):
+///   * empty / absent capabilities (older Ollama, or an `/api/show` miss);
+///   * a tag set we don't recognise (e.g. `["insert"]` only).
+/// Callers treat `None` as "keep visible" — fail-open, never hide a model
+/// that might be usable for chat. Mirrors the non-rejecting `Unknown` arm of
+/// [`super::model_requirements::ContextEligibility`]. See Sentry TAURI-RUST-4P6.
+pub(crate) fn ollama_chat_capability(capabilities: &[String]) -> Option<bool> {
+    if capabilities.is_empty() {
+        return None;
+    }
+    let has = |needle: &str| {
+        capabilities
+            .iter()
+            .any(|c| c.trim().eq_ignore_ascii_case(needle))
+    };
+    if has("completion") || has("chat") {
+        Some(true)
+    } else if has("embedding") || has("embed") {
+        Some(false)
+    } else {
+        None
     }
 }
 
@@ -417,6 +468,36 @@ pub(crate) fn ns_to_tps(tokens: f32, duration_ns: u64) -> Option<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn chat_capability_classifies_embedding_completion_and_unknown() {
+        let owned = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+
+        // Embedding-only model (bge-m3) → not chat-capable. TAURI-RUST-4P6.
+        assert_eq!(ollama_chat_capability(&owned(&["embedding"])), Some(false));
+        // Chat/completion models → chat-capable.
+        assert_eq!(ollama_chat_capability(&owned(&["completion"])), Some(true));
+        assert_eq!(
+            ollama_chat_capability(&owned(&["completion", "tools", "vision"])),
+            Some(true)
+        );
+        assert_eq!(ollama_chat_capability(&owned(&["chat"])), Some(true));
+        // A model exposing BOTH stays chat-capable (completion wins).
+        assert_eq!(
+            ollama_chat_capability(&owned(&["embedding", "completion"])),
+            Some(true)
+        );
+        // Unknown / fail-open: empty, or a tag set we don't recognise → None
+        // (caller keeps the model visible).
+        assert_eq!(ollama_chat_capability(&[]), None);
+        assert_eq!(ollama_chat_capability(&owned(&["insert"])), None);
+        // Case / whitespace tolerant.
+        assert_eq!(
+            ollama_chat_capability(&owned(&[" Embedding "])),
+            Some(false)
+        );
+        assert_eq!(ollama_chat_capability(&owned(&["COMPLETION"])), Some(true));
+    }
 
     #[test]
     fn pull_progress_aggregates_layered_download_events() {

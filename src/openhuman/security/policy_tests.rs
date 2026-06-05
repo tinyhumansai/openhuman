@@ -1423,6 +1423,20 @@ fn path_home_tilde_ssh() {
 }
 
 #[test]
+fn expand_tilde_delegates_to_config_single_source_of_truth() {
+    // The policy method must stay byte-for-byte identical to the canonical
+    // config helper so path checks and config expansion never diverge (#3353).
+    let p = SecurityPolicy::default();
+    let input = "~/OpenHuman/projects";
+    assert_eq!(
+        p.expand_tilde(input),
+        crate::openhuman::config::expand_tilde(input)
+    );
+    // Non-tilde inputs are returned unchanged on both sides.
+    assert_eq!(p.expand_tilde("/abs"), "/abs");
+}
+
+#[test]
 fn path_var_run_blocked() {
     let p = SecurityPolicy {
         workspace_only: false,

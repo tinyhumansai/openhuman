@@ -116,7 +116,7 @@ impl Tool for ApifyRunActorTool {
     }
 
     fn category(&self) -> ToolCategory {
-        ToolCategory::Skill
+        ToolCategory::Workflow
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
@@ -238,7 +238,7 @@ impl Tool for ApifyGetRunStatusTool {
     }
 
     fn category(&self) -> ToolCategory {
-        ToolCategory::Skill
+        ToolCategory::Workflow
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
@@ -324,7 +324,7 @@ impl Tool for ApifyGetRunResultsTool {
     }
 
     fn category(&self) -> ToolCategory {
-        ToolCategory::Skill
+        ToolCategory::Workflow
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {

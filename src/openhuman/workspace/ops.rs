@@ -2,7 +2,7 @@ use serde_json::json;
 
 use crate::openhuman::config::rpc as config_rpc;
 use crate::openhuman::heartbeat::engine::HeartbeatEngine;
-use crate::openhuman::skills::init_skills_dir;
+use crate::openhuman::workflows::init_workflows_dir;
 use std::path::Path;
 
 const BOOTSTRAP_FILES: [(&str, &str); 2] = [
@@ -75,7 +75,8 @@ pub async fn init_workspace(force: bool) -> Result<serde_json::Value, String> {
     let had_skills_readme = skills_readme.exists();
     let heartbeat = workspace_dir.join("HEARTBEAT.md");
     let had_heartbeat = heartbeat.exists();
-    init_skills_dir(&workspace_dir).map_err(|e| format!("failed to initialize skills dir: {e}"))?;
+    init_workflows_dir(&workspace_dir)
+        .map_err(|e| format!("failed to initialize skills dir: {e}"))?;
     HeartbeatEngine::ensure_heartbeat_file(&workspace_dir)
         .await
         .map_err(|e| format!("failed to initialize HEARTBEAT.md: {e}"))?;

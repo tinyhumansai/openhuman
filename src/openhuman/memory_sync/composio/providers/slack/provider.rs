@@ -468,6 +468,13 @@ impl ComposioProvider for SlackProvider {
         let mut total_messages_ingested: usize = 0;
         let mut channels_processed: usize = 0;
         let mut channels_errored: usize = 0;
+        let mut hit_cap_boundary = false;
+
+        // ctx.max_items: ItemCap is threaded through process_channel so the
+        // per-page batch is clamped before ingest and the channel loop stops
+        // precisely at the cap — the old coarse post-channel check allowed a
+        // single page/channel to blow past the cap.
+        let mut cap = super::super::helpers::ItemCap::new(ctx.max_items);
 
         // 2. Per-channel: fetch → post-process → enrich → ingest.
         for channel in &channels {
@@ -488,6 +495,7 @@ impl ComposioProvider for SlackProvider {
                 now,
                 &users,
                 &connection_id,
+                &mut cap,
             )
             .await
             {
@@ -506,6 +514,27 @@ impl ComposioProvider for SlackProvider {
                 }
             }
 
+            // ctx.max_items hard stop across all channels (precise — cap was
+            // already applied inside process_channel so this break fires
+            // exactly when the budget is exhausted, not one channel later).
+            if cap.is_reached() {
+                // Hold the cursor on a cap-truncated pass so the next sync re-scans the unseen tail.
+                hit_cap_boundary = true;
+                tracing::debug!(
+                    connection_id = %connection_id,
+                    total_messages_ingested,
+                    "[composio:slack] [memory_sync] max_items reached, stopping channel iteration"
+                );
+                // Save state before breaking without advancing the cursor.
+                if let Err(err) = state.save(&memory).await {
+                    tracing::warn!(
+                        error = %err,
+                        "[composio:slack] state save failed after cap-stop (non-fatal)"
+                    );
+                }
+                break;
+            }
+
             state.advance_cursor(sync::encode_cursors(&cursors));
             if let Err(err) = state.save(&memory).await {
                 tracing::warn!(
@@ -513,6 +542,15 @@ impl ComposioProvider for SlackProvider {
                     "[composio:slack] state save failed after channel (non-fatal)"
                 );
             }
+        }
+
+        if hit_cap_boundary {
+            // Hold the cursor on a cap-truncated pass so the next sync re-scans the unseen tail.
+            tracing::warn!(
+                connection_id = %connection_id,
+                "[composio:slack] cap-truncated pass; cursor held so next sync re-scans the \
+                 unseen tail"
+            );
         }
 
         let finished_at_ms = sync::now_ms();
@@ -608,7 +646,12 @@ async fn list_all_channels(
 }
 
 /// Pull one channel's history since its cursor, post-process + enrich each
-/// page, then ingest all messages. Returns the number of chunks written.
+/// page, then ingest all messages. Returns the number of messages written.
+///
+/// `cap` is the shared [`super::super::helpers::ItemCap`] for the sync pass.
+/// Each page's message batch is clamped to the remaining budget before ingest
+/// so the per-sync `max_items` limit is respected precisely regardless of how
+/// many messages a single channel/page returns.
 async fn process_channel(
     ctx: &ProviderContext,
     state: &mut SyncState,
@@ -617,13 +660,26 @@ async fn process_channel(
     now: chrono::DateTime<chrono::Utc>,
     users: &SlackUsers,
     connection_id: &str,
+    cap: &mut super::super::helpers::ItemCap,
 ) -> Result<usize, String> {
     // Cursor value is a raw Slack `ts` (`"<seconds>.<micro>"`) preserved
     // with full precision, so multi-message-per-second channels don't
     // replay the whole second on the next incremental fetch. When no
     // cursor exists yet, fall back to `<backfill_window_secs>.000000`.
+    // ctx.sync_depth_days wins over the env-var OPENHUMAN_SLACK_BACKFILL_DAYS
+    // default when set — it comes from the user-configured source entry.
     let oldest_ts = cursors.get(&channel.id).cloned().unwrap_or_else(|| {
-        let secs = (now - chrono::Duration::days(backfill_days())).timestamp();
+        let depth_days = ctx
+            .sync_depth_days
+            .map(|d| d as i64)
+            .unwrap_or_else(backfill_days);
+        let secs = (now - chrono::Duration::days(depth_days)).timestamp();
+        tracing::debug!(
+            channel = %channel.id,
+            depth_days,
+            oldest_ts_secs = secs,
+            "[composio:slack] [memory_sync] computing oldest_ts for backfill"
+        );
         format!("{secs}.000000")
     });
 
@@ -676,6 +732,23 @@ async fn process_channel(
             break;
         }
         all_messages.extend(msgs);
+
+        // Stop fetching further pages for this channel if we have already
+        // accumulated enough to fill the remaining budget (checked against
+        // remaining() which accounts for items recorded by previous channels).
+        if let Some(remaining) = cap.remaining() {
+            if all_messages.len() >= remaining {
+                tracing::debug!(
+                    channel = %channel.id,
+                    page = page_num,
+                    accumulated = all_messages.len(),
+                    remaining,
+                    "[composio:slack] [memory_sync] budget nearly full, stopping history pagination"
+                );
+                break;
+            }
+        }
+
         cursor = sync::extract_next_cursor(&resp.data);
         if cursor.is_none() {
             break;
@@ -686,6 +759,19 @@ async fn process_channel(
         tracing::debug!(
             channel = %channel.id,
             "[composio:slack] no new messages"
+        );
+        return Ok(0);
+    }
+
+    // ctx.max_items precise cap: clamp the full accumulated batch to the
+    // remaining budget before ingest so we never persist more than the cap
+    // allows, even if a single channel/page returned more than what remains.
+    cap.clamp_batch(&mut all_messages);
+
+    if all_messages.is_empty() {
+        tracing::debug!(
+            channel = %channel.id,
+            "[composio:slack] [memory_sync] cap already reached, skipping channel ingest"
         );
         return Ok(0);
     }
@@ -713,13 +799,16 @@ async fn process_channel(
             {
                 cursors.insert(channel.id.clone(), latest);
             }
+            cap.record(msg_count);
             tracing::info!(
                 channel = %channel.id,
                 messages = msg_count,
                 chunks,
                 "[composio:slack] channel ingest done"
             );
-            Ok(chunks)
+            // Return message count (consistent with the sync path which
+            // counts messages, not chunks, for the items_ingested metric).
+            Ok(msg_count)
         }
         Err(e) => {
             tracing::warn!(

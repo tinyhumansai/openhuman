@@ -1,20 +1,22 @@
 //! Model Council — multi-model deliberation core.
 //!
 //! A "council" runs one user question against several **member** models
-//! concurrently (each a single-shot, tool-free completion via the existing
-//! [`agent_chat_simple`] primitive), then asks a single **chair** model to
-//! synthesize the member answers into one response that surfaces where the
-//! models **agree**, where they **disagree**, and what unique insight each
-//! contributes.
+//! concurrently. Member turns use the standard agent harness with a restricted
+//! read-only tool registry, so jurors can recall memory, search, and inspect
+//! context before answering without mutating user state. A single **chair**
+//! model then synthesizes the member answers into one response that surfaces
+//! where the models **agree**, where they **disagree**, and what unique insight
+//! each contributes.
 //!
-//! ## Why single-shot (not the full agent loop)
+//! ## Why read-only agent loops
 //!
-//! Council members are deliberately *plain* completions: no tools, no memory
-//! writes, no multi-round agent loop. The value of a council is independent
-//! perspectives on the same prompt, so each member must see exactly the same
-//! input and nothing else. Reusing [`agent_chat_simple`] (which itself does a
-//! single `chat_with_system(None, …)` call) keeps every member identical and
-//! avoids duplicating provider-resolution logic here.
+//! Council members may need read-only context gathering before a turn, but a
+//! deliberation surface must not let a juror write files, store/forget memory,
+//! schedule work, or run host mutations. The member runner therefore reuses the
+//! normal [`Agent`] turn loop while constructing the session through
+//! `from_config_for_read_only_council_juror`, which filters the tool registry
+//! before tool specs are sent to the provider. The chair synthesis remains a
+//! plain completion over the collected debate record.
 //!
 //! ## Partial failure is tolerated, total failure is not
 //!
@@ -28,8 +30,9 @@
 //! I/O orchestrator ([`run_council`]) so the deliberation logic is unit-tested
 //! without any network or provider.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
+use crate::openhuman::agent::Agent;
 use crate::openhuman::config::Config;
 use crate::openhuman::inference::local::rpc::agent_chat_simple;
 use crate::rpc::RpcOutcome;
@@ -46,7 +49,7 @@ pub const MAX_COUNCIL_MEMBERS: usize = 5;
 /// `response` and `error` are mutually exclusive: exactly one is `Some`.
 /// Both are serialized (as `null` when absent) so the importer/UI can render a
 /// stable shape without guessing which key exists.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CouncilMemberResult {
     /// The model id this seat ran (the resolved override passed to the provider).
     pub model: String,
@@ -57,7 +60,7 @@ pub struct CouncilMemberResult {
 }
 
 /// Full result of a council run: every member's answer plus the chair synthesis.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ModelCouncilResult {
     /// The original user question, echoed back for display / logging.
     pub question: String,
@@ -69,23 +72,56 @@ pub struct ModelCouncilResult {
     pub synthesis: String,
 }
 
-/// Normalize the requested member model list: trim each id, drop blanks, and
-/// de-duplicate while preserving first-seen order.
+/// Sentinel model id that means "use the configured default model".
 ///
-/// De-duplication matters because the result is keyed by model id in the UI;
-/// two identical seats would collide and also waste a model call. PURE.
+/// The council UI uses this for default-profile jurors and the default judge so
+/// it does not bypass the user's configured provider with a hard-coded model id.
+pub const DEFAULT_MODEL_SENTINEL: &str = "default";
+
+/// Normalize the requested member model list: trim each id and drop blanks
+/// while preserving seat order.
+///
+/// Repeated model ids are intentionally retained. The council UX can create
+/// several jurors that share a model but carry different profile/flavor context
+/// in the prompt, so deduplicating here would silently reduce the configured
+/// jury count. PURE.
 pub fn normalize_member_models(member_models: &[String]) -> Vec<String> {
-    let mut seen: Vec<String> = Vec::new();
-    for raw in member_models {
-        let trimmed = raw.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        if !seen.iter().any(|m| m.as_str() == trimmed) {
-            seen.push(trimmed.to_string());
-        }
+    member_models
+        .iter()
+        .map(|raw| raw.trim())
+        .filter(|trimmed| !trimmed.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn is_default_model_sentinel(model: &str) -> bool {
+    model.trim().eq_ignore_ascii_case(DEFAULT_MODEL_SENTINEL)
+}
+
+fn configured_default_model(config: &Config) -> String {
+    config
+        .default_model
+        .as_deref()
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+        .unwrap_or(crate::openhuman::config::DEFAULT_MODEL)
+        .to_string()
+}
+
+fn model_override_for_call(model: &str) -> Option<String> {
+    if is_default_model_sentinel(model) {
+        None
+    } else {
+        Some(model.trim().to_string())
     }
-    seen
+}
+
+fn model_label_for_result(config: &Config, model: &str) -> String {
+    if is_default_model_sentinel(model) {
+        configured_default_model(config)
+    } else {
+        model.trim().to_string()
+    }
 }
 
 /// Validate a council request against the *normalized* member list. PURE.
@@ -112,6 +148,16 @@ pub fn validate_council_request(
     }
     if chair_model.trim().is_empty() {
         return Err("model council: chair model must not be empty".to_string());
+    }
+    Ok(())
+}
+
+fn validate_member_request(question: &str, model: &str) -> Result<(), String> {
+    if question.trim().is_empty() {
+        return Err("model council: question must not be empty".to_string());
+    }
+    if model.trim().is_empty() {
+        return Err("model council: member model must not be empty".to_string());
     }
     Ok(())
 }
@@ -206,26 +252,9 @@ pub async fn run_council(
         temperature
     );
 
-    // Fan out: each member answers the SAME question as an independent
-    // single-shot completion. A per-member failure is captured in-band as an
-    // error seat rather than aborting the whole council.
-    let member_futures = models.iter().map(|model| {
-        let model = model.clone();
-        async move {
-            match agent_chat_simple(config, question, Some(model.clone()), temperature).await {
-                Ok(outcome) => CouncilMemberResult {
-                    model,
-                    response: Some(outcome.value),
-                    error: None,
-                },
-                Err(e) => CouncilMemberResult {
-                    model,
-                    response: None,
-                    error: Some(e),
-                },
-            }
-        }
-    });
+    let member_futures = models
+        .iter()
+        .map(|model| run_member_answer_inner(config, question, model, temperature));
     let members: Vec<CouncilMemberResult> = futures_util::future::join_all(member_futures).await;
 
     let success_count = members.iter().filter(|m| m.response.is_some()).count();
@@ -235,22 +264,66 @@ pub async fn run_council(
         members.len() - success_count
     );
 
+    synthesize_members(config, question, members, chair_model, temperature).await
+}
+
+/// Run one council member seat and return its answer or failure in-band.
+///
+/// This is used by the desktop UI for progressive deliberation: each juror can
+/// complete independently and the UI can show that real answer immediately
+/// while the remaining seats are still thinking.
+pub async fn answer_member(
+    config: &Config,
+    question: &str,
+    model: &str,
+    temperature: Option<f64>,
+) -> Result<RpcOutcome<CouncilMemberResult>, String> {
+    validate_member_request(question, model)?;
+    let result = run_member_answer_inner(config, question, model, temperature).await;
+    Ok(RpcOutcome::single_log(
+        result,
+        "model council member completed",
+    ))
+}
+
+/// Ask the chair to synthesize a set of already-collected member answers.
+pub async fn synthesize_members(
+    config: &Config,
+    question: &str,
+    members: Vec<CouncilMemberResult>,
+    chair_model: &str,
+    temperature: Option<f64>,
+) -> Result<RpcOutcome<ModelCouncilResult>, String> {
+    if question.trim().is_empty() {
+        return Err("model council: question must not be empty".to_string());
+    }
+    if members.is_empty() {
+        return Err("model council: at least one member answer is required".to_string());
+    }
+    if members.len() > MAX_COUNCIL_MEMBERS {
+        return Err(format!(
+            "model council: too many member answers ({}, max {})",
+            members.len(),
+            MAX_COUNCIL_MEMBERS
+        ));
+    }
+    if chair_model.trim().is_empty() {
+        return Err("model council: chair model must not be empty".to_string());
+    }
+
     if all_members_failed(&members) {
         log::debug!("[model-council] all members failed; aborting before synthesis");
         return Err("model council: all member models failed to respond".to_string());
     }
 
     let synthesis_prompt = build_synthesis_prompt(question, &members);
-    log::debug!("[model-council] convening chair model: {chair_model}");
-    let synthesis = agent_chat_simple(
-        config,
-        &synthesis_prompt,
-        Some(chair_model.to_string()),
-        temperature,
-    )
-    .await
-    .map_err(|e| format!("model council: chair synthesis failed: {e}"))?
-    .value;
+    let chair_model_label = model_label_for_result(config, chair_model);
+    let chair_model_override = model_override_for_call(chair_model);
+    log::debug!("[model-council] convening chair model: {chair_model_label}");
+    let synthesis = agent_chat_simple(config, &synthesis_prompt, chair_model_override, temperature)
+        .await
+        .map_err(|e| format!("model council: chair synthesis failed: {e}"))?
+        .value;
     log::debug!(
         "[model-council] synthesis complete: {} chars",
         synthesis.len()
@@ -259,13 +332,66 @@ pub async fn run_council(
     let result = ModelCouncilResult {
         question: question.to_string(),
         members,
-        chair_model: chair_model.to_string(),
+        chair_model: chair_model_label,
         synthesis,
     };
     Ok(RpcOutcome::single_log(
         result,
         "model council synthesis completed",
     ))
+}
+
+async fn run_member_answer_inner(
+    config: &Config,
+    question: &str,
+    model: &str,
+    temperature: Option<f64>,
+) -> CouncilMemberResult {
+    let result_model = model_label_for_result(config, model);
+    let model_override = if is_default_model_sentinel(model) {
+        Some(configured_default_model(config))
+    } else {
+        model_override_for_call(model)
+    };
+    let profile_prompt = build_read_only_juror_profile_prompt(&result_model);
+    match Agent::from_config_for_read_only_council_juror(
+        config,
+        &result_model,
+        model_override,
+        temperature,
+        profile_prompt,
+    ) {
+        Ok(mut agent) => match agent.run_single(question).await {
+            Ok(response) => CouncilMemberResult {
+                model: result_model,
+                response: Some(response),
+                error: None,
+            },
+            Err(e) => CouncilMemberResult {
+                model: result_model,
+                response: None,
+                error: Some(e.to_string()),
+            },
+        },
+        Err(e) => CouncilMemberResult {
+            model: result_model,
+            response: None,
+            error: Some(e.to_string()),
+        },
+    }
+}
+
+fn build_read_only_juror_profile_prompt(model_label: &str) -> String {
+    format!(
+        "You are a model-council juror running as {model_label}.\n\
+         You may use only the read-only tools exposed to this session, such as \
+         memory recall, search, fetch, listing, and diagnostic tools. Never try \
+         to write files, store or forget memory, schedule work, send messages, \
+         execute commands, or mutate user state.\n\
+         Before each answer, use read-only tools when they would materially \
+         improve factual grounding. Then write a concise council thought and \
+         your current conclusion for this debate turn."
+    )
 }
 
 #[cfg(test)]
@@ -290,18 +416,33 @@ mod tests {
     }
 
     #[test]
-    fn normalize_trims_drops_blanks_and_dedups_preserving_order() {
+    fn normalize_trims_drops_blanks_and_preserves_repeated_seats() {
         let input = vec![
             " gpt ".to_string(),
             "claude".to_string(),
             "".to_string(),
             "   ".to_string(),
-            "gpt".to_string(), // dup of trimmed " gpt "
+            "gpt".to_string(), // repeated model: separate council seat
             "gemini".to_string(),
-            "claude".to_string(), // dup
+            "claude".to_string(), // repeated model: separate council seat
         ];
         let out = normalize_member_models(&input);
-        assert_eq!(out, vec!["gpt", "claude", "gemini"]);
+        assert_eq!(out, vec!["gpt", "claude", "gpt", "gemini", "claude"]);
+    }
+
+    #[test]
+    fn default_sentinel_resolves_to_configured_default_model() {
+        let mut config = Config::default();
+        config.default_model = Some("configured-model".to_string());
+        assert_eq!(
+            model_label_for_result(&config, DEFAULT_MODEL_SENTINEL),
+            "configured-model"
+        );
+        assert_eq!(model_override_for_call(DEFAULT_MODEL_SENTINEL), None);
+        assert_eq!(
+            model_override_for_call("explicit-model"),
+            Some("explicit-model".to_string())
+        );
     }
 
     #[test]

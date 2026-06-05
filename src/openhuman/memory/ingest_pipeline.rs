@@ -88,7 +88,7 @@ pub async fn ingest_chat(
             Some(c) => c,
             None => return Ok(IngestResult::empty(source_id)),
         };
-    persist(config, source_id, canonical).await
+    persist(config, source_id, canonical, None).await
 }
 
 /// Ingest an email thread: canonicalise → chunk → fast-score → persist → enqueue
@@ -110,7 +110,7 @@ pub async fn ingest_email(
             Some(c) => c,
             None => return Ok(IngestResult::empty(source_id)),
         };
-    persist(config, source_id, canonical).await
+    persist(config, source_id, canonical, None).await
 }
 
 /// Ingest a single document: canonicalise → chunk → fast-score → persist →
@@ -133,10 +133,39 @@ pub async fn ingest_document_with_scope(
     doc: DocumentInput,
     path_scope: Option<String>,
 ) -> Result<IngestResult> {
-    if already_ingested(config, SourceKind::Document, source_id).await? {
+    ingest_document_versioned(config, source_id, owner, tags, doc, path_scope, None).await
+}
+
+/// Like [`ingest_document_with_scope`] but version-aware.
+///
+/// When `version_ms` is `Some`, the source-ingest gate is keyed by
+/// `{source_id}@{version_ms}` instead of the bare `source_id`, so a later
+/// revision of the SAME document (same `source_id`) is admitted
+/// **non-destructively** — the prior version's chunks are left in place and
+/// the new version is ingested alongside them. Chunks keep the clean
+/// `source_id` (their `doc_id`), and the retrieval layer surfaces only the
+/// latest version per document.
+///
+/// `version_ms = None` is identical to [`ingest_document_with_scope`]
+/// (bare-`source_id` gate), so non-versioned document sources are unaffected.
+pub async fn ingest_document_versioned(
+    config: &Config,
+    source_id: &str,
+    owner: &str,
+    tags: Vec<String>,
+    doc: DocumentInput,
+    path_scope: Option<String>,
+    version_ms: Option<i64>,
+) -> Result<IngestResult> {
+    let gate_key = match version_ms {
+        Some(v) => format!("{source_id}@{v}"),
+        None => source_id.to_string(),
+    };
+    if already_ingested(config, SourceKind::Document, &gate_key).await? {
         log::debug!(
-            "[memory::ingest_pipeline] skip ingest_document — source_id_hash={} already ingested",
-            redact(source_id)
+            "[memory::ingest_pipeline] skip ingest_document — source_id_hash={} version_ms={:?} already ingested",
+            redact(source_id),
+            version_ms
         );
         return Ok(IngestResult::already_ingested(source_id));
     }
@@ -146,7 +175,7 @@ pub async fn ingest_document_with_scope(
         Some(c) => c,
         None => return Ok(IngestResult::empty(source_id)),
     };
-    persist(config, source_id, canonical).await
+    persist(config, source_id, canonical, version_ms).await
 }
 
 /// Best-effort pre-canonicalisation check. The transactional claim inside
@@ -168,6 +197,7 @@ async fn persist(
     config: &Config,
     source_id: &str,
     canonical: CanonicalisedSource,
+    gate_version_ms: Option<i64>,
 ) -> Result<IngestResult> {
     let source_kind_for_store = canonical.metadata.source_kind;
 
@@ -274,10 +304,22 @@ async fn persist(
             // genuine replays without blocking legitimate appends.
             if source_kind_for_store == SourceKind::Document {
                 let now_ms = chrono::Utc::now().timestamp_millis();
+                // Versioned sources (Notion) claim a per-version gate key
+                // `{source_id}@{version_ms}` so a later revision of the SAME
+                // document is admitted (non-destructively, alongside the
+                // prior version) instead of short-circuiting on the bare
+                // source_id. Chunks themselves keep the clean source_id so
+                // per-document grouping (doc_id) stays stable. Non-versioned
+                // documents (version_ms = None) use the bare source_id as
+                // before — behaviour unchanged.
+                let gate_key = match gate_version_ms {
+                    Some(v) => format!("{source_id_for_store}@{v}"),
+                    None => source_id_for_store.clone(),
+                };
                 let claimed = chunk_store::claim_source_ingest_tx(
                     &tx,
                     source_kind_for_store,
-                    &source_id_for_store,
+                    &gate_key,
                     now_ms,
                 )?;
                 if !claimed {

@@ -7,7 +7,6 @@ import PublicRoute from './components/PublicRoute';
 import HumanPage from './features/human/HumanPage';
 import { getIsMobile } from './lib/platform';
 import Accounts from './pages/Accounts';
-import AgentWorkflows from './pages/AgentWorkflows';
 import Channels from './pages/Channels';
 import Home from './pages/Home';
 import Intelligence from './pages/Intelligence';
@@ -18,11 +17,11 @@ import { PttOverlayPage } from './pages/PttOverlayPage';
 import Rewards from './pages/Rewards';
 import Routines from './pages/Routines';
 import Settings from './pages/Settings';
-import SkillNew from './pages/SkillNew';
 import Skills from './pages/Skills';
-import SkillsRun from './pages/SkillsRun';
 import WebCallbackPage from './pages/WebCallbackPage';
 import Welcome from './pages/Welcome';
+import WorkflowNew from './pages/WorkflowNew';
+import WorkflowsRun from './pages/WorkflowsRun';
 
 const AppRoutes = () => {
   // Mobile target (iOS or Android): pair → Human/Chat/Settings only.
@@ -90,23 +89,23 @@ const AppRoutes = () => {
           page — the bottom-bar "Connections" entry has always pointed at
           /skills to surface Composio integrations + MCP, and that muscle
           memory is restored here.
-          `/skills/new` is the create-a-skill authoring page.
-          Order matters: keep `/skills/new` before `/skills` so it wins the
+          `/workflows/new` is the create-a-skill authoring page.
+          Order matters: keep `/workflows/new` before `/skills` so it wins the
           prefix match. */}
       <Route
-        path="/skills/new"
+        path="/workflows/new"
         element={
           <ProtectedRoute requireAuth={true}>
-            <SkillNew />
+            <WorkflowNew />
           </ProtectedRoute>
         }
       />
 
       <Route
-        path="/skills/run"
+        path="/workflows/run"
         element={
           <ProtectedRoute requireAuth={true}>
-            <SkillsRun />
+            <WorkflowsRun />
           </ProtectedRoute>
         }
       />
@@ -176,14 +175,9 @@ const AppRoutes = () => {
         }
       />
 
-      <Route
-        path="/workflows"
-        element={
-          <ProtectedRoute requireAuth={true}>
-            <AgentWorkflows />
-          </ProtectedRoute>
-        }
-      />
+      {/* Workflows moved onto the Intelligence page (its own tab). Keep the
+          old /workflows path working as a deep link into that tab. */}
+      <Route path="/workflows" element={<Navigate to="/intelligence?tab=workflows" replace />} />
 
       <Route path="/webhooks" element={<Navigate to="/settings/webhooks-triggers" replace />} />
 

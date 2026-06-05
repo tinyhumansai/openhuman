@@ -12,7 +12,7 @@ fn run_tool_metadata() {
     let tool = ApifyRunActorTool::new(test_client());
     assert_eq!(tool.name(), "apify_run_actor");
     assert_eq!(tool.permission_level(), PermissionLevel::Execute);
-    assert_eq!(tool.category(), ToolCategory::Skill);
+    assert_eq!(tool.category(), ToolCategory::Workflow);
     assert!(tool.description().contains("Apify actor"));
 }
 
@@ -58,7 +58,7 @@ async fn run_tool_rejects_non_object_input() {
 fn status_tool_metadata() {
     let tool = ApifyGetRunStatusTool::new(test_client());
     assert_eq!(tool.name(), "apify_get_run_status");
-    assert_eq!(tool.category(), ToolCategory::Skill);
+    assert_eq!(tool.category(), ToolCategory::Workflow);
 }
 
 #[tokio::test]

@@ -371,6 +371,7 @@ mod tests {
             memory_context: std::sync::Arc::new(None),
             connected_integrations: vec![],
             on_progress: None,
+            run_queue: None,
             agent_config: crate::openhuman::config::AgentConfig::default(),
             tool_call_format: crate::openhuman::context::prompt::ToolCallFormat::Native,
         }

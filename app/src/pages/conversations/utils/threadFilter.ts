@@ -15,7 +15,7 @@ function isSubconsciousThread(thread: Thread): boolean {
   return hasAnyLabel(thread, [SUBCONSCIOUS_TAB_VALUE, ...LEGACY_SUBCONSCIOUS_LABELS]);
 }
 
-function isTaskThread(thread: Thread): boolean {
+export function isTaskThread(thread: Thread): boolean {
   return Boolean(
     thread.parentThreadId || hasAnyLabel(thread, [TASKS_TAB_VALUE, ...LEGACY_TASK_LABELS])
   );

@@ -975,6 +975,12 @@ pub async fn direct_list_connections(
                 toolkit,
                 status,
                 created_at: item.created_at.clone(),
+                // Identity fields are populated by
+                // `enrich_connections_with_identity` in ops.rs after
+                // the full list is fetched, using cached profile data.
+                account_email: None,
+                workspace: None,
+                username: None,
             })
         })
         .collect();

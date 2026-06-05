@@ -1,23 +1,18 @@
 /**
  * ScheduledCronCard — the polished "scheduled skill" card.
  *
- * Originally lived inline inside SkillsDashboard.tsx (the global
- * dashboard at `/skills` — see commit c474bc36) and inside
- * SkillsRunnerBody.tsx (the per-skill saved-schedules list at
- * `/skills/run`). The two surfaces had diverged: the dashboard rendered
- * a roomy, DevWorkflowPanel-style "active config" card with a friendly
- * cronToHuman schedule and a clickable surface that navigates into the
- * runner; the runner rendered a slim row with the raw cron expression
- * and inline action buttons. The user asked for the runner to adopt
- * the dashboard card pattern so the visual language is consistent.
+ * Now used by WorkflowRunnerBody.tsx (the per-workflow saved-schedules
+ * list at `/skills/run`). It originally also backed a standalone
+ * scheduled-jobs dashboard (`SkillsDashboard`, removed when that overview
+ * was phased out — see commit c474bc36 for the original inline version),
+ * which is why it still supports an optional clickable-card mode.
  *
- * This component is the single shared implementation used by both
- * surfaces. Composition is intentional:
+ * Composition is intentional:
  *
  *   onClick   — if provided, the whole card becomes a clickable button
- *               (used by the dashboard to navigate into the runner).
- *               Absent on the runner page where you're already on the
- *               right skill, so clicking would be a no-op.
+ *               (was used by the removed dashboard to navigate into the
+ *               runner). Absent on the runner page where you're already
+ *               on the right skill, so clicking would be a no-op.
  *
  *   onToggle  — enable/disable toggle. Wired identically on both
  *               surfaces; visual lifted from DevWorkflowPanel:502-516.

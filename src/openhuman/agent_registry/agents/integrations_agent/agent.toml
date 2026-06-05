@@ -14,13 +14,12 @@ omit_skills_catalog = true
 hint = "agentic"
 
 [tools]
+# Composio-only surface: this agent drives a single Composio toolkit per
+# spawn. Workflow discovery/execution is the orchestrator's job now
+# (`list_workflows` / `run_workflow`), so the old `workflow_load` /
+# `workflow_phase` tools (removed with the `agent_workflows` domain) are gone.
 named = [
     "composio_list_tools",
     "file_read",
     "composio_execute",
-    # Workflow tools — surface installed WORKFLOW.md bundles so the
-    # integrations_agent can inspect and activate phases when operating
-    # inside a task lifecycle (e.g. on_pick_up_task).
-    "workflow_load",
-    "workflow_phase",
 ]

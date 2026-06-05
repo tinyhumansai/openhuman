@@ -581,6 +581,7 @@ async fn agent_task_board_store_normalizes_persists_and_surfaces_errors() {
                     acceptance_criteria: vec![" tests pass ".to_string()],
                     evidence: vec![" coverage measured ".to_string()],
                     notes: Some(" waiting ".to_string()),
+                    session_thread_id: Some("  task-sess-owned  ".to_string()),
                     blocker: None,
                     source_metadata: None,
                     order: 99,
@@ -598,6 +599,7 @@ async fn agent_task_board_store_normalizes_persists_and_surfaces_errors() {
                     acceptance_criteria: Vec::new(),
                     evidence: Vec::new(),
                     notes: None,
+                    session_thread_id: None,
                     blocker: None,
                     source_metadata: None,
                     order: 99,
@@ -614,12 +616,22 @@ async fn agent_task_board_store_normalizes_persists_and_surfaces_errors() {
     assert_eq!(saved.cards[0].title, "Draft owned coverage");
     assert_eq!(saved.cards[0].plan, vec!["inspect", "test"]);
     assert_eq!(saved.cards[0].blocker.as_deref(), Some("waiting"));
+    // A padded session_thread_id is trimmed (not dropped) on persist.
+    assert_eq!(
+        saved.cards[0].session_thread_id.as_deref(),
+        Some("task-sess-owned")
+    );
     assert_eq!(saved.cards[0].order, 0);
 
     let loaded = board_for_thread(dir.path(), " thread-owned ")
         .expect("board_for_thread")
         .cards;
     assert_eq!(loaded[0].approval_mode, Some(TaskApprovalMode::Required));
+    // …and the normalized value survives a reload from disk.
+    assert_eq!(
+        loaded[0].session_thread_id.as_deref(),
+        Some("task-sess-owned")
+    );
 
     assert!(store.delete("thread-owned").expect("delete present"));
     assert!(!store.delete("thread-owned").expect("delete missing"));

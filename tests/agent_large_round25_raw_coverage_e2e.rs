@@ -333,6 +333,7 @@ fn parent(workspace_dir: PathBuf, provider: Arc<ScriptedProvider>) -> ParentExec
         session_key: "1700000000_round25_parent".to_string(),
         session_parent_prefix: Some("root_chain".to_string()),
         on_progress: None,
+        run_queue: None,
     }
 }
 

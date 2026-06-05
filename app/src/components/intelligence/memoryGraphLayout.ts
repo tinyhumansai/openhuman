@@ -40,7 +40,14 @@ export const SOURCE_COLOR = '#F97316'; // synthetic source root nodes
 /** Layout is computed in this fixed coordinate space; the renderer pans/zooms it. */
 export const VIEWPORT_W = 1100;
 export const VIEWPORT_H = 640;
-export const ZOOM_MIN = 0.3;
+// Lower bound shared by auto-fit framing and manual wheel zoom-out. Kept very
+// small (20× zoom-out) so large clouds — e.g. a Notion connection's hundreds
+// of page-chunk leaves — can be framed in full. At 0.3 the auto-fit was
+// clamped above the scale needed to show every node, so big graphs rendered
+// "too zoomed in" with the outer nodes spilling off-screen. Using one shared
+// floor (rather than a separate, lower auto-fit floor) avoids a zoom-snap
+// where the first wheel tick would jump back up to the manual floor.
+export const ZOOM_MIN = 0.05;
 export const ZOOM_MAX = 4;
 
 export function levelColor(level: number | null | undefined): string {
@@ -57,7 +64,16 @@ export function nodeColor(node: GraphNode): string {
 
 export function nodeRadius(node: GraphNode): number {
   if (node.kind === 'source') return 16;
-  if (node.kind === 'summary') return 5 + (node.level ?? 0) * 2.5;
+  if (node.kind === 'summary') {
+    // Higher levels render slightly larger, but the size MUST be capped:
+    // document source trees place their cross-document merge tier at a large
+    // synthetic level (MERGE_LEVEL_BASE = 1000+), so the raw `level * 2.5`
+    // would explode to thousands of px — rendering giant discs and, via the
+    // `forceCollide(nodeRadius + 2)` term, blowing the whole layout apart.
+    // The cap keeps merge nodes the largest summaries without distorting it.
+    const level = node.level ?? 0;
+    return Math.min(5 + level * 2.5, 14);
+  }
   if (node.kind === 'contact') return 9;
   return 3; // chunk / document leaf
 }

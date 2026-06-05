@@ -186,7 +186,7 @@ impl UserState {
 #[serde(rename_all = "snake_case")]
 pub enum FacetType {
     Preference,
-    Skill,
+    Workflow,
     Role,
     Personality,
     Context,
@@ -197,7 +197,7 @@ impl FacetType {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Preference => "preference",
-            Self::Skill => "skill",
+            Self::Workflow => "skill",
             Self::Role => "role",
             Self::Personality => "personality",
             Self::Context => "context",
@@ -208,7 +208,7 @@ impl FacetType {
     /// to `Preference`.
     pub fn parse_or_default(s: &str) -> Self {
         match s {
-            "skill" => Self::Skill,
+            "skill" => Self::Workflow,
             "role" => Self::Role,
             "personality" => Self::Personality,
             "context" => Self::Context,
@@ -648,7 +648,7 @@ fn infer_class_from_key(key: &str, facet_type: &FacetType) -> Option<String> {
     Some(
         match facet_type {
             FacetType::Role | FacetType::Personality => "identity",
-            FacetType::Skill => "tooling",
+            FacetType::Workflow => "tooling",
             FacetType::Preference => "style",
             FacetType::Context => "identity",
         }

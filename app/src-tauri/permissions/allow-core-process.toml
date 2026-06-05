@@ -62,6 +62,12 @@ allow = [
     # WINDOW / UI
     # =========================
     "activate_main_window",
+    # Notch activity indicator (transparent NSPanel pill, macOS). The Voice
+    # settings panel + app boot call these via `syncNotchVisibility` to mirror
+    # always-on listening state. Without these allow entries the invoke is
+    # rejected with "Command not found" and the notch never shows/hides.
+    "notch_window_show",
+    "notch_window_hide",
 
     # =========================
     # SCREEN SHARE

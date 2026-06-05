@@ -3,8 +3,8 @@ pub use types::*;
 mod connected_identities;
 pub use connected_identities::render_connected_identities;
 
-use crate::openhuman::skills::Skill;
 use crate::openhuman::tools::Tool;
+use crate::openhuman::workflows::Workflow;
 use anyhow::Result;
 use chrono::{DateTime, Local, Utc};
 use std::fmt::Write;
@@ -379,7 +379,7 @@ impl PromptSection for DynamicPromptSection {
 pub struct IdentitySection;
 pub struct ToolsSection;
 pub struct SafetySection;
-// `SkillsSection` and `ConnectedIntegrationsSection` previously lived
+// `WorkflowsSection` and `ConnectedIntegrationsSection` previously lived
 // here and branched on `ctx.agent_id` to pick between the skill-
 // executor and delegator voice. They've been removed — each agent's
 // `prompt.rs` now renders its own block inline (integrations_agent owns the
@@ -995,7 +995,7 @@ pub fn render_ambient_environment(ctx: &PromptContext<'_>) -> Result<String> {
 /// manufacture a full context when they only need the static text.
 fn empty_prompt_context_for_static_sections() -> PromptContext<'static> {
     static EMPTY_TOOLS: &[PromptTool<'static>] = &[];
-    static EMPTY_SKILLS: &[Skill] = &[];
+    static EMPTY_SKILLS: &[Workflow] = &[];
     static EMPTY_INTEGRATIONS: &[ConnectedIntegration] = &[];
     // SAFETY: the &HashSet reference must outlive the returned context;
     // a leaked OnceLock-style allocation gives us a permanent 'static
@@ -1021,7 +1021,6 @@ fn empty_prompt_context_for_static_sections() -> PromptContext<'static> {
         personality_soul_md: None,
         personality_memory_md: None,
         personality_roster: vec![],
-        workflows: &[],
     }
 }
 

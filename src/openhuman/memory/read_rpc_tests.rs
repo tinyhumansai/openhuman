@@ -947,3 +947,43 @@ async fn vault_health_check_reports_writable_and_obsidian_registered_when_ready(
         outcome.logs[0]
     );
 }
+
+/// Regression: `wipe_all` MUST also clear the source-ingest gate
+/// (`mem_tree_ingested_sources`). Before the fix it cleared chunks/summaries
+/// but left the gate claimed, so a wiped document source could never
+/// re-ingest — the next sync saw `already_ingested` and wrote 0 chunks / 0
+/// seal jobs. This pins that a wipe leaves the gate empty so re-sync works.
+#[tokio::test]
+async fn wipe_all_clears_ingest_gate() {
+    use crate::openhuman::memory_store::chunks::store as chunk_store;
+    use crate::openhuman::memory_store::chunks::types::SourceKind;
+
+    let (_tmp, cfg) = test_config();
+    let gate_key = "notion:conn-1:page-abc@1700000000000";
+
+    // Claim the gate exactly as a document ingest does.
+    chunk_store::with_connection(&cfg, |conn| {
+        let tx = conn.unchecked_transaction()?;
+        let claimed = chunk_store::claim_source_ingest_tx(
+            &tx,
+            SourceKind::Document,
+            gate_key,
+            1_700_000_000_000,
+        )?;
+        assert!(claimed, "first claim should succeed");
+        tx.commit()?;
+        Ok(())
+    })
+    .unwrap();
+    assert!(
+        chunk_store::is_source_ingested(&cfg, SourceKind::Document, gate_key).unwrap(),
+        "gate must be claimed before wipe"
+    );
+
+    wipe_all_rpc(&cfg).await.expect("wipe_all_rpc");
+
+    assert!(
+        !chunk_store::is_source_ingested(&cfg, SourceKind::Document, gate_key).unwrap(),
+        "wipe_all must clear mem_tree_ingested_sources so a wiped source can re-ingest"
+    );
+}

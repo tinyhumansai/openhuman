@@ -140,6 +140,15 @@ const McpServersTab = () => {
     [loadInstalled, fetchStatuses]
   );
 
+  const handleEnabledChange = useCallback(
+    async (_serverId: string, _enabled: boolean) => {
+      log('enabled_change server_id=%s enabled=%s', _serverId, _enabled);
+      await loadInstalled();
+      await fetchStatuses();
+    },
+    [loadInstalled, fetchStatuses]
+  );
+
   // Count rejected settlements and, if any, throw a descriptive error so the
   // toolbar surfaces it through its `role="alert"` region — otherwise a bulk
   // action that partially (or wholly) fails looks identical to success and
@@ -272,6 +281,7 @@ const McpServersTab = () => {
               server={selectedServer}
               connStatus={selectedConnStatus}
               onUninstalled={serverId => void handleUninstalled(serverId)}
+              onEnabledChange={(serverId, enabled) => void handleEnabledChange(serverId, enabled)}
             />
           )}
         </div>

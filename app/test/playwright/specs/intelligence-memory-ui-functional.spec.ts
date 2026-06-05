@@ -44,6 +44,14 @@ test.describe('Intelligence memory UI', () => {
     const label = `Playwright Memory Source ${Date.now()}`;
     await openMemory(page);
     await addFolderSource(label);
+    await page.reload();
+    await waitForAppReady(page);
+    await dismissWalkthroughIfPresent(page);
+    const memoryTab = page.getByRole('tab', { name: /^Memory$/ });
+    if (await memoryTab.isVisible().catch(() => false)) {
+      await memoryTab.click();
+    }
+    await expect(page.getByTestId('memory-workspace')).toBeVisible({ timeout: 20_000 });
 
     const row = page.getByTestId('memory-source-row-folder').filter({ hasText: label });
     await expect(row).toBeVisible({ timeout: 20_000 });

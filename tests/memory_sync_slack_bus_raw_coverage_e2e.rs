@@ -260,6 +260,8 @@ async fn configured_loopback_context(
         toolkit: "slack".to_string(),
         connection_id: Some("conn-slack-round19".to_string()),
         usage: Default::default(),
+        max_items: None,
+        sync_depth_days: None,
     };
     (config, ctx, server)
 }

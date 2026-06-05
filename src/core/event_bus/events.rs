@@ -156,6 +156,23 @@ pub enum DomainEvent {
         cancelled_request_id: String,
     },
 
+    // ── Monitor ───────────────────────────────────────────────────────
+    /// A background monitor changed lifecycle state.
+    MonitorStatusChanged {
+        monitor_id: String,
+        status: String,
+        thread_id: Option<String>,
+        description: String,
+    },
+    /// A background monitor emitted one bounded stdout/stderr line.
+    MonitorLine {
+        monitor_id: String,
+        thread_id: Option<String>,
+        timestamp_ms: u64,
+        stream: String,
+        line: String,
+    },
+
     // ── Memory ──────────────────────────────────────────────────────────
     /// The configured embedding provider is unreachable or the requested model
     /// is not installed, so the memory pipeline fell back to an alternative.
@@ -198,12 +215,24 @@ pub enum DomainEvent {
     ///
     /// Emitted by the `memory` domain so the frontend can surface progress
     /// across request → fetch → store → queue → ingest → complete.
+    ///
+    /// `source_id` is the originating memory-source id (from
+    /// `memory_sources`) when the event can be attributed to a specific
+    /// source row. The frontend prefers this over `connection_id` for
+    /// per-row indicator matching (see RC#2, issue #3295). Set to `None`
+    /// when the event originates from a non-memory-source sync path (e.g. a
+    /// channel-provider ingest) — `connection_id` remains unchanged for
+    /// those callers.
     MemorySyncStageChanged {
         trigger: String,
         stage: String,
         provider: Option<String>,
         connection_id: Option<String>,
         detail: Option<String>,
+        /// Originating memory-source id for frontend per-row indicator
+        /// matching. `None` when the event is not attributable to a
+        /// specific `MemorySourceEntry`.
+        source_id: Option<String>,
     },
     /// A memory ingestion job started running on the local extraction LLM.
     /// Ingestion is singleton — this fires once, then a matching
@@ -326,13 +355,13 @@ pub enum DomainEvent {
 
     // ── Skills ──────────────────────────────────────────────────────────
     /// A skill was loaded into the runtime.
-    SkillLoaded { skill_id: String, runtime: String },
+    WorkflowLoaded { skill_id: String, runtime: String },
     /// A skill was stopped.
-    SkillStopped { skill_id: String },
+    WorkflowStopped { skill_id: String },
     /// A skill failed to start.
-    SkillStartFailed { skill_id: String, error: String },
+    WorkflowStartFailed { skill_id: String, error: String },
     /// A skill tool was executed.
-    SkillExecuted {
+    WorkflowExecuted {
         skill_id: String,
         tool_name: String,
         arguments: serde_json::Value,
@@ -805,6 +834,30 @@ pub enum DomainEvent {
         reason: String,
     },
 
+    /// An `OPENHUMAN_APPROVAL_GATE=0` env override was observed but
+    /// IGNORED because the host is the Tauri desktop shell. The gate is
+    /// always installed under the desktop host; this event lets the UI
+    /// surface a one-shot info banner so the user sees the override was
+    /// rejected. Audit-only; carries no payload content.
+    ApprovalGateOverrideIgnored {
+        /// Host tag (currently always `"tauri-shell"` — added for forward
+        /// compatibility when more desktop hosts land).
+        host: String,
+    },
+    /// The approval gate was NOT installed because an
+    /// `OPENHUMAN_APPROVAL_GATE=0` env override was honored on a
+    /// standalone host (CLI / Docker). Surfaces the elevated-privilege
+    /// state so any connected dashboard can flag it; the desktop UI
+    /// banner subscribes to this variant.
+    ApprovalGateDisabled {
+        /// Host tag (`"cli"` or `"docker"`).
+        host: String,
+        /// Short reason code so downstream consumers can switch on the
+        /// cause without parsing free-text logs. Currently always
+        /// `"env-override"`.
+        reason: String,
+    },
+
     // ── System lifecycle ────────────────────────────────────────────────
     /// A system component started up.
     SystemStartup { component: String },
@@ -958,6 +1011,8 @@ impl DomainEvent {
             | Self::RunQueueFollowupDispatched { .. }
             | Self::RunQueueInterrupted { .. } => "agent",
 
+            Self::MonitorStatusChanged { .. } | Self::MonitorLine { .. } => "monitor",
+
             Self::EmbeddingModelUnhealthy { .. }
             | Self::MemoryStored { .. }
             | Self::MemoryRecalled { .. }
@@ -982,10 +1037,10 @@ impl DomainEvent {
             | Self::CronDeliveryRequested { .. }
             | Self::ProactiveMessageRequested { .. } => "cron",
 
-            Self::SkillLoaded { .. }
-            | Self::SkillStopped { .. }
-            | Self::SkillStartFailed { .. }
-            | Self::SkillExecuted { .. } => "skill",
+            Self::WorkflowLoaded { .. }
+            | Self::WorkflowStopped { .. }
+            | Self::WorkflowStartFailed { .. }
+            | Self::WorkflowExecuted { .. } => "workflow",
 
             Self::ToolExecutionStarted { .. } | Self::ToolExecutionCompleted { .. } => "tool",
 
@@ -1045,7 +1100,10 @@ impl DomainEvent {
 
             Self::Voice(_) => "voice",
 
-            Self::ApprovalRequested { .. } | Self::ApprovalDecided { .. } => "approval",
+            Self::ApprovalRequested { .. }
+            | Self::ApprovalDecided { .. }
+            | Self::ApprovalGateOverrideIgnored { .. }
+            | Self::ApprovalGateDisabled { .. } => "approval",
 
             Self::ArtifactReady { .. }
             | Self::ArtifactFailed { .. }
@@ -1085,6 +1143,8 @@ impl DomainEvent {
             Self::RunQueueMessageDelivered { .. } => "RunQueueMessageDelivered",
             Self::RunQueueFollowupDispatched { .. } => "RunQueueFollowupDispatched",
             Self::RunQueueInterrupted { .. } => "RunQueueInterrupted",
+            Self::MonitorStatusChanged { .. } => "MonitorStatusChanged",
+            Self::MonitorLine { .. } => "MonitorLine",
             Self::MemoryStored { .. } => "MemoryStored",
             Self::MemoryRecalled { .. } => "MemoryRecalled",
             Self::MemorySyncRequested { .. } => "MemorySyncRequested",
@@ -1104,10 +1164,10 @@ impl DomainEvent {
             Self::CronJobCompleted { .. } => "CronJobCompleted",
             Self::CronDeliveryRequested { .. } => "CronDeliveryRequested",
             Self::ProactiveMessageRequested { .. } => "ProactiveMessageRequested",
-            Self::SkillLoaded { .. } => "SkillLoaded",
-            Self::SkillStopped { .. } => "SkillStopped",
-            Self::SkillStartFailed { .. } => "SkillStartFailed",
-            Self::SkillExecuted { .. } => "SkillExecuted",
+            Self::WorkflowLoaded { .. } => "WorkflowLoaded",
+            Self::WorkflowStopped { .. } => "WorkflowStopped",
+            Self::WorkflowStartFailed { .. } => "WorkflowStartFailed",
+            Self::WorkflowExecuted { .. } => "WorkflowExecuted",
             Self::ToolExecutionStarted { .. } => "ToolExecutionStarted",
             Self::ToolExecutionCompleted { .. } => "ToolExecutionCompleted",
             Self::WebhookIncomingRequest { .. } => "WebhookIncomingRequest",
@@ -1152,6 +1212,8 @@ impl DomainEvent {
             Self::SessionExpired { .. } => "SessionExpired",
             Self::ApprovalRequested { .. } => "ApprovalRequested",
             Self::ApprovalDecided { .. } => "ApprovalDecided",
+            Self::ApprovalGateOverrideIgnored { .. } => "ApprovalGateOverrideIgnored",
+            Self::ApprovalGateDisabled { .. } => "ApprovalGateDisabled",
             Self::ArtifactReady { .. } => "ArtifactReady",
             Self::ArtifactFailed { .. } => "ArtifactFailed",
             Self::ArtifactPending { .. } => "ArtifactPending",
@@ -1198,6 +1260,13 @@ impl DomainEvent {
             | Self::ChannelDisconnected { channel, .. } => Some(channel.as_str()),
             Self::ToolExecutionStarted { tool_name, .. }
             | Self::ToolExecutionCompleted { tool_name, .. } => Some(tool_name.as_str()),
+            Self::RunQueueMessageQueued { thread_id, .. }
+            | Self::RunQueueMessageDelivered { thread_id, .. }
+            | Self::RunQueueFollowupDispatched { thread_id, .. }
+            | Self::RunQueueInterrupted { thread_id, .. } => Some(thread_id.as_str()),
+            Self::MonitorStatusChanged { thread_id, .. } | Self::MonitorLine { thread_id, .. } => {
+                thread_id.as_deref()
+            }
             _ => None,
         }
     }

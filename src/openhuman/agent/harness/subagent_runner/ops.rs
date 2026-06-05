@@ -48,7 +48,19 @@ You are a sub-agent working for a parent OpenHuman agent, not a direct end-user 
 - Stay tightly scoped to the delegated task.\n\
 - Keep tool arguments and follow-up prompts compact, include only required fields/context.\n\
 - Keep your final response concise and synthesis-ready for the parent, prefer short bullets or short paragraphs.\n\
-- Do not restate the full task/context unless strictly required for correctness.\n";
+- Do not restate the full task/context unless strictly required for correctness.\n\
+\n\
+## Sub-agent Result Contract\n\n\
+Return a compact result with these headings:\n\
+- Answer\n\
+- Evidence used\n\
+- Actions taken\n\
+- Open uncertainties\n\
+- Failed tool calls\n\
+- Recommended next step\n\
+\n\
+Do not include facts in Answer that are not supported by Evidence used or Actions taken.\n\
+If a tool result was truncated, partial, or too large to inspect fully, say so under Open uncertainties and do not treat it as complete.\n";
 
 fn append_subagent_role_contract(base_prompt: String, agent_id: &str) -> String {
     if base_prompt.contains(SUBAGENT_ROLE_CONTRACT_SUFFIX.trim()) {
@@ -673,13 +685,13 @@ async fn run_typed_mode(
 
     // `tools_agent` is the Composio-free counterpart to
     // `integrations_agent`: it inherits the orchestrator's wildcard
-    // scope but must never see Skill-category tools. Stripping them
+    // scope but must never see Workflow-category tools. Stripping them
     // here (before any dynamic additions) keeps the parent-fed
     // `allowed_indices` clean of composio_* meta-tools and
     // toolkit-specific action tools. Delegation to integrations_agent
     // is the orchestrator's job, not this agent's.
     if definition.id == "tools_agent" {
-        allowed_indices.retain(|&i| parent.all_tools[i].category() != ToolCategory::Skill);
+        allowed_indices.retain(|&i| parent.all_tools[i].category() != ToolCategory::Workflow);
     }
 
     if is_integrations_agent_with_toolkit {
@@ -688,7 +700,7 @@ async fn run_typed_mode(
         // definition) plus the dynamic per-action ComposioActionTools
         // injected below. Anything the agent author explicitly named
         // in the TOML is kept as-is — no extra stripping here.
-        // Previously we dropped every Skill-category tool at this
+        // Previously we dropped every Workflow-category tool at this
         // point, which also dropped `composio_list_tools` /
         // `composio_execute` whenever they were declared in the TOML,
         // making the TOML changes look like no-ops.
@@ -1115,7 +1127,6 @@ async fn run_typed_mode(
         personality_soul_md: None,
         personality_memory_md: None,
         personality_roster: vec![],
-        workflows: &[],
     };
 
     let system_prompt = match &definition.system_prompt {

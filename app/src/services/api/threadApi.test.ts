@@ -169,4 +169,56 @@ describe('threadApi', () => {
     });
     expect(board).toBeNull();
   });
+
+  it('loads durable run ledger rows and events through run_ledger RPCs', async () => {
+    const run = {
+      id: 'sub-1',
+      kind: 'worker_thread',
+      parentRunId: 'req-1',
+      parentThreadId: 'thread-1',
+      agentId: 'researcher',
+      status: 'awaiting_user',
+      workerThreadId: 'worker-1',
+      checkpoint: { resumeTool: 'continue_subagent' },
+      metadata: {},
+      startedAt: '2026-06-04T12:00:00Z',
+      updatedAt: '2026-06-04T12:00:10Z',
+    };
+    mockCallCoreRpc.mockResolvedValueOnce({ data: { runs: [run], count: 1 } });
+
+    const { threadApi } = await import('./threadApi');
+    await expect(threadApi.listRuns({ parentThreadId: 'thread-1' })).resolves.toEqual([run]);
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.run_ledger_list',
+      params: { parentThreadId: 'thread-1' },
+    });
+
+    mockCallCoreRpc.mockResolvedValueOnce({ data: { runs: [], count: 0 } });
+    await expect(threadApi.listRuns()).resolves.toEqual([]);
+    expect(mockCallCoreRpc).toHaveBeenLastCalledWith({
+      method: 'openhuman.run_ledger_list',
+      params: {},
+    });
+
+    mockCallCoreRpc.mockResolvedValueOnce({ data: { run } });
+    await expect(threadApi.getRun('sub-1')).resolves.toEqual(run);
+    expect(mockCallCoreRpc).toHaveBeenLastCalledWith({
+      method: 'openhuman.run_ledger_get',
+      params: { id: 'sub-1' },
+    });
+
+    const event = {
+      runId: 'sub-1',
+      sequence: 1,
+      eventType: 'subagent_awaiting_user',
+      payload: { question: 'Which file?' },
+      timestamp: '2026-06-04T12:00:10Z',
+    };
+    mockCallCoreRpc.mockResolvedValueOnce({ data: { events: [event], count: 1 } });
+    await expect(threadApi.listRunEvents('sub-1', { afterSequence: 0 })).resolves.toEqual([event]);
+    expect(mockCallCoreRpc).toHaveBeenLastCalledWith({
+      method: 'openhuman.run_ledger_events',
+      params: { runId: 'sub-1', afterSequence: 0 },
+    });
+  });
 });

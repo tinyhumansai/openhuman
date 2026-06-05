@@ -470,7 +470,33 @@ impl EventHandler for ComposioConnectionCreatedSubscriber {
                     return;
                 }
             };
-            let Some(ctx) = ProviderContext::from_config(
+            // Look up per-source caps from the memory_sources registry.
+            // Non-fatal: if the lookup fails we proceed without caps.
+            //
+            // upsert_composio_source runs AFTER this block (below), so for
+            // brand-new connections the entry may not exist yet. In that case
+            // fall back to the per-toolkit defaults so the first sync is still
+            // capped. list_enabled_by_kind would also drop disabled-but-
+            // configured entries, so we use list_sources() and filter ourselves.
+            let (src_max_items, src_sync_depth_days) = {
+                let registry_sources = crate::openhuman::memory_sources::list_sources()
+                    .await
+                    .unwrap_or_default();
+                registry_sources
+                    .iter()
+                    .find(|s| {
+                        s.kind == crate::openhuman::memory_sources::SourceKind::Composio
+                            && s.connection_id.as_deref() == Some(connection_id.as_str())
+                    })
+                    .map(|s| (s.max_items, s.sync_depth_days))
+                    .unwrap_or_else(|| {
+                        crate::openhuman::memory_sources::memory_sync_defaults_for_toolkit(
+                            toolkit.as_str(),
+                        )
+                    })
+            };
+
+            let Some(mut ctx) = ProviderContext::from_config(
                 Arc::new(config),
                 toolkit.clone(),
                 Some(connection_id.clone()),
@@ -481,6 +507,17 @@ impl EventHandler for ComposioConnectionCreatedSubscriber {
                 );
                 return;
             };
+
+            ctx.max_items = src_max_items;
+            ctx.sync_depth_days = src_sync_depth_days;
+
+            tracing::debug!(
+                toolkit = %toolkit,
+                connection_id = %connection_id,
+                max_items = ?src_max_items,
+                sync_depth_days = ?src_sync_depth_days,
+                "[composio:bus] caps from registry for connection_created"
+            );
 
             // `wait_for_connection_active` is a backend-only metadata
             // probe (`list_connections`). Resolve a backend

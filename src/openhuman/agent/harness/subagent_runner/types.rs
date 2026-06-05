@@ -124,7 +124,7 @@ pub struct SubagentCheckpointData {
     pub options: Option<Vec<String>>,
     /// Composio toolkit override, if the paused run was scoped to one.
     pub toolkit_override: Option<String>,
-    /// Skill filter override, if the paused run was scoped to one.
+    /// Workflow filter override, if the paused run was scoped to one.
     pub skill_filter_override: Option<String>,
     /// Model override, if one was set for this run.
     pub model_override: Option<String>,

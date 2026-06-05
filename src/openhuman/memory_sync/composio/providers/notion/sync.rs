@@ -22,6 +22,34 @@ pub(crate) fn extract_results(data: &Value) -> Vec<Value> {
     Vec::new()
 }
 
+/// Extract the rendered page body markdown from a `NOTION_GET_PAGE_MARKDOWN`
+/// response. Composio wraps action output in varying envelope shapes, so we
+/// try the common locations tolerantly and return the first non-empty string.
+/// Returns `None` if no markdown field is found (caller falls back to the
+/// metadata-only body and logs the raw shape for diagnosis).
+pub(crate) fn extract_page_markdown(data: &Value) -> Option<String> {
+    const PATHS: &[&str] = &[
+        "/markdown",
+        "/data/markdown",
+        "/data/response_data/markdown",
+        "/response_data/markdown",
+        "/data/content",
+        "/content",
+        "/data/markdown_content",
+        "/markdown_content",
+        "/text",
+        "/data/text",
+    ];
+    for p in PATHS {
+        if let Some(s) = data.pointer(p).and_then(Value::as_str) {
+            if !s.trim().is_empty() {
+                return Some(s.to_string());
+            }
+        }
+    }
+    None
+}
+
 /// Extract the Notion pagination cursor (for `start_cursor` on the
 /// next request).
 pub(crate) fn extract_notion_cursor(data: &Value) -> Option<String> {
@@ -92,6 +120,37 @@ mod tests {
         let data = json!({"data": {"results": [{"id": "page1"}]}});
         let results = extract_results(&data);
         assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn extract_page_markdown_reads_top_level_field() {
+        // Matches the live GET_PAGE_MARKDOWN envelope observed empirically:
+        // {id, markdown, object, request_id, truncated, unknown_block_ids}.
+        let data = json!({
+            "id": "p1",
+            "markdown": "# Heading\n\nbody text",
+            "object": "page",
+            "truncated": false,
+        });
+        assert_eq!(
+            extract_page_markdown(&data).as_deref(),
+            Some("# Heading\n\nbody text")
+        );
+    }
+
+    #[test]
+    fn extract_page_markdown_reads_nested_envelope() {
+        let data = json!({ "data": { "markdown": "nested body" } });
+        assert_eq!(extract_page_markdown(&data).as_deref(), Some("nested body"));
+    }
+
+    #[test]
+    fn extract_page_markdown_none_for_empty_or_missing() {
+        // Empty markdown (a DB row with no body blocks) → None → metadata-only.
+        assert_eq!(extract_page_markdown(&json!({ "markdown": "" })), None);
+        assert_eq!(extract_page_markdown(&json!({ "markdown": "   " })), None);
+        // No markdown field at all → None.
+        assert_eq!(extract_page_markdown(&json!({ "id": "p1" })), None);
     }
 
     #[test]

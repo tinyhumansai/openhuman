@@ -694,7 +694,7 @@ fn map_v3_tools_prefers_toolkit_slug_over_app_name() {
 fn composio_tool_category_is_skill() {
     use crate::openhuman::tools::traits::ToolCategory;
     let tool = ComposioTool::new("key", None, test_security());
-    assert_eq!(tool.category(), ToolCategory::Skill);
+    assert_eq!(tool.category(), ToolCategory::Workflow);
 }
 
 // ── v3 /connected_accounts shape parsing ───────────────────────────

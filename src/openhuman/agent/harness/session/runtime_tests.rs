@@ -271,7 +271,7 @@ fn accessors_and_history_reset_expose_agent_runtime_state() {
     });
     let mut agent = make_agent(provider);
     agent.history = vec![ConversationMessage::Chat(ChatMessage::system("sys"))];
-    agent.skills = vec![crate::openhuman::skills::Skill {
+    agent.skills = vec![crate::openhuman::workflows::Workflow {
         name: "demo".into(),
         ..Default::default()
     }];

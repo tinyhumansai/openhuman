@@ -4,7 +4,7 @@
  *
  * Small centered confirm modal for destructive uninstall of a user-scope
  * SKILL.md skill. Wraps `skillsApi.uninstallSkill` which calls
- * `openhuman.skills_uninstall` on the Rust side — that RPC only accepts
+ * `openhuman.workflows_uninstall` on the Rust side — that RPC only accepts
  * user-scope installs (`~/.openhuman/skills/<name>/`) and refuses project
  * and legacy scopes. The card that opens this dialog is responsible for
  * not surfacing the Uninstall action for non-user-scope entries.
@@ -106,19 +106,19 @@ export default function UninstallSkillConfirmDialog({ skill, onClose, onUninstal
       }}>
       <div className="w-[420px] max-w-[90vw] rounded-2xl bg-white dark:bg-neutral-900 p-5 shadow-2xl">
         <h2 id="uninstall-skill-title" className="text-base font-semibold text-stone-900 dark:text-neutral-100">
-          {t('skills.uninstall.title')} {skill.name}?
+          {t('common.delete')} {skill.name}?
         </h2>
         <p className="mt-2 text-sm text-stone-600 dark:text-neutral-300">
           {t('skills.uninstall.description')}
         </p>
         {skill.location && (
           <p className="mt-3 break-all rounded-lg bg-stone-50 dark:bg-neutral-800/60 px-3 py-2 font-mono text-[11px] text-stone-600 dark:text-neutral-300">
-            {skill.location.replace(/\/SKILL\.md$/i, '')}
+            {skill.location.replace(/\/(WORKFLOW|SKILL)\.md$/i, '')}
           </p>
         )}
         {error && (
           <div className="mt-3 rounded-lg border border-coral-200 bg-coral-50 px-3 py-2 text-xs text-coral-700">
-            <div className="font-medium">{t('skills.uninstall.couldNotUninstall')}</div>
+            <div className="font-medium">{t('workflows.deleteError')}</div>
             <div className="mt-1 break-words font-mono text-[11px] text-coral-700/90">{error}</div>
           </div>
         )}
@@ -137,7 +137,7 @@ export default function UninstallSkillConfirmDialog({ skill, onClose, onUninstal
             onClick={handleConfirm}
             data-testid="uninstall-skill-confirm"
             className="rounded-lg border border-coral-300 bg-coral-50 px-3 py-1.5 text-xs font-medium text-coral-700 hover:bg-coral-100 disabled:cursor-not-allowed disabled:opacity-50">
-            {submitting ? t('skills.uninstall.uninstalling') : t('skills.uninstall.uninstallBtn')}
+            {submitting ? t('team.deleting') : t('common.delete')}
           </button>
         </div>
       </div>

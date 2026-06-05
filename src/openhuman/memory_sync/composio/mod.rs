@@ -151,11 +151,35 @@ pub async fn run_connection_sync(
         ))
     })?;
 
+    // Look up the source entry to obtain any user-configured caps.
+    // Non-fatal: if the registry read fails we proceed uncapped.
+    let (src_max_items, src_sync_depth_days) = {
+        let registry_sources = crate::openhuman::memory_sources::list_enabled_by_kind(
+            crate::openhuman::memory_sources::SourceKind::Composio,
+        )
+        .await
+        .unwrap_or_default();
+        registry_sources
+            .iter()
+            .find(|s| s.connection_id.as_deref() == Some(&target.connection_id))
+            .map(|s| (s.max_items, s.sync_depth_days))
+            .unwrap_or((None, None))
+    };
+
+    tracing::debug!(
+        connection_id = %target.connection_id,
+        max_items = ?src_max_items,
+        sync_depth_days = ?src_sync_depth_days,
+        "[composio:sync] run_connection_sync: caps from registry"
+    );
+
     let ctx = ProviderContext {
         config: std::sync::Arc::new(config),
         toolkit: target.toolkit,
         connection_id: Some(target.connection_id),
         usage: Default::default(),
+        max_items: src_max_items,
+        sync_depth_days: src_sync_depth_days,
     };
 
     let sync_result = provider.sync(&ctx, reason).await;

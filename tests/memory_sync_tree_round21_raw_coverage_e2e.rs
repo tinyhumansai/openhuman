@@ -239,6 +239,8 @@ async fn configured_loopback_context(
         toolkit: toolkit.to_string(),
         connection_id: Some(connection_id.to_string()),
         usage: Default::default(),
+        max_items: None,
+        sync_depth_days: None,
     };
     (config, ctx, server)
 }
@@ -531,6 +533,8 @@ fn seed_source_summary(
         sealed_at: ts,
         deleted: false,
         embedding: embedding.clone(),
+        doc_id: None,
+        version_ms: None,
     };
     let staged = stage_summary(
         &config.memory_tree_content_root(),

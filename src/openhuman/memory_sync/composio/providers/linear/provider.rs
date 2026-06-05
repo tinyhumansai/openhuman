@@ -198,14 +198,41 @@ impl ComposioProvider for LinearProvider {
             _ => PAGE_SIZE,
         };
 
+        // ctx.max_items: route through ItemCap — page ceiling, mid-page
+        // per-item break, and post-page hard stop all share one source of truth.
+        let mut cap = super::super::helpers::ItemCap::new(ctx.max_items);
+        let effective_max_pages = cap.max_pages(page_size as u32, MAX_PAGES_PER_SYNC);
+        if ctx.max_items.is_some() && effective_max_pages < MAX_PAGES_PER_SYNC {
+            tracing::debug!(
+                connection_id = %connection_id,
+                max_items = ?ctx.max_items,
+                effective_max_pages,
+                "[composio:linear] [memory_sync] applying max_items page cap"
+            );
+        }
+
+        // ctx.sync_depth_days: oldest allowed updatedAt for client-side skip.
+        let oldest_allowed_time: Option<String> = ctx.sync_depth_days.map(|days| {
+            let floor = chrono::Utc::now() - chrono::Duration::days(days as i64);
+            let s = floor.to_rfc3339();
+            tracing::debug!(
+                connection_id = %connection_id,
+                sync_depth_days = days,
+                oldest_allowed = %s,
+                "[composio:linear] [memory_sync] applying sync_depth_days floor"
+            );
+            s
+        });
+
         let mut total_fetched: usize = 0;
         let mut total_persisted: usize = 0;
         let mut had_persist_failures = false;
         let mut newest_updated: Option<String> = None;
         let mut after_cursor: Option<String> = None;
         let mut hit_cursor_boundary = false;
+        let mut hit_cap_boundary = false;
 
-        for page_num in 0..MAX_PAGES_PER_SYNC {
+        for page_num in 0..effective_max_pages {
             if state.budget_exhausted() {
                 tracing::info!(
                     page = page_num,
@@ -256,10 +283,29 @@ impl ComposioProvider for LinearProvider {
             }
 
             // ── Per-item dedup + bounded-concurrency ingest ──────────
-            let (pending, page_hit_boundary) = select_pending(&issues, &state, &mut newest_updated);
+            let (mut pending, page_hit_boundary) =
+                select_pending(&issues, &state, &mut newest_updated);
             if page_hit_boundary {
                 hit_cursor_boundary = true;
             }
+
+            // ctx.sync_depth_days: drop items updated before the depth floor. `pending` is
+            // in descending timestamp order, so truncate at the first item below the floor
+            // and signal cursor-boundary so pagination stops.
+            if let Some(ref floor) = oldest_allowed_time {
+                if let Some(cut) = pending.iter().position(|p| {
+                    p.updated
+                        .as_deref()
+                        .map(|t| t < floor.as_str())
+                        .unwrap_or(false)
+                }) {
+                    pending.truncate(cut);
+                    hit_cursor_boundary = true;
+                }
+            }
+
+            // ctx.max_items: clamp the dedup'd batch to the remaining budget before ingest.
+            cap.clamp_batch(&mut pending);
 
             let ingestor = MemoryTreeIngestor {
                 config: ctx.config.as_ref(),
@@ -270,8 +316,15 @@ impl ComposioProvider for LinearProvider {
                 state.mark_synced(key);
             }
             total_persisted += outcome.persisted;
+            cap.record(outcome.persisted);
             if outcome.had_failures {
                 had_persist_failures = true;
+            }
+
+            // ctx.max_items precise cap: once the per-source cap is hit, stop paginating.
+            if cap.is_reached() {
+                hit_cap_boundary = true;
+                break;
             }
 
             if hit_cursor_boundary {
@@ -279,6 +332,17 @@ impl ComposioProvider for LinearProvider {
                     page = page_num,
                     "[composio:linear] reached cursor boundary, stopping pagination"
                 );
+                break;
+            }
+
+            // ctx.max_items hard stop.
+            if cap.is_reached() {
+                tracing::debug!(
+                    page = page_num,
+                    total_persisted,
+                    "[composio:linear] [memory_sync] max_items reached, stopping pagination"
+                );
+                hit_cap_boundary = true;
                 break;
             }
 
@@ -298,9 +362,16 @@ impl ComposioProvider for LinearProvider {
         }
 
         // ── Step 5: advance cursor and save state ────────────────────
+        // Hold the cursor on a cap-truncated pass so the next sync re-scans the unseen tail.
         if had_persist_failures {
             tracing::warn!(
                 "[composio:linear] persist failures seen; keeping previous cursor for retry"
+            );
+        } else if hit_cap_boundary {
+            tracing::warn!(
+                hit_cap_boundary,
+                "[composio:linear] holding cursor — cap-truncated pass; next sync will re-scan \
+                 the unseen tail"
             );
         } else if let Some(new_cursor) = newest_updated {
             state.advance_cursor(&new_cursor);

@@ -93,7 +93,6 @@ export function PixiGraph({
       mountedModeRef.current = null;
       void pending.then(handle => handle?.destroy());
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodes, edges, mode]);
 
   useEffect(() => {

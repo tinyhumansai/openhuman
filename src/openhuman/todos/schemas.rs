@@ -20,6 +20,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("add"),
         schemas("edit"),
         schemas("update_status"),
+        schemas("set_session_thread"),
         schemas("decide_plan"),
         schemas("remove"),
         schemas("replace"),
@@ -47,6 +48,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("update_status"),
             handler: handle_update_status,
+        },
+        RegisteredController {
+            schema: schemas("set_session_thread"),
+            handler: handle_set_session_thread,
         },
         RegisteredController {
             schema: schemas("decide_plan"),
@@ -115,6 +120,13 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 string_array_input("evidence", "Verification output, links, files, or notes."),
                 optional_string("notes", "Free-text notes."),
                 optional_string("blocker", "Reason the card is blocked, if any."),
+                FieldSchema {
+                    name: "sourceMetadata",
+                    ty: TypeSchema::Json,
+                    comment: "Originating task-source identifiers ({provider, external_id, …}) \
+                              stamped onto a card promoted from the task-sources inbox.",
+                    required: false,
+                },
             ],
             outputs: vec![snapshot_output()],
         },
@@ -161,6 +173,21 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required_string(
                     "status",
                     "New status (todo|awaiting_approval|ready|in_progress|blocked|done|rejected).",
+                ),
+            ],
+            outputs: vec![snapshot_output()],
+        },
+        "set_session_thread" => ControllerSchema {
+            namespace: "todos",
+            function: "set_session_thread",
+            description: "Link a card to its agent session's conversation thread so the UI can \
+                          offer a \"View session\" jump. Empty/absent sessionThreadId clears the link.",
+            inputs: vec![
+                thread_id_input(),
+                required_string("id", "Card identifier."),
+                optional_string(
+                    "sessionThreadId",
+                    "Conversation thread id of the card's agent session; omit or empty to clear.",
                 ),
             ],
             outputs: vec![snapshot_output()],
@@ -299,6 +326,8 @@ struct ThreadIdParams {
 struct AddParams {
     thread_id: String,
     content: String,
+    #[serde(default, alias = "sourceMetadata")]
+    source_metadata: Option<Value>,
     #[serde(default)]
     status: Option<String>,
     #[serde(default)]
@@ -366,6 +395,14 @@ struct RemoveParams {
 }
 
 #[derive(Debug, Deserialize)]
+struct SetSessionThreadParams {
+    thread_id: String,
+    id: String,
+    #[serde(default, alias = "sessionThreadId")]
+    session_thread_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct DecidePlanParams {
     thread_id: String,
     id: String,
@@ -403,7 +440,9 @@ fn handle_add(params: Map<String, Value>) -> ControllerFuture {
             evidence: p.evidence,
             notes: p.notes,
             blocker: p.blocker,
-            source_metadata: None,
+            // Carry the originating source identifiers onto the promoted card so
+            // the inbox can tell an item was already picked up (dedup/hide).
+            source_metadata: p.source_metadata,
         };
         tracing::debug!(thread_id = %p.thread_id, "[rpc][todos] add entry");
         snapshot_to_json(ops::add(&loc, &p.content, patch)?)
@@ -446,6 +485,20 @@ fn handle_update_status(params: Map<String, Value>) -> ControllerFuture {
             "[rpc][todos] update_status entry"
         );
         snapshot_to_json(ops::update_status(&loc, &p.id, status)?)
+    })
+}
+
+fn handle_set_session_thread(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let p = parse::<SetSessionThreadParams>(params)?;
+        let loc = thread_location(&p.thread_id).await?;
+        tracing::debug!(
+            thread_id = %p.thread_id,
+            id = %p.id,
+            session_thread_id = ?p.session_thread_id,
+            "[rpc][todos] set_session_thread entry"
+        );
+        snapshot_to_json(ops::set_session_thread(&loc, &p.id, p.session_thread_id)?)
     })
 }
 

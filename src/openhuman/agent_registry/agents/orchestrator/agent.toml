@@ -49,9 +49,43 @@ subagents = [
     "planner",
     "code_executor",
     "tools_agent",
+    # Task-board/source/workflow specialist. Route any request to create,
+    # edit, approve/reject, fetch, clear, remove, or summarize agent tasks,
+    # proactive task sources, workflow bundles, task evidence, or artifacts
+    # here instead of letting the generic tools agent see the full family.
+    "task_manager_agent",
+    # Settings/system specialist. Route app/core config, diagnostics,
+    # service lifecycle, update, proxy, health, model-health, and cost
+    # dashboard requests here so read-before-write and confirmation policy
+    # stays local to the risky tools.
+    "settings_agent",
+    # Persistent profile/memory/persona specialist. Route "remember",
+    # "forget", profile/persona edits, learned facets, and people alias
+    # management here.
+    "profile_memory_agent",
+    # Account/admin specialist. Route billing, team membership/invites/roles,
+    # OAuth/credential/session, and referral requests here.
+    "account_admin_agent",
+    # Screen-awareness specialist. Route screen-intelligence permissions,
+    # capture/session/listener state, and "what can you see" requests here;
+    # desktop app operation still goes to desktop_control_agent.
+    "screen_awareness_agent",
     "skill_creator",
     "critic",
     "archivist",
+    # Product docs/help specialist. Route OpenHuman docs, settings,
+    # setup, and feature questions here before guessing from priors.
+    "help",
+    # Scheduling/reminder specialist. Owns current_time + cron tools and
+    # confirmation-before-create policy so the chat prompt does not carry
+    # cron-specific instructions on every turn.
+    "scheduler_agent",
+    # Deck specialist. Owns presentation grounding, citations, image
+    # verification, and generate_presentation warning handling.
+    "presentation_agent",
+    # Desktop-control specialist. Owns launch_app and accessibility
+    # interaction policy, including list-before-press behavior.
+    "desktop_control_agent",
     # Crypto wallet & market specialist (#1397). Synthesised into a
     # `delegate_do_crypto` tool at agent-build time. Route any wallet,
     # transfer, swap, contract-call, or exchange trading request here —
@@ -86,7 +120,7 @@ subagents = [
 
 [model]
 # Front-line conversational agent: TTFT dominates UX. `hint:chat` resolves
-# to the fast chat tier (`reasoning-quick-v1` / Kimi K2.6 Turbo on
+# to the fast chat tier (`chat-v1` / Kimi K2.6 Turbo on
 # Fireworks via backend PR #760, 128k context, `supportsThinking: false`).
 # The orchestrator is a planner/router that picks a delegate and
 # synthesises sub-agent output — workload that doesn't benefit from the
@@ -108,37 +142,13 @@ hint = "chat"
 # / composio_execute directly.
 named = [
     "query_memory",
-    "memory_store",
-    "save_preference",
-    "memory_forget",
     "memory_tree",
     "read_workspace_state",
     "ask_user_clarification",
     "spawn_worker_thread",
+    "spawn_async_subagent",
     "spawn_parallel_agents",
     "composio_list_connections",
-    # App launching — lets the orchestrator open desktop applications
-    # directly when asked ("open Music", "launch Spotify", etc.) without
-    # delegating or telling the user it can't. Routes through the ApprovalGate
-    # (external effect), so launching prompts for confirmation per autonomy tier.
-    "launch_app",
-    # AXUIElement / UIA interaction — find UI by semantic label. No CGEventPost,
-    # no coordinate dependency, no CEF crash risk. Always call action='list'
-    # first to discover elements. Only the read-only `list` action is
-    # ReadOnly/unprompted; the mutating `press` / `set_value` actions are
-    # `Dangerous`, gate interactively through the ApprovalGate, are opt-in via
-    # `computer_control.ax_interact_mutations`, and refuse a sensitive-app
-    # denylist (password managers, Keychain, System Settings, terminals).
-    "ax_interact",
-    # Time + scheduling — lets the orchestrator answer "what time is it",
-    # "remind me in 10 minutes", "every morning at 8" directly rather than
-    # delegating or telling the user it can't. `current_time` grounds
-    # relative-time parsing; `cron_add` / `cron_list` / `cron_remove`
-    # manage recurring + one-shot agent/shell jobs.
-    "current_time",
-    "cron_add",
-    "cron_list",
-    "cron_remove",
     # Coding-harness coordination primitives from #1208. `todowrite`
     # gives the orchestrator a shared todo store to track multi-step
     # work across delegations; `plan_exit` is the stable marker that
@@ -155,15 +165,22 @@ named = [
     # `todowrite`, which only touches the current thread's board.
     "update_task",
     "plan_exit",
-    # Skill chaining: let an in-flight autonomous skill (e.g.
-    # `github-issue-crusher` after the draft PR is open) spawn another
-    # bundled skill_run (e.g. `pr-review-shepherd` against that PR) as a
-    # fresh background job, so each skill stays narrow + composable.
-    # Thin wrapper over `skills::schemas::spawn_skill_run_background` — the
-    # same helper the `openhuman.skills_run` JSON-RPC controller uses, so
-    # RPC callers and tool callers share one spawn path (iter cap,
-    # transcript isolation, degenerate-response detector all apply).
-    "run_skill",
+    # Workflow composition. `run_workflow` runs another workflow as a
+    # subagent and (by default) waits on its result like a function call;
+    # `await_workflow` re-attaches to a run that outlived its inline wait.
+    # `list_workflows` / `describe_workflow` let the orchestrator discover
+    # what's installed and learn a workflow's inputs before running it; the
+    # `*_run*` read tools let it inspect a run's status + log. All route
+    # through `workflows::schemas::spawn_skill_run_background` +
+    # `await_run_outcome` — the same spawn path the `openhuman.workflows_run`
+    # JSON-RPC controller uses (iter cap, transcript isolation,
+    # degenerate-response detector all apply).
+    "list_workflows",
+    "describe_workflow",
+    "list_workflow_runs",
+    "read_workflow_run_log",
+    "run_workflow",
+    "await_workflow",
     # Self-update — lets the orchestrator answer "am I up to date" /
     # "update OpenHuman" without sending the user to Settings →
     # Developer Options. `update_check` is read-only; `update_apply`
@@ -173,19 +190,9 @@ named = [
     # `src/openhuman/update/` end-to-end — no parallel release logic.
     "update_check",
     "update_apply",
-    # Workflow tools — let the orchestrator inspect and activate installed
-    # WORKFLOW.md bundles.  `workflow_load` is read-only (inspect a workflow);
-    # `workflow_phase` activates a phase (runs gated scripts, surfaces guidance).
-    # Both are routed through the same security/approval gate as `shell`.
-    "workflow_load",
-    "workflow_phase",
-    # structured slide spec via a native Rust engine (`ppt-rs`) running
-    # in-process — no Python subprocess, no managed venv. Output lands
-    # in the workspace artifacts directory and the tool returns the
-    # artifact id + absolute path so the orchestrator can quote it in
-    # the reply. Full agent-definition wiring + per-tier tool_filter
-    # policy lands in #2780; this entry exists so the orchestrator can
-    # drive the tool today (matches the user-facing "create slides"
-    # routing case the parent issue #1535 asks for).
-    "generate_presentation",
+    # NOTE: `generate_presentation` is intentionally NOT listed here — deck
+    # generation policy (grounding, citations, image verification) belongs to
+    # `presentation_agent`, which the orchestrator reaches via
+    # `delegate_make_presentation`. Listing it directly is asserted against in
+    # tests/orchestrator_presentation_wiring.rs.
 ]

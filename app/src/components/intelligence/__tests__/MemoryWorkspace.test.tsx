@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 
 import { renderWithProviders } from '../../../test/test-utils';
@@ -25,6 +25,7 @@ vi.mock('../../../services/memorySourcesService', () => ({
   removeMemorySource: vi.fn(),
   updateMemorySource: vi.fn(),
   addMemorySource: vi.fn(),
+  getSupportedToolkits: vi.fn().mockResolvedValue([]),
   SOURCE_KIND_ICONS: {
     folder: '📁',
     composio: '🔗',
@@ -394,6 +395,16 @@ describe('MemoryWorkspace (graph view)', () => {
     fireEvent.click(button);
     await waitFor(() => {
       expect(syncMemorySource).toHaveBeenCalledWith('src-gmail-001');
+    });
+    // Success feedback now fires on the terminal `completed` stage event, not
+    // the RPC ack — which only spawns the background sync and returns in ~4ms
+    // (#3295). Simulate the core emitting completion for this source.
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent('openhuman:memory-sync-stage', {
+          detail: { stage: 'completed', source_id: 'src-gmail-001', detail: 'ingested 4 item(s)' },
+        })
+      );
     });
     await waitFor(() => {
       expect(onToast).toHaveBeenCalledWith(

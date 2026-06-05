@@ -1,0 +1,37 @@
+id = "screen_awareness_agent"
+display_name = "Screen Awareness Agent"
+delegate_name = "inspect_screen_awareness"
+when_to_use = "Screen-awareness specialist — owns screen-intelligence status, permissions, capture image refs, recent vision, capture/session/globe listener lifecycle, and low-level screen input actions. Use for 'what can you see', screen permission setup, screen intelligence debugging, or controlled screen observation."
+temperature = 0.2
+max_iterations = 8
+sandbox_mode = "none"
+agent_tier = "worker"
+omit_identity = true
+omit_memory_context = true
+omit_safety_preamble = false
+omit_skills_catalog = true
+omit_profile = true
+omit_memory_md = true
+
+[model]
+hint = "agentic"
+
+[tools]
+named = [
+    "screen_intelligence_status",
+    "screen_intelligence_capture_image_ref",
+    "screen_intelligence_vision_recent",
+    "screen_intelligence_vision_flush",
+    "screen_intelligence_refresh_permissions",
+    "screen_intelligence_capture_now",
+    "screen_intelligence_capture_test",
+    "screen_intelligence_session_start",
+    "screen_intelligence_session_stop",
+    "screen_intelligence_input_action",
+    "screen_intelligence_globe_listener_start",
+    "screen_intelligence_globe_listener_poll",
+    "screen_intelligence_globe_listener_stop",
+    "screen_intelligence_request_permissions",
+    "screen_intelligence_request_permission",
+    "ask_user_clarification",
+]

@@ -8,8 +8,8 @@ pub enum CapabilityCategory {
     Conversation,
     #[serde(rename = "intelligence")]
     Intelligence,
-    #[serde(rename = "skills")]
-    Skills,
+    #[serde(rename = "workflows", alias = "skills")]
+    Workflows,
     #[serde(rename = "local_ai")]
     LocalAI,
     #[serde(rename = "team")]
@@ -32,7 +32,7 @@ impl CapabilityCategory {
     pub const ALL: [Self; 11] = [
         Self::Conversation,
         Self::Intelligence,
-        Self::Skills,
+        Self::Workflows,
         Self::LocalAI,
         Self::Team,
         Self::Settings,
@@ -47,7 +47,7 @@ impl CapabilityCategory {
         match self {
             Self::Conversation => "conversation",
             Self::Intelligence => "intelligence",
-            Self::Skills => "skills",
+            Self::Workflows => "workflows",
             Self::LocalAI => "local_ai",
             Self::Team => "team",
             Self::Settings => "settings",
@@ -68,7 +68,7 @@ impl FromStr for CapabilityCategory {
         match normalized.as_str() {
             "conversation" => Ok(Self::Conversation),
             "intelligence" => Ok(Self::Intelligence),
-            "skills" => Ok(Self::Skills),
+            "workflows" | "skills" => Ok(Self::Workflows),
             "local_ai" | "local-ai" | "local ai" | "localai" => Ok(Self::LocalAI),
             "team" => Ok(Self::Team),
             "settings" => Ok(Self::Settings),

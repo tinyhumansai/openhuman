@@ -199,7 +199,7 @@ fn resolve_translates_openhuman_tier_aliases_via_route_table() {
     assert_eq!(reasoning_idx, 1);
     assert_eq!(reasoning_model, "gpt-5.5");
 
-    let (chat_idx, chat_model) = router.resolve("reasoning-quick-v1");
+    let (chat_idx, chat_model) = router.resolve("chat-v1");
     assert_eq!(chat_idx, 1);
     assert_eq!(chat_model, "gpt-5.5-mini");
 
@@ -249,6 +249,7 @@ fn every_tier_alias_falls_back_to_default_model_when_unrouted() {
 
     for alias in [
         "reasoning-v1",
+        "chat-v1",
         "reasoning-quick-v1",
         "agentic-v1",
         "coding-v1",

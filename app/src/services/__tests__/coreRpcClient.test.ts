@@ -1105,6 +1105,20 @@ describe('getCoreRpcToken (cloud-mode persistence)', () => {
     expect(headers.Authorization).toBe('Bearer cloud-token-abc');
   });
 
+  test('honours the host-injected notch core token before the cache/store', async () => {
+    // The notch / overlay WKWebViews have no Tauri IPC; the Rust host injects
+    // the bearer as a global, which must win ahead of the resolution cache.
+    (globalThis as { __OPENHUMAN_NOTCH_CORE_TOKEN__?: string }).__OPENHUMAN_NOTCH_CORE_TOKEN__ =
+      'notch-bearer-xyz';
+    try {
+      const { getCoreRpcToken } = await import('../coreRpcClient');
+      await expect(getCoreRpcToken()).resolves.toBe('notch-bearer-xyz');
+    } finally {
+      delete (globalThis as { __OPENHUMAN_NOTCH_CORE_TOKEN__?: string })
+        .__OPENHUMAN_NOTCH_CORE_TOKEN__;
+    }
+  });
+
   test('clearCoreRpcTokenCache forces a re-resolve on the next call', async () => {
     let storedToken: string | null = 'first-token';
     vi.doMock('../../utils/configPersistence', () => ({

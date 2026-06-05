@@ -391,6 +391,18 @@ export async function getCoreRpcUrl(): Promise<string> {
  *      stored token is set so existing tests remain unaffected.
  */
 export async function getCoreRpcToken(): Promise<string | null> {
+  // Non-Tauri first-party webviews (the notch / overlay NSPanel WKWebViews have
+  // no Tauri IPC) receive the per-process bearer injected as a global by the
+  // Rust host. Honour it first — and not behind the resolution cache, so a late
+  // injection (the host injects on a timer once the core URL is ready) still wins.
+  const injected = (globalThis as { __OPENHUMAN_NOTCH_CORE_TOKEN__?: string })
+    .__OPENHUMAN_NOTCH_CORE_TOKEN__;
+  if (typeof injected === 'string' && injected) {
+    resolvedCoreRpcToken = injected;
+    didResolveCoreRpcToken = true;
+    return injected;
+  }
+
   if (didResolveCoreRpcToken) return resolvedCoreRpcToken;
 
   const storedToken = getStoredCoreToken();

@@ -272,7 +272,7 @@ async fn generated_tool_wrapper_executes_and_exposes_metadata() {
     let adapter = Arc::new(RecordingGeneratedAdapter);
     let mut write_tool = basic_generated_definition("write_status");
     write_tool.permission_level = PermissionLevel::Write;
-    write_tool.category = ToolCategory::Skill;
+    write_tool.category = ToolCategory::Workflow;
     write_tool.scope = ToolScope::AgentOnly;
     write_tool.risk = Some(GeneratedToolRisk::ExternalWrite);
 
@@ -281,7 +281,7 @@ async fn generated_tool_wrapper_executes_and_exposes_metadata() {
 
     assert_eq!(tool.name(), "write_status");
     assert_eq!(tool.permission_level(), PermissionLevel::Write);
-    assert_eq!(tool.category(), ToolCategory::Skill);
+    assert_eq!(tool.category(), ToolCategory::Workflow);
     assert_eq!(tool.scope(), ToolScope::AgentOnly);
     assert!(tool.external_effect());
     assert_eq!(

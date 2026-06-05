@@ -148,8 +148,9 @@ describe('Skills page — Channels grid', () => {
 
   it('does not surface a Channels chip in the category filter inside the Integrations card', () => {
     renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
+    fireEvent.click(screen.getByRole('tab', { name: 'Composio' }));
 
-    // The composio tab is active by default — Composio Integrations card is visible.
+    // The Composio tab owns the Integrations category filter.
     const integrationsHeading = screen.getByRole('heading', { name: 'Composio Integrations' });
     const integrationsCard = integrationsHeading.closest('.rounded-2xl');
     expect(integrationsCard).not.toBeNull();

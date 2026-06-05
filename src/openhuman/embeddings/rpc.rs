@@ -414,3 +414,67 @@ pub(crate) fn resolve_api_key(config: &Config, provider_name: &str) -> String {
         .flatten()
         .unwrap_or_default()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    /// The seam the memory factory depends on (TAURI-RUST-52S fix): the three
+    /// `create_memory_with_local_ai` call sites resolve the user's stored BYO
+    /// embedding credential via `resolve_api_key` and thread it into the
+    /// provider. If this lookup silently returns "" for a configured key —
+    /// wrong cred slug, encryption mismatch, profile-store regression — the
+    /// memory pipeline reverts to sending an empty bearer and Cohere 401s on
+    /// every embed. Lock the round-trip: store under `embeddings:<slug>`, read
+    /// it back; an unrelated provider must stay empty (no cross-bleed).
+    #[test]
+    fn resolve_api_key_returns_stored_embeddings_credential() {
+        let tmp = TempDir::new().unwrap();
+        let mut config = Config::default();
+        config.config_path = tmp.path().join("config.toml");
+
+        // Nothing stored yet → empty (the empty-key guard's "" input).
+        assert_eq!(resolve_api_key(&config, "cohere"), "");
+
+        // Store a Cohere embeddings key exactly as `set_api_key` does.
+        AuthService::from_config(&config)
+            .store_provider_token(
+                "embeddings:cohere",
+                "default",
+                "sk-cohere-test",
+                HashMap::new(),
+                true,
+            )
+            .unwrap();
+
+        // Resolve returns it; a provider with no stored key stays empty.
+        assert_eq!(resolve_api_key(&config, "cohere"), "sk-cohere-test");
+        assert_eq!(resolve_api_key(&config, "voyage"), "");
+    }
+
+    /// `custom:<url>` providers must look up under the `embeddings:custom`
+    /// slug (the inline URL is not part of the credential key), mirroring the
+    /// slug normalization in `embed`/`set_api_key`.
+    #[test]
+    fn resolve_api_key_normalizes_custom_prefix_to_custom_slug() {
+        let tmp = TempDir::new().unwrap();
+        let mut config = Config::default();
+        config.config_path = tmp.path().join("config.toml");
+
+        AuthService::from_config(&config)
+            .store_provider_token(
+                "embeddings:custom",
+                "default",
+                "sk-custom-test",
+                HashMap::new(),
+                true,
+            )
+            .unwrap();
+
+        assert_eq!(
+            resolve_api_key(&config, "custom:http://localhost:1234"),
+            "sk-custom-test"
+        );
+    }
+}

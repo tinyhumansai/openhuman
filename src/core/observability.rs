@@ -249,10 +249,39 @@ pub enum ExpectedErrorKind {
     /// contention (handled by the store's busy-retry loop) and unrelated DB
     /// failures in other domains still reach Sentry.
     SubconsciousSchemaUnavailable,
+    /// The user invoked "Import Codex CLI login" (Settings → AI → Codex auth)
+    /// but the Codex CLI auth at `~/.codex/auth.json` is absent or unusable:
+    /// the file doesn't exist (the user never ran `codex login`), can't be
+    /// parsed, or carries no tokens / no access token. The import RPC already
+    /// returns an actionable error string ("Run `codex login` first, then try
+    /// Codex auth again.") that the frontend surfaces inline
+    /// (`AIPanel.tsx` → `setCodexAuthError`), and Sentry has no remediation
+    /// path — we can't run `codex login` for the user. The error strings also
+    /// embed the absolute `~/.codex/auth.json` path (home dir / username), so
+    /// demoting these out of the event stream is a privacy win on top of the
+    /// noise reduction (mirror `FilesystemUserPathInvalid` / `DiskFull`).
+    ///
+    /// Drops Sentry TAURI-RUST-83A (~430 events / 40 users on
+    /// `openhuman@0.57.13`). Anchored to the `codex cli auth` /
+    /// `.codex/auth.json` envelope produced by
+    /// [`crate::openhuman::inference::openai_oauth::store::import_codex_cli_auth_from_path`]
+    /// — a genuine keyring/persist failure in `upsert_profile` carries neither
+    /// anchor, so a real defect in the import code still reaches Sentry.
+    CodexCliAuthUnavailable,
 }
 
 pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     let lower = message.to_ascii_lowercase();
+    // Check the Codex-CLI import envelope first: it is highly specific
+    // (literal `codex cli auth` / `.codex/auth.json`) and carries no overlap
+    // with the generic matchers below, so ordering is for clarity, not
+    // precedence. See `ExpectedErrorKind::CodexCliAuthUnavailable`. The
+    // keyring/persist failure path (`upsert_profile`) stringifies to generic
+    // keychain / "auth profile" / SQLite text that contains neither anchor,
+    // so a real defect in the import still falls through to capture.
+    if lower.contains("codex cli auth") || lower.contains(".codex/auth.json") {
+        return Some(ExpectedErrorKind::CodexCliAuthUnavailable);
+    }
     if lower.contains("local ai is disabled") {
         return Some(ExpectedErrorKind::LocalAiDisabled);
     }
@@ -263,9 +292,17 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     // no longer reaches here — but other direct-mode ops the user invokes
     // explicitly (execute / authorize) can still surface it, and it is the
     // same user-config state with no Sentry-actionable signal.
+    //
+    // `"no api key supplied"` is Cohere's exact 401 body wording when the
+    // hosted `/v2/embed` endpoint is called with an empty bearer (the BYO-key
+    // embedding path with no key configured). The `CohereEmbedding::embed`
+    // guard now fast-fails before issuing that request, but this arm demotes
+    // any residual 401 of that shape — older clients, or a present-but-rejected
+    // key — so the flood (TAURI-RUST-52S) stays out of Sentry either way.
     if lower.contains("api key not set")
         || lower.contains("missing api key")
         || lower.contains("no api key is configured")
+        || lower.contains("no api key supplied")
     {
         return Some(ExpectedErrorKind::ApiKeyMissing);
     }
@@ -1569,6 +1606,21 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
                 "[observability] {domain}.{operation} skipped expected subconscious schema DB-unavailable error"
             );
         }
+        ExpectedErrorKind::CodexCliAuthUnavailable => {
+            // User-state condition: the Codex CLI login at `~/.codex/auth.json`
+            // is missing / unparseable / has no tokens. The import RPC already
+            // returned the actionable "Run `codex login` first" string and the
+            // UI surfaces it inline — Sentry has nothing to act on. Demote at
+            // `info!` (mirrors `LocalAiBinaryMissing`). Do NOT include the raw
+            // `message`: it embeds the absolute `~/.codex/auth.json` path
+            // (home dir / username). Log only domain/operation/kind — no PII.
+            tracing::info!(
+                domain = domain,
+                operation = operation,
+                kind = "codex_cli_auth_unavailable",
+                "[observability] {domain}.{operation} skipped expected codex-cli auth-unavailable error"
+            );
+        }
     }
 }
 
@@ -2033,6 +2085,62 @@ mod tests {
         );
     }
 
+    /// Sentry TAURI-RUST-83A: the Codex-CLI import user-state errors must
+    /// classify as `CodexCliAuthUnavailable` so the ~430-event flood stays out
+    /// of Sentry. Verbatim envelope shapes from
+    /// `openai_oauth::store::import_codex_cli_auth_from_path` (with a fake path
+    /// in place of the real `~/.codex/auth.json`).
+    #[test]
+    fn classifies_codex_cli_import_user_state_as_expected() {
+        for msg in [
+            "Could not read Codex CLI auth at /home/u/.codex/auth.json: No such file \
+             or directory. Run `codex login` first, then try Codex auth again.",
+            "Could not parse Codex CLI auth at /home/u/.codex/auth.json: expected value. \
+             Run `codex login` again, then try Codex auth again.",
+            "Codex CLI auth at /home/u/.codex/auth.json has no tokens. Run `codex login` first.",
+            "Codex CLI auth at /home/u/.codex/auth.json has no access token. Run `codex login` first.",
+            "home directory is not set; cannot find ~/.codex/auth.json",
+        ] {
+            assert_eq!(
+                expected_error_kind(msg),
+                Some(ExpectedErrorKind::CodexCliAuthUnavailable),
+                "must classify as CodexCliAuthUnavailable: {msg}"
+            );
+        }
+    }
+
+    /// Exercise the full demotion path (classifier -> report arm) for a codex
+    /// auth-unavailable message: it must take the expected branch and not panic.
+    #[test]
+    fn report_error_or_expected_demotes_codex_auth_unavailable() {
+        report_error_or_expected(
+            "Could not read Codex CLI auth at /home/u/.codex/auth.json: No such file \
+             or directory. Run `codex login` first, then try Codex auth again.",
+            "inference",
+            "openai_oauth_import_codex_cli",
+            &[],
+        );
+    }
+
+    /// Guard against over-suppression on the import path: a genuine
+    /// keyring/persist failure (`upsert_profile`) or an unrelated error carries
+    /// neither the `codex cli auth` nor the `.codex/auth.json` anchor and MUST
+    /// still reach Sentry (stay `None`) so a real defect isn't blinded.
+    #[test]
+    fn does_not_classify_codex_persist_failure_as_codex_auth_unavailable() {
+        for msg in [
+            "failed to write auth profile store: keyring error: access denied",
+            "Auth profile not found: provider:openai/oauth",
+            "unable to open database file",
+        ] {
+            assert_ne!(
+                expected_error_kind(msg),
+                Some(ExpectedErrorKind::CodexCliAuthUnavailable),
+                "real-defect/unrelated error must NOT be demoted as codex auth-unavailable: {msg}"
+            );
+        }
+    }
+
     /// Sentry TAURI-RUST-R4: the composio direct-mode factory bail must
     /// classify as `ApiKeyMissing` so any residual emit (explicit
     /// execute/authorize call with no key) stays out of Sentry. Uses the
@@ -2043,6 +2151,23 @@ mod tests {
             expected_error_kind(
                 "[composio] list_connections: composio direct mode selected but no api key \
                  is configured (set via composio.set_api_key RPC or config.composio.api_key)"
+            ),
+            Some(ExpectedErrorKind::ApiKeyMissing)
+        );
+    }
+
+    /// Sentry TAURI-RUST-52S: Cohere's hosted `/v2/embed` returns a 401 with
+    /// body `"no api key supplied"` when called with an empty bearer (BYO-key
+    /// embedding path, no key configured). Verbatim wire shape from the embed
+    /// client must classify as `ApiKeyMissing` so the 8.7k-event flood stays
+    /// out of Sentry even from clients that predate the call-site guard.
+    #[test]
+    fn classifies_cohere_missing_api_key_401_as_api_key_missing() {
+        assert_eq!(
+            expected_error_kind(
+                "Cohere embed API error (401 Unauthorized): \
+                 {\"id\":\"3176e92f-d18e-4019-bd43-314821504a61\",\
+                 \"message\":\"no api key supplied\"}"
             ),
             Some(ExpectedErrorKind::ApiKeyMissing)
         );

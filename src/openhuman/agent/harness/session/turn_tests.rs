@@ -444,7 +444,7 @@ fn trim_history_snaps_past_orphaned_tool_results() {
 fn build_parent_context_and_sanitize_helpers_cover_snapshot_paths() {
     let mut agent = make_agent(None);
     agent.last_memory_context = Some("remember this".into());
-    agent.skills = vec![crate::openhuman::skills::Skill {
+    agent.skills = vec![crate::openhuman::workflows::Workflow {
         name: "demo".into(),
         ..Default::default()
     }];
@@ -652,6 +652,41 @@ async fn execute_tool_call_rewrites_legacy_run_skill_for_builtin_cron_tools() {
             }
         }),
         tool_call_id: Some("tc-run-skill-1".into()),
+    };
+
+    let (result, record) = agent.execute_tool_call(&call, 0).await;
+    assert!(result.success, "{}", result.output);
+    assert_eq!(result.name, "cron_add");
+    assert_eq!(record.name, "cron_add");
+    assert!(result.output.contains("\"every_ms\":60000"));
+}
+
+#[tokio::test]
+async fn execute_tool_call_rewrites_run_workflow_for_builtin_cron_tools() {
+    let provider: Arc<dyn Provider> = Arc::new(DummyProvider);
+    let agent = make_agent_with_builder(
+        provider,
+        vec![Box::new(CronAddProbeTool)],
+        Box::new(FixedMemoryLoader {
+            context: String::new(),
+        }),
+        vec![],
+        crate::openhuman::config::AgentConfig::default(),
+        crate::openhuman::config::ContextConfig::default(),
+    );
+    // Current form: `run_workflow({workflow_id: "<builtin>", inputs})`.
+    let call = ParsedToolCall {
+        name: "run_workflow".into(),
+        arguments: serde_json::json!({
+            "workflow_id": "cron_add",
+            "inputs": {
+              "name": "water-reminder",
+              "schedule": { "kind": "every", "every_ms": 60000 },
+              "job_type": "agent",
+              "prompt": "remind me to drink water"
+            }
+        }),
+        tool_call_id: Some("tc-run-workflow-1".into()),
     };
 
     let (result, record) = agent.execute_tool_call(&call, 0).await;

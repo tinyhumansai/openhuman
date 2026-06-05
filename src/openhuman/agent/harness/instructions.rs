@@ -39,7 +39,7 @@ pub(crate) fn build_tool_instructions(tools_registry: &[Box<dyn Tool>]) -> Strin
 
 /// Same as [`build_tool_instructions`] but accepts a pre-filtered slice
 /// of trait-object references (used by channel startup to exclude
-/// Skill-category tools from the main agent prompt).
+/// Workflow-category tools from the main agent prompt).
 pub(crate) fn build_tool_instructions_filtered(tools: &[&dyn Tool]) -> String {
     let mut instructions = tool_instructions_preamble();
     for tool in tools {

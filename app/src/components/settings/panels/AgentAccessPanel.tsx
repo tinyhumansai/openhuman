@@ -84,8 +84,6 @@ const AgentAccessPanel = () => {
   // RPC is pending or when not running under Tauri — the JSX falls back to
   // the documented defaults so the section never renders empty.
   const [agentPaths, setAgentPaths] = useState<AgentPaths | null>(null);
-  // Editable action_dir (issue #3240). `actionDirEditing` toggles the input;
-  // `actionDirInput` holds the in-progress value; error/saved are inline status.
   const [actionDirEditing, setActionDirEditing] = useState(false);
   const [actionDirInput, setActionDirInput] = useState('');
   const [actionDirError, setActionDirError] = useState<string | null>(null);
@@ -130,6 +128,7 @@ const AgentAccessPanel = () => {
         const pathsResp = await openhumanGetAgentPaths();
         if (cancelled) return;
         setAgentPaths(pathsResp.result);
+        setActionDirInput(pathsResp.result.action_dir);
       } catch {
         // Non-fatal: the Directories section falls back to the documented
         // defaults below. We don't gate the rest of the panel on this.

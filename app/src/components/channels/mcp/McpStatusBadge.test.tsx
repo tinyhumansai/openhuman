@@ -19,6 +19,13 @@ describe('McpStatusBadge', () => {
     expect(screen.getByRole('status')).toHaveTextContent(expectedLabel);
   });
 
+  it('renders the disabled status badge with label and italic style', () => {
+    render(<McpStatusBadge status="disabled" />);
+    const badge = screen.getByRole('status');
+    expect(badge).toHaveTextContent('Disabled');
+    expect(badge.className).toContain('italic');
+  });
+
   it('exposes role="status" and aria-live="polite" for assistive tech', () => {
     render(<McpStatusBadge status="connecting" />);
     const badge = screen.getByRole('status');

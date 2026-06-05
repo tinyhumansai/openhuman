@@ -133,6 +133,8 @@ pub async fn ingest_summary(
         sealed_at: now,
         deleted: false,
         embedding: None,
+        doc_id: None,
+        version_ms: None,
     };
 
     // Persist summary + update buffer in one transaction.

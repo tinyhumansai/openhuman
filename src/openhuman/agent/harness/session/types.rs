@@ -55,9 +55,8 @@ pub struct Agent {
     pub(super) temperature: f64,
     pub(super) workspace_dir: std::path::PathBuf,
     pub(super) action_dir: std::path::PathBuf,
-    pub(super) skills: Vec<crate::openhuman::skills::Skill>,
+    pub(super) skills: Vec<crate::openhuman::workflows::Workflow>,
     /// Agent workflows discovered at session start.
-    pub(super) workflows: Vec<crate::openhuman::agent_workflows::Workflow>,
     pub(super) auto_save: bool,
     /// Last memory context loaded for the current turn. Stored so it can
     /// be forwarded to subagents via `ParentExecutionContext`.
@@ -271,10 +270,9 @@ pub struct AgentBuilder {
     pub(super) temperature: Option<f64>,
     pub(super) workspace_dir: Option<std::path::PathBuf>,
     pub(super) action_dir: Option<std::path::PathBuf>,
-    pub(super) skills: Option<Vec<crate::openhuman::skills::Skill>>,
+    pub(super) skills: Option<Vec<crate::openhuman::workflows::Workflow>>,
     /// Agent workflows to surface in the prompt. Populated from `load_workflows`
     /// at session start; defaults to empty when not explicitly set.
-    pub(super) workflows: Option<Vec<crate::openhuman::agent_workflows::Workflow>>,
     pub(super) auto_save: Option<bool>,
     pub(super) post_turn_hooks: Vec<Arc<dyn PostTurnHook>>,
     pub(super) learning_enabled: bool,

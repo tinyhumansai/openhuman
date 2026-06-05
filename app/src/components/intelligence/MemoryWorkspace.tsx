@@ -111,6 +111,22 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
     };
   }, []);
 
+  // Live refresh: re-pull the graph every 30s while this tab is mounted so it
+  // reflects background tree growth (e.g. seal_document jobs draining as
+  // Notion syncs) without a manual refresh. The Memory tab unmounts this
+  // component when inactive, which clears the interval — so the poll only runs
+  // while the tab is actually open. Ticks are skipped while the window is
+  // backgrounded to avoid needless RPC churn; the next visible tick catches up.
+  useEffect(() => {
+    const GRAPH_POLL_MS = 30_000;
+    const id = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      console.debug('[ui-flow][memory-workspace] graph poll tick → bump version');
+      setGraphVersion(v => v + 1);
+    }, GRAPH_POLL_MS);
+    return () => clearInterval(id);
+  }, []);
+
   const handleWipe = useCallback(async () => {
     // Two-step confirm so accidental clicks can't nuke a workspace.
     const ok = window.confirm(t('workspace.wipeConfirm'));
@@ -236,6 +252,17 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
         data-testid="memory-actions">
         <ModeToggle mode={mode} onChange={setMode} />
         <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setGraphVersion(v => v + 1)}
+            data-testid="memory-graph-refresh"
+            className="inline-flex items-center gap-2 rounded-lg
+                       border border-stone-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-4 py-2 text-sm font-semibold
+                       text-stone-700 dark:text-neutral-200 shadow-sm transition-colors hover:bg-stone-50 dark:hover:bg-neutral-800
+                       focus:outline-none focus:ring-2 focus:ring-stone-200"
+            title={t('common.refresh')}>
+            <RefreshIcon /> {t('common.refresh')}
+          </button>
           <button
             type="button"
             onClick={handleWipe}

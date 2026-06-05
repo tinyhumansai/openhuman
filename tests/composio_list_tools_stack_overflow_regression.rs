@@ -354,6 +354,7 @@ async fn drive_subagent() {
         session_key: "0_stack_regression".into(),
         session_parent_prefix: None,
         on_progress: None,
+        run_queue: None,
     };
 
     let mut def = AgentDefinitionRegistry::global()

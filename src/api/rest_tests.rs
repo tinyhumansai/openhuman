@@ -1,6 +1,6 @@
 use super::{
-    key_bytes_from_string, parse_message_path, sanitize_client_version, BackendApiError,
-    BackendOAuthClient,
+    flatten_authed_error, key_bytes_from_string, parse_message_path, sanitize_client_version,
+    BackendApiError, BackendOAuthClient,
 };
 use axum::extract::State;
 use axum::http::HeaderMap;
@@ -416,6 +416,68 @@ async fn authed_json_surfaces_unauthorized_on_401() {
     };
     assert_eq!(method, "GET");
     assert_eq!(path, "/referral/stats");
+}
+
+#[test]
+fn flatten_authed_error_maps_unauthorized_to_session_expired_sentinel() {
+    // #3297: the typed `Unauthorized` (expected session-lapse 401) must flatten
+    // onto a string that the JSON-RPC session-expiry classifiers recognise, so
+    // it is suppressed from Sentry (TAURI-RUST-8WY / 8WZ) instead of leaking.
+    let err = anyhow::Error::new(BackendApiError::Unauthorized {
+        method: "GET".to_string(),
+        path: "/teams/me/usage".to_string(),
+    });
+    let flat = flatten_authed_error(err);
+
+    // Carries the SESSION_EXPIRED sentinel + preserves method/path for logs.
+    assert!(
+        flat.contains("SESSION_EXPIRED"),
+        "expected sentinel, got: {flat}"
+    );
+    assert!(flat.contains("GET"), "method preserved: {flat}");
+    assert!(flat.contains("/teams/me/usage"), "path preserved: {flat}");
+
+    // Contract cross-check: the flattened string MUST classify as session
+    // expiry. This couples the mapping to the actual classifier — if either the
+    // sentinel or the classifier drifts, this fails instead of silently leaking.
+    assert!(
+        crate::core::observability::is_session_expired_message(&flat),
+        "flattened Unauthorized must classify as session expiry: {flat}"
+    );
+}
+
+#[test]
+fn flatten_authed_error_preserves_non_unauthorized_chain() {
+    // A non-Unauthorized failure (e.g. a transient network/timeout error) keeps
+    // its full `{e:#}` anyhow chain and must NOT be demoted to session expiry —
+    // genuine failures still reach Sentry.
+    let err = anyhow::anyhow!("connect timeout").context("backend request GET /teams/me/usage");
+    let flat = flatten_authed_error(err);
+
+    assert!(!flat.contains("SESSION_EXPIRED"), "must not map: {flat}");
+    assert!(flat.contains("connect timeout"), "cause preserved: {flat}");
+    assert!(
+        !crate::core::observability::is_session_expired_message(&flat),
+        "non-auth error must NOT classify as session expiry: {flat}"
+    );
+}
+
+#[test]
+fn flatten_authed_error_does_not_swallow_message_not_found() {
+    // `MessageNotFound` is a different expected state handled by its own callers
+    // (channel streaming/delete paths downcast it); it must not be collapsed
+    // into the session-expiry sentinel here.
+    let err = anyhow::Error::new(BackendApiError::MessageNotFound {
+        provider: "telegram".to_string(),
+        message_id: "1103".to_string(),
+    });
+    let flat = flatten_authed_error(err);
+
+    assert!(!flat.contains("SESSION_EXPIRED"), "must not map: {flat}");
+    assert!(
+        flat.contains("message not found"),
+        "display preserved: {flat}"
+    );
 }
 
 #[tokio::test]

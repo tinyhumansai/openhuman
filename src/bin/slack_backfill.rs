@@ -451,6 +451,8 @@ async fn main() -> Result<()> {
                 toolkit: conn.toolkit.clone(),
                 connection_id: Some(conn.id.clone()),
                 usage: Default::default(),
+                max_items: None,
+                sync_depth_days: None,
             };
             match run_backfill_via_search(&ctx, cli.days).await {
                 Ok(outcome) => {
@@ -549,6 +551,8 @@ async fn main() -> Result<()> {
             toolkit: conn.toolkit.clone(),
             connection_id: Some(conn.id.clone()),
             usage: Default::default(),
+            max_items: None,
+            sync_depth_days: None,
         };
         match provider.sync(&ctx, SyncReason::Manual).await {
             Ok(outcome) => {

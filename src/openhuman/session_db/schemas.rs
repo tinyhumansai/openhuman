@@ -7,6 +7,7 @@ use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 use crate::openhuman::config::rpc as config_rpc;
 use crate::rpc::RpcOutcome;
 
+use super::run_ledger::{AgentRunListRequest, RunEventListRequest};
 use super::types::SessionSearchParams;
 
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
@@ -18,6 +19,9 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schema_for("session_db_get_tool_calls"),
         schema_for("session_db_get_children"),
         schema_for("session_db_import_transcript"),
+        schema_for("run_ledger_list"),
+        schema_for("run_ledger_get"),
+        schema_for("run_ledger_events"),
     ]
 }
 
@@ -50,6 +54,18 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schema_for("session_db_import_transcript"),
             handler: handle_session_db_import_transcript,
+        },
+        RegisteredController {
+            schema: schema_for("run_ledger_list"),
+            handler: handle_run_ledger_list,
+        },
+        RegisteredController {
+            schema: schema_for("run_ledger_get"),
+            handler: handle_run_ledger_get,
+        },
+        RegisteredController {
+            schema: schema_for("run_ledger_events"),
+            handler: handle_run_ledger_events,
         },
     ]
 }
@@ -145,6 +161,45 @@ fn schema_for(function: &str) -> ControllerSchema {
                 "Absolute path to the JSONL transcript file.",
             )],
             outputs: vec![json_output("session", "Imported SessionRecord.")],
+        },
+        "run_ledger_list" => ControllerSchema {
+            namespace: "run_ledger",
+            function: "list",
+            description:
+                "List durable agent/workflow run ledger rows with optional filters and pagination.",
+            inputs: vec![
+                optional_str("status", "Filter by run status."),
+                optional_str("kind", "Filter by run kind."),
+                optional_str("parentRunId", "Filter by parent run id."),
+                optional_str("parentThreadId", "Filter by parent thread id."),
+                optional_u64("limit", "Max runs to return (default 50, max 500)."),
+                optional_u64("offset", "Pagination offset."),
+            ],
+            outputs: vec![json_output(
+                "result",
+                "AgentRunListResponse with runs array and count.",
+            )],
+        },
+        "run_ledger_get" => ControllerSchema {
+            namespace: "run_ledger",
+            function: "get",
+            description: "Get a durable agent/workflow run ledger row by id.",
+            inputs: vec![required_str("id", "Run id.")],
+            outputs: vec![json_output("run", "AgentRun payload or null.")],
+        },
+        "run_ledger_events" => ControllerSchema {
+            namespace: "run_ledger",
+            function: "events",
+            description: "List recent durable events for a run, ordered by sequence.",
+            inputs: vec![
+                required_str("runId", "Run id."),
+                optional_u64("afterSequence", "Only return events after this sequence."),
+                optional_u64("limit", "Max events to return (default 100, max 1000)."),
+            ],
+            outputs: vec![json_output(
+                "events",
+                "RunEventListResponse with ordered events and count.",
+            )],
         },
         _ => ControllerSchema {
             namespace: "session_db",
@@ -380,6 +435,74 @@ fn handle_session_db_import_transcript(params: Map<String, Value>) -> Controller
     })
 }
 
+fn handle_run_ledger_list(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let cid = new_correlation_id();
+        log::debug!(target: "run_ledger_rpc", "[run_ledger_rpc][{cid}] list.entry");
+        let config = config_rpc::load_config_with_timeout().await.inspect_err(|err| {
+            log::warn!(target: "run_ledger_rpc", "[run_ledger_rpc][{cid}] list.config_failed err={err}");
+        })?;
+        let request: AgentRunListRequest = if params.is_empty() {
+            AgentRunListRequest::default()
+        } else {
+            serde_json::from_value(Value::Object(params)).map_err(|e| {
+                let s = format!("invalid run ledger list params: {e}");
+                log::warn!(target: "run_ledger_rpc", "[run_ledger_rpc][{cid}] list.bad_params err={s}");
+                s
+            })?
+        };
+        let response = super::run_ledger::list_agent_runs(&config, &request).map_err(|e| {
+            let s = e.to_string();
+            log::warn!(target: "run_ledger_rpc", "[run_ledger_rpc][{cid}] list.error err={s}");
+            s
+        })?;
+        to_json(response)
+    })
+}
+
+fn handle_run_ledger_get(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let cid = new_correlation_id();
+        log::debug!(target: "run_ledger_rpc", "[run_ledger_rpc][{cid}] get.entry");
+        let config = config_rpc::load_config_with_timeout().await.inspect_err(|err| {
+            log::warn!(target: "run_ledger_rpc", "[run_ledger_rpc][{cid}] get.config_failed err={err}");
+        })?;
+        let id = params
+            .get("id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "missing required param: id".to_string())?;
+        let run = super::run_ledger::get_agent_run(&config, id).map_err(|e| {
+            let s = e.to_string();
+            log::warn!(target: "run_ledger_rpc", "[run_ledger_rpc][{cid}] get.error id={id} err={s}");
+            s
+        })?;
+        to_json(serde_json::json!({ "run": run }))
+    })
+}
+
+fn handle_run_ledger_events(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let cid = new_correlation_id();
+        log::debug!(target: "run_ledger_rpc", "[run_ledger_rpc][{cid}] events.entry");
+        let config = config_rpc::load_config_with_timeout().await.inspect_err(|err| {
+            log::warn!(target: "run_ledger_rpc", "[run_ledger_rpc][{cid}] events.config_failed err={err}");
+        })?;
+        let request: RunEventListRequest =
+            serde_json::from_value(Value::Object(params)).map_err(|e| {
+                let s = format!("invalid run ledger events params: {e}");
+                log::warn!(target: "run_ledger_rpc", "[run_ledger_rpc][{cid}] events.bad_params err={s}");
+                s
+            })?;
+        let response =
+            super::run_ledger::list_recent_run_events(&config, &request).map_err(|e| {
+                let s = e.to_string();
+                log::warn!(target: "run_ledger_rpc", "[run_ledger_rpc][{cid}] events.error err={s}");
+                s
+            })?;
+        to_json(response)
+    })
+}
+
 fn to_json<T: serde::Serialize>(value: T) -> Result<Value, String> {
     RpcOutcome::new(value, vec![]).into_cli_compatible_json()
 }
@@ -425,12 +548,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn all_controller_schemas_lists_seven_functions() {
+    fn all_controller_schemas_lists_registered_functions() {
         let schemas = all_controller_schemas();
-        assert_eq!(schemas.len(), 7);
-        for schema in &schemas {
-            assert_eq!(schema.namespace, "session_db");
-        }
+        assert_eq!(schemas.len(), 10);
+        assert!(schemas
+            .iter()
+            .any(|schema| schema.namespace == "session_db"));
+        assert!(schemas
+            .iter()
+            .any(|schema| schema.namespace == "run_ledger"));
     }
 
     #[test]
@@ -481,6 +607,17 @@ mod tests {
     fn schema_for_unknown_returns_error_shape() {
         let s = schema_for("session_db_nonexistent");
         assert_eq!(s.function, "unknown");
+    }
+
+    #[test]
+    fn schema_for_run_ledger_events_requires_run_id() {
+        let s = schema_for("run_ledger_events");
+        assert_eq!(s.namespace, "run_ledger");
+        assert_eq!(s.function, "events");
+        assert!(s
+            .inputs
+            .iter()
+            .any(|input| input.name == "runId" && input.required));
     }
 
     #[test]

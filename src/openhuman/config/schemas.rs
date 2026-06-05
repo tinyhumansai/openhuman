@@ -192,6 +192,8 @@ struct VoiceServerSettingsUpdate {
     min_duration_secs: Option<f32>,
     silence_threshold: Option<f32>,
     custom_dictionary: Option<Vec<String>>,
+    always_on_enabled: Option<bool>,
+    wake_word: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -282,6 +284,8 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("get_search_settings"),
         schemas("get_activity_level_settings"),
         schemas("update_activity_level_settings"),
+        schemas("get_memory_sync_settings"),
+        schemas("update_memory_sync_settings"),
         schemas("get_sandbox_settings"),
         schemas("update_sandbox_settings"),
     ]
@@ -444,6 +448,14 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("update_activity_level_settings"),
             handler: handle_update_activity_level_settings,
+        },
+        RegisteredController {
+            schema: schemas("get_memory_sync_settings"),
+            handler: handle_get_memory_sync_settings,
+        },
+        RegisteredController {
+            schema: schemas("update_memory_sync_settings"),
+            handler: handle_update_memory_sync_settings,
         },
         RegisteredController {
             schema: schemas("get_sandbox_settings"),
@@ -969,6 +981,25 @@ pub fn schemas(function: &str) -> ControllerSchema {
             inputs: vec![optional_string("level", "Activity level: off | minimal | moderate | active | always_on (or 0–4).")],
             outputs: vec![json_output("settings", "Updated activity level settings with cost estimates.")],
         },
+        "get_memory_sync_settings" => ControllerSchema {
+            namespace: "config",
+            function: "get_memory_sync_settings",
+            description: "Get the global memory-sync cadence applied to all opted-in sources: stored value, resolved selected cadence, manual/default flags, the 24h default, and the preset options (4h/12h/24h).",
+            inputs: vec![],
+            outputs: vec![json_output("settings", "Memory sync schedule settings.")],
+        },
+        "update_memory_sync_settings" => ControllerSchema {
+            namespace: "config",
+            function: "update_memory_sync_settings",
+            description: "Set the global memory-sync cadence. Omit/null resets to the default; 0 means Manual only (auto-sync disabled); a positive value is seconds between syncs. Takes effect on the next scheduler tick.",
+            inputs: vec![FieldSchema {
+                name: "sync_interval_secs",
+                ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
+                comment: "Seconds between auto-syncs. null = default (24h); 0 = Manual only; n>0 = sync every n seconds.",
+                required: false,
+            }],
+            outputs: vec![json_output("settings", "Updated memory sync schedule settings.")],
+        },
         "get_sandbox_settings" => ControllerSchema {
             namespace: "config",
             function: "get_sandbox_settings",
@@ -1035,7 +1066,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
             namespace: "config",
             function: "get_agent_paths",
             description:
-                "Resolve the agent's filesystem roots (action_dir, workspace_dir, projects_dir) so the UI can render live values instead of hard-coded strings. Read-only.",
+                "Resolve the agent's filesystem roots (action_dir, workspace_dir, projects_dir) so the UI can render live values instead of hard-coded strings. Read-only. Also returns `action_dir_env_override: bool` so the UI knows when OPENHUMAN_ACTION_DIR is forcing the value (Settings → action_dir editing disabled in that case).",
             inputs: vec![],
             outputs: vec![json_output(
                 "paths",
@@ -1130,6 +1161,14 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     comment: "Custom vocabulary words to bias whisper toward.",
                     required: false,
                 },
+                optional_bool(
+                    "always_on_enabled",
+                    "Continuous always-on listening (no hotkey). Opt-in.",
+                ),
+                optional_string(
+                    "wake_word",
+                    "Always-on wake word; utterances must contain it (default 'Hey Tiny').",
+                ),
             ],
             outputs: vec![json_output("snapshot", "Updated config snapshot.")],
         },
@@ -1715,8 +1754,27 @@ fn handle_update_voice_server_settings(params: Map<String, Value>) -> Controller
             min_duration_secs: update.min_duration_secs,
             silence_threshold: update.silence_threshold,
             custom_dictionary: update.custom_dictionary,
+            always_on_enabled: update.always_on_enabled,
+            wake_word: update.wake_word,
         };
-        to_json(config_rpc::load_and_apply_voice_server_settings(patch).await?)
+        let result = config_rpc::load_and_apply_voice_server_settings(patch).await?;
+        // Apply the always-on toggle live (start/idle the capture loop) so the
+        // Settings switch takes effect without a restart. Don't fail the RPC if
+        // the reload hiccups, but DO surface it — otherwise the saved setting
+        // silently wouldn't apply until the next launch.
+        match config_rpc::load_config_with_timeout().await {
+            Ok(config) => {
+                log::debug!("[config][rpc] voice settings saved; applying live always-on state");
+                crate::openhuman::voice::always_on::start_if_enabled(&config).await;
+            }
+            Err(error) => {
+                log::warn!(
+                    "[config][rpc] voice settings saved, but live always-on apply was skipped \
+                     (config reload failed): {error}"
+                );
+            }
+        }
+        to_json(result)
     })
 }
 
@@ -1830,6 +1888,25 @@ fn handle_update_activity_level_settings(params: Map<String, Value>) -> Controll
             level: update.level,
         };
         to_json(config_rpc::load_and_apply_activity_level_settings(patch).await?)
+    })
+}
+
+#[derive(Debug, Deserialize)]
+struct MemorySyncSettingsUpdate {
+    sync_interval_secs: Option<u64>,
+}
+
+fn handle_get_memory_sync_settings(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move { to_json(config_rpc::get_memory_sync_settings().await?) })
+}
+
+fn handle_update_memory_sync_settings(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let update = deserialize_params::<MemorySyncSettingsUpdate>(params)?;
+        let patch = config_rpc::MemorySyncSettingsPatch {
+            sync_interval_secs: update.sync_interval_secs,
+        };
+        to_json(config_rpc::load_and_apply_memory_sync_settings(patch).await?)
     })
 }
 

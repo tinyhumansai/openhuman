@@ -85,6 +85,7 @@ pub async fn run_github_sync(
         Some(kind_str),
         Some(source_id),
         Some("listing items".to_string()),
+        Some(source_id),
     );
 
     let reader = readers::reader_for(&SourceKind::GithubRepo);
@@ -114,6 +115,7 @@ pub async fn run_github_sync(
         Some(kind_str),
         Some(source_id),
         Some(format!("reading {total} items")),
+        Some(source_id),
     );
 
     let content_root = config.memory_tree_content_root();
@@ -159,6 +161,7 @@ pub async fn run_github_sync(
         Some(format!(
             "summarising {input_count} items in {batch_count} batch(es)"
         )),
+        Some(source_id),
     );
 
     // Token/charge accounting across the run. The estimate (`body.len() / 4`
@@ -288,6 +291,7 @@ pub async fn run_github_sync(
         Some(format!(
             "{input_count} items → {batch_count} summary(ies) ({audit_input_tokens} in / {audit_output_tokens} out tokens, ${display_cost:.4})"
         )),
+        Some(source_id),
     );
 
     Ok(SyncOutcome {
@@ -415,6 +419,7 @@ async fn read_items_buffered(
                 Some(kind_str),
                 Some(source_id),
                 Some(format!("{processed}/{total} read")),
+                Some(source_id),
             );
         }
     }

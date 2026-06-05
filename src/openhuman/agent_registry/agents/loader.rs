@@ -94,6 +94,46 @@ pub const BUILTINS: &[BuiltinAgent] = &[
         prompt_fn: super::tools_agent::prompt::build,
     },
     BuiltinAgent {
+        id: "task_manager_agent",
+        toml: include_str!("task_manager_agent/agent.toml"),
+        prompt_fn: super::task_manager_agent::prompt::build,
+    },
+    BuiltinAgent {
+        id: "settings_agent",
+        toml: include_str!("settings_agent/agent.toml"),
+        prompt_fn: super::settings_agent::prompt::build,
+    },
+    BuiltinAgent {
+        id: "profile_memory_agent",
+        toml: include_str!("profile_memory_agent/agent.toml"),
+        prompt_fn: super::profile_memory_agent::prompt::build,
+    },
+    BuiltinAgent {
+        id: "account_admin_agent",
+        toml: include_str!("account_admin_agent/agent.toml"),
+        prompt_fn: super::account_admin_agent::prompt::build,
+    },
+    BuiltinAgent {
+        id: "screen_awareness_agent",
+        toml: include_str!("screen_awareness_agent/agent.toml"),
+        prompt_fn: super::screen_awareness_agent::prompt::build,
+    },
+    BuiltinAgent {
+        id: "scheduler_agent",
+        toml: include_str!("scheduler_agent/agent.toml"),
+        prompt_fn: super::scheduler_agent::prompt::build,
+    },
+    BuiltinAgent {
+        id: "presentation_agent",
+        toml: include_str!("presentation_agent/agent.toml"),
+        prompt_fn: super::presentation_agent::prompt::build,
+    },
+    BuiltinAgent {
+        id: "desktop_control_agent",
+        toml: include_str!("desktop_control_agent/agent.toml"),
+        prompt_fn: super::desktop_control_agent::prompt::build,
+    },
+    BuiltinAgent {
         id: "tool_maker",
         toml: include_str!("tool_maker/agent.toml"),
         prompt_fn: super::tool_maker::prompt::build,
@@ -171,11 +211,11 @@ pub fn load_builtins() -> Result<Vec<AgentDefinition>> {
 /// * `Reasoning` agents MUST NOT list another `Reasoning` agent in
 ///   `subagents`.
 /// * `Worker` agents MUST NOT list any [`SubagentEntry::AgentId`]
-///   entries. (Skill wildcards are allowed: they expand to the generic
+///   entries. (Workflow wildcards are allowed: they expand to the generic
 ///   `integrations_agent`, which is itself a `Worker`, and the call
 ///   happens via a single delegation tool rather than recursive spawn.)
 ///
-/// Skill-wildcard entries (`{ skills = "*" }`) are intentionally
+/// Workflow-wildcard entries (`{ skills = "*" }`) are intentionally
 /// untouched: they collapse to one `delegate_to_integrations_agent`
 /// tool whose target is a `Worker` and whose use sites are well
 /// understood. Mis-tiering of the `integrations_agent` itself is still
@@ -194,7 +234,7 @@ pub fn validate_tier_hierarchy(defs: &[AgentDefinition]) -> Result<()> {
         for entry in &def.subagents {
             let child_id = match entry {
                 SubagentEntry::AgentId(id) => id.as_str(),
-                // Skill wildcards always route to `integrations_agent`
+                // Workflow wildcards always route to `integrations_agent`
                 // (a Worker) via a single collapsed delegation tool —
                 // not subject to the tier-mismatch rule.
                 SubagentEntry::Skills(_) => continue,
@@ -406,7 +446,6 @@ mod tests {
                         personality_soul_md: None,
                         personality_memory_md: None,
                         personality_roster: vec![],
-                        workflows: &[],
                     };
                     let body = build(&ctx)
                         .unwrap_or_else(|e| panic!("{} prompt build failed: {e}", def.id));
@@ -444,6 +483,10 @@ mod tests {
                 assert!(
                     tools.iter().any(|t| t == "spawn_worker_thread"),
                     "orchestrator must have spawn_worker_thread"
+                );
+                assert!(
+                    tools.iter().any(|t| t == "spawn_async_subagent"),
+                    "orchestrator must have spawn_async_subagent for sparse background work"
                 );
                 assert!(
                     !tools.iter().any(|t| t == "spawn_subagent"),
@@ -558,6 +601,49 @@ mod tests {
     fn tools_agent_is_registered() {
         let def = find("tools_agent");
         assert!(matches!(def.tools, ToolScope::Wildcard));
+    }
+
+    #[test]
+    fn specialist_agents_are_registered_with_narrow_tools() {
+        let scheduler = find("scheduler_agent");
+        match &scheduler.tools {
+            ToolScope::Named(names) => {
+                for required in ["current_time", "cron_add", "cron_list", "cron_remove"] {
+                    assert!(
+                        names.iter().any(|name| name == required),
+                        "scheduler_agent missing `{required}`"
+                    );
+                }
+            }
+            other => panic!("scheduler_agent must use Named tool scope, got {other:?}"),
+        }
+
+        let presentation = find("presentation_agent");
+        match &presentation.tools {
+            ToolScope::Named(names) => {
+                assert!(names.iter().any(|name| name == "generate_presentation"));
+                assert!(names.iter().any(|name| name == "memory_tree"));
+                assert!(names.iter().any(|name| name == "web_search_tool"));
+            }
+            other => panic!("presentation_agent must use Named tool scope, got {other:?}"),
+        }
+
+        let desktop = find("desktop_control_agent");
+        match &desktop.tools {
+            ToolScope::Named(names) => {
+                for required in [
+                    "launch_app",
+                    "ax_interact",
+                    "automate",
+                    "screenshot",
+                    "mouse",
+                    "keyboard",
+                ] {
+                    assert!(names.iter().any(|name| name == required));
+                }
+            }
+            other => panic!("desktop_control_agent must use Named tool scope, got {other:?}"),
+        }
     }
 
     #[test]
@@ -933,8 +1019,67 @@ mod tests {
         assert!(
             listed,
             "orchestrator.subagents must list `skill_creator` so the \
-             routing layer can synthesise `create_skill`"
+            routing layer can synthesise `create_skill`"
         );
+    }
+
+    #[test]
+    fn orchestrator_subagents_include_control_specialists() {
+        use crate::openhuman::agent::harness::definition::SubagentEntry;
+        let def = find("orchestrator");
+        let subagents: std::collections::HashSet<&str> = def
+            .subagents
+            .iter()
+            .filter_map(|entry| match entry {
+                SubagentEntry::AgentId(id) => Some(id.as_str()),
+                SubagentEntry::Skills(_) => None,
+            })
+            .collect();
+
+        for expected in [
+            "task_manager_agent",
+            "settings_agent",
+            "profile_memory_agent",
+            "account_admin_agent",
+            "screen_awareness_agent",
+        ] {
+            assert!(
+                subagents.contains(expected),
+                "orchestrator.subagents must list `{expected}` so the routing layer can synthesize its delegate tool"
+            );
+        }
+    }
+
+    #[test]
+    fn control_specialists_have_named_tools_and_are_worker_leaves() {
+        for expected in [
+            "task_manager_agent",
+            "settings_agent",
+            "profile_memory_agent",
+            "account_admin_agent",
+            "screen_awareness_agent",
+        ] {
+            let def = find(expected);
+            assert_eq!(def.agent_tier, AgentTier::Worker);
+            assert!(def.subagents.is_empty(), "{expected} must be a worker leaf");
+            match def.tools {
+                ToolScope::Named(tools) => {
+                    assert!(
+                        !tools.is_empty(),
+                        "{expected} must have a concrete tool allowlist"
+                    );
+                    assert!(
+                        tools.iter().any(|tool| tool == "ask_user_clarification"),
+                        "{expected} must be able to ask for confirmation before risky writes"
+                    );
+                    assert!(
+                        !tools.iter().any(|tool| tool == "shell"),
+                        "{expected} must not inherit shell access"
+                    );
+                }
+                ToolScope::Wildcard => panic!("{expected} must not use wildcard tools"),
+            }
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────

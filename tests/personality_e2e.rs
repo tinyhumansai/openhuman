@@ -71,7 +71,6 @@ fn empty_prompt_context<'a>(workspace_dir: &'a std::path::Path) -> PromptContext
         agent_id: "orchestrator",
         tools: &[],
         skills: &[],
-        workflows: &[],
         dispatcher_instructions: "",
         learned: LearnedContextData::default(),
         visible_tool_names,

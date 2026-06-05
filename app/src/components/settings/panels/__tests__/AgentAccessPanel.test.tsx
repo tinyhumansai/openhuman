@@ -296,8 +296,6 @@ describe('AgentAccessPanel', () => {
     );
   });
 
-  // ── Editable action_dir (issue #3240) ───────────────────────────────────────
-
   it('shows an Edit affordance for action_dir when the source is not env', async () => {
     mockGetAgentPaths.mockResolvedValue({
       result: agentPaths({ action_dir: '/Users/sample/projects', action_dir_source: 'default' }),
@@ -348,7 +346,6 @@ describe('AgentAccessPanel', () => {
     expect(await screen.findByTestId('agent-access-action-dir-error')).toHaveTextContent(
       'action_dir must be an absolute path'
     );
-    // Still in edit mode so the user can correct the value.
     expect(screen.getByTestId('agent-access-action-dir-input')).toBeInTheDocument();
   });
 

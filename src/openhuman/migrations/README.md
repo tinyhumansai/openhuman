@@ -19,7 +19,7 @@ Startup data-migration runner gated by `Config::schema_version`. Each migration 
 | `src/openhuman/migrations/mod.rs` | Module docstring + the `run_pending` runner and `CURRENT_SCHEMA_VERSION` constant; declares each migration as a private `mod`. |
 | `src/openhuman/migrations/phase_out_profile_md.rs` | **0→1.** Deletes `{workspace}/PROFILE.md` and strips `### PROFILE.md` blocks from persisted JSONL session transcripts (`session_raw/**`) and `.md` companions (`sessions/**`). Blocking fs I/O. |
 | `src/openhuman/migrations/unify_ai_provider_settings.rs` | **1→2.** Consolidates scattered AI-provider settings into per-workload provider strings; seeds `cloud_providers` (always an `Openhuman` entry) and migrates a non-backend `inference_url` into a `Custom` cloud entry. Pure in-memory. |
-| `src/openhuman/migrations/retire_chat_v1_model.rs` | **2→3.** Remaps a persisted `default_model = "chat-v1"` to `"reasoning-quick-v1"` (backend dropped `chat-v1` from its strict registry; sub-agent spawns 400'd). Pure in-memory. |
+| `src/openhuman/migrations/retire_chat_v1_model.rs` | **2→3.** Legacy chat-v1 migration hook retained for schema-version progression. No longer remaps `chat-v1`, which is the canonical low-latency chat slug again. Pure in-memory. |
 | `src/openhuman/migrations/expand_autonomy_defaults.rs` | **3→4.** Additively merges expanded `autonomy.allowed_commands` / `auto_approve` defaults (PR #2500) and bumps `max_actions_per_hour` from the old `20` to `u32::MAX` only when still exactly `20`. Pure in-memory. |
 | `src/openhuman/migrations/remove_write_auto_approve.rs` | **4→5.** Removes `file_write` / `edit_file` from `autonomy.auto_approve` so Supervised mode resumes its ask-before-edit prompt. Pure in-memory. |
 | `src/openhuman/migrations/repair_http_request_limits.rs` | **5→6 (a).** Coerces stale-zero `[http_request]` `timeout_secs` / `max_response_size` to schema defaults (30s / 1 MB); a persisted `0` is an instant timeout / empty-body cap that serde defaults don't repair. Pure in-memory. |
@@ -55,7 +55,7 @@ Does not own a `store.rs`. Its effects are written through other layers:
 
 ## Dependencies
 
-- `crate::openhuman::config` (`Config`, `HttpRequestConfig`, `schema::cloud_providers::{CloudProviderCreds, AuthStyle, CloudProviderType, generate_provider_id}`, `schema::{MODEL_CHAT_V1, MODEL_REASONING_QUICK_V1}`) — the migrations read and mutate the config struct; `schema_version` is the gating field.
+- `crate::openhuman::config` (`Config`, `HttpRequestConfig`, `schema::cloud_providers::{CloudProviderCreds, AuthStyle, CloudProviderType, generate_provider_id}`, `schema::MODEL_CHAT_V1`) — the migrations read and mutate the config struct; `schema_version` is the gating field.
 - `crate::openhuman::agent::harness::session::transcript` (`transcript`, `SessionTranscript`, `write_transcript`) — `phase_out_profile_md` parses and rewrites persisted session transcripts byte-compatibly.
 - `crate::openhuman::inference::provider::factory` — `reconcile_orphaned_providers` mirrors the factory's exact, case-sensitive provider-string grammar so "resolvable here" matches "resolvable at inference time"; `unify_ai_provider_settings` references the factory's provider-string format. (`inference::provider::ChatMessage` is imported only by tests.)
 

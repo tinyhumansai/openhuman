@@ -14,8 +14,8 @@ use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::config::AgentConfig;
 use crate::openhuman::inference::provider::Provider;
 use crate::openhuman::memory::Memory;
-use crate::openhuman::skills::Skill;
 use crate::openhuman::tools::{Tool, ToolSpec};
+use crate::openhuman::workflows::Workflow;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -64,7 +64,7 @@ pub struct ParentExecutionContext {
 
     /// Skills loaded into the parent. Sub-agents that don't strip the
     /// skills catalog inherit this list.
-    pub skills: Arc<Vec<Skill>>,
+    pub skills: Arc<Vec<Workflow>>,
 
     /// Memory context loaded for the current turn. Auto-injected into
     /// subagent prompts so they have access to conversation history and
@@ -114,6 +114,11 @@ pub struct ParentExecutionContext {
     /// progress (e.g. CLI direct calls); the runner becomes a no-op for
     /// child progress in that case.
     pub on_progress: Option<tokio::sync::mpsc::Sender<AgentProgress>>,
+
+    /// Parent's active run queue. Tools that create background event sources
+    /// use this to inject concise collect-context at the same safe iteration
+    /// boundary as web-channel queue messages.
+    pub run_queue: Option<Arc<crate::openhuman::agent::harness::run_queue::RunQueue>>,
 }
 
 tokio::task_local! {

@@ -288,7 +288,7 @@ impl Tool for SearxngSearchTool {
     }
 
     fn category(&self) -> ToolCategory {
-        ToolCategory::Skill
+        ToolCategory::Workflow
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {

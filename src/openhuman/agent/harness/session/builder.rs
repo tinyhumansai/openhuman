@@ -95,7 +95,6 @@ impl AgentBuilder {
             workspace_dir: None,
             action_dir: None,
             skills: None,
-            workflows: None,
             auto_save: None,
             post_turn_hooks: Vec::new(),
             learning_enabled: false,
@@ -207,22 +206,8 @@ impl AgentBuilder {
     }
 
     /// Sets the skills available to the agent.
-    pub fn skills(mut self, skills: Vec<crate::openhuman::skills::Skill>) -> Self {
+    pub fn skills(mut self, skills: Vec<crate::openhuman::workflows::Workflow>) -> Self {
         self.skills = Some(skills);
-        self
-    }
-
-    /// Sets the agent workflows available to the agent.
-    ///
-    /// Populated at session start via
-    /// [`crate::openhuman::agent_workflows::load_workflows`]; defaults to empty
-    /// when not set so callers that do not participate in the workflow system
-    /// do not need to change.
-    pub fn workflows(
-        mut self,
-        workflows: Vec<crate::openhuman::agent_workflows::Workflow>,
-    ) -> Self {
-        self.workflows = Some(workflows);
         self
     }
 
@@ -573,7 +558,6 @@ impl AgentBuilder {
             workspace_dir,
             action_dir,
             skills: self.skills.unwrap_or_default(),
-            workflows: self.workflows.unwrap_or_default(),
             auto_save: self.auto_save.unwrap_or(false),
             last_memory_context: None,
             last_turn_citations: Vec::new(),
@@ -755,7 +739,7 @@ impl Agent {
                 .unwrap_or(config.default_temperature)
         );
 
-        Self::build_session_agent_inner(config, agent_id, target_def.as_ref(), None, None)
+        Self::build_session_agent_inner(config, agent_id, target_def.as_ref(), None, None, false)
     }
 
     /// Same as [`Self::from_config_for_agent`] but also appends a
@@ -787,6 +771,7 @@ impl Agent {
             target_def.as_ref(),
             Some(reflection_chunks),
             None,
+            false,
         )
     }
 
@@ -829,7 +814,58 @@ impl Agent {
             target_def.as_ref(),
             reflection_chunks,
             profile_prompt_suffix,
+            false,
         )
+    }
+
+    /// Constructs a council juror that runs the normal agent tool loop with
+    /// only read-only tools visible/executable.
+    ///
+    /// Model council calls need research/memory/search before a juror writes a
+    /// turn, but they must not mutate files, memory, schedules, wallets, or the
+    /// host. This constructor reuses the standard harness and provider wiring
+    /// while filtering the registry before tool specs and policy are built.
+    pub fn from_config_for_read_only_council_juror(
+        config: &Config,
+        juror_name: &str,
+        model_override: Option<String>,
+        temperature: Option<f64>,
+        prompt_suffix: String,
+    ) -> Result<Self> {
+        let mut agent = Self::build_session_agent_inner(
+            config,
+            "orchestrator",
+            None,
+            None,
+            Some(prompt_suffix),
+            true,
+        )?;
+        let safe_name: String = juror_name
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        agent.set_event_context(
+            format!("model-council-{safe_name}"),
+            "model_council_readonly",
+        );
+        agent.set_agent_definition_name(format!("model_council_{safe_name}"));
+        if let Some(model) = model_override
+            .map(|m| m.trim().to_string())
+            .filter(|m| !m.is_empty())
+        {
+            agent.model_name = model;
+        }
+        if let Some(temp) = temperature {
+            agent.temperature = temp;
+        }
+        agent.auto_save = false;
+        Ok(agent)
     }
 
     /// Internal constructor that consumes the optionally-resolved agent
@@ -849,6 +885,7 @@ impl Agent {
         target_def: Option<&crate::openhuman::agent::harness::definition::AgentDefinition>,
         reflection_chunks: Option<Vec<crate::openhuman::subconscious::SourceChunk>>,
         profile_prompt_suffix: Option<String>,
+        read_only_tools_only: bool,
     ) -> Result<Self> {
         let runtime: Arc<dyn host_runtime::RuntimeAdapter> =
             Arc::from(host_runtime::create_runtime(&config.runtime)?);
@@ -864,9 +901,14 @@ impl Agent {
         )?;
 
         let local_embedding = config.workload_local_model("embeddings");
+        let embedding_api_key = crate::openhuman::embeddings::resolve_api_key(
+            config,
+            &config.memory.embedding_provider,
+        );
         let memory: Arc<dyn Memory> = Arc::from(memory_store::create_memory_with_local_ai(
             &config.memory,
             local_embedding.as_deref(),
+            &embedding_api_key,
             &config.embedding_routes,
             Some(&config.storage.provider.config),
             &config.workspace_dir,
@@ -905,6 +947,19 @@ impl Agent {
                     );
                 }
             }
+        }
+
+        if read_only_tools_only {
+            let before = tools.len();
+            tools.retain(|tool| {
+                tool.permission_level() <= tools::PermissionLevel::ReadOnly
+                    && !matches!(tool.scope(), tools::ToolScope::CliRpcOnly)
+            });
+            log::info!(
+                "[agent::builder] read-only tool filter applied: before={} after={}",
+                before,
+                tools.len()
+            );
         }
 
         // Route the main agent's chat through the unified per-workload
@@ -1491,7 +1546,7 @@ impl Agent {
         //   2. The `agent:` line inside each transcript's metadata
         //      header stamps `agent: main` instead of `agent: welcome`.
         //
-        // Skills_agent and every other typed sub-agent are unaffected
+        // Workflows_agent and every other typed sub-agent are unaffected
         // because they never build via `from_config_for_agent` — they
         // are spawned through `subagent_runner` which constructs its
         // prompt and history directly.
@@ -1581,16 +1636,9 @@ impl Agent {
             .temperature(effective_temperature)
             .workspace_dir(config.workspace_dir.clone())
             .action_dir(config.action_dir.clone())
-            .skills(crate::openhuman::skills::load_skills(&config.workspace_dir))
-            .workflows({
-                let wf = crate::openhuman::agent_workflows::load_workflows(&config.workspace_dir);
-                log::debug!(
-                    "[workflows][phase] loaded {} workflow(s) from workspace={}",
-                    wf.len(),
-                    config.workspace_dir.display()
-                );
-                wf
-            })
+            .skills(crate::openhuman::workflows::load_workflow_metadata(
+                &config.workspace_dir,
+            ))
             .auto_save(config.memory.auto_save)
             .post_turn_hooks(post_turn_hooks)
             .learning_enabled(config.learning.enabled)

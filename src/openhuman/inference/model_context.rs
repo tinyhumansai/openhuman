@@ -6,7 +6,7 @@
 //! metadata is not yet available.
 
 use crate::openhuman::config::{
-    MODEL_AGENTIC_V1, MODEL_CODING_V1, MODEL_REASONING_QUICK_V1, MODEL_REASONING_V1,
+    MODEL_AGENTIC_V1, MODEL_CHAT_V1, MODEL_CODING_V1, MODEL_REASONING_QUICK_V1, MODEL_REASONING_V1,
 };
 
 /// Conservative default for OpenHuman abstract tier models (tokens).
@@ -99,7 +99,7 @@ fn tier_context_window(model: &str) -> Option<u64> {
     match model {
         MODEL_REASONING_V1 | MODEL_AGENTIC_V1 | MODEL_CODING_V1 => Some(TIER_LARGE_CONTEXT),
         "summarization-v1" => Some(TIER_SUMMARIZATION_CONTEXT),
-        MODEL_REASONING_QUICK_V1 | "chat" => Some(TIER_STANDARD_CONTEXT),
+        MODEL_CHAT_V1 | MODEL_REASONING_QUICK_V1 | "chat" => Some(TIER_STANDARD_CONTEXT),
         m if m.starts_with("gemma") || m.contains(":1b") || m.contains("270m") => {
             Some(TIER_LOCAL_CONTEXT)
         }
@@ -179,6 +179,7 @@ mod tests {
     fn tier_aliases_resolve() {
         assert_eq!(context_window_for_model("reasoning-v1"), Some(200_000));
         assert_eq!(context_window_for_model("agentic-v1"), Some(200_000));
+        assert_eq!(context_window_for_model("chat-v1"), Some(128_000));
         assert_eq!(
             context_window_for_model("reasoning-quick-v1"),
             Some(128_000)

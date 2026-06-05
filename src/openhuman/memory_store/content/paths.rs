@@ -104,6 +104,65 @@ pub fn summary_rel_path(
     }
 }
 
+/// On-disk placement for a summary node within a document **source** tree.
+///
+/// Document source trees (Notion) keep one folder per connection but nest
+/// per-document subtrees and the cross-document merge tier beneath it, so the
+/// vault mirrors the logical shape: `notion` → `docs/<page>/v-<ms>` →
+/// `merge`. Non-document trees (chat/email) and the `Standard` variant use
+/// the flat `source-<scope>/L<level>/` layout unchanged.
+#[derive(Clone, Copy, Debug)]
+pub enum SummaryDiskLayout<'a> {
+    /// Flat layout — `source-<scope>/L<level>/…` (chat, email, legacy).
+    Standard,
+    /// A node inside one document's versioned subtree —
+    /// `source-<scope>/docs/<doc_slug>/v-<version_ms>/L<level>/…`.
+    DocSubtree {
+        doc_slug: &'a str,
+        version_ms: Option<i64>,
+    },
+    /// A cross-document merge-tier node — `source-<scope>/merge/L<level>/…`.
+    Merge,
+}
+
+/// Layout-aware variant of [`summary_rel_path`]. For document source trees it
+/// routes per-doc and merge nodes into nested folders; for everything else
+/// (and [`SummaryDiskLayout::Standard`]) it is identical to
+/// [`summary_rel_path`].
+pub fn summary_rel_path_with_layout(
+    tree_kind: SummaryTreeKind,
+    scope_slug: &str,
+    level: u32,
+    summary_id: &str,
+    layout: SummaryDiskLayout<'_>,
+) -> String {
+    match (tree_kind, layout) {
+        (
+            SummaryTreeKind::Source,
+            SummaryDiskLayout::DocSubtree {
+                doc_slug,
+                version_ms,
+            },
+        ) => {
+            let filename = summary_filename(summary_id);
+            let safe_slug = slugify_source_id(doc_slug);
+            let vfolder = match version_ms {
+                Some(v) => format!("v-{v}"),
+                None => "v-unversioned".to_string(),
+            };
+            format!(
+                "{WIKI_PREFIX}/summaries/source-{scope_slug}/docs/{safe_slug}/{vfolder}/L{level}/{filename}.md"
+            )
+        }
+        (SummaryTreeKind::Source, SummaryDiskLayout::Merge) => {
+            let filename = summary_filename(summary_id);
+            format!("{WIKI_PREFIX}/summaries/source-{scope_slug}/merge/L{level}/{filename}.md")
+        }
+        // Standard layout, or a non-Source tree kind — fall back to flat.
+        _ => summary_rel_path(tree_kind, scope_slug, level, summary_id),
+    }
+}
+
 /// Convert a summary id into the canonical on-disk basename stem (without
 /// `.md`).
 ///
@@ -337,6 +396,73 @@ fn truncate_at_char(s: &str, max_chars: usize) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ─── doc-aware layout tests ───────────────────────────────────────────────
+
+    #[test]
+    fn layout_doc_subtree_nests_under_docs_and_version() {
+        let p = summary_rel_path_with_layout(
+            SummaryTreeKind::Source,
+            "notion-conn1",
+            2,
+            "summary:1700000000000:L2-deadbeef",
+            SummaryDiskLayout::DocSubtree {
+                doc_slug: "notion-conn1-pageA",
+                version_ms: Some(1717500000000),
+            },
+        );
+        assert_eq!(
+            p,
+            "wiki/summaries/source-notion-conn1/docs/notion-conn1-pagea/v-1717500000000/L2/summary-1700000000000-L2-deadbeef.md"
+        );
+    }
+
+    #[test]
+    fn layout_doc_subtree_unversioned_folder() {
+        let p = summary_rel_path_with_layout(
+            SummaryTreeKind::Source,
+            "notion-conn1",
+            1,
+            "summary:1700000000000:L1-abcd0000",
+            SummaryDiskLayout::DocSubtree {
+                doc_slug: "notion-conn1-pageB",
+                version_ms: None,
+            },
+        );
+        assert!(
+            p.contains("/docs/notion-conn1-pageb/v-unversioned/L1/"),
+            "got {p}"
+        );
+    }
+
+    #[test]
+    fn layout_merge_tier_nests_under_merge() {
+        let p = summary_rel_path_with_layout(
+            SummaryTreeKind::Source,
+            "notion-conn1",
+            1000,
+            "summary:1700000000000:L1000-aaaa1111",
+            SummaryDiskLayout::Merge,
+        );
+        assert_eq!(
+            p,
+            "wiki/summaries/source-notion-conn1/merge/L1000/summary-1700000000000-L1000-aaaa1111.md"
+        );
+    }
+
+    #[test]
+    fn layout_standard_matches_flat_path() {
+        let id = "summary:1700000000000:L1-cccc2222";
+        let flat = summary_rel_path(SummaryTreeKind::Source, "slack-eng", 1, id);
+        let std_layout = summary_rel_path_with_layout(
+            SummaryTreeKind::Source,
+            "slack-eng",
+            1,
+            id,
+            SummaryDiskLayout::Standard,
+        );
+        assert_eq!(flat, std_layout);
+    }
 
     // ─── slugify tests ────────────────────────────────────────────────────────
 

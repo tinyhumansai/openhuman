@@ -1,9 +1,9 @@
 //! JSON-RPC controller surface for the Model Council.
 //!
-//! Exposes a single method, `openhuman.model_council_run`, which takes a
-//! question + a list of member model ids + a chair model id, runs the council
-//! (see [`crate::openhuman::model_council::council`]), and returns the
-//! aggregated result synchronously in the JSON-RPC response.
+//! Exposes model-council controller methods. `openhuman.model_council_run`
+//! remains the batch API. `openhuman.model_council_answer_member` and
+//! `openhuman.model_council_synthesize` let the desktop UI show progressive
+//! per-juror answers before the judge synthesis completes.
 
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
@@ -22,15 +22,44 @@ struct ModelCouncilParams {
     temperature: Option<f64>,
 }
 
+#[derive(Debug, Deserialize)]
+struct ModelCouncilMemberParams {
+    question: String,
+    model: String,
+    temperature: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ModelCouncilSynthesizeParams {
+    question: String,
+    members: Vec<crate::openhuman::model_council::council::CouncilMemberResult>,
+    chair_model: String,
+    temperature: Option<f64>,
+}
+
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
-    vec![schemas("run")]
+    vec![
+        schemas("run"),
+        schemas("answer_member"),
+        schemas("synthesize"),
+    ]
 }
 
 pub fn all_registered_controllers() -> Vec<RegisteredController> {
-    vec![RegisteredController {
-        schema: schemas("run"),
-        handler: handle_run,
-    }]
+    vec![
+        RegisteredController {
+            schema: schemas("run"),
+            handler: handle_run,
+        },
+        RegisteredController {
+            schema: schemas("answer_member"),
+            handler: handle_answer_member,
+        },
+        RegisteredController {
+            schema: schemas("synthesize"),
+            handler: handle_synthesize,
+        },
+    ]
 }
 
 pub fn schemas(function: &str) -> ControllerSchema {
@@ -45,7 +74,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required_string("question", "The question to put to the council."),
                 required_string_array(
                     "member_models",
-                    "Member model ids to consult (deduplicated; max 5).",
+                    "Member model ids or `default` seats to consult (repeated seats preserved; max 5).",
                 ),
                 required_string(
                     "chair_model",
@@ -60,6 +89,46 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 "result",
                 "Council result: per-member answers + chair synthesis.",
             )],
+        },
+        "answer_member" => ControllerSchema {
+            namespace: "model_council",
+            function: "answer_member",
+            description: "Run one council juror as a single model call. Returns that member's \
+                          answer or failure in-band so the UI can update progressively.",
+            inputs: vec![
+                required_string("question", "The question to put to this council member."),
+                required_string("model", "Member model id or `default` sentinel."),
+                optional_f64(
+                    "temperature",
+                    "Optional sampling temperature for the member call.",
+                ),
+            ],
+            outputs: vec![json_output(
+                "result",
+                "One member answer with response or error.",
+            )],
+        },
+        "synthesize" => ControllerSchema {
+            namespace: "model_council",
+            function: "synthesize",
+            description: "Ask the judge model to synthesize already-collected council member \
+                          answers. Used after progressive member calls complete.",
+            inputs: vec![
+                required_string("question", "The original council question."),
+                required_json_array(
+                    "members",
+                    "Collected member answers from model_council.answer_member.",
+                ),
+                required_string(
+                    "chair_model",
+                    "Model id or `default` sentinel that synthesizes the member answers.",
+                ),
+                optional_f64(
+                    "temperature",
+                    "Optional sampling temperature for the synthesis call.",
+                ),
+            ],
+            outputs: vec![json_output("result", "Council result with chair synthesis.")],
         },
         _ => ControllerSchema {
             namespace: "model_council",
@@ -105,6 +174,60 @@ fn handle_run(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+fn handle_answer_member(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        log::debug!("[model-council] handle_answer_member: received RPC request");
+        let p = deserialize_params::<ModelCouncilMemberParams>(params)?;
+        log::debug!(
+            "[model-council] handle_answer_member: question_len={}, model={}",
+            p.question.len(),
+            p.model
+        );
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(
+            crate::openhuman::model_council::council::answer_member(
+                &config,
+                &p.question,
+                &p.model,
+                p.temperature,
+            )
+            .await
+            .map_err(|e| {
+                log::debug!("[model-council] handle_answer_member failed: {e}");
+                e
+            })?,
+        )
+    })
+}
+
+fn handle_synthesize(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        log::debug!("[model-council] handle_synthesize: received RPC request");
+        let p = deserialize_params::<ModelCouncilSynthesizeParams>(params)?;
+        log::debug!(
+            "[model-council] handle_synthesize: question_len={}, members={}, chair={}",
+            p.question.len(),
+            p.members.len(),
+            p.chair_model
+        );
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(
+            crate::openhuman::model_council::council::synthesize_members(
+                &config,
+                &p.question,
+                p.members,
+                &p.chair_model,
+                p.temperature,
+            )
+            .await
+            .map_err(|e| {
+                log::debug!("[model-council] handle_synthesize failed: {e}");
+                e
+            })?,
+        )
+    })
+}
+
 fn deserialize_params<T: DeserializeOwned>(params: Map<String, Value>) -> Result<T, String> {
     serde_json::from_value(Value::Object(params)).map_err(|e| format!("invalid params: {e}"))
 }
@@ -122,6 +245,15 @@ fn required_string_array(name: &'static str, comment: &'static str) -> FieldSche
     FieldSchema {
         name,
         ty: TypeSchema::Array(Box::new(TypeSchema::String)),
+        comment,
+        required: true,
+    }
+}
+
+fn required_json_array(name: &'static str, comment: &'static str) -> FieldSchema {
+    FieldSchema {
+        name,
+        ty: TypeSchema::Array(Box::new(TypeSchema::Json)),
         comment,
         required: true,
     }
@@ -157,7 +289,7 @@ mod tests {
     fn controller_schema_inventory_is_stable() {
         let schemas = all_controller_schemas();
         let functions: Vec<_> = schemas.iter().map(|schema| schema.function).collect();
-        assert_eq!(functions, vec!["run"]);
+        assert_eq!(functions, vec!["run", "answer_member", "synthesize"]);
         assert_eq!(schemas.len(), all_registered_controllers().len());
     }
 
@@ -196,6 +328,28 @@ mod tests {
         let unknown = schemas("nope");
         assert_eq!(unknown.function, "unknown");
         assert_eq!(unknown.outputs[0].name, "error");
+    }
+
+    #[test]
+    fn progressive_schemas_expose_expected_methods() {
+        let member = schemas("answer_member");
+        assert_eq!(
+            crate::core::all::rpc_method_name(&member),
+            "openhuman.model_council_answer_member"
+        );
+        assert!(member.inputs.iter().any(|input| input.name == "model"));
+
+        let synthesize = schemas("synthesize");
+        assert_eq!(
+            crate::core::all::rpc_method_name(&synthesize),
+            "openhuman.model_council_synthesize"
+        );
+        let members = synthesize
+            .inputs
+            .iter()
+            .find(|input| input.name == "members")
+            .expect("members input present");
+        assert!(matches!(members.ty, TypeSchema::Array(_)));
     }
 
     #[test]

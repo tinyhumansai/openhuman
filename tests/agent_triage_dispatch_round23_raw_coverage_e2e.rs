@@ -159,6 +159,7 @@ async fn dispatcher_rejects_missing_and_stale_non_claimable_cards() {
         acceptance_criteria: vec![],
         evidence: vec![],
         notes: None,
+        session_thread_id: None,
         blocker: None,
         source_metadata: None,
         order: 0,

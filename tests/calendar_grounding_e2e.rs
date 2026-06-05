@@ -158,6 +158,7 @@ async fn test_integrations_agent_has_current_date_context() -> Result<()> {
         session_key: "0_test".into(),
         session_parent_prefix: None,
         on_progress: None,
+        run_queue: None,
     };
 
     let mut def =

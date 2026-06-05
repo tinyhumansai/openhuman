@@ -374,6 +374,7 @@ pub async fn composio_list_connections(
             // connected-toolkits view stays in sync within one poll
             // interval.
             sync_cache_with_connections(&resp.connections);
+            let resp = enrich_connections_with_identity(resp);
             return Ok(RpcOutcome::new(
                 resp,
                 vec![format!(
@@ -395,6 +396,7 @@ pub async fn composio_list_connections(
     // timeout fires before the user finishes the hosted flow) is still
     // reflected in chat within one poll interval.
     sync_cache_with_connections(&resp.connections);
+    let resp = enrich_connections_with_identity(resp);
     Ok(RpcOutcome::new(
         resp,
         vec![format!(
@@ -1264,6 +1266,8 @@ pub async fn composio_get_user_profile(
         toolkit: toolkit.clone(),
         connection_id: Some(connection_id.to_string()),
         usage: Default::default(),
+        max_items: None,
+        sync_depth_days: None,
     };
 
     let profile = provider.fetch_user_profile(&ctx).await.map_err(|e| {
@@ -1336,6 +1340,8 @@ pub async fn composio_refresh_all_identities(
             toolkit: toolkit.clone(),
             connection_id: Some(connection_id.clone()),
             usage: Default::default(),
+            max_items: None,
+            sync_depth_days: None,
         };
 
         match provider.fetch_user_profile(&ctx).await {
@@ -1433,6 +1439,8 @@ pub async fn composio_sync(
         toolkit: toolkit.clone(),
         connection_id: Some(connection_id.to_string()),
         usage: Default::default(),
+        max_items: None,
+        sync_depth_days: None,
     };
     let started_at_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1498,6 +1506,82 @@ fn parse_sync_reason(raw: Option<&str>) -> OpResult<SyncReason> {
              'manual', 'periodic', 'connection_created'"
         )),
     }
+}
+
+/// Enrich each [`super::types::ComposioConnection`] with human-readable
+/// identity fields (`account_email`, `workspace`, `username`) from the
+/// persisted provider profile cache so the UI picker can show
+/// "Gmail · user@example.com" instead of a generic "Account N" label.
+///
+/// This is best-effort — no live API calls are made (one SQLite read per poll).
+/// If the memory client is not ready yet (first launch before any sync)
+/// or no profile rows exist for a connection, that connection is returned
+/// unchanged and the UI falls back to its numbered label logic.
+///
+/// Connections that already carry identity fields (e.g. from the
+/// backend-proxied path) are left untouched.
+fn enrich_connections_with_identity(
+    mut resp: super::types::ComposioConnectionsResponse,
+) -> super::types::ComposioConnectionsResponse {
+    use std::collections::HashMap;
+
+    use super::providers::profile::{load_connected_identities, normalize_connection_identifier};
+
+    let identities = load_connected_identities();
+    if identities.is_empty() {
+        tracing::debug!(
+            "[composio] enrich_connections_with_identity: no cached identities yet \
+             — picker will fall back to numbered labels until first sync completes"
+        );
+        return resp;
+    }
+
+    // (normalized_toolkit, normalized_conn_id) → identity
+    let lookup: HashMap<(String, String), _> = identities
+        .iter()
+        .map(|id| {
+            (
+                (
+                    normalize_connection_identifier(&id.source),
+                    normalize_connection_identifier(&id.identifier),
+                ),
+                id,
+            )
+        })
+        .collect();
+
+    tracing::debug!(
+        total = resp.connections.len(),
+        cached_identities = identities.len(),
+        "[composio] enrich_connections_with_identity: enriching connection labels"
+    );
+
+    for conn in &mut resp.connections {
+        // Skip connections already carrying identity info (backend-proxied
+        // path may supply them directly).
+        if conn.account_email.is_some() || conn.workspace.is_some() || conn.username.is_some() {
+            continue;
+        }
+        let toolkit_key = normalize_connection_identifier(&conn.toolkit);
+        let conn_id_key = normalize_connection_identifier(&conn.id);
+        if let Some(identity) = lookup.get(&(toolkit_key, conn_id_key)) {
+            conn.account_email = identity.email.clone();
+            // display_name carries the user's name; for Slack it falls back
+            // to the team/workspace name when no per-user display name exists,
+            // making it the best available workspace signal.
+            conn.workspace = identity.display_name.clone();
+            conn.username = identity.handle.clone();
+            tracing::debug!(
+                toolkit = %conn.toolkit,
+                connection_id = %conn.id,
+                has_email = conn.account_email.is_some(),
+                has_workspace = conn.workspace.is_some(),
+                has_username = conn.username.is_some(),
+                "[composio] enrich_connections_with_identity: enriched connection"
+            );
+        }
+    }
+    resp
 }
 
 #[cfg(test)]

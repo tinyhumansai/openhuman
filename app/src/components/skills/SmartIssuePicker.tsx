@@ -1,6 +1,6 @@
 // SmartIssuePicker — dev-workflow's repo / fork / upstream / branch
 // auto-detection lifted out of DevWorkflowPanel into a reusable
-// subcomponent. SkillsRunnerBody conditionally mounts it when the
+// subcomponent. WorkflowRunnerBody conditionally mounts it when the
 // selected skill is `dev-workflow` to give that one skill the same
 // frictionless setup it had in its bespoke Settings panel:
 //

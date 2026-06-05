@@ -164,6 +164,14 @@ export type BackendMeetJoinInput = {
   meetUrl: string;
   displayName?: string;
   platform?: MeetingPlatform;
+  agentName?: string;
+  systemPrompt?: string;
+  mascotId?: string;
+  riveColors?: { primaryColor?: string; secondaryColor?: string };
+  /** Only respond to messages from this participant name (empty = respond to all). */
+  respondToParticipant?: string;
+  /** Wake phrase the participant must say before the bot responds (empty = no wake phrase). */
+  wakePhrase?: string;
 };
 
 type CoreBackendMeetJoinResponse = { ok: boolean; meet_url: string; platform: string };
@@ -189,6 +197,18 @@ export async function joinMeetViaBackendBot(
       meet_url: meetUrl,
       display_name: input.displayName?.trim() || undefined,
       platform: input.platform || undefined,
+      agent_name: input.agentName?.trim() || undefined,
+      system_prompt: input.systemPrompt?.trim() || undefined,
+      mascot_id: input.mascotId?.trim() || undefined,
+      respond_to_participant: input.respondToParticipant?.trim() || undefined,
+      wake_phrase: input.wakePhrase?.trim() || undefined,
+      rive_colors: (() => {
+        if (!input.riveColors) return undefined;
+        const primary = input.riveColors.primaryColor?.trim() || undefined;
+        const secondary = input.riveColors.secondaryColor?.trim() || undefined;
+        if (!primary && !secondary) return undefined;
+        return { primary_color: primary, secondary_color: secondary };
+      })(),
     },
   });
 
@@ -220,19 +240,17 @@ export async function sendHarnessResponse(result: string): Promise<void> {
 }
 
 /**
- * Backend-driven meet bot join (PR tinyhumansai/backend#773).
+ * Direct backend-driven meet bot join.
  *
  * Hits `POST /mascots/join-meeting` which:
  *  - gates free users with a 429 (SERVER_OVERLOADED) — surfaced verbatim
  *    so callers can show the user-facing capacity message;
- *  - launches the Camoufox mascot bot for `gmeet`;
- *  - 400s on `zoom` / `teams` with "not yet supported".
+ *  - launches the Recall.ai mascot bot for supported meeting platforms.
  *
- * Distinct from `joinMeetCall` (which opens a CEF webview locally) —
- * this is a fire-and-forget request that runs the mascot bot in the
- * backend and streams events over Socket.IO.
+ * The app normally uses `joinMeetViaBackendBot`, which routes through the
+ * core Socket.IO bridge so backend bot events can be handled locally too.
  */
-export type MascotMeetPlatform = 'gmeet' | 'zoom' | 'teams';
+export type MascotMeetPlatform = 'gmeet' | 'zoom' | 'teams' | 'webex';
 
 export interface MascotJoinMeetingInput {
   platform: MascotMeetPlatform;

@@ -9,12 +9,17 @@ import type {
   ThreadsListData,
 } from '../../types/thread';
 import type {
+  AgentRun,
+  AgentRunGetResponse,
+  AgentRunListResponse,
   ClearTurnStateResponse,
   GetTaskBoardResponse,
   GetTurnStateResponse,
   ListTurnStatesResponse,
   PersistedTurnState,
   PutTaskBoardResponse,
+  RunEvent,
+  RunEventListResponse,
   TaskBoard,
   TaskBoardCard,
 } from '../../types/turnState';
@@ -141,6 +146,43 @@ export const threadApi = {
     });
     const data = unwrapEnvelope(response);
     return Boolean(data?.cleared);
+  },
+
+  listRuns: async (filters?: {
+    status?: string;
+    kind?: string;
+    parentRunId?: string;
+    parentThreadId?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<AgentRun[]> => {
+    const response = await callCoreRpc<{ data?: AgentRunListResponse }>({
+      method: 'openhuman.run_ledger_list',
+      params: filters ?? {},
+    });
+    const data = unwrapEnvelope(response);
+    return data?.runs ?? [];
+  },
+
+  getRun: async (id: string): Promise<AgentRun | null> => {
+    const response = await callCoreRpc<{ data?: AgentRunGetResponse }>({
+      method: 'openhuman.run_ledger_get',
+      params: { id },
+    });
+    const data = unwrapEnvelope(response);
+    return data?.run ?? null;
+  },
+
+  listRunEvents: async (
+    runId: string,
+    options?: { afterSequence?: number; limit?: number }
+  ): Promise<RunEvent[]> => {
+    const response = await callCoreRpc<{ data?: RunEventListResponse }>({
+      method: 'openhuman.run_ledger_events',
+      params: { runId, ...options },
+    });
+    const data = unwrapEnvelope(response);
+    return data?.events ?? [];
   },
 
   getTaskBoard: async (threadId: string): Promise<TaskBoard | null> => {

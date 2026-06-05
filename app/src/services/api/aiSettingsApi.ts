@@ -32,6 +32,7 @@ import {
   openhumanUpdateModelSettings,
 } from '../../utils/tauriCommands/config';
 import {
+  type InstalledModelInfo,
   type LocalAiDiagnostics,
   type LocalAiStatus,
   type ModelPresetResult,
@@ -432,7 +433,7 @@ export interface LocalProviderSnapshot {
   status: LocalAiStatus | null;
   diagnostics: LocalAiDiagnostics | null;
   presets: PresetsResponse | null;
-  installedModels: Array<{ name: string; size?: number | null }>;
+  installedModels: InstalledModelInfo[];
 }
 
 export async function loadLocalProviderSnapshot(): Promise<LocalProviderSnapshot> {

@@ -9,7 +9,7 @@ import { store } from '../../store';
 import { clearAllChatRuntime } from '../../store/chatRuntimeSlice';
 import { setStatusForUser } from '../../store/socketSlice';
 import { clearAllThreads, loadThreads, setSelectedThread } from '../../store/threadSlice';
-import ChatRuntimeProvider from '../ChatRuntimeProvider';
+import ChatRuntimeProvider, { findPendingDelegationContext } from '../ChatRuntimeProvider';
 
 vi.mock('../../services/chatService', async () => {
   const actual = await vi.importActual<typeof chatService>('../../services/chatService');
@@ -80,6 +80,34 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
   });
 
   describe('dedupe', () => {
+    it('finds pending spawn and async delegation tool rows', () => {
+      const entries = [
+        { id: 'ignored', name: 'search', round: 0, status: 'running' },
+        {
+          id: 'spawn',
+          name: 'spawn_async_subagent',
+          round: 0,
+          status: 'running',
+          argsBuffer: '{"prompt":"Archive preferences."}',
+        },
+      ] as Parameters<typeof findPendingDelegationContext>[0];
+
+      expect(findPendingDelegationContext(entries, 0)).toEqual({
+        sourceToolName: 'spawn_async_subagent',
+        prompt: 'Archive preferences.',
+        spawnEntryId: 'spawn',
+      });
+
+      expect(
+        findPendingDelegationContext(
+          [{ id: 'sync', name: 'spawn_subagent', round: 1, status: 'running' }] as Parameters<
+            typeof findPendingDelegationContext
+          >[0],
+          1
+        )
+      ).toMatchObject({ sourceToolName: 'spawn_subagent', spawnEntryId: 'sync' });
+    });
+
     it('stores task board updates from socket events', () => {
       const listeners = renderProvider();
       const board = {
@@ -166,6 +194,45 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
       // The parent's delegation prompt is carried onto the subagent so the
       // drawer can open the conversation with it.
       expect(timeline[0]?.subagent?.prompt).toContain('Research Q3 revenue');
+    });
+
+    it('collapses a spawn_async_subagent tool-call row into the subagent row', () => {
+      const listeners = renderProvider();
+
+      act(() => {
+        listeners.onToolCall?.({
+          thread_id: 't1',
+          request_id: 'r1',
+          round: 0,
+          tool_name: 'spawn_async_subagent',
+          skill_id: 'orchestration',
+          args: {},
+          tool_call_id: 'call-spawn-async',
+        });
+        listeners.onToolArgsDelta?.({
+          thread_id: 't1',
+          request_id: 'r1',
+          round: 0,
+          tool_call_id: 'call-spawn-async',
+          tool_name: 'spawn_async_subagent',
+          delta: '{"prompt":"Archive these preferences."}',
+        });
+        listeners.onSubagentSpawned?.({
+          thread_id: 't1',
+          request_id: 'r1',
+          round: 0,
+          tool_name: 'archivist',
+          skill_id: 'sub-async-1',
+          message: 'spawned',
+          subagent: { mode: 'async' },
+        });
+      });
+
+      const timeline = store.getState().chatRuntime.toolTimelineByThread['t1'] ?? [];
+      expect(timeline).toHaveLength(1);
+      expect(timeline[0]?.name).toBe('subagent:archivist');
+      expect(timeline[0]?.sourceToolName).toBe('spawn_async_subagent');
+      expect(timeline[0]?.subagent?.prompt).toContain('Archive these preferences');
     });
 
     it('appends streamed subagent text & thinking deltas to the subagent transcript', () => {

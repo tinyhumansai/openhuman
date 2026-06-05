@@ -49,3 +49,50 @@ export function routingWithProviderRemoved(
 
   return Object.fromEntries(scrubbed) as RoutingMap;
 }
+
+/**
+ * Whether a locally-installed Ollama model may be offered as a chat/LLM model
+ * in the settings pickers.
+ *
+ * Embedding-only models (e.g. `bge-m3`) cannot serve chat — Ollama 400s every
+ * turn with `"<model>" does not support chat`, which flooded Sentry
+ * (TAURI-RUST-4P6). The core reports `chat_capable: false` only when it is
+ * confident a model is embedding-only (from `/api/show` `capabilities`); a
+ * `null`/`undefined` value means unknown (older Ollama, or an `/api/show`
+ * miss) and stays selectable — fail-open, never hide a usable model. The
+ * embedding model is configured in a separate panel, so hiding these here
+ * never blocks embedding selection.
+ */
+export function isChatSelectableLocalModel(model: { chat_capable?: boolean | null }): boolean {
+  return model.chat_capable !== false;
+}
+
+/** A locally-installed model mapped to the picker shape consumed by the LLM/chat selectors. */
+export interface SelectableChatModel {
+  id: string;
+  sizeBytes: number;
+  family: string;
+}
+
+/**
+ * Filter the installed-model list down to chat-selectable models (hiding
+ * embedding-only ones via {@link isChatSelectableLocalModel}) and map each to
+ * the `{ id, sizeBytes, family }` picker shape.
+ *
+ * Pure so the filter + map wiring is unit-testable without rendering the panel
+ * — both picker consumers (`CustomRoutingDialog` + `GlobalOwnModelSelector`)
+ * route a chat model, never the embedder (configured separately in
+ * `EmbeddingsPanel`). Selecting an embedding model as chat 400s every turn on
+ * Ollama (TAURI-RUST-4P6).
+ */
+export function toSelectableChatModels(
+  installed: readonly { name: string; size?: number | null; chat_capable?: boolean | null }[]
+): SelectableChatModel[] {
+  return installed
+    .filter(isChatSelectableLocalModel)
+    .map(m => ({
+      id: m.name,
+      sizeBytes: m.size ?? 0,
+      family: m.name.split(/[:/]/, 1)[0] ?? 'model',
+    }));
+}

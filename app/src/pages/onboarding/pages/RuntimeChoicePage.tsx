@@ -42,7 +42,8 @@ const RuntimeChoicePage = () => {
           try {
             await completeAndExit();
           } catch (err) {
-            console.error('[onboarding:runtime-choice-page] completeAndExit failed', err);
+            const safeErr = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+            console.error('[onboarding:runtime-choice-page] completeAndExit failed', safeErr);
             setExitError(err instanceof Error ? err.message : String(err));
           }
         }}

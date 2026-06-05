@@ -3,6 +3,7 @@ import debug from 'debug';
 
 import { threadApi } from '../services/api/threadApi';
 import type {
+  AgentRun,
   PersistedSubagentActivity,
   PersistedSubagentToolCall,
   PersistedToolTimelineEntry,
@@ -222,6 +223,9 @@ export interface ArtifactSnapshot {
   updatedAt: number;
 }
 
+/** Queue behavior when a turn is already in flight for a thread. */
+export type QueueMode = 'interrupt' | 'steer' | 'followup' | 'collect';
+
 /**
  * Per-thread UI state for an in-flight agent turn (socket events while the user
  * may navigate away from Conversations). The thread slice keeps `activeThreadId`
@@ -242,9 +246,8 @@ interface ChatRuntimeState {
    * download / retry affordances (#2779).
    */
   artifactsByThread: Record<string, ArtifactSnapshot[]>;
-  /** Per-thread run queue status. Updated from queue_status RPC responses. */
-  queueStatusByThread: Record<string, QueueStatus>;
   sessionTokenUsage: SessionTokenUsage;
+  queueStatusByThread: Record<string, QueueStatus>;
 }
 
 /** Snapshot of the active-run queue depth per lane. */
@@ -264,8 +267,8 @@ const initialState: ChatRuntimeState = {
   inferenceTurnLifecycleByThread: {},
   pendingApprovalByThread: {},
   artifactsByThread: {},
-  queueStatusByThread: {},
   sessionTokenUsage: { inputTokens: 0, outputTokens: 0, turns: 0, lastUpdated: 0 },
+  queueStatusByThread: {},
 };
 
 /**
@@ -303,6 +306,7 @@ function subagentActivityFromPersisted(activity: PersistedSubagentActivity): Sub
   return {
     taskId: activity.taskId,
     agentId: activity.agentId,
+    status: activity.status,
     workerThreadId: activity.workerThreadId,
     mode: activity.mode,
     dedicatedThread: activity.dedicatedThread,
@@ -339,6 +343,59 @@ function toolTimelineFromPersisted(entry: PersistedToolTimelineEntry): ToolTimel
     detail: entry.detail,
     sourceToolName: entry.sourceToolName,
     subagent: entry.subagent ? subagentActivityFromPersisted(entry.subagent) : undefined,
+  };
+}
+
+function timelineStatusFromRun(status: AgentRun['status']): ToolTimelineEntryStatus {
+  switch (status) {
+    case 'completed':
+      return 'success';
+    case 'failed':
+    case 'cancelled':
+    case 'interrupted':
+      return 'error';
+    case 'awaiting_user':
+    case 'paused':
+      return 'awaiting_user';
+    default:
+      return 'running';
+  }
+}
+
+function timelineEntryFromRun(run: AgentRun): ToolTimelineEntry | null {
+  if (!['subagent', 'worker_thread', 'workflow_child', 'team_member'].includes(run.kind)) {
+    return null;
+  }
+  const agentId = run.agentId ?? 'agent';
+  const displayName =
+    typeof run.metadata?.displayName === 'string' ? run.metadata.displayName : agentId;
+  const elapsedMs = run.telemetry?.elapsedMs ?? undefined;
+  const outputChars =
+    typeof run.metadata?.outputChars === 'number' ? run.metadata.outputChars : undefined;
+  return {
+    id: `subagent:${run.id}`,
+    name: `subagent:${agentId}`,
+    round: 0,
+    status: timelineStatusFromRun(run.status),
+    displayName,
+    detail: run.summary ?? run.error ?? undefined,
+    sourceToolName: 'run_ledger',
+    subagent: {
+      taskId: run.id,
+      agentId,
+      status: run.status,
+      displayName,
+      workerThreadId: run.workerThreadId ?? undefined,
+      mode: typeof run.metadata?.mode === 'string' ? run.metadata.mode : undefined,
+      dedicatedThread:
+        typeof run.metadata?.dedicatedThread === 'boolean'
+          ? run.metadata.dedicatedThread
+          : undefined,
+      elapsedMs,
+      outputChars,
+      toolCalls: [],
+      transcript: [],
+    },
   };
 }
 
@@ -706,6 +763,26 @@ const chatRuntimeSlice = createSlice({
 
       state.toolTimelineByThread[threadId] = snapshot.toolTimeline.map(toolTimelineFromPersisted);
     },
+    /**
+     * Rebuild durable historical subagent rows from the run ledger. This is
+     * intentionally compact: streamed child prose is not replayed from the
+     * ledger, but the row remains inspectable and links to its worker thread /
+     * checkpoint metadata when present.
+     */
+    hydrateRuntimeFromRunLedger: (
+      state,
+      action: PayloadAction<{ threadId: string; runs: AgentRun[] }>
+    ) => {
+      const { threadId, runs } = action.payload;
+      const existing = state.toolTimelineByThread[threadId] ?? [];
+      const byId = new Map(existing.map(entry => [entry.id, entry]));
+      for (const run of runs) {
+        const entry = timelineEntryFromRun(run);
+        if (!entry || byId.has(entry.id)) continue;
+        byId.set(entry.id, entry);
+      }
+      state.toolTimelineByThread[threadId] = Array.from(byId.values());
+    },
   },
   extraReducers: builder => {
     builder.addCase(resetUserScopedState, () => initialState);
@@ -741,6 +818,7 @@ export const {
   recordChatTurnUsage,
   resetSessionTokenUsage,
   hydrateRuntimeFromSnapshot,
+  hydrateRuntimeFromRunLedger,
 } = chatRuntimeSlice.actions;
 
 /**
@@ -770,6 +848,11 @@ export const fetchAndHydrateTurnState = createAsyncThunk(
         dispatch(hydrateRuntimeFromSnapshot({ snapshot }));
       } else {
         turnStateLog('no snapshot thread=%s', threadId);
+      }
+      const runs = await threadApi.listRuns({ parentThreadId: threadId, limit: 50 });
+      if (runs.length > 0) {
+        turnStateLog('hydrated run ledger thread=%s runs=%d', threadId, runs.length);
+        dispatch(hydrateRuntimeFromRunLedger({ threadId, runs }));
       }
       return snapshot;
     } catch (error) {

@@ -3,6 +3,7 @@
 pub mod ops;
 pub mod rpc;
 mod schemas;
+pub mod state;
 pub mod tools;
 
 pub use ops::*;

@@ -1672,6 +1672,14 @@ pub async fn wipe_all_rpc(config: &Config) -> Result<RpcOutcome<WipeAllResponse>
             "mem_tree_summaries",
             "mem_tree_trees",
             "mem_tree_chunks",
+            // Source-level ingest gate. MUST be cleared on wipe: otherwise the
+            // chunks are gone but `(source_kind, source_id[@version])` stays
+            // claimed, so the next sync sees `already_ingested` and writes 0
+            // chunks / enqueues 0 seal jobs — a wiped source can never
+            // rebuild. (Previously masked for documents by the old
+            // delete-first re-ingest path, which has been removed in favour of
+            // non-destructive versioned ingest.)
+            "mem_tree_ingested_sources",
         ];
         let rows_deleted: u64 = with_connection(&cfg, |conn| {
             let tx = conn.unchecked_transaction()?;

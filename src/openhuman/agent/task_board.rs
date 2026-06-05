@@ -87,6 +87,12 @@ pub struct TaskBoardCard {
     pub notes: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub blocker: Option<String>,
+    /// Conversation thread id of the card's live/last agent session, when one
+    /// exists. Set by the autonomous dispatcher (`task_session`) and the manual
+    /// "Work" path so the UI can offer a "View session" jump into Conversations.
+    /// `None` for a card that has never been run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_thread_id: Option<String>,
     /// Provider/source identifiers for a card ingested from a task source
     /// (`{provider, source_id, external_id, url, repo?, urgency}`). Set by
     /// the `task_sources` route; consumed downstream for prioritisation and
@@ -351,6 +357,11 @@ pub fn normalise_board(board: &mut TaskBoard) {
             .as_ref()
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
+        card.session_thread_id = card
+            .session_thread_id
+            .as_ref()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
         if card.status == TaskCardStatus::Blocked && card.blocker.is_none() {
             card.blocker = card.notes.clone();
             tracing::trace!(
@@ -439,6 +450,7 @@ mod tests {
                     evidence: vec!["  cargo test  ".into()],
                     notes: Some("  note  ".into()),
                     blocker: None,
+                    session_thread_id: Some("   ".into()),
                     source_metadata: None,
                     order: 99,
                     updated_at: String::new(),
@@ -456,6 +468,7 @@ mod tests {
                     evidence: Vec::new(),
                     notes: Some("waiting on user".into()),
                     blocker: None,
+                    session_thread_id: None,
                     source_metadata: None,
                     order: 99,
                     updated_at: String::new(),
@@ -479,6 +492,9 @@ mod tests {
         );
         assert_eq!(saved.cards[0].acceptance_criteria, vec!["tests pass"]);
         assert_eq!(saved.cards[0].evidence, vec!["cargo test"]);
+        // Whitespace-only session_thread_id normalises to None so the board
+        // never offers a blank "View session" jump target.
+        assert_eq!(saved.cards[0].session_thread_id, None);
         assert_eq!(saved.cards[0].order, 0);
         assert!(saved.cards[0].id.starts_with("task-"));
         assert_eq!(saved.cards[1].blocker.as_deref(), Some("waiting on user"));
@@ -527,6 +543,7 @@ mod tests {
                     evidence: Vec::new(),
                     notes: None,
                     blocker: None,
+                    session_thread_id: None,
                     source_metadata: None,
                     order: 99,
                     updated_at: String::new(),
@@ -544,6 +561,7 @@ mod tests {
                     evidence: Vec::new(),
                     notes: None,
                     blocker: None,
+                    session_thread_id: None,
                     source_metadata: None,
                     order: 99,
                     updated_at: String::new(),

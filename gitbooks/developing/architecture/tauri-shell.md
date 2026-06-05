@@ -158,6 +158,28 @@ From **`workspace_paths.rs`** (closes `#1402`). These commands accept workspace-
 | `reveal_workspace_path`  | Reveal an existing workspace file or directory in the OS file manager. |
 | `preview_workspace_text` | Read a capped UTF-8 text preview from an existing workspace file.      |
 
+### Synthetic input main-thread executor (native registry, not `invoke`)
+
+Registered in **`lib.rs`** at startup under the event-bus native-request method
+`computer.input_on_main_thread` (`INPUT_ON_MAIN_THREAD_METHOD`, defined in
+`openhuman_core::openhuman::tools::computer::main_thread`). This is **not** a
+`@tauri-apps/api` `invoke` command — it is an in-process native request the
+**core** dispatches to the **shell** so synthetic input runs on the real app
+main thread.
+
+Why: enigo's macOS keyboard-layout lookup (`TSMGetInputSourceProperty`) traps
+(`_dispatch_assert_queue_fail` / `EXC_BREAKPOINT`) and crashes the CEF host when
+called off the main thread. The `mouse` / `keyboard` tools therefore never call
+enigo on their tokio worker; they build a closure and dispatch it here, where
+the shell runs it via `AppHandle::run_on_main_thread`.
+
+| Field        | Shape                                                                                              |
+| ------------ | -------------------------------------------------------------------------------------------------- |
+| Method       | `computer.input_on_main_thread`                                                                    |
+| Request      | `MainThreadInputOp { run: Box<dyn FnOnce() -> Result<String, String> + Send> }` (passed by value)  |
+| Response     | `Result<String, String>` — `Ok(message)` on success, `Err(reason)` on failure                      |
+| Availability | Desktop only. Headless / CLI builds register no executor; the core call then returns a clean `Err`. |
+
 ### Removed / not present
 
 The following **do not** exist in the current `generate_handler!` list: `exchange_token`, `get_auth_state`, `socket_connect`, `start_telegram_login`. Authentication and sockets are handled in the **React** app and **core** process, not via these IPC names.

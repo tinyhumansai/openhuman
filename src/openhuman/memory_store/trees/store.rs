@@ -358,8 +358,9 @@ pub(crate) fn insert_summary_tx(
             entities_json, topics_json,
             time_range_start_ms, time_range_end_ms,
             score, sealed_at_ms, deleted, embedding,
-            content_path, content_sha256
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+            content_path, content_sha256,
+            doc_id, version_ms
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
         params![
             node.id,
             node.tree_id,
@@ -379,6 +380,8 @@ pub(crate) fn insert_summary_tx(
             embedding_blob,
             content_path,
             content_sha256,
+            node.doc_id,
+            node.version_ms,
         ],
     )
     .with_context(|| format!("Failed to insert summary id={}", node.id))?;
@@ -694,7 +697,8 @@ pub fn get_summary(config: &Config, id: &str) -> Result<Option<SummaryNode>> {
                     child_ids_json, content, token_count,
                     entities_json, topics_json,
                     time_range_start_ms, time_range_end_ms,
-                    score, sealed_at_ms, deleted, embedding
+                    score, sealed_at_ms, deleted, embedding,
+                    doc_id, version_ms
                FROM mem_tree_summaries WHERE id = ?1",
         )?;
         let row = stmt
@@ -744,7 +748,8 @@ pub fn get_summaries_batch(
                         child_ids_json, content, token_count,
                         entities_json, topics_json,
                         time_range_start_ms, time_range_end_ms,
-                        score, sealed_at_ms, deleted, embedding
+                        score, sealed_at_ms, deleted, embedding,
+                        doc_id, version_ms
                    FROM mem_tree_summaries
                   WHERE id IN ({placeholders})"
             );
@@ -776,7 +781,8 @@ pub fn list_summaries_at_level(
                     child_ids_json, content, token_count,
                     entities_json, topics_json,
                     time_range_start_ms, time_range_end_ms,
-                    score, sealed_at_ms, deleted, embedding
+                    score, sealed_at_ms, deleted, embedding,
+                    doc_id, version_ms
                FROM mem_tree_summaries
               WHERE tree_id = ?1 AND level = ?2 AND deleted = 0
               ORDER BY sealed_at_ms ASC",
@@ -821,6 +827,8 @@ fn row_to_summary(row: &rusqlite::Row<'_>) -> rusqlite::Result<SummaryNode> {
     let sealed_ms: i64 = row.get(13)?;
     let deleted: i64 = row.get(14)?;
     let embedding_blob: Option<Vec<u8>> = row.get(15)?;
+    let doc_id: Option<String> = row.get(16)?;
+    let version_ms: Option<i64> = row.get(17)?;
 
     let tree_kind = TreeKind::parse(&tree_kind_s).map_err(|e| {
         rusqlite::Error::FromSqlConversionFailure(2, rusqlite::types::Type::Text, e.into())
@@ -863,6 +871,8 @@ fn row_to_summary(row: &rusqlite::Row<'_>) -> rusqlite::Result<SummaryNode> {
         sealed_at: ms_to_utc(sealed_ms)?,
         deleted: deleted != 0,
         embedding,
+        doc_id,
+        version_ms,
     })
 }
 

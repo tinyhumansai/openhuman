@@ -84,6 +84,24 @@ function ensureStorage(name: 'localStorage' | 'sessionStorage') {
 ensureStorage('localStorage');
 ensureStorage('sessionStorage');
 
+// Polyfill window.matchMedia — used by Rive (@rive-app/react-webgl2) and
+// some media-query hooks; not implemented in jsdom.
+if (typeof window.matchMedia === 'undefined') {
+  Object.defineProperty(window, 'matchMedia', {
+    writable: true,
+    value: vi.fn((query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })),
+  });
+}
+
 // Polyfill ResizeObserver for cmdk/Radix components in jsdom
 if (typeof globalThis.ResizeObserver === 'undefined') {
   globalThis.ResizeObserver = class ResizeObserver {
@@ -112,7 +130,10 @@ if (typeof Element !== 'undefined' && !Element.prototype.scrollIntoView) {
 // Mock Tauri APIs (not available in test env)
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(), isTauri: vi.fn(() => false) }));
 
-vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(), emit: vi.fn() }));
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: vi.fn().mockResolvedValue(vi.fn()),
+  emit: vi.fn(),
+}));
 
 vi.mock('@tauri-apps/plugin-deep-link', () => ({ onOpenUrl: vi.fn(), getCurrent: vi.fn() }));
 

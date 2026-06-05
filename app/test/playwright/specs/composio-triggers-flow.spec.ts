@@ -81,6 +81,7 @@ async function bootSkillsPage(page: Page, userId: string) {
     .toContain('/skills');
   await waitForAppReady(page);
   await dismissWalkthroughIfPresent(page);
+  await page.getByRole('tab', { name: 'Composio' }).click();
   const heading = page.getByRole('heading', { name: 'Composio Integrations' });
   if (!(await heading.isVisible().catch(() => false))) {
     const connectionsButton = page.getByRole('button', { name: 'Connections' });
@@ -189,6 +190,7 @@ test.describe('Composio triggers flow', () => {
     await page.reload();
     await waitForAppReady(page);
     await dismissWalkthroughIfPresent(page);
+    await page.getByRole('tab', { name: 'Composio' }).click();
     await expect(page.getByRole('heading', { name: 'Composio Integrations' })).toBeVisible({
       timeout: 20_000,
     });

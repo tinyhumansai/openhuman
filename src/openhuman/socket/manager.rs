@@ -4,7 +4,7 @@
 //! using `tokio-tungstenite` with `rustls` TLS.
 //!
 //! Responsibilities:
-//! - MCP `listTools` / `toolCall` handled directly via the SkillRegistry
+//! - MCP `listTools` / `toolCall` handled directly via the WorkflowRegistry
 //! - Non-MCP server events forwarded to running skills and to the frontend
 //! - Connection state logging for observability
 //! - Automatic reconnection with exponential backoff

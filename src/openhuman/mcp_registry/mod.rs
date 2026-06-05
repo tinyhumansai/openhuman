@@ -53,7 +53,7 @@
 pub mod boot;
 pub mod bus;
 pub mod connections;
-mod ops;
+pub mod ops;
 mod registries;
 mod registry;
 mod schemas;

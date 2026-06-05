@@ -7,6 +7,27 @@
 use crate::openhuman::config::rpc as config_rpc;
 use crate::openhuman::memory_sources::types::{MemorySourceEntry, SourceKind};
 
+/// Conservative default sync caps for a Composio toolkit, keyed by toolkit slug.
+///
+/// Single source of truth for the cheap out-of-the-box sync volume. Applied to a
+/// source entry when it is first registered (`upsert_composio_source`, insert-only)
+/// and by the one-time caps migration (`reconcile::apply_composio_source_caps_migration`)
+/// for cap-less entries. Never overwrites a user-customised cap.
+///
+/// Returns `(max_items, sync_depth_days)`.
+pub fn memory_sync_defaults_for_toolkit(toolkit: &str) -> (Option<u32>, Option<u32>) {
+    match toolkit {
+        "gmail" => (Some(100), Some(30)),
+        "slack" => (Some(50), Some(14)),
+        "notion" => (Some(30), Some(30)),
+        "linear" => (Some(50), Some(30)),
+        "clickup" => (Some(50), Some(30)),
+        "github" => (Some(50), Some(30)),
+        // Generic fallback for any toolkit not listed above.
+        _ => (Some(30), Some(14)),
+    }
+}
+
 pub async fn list_sources() -> Result<Vec<MemorySourceEntry>, String> {
     let config = config_rpc::load_config_with_timeout().await?;
     Ok(config.memory_sources.clone())
@@ -38,7 +59,6 @@ pub async fn add_source(entry: MemorySourceEntry) -> Result<MemorySourceEntry, S
     tracing::info!(
         id = %entry.id,
         kind = %entry.kind.as_str(),
-        label = %entry.label,
         "[memory_sources] adding source"
     );
 
@@ -110,6 +130,15 @@ pub async fn update_source(
     }
     if let Some(v) = patch.sync_depth_days {
         entry.sync_depth_days = Some(v);
+    }
+    if let Some(v) = patch.max_commits {
+        entry.max_commits = Some(v);
+    }
+    if let Some(v) = patch.max_issues {
+        entry.max_issues = Some(v);
+    }
+    if let Some(v) = patch.max_prs {
+        entry.max_prs = Some(v);
     }
 
     entry.validate()?;
@@ -202,11 +231,19 @@ pub async fn upsert_composio_source(
         return Ok(updated);
     }
 
+    let (default_max_items, default_sync_depth_days) = memory_sync_defaults_for_toolkit(toolkit);
+    tracing::debug!(
+        toolkit = %toolkit,
+        max_items = ?default_max_items,
+        sync_depth_days = ?default_sync_depth_days,
+        "[memory_sources] applying conservative defaults for new composio source"
+    );
+
     let entry = MemorySourceEntry {
         id: format!("src_{}", uuid::Uuid::new_v4().as_simple()),
         kind: SourceKind::Composio,
         label: label.to_string(),
-        enabled: false,
+        enabled: true,
         toolkit: Some(toolkit.to_string()),
         connection_id: Some(connection_id.to_string()),
         path: None,
@@ -219,11 +256,11 @@ pub async fn upsert_composio_source(
         max_prs: None,
         query: None,
         since_days: None,
-        max_items: None,
+        max_items: default_max_items,
         selector: None,
         max_tokens_per_sync: None,
         max_cost_per_sync_usd: None,
-        sync_depth_days: None,
+        sync_depth_days: default_sync_depth_days,
     };
     config.memory_sources.push(entry.clone());
     config
@@ -275,11 +312,105 @@ pub struct MemorySourcePatch {
     pub max_cost_per_sync_usd: Option<f64>,
     #[serde(default)]
     pub sync_depth_days: Option<u32>,
+    // ── GithubRepo-specific caps (previously missing from patch) ──
+    #[serde(default)]
+    pub max_commits: Option<u32>,
+    #[serde(default)]
+    pub max_issues: Option<u32>,
+    #[serde(default)]
+    pub max_prs: Option<u32>,
+}
+
+/// Enable ALL configured memory sources and clear every per-source cap,
+/// giving the user unrestricted access ("All In" mode).
+///
+/// For each source in `config.memory_sources`:
+/// - Sets `enabled = true`.
+/// - Clears `max_items`, `since_days`, `sync_depth_days`,
+///   `max_commits`, `max_issues`, `max_prs`,
+///   `max_tokens_per_sync`, `max_cost_per_sync_usd` to `None`.
+///
+/// Saves config once after all mutations and returns the updated entries.
+pub async fn apply_all_in() -> Result<Vec<MemorySourceEntry>, String> {
+    let mut config = config_rpc::load_config_with_timeout().await?;
+
+    tracing::info!(
+        count = config.memory_sources.len(),
+        "[memory_sources] apply_all_in: enabling all sources and clearing caps"
+    );
+
+    for source in &mut config.memory_sources {
+        tracing::debug!(
+            id = %source.id,
+            kind = %source.kind.as_str(),
+            "[memory_sources] apply_all_in: enabling source and clearing caps"
+        );
+        source.enabled = true;
+        source.max_items = None;
+        source.since_days = None;
+        source.sync_depth_days = None;
+        source.max_commits = None;
+        source.max_issues = None;
+        source.max_prs = None;
+        source.max_tokens_per_sync = None;
+        source.max_cost_per_sync_usd = None;
+    }
+
+    let updated = config.memory_sources.clone();
+
+    config
+        .save()
+        .await
+        .map_err(|e| format!("apply_all_in: failed to save config: {e:#}"))?;
+
+    tracing::info!(
+        count = updated.len(),
+        "[memory_sources] apply_all_in: complete — all sources enabled, all caps cleared"
+    );
+
+    Ok(updated)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn composio_defaults_for_known_toolkits() {
+        assert_eq!(
+            memory_sync_defaults_for_toolkit("gmail"),
+            (Some(100), Some(30))
+        );
+        assert_eq!(
+            memory_sync_defaults_for_toolkit("slack"),
+            (Some(50), Some(14))
+        );
+        assert_eq!(
+            memory_sync_defaults_for_toolkit("notion"),
+            (Some(30), Some(30))
+        );
+        assert_eq!(
+            memory_sync_defaults_for_toolkit("linear"),
+            (Some(50), Some(30))
+        );
+        assert_eq!(
+            memory_sync_defaults_for_toolkit("clickup"),
+            (Some(50), Some(30))
+        );
+        assert_eq!(
+            memory_sync_defaults_for_toolkit("github"),
+            (Some(50), Some(30))
+        );
+    }
+
+    #[test]
+    fn composio_defaults_for_generic_fallback() {
+        assert_eq!(
+            memory_sync_defaults_for_toolkit("unknown_toolkit_xyz"),
+            (Some(30), Some(14))
+        );
+        assert_eq!(memory_sync_defaults_for_toolkit(""), (Some(30), Some(14)));
+    }
 
     #[test]
     fn memory_source_patch_deserializes_partial() {
@@ -288,5 +419,30 @@ mod tests {
         assert_eq!(patch.label.as_deref(), Some("New label"));
         assert_eq!(patch.enabled, Some(false));
         assert!(patch.toolkit.is_none());
+    }
+
+    #[test]
+    fn memory_source_patch_round_trips_github_limit_fields() {
+        let json = serde_json::json!({
+            "max_commits": 100,
+            "max_issues": 50,
+            "max_prs": 25
+        });
+        let patch: MemorySourcePatch = serde_json::from_value(json).unwrap();
+        assert_eq!(patch.max_commits, Some(100));
+        assert_eq!(patch.max_issues, Some(50));
+        assert_eq!(patch.max_prs, Some(25));
+        // Unset fields must be None (serde(default))
+        assert!(patch.label.is_none());
+        assert!(patch.enabled.is_none());
+    }
+
+    #[test]
+    fn memory_source_patch_defaults_github_fields_to_none() {
+        let json = serde_json::json!({ "enabled": true });
+        let patch: MemorySourcePatch = serde_json::from_value(json).unwrap();
+        assert!(patch.max_commits.is_none());
+        assert!(patch.max_issues.is_none());
+        assert!(patch.max_prs.is_none());
     }
 }

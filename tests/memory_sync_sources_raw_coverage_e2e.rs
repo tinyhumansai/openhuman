@@ -508,6 +508,8 @@ async fn composio_providers_fetch_profiles_tasks_and_cover_error_branches() {
         toolkit: "github".to_string(),
         connection_id: Some("conn-github".to_string()),
         usage: Default::default(),
+        max_items: None,
+        sync_depth_days: None,
     };
     let github = GitHubProvider::new();
     let github_profile = github

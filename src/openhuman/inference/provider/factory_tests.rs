@@ -1772,10 +1772,7 @@ fn resolve_model_for_hint_maps_known_hints_to_tiers() {
         resolve_model_for_hint("hint:reasoning", &config),
         "reasoning-v1"
     );
-    assert_eq!(
-        resolve_model_for_hint("hint:chat", &config),
-        "reasoning-quick-v1"
-    );
+    assert_eq!(resolve_model_for_hint("hint:chat", &config), "chat-v1");
     assert_eq!(
         resolve_model_for_hint("hint:agentic", &config),
         "agentic-v1"

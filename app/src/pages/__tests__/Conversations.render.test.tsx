@@ -19,6 +19,7 @@ import { CoreRpcError } from '../../services/coreRpcClient';
 import agentProfileReducer from '../../store/agentProfileSlice';
 import chatRuntimeReducer, {
   setInferenceStatusForThread,
+  setTaskBoardForThread,
   setToolTimelineForThread,
 } from '../../store/chatRuntimeSlice';
 import socketReducer from '../../store/socketSlice';
@@ -205,8 +206,7 @@ async function renderConversations(preload: Record<string, unknown> = {}) {
   return store;
 }
 
-/** Click the sidebar toggle so the thread list becomes visible.
- *  The sidebar starts hidden (showSidebar=false) in this PR. */
+/** Click the sidebar toggle so the thread list becomes visible. */
 async function openSidebar() {
   const toggleBtn = screen.getByTitle('Show sidebar');
   await act(async () => {
@@ -218,6 +218,7 @@ async function openSidebar() {
 const emptyThreadState = {
   threads: [],
   selectedThreadId: null,
+  threadSidebarVisible: false,
   activeThreadId: null,
   welcomeThreadId: null,
   messagesByThreadId: {},
@@ -311,7 +312,7 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     });
   });
 
-  // Covers line 906: const effectiveShowSidebar = showSidebar;
+  // Covers line 906: const effectiveShowSidebar = threadSidebarVisible;
   // Covers line 941: <div className="flex-1 overflow-y-auto"> (always rendered in page mode)
   it('renders the Threads sidebar header in page mode', async () => {
     await act(async () => {
@@ -323,6 +324,26 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
 
     // The "Threads" header is always rendered in page mode (sidebar guard removed)
     expect(screen.getByText('Threads')).toBeInTheDocument();
+  });
+
+  it('restores and updates the persisted thread sidebar visibility', async () => {
+    let renderedStore: ReturnType<typeof buildStore> | undefined;
+    await act(async () => {
+      renderedStore = await renderConversations({
+        thread: { ...emptyThreadState, threadSidebarVisible: true },
+      });
+    });
+
+    expect(screen.getByText('Threads')).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByTitle('Hide sidebar'));
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText('Threads')).not.toBeInTheDocument();
+    });
+    expect(renderedStore?.getState().thread.threadSidebarVisible).toBe(false);
   });
 
   // Covers line 941 empty branch
@@ -1619,5 +1640,96 @@ describe('Conversations — thread title editing', () => {
     });
 
     expect(threadApi.updateTitle).not.toHaveBeenCalled();
+  });
+});
+
+describe('Conversations — open-session resume (View work)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetThreadMessages.mockResolvedValue({ messages: [], count: 0 });
+  });
+
+  it('honours location.state.openThreadId to open a task session on mount', async () => {
+    // A task-labelled session thread, reachable only via an explicit
+    // open-intent because it's hidden behind the default General tab.
+    const taskThread = makeThread({
+      id: 'task-open-1',
+      title: 'Autonomous run',
+      labels: ['tasks'],
+    });
+    mockGetThreads.mockResolvedValue({ threads: [taskThread], count: 1 });
+
+    const store = buildStore({ thread: emptyThreadState });
+    const { default: Conversations } = await import('../Conversations');
+
+    await act(async () => {
+      render(
+        <Provider store={store}>
+          <MemoryRouter
+            initialEntries={[
+              { pathname: '/conversations', state: { openThreadId: 'task-open-1' } },
+            ]}>
+            <Conversations />
+          </MemoryRouter>
+        </Provider>
+      );
+    });
+
+    // The open-intent selects the task session (bypassing the General-tab
+    // filter) and loads its messages.
+    await waitFor(() => expect(store.getState().thread.selectedThreadId).toBe('task-open-1'));
+    await waitFor(() => expect(mockGetThreadMessages).toHaveBeenCalled());
+  });
+
+  it("View work on a selected task board opens that card's session thread", async () => {
+    const thread = makeThread({ id: 'board-thread', title: 'Board thread' });
+    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
+
+    const store = buildStore({ thread: selectedThreadState(thread) });
+
+    const { default: Conversations } = await import('../Conversations');
+    await act(async () => {
+      render(
+        <Provider store={store}>
+          <MemoryRouter initialEntries={['/conversations']}>
+            <Conversations />
+          </MemoryRouter>
+        </Provider>
+      );
+    });
+    // Let the mount-resume effect settle, then seed the selected thread's task
+    // board with a card that has a live session (seeding before mount gets
+    // clobbered by turn-state hydration).
+    await screen.findByPlaceholderText('How can I help you today?');
+    const selectedId = store.getState().thread.selectedThreadId ?? 'board-thread';
+    await act(async () => {
+      store.dispatch(
+        setTaskBoardForThread({
+          threadId: selectedId,
+          board: {
+            threadId: selectedId,
+            updatedAt: '',
+            cards: [
+              {
+                id: 'tc1',
+                title: 'Worked card',
+                status: 'in_progress',
+                order: 0,
+                updatedAt: '',
+                sessionThreadId: 'sess-99',
+              },
+            ],
+          },
+        })
+      );
+    });
+
+    const viewBtn = await screen.findByTitle('View work');
+    await act(async () => {
+      fireEvent.click(viewBtn);
+    });
+
+    // onViewSession navigates the chat view to the card's session thread.
+    await waitFor(() => expect(store.getState().thread.selectedThreadId).toBe('sess-99'));
   });
 });

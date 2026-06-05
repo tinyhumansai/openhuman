@@ -143,6 +143,7 @@ fn stub_parent_context() -> ParentExecutionContext {
         session_key: "test-session".into(),
         session_parent_prefix: None,
         on_progress: None,
+        run_queue: None,
     }
 }
 

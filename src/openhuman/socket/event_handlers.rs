@@ -332,7 +332,34 @@ pub(super) fn handle_sio_event(
                 turns.len(),
                 duration_ms
             );
-            publish_global(DomainEvent::BackendMeetTranscript { turns, duration_ms });
+            publish_global(DomainEvent::BackendMeetTranscript {
+                turns: turns.clone(),
+                duration_ms,
+            });
+            tokio::spawn(async move {
+                // Only ingest into memory when the user has opted in via
+                // config.meet.ingest_backend_transcripts (default: false).
+                let enabled = crate::openhuman::config::Config::load_or_init()
+                    .await
+                    .map(|c| c.meet.ingest_backend_transcripts)
+                    .unwrap_or(false);
+                if !enabled {
+                    tracing::debug!(
+                        "[socket] bot:transcript memory ingest skipped \
+                         (config.meet.ingest_backend_transcripts = false)"
+                    );
+                    return;
+                }
+                if let Err(e) =
+                    crate::openhuman::agent_meetings::ops::ingest_backend_meeting_transcript(
+                        turns,
+                        duration_ms,
+                    )
+                    .await
+                {
+                    log::warn!("[socket] bot:transcript memory ingest failed: {e}");
+                }
+            });
         }
         "bot:error" => {
             let error = data

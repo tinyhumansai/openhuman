@@ -178,7 +178,7 @@ impl Tool for TinyFishSearchTool {
     }
 
     fn category(&self) -> ToolCategory {
-        ToolCategory::Skill
+        ToolCategory::Workflow
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
@@ -311,7 +311,7 @@ impl Tool for TinyFishFetchTool {
     }
 
     fn category(&self) -> ToolCategory {
-        ToolCategory::Skill
+        ToolCategory::Workflow
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
@@ -501,7 +501,7 @@ impl Tool for TinyFishAgentRunTool {
     }
 
     fn category(&self) -> ToolCategory {
-        ToolCategory::Skill
+        ToolCategory::Workflow
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {

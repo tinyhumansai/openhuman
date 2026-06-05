@@ -57,6 +57,7 @@ import {
   persistReaction,
   setActiveThread,
   setSelectedThread,
+  setThreadSidebarVisible,
   THREAD_NOT_FOUND_MESSAGE,
   updateThreadTitle,
 } from '../store/threadSlice';
@@ -186,10 +187,17 @@ const Conversations = ({
   const { t } = useT();
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
-  const { threads, selectedThreadId, messages, isLoadingMessages, messagesError, activeThreadId } =
-    useAppSelector(state => state.thread);
+  const location = useLocation();
+  const {
+    threads,
+    selectedThreadId,
+    threadSidebarVisible = false,
+    messages,
+    isLoadingMessages,
+    messagesError,
+    activeThreadId,
+  } = useAppSelector(state => state.thread);
 
-  const [showSidebar, setShowSidebar] = useState(false);
   const [inputValue, setInputValue] = useState('');
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -370,6 +378,27 @@ const Conversations = ({
         // Match the sidebar's default General filter here so initial/resume
         // selection can't auto-pick a thread hidden by the selected tab.
         const visibleThreads = data.threads.filter(t => isThreadVisibleInTab(t, GENERAL_TAB_VALUE));
+        // An explicit "open this session" intent (e.g. View work from the Agent
+        // Tasks board) wins over passive resume — and bypasses the General-tab
+        // visibility filter so a task-labelled session thread can actually be
+        // opened (the resume default below only considers General threads).
+        const openThreadId = (location.state as { openThreadId?: string } | null)?.openThreadId;
+        const openThread = openThreadId ? data.threads.find(t => t.id === openThreadId) : undefined;
+        if (openThread) {
+          // Switch the sidebar tab to the bucket that contains the opened
+          // thread (e.g. Tasks for a task session) so it's visible/selected in
+          // the list instead of hidden behind the default General tab.
+          setSelectedLabel(
+            isThreadVisibleInTab(openThread, TASKS_TAB_VALUE)
+              ? TASKS_TAB_VALUE
+              : isThreadVisibleInTab(openThread, SUBCONSCIOUS_TAB_VALUE)
+                ? SUBCONSCIOUS_TAB_VALUE
+                : GENERAL_TAB_VALUE
+          );
+          dispatch(setSelectedThread(openThread.id));
+          void dispatch(loadThreadMessages(openThread.id));
+          return;
+        }
         if (visibleThreads.length > 0) {
           // Prefer the thread the user was last viewing (persisted across
           // reloads via redux-persist on the `thread` slice). Only fall
@@ -423,7 +452,6 @@ const Conversations = ({
       });
   }, [dispatch]);
 
-  const location = useLocation();
   const { containerRef: messagesContainerRef, endRef: messagesEndRef } = useStickToBottom(
     messages,
     selectedThreadId,
@@ -1203,7 +1231,7 @@ const Conversations = ({
     labelTabs.find(tab => tab.value === selectedLabel)?.label ?? selectedLabel;
 
   const isSidebar = variant === 'sidebar';
-  const effectiveShowSidebar = showSidebar;
+  const effectiveShowSidebar = threadSidebarVisible;
 
   // Stable title resolver used by both the sidebar thread list and the header.
   const resolveThreadDisplayTitle = (threadId: string | null): string => {
@@ -1384,7 +1412,7 @@ const Conversations = ({
             <button
               type="button"
               data-analytics-id="chat-header-toggle-sidebar"
-              onClick={() => setShowSidebar(prev => !prev)}
+              onClick={() => dispatch(setThreadSidebarVisible(!effectiveShowSidebar))}
               className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 dark:hover:bg-neutral-800/60 text-stone-500 dark:text-neutral-400 hover:text-stone-700 dark:hover:text-neutral-200 dark:text-neutral-200 dark:hover:text-neutral-200 transition-colors"
               title={effectiveShowSidebar ? t('chat.hideSidebar') : t('chat.showSidebar')}>
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1587,6 +1615,15 @@ const Conversations = ({
                       notify: setSendAdvisory,
                       t,
                     });
+                  }}
+                  onViewSession={card => {
+                    if (!card.sessionThreadId) return;
+                    // Navigation only — do NOT mark the thread active. activeThreadId
+                    // tracks a true in-flight turn (set on send, cleared on
+                    // done/error). A completed session never emits that lifecycle
+                    // event, so forcing it active would wedge the composer.
+                    dispatch(setSelectedThread(card.sessionThreadId));
+                    void dispatch(loadThreadMessages(card.sessionThreadId));
                   }}
                 />
               )}

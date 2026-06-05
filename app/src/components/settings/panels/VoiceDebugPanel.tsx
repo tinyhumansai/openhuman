@@ -102,6 +102,7 @@ const VoiceDebugPanel = () => {
         min_duration_secs: settings.min_duration_secs,
         silence_threshold: settings.silence_threshold,
         custom_dictionary: settings.custom_dictionary,
+        always_on_enabled: settings.always_on_enabled,
       });
       setNotice(t('voice.debug.settingsSaved'));
       await loadData(true);
@@ -203,6 +204,37 @@ const VoiceDebugPanel = () => {
 
             {settings && (
               <>
+                {/* Always-on listening (Phase 2) — opt-in, privacy-sensitive. */}
+                <div className="flex items-start justify-between gap-3 rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2.5">
+                  <div className="min-w-0">
+                    <span className="text-xs font-medium text-stone-700 dark:text-neutral-200">
+                      {t('voice.debug.alwaysOn')}
+                    </span>
+                    <p className="text-[11px] text-stone-400 dark:text-neutral-500 mt-0.5">
+                      {t('voice.debug.alwaysOnDesc')}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={settings.always_on_enabled}
+                    aria-label={t('voice.debug.alwaysOn')}
+                    data-testid="voice-always-on-toggle"
+                    onClick={() => updateSetting('always_on_enabled', !settings.always_on_enabled)}
+                    className={`relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors ${
+                      settings.always_on_enabled
+                        ? 'bg-primary-500'
+                        : 'bg-stone-300 dark:bg-neutral-600'
+                    }`}>
+                    <span
+                      aria-hidden
+                      className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${
+                        settings.always_on_enabled ? 'translate-x-3.5' : 'translate-x-0.5'
+                      }`}
+                    />
+                  </button>
+                </div>
+
                 <label className="block space-y-1">
                   <span className="text-xs font-medium text-stone-600 dark:text-neutral-300">
                     {t('voice.debug.minimumRecordingSeconds')}

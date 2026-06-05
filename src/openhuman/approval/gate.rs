@@ -83,6 +83,50 @@ pub fn parse_approval_reply(message: &str) -> Option<ApprovalDecision> {
 
 static GLOBAL_GATE: OnceLock<Arc<ApprovalGate>> = OnceLock::new();
 
+/// Snapshot of the host-aware boot decision the runtime made when it
+/// evaluated `OPENHUMAN_APPROVAL_GATE`. Surfaced to the UI banner via
+/// `approval_get_gate_state` so the user sees a banner the *first* time
+/// they open the app after an override was honored, not only when a
+/// connected socket happens to receive the boot-time domain event.
+///
+/// Set exactly once on boot from `bootstrap_core_runtime`; subsequent
+/// reads return the same snapshot for the lifetime of the process.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApprovalGateBootState {
+    /// True when the gate was installed at boot.
+    pub installed: bool,
+    /// True when an `OPENHUMAN_APPROVAL_GATE=0` env override was honored
+    /// (CLI / Docker host) — the gate is OFF and external_effect tools
+    /// run unprompted. UI banners on this state.
+    pub disabled_by_env: bool,
+    /// True when an `OPENHUMAN_APPROVAL_GATE=0` env override was observed
+    /// but suppressed because the host is the Tauri desktop shell. UI
+    /// surfaces a softer one-shot info banner so the user knows the
+    /// override was rejected.
+    pub override_ignored: bool,
+    /// Host tag the boot decision keyed off — `tauri-shell` / `cli` /
+    /// `docker`. Pinned strings; downstream consumers may switch on this.
+    pub host: &'static str,
+}
+
+static BOOT_STATE: OnceLock<ApprovalGateBootState> = OnceLock::new();
+
+/// Record the host-aware boot decision so the UI / RPC layer can read it
+/// back. Idempotent — only the first call wins, mirroring the gate
+/// `OnceLock` install pattern.
+pub fn record_boot_state(state: ApprovalGateBootState) {
+    let _ = BOOT_STATE.set(state);
+}
+
+/// Read the recorded boot state. Returns `None` when `record_boot_state`
+/// was never called (e.g. older test paths that bring up the gate
+/// directly without going through `bootstrap_core_runtime`); RPC and UI
+/// callers treat that as "no banner needed".
+pub fn try_boot_state() -> Option<ApprovalGateBootState> {
+    BOOT_STATE.get().copied()
+}
+
 /// Coordinator for pending approvals.
 pub struct ApprovalGate {
     config: Config,
@@ -237,12 +281,14 @@ impl ApprovalGate {
             }
             AgentTurnOrigin::ExternalChannel {
                 channel,
+                sender,
                 reply_target,
                 message_id,
             } => {
                 tracing::info!(
                     tool = tool_name,
                     channel = %channel,
+                    sender = %sender.as_deref().unwrap_or("<unknown>"),
                     reply_target = %reply_target,
                     message_id = %message_id,
                     "[approval::gate] external channel turn — persisting audit row and parking \
@@ -956,6 +1002,7 @@ mod tests {
         let gate = Arc::new(gate);
         let origin = AgentTurnOrigin::ExternalChannel {
             channel: "telegram".into(),
+            sender: Some("tg-user-1".into()),
             reply_target: "tg-chat-1".into(),
             message_id: "msg-1".into(),
         };

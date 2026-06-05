@@ -56,8 +56,8 @@ use std::sync::Arc;
 /// failure mode this guards against.
 use super::turn_checkpoint::{assistant_message_has_tool_calls, MAX_ITER_CHECKPOINT_INSTRUCTION};
 
-/// Built-in direct tools that the orchestrator should call by name, not via
-/// `run_skill`.
+/// Built-in direct tools that the orchestrator should call by name, not
+/// wrapped in `run_workflow`.
 const DIRECT_TOOL_NAMES: &[&str] = &[
     "cron_add",
     "cron_list",
@@ -69,18 +69,25 @@ const DIRECT_TOOL_NAMES: &[&str] = &[
 ];
 
 /// Recovery shim for legacy/wrong-model calls of the form:
-/// `run_skill({skill_id: "<built-in tool>", inputs: {...}})`.
+/// `run_workflow({workflow_id: "<built-in tool>", inputs: {...}})` (or the
+/// pre-rename `run_skill({skill_id: ...})`).
 ///
 /// When this pattern appears, rewrite it into a direct tool call so the turn
 /// can proceed without a manual retry.
 fn normalize_tool_call<'a>(call: &'a ParsedToolCall) -> Cow<'a, ParsedToolCall> {
-    if call.name != "run_skill" {
+    if call.name != "run_workflow" && call.name != "run_skill" {
         return Cow::Borrowed(call);
     }
-    let Some(skill_id) = call.arguments.get("skill_id").and_then(|v| v.as_str()) else {
+    // Accept either the current `workflow_id` arg or the legacy `skill_id`.
+    let Some(target) = call
+        .arguments
+        .get("workflow_id")
+        .or_else(|| call.arguments.get("skill_id"))
+        .and_then(|v| v.as_str())
+    else {
         return Cow::Borrowed(call);
     };
-    if !DIRECT_TOOL_NAMES.contains(&skill_id) {
+    if !DIRECT_TOOL_NAMES.contains(&target) {
         return Cow::Borrowed(call);
     }
     let Some(inputs) = call.arguments.get("inputs").and_then(|v| v.as_object()) else {
@@ -88,9 +95,11 @@ fn normalize_tool_call<'a>(call: &'a ParsedToolCall) -> Cow<'a, ParsedToolCall> 
     };
 
     log::warn!(
-        "[agent_loop] rewrote legacy run_skill->{} call into direct tool invocation",
-        skill_id
+        "[agent_loop] rewrote legacy {}->{} call into direct tool invocation",
+        call.name,
+        target
     );
+    let skill_id = target;
     Cow::Owned(ParsedToolCall {
         name: skill_id.to_string(),
         arguments: serde_json::Value::Object(inputs.clone()),
@@ -385,11 +394,11 @@ impl Agent {
         // Match installed SKILL.md skills against the user message and
         // prepend their bodies ahead of the memory-context block so the
         // LLM sees them at the top of the user turn. See the module
-        // docs on [`crate::openhuman::skills::inject`] for the matching
+        // docs on [`crate::openhuman::workflows::inject`] for the matching
         // heuristic and size cap rationale.
         let enriched = {
-            use crate::openhuman::skills::inject;
-            let matches = inject::match_skills(&self.skills, user_message);
+            use crate::openhuman::workflows::inject;
+            let matches = inject::match_workflows(&self.skills, user_message);
             if matches.is_empty() {
                 log::debug!(
                     "[skills:inject] no skill matches for user message (skill_catalog_len={})",
@@ -822,6 +831,7 @@ impl Agent {
             session_key: self.session_key.clone(),
             session_parent_prefix: self.session_parent_prefix.clone(),
             on_progress: self.on_progress.clone(),
+            run_queue: self.run_queue.clone(),
         }
     }
 
@@ -1468,7 +1478,6 @@ impl Agent {
             personality_soul_md: None, // TODO: personality_ctx.soul_md_override
             personality_memory_md: None, // TODO: personality_ctx.memory_md_override
             personality_roster: vec![], // TODO: build_personality_roster(&workspace_dir)
-            workflows: &self.workflows,
         };
         // Route through the global context manager so every
         // prompt-building call-site — main agent, sub-agent runner,

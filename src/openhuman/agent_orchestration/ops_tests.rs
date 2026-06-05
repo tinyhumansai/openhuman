@@ -93,6 +93,7 @@ fn parent_context(provider: Arc<dyn Provider>) -> ParentExecutionContext {
         session_key: "0_orchestrator".to_string(),
         session_parent_prefix: None,
         on_progress: None,
+        run_queue: None,
     }
 }
 

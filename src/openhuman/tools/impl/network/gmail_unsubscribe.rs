@@ -31,7 +31,7 @@ impl Tool for GmailUnsubscribeTool {
     }
 
     fn category(&self) -> ToolCategory {
-        ToolCategory::Skill
+        ToolCategory::Workflow
     }
 
     // Intentionally NOT marked external_effect=true in v1.

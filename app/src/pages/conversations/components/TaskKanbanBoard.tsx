@@ -13,6 +13,7 @@ import {
   LuWrench,
   LuX,
 } from 'react-icons/lu';
+import { useNavigate } from 'react-router-dom';
 
 import { useT } from '../../../lib/i18n/I18nContext';
 import type { TaskBoard, TaskBoardCard, TaskBoardCardStatus } from '../../../types/turnState';
@@ -97,6 +98,9 @@ interface TaskKanbanBoardProps {
   onDecidePlan?: (card: TaskBoardCard, approve: boolean) => void;
   /** Start work on a card from a higher-level task board. */
   onWorkTask?: (card: TaskBoardCard) => void;
+  /** Jump to the card's agent session in Conversations. Shown on any card that
+   *  carries a `sessionThreadId` (a run is live or has happened). */
+  onViewSession?: (card: TaskBoardCard) => void;
   workingCardId?: string | null;
 }
 
@@ -110,6 +114,7 @@ export function TaskKanbanBoard({
   onDeleteCard,
   onDecidePlan,
   onWorkTask,
+  onViewSession,
   workingCardId = null,
 }: TaskKanbanBoardProps) {
   const { t } = useT();
@@ -195,6 +200,7 @@ export function TaskKanbanBoard({
                   hasBriefActions={Boolean(onUpdateCard || onDeleteCard)}
                   onDecidePlan={onDecidePlan}
                   onWorkTask={onWorkTask}
+                  onViewSession={onViewSession}
                   working={workingCardId === card.id}
                   onOpenBrief={() => setSelectedCardId(card.id)}
                 />
@@ -224,6 +230,7 @@ function TaskBoardArticle({
   hasBriefActions,
   onDecidePlan,
   onWorkTask,
+  onViewSession,
   working,
   onOpenBrief,
 }: {
@@ -234,6 +241,7 @@ function TaskBoardArticle({
   hasBriefActions: boolean;
   onDecidePlan?: (card: TaskBoardCard, approve: boolean) => void;
   onWorkTask?: (card: TaskBoardCard) => void;
+  onViewSession?: (card: TaskBoardCard) => void;
   working: boolean;
   onOpenBrief: () => void;
 }) {
@@ -246,7 +254,16 @@ function TaskBoardArticle({
         <p className="min-w-0 flex-1 break-words text-xs font-medium leading-snug text-stone-800 dark:text-neutral-100">
           {card.title}
         </p>
-        {card.status === 'awaiting_approval' && onDecidePlan ? (
+        {card.sessionThreadId && onViewSession ? (
+          <button
+            type="button"
+            title={t('conversations.taskKanban.viewWork')}
+            onClick={() => onViewSession(card)}
+            className="inline-flex flex-shrink-0 items-center gap-1 rounded-md bg-ocean-50 px-1.5 py-0.5 text-[10px] font-medium text-ocean-700 transition-colors hover:bg-ocean-100 dark:bg-ocean-500/10 dark:text-ocean-200 dark:hover:bg-ocean-500/20">
+            <LuExternalLink className="h-3 w-3 flex-none" />
+            {t('conversations.taskKanban.viewWork')}
+          </button>
+        ) : card.status === 'awaiting_approval' && onDecidePlan ? (
           <div className="flex flex-shrink-0 items-center gap-1">
             <button
               type="button"
@@ -456,6 +473,7 @@ function formatFetchNotice(outcome: FetchOutcome, t: (key: string) => string): s
 
 function TaskSourceControls({ disabled, compact }: { disabled: boolean; compact: boolean }) {
   const { t } = useT();
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [sources, setSources] = useState<TaskSource[]>([]);
   const [status, setStatus] = useState<TaskSourcesStatus | null>(null);
@@ -543,11 +561,12 @@ function TaskSourceControls({ disabled, compact }: { disabled: boolean; compact:
           )}
         </div>
         <div className="flex items-center gap-2">
-          <a
-            href="#/settings/task-sources"
+          <button
+            type="button"
+            onClick={() => navigate('/settings/task-sources')}
             className="text-[11px] font-medium text-ocean-600 hover:text-ocean-700 dark:text-ocean-300 dark:hover:text-ocean-200">
             {t('conversations.taskKanban.sources.manage')}
-          </a>
+          </button>
           <button
             type="button"
             aria-label={t('settings.taskSources.refresh')}

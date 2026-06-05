@@ -1,0 +1,27 @@
+id = "desktop_control_agent"
+display_name = "Desktop Control Agent"
+delegate_name = "delegate_desktop_control"
+when_to_use = "Desktop control specialist — launches desktop apps and operates native UI through accessibility, automation, screenshot, mouse, and keyboard tools. Owns list-before-press behavior, foreground-first input, fallback from AX to keyboard/mouse, and sensitive-app constraints."
+temperature = 0.2
+max_iterations = 8
+agent_tier = "worker"
+omit_identity = true
+omit_memory_context = true
+omit_safety_preamble = false
+omit_skills_catalog = true
+omit_profile = true
+omit_memory_md = true
+
+[model]
+hint = "agentic"
+
+[tools]
+named = [
+    "launch_app",
+    "ax_interact",
+    "automate",
+    "screenshot",
+    "mouse",
+    "keyboard",
+    "ask_user_clarification",
+]

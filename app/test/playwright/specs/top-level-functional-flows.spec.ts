@@ -2,7 +2,6 @@ import { expect, type Page, test } from '@playwright/test';
 
 import {
   bootAuthenticatedPage,
-  callCoreRpc,
   dismissWalkthroughIfPresent,
   waitForAppReady,
 } from '../helpers/core-rpc';
@@ -25,7 +24,10 @@ async function setMockBehavior(behavior: Record<string, unknown>): Promise<void>
 
 test.describe('Top-level functional flows', () => {
   test('workflows create and delete round-trip through the top-level page', async ({ page }) => {
-    const name = `Playwright Workflow ${Date.now()}`;
+    // Use a slug-safe name: create stores `name: <slug>` (the display string is
+    // slugified), and the runner heading / workflows_list both surface that
+    // slug — so keep the typed name already slug-shaped to assert against it.
+    const name = `pw-workflow-${Date.now()}`;
     await bootAuthenticatedPage(page, 'pw-workflows-create-delete', '/workflows');
     await dismissWalkthroughIfPresent(page);
 
@@ -37,16 +39,23 @@ test.describe('Top-level functional flows', () => {
     await page.getByRole('button', { name: 'Create workflow' }).click();
 
     await expect(page.getByRole('heading', { name })).toBeVisible({ timeout: 15_000 });
-    const workflows = await callCoreRpc<{ workflows?: Array<{ id: string; name: string }> }>(
-      'openhuman.workflows_list',
-      {}
-    );
-    const created = workflows.workflows?.find(workflow => workflow.name === name);
-    expect(created?.id).toBeTruthy();
+    // The display name is already slug-shaped, so the workflow id === name
+    // (create derives the id by slugifying the name). Use it directly for the
+    // delete selectors instead of round-tripping through workflows_list.
+    const id = name;
 
-    await page.getByTestId(`workflow-card-${created!.id}-delete`).click();
-    await expect(page.getByRole('alertdialog')).toBeVisible();
-    await page.getByTestId('wf-delete-confirm-btn').click();
+    // Creating navigates to the runner page locked to the new workflow, so
+    // return to the Workflows list to delete it. The delete action lives in
+    // the card's "More actions" menu.
+    await page.goto('/#/workflows');
+    await waitForAppReady(page);
+    await dismissWalkthroughIfPresent(page);
+
+    const card = page.getByTestId(`workflow-card-${id}`);
+    await card.getByTitle('More actions').click();
+    await page.getByTestId(`workflow-uninstall-${id}`).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await page.getByTestId('uninstall-skill-confirm').click();
     await expect(page.getByText(name)).toHaveCount(0, { timeout: 15_000 });
   });
 

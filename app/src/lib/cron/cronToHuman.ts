@@ -7,7 +7,7 @@
  * of the raw `*\/30 * * * *` next to a schedule.
  *
  * Scope: this is intentionally small — it recognises the five
- * preset expressions both DevWorkflowPanel and SkillsRunnerBody offer
+ * preset expressions both DevWorkflowPanel and WorkflowRunnerBody offer
  * (`every30min` / `everyHour` / `every2hours` / `every6hours` /
  * `onceDaily`) plus a few generic patterns that fall out naturally
  * from those (hourly at minute N, every N minutes/hours, daily at

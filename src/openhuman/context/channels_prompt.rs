@@ -77,7 +77,7 @@ pub fn build_system_prompt(
     workspace_dir: &Path,
     model_name: &str,
     tools: &[(&str, &str)],
-    skills: &[crate::openhuman::skills::Skill],
+    skills: &[crate::openhuman::workflows::Workflow],
     bootstrap_max_chars: Option<usize>,
     channel_name: Option<&str>,
 ) -> String {
@@ -255,23 +255,26 @@ fn inject_workspace_file(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::openhuman::skills::{Skill, SkillFrontmatter, SkillScope};
+    use crate::openhuman::workflows::{Workflow, WorkflowFrontmatter, WorkflowScope};
     use tempfile::tempdir;
 
-    fn skill(name: &str, location: Option<std::path::PathBuf>) -> Skill {
-        Skill {
+    fn skill(name: &str, location: Option<std::path::PathBuf>) -> Workflow {
+        Workflow {
             name: name.to_string(),
             dir_name: name.to_string(),
             description: format!("{name} description"),
             version: "1.0.0".into(),
             author: None,
             tags: vec![],
+            platforms: vec![],
+            related_skills: vec![],
+            source_format: "openhuman".to_string(),
             tools: vec![],
             prompts: vec![],
             location,
-            frontmatter: SkillFrontmatter::default(),
+            frontmatter: WorkflowFrontmatter::default(),
             resources: vec![],
-            scope: SkillScope::Project,
+            scope: WorkflowScope::Project,
             legacy: false,
             warnings: vec![],
         }

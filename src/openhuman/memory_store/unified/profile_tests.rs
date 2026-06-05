@@ -458,7 +458,7 @@ fn profile_upsert_appends_segment_ids() {
 #[test]
 fn profile_facets_by_type_returns_empty_for_no_matches() {
     let conn = setup_db();
-    // Insert a Preference facet; querying for Skill should yield nothing.
+    // Insert a Preference facet; querying for Workflow should yield nothing.
     profile_upsert(
         &conn,
         "f-pref",
@@ -471,10 +471,10 @@ fn profile_facets_by_type_returns_empty_for_no_matches() {
     )
     .unwrap();
 
-    let skills = profile_facets_by_type(&conn, &FacetType::Skill).unwrap();
+    let skills = profile_facets_by_type(&conn, &FacetType::Workflow).unwrap();
     assert!(
         skills.is_empty(),
-        "Querying Skill type should return empty when only Preference exists"
+        "Querying Workflow type should return empty when only Preference exists"
     );
 }
 
@@ -496,7 +496,7 @@ fn profile_multiple_types_coexist() {
     profile_upsert(
         &conn,
         "f-skill",
-        &FacetType::Skill,
+        &FacetType::Workflow,
         "language",
         "Rust",
         0.9,

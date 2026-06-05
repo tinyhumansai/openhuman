@@ -370,6 +370,8 @@ async fn clear_memory_delete_cascades_orphaned_source_tree_and_settles_queued_jo
         sealed_at: ts,
         deleted: false,
         embedding: None,
+        doc_id: None,
+        version_ms: None,
     };
 
     with_connection(&cfg, |conn| {
@@ -587,6 +589,8 @@ fn clear_memory_delete_removes_orphaned_summary_content_file() {
                 sealed_at: ts,
                 deleted: false,
                 embedding: None,
+                doc_id: None,
+                version_ms: None,
             },
             None,
             "test/model@3",

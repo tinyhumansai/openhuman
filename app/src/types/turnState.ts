@@ -34,6 +34,10 @@ export interface TaskBoardCard {
   evidence?: string[];
   notes?: string | null;
   blocker?: string | null;
+  /** Conversation thread id of the card's live/last agent session, if any —
+   *  drives the "View session" jump into Conversations. Set by the autonomous
+   *  dispatcher and the manual "Work" path. */
+  sessionThreadId?: string | null;
   /** Provider/source identifiers for a card ingested from a task source
    *  (`{provider, source_id, external_id, url, repo?, urgency}`); absent on
    *  agent/UI-authored cards. */
@@ -60,6 +64,7 @@ export interface PersistedSubagentToolCall {
 export interface PersistedSubagentActivity {
   taskId: string;
   agentId: string;
+  status?: string;
   mode?: string;
   dedicatedThread?: boolean;
   childIteration?: number;
@@ -112,6 +117,81 @@ export interface ListTurnStatesResponse {
 
 export interface ClearTurnStateResponse {
   cleared: boolean;
+}
+
+export type AgentRunKind =
+  | 'subagent'
+  | 'worker_thread'
+  | 'background_agent'
+  | 'team_member'
+  | 'workflow_child';
+
+export type AgentRunStatus =
+  | 'pending'
+  | 'running'
+  | 'awaiting_user'
+  | 'paused'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'interrupted';
+
+export interface RunTelemetry {
+  runId: string;
+  inputTokens: number;
+  outputTokens: number;
+  cachedInputTokens: number;
+  costUsd: number;
+  elapsedMs?: number | null;
+  toolCount: number;
+  model?: string | null;
+  provider?: string | null;
+  error?: string | null;
+  updatedAt?: string | null;
+}
+
+export interface AgentRun {
+  id: string;
+  kind: AgentRunKind;
+  parentRunId?: string | null;
+  parentThreadId?: string | null;
+  agentId?: string | null;
+  status: AgentRunStatus;
+  promptRef?: string | null;
+  workerThreadId?: string | null;
+  taskBoardId?: string | null;
+  taskCardId?: string | null;
+  checkpointPath?: string | null;
+  checkpoint?: Record<string, unknown> | null;
+  summary?: string | null;
+  error?: string | null;
+  metadata: Record<string, unknown>;
+  telemetry?: RunTelemetry | null;
+  startedAt: string;
+  updatedAt: string;
+  completedAt?: string | null;
+}
+
+export interface RunEvent {
+  runId: string;
+  sequence: number;
+  eventType: string;
+  payload: Record<string, unknown>;
+  timestamp: string;
+}
+
+export interface AgentRunListResponse {
+  runs: AgentRun[];
+  count: number;
+}
+
+export interface AgentRunGetResponse {
+  run?: AgentRun | null;
+}
+
+export interface RunEventListResponse {
+  events: RunEvent[];
+  count: number;
 }
 
 export interface GetTaskBoardResponse {
