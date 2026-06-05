@@ -16,6 +16,7 @@
  * mounts would create competing state machines fighting over the same mic.
  */
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import debug from 'debug';
 import { useEffect, useMemo, useRef } from 'react';
 import { useDispatch, useStore } from 'react-redux';
 
@@ -29,6 +30,8 @@ import { createPttService } from '../services/pttService';
 import type { RootState } from '../store';
 import { setIsHeld } from '../store/pttSlice';
 import { showPttOverlay } from '../utils/tauriCommands/ptt';
+
+const log = debug('app:ptt:manager');
 
 interface PttEventPayload {
   session_id: number;
@@ -84,9 +87,9 @@ export default function PttHotkeyManager(): null {
         // Recordings shorter than this are treated as accidental taps.
         minAudioMs: 250,
         logger: {
-          debug: (msg, meta) => console.debug(msg, meta ?? {}),
-          info: (msg, meta) => console.info(msg, meta ?? {}),
-          warn: (msg, meta) => console.warn(msg, meta ?? {}),
+          debug: (msg, meta) => log(msg, meta ?? {}),
+          info: (msg, meta) => log(msg, meta ?? {}),
+          warn: (msg, meta) => log(msg, meta ?? {}),
         },
       }),
     // The service holds an internal state machine — recreating it across
@@ -102,11 +105,15 @@ export default function PttHotkeyManager(): null {
       try {
         const offStart = await listen<PttEventPayload>('ptt://start', e => {
           dispatch(setIsHeld(true));
-          void service.onStart(e.payload.session_id);
+          service.onStart(e.payload.session_id).catch(err => {
+            log('onStart failed', { sessionId: e.payload.session_id, err: String(err) });
+          });
         });
         const offStop = await listen<PttEventPayload>('ptt://stop', e => {
           dispatch(setIsHeld(false));
-          void service.onStop(e.payload.session_id);
+          service.onStop(e.payload.session_id).catch(err => {
+            log('onStop failed', { sessionId: e.payload.session_id, err: String(err) });
+          });
         });
         if (!mounted) {
           offStart();
@@ -114,9 +121,9 @@ export default function PttHotkeyManager(): null {
           return;
         }
         unlistenRef.current.push(offStart, offStop);
-        console.debug('[ptt] PttHotkeyManager: listeners attached');
+        log('PttHotkeyManager: listeners attached');
       } catch (err) {
-        console.warn('[ptt] PttHotkeyManager: failed to attach listeners', err);
+        log('PttHotkeyManager: failed to attach listeners', err);
       }
     };
     void subscribe();
@@ -128,7 +135,7 @@ export default function PttHotkeyManager(): null {
         try {
           off();
         } catch (err) {
-          console.debug('[ptt] PttHotkeyManager: unlisten threw', err);
+          log('PttHotkeyManager: unlisten threw', err);
         }
       }
     };
