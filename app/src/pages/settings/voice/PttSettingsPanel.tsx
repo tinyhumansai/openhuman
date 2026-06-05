@@ -68,7 +68,9 @@ function eventToShortcut(e: React.KeyboardEvent): string | null {
   // Prefer e.key (already the localised label like "F13", "a", "Enter")
   // unless it's a single lowercase letter — for those we uppercase to
   // produce a consistent "Ctrl+A" form across capitalised / not.
-  let label = e.key;
+  // Normalize Space (" ") to the display label "Space" so the saved
+  // binding is readable (e.g. "Ctrl+Space" rather than "Ctrl+ ").
+  let label = e.key === ' ' ? 'Space' : e.key;
   if (label.length === 1 && /[a-z]/.test(label)) {
     label = label.toUpperCase();
   }
@@ -117,9 +119,13 @@ const PttSettingsPanel = () => {
 
   const handleShortcutKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLInputElement>) => {
-      // Always preventDefault so the input doesn't try to insert text
-      // for the captured character — we treat it as a binding press,
-      // not editable content.
+      // Let Tab / Shift+Tab pass through so keyboard navigation within
+      // the settings panel still works. All other keys are captured as
+      // potential binding candidates and their default actions suppressed
+      // so the input doesn't insert text.
+      if (e.key === 'Tab') {
+        return;
+      }
       e.preventDefault();
       e.stopPropagation();
 
