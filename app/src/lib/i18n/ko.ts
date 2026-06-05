@@ -1533,7 +1533,7 @@ const messages: TranslationMap = {
   'voice.externalProviders.add': 'Add',
   'pttSettings.title': '눌러서 말하기',
   'pttSettings.description':
-    '다른 앱을 사용하는 중에도 키를 누르고 있으면 OpenHuman과 대화할 수 있습니다. 키를 놓으면 녹음이 전송되고, \'답변 읽어주기\'가 켜져 있으면 OpenHuman이 답변을 음성으로 들려줍니다.',
+    "다른 앱을 사용하는 중에도 키를 누르고 있으면 OpenHuman과 대화할 수 있습니다. 키를 놓으면 녹음이 전송되고, '답변 읽어주기'가 켜져 있으면 OpenHuman이 답변을 음성으로 들려줍니다.",
   'pttSettings.shortcutLabel': '단축키',
   'pttSettings.shortcutPlaceholder': '키를 누르세요 (예: F13)',
   'pttSettings.shortcutUnsetHint':
