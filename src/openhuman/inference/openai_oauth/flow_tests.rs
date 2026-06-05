@@ -506,6 +506,24 @@ fn codex_import_user_state_errors_classify_as_expected() {
     }
 }
 
+/// Exercise the ops entry point (`inference_openai_oauth_import_codex_cli`) on
+/// the failure path so the `report_error_or_expected` call at the match arm is
+/// covered: point `CODEX_HOME` at an empty dir (no `auth.json`) and assert the
+/// RPC surfaces the actionable error.
+#[tokio::test]
+async fn inference_import_codex_cli_surfaces_error_when_auth_missing() {
+    let tmp = tempdir().unwrap();
+    let config = test_config(&tmp);
+    let _env_guard = EnvVarGuard::set("CODEX_HOME", tmp.path());
+
+    let err = crate::openhuman::inference::ops::inference_openai_oauth_import_codex_cli(&config)
+        .await
+        .unwrap_err();
+
+    assert!(err.contains("Could not read Codex CLI auth"));
+    assert!(err.contains("codex login"));
+}
+
 #[test]
 fn openai_oauth_status_reports_token_profile_as_disconnected() {
     let tmp = tempdir().unwrap();

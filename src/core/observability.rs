@@ -2109,6 +2109,19 @@ mod tests {
         }
     }
 
+    /// Exercise the full demotion path (classifier -> report arm) for a codex
+    /// auth-unavailable message: it must take the expected branch and not panic.
+    #[test]
+    fn report_error_or_expected_demotes_codex_auth_unavailable() {
+        report_error_or_expected(
+            "Could not read Codex CLI auth at /home/u/.codex/auth.json: No such file \
+             or directory. Run `codex login` first, then try Codex auth again.",
+            "inference",
+            "openai_oauth_import_codex_cli",
+            &[],
+        );
+    }
+
     /// Guard against over-suppression on the import path: a genuine
     /// keyring/persist failure (`upsert_profile`) or an unrelated error carries
     /// neither the `codex cli auth` nor the `.codex/auth.json` anchor and MUST
