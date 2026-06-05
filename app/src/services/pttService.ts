@@ -132,17 +132,35 @@ export function createPttService(deps: PttDeps): PttService {
       return;
     }
 
-    let threadId = await deps.resolveActiveThreadId();
-    if (!threadId) {
-      threadId = await deps.createNewVoiceThread();
+    let threadId: string;
+    try {
+      const resolved = await deps.resolveActiveThreadId();
+      if (!resolved) {
+        threadId = await deps.createNewVoiceThread();
+      } else {
+        threadId = resolved;
+      }
+    } catch (err) {
+      deps.logger.warn('[ptt] thread resolution failed — aborting commit', {
+        sessionId,
+        err: String(err),
+      });
+      await deps.playChime('error');
+      return;
     }
 
-    await deps.sendMessage({
-      threadId,
-      body: trimmed,
-      metadata: { source: 'ptt', session_id: sessionId },
-      speakReply: settings.speakReplies,
-    });
+    try {
+      await deps.sendMessage({
+        threadId,
+        body: trimmed,
+        metadata: { source: 'ptt', session_id: sessionId },
+        speakReply: settings.speakReplies,
+      });
+    } catch (err) {
+      deps.logger.warn('[ptt] sendMessage failed', { sessionId, threadId, err: String(err) });
+      await deps.playChime('error');
+      return;
+    }
 
     deps.logger.info('[ptt] session committed', {
       sessionId,
