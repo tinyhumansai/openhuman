@@ -427,7 +427,7 @@ describe('AIPanel', () => {
     );
   });
 
-  it('connects MiniMax with anthropic auth style', async () => {
+  it('connects MiniMax via its OpenAI-compatible /v1 endpoint with bearer auth', async () => {
     vi.mocked(loadAISettings).mockResolvedValue({ ...baseSettings, cloudProviders: [] });
 
     renderWithProviders(<AIPanel />);
@@ -445,13 +445,16 @@ describe('AIPanel', () => {
     await waitFor(() => expect(vi.mocked(saveAISettings)).toHaveBeenCalled());
 
     const [, nextSettings] = vi.mocked(saveAISettings).mock.calls[0];
+    // MiniMax speaks OpenAI on `/v1` (chat/completions + models). The old
+    // `/anthropic` base + anthropic auth pointed at its Messages API, which
+    // OpenHuman doesn't speak — both paths 404'd (Sentry TAURI-RUST-8X3).
     expect(nextSettings.cloudProviders).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           slug: 'minimax',
           label: 'MiniMax',
-          endpoint: 'https://api.minimax.io/anthropic',
-          auth_style: 'anthropic',
+          endpoint: 'https://api.minimax.io/v1',
+          auth_style: 'bearer',
         }),
       ])
     );

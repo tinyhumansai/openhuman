@@ -132,8 +132,16 @@ pub const BUILTIN_CLOUD_PROVIDERS: &[BuiltinCloudProvider] = &[
     BuiltinCloudProvider {
         slug: "minimax",
         label: "MiniMax",
-        endpoint: "https://api.minimax.io/anthropic",
-        auth_style: AuthStyle::Anthropic,
+        // MiniMax exposes a full OpenAI-compatible surface at `/v1`
+        // (`/v1/chat/completions`, `/v1/models`). The previous `/anthropic`
+        // base + Anthropic auth pointed at MiniMax's Messages-protocol API,
+        // which OpenHuman does not speak — it only builds OpenAI-style
+        // `/chat/completions` and `/models` — so both chat and model-listing
+        // 404'd (`/anthropic/chat/completions`, `/anthropic/models`). The
+        // 404 on model-listing was Sentry TAURI-RUST-8X3. Use the `/v1`
+        // OpenAI surface with Bearer auth so both paths resolve.
+        endpoint: "https://api.minimax.io/v1",
+        auth_style: AuthStyle::Bearer,
     },
     BuiltinCloudProvider {
         slug: "stepfun",
@@ -507,8 +515,8 @@ mod tests {
             (
                 "minimax",
                 "MiniMax",
-                "https://api.minimax.io/anthropic",
-                AuthStyle::Anthropic,
+                "https://api.minimax.io/v1",
+                AuthStyle::Bearer,
             ),
             (
                 "sumopod",
