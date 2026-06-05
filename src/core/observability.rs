@@ -414,8 +414,22 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
 ///   `"not enough space on the disk"`.
 /// - **Windows `ERROR_HANDLE_DISK_FULL` (39)**: same wire text but errno 39.
 ///   The text anchor already covers it.
+///
+/// A fourth shape comes from call sites that render the `io::ErrorKind` debug
+/// name instead of the `io::Error` Display — notably the auth-profile
+/// lock-create annotation, which emits
+/// `"... (kind=Some(StorageFull), os_code=Some(28))"` (Sentry TAURI-RUST-4SZ).
+/// That string carries no "no space left on device" text, so anchor
+/// additionally on the cross-platform `StorageFull` ErrorKind token (std maps
+/// ENOSPC / `ERROR_DISK_FULL` / `ERROR_HANDLE_DISK_FULL` all to
+/// `ErrorKind::StorageFull`). This is defense-in-depth for the genuinely
+/// unpreventable **write** paths (a write can't succeed on a full disk); the
+/// read path no longer emits this error at all (it degrades to a lock-free
+/// read — see `AuthProfilesStore::load`).
 fn is_disk_full_message(lower: &str) -> bool {
-    lower.contains("no space left on device") || lower.contains("not enough space on the disk")
+    lower.contains("no space left on device")
+        || lower.contains("not enough space on the disk")
+        || lower.contains("storagefull")
 }
 
 /// Detect the literal `"Config loading timed out"` string produced by
@@ -2543,6 +2557,12 @@ mod tests {
             "state snapshot write failed: No space left on device (os error 28)",
             // Windows ERROR_DISK_FULL (112) rendering.
             "log rotation failed: There is not enough space on the disk. (os error 112)",
+            // Outer-only `{}` wire shape that production actually emits for the
+            // auth-profile lock-create failure (Sentry TAURI-RUST-4SZ): the
+            // inner io::Error Display is flattened away at the RPC boundary, so
+            // only the `ErrorKind` debug + os_code survive — no "no space left
+            // on device" text. Must still classify via the StorageFull anchor.
+            "Failed to create auth profile lock (kind=Some(StorageFull), os_code=Some(28))",
         ] {
             assert_eq!(
                 expected_error_kind(raw),
