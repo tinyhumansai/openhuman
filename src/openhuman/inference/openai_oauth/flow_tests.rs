@@ -466,6 +466,46 @@ fn import_codex_cli_auth_file_reports_missing_file_with_login_hint() {
     assert!(err.contains("codex login"));
 }
 
+/// Drift-proof coupling: every user-state error the real Codex-CLI import
+/// producer emits MUST classify as `CodexCliAuthUnavailable`, so the Sentry
+/// demotion at `ops.rs` (TAURI-RUST-83A) keeps working even if the wording
+/// changes. If a future edit to `store.rs` drops the `codex cli auth` /
+/// `.codex/auth.json` anchor from a message, this test fails in CI.
+#[test]
+fn codex_import_user_state_errors_classify_as_expected() {
+    use crate::core::observability::{expected_error_kind, ExpectedErrorKind};
+
+    let tmp = tempdir().unwrap();
+    let config = test_config(&tmp);
+
+    // Missing file (no `codex login`).
+    let missing = import_codex_cli_auth_from_path(&config, &tmp.path().join("missing-auth.json"))
+        .unwrap_err();
+
+    // Unparseable file.
+    let garbage_path = tmp.path().join("garbage-auth.json");
+    std::fs::write(&garbage_path, b"not json").unwrap();
+    let garbage = import_codex_cli_auth_from_path(&config, &garbage_path).unwrap_err();
+
+    // Parses but carries no tokens.
+    let no_tokens_path = tmp.path().join("no-tokens-auth.json");
+    std::fs::write(&no_tokens_path, b"{}").unwrap();
+    let no_tokens = import_codex_cli_auth_from_path(&config, &no_tokens_path).unwrap_err();
+
+    // Parses with a tokens object but no access token.
+    let no_access_path = tmp.path().join("no-access-auth.json");
+    std::fs::write(&no_access_path, br#"{"tokens":{"refresh_token":"r"}}"#).unwrap();
+    let no_access = import_codex_cli_auth_from_path(&config, &no_access_path).unwrap_err();
+
+    for err in [&missing, &garbage, &no_tokens, &no_access] {
+        assert_eq!(
+            expected_error_kind(err),
+            Some(ExpectedErrorKind::CodexCliAuthUnavailable),
+            "codex import user-state error must classify as CodexCliAuthUnavailable: {err}"
+        );
+    }
+}
+
 #[test]
 fn openai_oauth_status_reports_token_profile_as_disconnected() {
     let tmp = tempdir().unwrap();
