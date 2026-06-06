@@ -8,6 +8,8 @@ pub(crate) const OPENAI_CODEX_ORIGINATOR_HEADER: &str = "originator";
 pub(crate) const OPENAI_CODEX_ORIGINATOR: &str = "codex_cli_rs";
 pub(crate) const OPENAI_CODEX_MODEL_HINTS: &[&str] =
     &["gpt-5.5", "gpt-5.4", "gpt-5.3-codex-spark", "gpt-5.3-codex"];
+// Conservative Codex CLI release known to work with the ChatGPT Codex backend.
+// Bump this when field reports show the backend rejecting older client versions.
 const OPENAI_CODEX_DEFAULT_CLIENT_VERSION: &str = "0.130.0";
 
 pub(crate) fn openai_codex_user_agent() -> String {
@@ -35,20 +37,34 @@ impl OpenAiCodexRouting {
 }
 
 pub(crate) fn openai_codex_client_version() -> String {
-    std::env::var("OPENAI_CODEX_CLIENT_VERSION")
+    let (version, source) = resolve_openai_codex_client_version();
+    log::debug!(
+        "[providers][openai-codex] resolved client_version source={source} value={version}"
+    );
+    version
+}
+
+fn resolve_openai_codex_client_version() -> (String, &'static str) {
+    if let Some(version) = std::env::var("OPENAI_CODEX_CLIENT_VERSION")
         .ok()
         .and_then(non_empty_trimmed)
-        .or_else(|| {
-            codex_home_dir().and_then(|home| {
-                read_json_string_field(&home.join("models_cache.json"), "client_version")
-            })
-        })
-        .or_else(|| {
-            codex_home_dir().and_then(|home| {
-                read_json_string_field(&home.join("version.json"), "latest_version")
-            })
-        })
-        .unwrap_or_else(|| OPENAI_CODEX_DEFAULT_CLIENT_VERSION.to_string())
+    {
+        return (version, "env");
+    }
+
+    if let Some(home) = codex_home_dir() {
+        if let Some(version) =
+            read_json_string_field(&home.join("models_cache.json"), "client_version")
+        {
+            return (version, "models_cache");
+        }
+        if let Some(version) = read_json_string_field(&home.join("version.json"), "latest_version")
+        {
+            return (version, "version_json");
+        }
+    }
+
+    (OPENAI_CODEX_DEFAULT_CLIENT_VERSION.to_string(), "default")
 }
 
 fn non_empty_trimmed(value: String) -> Option<String> {
@@ -202,6 +218,28 @@ mod tests {
     }
 
     #[test]
+    fn client_version_models_cache_precedes_version_file() {
+        let _env_lock = crate::openhuman::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let tmp = tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("models_cache.json"),
+            serde_json::json!({ "client_version": "0.137.0", "models": [] }).to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.path().join("version.json"),
+            serde_json::json!({ "latest_version": "0.140.0" }).to_string(),
+        )
+        .unwrap();
+        let _version = EnvVarGuard::remove("OPENAI_CODEX_CLIENT_VERSION");
+        let _codex_home = EnvVarGuard::set("CODEX_HOME", tmp.path());
+
+        assert_eq!(openai_codex_client_version(), "0.137.0");
+    }
+
+    #[test]
     fn client_version_falls_back_to_codex_version_file() {
         let _env_lock = crate::openhuman::config::TEST_ENV_LOCK
             .lock()
@@ -209,12 +247,27 @@ mod tests {
         let tmp = tempdir().unwrap();
         std::fs::write(
             tmp.path().join("version.json"),
-            serde_json::json!({ "latest_version": "0.130.0" }).to_string(),
+            serde_json::json!({ "latest_version": "0.140.0" }).to_string(),
         )
         .unwrap();
         let _version = EnvVarGuard::remove("OPENAI_CODEX_CLIENT_VERSION");
         let _codex_home = EnvVarGuard::set("CODEX_HOME", tmp.path());
 
-        assert_eq!(openai_codex_client_version(), "0.130.0");
+        assert_eq!(openai_codex_client_version(), "0.140.0");
+    }
+
+    #[test]
+    fn client_version_uses_default_when_codex_files_are_missing() {
+        let _env_lock = crate::openhuman::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let tmp = tempdir().unwrap();
+        let _version = EnvVarGuard::remove("OPENAI_CODEX_CLIENT_VERSION");
+        let _codex_home = EnvVarGuard::set("CODEX_HOME", tmp.path());
+
+        assert_eq!(
+            openai_codex_client_version(),
+            OPENAI_CODEX_DEFAULT_CLIENT_VERSION
+        );
     }
 }
