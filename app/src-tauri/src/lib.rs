@@ -2449,21 +2449,12 @@ pub fn run() {
         // mock; `password-store=basic` is the equivalent for the password
         // manager. Both are no-ops on Windows/Linux, so safe to always set.
         //
-        // In debug builds we additionally expose the Chrome DevTools
-        // Protocol on localhost:19222 so every CEF webview can be
-        // inspected from a regular browser (right-click "Inspect" does
-        // not propagate to CEF child webviews on macOS). Release builds
-        // intentionally do NOT open the CDP port — it would let any
-        // process on the machine drive the embedded WhatsApp/Slack/etc.
-        // webviews.
-        //
-        // The port was 9222 (Chromium's default) but ollama's
-        // OpenAI-compatible server squats on 127.0.0.1:9222 in some
-        // installs, which silently broke CDP attach (our client hit
-        // ollama, the WS handshake failed, child webviews stayed at
-        // about:blank → black screen). Picked 19222 to dodge that
-        // collision; if you change it here also update
-        // `cdp::CDP_PORT` and `whatsapp_scanner::CDP_PORT`.
+        // We do NOT pass `--remote-debugging-port`. CDP attach is
+        // in-process via `Webview::send_dev_tools_message` (see
+        // `app/src-tauri/src/cdp/in_process.rs`). Opening the TCP
+        // remote-debugging port would let any same-UID local process
+        // drive the embedded WhatsApp/Slack/etc. webviews without
+        // authentication.
         //
         // NOTE: flags must be prefixed with `--`. The runtime's
         // `on_before_command_line_processing` dispatch (in
@@ -2568,14 +2559,13 @@ pub fn run() {
             args.push(("--use-fake-ui-for-media-stream", None));
             args.push(("--use-file-for-fake-video-capture", Some(path)));
         }
-        // Always expose the CDP port, not just in debug. The webview-accounts
-        // CDP session opener navigates each embedded provider webview from its
-        // `about:blank#openhuman-acct-...` placeholder to the real provider URL
-        // via `Page.navigate`. Without this port available in release builds,
-        // the CDP client can't attach (`browser_ws_url()` 404s on /json/version),
-        // the navigation never fires, and the embedded webview stays on
-        // `about:blank` (blank panel for Telegram / WhatsApp / Slack / Discord).
-        // Same port the `cdp::CDP_HOST`/`cdp::CDP_PORT` constants expect.
+        // CDP attach is migrating to in-process. The per-account
+        // session opener (`cdp/session.rs`) uses the in-process channel
+        // installed by `webview_accounts::open`. The per-scanner
+        // duplicates (whatsapp, slack, telegram, wechat, discord,
+        // meet_video) still reach the embedded browser over the TCP
+        // loopback DevTools port — once they migrate this flag can be
+        // dropped and the unauthenticated listener closed for good.
         args.push(("--remote-debugging-port", Some("19222")));
         let force_gpu_env = std::env::var("OPENHUMAN_FORCE_GPU").ok();
         append_platform_cef_gpu_workarounds(
@@ -2680,6 +2670,7 @@ pub fn run() {
             std::sync::Mutex::new(Vec::new()),
         ))
         .manage(webview_accounts::WebviewAccountsState::default())
+        .manage(cdp::CdpRegistry::default())
         .manage(notification_settings::NotificationSettingsState::new())
         .manage(PendingAppUpdateState::default());
     let builder = builder.manage(std::sync::Arc::new(imessage_scanner::ScannerRegistry::new()));
@@ -2697,6 +2688,12 @@ pub fn run() {
     let builder = builder.manage(meet_video::frame_bus::MeetVideoFrameBusState::new());
     builder
         .setup(move |app| {
+            // Stash the typed CEF `AppHandle` for the in-process CDP
+            // transport. Lets `cdp::install_for_account` reach the
+            // concrete `Webview<Cef>` (which `send_dev_tools_message`
+            // requires) from generic `<R: Runtime>` call sites.
+            cdp::set_cef_app_handle(app.handle().clone());
+
             #[cfg(windows)]
             {
                 // `register_all` writes HKCU\Software\Classes\openhuman so the
