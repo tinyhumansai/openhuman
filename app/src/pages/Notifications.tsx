@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import NotificationBody from '../components/notifications/NotificationBody';
@@ -33,6 +33,7 @@ const Notifications = () => {
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
   const unread = useMemo(() => selectUnreadCount(items), [items]);
+  const pendingActionsRef = useRef(new Set<string>());
 
   const categoryLabel = (category: NotificationCategory): string => {
     switch (category) {
@@ -60,14 +61,17 @@ const Notifications = () => {
 
   const handleAction = useCallback(
     async (item: NotificationItem, actionId: string, payload?: unknown) => {
+      const key = `${item.id}:${actionId}`;
+      if (pendingActionsRef.current.has(key)) return;
+      pendingActionsRef.current.add(key);
       if (!item.read) dispatch(markRead({ id: item.id }));
       try {
         await callCoreRpc({
           method: 'openhuman.agent_meetings_notification_action',
           params: { notification_id: item.id, action_id: actionId, payload },
         });
-      } catch {
-        // Action failed — user can retry.
+      } finally {
+        pendingActionsRef.current.delete(key);
       }
     },
     [dispatch]

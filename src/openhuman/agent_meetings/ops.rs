@@ -299,13 +299,20 @@ pub async fn handle_notification_action(params: Map<String, Value>) -> Result<Va
     let meeting_id = payload
         .get("meeting_id")
         .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_string();
+        .map(ToString::to_string)
+        .filter(|s| !s.is_empty());
     let meet_url = payload
         .get("meet_url")
         .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_string();
+        .map(ToString::to_string)
+        .filter(|s| !s.is_empty());
+
+    tracing::debug!(
+        action_id = %action_id,
+        meeting_id = ?meeting_id,
+        meet_url = ?meet_url,
+        "[agent_meetings] handle_notification_action entry"
+    );
 
     let config = crate::openhuman::config::Config::load_or_init()
         .await
@@ -315,13 +322,19 @@ pub async fn handle_notification_action(params: Map<String, Value>) -> Result<Va
 
     match action_id.as_str() {
         "join_meeting" => {
-            // Join in listen-only mode with correlation_id.
+            let meeting_id = meeting_id.ok_or("[agent_meetings] missing meeting_id for join")?;
+            let meet_url = meet_url.ok_or("[agent_meetings] missing meet_url for join")?;
+
+            tracing::debug!(meeting_id = %meeting_id, "[agent_meetings] joining meeting");
+
             let join_params: Map<String, Value> = serde_json::from_value(json!({
                 "meet_url": meet_url,
                 "listen_only": config.meet.listen_only_default,
                 "correlation_id": meeting_id,
             }))
             .map_err(|e| e.to_string())?;
+
+            let response = handle_join(join_params).await?;
 
             super::store::update_session_status(
                 &config,
@@ -331,9 +344,13 @@ pub async fn handle_notification_action(params: Map<String, Value>) -> Result<Va
             )
             .map_err(|e| format!("[agent_meetings] session update failed: {e}"))?;
 
-            handle_join(join_params).await
+            Ok(response)
         }
         "skip_meeting" => {
+            let meeting_id = meeting_id.ok_or("[agent_meetings] missing meeting_id for skip")?;
+
+            tracing::debug!(meeting_id = %meeting_id, "[agent_meetings] skipping meeting");
+
             super::store::update_session_status(
                 &config,
                 &meeting_id,
@@ -346,10 +363,14 @@ pub async fn handle_notification_action(params: Map<String, Value>) -> Result<Va
             outcome.into_cli_compatible_json()
         }
         "always_join" => {
-            // Flip policy to Always, then join.
+            let meeting_id =
+                meeting_id.ok_or("[agent_meetings] missing meeting_id for always_join")?;
+            let meet_url = meet_url.ok_or("[agent_meetings] missing meet_url for always_join")?;
+
+            tracing::debug!(meeting_id = %meeting_id, "[agent_meetings] always_join: flipping policy");
+
             let mut new_config = config.clone();
-            new_config.meet.auto_join_policy =
-                crate::openhuman::config::schema::meet::AutoJoinPolicy::Always;
+            new_config.meet.auto_join_policy = crate::openhuman::config::AutoJoinPolicy::Always;
             new_config
                 .save()
                 .await
@@ -362,6 +383,8 @@ pub async fn handle_notification_action(params: Map<String, Value>) -> Result<Va
             }))
             .map_err(|e| e.to_string())?;
 
+            let response = handle_join(join_params).await?;
+
             super::store::update_session_status(
                 &config,
                 &meeting_id,
@@ -370,9 +393,9 @@ pub async fn handle_notification_action(params: Map<String, Value>) -> Result<Va
             )
             .map_err(|e| format!("[agent_meetings] session update failed: {e}"))?;
 
-            handle_join(join_params).await
+            Ok(response)
         }
-        other => Err(format!("unknown action_id: {other}")),
+        other => Err(format!("[agent_meetings] unknown action_id: {other}")),
     }
 }
 

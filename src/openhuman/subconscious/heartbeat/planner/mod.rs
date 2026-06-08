@@ -32,7 +32,7 @@ use crate::openhuman::agent_meetings::store as meetings_store;
 use crate::openhuman::agent_meetings::types::{
     AutoJoinSource, MeetingSession, MeetingSessionStatus,
 };
-use crate::openhuman::config::schema::meet::AutoJoinPolicy;
+use crate::openhuman::config::AutoJoinPolicy;
 use crate::openhuman::config::Config;
 use crate::openhuman::notifications::bus::publish_core_notification;
 use crate::openhuman::notifications::types::{CoreNotificationAction, CoreNotificationEvent};
@@ -153,7 +153,7 @@ pub async fn evaluate_and_dispatch(config: &Config, now: DateTime<Utc>) -> Plann
         }
 
         // For meetings with a Meet URL, apply the auto-join policy.
-        let actions = build_meeting_actions(config, &event, now);
+        let actions = build_meeting_actions(config, &event, now, plan.stage);
 
         publish_core_notification(CoreNotificationEvent {
             id,
@@ -194,13 +194,19 @@ pub async fn evaluate_and_dispatch(config: &Config, now: DateTime<Utc>) -> Plann
 
 /// For Meetings events with a Meet URL, create a `MeetingSession` and return
 /// notification action buttons based on the `auto_join_policy`.
+/// Only fires on `final_call` or `happening_now` stages to avoid premature joins.
 /// Non-meeting events or events without a URL return `None`.
 fn build_meeting_actions(
     config: &Config,
     event: &types::PendingEvent,
     now: DateTime<Utc>,
+    stage: &str,
 ) -> Option<Vec<CoreNotificationAction>> {
     if event.category != types::HeartbeatCategory::Meetings {
+        return None;
+    }
+    // Only act on final delivery stages — not early heads-up notifications.
+    if stage != "final_call" && stage != "happening_now" {
         return None;
     }
     let meet_url = event.meet_url.as_deref()?;

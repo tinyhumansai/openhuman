@@ -3,6 +3,7 @@ import debug from 'debug';
 import { socketService } from '../../services/socketService';
 import { store } from '../../store';
 import {
+  type NotificationAction,
   type NotificationCategory,
   type NotificationItem,
   notificationReceived,
@@ -39,7 +40,7 @@ interface CoreNotificationPayload {
   body: string;
   deep_link?: string | null;
   timestamp_ms: number;
-  actions?: Array<{ actionId: string; label: string; payload?: unknown }>;
+  actions?: NotificationAction[];
 }
 
 function windowIsFocused(): boolean {
