@@ -9,6 +9,7 @@ pub mod command_center;
 mod ops;
 pub mod tools;
 pub mod types;
+pub mod workflow_runs;
 
 #[cfg(test)]
 mod ops_tests;
@@ -21,4 +22,7 @@ pub use types::{
     AgentMessage, AgentOrchestrationEvent, AgentSnapshot, AgentStatus, CloseAgentRequest,
     FollowUpRequest, MessageAgentRequest, ResumeAgentRequest, SpawnAgentRequest,
     SpawnAgentResponse, WaitAgentOptions, WaitAgentResponse,
+};
+pub use workflow_runs::{
+    all_workflow_run_controller_schemas, all_workflow_run_registered_controllers,
 };
