@@ -313,7 +313,8 @@ pub async fn handle_speak(params: Map<String, Value>) -> Result<Value, String> {
         "[agent_meetings] emitting bot:speak"
     );
 
-    let mgr = global_socket_manager();
+    let mgr = global_socket_manager()
+        .ok_or_else(|| "[agent_meetings] socket not connected to backend".to_string())?;
     mgr.emit(
         "bot:speak",
         json!({ "correlationId": correlation_id, "text": text }),
