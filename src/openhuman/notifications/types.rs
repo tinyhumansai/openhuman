@@ -47,6 +47,7 @@ pub struct CoreNotificationEvent {
 
 /// A single action button attached to a notification.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct CoreNotificationAction {
     /// Machine-readable identifier for this action (e.g. `"approve"`, `"dismiss"`).
     pub action_id: String,
@@ -207,8 +208,8 @@ mod tests {
             "body": "Standup in 5 min",
             "timestamp_ms": 999,
             "actions": [
-                {"action_id": "yes", "label": "Yes"},
-                {"action_id": "no", "label": "No", "payload": {"meeting_id": "m1"}}
+                {"actionId": "yes", "label": "Yes"},
+                {"actionId": "no", "label": "No", "payload": {"meeting_id": "m1"}}
             ]
         });
         let event: CoreNotificationEvent = serde_json::from_value(json).unwrap();
