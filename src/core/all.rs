@@ -291,6 +291,9 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::devices::all_devices_registered_controllers());
     // Durable agent session database — queryable index over transcripts, lineage, tool calls
     controllers.extend(crate::openhuman::session_db::all_session_db_registered_controllers());
+    // Background agent command center — read-only grouped view over the run ledger
+    controllers
+        .extend(crate::openhuman::agent_orchestration::all_command_center_registered_controllers());
     controllers
 }
 
@@ -416,6 +419,8 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::devices::all_devices_controller_schemas());
     // Durable agent session database
     schemas.extend(crate::openhuman::session_db::all_session_db_controller_schemas());
+    // Background agent command center
+    schemas.extend(crate::openhuman::agent_orchestration::all_command_center_controller_schemas());
     schemas
 }
 
@@ -497,6 +502,9 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         "referral" => Some("Referral codes, stats, and apply flows via the hosted backend API."),
         "run_ledger" => Some(
             "Durable agent and workflow run state, child lineage, events, telemetry, and checkpoint references.",
+        ),
+        "agent_work" => Some(
+            "Background agent command center — recent agent runs grouped by status (needs-input, working, completed, failed, stopped).",
         ),
         "billing" => Some("Subscription plan, payment links, and credit top-up via the backend."),
         "team" => Some("Team member management, invites, and role changes via the backend."),
