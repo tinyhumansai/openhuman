@@ -812,7 +812,7 @@ async fn dom_scan_once(
     use crate::cdp::CdpConn as CanonicalCdpConn;
 
     let browser_ws = crate::cdp::browser_ws_url().await?;
-    let mut probe = CanonicalCdpConn::open(&browser_ws).await?;
+    let mut probe = CanonicalCdpConn::open_ws(&browser_ws).await?;
     let targets_v = probe
         .call("Target.getTargets", serde_json::json!({}), None)
         .await?;
