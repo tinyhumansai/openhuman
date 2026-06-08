@@ -152,6 +152,7 @@ pub async fn evaluate_and_dispatch(config: &Config, now: DateTime<Utc>) -> Plann
             body: plan.body,
             deep_link: event.deep_link.clone(),
             timestamp_ms: now.timestamp_millis().max(0) as u64,
+            actions: None,
         });
 
         if config.heartbeat.external_delivery_enabled && plan.allow_external {

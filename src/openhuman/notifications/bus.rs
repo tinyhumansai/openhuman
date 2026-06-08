@@ -79,6 +79,7 @@ pub fn event_to_notification(event: &DomainEvent) -> Option<CoreNotificationEven
             },
             deep_link: Some("/settings/cron-jobs".into()),
             timestamp_ms: ts,
+            actions: None,
         }),
         DomainEvent::WebhookProcessed {
             skill_id,
@@ -105,6 +106,7 @@ pub fn event_to_notification(event: &DomainEvent) -> Option<CoreNotificationEven
                 },
                 deep_link: Some("/settings/webhooks-triggers".into()),
                 timestamp_ms: ts,
+                actions: None,
             })
         }
         DomainEvent::SubagentCompleted {
@@ -120,6 +122,7 @@ pub fn event_to_notification(event: &DomainEvent) -> Option<CoreNotificationEven
             body: format!("{agent_id} produced {output_chars} chars of output."),
             deep_link: Some("/chat".into()),
             timestamp_ms: ts,
+            actions: None,
         }),
         DomainEvent::SubagentFailed {
             parent_session,
@@ -136,6 +139,7 @@ pub fn event_to_notification(event: &DomainEvent) -> Option<CoreNotificationEven
             ),
             deep_link: Some("/chat".into()),
             timestamp_ms: ts,
+            actions: None,
         }),
         DomainEvent::NotificationTriaged {
             id,
@@ -162,6 +166,7 @@ pub fn event_to_notification(event: &DomainEvent) -> Option<CoreNotificationEven
                 },
                 deep_link: Some("/notifications".into()),
                 timestamp_ms: ts,
+                actions: None,
             })
         }
         _ => None,
