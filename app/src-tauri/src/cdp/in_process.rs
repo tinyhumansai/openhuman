@@ -73,7 +73,7 @@ pub struct EventFrame {
 /// inserted into the per-app [`CdpRegistry`] for later lookup.
 pub struct WebviewCdpTransport {
     label: String,
-        webview: Webview<tauri::Cef>,
+    webview: Webview<tauri::Cef>,
     next_id: Mutex<i64>,
     pending: PendingMap,
     events_tx: broadcast::Sender<EventFrame>,
@@ -85,7 +85,7 @@ impl WebviewCdpTransport {
     /// The request `id` is auto-assigned. `session_id`, when supplied, is
     /// inlined into the envelope so the call routes to a previously-attached
     /// child target.
-        pub async fn call(
+    pub async fn call(
         self: &Arc<Self>,
         method: &str,
         params: Value,
@@ -206,18 +206,11 @@ impl CdpRegistry {
     /// The creator closure is responsible for constructing the transport
     /// (which includes registering the CEF observer). If the closure
     /// returns `Err`, the registry is unchanged.
-    fn get_or_create<F>(
-        &self,
-        label: &str,
-        create: F,
-    ) -> Result<Arc<WebviewCdpTransport>, String>
+    fn get_or_create<F>(&self, label: &str, create: F) -> Result<Arc<WebviewCdpTransport>, String>
     where
         F: FnOnce() -> Result<Arc<WebviewCdpTransport>, String>,
     {
-        let mut t = self
-            .transports
-            .lock()
-            .expect("CdpRegistry mutex poisoned");
+        let mut t = self.transports.lock().expect("CdpRegistry mutex poisoned");
         if let Some(existing) = t.get(label) {
             return Ok(Arc::clone(existing));
         }

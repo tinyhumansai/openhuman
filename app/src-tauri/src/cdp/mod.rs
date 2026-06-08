@@ -43,7 +43,7 @@ pub use session::{
 #[allow(unused_imports)] // `Rect` re-export consumed once turn 2 lands; keep stable.
 pub use snapshot::{Rect, Snapshot};
 pub use target::{
-    browser_ws_url, connect_and_attach_matching, conn_for_account, detach_session,
+    browser_ws_url, conn_for_account, connect_and_attach_matching, detach_session,
     find_page_target_where,
 };
 
