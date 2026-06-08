@@ -309,6 +309,9 @@ const messages: TranslationMap = {
   'memory.tab.tasksDescription':
     '작업을 만들고 추적하세요 — 본인의 할 일 목록과 에이전트가 대화를 통해 구성한 보드가 모두 포함됩니다.',
   'memory.tab.subconscious': '잠재의식',
+  'memory.tab.agentWork': '에이전트 작업',
+  'memory.tab.agentWorkDescription':
+    '모든 백그라운드 에이전트 실행을 위한 명령 센터 — 입력이 필요한 것, 진행 중인 것, 완료된 것별로 그룹화됩니다.',
   'memory.tab.agents': '라이브러리',
   'memory.tab.agentsDescription':
     '사용 가능한 에이전트를 탐색하고 실행하세요 — 각 에이전트는 고유한 도구, 기능 및 전문 분야를 갖추고 있습니다.',
@@ -2800,6 +2803,23 @@ const messages: TranslationMap = {
   'intelligence.workTask.urlLine': '- 링크: {url}',
   'intelligence.workTask.closingInstruction':
     '먼저 구체적인 구현 계획을 간략히 다시 설명한 다음 실행하세요. 이 스레드에서 진행 상황을 계속 보이게 하고 작업 상태가 바뀌면 작업 보드를 업데이트하세요.',
+  'intelligence.agentWork.subtitle':
+    '모든 백그라운드 에이전트 실행을 수명 주기 상태별로 그룹화합니다.',
+  'intelligence.agentWork.loading': '에이전트 작업 불러오는 중…',
+  'intelligence.agentWork.failedToLoad': '에이전트 작업을 불러오지 못했습니다',
+  'intelligence.agentWork.empty': '아직 백그라운드 에이전트 실행이 없습니다.',
+  'intelligence.agentWork.bucket.needsInput': '입력 필요',
+  'intelligence.agentWork.bucket.working': 'Working',
+  'intelligence.agentWork.bucket.completed': 'Completed',
+  'intelligence.agentWork.bucket.failed': 'Failed',
+  'intelligence.agentWork.bucket.stopped': 'Stopped',
+  'intelligence.agentWork.column.agent': 'Agent',
+  'intelligence.agentWork.column.status': 'Status',
+  'intelligence.agentWork.column.elapsed': 'Elapsed',
+  'intelligence.agentWork.column.cost': 'Cost',
+  'intelligence.agentWork.column.tokens': 'Tokens',
+  'intelligence.agentWork.openThread': '스레드 열기',
+  'intelligence.agentWork.openWorker': '워커 열기',
   'intelligence.refine.objectiveDefault':
     '소스 작업을 구현 준비가 된 에이전트 작업으로 전환하세요: {title}',
   'intelligence.refine.sourceLine': '소스: {url}',

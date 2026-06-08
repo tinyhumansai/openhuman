@@ -310,6 +310,9 @@ const messages: TranslationMap = {
   'memory.tab.tasksDescription':
     'টাস্ক তৈরি করুন এবং ট্র্যাক করুন — আপনার নিজের কাজের তালিকা এবং এজেন্টরা কথোপকথন জুড়ে যে বোর্ডগুলি তৈরি করে।',
   'memory.tab.subconscious': 'সাবকনশাস',
+  'memory.tab.agentWork': 'এজেন্ট কাজ',
+  'memory.tab.agentWorkDescription':
+    'প্রতিটি ব্যাকগ্রাউন্ড এজেন্ট রানের জন্য একটি কমান্ড সেন্টার — আপনার ইনপুট প্রয়োজন এমন, চলমান এবং সম্পন্ন অনুযায়ী গোষ্ঠীবদ্ধ।',
   'memory.tab.agents': 'লাইব্রেরি',
   'memory.tab.agentsDescription':
     'আপনার উপলব্ধ এজেন্টগুলি ব্রাউজ করুন এবং চালান — প্রতিটির নিজস্ব টুল, ক্ষমতা এবং ফোকাস এলাকা রয়েছে।',
@@ -2822,6 +2825,23 @@ const messages: TranslationMap = {
   'intelligence.workTask.urlLine': '- ইউআরএল: {url}',
   'intelligence.workTask.closingInstruction':
     'প্রথমে সুনির্দিষ্ট বাস্তবায়ন পরিকল্পনাটি সংক্ষেপে পুনরায় বলুন, তারপর তা সম্পাদন করুন। এই থ্রেডে অগ্রগতি দৃশ্যমান রাখুন এবং কাজের অবস্থা পরিবর্তিত হলে টাস্ক বোর্ড আপডেট করুন।',
+  'intelligence.agentWork.subtitle':
+    'প্রতিটি ব্যাকগ্রাউন্ড এজেন্ট রান, জীবনচক্রের অবস্থা অনুযায়ী গোষ্ঠীবদ্ধ।',
+  'intelligence.agentWork.loading': 'এজেন্ট কাজ লোড হচ্ছে…',
+  'intelligence.agentWork.failedToLoad': 'এজেন্ট কাজ লোড করা যায়নি',
+  'intelligence.agentWork.empty': 'এখনও কোনো ব্যাকগ্রাউন্ড এজেন্ট রান নেই।',
+  'intelligence.agentWork.bucket.needsInput': 'ইনপুট প্রয়োজন',
+  'intelligence.agentWork.bucket.working': 'Working',
+  'intelligence.agentWork.bucket.completed': 'Completed',
+  'intelligence.agentWork.bucket.failed': 'Failed',
+  'intelligence.agentWork.bucket.stopped': 'Stopped',
+  'intelligence.agentWork.column.agent': 'Agent',
+  'intelligence.agentWork.column.status': 'Status',
+  'intelligence.agentWork.column.elapsed': 'Elapsed',
+  'intelligence.agentWork.column.cost': 'Cost',
+  'intelligence.agentWork.column.tokens': 'Tokens',
+  'intelligence.agentWork.openThread': 'থ্রেড খুলুন',
+  'intelligence.agentWork.openWorker': 'ওয়ার্কার খুলুন',
   'intelligence.refine.objectiveDefault':
     'উৎস টাস্কটিকে বাস্তবায়নের জন্য প্রস্তুত একটি এজেন্ট টাস্কে রূপান্তর করুন: {title}',
   'intelligence.refine.sourceLine': 'উৎস: {url}',

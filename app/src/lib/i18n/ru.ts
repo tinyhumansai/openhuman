@@ -311,6 +311,9 @@ const messages: TranslationMap = {
   'memory.tab.tasksDescription':
     'Создавайте и отслеживайте задачи — ваши личные дела и доски, которые агенты формируют в ходе разговоров.',
   'memory.tab.subconscious': 'Подсознание',
+  'memory.tab.agentWork': 'Работа агента',
+  'memory.tab.agentWorkDescription':
+    'Центр управления для каждого фонового запуска агента — сгруппировано по тому, что требует вашего участия, что выполняется и что завершено.',
   'memory.tab.agents': 'Библиотека',
   'memory.tab.agentsDescription':
     'Просматривайте и запускайте доступных агентов — у каждого свои инструменты, возможности и область специализации.',
@@ -2846,6 +2849,23 @@ const messages: TranslationMap = {
   'intelligence.workTask.urlLine': '- Ссылка: {url}',
   'intelligence.workTask.closingInstruction':
     'Начните с краткого повторения конкретного плана реализации, затем выполните его. Поддерживайте видимость прогресса в этой ветке и обновляйте доску задач при изменении состояния работы.',
+  'intelligence.agentWork.subtitle':
+    'Каждый фоновый запуск агента, сгруппированный по состоянию жизненного цикла.',
+  'intelligence.agentWork.loading': 'Загрузка работы агента…',
+  'intelligence.agentWork.failedToLoad': 'Не удалось загрузить работу агента',
+  'intelligence.agentWork.empty': 'Фоновых запусков агента пока нет.',
+  'intelligence.agentWork.bucket.needsInput': 'Нужны данные',
+  'intelligence.agentWork.bucket.working': 'Working',
+  'intelligence.agentWork.bucket.completed': 'Completed',
+  'intelligence.agentWork.bucket.failed': 'Failed',
+  'intelligence.agentWork.bucket.stopped': 'Stopped',
+  'intelligence.agentWork.column.agent': 'Agent',
+  'intelligence.agentWork.column.status': 'Status',
+  'intelligence.agentWork.column.elapsed': 'Elapsed',
+  'intelligence.agentWork.column.cost': 'Cost',
+  'intelligence.agentWork.column.tokens': 'Tokens',
+  'intelligence.agentWork.openThread': 'Открыть тред',
+  'intelligence.agentWork.openWorker': 'Открыть воркер',
   'intelligence.refine.objectiveDefault':
     'Превратите исходную задачу в готовую к реализации задачу агента: {title}',
   'intelligence.refine.sourceLine': 'Источник: {url}',

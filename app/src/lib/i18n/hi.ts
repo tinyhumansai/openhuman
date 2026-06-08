@@ -309,6 +309,9 @@ const messages: TranslationMap = {
   'memory.tab.tasksDescription':
     'कार्य बनाएं और ट्रैक करें — आपके अपने टू-डू और साथ ही वे बोर्ड जो आपके एजेंट वार्तालापों में बनाते हैं।',
   'memory.tab.subconscious': 'सबकॉन्शस',
+  'memory.tab.agentWork': 'एजेंट कार्य',
+  'memory.tab.agentWorkDescription':
+    'हर पृष्ठभूमि एजेंट रन के लिए एक कमांड सेंटर — इस आधार पर समूहित कि किसे आपकी जानकारी चाहिए, क्या चल रहा है और क्या पूरा हो चुका है।',
   'memory.tab.agents': 'लाइब्रेरी',
   'memory.tab.agentsDescription':
     'अपने उपलब्ध एजेंट ब्राउज़ करें और चलाएं — प्रत्येक के पास अपने टूल, क्षमताएं और फोकस क्षेत्र हैं।',
@@ -2827,6 +2830,22 @@ const messages: TranslationMap = {
   'intelligence.workTask.urlLine': '- यूआरएल: {url}',
   'intelligence.workTask.closingInstruction':
     'पहले ठोस कार्यान्वयन योजना को संक्षेप में दोहराएँ, फिर उसे निष्पादित करें। इस थ्रेड में प्रगति दिखती रहे और कार्य की स्थिति बदलने पर कार्य बोर्ड अपडेट करें।',
+  'intelligence.agentWork.subtitle': 'हर पृष्ठभूमि एजेंट रन, जीवनचक्र स्थिति के अनुसार समूहित।',
+  'intelligence.agentWork.loading': 'एजेंट कार्य लोड हो रहा है…',
+  'intelligence.agentWork.failedToLoad': 'एजेंट कार्य लोड नहीं हो सका',
+  'intelligence.agentWork.empty': 'अभी तक कोई पृष्ठभूमि एजेंट रन नहीं।',
+  'intelligence.agentWork.bucket.needsInput': 'इनपुट चाहिए',
+  'intelligence.agentWork.bucket.working': 'Working',
+  'intelligence.agentWork.bucket.completed': 'Completed',
+  'intelligence.agentWork.bucket.failed': 'Failed',
+  'intelligence.agentWork.bucket.stopped': 'Stopped',
+  'intelligence.agentWork.column.agent': 'Agent',
+  'intelligence.agentWork.column.status': 'Status',
+  'intelligence.agentWork.column.elapsed': 'Elapsed',
+  'intelligence.agentWork.column.cost': 'Cost',
+  'intelligence.agentWork.column.tokens': 'Tokens',
+  'intelligence.agentWork.openThread': 'थ्रेड खोलें',
+  'intelligence.agentWork.openWorker': 'वर्कर खोलें',
   'intelligence.refine.objectiveDefault':
     'स्रोत कार्य को कार्यान्वयन के लिए तैयार एजेंट कार्य में बदलें: {title}',
   'intelligence.refine.sourceLine': 'स्रोत: {url}',

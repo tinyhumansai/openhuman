@@ -296,6 +296,9 @@ const messages: TranslationMap = {
   'memory.tab.tasksDescription':
     '创建并跟踪任务——包括您自己的待办事项以及智能体在对话中创建的看板。',
   'memory.tab.subconscious': '潜意识',
+  'memory.tab.agentWork': '智能体工作',
+  'memory.tab.agentWorkDescription':
+    '所有后台智能体运行的指挥中心——按需要你处理的、正在运行的和已完成的进行分组。',
   'memory.tab.agents': '资料库',
   'memory.tab.agentsDescription':
     '浏览并运行可用的智能体——每个智能体都有自己的工具、能力和专注领域。',
@@ -2685,6 +2688,22 @@ const messages: TranslationMap = {
   'intelligence.workTask.urlLine': '- 网址：{url}',
   'intelligence.workTask.closingInstruction':
     '先简要重述具体的实施计划，然后执行它。在此线程中保持进度可见，并在工作状态变化时更新任务看板。',
+  'intelligence.agentWork.subtitle': '所有后台智能体运行，按生命周期状态分组。',
+  'intelligence.agentWork.loading': '正在加载智能体工作…',
+  'intelligence.agentWork.failedToLoad': '无法加载智能体工作',
+  'intelligence.agentWork.empty': '暂无后台智能体运行。',
+  'intelligence.agentWork.bucket.needsInput': '需要输入',
+  'intelligence.agentWork.bucket.working': 'Working',
+  'intelligence.agentWork.bucket.completed': 'Completed',
+  'intelligence.agentWork.bucket.failed': 'Failed',
+  'intelligence.agentWork.bucket.stopped': 'Stopped',
+  'intelligence.agentWork.column.agent': 'Agent',
+  'intelligence.agentWork.column.status': 'Status',
+  'intelligence.agentWork.column.elapsed': 'Elapsed',
+  'intelligence.agentWork.column.cost': 'Cost',
+  'intelligence.agentWork.column.tokens': 'Tokens',
+  'intelligence.agentWork.openThread': '打开会话',
+  'intelligence.agentWork.openWorker': '打开工作线程',
   'intelligence.refine.objectiveDefault': '将来源任务转化为可立即实施的智能体任务：{title}',
   'intelligence.refine.sourceLine': '来源：{url}',
   'intelligence.refine.sourceIntake': '来源：任务来源接收',

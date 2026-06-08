@@ -314,6 +314,9 @@ const messages: TranslationMap = {
   'memory.tab.tasksDescription':
     'Twórz i śledź zadania — własne listy do zrobienia oraz tablice, które Twoi agenci budują w rozmowach.',
   'memory.tab.subconscious': 'Podświadomość',
+  'memory.tab.agentWork': 'Praca agenta',
+  'memory.tab.agentWorkDescription':
+    'Centrum dowodzenia dla każdego przebiegu agenta w tle — pogrupowane według tego, co wymaga Twojej reakcji, co działa i co zostało ukończone.',
   'memory.tab.agents': 'Biblioteka',
   'memory.tab.agentsDescription':
     'Przeglądaj i uruchamiaj dostępnych agentów — każdy z własnymi narzędziami, możliwościami i obszarem specjalizacji.',
@@ -2861,6 +2864,23 @@ const messages: TranslationMap = {
   'intelligence.workTask.urlLine': '- Adres: {url}',
   'intelligence.workTask.closingInstruction':
     'Zacznij od krótkiego powtórzenia konkretnego planu wdrożenia, a następnie go zrealizuj. Utrzymuj widoczność postępów w tym wątku i aktualizuj tablicę zadań, gdy zmienia się stan pracy.',
+  'intelligence.agentWork.subtitle':
+    'Każdy przebieg agenta w tle, pogrupowany według stanu cyklu życia.',
+  'intelligence.agentWork.loading': 'Ładowanie pracy agenta…',
+  'intelligence.agentWork.failedToLoad': 'Nie udało się załadować pracy agenta',
+  'intelligence.agentWork.empty': 'Brak przebiegów agenta w tle.',
+  'intelligence.agentWork.bucket.needsInput': 'Wymaga reakcji',
+  'intelligence.agentWork.bucket.working': 'Working',
+  'intelligence.agentWork.bucket.completed': 'Completed',
+  'intelligence.agentWork.bucket.failed': 'Failed',
+  'intelligence.agentWork.bucket.stopped': 'Stopped',
+  'intelligence.agentWork.column.agent': 'Agent',
+  'intelligence.agentWork.column.status': 'Status',
+  'intelligence.agentWork.column.elapsed': 'Elapsed',
+  'intelligence.agentWork.column.cost': 'Cost',
+  'intelligence.agentWork.column.tokens': 'Tokens',
+  'intelligence.agentWork.openThread': 'Otwórz wątek',
+  'intelligence.agentWork.openWorker': 'Otwórz proces',
   'intelligence.refine.objectiveDefault':
     'Przekształć zadanie źródłowe w gotowe do wdrożenia zadanie agenta: {title}',
   'intelligence.refine.sourceLine': 'Źródło: {url}',

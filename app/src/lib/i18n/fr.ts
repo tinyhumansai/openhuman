@@ -318,6 +318,9 @@ const messages: TranslationMap = {
   'memory.tab.tasksDescription':
     'Créez et suivez des tâches — vos propres listes de choses à faire ainsi que les tableaux que vos agents construisent au fil des conversations.',
   'memory.tab.subconscious': 'Subconscient',
+  'memory.tab.agentWork': "Travail de l'agent",
+  'memory.tab.agentWorkDescription':
+    "Un centre de commande pour chaque exécution d'agent en arrière-plan, regroupée selon ce qui nécessite votre intervention, ce qui est en cours et ce qui est terminé.",
   'memory.tab.agents': 'Bibliothèque',
   'memory.tab.agentsDescription':
     'Parcourez et exécutez vos agents disponibles — chacun avec ses propres outils, capacités et domaine de spécialisation.',
@@ -2890,6 +2893,23 @@ const messages: TranslationMap = {
   'intelligence.refine.objectiveDefault':
     "Transformez la tâche source en une tâche d'agent prête à être implémentée : {title}",
   'intelligence.refine.sourceLine': 'Source : {url}',
+  'intelligence.agentWork.subtitle':
+    "Chaque exécution d'agent en arrière-plan, regroupée par état du cycle de vie.",
+  'intelligence.agentWork.loading': "Chargement du travail de l'agent…",
+  'intelligence.agentWork.failedToLoad': "Impossible de charger le travail de l'agent",
+  'intelligence.agentWork.empty': "Aucune exécution d'agent en arrière-plan pour l'instant.",
+  'intelligence.agentWork.bucket.needsInput': 'Intervention requise',
+  'intelligence.agentWork.bucket.working': 'Working',
+  'intelligence.agentWork.bucket.completed': 'Completed',
+  'intelligence.agentWork.bucket.failed': 'Failed',
+  'intelligence.agentWork.bucket.stopped': 'Stopped',
+  'intelligence.agentWork.column.agent': 'Agent',
+  'intelligence.agentWork.column.status': 'Status',
+  'intelligence.agentWork.column.elapsed': 'Elapsed',
+  'intelligence.agentWork.column.cost': 'Cost',
+  'intelligence.agentWork.column.tokens': 'Tokens',
+  'intelligence.agentWork.openThread': 'Ouvrir le fil',
+  'intelligence.agentWork.openWorker': 'Ouvrir le worker',
   'intelligence.refine.sourceIntake': 'Source : réception des sources de tâches',
   'intelligence.refine.repositoryLine': 'Dépôt : {repo}',
   'intelligence.refine.externalTaskLine': 'Tâche externe : {externalId}',

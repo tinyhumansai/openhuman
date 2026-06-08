@@ -306,6 +306,9 @@ const messages: TranslationMap = {
   'memory.tab.tasksDescription':
     'أنشئ المهام وتتبعها — مهامك الخاصة بالإضافة إلى اللوحات التي يبنيها وكلاؤك عبر المحادثات.',
   'memory.tab.subconscious': 'اللاوعي',
+  'memory.tab.agentWork': 'عمل الوكيل',
+  'memory.tab.agentWorkDescription':
+    'مركز قيادة لكل تشغيل وكيل في الخلفية — مُجمّع حسب ما يحتاج إلى مُدخلاتك، وما يعمل الآن، وما اكتمل.',
   'memory.tab.agents': 'المكتبة',
   'memory.tab.agentsDescription':
     'تصفّح وشغّل الوكلاء المتاحين — لكل منهم أدواته وقدراته ومجال تركيزه.',
@@ -2766,6 +2769,22 @@ const messages: TranslationMap = {
   'intelligence.workTask.urlLine': '- الرابط: {url}',
   'intelligence.workTask.closingInstruction':
     'ابدأ بإعادة صياغة خطة التنفيذ الملموسة بإيجاز، ثم نفّذها. أبقِ التقدّم مرئيًا في هذا المحادثة وحدّث لوحة المهام عند تغيّر حالة العمل.',
+  'intelligence.agentWork.subtitle': 'كل تشغيل وكيل في الخلفية، مُجمّع حسب حالة دورة الحياة.',
+  'intelligence.agentWork.loading': 'جارٍ تحميل عمل الوكيل…',
+  'intelligence.agentWork.failedToLoad': 'تعذّر تحميل عمل الوكيل',
+  'intelligence.agentWork.empty': 'لا توجد عمليات تشغيل وكيل في الخلفية بعد.',
+  'intelligence.agentWork.bucket.needsInput': 'يحتاج إلى مُدخلات',
+  'intelligence.agentWork.bucket.working': 'Working',
+  'intelligence.agentWork.bucket.completed': 'Completed',
+  'intelligence.agentWork.bucket.failed': 'Failed',
+  'intelligence.agentWork.bucket.stopped': 'Stopped',
+  'intelligence.agentWork.column.agent': 'Agent',
+  'intelligence.agentWork.column.status': 'Status',
+  'intelligence.agentWork.column.elapsed': 'Elapsed',
+  'intelligence.agentWork.column.cost': 'Cost',
+  'intelligence.agentWork.column.tokens': 'Tokens',
+  'intelligence.agentWork.openThread': 'فتح المحادثة',
+  'intelligence.agentWork.openWorker': 'فتح العامل',
   'intelligence.refine.objectiveDefault': 'حوّل المهمة المصدر إلى مهمة وكيل جاهزة للتنفيذ: {title}',
   'intelligence.refine.sourceLine': 'المصدر: {url}',
   'intelligence.refine.sourceIntake': 'المصدر: استقبال مصدر المهام',

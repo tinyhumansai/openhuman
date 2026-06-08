@@ -319,6 +319,9 @@ const messages: TranslationMap = {
   'memory.tab.tasksDescription':
     'Crea y realiza un seguimiento de tareas: tus propios pendientes más los tableros que tus agentes crean a lo largo de las conversaciones.',
   'memory.tab.subconscious': 'Subconsciente',
+  'memory.tab.agentWork': 'Trabajo del agente',
+  'memory.tab.agentWorkDescription':
+    'Un centro de mando para cada ejecución de agente en segundo plano, agrupado según lo que necesita tu intervención, lo que está en curso y lo que ha terminado.',
   'memory.tab.agents': 'Biblioteca',
   'memory.tab.agentsDescription':
     'Explora y ejecuta los agentes disponibles — cada uno con sus propias herramientas, capacidades y área de enfoque.',
@@ -2876,6 +2879,23 @@ const messages: TranslationMap = {
   'intelligence.workTask.urlLine': '- Dirección: {url}',
   'intelligence.workTask.closingInstruction':
     'Empieza reformulando brevemente el plan de implementación concreto y luego ejecútalo. Mantén el progreso visible en este hilo y actualiza el tablero de tareas cuando cambie el estado del trabajo.',
+  'intelligence.agentWork.subtitle':
+    'Cada ejecución de agente en segundo plano, agrupada por estado del ciclo de vida.',
+  'intelligence.agentWork.loading': 'Cargando trabajo del agente…',
+  'intelligence.agentWork.failedToLoad': 'No se pudo cargar el trabajo del agente',
+  'intelligence.agentWork.empty': 'Aún no hay ejecuciones de agente en segundo plano.',
+  'intelligence.agentWork.bucket.needsInput': 'Requiere intervención',
+  'intelligence.agentWork.bucket.working': 'Working',
+  'intelligence.agentWork.bucket.completed': 'Completed',
+  'intelligence.agentWork.bucket.failed': 'Failed',
+  'intelligence.agentWork.bucket.stopped': 'Stopped',
+  'intelligence.agentWork.column.agent': 'Agent',
+  'intelligence.agentWork.column.status': 'Status',
+  'intelligence.agentWork.column.elapsed': 'Elapsed',
+  'intelligence.agentWork.column.cost': 'Cost',
+  'intelligence.agentWork.column.tokens': 'Tokens',
+  'intelligence.agentWork.openThread': 'Abrir hilo',
+  'intelligence.agentWork.openWorker': 'Abrir trabajador',
   'intelligence.refine.objectiveDefault':
     'Convierte la tarea de origen en una tarea de agente lista para implementar: {title}',
   'intelligence.refine.sourceLine': 'Origen: {url}',

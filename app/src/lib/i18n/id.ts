@@ -311,6 +311,9 @@ const messages: TranslationMap = {
   'memory.tab.tasksDescription':
     'Buat dan lacak tugas — to-do Anda sendiri beserta papan yang dibangun agen Anda di berbagai percakapan.',
   'memory.tab.subconscious': 'Bawah sadar',
+  'memory.tab.agentWork': 'Kerja agen',
+  'memory.tab.agentWorkDescription':
+    'Pusat kendali untuk setiap proses agen latar belakang — dikelompokkan berdasarkan apa yang butuh masukan Anda, apa yang sedang berjalan, dan apa yang sudah selesai.',
   'memory.tab.agents': 'Perpustakaan',
   'memory.tab.agentsDescription':
     'Telusuri dan jalankan agen yang tersedia — masing-masing dengan alat, kemampuan, dan area fokusnya sendiri.',
@@ -2829,6 +2832,23 @@ const messages: TranslationMap = {
   'intelligence.workTask.urlLine': '- Tautan: {url}',
   'intelligence.workTask.closingInstruction':
     'Mulailah dengan menyatakan kembali rencana implementasi konkret secara singkat, lalu jalankan. Jaga agar kemajuan tetap terlihat di utas ini dan perbarui papan tugas ketika status pekerjaan berubah.',
+  'intelligence.agentWork.subtitle':
+    'Setiap proses agen latar belakang, dikelompokkan menurut status siklus hidup.',
+  'intelligence.agentWork.loading': 'Memuat kerja agen…',
+  'intelligence.agentWork.failedToLoad': 'Gagal memuat kerja agen',
+  'intelligence.agentWork.empty': 'Belum ada proses agen latar belakang.',
+  'intelligence.agentWork.bucket.needsInput': 'Perlu masukan',
+  'intelligence.agentWork.bucket.working': 'Working',
+  'intelligence.agentWork.bucket.completed': 'Completed',
+  'intelligence.agentWork.bucket.failed': 'Failed',
+  'intelligence.agentWork.bucket.stopped': 'Stopped',
+  'intelligence.agentWork.column.agent': 'Agent',
+  'intelligence.agentWork.column.status': 'Status',
+  'intelligence.agentWork.column.elapsed': 'Elapsed',
+  'intelligence.agentWork.column.cost': 'Cost',
+  'intelligence.agentWork.column.tokens': 'Tokens',
+  'intelligence.agentWork.openThread': 'Buka utas',
+  'intelligence.agentWork.openWorker': 'Buka pekerja',
   'intelligence.refine.objectiveDefault':
     'Ubah tugas sumber menjadi tugas agen yang siap diimplementasikan: {title}',
   'intelligence.refine.sourceLine': 'Sumber: {url}',

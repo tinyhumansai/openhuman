@@ -319,6 +319,9 @@ const messages: TranslationMap = {
   'memory.tab.tasksDescription':
     'Aufgaben erstellen und verfolgen – eigene To-dos sowie die Boards, die Agenten in Gesprächen anlegen.',
   'memory.tab.subconscious': 'Unterbewusstsein',
+  'memory.tab.agentWork': 'Agentenarbeit',
+  'memory.tab.agentWorkDescription':
+    'Eine Kommandozentrale für jeden Hintergrund-Agentenlauf — gruppiert danach, was deine Eingabe braucht, was läuft und was abgeschlossen ist.',
   'memory.tab.agents': 'Bibliothek',
   'memory.tab.agentsDescription':
     'Verfügbare Agenten durchsuchen und starten — jeder mit eigenen Werkzeugen, Fähigkeiten und Schwerpunkten.',
@@ -2892,6 +2895,23 @@ const messages: TranslationMap = {
   'intelligence.workTask.urlLine': '- Adresse: {url}',
   'intelligence.workTask.closingInstruction':
     'Beginne damit, den konkreten Umsetzungsplan kurz zu wiederholen, und führe ihn dann aus. Halte den Fortschritt in diesem Thread sichtbar und aktualisiere das Aufgabenboard, wenn sich der Arbeitsstand ändert.',
+  'intelligence.agentWork.subtitle':
+    'Jeder Hintergrund-Agentenlauf, gruppiert nach Lebenszyklusstatus.',
+  'intelligence.agentWork.loading': 'Agentenarbeit wird geladen…',
+  'intelligence.agentWork.failedToLoad': 'Agentenarbeit konnte nicht geladen werden',
+  'intelligence.agentWork.empty': 'Noch keine Hintergrund-Agentenläufe.',
+  'intelligence.agentWork.bucket.needsInput': 'Eingabe nötig',
+  'intelligence.agentWork.bucket.working': 'Working',
+  'intelligence.agentWork.bucket.completed': 'Completed',
+  'intelligence.agentWork.bucket.failed': 'Failed',
+  'intelligence.agentWork.bucket.stopped': 'Stopped',
+  'intelligence.agentWork.column.agent': 'Agent',
+  'intelligence.agentWork.column.status': 'Status',
+  'intelligence.agentWork.column.elapsed': 'Elapsed',
+  'intelligence.agentWork.column.cost': 'Cost',
+  'intelligence.agentWork.column.tokens': 'Tokens',
+  'intelligence.agentWork.openThread': 'Thread öffnen',
+  'intelligence.agentWork.openWorker': 'Worker öffnen',
   'intelligence.refine.objectiveDefault':
     'Verwandle die Quellaufgabe in eine umsetzungsbereite Agentenaufgabe: {title}',
   'intelligence.refine.sourceLine': 'Quelle: {url}',
