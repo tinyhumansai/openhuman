@@ -2449,12 +2449,16 @@ pub fn run() {
         // mock; `password-store=basic` is the equivalent for the password
         // manager. Both are no-ops on Windows/Linux, so safe to always set.
         //
-        // We do NOT pass `--remote-debugging-port`. CDP attach is
-        // in-process via `Webview::send_dev_tools_message` (see
-        // `app/src-tauri/src/cdp/in_process.rs`). Opening the TCP
-        // remote-debugging port would let any same-UID local process
-        // drive the embedded WhatsApp/Slack/etc. webviews without
-        // authentication.
+        // CDP attach is migrating to the in-process channel — see
+        // `app/src-tauri/src/cdp/in_process.rs` and the per-account
+        // session opener (`cdp/session.rs`). The legacy TCP DevTools
+        // port is still passed below (search for
+        // `--remote-debugging-port`) because the per-scanner `CdpConn`
+        // duplicates in `discord_scanner`, `whatsapp_scanner`,
+        // `slack_scanner`, `telegram_scanner`, `wechat_scanner`, and
+        // `meet_video` have not migrated yet. Once they do, the flag
+        // can be dropped and the unauthenticated same-UID loopback
+        // listener with it.
         //
         // NOTE: flags must be prefixed with `--`. The runtime's
         // `on_before_command_line_processing` dispatch (in
