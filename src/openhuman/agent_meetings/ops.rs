@@ -175,6 +175,12 @@ fn build_join_payload(
         if let Some(phrase) = &req.wake_phrase {
             map.insert("wakePhrase".to_string(), json!(phrase));
         }
+        if let Some(cid) = &req.correlation_id {
+            map.insert("correlationId".to_string(), json!(cid));
+        }
+        if let Some(lo) = req.listen_only {
+            map.insert("listenOnly".to_string(), json!(lo));
+        }
     }
     payload
 }
@@ -283,6 +289,37 @@ pub async fn handle_harness_response(params: Map<String, Value>) -> Result<Value
     mgr.emit("bot:harness:response", json!({ "result": req.result }))
         .await
         .map_err(|e| format!("[agent_meetings] emit failed: {e}"))?;
+
+    let outcome = RpcOutcome::new(json!({ "ok": true }), vec![]);
+    outcome.into_cli_compatible_json()
+}
+
+/// Handle `openhuman.agent_meetings_speak` — make the bot speak text into the call.
+pub async fn handle_speak(params: Map<String, Value>) -> Result<Value, String> {
+    let correlation_id = params
+        .get("correlation_id")
+        .and_then(Value::as_str)
+        .ok_or("[agent_meetings] missing correlation_id for speak")?
+        .to_string();
+    let text = params
+        .get("text")
+        .and_then(Value::as_str)
+        .ok_or("[agent_meetings] missing text for speak")?
+        .to_string();
+
+    tracing::debug!(
+        correlation_id = %correlation_id,
+        text_len = text.len(),
+        "[agent_meetings] emitting bot:speak"
+    );
+
+    let mgr = global_socket_manager();
+    mgr.emit(
+        "bot:speak",
+        json!({ "correlationId": correlation_id, "text": text }),
+    )
+    .await
+    .map_err(|e| format!("[agent_meetings] emit failed: {e}"))?;
 
     let outcome = RpcOutcome::new(json!({ "ok": true }), vec![]);
     outcome.into_cli_compatible_json()

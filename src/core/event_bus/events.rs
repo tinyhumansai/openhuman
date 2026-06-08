@@ -979,29 +979,54 @@ pub enum DomainEvent {
     },
 
     // ── Backend Meet Bot ──────────────────────────────────────────────
+    /// Calendar auto-join policy triggered a meeting join.
+    MeetingAutoJoinTriggered {
+        meeting_id: String,
+        meet_url: String,
+    },
     /// Backend gmeet bot successfully joined the meeting.
-    BackendMeetJoined { meet_url: String },
+    BackendMeetJoined {
+        meet_url: String,
+        correlation_id: Option<String>,
+    },
     /// Backend gmeet bot left the meeting.
-    BackendMeetLeft { reason: String },
+    BackendMeetLeft {
+        reason: String,
+        correlation_id: Option<String>,
+    },
     /// Backend gmeet bot produced a spoken reply.
     BackendMeetReply {
         transcript: String,
         reply: String,
         emotion: String,
+        correlation_id: Option<String>,
     },
     /// Backend gmeet bot needs the harness to execute a tool instruction.
     BackendMeetHarness {
         transcript: String,
         instruction: String,
         emotion: String,
+        correlation_id: Option<String>,
     },
     /// Backend gmeet bot sent the full meeting transcript on close.
     BackendMeetTranscript {
         turns: Vec<BackendMeetTurn>,
         duration_ms: u64,
+        correlation_id: Option<String>,
     },
     /// Backend gmeet bot emitted an error.
-    BackendMeetError { error: String },
+    BackendMeetError {
+        error: String,
+        correlation_id: Option<String>,
+    },
+    /// Backend bot detected a mid-call voice command addressed to it (Phase 2).
+    BackendMeetInCallRequest {
+        correlation_id: String,
+        speaker: String,
+        command_text: String,
+        recent_transcript: Vec<BackendMeetTurn>,
+        timestamp_ms: u64,
+    },
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -1137,12 +1162,14 @@ impl DomainEvent {
             | Self::McpSetupSecretRequested { .. }
             | Self::McpToolRejected { .. } => "mcp_client",
 
-            Self::BackendMeetJoined { .. }
+            Self::MeetingAutoJoinTriggered { .. }
+            | Self::BackendMeetJoined { .. }
             | Self::BackendMeetLeft { .. }
             | Self::BackendMeetReply { .. }
             | Self::BackendMeetHarness { .. }
             | Self::BackendMeetTranscript { .. }
-            | Self::BackendMeetError { .. } => "agent_meetings",
+            | Self::BackendMeetError { .. }
+            | Self::BackendMeetInCallRequest { .. } => "agent_meetings",
         }
     }
 
@@ -1252,12 +1279,14 @@ impl DomainEvent {
             Self::TaskSourceFetchFailed { .. } => "TaskSourceFetchFailed",
             Self::TaskPlanAwaitingApproval { .. } => "TaskPlanAwaitingApproval",
             Self::TaskRunReclaimed { .. } => "TaskRunReclaimed",
+            Self::MeetingAutoJoinTriggered { .. } => "MeetingAutoJoinTriggered",
             Self::BackendMeetJoined { .. } => "BackendMeetJoined",
             Self::BackendMeetLeft { .. } => "BackendMeetLeft",
             Self::BackendMeetReply { .. } => "BackendMeetReply",
             Self::BackendMeetHarness { .. } => "BackendMeetHarness",
             Self::BackendMeetTranscript { .. } => "BackendMeetTranscript",
             Self::BackendMeetError { .. } => "BackendMeetError",
+            Self::BackendMeetInCallRequest { .. } => "BackendMeetInCallRequest",
             Self::Voice(_) => "Voice",
         }
     }

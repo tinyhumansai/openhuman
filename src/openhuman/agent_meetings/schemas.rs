@@ -31,6 +31,11 @@ const DEFS: &[BackendMeetControllerDef] = &[
         schema: schema_harness_response,
         handler: handle_harness_response_wrap,
     },
+    BackendMeetControllerDef {
+        function: "speak",
+        schema: schema_speak,
+        handler: handle_speak_wrap,
+    },
 ];
 
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
@@ -188,6 +193,38 @@ fn handle_harness_response_wrap(params: Map<String, Value>) -> ControllerFuture 
     Box::pin(async move { super::ops::handle_harness_response(params).await })
 }
 
+fn schema_speak() -> ControllerSchema {
+    ControllerSchema {
+        namespace: "agent_meetings",
+        function: "speak",
+        description: "Make the bot speak text into the active call via TTS (Phase 2).",
+        inputs: vec![
+            FieldSchema {
+                name: "correlation_id",
+                ty: TypeSchema::String,
+                comment: "Meeting correlation ID identifying the active call.",
+                required: true,
+            },
+            FieldSchema {
+                name: "text",
+                ty: TypeSchema::String,
+                comment: "Text the bot should speak.",
+                required: true,
+            },
+        ],
+        outputs: vec![FieldSchema {
+            name: "ok",
+            ty: TypeSchema::Bool,
+            comment: "True when the speak request was emitted.",
+            required: true,
+        }],
+    }
+}
+
+fn handle_speak_wrap(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move { super::ops::handle_speak(params).await })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -203,7 +240,10 @@ mod tests {
             .map(|c| c.schema.function)
             .collect();
         assert_eq!(schema_fns, handler_fns);
-        assert_eq!(schema_fns, vec!["join", "leave", "harness_response"]);
+        assert_eq!(
+            schema_fns,
+            vec!["join", "leave", "harness_response", "speak"]
+        );
     }
 
     #[test]
