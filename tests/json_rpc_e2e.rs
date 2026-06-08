@@ -3091,6 +3091,111 @@ async fn json_rpc_agent_work_list_groups_runs_by_bucket() {
 }
 
 #[tokio::test]
+async fn json_rpc_workflow_run_definitions_and_runs_roundtrip() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_url_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+    let _api_url_guard = EnvVarGuard::unset("OPENHUMAN_API_URL");
+
+    let (api_addr, api_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let api_origin = format!("http://{api_addr}");
+    write_min_config(openhuman_home.as_path(), &api_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{rpc_addr}");
+
+    let config = openhuman_core::openhuman::config::Config::load_or_init()
+        .await
+        .expect("load config");
+
+    // Builtin definitions are available with no seeding.
+    let defs = post_json_rpc(
+        &rpc_base,
+        9141,
+        "openhuman.workflow_run_list_definitions",
+        json!({}),
+    )
+    .await;
+    let defs_outer = assert_no_jsonrpc_error(&defs, "workflow_run_list_definitions");
+    assert_eq!(
+        defs_outer.get("count").and_then(serde_json::Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        defs_outer
+            .get("definitions")
+            .and_then(|d| d.get(0))
+            .and_then(|d| d.get("id"))
+            .and_then(serde_json::Value::as_str),
+        Some("parallel_research_cross_check")
+    );
+
+    // Seed a durable workflow run, then list + get it.
+    openhuman_core::openhuman::session_db::run_ledger::upsert_workflow_run(
+        &config,
+        openhuman_core::openhuman::session_db::run_ledger::WorkflowRunUpsert {
+            id: "wf-run-1".to_string(),
+            definition_id: "parallel_research_cross_check".to_string(),
+            parent_thread_id: Some("thread-wf-1".to_string()),
+            input: json!({ "question": "test" }),
+            phase_states: json!({ "decompose": "completed" }),
+            child_run_ids: vec!["child-1".to_string()],
+            status: openhuman_core::openhuman::session_db::run_ledger::WorkflowRunStatus::Running,
+            summary: None,
+            started_at: None,
+            completed_at: None,
+        },
+    )
+    .expect("seed workflow run");
+
+    let list = post_json_rpc(
+        &rpc_base,
+        9142,
+        "openhuman.workflow_run_list",
+        json!({ "definitionId": "parallel_research_cross_check" }),
+    )
+    .await;
+    let list_outer = assert_no_jsonrpc_error(&list, "workflow_run_list");
+    assert_eq!(
+        list_outer.get("count").and_then(serde_json::Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        list_outer
+            .get("runs")
+            .and_then(|r| r.get(0))
+            .and_then(|r| r.get("status"))
+            .and_then(serde_json::Value::as_str),
+        Some("running")
+    );
+
+    let get = post_json_rpc(
+        &rpc_base,
+        9143,
+        "openhuman.workflow_run_get",
+        json!({ "id": "wf-run-1" }),
+    )
+    .await;
+    let get_outer = assert_no_jsonrpc_error(&get, "workflow_run_get");
+    assert_eq!(
+        get_outer
+            .get("workflowRun")
+            .and_then(|r| r.get("definitionId"))
+            .and_then(serde_json::Value::as_str),
+        Some("parallel_research_cross_check")
+    );
+
+    api_join.abort();
+    rpc_join.abort();
+}
+
+#[tokio::test]
 async fn json_rpc_task_board_brief_roundtrips_across_todos_and_threads_rpc() {
     let _env_lock = json_rpc_e2e_env_lock();
     let tmp = tempdir().expect("tempdir");
