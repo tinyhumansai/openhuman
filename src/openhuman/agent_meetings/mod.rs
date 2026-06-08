@@ -8,12 +8,14 @@
 //!
 //! ## Module layout
 //!
-//! - [`types`]   — request/response types
+//! - [`types`]   — request/response types + meeting session model
 //! - [`ops`]     — RPC handlers that emit Socket.IO events
 //! - [`schemas`] — controller schema + registered handler wrappers
+//! - [`store`]   — SQLite persistence for meeting sessions
 
 pub mod ops;
 pub mod schemas;
+pub mod store;
 pub mod types;
 
 pub use schemas::{

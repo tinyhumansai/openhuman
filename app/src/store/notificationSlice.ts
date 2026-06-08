@@ -13,6 +13,12 @@ export type NotificationCategory =
   | 'reminders'
   | 'important';
 
+export interface NotificationAction {
+  actionId: string;
+  label: string;
+  payload?: unknown;
+}
+
 export interface NotificationItem {
   id: string;
   category: NotificationCategory;
@@ -23,6 +29,7 @@ export interface NotificationItem {
   accountId?: string;
   provider?: string;
   deepLink?: string;
+  actions?: NotificationAction[];
 }
 
 export interface NotificationPreferences {
