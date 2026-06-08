@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 
 import { ConfirmationModal } from '../components/intelligence/ConfirmationModal';
 import IntelligenceAgentsTab from '../components/intelligence/IntelligenceAgentsTab';
+import IntelligenceAgentWorkTab from '../components/intelligence/IntelligenceAgentWorkTab';
 import IntelligenceSubconsciousTab from '../components/intelligence/IntelligenceSubconsciousTab';
 import IntelligenceTasksTab from '../components/intelligence/IntelligenceTasksTab';
 import MemorySection from '../components/intelligence/MemorySection';
@@ -22,12 +23,20 @@ import type {
 } from '../types/intelligence';
 import { IS_DEV } from '../utils/config';
 
-type IntelligenceTab = 'memory' | 'subconscious' | 'tasks' | 'agents' | 'workflows' | 'council';
+type IntelligenceTab =
+  | 'memory'
+  | 'subconscious'
+  | 'tasks'
+  | 'agent-work'
+  | 'agents'
+  | 'workflows'
+  | 'council';
 
 const INTELLIGENCE_TABS: IntelligenceTab[] = [
   'memory',
   'subconscious',
   'tasks',
+  'agent-work',
   'agents',
   'workflows',
   'council',
@@ -128,6 +137,11 @@ export default function Intelligence() {
     devOnly?: boolean;
   }[] = [
     { id: 'tasks', label: t('memory.tab.tasks'), description: t('memory.tab.tasksDescription') },
+    {
+      id: 'agent-work',
+      label: t('memory.tab.agentWork'),
+      description: t('memory.tab.agentWorkDescription'),
+    },
     { id: 'memory', label: t('memory.tab.memory') },
     { id: 'subconscious', label: t('memory.tab.subconscious') },
     {
@@ -214,6 +228,8 @@ export default function Intelligence() {
             )}
 
             {activeTab === 'tasks' && <IntelligenceTasksTab />}
+
+            {activeTab === 'agent-work' && <IntelligenceAgentWorkTab />}
 
             {activeTab === 'agents' && <IntelligenceAgentsTab />}
 
