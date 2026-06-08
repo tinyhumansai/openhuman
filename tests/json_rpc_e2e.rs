@@ -2999,6 +2999,98 @@ async fn json_rpc_run_ledger_lifecycle() {
 }
 
 #[tokio::test]
+async fn json_rpc_agent_work_list_groups_runs_by_bucket() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_url_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+    let _api_url_guard = EnvVarGuard::unset("OPENHUMAN_API_URL");
+
+    let (api_addr, api_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let api_origin = format!("http://{api_addr}");
+    write_min_config(openhuman_home.as_path(), &api_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{rpc_addr}");
+
+    let config = openhuman_core::openhuman::config::Config::load_or_init()
+        .await
+        .expect("load config");
+
+    use openhuman_core::openhuman::session_db::run_ledger::{
+        upsert_agent_run, AgentRunKind, AgentRunStatus, AgentRunUpsert,
+    };
+    let seed = |id: &str, status: AgentRunStatus| AgentRunUpsert {
+        id: id.to_string(),
+        kind: AgentRunKind::Subagent,
+        parent_run_id: None,
+        parent_thread_id: Some("thread-work-1".to_string()),
+        agent_id: Some("researcher".to_string()),
+        status,
+        prompt_ref: None,
+        worker_thread_id: None,
+        task_board_id: None,
+        task_card_id: None,
+        checkpoint_path: None,
+        checkpoint: None,
+        summary: None,
+        error: None,
+        metadata: json!({ "source": "json_rpc_e2e" }),
+        started_at: None,
+        completed_at: None,
+    };
+    // Two awaiting-user (needs_input), one running (working), one completed.
+    upsert_agent_run(&config, seed("work-a", AgentRunStatus::AwaitingUser)).expect("seed a");
+    upsert_agent_run(&config, seed("work-b", AgentRunStatus::AwaitingUser)).expect("seed b");
+    upsert_agent_run(&config, seed("work-c", AgentRunStatus::Running)).expect("seed c");
+    upsert_agent_run(&config, seed("work-d", AgentRunStatus::Completed)).expect("seed d");
+
+    let list = post_json_rpc(&rpc_base, 9131, "openhuman.agent_work_list", json!({})).await;
+    let outer = assert_no_jsonrpc_error(&list, "agent_work_list");
+
+    assert_eq!(
+        outer.get("total").and_then(serde_json::Value::as_u64),
+        Some(4)
+    );
+
+    let groups = outer
+        .get("groups")
+        .and_then(serde_json::Value::as_array)
+        .expect("groups array");
+    // Always five buckets, in display order.
+    let buckets: Vec<&str> = groups
+        .iter()
+        .filter_map(|g| g.get("bucket").and_then(serde_json::Value::as_str))
+        .collect();
+    assert_eq!(
+        buckets,
+        vec!["needs_input", "working", "completed", "failed", "stopped"]
+    );
+
+    let count_of = |bucket: &str| -> u64 {
+        groups
+            .iter()
+            .find(|g| g.get("bucket").and_then(serde_json::Value::as_str) == Some(bucket))
+            .and_then(|g| g.get("count"))
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0)
+    };
+    assert_eq!(count_of("needs_input"), 2);
+    assert_eq!(count_of("working"), 1);
+    assert_eq!(count_of("completed"), 1);
+    assert_eq!(count_of("failed"), 0);
+    assert_eq!(count_of("stopped"), 0);
+
+    api_join.abort();
+    rpc_join.abort();
+}
+
+#[tokio::test]
 async fn json_rpc_task_board_brief_roundtrips_across_todos_and_threads_rpc() {
     let _env_lock = json_rpc_e2e_env_lock();
     let tmp = tempdir().expect("tempdir");
