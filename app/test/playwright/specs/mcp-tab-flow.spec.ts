@@ -8,7 +8,13 @@
  */
 import { expect, type Page, test } from '@playwright/test';
 
-const APP_VERSION = '0.57.18';
+import packageJson from '../../../package.json' with { type: 'json' };
+
+// Derive from the build's real version, never hardcode. `update_version` feeds
+// the bootCheck version-match gate; a stale literal makes the mock mismatch the
+// app build, leaving BootCheckGate in "outdated" so `#root` never renders and
+// the whole spec times out (the 0.57.18→0.57.19 bump blanked it this way).
+const APP_VERSION = packageJson.version;
 
 // ---------------------------------------------------------------------------
 // Mock data
