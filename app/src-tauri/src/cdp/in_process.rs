@@ -192,17 +192,38 @@ impl CdpRegistry {
         self.by_label(&format!("acct_{account_id}"))
     }
 
-    /// Insert a transport into the registry. Idempotent — re-inserting
-    /// for the same label overwrites the previous entry. The CEF
-    /// observer attached to the old transport remains live (CEF gives
-    /// no un-register hook) but its pending-map and events channel
-    /// drop, so the orphaned observer is a no-op until the webview
-    /// itself goes away.
-    fn insert(&self, transport: Arc<WebviewCdpTransport>) {
-        self.transports
+    /// Atomic "get or create" for a transport keyed by webview label.
+    ///
+    /// Holds the registry mutex across both the existence check AND the
+    /// caller-supplied creator, so two concurrent
+    /// [`install_for_webview`] callers can never both register a
+    /// `on_dev_tools_protocol` observer on the same webview. The CEF
+    /// runtime offers no un-register hook, so a double-registration is
+    /// permanent — every inbound frame would fan out to both observer
+    /// closures, splitting `id`-keyed responses between two
+    /// disconnected `next_id` counters and breaking response routing.
+    ///
+    /// The creator closure is responsible for constructing the transport
+    /// (which includes registering the CEF observer). If the closure
+    /// returns `Err`, the registry is unchanged.
+    fn get_or_create<F>(
+        &self,
+        label: &str,
+        create: F,
+    ) -> Result<Arc<WebviewCdpTransport>, String>
+    where
+        F: FnOnce() -> Result<Arc<WebviewCdpTransport>, String>,
+    {
+        let mut t = self
+            .transports
             .lock()
-            .expect("CdpRegistry mutex poisoned")
-            .insert(transport.label.clone(), transport);
+            .expect("CdpRegistry mutex poisoned");
+        if let Some(existing) = t.get(label) {
+            return Ok(Arc::clone(existing));
+        }
+        let transport = create()?;
+        t.insert(label.to_string(), Arc::clone(&transport));
+        Ok(transport)
     }
 
     /// Remove a transport from the registry by label. Called when a
@@ -272,69 +293,70 @@ pub fn install_for_account(account_id: &str) -> Result<Arc<WebviewCdpTransport>,
 /// Install a CDP transport on `webview`, register the observer, and
 /// insert the resulting [`WebviewCdpTransport`] into `registry`.
 ///
-/// Idempotent: if a transport is already registered for `webview.label()`
-/// the existing one is returned unchanged and no new observer is
-/// attached. This means duplicate calls (e.g. account reopen) are safe.
+/// Idempotent and concurrency-safe: the existence check, observer
+/// registration, and registry insert all happen while the registry
+/// mutex is held, so two concurrent callers for the same webview
+/// label can never both attach an observer (CEF gives no un-register
+/// hook — a double-registration would permanently split responses
+/// between two `next_id` counters).
 pub fn install_for_webview(
     registry: &CdpRegistry,
     webview: Webview<tauri::Cef>,
 ) -> Result<Arc<WebviewCdpTransport>, String> {
     let label = webview.label().to_string();
-    if let Some(existing) = registry.by_label(&label) {
-        return Ok(existing);
-    }
+    registry.get_or_create(&label, || {
+        let pending: PendingMap = Arc::new(Mutex::new(HashMap::new()));
+        let (events_tx, _rx0) = broadcast::channel::<EventFrame>(EVENT_CHANNEL_CAP);
 
-    let pending: PendingMap = Arc::new(Mutex::new(HashMap::new()));
-    let (events_tx, _rx0) = broadcast::channel::<EventFrame>(EVENT_CHANNEL_CAP);
+        let transport = Arc::new(WebviewCdpTransport {
+            label: label.clone(),
+            webview: webview.clone(),
+            next_id: Mutex::new(1),
+            pending: Arc::clone(&pending),
+            events_tx: events_tx.clone(),
+        });
 
-    let transport = Arc::new(WebviewCdpTransport {
-        label: label.clone(),
-        webview: webview.clone(),
-        next_id: Mutex::new(1),
-        pending: Arc::clone(&pending),
-        events_tx: events_tx.clone(),
-    });
+        let pending_for_observer = Arc::clone(&pending);
+        let events_for_observer = events_tx.clone();
+        let label_for_observer = label.clone();
+        webview
+            .on_dev_tools_protocol(move |protocol| {
+                use tauri::CefDevToolsProtocol as P;
+                // Listen only on the raw `Message` variant — it carries
+                // the full envelope (including `sessionId`) which
+                // `MethodResult` and `Event` strip. Tauri-CEF still
+                // fires all three for the same wire message, so
+                // consuming both would double-dispatch.
+                if let P::Message(bytes) = protocol {
+                    let v: Value = match serde_json::from_slice(&bytes) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            log::warn!(
+                                "[cdp][{}] inbound: parse error: {} (bytes_len={})",
+                                label_for_observer,
+                                e,
+                                bytes.len()
+                            );
+                            return;
+                        }
+                    };
+                    handle_inbound(
+                        &label_for_observer,
+                        &v,
+                        &pending_for_observer,
+                        &events_for_observer,
+                    );
+                }
+            })
+            .map_err(|e| format!("on_dev_tools_protocol: {e}"))?;
 
-    let pending_for_observer = Arc::clone(&pending);
-    let events_for_observer = events_tx.clone();
-    let label_for_observer = label.clone();
-    webview
-        .on_dev_tools_protocol(move |protocol| {
-            use tauri::CefDevToolsProtocol as P;
-            // Listen only on the raw `Message` variant — it carries the
-            // full envelope (including `sessionId`) which `MethodResult`
-            // and `Event` strip. Tauri-CEF still fires all three for the
-            // same wire message, so consuming both would double-dispatch.
-            if let P::Message(bytes) = protocol {
-                let v: Value = match serde_json::from_slice(&bytes) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        log::warn!(
-                            "[cdp][{}] inbound: parse error: {} (bytes_len={})",
-                            label_for_observer,
-                            e,
-                            bytes.len()
-                        );
-                        return;
-                    }
-                };
-                handle_inbound(
-                    &label_for_observer,
-                    &v,
-                    &pending_for_observer,
-                    &events_for_observer,
-                );
-            }
-        })
-        .map_err(|e| format!("on_dev_tools_protocol: {e}"))?;
+        log::info!(
+            "[cdp][{}] in-process transport installed (observer registered)",
+            label
+        );
 
-    log::info!(
-        "[cdp][{}] in-process transport installed (observer registered)",
-        label
-    );
-
-    registry.insert(Arc::clone(&transport));
-    Ok(transport)
+        Ok(transport)
+    })
 }
 
 fn handle_inbound(
