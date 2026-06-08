@@ -10,11 +10,12 @@ pub mod store;
 pub mod types;
 
 pub use ops::{
-    append_run_event, get_agent_run, list_agent_runs, list_recent_run_events, upsert_agent_run,
-    upsert_run_telemetry, upsert_workflow_run,
+    append_run_event, get_agent_run, get_workflow_run, list_agent_runs, list_recent_run_events,
+    list_workflow_runs, upsert_agent_run, upsert_run_telemetry, upsert_workflow_run,
 };
 pub use types::{
     AgentRun, AgentRunKind, AgentRunListRequest, AgentRunListResponse, AgentRunStatus,
     AgentRunUpsert, RunEvent, RunEventAppend, RunEventListRequest, RunEventListResponse,
-    RunTelemetry, RunTelemetryUpsert, WorkflowRun, WorkflowRunStatus, WorkflowRunUpsert,
+    RunTelemetry, RunTelemetryUpsert, WorkflowRun, WorkflowRunListRequest, WorkflowRunListResponse,
+    WorkflowRunStatus, WorkflowRunUpsert,
 };
