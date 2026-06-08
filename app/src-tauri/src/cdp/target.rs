@@ -94,9 +94,13 @@ pub fn parse_targets(v: &Value) -> Vec<CdpTarget> {
 /// pre-installed in-process transport from the [`CdpRegistry`] managed
 /// on `app`.
 ///
-/// Returns `Err` when the webview has not been created yet (cold-boot
-/// race against a scanner that spun up too early) — caller backs off
-/// and retries, same shape as the previous `browser_ws_url` Err path.
+/// On a cache miss, falls back to
+/// [`super::in_process::install_for_account`] so a transient install
+/// failure during `webview_accounts::open` (logged as a warning by the
+/// account-open path, not fatal) doesn't permanently lock the account
+/// out of CDP. The install call is idempotent and cheap on the cached
+/// path. Still returns `Err` when the webview itself has not yet been
+/// created — caller backs off and retries.
 pub fn conn_for_account<R: Runtime>(
     app: &AppHandle<R>,
     account_id: &str,
@@ -104,9 +108,15 @@ pub fn conn_for_account<R: Runtime>(
     let registry = app
         .try_state::<CdpRegistry>()
         .ok_or_else(|| "CdpRegistry not managed by app".to_string())?;
-    let transport = registry
-        .by_account(account_id)
-        .ok_or_else(|| format!("no cdp transport for account {account_id}"))?;
+    if let Some(transport) = registry.by_account(account_id) {
+        return Ok(CdpConn::new(transport));
+    }
+    // Retry — the install path is idempotent. The most common cause of
+    // a cache miss here is an earlier non-fatal `install_for_account`
+    // failure in `webview_accounts::open` (warn-logged) that left the
+    // webview alive without a transport.
+    let transport = super::in_process::install_for_account(account_id)
+        .map_err(|e| format!("no cdp transport for account {account_id} (install retry: {e})"))?;
     Ok(CdpConn::new(transport))
 }
 
