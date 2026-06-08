@@ -7,12 +7,23 @@
 //!
 //! # Transport
 //!
-//! The CDP transport is **in-process** — see [`in_process`]. CDP messages
-//! travel directly between the Tauri shell and the embedded CEF browser
-//! via `Webview::send_dev_tools_message` /
-//! `Webview::on_dev_tools_protocol`. There is no TCP listener; the
-//! previous `--remote-debugging-port=19222` flag was dropped because any
-//! same-UID local process could attach to it without authentication.
+//! Two transports coexist while migration is in progress:
+//!
+//! - **In-process** — see [`in_process`]. CDP messages travel directly
+//!   between the Tauri shell and the embedded CEF browser via
+//!   `Webview::send_dev_tools_message` /
+//!   `Webview::on_dev_tools_protocol`. No listener, no network surface;
+//!   any same-UID process is shut out by construction. The per-account
+//!   session opener (`session.rs`) already uses this path.
+//! - **Legacy TCP WebSocket** — driven by [`CDP_HOST`] / [`CDP_PORT`]
+//!   (`127.0.0.1:19222`). Kept alive for the per-scanner `CdpConn`
+//!   duplicates in `discord_scanner`, `whatsapp_scanner`,
+//!   `slack_scanner`, `telegram_scanner`, `wechat_scanner`, and
+//!   `meet_video` that have not yet migrated. While this path exists,
+//!   `app/src-tauri/src/lib.rs` still passes
+//!   `--remote-debugging-port=19222`, which is the same unauthenticated
+//!   loopback listener it has always been. The flag will be dropped
+//!   once all scanners cut over to the in-process channel.
 
 pub mod conn;
 pub mod in_process;
