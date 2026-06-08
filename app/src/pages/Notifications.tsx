@@ -70,6 +70,8 @@ const Notifications = () => {
           method: 'openhuman.agent_meetings_notification_action',
           params: { notification_id: item.id, action_id: actionId, payload },
         });
+      } catch (err) {
+        console.error('[Notifications] action failed', actionId, item.id, err);
       } finally {
         pendingActionsRef.current.delete(key);
       }
