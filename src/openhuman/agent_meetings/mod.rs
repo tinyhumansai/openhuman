@@ -13,6 +13,7 @@
 //! - [`schemas`] — controller schema + registered handler wrappers
 //! - [`store`]   — SQLite persistence for meeting sessions
 
+pub mod calendar;
 pub mod ops;
 pub mod schemas;
 pub mod store;

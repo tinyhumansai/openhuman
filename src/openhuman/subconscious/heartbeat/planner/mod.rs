@@ -20,15 +20,22 @@ mod types;
 mod utils;
 
 pub use types::PlannerRunSummary;
+pub(crate) use types::{HeartbeatCategory, PendingEvent};
 
 use std::collections::HashSet;
 
 use chrono::{DateTime, Duration, Utc};
 
 use crate::core::event_bus::{publish_global, DomainEvent};
+use crate::openhuman::agent_meetings::calendar::identify_meet_meetings;
+use crate::openhuman::agent_meetings::store as meetings_store;
+use crate::openhuman::agent_meetings::types::{
+    AutoJoinSource, MeetingSession, MeetingSessionStatus,
+};
+use crate::openhuman::config::schema::meet::AutoJoinPolicy;
 use crate::openhuman::config::Config;
 use crate::openhuman::notifications::bus::publish_core_notification;
-use crate::openhuman::notifications::types::CoreNotificationEvent;
+use crate::openhuman::notifications::types::{CoreNotificationAction, CoreNotificationEvent};
 
 use collectors::{
     collect_calendar_meetings, collect_cron_reminders, collect_relevant_notifications,
@@ -145,6 +152,9 @@ pub async fn evaluate_and_dispatch(config: &Config, now: DateTime<Utc>) -> Plann
             continue;
         }
 
+        // For meetings with a Meet URL, apply the auto-join policy.
+        let actions = build_meeting_actions(config, &event, now);
+
         publish_core_notification(CoreNotificationEvent {
             id,
             category: event.category.notification_category(),
@@ -152,7 +162,7 @@ pub async fn evaluate_and_dispatch(config: &Config, now: DateTime<Utc>) -> Plann
             body: plan.body,
             deep_link: event.deep_link.clone(),
             timestamp_ms: now.timestamp_millis().max(0) as u64,
-            actions: None,
+            actions,
         });
 
         if config.heartbeat.external_delivery_enabled && plan.allow_external {
@@ -180,6 +190,90 @@ pub async fn evaluate_and_dispatch(config: &Config, now: DateTime<Utc>) -> Plann
     }
 
     summary
+}
+
+/// For Meetings events with a Meet URL, create a `MeetingSession` and return
+/// notification action buttons based on the `auto_join_policy`.
+/// Non-meeting events or events without a URL return `None`.
+fn build_meeting_actions(
+    config: &Config,
+    event: &types::PendingEvent,
+    now: DateTime<Utc>,
+) -> Option<Vec<CoreNotificationAction>> {
+    if event.category != types::HeartbeatCategory::Meetings {
+        return None;
+    }
+    let meet_url = event.meet_url.as_deref()?;
+
+    // Identify this event as a valid conferencing meeting.
+    let meetings = identify_meet_meetings(std::slice::from_ref(event));
+    if meetings.is_empty() {
+        return None;
+    }
+
+    let meeting_id = format!(
+        "meet-{}",
+        &event.fingerprint[..12.min(event.fingerprint.len())]
+    );
+    let now_ms = now.timestamp_millis().max(0) as u64;
+
+    // Create a Pending session (idempotent — skip if already exists).
+    let session = MeetingSession {
+        id: meeting_id.clone(),
+        meet_url: meet_url.to_string(),
+        title: Some(event.title.clone()),
+        calendar_event_id: Some(event.source_event_id.clone()),
+        status: MeetingSessionStatus::Pending,
+        source: AutoJoinSource::Calendar,
+        thread_id: None,
+        transcript_received: false,
+        summary_generated: false,
+        created_at_ms: now_ms,
+        updated_at_ms: now_ms,
+    };
+
+    if let Err(e) = meetings_store::create_session(config, &session) {
+        // UNIQUE constraint = already tracked, not an error.
+        tracing::debug!(
+            meeting_id = %meeting_id,
+            error = %e,
+            "[heartbeat:planner] session already exists or store error"
+        );
+    }
+
+    let payload = serde_json::json!({
+        "meeting_id": meeting_id,
+        "meet_url": meet_url,
+    });
+
+    match config.meet.auto_join_policy {
+        AutoJoinPolicy::Never => None,
+        AutoJoinPolicy::Always => {
+            // Auto-join with transparency notification (no action buttons).
+            publish_global(DomainEvent::MeetingAutoJoinTriggered {
+                meeting_id: meeting_id.clone(),
+                meet_url: meet_url.to_string(),
+            });
+            None
+        }
+        AutoJoinPolicy::AskEachTime => Some(vec![
+            CoreNotificationAction {
+                action_id: "join_meeting".into(),
+                label: "Add OpenHuman".into(),
+                payload: Some(payload.clone()),
+            },
+            CoreNotificationAction {
+                action_id: "skip_meeting".into(),
+                label: "Not this one".into(),
+                payload: Some(payload.clone()),
+            },
+            CoreNotificationAction {
+                action_id: "always_join".into(),
+                label: "Always join".into(),
+                payload: Some(payload),
+            },
+        ]),
+    }
 }
 
 #[cfg(test)]
@@ -306,6 +400,7 @@ mod tests {
             title: "Pay rent".to_string(),
             body: String::new(),
             deep_link: None,
+            meet_url: None,
             anchor_at: now,
         };
 
@@ -332,6 +427,7 @@ mod tests {
             title: "Planning".to_string(),
             body: String::new(),
             deep_link: None,
+            meet_url: None,
             anchor_at: now + Duration::minutes(45),
         };
 

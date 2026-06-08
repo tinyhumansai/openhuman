@@ -31,6 +31,11 @@ const DEFS: &[BackendMeetControllerDef] = &[
         schema: schema_harness_response,
         handler: handle_harness_response_wrap,
     },
+    BackendMeetControllerDef {
+        function: "notification_action",
+        schema: schema_notification_action,
+        handler: handle_notification_action_wrap,
+    },
 ];
 
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
@@ -188,6 +193,44 @@ fn handle_harness_response_wrap(params: Map<String, Value>) -> ControllerFuture 
     Box::pin(async move { super::ops::handle_harness_response(params).await })
 }
 
+fn schema_notification_action() -> ControllerSchema {
+    ControllerSchema {
+        namespace: "agent_meetings",
+        function: "notification_action",
+        description: "Handle a user action on a meeting notification (join, skip, always join).",
+        inputs: vec![
+            FieldSchema {
+                name: "notification_id",
+                ty: TypeSchema::String,
+                comment: "ID of the notification that was acted on.",
+                required: true,
+            },
+            FieldSchema {
+                name: "action_id",
+                ty: TypeSchema::String,
+                comment: "Action identifier: join_meeting, skip_meeting, always_join.",
+                required: true,
+            },
+            FieldSchema {
+                name: "payload",
+                ty: TypeSchema::Json,
+                comment: "Opaque payload forwarded from the notification action button.",
+                required: false,
+            },
+        ],
+        outputs: vec![FieldSchema {
+            name: "ok",
+            ty: TypeSchema::Bool,
+            comment: "True when the action was handled.",
+            required: true,
+        }],
+    }
+}
+
+fn handle_notification_action_wrap(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move { super::ops::handle_notification_action(params).await })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -203,7 +246,10 @@ mod tests {
             .map(|c| c.schema.function)
             .collect();
         assert_eq!(schema_fns, handler_fns);
-        assert_eq!(schema_fns, vec!["join", "leave", "harness_response"]);
+        assert_eq!(
+            schema_fns,
+            vec!["join", "leave", "harness_response", "notification_action"]
+        );
     }
 
     #[test]

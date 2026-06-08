@@ -288,6 +288,94 @@ pub async fn handle_harness_response(params: Map<String, Value>) -> Result<Value
     outcome.into_cli_compatible_json()
 }
 
+/// Handle a user's action on a meeting notification (join / skip / always_join).
+pub async fn handle_notification_action(params: Map<String, Value>) -> Result<Value, String> {
+    let action_id = params
+        .get("action_id")
+        .and_then(Value::as_str)
+        .ok_or("missing action_id")?
+        .to_string();
+    let payload = params.get("payload").cloned().unwrap_or(Value::Null);
+    let meeting_id = payload
+        .get("meeting_id")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let meet_url = payload
+        .get("meet_url")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+
+    let config = crate::openhuman::config::Config::load_or_init()
+        .await
+        .map_err(|e| format!("[agent_meetings] config load failed: {e}"))?;
+
+    let now_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
+
+    match action_id.as_str() {
+        "join_meeting" => {
+            // Join in listen-only mode with correlation_id.
+            let join_params: Map<String, Value> = serde_json::from_value(json!({
+                "meet_url": meet_url,
+                "listen_only": config.meet.listen_only_default,
+                "correlation_id": meeting_id,
+            }))
+            .map_err(|e| e.to_string())?;
+
+            super::store::update_session_status(
+                &config,
+                &meeting_id,
+                super::types::MeetingSessionStatus::Joined,
+                now_ms,
+            )
+            .map_err(|e| format!("[agent_meetings] session update failed: {e}"))?;
+
+            handle_join(join_params).await
+        }
+        "skip_meeting" => {
+            super::store::update_session_status(
+                &config,
+                &meeting_id,
+                super::types::MeetingSessionStatus::Ended,
+                now_ms,
+            )
+            .map_err(|e| format!("[agent_meetings] session update failed: {e}"))?;
+
+            let outcome = RpcOutcome::new(json!({ "ok": true }), vec![]);
+            outcome.into_cli_compatible_json()
+        }
+        "always_join" => {
+            // Flip policy to Always, then join.
+            let mut new_config = config.clone();
+            new_config.meet.auto_join_policy =
+                crate::openhuman::config::schema::meet::AutoJoinPolicy::Always;
+            new_config
+                .save()
+                .await
+                .map_err(|e| format!("[agent_meetings] config save failed: {e}"))?;
+
+            let join_params: Map<String, Value> = serde_json::from_value(json!({
+                "meet_url": meet_url,
+                "listen_only": config.meet.listen_only_default,
+                "correlation_id": meeting_id,
+            }))
+            .map_err(|e| e.to_string())?;
+
+            super::store::update_session_status(
+                &config,
+                &meeting_id,
+                super::types::MeetingSessionStatus::Joined,
+                now_ms,
+            )
+            .map_err(|e| format!("[agent_meetings] session update failed: {e}"))?;
+
+            handle_join(join_params).await
+        }
+        other => Err(format!("unknown action_id: {other}")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

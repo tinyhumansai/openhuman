@@ -39,6 +39,7 @@ interface CoreNotificationPayload {
   body: string;
   deep_link?: string | null;
   timestamp_ms: number;
+  actions?: Array<{ actionId: string; label: string; payload?: unknown }>;
 }
 
 function windowIsFocused(): boolean {
@@ -137,6 +138,7 @@ export function startNativeNotificationsService(): void {
         title: truncate(p.title, 120),
         body: truncate(p.body ?? '', 160),
         deepLink: p.deep_link ?? undefined,
+        actions: p.actions,
       },
       serverTs
     );
@@ -206,6 +208,7 @@ export function __handleCoreNotificationForTests(payload: CoreNotificationPayloa
       title: truncate(payload.title, 120),
       body: truncate(payload.body ?? '', 160),
       deepLink: payload.deep_link ?? undefined,
+      actions: payload.actions,
     },
     serverTs
   );

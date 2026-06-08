@@ -43,6 +43,9 @@ pub(crate) struct PendingEvent {
     pub title: String,
     pub body: String,
     pub deep_link: Option<String>,
+    /// Google Meet URL extracted from `hangoutLink` (separate from `deep_link`
+    /// which may point to the calendar HTML view). `None` for non-Meet events.
+    pub meet_url: Option<String>,
     pub anchor_at: DateTime<Utc>,
 }
 

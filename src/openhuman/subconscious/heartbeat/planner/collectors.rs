@@ -58,6 +58,7 @@ pub(crate) fn collect_cron_reminders(config: &Config, now: DateTime<Utc>) -> Vec
                 title,
                 body,
                 deep_link: Some("/settings/cron-jobs".to_string()),
+                meet_url: None,
                 anchor_at: job.next_run,
             }
         })
@@ -350,10 +351,14 @@ fn collect_calendar_events_recursive(
                         .or_else(|| map.get("icalUID").and_then(serde_json::Value::as_str))
                         .unwrap_or("calendar-event")
                         .to_string();
+                    let meet_url = map
+                        .get("hangoutLink")
+                        .and_then(serde_json::Value::as_str)
+                        .map(ToString::to_string);
                     let deep_link = map
                         .get("htmlLink")
                         .and_then(serde_json::Value::as_str)
-                        .or_else(|| map.get("hangoutLink").and_then(serde_json::Value::as_str))
+                        .or(meet_url.as_deref())
                         .map(ToString::to_string);
 
                     let fingerprint = stable_key(&format!(
@@ -377,6 +382,7 @@ fn collect_calendar_events_recursive(
                         title: title.clone(),
                         body: format!("{} starts at {}.", title, starts_at.format("%H:%M")),
                         deep_link,
+                        meet_url,
                         anchor_at: starts_at,
                     });
                 }
@@ -489,6 +495,7 @@ pub(crate) fn collect_relevant_notifications(
                 title,
                 body,
                 deep_link: Some("/notifications".to_string()),
+                meet_url: None,
                 anchor_at: item.received_at,
             }
         })

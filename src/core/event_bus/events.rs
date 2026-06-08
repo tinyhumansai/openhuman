@@ -979,6 +979,11 @@ pub enum DomainEvent {
     },
 
     // ── Backend Meet Bot ──────────────────────────────────────────────
+    /// Calendar auto-join policy triggered a meeting join.
+    MeetingAutoJoinTriggered {
+        meeting_id: String,
+        meet_url: String,
+    },
     /// Backend gmeet bot successfully joined the meeting.
     BackendMeetJoined { meet_url: String },
     /// Backend gmeet bot left the meeting.
@@ -1137,7 +1142,8 @@ impl DomainEvent {
             | Self::McpSetupSecretRequested { .. }
             | Self::McpToolRejected { .. } => "mcp_client",
 
-            Self::BackendMeetJoined { .. }
+            Self::MeetingAutoJoinTriggered { .. }
+            | Self::BackendMeetJoined { .. }
             | Self::BackendMeetLeft { .. }
             | Self::BackendMeetReply { .. }
             | Self::BackendMeetHarness { .. }
@@ -1252,6 +1258,7 @@ impl DomainEvent {
             Self::TaskSourceFetchFailed { .. } => "TaskSourceFetchFailed",
             Self::TaskPlanAwaitingApproval { .. } => "TaskPlanAwaitingApproval",
             Self::TaskRunReclaimed { .. } => "TaskRunReclaimed",
+            Self::MeetingAutoJoinTriggered { .. } => "MeetingAutoJoinTriggered",
             Self::BackendMeetJoined { .. } => "BackendMeetJoined",
             Self::BackendMeetLeft { .. } => "BackendMeetLeft",
             Self::BackendMeetReply { .. } => "BackendMeetReply",

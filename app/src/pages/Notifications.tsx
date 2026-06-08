@@ -1,10 +1,11 @@
-import { useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import NotificationBody from '../components/notifications/NotificationBody';
 import NotificationCenter from '../components/notifications/NotificationCenter';
 import { useT } from '../lib/i18n/I18nContext';
 import { resolveSystemRoute } from '../lib/notificationRouter';
+import { callCoreRpc } from '../services/coreRpcClient';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import {
   clearAll,
@@ -56,6 +57,21 @@ const Notifications = () => {
     if (!item.read) dispatch(markRead({ id: item.id }));
     navigate(resolveSystemRoute(item));
   };
+
+  const handleAction = useCallback(
+    async (item: NotificationItem, actionId: string, payload?: unknown) => {
+      if (!item.read) dispatch(markRead({ id: item.id }));
+      try {
+        await callCoreRpc({
+          method: 'openhuman.agent_meetings_notification_action',
+          params: { notification_id: item.id, action_id: actionId, payload },
+        });
+      } catch {
+        // Action failed — user can retry.
+      }
+    },
+    [dispatch]
+  );
 
   return (
     <div className="p-4 pt-6 space-y-4">
@@ -149,6 +165,22 @@ const Notifications = () => {
                         className="mt-0.5 text-sm text-stone-600 dark:text-neutral-300 line-clamp-2">
                         <NotificationBody body={item.body} />
                       </p>
+                      {item.actions && item.actions.length > 0 && (
+                        <div className="mt-2 flex items-center gap-2">
+                          {item.actions.map(action => (
+                            <button
+                              key={action.actionId}
+                              type="button"
+                              onClick={e => {
+                                e.stopPropagation();
+                                void handleAction(item, action.actionId, action.payload);
+                              }}
+                              className="px-2.5 py-1 rounded-md text-xs font-medium bg-primary-500/10 text-primary-700 dark:text-primary-300 hover:bg-primary-500/20 transition-colors">
+                              {action.label}
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
                     <span className="text-[11px] text-stone-400 dark:text-neutral-500 whitespace-nowrap">
                       {formatTime(item.timestamp, t)}
