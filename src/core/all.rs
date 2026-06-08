@@ -296,6 +296,9 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     // Background agent command center — read-only grouped view over the run ledger
     controllers
         .extend(crate::openhuman::agent_orchestration::all_command_center_registered_controllers());
+    // Durable dynamic workflow runs — definitions + read surface over the run ledger
+    controllers
+        .extend(crate::openhuman::agent_orchestration::all_workflow_run_registered_controllers());
     controllers
 }
 
@@ -424,6 +427,8 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::session_db::all_session_db_controller_schemas());
     // Background agent command center
     schemas.extend(crate::openhuman::agent_orchestration::all_command_center_controller_schemas());
+    // Durable dynamic workflow runs
+    schemas.extend(crate::openhuman::agent_orchestration::all_workflow_run_controller_schemas());
     schemas
 }
 
@@ -509,6 +514,9 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         ),
         "agent_work" => Some(
             "Background agent command center — recent agent runs grouped by status (needs-input, working, completed, failed, stopped).",
+        ),
+        "workflow_run" => Some(
+            "Durable dynamic workflow runs — declarative multi-agent definitions and the read surface over persisted runs.",
         ),
         "billing" => Some("Subscription plan, payment links, and credit top-up via the backend."),
         "team" => Some("Team member management, invites, and role changes via the backend."),
