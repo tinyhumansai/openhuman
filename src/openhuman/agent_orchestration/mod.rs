@@ -5,6 +5,7 @@
 //! [`crate::openhuman::agent::harness`] module remains responsible for prompt
 //! construction, tool filtering, and the actual sub-agent run loop.
 
+pub mod command_center;
 mod ops;
 pub mod tools;
 pub mod types;
@@ -12,6 +13,9 @@ pub mod types;
 #[cfg(test)]
 mod ops_tests;
 
+pub use command_center::{
+    all_command_center_controller_schemas, all_command_center_registered_controllers,
+};
 pub use ops::{AgentOrchestrationSession, OrchestrationError};
 pub use types::{
     AgentMessage, AgentOrchestrationEvent, AgentSnapshot, AgentStatus, CloseAgentRequest,
