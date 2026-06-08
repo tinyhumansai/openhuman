@@ -106,6 +106,7 @@ fn row_to_session(row: &rusqlite::Row) -> rusqlite::Result<MeetingSession> {
 // Public API
 // ---------------------------------------------------------------------------
 
+/// Insert a new meeting session into the store. Fails if the `id` already exists.
 pub fn create_session(config: &Config, session: &MeetingSession) -> Result<()> {
     with_connection(config, |conn| {
         conn.execute(
@@ -132,6 +133,7 @@ pub fn create_session(config: &Config, session: &MeetingSession) -> Result<()> {
     })
 }
 
+/// Retrieve a session by its unique ID. Returns `None` if not found.
 pub fn get_session(config: &Config, id: &str) -> Result<Option<MeetingSession>> {
     with_connection(config, |conn| {
         let mut stmt = conn.prepare(
@@ -149,6 +151,7 @@ pub fn get_session(config: &Config, id: &str) -> Result<Option<MeetingSession>> 
     })
 }
 
+/// Find the most recent session for a given meet URL. Returns `None` if none exist.
 pub fn get_session_by_meet_url(config: &Config, url: &str) -> Result<Option<MeetingSession>> {
     with_connection(config, |conn| {
         let mut stmt = conn.prepare(
@@ -167,6 +170,7 @@ pub fn get_session_by_meet_url(config: &Config, url: &str) -> Result<Option<Meet
     })
 }
 
+/// Transition a session to a new status and update `updated_at_ms`.
 pub fn update_session_status(
     config: &Config,
     id: &str,
@@ -182,6 +186,7 @@ pub fn update_session_status(
     })
 }
 
+/// Associate a conversation thread with an existing session.
 pub fn set_session_thread_id(
     config: &Config,
     id: &str,
@@ -197,6 +202,7 @@ pub fn set_session_thread_id(
     })
 }
 
+/// Return all sessions with status `pending`, `joined`, or `active` (most recent first).
 pub fn list_active_sessions(config: &Config) -> Result<Vec<MeetingSession>> {
     with_connection(config, |conn| {
         let mut stmt = conn.prepare(
@@ -207,10 +213,12 @@ pub fn list_active_sessions(config: &Config) -> Result<Vec<MeetingSession>> {
              ORDER BY created_at_ms DESC",
         )?;
         let rows = stmt.query_map([], row_to_session)?;
-        Ok(rows.filter_map(|r| r.ok()).collect())
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(Into::into)
     })
 }
 
+/// Flag that a transcript was received for this session.
 pub fn mark_transcript_received(config: &Config, id: &str, now_ms: u64) -> Result<()> {
     with_connection(config, |conn| {
         conn.execute(
@@ -221,6 +229,7 @@ pub fn mark_transcript_received(config: &Config, id: &str, now_ms: u64) -> Resul
     })
 }
 
+/// Flag that a summary was generated for this session.
 pub fn mark_summary_generated(config: &Config, id: &str, now_ms: u64) -> Result<()> {
     with_connection(config, |conn| {
         conn.execute(
