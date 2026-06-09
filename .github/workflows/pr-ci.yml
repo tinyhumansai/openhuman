@@ -323,6 +323,16 @@ jobs:
           cache-on-failure: true
           shared-key: pr-rust-core-cov
 
+      - name: Trim stale build artifacts
+        run: |
+          # cargo-llvm-cov uses target/llvm-cov-target/ — remove any stale
+          # prior coverage artifacts plus debug/incremental data that won't be
+          # reused (CARGO_INCREMENTAL=0).
+          rm -rf target/llvm-cov-target target/debug/incremental target/debug/build target/debug/examples target/release 2>/dev/null || true
+          echo "Target size after trim:"
+          du -sh target/ 2>/dev/null || echo "no target dir"
+          df -h /__w || true
+
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
 
