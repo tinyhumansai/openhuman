@@ -96,6 +96,19 @@ pub(crate) async fn run_turn_engine(
     // smaller than the model's trained maximum in the static table — trimming
     // to the max would overflow the loaded `n_ctx` (#3550 / TAURI-RUST-6V0).
     let effective_context_window = provider.effective_context_window(model).await;
+    match effective_context_window {
+        Some(context_window) => tracing::debug!(
+            provider = provider_name,
+            model,
+            context_window,
+            "[agent_loop] effective context window resolved"
+        ),
+        None => tracing::debug!(
+            provider = provider_name,
+            model,
+            "[agent_loop] effective context window unavailable; pre-dispatch trimming disabled this turn"
+        ),
+    }
     let mut context_guard = effective_context_window
         .map(ContextGuard::with_context_window)
         .unwrap_or_else(ContextGuard::new);
