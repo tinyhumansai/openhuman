@@ -101,4 +101,10 @@ pub enum DefinitionError {
     CyclicDependency,
     /// The definition declares no phases.
     NoPhases,
+    /// `default_concurrency` or `max_children` is zero — an executor would
+    /// deadlock or trivially fail to launch any child.
+    InvalidConcurrency {
+        default_concurrency: u32,
+        max_children: u32,
+    },
 }

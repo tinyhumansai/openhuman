@@ -123,6 +123,13 @@ pub fn validate_structure(def: &WorkflowDefinition) -> Vec<DefinitionError> {
         errors.push(DefinitionError::CyclicDependency);
     }
 
+    if def.default_concurrency == 0 || def.max_children == 0 {
+        errors.push(DefinitionError::InvalidConcurrency {
+            default_concurrency: def.default_concurrency,
+            max_children: def.max_children,
+        });
+    }
+
     errors
 }
 
@@ -319,6 +326,21 @@ mod tests {
             ..good_def()
         };
         assert!(validate_structure(&def).contains(&DefinitionError::CyclicDependency));
+    }
+
+    #[test]
+    fn zero_concurrency_is_rejected() {
+        let def = WorkflowDefinition {
+            default_concurrency: 0,
+            max_children: 0,
+            ..good_def()
+        };
+        assert!(
+            validate_structure(&def).contains(&DefinitionError::InvalidConcurrency {
+                default_concurrency: 0,
+                max_children: 0,
+            })
+        );
     }
 
     #[test]
