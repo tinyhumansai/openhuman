@@ -3014,3 +3014,51 @@ fn stream_repeat_detector_ignores_varied_and_short_lines() {
         assert!(!d.observe("}\n"), "short repeated lines must not trip");
     }
 }
+
+// ── effective_context_window (#3550 / Sentry TAURI-RUST-6V0) ───────────────
+
+#[tokio::test]
+async fn effective_context_window_cloud_uses_static_table() {
+    // No local provider kind → static trained-max table, unchanged behavior.
+    let p = make_provider("openai", "https://api.openai.com/v1", Some("k"));
+    assert_eq!(p.effective_context_window("gpt-4o").await, Some(128_000));
+    // Unknown cloud model → None (skip trimming), as before.
+    assert_eq!(p.effective_context_window("totally-unknown").await, None);
+}
+
+#[tokio::test]
+async fn effective_context_window_lmstudio_uses_loaded_window() {
+    use crate::openhuman::inference::local::profile::LocalProviderKind;
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v0/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            r#"{"data":[{"id":"qwen2.5-7b","loaded_context_length":4096,"max_context_length":32768}]}"#,
+            "application/json",
+        ))
+        .mount(&server)
+        .await;
+    let p = OpenAiCompatibleProvider::new("lmstudio", &server.uri(), None, AuthStyle::None)
+        .with_local_provider_kind(LocalProviderKind::LmStudio);
+    // Trim to the runtime-loaded n_ctx (4096), NOT the model's trained max.
+    assert_eq!(p.effective_context_window("qwen2.5-7b").await, Some(4096));
+}
+
+#[tokio::test]
+async fn effective_context_window_lmstudio_falls_back_when_native_unavailable() {
+    use crate::openhuman::inference::local::profile::LocalProviderKind;
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v0/models"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&server)
+        .await;
+    let p = OpenAiCompatibleProvider::new("lmstudio", &server.uri(), None, AuthStyle::None)
+        .with_local_provider_kind(LocalProviderKind::LmStudio);
+    // Native probe fails → fall back to the LM Studio profile default (8192),
+    // so unknown local models still get trimmed instead of skipped.
+    assert_eq!(
+        p.effective_context_window("unknown-local-model").await,
+        Some(8_192)
+    );
+}
