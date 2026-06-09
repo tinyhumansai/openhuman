@@ -7,7 +7,6 @@ use futures_util::{stream, StreamExt};
 
 use super::compatible_dump::{dump_prompt_if_enabled, dump_response_if_enabled, reserve_dump_seq};
 use super::compatible_parse::normalize_function_arguments;
-use super::compatible_repeat::CHAT_FREQUENCY_PENALTY;
 use super::compatible_stream::sse_bytes_to_chunks;
 use super::compatible_types::{
     ApiChatRequest, ApiChatResponse, Message, MessageContent, NativeChatRequest,
@@ -512,7 +511,10 @@ impl Provider for OpenAiCompatibleProvider {
                     include_usage: true,
                 }),
                 options: self.build_ollama_options(),
-                frequency_penalty: Some(CHAT_FREQUENCY_PENALTY),
+                // Omitted for endpoints whose OpenAI-compat surface 400s on the
+                // field (Google Gemini shim — TAURI-RUST-4PJ); the reactive
+                // retry below stays as defense-in-depth for unknown providers.
+                frequency_penalty: self.effective_frequency_penalty(),
             };
             let stream_dump_seq = reserve_dump_seq();
             dump_prompt_if_enabled(&self.name, model, stream_dump_seq, &native_request);

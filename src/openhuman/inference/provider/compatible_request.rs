@@ -42,6 +42,28 @@ impl OpenAiCompatibleProvider {
         }
     }
 
+    /// Resolve the `frequency_penalty` to send on streaming chat requests.
+    ///
+    /// Returns `None` — omitting the field entirely — for endpoints whose
+    /// OpenAI-compatible surface rejects the parameter with an HTTP 400
+    /// (see [`endpoint_rejects_frequency_penalty`]). Google's Gemini shim
+    /// (`generativelanguage.googleapis.com/v1beta/openai`) is the known case:
+    /// it 400s on the unknown field, which previously forced every streaming
+    /// call into a wasted reject→retry round-trip and one Sentry report
+    /// (TAURI-RUST-4PJ). Omitting it up front removes the failing request at
+    /// the source. Every other provider keeps the configured penalty.
+    pub(super) fn effective_frequency_penalty(&self) -> Option<f64> {
+        if endpoint_rejects_frequency_penalty(&self.base_url) {
+            tracing::debug!(
+                "[provider:{}] endpoint rejects frequency_penalty — omitting it",
+                self.name
+            );
+            None
+        } else {
+            Some(super::compatible_repeat::CHAT_FREQUENCY_PENALTY)
+        }
+    }
+
     /// Read the ambient `thread_id` only when this provider has been
     /// opted in via [`with_openhuman_thread_id`]. Returns `None` for
     /// every third-party provider so the field is omitted by
@@ -321,4 +343,32 @@ impl OpenAiCompatibleProvider {
         self.is_openrouter_endpoint()
             .then_some((OPENROUTER_REFERER, OPENROUTER_TITLE))
     }
+}
+
+/// Endpoint hosts whose OpenAI-compatible surface rejects the
+/// `frequency_penalty` sampling field with an HTTP 400. Matched against the
+/// request host (exact or as a registrable-domain suffix), so a BYOK provider
+/// pointed at the same upstream is covered too. Single source of truth — add a
+/// host here if another strict endpoint surfaces the same rejection.
+const FREQUENCY_PENALTY_UNSUPPORTED_HOSTS: &[&str] = &["generativelanguage.googleapis.com"];
+
+/// Whether `base_url`'s host is known to reject `frequency_penalty`.
+///
+/// Google's Gemini OpenAI-compat shim
+/// (`https://generativelanguage.googleapis.com/v1beta/openai`) 400s on the
+/// unknown field (`Unknown name "frequency_penalty": Cannot find field`),
+/// which previously forced every streaming call into a wasted reject→retry
+/// and one Sentry report per first attempt (TAURI-RUST-4PJ). Detecting it by
+/// host — rather than provider slug — also covers BYOK providers configured
+/// against the same endpoint.
+pub(super) fn endpoint_rejects_frequency_penalty(base_url: &str) -> bool {
+    let host = reqwest::Url::parse(base_url)
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_ascii_lowercase));
+    let Some(host) = host else {
+        return false;
+    };
+    FREQUENCY_PENALTY_UNSUPPORTED_HOSTS
+        .iter()
+        .any(|known| host == *known || host.ends_with(&format!(".{known}")))
 }
