@@ -1157,6 +1157,7 @@ fn parse_native_response_preserves_tool_call_id() {
                     r#"{"command":"pwd"}"#.to_string(),
                 )),
             }),
+            extra_content: None,
         }]),
         function_call: None,
         reasoning_content: None,
@@ -1183,6 +1184,7 @@ fn parse_native_response_captures_reasoning_content() {
                 name: Some("shell".to_string()),
                 arguments: Some(serde_json::Value::String("{}".to_string())),
             }),
+            extra_content: None,
         }]),
         function_call: None,
         reasoning_content: Some("  weighing the options  ".to_string()),
@@ -1231,6 +1233,189 @@ fn convert_messages_for_native_maps_tool_result_payload() {
     assert_eq!(
         serde_json::to_value(&converted[1].content).unwrap(),
         serde_json::json!("done")
+    );
+}
+
+// ── TAURI-RUST-4PK: Gemini thought_signature round-trip ──────────────────────
+
+/// The wire `ToolCall` must capture Gemini's `extra_content` from the response
+/// and re-emit it verbatim on the request, so the thought_signature survives the
+/// round-trip. A tool call without it omits the field entirely (non-Gemini
+/// providers stay byte-identical on the wire).
+#[test]
+fn tool_call_wire_round_trips_extra_content() {
+    let json = r#"{"id":"call_g","type":"function","function":{"name":"shell","arguments":"{}"},"extra_content":{"google":{"thought_signature":"SIG123"}}}"#;
+    let tc: ToolCall = serde_json::from_str(json).unwrap();
+    assert_eq!(
+        tc.extra_content
+            .as_ref()
+            .and_then(|v| v.pointer("/google/thought_signature"))
+            .and_then(|v| v.as_str()),
+        Some("SIG123"),
+        "extra_content must be captured from the Gemini response"
+    );
+    let reemitted = serde_json::to_value(&tc).unwrap();
+    assert_eq!(
+        reemitted
+            .pointer("/extra_content/google/thought_signature")
+            .and_then(|v| v.as_str()),
+        Some("SIG123"),
+        "extra_content must be echoed verbatim on the request body"
+    );
+
+    let bare: ToolCall = serde_json::from_str(
+        r#"{"id":"c","type":"function","function":{"name":"x","arguments":"{}"}}"#,
+    )
+    .unwrap();
+    assert!(bare.extra_content.is_none());
+    assert!(
+        serde_json::to_value(&bare)
+            .unwrap()
+            .get("extra_content")
+            .is_none(),
+        "providers that don't send extra_content keep a byte-identical wire body"
+    );
+}
+
+/// `parse_native_response` lifts the tool-call `extra_content` onto the harness
+/// ToolCall so it can be persisted and echoed (TAURI-RUST-4PK).
+#[test]
+fn parse_native_response_captures_tool_call_extra_content() {
+    let message = ResponseMessage {
+        content: None,
+        tool_calls: Some(vec![ToolCall {
+            id: Some("call_g".to_string()),
+            kind: Some("function".to_string()),
+            function: Some(Function {
+                name: Some("shell".to_string()),
+                arguments: Some(serde_json::Value::String("{}".to_string())),
+            }),
+            extra_content: Some(serde_json::json!({"google":{"thought_signature":"SIG_RESP"}})),
+        }]),
+        function_call: None,
+        reasoning_content: None,
+    };
+    let parsed =
+        OpenAiCompatibleProvider::parse_native_response(wrap_message(message), "google").unwrap();
+    assert_eq!(parsed.tool_calls.len(), 1);
+    assert_eq!(
+        parsed.tool_calls[0]
+            .extra_content
+            .as_ref()
+            .and_then(|v| v.pointer("/google/thought_signature"))
+            .and_then(|v| v.as_str()),
+        Some("SIG_RESP"),
+        "the signature must land on the harness ToolCall"
+    );
+}
+
+/// On rebuild, a persisted assistant tool-call message whose stored JSON carries
+/// `extra_content` must re-emit it on the wire tool_calls, so Gemini sees the
+/// signature on the follow-up turn (TAURI-RUST-4PK).
+#[test]
+fn convert_messages_for_native_echoes_tool_call_extra_content() {
+    let input = vec![
+        ChatMessage::assistant(
+            r#"{"content":"on it","tool_calls":[{"id":"call_g","name":"shell","arguments":"{}","extra_content":{"google":{"thought_signature":"SIG_ECHO"}}}]}"#,
+        ),
+        ChatMessage::tool(r#"{"tool_call_id":"call_g","content":"done"}"#),
+    ];
+    let converted = OpenAiCompatibleProvider::convert_messages_for_native(&input);
+    let tool_calls = converted[0]
+        .tool_calls
+        .as_ref()
+        .expect("assistant tool_calls present");
+    assert_eq!(
+        tool_calls[0]
+            .extra_content
+            .as_ref()
+            .and_then(|v| v.pointer("/google/thought_signature"))
+            .and_then(|v| v.as_str()),
+        Some("SIG_ECHO"),
+        "stored extra_content must be echoed back on the rebuilt request"
+    );
+    assert_eq!(
+        serde_json::to_value(tool_calls)
+            .unwrap()
+            .pointer("/0/extra_content/google/thought_signature")
+            .and_then(|v| v.as_str()),
+        Some("SIG_ECHO"),
+        "echoed signature must appear on the serialized wire body"
+    );
+}
+
+/// A non-Gemini stored tool call (no `extra_content`) rebuilds with the field
+/// omitted — every other provider's wire body stays byte-identical.
+#[test]
+fn convert_messages_for_native_tool_call_without_extra_content_stays_none() {
+    let input = vec![
+        ChatMessage::assistant(
+            r#"{"content":"on it","tool_calls":[{"id":"call_x","name":"shell","arguments":"{}"}]}"#,
+        ),
+        ChatMessage::tool(r#"{"tool_call_id":"call_x","content":"done"}"#),
+    ];
+    let converted = OpenAiCompatibleProvider::convert_messages_for_native(&input);
+    let tool_calls = converted[0]
+        .tool_calls
+        .as_ref()
+        .expect("assistant tool_calls present");
+    assert!(tool_calls[0].extra_content.is_none());
+    assert!(serde_json::to_value(&tool_calls[0])
+        .unwrap()
+        .get("extra_content")
+        .is_none());
+}
+
+/// Streaming: Gemini sends the thought_signature in the tool-call delta's
+/// `extra_content` on the first chunk. The accumulator must preserve it onto the
+/// aggregated tool call so it reaches history (TAURI-RUST-4PK).
+#[tokio::test]
+async fn streaming_tool_call_captures_extra_content() {
+    let mock_server = MockServer::start().await;
+    let body = "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_g\",\"type\":\"function\",\"function\":{\"name\":\"shell\",\"arguments\":\"{}\"},\"extra_content\":{\"google\":{\"thought_signature\":\"SIG_STREAM\"}}}]}}]}\n\n\
+                data: [DONE]\n\n";
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(body, "text/event-stream"))
+        .mount(&mock_server)
+        .await;
+
+    let provider =
+        OpenAiCompatibleProvider::new("google", &mock_server.uri(), None, AuthStyle::None);
+    let request = NativeChatRequest {
+        model: "models/gemini-3.5-flash".to_string(),
+        messages: vec![NativeMessage {
+            role: "user".to_string(),
+            content: Some("hi".into()),
+            tool_call_id: None,
+            tool_calls: None,
+            reasoning_content: None,
+        }],
+        temperature: Some(0.7),
+        stream: Some(true),
+        tools: None,
+        tool_choice: None,
+        thread_id: None,
+        stream_options: Some(super::compatible_types::OpenAiStreamOptions {
+            include_usage: true,
+        }),
+        options: None,
+        frequency_penalty: None,
+    };
+    let (delta_tx, _delta_rx) = tokio::sync::mpsc::channel(64);
+    let resp = provider
+        .stream_native_chat(None, &request, &delta_tx, 0)
+        .await
+        .unwrap();
+    assert_eq!(resp.tool_calls.len(), 1);
+    assert_eq!(
+        resp.tool_calls[0]
+            .extra_content
+            .as_ref()
+            .and_then(|v| v.pointer("/google/thought_signature"))
+            .and_then(|v| v.as_str()),
+        Some("SIG_STREAM"),
+        "streaming must preserve the thought_signature onto the aggregated tool call"
     );
 }
 
@@ -1550,6 +1735,7 @@ fn enforce_invariants_clears_reasoning_when_assistant_collapses_to_text() {
                     name: Some("web_fetch".to_string()),
                     arguments: Some(serde_json::Value::String("{}".to_string())),
                 }),
+                extra_content: None,
             }]),
             reasoning_content: Some("deep reasoning".to_string()),
         },
@@ -1897,6 +2083,7 @@ fn response_with_tool_call_object_arguments_deserializes() {
                     name: Some("get_weather".to_string()),
                     arguments: Some(serde_json::json!({"location":"London","unit":"c"})),
                 }),
+                extra_content: None,
             }]),
             function_call: None,
         }),

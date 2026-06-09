@@ -414,6 +414,7 @@ fn trim_history_snaps_past_orphaned_tool_results() {
                 id: "call_x".into(),
                 name: "shell".into(),
                 arguments: "{}".into(),
+                extra_content: None,
             }],
             reasoning_content: None,
         },

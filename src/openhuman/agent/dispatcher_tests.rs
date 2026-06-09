@@ -26,6 +26,7 @@ fn native_dispatcher_roundtrip() {
             id: "tc1".into(),
             name: "file_read".into(),
             arguments: "{\"path\":\"a.txt\"}".into(),
+            extra_content: None,
         }],
         usage: None,
         reasoning_content: None,
@@ -268,6 +269,7 @@ fn assistant_tool_calls(id: &str) -> ConversationMessage {
             id: id.into(),
             name: "shell".into(),
             arguments: "{}".into(),
+            extra_content: None,
         }],
         reasoning_content: None,
     }
@@ -397,6 +399,7 @@ fn assistant_tool_calls_multi(ids: &[&str]) -> ConversationMessage {
                 id: (*id).into(),
                 name: "shell".into(),
                 arguments: "{}".into(),
+                extra_content: None,
             })
             .collect(),
         reasoning_content: None,
@@ -413,6 +416,7 @@ fn native_dispatcher_serializes_reasoning_content_for_tool_call_turns() {
                 id: "tc-1".into(),
                 name: "shell".into(),
                 arguments: "{}".into(),
+                extra_content: None,
             }],
             reasoning_content: Some("chain-of-thought replay blob".into()),
         },

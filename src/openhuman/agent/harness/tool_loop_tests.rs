@@ -398,6 +398,7 @@ async fn run_tool_call_loop_persists_native_tool_results_as_tool_messages() {
                     id: "call-1".into(),
                     name: "echo".into(),
                     arguments: "{}".into(),
+                    extra_content: None,
                 }],
                 usage: None,
                 reasoning_content: None,

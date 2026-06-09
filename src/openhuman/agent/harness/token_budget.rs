@@ -372,6 +372,7 @@ mod tests {
                 id: "1".into(),
                 name: "echo".into(),
                 arguments: "{\"value\":\"x\"}".into(),
+                extra_content: None,
             }],
             reasoning_content: None,
         };
@@ -396,6 +397,7 @@ mod tests {
             id: id.into(),
             name: "f".into(),
             arguments: "{}".into(),
+            extra_content: None,
         }
     }
 

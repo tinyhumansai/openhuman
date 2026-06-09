@@ -302,6 +302,7 @@ fn tool_response(name: &str, args: &str) -> ChatResponse {
             id: "call-1".into(),
             name: name.into(),
             arguments: args.into(),
+            extra_content: None,
         }],
         usage: None,
         reasoning_content: None,

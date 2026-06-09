@@ -312,6 +312,7 @@ fn helper_paths_cover_no_overlap_native_calls_and_truncation() {
         id: "native-1".into(),
         name: "echo".into(),
         arguments: "{}".into(),
+        extra_content: None,
     }];
     let response = crate::openhuman::inference::provider::ChatResponse {
         text: Some(String::new()),

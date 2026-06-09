@@ -18,6 +18,7 @@ fn call(id: &str) -> ConversationMessage {
             id: id.into(),
             name: "t".into(),
             arguments: "{}".into(),
+            extra_content: None,
         }],
         reasoning_content: None,
     }
@@ -217,6 +218,7 @@ fn transcript_renders_all_message_variants() {
                 id: "1".into(),
                 name: "shell".into(),
                 arguments: r#"{"cmd":"ls"}"#.into(),
+                extra_content: None,
             }],
             reasoning_content: None,
         },

@@ -500,6 +500,7 @@ fn tool_response(name: &str, arguments: serde_json::Value) -> ChatResponse {
             id: format!("call-{name}"),
             name: name.to_string(),
             arguments: arguments.to_string(),
+            extra_content: None,
         }],
         usage: None,
         reasoning_content: None,
