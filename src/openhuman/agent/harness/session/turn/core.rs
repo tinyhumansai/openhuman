@@ -414,10 +414,19 @@ impl Agent {
             };
             let turn_run_queue = self.run_queue.clone();
             let cached_prefix = self.cached_transcript_messages.take();
+            // Resolve the context window once per turn through the provider so
+            // local providers (LM Studio) trim to their runtime-loaded n_ctx
+            // rather than the trained-max table (#3550 / TAURI-RUST-6V0).
+            // Must run before `agent: self` takes the &mut borrow below.
+            let turn_context_window = self
+                .provider
+                .effective_context_window(&effective_model)
+                .await;
             let mut observer = AgentObserver {
                 agent: self,
                 artifact_store,
                 effective_model: effective_model.clone(),
+                context_window: turn_context_window,
                 cumulative_input: 0,
                 cumulative_output: 0,
                 cumulative_cached: 0,

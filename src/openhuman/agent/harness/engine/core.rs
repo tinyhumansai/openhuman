@@ -25,7 +25,6 @@ use crate::openhuman::agent::cost::TurnCost;
 use crate::openhuman::agent::multimodal;
 use crate::openhuman::agent::stop_hooks::{current_stop_hooks, StopDecision, TurnState};
 use crate::openhuman::context::guard::{ContextCheckResult, ContextGuard};
-use crate::openhuman::inference::model_context::context_window_for_model;
 use crate::openhuman::inference::provider::{
     ChatMessage, ChatRequest, Provider, ProviderCapabilityError,
 };
@@ -92,7 +91,12 @@ pub(crate) async fn run_turn_engine(
     early_exit_tool_names: &[&str],
     run_queue: Option<Arc<RunQueue>>,
 ) -> Result<TurnEngineOutcome> {
-    let mut context_guard = context_window_for_model(model)
+    // Resolve the model's context window once per turn. Local providers (e.g.
+    // LM Studio) report their *runtime-loaded* window here, which can be far
+    // smaller than the model's trained maximum in the static table — trimming
+    // to the max would overflow the loaded `n_ctx` (#3550 / TAURI-RUST-6V0).
+    let effective_context_window = provider.effective_context_window(model).await;
+    let mut context_guard = effective_context_window
         .map(ContextGuard::with_context_window)
         .unwrap_or_else(ContextGuard::new);
     let mut turn_cost = TurnCost::new();
@@ -174,7 +178,7 @@ pub(crate) async fn run_turn_engine(
             }
         }
 
-        if let Some(context_window) = context_window_for_model(model) {
+        if let Some(context_window) = effective_context_window {
             let budget_outcome = trim_chat_messages_to_budget(history, context_window);
             if budget_outcome.trimmed {
                 log::warn!(
@@ -291,7 +295,7 @@ pub(crate) async fn run_turn_engine(
         // *original* marker text, not the rendered
         // [FILE-EXTRACTED]/[FILE-ATTACHED]/[IMAGE:data:…] blocks.
         let mut prepared_messages_vec = prepared_messages.messages;
-        if let Some(context_window) = context_window_for_model(model) {
+        if let Some(context_window) = effective_context_window {
             let budget_outcome =
                 trim_chat_messages_to_budget(&mut prepared_messages_vec, context_window);
             if budget_outcome.trimmed {
