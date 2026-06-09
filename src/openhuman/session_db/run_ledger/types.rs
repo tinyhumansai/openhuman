@@ -303,3 +303,224 @@ pub struct RunEventListResponse {
     pub events: Vec<RunEvent>,
     pub count: usize,
 }
+
+// ---------------------------------------------------------------------------
+// Agent-team coordination (issue #3374)
+// ---------------------------------------------------------------------------
+
+/// Lifecycle of an agent team.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentTeamStatus {
+    Active,
+    Closed,
+}
+
+impl AgentTeamStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Closed => "closed",
+        }
+    }
+
+    /// Parse a stored status string (named `parse`, not `from_str`, to match the
+    /// run-ledger status-enum convention and avoid the `FromStr` clippy lint).
+    pub fn parse(raw: &str) -> Self {
+        match raw {
+            "closed" => Self::Closed,
+            _ => Self::Active,
+        }
+    }
+}
+
+/// Lifecycle of a single team member.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentTeamMemberStatus {
+    Pending,
+    Active,
+    Idle,
+    Stopped,
+}
+
+impl AgentTeamMemberStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Active => "active",
+            Self::Idle => "idle",
+            Self::Stopped => "stopped",
+        }
+    }
+
+    pub fn parse(raw: &str) -> Self {
+        match raw {
+            "active" => Self::Active,
+            "idle" => Self::Idle,
+            "stopped" => Self::Stopped,
+            _ => Self::Pending,
+        }
+    }
+}
+
+/// Lifecycle of a coordination task within a team.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentTeamTaskStatus {
+    Todo,
+    Ready,
+    InProgress,
+    Blocked,
+    Done,
+}
+
+impl AgentTeamTaskStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Todo => "todo",
+            Self::Ready => "ready",
+            Self::InProgress => "in_progress",
+            Self::Blocked => "blocked",
+            Self::Done => "done",
+        }
+    }
+
+    pub fn parse(raw: &str) -> Self {
+        match raw {
+            "ready" => Self::Ready,
+            "in_progress" => Self::InProgress,
+            "blocked" => Self::Blocked,
+            "done" => Self::Done,
+            _ => Self::Todo,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentTeam {
+    pub id: String,
+    pub parent_thread_id: Option<String>,
+    pub lead_agent_id: String,
+    pub status: AgentTeamStatus,
+    pub summary: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub closed_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AgentTeamUpsert {
+    pub id: String,
+    pub parent_thread_id: Option<String>,
+    pub lead_agent_id: String,
+    pub status: AgentTeamStatus,
+    pub summary: Option<String>,
+    pub created_at: Option<DateTime<Utc>>,
+    pub closed_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentTeamMember {
+    pub id: String,
+    pub team_id: String,
+    pub name: String,
+    pub agent_id: Option<String>,
+    pub member_status: AgentTeamMemberStatus,
+    pub current_task_id: Option<String>,
+    pub worker_thread_id: Option<String>,
+    pub run_id: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AgentTeamMemberUpsert {
+    pub id: String,
+    pub team_id: String,
+    pub name: String,
+    pub agent_id: Option<String>,
+    pub member_status: AgentTeamMemberStatus,
+    pub current_task_id: Option<String>,
+    pub worker_thread_id: Option<String>,
+    pub run_id: Option<String>,
+    pub created_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentTeamTask {
+    pub id: String,
+    pub team_id: String,
+    pub title: String,
+    pub objective: Option<String>,
+    pub status: AgentTeamTaskStatus,
+    pub owner_member_id: Option<String>,
+    pub claimed_by_member_id: Option<String>,
+    pub claim_token: Option<String>,
+    pub depends_on: Vec<String>,
+    pub gate_status: String,
+    pub gate_reason: Option<String>,
+    pub evidence: Vec<String>,
+    pub source_run_id: Option<String>,
+    pub order_index: i64,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AgentTeamTaskUpsert {
+    pub id: String,
+    pub team_id: String,
+    pub title: String,
+    pub objective: Option<String>,
+    pub status: AgentTeamTaskStatus,
+    pub owner_member_id: Option<String>,
+    pub depends_on: Vec<String>,
+    pub gate_status: Option<String>,
+    pub gate_reason: Option<String>,
+    pub evidence: Vec<String>,
+    pub source_run_id: Option<String>,
+    pub order_index: i64,
+    pub created_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentTeamListRequest {
+    #[serde(default)]
+    pub parent_thread_id: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+    /// `u64` to match the `TypeSchema::U64` the controller advertises (the RPC
+    /// scalar-coercion layer only handles `U64`). Capped at 500 in
+    /// `list_agent_teams`.
+    #[serde(default)]
+    pub limit: Option<u64>,
+    #[serde(default)]
+    pub offset: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentTeamListResponse {
+    pub teams: Vec<AgentTeam>,
+    pub count: usize,
+}
+
+/// Outcome of an atomic claim attempt on a team task.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", tag = "kind")]
+pub enum ClaimOutcome {
+    /// The claim succeeded; carries the freshly-claimed task. Boxed to keep the
+    /// enum small (the task payload dwarfs the other variants).
+    Claimed(Box<AgentTeamTask>),
+    /// Another member already holds the claim.
+    AlreadyClaimed,
+    /// One or more dependency tasks are not yet `done`.
+    Blocked { unmet: Vec<String> },
+    /// No task matched the given team + task id.
+    UnknownTask,
+}

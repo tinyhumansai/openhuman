@@ -69,7 +69,57 @@ pub(crate) fn init_run_ledger_schema(conn: &Connection) -> Result<()> {
             provider            TEXT,
             error               TEXT,
             updated_at          TEXT NOT NULL
-        );",
+        );
+
+        CREATE TABLE IF NOT EXISTS agent_teams (
+            id                 TEXT PRIMARY KEY,
+            parent_thread_id   TEXT,
+            lead_agent_id      TEXT NOT NULL,
+            status             TEXT NOT NULL,
+            summary            TEXT,
+            created_at         TEXT NOT NULL,
+            updated_at         TEXT NOT NULL,
+            closed_at          TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_agent_teams_thread ON agent_teams(parent_thread_id);
+        CREATE INDEX IF NOT EXISTS idx_agent_teams_status ON agent_teams(status);
+
+        CREATE TABLE IF NOT EXISTS agent_team_members (
+            id                 TEXT PRIMARY KEY,
+            team_id            TEXT NOT NULL,
+            name               TEXT NOT NULL,
+            agent_id           TEXT,
+            member_status      TEXT NOT NULL,
+            current_task_id    TEXT,
+            worker_thread_id   TEXT,
+            run_id             TEXT,
+            created_at         TEXT NOT NULL,
+            updated_at         TEXT NOT NULL,
+            UNIQUE(team_id, name)
+        );
+        CREATE INDEX IF NOT EXISTS idx_agent_team_members_team ON agent_team_members(team_id);
+
+        CREATE TABLE IF NOT EXISTS agent_team_tasks (
+            id                  TEXT PRIMARY KEY,
+            team_id             TEXT NOT NULL,
+            title               TEXT NOT NULL,
+            objective           TEXT,
+            status              TEXT NOT NULL,
+            owner_member_id     TEXT,
+            claimed_by_member_id TEXT,
+            claim_token         TEXT,
+            depends_on_json     TEXT NOT NULL DEFAULT '[]',
+            gate_status         TEXT NOT NULL DEFAULT 'pending',
+            gate_reason         TEXT,
+            evidence_json       TEXT NOT NULL DEFAULT '[]',
+            source_run_id       TEXT,
+            order_index         INTEGER NOT NULL DEFAULT 0,
+            created_at          TEXT NOT NULL,
+            updated_at          TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_agent_team_tasks_team ON agent_team_tasks(team_id);
+        CREATE INDEX IF NOT EXISTS idx_agent_team_tasks_status ON agent_team_tasks(status);
+        CREATE INDEX IF NOT EXISTS idx_agent_team_tasks_claimed ON agent_team_tasks(claimed_by_member_id);",
     )
     .context("failed to initialize run ledger schema")
 }
