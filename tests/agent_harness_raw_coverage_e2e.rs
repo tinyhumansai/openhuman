@@ -187,6 +187,7 @@ fn tool_call(id: &str, name: &str, arguments: serde_json::Value) -> ToolCall {
         id: id.to_string(),
         name: name.to_string(),
         arguments: arguments.to_string(),
+        extra_content: None,
     }
 }
 

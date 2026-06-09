@@ -225,6 +225,7 @@ fn tool_response(name: &str, arguments: serde_json::Value) -> ChatResponse {
             id: "round18-call".to_string(),
             name: name.to_string(),
             arguments: arguments.to_string(),
+            extra_content: None,
         }],
         usage: None,
         reasoning_content: Some("test reasoning".to_string()),

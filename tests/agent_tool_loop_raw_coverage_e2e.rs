@@ -330,6 +330,7 @@ fn native_tool_response(name: &str, arguments: serde_json::Value) -> ChatRespons
             id: format!("call-{name}"),
             name: name.to_string(),
             arguments: arguments.to_string(),
+            extra_content: None,
         }],
         usage: Some(UsageInfo {
             input_tokens: 13,

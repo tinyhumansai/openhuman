@@ -725,6 +725,7 @@ async fn round16_agent_builder_turn_uses_public_harness_paths() {
                 id: "call-round16".into(),
                 name: "echo".into(),
                 arguments: json!({ "message": "builder" }).to_string(),
+                extra_content: None,
             }],
         ),
         response(Some("builder final"), Vec::new()),

@@ -290,6 +290,7 @@ fn native_tool_response(name: &str, arguments: &str) -> ChatResponse {
             id: "round20-native-1".to_string(),
             name: name.to_string(),
             arguments: arguments.to_string(),
+            extra_content: None,
         }],
         usage: Some(UsageInfo {
             input_tokens: 7_000,
