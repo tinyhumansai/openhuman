@@ -483,6 +483,21 @@ pub trait Provider: Send + Sync {
         self.capabilities().vision
     }
 
+    /// Effective context window (in tokens) for `model`, used for
+    /// pre-dispatch history trimming.
+    ///
+    /// Defaults to the static model table
+    /// ([`crate::openhuman::inference::context_window_for_model`]), which
+    /// reflects a model's *trained maximum* context. Local providers
+    /// override this to report the model's **runtime-loaded** window — e.g.
+    /// LM Studio lets the user load a model with a smaller `n_ctx` than its
+    /// trained maximum, and budgeting against the max overflows the loaded
+    /// window so the request is rejected (issue #3550 / Sentry
+    /// TAURI-RUST-6V0). `None` means "unknown — skip pre-dispatch trimming".
+    async fn effective_context_window(&self, model: &str) -> Option<u64> {
+        crate::openhuman::inference::context_window_for_model(model)
+    }
+
     /// Warm up the HTTP connection pool (TLS handshake, DNS, HTTP/2 setup).
     /// Default implementation is a no-op; providers with HTTP clients should override.
     async fn warmup(&self) -> anyhow::Result<()> {
