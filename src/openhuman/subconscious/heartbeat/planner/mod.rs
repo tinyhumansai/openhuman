@@ -548,6 +548,94 @@ mod tests {
         );
     }
 
+    // --- build_meeting_actions tests ---
+
+    fn make_meeting_event(meet_url: Option<&str>) -> PendingEvent {
+        let now = Utc::now();
+        PendingEvent {
+            category: HeartbeatCategory::Meetings,
+            source: "calendar:googlecalendar".into(),
+            source_event_id: "evt-test".into(),
+            fingerprint: "fp-1234567890ab".into(),
+            overlap_key: "test-overlap".into(),
+            title: "Team sync".into(),
+            body: String::new(),
+            deep_link: Some("https://calendar.google.com/event?id=x".into()),
+            meet_url: meet_url.map(Into::into),
+            anchor_at: now,
+        }
+    }
+
+    #[test]
+    fn build_meeting_actions_returns_none_for_non_meeting() {
+        let config = Config::default();
+        let mut event = make_meeting_event(Some("https://meet.google.com/abc-defg-hij"));
+        event.category = HeartbeatCategory::Reminders;
+        assert!(build_meeting_actions(&config, &event, Utc::now(), "final_call").is_none());
+    }
+
+    #[test]
+    fn build_meeting_actions_returns_none_for_early_stage() {
+        let config = Config::default();
+        let event = make_meeting_event(Some("https://meet.google.com/abc-defg-hij"));
+        assert!(build_meeting_actions(&config, &event, Utc::now(), "heads_up").is_none());
+    }
+
+    #[test]
+    fn build_meeting_actions_returns_none_without_meet_url() {
+        let config = Config::default();
+        let event = make_meeting_event(None);
+        assert!(build_meeting_actions(&config, &event, Utc::now(), "final_call").is_none());
+    }
+
+    #[test]
+    fn build_meeting_actions_returns_none_for_unrecognized_host() {
+        let config = Config::default();
+        let event = make_meeting_event(Some("https://unknown.example.com/room"));
+        assert!(build_meeting_actions(&config, &event, Utc::now(), "final_call").is_none());
+    }
+
+    #[test]
+    fn build_meeting_actions_ask_each_time_returns_three_buttons() {
+        let mut config = Config::default();
+        config.meet.auto_join_policy = AutoJoinPolicy::AskEachTime;
+        let event = make_meeting_event(Some("https://meet.google.com/abc-defg-hij"));
+        let actions = build_meeting_actions(&config, &event, Utc::now(), "final_call")
+            .expect("should return actions");
+        assert_eq!(actions.len(), 3);
+        assert_eq!(actions[0].action_id, "join_meeting");
+        assert_eq!(actions[1].action_id, "skip_meeting");
+        assert_eq!(actions[2].action_id, "always_join");
+    }
+
+    #[test]
+    fn build_meeting_actions_never_returns_none() {
+        let mut config = Config::default();
+        config.meet.auto_join_policy = AutoJoinPolicy::Never;
+        let event = make_meeting_event(Some("https://meet.google.com/abc-defg-hij"));
+        assert!(build_meeting_actions(&config, &event, Utc::now(), "final_call").is_none());
+    }
+
+    #[test]
+    fn build_meeting_actions_always_returns_none_and_publishes_event() {
+        let mut config = Config::default();
+        config.meet.auto_join_policy = AutoJoinPolicy::Always;
+        let event = make_meeting_event(Some("https://meet.google.com/abc-defg-hij"));
+        // Always policy returns None (no action buttons — auto-joins transparently).
+        assert!(build_meeting_actions(&config, &event, Utc::now(), "happening_now").is_none());
+    }
+
+    #[test]
+    fn build_meeting_actions_happening_now_also_works() {
+        let mut config = Config::default();
+        config.meet.auto_join_policy = AutoJoinPolicy::AskEachTime;
+        let event = make_meeting_event(Some("https://zoom.us/j/123456"));
+        let actions = build_meeting_actions(&config, &event, Utc::now(), "happening_now")
+            .expect("should return actions for happening_now");
+        assert_eq!(actions.len(), 3);
+        assert_eq!(actions[0].label, "Add OpenHuman");
+    }
+
     #[test]
     fn overlap_key_differs_for_different_titles_or_times() {
         let anchor = Utc.with_ymd_and_hms(2026, 5, 8, 10, 0, 0).unwrap();

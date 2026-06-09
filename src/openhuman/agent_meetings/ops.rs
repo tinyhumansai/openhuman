@@ -626,6 +626,29 @@ mod tests {
         assert_eq!(batch.messages.len(), 1);
     }
 
+    #[tokio::test]
+    async fn notification_action_rejects_unknown_action() {
+        let params: Map<String, Value> = serde_json::from_value(json!({
+            "action_id": "unknown_action",
+            "payload": {}
+        }))
+        .unwrap();
+        let result = handle_notification_action(params).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("unknown action_id"));
+    }
+
+    #[tokio::test]
+    async fn notification_action_rejects_missing_action_id() {
+        let params: Map<String, Value> = serde_json::from_value(json!({
+            "payload": {"meeting_id": "x"}
+        }))
+        .unwrap();
+        let result = handle_notification_action(params).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("missing action_id"));
+    }
+
     #[test]
     fn rive_colors_deserialize() {
         use crate::openhuman::agent_meetings::types::RiveColors;
