@@ -87,9 +87,16 @@ pub fn list_definitions() -> WorkflowDefinitionListResponse {
 /// Checks: at least one phase; unique phase names; non-empty phases;
 /// `depends_on` references existing phases; no dependency cycles.
 pub fn validate_structure(def: &WorkflowDefinition) -> Vec<DefinitionError> {
+    log::debug!(
+        target: "workflow_run",
+        "[workflow_run] validate_structure.entry id={} phases={}",
+        def.id,
+        def.phases.len()
+    );
     let mut errors = Vec::new();
     if def.phases.is_empty() {
         errors.push(DefinitionError::NoPhases);
+        log::debug!(target: "workflow_run", "[workflow_run] validate_structure.exit id={} errors=1 reason=no_phases", def.id);
         return errors;
     }
 
@@ -130,6 +137,12 @@ pub fn validate_structure(def: &WorkflowDefinition) -> Vec<DefinitionError> {
         });
     }
 
+    log::debug!(
+        target: "workflow_run",
+        "[workflow_run] validate_structure.exit id={} errors={}",
+        def.id,
+        errors.len()
+    );
     errors
 }
 
@@ -140,6 +153,12 @@ pub fn validate_agents<F>(def: &WorkflowDefinition, is_known: F) -> Vec<Definiti
 where
     F: Fn(&str) -> bool,
 {
+    log::debug!(
+        target: "workflow_run",
+        "[workflow_run] validate_agents.entry id={} phases={}",
+        def.id,
+        def.phases.len()
+    );
     let mut errors = Vec::new();
     for phase in &def.phases {
         for agent_id in &phase.agent_ids {
@@ -151,6 +170,12 @@ where
             }
         }
     }
+    log::debug!(
+        target: "workflow_run",
+        "[workflow_run] validate_agents.exit id={} unknown={}",
+        def.id,
+        errors.len()
+    );
     errors
 }
 
@@ -160,10 +185,26 @@ where
 /// registry is initialized, so callers in a registry-less context (e.g. early
 /// boot, some tests) are not given false `UnknownAgent` errors.
 pub fn validate_definition(def: &WorkflowDefinition) -> Vec<DefinitionError> {
+    log::debug!(target: "workflow_run", "[workflow_run] validate_definition.entry id={}", def.id);
     let mut errors = validate_structure(def);
-    if let Some(registry) = AgentDefinitionRegistry::global() {
-        errors.extend(validate_agents(def, |id| registry.get(id).is_some()));
+    match AgentDefinitionRegistry::global() {
+        Some(registry) => {
+            errors.extend(validate_agents(def, |id| registry.get(id).is_some()));
+        }
+        None => {
+            log::debug!(
+                target: "workflow_run",
+                "[workflow_run][registry] validate_definition.skip_agents id={} reason=registry_uninitialized",
+                def.id
+            );
+        }
     }
+    log::debug!(
+        target: "workflow_run",
+        "[workflow_run] validate_definition.exit id={} errors={}",
+        def.id,
+        errors.len()
+    );
     errors
 }
 
@@ -203,7 +244,10 @@ fn has_cycle(def: &WorkflowDefinition) -> bool {
             }
         }
     }
-    visited != def.phases.len()
+    // Compare against the unique-node count, not `def.phases.len()`: the graph
+    // is keyed by unique phase names, so duplicate names (reported separately as
+    // `DuplicatePhase`) would otherwise trip a false `CyclicDependency`.
+    visited != indegree.len()
 }
 
 /// List durable workflow runs (delegates to the run ledger).
@@ -326,6 +370,33 @@ mod tests {
             ..good_def()
         };
         assert!(validate_structure(&def).contains(&DefinitionError::CyclicDependency));
+    }
+
+    #[test]
+    fn duplicate_phase_names_do_not_report_false_cycle() {
+        let def = WorkflowDefinition {
+            phases: vec![
+                WorkflowPhase {
+                    name: "a".into(),
+                    description: String::new(),
+                    agent_ids: vec!["researcher".into()],
+                    depends_on: vec![],
+                },
+                WorkflowPhase {
+                    name: "a".into(),
+                    description: String::new(),
+                    agent_ids: vec!["researcher".into()],
+                    depends_on: vec![],
+                },
+            ],
+            ..good_def()
+        };
+        let errors = validate_structure(&def);
+        assert!(errors.contains(&DefinitionError::DuplicatePhase { name: "a".into() }));
+        assert!(
+            !errors.contains(&DefinitionError::CyclicDependency),
+            "duplicate names must not trip a false cycle: {errors:?}"
+        );
     }
 
     #[test]
