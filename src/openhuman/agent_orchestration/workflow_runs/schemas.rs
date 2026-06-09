@@ -75,13 +75,7 @@ fn schema_for(function: &str) -> ControllerSchema {
             inputs: vec![required_str("id", "Workflow run id.")],
             outputs: vec![json_output("workflowRun", "WorkflowRun payload or null.")],
         },
-        _ => ControllerSchema {
-            namespace: "workflow_run",
-            function: "unknown",
-            description: "unknown workflow_run function",
-            inputs: vec![],
-            outputs: vec![],
-        },
+        other => unreachable!("unknown workflow_run schema: {other}"),
     }
 }
 
