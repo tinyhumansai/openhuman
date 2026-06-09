@@ -438,6 +438,9 @@ impl Provider for OpenAiCompatibleProvider {
                     id: tc.id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
                     name,
                     arguments,
+                    // Non-streaming response: preserve Gemini's thought_signature
+                    // so it round-trips on the next turn (TAURI-RUST-4PK).
+                    extra_content: tc.extra_content,
                 })
             })
             .collect::<Vec<_>>();

@@ -254,6 +254,16 @@ impl OpenAiCompatibleProvider {
                                 let idx = tc.index.unwrap_or(0);
                                 let entry = tool_accum.entry(idx).or_default();
 
+                                // Capture the first non-null extra_content seen for
+                                // this index (Gemini's thought_signature, TAURI-RUST-4PK).
+                                if entry.extra_content.is_none() {
+                                    if let Some(ec) = tc.extra_content.as_ref() {
+                                        if !ec.is_null() {
+                                            entry.extra_content = Some(ec.clone());
+                                        }
+                                    }
+                                }
+
                                 if let Some(id) = tc.id.as_ref() {
                                     if entry.id.is_none() {
                                         log::debug!(
@@ -380,6 +390,9 @@ impl OpenAiCompatibleProvider {
                         )
                     },
                 }),
+                // Carry Gemini's thought_signature through to parse_native_response
+                // so it lands on the harness ToolCall (TAURI-RUST-4PK).
+                extra_content: c.extra_content,
             })
             .collect();
 

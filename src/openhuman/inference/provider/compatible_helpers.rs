@@ -199,6 +199,9 @@ impl OpenAiCompatibleProvider {
                                                     tc.arguments,
                                                 )),
                                             }),
+                                            // Echo Gemini's thought_signature back on
+                                            // the next turn (TAURI-RUST-4PK).
+                                            extra_content: tc.extra_content,
                                         })
                                         .collect::<Vec<_>>();
 
@@ -405,6 +408,10 @@ impl OpenAiCompatibleProvider {
                     id: tc.id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
                     name,
                     arguments,
+                    // Preserve Gemini's thought_signature (TAURI-RUST-4PK) so it
+                    // can be echoed on the next turn; None for providers that
+                    // don't send extra_content.
+                    extra_content: tc.extra_content,
                 })
             })
             .collect::<Vec<_>>();
@@ -420,6 +427,8 @@ impl OpenAiCompatibleProvider {
                         id: uuid::Uuid::new_v4().to_string(),
                         name: name.clone(),
                         arguments: normalize_function_arguments(function.arguments.clone()),
+                        // Legacy `function_call` shape carries no extra_content.
+                        extra_content: None,
                     });
                 }
             }
