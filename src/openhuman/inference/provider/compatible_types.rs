@@ -378,6 +378,20 @@ pub(crate) struct ToolCall {
     #[serde(rename = "type")]
     pub(crate) kind: Option<String>,
     pub(crate) function: Option<Function>,
+    /// Provider-specific passthrough metadata attached to a tool call.
+    ///
+    /// Google's Gemini OpenAI-compat endpoint returns a cryptographically
+    /// signed reasoning token here as
+    /// `extra_content.google.thought_signature`, and **requires** it echoed
+    /// back verbatim on the assistant tool-call turn of every subsequent
+    /// request — otherwise it 400s with "Function call is missing a
+    /// thought_signature" (TAURI-RUST-4PK). Captured on the response and
+    /// re-emitted on the request as an opaque value so any future
+    /// `extra_content.*` keys round-trip unchanged. `skip_serializing_if`
+    /// keeps the wire body byte-identical for every provider that doesn't
+    /// send it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) extra_content: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -456,6 +470,12 @@ pub(crate) struct StreamToolCallDelta {
     pub(crate) kind: Option<String>,
     #[serde(default)]
     pub(crate) function: Option<StreamToolCallFunction>,
+    /// Provider passthrough metadata (Gemini's `extra_content`, carrying
+    /// `google.thought_signature`). Arrives on the first chunk for a given
+    /// tool-call index; accumulated and re-emitted so the signature survives
+    /// the streaming path (TAURI-RUST-4PK).
+    #[serde(default)]
+    pub(crate) extra_content: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -484,4 +504,8 @@ pub(crate) struct StreamingToolCall {
     pub(crate) arguments: String,
     pub(crate) emitted_start: bool,
     pub(crate) emitted_chars: usize,
+    /// First non-null `extra_content` seen for this tool-call index (Gemini's
+    /// thought_signature). Re-emitted on the aggregated [`ToolCall`] so it can
+    /// be echoed on the next turn (TAURI-RUST-4PK).
+    pub(crate) extra_content: Option<serde_json::Value>,
 }

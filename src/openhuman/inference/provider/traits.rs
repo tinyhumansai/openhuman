@@ -59,6 +59,14 @@ pub struct ToolCall {
     pub id: String,
     pub name: String,
     pub arguments: String,
+    /// Provider-specific passthrough metadata for this call, captured from the
+    /// response and echoed back verbatim on the next assistant turn. Carries
+    /// Google Gemini's required `extra_content.google.thought_signature` so
+    /// multi-turn tool calling round-trips without a 400 (TAURI-RUST-4PK).
+    /// `None`/omitted for every provider that doesn't emit it, so non-Gemini
+    /// history stays byte-identical.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extra_content: Option<serde_json::Value>,
 }
 
 /// Token usage information returned by the provider after an inference call.
