@@ -94,6 +94,18 @@ impl OpenAiCompatibleProvider {
                     self.name,
                     status,
                 );
+            } else if Self::err_indicates_frequency_penalty_unsupported(&body) {
+                // Endpoint rejects `frequency_penalty` (e.g. an unknown strict
+                // provider not yet covered by `effective_frequency_penalty`).
+                // The caller retries without the field and succeeds, so this is
+                // a self-healed recoverable condition — log, don't page
+                // (TAURI-RUST-4PJ). Defense-in-depth behind the prevent-at-source
+                // omission; the bail! below still drives the retry path.
+                log::info!(
+                    "[stream] {} rejected frequency_penalty (status={}) — caller will retry without it",
+                    self.name,
+                    status,
+                );
             } else if super::super::is_backend_error_code_owned(self.name.as_str(), &body) {
                 // F4/F2: managed-backend errorCode (#870) — backend-owned, FE
                 // must not double-report. Malformed BAD_REQUEST is excluded and
