@@ -83,7 +83,9 @@ fn handle_list_definitions(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let cid = new_correlation_id();
         log::debug!(target: "workflow_run_rpc", "[workflow_run_rpc][{cid}] list_definitions.entry");
-        to_json(super::ops::list_definitions())
+        let response = super::ops::list_definitions();
+        log::debug!(target: "workflow_run_rpc", "[workflow_run_rpc][{cid}] list_definitions.success count={}", response.count);
+        to_json(response)
     })
 }
 
@@ -95,8 +97,10 @@ fn handle_list(params: Map<String, Value>) -> ControllerFuture {
             log::warn!(target: "workflow_run_rpc", "[workflow_run_rpc][{cid}] list.config_failed err={err}");
         })?;
         let request: WorkflowRunListRequest = if params.is_empty() {
+            log::debug!(target: "workflow_run_rpc", "[workflow_run_rpc][{cid}] list.branch=default_request");
             WorkflowRunListRequest::default()
         } else {
+            log::debug!(target: "workflow_run_rpc", "[workflow_run_rpc][{cid}] list.branch=parsed_params");
             serde_json::from_value(Value::Object(params)).map_err(|e| {
                 let s = format!("invalid workflow run list params: {e}");
                 log::warn!(target: "workflow_run_rpc", "[workflow_run_rpc][{cid}] list.bad_params err={s}");
@@ -108,6 +112,7 @@ fn handle_list(params: Map<String, Value>) -> ControllerFuture {
             log::warn!(target: "workflow_run_rpc", "[workflow_run_rpc][{cid}] list.error err={s}");
             s
         })?;
+        log::debug!(target: "workflow_run_rpc", "[workflow_run_rpc][{cid}] list.success count={}", response.count);
         to_json(response)
     })
 }
@@ -123,11 +128,13 @@ fn handle_get(params: Map<String, Value>) -> ControllerFuture {
             .get("id")
             .and_then(|v| v.as_str())
             .ok_or_else(|| "missing required param: id".to_string())?;
+        log::debug!(target: "workflow_run_rpc", "[workflow_run_rpc][{cid}] get.id={id}");
         let run = super::ops::get_run(&config, id).map_err(|e| {
             let s = e.to_string();
             log::warn!(target: "workflow_run_rpc", "[workflow_run_rpc][{cid}] get.error id={id} err={s}");
             s
         })?;
+        log::debug!(target: "workflow_run_rpc", "[workflow_run_rpc][{cid}] get.success id={id} found={}", run.is_some());
         to_json(serde_json::json!({ "workflowRun": run }))
     })
 }
