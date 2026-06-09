@@ -323,6 +323,7 @@ pub fn list_recent_run_events(
 }
 
 pub fn get_workflow_run(config: &Config, id: &str) -> Result<Option<WorkflowRun>> {
+    log::debug!("{LOG_PREFIX} get_workflow_run.entry id={id}");
     crate::openhuman::session_db::store::with_connection(config, |conn| {
         init_run_ledger_schema(conn)?;
         let mut stmt = conn.prepare(
@@ -330,9 +331,14 @@ pub fn get_workflow_run(config: &Config, id: &str) -> Result<Option<WorkflowRun>
                     child_run_ids_json, status, summary, started_at, updated_at, completed_at
              FROM workflow_runs WHERE id = ?1",
         )?;
-        Ok(stmt
+        let run = stmt
             .query_row(params![id], map_workflow_run_row)
-            .optional()?)
+            .optional()?;
+        log::debug!(
+            "{LOG_PREFIX} get_workflow_run.exit id={id} found={}",
+            run.is_some()
+        );
+        Ok(run)
     })
 }
 
@@ -343,6 +349,14 @@ pub fn list_workflow_runs(
     config: &Config,
     request: &WorkflowRunListRequest,
 ) -> Result<WorkflowRunListResponse> {
+    log::debug!(
+        "{LOG_PREFIX} list_workflow_runs.entry definition={:?} status={:?} parent_thread={:?} limit={:?} offset={:?}",
+        request.definition_id,
+        request.status,
+        request.parent_thread_id,
+        request.limit,
+        request.offset
+    );
     crate::openhuman::session_db::store::with_connection(config, |conn| {
         init_run_ledger_schema(conn)?;
         let mut where_clauses = Vec::new();
@@ -382,7 +396,10 @@ pub fn list_workflow_runs(
         })? as usize;
 
         let limit = request.limit.unwrap_or(50).min(500) as i64;
-        let offset = request.offset.unwrap_or(0) as i64;
+        // `offset` is `u64`; convert checked so a value > i64::MAX surfaces a
+        // clear error instead of wrapping negative and corrupting pagination.
+        let offset = i64::try_from(request.offset.unwrap_or(0))
+            .context("workflow run list offset exceeds i64::MAX")?;
         values.push(Box::new(limit));
         let limit_idx = values.len();
         values.push(Box::new(offset));
@@ -403,6 +420,10 @@ pub fn list_workflow_runs(
         for row in rows {
             runs.push(row?);
         }
+        log::debug!(
+            "{LOG_PREFIX} list_workflow_runs.exit count={count} returned={}",
+            runs.len()
+        );
         Ok(WorkflowRunListResponse { runs, count })
     })
 }
