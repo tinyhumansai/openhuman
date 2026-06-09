@@ -146,6 +146,127 @@ fn detects_frequency_penalty_rejection_for_retry() {
     ));
 }
 
+#[test]
+fn endpoint_rejects_frequency_penalty_matches_google_gemini_host() {
+    use super::compatible_request::endpoint_rejects_frequency_penalty as rejects;
+    // The Google Gemini OpenAI-compat shim 400s on the field (TAURI-RUST-4PJ).
+    assert!(rejects(
+        "https://generativelanguage.googleapis.com/v1beta/openai"
+    ));
+    // Host match is case-insensitive and covers a registrable-domain suffix,
+    // so a BYOK provider pointed at a regional/sub-host is covered too.
+    assert!(rejects(
+        "https://GenerativeLanguage.GoogleAPIs.com/v1beta/openai"
+    ));
+    assert!(rejects(
+        "https://eu.generativelanguage.googleapis.com/v1beta/openai"
+    ));
+    // Every other provider keeps the penalty; an unparseable URL is a no-op.
+    assert!(!rejects("https://api.openai.com/v1"));
+    assert!(!rejects("https://api.venice.ai"));
+    // A look-alike host must NOT match (suffix check is dot-anchored).
+    assert!(!rejects(
+        "https://notgenerativelanguage.googleapis.com.evil.test/v1"
+    ));
+    assert!(!rejects("not a url"));
+}
+
+#[test]
+fn effective_frequency_penalty_omitted_for_google_kept_for_others() {
+    // Google Gemini endpoint → field omitted at the source (no rejected
+    // round-trip, no Sentry report).
+    let google = OpenAiCompatibleProvider::new(
+        "google",
+        "https://generativelanguage.googleapis.com/v1beta/openai",
+        None,
+        AuthStyle::Bearer,
+    );
+    assert_eq!(
+        google.effective_frequency_penalty(),
+        None,
+        "Gemini shim rejects frequency_penalty — it must be omitted up front"
+    );
+
+    // Any other OpenAI-compatible provider keeps the repetition-damping value.
+    let other = make_provider("openai", "https://api.openai.com/v1", None);
+    assert_eq!(
+        other.effective_frequency_penalty(),
+        Some(super::compatible_repeat::CHAT_FREQUENCY_PENALTY),
+        "providers that accept the field must still receive it"
+    );
+}
+
+#[tokio::test]
+async fn streaming_chat_frequency_penalty_rejection_not_reported_to_sentry() {
+    // Defense-in-depth (TAURI-RUST-4PJ): an unknown strict provider — one not
+    // covered by the host allow-list, so prevention did not omit the field —
+    // 400s on frequency_penalty. The caller retries without it and succeeds, so
+    // this self-healed condition must NOT page Sentry, while still propagating
+    // as an Err so the retry path fires.
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(400).set_body_string(
+            r#"{"error":{"code":400,"message":"Invalid JSON payload received. Unknown name \"frequency_penalty\": Cannot find field.","status":"INVALID_ARGUMENT"}}"#,
+        ))
+        .mount(&mock_server)
+        .await;
+
+    let transport = TestTransport::new();
+    let sentry_options = sentry::ClientOptions {
+        dsn: Some("https://public@sentry.invalid/1".parse().unwrap()),
+        transport: Some(Arc::new(transport.clone())),
+        ..Default::default()
+    };
+    let sentry_hub = Arc::new(sentry::Hub::new(
+        Some(Arc::new(sentry_options.into())),
+        Arc::new(Default::default()),
+    ));
+    let _sentry_guard = sentry::HubSwitchGuard::new(sentry_hub);
+
+    // Provider URL is the mock host (not the google allow-list host), so the
+    // request DOES carry frequency_penalty and exercises the stream-error
+    // classifier arm rather than the prevent-at-source omission.
+    let provider =
+        OpenAiCompatibleProvider::new("strict_byok", &mock_server.uri(), None, AuthStyle::None);
+    let request = NativeChatRequest {
+        model: "some-model".to_string(),
+        messages: vec![NativeMessage {
+            role: "user".to_string(),
+            content: Some("hello".into()),
+            tool_call_id: None,
+            tool_calls: None,
+            reasoning_content: None,
+        }],
+        temperature: Some(0.7),
+        stream: Some(true),
+        tools: None,
+        tool_choice: None,
+        thread_id: None,
+        stream_options: Some(super::compatible_types::OpenAiStreamOptions {
+            include_usage: true,
+        }),
+        options: None,
+        frequency_penalty: Some(super::compatible_repeat::CHAT_FREQUENCY_PENALTY),
+    };
+    let (delta_tx, _delta_rx) = tokio::sync::mpsc::channel(8);
+
+    let err = provider
+        .stream_native_chat(None, &request, &delta_tx, 0)
+        .await
+        .expect_err(
+            "400 frequency_penalty rejection must still propagate as Err to drive the retry",
+        );
+    assert!(
+        err.to_string().contains("streaming API error"),
+        "err: {err}"
+    );
+    assert!(
+        transport.fetch_and_clear_events().is_empty(),
+        "a self-healed frequency_penalty rejection must not be reported to Sentry"
+    );
+}
+
 /// Streaming responses arrive without `usage` unless the request asks
 /// for `stream_options.include_usage = true` (OpenAI spec). Without it
 /// the OpenHuman backend's `openhuman.billing` block also never lands,
