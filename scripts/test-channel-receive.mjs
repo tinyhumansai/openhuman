@@ -20,7 +20,26 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 
+function usage() {
+  return [
+    'Usage: node scripts/test-channel-receive.mjs [options]',
+    '',
+    'Connects to the backend Socket.IO server, authenticates with the stored',
+    'session JWT, and listens for incoming channel messages.',
+    '',
+    'Options:',
+    '  --timeout N     Wait N seconds before timing out (default: 60).',
+    '  --debug         Enable verbose logging.',
+    '  --send-test     Also send a test message after connecting.',
+    '  -h, --help      Show this help and exit.',
+  ].join('\n');
+}
+
 const args = process.argv.slice(2);
+if (args.includes('--help') || args.includes('-h')) {
+  console.log(usage());
+  process.exit(0);
+}
 const DEBUG = args.includes('--debug');
 const SEND_TEST = args.includes('--send-test');
 
