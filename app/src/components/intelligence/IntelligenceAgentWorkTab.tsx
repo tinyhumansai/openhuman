@@ -62,6 +62,27 @@ const BUCKET_LABEL_KEY: Record<AgentWorkBucket, string> = {
   stopped: 'intelligence.agentWork.bucket.stopped',
 };
 
+/** i18n key for each granular run status (mirrors Rust `AgentRunStatus`). */
+const STATUS_LABEL_KEY: Record<string, string> = {
+  pending: 'intelligence.agentWork.status.pending',
+  running: 'intelligence.agentWork.status.running',
+  awaiting_user: 'intelligence.agentWork.status.awaitingUser',
+  paused: 'intelligence.agentWork.status.paused',
+  completed: 'intelligence.agentWork.status.completed',
+  failed: 'intelligence.agentWork.status.failed',
+  cancelled: 'intelligence.agentWork.status.cancelled',
+  interrupted: 'intelligence.agentWork.status.interrupted',
+};
+
+/** i18n key for each run kind (mirrors Rust `AgentRunKind`). */
+const KIND_LABEL_KEY: Record<string, string> = {
+  subagent: 'intelligence.agentWork.kind.subagent',
+  worker_thread: 'intelligence.agentWork.kind.workerThread',
+  background_agent: 'intelligence.agentWork.kind.backgroundAgent',
+  team_member: 'intelligence.agentWork.kind.teamMember',
+  workflow_child: 'intelligence.agentWork.kind.workflowChild',
+};
+
 /** Format an elapsed millisecond span as a compact "1h 23m" / "45s" string. */
 export function formatElapsed(ms: number | undefined): string {
   if (ms === undefined || !Number.isFinite(ms) || ms < 0) return '—';
@@ -210,16 +231,19 @@ export default function IntelligenceAgentWorkTab() {
   );
 }
 
-function AgentWorkRowItem({
-  row,
-  onOpenThread,
-}: {
+interface AgentWorkRowItemProps {
   row: AgentWorkRow;
   onOpenThread: (threadId: string) => void;
-}) {
+}
+
+function AgentWorkRowItem({ row, onOpenThread }: AgentWorkRowItemProps) {
   const { t } = useT();
   const name = row.displayName || row.agentId || row.runId;
   const totalTokens = row.inputTokens + row.outputTokens;
+  // Localize the backend enum values, falling back to the raw value for any
+  // status/kind the UI doesn't yet have a key for.
+  const statusLabel = STATUS_LABEL_KEY[row.status] ? t(STATUS_LABEL_KEY[row.status]) : row.status;
+  const kindLabel = KIND_LABEL_KEY[row.kind] ? t(KIND_LABEL_KEY[row.kind]) : row.kind;
 
   return (
     <li className="p-3">
@@ -234,10 +258,10 @@ function AgentWorkRowItem({
             <span
               title={t('intelligence.agentWork.column.status')}
               className="rounded-md border border-stone-200 px-1.5 py-0.5 text-[10px] font-medium text-stone-500 dark:border-neutral-700 dark:text-neutral-400">
-              {row.status}
+              {statusLabel}
             </span>
             <span className="text-[10px] uppercase tracking-wide text-stone-400 dark:text-neutral-500">
-              {row.kind}
+              {kindLabel}
             </span>
           </div>
           {row.summary && (
