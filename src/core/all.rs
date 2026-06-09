@@ -299,6 +299,9 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     // Durable dynamic workflow runs — definitions + read surface over the run ledger
     controllers
         .extend(crate::openhuman::agent_orchestration::all_workflow_run_registered_controllers());
+    // Durable agent-team coordination — teams, members, dependency-aware task claiming, messaging
+    controllers
+        .extend(crate::openhuman::agent_orchestration::all_agent_team_registered_controllers());
     controllers
 }
 
@@ -429,6 +432,8 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::agent_orchestration::all_command_center_controller_schemas());
     // Durable dynamic workflow runs
     schemas.extend(crate::openhuman::agent_orchestration::all_workflow_run_controller_schemas());
+    // Durable agent-team coordination
+    schemas.extend(crate::openhuman::agent_orchestration::all_agent_team_controller_schemas());
     schemas
 }
 
@@ -517,6 +522,9 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         ),
         "workflow_run" => Some(
             "Durable dynamic workflow runs — declarative multi-agent definitions and the read surface over persisted runs.",
+        ),
+        "agent_team" => Some(
+            "Durable agent-team coordination: teams, members, dependency-aware task claiming, and teammate messaging.",
         ),
         "billing" => Some("Subscription plan, payment links, and credit top-up via the backend."),
         "team" => Some("Team member management, invites, and role changes via the backend."),

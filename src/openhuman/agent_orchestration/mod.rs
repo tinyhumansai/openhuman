@@ -5,6 +5,7 @@
 //! [`crate::openhuman::agent::harness`] module remains responsible for prompt
 //! construction, tool filtering, and the actual sub-agent run loop.
 
+pub mod agent_teams;
 pub mod command_center;
 mod ops;
 pub mod tools;
@@ -14,6 +15,7 @@ pub mod workflow_runs;
 #[cfg(test)]
 mod ops_tests;
 
+pub use agent_teams::{all_agent_team_controller_schemas, all_agent_team_registered_controllers};
 pub use command_center::{
     all_command_center_controller_schemas, all_command_center_registered_controllers,
 };
