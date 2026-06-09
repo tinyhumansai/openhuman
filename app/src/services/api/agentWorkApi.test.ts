@@ -61,6 +61,13 @@ describe('agentWorkApi', () => {
     });
   });
 
+  it('list rejects a non-positive or non-integer limit without calling core', async () => {
+    await expect(agentWorkApi.list(0)).rejects.toThrow('positive integer');
+    await expect(agentWorkApi.list(-5)).rejects.toThrow('positive integer');
+    await expect(agentWorkApi.list(1.5)).rejects.toThrow('positive integer');
+    expect(mockCall).not.toHaveBeenCalled();
+  });
+
   it('list returns the grouped response unchanged (wire is already camelCase)', async () => {
     mockCall.mockResolvedValueOnce(response());
     const result = await agentWorkApi.list();

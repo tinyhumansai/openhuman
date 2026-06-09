@@ -62,6 +62,9 @@ export const agentWorkApi = {
    *   applied server-side). Omit to use the handler default.
    */
   list: async (limit?: number): Promise<AgentWorkResponse> => {
+    if (limit !== undefined && (!Number.isInteger(limit) || limit <= 0)) {
+      throw new Error('agentWorkApi.list: limit must be a positive integer');
+    }
     log('list limit=%o', limit);
     const response = await callCoreRpc<AgentWorkResponse>({
       method: 'openhuman.agent_work_list',
