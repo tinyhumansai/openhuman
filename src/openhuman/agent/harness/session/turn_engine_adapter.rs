@@ -79,6 +79,9 @@ fn persisted_tool_calls(
                 id,
                 name: c.name.clone(),
                 arguments: c.arguments.to_string(),
+                // Prompt-parsed calls carry no provider extra_content; the
+                // native (Gemini) path returns early above, preserving it.
+                extra_content: None,
             }
         })
         .collect()
