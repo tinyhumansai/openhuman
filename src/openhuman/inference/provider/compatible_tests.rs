@@ -2196,6 +2196,36 @@ fn reasoning_alias_captured_in_stream_delta() {
     );
 }
 
+/// Regression for Sentry TAURI-RUST-A5N: a provider that emits BOTH `reasoning`
+/// and `reasoning_content` in the same message object must not fail with
+/// `duplicate field \`reasoning_content\``. Both keys deserialize and fold into
+/// the canonical field, which wins when both are present.
+#[test]
+fn reasoning_and_reasoning_content_both_present_does_not_error() {
+    let json = r#"{"choices":[{"message":{"content":null,"reasoning":"alias cot","reasoning_content":"canonical cot"}}]}"#;
+    let resp: ApiChatResponse = serde_json::from_str(json)
+        .expect("both reasoning keys must parse without a duplicate-field error");
+    assert_eq!(
+        resp.choices[0].message.reasoning_content.as_deref(),
+        Some("canonical cot"),
+        "canonical reasoning_content wins when both keys are present"
+    );
+}
+
+/// Same regression on the streaming delta path (TAURI-RUST-A5N also hits the
+/// native stream parser at `compatible_stream_native.rs`).
+#[test]
+fn reasoning_and_reasoning_content_both_present_in_stream_delta_does_not_error() {
+    let json = r#"{"choices":[{"delta":{"reasoning":"alias cot","reasoning_content":"canonical cot"},"finish_reason":null}]}"#;
+    let chunk: StreamChunkResponse = serde_json::from_str(json)
+        .expect("both reasoning keys must parse without a duplicate-field error");
+    assert_eq!(
+        chunk.choices[0].delta.reasoning_content.as_deref(),
+        Some("canonical cot"),
+        "canonical reasoning_content wins when both keys are present"
+    );
+}
+
 /// End-to-end: a tool-call turn whose reasoning arrived under the `reasoning`
 /// alias must still be surfaced by `parse_native_response` so the agent loop
 /// can replay it on the follow-up request (the issue #3094 failure path).
