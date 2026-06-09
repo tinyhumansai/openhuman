@@ -1223,11 +1223,22 @@ impl OpenAiCompatibleProvider {
     async fn lm_studio_loaded_context_window(&self, model: &str) -> Option<u64> {
         use crate::openhuman::inference::local::lm_studio;
         let url = lm_studio::lm_studio_native_models_url(&self.base_url);
-        let resp = self
+        let resp = match self
             .apply_auth_header(self.http_client().get(&url), self.credential.as_deref())
             .send()
             .await
-            .ok()?;
+        {
+            Ok(resp) => resp,
+            Err(err) => {
+                tracing::debug!(
+                    provider = %self.name,
+                    model,
+                    error = %err,
+                    "[lm-studio] native models probe transport error; using profile default context window"
+                );
+                return None;
+            }
+        };
         if !resp.status().is_success() {
             tracing::debug!(
                 provider = %self.name,
@@ -1236,7 +1247,18 @@ impl OpenAiCompatibleProvider {
             );
             return None;
         }
-        let parsed: lm_studio::LmStudioNativeModelsResponse = resp.json().await.ok()?;
+        let parsed: lm_studio::LmStudioNativeModelsResponse = match resp.json().await {
+            Ok(parsed) => parsed,
+            Err(err) => {
+                tracing::debug!(
+                    provider = %self.name,
+                    model,
+                    error = %err,
+                    "[lm-studio] native models probe parse error; using profile default context window"
+                );
+                return None;
+            }
+        };
         let window = lm_studio::lm_studio_context_window_for(&parsed, model);
         tracing::debug!(
             provider = %self.name,
