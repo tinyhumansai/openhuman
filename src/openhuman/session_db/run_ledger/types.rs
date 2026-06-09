@@ -272,10 +272,12 @@ pub struct WorkflowRunListRequest {
     pub status: Option<String>,
     #[serde(default)]
     pub parent_thread_id: Option<String>,
+    /// `u64` to match the `TypeSchema::U64` the controller advertises (the RPC
+    /// scalar-coercion layer only handles `U64`). Capped at 500 in `list_workflow_runs`.
     #[serde(default)]
-    pub limit: Option<u32>,
+    pub limit: Option<u64>,
     #[serde(default)]
-    pub offset: Option<u32>,
+    pub offset: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
