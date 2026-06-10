@@ -6,6 +6,7 @@ import IntelligenceAgentsTab from '../components/intelligence/IntelligenceAgents
 import IntelligenceAgentWorkTab from '../components/intelligence/IntelligenceAgentWorkTab';
 import IntelligenceSubconsciousTab from '../components/intelligence/IntelligenceSubconsciousTab';
 import IntelligenceTasksTab from '../components/intelligence/IntelligenceTasksTab';
+import IntelligenceTeamsTab from '../components/intelligence/IntelligenceTeamsTab';
 import MemorySection from '../components/intelligence/MemorySection';
 import ModelCouncilTab from '../components/intelligence/ModelCouncilTab';
 import { ToastContainer } from '../components/intelligence/Toast';
@@ -28,6 +29,7 @@ type IntelligenceTab =
   | 'subconscious'
   | 'tasks'
   | 'agent-work'
+  | 'teams'
   | 'agents'
   | 'workflows'
   | 'council';
@@ -37,6 +39,7 @@ const INTELLIGENCE_TABS: IntelligenceTab[] = [
   'subconscious',
   'tasks',
   'agent-work',
+  'teams',
   'agents',
   'workflows',
   'council',
@@ -146,6 +149,11 @@ export default function Intelligence() {
       label: t('memory.tab.agentWork'),
       description: t('memory.tab.agentWorkDescription'),
     },
+    {
+      id: 'teams',
+      label: t('memory.tab.teams'),
+      description: t('memory.tab.teamsDescription'),
+    },
     { id: 'memory', label: t('memory.tab.memory') },
     { id: 'subconscious', label: t('memory.tab.subconscious') },
     {
@@ -234,6 +242,8 @@ export default function Intelligence() {
             {activeTab === 'tasks' && <IntelligenceTasksTab />}
 
             {activeTab === 'agent-work' && <IntelligenceAgentWorkTab />}
+
+            {activeTab === 'teams' && <IntelligenceTeamsTab />}
 
             {activeTab === 'agents' && <IntelligenceAgentsTab />}
 
