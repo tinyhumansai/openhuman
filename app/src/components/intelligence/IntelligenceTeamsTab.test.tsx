@@ -81,6 +81,51 @@ describe('IntelligenceTeamsTab', () => {
     expect(screen.getByText(/core down/)).toBeInTheDocument();
   });
 
+  it('recovers from a load error via the retry button', async () => {
+    // First list rejects (error state), the retry succeeds. Counter-based impl
+    // (not mock*Once) keeps this independent of any implementation inherited
+    // from a prior test under the clearMocks-only config. Two teams on retry so
+    // the assertion lands on the stable list view (no auto-select detail race).
+    let calls = 0;
+    mockList.mockImplementation(() => {
+      calls += 1;
+      return calls === 1
+        ? Promise.reject(new Error('core down'))
+        : Promise.resolve([team('team-1', 'Alpha'), team('team-2', 'Beta')]);
+    });
+    render(<IntelligenceTeamsTab />);
+
+    await screen.findByText(/core down/);
+    fireEvent.click(screen.getByText('intelligence.teams.refresh'));
+    expect(await screen.findByText('Alpha')).toBeInTheDocument();
+    expect(screen.getByText('Beta')).toBeInTheDocument();
+  });
+
+  it('ignores a stale detail response after the selection changes', async () => {
+    const a = team('team-1', 'Team A');
+    const b = team('team-2', 'Team B');
+    mockList.mockResolvedValue([a, b]);
+
+    let resolveA: (v: TeamView) => void = () => {};
+    const slowA = new Promise<TeamView>(resolve => {
+      resolveA = resolve;
+    });
+    mockGet.mockImplementation((id: string) =>
+      id === 'team-1' ? slowA : Promise.resolve(view(b))
+    );
+
+    render(<IntelligenceTeamsTab />);
+    await screen.findByText('Team A'); // list view (no auto-select with >1 team)
+
+    fireEvent.click(screen.getByText('Team A')); // select A — detail fetch hangs
+    fireEvent.click(screen.getByText('Team B')); // switch to B before A resolves
+    await screen.findByText('Audit flow'); // B's detail rendered
+
+    resolveA(view(a)); // late A response must NOT overwrite B
+    await waitFor(() => expect(screen.getByText('Team B')).toBeInTheDocument());
+    expect(screen.queryByText('Team A')).not.toBeInTheDocument();
+  });
+
   it('auto-selects and renders the board when there is exactly one team', async () => {
     const t = team('team-1', 'Ship onboarding');
     mockList.mockResolvedValue([t]);

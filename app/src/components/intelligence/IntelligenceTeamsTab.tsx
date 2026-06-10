@@ -53,6 +53,14 @@ export default function IntelligenceTeamsTab() {
   // Mirrors `view` for reads inside the poll interval without making the poll
   // effect depend on `view` (which would rebuild the interval every tick).
   const viewRef = useRef<TeamView | null>(null);
+  // Mirrors `selectedId` so an in-flight `fetchDetail` can drop its result if
+  // the selection changed (or cleared) while it was awaiting — a slower
+  // detail fetch for an old team must not overwrite a newer selection.
+  const selectedIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    selectedIdRef.current = selectedId;
+  }, [selectedId]);
 
   const fetchTeams = useCallback(async () => {
     log('fetchTeams: entry');
@@ -83,7 +91,9 @@ export default function IntelligenceTeamsTab() {
       agentTeamApi.get(teamId),
       agentTeamApi.listMessages(teamId, MESSAGE_LIMIT),
     ]);
-    if (!mountedRef.current) return;
+    // Drop a stale response: unmounted, or the selection moved on while we
+    // were awaiting (guards the slow-fetch-overwrites-newer-team race).
+    if (!mountedRef.current || selectedIdRef.current !== teamId) return;
     setView(nextView);
     viewRef.current = nextView;
     setMessages(nextMessages);
@@ -151,8 +161,11 @@ export default function IntelligenceTeamsTab() {
 
   if (error) {
     return (
-      <div className="rounded-xl border border-coral-200 bg-coral-50 px-4 py-3 text-sm text-coral-700 dark:border-coral-500/30 dark:bg-coral-500/10 dark:text-coral-300">
-        {t('intelligence.teams.failedToLoad')}: {error}
+      <div className="space-y-3">
+        <div className="rounded-xl border border-coral-200 bg-coral-50 px-4 py-3 text-sm text-coral-700 dark:border-coral-500/30 dark:bg-coral-500/10 dark:text-coral-300">
+          {t('intelligence.teams.failedToLoad')}: {error}
+        </div>
+        <RefreshButton refreshing={refreshing} onClick={() => void refresh()} t={t} />
       </div>
     );
   }
