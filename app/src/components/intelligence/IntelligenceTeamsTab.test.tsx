@@ -71,6 +71,13 @@ describe('IntelligenceTeamsTab', () => {
     expect(screen.getByText('intelligence.teams.emptyHint')).toBeInTheDocument();
   });
 
+  it('requests active teams only (closed teams are not surfaced)', async () => {
+    mockList.mockResolvedValue([]);
+    render(<IntelligenceTeamsTab />);
+    await screen.findByText('intelligence.teams.empty');
+    expect(mockList).toHaveBeenCalledWith({ status: 'active' });
+  });
+
   it('surfaces a load error', async () => {
     mockList.mockRejectedValue(new Error('core down'));
     render(<IntelligenceTeamsTab />);

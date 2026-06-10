@@ -58,7 +58,10 @@ export default function IntelligenceTeamsTab() {
     log('fetchTeams: entry');
     setError(null);
     try {
-      const rows = await agentTeamApi.list();
+      // Active teams only — `agent_team_list` returns closed teams too, and a
+      // coordination board surfacing archived teams as primary entries is
+      // noise. Closed-team history is a separate (future) surface.
+      const rows = await agentTeamApi.list({ status: 'active' });
       if (!mountedRef.current) return;
       setTeams(rows);
       log('fetchTeams: done teams=%d', rows.length);
