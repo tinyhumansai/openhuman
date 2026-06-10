@@ -113,7 +113,12 @@ describe('TeamTaskBoard', () => {
   });
 
   it('places a task in the column matching its status', () => {
-    render(<TeamTaskBoard tasks={[task({ id: 't1', title: 'Blocked one', status: 'blocked' })]} members={members} />);
+    render(
+      <TeamTaskBoard
+        tasks={[task({ id: 't1', title: 'Blocked one', status: 'blocked' })]}
+        members={members}
+      />
+    );
     expect(screen.getByText('Blocked one')).toBeInTheDocument();
   });
 });

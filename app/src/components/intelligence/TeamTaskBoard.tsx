@@ -220,13 +220,7 @@ function TeamTaskCard({
   );
 }
 
-function GateBadge({
-  gateStatus,
-  gateReason,
-}: {
-  gateStatus: string;
-  gateReason?: string | null;
-}) {
+function GateBadge({ gateStatus, gateReason }: { gateStatus: string; gateReason?: string | null }) {
   const { t } = useT();
   // Defensive mapping: an unseen gate string must render as a neutral chip
   // showing its raw value, never crash or vanish.

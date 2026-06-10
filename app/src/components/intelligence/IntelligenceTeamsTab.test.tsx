@@ -1,11 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import {
-  type AgentTeam,
-  agentTeamApi,
-  type TeamView,
-} from '../../services/api/agentTeamApi';
+import { type AgentTeam, agentTeamApi, type TeamView } from '../../services/api/agentTeamApi';
 import IntelligenceTeamsTab from './IntelligenceTeamsTab';
 
 vi.mock('../../services/api/agentTeamApi', () => ({

@@ -46,6 +46,8 @@ describe('TeamActivityRail', () => {
 
   it('labels a broadcast (null recipient) as the team', () => {
     render(<TeamActivityRail messages={[message(1, 'm1', null, 'hi all')]} members={members} />);
-    expect(screen.getByText('intelligence.teams.activity.toTeam', { exact: false })).toBeInTheDocument();
+    expect(
+      screen.getByText('intelligence.teams.activity.toTeam', { exact: false })
+    ).toBeInTheDocument();
   });
 });

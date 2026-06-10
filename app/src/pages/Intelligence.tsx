@@ -149,11 +149,7 @@ export default function Intelligence() {
       label: t('memory.tab.agentWork'),
       description: t('memory.tab.agentWorkDescription'),
     },
-    {
-      id: 'teams',
-      label: t('memory.tab.teams'),
-      description: t('memory.tab.teamsDescription'),
-    },
+    { id: 'teams', label: t('memory.tab.teams'), description: t('memory.tab.teamsDescription') },
     { id: 'memory', label: t('memory.tab.memory') },
     { id: 'subconscious', label: t('memory.tab.subconscious') },
     {

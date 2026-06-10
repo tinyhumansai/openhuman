@@ -2963,7 +2963,8 @@ const messages: TranslationMap = {
   'intelligence.agentWork.kind.workflowChild': 'Дочерний элемент рабочего процесса',
   'intelligence.agentWork.openThread': 'Открыть тред',
   'intelligence.agentWork.openWorker': 'Открыть воркер',
-  'intelligence.teams.subtitle': 'Скоординированные команды агентов и задачи, которые они разделяют.',
+  'intelligence.teams.subtitle':
+    'Скоординированные команды агентов и задачи, которые они разделяют.',
   'intelligence.teams.loading': 'Загрузка команд…',
   'intelligence.teams.failedToLoad': 'Не удалось загрузить команды',
   'intelligence.teams.empty': 'Пока нет команд агентов',
