@@ -59,6 +59,15 @@ Tracking: progress for this batch is reported on issue #${spec.tracking_issue}.
 `;
 }
 
+/**
+ * Returns formatted help text for the agent-batch launch CLI.
+ *
+ * Describes the script's purpose, required arguments, and available options.
+ * The operator uses this tool to generate launch comments that are pasted
+ * into Cursor as agent prompts.
+ *
+ * @returns {string} Multi-line help text describing usage, arguments, and flags.
+ */
 function usage() {
   return [
     'Usage: node scripts/agent-batch/launch.mjs <spec.json> [options]',
