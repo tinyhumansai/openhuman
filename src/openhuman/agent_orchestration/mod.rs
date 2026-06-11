@@ -11,6 +11,7 @@ mod ops;
 pub mod tools;
 pub mod types;
 pub mod workflow_runs;
+pub mod worktree;
 
 #[cfg(test)]
 mod ops_tests;
@@ -28,3 +29,4 @@ pub use types::{
 pub use workflow_runs::{
     all_workflow_run_controller_schemas, all_workflow_run_registered_controllers,
 };
+pub use worktree::{BaseRef, WorktreeError, WorktreeStatus};
