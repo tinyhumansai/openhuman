@@ -1,11 +1,13 @@
 /**
  * Frontend client for the durable agent-team coordination surface (#3374).
  *
- * Wraps the read paths of the `openhuman.agent_team_*` controller family that
- * landed with the durable team ledger (PR1, #3546): `agent_team_list`,
- * `agent_team_get`, and `agent_team_list_messages`. PR2 is a READ-ONLY surface
- * — creating teams, assigning/claiming tasks and posting messages is the
- * agents' job (and a later PR), so only the three read methods live here.
+ * Wraps the `openhuman.agent_team_*` controller family from the durable team
+ * ledger (PR1, #3546): the read paths `agent_team_list`, `agent_team_get`, and
+ * `agent_team_list_messages`, plus two lifecycle writes added with quality-gated
+ * completion — `agent_team_complete_task` and `agent_team_shutdown_member`.
+ * Creating teams, assigning and claiming tasks, and posting messages stay the
+ * agents' job (driven over the same controllers from the run loop), so those
+ * write methods are deliberately absent here.
  *
  * The Rust controllers serialize their row types with
  * `#[serde(rename_all = "camelCase")]`, so the wire payload is already camelCase
@@ -84,6 +86,24 @@ export interface TeamView {
   team: AgentTeam;
   members: AgentTeamMember[];
   tasks: AgentTeamTask[];
+}
+
+/**
+ * Outcome of a completion attempt. Mirrors Rust `CompletionOutcome`, which is an
+ * internally-tagged enum on `kind`: `completed` flattens the resulting task onto
+ * the object; `gateFailed` carries the unmet-invariant reasons; the rest are
+ * bare tags.
+ */
+export type CompletionOutcome =
+  | ({ kind: 'completed' } & AgentTeamTask)
+  | { kind: 'gateFailed'; reasons: string[] }
+  | { kind: 'notClaimed' }
+  | { kind: 'unknownTask' };
+
+/** Result of stopping a member. Mirrors Rust `MemberShutdown`. */
+export interface MemberShutdown {
+  member: AgentTeamMember;
+  releasedTaskIds: string[];
 }
 
 /** Parsed payload of a `team_message` run event. Mirrors the Rust `json!` body. */
@@ -193,5 +213,49 @@ export const agentTeamApi = {
     }));
     log('listMessages received=%d', messages.length);
     return messages;
+  },
+
+  /**
+   * Complete a claimed task, gating its transition to `done`. The core checks
+   * the quality invariants (dependencies done, the completer is the claimant and
+   * any pre-assigned owner, evidence present when `requireEvidence`) and returns
+   * a {@link CompletionOutcome}: `completed`, `gateFailed` (with reasons),
+   * `notClaimed`, or `unknownTask`. Evidence links accumulate across retries.
+   */
+  completeTask: async (params: {
+    teamId: string;
+    taskId: string;
+    memberId: string;
+    evidence?: string[];
+    requireEvidence?: boolean;
+  }): Promise<CompletionOutcome> => {
+    const { teamId, taskId, memberId, evidence = [], requireEvidence = false } = params;
+    if (!teamId || !taskId || !memberId) {
+      throw new Error('agentTeamApi.completeTask: teamId, taskId and memberId are required');
+    }
+    log('completeTask teamId=%s taskId=%s requireEvidence=%o', teamId, taskId, requireEvidence);
+    const response = await callCoreRpc<{ result: CompletionOutcome }>({
+      method: 'openhuman.agent_team_complete_task',
+      params: { teamId, taskId, memberId, evidence, requireEvidence },
+    });
+    log('completeTask kind=%s', response.result.kind);
+    return response.result;
+  },
+
+  /**
+   * Stop a member and release any task it is actively working on back to `todo`.
+   * Returns the stopped member plus the ids that were released.
+   */
+  shutdownMember: async (teamId: string, memberId: string): Promise<MemberShutdown> => {
+    if (!teamId || !memberId) {
+      throw new Error('agentTeamApi.shutdownMember: teamId and memberId are required');
+    }
+    log('shutdownMember teamId=%s memberId=%s', teamId, memberId);
+    const response = await callCoreRpc<{ result: MemberShutdown }>({
+      method: 'openhuman.agent_team_shutdown_member',
+      params: { teamId, memberId },
+    });
+    log('shutdownMember released=%d', response.result.releasedTaskIds.length);
+    return response.result;
   },
 };

@@ -123,3 +123,78 @@ describe('agentTeamApi.listMessages', () => {
     });
   });
 });
+
+describe('agentTeamApi.completeTask', () => {
+  it('unwraps { result } and defaults evidence + requireEvidence', async () => {
+    mockCall.mockResolvedValueOnce({ result: { kind: 'completed', id: 'task-1', status: 'done' } });
+    const outcome = await agentTeamApi.completeTask({
+      teamId: 'team-1',
+      taskId: 'task-1',
+      memberId: 'm1',
+    });
+    expect(outcome.kind).toBe('completed');
+    expect(mockCall).toHaveBeenCalledWith({
+      method: 'openhuman.agent_team_complete_task',
+      params: {
+        teamId: 'team-1',
+        taskId: 'task-1',
+        memberId: 'm1',
+        evidence: [],
+        requireEvidence: false,
+      },
+    });
+  });
+
+  it('forwards evidence + requireEvidence and surfaces a gateFailed outcome', async () => {
+    mockCall.mockResolvedValueOnce({
+      result: { kind: 'gateFailed', reasons: ['completion requires at least one evidence link'] },
+    });
+    const outcome = await agentTeamApi.completeTask({
+      teamId: 'team-1',
+      taskId: 'task-1',
+      memberId: 'm1',
+      evidence: ['proof'],
+      requireEvidence: true,
+    });
+    expect(outcome).toEqual({
+      kind: 'gateFailed',
+      reasons: ['completion requires at least one evidence link'],
+    });
+    expect(mockCall).toHaveBeenCalledWith({
+      method: 'openhuman.agent_team_complete_task',
+      params: {
+        teamId: 'team-1',
+        taskId: 'task-1',
+        memberId: 'm1',
+        evidence: ['proof'],
+        requireEvidence: true,
+      },
+    });
+  });
+
+  it('throws when a required id is missing, without calling core', async () => {
+    await expect(
+      agentTeamApi.completeTask({ teamId: '', taskId: 't', memberId: 'm' })
+    ).rejects.toThrow('required');
+    expect(mockCall).not.toHaveBeenCalled();
+  });
+});
+
+describe('agentTeamApi.shutdownMember', () => {
+  it('unwraps { result } to the MemberShutdown', async () => {
+    const result = { member: { id: 'm1', memberStatus: 'stopped' }, releasedTaskIds: ['task-1'] };
+    mockCall.mockResolvedValueOnce({ result });
+    const outcome = await agentTeamApi.shutdownMember('team-1', 'm1');
+    expect(outcome).toBe(result);
+    expect(mockCall).toHaveBeenCalledWith({
+      method: 'openhuman.agent_team_shutdown_member',
+      params: { teamId: 'team-1', memberId: 'm1' },
+    });
+  });
+
+  it('throws when teamId or memberId is empty, without calling core', async () => {
+    await expect(agentTeamApi.shutdownMember('', 'm1')).rejects.toThrow('required');
+    await expect(agentTeamApi.shutdownMember('team-1', '')).rejects.toThrow('required');
+    expect(mockCall).not.toHaveBeenCalled();
+  });
+});
