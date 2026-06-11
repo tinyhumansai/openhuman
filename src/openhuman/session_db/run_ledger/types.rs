@@ -524,3 +524,24 @@ pub enum ClaimOutcome {
     /// No task matched the given team + task id.
     UnknownTask,
 }
+
+/// Outcome of a completion attempt on a team task.
+///
+/// Completion gates a task's transition to `done` behind quality invariants
+/// (dependencies done, claimer owns the task, evidence present when required).
+/// A failed gate leaves the task `in_progress` with `gate_status = "failed"`
+/// and the reasons recorded, so a teammate can fix and retry.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", tag = "kind")]
+pub enum CompletionOutcome {
+    /// The task passed its quality gate and is now `done`. Boxed to keep the
+    /// enum small (the task payload dwarfs the other variants).
+    Completed(Box<AgentTeamTask>),
+    /// One or more quality-gate invariants failed; carries human-readable
+    /// reasons for each unmet invariant.
+    GateFailed { reasons: Vec<String> },
+    /// The task is not claimed by the completing member, or is not in progress.
+    NotClaimed,
+    /// No task matched the given team + task id.
+    UnknownTask,
+}

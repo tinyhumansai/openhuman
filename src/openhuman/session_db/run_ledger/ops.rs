@@ -10,9 +10,9 @@ use super::types::{
     AgentRun, AgentRunListRequest, AgentRunListResponse, AgentRunStatus, AgentRunUpsert, AgentTeam,
     AgentTeamListRequest, AgentTeamListResponse, AgentTeamMember, AgentTeamMemberStatus,
     AgentTeamMemberUpsert, AgentTeamStatus, AgentTeamTask, AgentTeamTaskStatus,
-    AgentTeamTaskUpsert, AgentTeamUpsert, ClaimOutcome, RunEvent, RunEventAppend,
-    RunEventListRequest, RunEventListResponse, RunTelemetry, RunTelemetryUpsert, WorkflowRun,
-    WorkflowRunListRequest, WorkflowRunListResponse, WorkflowRunUpsert,
+    AgentTeamTaskUpsert, AgentTeamUpsert, ClaimOutcome, CompletionOutcome, RunEvent,
+    RunEventAppend, RunEventListRequest, RunEventListResponse, RunTelemetry, RunTelemetryUpsert,
+    WorkflowRun, WorkflowRunListRequest, WorkflowRunListResponse, WorkflowRunUpsert,
 };
 
 const LOG_PREFIX: &str = "[session_db:run_ledger]";
@@ -855,6 +855,230 @@ pub fn claim_agent_team_task(
         }
     );
     Ok(outcome)
+}
+
+/// Quality-gate a task's completion and, on pass, transition it to `done`.
+///
+/// Runs inside a single transaction so the gate evaluation and the status flip
+/// observe one consistent snapshot:
+/// 1. Resolve the task by `(id, team_id)`; absent → [`CompletionOutcome::UnknownTask`].
+/// 2. The completer must be the current claimant and the task must be
+///    `in_progress`; otherwise [`CompletionOutcome::NotClaimed`].
+/// 3. Evaluate the quality gate (every dependency `done`, claimant matches any
+///    pre-assigned owner, evidence present when `require_evidence`). Any unmet
+///    invariant records `gate_status = "failed"` + the joined reasons and leaves
+///    the task `in_progress` → [`CompletionOutcome::GateFailed`].
+/// 4. On pass, merge `evidence`, set `status = "done"`, `gate_status = "passed"`,
+///    clear `gate_reason`, re-fetch → [`CompletionOutcome::Completed`].
+pub fn complete_agent_team_task(
+    config: &Config,
+    team_id: &str,
+    task_id: &str,
+    member_id: &str,
+    evidence: &[String],
+    require_evidence: bool,
+) -> Result<CompletionOutcome> {
+    log::debug!(
+        "{LOG_PREFIX} complete_agent_team_task.entry team={team_id} task={task_id} member={member_id}"
+    );
+    let outcome = crate::openhuman::session_db::store::with_connection(config, |conn| {
+        init_run_ledger_schema(conn)?;
+
+        // 1. Resolve the task within this team.
+        let task = match get_agent_team_task_inner(conn, task_id)? {
+            Some(task) if task.team_id == team_id => task,
+            _ => {
+                log::debug!(
+                    "{LOG_PREFIX} complete_agent_team_task.unknown team={team_id} task={task_id}"
+                );
+                return Ok(CompletionOutcome::UnknownTask);
+            }
+        };
+
+        // 2. Only the current claimant may complete, and only while in progress.
+        let is_claimant = task.claimed_by_member_id.as_deref() == Some(member_id);
+        let in_progress = task.status == AgentTeamTaskStatus::InProgress;
+        if !is_claimant || !in_progress {
+            log::debug!(
+                "{LOG_PREFIX} complete_agent_team_task.not_claimed team={team_id} task={task_id} claimant={is_claimant} in_progress={in_progress}"
+            );
+            return Ok(CompletionOutcome::NotClaimed);
+        }
+
+        // Merge prior evidence with the newly-supplied links (de-duplicated,
+        // order-preserving) so a retry that adds evidence accumulates it.
+        let mut merged_evidence = task.evidence.clone();
+        for link in evidence {
+            if !merged_evidence.iter().any(|e| e == link) {
+                merged_evidence.push(link.clone());
+            }
+        }
+
+        // 3. Quality gate.
+        let reasons =
+            evaluate_completion_gate(conn, team_id, &task, &merged_evidence, require_evidence)?;
+        let now = Utc::now();
+        if !reasons.is_empty() {
+            let joined = reasons.join("; ");
+            conn.execute(
+                "UPDATE agent_team_tasks
+                 SET gate_status = 'failed', gate_reason = ?1, updated_at = ?2
+                 WHERE id = ?3 AND team_id = ?4",
+                params![joined, now.to_rfc3339(), task_id, team_id],
+            )
+            .context("record failed completion gate")?;
+            log::debug!(
+                "{LOG_PREFIX} complete_agent_team_task.gate_failed team={team_id} task={task_id} reasons={}",
+                reasons.len()
+            );
+            return Ok(CompletionOutcome::GateFailed { reasons });
+        }
+
+        // 4. Gate passed — flip to done. The claimant guard keeps a concurrent
+        // shutdown/unclaim from completing a task it no longer holds.
+        let evidence_json =
+            serde_json::to_string(&merged_evidence).context("serialize completion evidence")?;
+        let rows_affected = conn
+            .execute(
+                "UPDATE agent_team_tasks
+                 SET status = 'done', gate_status = 'passed', gate_reason = NULL,
+                     evidence_json = ?1, updated_at = ?2
+                 WHERE id = ?3 AND team_id = ?4 AND claimed_by_member_id = ?5",
+                params![evidence_json, now.to_rfc3339(), task_id, team_id, member_id],
+            )
+            .context("complete agent team task")?;
+        if rows_affected == 0 {
+            log::debug!(
+                "{LOG_PREFIX} complete_agent_team_task.lost_claim team={team_id} task={task_id}"
+            );
+            return Ok(CompletionOutcome::NotClaimed);
+        }
+
+        let done = get_agent_team_task_inner(conn, task_id)?
+            .context("completed task missing after update")?;
+        Ok(CompletionOutcome::Completed(Box::new(done)))
+    })?;
+    log::debug!(
+        "{LOG_PREFIX} complete_agent_team_task.exit team={team_id} task={task_id} outcome={}",
+        match &outcome {
+            CompletionOutcome::Completed(_) => "completed",
+            CompletionOutcome::GateFailed { .. } => "gate_failed",
+            CompletionOutcome::NotClaimed => "not_claimed",
+            CompletionOutcome::UnknownTask => "unknown",
+        }
+    );
+    Ok(outcome)
+}
+
+/// Evaluate the quality-gate invariants for a completing task. Returns one
+/// human-readable reason per unmet invariant (empty = gate passes).
+fn evaluate_completion_gate(
+    conn: &Connection,
+    team_id: &str,
+    task: &AgentTeamTask,
+    merged_evidence: &[String],
+    require_evidence: bool,
+) -> Result<Vec<String>> {
+    let mut reasons = Vec::new();
+
+    // Every dependency must still be `done` (defends against a dependency that
+    // regressed after this task was claimed).
+    for dep_id in &task.depends_on {
+        let dep_status: Option<String> = conn
+            .query_row(
+                "SELECT status FROM agent_team_tasks WHERE id = ?1 AND team_id = ?2",
+                params![dep_id, team_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if dep_status.as_deref() != Some(AgentTeamTaskStatus::Done.as_str()) {
+            reasons.push(format!("dependency {dep_id} is not done"));
+        }
+    }
+
+    // No overlapping ownership: a pre-assigned owner must be the one completing.
+    if let Some(owner) = &task.owner_member_id {
+        if Some(owner.as_str()) != task.claimed_by_member_id.as_deref() {
+            reasons.push(format!(
+                "task is owned by {owner} but claimed by {}",
+                task.claimed_by_member_id.as_deref().unwrap_or("nobody")
+            ));
+        }
+    }
+
+    // Evidence gate.
+    if require_evidence && merged_evidence.is_empty() {
+        reasons.push("completion requires at least one evidence link".to_string());
+    }
+
+    Ok(reasons)
+}
+
+/// Stop a team member and release any task it is actively working on.
+///
+/// In one transaction: unclaim the member's `in_progress` tasks back to `todo`
+/// (clearing claimant + token so another teammate can pick them up), then mark
+/// the member `stopped` and clear its `current_task_id`. Returns the updated
+/// member plus the ids of the tasks that were released, or `None` if the member
+/// is not part of the team.
+pub fn shutdown_agent_team_member(
+    config: &Config,
+    team_id: &str,
+    member_id: &str,
+) -> Result<Option<(AgentTeamMember, Vec<String>)>> {
+    log::debug!("{LOG_PREFIX} shutdown_agent_team_member.entry team={team_id} member={member_id}");
+    let result = crate::openhuman::session_db::store::with_connection(config, |conn| {
+        init_run_ledger_schema(conn)?;
+
+        match get_agent_team_member_inner(conn, member_id)? {
+            Some(member) if member.team_id == team_id => member,
+            _ => {
+                log::debug!(
+                    "{LOG_PREFIX} shutdown_agent_team_member.unknown team={team_id} member={member_id}"
+                );
+                return Ok(None);
+            }
+        };
+
+        // Collect the ids first so the caller can report exactly what was freed.
+        let released: Vec<String> = {
+            let mut stmt = conn.prepare(
+                "SELECT id FROM agent_team_tasks
+                 WHERE team_id = ?1 AND claimed_by_member_id = ?2 AND status = 'in_progress'",
+            )?;
+            let ids = stmt.query_map(params![team_id, member_id], |row| row.get::<_, String>(0))?;
+            let mut out = Vec::new();
+            for id in ids {
+                out.push(id?);
+            }
+            out
+        };
+
+        let now = Utc::now();
+        conn.execute(
+            "UPDATE agent_team_tasks
+             SET claimed_by_member_id = NULL, claim_token = NULL, status = 'todo', updated_at = ?1
+             WHERE team_id = ?2 AND claimed_by_member_id = ?3 AND status = 'in_progress'",
+            params![now.to_rfc3339(), team_id, member_id],
+        )
+        .context("release tasks on member shutdown")?;
+        conn.execute(
+            "UPDATE agent_team_members
+             SET member_status = 'stopped', current_task_id = NULL, updated_at = ?1
+             WHERE id = ?2 AND team_id = ?3",
+            params![now.to_rfc3339(), member_id, team_id],
+        )
+        .context("stop agent team member")?;
+
+        let member = get_agent_team_member_inner(conn, member_id)?
+            .context("member missing after shutdown")?;
+        Ok(Some((member, released)))
+    })?;
+    log::debug!(
+        "{LOG_PREFIX} shutdown_agent_team_member.exit team={team_id} member={member_id} released={}",
+        result.as_ref().map(|(_, r)| r.len()).unwrap_or(0)
+    );
+    Ok(result)
 }
 
 fn get_agent_team_inner(conn: &Connection, id: &str) -> Result<Option<AgentTeam>> {
