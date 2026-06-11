@@ -571,3 +571,26 @@ async fn ensure_reembed_backfill_enqueues_only_when_uncovered() {
         "re-call must dedupe to a single chain per signature"
     );
 }
+
+/// `cap_embed_text` must bound an over-budget body to `EMBED_SAFE_TOKENS` before
+/// it is batched for embedding, and pass small bodies through verbatim, so no
+/// single `embed_batch` input can exceed the embedder's input limit.
+#[test]
+fn cap_embed_text_bounds_oversized_input() {
+    use crate::openhuman::memory_store::chunks::types::conservative_token_estimate;
+
+    // Punctuation-dense body (~1 token/char) far over the embed budget.
+    let big = "x,".repeat(EMBED_SAFE_TOKENS as usize);
+    assert!(conservative_token_estimate(&big) > EMBED_SAFE_TOKENS);
+    let capped = cap_embed_text(&big);
+    assert!(capped.len() < big.len(), "oversized body must be truncated");
+    assert!(
+        conservative_token_estimate(capped) <= EMBED_SAFE_TOKENS,
+        "capped body must be within the embed budget",
+    );
+    assert!(big.starts_with(capped), "cap must return a leading prefix");
+
+    // A small body is returned unchanged.
+    let small = "hello world";
+    assert_eq!(cap_embed_text(small), small);
+}
