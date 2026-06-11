@@ -1,9 +1,10 @@
 //! Controller schemas + JSON-RPC dispatchers for durable agent-team
 //! coordination (#3374). Namespace `agent_team`.
 //!
-//! Surface (PR1): create a team with members, list/get teams, assign
-//! dependency-aware tasks, atomically claim a task, exchange teammate messages,
-//! list those messages, and close a team. Live agent execution is a follow-up.
+//! Surface: create a team with members, list/get teams, assign dependency-aware
+//! tasks, atomically claim a task, exchange + list teammate messages, complete a
+//! claimed task behind a quality gate, shut a member down (releasing its tasks),
+//! and close a team. Live agent execution is a follow-up.
 
 use serde_json::{Map, Value};
 
@@ -25,6 +26,8 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schema_for("agent_team_claim_task"),
         schema_for("agent_team_message_member"),
         schema_for("agent_team_list_messages"),
+        schema_for("agent_team_complete_task"),
+        schema_for("agent_team_shutdown_member"),
         schema_for("agent_team_close"),
     ]
 }
@@ -59,6 +62,14 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schema_for("agent_team_list_messages"),
             handler: handle_list_messages,
+        },
+        RegisteredController {
+            schema: schema_for("agent_team_complete_task"),
+            handler: handle_complete_task,
+        },
+        RegisteredController {
+            schema: schema_for("agent_team_shutdown_member"),
+            handler: handle_shutdown_member,
         },
         RegisteredController {
             schema: schema_for("agent_team_close"),
@@ -156,6 +167,45 @@ fn schema_for(function: &str) -> ControllerSchema {
                 optional_u64("limit", "Max messages to return."),
             ],
             outputs: vec![json_output("messages", "Array of message events.")],
+        },
+        "agent_team_complete_task" => ControllerSchema {
+            namespace: "agent_team",
+            function: "complete_task",
+            description:
+                "Complete a claimed task, gating its transition to done behind quality checks.",
+            inputs: vec![
+                required_str("teamId", "Team id."),
+                required_str("taskId", "Task id to complete."),
+                required_str(
+                    "memberId",
+                    "Member completing the task (must be the claimant).",
+                ),
+                json_input(
+                    "evidence",
+                    "Array of evidence links to attach on completion.",
+                ),
+                optional_bool(
+                    "requireEvidence",
+                    "Require at least one evidence link to pass the gate (default false).",
+                ),
+            ],
+            outputs: vec![json_output(
+                "result",
+                "CompletionOutcome: completed | gateFailed | notClaimed | unknownTask.",
+            )],
+        },
+        "agent_team_shutdown_member" => ControllerSchema {
+            namespace: "agent_team",
+            function: "shutdown_member",
+            description: "Stop a team member and release any task it is actively working on.",
+            inputs: vec![
+                required_str("teamId", "Team id."),
+                required_str("memberId", "Member id to stop."),
+            ],
+            outputs: vec![json_output(
+                "result",
+                "MemberShutdown: the stopped member and releasedTaskIds.",
+            )],
         },
         "agent_team_close" => ControllerSchema {
             namespace: "agent_team",
@@ -324,6 +374,52 @@ fn handle_list_messages(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+fn handle_complete_task(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let cid = new_correlation_id();
+        log::debug!(target: "agent_team_rpc", "[agent_team_rpc][{cid}] complete_task.entry");
+        let config = config_rpc::load_config_with_timeout().await.inspect_err(|err| {
+            log::warn!(target: "agent_team_rpc", "[agent_team_rpc][{cid}] complete_task.config_failed err={err}");
+        })?;
+        let team_id = require_str(&params, "teamId")?;
+        let task_id = require_str(&params, "taskId")?;
+        let member_id = require_str(&params, "memberId")?;
+        let evidence = opt_str_array(&params, "evidence");
+        let require_evidence = params
+            .get("requireEvidence")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        log::debug!(target: "agent_team_rpc", "[agent_team_rpc][{cid}] complete_task.parsed team={team_id} task={task_id} evidence={} requireEvidence={require_evidence}", evidence.len());
+        let outcome = ops::complete_task(
+            &config,
+            &team_id,
+            &task_id,
+            &member_id,
+            &evidence,
+            require_evidence,
+        )
+        .map_err(|e| log_err(&cid, "complete_task", e))?;
+        log::debug!(target: "agent_team_rpc", "[agent_team_rpc][{cid}] complete_task.success team={team_id} task={task_id}");
+        to_json(serde_json::json!({ "result": outcome }))
+    })
+}
+
+fn handle_shutdown_member(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let cid = new_correlation_id();
+        log::debug!(target: "agent_team_rpc", "[agent_team_rpc][{cid}] shutdown_member.entry");
+        let config = config_rpc::load_config_with_timeout().await.inspect_err(|err| {
+            log::warn!(target: "agent_team_rpc", "[agent_team_rpc][{cid}] shutdown_member.config_failed err={err}");
+        })?;
+        let team_id = require_str(&params, "teamId")?;
+        let member_id = require_str(&params, "memberId")?;
+        let result = ops::shutdown_member(&config, &team_id, &member_id)
+            .map_err(|e| log_err(&cid, "shutdown_member", e))?;
+        log::debug!(target: "agent_team_rpc", "[agent_team_rpc][{cid}] shutdown_member.success team={team_id} member={member_id} released={}", result.released_task_ids.len());
+        to_json(serde_json::json!({ "result": result }))
+    })
+}
+
 fn handle_close(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let cid = new_correlation_id();
@@ -438,6 +534,15 @@ fn optional_u64(name: &'static str, comment: &'static str) -> FieldSchema {
     }
 }
 
+fn optional_bool(name: &'static str, comment: &'static str) -> FieldSchema {
+    FieldSchema {
+        name,
+        ty: TypeSchema::Option(Box::new(TypeSchema::Bool)),
+        comment,
+        required: false,
+    }
+}
+
 fn json_input(name: &'static str, comment: &'static str) -> FieldSchema {
     FieldSchema {
         name,
@@ -465,8 +570,16 @@ mod tests {
         let schemas = all_controller_schemas();
         let registered = all_registered_controllers();
         assert_eq!(schemas.len(), registered.len());
-        assert_eq!(schemas.len(), 8);
+        assert_eq!(schemas.len(), 10);
         assert!(schemas.iter().all(|s| s.namespace == "agent_team"));
         assert_eq!(schema_for("agent_team_claim_task").function, "claim_task");
+        assert_eq!(
+            schema_for("agent_team_complete_task").function,
+            "complete_task"
+        );
+        assert_eq!(
+            schema_for("agent_team_shutdown_member").function,
+            "shutdown_member"
+        );
     }
 }
