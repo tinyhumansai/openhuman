@@ -162,6 +162,14 @@ struct EmbedRequest<'a> {
 #[derive(Serialize)]
 struct EmbedOptions {
     num_ctx: u32,
+    // Ollama/llama.cpp evaluates an embedding prompt in a SINGLE batch and
+    // rejects (HTTP 500 "input length exceeds the context length") any prompt
+    // longer than `n_batch` — whose default is 2048, far below `num_ctx`.
+    // Raising `num_ctx` alone does NOT lift this; `num_batch` must match, or
+    // chunks between ~2k and 8k real tokens fail to embed even though they fit
+    // the context window. Set equal to `num_ctx` so the batch limit never bites
+    // before the real context limit.
+    num_batch: u32,
 }
 
 #[derive(Deserialize)]
@@ -188,6 +196,7 @@ impl Embedder for OllamaEmbedder {
             prompt: text,
             options: EmbedOptions {
                 num_ctx: EMBED_NUM_CTX,
+                num_batch: EMBED_NUM_CTX,
             },
         };
         let resp = self
@@ -293,6 +302,7 @@ mod tests {
                     assert_eq!(body["model"], "bge-m3");
                     assert_eq!(body["prompt"], "hello world");
                     assert_eq!(body["options"]["num_ctx"], 8192);
+                    assert_eq!(body["options"]["num_batch"], 8192);
                     Json(serde_json::json!({ "embedding": v }))
                 }
             }),
