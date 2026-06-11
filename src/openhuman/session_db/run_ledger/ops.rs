@@ -934,8 +934,12 @@ pub fn complete_agent_team_task(
             return Ok(CompletionOutcome::GateFailed { reasons });
         }
 
-        // 4. Gate passed — flip to done. The claimant guard keeps a concurrent
-        // shutdown/unclaim from completing a task it no longer holds.
+        // 4. Gate passed — flip to done. The WHERE clause is the real CAS: the
+        // `claimed_by_member_id` guard stops a concurrent shutdown/unclaim from
+        // completing a task it no longer holds, and the `status = 'in_progress'`
+        // guard stops a concurrent double-complete by the same member (the
+        // snapshot check above is a read, not part of the swap — only one of two
+        // racing UPDATEs flips `in_progress -> done`).
         let evidence_json =
             serde_json::to_string(&merged_evidence).context("serialize completion evidence")?;
         let rows_affected = conn
@@ -943,7 +947,8 @@ pub fn complete_agent_team_task(
                 "UPDATE agent_team_tasks
                  SET status = 'done', gate_status = 'passed', gate_reason = NULL,
                      evidence_json = ?1, updated_at = ?2
-                 WHERE id = ?3 AND team_id = ?4 AND claimed_by_member_id = ?5",
+                 WHERE id = ?3 AND team_id = ?4 AND claimed_by_member_id = ?5
+                   AND status = 'in_progress'",
                 params![evidence_json, now.to_rfc3339(), task_id, team_id, member_id],
             )
             .context("complete agent team task")?;
@@ -1030,15 +1035,18 @@ pub fn shutdown_agent_team_member(
     let result = crate::openhuman::session_db::store::with_connection(config, |conn| {
         init_run_ledger_schema(conn)?;
 
+        // Existence + team-membership check only; the row is intentionally not
+        // reused — the caller-facing member is re-read after the UPDATEs below so
+        // it reflects the stopped state.
         match get_agent_team_member_inner(conn, member_id)? {
-            Some(member) if member.team_id == team_id => member,
+            Some(found) if found.team_id == team_id => {}
             _ => {
                 log::debug!(
                     "{LOG_PREFIX} shutdown_agent_team_member.unknown team={team_id} member={member_id}"
                 );
                 return Ok(None);
             }
-        };
+        }
 
         // Collect the ids first so the caller can report exactly what was freed.
         let released: Vec<String> = {

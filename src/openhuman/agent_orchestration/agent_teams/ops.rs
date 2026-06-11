@@ -669,6 +669,25 @@ mod tests {
     }
 
     #[test]
+    fn complete_task_is_not_double_completable() {
+        let dir = TempDir::new().unwrap();
+        let config = test_config(&dir);
+        let (team_id, alice) = solo_team(&config, "alice");
+
+        let task = assign_task(&config, &team_id, "ship it", None, None, &[]).unwrap();
+        claim_task(&config, &team_id, &task.id, &alice, "tok-1").unwrap();
+
+        let first = complete_task(&config, &team_id, &task.id, &alice, &[], false).unwrap();
+        assert!(matches!(first, CompletionOutcome::Completed(_)));
+
+        // A task that is already `done` is no longer in progress, so a second
+        // completion is rejected (the `status = 'in_progress'` UPDATE guard makes
+        // the CAS airtight even under a concurrent double-complete).
+        let second = complete_task(&config, &team_id, &task.id, &alice, &[], false).unwrap();
+        assert_eq!(second, CompletionOutcome::NotClaimed);
+    }
+
+    #[test]
     fn complete_task_rejects_non_claimant() {
         let dir = TempDir::new().unwrap();
         let config = test_config(&dir);
