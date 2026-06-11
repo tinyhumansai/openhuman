@@ -126,6 +126,27 @@ describe('IntelligenceTeamsTab', () => {
     expect(screen.queryByText('Team A')).not.toBeInTheDocument();
   });
 
+  it('recovers from a detail-fetch error via the retry button', async () => {
+    // Regression for the stuck-error bug: one team auto-selects, its detail
+    // fetch fails, then the retry succeeds. `refresh` must clear `error` first
+    // or the error branch short-circuits the render and the recovered board is
+    // never shown. Counter-based impl, not mock*Once (clearMocks-only config).
+    mockList.mockResolvedValue([team('team-1', 'Ship onboarding')]);
+    let calls = 0;
+    mockGet.mockImplementation(() => {
+      calls += 1;
+      return calls === 1
+        ? Promise.reject(new Error('detail timeout'))
+        : Promise.resolve(view(team('team-1', 'Ship onboarding')));
+    });
+    render(<IntelligenceTeamsTab />);
+
+    await screen.findByText(/detail timeout/);
+    fireEvent.click(screen.getByText('intelligence.teams.refresh'));
+    expect(await screen.findByText('Audit flow')).toBeInTheDocument();
+    expect(screen.queryByText(/detail timeout/)).not.toBeInTheDocument();
+  });
+
   it('auto-selects and renders the board when there is exactly one team', async () => {
     const t = team('team-1', 'Ship onboarding');
     mockList.mockResolvedValue([t]);

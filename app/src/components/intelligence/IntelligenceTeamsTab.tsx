@@ -139,6 +139,13 @@ export default function IntelligenceTeamsTab() {
   }, [selectedId, fetchDetail]);
 
   const refresh = useCallback(async () => {
+    // Clear any prior error before retrying. Without this a successful retry
+    // after a `fetchDetail` failure would refresh `view`/`messages` but leave
+    // `error` set, so the error-branch render short-circuits and the user is
+    // stuck on the banner forever. `fetchTeams` self-clears; `fetchDetail`
+    // deliberately doesn't (so silent polls don't wipe a visible error), so the
+    // clear belongs here on the explicit user-driven retry.
+    setError(null);
     setRefreshing(true);
     try {
       if (selectedId) await fetchDetail(selectedId);
