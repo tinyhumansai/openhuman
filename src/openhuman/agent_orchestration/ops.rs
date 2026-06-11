@@ -252,6 +252,31 @@ impl AgentOrchestrationSession {
         Ok(snapshot)
     }
 
+    /// Abort every in-flight child task and mark non-terminal children
+    /// [`AgentStatus::Cancelled`].
+    ///
+    /// Used by the workflow engine on stop/interrupt to drain a session's
+    /// running children without going through per-child `close_agent` calls.
+    /// Idempotent — children already terminal are left untouched. Wakes waiters
+    /// so any pending `wait_agents` resolves immediately.
+    pub async fn abort_all(&self) {
+        let mut state = self.state.lock().await;
+        let task_ids: Vec<String> = state.tasks.keys().cloned().collect();
+        for id in task_ids {
+            if let Some(task) = state.tasks.remove(&id) {
+                task.abort();
+            }
+        }
+        for record in state.agents.values_mut() {
+            if !record.snapshot.status.is_terminal() {
+                record.snapshot.status = AgentStatus::Cancelled;
+                record.snapshot.updated_at = now();
+            }
+        }
+        drop(state);
+        self.notify.notify_waiters();
+    }
+
     /// Spawn a linked follow-up child from an existing child record.
     ///
     /// `request.orchestration_id` identifies the previous child and
