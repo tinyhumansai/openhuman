@@ -3380,6 +3380,82 @@ async fn json_rpc_agent_team_coordination_roundtrip() {
         Some("claimed")
     );
 
+    // Complete B with no evidence but requireEvidence → quality gate fails.
+    let complete_b_blocked = post_json_rpc(
+        &rpc_base,
+        9360,
+        "openhuman.agent_team_complete_task",
+        json!({
+            "teamId": team_id,
+            "taskId": task_b_id,
+            "memberId": bob_id,
+            "evidence": [],
+            "requireEvidence": true
+        }),
+    )
+    .await;
+    let complete_b_blocked_outer =
+        assert_no_jsonrpc_error(&complete_b_blocked, "agent_team_complete_task B gate-fail");
+    assert_eq!(
+        complete_b_blocked_outer
+            .get("result")
+            .and_then(|r| r.get("kind"))
+            .and_then(serde_json::Value::as_str),
+        Some("gateFailed")
+    );
+
+    // Complete B again with evidence → passes the gate, task is now done.
+    let complete_b_ok = post_json_rpc(
+        &rpc_base,
+        9361,
+        "openhuman.agent_team_complete_task",
+        json!({
+            "teamId": team_id,
+            "taskId": task_b_id,
+            "memberId": bob_id,
+            "evidence": ["https://ci/run/42"],
+            "requireEvidence": true
+        }),
+    )
+    .await;
+    let complete_b_ok_outer =
+        assert_no_jsonrpc_error(&complete_b_ok, "agent_team_complete_task B done");
+    assert_eq!(
+        complete_b_ok_outer
+            .get("result")
+            .and_then(|r| r.get("kind"))
+            .and_then(serde_json::Value::as_str),
+        Some("completed")
+    );
+
+    // Shut alice down → member stopped (her task A is already done, so nothing
+    // is released back to the queue).
+    let shutdown_alice = post_json_rpc(
+        &rpc_base,
+        9362,
+        "openhuman.agent_team_shutdown_member",
+        json!({ "teamId": team_id, "memberId": alice_id }),
+    )
+    .await;
+    let shutdown_alice_outer =
+        assert_no_jsonrpc_error(&shutdown_alice, "agent_team_shutdown_member alice");
+    assert_eq!(
+        shutdown_alice_outer
+            .get("result")
+            .and_then(|r| r.get("member"))
+            .and_then(|m| m.get("memberStatus"))
+            .and_then(serde_json::Value::as_str),
+        Some("stopped")
+    );
+    assert_eq!(
+        shutdown_alice_outer
+            .get("result")
+            .and_then(|r| r.get("releasedTaskIds"))
+            .and_then(serde_json::Value::as_array)
+            .map(|ids| ids.len()),
+        Some(0)
+    );
+
     // Message bob from alice, then list messages.
     let message = post_json_rpc(
         &rpc_base,
