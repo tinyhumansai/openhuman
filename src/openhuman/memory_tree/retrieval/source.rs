@@ -154,26 +154,44 @@ fn collect_hits_and_nodes(
     // single batched lookup at the active signature, only for nodes the legacy
     // column left empty — so pre-cutover rows that still carry an in-row vector
     // are untouched.
+    let node_count = nodes.len();
     let unembedded: Vec<String> = nodes
         .iter()
         .filter(|(node, _)| node.embedding.is_none())
         .map(|(node, _)| node.id.clone())
         .collect();
     if !unembedded.is_empty() {
+        log::debug!(
+            "[retrieval::source] sidecar hydration: unembedded_count={} node_count={} source_kind={:?}",
+            unembedded.len(),
+            node_count,
+            source_kind.map(|k| k.as_str())
+        );
         match store::get_summary_embeddings_batch(config, &unembedded) {
             Ok(by_id) => {
+                let mut hydrated = 0usize;
                 for (node, _) in nodes.iter_mut() {
                     if node.embedding.is_none() {
                         if let Some(vec) = by_id.get(&node.id) {
                             node.embedding = Some(vec.clone());
+                            hydrated += 1;
                         }
                     }
                 }
+                log::debug!(
+                    "[retrieval::source] sidecar hydration done: hydrated_count={} missing_count={} unembedded_count={}",
+                    hydrated,
+                    unembedded.len() - hydrated,
+                    unembedded.len()
+                );
             }
             Err(e) => log::warn!(
                 "[retrieval::source] sidecar summary-embedding batch read failed \
-                 ({} ids): {e:#} — semantic rerank may degrade to recency",
-                unembedded.len()
+                 (unembedded_count={} node_count={} source_kind={:?}): {e:#} — \
+                 semantic rerank may degrade to recency",
+                unembedded.len(),
+                node_count,
+                source_kind.map(|k| k.as_str())
             ),
         }
     }
