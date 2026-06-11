@@ -91,6 +91,25 @@ export interface SubagentActivity {
    * tool sequence. Absent on legacy/test rows that predate streaming.
    */
   transcript?: SubagentTranscriptItem[];
+  /**
+   * Absolute path to this worker's isolated `git worktree` checkout, when it
+   * ran with `isolation = "worktree"` (#3376). `undefined` for non-isolated
+   * (read-only or shared-workspace) workers. Scaffold-only: the open/diff/
+   * remove action buttons that consume this land in a follow-up PR.
+   */
+  worktreePath?: string;
+  /**
+   * Files (relative to the worktree root) this worker changed, collected from
+   * `git status` after the run. Drives the future diff/overlap UI. Absent or
+   * empty for non-isolated workers and clean worktrees.
+   */
+  changedFiles?: string[];
+  /**
+   * `true` when the worker's worktree had uncommitted changes after the run.
+   * A dirty worktree must not be auto-removed — the cleanup UI will require an
+   * explicit user choice. `undefined` for non-isolated workers.
+   */
+  isDirty?: boolean;
 }
 
 /**
