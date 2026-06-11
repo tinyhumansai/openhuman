@@ -46,6 +46,85 @@ fn ownership_boundary_is_prepended_when_present() {
     assert!(prompt.contains("[Task]\nimplement tests"));
 }
 
+#[test]
+fn schema_advertises_isolation_and_base_ref() {
+    let tool = SpawnParallelAgentsTool::default();
+    let schema = tool.parameters_schema();
+    let props = &schema["properties"]["tasks"]["items"]["properties"];
+    assert_eq!(props["isolation"]["enum"][0], "none");
+    assert_eq!(props["isolation"]["enum"][1], "worktree");
+    assert_eq!(props["base_ref"]["enum"][0], "head");
+    assert_eq!(props["base_ref"]["enum"][1], "fresh");
+}
+
+#[test]
+fn task_deserializes_isolation_and_base_ref() {
+    let task: ParallelAgentTask = serde_json::from_value(json!({
+        "agent_id": "coder",
+        "prompt": "do it",
+        "isolation": "worktree",
+        "base_ref": "fresh"
+    }))
+    .expect("deserialize task");
+    assert_eq!(task.isolation.as_deref(), Some("worktree"));
+    assert_eq!(task.base_ref.as_deref(), Some("fresh"));
+}
+
+#[test]
+fn task_isolation_defaults_to_none() {
+    let task: ParallelAgentTask = serde_json::from_value(json!({
+        "agent_id": "researcher",
+        "prompt": "read it"
+    }))
+    .expect("deserialize task");
+    assert!(task.isolation.is_none());
+    assert!(task.base_ref.is_none());
+}
+
+#[test]
+fn result_omits_worktree_fields_when_absent() {
+    let result = ParallelAgentResult {
+        task_id: "t1".into(),
+        agent_id: "a".into(),
+        success: true,
+        output: Some("ok".into()),
+        error: None,
+        ownership: None,
+        elapsed_ms: 5,
+        iterations: 1,
+        stale_parent_reads: Vec::new(),
+        worktree_path: None,
+        changed_files: Vec::new(),
+        dirty_status: None,
+    };
+    let v = serde_json::to_value(&result).unwrap();
+    assert!(v.get("worktreePath").is_none());
+    assert!(v.get("changedFiles").is_none());
+    assert!(v.get("dirtyStatus").is_none());
+}
+
+#[test]
+fn result_serializes_worktree_fields_when_present() {
+    let result = ParallelAgentResult {
+        task_id: "t2".into(),
+        agent_id: "coder".into(),
+        success: true,
+        output: None,
+        error: None,
+        ownership: None,
+        elapsed_ms: 9,
+        iterations: 2,
+        stale_parent_reads: Vec::new(),
+        worktree_path: Some("/repo/.claude/worktrees/t2".into()),
+        changed_files: vec!["src/a.rs".into()],
+        dirty_status: Some(true),
+    };
+    let v = serde_json::to_value(&result).unwrap();
+    assert_eq!(v["worktreePath"], "/repo/.claude/worktrees/t2");
+    assert_eq!(v["changedFiles"][0], "src/a.rs");
+    assert_eq!(v["dirtyStatus"], true);
+}
+
 #[tokio::test]
 async fn rejects_single_task() {
     let tool = SpawnParallelAgentsTool::new();

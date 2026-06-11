@@ -439,6 +439,7 @@ impl AgentOrchestrationSession {
             worker_thread_id: None,
             initial_history: None,
             checkpoint_dir: None,
+            worktree_action_dir: None,
         };
 
         let task_session = self.clone();

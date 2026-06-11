@@ -102,17 +102,36 @@ pub async fn run_subagent(
 
         // Install the sub-agent's declared `sandbox_mode` as the active
         // task-local for every tool invocation inside this run.
+        //
+        // When the worker opted into git-worktree isolation, also install
+        // its isolated checkout path as the `action_dir` override so acting
+        // tools (shell, git) operate inside that worktree instead of the
+        // shared `Config.action_dir`. When `worktree_action_dir` is `None`
+        // (the default / non-isolated path), no override scope is entered and
+        // behaviour is unchanged.
+        let worktree_action_dir = options.worktree_action_dir.clone();
+        if let Some(ref wt_dir) = worktree_action_dir {
+            tracing::debug!(
+                agent_id = %definition.id,
+                task_id = %task_id,
+                worktree = %wt_dir.display(),
+                "[subagent_runner] installing worktree action_dir override"
+            );
+        }
         let mut outcome = with_spawn_depth(attempted_depth, async {
             with_file_state_agent_id(task_id.clone(), async {
                 with_current_sandbox_mode(definition.sandbox_mode, async {
-                    Box::pin(run_typed_mode(
-                        definition,
-                        task_prompt,
-                        &options,
-                        &parent,
-                        &task_id,
-                    ))
-                    .await
+                    let run = run_typed_mode(definition, task_prompt, &options, &parent, &task_id);
+                    match worktree_action_dir {
+                        Some(wt_dir) => {
+                            crate::openhuman::agent::harness::with_action_dir_override(
+                                wt_dir,
+                                Box::pin(run),
+                            )
+                            .await
+                        }
+                        None => Box::pin(run).await,
+                    }
                 })
                 .await
             })

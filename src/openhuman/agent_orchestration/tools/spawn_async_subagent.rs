@@ -244,6 +244,7 @@ impl Tool for SpawnAsyncSubagentTool {
                 worker_thread_id: background_worker_thread_id.clone(),
                 initial_history: None,
                 checkpoint_dir: None,
+                worktree_action_dir: None,
             };
 
             let result = with_parent_context(background_parent, async move {

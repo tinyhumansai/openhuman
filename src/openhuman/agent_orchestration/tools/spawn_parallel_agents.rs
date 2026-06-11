@@ -36,6 +36,19 @@ struct ParallelAgentTask {
     toolkit: Option<String>,
     #[serde(default)]
     ownership: Option<String>,
+    /// File-isolation strategy for this worker: `"none"` (default — share the
+    /// parent's `action_dir`) or `"worktree"` (run inside a dedicated
+    /// `git worktree` checkout). Read-only workers should stay `"none"`;
+    /// edit-capable workers opt into `"worktree"` explicitly. We never
+    /// auto-promote a worker to worktree isolation without this flag — the
+    /// approval UX for auto-isolation lands in a later PR.
+    #[serde(default)]
+    isolation: Option<String>,
+    /// When `isolation = "worktree"`, which ref the worktree branches from:
+    /// `"head"` (default — continue the parent's in-progress state) or
+    /// `"fresh"` (start from the repo's default branch).
+    #[serde(default)]
+    base_ref: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -54,6 +67,20 @@ struct ParallelAgentResult {
     iterations: u32,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     stale_parent_reads: Vec<String>,
+    /// Absolute path to the worker's isolated `git worktree` checkout, when
+    /// it ran with `isolation = "worktree"`. `None` for non-isolated workers.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    worktree_path: Option<String>,
+    /// Files (relative to the worktree root) the worker changed, collected
+    /// from `git status` after the run. Empty for non-isolated workers or a
+    /// clean worktree.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    changed_files: Vec<String>,
+    /// Whether the worker's worktree had uncommitted changes after the run.
+    /// A dirty worktree must not be auto-removed (surfaced to the UI so the
+    /// user can choose). `None` for non-isolated workers.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dirty_status: Option<bool>,
 }
 
 #[async_trait]
@@ -96,6 +123,16 @@ impl Tool for SpawnParallelAgentsTool {
                             "ownership": {
                                 "type": "string",
                                 "description": "Disjoint file/module/responsibility boundary for this worker."
+                            },
+                            "isolation": {
+                                "type": "string",
+                                "enum": ["none", "worktree"],
+                                "description": "File-isolation strategy. `none` (default) shares the workspace; `worktree` gives this edit-capable worker its own git worktree checkout so parallel edits never collide. Use `worktree` only for edit-capable coding workers, not read-only ones."
+                            },
+                            "base_ref": {
+                                "type": "string",
+                                "enum": ["head", "fresh"],
+                                "description": "For `isolation = worktree`: branch the worktree from current HEAD (`head`, default) or the repo's default branch (`fresh`)."
                             }
                         }
                     }
@@ -174,6 +211,16 @@ impl Tool for SpawnParallelAgentsTool {
         let mut immediate_results = Vec::new();
         let mut prepared = Vec::new();
 
+        // Resolve the agent sandbox root once — used as the repo root when a
+        // task opts into git-worktree isolation. This is `Config.action_dir`
+        // (the user's project repo the coding agent edits), NOT openhuman's
+        // own tree. Loaded lazily; only consulted for worktree-isolated tasks.
+        let action_root: Option<std::path::PathBuf> =
+            crate::openhuman::config::Config::load_or_init()
+                .await
+                .ok()
+                .map(|cfg| cfg.action_dir.clone());
+
         for task in tasks {
             let agent_id = task.agent_id.trim().to_string();
             let prompt = task.prompt.trim().to_string();
@@ -195,6 +242,9 @@ impl Tool for SpawnParallelAgentsTool {
                     elapsed_ms: 0,
                     iterations: 0,
                     stale_parent_reads: Vec::new(),
+                    worktree_path: None,
+                    changed_files: Vec::new(),
+                    dirty_status: None,
                 });
                 continue;
             }
@@ -216,6 +266,9 @@ impl Tool for SpawnParallelAgentsTool {
                     elapsed_ms: 0,
                     iterations: 0,
                     stale_parent_reads: Vec::new(),
+                    worktree_path: None,
+                    changed_files: Vec::new(),
+                    dirty_status: None,
                 });
                 continue;
             };
@@ -242,6 +295,9 @@ impl Tool for SpawnParallelAgentsTool {
                     elapsed_ms: 0,
                     iterations: 0,
                     stale_parent_reads: Vec::new(),
+                    worktree_path: None,
+                    changed_files: Vec::new(),
+                    dirty_status: None,
                 });
                 continue;
             }
@@ -269,6 +325,9 @@ impl Tool for SpawnParallelAgentsTool {
                     elapsed_ms: 0,
                     iterations: 0,
                     stale_parent_reads: Vec::new(),
+                    worktree_path: None,
+                    changed_files: Vec::new(),
+                    dirty_status: None,
                 });
                 continue;
             }
@@ -311,7 +370,88 @@ impl Tool for SpawnParallelAgentsTool {
                     );
                 }
             }
-            prepared.push((definition, prompt, task, task_id));
+            // ── Optional git-worktree isolation ────────────────────────────
+            // When the task requests `isolation = "worktree"`, create a
+            // dedicated worktree under the user's project repo and run this
+            // worker with its `action_dir` pointed there. On any failure we
+            // surface an immediate error result rather than silently falling
+            // back to the shared workspace (which is the exact collision this
+            // feature prevents).
+            let wants_worktree = task
+                .isolation
+                .as_deref()
+                .map(str::trim)
+                .map(|s| s.eq_ignore_ascii_case("worktree"))
+                .unwrap_or(false);
+            let worktree_path = if wants_worktree {
+                use crate::openhuman::agent_orchestration::worktree;
+                let base_ref = worktree::BaseRef::parse(task.base_ref.as_deref());
+                match action_root.as_ref() {
+                    Some(repo_root) => match worktree::create(repo_root, &task_id, base_ref) {
+                        Ok(status) => {
+                            tracing::debug!(
+                                parent_session = %parent_session,
+                                task_id = %task_id,
+                                worktree = %status.path.display(),
+                                base_ref = base_ref.as_str(),
+                                "[spawn_parallel_agents] created isolated worktree"
+                            );
+                            Some(status.path)
+                        }
+                        Err(err) => {
+                            tracing::warn!(
+                                parent_session = %parent_session,
+                                task_id = %task_id,
+                                error = %err,
+                                "[spawn_parallel_agents] worktree_create_failed"
+                            );
+                            immediate_results.push(ParallelAgentResult {
+                                task_id,
+                                agent_id: definition.id.clone(),
+                                success: false,
+                                output: None,
+                                error: Some(format!("worktree isolation failed: {err}")),
+                                ownership: task.ownership,
+                                elapsed_ms: 0,
+                                iterations: 0,
+                                stale_parent_reads: Vec::new(),
+                                worktree_path: None,
+                                changed_files: Vec::new(),
+                                dirty_status: None,
+                            });
+                            continue;
+                        }
+                    },
+                    None => {
+                        tracing::warn!(
+                            parent_session = %parent_session,
+                            task_id = %task_id,
+                            "[spawn_parallel_agents] worktree_requested_but_no_action_dir"
+                        );
+                        immediate_results.push(ParallelAgentResult {
+                            task_id,
+                            agent_id: definition.id.clone(),
+                            success: false,
+                            output: None,
+                            error: Some(
+                                "worktree isolation requested but action_dir is unavailable"
+                                    .to_string(),
+                            ),
+                            ownership: task.ownership,
+                            elapsed_ms: 0,
+                            iterations: 0,
+                            stale_parent_reads: Vec::new(),
+                            worktree_path: None,
+                            changed_files: Vec::new(),
+                            dirty_status: None,
+                        });
+                        continue;
+                    }
+                }
+            } else {
+                None
+            };
+            prepared.push((definition, prompt, task, task_id, worktree_path));
         }
         tracing::debug!(
             parent_session = %parent_session,
@@ -320,11 +460,23 @@ impl Tool for SpawnParallelAgentsTool {
             "[spawn_parallel_agents] prepared_tasks"
         );
 
-        let futures = prepared
-            .into_iter()
-            .map(|(definition, prompt, task, task_id)| async move {
-                run_one_parallel_task(definition, prompt, task, task_id).await
-            });
+        let futures =
+            prepared
+                .into_iter()
+                .map(|(definition, prompt, task, task_id, worktree_path)| {
+                    let repo_root = action_root.clone();
+                    async move {
+                        run_one_parallel_task(
+                            definition,
+                            prompt,
+                            task,
+                            task_id,
+                            worktree_path,
+                            repo_root,
+                        )
+                        .await
+                    }
+                });
         let mut results = immediate_results;
         for result in join_all(futures).await {
             match &result {
@@ -442,12 +594,49 @@ impl Tool for SpawnParallelAgentsTool {
             }
         }
 
+        // Cross-worker overlap detection: when two isolated workers changed
+        // the SAME file, surface a warning so the parent reconciles before
+        // synthesis/merge instead of silently clobbering. Keyed on the
+        // changed-file snapshot collected from each worker's worktree.
+        let per_worker: Vec<(String, Vec<std::path::PathBuf>)> = results
+            .iter()
+            .filter(|r| !r.changed_files.is_empty())
+            .map(|r| {
+                (
+                    r.task_id.clone(),
+                    r.changed_files
+                        .iter()
+                        .map(std::path::PathBuf::from)
+                        .collect(),
+                )
+            })
+            .collect();
+        let overlaps =
+            crate::openhuman::agent_orchestration::worktree::detect_overlaps(&per_worker);
+        let overlap_warnings: Vec<serde_json::Value> = overlaps
+            .iter()
+            .map(|(file, workers)| {
+                json!({
+                    "file": file.to_string_lossy(),
+                    "workers": workers,
+                })
+            })
+            .collect();
+        if !overlap_warnings.is_empty() {
+            tracing::warn!(
+                parent_session = %parent_session,
+                overlap_count = overlap_warnings.len(),
+                "[spawn_parallel_agents] detected overlapping changed files across workers"
+            );
+        }
+
         let failures = results.iter().filter(|r| !r.success).count();
         tracing::debug!(
             parent_session = %parent_session,
             total = results.len(),
             succeeded = results.len().saturating_sub(failures),
             failed = failures,
+            overlaps = overlap_warnings.len(),
             "[spawn_parallel_agents] execute exit"
         );
         Ok(ToolResult::success(
@@ -457,6 +646,7 @@ impl Tool for SpawnParallelAgentsTool {
                     "succeeded": results.len() - failures,
                     "failed": failures,
                     "results": results,
+                    "overlap_warnings": overlap_warnings,
                 }
             }))
             .unwrap_or_else(|_| "{}".to_string()),
@@ -469,6 +659,8 @@ async fn run_one_parallel_task(
     prompt: String,
     task: ParallelAgentTask,
     task_id: String,
+    worktree_path: Option<std::path::PathBuf>,
+    repo_root: Option<std::path::PathBuf>,
 ) -> ParallelAgentResult {
     let started = std::time::Instant::now();
     tracing::debug!(
@@ -477,6 +669,7 @@ async fn run_one_parallel_task(
         toolkit = task.toolkit.as_deref().unwrap_or(""),
         context_chars = task.context.as_ref().map(|s| s.chars().count()).unwrap_or(0),
         prompt_chars = prompt.chars().count(),
+        isolated = worktree_path.is_some(),
         "[spawn_parallel_agents] task_start"
     );
     let options = SubagentRunOptions {
@@ -488,8 +681,51 @@ async fn run_one_parallel_task(
         worker_thread_id: None,
         initial_history: None,
         checkpoint_dir: None,
+        worktree_action_dir: worktree_path.clone(),
     };
-    match run_subagent(&definition, &prompt, options).await {
+    let run_result = run_subagent(&definition, &prompt, options).await;
+
+    // After the worker finishes, snapshot the worktree's changed files +
+    // dirty status so the parent can detect cross-worker overlaps and the UI
+    // can surface diff/cleanup actions. Best-effort: a status error degrades
+    // to "no changes recorded" rather than failing the task.
+    let worktree_str = worktree_path
+        .as_ref()
+        .map(|p| p.to_string_lossy().to_string());
+    let (changed_files, dirty_status) = match (&worktree_path, &repo_root) {
+        (Some(wt), Some(root)) => {
+            use crate::openhuman::agent_orchestration::worktree;
+            match worktree::status(root, wt) {
+                Ok(st) => {
+                    tracing::debug!(
+                        task_id = %task_id,
+                        worktree = %wt.display(),
+                        is_dirty = st.is_dirty,
+                        changed = st.changed_files.len(),
+                        "[spawn_parallel_agents] worktree_post_run_status"
+                    );
+                    let files = st
+                        .changed_files
+                        .iter()
+                        .map(|p| p.to_string_lossy().to_string())
+                        .collect();
+                    (files, Some(st.is_dirty))
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        task_id = %task_id,
+                        worktree = %wt.display(),
+                        error = %err,
+                        "[spawn_parallel_agents] worktree_status_failed"
+                    );
+                    (Vec::new(), None)
+                }
+            }
+        }
+        _ => (Vec::new(), None),
+    };
+
+    match run_result {
         Ok(outcome) => {
             tracing::debug!(
                 task_id = %outcome.task_id,
@@ -509,6 +745,9 @@ async fn run_one_parallel_task(
                 elapsed_ms: outcome.elapsed.as_millis() as u64,
                 iterations: outcome.iterations as u32,
                 stale_parent_reads: Vec::new(),
+                worktree_path: worktree_str,
+                changed_files,
+                dirty_status,
             }
         }
         Err(err) => {
@@ -529,6 +768,9 @@ async fn run_one_parallel_task(
                 elapsed_ms: started.elapsed().as_millis() as u64,
                 iterations: 0,
                 stale_parent_reads: Vec::new(),
+                worktree_path: worktree_str,
+                changed_files,
+                dirty_status,
             }
         }
     }

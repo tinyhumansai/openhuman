@@ -479,6 +479,7 @@ async fn typed_mode_returns_text_through_runner() {
                 worker_thread_id: None,
                 initial_history: None,
                 checkpoint_dir: None,
+                worktree_action_dir: None,
             },
         )
         .await
@@ -590,6 +591,7 @@ async fn typed_mode_filters_tools_by_skill_filter() {
                 worker_thread_id: None,
                 initial_history: None,
                 checkpoint_dir: None,
+                worktree_action_dir: None,
             },
         )
         .await
