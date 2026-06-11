@@ -18,6 +18,15 @@ pub struct TeamView {
     pub tasks: Vec<AgentTeamTask>,
 }
 
+/// Result of shutting a member down: the stopped member plus the ids of any
+/// `in_progress` tasks that were released back to `todo` for another teammate.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemberShutdown {
+    pub member: AgentTeamMember,
+    pub released_task_ids: Vec<String>,
+}
+
 /// A validation / coordination problem surfaced by the agent-team ops.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase", tag = "kind", content = "detail")]

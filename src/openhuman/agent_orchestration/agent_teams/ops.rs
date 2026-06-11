@@ -17,11 +17,11 @@ use crate::openhuman::config::Config;
 use crate::openhuman::session_db::run_ledger::{
     self, AgentTeam, AgentTeamListRequest, AgentTeamListResponse, AgentTeamMemberStatus,
     AgentTeamMemberUpsert, AgentTeamStatus, AgentTeamTask, AgentTeamTaskStatus,
-    AgentTeamTaskUpsert, AgentTeamUpsert, ClaimOutcome, RunEvent, RunEventAppend,
-    RunEventListRequest,
+    AgentTeamTaskUpsert, AgentTeamUpsert, ClaimOutcome, CompletionOutcome, RunEvent,
+    RunEventAppend, RunEventListRequest,
 };
 
-use super::types::{TeamError, TeamView};
+use super::types::{MemberShutdown, TeamError, TeamView};
 
 const LOG_PREFIX: &str = "[agent_team]";
 const TEAM_MESSAGE_EVENT: &str = "team_message";
@@ -287,6 +287,63 @@ pub fn close_team(config: &Config, team_id: &str, summary: Option<&str>) -> Resu
     Ok(team)
 }
 
+/// Complete a claimed task, gating its transition to `done`.
+///
+/// Validates the completing member belongs to the team, then delegates to the
+/// run-ledger completion CAS, which enforces the quality gate (dependencies
+/// done, claimant owns the task, evidence present when `require_evidence`) and
+/// only flips the task to `done` when every invariant holds.
+pub fn complete_task(
+    config: &Config,
+    team_id: &str,
+    task_id: &str,
+    member_id: &str,
+    evidence: &[String],
+    require_evidence: bool,
+) -> Result<CompletionOutcome> {
+    log::debug!(
+        "{LOG_PREFIX} complete_task.entry team={team_id} task={task_id} member={member_id}"
+    );
+    let members = run_ledger::list_agent_team_members(config, team_id)?;
+    if !members.iter().any(|m| m.id == member_id) {
+        return Err(anyhow!(TeamError::UnknownMember {
+            member_id: member_id.to_string(),
+        }));
+    }
+    let outcome = run_ledger::complete_agent_team_task(
+        config,
+        team_id,
+        task_id,
+        member_id,
+        evidence,
+        require_evidence,
+    )?;
+    log::debug!("{LOG_PREFIX} complete_task.exit team={team_id} task={task_id}");
+    Ok(outcome)
+}
+
+/// Stop a team member, releasing any task it was actively working on.
+///
+/// Unknown member ids surface as [`TeamError::UnknownMember`]; otherwise returns
+/// the stopped member plus the ids of tasks released back to `todo`.
+pub fn shutdown_member(config: &Config, team_id: &str, member_id: &str) -> Result<MemberShutdown> {
+    log::debug!("{LOG_PREFIX} shutdown_member.entry team={team_id} member={member_id}");
+    let (member, released_task_ids) =
+        run_ledger::shutdown_agent_team_member(config, team_id, member_id)?.ok_or_else(|| {
+            anyhow!(TeamError::UnknownMember {
+                member_id: member_id.to_string(),
+            })
+        })?;
+    log::debug!(
+        "{LOG_PREFIX} shutdown_member.exit team={team_id} member={member_id} released={}",
+        released_task_ids.len()
+    );
+    Ok(MemberShutdown {
+        member,
+        released_task_ids,
+    })
+}
+
 fn team_view(config: &Config, team_id: &str) -> Result<TeamView> {
     let team = run_ledger::get_agent_team(config, team_id)?
         .ok_or_else(|| anyhow!("team missing after creation: {team_id}"))?;
@@ -523,5 +580,211 @@ mod tests {
         assert_eq!(messages[1].sequence, 2);
         assert_eq!(messages[0].payload["content"], "first");
         assert_eq!(messages[1].payload["content"], "second");
+    }
+
+    /// Create a single-member team and return `(team_id, member_id)`.
+    fn solo_team(config: &Config, name: &str) -> (String, String) {
+        let view = create_team(
+            config,
+            "lead",
+            None,
+            None,
+            &[NewMember {
+                name: name.into(),
+                agent_id: None,
+            }],
+        )
+        .unwrap();
+        let member_id = view.members[0].id.clone();
+        (view.team.id, member_id)
+    }
+
+    #[test]
+    fn complete_task_gate_passes_and_marks_done() {
+        let dir = TempDir::new().unwrap();
+        let config = test_config(&dir);
+        let (team_id, alice) = solo_team(&config, "alice");
+
+        let task = assign_task(&config, &team_id, "ship it", None, None, &[]).unwrap();
+        let claim = claim_task(&config, &team_id, &task.id, &alice, "tok-1").unwrap();
+        assert!(matches!(claim, ClaimOutcome::Claimed(_)));
+
+        let outcome = complete_task(
+            &config,
+            &team_id,
+            &task.id,
+            &alice,
+            &["https://ci/run/1".to_string()],
+            true,
+        )
+        .unwrap();
+        match outcome {
+            CompletionOutcome::Completed(done) => {
+                assert_eq!(done.status, AgentTeamTaskStatus::Done);
+                assert_eq!(done.gate_status, "passed");
+                assert_eq!(done.gate_reason, None);
+                assert_eq!(done.evidence, vec!["https://ci/run/1".to_string()]);
+            }
+            other => panic!("expected Completed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn complete_task_requires_evidence_then_recovers() {
+        let dir = TempDir::new().unwrap();
+        let config = test_config(&dir);
+        let (team_id, alice) = solo_team(&config, "alice");
+
+        let task = assign_task(&config, &team_id, "ship it", None, None, &[]).unwrap();
+        claim_task(&config, &team_id, &task.id, &alice, "tok-1").unwrap();
+
+        // No evidence + require_evidence → gate fails, task stays in progress.
+        let failed = complete_task(&config, &team_id, &task.id, &alice, &[], true).unwrap();
+        match failed {
+            CompletionOutcome::GateFailed { reasons } => {
+                assert!(
+                    reasons.iter().any(|r| r.contains("evidence")),
+                    "{reasons:?}"
+                );
+            }
+            other => panic!("expected GateFailed, got {other:?}"),
+        }
+        let mid = run_ledger::get_agent_team_task(&config, &task.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(mid.status, AgentTeamTaskStatus::InProgress);
+        assert_eq!(mid.gate_status, "failed");
+
+        // Retry with evidence → passes.
+        let ok = complete_task(
+            &config,
+            &team_id,
+            &task.id,
+            &alice,
+            &["proof".to_string()],
+            true,
+        )
+        .unwrap();
+        assert!(matches!(ok, CompletionOutcome::Completed(_)));
+    }
+
+    #[test]
+    fn complete_task_rejects_non_claimant() {
+        let dir = TempDir::new().unwrap();
+        let config = test_config(&dir);
+        let view = create_team(
+            &config,
+            "lead",
+            None,
+            None,
+            &[
+                NewMember {
+                    name: "alice".into(),
+                    agent_id: None,
+                },
+                NewMember {
+                    name: "bob".into(),
+                    agent_id: None,
+                },
+            ],
+        )
+        .unwrap();
+        let team_id = view.team.id.clone();
+        let alice = view.members[0].id.clone();
+        let bob = view.members[1].id.clone();
+
+        let task = assign_task(&config, &team_id, "ship it", None, None, &[]).unwrap();
+        claim_task(&config, &team_id, &task.id, &alice, "tok-1").unwrap();
+
+        // Bob is a member but not the claimant → NotClaimed.
+        let outcome = complete_task(&config, &team_id, &task.id, &bob, &[], false).unwrap();
+        assert_eq!(outcome, CompletionOutcome::NotClaimed);
+
+        // Unknown member → typed error (not an outcome).
+        let err = complete_task(&config, &team_id, &task.id, "ghost", &[], false).unwrap_err();
+        assert_eq!(
+            team_err(err),
+            TeamError::UnknownMember {
+                member_id: "ghost".into()
+            }
+        );
+    }
+
+    #[test]
+    fn complete_task_owner_mismatch_fails_gate() {
+        let dir = TempDir::new().unwrap();
+        let config = test_config(&dir);
+        let view = create_team(
+            &config,
+            "lead",
+            None,
+            None,
+            &[
+                NewMember {
+                    name: "alice".into(),
+                    agent_id: None,
+                },
+                NewMember {
+                    name: "bob".into(),
+                    agent_id: None,
+                },
+            ],
+        )
+        .unwrap();
+        let team_id = view.team.id.clone();
+        let alice = view.members[0].id.clone();
+        let bob = view.members[1].id.clone();
+
+        // Task owned by bob, but alice claims + tries to complete.
+        let task = assign_task(&config, &team_id, "ship it", None, Some(&bob), &[]).unwrap();
+        claim_task(&config, &team_id, &task.id, &alice, "tok-1").unwrap();
+
+        let outcome = complete_task(&config, &team_id, &task.id, &alice, &[], false).unwrap();
+        match outcome {
+            CompletionOutcome::GateFailed { reasons } => {
+                assert!(
+                    reasons.iter().any(|r| r.contains("owned by")),
+                    "{reasons:?}"
+                );
+            }
+            other => panic!("expected GateFailed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn shutdown_member_releases_in_progress_tasks() {
+        let dir = TempDir::new().unwrap();
+        let config = test_config(&dir);
+        let (team_id, alice) = solo_team(&config, "alice");
+
+        let task = assign_task(&config, &team_id, "ship it", None, None, &[]).unwrap();
+        claim_task(&config, &team_id, &task.id, &alice, "tok-1").unwrap();
+
+        let result = shutdown_member(&config, &team_id, &alice).unwrap();
+        assert_eq!(result.released_task_ids, vec![task.id.clone()]);
+        assert_eq!(result.member.member_status, AgentTeamMemberStatus::Stopped);
+
+        // Task is back to todo and unclaimed → another teammate could claim it.
+        let released = run_ledger::get_agent_team_task(&config, &task.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(released.status, AgentTeamTaskStatus::Todo);
+        assert_eq!(released.claimed_by_member_id, None);
+        assert_eq!(released.claim_token, None);
+    }
+
+    #[test]
+    fn shutdown_member_unknown_errors() {
+        let dir = TempDir::new().unwrap();
+        let config = test_config(&dir);
+        let (team_id, _alice) = solo_team(&config, "alice");
+
+        let err = shutdown_member(&config, &team_id, "ghost").unwrap_err();
+        assert_eq!(
+            team_err(err),
+            TeamError::UnknownMember {
+                member_id: "ghost".into()
+            }
+        );
     }
 }

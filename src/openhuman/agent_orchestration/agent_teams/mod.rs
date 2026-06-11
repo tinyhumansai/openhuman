@@ -8,11 +8,13 @@
 //! never in the main chat context — so a coordination session can be listed,
 //! inspected, and resumed.
 //!
-//! PR1 scope (this module today): the durable model + 8 read/write controllers
+//! Scope (this module today): the durable model + 10 read/write controllers
 //! (`create`, `list`, `get`, `assign_task`, `claim_task`, `message_member`,
-//! `list_messages`, `close`), the atomic compare-and-swap claim primitive, and
-//! dependency validation (self / unknown / cycle). Live agent execution
-//! (spawning workers, driving the run loop) and the UI are follow-up PRs.
+//! `list_messages`, `complete_task`, `shutdown_member`, `close`), the atomic
+//! compare-and-swap claim primitive, dependency validation (self / unknown /
+//! cycle), and quality-gated task completion (dependencies done, claimant owns
+//! the task, evidence present when required). Live agent execution (spawning
+//! workers, driving the run loop) and the message-send UI are a follow-up PR.
 //!
 //! Namespace note: `agent_team` is distinct from the existing `team` domain,
 //! which manages backend org/team membership.
@@ -22,11 +24,11 @@ mod schemas;
 pub mod types;
 
 pub use ops::{
-    assign_task, claim_task, close_team, create_team, get_team, list_messages, list_teams,
-    message_member, NewMember,
+    assign_task, claim_task, close_team, complete_task, create_team, get_team, list_messages,
+    list_teams, message_member, shutdown_member, NewMember,
 };
 pub use schemas::{
     all_controller_schemas as all_agent_team_controller_schemas,
     all_registered_controllers as all_agent_team_registered_controllers,
 };
-pub use types::{TeamError, TeamView};
+pub use types::{MemberShutdown, TeamError, TeamView};
