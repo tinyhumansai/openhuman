@@ -181,6 +181,7 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 | 4.2.1 | User Message Handling  | WD+RI | `conversations-web-channel-flow.spec.ts`, `tests/json_rpc_e2e.rs` | ✅     |                             |
 | 4.2.2 | AI Response Generation | WD    | `agent-review.spec.ts`                                            | ✅     | Mock LLM                    |
 | 4.2.3 | Streaming Responses    | RI    | `tests/json_rpc_e2e.rs`                                           | 🟡     | UI streaming assertion thin |
+| 4.2.4 | Parallel inference (cross-thread + within-thread forked turns) | RU+VU | `src/openhuman/channels/providers/web_tests.rs`, `app/src/store/__tests__/chatRuntimeSlice.test.ts`, `app/src/providers/__tests__/ChatRuntimeProvider.test.tsx` | 🟡 | Concurrent same-/cross-thread dispatch, cooperative `CancellationToken` teardown, and parallel-lane stream routing covered; dedicated WD E2E is a follow-up |
 
 ### 4.3 Tool Invocation
 

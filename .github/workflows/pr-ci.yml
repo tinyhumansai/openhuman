@@ -490,10 +490,12 @@ jobs:
       fail-fast: false
       matrix:
         shard: [1, 2, 3, 4]
-    # TODO(ci-flaky): the web lane currently times out on ~7 specs under CI
-    # contention (accounts-provider-modal, connector-gmail-composio, gmail-flow,
-    # harness-cron-prompt-flow, insights-dashboard, skills-registry). Run it but
-    # don't block the merge until those flakes are fixed — remove this then.
+    # TODO(ci-flaky, #3615): shard 1/4 consistently hits toBeVisible timeouts
+    # under CI resource contention — chat-tool-error-recovery, connector-gmail-
+    # composio, connector-session-guard-matrix, chat-harness-send-stream,
+    # chat-management-functional and ~7 others. Shards 2-4 pass reliably.
+    # Playwright config bumped to 90s test / 15s expect timeout + 2 retries.
+    # Run the lane but don't block merges until infra stabilises.
     continue-on-error: true
     steps:
       - name: Checkout code

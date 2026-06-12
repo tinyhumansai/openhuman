@@ -20,17 +20,19 @@ describe('[#1123] Conversations — unlocked flow (welcome-lock removed)', () =>
     // The welcome-lock previously would have been active here
     // (chatOnboardingCompleted=false → welcomeLocked=true → composer blocked).
     // After #1123 there is no welcomeLocked state, so the composer is unblocked.
-    expect(isComposerInteractionBlocked({ activeThreadId: null, rustChat: true })).toBe(false);
-  });
-
-  it('still blocks when an agent thread is actively running (not a welcome-lock concern)', () => {
-    expect(isComposerInteractionBlocked({ activeThreadId: 'thread-xyz', rustChat: true })).toBe(
-      true
+    expect(isComposerInteractionBlocked({ selectedThreadActive: false, rustChat: true })).toBe(
+      false
     );
   });
 
+  it('still blocks when an agent thread is actively running (not a welcome-lock concern)', () => {
+    expect(isComposerInteractionBlocked({ selectedThreadActive: true, rustChat: true })).toBe(true);
+  });
+
   it('blocks when rust chat transport is unavailable', () => {
-    expect(isComposerInteractionBlocked({ activeThreadId: null, rustChat: false })).toBe(true);
+    expect(isComposerInteractionBlocked({ selectedThreadActive: false, rustChat: false })).toBe(
+      true
+    );
   });
 
   it('resolves thread display title to thread title (no "Onboarding" override)', () => {
@@ -43,6 +45,8 @@ describe('[#1123] Conversations — unlocked flow (welcome-lock removed)', () =>
     // The title override was in the component body (not exported separately)
     // so this test simply confirms the exported composer gate does not
     // special-case any thread as a "welcome thread".
-    expect(isComposerInteractionBlocked({ activeThreadId: null, rustChat: true })).toBe(false);
+    expect(isComposerInteractionBlocked({ selectedThreadActive: false, rustChat: true })).toBe(
+      false
+    );
   });
 });

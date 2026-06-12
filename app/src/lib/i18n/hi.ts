@@ -321,6 +321,8 @@ const messages: TranslationMap = {
   'chat.newThread': 'नई थ्रेड',
   'chat.typeMessage': 'आज मैं आपकी कैसे मदद कर सकता हूँ?',
   'chat.send': 'मैसेज भेजें',
+  'chat.parallelBranchHint': 'समानांतर शाखा टाइप करें — भेजने के लिए ⌘/Ctrl+Enter',
+  'chat.parallelBranchLabel': 'समानांतर शाखा',
   'chat.thinking': 'सोच रहा है...',
   'chat.noMessages': 'अभी कोई मैसेज नहीं',
   'chat.startConversation': 'बातचीत शुरू करें',
