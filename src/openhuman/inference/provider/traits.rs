@@ -424,12 +424,30 @@ pub trait Provider: Send + Sync {
     }
 
     /// Structured chat API for agent loop callers.
+    ///
+    /// **`max_tokens` caveat:** the default implementation delegates to
+    /// [`Self::chat_with_history`], whose signature carries no output-token
+    /// budget, so a `request.max_tokens` set by the caller is **not** honored
+    /// on this path. Providers that need to enforce an output cap (e.g. the
+    /// OpenAI-compatible provider, which threads it onto the wire for
+    /// credit-metered backends — TAURI-RUST-C62) override `chat()` directly.
+    /// The drop is logged below rather than silently swallowed; it is not a
+    /// hard error because no production caller both sets `max_tokens` and
+    /// routes through a default-`chat()` provider (agent turns pass `None`;
+    /// memory extraction uses the compatible provider).
     async fn chat(
         &self,
         request: ChatRequest<'_>,
         model: &str,
         temperature: f64,
     ) -> anyhow::Result<ChatResponse> {
+        if let Some(cap) = request.max_tokens {
+            log::warn!(
+                "[provider] default chat() for model={model} ignores max_tokens={cap} — \
+                 this provider does not override chat() and chat_with_history() carries no \
+                 output budget; the cap will not reach the wire"
+            );
+        }
         let log_prompts = should_log_prompts();
         // If tools are provided but provider doesn't support native tools,
         // inject tool instructions into system prompt as fallback.
