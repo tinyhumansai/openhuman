@@ -1,8 +1,17 @@
+import { configureStore } from '@reduxjs/toolkit';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import type { PropsWithChildren } from 'react';
+import { Provider } from 'react-redux';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import themeReducer from '../../store/themeSlice';
 import type { GraphEdge, GraphNode } from '../../utils/tauriCommands';
 import { MemoryGraph } from './MemoryGraph';
+
+function ReduxWrapper({ children }: PropsWithChildren) {
+  const store = configureStore({ reducer: { theme: themeReducer } });
+  return <Provider store={store}>{children}</Provider>;
+}
 
 const mocks = vi.hoisted(() => ({
   openUrl: vi.fn(),
@@ -64,7 +73,7 @@ describe('<MemoryGraph />', () => {
   });
 
   it('renders the empty state when there are no nodes', () => {
-    render(<MemoryGraph nodes={[]} edges={[]} mode="tree" />);
+    render(<MemoryGraph nodes={[]} edges={[]} mode="tree" />, { wrapper: ReduxWrapper });
     expect(screen.getByTestId('memory-graph-empty')).toBeInTheDocument();
   });
 
@@ -74,13 +83,17 @@ describe('<MemoryGraph />', () => {
       makeSummaryNode({ id: 'root', level: 0, parent_id: null }),
       makeSummaryNode({ id: 'child', level: 1, parent_id: 'root' }),
     ];
-    render(<MemoryGraph nodes={nodes} edges={[]} mode="tree" onReady={onReady} />);
+    render(<MemoryGraph nodes={nodes} edges={[]} mode="tree" onReady={onReady} />, {
+      wrapper: ReduxWrapper,
+    });
     await waitFor(() => expect(onReady).toHaveBeenCalledTimes(1));
   });
 
   it('does not fire onReady for an empty graph (nothing to lay out)', () => {
     const onReady = vi.fn();
-    render(<MemoryGraph nodes={[]} edges={[]} mode="tree" onReady={onReady} />);
+    render(<MemoryGraph nodes={[]} edges={[]} mode="tree" onReady={onReady} />, {
+      wrapper: ReduxWrapper,
+    });
     expect(onReady).not.toHaveBeenCalled();
   });
 
@@ -89,7 +102,9 @@ describe('<MemoryGraph />', () => {
       makeSummaryNode({ id: 'root', level: 0, parent_id: null }),
       makeSummaryNode({ id: 'child', level: 1, parent_id: 'root' }),
     ];
-    const { container } = render(<MemoryGraph nodes={nodes} edges={[]} mode="tree" />);
+    const { container } = render(<MemoryGraph nodes={nodes} edges={[]} mode="tree" />, {
+      wrapper: ReduxWrapper,
+    });
     expect(screen.getByTestId('memory-graph-svg')).toBeInTheDocument();
     expect(container.querySelectorAll('circle').length).toBe(2);
     expect(screen.getByTestId('memory-graph-node-root')).toBeInTheDocument();
@@ -102,7 +117,7 @@ describe('<MemoryGraph />', () => {
       makeContactNode({ id: 'person:alice', label: 'Alice' }),
     ];
     const edges: GraphEdge[] = [{ from: 'd1', to: 'person:alice' }];
-    render(<MemoryGraph nodes={nodes} edges={edges} mode="contacts" />);
+    render(<MemoryGraph nodes={nodes} edges={edges} mode="contacts" />, { wrapper: ReduxWrapper });
     // Two legend rows render with i18n keys as fallback (graph.document/contact)
     // — assert via the rendered nodes count instead, which is deterministic.
     expect(screen.getAllByTestId(/memory-graph-node-/).length).toBe(2);
@@ -118,7 +133,7 @@ describe('<MemoryGraph />', () => {
         file_basename: 'summary-A',
       }),
     ];
-    render(<MemoryGraph nodes={nodes} edges={[]} mode="tree" />);
+    render(<MemoryGraph nodes={nodes} edges={[]} mode="tree" />, { wrapper: ReduxWrapper });
     fireEvent.click(screen.getByTestId('memory-graph-node-sum-A'));
     await waitFor(() => {
       expect(mocks.openWorkspacePath).toHaveBeenCalledWith(
@@ -141,7 +156,7 @@ describe('<MemoryGraph />', () => {
       }),
     ];
 
-    render(<MemoryGraph nodes={nodes} edges={[]} mode="tree" />);
+    render(<MemoryGraph nodes={nodes} edges={[]} mode="tree" />, { wrapper: ReduxWrapper });
     fireEvent.click(screen.getByTestId('memory-graph-node-sum-open-fails'));
 
     await waitFor(() => {
@@ -164,7 +179,7 @@ describe('<MemoryGraph />', () => {
         file_basename: 'summary-slack',
       }),
     ];
-    render(<MemoryGraph nodes={nodes} edges={[]} mode="tree" />);
+    render(<MemoryGraph nodes={nodes} edges={[]} mode="tree" />, { wrapper: ReduxWrapper });
     fireEvent.click(screen.getByTestId('memory-graph-node-sum-slack'));
     await waitFor(() => {
       expect(mocks.openWorkspacePath).toHaveBeenCalledWith(
@@ -183,7 +198,7 @@ describe('<MemoryGraph />', () => {
         file_basename: 'summary-A',
       }),
     ];
-    render(<MemoryGraph nodes={nodes} edges={[]} mode="tree" />);
+    render(<MemoryGraph nodes={nodes} edges={[]} mode="tree" />, { wrapper: ReduxWrapper });
 
     fireEvent.mouseEnter(screen.getByTestId('memory-graph-node-sum-A'));
     fireEvent.click(screen.getByTestId('memory-graph-preview-sum-A'));
@@ -211,7 +226,7 @@ describe('<MemoryGraph />', () => {
       }),
     ];
 
-    render(<MemoryGraph nodes={nodes} edges={[]} mode="tree" />);
+    render(<MemoryGraph nodes={nodes} edges={[]} mode="tree" />, { wrapper: ReduxWrapper });
     fireEvent.mouseEnter(screen.getByTestId('memory-graph-node-sum-preview-fails'));
     fireEvent.click(screen.getByTestId('memory-graph-preview-sum-preview-fails'));
 
@@ -242,7 +257,7 @@ describe('<MemoryGraph />', () => {
       }),
     ];
 
-    render(<MemoryGraph nodes={nodes} edges={[]} mode="tree" />);
+    render(<MemoryGraph nodes={nodes} edges={[]} mode="tree" />, { wrapper: ReduxWrapper });
     fireEvent.mouseEnter(screen.getByTestId('memory-graph-node-sum-truncated'));
     fireEvent.click(screen.getByTestId('memory-graph-preview-sum-truncated'));
 
@@ -260,7 +275,7 @@ describe('<MemoryGraph />', () => {
         file_basename: 'summary-A',
       }),
     ];
-    render(<MemoryGraph nodes={nodes} edges={[]} mode="tree" />);
+    render(<MemoryGraph nodes={nodes} edges={[]} mode="tree" />, { wrapper: ReduxWrapper });
 
     const node = screen.getByTestId('memory-graph-node-sum-A');
     fireEvent.mouseEnter(node);
@@ -279,7 +294,9 @@ describe('<MemoryGraph />', () => {
         file_basename: 'summary-A',
       }),
     ];
-    const { container } = render(<MemoryGraph nodes={nodes} edges={[]} mode="tree" />);
+    const { container } = render(<MemoryGraph nodes={nodes} edges={[]} mode="tree" />, {
+      wrapper: ReduxWrapper,
+    });
 
     fireEvent.mouseEnter(screen.getByTestId('memory-graph-node-sum-A'));
     expect(screen.getByTestId('memory-graph-tooltip')).toBeInTheDocument();
@@ -290,7 +307,7 @@ describe('<MemoryGraph />', () => {
 
   it('does NOT call workspace open when a non-summary node is clicked', async () => {
     const nodes = [makeChunkNode({ id: 'doc-1' })];
-    render(<MemoryGraph nodes={nodes} edges={[]} mode="contacts" />);
+    render(<MemoryGraph nodes={nodes} edges={[]} mode="contacts" />, { wrapper: ReduxWrapper });
     fireEvent.click(screen.getByTestId('memory-graph-node-doc-1'));
     await Promise.resolve();
     expect(mocks.openWorkspacePath).not.toHaveBeenCalled();
@@ -298,7 +315,7 @@ describe('<MemoryGraph />', () => {
 
   it('shows a tooltip footer when a node is hovered', () => {
     const nodes = [makeContactNode({ id: 'person:bob', label: 'Bob' })];
-    render(<MemoryGraph nodes={nodes} edges={[]} mode="contacts" />);
+    render(<MemoryGraph nodes={nodes} edges={[]} mode="contacts" />, { wrapper: ReduxWrapper });
     fireEvent.mouseEnter(screen.getByTestId('memory-graph-node-person:bob'));
     expect(screen.getByTestId('memory-graph-tooltip')).toBeInTheDocument();
     expect(screen.getByTestId('memory-graph-tooltip').textContent).toContain('Bob');

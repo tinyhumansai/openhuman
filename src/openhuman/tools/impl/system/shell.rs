@@ -140,6 +140,18 @@ impl ShellTool {
             );
         }
     }
+
+    /// Resolve the working directory for this shell invocation.
+    ///
+    /// Returns the per-worker git-worktree override when one is installed via
+    /// [`crate::openhuman::agent::harness::with_action_dir_override`] (an
+    /// edit-capable worker running with `isolation = "worktree"`), otherwise
+    /// the shared `self.security.action_dir`. Keeping `security.action_dir` as
+    /// the fallback preserves the non-isolated behaviour exactly. See #3376.
+    fn effective_action_dir(&self) -> std::path::PathBuf {
+        crate::openhuman::agent::harness::current_action_dir_override()
+            .unwrap_or_else(|| self.security.action_dir.clone())
+    }
 }
 
 #[async_trait]
@@ -279,7 +291,7 @@ impl ShellTool {
         // (CWE-200), then re-add only safe, functional variables.
         let mut cmd = match self
             .runtime
-            .build_shell_command(command, &self.security.action_dir)
+            .build_shell_command(command, &self.effective_action_dir())
         {
             Ok(cmd) => cmd,
             Err(e) => {
@@ -383,7 +395,7 @@ impl ShellTool {
         let config = crate::openhuman::config::RuntimeConfig::default();
         let policy = sandbox::resolve_sandbox_policy(
             crate::openhuman::agent::harness::definition::SandboxMode::Sandboxed,
-            &self.security.action_dir,
+            &self.effective_action_dir(),
             &config,
             false,
         );

@@ -97,7 +97,8 @@ describe('AgentAccessPanel (advanced)', () => {
   it('toggling "confine to workspace" persists workspace_only', async () => {
     renderWithProviders(<AgentAccessPanel />);
     await screen.findByText('Confine to workspace');
-    fireEvent.click(screen.getByRole('checkbox', { name: /confine to workspace/i }));
+    // Controls are now role="switch" (SettingsSwitch) instead of native checkboxes.
+    fireEvent.click(screen.getByRole('switch', { name: /confine to workspace/i }));
     await waitFor(() =>
       expect(mockUpdate).toHaveBeenCalledWith(expect.objectContaining({ workspace_only: true }))
     );
@@ -106,7 +107,7 @@ describe('AgentAccessPanel (advanced)', () => {
   it('toggling task plan approval persists require_task_plan_approval', async () => {
     renderWithProviders(<AgentAccessPanel />);
     await screen.findByText('Confine to workspace');
-    fireEvent.click(screen.getByRole('checkbox', { name: /require task plan approval/i }));
+    fireEvent.click(screen.getByRole('switch', { name: /require task plan approval/i }));
     await waitFor(() =>
       expect(mockUpdate).toHaveBeenCalledWith(
         expect.objectContaining({ require_task_plan_approval: false })
@@ -146,10 +147,11 @@ describe('AgentAccessPanel (advanced)', () => {
     renderWithProviders(<AgentAccessPanel />);
     // Folder path is visible.
     expect(await screen.findByText('/home/u/notes')).toBeInTheDocument();
-    // workspace_only checkbox is checked.
-    expect(
-      (screen.getByRole('checkbox', { name: /confine to workspace/i }) as HTMLInputElement).checked
-    ).toBe(true);
+    // workspace_only switch has aria-checked="true".
+    expect(screen.getByRole('switch', { name: /confine to workspace/i })).toHaveAttribute(
+      'aria-checked',
+      'true'
+    );
     // But the tier radio UI is NOT here (lives in PermissionsPanel).
     expect(screen.queryByText('Read-only')).not.toBeInTheDocument();
   });
@@ -235,5 +237,11 @@ describe('AgentAccessPanel (advanced)', () => {
     const input = (await screen.findByLabelText('Action timeout')) as HTMLInputElement;
     expect(input.disabled).toBe(true);
     expect(screen.getByText(/OPENHUMAN_TOOL_TIMEOUT_SECS/)).toBeInTheDocument();
+  });
+
+  it('approval history link button is present and has the correct data-testid', async () => {
+    renderWithProviders(<AgentAccessPanel />);
+    await screen.findByText('Approval history');
+    expect(screen.getByTestId('agent-access-approval-history-link')).toBeInTheDocument();
   });
 });

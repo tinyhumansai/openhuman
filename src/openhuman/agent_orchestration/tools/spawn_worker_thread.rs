@@ -227,6 +227,7 @@ impl Tool for SpawnWorkerThreadTool {
             worker_thread_id: Some(worker_thread_id.clone()),
             initial_history: None,
             checkpoint_dir: None,
+            worktree_action_dir: None,
         };
 
         tracing::debug!(

@@ -18,16 +18,16 @@ describe('useSettingsNavigation breadcrumbs', () => {
     expect(screen.getByTestId('breadcrumbs')).toHaveTextContent('Settings > Developer Options');
   });
 
-  test('notifications-hub returns Settings > Developer Options', () => {
+  test('notifications-hub returns Settings (section page)', () => {
+    // notifications-hub is now a home-level section hub — its breadcrumb is just Settings.
     renderWithProviders(<BreadcrumbProbe />, { initialEntries: ['/settings/notifications-hub'] });
-    expect(screen.getByTestId('breadcrumbs')).toHaveTextContent('Settings > Developer Options');
+    expect(screen.getByTestId('breadcrumbs')).toHaveTextContent('Settings');
   });
 
-  test('notifications panel nests under Settings > Developer Options > Notifications', () => {
+  test('notifications panel nests under Settings > Notifications', () => {
+    // notifications is a leaf under the notifications section — breadcrumb is Settings > Notifications.
     renderWithProviders(<BreadcrumbProbe />, { initialEntries: ['/settings/notifications'] });
-    expect(screen.getByTestId('breadcrumbs')).toHaveTextContent(
-      'Settings > Developer Options > Notifications'
-    );
+    expect(screen.getByTestId('breadcrumbs')).toHaveTextContent('Settings > Notifications');
   });
 
   test('tasks returns Settings > Developer Options', () => {

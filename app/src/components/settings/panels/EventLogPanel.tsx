@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
 import { getCoreHttpBaseUrl, getCoreRpcToken } from '../../../services/coreRpcClient';
+import Button from '../../ui/Button';
 import SettingsHeader from '../components/SettingsHeader';
+import { SettingsSelect, SettingsTextField } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 interface EventEntry {
@@ -209,7 +211,7 @@ const EventLogPanel = () => {
   const domains = [...new Set(entries.map(e => e.domain))].sort();
 
   return (
-    <div data-testid="event-log-panel">
+    <div className="z-10 relative" data-testid="event-log-panel">
       <SettingsHeader
         title={t('settings.developerMenu.eventLog.title')}
         showBackButton={true}
@@ -219,37 +221,42 @@ const EventLogPanel = () => {
 
       <div className="p-4 space-y-4">
         {/* Status bar */}
-        <div className="flex flex-wrap items-center gap-2 text-xs">
-          <select
-            className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-3 py-1.5 font-medium text-stone-700 dark:text-neutral-200"
+        <div className="flex flex-wrap items-center gap-2">
+          <SettingsSelect
             value={filterType}
-            onChange={e => setFilterType(e.target.value)}>
+            onChange={e => setFilterType(e.target.value)}
+            aria-label={t('settings.developerMenu.eventLog.allTypes')}
+            inputSize="sm">
             <option value="">{t('settings.developerMenu.eventLog.allTypes')}</option>
             {domains.map(d => (
               <option key={d} value={d}>
                 {d}
               </option>
             ))}
-          </select>
-          <input
-            type="text"
-            className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-3 py-1.5 font-medium text-stone-700 dark:text-neutral-200 w-40"
+          </SettingsSelect>
+          <SettingsTextField
+            className="w-40"
             placeholder={t('settings.developerMenu.eventLog.filterAgent')}
             value={filterText}
             onChange={e => setFilterText(e.target.value)}
+            aria-label={t('settings.developerMenu.eventLog.filterAgent')}
+            inputSize="sm"
           />
-          <button
+          <Button
             type="button"
+            variant="secondary"
+            size="xs"
             onClick={exportLog}
-            disabled={filteredEntries.length === 0}
-            className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-3 py-1.5 font-medium text-stone-700 dark:text-neutral-200 hover:bg-stone-100 dark:hover:bg-neutral-800 disabled:opacity-50">
+            disabled={filteredEntries.length === 0}>
             {t('settings.developerMenu.eventLog.download')}
-          </button>
-          <span className="text-stone-500 dark:text-neutral-400">
+          </Button>
+          <span className="text-xs text-neutral-500 dark:text-neutral-400">
             {filteredEntries.length} {t('settings.developerMenu.eventLog.events')} &middot;{' '}
             <span
               className={
-                isLive ? 'text-sage-600 dark:text-sage-300' : 'text-stone-400 dark:text-neutral-500'
+                isLive
+                  ? 'text-sage-600 dark:text-sage-300'
+                  : 'text-neutral-500 dark:text-neutral-400'
               }>
               {isLive
                 ? t('settings.developerMenu.eventLog.live')
@@ -260,18 +267,19 @@ const EventLogPanel = () => {
 
         {/* Jump to latest */}
         {!autoScroll && (
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="xs"
             onClick={() => {
               setAutoScroll(true);
               const el = containerRef.current;
               if (el) {
                 el.scrollTop = newEntriesRef.current === 'top' ? 0 : el.scrollHeight;
               }
-            }}
-            className="text-xs rounded-lg border border-primary-300 dark:border-primary-500/40 bg-primary-50 dark:bg-primary-500/10 px-3 py-1 text-primary-700 dark:text-primary-300">
+            }}>
             {t('settings.developerMenu.eventLog.jumpToLatest')}
-          </button>
+          </Button>
         )}
 
         {/* Event stream */}
@@ -281,7 +289,7 @@ const EventLogPanel = () => {
             onScroll={handleScroll}
             className="max-h-[60vh] overflow-y-auto space-y-1">
             {filteredEntries.length === 0 && (
-              <p className="text-xs text-stone-400 dark:text-neutral-500 py-4 text-center">
+              <p className="text-xs text-neutral-500 dark:text-neutral-400 py-4 text-center">
                 {isLive
                   ? t('settings.developerMenu.eventLog.waiting')
                   : t('settings.developerMenu.eventLog.notConnected')}
@@ -289,14 +297,14 @@ const EventLogPanel = () => {
             )}
             {filteredEntries.map(entry => {
               const colors = DOMAIN_BADGE_COLORS[entry.domain] || {
-                bg: 'bg-stone-500/20',
-                text: 'text-stone-400',
+                bg: 'bg-neutral-500/20',
+                text: 'text-neutral-400',
               };
               return (
                 <div
                   key={entry.id}
-                  className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-3 py-2 flex items-start gap-2">
-                  <span className="text-[10px] text-stone-400 dark:text-neutral-500 font-mono shrink-0 pt-0.5">
+                  className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/60 px-3 py-2 flex items-start gap-2">
+                  <span className="text-[10px] text-neutral-500 dark:text-neutral-400 font-mono shrink-0 pt-0.5">
                     {entry.timestamp}
                   </span>
                   <span
@@ -306,11 +314,11 @@ const EventLogPanel = () => {
                       : entry.domain.toUpperCase()}
                   </span>
                   {entry.agent && (
-                    <span className="text-[10px] text-stone-500 dark:text-neutral-400 shrink-0 font-mono">
+                    <span className="text-[10px] text-neutral-500 dark:text-neutral-400 shrink-0 font-mono">
                       {entry.agent}
                     </span>
                   )}
-                  <span className="text-xs text-stone-900 dark:text-neutral-100 truncate">
+                  <span className="text-xs text-neutral-800 dark:text-neutral-100 truncate">
                     {entry.event}
                   </span>
                 </div>

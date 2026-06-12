@@ -3,30 +3,16 @@ import { useState } from 'react';
 import { useT } from '../../../lib/i18n/I18nContext';
 import { useCoreState } from '../../../providers/CoreStateProvider';
 import { decideKeyringConsent, retryKeyringProbe } from '../../../services/keyringApi';
+import Button from '../../ui/Button';
 import SettingsHeader from '../components/SettingsHeader';
+import { SettingsBadge, SettingsRow, SettingsSection, SettingsStatusLine } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
-const MODE_BADGE: Record<string, { label: string; className: string }> = {
-  os_keyring: {
-    label: 'keyring.settings.mode.osKeychain',
-    className:
-      'bg-sage-50 dark:bg-sage-500/10 text-sage-700 dark:text-sage-300 border-sage-200 dark:border-sage-500/30',
-  },
-  local_encrypted: {
-    label: 'keyring.settings.mode.encryptedFile',
-    className:
-      'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-500/30',
-  },
-  consent_pending: {
-    label: 'keyring.settings.mode.consentPending',
-    className:
-      'bg-stone-100 dark:bg-neutral-800 text-stone-700 dark:text-neutral-200 border-stone-200 dark:border-neutral-800',
-  },
-  declined: {
-    label: 'keyring.settings.mode.declined',
-    className:
-      'bg-coral-50 dark:bg-coral-500/10 text-coral-700 dark:text-coral-300 border-coral-200 dark:border-coral-500/30',
-  },
+const MODE_BADGE_VARIANT: Record<string, 'success' | 'warning' | 'neutral' | 'danger'> = {
+  os_keyring: 'success',
+  local_encrypted: 'warning',
+  consent_pending: 'neutral',
+  declined: 'danger',
 };
 
 const SecurityPanel = () => {
@@ -37,7 +23,8 @@ const SecurityPanel = () => {
   const [error, setError] = useState<string | null>(null);
 
   const keyringStatus = snapshot.keyringStatus;
-  const modeBadge = MODE_BADGE[keyringStatus.activeMode] ?? MODE_BADGE.consent_pending;
+  const modeBadgeVariant =
+    MODE_BADGE_VARIANT[keyringStatus.activeMode] ?? MODE_BADGE_VARIANT.consent_pending;
 
   const handleRetryProbe = async () => {
     setIsLoading(true);
@@ -71,87 +58,93 @@ const SecurityPanel = () => {
         breadcrumbs={breadcrumbs}
       />
 
-      <div className="space-y-6 p-4">
+      <div className="p-4 pt-2 space-y-5">
         {/* Storage mode */}
-        <section>
-          <h3 className="text-sm font-medium text-stone-700 dark:text-stone-200 mb-3">
-            {t('keyring.settings.storageMode')}
-          </h3>
-          <div className="flex items-center gap-3">
-            <span
-              className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium ${modeBadge.className}`}>
-              {t(modeBadge.label)}
-            </span>
-            <span className="text-xs text-stone-500 dark:text-stone-400">
-              {t('keyring.settings.backend')}: {keyringStatus.backendName}
-            </span>
-          </div>
-        </section>
+        <SettingsSection title={t('keyring.settings.storageMode')}>
+          <SettingsRow
+            label={t('keyring.settings.storageMode')}
+            control={
+              <div className="flex items-center gap-3">
+                <SettingsBadge variant={modeBadgeVariant}>
+                  {t(
+                    `keyring.settings.mode.${keyringStatus.activeMode}` as Parameters<typeof t>[0]
+                  )}
+                </SettingsBadge>
+                <span className="text-xs text-neutral-500 dark:text-neutral-400">
+                  {t('keyring.settings.backend')}: {keyringStatus.backendName}
+                </span>
+              </div>
+            }
+          />
+        </SettingsSection>
 
         {/* Availability */}
-        <section>
-          <h3 className="text-sm font-medium text-stone-700 dark:text-stone-200 mb-3">
-            {t('keyring.settings.availability')}
-          </h3>
-          <div className="rounded-lg bg-stone-100 dark:bg-stone-800/60 p-4">
-            <div className="flex items-center gap-2 mb-2">
+        <SettingsSection title={t('keyring.settings.availability')}>
+          <div className="px-4 py-3 space-y-3">
+            <div className="flex items-center gap-2">
               <div
                 className={`h-2 w-2 rounded-full ${keyringStatus.available ? 'bg-sage-500' : 'bg-amber-500'}`}
               />
-              <span className="text-sm text-stone-700 dark:text-stone-200">
+              <span className="text-sm text-neutral-700 dark:text-neutral-200">
                 {keyringStatus.available
                   ? t('keyring.settings.available')
                   : t('keyring.settings.unavailable')}
               </span>
             </div>
             {keyringStatus.failureReason && (
-              <p className="text-xs text-stone-500 dark:text-stone-400 ml-4">
+              <p className="text-xs text-neutral-500 dark:text-neutral-400 ml-4">
                 {keyringStatus.failureReason}
               </p>
             )}
-            <button
+            <Button
               type="button"
-              onClick={handleRetryProbe}
-              disabled={isLoading}
-              className="mt-3 rounded-lg border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-xs text-stone-700 dark:text-stone-200 hover:bg-stone-200 dark:hover:bg-stone-700 disabled:opacity-60">
+              variant="secondary"
+              size="sm"
+              onClick={() => void handleRetryProbe()}
+              disabled={isLoading}>
               {isLoading ? t('keyring.consent.retrying') : t('keyring.settings.retryButton')}
-            </button>
+            </Button>
           </div>
-        </section>
+        </SettingsSection>
 
         {/* Consent management (only when keyring is unavailable) */}
         {!keyringStatus.available && (
-          <section>
-            <h3 className="text-sm font-medium text-stone-700 dark:text-stone-200 mb-3">
-              {t('keyring.settings.consentTitle')}
-            </h3>
-            <p className="text-xs text-stone-500 dark:text-stone-400 mb-3">
-              {t('keyring.settings.consentDescription')}
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {keyringStatus.activeMode !== 'local_encrypted' && (
-                <button
-                  type="button"
-                  onClick={() => handleConsentChange('local_encrypted')}
-                  disabled={isLoading}
-                  className="rounded-lg bg-ocean-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-ocean-600 disabled:opacity-60">
-                  {t('keyring.settings.grantConsent')}
-                </button>
-              )}
-              {keyringStatus.activeMode !== 'declined' && (
-                <button
-                  type="button"
-                  onClick={() => handleConsentChange('declined')}
-                  disabled={isLoading}
-                  className="rounded-lg border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-xs text-stone-700 dark:text-stone-200 hover:bg-stone-200 dark:hover:bg-stone-700 disabled:opacity-60">
-                  {t('keyring.settings.revokeConsent')}
-                </button>
-              )}
+          <SettingsSection title={t('keyring.settings.consentTitle')}>
+            <div className="px-4 py-3 space-y-3">
+              <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                {t('keyring.settings.consentDescription')}
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {keyringStatus.activeMode !== 'local_encrypted' && (
+                  <Button
+                    type="button"
+                    variant="primary"
+                    size="sm"
+                    onClick={() => void handleConsentChange('local_encrypted')}
+                    disabled={isLoading}>
+                    {t('keyring.settings.grantConsent')}
+                  </Button>
+                )}
+                {keyringStatus.activeMode !== 'declined' && (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => void handleConsentChange('declined')}
+                    disabled={isLoading}>
+                    {t('keyring.settings.revokeConsent')}
+                  </Button>
+                )}
+              </div>
             </div>
-          </section>
+          </SettingsSection>
         )}
 
-        {error && <p className="text-sm text-coral-400">{error}</p>}
+        <SettingsStatusLine
+          saving={isLoading}
+          error={error}
+          savingLabel={t('keyring.consent.retrying')}
+        />
       </div>
     </div>
   );

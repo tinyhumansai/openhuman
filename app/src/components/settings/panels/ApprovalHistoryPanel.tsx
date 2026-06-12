@@ -7,7 +7,14 @@ import {
   type ApprovalDecision,
   fetchRecentApprovalDecisions,
 } from '../../../services/api/approvalApi';
+import Button from '../../ui/Button';
 import SettingsHeader from '../components/SettingsHeader';
+import {
+  SettingsBadge,
+  SettingsEmptyState,
+  SettingsSection,
+  SettingsStatusLine,
+} from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 const log = debug('ui:approval-history');
@@ -18,12 +25,11 @@ const formatDateTime = (value: string): string => {
   return Number.isNaN(ts) ? value : new Date(ts).toLocaleString();
 };
 
-/** Tailwind tone + i18n label key per decision variant. */
-const DECISION_TONE: Record<ApprovalDecision, string> = {
-  approve_once: 'bg-sage-50 text-sage ring-sage-200',
-  approve_always_for_tool: 'bg-sage-50 text-sage ring-sage-200',
-  deny: 'bg-coral-50 text-coral ring-coral-200',
-};
+/** SettingsBadge variant per decision variant. */
+const DECISION_BADGE_VARIANT: Record<
+  ApprovalDecision,
+  'success' | 'danger' | 'warning' | 'neutral' | 'primary'
+> = { approve_once: 'success', approve_always_for_tool: 'success', deny: 'danger' };
 
 const DECISION_LABEL_KEY: Record<ApprovalDecision, string> = {
   approve_once: 'settings.approvalHistory.decision.approveOnce',
@@ -90,63 +96,80 @@ const ApprovalHistoryPanel = () => {
         breadcrumbs={breadcrumbs}
       />
 
-      <div className="p-4 space-y-4" data-testid="approval-history-panel">
-        <div className="flex items-center justify-between">
-          <p className="text-xs text-ink-soft">{t('settings.approvalHistory.subtitle')}</p>
-          <button
-            type="button"
-            onClick={handleRefresh}
-            disabled={isLoading}
-            data-testid="approval-history-refresh"
-            className="rounded bg-primary-500 px-3 py-1 text-xs text-white hover:bg-primary-600 disabled:opacity-50">
-            {t('settings.approvalHistory.refresh')}
-          </button>
-        </div>
-
-        {isLoading ? (
-          <p className="text-sm text-ink-soft" data-testid="approval-history-loading">
-            {t('settings.approvalHistory.loading')}
-          </p>
-        ) : error ? (
-          <div className="space-y-2" data-testid="approval-history-error">
-            <p className="text-sm text-coral">{error}</p>
-            <button
+      <div className="p-4 pt-2 space-y-5" data-testid="approval-history-panel">
+        <SettingsSection>
+          <div className="px-4 py-3 flex items-center justify-between gap-2">
+            <p className="text-xs text-neutral-500 dark:text-neutral-400">
+              {t('settings.approvalHistory.subtitle')}
+            </p>
+            <Button
               type="button"
+              variant="primary"
+              size="xs"
               onClick={handleRefresh}
-              className="text-xs text-primary-600 hover:underline">
-              {t('settings.approvalHistory.retry')}
-            </button>
+              disabled={isLoading}
+              data-testid="approval-history-refresh">
+              {t('settings.approvalHistory.refresh')}
+            </Button>
           </div>
-        ) : entries.length === 0 ? (
-          <p className="text-sm text-ink-soft" data-testid="approval-history-empty">
-            {t('settings.approvalHistory.emptyState')}
-          </p>
-        ) : (
-          <ul className="space-y-2" data-testid="approval-history-list">
-            {entries.map(entry => (
-              <li
-                key={entry.request_id}
-                className="rounded-lg border border-line p-3 space-y-1"
-                data-testid="approval-history-row">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-mono text-xs text-ink truncate">{entry.tool_name}</span>
-                  <span
-                    className={`inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-xs font-medium ring-1 ${DECISION_TONE[entry.decision]}`}
-                    data-testid={`approval-history-decision-${entry.decision}`}>
-                    {t(DECISION_LABEL_KEY[entry.decision])}
-                  </span>
-                </div>
-                <p className="text-xs text-ink-soft">{entry.action_summary}</p>
-                <p className="text-[11px] text-ink-soft">
-                  {t('settings.approvalHistory.decidedAt').replace(
-                    '{date}',
-                    formatDateTime(entry.decided_at)
-                  )}
-                </p>
-              </li>
-            ))}
-          </ul>
-        )}
+
+          {isLoading ? (
+            <div
+              className="px-4 py-4 text-sm text-neutral-500 dark:text-neutral-400"
+              data-testid="approval-history-loading">
+              {t('settings.approvalHistory.loading')}
+            </div>
+          ) : error ? (
+            <div className="px-4 py-4 space-y-2" data-testid="approval-history-error">
+              <SettingsStatusLine saving={false} error={error} savingLabel="" />
+              <Button
+                type="button"
+                variant="ghost"
+                size="xs"
+                onClick={handleRefresh}
+                className="text-primary-600 dark:text-primary-400">
+                {t('settings.approvalHistory.retry')}
+              </Button>
+            </div>
+          ) : entries.length === 0 ? (
+            <div className="px-4 py-8 text-center" data-testid="approval-history-empty">
+              <SettingsEmptyState label={t('settings.approvalHistory.emptyState')} />
+            </div>
+          ) : (
+            <ul
+              className="divide-y divide-neutral-100 dark:divide-neutral-800"
+              data-testid="approval-history-list">
+              {entries.map(entry => (
+                <li
+                  key={entry.request_id}
+                  className="px-4 py-3 space-y-1"
+                  data-testid="approval-history-row">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-mono text-xs text-neutral-800 dark:text-neutral-100 truncate">
+                      {entry.tool_name}
+                    </span>
+                    <span
+                      data-testid={`approval-history-decision-${entry.decision}`}
+                      className="flex-shrink-0">
+                      <SettingsBadge variant={DECISION_BADGE_VARIANT[entry.decision]}>
+                        {t(DECISION_LABEL_KEY[entry.decision])}
+                      </SettingsBadge>
+                    </span>
+                  </div>
+                  <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                    {entry.action_summary}
+                  </p>
+                  <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
+                    {t('settings.approvalHistory.decidedAt').replace(
+                      '{date}',
+                      formatDateTime(entry.decided_at)
+                    )}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          )}
+        </SettingsSection>
       </div>
     </div>
   );

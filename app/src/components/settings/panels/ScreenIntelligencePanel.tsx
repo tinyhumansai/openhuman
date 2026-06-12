@@ -3,7 +3,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useScreenIntelligenceState } from '../../../features/screen-intelligence/useScreenIntelligenceState';
 import { useT } from '../../../lib/i18n/I18nContext';
 import { isTauri, openhumanUpdateScreenIntelligenceSettings } from '../../../utils/tauriCommands';
+import Button from '../../ui/Button';
 import SettingsHeader from '../components/SettingsHeader';
+import { SettingsRow, SettingsSection, SettingsSelect, SettingsStatusLine } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 import PermissionsSection from './screen-intelligence/PermissionsSection';
 
@@ -135,13 +137,11 @@ const ScreenIntelligencePanel = () => {
           />
         )}
 
-        <section className="space-y-3">
-          <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
-            {t('settings.features.screenAwareness')}
-          </h3>
-
-          <label className="flex items-center justify-between rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-3 py-2">
-            <span className="text-sm text-stone-700 dark:text-neutral-200">
+        {/* Screen awareness config */}
+        <SettingsSection title={t('settings.features.screenAwareness')}>
+          {/* Enabled toggle */}
+          <label className="flex items-center justify-between px-4 py-3">
+            <span className="text-sm text-neutral-700 dark:text-neutral-200">
               {t('common.enabled')}
             </span>
             <input
@@ -151,29 +151,35 @@ const ScreenIntelligencePanel = () => {
             />
           </label>
 
-          <label className="flex items-center justify-between rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-3 py-2">
-            <span className="text-sm text-stone-700 dark:text-neutral-200">
-              {t('settings.screenAwareness.mode')}
-            </span>
-            <select
-              value={policyMode}
-              onChange={event =>
-                setPolicyMode(
-                  event.target.value === 'whitelist_only'
-                    ? 'whitelist_only'
-                    : 'all_except_blacklist'
-                )
-              }
-              className="rounded border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-2 py-1 text-xs text-stone-700 dark:text-neutral-200">
-              <option value="all_except_blacklist">
-                {t('settings.screenAwareness.allExceptBlacklist')}
-              </option>
-              <option value="whitelist_only">{t('settings.screenAwareness.whitelistOnly')}</option>
-            </select>
-          </label>
+          {/* Policy mode */}
+          <SettingsRow
+            htmlFor="select-policy-mode"
+            label={t('settings.screenAwareness.mode')}
+            control={
+              <SettingsSelect
+                id="select-policy-mode"
+                value={policyMode}
+                onChange={event =>
+                  setPolicyMode(
+                    event.target.value === 'whitelist_only'
+                      ? 'whitelist_only'
+                      : 'all_except_blacklist'
+                  )
+                }
+                inputSize="sm">
+                <option value="all_except_blacklist">
+                  {t('settings.screenAwareness.allExceptBlacklist')}
+                </option>
+                <option value="whitelist_only">
+                  {t('settings.screenAwareness.whitelistOnly')}
+                </option>
+              </SettingsSelect>
+            }
+          />
 
-          <label className="flex items-center justify-between rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-3 py-2">
-            <span className="text-sm text-stone-700 dark:text-neutral-200">
+          {/* Screen monitoring toggle */}
+          <label className="flex items-center justify-between px-4 py-3">
+            <span className="text-sm text-neutral-700 dark:text-neutral-200">
               {t('settings.screenAwareness.screenMonitoring')}
             </span>
             <input
@@ -188,67 +194,77 @@ const ScreenIntelligencePanel = () => {
             />
           </label>
 
-          <button
-            type="button"
-            onClick={() => void saveConfig()}
-            disabled={isSavingConfig}
-            className="rounded-lg border border-primary-400 bg-primary-50 dark:bg-primary-500/10 px-3 py-2 text-sm text-primary-700 dark:text-primary-300 disabled:opacity-50">
-            {isSavingConfig ? 'Saving…' : t('settings.screenAwareness.saveSettings')}
-          </button>
-          {configError && (
-            <div className="text-xs text-red-600 dark:text-red-300">{configError}</div>
-          )}
-        </section>
+          {/* Save */}
+          <div className="px-4 py-3 space-y-2">
+            <Button
+              type="button"
+              variant="primary"
+              size="sm"
+              onClick={() => void saveConfig()}
+              disabled={isSavingConfig}>
+              {isSavingConfig ? 'Saving…' : t('settings.screenAwareness.saveSettings')}
+            </Button>
+            <SettingsStatusLine
+              saving={false}
+              savedNote={null}
+              error={configError}
+              savingLabel={t('settings.agentAccess.saving')}
+            />
+          </div>
+        </SettingsSection>
 
-        <section className="space-y-3">
-          <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
-            {t('settings.screenAwareness.session')}
-          </h3>
-          <div className="text-sm text-stone-600 dark:text-neutral-300 space-y-1">
-            <div>
-              {t('settings.screenAwareness.status')}:{' '}
-              {status?.session.active
-                ? t('settings.screenAwareness.active')
-                : t('settings.screenAwareness.stopped')}
+        {/* Session controls */}
+        <SettingsSection title={t('settings.screenAwareness.session')}>
+          <div className="px-4 py-3 space-y-3">
+            <div className="text-sm text-neutral-600 dark:text-neutral-300 space-y-1">
+              <div>
+                {t('settings.screenAwareness.status')}:{' '}
+                {status?.session.active
+                  ? t('settings.screenAwareness.active')
+                  : t('settings.screenAwareness.stopped')}
+              </div>
+              <div>
+                {t('settings.screenAwareness.remaining')}: {remaining}
+              </div>
             </div>
-            <div>
-              {t('settings.screenAwareness.remaining')}: {remaining}
+
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() =>
+                  void startSession({
+                    consent: true,
+                    ttl_secs: status?.config.session_ttl_secs ?? 300,
+                    screen_monitoring: screenMonitoring,
+                  })
+                }
+                disabled={startDisabled}>
+                {isStartingSession ? 'Starting…' : t('settings.screenAwareness.startSession')}
+              </Button>
+              <Button
+                type="button"
+                variant="danger"
+                size="sm"
+                onClick={() => void stopSession('manual_stop')}
+                disabled={stopDisabled}>
+                {isStoppingSession ? 'Stopping…' : t('settings.screenAwareness.stopSession')}
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => void flushVision()}
+                disabled={isFlushingVision || !status?.session.active}>
+                {isFlushingVision ? 'Analyzing…' : t('settings.screenAwareness.analyzeNow')}
+              </Button>
             </div>
           </div>
-
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() =>
-                void startSession({
-                  consent: true,
-                  ttl_secs: status?.config.session_ttl_secs ?? 300,
-                  screen_monitoring: screenMonitoring,
-                })
-              }
-              disabled={startDisabled}
-              className="rounded-lg border border-green-400 bg-green-50 dark:bg-green-500/10 px-3 py-2 text-sm text-green-700 dark:text-green-300 disabled:opacity-50">
-              {isStartingSession ? 'Starting…' : t('settings.screenAwareness.startSession')}
-            </button>
-            <button
-              type="button"
-              onClick={() => void stopSession('manual_stop')}
-              disabled={stopDisabled}
-              className="rounded-lg border border-red-400 bg-red-50 dark:bg-red-500/10 px-3 py-2 text-sm text-red-700 dark:text-red-300 disabled:opacity-50">
-              {isStoppingSession ? 'Stopping…' : t('settings.screenAwareness.stopSession')}
-            </button>
-            <button
-              type="button"
-              onClick={() => void flushVision()}
-              disabled={isFlushingVision || !status?.session.active}
-              className="rounded-lg border border-primary-400 bg-primary-50 dark:bg-primary-500/10 px-3 py-2 text-sm text-primary-700 dark:text-primary-300 disabled:opacity-50">
-              {isFlushingVision ? 'Analyzing…' : t('settings.screenAwareness.analyzeNow')}
-            </button>
-          </div>
-        </section>
+        </SettingsSection>
 
         {status !== null && !status.platform_supported && (
-          <div className="rounded-xl border border-amber-300 dark:border-amber-500/40 bg-amber-50 dark:bg-amber-500/10 dark:border-amber-500/30 p-3 text-sm text-amber-700 dark:text-amber-300">
+          <div className="rounded-xl border border-amber-300 dark:border-amber-500/40 bg-amber-50 dark:bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-300">
             {t('settings.screenAwareness.macosOnly')}
           </div>
         )}

@@ -9,7 +9,9 @@ import type {
   StopCompanionSessionResult,
 } from '../../../store/companionSlice';
 import { useAppSelector } from '../../../store/hooks';
+import Button from '../../ui/Button';
 import SettingsHeader from '../components/SettingsHeader';
+import { SettingsRow, SettingsSection, SettingsStatusLine } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 const CompanionPanel = () => {
@@ -97,7 +99,7 @@ const CompanionPanel = () => {
   const sessionActive = status?.active ?? false;
 
   return (
-    <div>
+    <div className="z-10 relative">
       <SettingsHeader
         title={t('settings.companion.title')}
         showBackButton
@@ -106,103 +108,119 @@ const CompanionPanel = () => {
       />
 
       <div className="space-y-4 p-4">
-        {/* Status */}
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-sm font-medium text-stone-800">{t('settings.companion.session')}</p>
-            <p className="text-xs text-stone-500">
-              {isLoading
+        {/* Session status + controls */}
+        <SettingsSection>
+          <SettingsRow
+            label={t('settings.companion.session')}
+            description={
+              isLoading
                 ? t('common.loading')
                 : sessionActive
                   ? `${t('settings.companion.activeLabel')} — ${companionState}`
-                  : t('settings.companion.inactiveStatus')}
-            </p>
-          </div>
-          <div>
-            {sessionActive ? (
-              <button
-                type="button"
-                onClick={handleStop}
-                disabled={isStopping}
-                className="rounded-lg bg-red-50 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-100 disabled:opacity-50">
-                {isStopping
-                  ? t('settings.companion.stopping')
-                  : t('settings.companion.stopSession')}
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={handleStart}
-                disabled={isStarting || isLoading}
-                className="rounded-lg bg-blue-50 px-3 py-1.5 text-sm font-medium text-blue-700 hover:bg-blue-100 disabled:opacity-50">
-                {isStarting
-                  ? t('settings.companion.starting')
-                  : t('settings.companion.startSession')}
-              </button>
-            )}
-          </div>
-        </div>
+                  : t('settings.companion.inactiveStatus')
+            }
+            control={
+              sessionActive ? (
+                <Button
+                  type="button"
+                  variant="danger"
+                  size="sm"
+                  onClick={handleStop}
+                  disabled={isStopping}>
+                  {isStopping
+                    ? t('settings.companion.stopping')
+                    : t('settings.companion.stopSession')}
+                </Button>
+              ) : (
+                <Button
+                  type="button"
+                  variant="primary"
+                  size="sm"
+                  onClick={handleStart}
+                  disabled={isStarting || isLoading}>
+                  {isStarting
+                    ? t('settings.companion.starting')
+                    : t('settings.companion.startSession')}
+                </Button>
+              )
+            }
+          />
+        </SettingsSection>
 
         {/* Session details */}
         {sessionActive && status && (
-          <div className="rounded-lg bg-stone-50 p-3 text-xs text-stone-600 space-y-1">
-            <p>
-              {t('settings.companion.sessionId')}:{' '}
-              <span className="font-mono">{status.session_id?.slice(0, 8)}…</span>
-            </p>
-            <p>
-              {t('settings.companion.turns')}: {status.turn_count}
-            </p>
-            {status.remaining_ms != null && (
+          <SettingsSection>
+            <div className="px-4 py-3 text-xs text-neutral-600 dark:text-neutral-300 space-y-1">
               <p>
-                {t('settings.companion.remaining')}: {Math.floor(status.remaining_ms / 60000)}m{' '}
-                {Math.floor((status.remaining_ms % 60000) / 1000)}s
+                {t('settings.companion.sessionId')}:{' '}
+                <span className="font-mono">{status.session_id?.slice(0, 8)}…</span>
               </p>
-            )}
-          </div>
+              <p>
+                {t('settings.companion.turns')}: {status.turn_count}
+              </p>
+              {status.remaining_ms != null && (
+                <p>
+                  {t('settings.companion.remaining')}: {Math.floor(status.remaining_ms / 60000)}m{' '}
+                  {Math.floor((status.remaining_ms % 60000) / 1000)}s
+                </p>
+              )}
+            </div>
+          </SettingsSection>
         )}
 
         {/* Config */}
         {config && (
-          <div className="space-y-3 border-t border-stone-100 pt-4">
-            <p className="text-xs font-medium uppercase tracking-wide text-stone-400">
-              {t('settings.companion.configuration')}
-            </p>
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-stone-700">{t('settings.companion.hotkey')}</span>
-              <span className="rounded bg-stone-100 px-2 py-0.5 font-mono text-xs text-stone-600">
-                {config.hotkey}
-              </span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-stone-700">
-                {t('settings.companion.activationMode')}
-              </span>
-              <span className="text-xs text-stone-500">{config.activation_mode}</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-stone-700">{t('settings.companion.sessionTtl')}</span>
-              <span className="text-xs text-stone-500">{config.ttl_secs}s</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-stone-700">
-                {t('settings.companion.screenCapture')}
-              </span>
-              <span className="text-xs text-stone-500">
-                {config.capture_screen ? t('common.enabled') : t('common.disabled')}
-              </span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-stone-700">{t('settings.companion.appContext')}</span>
-              <span className="text-xs text-stone-500">
-                {config.include_app_context ? t('common.enabled') : t('common.disabled')}
-              </span>
-            </div>
-          </div>
+          <SettingsSection title={t('settings.companion.configuration')}>
+            <SettingsRow
+              label={t('settings.companion.hotkey')}
+              control={
+                <span className="rounded bg-neutral-100 dark:bg-neutral-800 px-2 py-0.5 font-mono text-xs text-neutral-600 dark:text-neutral-300">
+                  {config.hotkey}
+                </span>
+              }
+            />
+            <SettingsRow
+              label={t('settings.companion.activationMode')}
+              control={
+                <span className="text-xs text-neutral-500 dark:text-neutral-400">
+                  {config.activation_mode}
+                </span>
+              }
+            />
+            <SettingsRow
+              label={t('settings.companion.sessionTtl')}
+              control={
+                <span className="text-xs text-neutral-500 dark:text-neutral-400">
+                  {config.ttl_secs}s
+                </span>
+              }
+            />
+            <SettingsRow
+              label={t('settings.companion.screenCapture')}
+              control={
+                <span className="text-xs text-neutral-500 dark:text-neutral-400">
+                  {config.capture_screen ? t('common.enabled') : t('common.disabled')}
+                </span>
+              }
+            />
+            <SettingsRow
+              label={t('settings.companion.appContext')}
+              control={
+                <span className="text-xs text-neutral-500 dark:text-neutral-400">
+                  {config.include_app_context ? t('common.enabled') : t('common.disabled')}
+                </span>
+              }
+            />
+          </SettingsSection>
         )}
 
         {/* Error */}
-        {error && <div className="rounded-lg bg-red-50 p-3 text-xs text-red-700">{error}</div>}
+        <SettingsStatusLine
+          saving={false}
+          savedNote={null}
+          error={error}
+          savingLabel={t('settings.agentAccess.saving')}
+        />
       </div>
     </div>
   );

@@ -175,11 +175,12 @@ describe('SettingsHome', () => {
   });
 
   describe('items no longer on the home screen', () => {
-    it('no longer renders Agents / Crypto section pages on the home screen', () => {
-      // These moved into the Developer & Diagnostics sub-tree (Agents & Autonomy).
+    it('renders Agents and Crypto section hubs on the home screen', () => {
+      // Pass A surfaced agents-settings and crypto on the home screen as part of
+      // the merged layman card (assistant group + crypto group).
       renderSettingsHome();
-      expect(screen.queryByTestId('settings-nav-agents-settings')).not.toBeInTheDocument();
-      expect(screen.queryByTestId('settings-nav-crypto')).not.toBeInTheDocument();
+      expect(screen.getByTestId('settings-nav-agents-settings')).toBeInTheDocument();
+      expect(screen.getByTestId('settings-nav-crypto')).toBeInTheDocument();
     });
 
     it('no longer renders Alerts / stand-alone Notifications on the home screen', () => {
@@ -196,10 +197,13 @@ describe('SettingsHome', () => {
       expect(screen.queryByText('Log out')).not.toBeInTheDocument();
     });
 
-    it('no longer renders Features / AI Configuration / Rewards / Restart Tour on the home screen', () => {
+    it('renders Features and AI section hubs on home; Rewards and Restart Tour remain absent', () => {
+      // Pass A moved Features and AI onto the home screen as merged-card entries.
+      // Rewards and Restart Tour are not home items (Rewards lives in the avatar
+      // menu; Restart Tour is in Developer & Diagnostics only).
       renderSettingsHome();
-      expect(screen.queryByText('Features')).not.toBeInTheDocument();
-      expect(screen.queryByText('AI Configuration')).not.toBeInTheDocument();
+      expect(screen.getByTestId('settings-nav-features')).toBeInTheDocument();
+      expect(screen.getByTestId('settings-nav-ai')).toBeInTheDocument();
       expect(screen.queryByText('Rewards')).not.toBeInTheDocument();
       expect(screen.queryByText('Restart Tour')).not.toBeInTheDocument();
     });
@@ -315,6 +319,85 @@ describe('SettingsHome', () => {
 
       expect(screen.getByText('外观')).toBeInTheDocument();
       expect(screen.getByText('选择浅色、深色或跟随系统主题')).toBeInTheDocument();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Pass A — newly-surfaced section entries
+  // ---------------------------------------------------------------------------
+
+  describe('Pass A section hubs', () => {
+    it('renders the 5 newly-surfaced section entry hubs in the merged card', () => {
+      // Pass A merged AI, Agents, Features, Integrations (composio), and Crypto
+      // directly onto the home screen as section-hub entries. All 5 must render
+      // as navigable items in the settings-group-main card.
+      renderSettingsHome();
+      expect(screen.getByTestId('settings-nav-ai')).toBeInTheDocument();
+      expect(screen.getByTestId('settings-nav-agents-settings')).toBeInTheDocument();
+      expect(screen.getByTestId('settings-nav-features')).toBeInTheDocument();
+      expect(screen.getByTestId('settings-nav-composio')).toBeInTheDocument();
+      expect(screen.getByTestId('settings-nav-crypto')).toBeInTheDocument();
+    });
+
+    it('clicking ai hub navigates to ai', async () => {
+      const user = userEvent.setup();
+      renderSettingsHome();
+      await user.click(screen.getByTestId('settings-nav-ai'));
+      expect(mockNavigateToSettings).toHaveBeenCalledWith('ai');
+    });
+
+    it('clicking agents-settings hub navigates to agents-settings', async () => {
+      const user = userEvent.setup();
+      renderSettingsHome();
+      await user.click(screen.getByTestId('settings-nav-agents-settings'));
+      expect(mockNavigateToSettings).toHaveBeenCalledWith('agents-settings');
+    });
+
+    it('clicking features hub navigates to features', async () => {
+      const user = userEvent.setup();
+      renderSettingsHome();
+      await user.click(screen.getByTestId('settings-nav-features'));
+      expect(mockNavigateToSettings).toHaveBeenCalledWith('features');
+    });
+
+    it('clicking composio hub navigates to composio', async () => {
+      const user = userEvent.setup();
+      renderSettingsHome();
+      await user.click(screen.getByTestId('settings-nav-composio'));
+      expect(mockNavigateToSettings).toHaveBeenCalledWith('composio');
+    });
+
+    it('clicking crypto hub navigates to crypto', async () => {
+      const user = userEvent.setup();
+      renderSettingsHome();
+      await user.click(screen.getByTestId('settings-nav-crypto'));
+      expect(mockNavigateToSettings).toHaveBeenCalledWith('crypto');
+    });
+  });
+
+  describe('navigation — account group items (lines 261, 268, 275)', () => {
+    it('navigates to devices when Devices is clicked (line 268)', async () => {
+      const user = userEvent.setup();
+      renderSettingsHome();
+
+      await user.click(screen.getByTestId('settings-nav-devices'));
+      expect(mockNavigateToSettings).toHaveBeenCalledWith('devices');
+    });
+
+    it('navigates to memory-sync when Data Sync is clicked (line 275)', async () => {
+      const user = userEvent.setup();
+      renderSettingsHome();
+
+      await user.click(screen.getByTestId('settings-nav-data-sync'));
+      expect(mockNavigateToSettings).toHaveBeenCalledWith('memory-sync');
+    });
+
+    it('navigates to appearance when Appearance is clicked (line 261)', async () => {
+      const user = userEvent.setup();
+      renderSettingsHome();
+
+      await user.click(screen.getByTestId('settings-nav-appearance'));
+      expect(mockNavigateToSettings).toHaveBeenCalledWith('appearance');
     });
   });
 

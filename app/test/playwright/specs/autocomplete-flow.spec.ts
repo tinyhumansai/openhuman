@@ -16,7 +16,9 @@ test.describe('Autocomplete Flow', () => {
     await waitForAppReady(page);
     await dismissWalkthroughIfPresent(page);
 
-    await expect(page.getByText('Autocomplete')).toBeVisible();
+    // "Autocomplete" now appears both as the panel title and a section label,
+    // so scope the assertion to the first match.
+    await expect(page.getByText('Autocomplete').first()).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible();
     await expect(page.getByText('Runtime')).toBeVisible();
     await expect(page.getByText(/Running:\s+(Yes|No)/)).toBeVisible();

@@ -79,7 +79,7 @@ describe('Skills page — Composio catalog fallback', () => {
   });
 
   function openAppsTab() {
-    fireEvent.click(screen.getByRole('tab', { name: 'Apps' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Composio' }));
   }
 
   it('shows known composio integrations in the integrations icon grid when the live toolkit list is empty', () => {

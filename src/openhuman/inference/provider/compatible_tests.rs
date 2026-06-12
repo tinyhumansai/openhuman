@@ -1419,6 +1419,176 @@ async fn streaming_tool_call_captures_extra_content() {
     );
 }
 
+/// Regression: some providers (DashScope/Qwen, GMI) emit the tool-call `id`
+/// ONLY on the first delta for an index, then send `"id": ""` (empty string,
+/// not omitted) on every argument-continuation delta. The streaming accumulator
+/// must not let those empty continuation ids clobber the resolved id down to
+/// `""` — an empty `tool_call_id` is rejected by the upstream tool-message
+/// ordering check on the next turn (400), dead-ending the conversation.
+#[tokio::test]
+async fn streaming_empty_continuation_id_does_not_clobber_tool_call_id() {
+    let mock_server = MockServer::start().await;
+    // Delta 1 carries the real id + name; deltas 2-3 are arg continuations that
+    // repeat index 0 with an EMPTY id (the DashScope/GMI wire shape).
+    let body = "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_real\",\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"arguments\":\"{}\"}}]}}]}\n\n\
+                data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"\",\"function\":{\"arguments\":\"\"}}]}}]}\n\n\
+                data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"\"}]}}]}\n\n\
+                data: [DONE]\n\n";
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(body, "text/event-stream"))
+        .mount(&mock_server)
+        .await;
+
+    let provider =
+        OpenAiCompatibleProvider::new("dashscope", &mock_server.uri(), None, AuthStyle::None);
+    let request = NativeChatRequest {
+        model: "qwen3.7-plus".to_string(),
+        messages: vec![NativeMessage {
+            role: "user".to_string(),
+            content: Some("weather in paris?".into()),
+            tool_call_id: None,
+            tool_calls: None,
+            reasoning_content: None,
+        }],
+        temperature: Some(0.7),
+        stream: Some(true),
+        tools: None,
+        tool_choice: None,
+        thread_id: None,
+        stream_options: Some(super::compatible_types::OpenAiStreamOptions {
+            include_usage: true,
+        }),
+        options: None,
+        frequency_penalty: None,
+    };
+    let (delta_tx, _delta_rx) = tokio::sync::mpsc::channel(64);
+    let resp = provider
+        .stream_native_chat(None, &request, &delta_tx, 0)
+        .await
+        .unwrap();
+    assert_eq!(resp.tool_calls.len(), 1);
+    assert_eq!(
+        resp.tool_calls[0].id.as_str(),
+        "call_real",
+        "empty-string id on continuation deltas must not clobber the resolved tool_call id"
+    );
+}
+
+/// Regression: a single turn can emit MULTIPLE parallel tool calls. The
+/// per-`index` accumulator must keep each call's first-delta id even when the
+/// empty-id continuation deltas for both indices arrive together — neither may
+/// clobber the other (or itself) to `""`.
+#[tokio::test]
+async fn streaming_parallel_tool_calls_preserve_ids_against_empty_continuations() {
+    let mock_server = MockServer::start().await;
+    // Two parallel calls (index 0 + 1), then one continuation delta carrying
+    // BOTH indices with empty ids.
+    let body = "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_a\",\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"arguments\":\"{}\"}}]}}]}\n\n\
+                data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":1,\"id\":\"call_b\",\"type\":\"function\",\"function\":{\"name\":\"get_time\",\"arguments\":\"{}\"}}]}}]}\n\n\
+                data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"\"},{\"index\":1,\"id\":\"\"}]}}]}\n\n\
+                data: [DONE]\n\n";
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(body, "text/event-stream"))
+        .mount(&mock_server)
+        .await;
+
+    let provider =
+        OpenAiCompatibleProvider::new("dashscope", &mock_server.uri(), None, AuthStyle::None);
+    let request = NativeChatRequest {
+        model: "qwen3.7-plus".to_string(),
+        messages: vec![NativeMessage {
+            role: "user".to_string(),
+            content: Some("weather and time?".into()),
+            tool_call_id: None,
+            tool_calls: None,
+            reasoning_content: None,
+        }],
+        temperature: Some(0.7),
+        stream: Some(true),
+        tools: None,
+        tool_choice: None,
+        thread_id: None,
+        stream_options: Some(super::compatible_types::OpenAiStreamOptions {
+            include_usage: true,
+        }),
+        options: None,
+        frequency_penalty: None,
+    };
+    let (delta_tx, _delta_rx) = tokio::sync::mpsc::channel(64);
+    let resp = provider
+        .stream_native_chat(None, &request, &delta_tx, 0)
+        .await
+        .unwrap();
+    assert_eq!(resp.tool_calls.len(), 2, "both parallel tool calls survive");
+    // Order-independent: each id must be preserved AND mapped to the right tool
+    // (no cross-index contamination).
+    let by_id: std::collections::HashMap<&str, (&str, &str)> = resp
+        .tool_calls
+        .iter()
+        .map(|t| (t.id.as_str(), (t.name.as_str(), t.arguments.as_str())))
+        .collect();
+    assert_eq!(by_id.get("call_a"), Some(&("get_weather", "{}")));
+    assert_eq!(by_id.get("call_b"), Some(&("get_time", "{}")));
+}
+
+/// Counterpart to the DashScope cases: DeepSeek OMITS the `id` key on
+/// argument-continuation deltas (rather than sending `""`). That deserializes
+/// to `None`, so the accumulator already leaves the resolved id alone — assert
+/// the contract holds for the key-absent shape too, and that args still
+/// accumulate across the continuation.
+#[tokio::test]
+async fn streaming_omitted_continuation_id_preserves_tool_call_id() {
+    let mock_server = MockServer::start().await;
+    // Delta 2 has NO `id` key at all (DeepSeek shape) and carries the rest of
+    // the arguments.
+    let body = "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_ds\",\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"arguments\":\"{\"}}]}}]}\n\n\
+                data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"}\"}}]}}]}\n\n\
+                data: [DONE]\n\n";
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(body, "text/event-stream"))
+        .mount(&mock_server)
+        .await;
+
+    let provider =
+        OpenAiCompatibleProvider::new("deepseek", &mock_server.uri(), None, AuthStyle::None);
+    let request = NativeChatRequest {
+        model: "deepseek-v4-flash".to_string(),
+        messages: vec![NativeMessage {
+            role: "user".to_string(),
+            content: Some("weather?".into()),
+            tool_call_id: None,
+            tool_calls: None,
+            reasoning_content: None,
+        }],
+        temperature: Some(0.7),
+        stream: Some(true),
+        tools: None,
+        tool_choice: None,
+        thread_id: None,
+        stream_options: Some(super::compatible_types::OpenAiStreamOptions {
+            include_usage: true,
+        }),
+        options: None,
+        frequency_penalty: None,
+    };
+    let (delta_tx, _delta_rx) = tokio::sync::mpsc::channel(64);
+    let resp = provider
+        .stream_native_chat(None, &request, &delta_tx, 0)
+        .await
+        .unwrap();
+    assert_eq!(resp.tool_calls.len(), 1);
+    assert_eq!(resp.tool_calls[0].id.as_str(), "call_ds");
+    assert_eq!(resp.tool_calls[0].name.as_str(), "get_weather");
+    assert_eq!(
+        resp.tool_calls[0].arguments.as_str(),
+        "{}",
+        "arguments must accumulate across the id-omitted continuation delta"
+    );
+}
+
 /// Helper: roles in serialized order.
 fn roles(messages: &[NativeMessage]) -> Vec<&str> {
     messages.iter().map(|m| m.role.as_str()).collect()

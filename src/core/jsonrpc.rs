@@ -1056,35 +1056,50 @@ pub(super) fn with_cors_headers(mut response: Response, origin: Option<&str>) ->
 }
 
 /// Handler for the health check endpoint.
+///
+/// Liveness is granular (#3312): a single degraded *background* component
+/// (scheduler, channels, update_checker, …) no longer 503s the whole container.
+/// `/health` returns 503 only when a *critical* component is unhealthy (see
+/// `health::CRITICAL_COMPONENTS`); otherwise it returns 200 — with a `degraded`
+/// flag and per-component buckets in the body so readiness probes and operators
+/// can still see partial failures.
 async fn health_handler() -> impl IntoResponse {
     let snapshot = crate::openhuman::health::snapshot();
-    let unhealthy: Vec<&str> = snapshot
-        .components
-        .iter()
-        .filter_map(|(name, c)| {
-            if c.status == "ok" || c.status == "starting" {
-                None
-            } else {
-                Some(name.as_str())
-            }
-        })
-        .collect();
-    let is_ok = unhealthy.is_empty();
+    let verdict = crate::openhuman::health::verdict(&snapshot);
 
-    let status = if is_ok {
+    let status = if verdict.healthy {
         StatusCode::OK
     } else {
         StatusCode::SERVICE_UNAVAILABLE
     };
 
+    // Augment the snapshot body with the verdict so the components map stays
+    // backward-compatible while exposing overall liveness/readiness.
+    let mut body = serde_json::to_value(&snapshot).unwrap_or_else(|_| serde_json::json!({}));
+    if let Some(obj) = body.as_object_mut() {
+        obj.insert("healthy".to_string(), serde_json::json!(verdict.healthy));
+        obj.insert("degraded".to_string(), serde_json::json!(verdict.degraded));
+        obj.insert(
+            "critical_unhealthy".to_string(),
+            serde_json::json!(verdict.critical_unhealthy),
+        );
+        obj.insert(
+            "degraded_components".to_string(),
+            serde_json::json!(verdict.degraded_components),
+        );
+    }
+
     tracing::debug!(
-        "[health] status={} components={} unhealthy={:?}",
+        "[health] status={} components={} healthy={} degraded={} critical_unhealthy={:?} degraded_components={:?}",
         status.as_u16(),
         snapshot.components.len(),
-        unhealthy
+        verdict.healthy,
+        verdict.degraded,
+        verdict.critical_unhealthy,
+        verdict.degraded_components,
     );
 
-    (status, Json(snapshot))
+    (status, Json(body))
 }
 
 /// Handler for the schema discovery endpoint.
@@ -1902,6 +1917,11 @@ fn register_domain_subscribers(
         crate::openhuman::agent_meetings::calendar::register_meet_calendar_subscriber();
         crate::openhuman::agent_meetings::bus::register_meeting_event_subscriber();
         crate::openhuman::composio::start_periodic_sync();
+        // Workspace-kind memory sources (GitHub repos, folders, RSS, web
+        // pages) get their own cadence loop — the Composio scheduler above
+        // only walks Composio connections, so without this they only sync
+        // on manual "Sync now" and silently go stale.
+        crate::openhuman::memory_sync::workspace::start_workspace_periodic_sync();
         // Task-sources proactive ingestion: connection-created hook + poll.
         crate::openhuman::task_sources::bus::register_task_sources_subscriber();
         crate::openhuman::task_sources::start_periodic_poll();
@@ -2241,6 +2261,29 @@ pub async fn bootstrap_core_runtime(host_kind: crate::core::types::HostKind) {
         let cfg = cfg.clone();
         tokio::spawn(async move {
             crate::openhuman::mcp_registry::boot::spawn_installed_servers(&cfg).await;
+        });
+    }
+
+    // --- MCP registry reconnect supervisor (#3312) -----------------------
+    // Keep installed MCP servers connected for the life of the process:
+    // transports drop silently over long uptimes (subprocess exits, HTTP
+    // session expires) and the boot spawn above only runs once. The
+    // supervisor periodically probes each connection and reconnects dropped
+    // ones with per-server backoff. First tick is delayed so it doesn't race
+    // the boot spawn.
+    //
+    // Guarded by `Once`: `bootstrap_core_runtime` is documented idempotent, and
+    // unlike the one-shot boot spawn above the supervisor is an infinite tick
+    // loop — a second instance would race the first on the shared connections
+    // registry (duplicate probes, reconnect thrashing, nondeterministic backoff).
+    {
+        use std::sync::Once;
+        static SUPERVISOR_SPAWNED: Once = Once::new();
+        SUPERVISOR_SPAWNED.call_once(|| {
+            let cfg = cfg.clone();
+            tokio::spawn(async move {
+                crate::openhuman::mcp_registry::supervisor::run(cfg).await;
+            });
         });
     }
 

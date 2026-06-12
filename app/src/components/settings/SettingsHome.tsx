@@ -144,6 +144,67 @@ const DataSyncIcon = (
   </svg>
 );
 
+const AiIcon = (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={2}
+      d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"
+    />
+  </svg>
+);
+
+const AgentsIcon = (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={2}
+      d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"
+    />
+  </svg>
+);
+
+const FeaturesIcon = (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={2}
+      d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+    />
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={2}
+      d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+    />
+  </svg>
+);
+
+const IntegrationsIcon = (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={2}
+      d="M13 10V3L4 14h7v7l9-11h-7z"
+    />
+  </svg>
+);
+
+const CryptoIcon = (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={2}
+      d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V6m0 10c-1.11 0-2.08-.402-2.599-1M12 16v2m0-12a9 9 0 100 18 9 9 0 000-18z"
+    />
+  </svg>
+);
+
 // ---------------------------------------------------------------------------
 // Group header (visual separator label above each settings card)
 // ---------------------------------------------------------------------------
@@ -156,8 +217,8 @@ const GroupHeader = ({ label }: { label: string }) =>
       </span>
     </div>
   ) : (
-    // Empty label → a plain divider (the doc places Developer & Diagnostics and
-    // About after a divider, not under their own section headers).
+    // Empty label → a plain divider (Developer & Diagnostics and About sit
+    // after a divider, not under their own section headers).
     <div className="mx-1 mt-6 mb-2 border-t border-stone-200 dark:border-neutral-800" />
   );
 
@@ -175,92 +236,131 @@ const SettingsHome = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const isSearching = searchQuery.trim().length > 0;
 
-  // --- 👤 Account group ---
-  const accountGroup: SettingsGroup = {
-    id: 'account',
-    label: t('settings.groups.account'),
-    items: [
-      {
-        // The Account row opens the account hub (recovery phrase, team,
-        // connections, privacy, sign-out) — named after what it actually holds.
-        id: 'profile',
-        title: t('pages.settings.accountSection.title'),
-        description: t('pages.settings.accountSection.description'),
-        icon: AccountIcon,
-        onClick: () => navigateToSettings('account'),
-      },
-      {
-        id: 'language',
-        title: t('settings.language'),
-        description: t('settings.languageDesc'),
-        icon: LanguageIcon,
-        rightElement: <LanguageSelect ariaLabel={t('settings.language')} />,
-      },
-      {
-        id: 'appearance',
-        title: t('settings.appearance.title'),
-        description: t('settings.appearance.menuDesc'),
-        icon: AppearanceIcon,
-        onClick: () => navigateToSettings('appearance'),
-      },
-      {
-        id: 'devices',
-        title: t('settings.account.devices'),
-        description: t('settings.account.devicesDesc'),
-        icon: DevicesIcon,
-        onClick: () => navigateToSettings('devices'),
-      },
-      {
-        id: 'data-sync',
-        title: t('settings.dataSync.title'),
-        description: t('settings.dataSync.menuDesc'),
-        icon: DataSyncIcon,
-        onClick: () => navigateToSettings('memory-sync'),
-      },
-    ],
-  };
+  // --- Account group items ---
+  // Account (hub), Language (inline), Appearance, Devices, Data Sync.
+  const accountItems: SettingsItem[] = [
+    {
+      id: 'profile',
+      title: t('pages.settings.accountSection.title'),
+      description: t('pages.settings.accountSection.description'),
+      icon: AccountIcon,
+      onClick: () => navigateToSettings('account'),
+    },
+    {
+      id: 'language',
+      title: t('settings.language'),
+      description: t('settings.languageDesc'),
+      icon: LanguageIcon,
+      rightElement: <LanguageSelect ariaLabel={t('settings.language')} />,
+    },
+    {
+      id: 'appearance',
+      title: t('settings.appearance.title'),
+      description: t('settings.appearance.menuDesc'),
+      icon: AppearanceIcon,
+      onClick: () => navigateToSettings('appearance'),
+    },
+    {
+      id: 'devices',
+      title: t('settings.account.devices'),
+      description: t('settings.account.devicesDesc'),
+      icon: DevicesIcon,
+      onClick: () => navigateToSettings('devices'),
+    },
+    {
+      id: 'data-sync',
+      title: t('settings.dataSync.title'),
+      description: t('settings.dataSync.menuDesc'),
+      icon: DataSyncIcon,
+      onClick: () => navigateToSettings('memory-sync'),
+    },
+  ];
 
-  // --- 🤖 Assistant group ---
-  const assistantGroup: SettingsGroup = {
-    id: 'assistant',
-    label: t('settings.groups.assistant'),
-    items: [
-      {
-        id: 'persona',
-        title: t('settings.assistant.personality'),
-        description: t('settings.assistant.personalityDesc'),
-        icon: PersonalityIcon,
-        onClick: () => navigateToSettings('persona'),
-      },
-      {
-        id: 'mascot',
-        title: t('settings.assistant.faceMascot'),
-        description: t('settings.assistant.faceMascotDesc'),
-        icon: MascotIcon,
-        onClick: () => navigateToSettings('mascot'),
-      },
-    ],
-  };
+  // --- Assistant group items ---
+  // AI & Models, Agents, Personality, Face & Mascot.
+  const assistantItems: SettingsItem[] = [
+    {
+      id: 'ai',
+      title: t('pages.settings.aiSection.title'),
+      description: t('pages.settings.aiSection.description'),
+      icon: AiIcon,
+      onClick: () => navigateToSettings('ai'),
+    },
+    {
+      id: 'agents-settings',
+      title: t('settings.agentsSection.title'),
+      description: t('settings.agentsSection.menuDesc'),
+      icon: AgentsIcon,
+      onClick: () => navigateToSettings('agents-settings'),
+    },
+    {
+      id: 'persona',
+      title: t('settings.assistant.personality'),
+      description: t('settings.assistant.personalityDesc'),
+      icon: PersonalityIcon,
+      onClick: () => navigateToSettings('persona'),
+    },
+    {
+      id: 'mascot',
+      title: t('settings.assistant.faceMascot'),
+      description: t('settings.assistant.faceMascotDesc'),
+      icon: MascotIcon,
+      onClick: () => navigateToSettings('mascot'),
+    },
+  ];
 
-  // Privacy is reached from the Account hub (Settings → Account → Privacy);
-  // it is intentionally not duplicated as a top-level row here.
+  // --- Features & Integrations group items ---
+  // Features section, Composio/Integrations section.
+  const featuresIntegrationsItems: SettingsItem[] = [
+    {
+      id: 'features',
+      title: t('pages.settings.featuresSection.title'),
+      description: t('pages.settings.featuresSection.description'),
+      icon: FeaturesIcon,
+      onClick: () => navigateToSettings('features'),
+    },
+    {
+      id: 'composio',
+      title: t('pages.settings.composioSection.title'),
+      description: t('pages.settings.composioSection.description'),
+      icon: IntegrationsIcon,
+      onClick: () => navigateToSettings('composio'),
+    },
+  ];
 
-  // --- 🔔 Notifications group ---
-  const notificationsGroup: SettingsGroup = {
-    id: 'notifications',
-    label: t('settings.groups.notifications'),
-    items: [
-      {
-        id: 'notifications-hub',
-        title: t('settings.notifications.menuTitle'),
-        description: t('settings.notifications.menuDesc'),
-        icon: NotificationsIcon,
-        onClick: () => navigateToSettings('notifications-hub'),
-      },
-    ],
-  };
+  // --- Notifications group ---
+  const notificationsItems: SettingsItem[] = [
+    {
+      id: 'notifications-hub',
+      title: t('settings.notifications.menuTitle'),
+      description: t('settings.notifications.menuDesc'),
+      icon: NotificationsIcon,
+      onClick: () => navigateToSettings('notifications-hub'),
+    },
+  ];
 
-  // --- ℹ️ About group (always visible; no section header — just a divider) ---
+  // --- Crypto group ---
+  const cryptoItems: SettingsItem[] = [
+    {
+      id: 'crypto',
+      title: t('settings.cryptoSection.title'),
+      description: t('settings.cryptoSection.menuDesc'),
+      icon: CryptoIcon,
+      onClick: () => navigateToSettings('crypto'),
+    },
+  ];
+
+  // The layman-facing merged card combines: Account, Assistant,
+  // Features & Integrations, Notifications, Crypto rows in one flat card.
+  const laymanItems: SettingsItem[] = [
+    ...accountItems,
+    ...assistantItems,
+    ...featuresIntegrationsItems,
+    ...notificationsItems,
+    ...cryptoItems,
+  ];
+
+  // --- About group (always visible; no section header — just a divider) ---
   const aboutGroup: SettingsGroup = {
     id: 'about',
     label: '',
@@ -275,16 +375,9 @@ const SettingsHome = () => {
     ],
   };
 
-  // --- Always-visible groups ---
-  const visibleGroups: SettingsGroup[] = [accountGroup, assistantGroup, notificationsGroup];
-
-  // Billing / Rewards / Wallet are NOT in Settings — per the design doc they
-  // live in the avatar menu (monetisation out of the settings tree).
-
   // --- Developer & Diagnostics (gated) ---
-  // The Developer & Diagnostics entry is hidden when developer mode is off.
-  // About is always accessible — that's where the toggle lives (chicken-and-egg).
-  // No section header — it sits after a divider, then About (per the doc).
+  // Hidden when developer mode is off.
+  // About is always accessible — that's where the toggle lives.
   const developerGroup: SettingsGroup | null = developerMode
     ? {
         id: 'developer',
@@ -301,10 +394,6 @@ const SettingsHome = () => {
       }
     : null;
 
-  // The layman groups (Account / Assistant / Privacy / Notifications) render as a
-  // single flat card with no section subheadings. Developer & Diagnostics (when
-  // on) and About sit after a divider, each in their own card.
-  const laymanItems: SettingsItem[] = visibleGroups.flatMap(group => group.items);
   const trailingGroups: SettingsGroup[] = [...(developerGroup ? [developerGroup] : []), aboutGroup];
 
   return (
@@ -319,7 +408,8 @@ const SettingsHome = () => {
           settings menu is hidden to avoid a confusing double list. */}
       {isSearching ? null : (
         <div className="px-4 pt-3 pb-5">
-          {/* Merged layman card — no Account/Assistant/… subheadings. */}
+          {/* Merged layman card — Account / Assistant / Features & Integrations /
+              Notifications / Crypto in one flat card. No sub-section headers. */}
           <div
             data-testid="settings-group-main"
             className="rounded-3xl overflow-hidden border border-stone-200 dark:border-neutral-800">

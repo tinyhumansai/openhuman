@@ -135,8 +135,163 @@ async function sendMessage(page: Page, prompt: string): Promise<void> {
   await page.getByTestId('send-message-button').click();
 }
 
+async function llmCompletionRequests(): Promise<MockRequest[]> {
+  const log = await requests();
+  return log.filter(
+    entry => entry.method === 'POST' && entry.url.includes('/openai/v1/chat/completions')
+  );
+}
+
+async function completionRequestCount(): Promise<number> {
+  return (await llmCompletionRequests()).length;
+}
+
+interface DiagnosticsSnapshot {
+  completionRequests: Array<{ probe: string; index: number }>;
+  matchedKeywords: string[];
+  selectedThreadId: string | null;
+  runtime: {
+    phase: string | null;
+    toolTimelineNames: string[];
+    toolTimelineIds: string[];
+    messageCount: number;
+    lastAssistantText: string | null;
+  };
+}
+
+// Captures the harness state the moment a strong assertion is about to time
+// out so future CI failures expose request counts, consumed keyword matches,
+// the active thread, and the chat runtime — instead of just "element not
+// found." Required by issue #3469's RCA acceptance criteria.
+async function diagnosticsSnapshot(page: Page): Promise<DiagnosticsSnapshot> {
+  const llmRequests = await llmCompletionRequests();
+  const completionRequests = llmRequests.map((entry, index) => {
+    let probe = '';
+    try {
+      const parsed = JSON.parse(entry.body ?? '{}') as {
+        messages?: Array<{ role?: string; content?: unknown }>;
+      };
+      const messages = Array.isArray(parsed.messages) ? parsed.messages : [];
+      for (let i = messages.length - 1; i >= 0; i -= 1) {
+        const m = messages[i];
+        if (!m || (m.role !== 'user' && m.role !== 'tool')) continue;
+        if (typeof m.content === 'string') {
+          probe = m.content;
+          break;
+        }
+        if (Array.isArray(m.content)) {
+          probe = m.content
+            .filter(
+              (c): c is { type: 'text'; text: string } =>
+                !!c &&
+                typeof c === 'object' &&
+                (c as { type?: string }).type === 'text' &&
+                typeof (c as { text?: unknown }).text === 'string'
+            )
+            .map(c => c.text)
+            .join(' ');
+          break;
+        }
+      }
+    } catch {
+      probe = '';
+    }
+    return { probe: probe.slice(0, 240), index };
+  });
+
+  const matchedKeywords = completionRequests
+    .map(({ probe }) =>
+      KEYWORD_RESPONSES.find(rule => probe.toLowerCase().includes(rule.keyword.toLowerCase()))
+    )
+    .map(rule => (rule ? rule.keyword : '<no-match>'));
+
+  const threadId = await selectedThreadId(page);
+
+  const runtime = await page.evaluate(currentThreadId => {
+    const store = (
+      window as unknown as {
+        __OPENHUMAN_STORE__?: {
+          getState?: () => {
+            chatRuntime?: {
+              inferenceStatusByThread?: Record<string, { phase?: string }>;
+              toolTimelineByThread?: Record<string, Array<{ id?: string; name?: string }>>;
+            };
+            thread?: {
+              messagesByThread?: Record<string, Array<{ role?: string; content?: string }>>;
+            };
+          };
+        };
+      }
+    ).__OPENHUMAN_STORE__;
+    const state = store?.getState?.();
+    const phase =
+      currentThreadId && state?.chatRuntime?.inferenceStatusByThread?.[currentThreadId]?.phase
+        ? (state.chatRuntime.inferenceStatusByThread[currentThreadId].phase ?? null)
+        : null;
+    const timeline =
+      currentThreadId && state?.chatRuntime?.toolTimelineByThread?.[currentThreadId]
+        ? state.chatRuntime.toolTimelineByThread[currentThreadId]
+        : [];
+    const messages =
+      currentThreadId && state?.thread?.messagesByThread?.[currentThreadId]
+        ? state.thread.messagesByThread[currentThreadId]
+        : [];
+    const lastAssistant = [...messages].reverse().find(m => m?.role === 'assistant');
+    return {
+      phase,
+      toolTimelineNames: timeline.map(entry => entry?.name ?? ''),
+      toolTimelineIds: timeline.map(entry => entry?.id ?? ''),
+      messageCount: messages.length,
+      lastAssistantText:
+        typeof lastAssistant?.content === 'string' ? lastAssistant.content.slice(0, 240) : null,
+    };
+  }, threadId);
+
+  return { completionRequests, matchedKeywords, selectedThreadId: threadId, runtime };
+}
+
+function formatDiagnostics(snapshot: DiagnosticsSnapshot): string {
+  return [
+    `selectedThreadId=${snapshot.selectedThreadId ?? '<null>'}`,
+    `completionRequestCount=${snapshot.completionRequests.length}`,
+    `matchedKeywords=${JSON.stringify(snapshot.matchedKeywords)}`,
+    `runtime.phase=${snapshot.runtime.phase ?? '<null>'}`,
+    `runtime.toolTimelineNames=${JSON.stringify(snapshot.runtime.toolTimelineNames)}`,
+    `runtime.messageCount=${snapshot.runtime.messageCount}`,
+    `runtime.lastAssistantText=${JSON.stringify(snapshot.runtime.lastAssistantText)}`,
+    `completionProbes=${JSON.stringify(
+      snapshot.completionRequests.map(r => ({ i: r.index, probe: r.probe }))
+    )}`,
+  ].join('\n  ');
+}
+
 test.describe('Chat Harness - Subagent', () => {
-  test('delegates to a subagent through the harness', async ({ page }) => {
+  // On any test failure, attach the harness state (mock request log, matched
+  // keywords, selected thread, chat-runtime phase + tool timeline + last
+  // assistant text) as a Playwright artifact. Keeps the original Playwright
+  // assertion error intact while satisfying issue #3469's RCA requirement
+  // that future failures expose request counts, consumed forced/keyword
+  // responses, active thread id, and final chat-runtime state.
+  test.afterEach(async ({ page }, testInfo) => {
+    if (testInfo.status === 'passed' || testInfo.status === 'skipped') return;
+    if (page.isClosed()) return;
+    try {
+      const snapshot = await diagnosticsSnapshot(page);
+      await testInfo.attach('subagent-harness-diagnostics.txt', {
+        contentType: 'text/plain',
+        body: formatDiagnostics(snapshot),
+      });
+      await testInfo.attach('subagent-harness-diagnostics.json', {
+        contentType: 'application/json',
+        body: JSON.stringify(snapshot, null, 2),
+      });
+    } catch {
+      // Diagnostics are best-effort — never mask the real failure if the
+      // page/mock is already torn down (e.g. core crash mid-test).
+    }
+  });
+
+  test('delegates to a subagent and persists the final orchestrator text', async ({ page }) => {
     test.setTimeout(150_000);
 
     await resetMock();
@@ -148,25 +303,26 @@ test.describe('Chat Harness - Subagent', () => {
     await createNewThread(page);
     await sendMessage(page, PROMPT);
 
-    await expect
-      .poll(
-        async () => {
-          const log = await requests();
-          const llmRequests = log.filter(
-            entry => entry.method === 'POST' && entry.url.includes('/openai/v1/chat/completions')
-          );
-          const bodies = llmRequests.map(entry => entry.body ?? '');
-          // The orchestrator no longer eagerly spawns the memory agent before
-          // the turn (memory retrieval is on-demand now), so we assert the
-          // harness delegated to the researcher sub-agent — its prompt reaching
-          // the LLM is the signal — rather than ordering it after a memory call.
-          const delegatedPromptIndex = bodies.findIndex(body =>
-            body.includes('Tell me a marker phrase')
-          );
-          return delegatedPromptIndex >= 0;
-        },
-        { timeout: 90_000 }
-      )
-      .toBe(true);
+    // Three LLM hits are expected: orchestrator-1 (delegates), researcher
+    // (returns RESEARCHER_REPLY), orchestrator-2 (returns CANARY_FINAL).
+    // The orchestrator no longer eagerly invokes the memory agent (PR #3521),
+    // so this is the full sequence — no extra calls should consume keyword
+    // rules out from under the next-expected matcher.
+    await expect.poll(completionRequestCount, { timeout: 90_000 }).toBeGreaterThanOrEqual(3);
+    await expect(page.getByText(CANARY_FINAL)).toBeVisible({ timeout: 30_000 });
+
+    const runtimeSnapshot = await diagnosticsSnapshot(page);
+    expect(
+      runtimeSnapshot.runtime.phase === 'subagent' ||
+        runtimeSnapshot.runtime.toolTimelineNames.some(name => name.startsWith('subagent:')) ||
+        runtimeSnapshot.runtime.toolTimelineIds.some(id => id.includes(':subagent:')),
+      `expected runtime to show a subagent delegation, got:\n  ${formatDiagnostics(
+        runtimeSnapshot
+      )}`
+    ).toBe(true);
+
+    // Re-assert after the runtime probe so the persisted message survives the
+    // turn-completion store transition rather than only being visible mid-stream.
+    await expect(page.getByText(CANARY_FINAL)).toBeVisible({ timeout: 15_000 });
   });
 });

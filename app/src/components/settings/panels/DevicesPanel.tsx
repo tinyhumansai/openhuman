@@ -5,7 +5,15 @@ import { useT } from '../../../lib/i18n/I18nContext';
 import { callCoreRpc } from '../../../services/coreRpcClient';
 import type { ToastNotification } from '../../../types/intelligence';
 import { ToastContainer } from '../../intelligence/Toast';
+import Button from '../../ui/Button';
 import SettingsHeader from '../components/SettingsHeader';
+import {
+  SettingsBadge,
+  SettingsEmptyState,
+  SettingsListItem,
+  SettingsSection,
+  SettingsStatusLine,
+} from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 import PairPhoneModal from './devices/PairPhoneModal';
 
@@ -77,7 +85,8 @@ function PeerDot({ online }: { online: boolean | null }) {
   return (
     <span
       title={isOnline ? t('devices.online') : t('devices.offline')}
-      className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${isOnline ? 'bg-sage-500' : 'bg-stone-300'}`}
+      data-testid={isOnline ? 'peer-status-online' : 'peer-status-offline'}
+      className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${isOnline ? 'bg-sage-500' : 'bg-neutral-300'}`}
     />
   );
 }
@@ -85,34 +94,28 @@ function PeerDot({ online }: { online: boolean | null }) {
 function DeviceRow({
   device,
   onRevoke,
-  isFirst,
-  isLast,
 }: {
   device: PairedDevice;
   onRevoke: (device: PairedDevice) => void;
-  isFirst: boolean;
-  isLast: boolean;
 }) {
   const { t } = useT();
+  const statusBadge = (
+    <div className="flex items-center gap-1.5">
+      <PeerDot online={device.peer_online} />
+      <span className="font-mono text-xs text-neutral-400">{truncateId(device.channel_id)}</span>
+      <span className="text-xs text-neutral-400">
+        {formatRelativeTime(relativeTime(device.last_seen_at), t)}
+      </span>
+    </div>
+  );
 
   return (
-    <div
-      className={`flex items-center gap-3 px-4 py-3 bg-white border-b ${isLast ? 'border-b-0' : 'border-stone-100'} ${isFirst ? 'rounded-t-lg' : ''} ${isLast ? 'rounded-b-lg' : ''}`}>
-      <PeerDot online={device.peer_online} />
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-stone-900 truncate">{device.label}</p>
-        <p className="text-xs text-stone-400 font-mono">{truncateId(device.channel_id)}</p>
-        <p className="text-xs text-stone-400">
-          {formatRelativeTime(relativeTime(device.last_seen_at), t)}
-        </p>
-      </div>
-      <button
-        onClick={() => onRevoke(device)}
-        className="text-xs text-coral-600 hover:text-coral-700 transition-colors flex-shrink-0 px-2 py-1 rounded hover:bg-coral-50"
-        aria-label={t('devices.revokeAria').replace('{label}', device.label)}>
-        {t('devices.revoke')}
-      </button>
-    </div>
+    <SettingsListItem
+      label={device.label}
+      badge={statusBadge}
+      onRemove={() => onRevoke(device)}
+      removeLabel={t('devices.revoke')}
+    />
   );
 }
 
@@ -129,24 +132,26 @@ function ConfirmRevokeDialog({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/30">
-      <div className="bg-white rounded-2xl max-w-sm w-full p-6 border border-stone-200 shadow-large">
-        <h3 className="text-base font-semibold text-stone-900 mb-2">
+      <div className="bg-white dark:bg-neutral-900 rounded-2xl max-w-sm w-full p-6 border border-neutral-200 dark:border-neutral-800 shadow-large">
+        <h3 className="text-base font-semibold text-neutral-800 dark:text-neutral-100 mb-2">
           {t('devices.confirmRevokeTitle')}
         </h3>
-        <p className="text-sm text-stone-600 mb-5">
+        <p className="text-sm text-neutral-600 dark:text-neutral-300 mb-5">
           {t('devices.confirmRevokeBody').replace('{label}', device.label)}
         </p>
         <div className="flex gap-3">
-          <button
-            onClick={onCancel}
-            className="flex-1 px-4 py-2 rounded-lg border border-stone-200 text-stone-700 hover:bg-stone-50 transition-colors text-sm">
+          <Button type="button" variant="secondary" size="md" onClick={onCancel} className="flex-1">
             {t('common.cancel')}
-          </button>
-          <button
+          </Button>
+          <Button
+            type="button"
+            variant="danger"
+            size="md"
             onClick={onConfirm}
-            className="flex-1 px-4 py-2 rounded-lg bg-coral-500 hover:bg-coral-600 text-white transition-colors text-sm">
+            className="flex-1"
+            data-testid="confirm-revoke-btn">
             {t('devices.revoke')}
-          </button>
+          </Button>
         </div>
       </div>
     </div>
@@ -283,25 +288,22 @@ const DevicesPanel = () => {
         onBack={navigateBack}
         breadcrumbs={breadcrumbs}
         action={
-          <button
-            onClick={handleOpenPairModal}
-            className="text-xs font-medium text-white bg-primary-500 hover:bg-primary-600 transition-colors px-3 py-1.5 rounded-lg flex-shrink-0">
+          <Button type="button" variant="primary" size="xs" onClick={handleOpenPairModal}>
             {t('devices.pairIphone')}
-          </button>
+          </Button>
         }
       />
 
       <div className="px-5 pb-3 flex items-center gap-2">
-        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200 border border-amber-200 dark:border-amber-800/60">
-          {t('devices.betaBadge')}
-        </span>
-        <p className="text-xs text-stone-500 dark:text-neutral-400">{t('devices.betaText')}</p>
+        {/* Bespoke beta badge — intentional marketing chip */}
+        <SettingsBadge variant="warning">{t('devices.betaBadge')}</SettingsBadge>
+        <p className="text-xs text-neutral-500 dark:text-neutral-400">{t('devices.betaText')}</p>
       </div>
 
-      <div className="px-5 pb-5">
+      <div className="px-5 pb-5 space-y-3">
         {loading && (
           <div className="flex items-center justify-center py-12">
-            <svg className="w-5 h-5 animate-spin text-stone-400" fill="none" viewBox="0 0 24 24">
+            <svg className="w-5 h-5 animate-spin text-neutral-400" fill="none" viewBox="0 0 24 24">
               <circle
                 className="opacity-25"
                 cx="12"
@@ -319,53 +321,51 @@ const DevicesPanel = () => {
           </div>
         )}
 
-        {!loading && error && (
-          <div className="rounded-lg bg-coral-50 border border-coral-200 px-4 py-3 text-sm text-coral-700">
-            {error}
-          </div>
-        )}
+        {!loading && error && <SettingsStatusLine saving={false} error={error} savingLabel="" />}
 
         {!loading && !error && devices.length === 0 && (
-          <div className="flex flex-col items-center justify-center py-12 text-center">
-            <div className="w-12 h-12 rounded-xl bg-primary-50 flex items-center justify-center mb-3">
-              <svg
-                className="w-6 h-6 text-primary-400"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={1.5}
-                  d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z"
-                />
-              </svg>
+          <SettingsSection>
+            <div className="flex flex-col items-center justify-center py-12 text-center">
+              <div className="w-12 h-12 rounded-xl bg-primary-50 dark:bg-primary-500/10 flex items-center justify-center mb-3">
+                <svg
+                  className="w-6 h-6 text-primary-400"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={1.5}
+                    d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z"
+                  />
+                </svg>
+              </div>
+              <SettingsEmptyState label={t('devices.noPaired')} />
+              <p className="text-xs text-neutral-400 dark:text-neutral-500 mb-4 max-w-xs">
+                {t('devices.emptyState')}
+              </p>
+              <Button type="button" variant="primary" size="sm" onClick={handleOpenPairModal}>
+                {t('devices.pairIphone')}
+              </Button>
             </div>
-            <p className="text-sm font-medium text-stone-700 mb-1">{t('devices.noPaired')}</p>
-            <p className="text-xs text-stone-400 mb-4 max-w-xs">{t('devices.emptyState')}</p>
-            <button
-              onClick={handleOpenPairModal}
-              className="px-4 py-2 text-sm font-medium text-white bg-primary-500 hover:bg-primary-600 transition-colors rounded-lg">
-              {t('devices.pairIphone')}
-            </button>
-          </div>
+          </SettingsSection>
         )}
 
         {!loading && !error && devices.length > 0 && (
-          <div className="rounded-xl border border-stone-200 overflow-hidden">
-            {devices.map((device, idx) => (
-              <DeviceRow
-                key={device.channel_id}
-                device={device}
-                onRevoke={d => {
-                  log('[devices-ui] revoke requested channel_id=%s', d.channel_id);
-                  setRevokeTarget(d);
-                }}
-                isFirst={idx === 0}
-                isLast={idx === devices.length - 1}
-              />
-            ))}
-          </div>
+          <SettingsSection>
+            <ul>
+              {devices.map(device => (
+                <DeviceRow
+                  key={device.channel_id}
+                  device={device}
+                  onRevoke={d => {
+                    log('[devices-ui] revoke requested channel_id=%s', d.channel_id);
+                    setRevokeTarget(d);
+                  }}
+                />
+              ))}
+            </ul>
+          </SettingsSection>
         )}
       </div>
 

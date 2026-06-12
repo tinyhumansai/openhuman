@@ -16,7 +16,7 @@ test.describe('Settings - AI & Skills', () => {
     await waitForAppReady(page);
     await dismissWalkthroughIfPresent(page);
 
-    await expect(page.getByRole('button', { name: 'AI', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'AI & Models', exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'LLM Providers', exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Routing', exact: true })).toBeVisible();
   });

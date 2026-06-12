@@ -8,7 +8,9 @@ import {
 } from '../../hooks/useCostDashboard';
 import { useT } from '../../lib/i18n/I18nContext';
 import SettingsHeader from '../settings/components/SettingsHeader';
+import { SettingsStatusLine } from '../settings/controls';
 import { useSettingsNavigation } from '../settings/hooks/useSettingsNavigation';
+import Button from '../ui/Button';
 import BudgetSummary from './BudgetSummary';
 import CostBarChart from './CostBarChart';
 import DashboardSkeleton from './DashboardSkeleton';
@@ -52,14 +54,14 @@ const CostDashboardPanel = () => {
       />
       <div className="p-4 space-y-4">
         <div className="flex items-start justify-between gap-3">
-          <p className="text-xs text-stone-500 dark:text-neutral-400 max-w-prose">
+          <p className="text-xs text-neutral-500 dark:text-neutral-400 max-w-prose">
             {t('settings.costDashboard.subtitle')}
           </p>
           <div className="flex items-center gap-2 shrink-0">
             {(lastUpdated !== null || usageLogUpdated !== null) && (
               <span
                 data-testid="cost-dashboard-updated"
-                className="inline-flex items-center gap-1.5 text-[11px] text-stone-500 dark:text-neutral-400">
+                className="inline-flex items-center gap-1.5 text-[11px] text-neutral-500 dark:text-neutral-400">
                 <span
                   aria-hidden
                   className={`inline-block h-1.5 w-1.5 rounded-full ${isFetching || usageLogFetching ? 'bg-ocean-500 animate-pulse' : 'bg-sage-500'}`}
@@ -67,35 +69,32 @@ const CostDashboardPanel = () => {
                 {`${t('settings.costDashboard.updated')} ${relativeTime(Math.max(lastUpdated ?? 0, usageLogUpdated ?? 0), t)}`}
               </span>
             )}
-            <button
+            <Button
               type="button"
+              variant="secondary"
+              size="xs"
               data-testid="cost-dashboard-refresh"
               onClick={() => void Promise.all([refetch(), refetchUsageLog()])}
               disabled={isFetching || usageLogFetching}
               aria-label={t('settings.costDashboard.refresh')}
-              className="inline-flex items-center gap-1 rounded-md border border-stone-200 dark:border-neutral-800 px-2 py-1 text-[11px] text-stone-700 dark:text-neutral-200 hover:bg-stone-100 dark:hover:bg-neutral-800 disabled:opacity-50 transition-colors">
-              <RefreshIcon
-                className={`h-3.5 w-3.5 ${isFetching || usageLogFetching ? 'animate-spin' : ''}`}
-              />
-              <span>{t('settings.costDashboard.refresh')}</span>
-            </button>
+              leadingIcon={
+                <RefreshIcon
+                  className={`h-3.5 w-3.5 ${isFetching || usageLogFetching ? 'animate-spin' : ''}`}
+                />
+              }>
+              {t('settings.costDashboard.refresh')}
+            </Button>
           </div>
         </div>
 
         {error && (
-          <div
-            role="alert"
-            className="rounded-md border border-coral-200 dark:border-coral-500/30 bg-coral-50 dark:bg-coral-500/10 px-3 py-2 text-xs text-coral-700 dark:text-coral-300"
-            data-testid="cost-dashboard-error">
-            {error}
+          <div role="alert" data-testid="cost-dashboard-error">
+            <SettingsStatusLine saving={false} error={error} savingLabel="" />
           </div>
         )}
         {usageLogError && (
-          <div
-            role="alert"
-            className="rounded-md border border-coral-200 dark:border-coral-500/30 bg-coral-50 dark:bg-coral-500/10 px-3 py-2 text-xs text-coral-700 dark:text-coral-300"
-            data-testid="cost-dashboard-usage-error">
-            {usageLogError}
+          <div role="alert" data-testid="cost-dashboard-usage-error">
+            <SettingsStatusLine saving={false} error={usageLogError} savingLabel="" />
           </div>
         )}
         {data && !data.enabled && (
@@ -121,12 +120,12 @@ const CostDashboardPanel = () => {
             />
             <section
               data-testid="cost-dashboard-cost-chart"
-              className="rounded-2xl border border-stone-200 dark:border-neutral-800 p-4 bg-white/40 dark:bg-neutral-900/40">
+              className="rounded-2xl border border-neutral-200 dark:border-neutral-800 p-4 bg-white/40 dark:bg-neutral-900/40">
               <header className="mb-2 flex items-baseline justify-between">
-                <h2 className="text-sm font-semibold text-stone-800 dark:text-neutral-100">
+                <h2 className="text-sm font-semibold text-neutral-800 dark:text-neutral-100">
                   {t('settings.costDashboard.sevenDayCost')}
                 </h2>
-                <span className="text-[11px] text-stone-500 dark:text-neutral-400">
+                <span className="text-[11px] text-neutral-500 dark:text-neutral-400">
                   {t('settings.costDashboard.utcNote')}
                 </span>
               </header>
@@ -140,12 +139,12 @@ const CostDashboardPanel = () => {
             </section>
             <section
               data-testid="cost-dashboard-token-chart"
-              className="rounded-2xl border border-stone-200 dark:border-neutral-800 p-4 bg-white/40 dark:bg-neutral-900/40">
+              className="rounded-2xl border border-neutral-200 dark:border-neutral-800 p-4 bg-white/40 dark:bg-neutral-900/40">
               <header className="mb-2 flex items-baseline justify-between">
-                <h2 className="text-sm font-semibold text-stone-800 dark:text-neutral-100">
+                <h2 className="text-sm font-semibold text-neutral-800 dark:text-neutral-100">
                   {t('settings.costDashboard.sevenDayTokens')}
                 </h2>
-                <span className="text-[11px] text-stone-500 dark:text-neutral-400">
+                <span className="text-[11px] text-neutral-500 dark:text-neutral-400">
                   {t('settings.costDashboard.stackedNote')}
                 </span>
               </header>
@@ -153,12 +152,12 @@ const CostDashboardPanel = () => {
             </section>
             <section
               data-testid="cost-dashboard-model-table"
-              className="rounded-2xl border border-stone-200 dark:border-neutral-800 p-4 bg-white/40 dark:bg-neutral-900/40">
+              className="rounded-2xl border border-neutral-200 dark:border-neutral-800 p-4 bg-white/40 dark:bg-neutral-900/40">
               <header className="mb-2">
-                <h2 className="text-sm font-semibold text-stone-800 dark:text-neutral-100">
+                <h2 className="text-sm font-semibold text-neutral-800 dark:text-neutral-100">
                   {t('settings.costDashboard.modelBreakdown')}
                 </h2>
-                <p className="text-[11px] text-stone-500 dark:text-neutral-400">
+                <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
                   {t('settings.costDashboard.modelBreakdownHint')}
                 </p>
               </header>
@@ -166,12 +165,12 @@ const CostDashboardPanel = () => {
             </section>
             <section
               data-testid="cost-dashboard-category-distribution"
-              className="rounded-2xl border border-stone-200 dark:border-neutral-800 p-4 bg-white/40 dark:bg-neutral-900/40">
+              className="rounded-2xl border border-neutral-200 dark:border-neutral-800 p-4 bg-white/40 dark:bg-neutral-900/40">
               <header className="mb-3">
-                <h2 className="text-sm font-semibold text-stone-800 dark:text-neutral-100">
+                <h2 className="text-sm font-semibold text-neutral-800 dark:text-neutral-100">
                   {t('settings.costDashboard.categoryDistribution')}
                 </h2>
-                <p className="text-[11px] text-stone-500 dark:text-neutral-400">
+                <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
                   {t('settings.costDashboard.categoryDistributionHint')}
                 </p>
               </header>
@@ -181,20 +180,20 @@ const CostDashboardPanel = () => {
                   currency={usageLog.currency}
                 />
               ) : usageLogLoading ? (
-                <div className="text-xs text-stone-500 dark:text-neutral-400">
+                <div className="text-xs text-neutral-500 dark:text-neutral-400">
                   {t('settings.costDashboard.loading')}
                 </div>
               ) : null}
             </section>
             <section
               data-testid="cost-dashboard-usage-log"
-              className="rounded-2xl border border-stone-200 dark:border-neutral-800 p-4 bg-white/40 dark:bg-neutral-900/40">
+              className="rounded-2xl border border-neutral-200 dark:border-neutral-800 p-4 bg-white/40 dark:bg-neutral-900/40">
               <header className="mb-3 flex items-baseline justify-between gap-3">
                 <div>
-                  <h2 className="text-sm font-semibold text-stone-800 dark:text-neutral-100">
+                  <h2 className="text-sm font-semibold text-neutral-800 dark:text-neutral-100">
                     {t('settings.costDashboard.usageLog')}
                   </h2>
-                  <p className="text-[11px] text-stone-500 dark:text-neutral-400">
+                  <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
                     {usageLog
                       ? t('settings.costDashboard.usageLogHint')
                           .replace('{days}', String(usageLog.days))
@@ -205,7 +204,7 @@ const CostDashboardPanel = () => {
                   </p>
                 </div>
                 {usageLog && (
-                  <span className="shrink-0 text-[11px] text-stone-500 dark:text-neutral-400">
+                  <span className="shrink-0 text-[11px] text-neutral-500 dark:text-neutral-400">
                     {t('settings.costDashboard.logTotal')
                       .replace('{requests}', String(usageLog.request_count))
                       .replace(
@@ -218,7 +217,7 @@ const CostDashboardPanel = () => {
               {usageLog ? (
                 <UsageLogTable records={usageLog.records} currency={usageLog.currency} />
               ) : usageLogLoading ? (
-                <div className="text-xs text-stone-500 dark:text-neutral-400">
+                <div className="text-xs text-neutral-500 dark:text-neutral-400">
                   {t('settings.costDashboard.loading')}
                 </div>
               ) : null}
@@ -226,11 +225,11 @@ const CostDashboardPanel = () => {
             {!hasAnyCost && (
               <div
                 data-testid="cost-dashboard-empty"
-                className="rounded-xl border border-dashed border-stone-300 dark:border-neutral-700 px-4 py-6 text-center">
-                <div className="text-sm font-medium text-stone-700 dark:text-neutral-200">
+                className="rounded-xl border border-dashed border-neutral-300 dark:border-neutral-700 px-4 py-6 text-center">
+                <div className="text-sm font-medium text-neutral-700 dark:text-neutral-200">
                   {t('settings.costDashboard.noData')}
                 </div>
-                <div className="text-[11px] text-stone-500 dark:text-neutral-400 mt-1">
+                <div className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-1">
                   {t('settings.costDashboard.noDataHint')}
                 </div>
               </div>
@@ -247,7 +246,7 @@ const CATEGORY_COLORS = [
   'bg-sage-500',
   'bg-amber-500',
   'bg-coral-500',
-  'bg-stone-500 dark:bg-neutral-400',
+  'bg-neutral-500 dark:bg-neutral-400',
 ];
 
 const CategoryDistribution = ({
@@ -260,7 +259,7 @@ const CategoryDistribution = ({
   const { t } = useT();
   if (categories.length === 0) {
     return (
-      <div className="text-xs text-stone-500 dark:text-neutral-400 italic py-2">
+      <div className="text-xs text-neutral-500 dark:text-neutral-400 italic py-2">
         {t('settings.costDashboard.noCategories')}
       </div>
     );
@@ -270,7 +269,7 @@ const CategoryDistribution = ({
     <div className="space-y-3">
       <div
         aria-hidden
-        className="flex h-3 w-full overflow-hidden rounded-full bg-stone-200 dark:bg-neutral-800">
+        className="flex h-3 w-full overflow-hidden rounded-full bg-neutral-200 dark:bg-neutral-800">
         {categories.map((category, index) => (
           <div
             key={category.category}
@@ -283,22 +282,22 @@ const CategoryDistribution = ({
         {categories.map((category, index) => (
           <div
             key={category.category}
-            className="rounded-lg border border-stone-200 dark:border-neutral-800 px-3 py-2">
+            className="rounded-lg border border-neutral-200 dark:border-neutral-800 px-3 py-2">
             <div className="flex items-center justify-between gap-3">
               <div className="flex min-w-0 items-center gap-2">
                 <span
                   aria-hidden
                   className={`h-2 w-2 rounded-full ${CATEGORY_COLORS[index % CATEGORY_COLORS.length]}`}
                 />
-                <span className="truncate text-xs font-medium text-stone-800 dark:text-neutral-100">
+                <span className="truncate text-xs font-medium text-neutral-800 dark:text-neutral-100">
                   {category.category}
                 </span>
               </div>
-              <span className="shrink-0 text-xs font-semibold tabular-nums text-stone-900 dark:text-neutral-50">
+              <span className="shrink-0 text-xs font-semibold tabular-nums text-neutral-900 dark:text-neutral-50">
                 {formatCurrency(category.cost_usd, currency)}
               </span>
             </div>
-            <div className="mt-1 flex items-center justify-between gap-2 text-[11px] text-stone-500 dark:text-neutral-400">
+            <div className="mt-1 flex items-center justify-between gap-2 text-[11px] text-neutral-500 dark:text-neutral-400">
               <span>{`${category.percent_of_total.toFixed(1)}%`}</span>
               <span>
                 {t('settings.costDashboard.categoryMeta')
@@ -317,7 +316,7 @@ const UsageLogTable = ({ records, currency }: { records: CostUsageRecord[]; curr
   const { t } = useT();
   if (records.length === 0) {
     return (
-      <div className="text-xs text-stone-500 dark:text-neutral-400 italic py-2">
+      <div className="text-xs text-neutral-500 dark:text-neutral-400 italic py-2">
         {t('settings.costDashboard.noUsageLog')}
       </div>
     );
@@ -327,7 +326,7 @@ const UsageLogTable = ({ records, currency }: { records: CostUsageRecord[]; curr
     <div className="overflow-x-auto -mx-1">
       <table className="w-full min-w-[760px] text-xs">
         <thead>
-          <tr className="border-b border-stone-200 text-left text-[10px] uppercase tracking-wide text-stone-500 dark:border-neutral-800 dark:text-neutral-400">
+          <tr className="border-b border-neutral-200 text-left text-[10px] uppercase tracking-wide text-neutral-500 dark:border-neutral-800 dark:text-neutral-400">
             <Th>{t('settings.costDashboard.when')}</Th>
             <Th>{t('settings.costDashboard.category')}</Th>
             <Th>{t('settings.costDashboard.model')}</Th>
@@ -341,34 +340,34 @@ const UsageLogTable = ({ records, currency }: { records: CostUsageRecord[]; curr
           {records.map(record => (
             <tr
               key={record.id}
-              className="border-b border-stone-100 transition-colors last:border-0 hover:bg-stone-50/60 dark:border-neutral-800/60 dark:hover:bg-neutral-800/40">
+              className="border-b border-neutral-100 transition-colors last:border-0 hover:bg-neutral-50/60 dark:border-neutral-800/60 dark:hover:bg-neutral-800/40">
               <Td>
-                <div className="tabular-nums text-stone-700 dark:text-neutral-200">
+                <div className="tabular-nums text-neutral-700 dark:text-neutral-200">
                   {formatDateTime(record.timestamp)}
                 </div>
               </Td>
               <Td>
-                <span className="inline-flex rounded-full bg-stone-100 px-2 py-0.5 text-[10px] font-medium text-stone-700 ring-1 ring-inset ring-stone-200 dark:bg-neutral-800 dark:text-neutral-200 dark:ring-neutral-700">
+                <span className="inline-flex rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] font-medium text-neutral-700 ring-1 ring-inset ring-neutral-200 dark:bg-neutral-800 dark:text-neutral-200 dark:ring-neutral-700">
                   {record.category}
                 </span>
               </Td>
               <Td>
-                <div className="max-w-[16rem] truncate font-medium text-stone-800 dark:text-neutral-100">
+                <div className="max-w-[16rem] truncate font-medium text-neutral-800 dark:text-neutral-100">
                   {record.model}
                 </div>
-                <div className="text-[10px] text-stone-500 dark:text-neutral-400">
+                <div className="text-[10px] text-neutral-500 dark:text-neutral-400">
                   {record.provider ?? t('settings.costDashboard.unknownProvider')}
                 </div>
               </Td>
               <Td align="right">{formatTokens(record.input_tokens)}</Td>
               <Td align="right">{formatTokens(record.output_tokens)}</Td>
               <Td align="right">
-                <span className="font-semibold tabular-nums text-stone-900 dark:text-neutral-50">
+                <span className="font-semibold tabular-nums text-neutral-900 dark:text-neutral-50">
                   {formatCurrency(record.cost_usd, currency)}
                 </span>
               </Td>
               <Td>
-                <span className="font-mono text-[10px] text-stone-500 dark:text-neutral-400">
+                <span className="font-mono text-[10px] text-neutral-500 dark:text-neutral-400">
                   {shortId(record.session_id)}
                 </span>
               </Td>

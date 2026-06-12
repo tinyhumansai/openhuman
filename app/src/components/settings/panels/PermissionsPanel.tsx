@@ -10,7 +10,9 @@ import {
   openhumanUpdateAgentPaths,
   openhumanUpdateAutonomySettings,
 } from '../../../utils/tauriCommands';
+import Button from '../../ui/Button';
 import SettingsHeader from '../components/SettingsHeader';
+import { SettingsStatusLine, SettingsTextField } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 // Installs are always *available* but never silent: every `install_tool` call
@@ -203,17 +205,17 @@ const PermissionsPanel = () => {
         )}
 
         {isLoading ? (
-          <p className="text-sm text-stone-600 dark:text-neutral-400">
+          <p className="text-sm text-neutral-500 dark:text-neutral-400">
             {t('settings.agentAccess.loading')}
           </p>
         ) : (
           <>
-            {/* Access mode presets — layman-friendly labels */}
+            {/* Access mode presets — intentional bespoke card UI; kept as-is. */}
             <section className="space-y-2">
-              <h2 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+              <h2 className="text-sm font-semibold text-neutral-800 dark:text-neutral-100">
                 {t('settings.permissions.accessMode')}
               </h2>
-              <p className="text-xs text-stone-600 dark:text-neutral-400">
+              <p className="text-xs text-neutral-500 dark:text-neutral-400">
                 {t('settings.permissions.accessModeDesc')}
               </p>
               <div className="grid gap-2">
@@ -226,26 +228,26 @@ const PermissionsPanel = () => {
                     className={`text-left rounded-lg border p-3 transition ${
                       level === p.id
                         ? 'border-primary-500 bg-primary-50 dark:bg-primary-500/10'
-                        : 'border-stone-200 dark:border-neutral-800 hover:border-primary-300 dark:hover:border-primary-500'
+                        : 'border-neutral-200 dark:border-neutral-800 hover:border-primary-300 dark:hover:border-primary-500'
                     }`}>
                     <div className="flex items-center gap-2">
                       <span
                         className={`inline-block w-3 h-3 rounded-full border ${
                           level === p.id
                             ? 'bg-primary-500 border-primary-500'
-                            : 'border-stone-300 dark:border-neutral-700'
+                            : 'border-neutral-300 dark:border-neutral-700'
                         }`}
                       />
-                      <span className="font-medium text-stone-900 dark:text-neutral-100">
+                      <span className="font-medium text-neutral-800 dark:text-neutral-100">
                         {p.title}
                       </span>
                       {p.id === 'supervised' && (
-                        <span className="text-xs text-stone-600 dark:text-neutral-400">
+                        <span className="text-xs text-neutral-500 dark:text-neutral-400">
                           {t('settings.agentAccess.defaultTag')}
                         </span>
                       )}
                     </div>
-                    <p className="mt-1 text-xs text-stone-600 dark:text-neutral-400">
+                    <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
                       {p.description}
                     </p>
                   </button>
@@ -260,16 +262,16 @@ const PermissionsPanel = () => {
 
             {/* Folders the assistant can use */}
             <section className="space-y-2">
-              <h2 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+              <h2 className="text-sm font-semibold text-neutral-800 dark:text-neutral-100">
                 {t('settings.permissions.folders')}
               </h2>
-              <p className="text-xs text-stone-600 dark:text-neutral-400">
+              <p className="text-xs text-neutral-500 dark:text-neutral-400">
                 {t('settings.permissions.foldersDesc')}
               </p>
-              <div className="rounded-lg border border-stone-200 dark:border-neutral-800 px-3 py-2">
+              <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 px-3 py-2">
                 <div className="flex items-center gap-2">
                   <span className="inline-block w-2 h-2 rounded-full bg-sage-500" />
-                  <span className="text-xs font-medium text-stone-900 dark:text-neutral-100">
+                  <span className="text-xs font-medium text-neutral-800 dark:text-neutral-100">
                     {t('settings.agentAccess.actionSandbox')}
                   </span>
                   <span className="text-xs text-sage-600 dark:text-sage-400">
@@ -279,31 +281,34 @@ const PermissionsPanel = () => {
                 {actionDirEditing ? (
                   <div className="mt-1 space-y-1">
                     <div className="flex items-center gap-2">
-                      <input
-                        type="text"
-                        className="flex-1 rounded border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1 text-xs font-mono text-stone-900 dark:text-neutral-100"
+                      <SettingsTextField
+                        mono
+                        className="flex-1"
+                        inputSize="sm"
                         value={actionDirInput}
                         onChange={e => setActionDirInput(e.target.value)}
                         placeholder={t('settings.agentAccess.actionDir.placeholder')}
                         disabled={actionDirSaving}
                         data-testid="permissions-action-dir-input"
                       />
-                      <button
+                      <Button
                         type="button"
-                        className="rounded bg-ocean px-2 py-1 text-xs font-medium text-white disabled:opacity-50"
+                        variant="primary"
+                        size="xs"
                         onClick={() => void saveActionDir()}
                         disabled={actionDirSaving}
                         data-testid="permissions-action-dir-save">
                         {t('settings.agentAccess.actionDir.save')}
-                      </button>
-                      <button
+                      </Button>
+                      <Button
                         type="button"
-                        className="rounded border border-stone-300 dark:border-neutral-700 px-2 py-1 text-xs font-medium text-stone-700 dark:text-neutral-300 disabled:opacity-50"
+                        variant="secondary"
+                        size="xs"
                         onClick={cancelEditActionDir}
                         disabled={actionDirSaving}
                         data-testid="permissions-action-dir-cancel">
                         {t('settings.agentAccess.actionDir.cancel')}
-                      </button>
+                      </Button>
                     </div>
                     {actionDirError && (
                       <p
@@ -316,7 +321,7 @@ const PermissionsPanel = () => {
                 ) : (
                   <div className="mt-0.5 flex items-center gap-2">
                     <p
-                      className="text-xs text-stone-600 dark:text-neutral-400 font-mono"
+                      className="text-xs text-neutral-500 dark:text-neutral-400 font-mono"
                       data-testid="permissions-action-dir">
                       {agentPaths?.action_dir ?? '~/OpenHuman/projects'}
                     </p>
@@ -341,28 +346,19 @@ const PermissionsPanel = () => {
                 {actionDirSaved && !actionDirEditing && (
                   <p className="text-xs text-sage-600 dark:text-sage-400">{actionDirSaved}</p>
                 )}
-                <p className="text-xs text-stone-500 dark:text-neutral-500 mt-0.5">
+                <p className="text-xs text-neutral-500 dark:text-neutral-500 mt-0.5">
                   {t('settings.agentAccess.actionSandboxDesc')}
                 </p>
               </div>
             </section>
 
             {/* Auto-save status */}
-            <div className="min-h-[1.25rem] text-sm" aria-live="polite">
-              {error ? (
-                <span className="text-coral-600 dark:text-coral-300">{error}</span>
-              ) : isSaving ? (
-                <span className="text-stone-600 dark:text-neutral-400">
-                  {t('settings.agentAccess.saving')}
-                </span>
-              ) : savedNote ? (
-                <span className="text-sage-700 dark:text-sage-300">✓ {savedNote}</span>
-              ) : (
-                <span className="text-stone-600 dark:text-neutral-400">
-                  {t('settings.agentAccess.changesApply')}
-                </span>
-              )}
-            </div>
+            <SettingsStatusLine
+              saving={isSaving}
+              savedNote={savedNote}
+              error={error}
+              savingLabel={t('settings.agentAccess.saving')}
+            />
           </>
         )}
       </div>

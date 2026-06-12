@@ -134,7 +134,7 @@ test.describe('Settings leaf workflows', () => {
 
     await expect(page.getByRole('heading', { name: 'New agent' })).toBeVisible();
     await page.getByRole('textbox', { name: 'Name' }).fill('Playwright Researcher');
-    await page.getByRole('textbox', { name: /ID Lowercase/ }).fill(agentId);
+    await page.getByRole('textbox', { name: 'ID', exact: true }).fill(agentId);
     await page.getByLabel('Description').fill('Validates settings agent authoring in E2E.');
     await page.getByLabel('Model (optional)').selectOption('hint:reasoning');
     await page

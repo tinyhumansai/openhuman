@@ -92,8 +92,9 @@ export function pickViseme(delta: string): VisemeShape {
 /**
  * Pick a raw Oculus viseme code from a text delta character. Used to drive
  * `mouthVisemeCode` on the Rive state machine during pseudo-lipsync (no TTS).
- * Returns Oculus 15-set codes; `RiveMascot` translates vowels (`E`→`ih`,
- * `O`→`oh`, `U`→`ou`) to the Rive asset's vocabulary at render time.
+ * Returns Oculus 15-set codes; `RiveMascot` normalises the close vowels
+ * (`I`→`ih`, `O`→`oh`, `U`→`ou`) to the asset's `visme_codes` vocabulary at
+ * render time, keeping `E`/`aa` and the consonants as-is.
  */
 export function pickVisemeCode(delta: string): string {
   const ch = delta

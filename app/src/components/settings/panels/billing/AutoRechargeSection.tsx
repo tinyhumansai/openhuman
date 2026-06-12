@@ -1,5 +1,7 @@
 import { useT } from '../../../../lib/i18n/I18nContext';
 import type { AutoRechargeSettings, SavedCard } from '../../../../services/api/creditsApi';
+import Button from '../../../ui/Button';
+import { SettingsSwitch } from '../../controls';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 const THRESHOLD_OPTIONS = [5, 10, 20] as const;
@@ -72,35 +74,27 @@ const AutoRechargeSection = ({
 }: AutoRechargeSectionProps) => {
   const { t } = useT();
   return (
-    <div className="rounded-2xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 overflow-hidden">
+    <div className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 overflow-hidden">
       {/* Header row */}
       <div className="flex items-center justify-between p-3">
         <div>
-          <p className="text-md font-semibold text-stone-900 dark:text-neutral-100">
+          <p className="text-md font-semibold text-neutral-800 dark:text-neutral-100">
             {t('settings.billing.autoRecharge.title')}
           </p>
-          <p className="text-[11px] text-stone-400 dark:text-neutral-500 mt-0.5">
+          <p className="text-[11px] text-neutral-400 dark:text-neutral-500 mt-0.5">
             {t('settings.billing.autoRecharge.subtitle')}
           </p>
         </div>
         {arLoading ? (
-          <div className="w-10 h-5 rounded-full bg-stone-700/60 animate-pulse" />
+          <div className="w-10 h-5 rounded-full bg-neutral-300 dark:bg-neutral-700 animate-pulse" />
         ) : (
-          <button
-            onClick={onArToggle}
+          <SettingsSwitch
+            id="auto-recharge-toggle"
+            checked={arSettings?.enabled ?? false}
+            onCheckedChange={onArToggle}
             disabled={arSaving}
-            role="switch"
-            aria-checked={arSettings?.enabled ?? false}
             aria-label={t('settings.billing.autoRecharge.toggleAriaLabel')}
-            className={`relative w-10 h-5 rounded-full transition-colors focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 focus-visible:ring-offset-stone-900 ${
-              arSaving ? 'opacity-50 cursor-not-allowed' : ''
-            } ${arSettings?.enabled ? 'bg-primary-500' : 'bg-stone-600'}`}>
-            <span
-              className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white dark:bg-neutral-900 shadow transition-transform ${
-                arSettings?.enabled ? 'translate-x-5' : 'translate-x-0'
-              }`}
-            />
-          </button>
+          />
         )}
       </div>
 
@@ -125,7 +119,7 @@ const AutoRechargeSection = ({
 
       {/* Settings — only shown when enabled */}
       {!arLoading && arSettings?.enabled && (
-        <div className="border-t border-stone-200 dark:border-neutral-800 px-3 pt-3 pb-2 space-y-3">
+        <div className="border-t border-neutral-200 dark:border-neutral-800 px-3 pt-3 pb-2 space-y-3">
           {/* Status row */}
           <div className="flex items-center gap-3 flex-wrap">
             {arSettings.inFlight && (
@@ -149,14 +143,14 @@ const AutoRechargeSection = ({
               </span>
             )}
             {arSettings.spentThisWeekUsd > 0 && (
-              <span className="text-[10px] text-stone-400 dark:text-neutral-500">
+              <span className="text-[10px] text-neutral-400 dark:text-neutral-500">
                 {t('settings.billing.autoRecharge.spentThisWeek')
                   .replace('{spent}', arSettings.spentThisWeekUsd.toFixed(2))
                   .replace('{limit}', String(arSettings.weeklyLimitUsd))}
               </span>
             )}
             {arSettings.lastRechargeAt && (
-              <span className="text-[10px] text-stone-500 dark:text-neutral-400">
+              <span className="text-[10px] text-neutral-500 dark:text-neutral-400">
                 {t('settings.billing.autoRecharge.expires').replace(
                   '{date}',
                   new Date(arSettings.lastRechargeAt).toLocaleDateString('en-US', {
@@ -189,20 +183,21 @@ const AutoRechargeSection = ({
             </div>
           )}
 
-          {/* Trigger threshold */}
+          {/* Trigger threshold — bespoke pill-button selector, keep layout */}
           <div>
-            <p className="text-[11px] text-stone-400 dark:text-neutral-500 mb-1.5">
+            <p className="text-[11px] text-neutral-400 dark:text-neutral-500 mb-1.5">
               {t('settings.billing.autoRecharge.rechargeWhen')}
             </p>
             <div className="flex gap-1.5 flex-wrap">
               {THRESHOLD_OPTIONS.map(v => (
                 <button
                   key={v}
+                  type="button"
                   onClick={() => setArThreshold(v)}
                   className={`px-2.5 py-1 text-xs rounded-lg border transition-colors ${
                     arThreshold === v
                       ? 'bg-primary-500/20 text-primary-400 border-primary-500/40'
-                      : 'bg-stone-100 dark:bg-neutral-800 text-stone-500 dark:text-neutral-400 border-stone-200 dark:border-neutral-800 hover:text-stone-700 dark:hover:text-neutral-200 dark:text-neutral-200'
+                      : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-500 dark:text-neutral-400 border-neutral-200 dark:border-neutral-800 hover:text-neutral-700 dark:hover:text-neutral-200'
                   }`}>
                   ${v}
                 </button>
@@ -210,20 +205,21 @@ const AutoRechargeSection = ({
             </div>
           </div>
 
-          {/* Recharge amount */}
+          {/* Recharge amount — bespoke pill-button selector, keep layout */}
           <div>
-            <p className="text-[11px] text-stone-400 dark:text-neutral-500 mb-1.5">
+            <p className="text-[11px] text-neutral-400 dark:text-neutral-500 mb-1.5">
               {t('settings.billing.autoRecharge.addAmount')}
             </p>
             <div className="flex gap-1.5 flex-wrap">
               {RECHARGE_OPTIONS.map(v => (
                 <button
                   key={v}
+                  type="button"
                   onClick={() => setArAmount(v)}
                   className={`px-2.5 py-1 text-xs rounded-lg border transition-colors ${
                     arAmount === v
                       ? 'bg-primary-500/20 text-primary-400 border-primary-500/40'
-                      : 'bg-stone-100 dark:bg-neutral-800 text-stone-500 dark:text-neutral-400 border-stone-200 dark:border-neutral-800 hover:text-stone-700 dark:hover:text-neutral-200 dark:text-neutral-200'
+                      : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-500 dark:text-neutral-400 border-neutral-200 dark:border-neutral-800 hover:text-neutral-700 dark:hover:text-neutral-200'
                   }`}>
                   ${v}
                 </button>
@@ -231,20 +227,21 @@ const AutoRechargeSection = ({
             </div>
           </div>
 
-          {/* Weekly limit */}
+          {/* Weekly limit — bespoke pill-button selector, keep layout */}
           <div>
-            <p className="text-[11px] text-stone-400 dark:text-neutral-500 mb-1.5">
+            <p className="text-[11px] text-neutral-400 dark:text-neutral-500 mb-1.5">
               {t('settings.billing.autoRecharge.weeklyLimit')}
             </p>
             <div className="flex gap-1.5 flex-wrap">
               {WEEKLY_LIMIT_OPTIONS.map(v => (
                 <button
                   key={v}
+                  type="button"
                   onClick={() => setArWeeklyLimit(v)}
                   className={`px-2.5 py-1 text-xs rounded-lg border transition-colors ${
                     arWeeklyLimit === v
                       ? 'bg-primary-500/20 text-primary-400 border-primary-500/40'
-                      : 'bg-stone-100 dark:bg-neutral-800 text-stone-500 dark:text-neutral-400 border-stone-200 dark:border-neutral-800 hover:text-stone-700 dark:hover:text-neutral-200 dark:text-neutral-200'
+                      : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-500 dark:text-neutral-400 border-neutral-200 dark:border-neutral-800 hover:text-neutral-700 dark:hover:text-neutral-200'
                   }`}>
                   ${v}
                 </button>
@@ -261,45 +258,50 @@ const AutoRechargeSection = ({
 
           {/* Save button */}
           {arDirty && (
-            <button
+            <Button
+              type="button"
+              variant="primary"
+              size="sm"
               onClick={onArSave}
               disabled={arSaving || arAmount <= arThreshold}
-              className={`w-full py-1.5 text-xs font-medium rounded-lg transition-colors ${
-                arSaving || arAmount <= arThreshold
-                  ? 'bg-stone-700/40 text-stone-500 dark:text-neutral-400 cursor-not-allowed'
-                  : 'bg-primary-500 hover:bg-primary-600 text-white'
-              }`}>
+              className="w-full">
               {arSaving
                 ? t('settings.billing.autoRecharge.saving')
                 : t('settings.billing.autoRecharge.saveSettings')}
-            </button>
+            </Button>
           )}
         </div>
       )}
 
       {/* Payment methods */}
-      <div className="border-t border-stone-200 dark:border-neutral-800 px-3 py-2.5">
+      <div className="border-t border-neutral-200 dark:border-neutral-800 px-3 py-2.5">
         <div className="flex items-center justify-between mb-2">
-          <p className="text-[11px] font-medium text-stone-600 dark:text-neutral-300">
+          <p className="text-[11px] font-medium text-neutral-600 dark:text-neutral-300">
             {t('settings.billing.autoRecharge.paymentMethods')}
           </p>
-          <button
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
             onClick={onAddCard}
-            className="text-[11px] text-primary-400 hover:text-primary-300 font-medium transition-colors">
+            className="text-primary-500 dark:text-primary-400 hover:text-primary-600 dark:hover:text-primary-300">
             {t('settings.billing.autoRecharge.addCard')}
-          </button>
+          </Button>
         </div>
 
         {cardsLoading ? (
           <div className="space-y-1.5">
             {[0, 1].map(i => (
-              <div key={i} className="h-9 rounded-lg bg-stone-700/30 animate-pulse" />
+              <div
+                key={i}
+                className="h-9 rounded-lg bg-neutral-200/60 dark:bg-neutral-700/30 animate-pulse"
+              />
             ))}
           </div>
         ) : cards.length === 0 ? (
-          <div className="flex items-center gap-2 rounded-lg bg-stone-50 dark:bg-neutral-800/60 border border-stone-200 dark:border-neutral-800 p-2.5">
+          <div className="flex items-center gap-2 rounded-lg bg-neutral-50 dark:bg-neutral-800/60 border border-neutral-200 dark:border-neutral-800 p-2.5">
             <svg
-              className="w-4 h-4 text-stone-500 dark:text-neutral-400 flex-shrink-0"
+              className="w-4 h-4 text-neutral-500 dark:text-neutral-400 flex-shrink-0"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24">
@@ -310,7 +312,7 @@ const AutoRechargeSection = ({
                 d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"
               />
             </svg>
-            <p className="text-[11px] text-stone-500 dark:text-neutral-400">
+            <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
               {t('settings.billing.autoRecharge.noCards')}
             </p>
           </div>
@@ -324,10 +326,10 @@ const AutoRechargeSection = ({
               return (
                 <div
                   key={card.id}
-                  className="flex items-center gap-2 rounded-lg bg-stone-50 dark:bg-neutral-800/60 border border-stone-200 dark:border-neutral-800 px-2.5 py-2">
+                  className="flex items-center gap-2 rounded-lg bg-neutral-50 dark:bg-neutral-800/60 border border-neutral-200 dark:border-neutral-800 px-2.5 py-2">
                   {/* Card icon */}
                   <svg
-                    className="w-4 h-4 text-stone-400 dark:text-neutral-500 flex-shrink-0"
+                    className="w-4 h-4 text-neutral-400 dark:text-neutral-500 flex-shrink-0"
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24">
@@ -342,7 +344,7 @@ const AutoRechargeSection = ({
                   {/* Card info */}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="text-xs text-stone-900 dark:text-neutral-100 font-medium">
+                      <span className="text-xs text-neutral-800 dark:text-neutral-100 font-medium">
                         {cardBrandLabel(card.brand)} ••••{card.last4}
                       </span>
                       {card.isDefault && (
@@ -351,7 +353,7 @@ const AutoRechargeSection = ({
                         </span>
                       )}
                     </div>
-                    <p className="text-[10px] text-stone-500 dark:text-neutral-400 mt-0.5">
+                    <p className="text-[10px] text-neutral-500 dark:text-neutral-400 mt-0.5">
                       {t('settings.billing.autoRecharge.expires').replace(
                         '{date}',
                         `${String(card.expMonth).padStart(2, '0')}/${String(card.expYear).slice(-2)}`
@@ -362,35 +364,44 @@ const AutoRechargeSection = ({
                   {/* Actions */}
                   <div className="flex items-center gap-1 flex-shrink-0">
                     {!card.isDefault && (
-                      <button
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="xs"
                         onClick={() => onSetDefault(card.id)}
-                        disabled={!!settingDefaultId || !!deletingCardId}
-                        className="text-[10px] text-stone-500 dark:text-neutral-400 hover:text-stone-700 dark:hover:text-neutral-200 dark:text-neutral-200 transition-colors disabled:opacity-40 disabled:cursor-not-allowed px-1.5 py-1">
+                        disabled={!!settingDefaultId || !!deletingCardId}>
                         {isSettingDefault ? '…' : t('settings.billing.autoRecharge.setDefault')}
-                      </button>
+                      </Button>
                     )}
 
                     {isConfirming ? (
                       <div className="flex items-center gap-1">
-                        <button
+                        <Button
+                          type="button"
+                          variant="danger"
+                          size="xs"
                           onClick={() => onDeleteCard(card.id)}
-                          disabled={isDeleting}
-                          className="text-[10px] text-coral-400 hover:text-coral-300 font-medium transition-colors disabled:opacity-40 px-1.5 py-1">
+                          disabled={isDeleting}>
                           {isDeleting ? '…' : t('common.confirm')}
-                        </button>
-                        <button
-                          onClick={() => setConfirmDeleteId(null)}
-                          className="text-[10px] text-stone-500 dark:text-neutral-400 hover:text-stone-400 dark:text-neutral-500 transition-colors px-1 py-1">
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="xs"
+                          onClick={() => setConfirmDeleteId(null)}>
                           {t('common.cancel')}
-                        </button>
+                        </Button>
                       </div>
                     ) : (
-                      <button
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="xs"
                         onClick={() => setConfirmDeleteId(card.id)}
                         disabled={isDeleting || !!settingDefaultId}
-                        className="text-[10px] text-stone-500 dark:text-neutral-400 hover:text-coral-400 transition-colors disabled:opacity-40 disabled:cursor-not-allowed px-1.5 py-1">
+                        className="text-neutral-500 dark:text-neutral-400 hover:text-coral-600 dark:hover:text-coral-400">
                         {t('common.remove')}
-                      </button>
+                      </Button>
                     )}
                   </div>
                 </div>

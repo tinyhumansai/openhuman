@@ -60,6 +60,7 @@ mod schemas;
 pub mod setup;
 pub mod setup_ops;
 pub mod store;
+pub mod supervisor;
 pub mod tools;
 pub mod types;
 

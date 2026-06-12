@@ -43,12 +43,12 @@ const MemorySyncPanel = () => {
         breadcrumbs={breadcrumbs}
       />
       <div className="p-4 space-y-4">
-        <p className="text-sm text-stone-600 dark:text-neutral-300">
+        <p className="text-sm text-neutral-500 dark:text-neutral-400">
           {t('settings.dataSync.description')}
         </p>
         <MemorySourcesRegistry onToast={addToast} />
-        <div className="rounded-lg border border-stone-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
-          <h3 className="mb-2 text-sm font-semibold text-stone-700 dark:text-neutral-200">
+        <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4">
+          <h3 className="mb-2 text-sm font-semibold text-neutral-800 dark:text-neutral-100">
             {t('sync.auditTitle', 'Sync History')}
           </h3>
           <SyncAuditPanel />

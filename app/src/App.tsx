@@ -1,7 +1,12 @@
 import * as Sentry from '@sentry/react';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { Provider } from 'react-redux';
-import { HashRouter as Router, useLocation, useNavigate } from 'react-router-dom';
+import {
+  HashRouter as Router,
+  useLocation,
+  useNavigate,
+  useNavigationType,
+} from 'react-router-dom';
 import { PersistGate } from 'redux-persist/integration/react';
 
 import AppRoutes from './AppRoutes';
@@ -200,11 +205,22 @@ function AppShellDesktop() {
   // the core is ready (once per boot). Extracted to a hook so it's testable.
   useNotchBootSync(isBootstrapping);
 
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const navType = useNavigationType();
+
+  useEffect(() => {
+    if (navType !== 'POP') {
+      scrollRef.current?.scrollTo(0, 0);
+    }
+  }, [location.pathname, navType]);
+
   return (
     <div className="relative h-screen flex flex-col overflow-hidden">
       <AppBackground />
       <div className="relative z-10 flex-1 flex flex-col overflow-hidden">
-        <div className={`flex-1 overflow-y-auto ${fullscreen || onOnboardingRoute ? '' : 'pb-16'}`}>
+        <div
+          ref={scrollRef}
+          className={`flex-1 overflow-y-auto ${fullscreen || onOnboardingRoute ? '' : 'pb-16'}`}>
           <GlobalUpsellBanner />
           <AppRoutes />
         </div>

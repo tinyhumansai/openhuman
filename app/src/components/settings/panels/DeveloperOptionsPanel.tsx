@@ -1,3 +1,9 @@
+// [settings] Developer & Diagnostics panel — debug-only entries only.
+// User-facing routes (agents, autonomy, agent-access, sandbox-settings,
+// activity-level, tools, companion, screen-intelligence, voice, embeddings,
+// heartbeat, ledger-usage, cost-dashboard, task-sources, composio-routing,
+// webhooks-triggers, migration, security) have been moved to their canonical
+// section pages. Only genuine diagnostics remain here.
 import { type ReactNode, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
@@ -13,6 +19,7 @@ import { safeInvoke as invoke, isTauri } from '../../../utils/tauriCommands/comm
 import { resetWalkthrough } from '../../walkthrough/AppWalkthrough';
 import SettingsHeader from '../components/SettingsHeader';
 import SettingsMenuItem from '../components/SettingsMenuItem';
+import { SettingsSection } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 // ---------------------------------------------------------------------------
@@ -34,13 +41,28 @@ interface DevGroup {
 }
 
 // ---------------------------------------------------------------------------
-// 7 sub-sections per the IA redesign doc
+// Debug-only groups — genuine diagnostics that belong ONLY here.
+//
+// Removed from all groups (moved to canonical section pages):
+//   agents, autonomy, agent-access, sandbox-settings, activity-level
+//   → Settings → Agents
+//   tools, companion, screen-intelligence
+//   → Settings → Features
+//   voice, embeddings, heartbeat, ledger-usage, cost-dashboard
+//   → Settings → AI & Models
+//   task-sources, composio-routing, webhooks-triggers
+//   → Settings → Integrations
+//   migration, security
+//   → Settings → Account
+//   persona
+//   → Settings home (Assistant group)
 // ---------------------------------------------------------------------------
 
 const knowledgeMemoryGroup: DevGroup = {
   labelKey: 'settings.devGroups.knowledgeMemory',
   items: [
     {
+      // intelligence appears only once here (Council duplicate removed).
       id: 'intelligence',
       titleKey: 'settings.developerMenu.intelligence.title',
       descriptionKey: 'settings.developerMenu.intelligence.desc',
@@ -104,109 +126,12 @@ const knowledgeMemoryGroup: DevGroup = {
         </svg>
       ),
     },
-    {
-      // Moved out of the layman Account group.
-      id: 'migration',
-      titleKey: 'settings.account.dataMigration',
-      descriptionKey: 'settings.account.dataMigrationDesc',
-      route: 'migration',
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M4 7h11m0 0l-3-3m3 3l-3 3m8 7H9m0 0l3 3m-3-3l3-3"
-          />
-        </svg>
-      ),
-    },
   ],
 };
 
-const agentsAutonomyGroup: DevGroup = {
+const agentDebugGroup: DevGroup = {
   labelKey: 'settings.devGroups.agentsAutonomy',
   items: [
-    {
-      id: 'agents',
-      titleKey: 'settings.agents.title',
-      descriptionKey: 'settings.agents.subtitle',
-      route: 'agents',
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"
-          />
-        </svg>
-      ),
-    },
-    {
-      id: 'autonomy',
-      titleKey: 'settings.developerMenu.autonomy.title',
-      descriptionKey: 'settings.developerMenu.autonomy.desc',
-      route: 'autonomy',
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
-          />
-        </svg>
-      ),
-    },
-    {
-      id: 'agent-access',
-      titleKey: 'settings.agentAccess.title',
-      descriptionKey: 'settings.agentAccess.menuDesc',
-      route: 'agent-access',
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
-          />
-        </svg>
-      ),
-    },
-    {
-      id: 'sandbox-settings',
-      titleKey: 'settings.sandbox.title',
-      descriptionKey: 'settings.sandbox.menuDesc',
-      route: 'sandbox-settings',
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"
-          />
-        </svg>
-      ),
-    },
-    {
-      id: 'heartbeat',
-      titleKey: 'settings.heartbeat.title',
-      descriptionKey: 'settings.heartbeat.desc',
-      route: 'heartbeat',
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"
-          />
-        </svg>
-      ),
-    },
     {
       id: 'tool-policy-diagnostics',
       titleKey: 'devOptions.diagnostics',
@@ -240,73 +165,17 @@ const agentsAutonomyGroup: DevGroup = {
       ),
     },
     {
-      // Layman Permissions picker, moved out of the Assistant group.
-      id: 'permissions',
-      titleKey: 'settings.assistant.permissions',
-      descriptionKey: 'settings.assistant.permissionsDesc',
-      route: 'permissions',
+      id: 'agent-chat',
+      titleKey: 'settings.developerMenu.agentChat.title',
+      descriptionKey: 'settings.developerMenu.agentChat.desc',
+      route: 'agent-chat',
       icon: (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path
             strokeLinecap="round"
             strokeLinejoin="round"
             strokeWidth={2}
-            d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
-          />
-        </svg>
-      ),
-    },
-    {
-      // Subconscious (activity level), moved out of the Assistant group.
-      id: 'activity-level',
-      titleKey: 'settings.assistant.backgroundActivity',
-      descriptionKey: 'settings.assistant.backgroundActivityDesc',
-      route: 'activity-level',
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M13 10V3L4 14h7v7l9-11h-7z"
-          />
-        </svg>
-      ),
-    },
-  ],
-};
-
-const modelsInferenceGroup: DevGroup = {
-  labelKey: 'settings.devGroups.modelsInference',
-  items: [
-    {
-      id: 'ai',
-      titleKey: 'settings.developerMenu.ai.title',
-      descriptionKey: 'settings.developerMenu.ai.desc',
-      route: 'ai',
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"
-          />
-        </svg>
-      ),
-    },
-    {
-      id: 'embeddings',
-      titleKey: 'pages.settings.ai.embeddings',
-      descriptionKey: 'pages.settings.ai.embeddingsDesc',
-      route: 'embeddings',
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"
+            d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"
           />
         </svg>
       ),
@@ -328,6 +197,34 @@ const modelsInferenceGroup: DevGroup = {
       ),
     },
     {
+      id: 'skills-runner',
+      titleKey: 'settings.developerMenu.skillsRunner.title',
+      descriptionKey: 'settings.developerMenu.skillsRunner.desc',
+      route: 'skills-runner',
+      icon: (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"
+          />
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+          />
+        </svg>
+      ),
+    },
+  ],
+};
+
+const modelsDebugGroup: DevGroup = {
+  labelKey: 'settings.devGroups.modelsInference',
+  items: [
+    {
       id: 'model-health',
       titleKey: 'settings.modelHealth.title',
       descriptionKey: 'settings.modelHealth.desc',
@@ -344,33 +241,49 @@ const modelsInferenceGroup: DevGroup = {
       ),
     },
     {
-      id: 'search',
-      titleKey: 'settings.search.title',
-      descriptionKey: 'settings.search.menuDesc',
-      route: 'search',
+      id: 'screen-awareness-debug',
+      titleKey: 'settings.developerMenu.screenAwareness.title',
+      descriptionKey: 'settings.developerMenu.screenAwareness.desc',
+      route: 'screen-awareness-debug',
       icon: (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path
             strokeLinecap="round"
             strokeLinejoin="round"
             strokeWidth={2}
-            d="M21 21l-4.35-4.35M11 19a8 8 0 100-16 8 8 0 000 16z"
+            d="M3 5h18v12H3zM8 21h8m-4-4v4"
           />
         </svg>
       ),
     },
     {
-      id: 'agent-chat',
-      titleKey: 'settings.developerMenu.agentChat.title',
-      descriptionKey: 'settings.developerMenu.agentChat.desc',
-      route: 'agent-chat',
+      id: 'voice-debug',
+      titleKey: 'settings.developerMenu.voiceDebug.title',
+      descriptionKey: 'settings.developerMenu.voiceDebug.desc',
+      route: 'voice-debug',
       icon: (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path
             strokeLinecap="round"
             strokeLinejoin="round"
             strokeWidth={2}
-            d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"
+            d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"
+          />
+        </svg>
+      ),
+    },
+    {
+      id: 'autocomplete-debug',
+      titleKey: 'settings.developerMenu.autocomplete.title',
+      descriptionKey: 'settings.developerMenu.autocomplete.desc',
+      route: 'autocomplete-debug',
+      icon: (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M4 6h16M4 10h10M4 14h7m3 4h3m0 0l-2-2m2 2l-2 2"
           />
         </svg>
       ),
@@ -378,7 +291,7 @@ const modelsInferenceGroup: DevGroup = {
   ],
 };
 
-const automationIntegrationsGroup: DevGroup = {
+const automationDebugGroup: DevGroup = {
   labelKey: 'settings.devGroups.automationIntegrations',
   items: [
     {
@@ -414,10 +327,10 @@ const automationIntegrationsGroup: DevGroup = {
       ),
     },
     {
-      id: 'webhooks-triggers',
-      titleKey: 'settings.developerMenu.composeioTriggers.title',
-      descriptionKey: 'settings.developerMenu.composeioTriggers.desc',
-      route: 'webhooks-triggers',
+      id: 'composio-triggers',
+      titleKey: 'settings.developerMenu.composio.title',
+      descriptionKey: 'settings.developerMenu.composio.desc',
+      route: 'composio-triggers',
       icon: (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path
@@ -441,38 +354,6 @@ const automationIntegrationsGroup: DevGroup = {
             strokeLinejoin="round"
             strokeWidth={2}
             d="M13.828 10.172a4 4 0 010 5.656l-2 2a4 4 0 01-5.656-5.656l1-1m5-5a4 4 0 015.656 5.656l-1 1m-5 5l5-5"
-          />
-        </svg>
-      ),
-    },
-    {
-      id: 'task-sources',
-      titleKey: 'settings.taskSources.title',
-      descriptionKey: 'settings.taskSources.subtitle',
-      route: 'task-sources',
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
-          />
-        </svg>
-      ),
-    },
-    {
-      id: 'composio',
-      titleKey: 'settings.developerMenu.composio.title',
-      descriptionKey: 'settings.developerMenu.composio.desc',
-      route: 'composio-routing',
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M13 10V3L4 14h7v7l9-11h-7z"
           />
         </svg>
       ),
@@ -512,157 +393,6 @@ const automationIntegrationsGroup: DevGroup = {
   ],
 };
 
-const toolsCapabilitiesGroup: DevGroup = {
-  labelKey: 'settings.devGroups.toolsCapabilities',
-  items: [
-    {
-      id: 'tools',
-      titleKey: 'settings.developerMenu.tools.title',
-      descriptionKey: 'settings.developerMenu.tools.desc',
-      route: 'tools',
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
-          />
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-          />
-        </svg>
-      ),
-    },
-    {
-      id: 'screen-awareness-debug',
-      titleKey: 'settings.developerMenu.screenAwareness.title',
-      descriptionKey: 'settings.developerMenu.screenAwareness.desc',
-      route: 'screen-awareness-debug',
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M3 5h18v12H3zM8 21h8m-4-4v4"
-          />
-        </svg>
-      ),
-    },
-    {
-      id: 'autocomplete',
-      titleKey: 'settings.developerMenu.autocomplete.title',
-      descriptionKey: 'settings.developerMenu.autocomplete.desc',
-      route: 'autocomplete',
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M4 6h16M4 10h10M4 14h7m3 4h3m0 0l-2-2m2 2l-2 2"
-          />
-        </svg>
-      ),
-    },
-    {
-      id: 'voice-debug',
-      titleKey: 'settings.developerMenu.voiceDebug.title',
-      descriptionKey: 'settings.developerMenu.voiceDebug.desc',
-      route: 'voice-debug',
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"
-          />
-        </svg>
-      ),
-    },
-    {
-      // Voice (TTS/STT) settings, moved out of the Assistant group.
-      id: 'voice',
-      titleKey: 'settings.assistant.voice',
-      descriptionKey: 'settings.assistant.voiceDesc',
-      route: 'voice',
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"
-          />
-        </svg>
-      ),
-    },
-    {
-      // Screen awareness, moved out of the Assistant group.
-      id: 'screen-intelligence',
-      titleKey: 'settings.assistant.screenAwareness',
-      descriptionKey: 'settings.assistant.screenAwarenessDesc',
-      route: 'screen-intelligence',
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M3 5h18v12H3zM8 21h8m-4-4v4"
-          />
-        </svg>
-      ),
-    },
-    {
-      // Desktop companion, moved out of the Assistant group.
-      id: 'companion',
-      titleKey: 'settings.assistant.desktopCompanion',
-      descriptionKey: 'settings.assistant.desktopCompanionDesc',
-      route: 'companion',
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"
-          />
-        </svg>
-      ),
-    },
-  ],
-};
-
-const councilGroup: DevGroup = {
-  labelKey: 'settings.devGroups.council',
-  items: [
-    // Council links to /intelligence?tab=council (the IS_DEV-gated tab).
-    // We route through the embedded Intelligence page in settings.
-    {
-      id: 'council',
-      titleKey: 'settings.devGroups.council',
-      descriptionKey: 'settings.developerMenu.intelligence.desc',
-      route: 'intelligence',
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"
-          />
-        </svg>
-      ),
-    },
-  ],
-};
-
 const diagnosticsLogsGroup: DevGroup = {
   labelKey: 'settings.devGroups.diagnosticsLogs',
   items: [
@@ -683,38 +413,6 @@ const diagnosticsLogsGroup: DevGroup = {
       ),
     },
     {
-      id: 'ledger-usage',
-      titleKey: 'settings.ledgerUsage.title',
-      descriptionKey: 'settings.ledgerUsage.desc',
-      route: 'ledger-usage',
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
-          />
-        </svg>
-      ),
-    },
-    {
-      id: 'cost-dashboard',
-      titleKey: 'settings.costDashboard.title',
-      descriptionKey: 'settings.costDashboard.desc',
-      route: 'cost-dashboard',
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V6m0 10c-1.11 0-2.08-.402-2.599-1M12 16v2m0-12a9 9 0 100 18 9 9 0 000-18z"
-          />
-        </svg>
-      ),
-    },
-    {
       id: 'build-info',
       titleKey: 'settings.buildInfo.title',
       descriptionKey: 'settings.buildInfo.menuDesc',
@@ -730,35 +428,15 @@ const diagnosticsLogsGroup: DevGroup = {
         </svg>
       ),
     },
-    {
-      // Security (secret storage / keychain), moved out of the layman
-      // Privacy & Security group.
-      id: 'security',
-      titleKey: 'settings.privacySecurity.security',
-      descriptionKey: 'settings.privacySecurity.securityDesc',
-      route: 'security',
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z"
-          />
-        </svg>
-      ),
-    },
   ],
 };
 
-/** All 7 dev groups in display order */
+/** All debug-only groups in display order */
 const DEV_GROUPS: DevGroup[] = [
   knowledgeMemoryGroup,
-  agentsAutonomyGroup,
-  modelsInferenceGroup,
-  automationIntegrationsGroup,
-  toolsCapabilitiesGroup,
-  councilGroup,
+  agentDebugGroup,
+  modelsDebugGroup,
+  automationDebugGroup,
   diagnosticsLogsGroup,
 ];
 
@@ -772,7 +450,7 @@ const CoreModeBadge = () => {
 
   if (mode.kind === 'unset') {
     return (
-      <div className="px-4 py-3 rounded-lg border border-coral-300 dark:border-coral-500/40 bg-coral-50 dark:bg-coral-500/10 dark:border-coral-500/30">
+      <div className="px-4 py-3 rounded-xl border border-coral-300 dark:border-coral-500/40 bg-coral-50 dark:bg-coral-500/10">
         <div className="text-sm font-semibold text-coral-900 dark:text-coral-300">
           {t('devOptions.coreModeNotSet')}
         </div>
@@ -785,7 +463,7 @@ const CoreModeBadge = () => {
 
   if (mode.kind === 'local') {
     return (
-      <div className="px-4 py-3 rounded-lg border border-primary-300 dark:border-primary-500/40 bg-primary-50 dark:bg-primary-500/10 dark:border-primary-500/30">
+      <div className="px-4 py-3 rounded-xl border border-primary-300 dark:border-primary-500/40 bg-primary-50 dark:bg-primary-500/10">
         <div className="flex items-center gap-2">
           <span className="px-2 py-0.5 rounded-full bg-primary-600 text-white text-[11px] font-medium">
             {t('devOptions.local')}
@@ -802,7 +480,7 @@ const CoreModeBadge = () => {
   }
 
   return (
-    <div className="px-4 py-3 rounded-lg border border-sage-300 dark:border-sage-500/40 bg-sage-50 dark:bg-sage-500/10 dark:border-sage-500/30">
+    <div className="px-4 py-3 rounded-xl border border-sage-300 dark:border-sage-500/40 bg-sage-50 dark:bg-sage-500/10">
       <div className="flex items-center gap-2">
         <span className="px-2 py-0.5 rounded-full bg-sage-600 text-white text-[11px] font-medium">
           {t('devOptions.cloud')}
@@ -852,7 +530,7 @@ const SentryTestRow = () => {
   };
 
   return (
-    <div className="px-4 py-3 rounded-lg border border-amber-300 dark:border-amber-500/40 bg-amber-50 dark:bg-amber-500/10 dark:border-amber-500/30">
+    <div className="px-4 py-3 rounded-xl border border-amber-300 dark:border-amber-500/40 bg-amber-50 dark:bg-amber-500/10">
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
           <div className="text-sm font-semibold text-amber-900 dark:text-amber-300">
@@ -916,24 +594,24 @@ const LogsFolderRow = () => {
   if (!isTauri()) return null;
 
   return (
-    <div className="px-4 py-3 rounded-lg border border-slate-200 dark:border-neutral-800 bg-slate-50 dark:bg-neutral-800/60">
+    <div className="px-4 py-3 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/60">
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <div className="text-sm font-semibold text-slate-900 dark:text-neutral-100">
+          <div className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
             {t('devOptions.appLogs')}
           </div>
-          <div className="text-xs text-slate-700 dark:text-neutral-300 mt-0.5">
+          <div className="text-xs text-neutral-700 dark:text-neutral-300 mt-0.5">
             {t('devOptions.appLogsDesc')}
           </div>
           {path && (
-            <div className="text-[11px] text-slate-500 dark:text-neutral-400 mt-1 font-mono truncate">
+            <div className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-1 font-mono truncate">
               {path}
             </div>
           )}
         </div>
         <button
           onClick={onClick}
-          className="shrink-0 px-3 py-1.5 rounded-md bg-slate-700 hover:bg-slate-600 text-white text-xs font-medium transition-colors">
+          className="shrink-0 px-3 py-1.5 rounded-md bg-neutral-700 hover:bg-neutral-600 text-white text-xs font-medium transition-colors">
           {t('devOptions.openLogsFolder')}
         </button>
       </div>
@@ -948,18 +626,6 @@ const LogsFolderRow = () => {
     </div>
   );
 };
-
-// ---------------------------------------------------------------------------
-// Group section header
-// ---------------------------------------------------------------------------
-
-const DevGroupHeader = ({ label }: { label: string }) => (
-  <div className="px-1 pt-5 pb-1">
-    <span className="text-xs font-semibold uppercase tracking-wider text-stone-500 dark:text-neutral-400">
-      {label}
-    </span>
-  </div>
-);
 
 // ---------------------------------------------------------------------------
 // Main panel
@@ -1001,12 +667,11 @@ const DeveloperOptionsPanel = () => {
         breadcrumbs={breadcrumbs}
       />
 
-      {/* 7 labeled sub-sections replacing the previous flat list */}
-      <div className="px-4 pb-5">
+      {/* Debug-only sub-sections */}
+      <div className="p-4 pt-2 space-y-3">
         {DEV_GROUPS.map(group => (
           <div key={group.labelKey} data-testid={`dev-group-${group.labelKey.split('.').pop()}`}>
-            <DevGroupHeader label={t(group.labelKey)} />
-            <div className="rounded-3xl overflow-hidden border border-stone-200 dark:border-neutral-800">
+            <SettingsSection title={t(group.labelKey)}>
               {group.items.map((item, index) => (
                 <SettingsMenuItem
                   key={item.id}
@@ -1019,30 +684,28 @@ const DeveloperOptionsPanel = () => {
                   isLast={index === group.items.length - 1}
                 />
               ))}
-            </div>
+            </SettingsSection>
           </div>
         ))}
 
-        {/* Restart Tour lives outside the 7 groups — utility action */}
-        <div className="pt-5">
-          <div className="rounded-3xl overflow-hidden border border-stone-200 dark:border-neutral-800">
-            <SettingsMenuItem
-              key={restartTourItem.id}
-              icon={restartTourItem.icon}
-              title={restartTourItem.title}
-              description={restartTourItem.description}
-              onClick={restartTourItem.onClick}
-              testId={`settings-nav-${restartTourItem.id}`}
-              isFirst={true}
-              isLast={true}
-            />
-          </div>
-        </div>
+        {/* Restart Tour lives outside the groups — utility action */}
+        <SettingsSection>
+          <SettingsMenuItem
+            key={restartTourItem.id}
+            icon={restartTourItem.icon}
+            title={restartTourItem.title}
+            description={restartTourItem.description}
+            onClick={restartTourItem.onClick}
+            testId={`settings-nav-${restartTourItem.id}`}
+            isFirst={true}
+            isLast={true}
+          />
+        </SettingsSection>
       </div>
 
       {/* Diagnostics callouts live outside the menu card so the spacing
           and alignment don't clash with the SettingsMenuItem rows. */}
-      <div className="px-4 pt-6 flex flex-col gap-3">
+      <div className="px-4 pt-2 pb-5 flex flex-col gap-3">
         <CoreModeBadge />
         <LogsFolderRow />
         {showSentryTest && <SentryTestRow />}

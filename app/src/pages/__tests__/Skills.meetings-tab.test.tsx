@@ -38,33 +38,33 @@ vi.mock('../../lib/composio/hooks', () => ({
   }),
 }));
 
-describe('Skills page — Talents tab (meeting bots)', () => {
-  it('shows the meeting bot CTA inside the Talents tab (not Tools)', () => {
+describe('Skills page — Meetings tab (meeting bots)', () => {
+  it('shows the meeting bot CTA inside the Meetings tab (not MCP Servers)', () => {
     renderWithProviders(<Skills />, { initialEntries: ['/connections'] });
 
     expect(screen.queryByTestId('meeting-bots-card')).not.toBeInTheDocument();
 
-    // Tools no longer hosts the meeting bot CTA.
-    fireEvent.click(screen.getByRole('tab', { name: 'Tools' }));
+    // MCP Servers no longer hosts the meeting bot CTA.
+    fireEvent.click(screen.getByRole('tab', { name: 'MCP Servers' }));
     expect(screen.queryByTestId('meeting-bots-card')).not.toBeInTheDocument();
 
-    // Talents does.
-    fireEvent.click(screen.getByRole('tab', { name: 'Talents' }));
+    // Meetings does.
+    fireEvent.click(screen.getByRole('tab', { name: 'Meetings' }));
     expect(screen.getByTestId('meeting-bots-card')).toBeInTheDocument();
   });
 
   it('supports direct links via legacy ?tab=meetings (normalised to talents)', () => {
-    // The old ?tab=meetings alias now maps to the new "Talents" tab.
+    // The old ?tab=meetings alias now maps to the new "Meetings" tab.
     renderWithProviders(<Skills />, { initialEntries: ['/connections?tab=meetings'] });
 
-    expect(screen.getByRole('tab', { name: 'Talents' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'Meetings' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByTestId('meeting-bots-card')).toBeInTheDocument();
   });
 
   it('supports direct links via ?tab=talents', () => {
     renderWithProviders(<Skills />, { initialEntries: ['/connections?tab=talents'] });
 
-    expect(screen.getByRole('tab', { name: 'Talents' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'Meetings' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByTestId('meeting-bots-card')).toBeInTheDocument();
   });
 });

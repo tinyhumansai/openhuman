@@ -282,16 +282,26 @@ impl OpenAiCompatibleProvider {
                                     }
                                 }
 
+                                // Only the FIRST delta for a tool-call index carries
+                                // the real id; argument-continuation deltas repeat the
+                                // index with an EMPTY id (`""`) on some providers
+                                // (DashScope/GMI) and omit it entirely on others
+                                // (DeepSeek). Guard against the empty string so a
+                                // continuation delta can't clobber the resolved id down
+                                // to `""` — which later trips the upstream tool-message
+                                // ordering check (empty `tool_call_id` → 400).
                                 if let Some(id) = tc.id.as_ref() {
-                                    if entry.id.is_none() {
-                                        log::debug!(
-                                            "[stream] {} tool_call[{}] id resolved: {}",
-                                            self.name,
-                                            idx,
-                                            id,
-                                        );
+                                    if !id.is_empty() {
+                                        if entry.id.is_none() {
+                                            log::debug!(
+                                                "[stream] {} tool_call[{}] id resolved: {}",
+                                                self.name,
+                                                idx,
+                                                id,
+                                            );
+                                        }
+                                        entry.id = Some(id.clone());
                                     }
-                                    entry.id = Some(id.clone());
                                 }
                                 if let Some(func) = tc.function.as_ref() {
                                     if let Some(name) = func.name.as_ref() {

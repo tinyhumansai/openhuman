@@ -4,7 +4,13 @@
 //! includes skills from HermesHub (built-in + optional), ClawHub, skills.sh,
 //! LobeHub, and browse.sh — all accessible from a single endpoint.
 
+use std::future::Future;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use tokio::sync::Mutex;
+
 use super::store;
+use super::store::CachedCatalog;
 use super::types::CatalogEntry;
 
 const CATALOG_URL: &str = "https://hermes-agent.nousresearch.com/docs/api/skills.json";
@@ -12,6 +18,28 @@ const CATALOG_URL_ENV: &str = "OPENHUMAN_SKILL_REGISTRY_CATALOG_URL";
 const DOWNLOAD_BASE_URL_ENV: &str = "OPENHUMAN_SKILL_REGISTRY_DOWNLOAD_BASE_URL";
 const REFRESH_ON_BOOT_ENV: &str = "OPENHUMAN_SKILL_REGISTRY_REFRESH_ON_BOOT";
 const FETCH_TIMEOUT_SECS: u64 = 180;
+
+/// Single-flight gate for catalog fetches. On mount the skills explorer issues
+/// several catalog reads that each funnel into [`browse_catalog`] — `sources`
+/// and `browse` from two separate effects, plus `search` as the user types —
+/// and React StrictMode double-invokes those effects in dev, so a handful of
+/// reads land within the same instant. Without this lock each would issue its
+/// own ~80s download of the same ~90k-entry catalog. Concurrent cache-miss
+/// callers serialize here, and all but the first re-read the just-written cache
+/// instead of hitting the network.
+static FETCH_LOCK: Mutex<()> = Mutex::const_new(());
+
+/// True while a background (stale-while-revalidate) refresh is scheduled or
+/// running, so a burst of stale-cache reads spawns at most one refresh task.
+static REFRESHING: AtomicBool = AtomicBool::new(false);
+
+/// Clears [`REFRESHING`] when the background refresh task ends (incl. panic).
+struct RefreshGuard;
+impl Drop for RefreshGuard {
+    fn drop(&mut self) {
+        REFRESHING.store(false, Ordering::Release);
+    }
+}
 
 /// Start a one-shot background refresh of the remote skills catalog.
 ///
@@ -63,15 +91,122 @@ fn refresh_on_boot_enabled(raw: Option<&str>) -> bool {
         || value.eq_ignore_ascii_case("off"))
 }
 
-/// Fetch the full catalog, using cache when fresh.
+/// Whether a past-TTL (stale) cache may be served without a network round-trip.
+#[derive(Clone, Copy, PartialEq)]
+enum StaleMode {
+    /// Serve stale immediately + revalidate in the background — for the
+    /// unfiltered browse, where a slightly-old catalog is fine and speed wins.
+    Allow,
+    /// Treat stale as a miss and fetch fresh under the single-flight lock — for
+    /// search / filter reads, which must reflect the current catalog.
+    Reject,
+}
+
+/// Fetch the full catalog for the **unfiltered browse** view, accepting a stale
+/// cache (stale-while-revalidate):
+/// - **Fresh cache** → returned immediately.
+/// - **Stale cache** (past TTL) → returned immediately *and* a single background
+///   refresh is kicked off, so the explorer renders from the last-known catalog
+///   instead of blocking on the ~80s download.
+/// - **No cache** → fetch under the single-flight lock; concurrent callers
+///   coalesce onto that one request.
+///
+/// `force_refresh == true` (boot warm-up / explicit refresh) always re-fetches.
+/// Search / filter reads use [`browse_catalog_fresh`], which never serves stale.
 pub async fn browse_catalog(force_refresh: bool) -> Result<Vec<CatalogEntry>, String> {
+    browse_catalog_with(force_refresh, StaleMode::Allow, fetch_catalog_uncached).await
+}
+
+/// Fetch the full catalog for **search / filter** reads. Never serves a stale
+/// cache: a fresh cache is used as-is, but a stale-or-absent cache falls through
+/// to a (single-flight) fresh fetch so results aren't computed over an outdated
+/// catalog. Thanks to single-flight, a search issued while a background
+/// revalidation is already running simply awaits that in-flight fetch rather
+/// than starting a new one.
+pub async fn browse_catalog_fresh() -> Result<Vec<CatalogEntry>, String> {
+    browse_catalog_with(false, StaleMode::Reject, fetch_catalog_uncached).await
+}
+
+/// Core of [`browse_catalog`] / [`browse_catalog_fresh`], parameterised over the
+/// fetcher so the cache / single-flight orchestration can be unit-tested without
+/// real network I/O.
+async fn browse_catalog_with<F, Fut>(
+    force_refresh: bool,
+    stale_mode: StaleMode,
+    fetch: F,
+) -> Result<Vec<CatalogEntry>, String>
+where
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = Result<Vec<CatalogEntry>, String>>,
+{
     if !force_refresh {
-        if let Some(cached) = store::load_cached_catalog() {
-            tracing::debug!(count = cached.len(), "[skill_registry] serving from cache");
-            return Ok(cached);
+        match store::load_cached_catalog_state() {
+            Some(CachedCatalog::Fresh(entries)) => {
+                tracing::debug!(
+                    count = entries.len(),
+                    "[skill_registry] serving fresh cache"
+                );
+                return Ok(entries);
+            }
+            // Browse: serve stale now, revalidate in background.
+            Some(CachedCatalog::Stale(entries)) if stale_mode == StaleMode::Allow => {
+                tracing::info!(
+                    count = entries.len(),
+                    "[skill_registry] serving stale cache; revalidating in background"
+                );
+                spawn_background_refresh();
+                return Ok(entries);
+            }
+            // Search / filter: stale is not good enough — fall through to fetch.
+            Some(CachedCatalog::Stale(_)) => {
+                tracing::debug!("[skill_registry] stale cache rejected for fresh read; fetching");
+            }
+            None => {}
         }
     }
 
+    // Single-flight: only one fetch runs at a time. Callers that queued behind
+    // the lock re-check the cache below and reuse the just-fetched result.
+    let _guard = FETCH_LOCK.lock().await;
+    if !force_refresh {
+        if let Some(CachedCatalog::Fresh(entries)) = store::load_cached_catalog_state() {
+            tracing::debug!(
+                count = entries.len(),
+                "[skill_registry] cache populated by concurrent fetch; reusing"
+            );
+            return Ok(entries);
+        }
+    }
+
+    fetch().await
+}
+
+/// Spawn at most one background catalog refresh (stale-while-revalidate). Extra
+/// calls while a refresh is in flight no-op via [`REFRESHING`]. The refresh runs
+/// under [`FETCH_LOCK`] so it never races a foreground fetch.
+fn spawn_background_refresh() {
+    if REFRESHING.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    tokio::spawn(async {
+        let _reset = RefreshGuard;
+        let _guard = FETCH_LOCK.lock().await;
+        match fetch_catalog_uncached().await {
+            Ok(entries) => tracing::info!(
+                count = entries.len(),
+                "[skill_registry] background catalog refresh complete"
+            ),
+            Err(error) => {
+                tracing::warn!(error = %error, "[skill_registry] background catalog refresh failed")
+            }
+        }
+    });
+}
+
+/// Download, parse, index, and cache the catalog — the network path, unguarded.
+/// Callers must go through [`browse_catalog_with`] / [`spawn_background_refresh`]
+/// so this runs under the single-flight lock.
+async fn fetch_catalog_uncached() -> Result<Vec<CatalogEntry>, String> {
     let catalog_url = catalog_url();
     tracing::info!(
         catalog_url = %redact_url_for_log(&catalog_url),
@@ -153,7 +288,8 @@ pub async fn search_catalog(
         category_filter = ?category_filter,
         "[skill_registry] search_catalog"
     );
-    let catalog = browse_catalog(false).await?;
+    // Search/filter must reflect the current catalog — never serve stale.
+    let catalog = browse_catalog_fresh().await?;
     let q = query.to_lowercase();
 
     let filtered: Vec<CatalogEntry> = catalog
@@ -444,5 +580,166 @@ mod tests {
         assert!(!refresh_on_boot_enabled(Some("false")));
         assert!(!refresh_on_boot_enabled(Some(" no ")));
         assert!(!refresh_on_boot_enabled(Some("OFF")));
+    }
+
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering as AtomicOrdering};
+    use std::sync::Arc;
+
+    const CACHE_DIR_ENV: &str = "OPENHUMAN_SKILL_REGISTRY_CACHE_DIR";
+
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        crate::openhuman::skill_registry::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn sample_entry() -> CatalogEntry {
+        parse_hermes_entry(&json!({
+            "name": "apple-notes",
+            "description": "Manage Apple Notes",
+            "category": "apple",
+            "source": "built-in",
+            "docsPath": "bundled/apple/apple-apple-notes"
+        }))
+        .expect("entry")
+    }
+
+    #[tokio::test]
+    async fn fresh_cache_skips_fetch() {
+        let _env = env_lock();
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_var(CACHE_DIR_ENV, tmp.path());
+        store::save_catalog_cache(&[sample_entry()]);
+
+        let called = Arc::new(AtomicBool::new(false));
+        let called_in = called.clone();
+        let entries = browse_catalog_with(false, StaleMode::Allow, move || async move {
+            called_in.store(true, AtomicOrdering::SeqCst);
+            Ok(Vec::new())
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(entries.len(), 1);
+        assert!(
+            !called.load(AtomicOrdering::SeqCst),
+            "fetcher must not run when the cache is fresh"
+        );
+
+        store::clear_cache();
+        std::env::remove_var(CACHE_DIR_ENV);
+    }
+
+    #[tokio::test]
+    async fn concurrent_cache_miss_coalesces_to_single_fetch() {
+        let _env = env_lock();
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_var(CACHE_DIR_ENV, tmp.path());
+        store::clear_cache();
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut handles = Vec::new();
+        for _ in 0..4 {
+            let calls = calls.clone();
+            handles.push(tokio::spawn(async move {
+                browse_catalog_with(false, StaleMode::Allow, move || async move {
+                    calls.fetch_add(1, AtomicOrdering::SeqCst);
+                    // Mimic the slow upstream so the other callers queue on the
+                    // single-flight lock instead of each starting a fetch.
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    let entries = vec![sample_entry()];
+                    store::save_catalog_cache(&entries);
+                    Ok(entries)
+                })
+                .await
+            }));
+        }
+
+        for handle in handles {
+            let entries = handle.await.unwrap().unwrap();
+            assert_eq!(entries.len(), 1, "every caller receives the catalog");
+        }
+        assert_eq!(
+            calls.load(AtomicOrdering::SeqCst),
+            1,
+            "four concurrent cache-miss callers must trigger exactly one fetch"
+        );
+
+        store::clear_cache();
+        std::env::remove_var(CACHE_DIR_ENV);
+    }
+
+    /// Write a cache file with an explicit `fetched_at_epoch` (epoch 1 => stale).
+    fn write_cache_at(dir: &std::path::Path, entries: Vec<CatalogEntry>, epoch: u64) {
+        let cache = store::CatalogCache {
+            entries,
+            fetched_at_epoch: epoch,
+        };
+        std::fs::write(
+            dir.join("cache.json"),
+            serde_json::to_string(&cache).unwrap(),
+        )
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn browse_serves_stale_without_a_foreground_fetch() {
+        let _env = env_lock();
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_var(CACHE_DIR_ENV, tmp.path());
+        write_cache_at(tmp.path(), vec![sample_entry()], 1); // epoch 1 => stale
+
+        // Pin REFRESHING so the background revalidation no-ops (no real network).
+        REFRESHING.store(true, AtomicOrdering::SeqCst);
+        let called = Arc::new(AtomicBool::new(false));
+        let called_in = called.clone();
+        let entries = browse_catalog_with(false, StaleMode::Allow, move || async move {
+            called_in.store(true, AtomicOrdering::SeqCst);
+            Ok(Vec::new())
+        })
+        .await
+        .unwrap();
+        REFRESHING.store(false, AtomicOrdering::SeqCst);
+
+        assert_eq!(entries.len(), 1, "browse returns the stale entry");
+        assert!(
+            !called.load(AtomicOrdering::SeqCst),
+            "browse must serve stale without a foreground fetch"
+        );
+
+        store::clear_cache();
+        std::env::remove_var(CACHE_DIR_ENV);
+    }
+
+    #[tokio::test]
+    async fn search_rejects_stale_and_fetches_fresh() {
+        let _env = env_lock();
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_var(CACHE_DIR_ENV, tmp.path());
+        write_cache_at(tmp.path(), vec![sample_entry()], 1); // stale: 1 entry
+
+        let called = Arc::new(AtomicBool::new(false));
+        let called_in = called.clone();
+        let entries = browse_catalog_with(false, StaleMode::Reject, move || async move {
+            called_in.store(true, AtomicOrdering::SeqCst);
+            let fresh = vec![sample_entry(), sample_entry()];
+            store::save_catalog_cache(&fresh);
+            Ok(fresh)
+        })
+        .await
+        .unwrap();
+
+        assert!(
+            called.load(AtomicOrdering::SeqCst),
+            "a fresh (search) read must not be satisfied by a stale cache"
+        );
+        assert_eq!(
+            entries.len(),
+            2,
+            "returns the freshly fetched catalog, not the stale one"
+        );
+
+        store::clear_cache();
+        std::env::remove_var(CACHE_DIR_ENV);
     }
 }

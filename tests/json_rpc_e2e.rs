@@ -11623,6 +11623,94 @@ async fn json_rpc_memory_sources_conversation_crud() {
     rpc_join.abort();
 }
 
+/// Raw-archive coverage reconcile over JSON-RPC: a GitHub source whose raw
+/// archive holds files that no tree summary covers must be reported as
+/// pending by `openhuman.memory_sources_reconcile` (report-only mode).
+/// Regression for the silent divergence where thousands of raw files sat
+/// unsummarised with no way to see or repair it.
+#[tokio::test]
+async fn json_rpc_memory_sources_reconcile_reports_pending_raw_files() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _ws_guard = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", home);
+    let _action_guard = EnvVarGuard::set_to_path("OPENHUMAN_ACTION_DIR", home);
+    let _backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{rpc_addr}");
+
+    // 1. Register a GitHub repo source (no sync — we plant the archive).
+    let add_resp = post_json_rpc(
+        &rpc_base,
+        9601,
+        "openhuman.memory_sources_add",
+        json!({
+            "kind": "github_repo",
+            "label": "Repo",
+            "enabled": true,
+            "url": "https://github.com/owner/repo"
+        }),
+    )
+    .await;
+    let add_result = assert_no_jsonrpc_error(&add_resp, "memory_sources_add github_repo");
+    let source_id = add_result
+        .get("source")
+        .and_then(|s| s.get("id"))
+        .and_then(Value::as_str)
+        .expect("source must have id")
+        .to_string();
+
+    // 2. Plant two uncovered raw archive files where a fetch would write
+    //    them: <workspace>/memory_tree/content/raw/github-com-owner-repo/.
+    //    With OPENHUMAN_WORKSPACE=$home and no config.toml, the resolved
+    //    workspace dir is $home/workspace (resolve_config_dir_for_workspace).
+    let commits_dir = home
+        .join("workspace")
+        .join("memory_tree")
+        .join("content")
+        .join("raw")
+        .join("github-com-owner-repo")
+        .join("commits");
+    std::fs::create_dir_all(&commits_dir).expect("create raw commits dir");
+    std::fs::write(commits_dir.join("1000_aaa.md"), "commit one").expect("write raw");
+    std::fs::write(commits_dir.join("2000_bbb.md"), "commit two").expect("write raw");
+
+    // 3. Report-only reconcile must surface both files as pending.
+    let reconcile_resp = post_json_rpc(
+        &rpc_base,
+        9602,
+        "openhuman.memory_sources_reconcile",
+        json!({ "source_id": source_id }),
+    )
+    .await;
+    let reconcile_result = assert_no_jsonrpc_error(&reconcile_resp, "memory_sources_reconcile");
+    let scopes = reconcile_result
+        .get("scopes")
+        .and_then(Value::as_array)
+        .expect("reconcile should return scopes array");
+    assert_eq!(scopes.len(), 1, "one scope for one github source");
+    let scope = &scopes[0];
+    assert_eq!(
+        scope.get("tree_scope").and_then(Value::as_str),
+        Some("github:owner/repo")
+    );
+    assert_eq!(
+        scope.get("total_raw_files").and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(scope.get("covered").and_then(Value::as_u64), Some(0));
+    assert_eq!(scope.get("pending").and_then(Value::as_u64), Some(2));
+    assert_eq!(
+        scope.get("started").and_then(Value::as_bool),
+        Some(false),
+        "report-only call must not start a reconcile"
+    );
+
+    rpc_join.abort();
+}
+
 // ── Memory sources: active-connection filtering over JSON-RPC ────────────────
 
 /// Mock Composio v3 `/connected_accounts`. Returns a single ACTIVE Gmail
@@ -11935,4 +12023,156 @@ async fn json_rpc_memory_sources_list_keeps_multiple_active_connections_per_tool
 
     rpc_join.abort();
     composio_join.abort();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Workflow run execution engine (#3375 PR2)
+//
+// Starts the builtin read-only "parallel research with cross-checking" workflow
+// over the live JSON-RPC core with the mock backend, then polls workflow_run_get
+// until the run reaches `completed` with a non-empty `summary`. Child agents are
+// pinned to the mock provider via `modelOverride` so every phase resolves against
+// the in-process mock `/openai/v1/chat/completions` (no live network).
+//
+// Self-contained: boots its own mock + core stack and tears them down. Appended
+// at the END of the file per the multi-agent coordination protocol (#3370 epic).
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn json_rpc_workflow_run_engine_executes_builtin_to_completion() {
+    run_json_rpc_e2e_on_agent_stack(
+        "json_rpc_workflow_run_engine_executes_builtin_to_completion",
+        json_rpc_workflow_run_engine_executes_builtin_to_completion_inner,
+    );
+}
+
+async fn json_rpc_workflow_run_engine_executes_builtin_to_completion_inner() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+
+    write_min_config(&openhuman_home, &mock_origin);
+    let user_scoped_dir = openhuman_home.join("users").join("e2e-user");
+    write_min_config(&user_scoped_dir, &mock_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Authenticate so the child agents' provider has a backend session.
+    let store = post_json_rpc(
+        &rpc_base,
+        37_500_1,
+        "openhuman.auth_store_session",
+        json!({ "token": "e2e-test-jwt", "user_id": "e2e-user" }),
+    )
+    .await;
+    assert_no_jsonrpc_error(&store, "store_session");
+
+    // Sanity: the builtin definition is listed.
+    let defs = post_json_rpc(
+        &rpc_base,
+        37_500_2,
+        "openhuman.workflow_run_list_definitions",
+        json!({}),
+    )
+    .await;
+    let defs_result = assert_no_jsonrpc_error(&defs, "list_definitions");
+    let defs_body = peel_logs_envelope(defs_result.get("result").unwrap_or(defs_result));
+    let definition_id = defs_body
+        .get("definitions")
+        .and_then(Value::as_array)
+        .and_then(|arr| arr.first())
+        .and_then(|d| d.get("id"))
+        .and_then(Value::as_str)
+        .expect("at least one builtin workflow definition")
+        .to_string();
+    assert_eq!(definition_id, "parallel_research_cross_check");
+
+    // Start the workflow. Children inherit the parent (root) provider via the
+    // `modelOverride` pin → every phase hits the mock chat-completions route.
+    let start = post_json_rpc(
+        &rpc_base,
+        37_500_3,
+        "openhuman.workflow_run_start",
+        json!({
+            "definitionId": definition_id,
+            "input": { "question": "What is the capital of France?", "modelOverride": "e2e-mock-model" },
+        }),
+    )
+    .await;
+    let start_result = assert_no_jsonrpc_error(&start, "workflow_run_start");
+    let start_body = peel_logs_envelope(start_result.get("result").unwrap_or(start_result));
+    let run = start_body
+        .get("workflowRun")
+        .expect("workflowRun in start response");
+    let run_id = run
+        .get("id")
+        .and_then(Value::as_str)
+        .expect("run id")
+        .to_string();
+    assert_eq!(
+        run.get("status").and_then(Value::as_str),
+        Some("running"),
+        "fresh run should be running: {run}"
+    );
+
+    // Poll workflow_run_get until terminal (or timeout). The four-phase builtin
+    // fans out 5 children total against the mock — completes quickly.
+    let mut final_status = String::new();
+    let mut final_summary = String::new();
+    for attempt in 0..120 {
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        let got = post_json_rpc(
+            &rpc_base,
+            37_500_100 + attempt,
+            "openhuman.workflow_run_get",
+            json!({ "id": run_id }),
+        )
+        .await;
+        let got_result = assert_no_jsonrpc_error(&got, "workflow_run_get");
+        let got_body = peel_logs_envelope(got_result.get("result").unwrap_or(got_result));
+        let wf = got_body
+            .get("workflowRun")
+            .expect("workflowRun payload present");
+        let status = wf
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        if matches!(
+            status.as_str(),
+            "completed" | "failed" | "cancelled" | "interrupted"
+        ) {
+            final_status = status;
+            final_summary = wf
+                .get("summary")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            break;
+        }
+    }
+
+    assert_eq!(
+        final_status, "completed",
+        "workflow run must reach completed; got status={final_status:?} summary={final_summary:?}"
+    );
+    assert!(
+        !final_summary.trim().is_empty(),
+        "completed workflow run must carry a non-empty summary"
+    );
+
+    rpc_join.abort();
+    mock_join.abort();
 }

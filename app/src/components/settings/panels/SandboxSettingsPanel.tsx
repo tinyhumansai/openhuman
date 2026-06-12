@@ -8,6 +8,16 @@ import {
   type SandboxBackendId,
 } from '../../../utils/tauriCommands';
 import SettingsHeader from '../components/SettingsHeader';
+import {
+  SettingsBadge,
+  SettingsEmptyState,
+  SettingsRow,
+  SettingsSection,
+  SettingsSelect,
+  SettingsStatusLine,
+  SettingsSwitch,
+  SettingsTextField,
+} from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 const BACKEND_OPTIONS: SandboxBackendId[] = [
@@ -126,235 +136,210 @@ const SandboxSettingsPanel = () => {
 
   if (!isTauri()) {
     return (
-      <div className="z-10 relative mx-auto max-w-2xl px-4 py-8">
+      <div className="z-10 relative">
         <SettingsHeader
           title={t('settings.sandbox.title')}
           onBack={navigateBack}
           breadcrumbs={breadcrumbs}
         />
-        <p className="text-sm text-stone-500 dark:text-stone-400">
-          {t('settings.sandbox.desktopOnly')}
-        </p>
+        <div className="p-4 pt-2">
+          <p className="text-sm text-neutral-500 dark:text-neutral-400">
+            {t('settings.sandbox.desktopOnly')}
+          </p>
+        </div>
       </div>
     );
   }
 
   if (isLoading) {
     return (
-      <div className="z-10 relative mx-auto max-w-2xl px-4 py-8">
+      <div className="z-10 relative">
         <SettingsHeader
           title={t('settings.sandbox.title')}
           onBack={navigateBack}
           breadcrumbs={breadcrumbs}
         />
-        <p className="text-sm text-stone-500 dark:text-stone-400">
-          {t('settings.sandbox.loading')}
-        </p>
+        <div className="p-4 pt-2">
+          <p className="text-sm text-neutral-500 dark:text-neutral-400">
+            {t('settings.sandbox.loading')}
+          </p>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="z-10 relative mx-auto max-w-2xl px-4 py-8">
+    <div className="z-10 relative">
       <SettingsHeader
         title={t('settings.sandbox.title')}
+        showBackButton
         onBack={navigateBack}
         breadcrumbs={breadcrumbs}
       />
 
-      {error && (
-        <div
-          className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-300"
-          role="alert">
-          {error}
-        </div>
-      )}
-
-      {savedNote && (
-        <p className="mb-4 text-sm text-green-600 dark:text-green-400" aria-live="polite">
-          {savedNote}
-        </p>
-      )}
-
-      {/* Status */}
-      <section className="mb-6">
-        <h2 className="mb-2 text-sm font-semibold text-stone-700 dark:text-stone-200">
-          {t('settings.sandbox.status')}
-        </h2>
-        <div className="space-y-2 rounded-lg border border-stone-200 bg-stone-50 p-4 dark:border-stone-700 dark:bg-stone-800">
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-stone-600 dark:text-stone-300">
-              {t('settings.sandbox.dockerStatus')}
-            </span>
-            <span
-              className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                dockerAvailable
-                  ? 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300'
-                  : 'bg-stone-200 text-stone-600 dark:bg-stone-700 dark:text-stone-400'
-              }`}>
-              {dockerAvailable
-                ? t('settings.sandbox.available')
-                : t('settings.sandbox.unavailable')}
-            </span>
-          </div>
-          {detectedBackend && (
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-stone-600 dark:text-stone-300">
-                {t('settings.sandbox.detectedBackend')}
-              </span>
-              <span className="text-sm font-mono text-stone-700 dark:text-stone-200">
-                {detectedBackend}
-              </span>
-            </div>
-          )}
-        </div>
-      </section>
-
-      {/* Enabled toggle */}
-      <section className="mb-6">
-        <label className="flex items-center gap-3">
-          <input
-            type="checkbox"
-            checked={enabled}
-            onChange={e => handleEnabledChange(e.target.checked)}
-            className="h-4 w-4 rounded border-stone-300 dark:border-stone-600"
-            aria-label={t('settings.sandbox.enableLabel')}
+      <div className="p-4 pt-2 space-y-5">
+        {/* Status section */}
+        <SettingsSection title={t('settings.sandbox.status')}>
+          <SettingsRow
+            label={t('settings.sandbox.dockerStatus')}
+            control={
+              <SettingsBadge variant={dockerAvailable ? 'success' : 'neutral'}>
+                {dockerAvailable
+                  ? t('settings.sandbox.available')
+                  : t('settings.sandbox.unavailable')}
+              </SettingsBadge>
+            }
           />
-          <div>
-            <span className="text-sm font-medium text-stone-700 dark:text-stone-200">
-              {t('settings.sandbox.enableLabel')}
-            </span>
-            <p className="text-xs text-stone-500 dark:text-stone-400">
-              {t('settings.sandbox.enableDesc')}
-            </p>
-          </div>
-        </label>
-      </section>
-
-      {/* Backend selection */}
-      <section className="mb-6">
-        <h2 className="mb-2 text-sm font-semibold text-stone-700 dark:text-stone-200">
-          {t('settings.sandbox.backendLabel')}
-        </h2>
-        <p className="mb-2 text-xs text-stone-500 dark:text-stone-400">
-          {t('settings.sandbox.backendDesc')}
-        </p>
-        <select
-          value={backend}
-          onChange={e => handleBackendChange(e.target.value as SandboxBackendId)}
-          className="w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm text-stone-700 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-200"
-          aria-label={t('settings.sandbox.backendLabel')}>
-          {BACKEND_OPTIONS.map(opt => (
-            <option key={opt} value={opt}>
-              {t(`settings.sandbox.backend.${opt}`)}
-            </option>
-          ))}
-        </select>
-      </section>
-
-      {/* Docker settings */}
-      <section className="mb-6">
-        <h2 className="mb-2 text-sm font-semibold text-stone-700 dark:text-stone-200">
-          {t('settings.sandbox.dockerSettings')}
-        </h2>
-        <div className="space-y-4 rounded-lg border border-stone-200 p-4 dark:border-stone-700">
-          {/* Docker image */}
-          <div>
-            <label className="mb-1 block text-xs font-medium text-stone-600 dark:text-stone-300">
-              {t('settings.sandbox.dockerImage')}
-            </label>
-            <input
-              type="text"
-              value={dockerImage}
-              onChange={e => setDockerImage(e.target.value)}
-              onBlur={handleDockerImageBlur}
-              onKeyDown={e => e.key === 'Enter' && handleDockerImageBlur()}
-              className="w-full rounded-lg border border-stone-300 bg-white px-3 py-2 font-mono text-sm text-stone-700 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-200"
-              aria-label={t('settings.sandbox.dockerImage')}
-              placeholder={t('settings.sandbox.dockerImagePlaceholder')}
+          {detectedBackend && (
+            <SettingsRow
+              label={t('settings.sandbox.detectedBackend')}
+              control={
+                <span className="text-sm font-mono text-neutral-800 dark:text-neutral-100">
+                  {detectedBackend}
+                </span>
+              }
             />
-          </div>
+          )}
+        </SettingsSection>
+
+        {/* Enabled toggle */}
+        <SettingsSection>
+          <SettingsRow
+            htmlFor="switch-sandbox-enabled"
+            label={t('settings.sandbox.enableLabel')}
+            description={t('settings.sandbox.enableDesc')}
+            control={
+              <SettingsSwitch
+                id="switch-sandbox-enabled"
+                checked={enabled}
+                onCheckedChange={handleEnabledChange}
+                aria-label={t('settings.sandbox.enableLabel')}
+              />
+            }
+          />
+        </SettingsSection>
+
+        {/* Backend selection */}
+        <SettingsSection
+          title={t('settings.sandbox.backendLabel')}
+          description={t('settings.sandbox.backendDesc')}>
+          <SettingsRow
+            stacked
+            control={
+              <SettingsSelect
+                value={backend}
+                onChange={e => handleBackendChange(e.target.value as SandboxBackendId)}
+                aria-label={t('settings.sandbox.backendLabel')}>
+                {BACKEND_OPTIONS.map(opt => (
+                  <option key={opt} value={opt}>
+                    {t(`settings.sandbox.backend.${opt}`)}
+                  </option>
+                ))}
+              </SettingsSelect>
+            }
+          />
+        </SettingsSection>
+
+        {/* Docker settings */}
+        <SettingsSection title={t('settings.sandbox.dockerSettings')}>
+          {/* Docker image */}
+          <SettingsRow
+            htmlFor="sandbox-docker-image"
+            label={t('settings.sandbox.dockerImage')}
+            stacked
+            control={
+              <SettingsTextField
+                id="sandbox-docker-image"
+                mono
+                value={dockerImage}
+                onChange={e => setDockerImage(e.target.value)}
+                onBlur={handleDockerImageBlur}
+                onKeyDown={e => e.key === 'Enter' && handleDockerImageBlur()}
+                aria-label={t('settings.sandbox.dockerImage')}
+                placeholder={t('settings.sandbox.dockerImagePlaceholder')}
+              />
+            }
+          />
 
           {/* Memory limit */}
-          <div>
-            <label className="mb-1 block text-xs font-medium text-stone-600 dark:text-stone-300">
-              {t('settings.sandbox.memoryLimit')}
-            </label>
-            <div className="flex items-center gap-2">
-              <input
-                type="number"
-                value={memoryLimitMb}
-                onChange={e => setMemoryLimitMb(e.target.value)}
-                onBlur={handleMemoryBlur}
-                onKeyDown={e => e.key === 'Enter' && handleMemoryBlur()}
-                className="w-32 rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm text-stone-700 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-200"
-                aria-label={t('settings.sandbox.memoryLimit')}
-                min={64}
-              />
-              <span className="text-xs text-stone-500 dark:text-stone-400">
-                {t('settings.sandbox.memoryUnit')}
-              </span>
-            </div>
-          </div>
+          <SettingsRow
+            htmlFor="sandbox-memory-limit"
+            label={t('settings.sandbox.memoryLimit')}
+            stacked
+            control={
+              <div className="flex items-center gap-2">
+                <SettingsTextField
+                  id="sandbox-memory-limit"
+                  type="number"
+                  className="w-32"
+                  inputSize="sm"
+                  value={memoryLimitMb}
+                  onChange={e => setMemoryLimitMb(e.target.value)}
+                  onBlur={handleMemoryBlur}
+                  onKeyDown={e => e.key === 'Enter' && handleMemoryBlur()}
+                  aria-label={t('settings.sandbox.memoryLimit')}
+                  min={64}
+                />
+                <span className="text-xs text-neutral-500 dark:text-neutral-400">
+                  {t('settings.sandbox.memoryUnit')}
+                </span>
+              </div>
+            }
+          />
 
           {/* CPU limit */}
-          <div>
-            <label className="mb-1 block text-xs font-medium text-stone-600 dark:text-stone-300">
-              {t('settings.sandbox.cpuLimit')}
-            </label>
-            <div className="flex items-center gap-2">
-              <input
-                type="number"
-                value={cpuLimit}
-                onChange={e => setCpuLimit(e.target.value)}
-                onBlur={handleCpuBlur}
-                onKeyDown={e => e.key === 'Enter' && handleCpuBlur()}
-                className="w-32 rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm text-stone-700 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-200"
-                aria-label={t('settings.sandbox.cpuLimit')}
-                min={0.1}
-                step={0.1}
-              />
-              <span className="text-xs text-stone-500 dark:text-stone-400">
-                {t('settings.sandbox.cpuUnit')}
-              </span>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* Environment passthrough */}
-      <section className="mb-6">
-        <h2 className="mb-2 text-sm font-semibold text-stone-700 dark:text-stone-200">
-          {t('settings.sandbox.envPassthrough')}
-        </h2>
-        <p className="mb-2 text-xs text-stone-500 dark:text-stone-400">
-          {t('settings.sandbox.envPassthroughDesc')}
-        </p>
-        <div className="rounded-lg border border-stone-200 bg-stone-50 p-3 dark:border-stone-700 dark:bg-stone-800">
-          {envPassthrough.length > 0 ? (
-            <div className="flex flex-wrap gap-2">
-              {envPassthrough.map(v => (
-                <span
-                  key={v}
-                  className="rounded-md bg-stone-200 px-2 py-0.5 font-mono text-xs text-stone-700 dark:bg-stone-700 dark:text-stone-300">
-                  {v}
+          <SettingsRow
+            htmlFor="sandbox-cpu-limit"
+            label={t('settings.sandbox.cpuLimit')}
+            stacked
+            control={
+              <div className="flex items-center gap-2">
+                <SettingsTextField
+                  id="sandbox-cpu-limit"
+                  type="number"
+                  className="w-32"
+                  inputSize="sm"
+                  value={cpuLimit}
+                  onChange={e => setCpuLimit(e.target.value)}
+                  onBlur={handleCpuBlur}
+                  onKeyDown={e => e.key === 'Enter' && handleCpuBlur()}
+                  aria-label={t('settings.sandbox.cpuLimit')}
+                  min={0.1}
+                  step={0.1}
+                />
+                <span className="text-xs text-neutral-500 dark:text-neutral-400">
+                  {t('settings.sandbox.cpuUnit')}
                 </span>
+              </div>
+            }
+          />
+        </SettingsSection>
+
+        {/* Environment passthrough */}
+        <SettingsSection
+          title={t('settings.sandbox.envPassthrough')}
+          description={t('settings.sandbox.envPassthroughDesc')}>
+          {envPassthrough.length > 0 ? (
+            <div className="px-4 py-3 flex flex-wrap gap-2">
+              {envPassthrough.map(v => (
+                <SettingsBadge key={v} variant="neutral">
+                  <span className="font-mono">{v}</span>
+                </SettingsBadge>
               ))}
             </div>
           ) : (
-            <p className="text-xs text-stone-400 dark:text-stone-500">
-              {t('settings.sandbox.noEnvVars')}
-            </p>
+            <SettingsEmptyState label={t('settings.sandbox.noEnvVars')} />
           )}
-        </div>
-      </section>
+        </SettingsSection>
 
-      {/* Saving indicator */}
-      {isSaving && (
-        <p className="text-xs text-stone-500 dark:text-stone-400" aria-live="polite">
-          {t('settings.sandbox.saving')}
-        </p>
-      )}
+        {/* Status line */}
+        <SettingsStatusLine
+          saving={isSaving}
+          savedNote={savedNote}
+          error={error}
+          savingLabel={t('settings.sandbox.saving')}
+        />
+      </div>
     </div>
   );
 };

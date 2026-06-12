@@ -170,16 +170,44 @@ impl Agent {
         }
 
         if self.auto_save {
-            let _ = self
-                .memory
-                .store(
-                    "",
-                    "user_msg",
-                    user_message,
-                    MemoryCategory::Conversation,
-                    None,
-                )
-                .await;
+            // Fire-and-forget: persisting the user message to the memory store
+            // does an embedding round-trip (Voyage) + memory-tree write that the
+            // in-flight turn never reads back. Awaiting it delayed the start of
+            // *every* turn before recall/LLM began, so spawn it and let the chat
+            // continue immediately.
+            //
+            // Use a UNIQUE per-message key: the old fixed `"user_msg"` key
+            // upserts a single document (`upsert_document` keys by namespace+key),
+            // so concurrent turns would race on — and overwrite — one shared slot.
+            // A unique key makes each user message its own conversation document,
+            // which both removes the race and stops the autosave from only ever
+            // retaining the latest message.
+            let memory = self.memory.clone();
+            let user_msg = user_message.to_string();
+            let autosave_key = format!("user_msg:{}", uuid::Uuid::new_v4());
+            let chars = user_msg.chars().count();
+            log::debug!(
+                "[agent_autosave] enqueue user-message store key={autosave_key} chars={chars}"
+            );
+            tokio::spawn(async move {
+                match memory
+                    .store(
+                        "",
+                        &autosave_key,
+                        &user_msg,
+                        MemoryCategory::Conversation,
+                        None,
+                    )
+                    .await
+                {
+                    Ok(()) => log::debug!(
+                        "[agent_autosave] stored user-message key={autosave_key} chars={chars}"
+                    ),
+                    Err(err) => log::warn!(
+                        "[agent_autosave] user-message memory autosave failed key={autosave_key} err={err}"
+                    ),
+                }
+            });
         }
 
         log::info!("[agent] loading memory context for user message");

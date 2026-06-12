@@ -13,7 +13,9 @@ import {
   fetchWalletStatus,
   type WalletChain,
 } from '../../../services/walletApi';
+import Button from '../../ui/Button';
 import SettingsHeader from '../components/SettingsHeader';
+import { SettingsEmptyState, SettingsSection } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 import ReceiveModal from './wallet/ReceiveModal';
 import SendCryptoModal from './wallet/SendCryptoModal';
@@ -34,7 +36,7 @@ const CHAIN_BADGE_CLASS: Record<string, string> = {
 
 const badgeClassFor = (chain: WalletChain): string =>
   CHAIN_BADGE_CLASS[chain] ??
-  'bg-stone-100 text-stone-700 dark:bg-neutral-800 dark:text-neutral-300';
+  'bg-neutral-100 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300';
 
 // The rows rendered as placeholders before the wallet is set up, mirroring the
 // configured layout (one EVM row per displayed network + BTC/Solana/Tron) so
@@ -113,7 +115,7 @@ const BalanceRow = ({ balance, onSend, onReceive }: BalanceRowProps) => {
 
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className="text-xs font-medium text-stone-700 dark:text-neutral-200 truncate">
+            <span className="text-xs font-medium text-neutral-700 dark:text-neutral-200 truncate">
               {networkLabel}
             </span>
             {balance.providerStatus !== 'ready' && (
@@ -124,14 +126,14 @@ const BalanceRow = ({ balance, onSend, onReceive }: BalanceRowProps) => {
           </div>
           {/* Address + copy button */}
           <div className="flex items-center gap-1.5 min-w-0">
-            <span className="font-mono text-[11px] text-stone-500 dark:text-neutral-400 truncate">
+            <span className="font-mono text-[11px] text-neutral-500 dark:text-neutral-400 truncate">
               {truncateAddress(balance.address)}
             </span>
             <button
               type="button"
               onClick={() => void handleCopyAddress()}
               aria-label={t('walletBalances.copyAddress')}
-              className="shrink-0 text-stone-400 hover:text-stone-600 dark:text-neutral-500 dark:hover:text-neutral-300 transition-colors">
+              className="shrink-0 text-neutral-400 hover:text-neutral-600 dark:text-neutral-500 dark:hover:text-neutral-300 transition-colors">
               {copied ? (
                 <svg
                   className="w-3.5 h-3.5 text-sage-500"
@@ -163,10 +165,10 @@ const BalanceRow = ({ balance, onSend, onReceive }: BalanceRowProps) => {
         <div className="text-right shrink-0">
           <span
             title={t('walletBalances.rawBalance').replace('{raw}', balance.raw)}
-            className="text-sm font-medium text-stone-800 dark:text-neutral-100 font-mono">
+            className="text-sm font-medium text-neutral-800 dark:text-neutral-100 font-mono">
             {balance.formatted}
           </span>
-          <span className="ml-1 text-xs text-stone-500 dark:text-neutral-400">
+          <span className="ml-1 text-xs text-neutral-500 dark:text-neutral-400">
             {balance.assetSymbol}
           </span>
         </div>
@@ -174,20 +176,24 @@ const BalanceRow = ({ balance, onSend, onReceive }: BalanceRowProps) => {
 
       {/* Send / Receive actions */}
       <div className="flex gap-2 mt-2.5">
-        <button
+        <Button
           type="button"
+          variant="secondary"
+          size="xs"
           onClick={() => onSend(balance)}
-          className="flex-1 py-1.5 text-xs font-medium rounded-lg border border-stone-200 dark:border-neutral-700 text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60 transition-colors"
+          className="flex-1"
           data-testid={`wallet-send-${balanceKey(balance)}`}>
           {t('walletBalances.send')}
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
+          variant="secondary"
+          size="xs"
           onClick={() => onReceive(balance)}
-          className="flex-1 py-1.5 text-xs font-medium rounded-lg border border-stone-200 dark:border-neutral-700 text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60 transition-colors"
+          className="flex-1"
           data-testid={`wallet-receive-${balanceKey(balance)}`}>
           {t('walletBalances.receive')}
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -218,20 +224,20 @@ const ChainPlaceholderRow = ({
         {balanceBadge({ chain, evmNetwork })}
       </span>
       <div className="min-w-0">
-        <span className="block text-xs font-medium text-stone-400 dark:text-neutral-500 truncate">
+        <span className="block text-xs font-medium text-neutral-400 dark:text-neutral-500 truncate">
           {balanceNetworkLabel({ chain, evmNetwork })}
         </span>
-        <span className="font-mono text-[11px] text-stone-400 dark:text-neutral-500 truncate">
+        <span className="font-mono text-[11px] text-neutral-400 dark:text-neutral-500 truncate">
           {t('walletBalances.notSetUp')}
         </span>
       </div>
       <div className="flex-1" />
       <div className="text-right shrink-0">
         {/* Em dash placeholder — punctuation, not translatable copy. */}
-        <span className="text-sm font-medium text-stone-400 dark:text-neutral-500 font-mono">
+        <span className="text-sm font-medium text-neutral-400 dark:text-neutral-500 font-mono">
           —
         </span>
-        <span className="ml-1 text-xs text-stone-400 dark:text-neutral-500">{symbol}</span>
+        <span className="ml-1 text-xs text-neutral-400 dark:text-neutral-500">{symbol}</span>
       </div>
     </div>
   );
@@ -302,7 +308,7 @@ const WalletBalancesPanel = () => {
   const renderContent = () => {
     if (loading) {
       return (
-        <div className="flex items-center justify-center gap-2 py-10 text-stone-500 dark:text-neutral-400">
+        <div className="flex items-center justify-center gap-2 py-10 text-neutral-500 dark:text-neutral-400">
           <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
             <circle
               className="opacity-25"
@@ -345,12 +351,14 @@ const WalletBalancesPanel = () => {
               {t('walletBalances.errorGeneric')}
             </p>
           </div>
-          <button
+          <Button
             type="button"
+            variant="primary"
+            size="md"
             onClick={() => void loadBalances()}
-            className="btn-primary w-full py-2.5 text-sm font-medium rounded-xl">
+            className="w-full">
             {t('walletBalances.retry')}
-          </button>
+          </Button>
         </div>
       );
     }
@@ -389,7 +397,7 @@ const WalletBalancesPanel = () => {
               </div>
             </div>
           </div>
-          <div className="divide-y divide-stone-100 dark:divide-neutral-800">
+          <div className="divide-y divide-neutral-100 dark:divide-neutral-800">
             {PLACEHOLDER_ROWS.map(row => (
               <ChainPlaceholderRow
                 key={`${row.chain}-${row.evmNetwork ?? 'native'}`}
@@ -406,9 +414,9 @@ const WalletBalancesPanel = () => {
     if (balances !== null && balances.length === 0) {
       return (
         <div className="px-4 py-8 text-center">
-          <div className="w-12 h-12 rounded-full bg-stone-100 dark:bg-neutral-800 flex items-center justify-center mx-auto mb-3">
+          <div className="w-12 h-12 rounded-full bg-neutral-100 dark:bg-neutral-800 flex items-center justify-center mx-auto mb-3">
             <svg
-              className="w-6 h-6 text-stone-400 dark:text-neutral-500"
+              className="w-6 h-6 text-neutral-400 dark:text-neutral-500"
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -420,16 +428,14 @@ const WalletBalancesPanel = () => {
               />
             </svg>
           </div>
-          <p className="text-sm text-stone-500 dark:text-neutral-400 leading-relaxed">
-            {t('walletBalances.emptyState')}
-          </p>
+          <SettingsEmptyState label={t('walletBalances.emptyState')} />
         </div>
       );
     }
 
     if (balances && balances.length > 0) {
       return (
-        <div className="divide-y divide-stone-100 dark:divide-neutral-800">
+        <div className="divide-y divide-neutral-100 dark:divide-neutral-800">
           {balances.map(balance => (
             <BalanceRow
               key={balanceKey(balance)}
@@ -453,12 +459,14 @@ const WalletBalancesPanel = () => {
         onBack={navigateBack}
         breadcrumbs={breadcrumbs}
         action={
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="sm"
             onClick={() => void loadBalances()}
             disabled={loading}
             aria-label={t('walletBalances.refresh')}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 disabled:opacity-50 transition-colors">
+            className="gap-1.5 text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300">
             <svg
               className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`}
               fill="none"
@@ -472,12 +480,12 @@ const WalletBalancesPanel = () => {
               />
             </svg>
             {t('walletBalances.refresh')}
-          </button>
+          </Button>
         }
       />
 
-      <div className="bg-white dark:bg-neutral-900 rounded-xl border border-stone-200 dark:border-neutral-800 mx-4 mb-4 overflow-hidden">
-        {renderContent()}
+      <div className="mx-4 mb-4">
+        <SettingsSection>{renderContent()}</SettingsSection>
       </div>
 
       {sendTarget && (

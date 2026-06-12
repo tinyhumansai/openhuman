@@ -20,7 +20,7 @@ use crate::openhuman::memory_queue::types::{
     JobOutcome, NewJob, NodeRef, ReembedBackfillPayload, SealDocumentPayload, SealPayload,
 };
 use crate::openhuman::memory_store::chunks::store as chunk_store;
-use crate::openhuman::memory_store::chunks::types::Chunk;
+use crate::openhuman::memory_store::chunks::types::{truncate_to_conservative_tokens, Chunk};
 use crate::openhuman::memory_store::content::{
     self as content_store, read as content_read, tags as content_tags,
 };
@@ -33,6 +33,21 @@ use crate::openhuman::memory_tree::tree::{LeafRef, TreeFactory};
 /// Default age for L0 flush_stale when the caller doesn't override.
 /// 1 hour means low-volume sources get summaries within a working session.
 const L0_DEFAULT_FLUSH_AGE_SECS: i64 = 60 * 60;
+
+/// Conservative per-text embed token budget. Each body is truncated to this
+/// (via [`cap_embed_text`]) before it joins an `embed_batch` call, so no single
+/// input can exceed the embedder's batch / context limit (`EMBED_NUM_CTX` =
+/// 8192) and terminally fail the reembed job. The estimate over-counts dense /
+/// multilingual text, so this stays safely under the real limit; the chunker
+/// keeps normal chunks well below it, so truncation is a last-resort backstop.
+const EMBED_SAFE_TOKENS: u32 = 7500;
+
+/// Truncate one body to [`EMBED_SAFE_TOKENS`] before it is batched for
+/// embedding. A backstop for any body that reaches an embed call without having
+/// passed through the conservative chunker (`split_by_token_budget`).
+fn cap_embed_text(text: &str) -> &str {
+    truncate_to_conservative_tokens(text, EMBED_SAFE_TOKENS)
+}
 
 /// Maximum `extract_chunk` jobs to coalesce in one worker tick.
 ///
@@ -742,7 +757,12 @@ async fn reembed_collect(
     // Phase B: one batched embed call. Scope `texts` so its borrow on
     // `readable` ends before we consume `readable` below.
     let results = {
-        let texts: Vec<&str> = readable.iter().map(|(_, body)| body.as_str()).collect();
+        // Cap each body to the embed budget so no single input overflows the
+        // embedder's batch/context limit and fails the whole batch.
+        let texts: Vec<&str> = readable
+            .iter()
+            .map(|(_, body)| cap_embed_text(body))
+            .collect();
         embedder.embed_batch(&texts).await
     };
     if results.len() != readable.len() {

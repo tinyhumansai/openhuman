@@ -434,10 +434,10 @@ pub fn recover_stale_locks(config: &Config) -> Result<usize> {
 /// clears the typed `failure_reason` / `failure_class` and `last_error`, and
 /// makes the row immediately available. Returns the number of jobs requeued.
 ///
-/// NOTE: there is currently **no automatic caller**. An automatic
-/// requeue-on-sync was planned, but its hook lived on the upstream-removed
-/// vault sync path and has not been re-homed, so requeue is **manual-only**
-/// (the `memory_tree_retry_failed` RPC) for now.
+/// Automatic callers: the manual sync path (`memory_sources::sync`,
+/// via [`retry_all_failed`]) and the 3-hourly queue scheduler (via
+/// [`requeue_transient_failed`], which excludes `unrecoverable`
+/// failures so a bad config can't 3-hourly retry-loop forever).
 pub fn requeue_failed(config: &Config) -> Result<u64> {
     with_connection(config, |conn| {
         let now_ms = Utc::now().timestamp_millis();
@@ -457,6 +457,44 @@ pub fn requeue_failed(config: &Config) -> Result<u64> {
         )?;
         if n > 0 {
             log::info!("[memory::jobs] requeued {n} failed job(s) for retry");
+        }
+        Ok(n as u64)
+    })
+}
+
+/// Requeue only failed jobs whose recorded failure class is NOT
+/// `unrecoverable` — i.e. transient failures (network 5xx, timeouts,
+/// SQLITE_BUSY) and legacy rows with no class recorded.
+///
+/// This is the **automatic** self-healing variant, fired from the
+/// 3-hourly queue scheduler so a crash or flaky network never leaves
+/// pipeline jobs permanently stuck until the user happens to press
+/// "Sync now". Unrecoverable failures (bad/missing key, budget
+/// exhausted, dim mismatch) stay parked for the manual
+/// `memory_tree_retry_failed` RPC after the user fixes the cause —
+/// auto-retrying those would just burn a failure every 3 hours forever.
+pub fn requeue_transient_failed(config: &Config) -> Result<u64> {
+    with_connection(config, |conn| {
+        let now_ms = Utc::now().timestamp_millis();
+        let n = conn.execute(
+            "UPDATE mem_tree_jobs
+                SET status = 'ready',
+                    attempts = 0,
+                    available_at_ms = ?1,
+                    locked_until_ms = NULL,
+                    started_at_ms = NULL,
+                    completed_at_ms = NULL,
+                    last_error = NULL,
+                    failure_reason = NULL,
+                    failure_class = NULL
+              WHERE status = 'failed'
+                AND (failure_class IS NULL OR failure_class != 'unrecoverable')",
+            params![now_ms],
+        )?;
+        if n > 0 {
+            log::info!(
+                "[memory::jobs] auto-requeued {n} transient-failed job(s) from the periodic scheduler"
+            );
         }
         Ok(n as u64)
     })
@@ -757,6 +795,67 @@ mod tests {
             get_job(&cfg, &id_b).unwrap().unwrap().status,
             JobStatus::Ready
         );
+    }
+
+    /// The 3-hourly scheduler's self-heal must requeue jobs that failed
+    /// transiently (attempts exhausted on network-class errors — untyped
+    /// `last_error` only) while leaving `unrecoverable`-classified jobs
+    /// parked for the manual RPC, so a bad embeddings key can't produce a
+    /// retry-fail loop every 3 hours forever.
+    #[test]
+    fn requeue_transient_failed_skips_unrecoverable_jobs() {
+        use crate::openhuman::memory_tree::health::{FailureCode, PipelineFailure};
+        let (_tmp, cfg) = test_config();
+
+        // Job A: terminal via exhausted retry budget, NO typed class
+        // (the shape an interrupted network leaves behind).
+        let mut a = NewJob::extract_chunk(&ExtractChunkPayload {
+            chunk_id: "a-transient".into(),
+        })
+        .unwrap();
+        a.max_attempts = Some(1);
+        let id_a = enqueue(&cfg, &a).unwrap().unwrap();
+        let claim_a = claim_next(&cfg, DEFAULT_LOCK_DURATION_MS).unwrap().unwrap();
+        mark_failed(&cfg, &claim_a, "connection reset by peer").unwrap();
+        assert_eq!(
+            get_job(&cfg, &id_a).unwrap().unwrap().status,
+            JobStatus::Failed
+        );
+
+        // Job B: terminal with an unrecoverable classification.
+        let mut b = NewJob::extract_chunk(&ExtractChunkPayload {
+            chunk_id: "b-unrecoverable".into(),
+        })
+        .unwrap();
+        b.max_attempts = Some(1);
+        let id_b = enqueue(&cfg, &b).unwrap().unwrap();
+        let claim_b = claim_next(&cfg, DEFAULT_LOCK_DURATION_MS).unwrap().unwrap();
+        mark_failed_typed(
+            &cfg,
+            &claim_b,
+            "Insufficient budget",
+            Some(&PipelineFailure::new(FailureCode::BudgetExhausted)),
+        )
+        .unwrap();
+        assert_eq!(
+            get_job(&cfg, &id_b).unwrap().unwrap().status,
+            JobStatus::Failed
+        );
+
+        let requeued = requeue_transient_failed(&cfg).unwrap();
+        assert_eq!(requeued, 1, "only the unclassified failure requeues");
+
+        let row_a = get_job(&cfg, &id_a).unwrap().unwrap();
+        assert_eq!(row_a.status, JobStatus::Ready, "transient job re-runs");
+        assert_eq!(row_a.attempts, 0);
+
+        let row_b = get_job(&cfg, &id_b).unwrap().unwrap();
+        assert_eq!(
+            row_b.status,
+            JobStatus::Failed,
+            "unrecoverable job stays parked for the manual retry RPC"
+        );
+        assert_eq!(row_b.failure_class.as_deref(), Some("unrecoverable"));
     }
 
     #[test]

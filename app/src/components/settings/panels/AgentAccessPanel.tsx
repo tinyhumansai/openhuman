@@ -11,7 +11,20 @@ import {
   type TrustedAccess,
   type TrustedRoot,
 } from '../../../utils/tauriCommands';
+import Button from '../../ui/Button';
 import SettingsHeader from '../components/SettingsHeader';
+import {
+  SettingsBadge,
+  SettingsEmptyState,
+  SettingsListItem,
+  SettingsNumberField,
+  SettingsRow,
+  SettingsSection,
+  SettingsSelect,
+  SettingsStatusLine,
+  SettingsSwitch,
+  SettingsTextField,
+} from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 // Installs are always *available* but never silent: every `install_tool` call
@@ -228,7 +241,8 @@ const AgentAccessPanel = () => {
         breadcrumbs={breadcrumbs}
       />
 
-      <div className="p-4 space-y-6">
+      <div className="p-4 pt-2 space-y-5">
+        {/* Desktop-only notice */}
         {!isTauri() && (
           <p className="text-sm text-coral-600 dark:text-coral-300">
             {t('settings.agentAccess.desktopOnly')}
@@ -236,232 +250,188 @@ const AgentAccessPanel = () => {
         )}
 
         {isLoading ? (
-          <p className="text-sm text-stone-600 dark:text-neutral-400">
+          <p className="text-sm text-neutral-500 dark:text-neutral-400">
             {t('settings.agentAccess.loading')}
           </p>
         ) : (
           <>
-            {/* Workspace confinement — orthogonal to the tier; applies in all
-                modes. Tier selection moved to PermissionsPanel. */}
-            <section className="space-y-1">
-              <label className="flex items-start gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  className="mt-0.5 cursor-pointer"
-                  checked={workspaceOnly}
-                  onChange={e => toggleWorkspaceOnly(e.target.checked)}
-                />
-                <span>
-                  <span className="text-sm font-medium text-stone-900 dark:text-neutral-100">
-                    {t('settings.agentAccess.confine.label')}
-                  </span>
-                  <span className="block text-xs text-stone-600 dark:text-neutral-400">
-                    {t('settings.agentAccess.confine.desc')}
-                  </span>
-                </span>
-              </label>
-            </section>
+            {/* Workspace confinement + task plan approval */}
+            <SettingsSection>
+              <SettingsRow
+                htmlFor="switch-workspace-only"
+                label={t('settings.agentAccess.confine.label')}
+                description={t('settings.agentAccess.confine.desc')}
+                control={
+                  <SettingsSwitch
+                    id="switch-workspace-only"
+                    checked={workspaceOnly}
+                    onCheckedChange={toggleWorkspaceOnly}
+                    aria-label={t('settings.agentAccess.confine.label')}
+                  />
+                }
+              />
+              <SettingsRow
+                htmlFor="switch-task-plan-approval"
+                label={t('settings.agentAccess.requireTaskPlanApproval.label')}
+                description={t('settings.agentAccess.requireTaskPlanApproval.desc')}
+                control={
+                  <SettingsSwitch
+                    id="switch-task-plan-approval"
+                    checked={requireTaskPlanApproval}
+                    onCheckedChange={toggleTaskPlanApproval}
+                    aria-label={t('settings.agentAccess.requireTaskPlanApproval.label')}
+                  />
+                }
+              />
+            </SettingsSection>
 
-            <section className="space-y-1">
-              <label className="flex items-start gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  className="mt-0.5 cursor-pointer"
-                  checked={requireTaskPlanApproval}
-                  onChange={e => toggleTaskPlanApproval(e.target.checked)}
-                />
-                <span>
-                  <span className="text-sm font-medium text-stone-900 dark:text-neutral-100">
-                    {t('settings.agentAccess.requireTaskPlanApproval.label')}
-                  </span>
-                  <span className="block text-xs text-stone-600 dark:text-neutral-400">
-                    {t('settings.agentAccess.requireTaskPlanApproval.desc')}
-                  </span>
-                </span>
-              </label>
-            </section>
+            {/* Action timeout */}
+            <SettingsSection
+              title={t('settings.agentAccess.timeout.label')}
+              description={t('settings.agentAccess.timeout.desc')}>
+              <SettingsRow
+                stacked
+                control={
+                  <div className="space-y-2">
+                    <SettingsNumberField
+                      id="timeout-input"
+                      value={timeoutInput}
+                      onChange={setTimeoutInput}
+                      onCommit={() => void commitTimeout()}
+                      unit={t('settings.agentAccess.timeout.unit')}
+                      min={timeoutMin}
+                      max={timeoutMax}
+                      disabled={timeoutEnvOverride}
+                      invalid={!!timeoutError}
+                      aria-label={t('settings.agentAccess.timeout.label')}
+                    />
+                    {timeoutEnvOverride && (
+                      <p className="rounded border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 p-2 text-xs text-amber-700 dark:text-amber-300">
+                        {t('settings.agentAccess.timeout.envOverride')}
+                      </p>
+                    )}
+                    <SettingsStatusLine
+                      saving={false}
+                      savedNote={timeoutSavedNote}
+                      error={timeoutError}
+                      savingLabel={t('settings.agentAccess.saving')}
+                    />
+                  </div>
+                }
+              />
+            </SettingsSection>
 
-            {/* Action timeout — wall-clock limit for a single tool/action.
-                Extend it when large local models get cut off mid-response
-                (issue #3100). Persists independently of the autonomy block. */}
-            <section className="space-y-2">
-              <h2 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
-                {t('settings.agentAccess.timeout.label')}
-              </h2>
-              <p className="text-xs text-stone-600 dark:text-neutral-400">
-                {t('settings.agentAccess.timeout.desc')}
-              </p>
-              <div className="flex items-center gap-2">
-                <input
-                  type="number"
-                  inputMode="numeric"
-                  min={timeoutMin}
-                  max={timeoutMax}
-                  step={1}
-                  value={timeoutInput}
-                  disabled={timeoutEnvOverride}
-                  onChange={e => setTimeoutInput(e.target.value)}
-                  onBlur={() => void commitTimeout()}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      void commitTimeout();
-                    }
-                  }}
-                  aria-label={t('settings.agentAccess.timeout.label')}
-                  className="w-28 rounded border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-stone-900 dark:text-neutral-100 px-2 py-1 text-sm disabled:opacity-60"
-                />
-                <span className="text-xs text-stone-600 dark:text-neutral-400">
-                  {t('settings.agentAccess.timeout.unit')} ({timeoutMin}–{timeoutMax})
-                </span>
-              </div>
-              {timeoutEnvOverride && (
-                <p className="rounded border border-amber/40 bg-amber/5 dark:bg-amber/10 p-2 text-xs text-amber-700 dark:text-amber-300">
-                  {t('settings.agentAccess.timeout.envOverride')}
-                </p>
-              )}
-              <div className="min-h-[1.25rem] text-xs" aria-live="polite">
-                {timeoutError ? (
-                  <span className="text-coral-600 dark:text-coral-300">{timeoutError}</span>
-                ) : timeoutSavedNote ? (
-                  <span className="text-sage-700 dark:text-sage-300">✓ {timeoutSavedNote}</span>
-                ) : null}
-              </div>
-            </section>
-
-            {/* Granted folders (trusted roots) — extra read/write reach. */}
-            <section className="space-y-2">
-              <h2 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
-                {t('settings.agentAccess.grantedFolders')}
-              </h2>
-              <p className="text-xs text-stone-600 dark:text-neutral-400">
-                {t('settings.agentAccess.grantedDesc')}
-              </p>
+            {/* Granted folders (trusted roots) */}
+            <SettingsSection
+              title={t('settings.agentAccess.grantedFolders')}
+              description={t('settings.agentAccess.grantedDesc')}>
               {trustedRoots.length === 0 ? (
-                <p className="text-xs text-stone-600 dark:text-neutral-400">
-                  {t('settings.agentAccess.noneGranted')}
-                </p>
+                <SettingsEmptyState label={t('settings.agentAccess.noneGranted')} />
               ) : (
-                <ul className="space-y-1">
+                <ul>
                   {trustedRoots.map(r => (
-                    <li
+                    <SettingsListItem
                       key={r.path}
-                      className="flex items-center justify-between rounded border border-stone-200 dark:border-neutral-800 px-2 py-1">
-                      <span className="font-mono text-xs text-stone-900 dark:text-neutral-100 truncate">
-                        {r.path}
-                      </span>
-                      <span className="flex items-center gap-2">
-                        <span className="text-xs text-stone-600 dark:text-neutral-400">
-                          {r.access === 'readwrite'
-                            ? t('settings.agentAccess.readWrite')
-                            : t('settings.agentAccess.readOnly')}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => removeRoot(r.path)}
-                          className="text-xs text-coral-600 dark:text-coral-300 hover:underline">
-                          {t('settings.agentAccess.remove')}
-                        </button>
-                      </span>
-                    </li>
+                      label={r.path}
+                      mono
+                      badge={
+                        r.access === 'readwrite' ? (
+                          <SettingsBadge variant="success">
+                            {t('settings.agentAccess.readWrite')}
+                          </SettingsBadge>
+                        ) : (
+                          <SettingsBadge variant="neutral">
+                            {t('settings.agentAccess.readOnly')}
+                          </SettingsBadge>
+                        )
+                      }
+                      onRemove={() => removeRoot(r.path)}
+                      removeLabel={t('settings.agentAccess.remove')}
+                    />
                   ))}
                 </ul>
               )}
-              <div className="flex items-center gap-2">
-                <input
-                  type="text"
+              {/* Add-folder row */}
+              <div className="flex items-center gap-2 px-4 py-3 border-t border-neutral-100 dark:border-neutral-800">
+                <SettingsTextField
+                  mono
+                  className="flex-1"
                   value={newRootPath}
                   onChange={e => setNewRootPath(e.target.value)}
                   placeholder={t('settings.agentAccess.pathPlaceholder')}
                   aria-label={t('settings.agentAccess.pathPlaceholder')}
-                  className="flex-1 rounded border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-stone-900 dark:text-neutral-100 px-2 py-1 text-xs font-mono"
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      addRoot();
+                    }
+                  }}
+                  inputSize="sm"
                 />
-                <select
+                <SettingsSelect
                   value={newRootAccess}
                   onChange={e => setNewRootAccess(e.target.value as TrustedAccess)}
                   aria-label={t('settings.agentAccess.accessLevelLabel')}
-                  className="rounded border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-stone-900 dark:text-neutral-100 px-2 py-1 text-xs">
+                  inputSize="sm"
+                  className="w-32">
                   <option value="read">{t('settings.agentAccess.readOnly')}</option>
                   <option value="readwrite">{t('settings.agentAccess.readWrite')}</option>
-                </select>
-                <button
+                </SettingsSelect>
+                <Button
                   type="button"
+                  variant="primary"
+                  size="xs"
                   onClick={addRoot}
-                  className="rounded bg-primary-500 px-3 py-1 text-xs text-white hover:bg-primary-600">
+                  disabled={!newRootPath.trim()}>
                   {t('settings.agentAccess.add')}
-                </button>
+                </Button>
               </div>
-            </section>
+            </SettingsSection>
 
-            {/* "Always allow" allowlist — tools the user chose to stop being
-                prompted for, via the in-chat approval card. Read-only here with
-                a Remove action to re-enable prompting for a tool. */}
-            <section className="space-y-2">
-              <h2 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
-                {t('settings.agentAccess.alwaysAllow')}
-              </h2>
-              <p className="text-xs text-stone-600 dark:text-neutral-400">
-                {t('settings.agentAccess.alwaysAllowDesc')}
-              </p>
+            {/* Always-allowed tools */}
+            <SettingsSection
+              title={t('settings.agentAccess.alwaysAllow')}
+              description={t('settings.agentAccess.alwaysAllowDesc')}>
               {autoApprove.length === 0 ? (
-                <p className="text-xs text-stone-600 dark:text-neutral-400">
-                  {t('settings.agentAccess.alwaysAllowNone')}
-                </p>
+                <SettingsEmptyState label={t('settings.agentAccess.alwaysAllowNone')} />
               ) : (
-                <ul className="space-y-1">
+                <ul>
                   {autoApprove.map(tool => (
-                    <li
+                    <SettingsListItem
                       key={tool}
-                      className="flex items-center justify-between rounded border border-stone-200 dark:border-neutral-800 px-2 py-1">
-                      <span className="font-mono text-xs text-stone-900 dark:text-neutral-100 truncate">
-                        {tool}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => removeAutoApprove(tool)}
-                        className="text-xs text-coral-600 dark:text-coral-300 hover:underline">
-                        {t('settings.agentAccess.remove')}
-                      </button>
-                    </li>
+                      label={tool}
+                      mono
+                      onRemove={() => removeAutoApprove(tool)}
+                      removeLabel={t('settings.agentAccess.remove')}
+                    />
                   ))}
                 </ul>
               )}
-            </section>
+            </SettingsSection>
 
-            {/* Approval history — read-only audit trail of past decisions,
-                backed by the gate's durable decided-rows store. */}
-            <section className="space-y-2">
-              <h2 className="text-sm font-semibold text-ink">
-                {t('settings.agentAccess.approvalHistory')}
-              </h2>
-              <p className="text-xs text-ink-soft">
-                {t('settings.agentAccess.approvalHistoryDesc')}
-              </p>
-              <button
-                type="button"
-                onClick={() => navigateToSettings('approval-history')}
-                data-testid="agent-access-approval-history-link"
-                className="rounded border border-line px-3 py-1 text-xs text-ink hover:border-primary-300">
-                {t('settings.agentAccess.viewApprovalHistory')}
-              </button>
-            </section>
+            {/* Approval history */}
+            <SettingsSection
+              title={t('settings.agentAccess.approvalHistory')}
+              description={t('settings.agentAccess.approvalHistoryDesc')}>
+              <div className="px-4 py-3">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="xs"
+                  onClick={() => navigateToSettings('approval-history')}
+                  data-testid="agent-access-approval-history-link">
+                  {t('settings.agentAccess.viewApprovalHistory')}
+                </Button>
+              </div>
+            </SettingsSection>
 
-            {/* Auto-save status — changes persist on selection; no manual save. */}
-            <div className="min-h-[1.25rem] text-sm" aria-live="polite">
-              {error ? (
-                <span className="text-coral-600 dark:text-coral-300">{error}</span>
-              ) : isSaving ? (
-                <span className="text-stone-600 dark:text-neutral-400">
-                  {t('settings.agentAccess.saving')}
-                </span>
-              ) : savedNote ? (
-                <span className="text-sage-700 dark:text-sage-300">✓ {savedNote}</span>
-              ) : (
-                <span className="text-stone-600 dark:text-neutral-400">
-                  {t('settings.agentAccess.changesApply')}
-                </span>
-              )}
-            </div>
+            {/* Auto-save status */}
+            <SettingsStatusLine
+              saving={isSaving}
+              savedNote={savedNote}
+              error={error}
+              savingLabel={t('settings.agentAccess.saving')}
+            />
           </>
         )}
       </div>

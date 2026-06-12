@@ -157,8 +157,10 @@ fn build_filename(created_at_ms: i64, uid: &str) -> String {
 
 /// Replace path-illegal characters in the upstream uid before splicing
 /// it into a filename. Mirrors `paths::sanitize_filename` but is local
-/// so a future change to either side stays decoupled.
-fn sanitize_uid(uid: &str) -> String {
+/// so a future change to either side stays decoupled. `pub(crate)` so
+/// the raw-coverage backfill (`memory_sync::sources::rebuild`) can map
+/// summary child labels back to on-disk filename suffixes.
+pub(crate) fn sanitize_uid(uid: &str) -> String {
     let cleaned: String = uid
         .chars()
         .map(|c| match c {

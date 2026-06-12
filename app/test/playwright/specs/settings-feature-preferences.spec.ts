@@ -92,17 +92,18 @@ test.describe('Settings - Feature Preferences', () => {
 
     await expect(page.getByText('Features', { exact: true })).toBeVisible();
     await expect(page.getByTestId('settings-nav-screen-intelligence')).toBeVisible();
-    // Phase 2: default messaging channel moved to /connections (Messaging tab);
-    // the settings/features nav no longer has a dedicated "messaging" entry.
-    await expect(page.getByTestId('settings-nav-notifications')).toBeVisible();
+    // Phase 2: default messaging channel moved to /connections (Messaging tab).
+    // Settings consistency pass: Notifications now has its own home-level hub
+    // (notifications-hub) and is no longer nested under the Features section.
     await expect(page.getByTestId('settings-nav-tools')).toBeVisible();
+    await expect(page.getByTestId('settings-nav-companion')).toBeVisible();
   });
 
   test('persists the default messaging channel through redux state', async ({ page }) => {
     // Phase 2: default messaging channel moved to /connections (Messaging tab)
     await openAuthenticatedRoute(page, 'pw-settings-default-channel', '/connections?tab=messaging');
 
-    const messagingTab = page.getByRole('tab', { name: 'Messaging', exact: true });
+    const messagingTab = page.getByRole('tab', { name: 'Channels', exact: true });
     if (await messagingTab.isVisible().catch(() => false)) {
       await messagingTab.click();
     }
@@ -137,9 +138,9 @@ test.describe('Settings - Feature Preferences', () => {
     await reloadAndWait(page);
 
     await expect(page.getByText('Tools', { exact: true })).toBeVisible();
-    const shellToggle = page
-      .locator('button')
-      .filter({ has: page.getByText('Shell Commands', { exact: true }) });
+    // Tool rows are now SettingsRow + SettingsSwitch (role="switch", aria-label =
+    // the tool's display name), not a single text-bearing button.
+    const shellToggle = page.getByRole('switch', { name: 'Shell Commands', exact: true });
     await expect(shellToggle).toHaveAttribute('aria-checked', 'true');
     await shellToggle.click();
     await expect(shellToggle).toHaveAttribute('aria-checked', 'false');

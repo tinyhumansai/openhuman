@@ -88,11 +88,13 @@ describe('DevicesPanel', () => {
     renderWithProviders(<DevicesPanel />, { initialEntries: ['/settings/devices'] });
 
     await screen.findByText("Charlie's iPhone");
-    fireEvent.click(screen.getByRole('button', { name: /Revoke/i }));
+    // Click the per-row revoke button (may be many; pick the first one)
+    fireEvent.click(screen.getAllByRole('button', { name: /Revoke/i })[0]);
 
     // Confirmation dialog
     expect(await screen.findByText('Revoke device?')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /^Revoke$/i }));
+    // Use testid to unambiguously target the dialog confirm button
+    fireEvent.click(screen.getByTestId('confirm-revoke-btn'));
 
     await waitFor(() => {
       expect(mockCall).toHaveBeenCalledWith(
@@ -153,5 +155,27 @@ describe('DevicesPanel', () => {
     renderWithProviders(<DevicesPanel />, { initialEntries: ['/settings/devices'] });
 
     expect(await screen.findByText(/Failed to load devices/)).toBeInTheDocument();
+  });
+
+  it('shows the online status indicator when a peer is online', async () => {
+    const device = makeDevice({ label: 'Online iPhone', peer_online: true });
+    mockCall.mockResolvedValue(listResponse([device]));
+    renderWithProviders(<DevicesPanel />, { initialEntries: ['/settings/devices'] });
+
+    await screen.findByText('Online iPhone');
+
+    expect(screen.getByTestId('peer-status-online')).toBeInTheDocument();
+    expect(screen.queryByTestId('peer-status-offline')).not.toBeInTheDocument();
+  });
+
+  it('shows the offline status indicator when a peer is offline', async () => {
+    const device = makeDevice({ label: 'Offline iPhone', peer_online: false });
+    mockCall.mockResolvedValue(listResponse([device]));
+    renderWithProviders(<DevicesPanel />, { initialEntries: ['/settings/devices'] });
+
+    await screen.findByText('Offline iPhone');
+
+    expect(screen.getByTestId('peer-status-offline')).toBeInTheDocument();
+    expect(screen.queryByTestId('peer-status-online')).not.toBeInTheDocument();
   });
 });

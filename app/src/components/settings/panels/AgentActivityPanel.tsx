@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useT } from '../../../lib/i18n/I18nContext';
 import { callCoreRpc } from '../../../services/coreRpcClient';
 import SettingsHeader from '../components/SettingsHeader';
+import { SettingsStatusLine } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 interface ActivityLevelSettings {
@@ -100,7 +101,9 @@ export default function AgentActivityPanel() {
 
   if (status === 'loading' && !settings) {
     return (
-      <div className="p-4 text-sm text-stone-500 dark:text-neutral-400">{t('common.loading')}</div>
+      <div className="p-4 text-sm text-neutral-500 dark:text-neutral-400">
+        {t('common.loading')}
+      </div>
     );
   }
 
@@ -117,13 +120,13 @@ export default function AgentActivityPanel() {
         breadcrumbs={breadcrumbs}
       />
       <div className="flex flex-col gap-4 p-4">
-        <p className="text-xs text-stone-600 dark:text-neutral-400">
+        <p className="text-xs text-neutral-500 dark:text-neutral-400">
           {t('activityLevel.description')}
         </p>
 
         {monthlyCost && monthlyCost.total_cost_usd > 0 && (
-          <div className="px-3 py-2 rounded-md bg-stone-100 dark:bg-neutral-800 text-sm">
-            <span className="font-medium text-stone-700 dark:text-neutral-300">
+          <div className="px-3 py-2 rounded-md bg-neutral-100 dark:bg-neutral-800 text-sm">
+            <span className="font-medium text-neutral-800 dark:text-neutral-200">
               {t('activityLevel.currentMonth').replace(
                 '{amount}',
                 monthlyCost.total_cost_usd.toFixed(2)
@@ -132,6 +135,7 @@ export default function AgentActivityPanel() {
           </div>
         )}
 
+        {/* Level selection cards — intentional bespoke card UI; kept as-is. */}
         <div className="flex flex-col gap-2">
           {LEVELS.map(({ key, value }) => {
             const isSelected = settings?.level === value;
@@ -146,25 +150,25 @@ export default function AgentActivityPanel() {
                 className={`w-full text-left px-4 py-3 rounded-lg border transition-colors ${
                   isSelected
                     ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20'
-                    : 'border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 hover:border-stone-300 dark:hover:border-neutral-700'
+                    : 'border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 hover:border-neutral-300 dark:hover:border-neutral-700'
                 } ${status === 'saving' ? 'opacity-50' : ''}`}>
                 <div className="flex items-center justify-between">
                   <div>
                     <div className="flex items-center gap-2">
-                      <span className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+                      <span className="text-sm font-semibold text-neutral-800 dark:text-neutral-100">
                         {t(`activityLevel.${key as LevelKey}`)}
                       </span>
                       {value === 2 && (
-                        <span className="text-xs px-1.5 py-0.5 rounded bg-stone-200 dark:bg-neutral-700 text-stone-600 dark:text-neutral-400">
+                        <span className="text-xs px-1.5 py-0.5 rounded bg-neutral-200 dark:bg-neutral-700 text-neutral-600 dark:text-neutral-400">
                           {t('activityLevel.default')}
                         </span>
                       )}
                     </div>
-                    <p className="text-xs text-stone-500 dark:text-neutral-400 mt-0.5">
+                    <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
                       {t(`activityLevel.${key as LevelKey}Desc`)}
                     </p>
                   </div>
-                  <div className="text-xs font-mono text-stone-500 dark:text-neutral-400 shrink-0 ml-4">
+                  <div className="text-xs font-mono text-neutral-500 dark:text-neutral-400 shrink-0 ml-4">
                     {costMin === 0 && costMax === 0
                       ? t('activityLevel.costFree')
                       : t('activityLevel.costRange')
@@ -177,15 +181,12 @@ export default function AgentActivityPanel() {
           })}
         </div>
 
-        <div role="status" aria-live="polite" aria-atomic="true" className="text-xs min-h-[1rem]">
-          {status === 'saving' && (
-            <span className="text-stone-500">{t('autonomy.statusSaving')}</span>
-          )}
-          {status === 'saved' && (
-            <span className="text-sage-700 dark:text-sage-400">{t('activityLevel.saved')}</span>
-          )}
-          {error && <span className="text-coral-600">{error}</span>}
-        </div>
+        <SettingsStatusLine
+          saving={status === 'saving'}
+          savedNote={status === 'saved' ? t('activityLevel.saved') : null}
+          error={error}
+          savingLabel={t('autonomy.statusSaving')}
+        />
       </div>
     </div>
   );

@@ -7,6 +7,7 @@
  * here would race with that component's own state machine.
  */
 import { invoke } from '@tauri-apps/api/core';
+import debug from 'debug';
 import { useEffect, useState } from 'react';
 
 import { useAppUpdate } from '../../../hooks/useAppUpdate';
@@ -17,8 +18,12 @@ import { selectDeveloperMode, setDeveloperMode } from '../../../store/themeSlice
 import { APP_VERSION, LATEST_APP_DOWNLOAD_URL } from '../../../utils/config';
 import { isTauriEnvironment } from '../../../utils/configPersistence';
 import { openUrl } from '../../../utils/openUrl';
+import Button from '../../ui/Button';
 import SettingsHeader from '../components/SettingsHeader';
+import { SettingsRow, SettingsSection, SettingsSwitch } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+
+const log = debug('settings:developer-mode');
 
 const AboutPanel = () => {
   const { t } = useT();
@@ -83,133 +88,126 @@ const AboutPanel = () => {
       />
 
       <div className="p-4 space-y-4">
-        <div className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4">
-          <div className="text-xs text-stone-500 dark:text-neutral-400">
-            {t('settings.about.version')}
+        {/* Version */}
+        <SettingsSection>
+          <div className="px-4 py-4">
+            <div className="text-xs text-neutral-500 dark:text-neutral-400">
+              {t('settings.about.version')}
+            </div>
+            <div className="mt-1 text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+              v{APP_VERSION}
+            </div>
+            {info?.available && info.available_version && (
+              <div className="mt-1 text-xs text-primary-500">
+                v{info.available_version} {t('settings.about.updateAvailable')}
+              </div>
+            )}
           </div>
-          <div className="mt-1 text-lg font-semibold text-stone-900 dark:text-neutral-100">
-            v{APP_VERSION}
-          </div>
-          {info?.available && info.available_version && (
-            <div className="mt-1 text-xs text-primary-500">
-              v{info.available_version} {t('settings.about.updateAvailable')}
+        </SettingsSection>
+
+        {/* Software updates */}
+        <SettingsSection>
+          <SettingsRow
+            label={t('settings.about.softwareUpdates')}
+            description={summary}
+            control={
+              <Button
+                type="button"
+                variant="primary"
+                size="xs"
+                onClick={handleCheck}
+                disabled={isChecking}>
+                {isChecking ? t('settings.about.checking') : t('settings.about.checkForUpdates')}
+              </Button>
+            }
+          />
+          {lastCheckedAt && (
+            <div className="px-4 pb-3 text-[11px] text-neutral-400 dark:text-neutral-500">
+              {t('settings.about.lastChecked')} {formatRelative(lastCheckedAt, t)}
             </div>
           )}
-        </div>
+        </SettingsSection>
 
-        <div className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4">
-          <div className="flex items-start justify-between gap-3">
-            <div className="flex-1 min-w-0">
-              <div className="text-sm font-medium text-stone-900 dark:text-neutral-100">
-                {t('settings.about.softwareUpdates')}
-              </div>
-              <div className="mt-1 text-xs text-stone-500 dark:text-neutral-400 leading-relaxed">
-                {summary}
-              </div>
-              {lastCheckedAt && (
-                <div className="mt-1 text-[11px] text-stone-400 dark:text-neutral-500">
-                  {t('settings.about.lastChecked')} {formatRelative(lastCheckedAt, t)}
-                </div>
-              )}
-            </div>
-            <button
-              type="button"
-              onClick={handleCheck}
-              disabled={isChecking}
-              className="shrink-0 px-3 py-1.5 rounded-lg bg-primary-500 hover:bg-primary-400 text-white text-xs font-medium transition-colors disabled:opacity-50">
-              {isChecking ? t('settings.about.checking') : t('settings.about.checkForUpdates')}
-            </button>
-          </div>
-        </div>
-
-        <div className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4">
-          <div className="text-sm font-medium text-stone-900 dark:text-neutral-100">
-            {t('settings.about.connection')}
-          </div>
-          <div className="mt-2 space-y-1.5">
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-xs text-stone-500 dark:text-neutral-400">
-                {t('settings.about.connectionMode')}
-              </span>
-              <span className="text-xs font-medium text-stone-900 dark:text-neutral-100">
+        {/* Connection */}
+        <SettingsSection title={t('settings.about.connection')}>
+          <SettingsRow
+            label={t('settings.about.connectionMode')}
+            control={
+              <span className="text-xs font-medium text-neutral-800 dark:text-neutral-100">
                 {coreMode.kind === 'local'
                   ? t('settings.about.connectionModeLocal')
                   : coreMode.kind === 'cloud'
                     ? t('settings.about.connectionModeCloud')
                     : t('settings.about.connectionModeUnset')}
               </span>
-            </div>
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-xs text-stone-500 dark:text-neutral-400 shrink-0">
-                {t('settings.about.serverUrl')}
-              </span>
+            }
+          />
+          <SettingsRow
+            label={t('settings.about.serverUrl')}
+            control={
               <span
-                className="text-xs font-mono text-stone-900 dark:text-neutral-100 truncate"
+                className="text-xs font-mono text-neutral-800 dark:text-neutral-100 truncate max-w-[200px]"
                 title={rpcUrl ?? undefined}>
                 {rpcUrl ?? t('settings.about.serverUrlUnavailable')}
               </span>
-            </div>
+            }
+          />
+          <div className="px-4 pb-3">
+            <p className="text-[11px] text-neutral-500 dark:text-neutral-400 leading-relaxed">
+              {coreMode.kind === 'cloud'
+                ? t('settings.about.connectionHelperCloud')
+                : t('settings.about.connectionHelperLocal')}
+            </p>
           </div>
-          <p className="mt-2 text-[11px] text-stone-500 dark:text-neutral-400 leading-relaxed">
-            {coreMode.kind === 'cloud'
-              ? t('settings.about.connectionHelperCloud')
-              : t('settings.about.connectionHelperLocal')}
-          </p>
-        </div>
+        </SettingsSection>
 
         {/* Developer Mode toggle — always visible so users can enable it
             without needing it to be on first (chicken-and-egg avoidance). */}
-        <div
-          className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4"
-          data-testid="developer-mode-section">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex-1 min-w-0">
-              <div className="text-sm font-medium text-stone-900 dark:text-neutral-100">
-                {t('settings.developerMode.title')}
-              </div>
-              <div className="mt-1 text-xs text-stone-500 dark:text-neutral-400 leading-relaxed">
-                {developerModeActive && !developerModePref
+        <div data-testid="developer-mode-section">
+          <SettingsSection>
+            <SettingsRow
+              htmlFor="switch-developer-mode"
+              label={t('settings.developerMode.title')}
+              description={
+                developerModeActive && !developerModePref
                   ? t('settings.developerMode.enabledByBuild')
-                  : t('settings.developerMode.description')}
-              </div>
-            </div>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={developerModePref}
-              aria-label={t('settings.developerMode.title')}
-              onClick={() => {
-                console.debug('[developer-mode] toggled to', !developerModePref);
-                dispatch(setDeveloperMode(!developerModePref));
-              }}
-              className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 ${
-                developerModePref ? 'bg-primary-600' : 'bg-stone-300 dark:bg-neutral-600'
-              }`}>
-              <span
-                className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ${
-                  developerModePref ? 'translate-x-5' : 'translate-x-0'
-                }`}
-              />
-            </button>
-          </div>
+                  : t('settings.developerMode.description')
+              }
+              control={
+                <SettingsSwitch
+                  id="switch-developer-mode"
+                  checked={developerModePref}
+                  onCheckedChange={next => {
+                    log('toggled to %s', String(next));
+                    dispatch(setDeveloperMode(next));
+                  }}
+                  aria-label={t('settings.developerMode.title')}
+                />
+              }
+            />
+          </SettingsSection>
         </div>
 
-        <div className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4">
-          <div className="text-sm font-medium text-stone-900 dark:text-neutral-100">
-            {t('settings.about.releases')}
+        {/* Releases */}
+        <SettingsSection>
+          <div className="px-4 py-4 space-y-2">
+            <div className="text-sm font-medium text-neutral-800 dark:text-neutral-100">
+              {t('settings.about.releases')}
+            </div>
+            <p className="text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed">
+              {t('settings.about.releasesDesc')}
+            </p>
+            <Button
+              type="button"
+              variant="secondary"
+              size="xs"
+              onClick={() => {
+                void openUrl(LATEST_APP_DOWNLOAD_URL);
+              }}>
+              {t('settings.about.openReleases')}
+            </Button>
           </div>
-          <p className="mt-1 text-xs text-stone-500 dark:text-neutral-400 leading-relaxed">
-            {t('settings.about.releasesDesc')}
-          </p>
-          <button
-            type="button"
-            onClick={() => {
-              void openUrl(LATEST_APP_DOWNLOAD_URL);
-            }}
-            className="mt-3 px-3 py-1.5 rounded-lg border border-stone-200 dark:border-neutral-800 text-stone-700 dark:text-neutral-200 hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 dark:hover:bg-neutral-800/60 text-xs transition-colors">
-            {t('settings.about.openReleases')}
-          </button>
-        </div>
+        </SettingsSection>
       </div>
     </div>
   );

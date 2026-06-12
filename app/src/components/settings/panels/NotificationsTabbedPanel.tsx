@@ -38,7 +38,7 @@ const NotificationsTabbedPanel = () => {
   ];
 
   return (
-    <div>
+    <div className="z-10 relative">
       <SettingsHeader
         title={t('settings.notifications')}
         showBackButton={true}
@@ -49,7 +49,7 @@ const NotificationsTabbedPanel = () => {
       <div
         role="tablist"
         aria-label={t('settings.notifications')}
-        className="flex gap-1 px-4 pt-3 border-b border-stone-200 dark:border-neutral-800">
+        className="flex gap-1 px-4 pt-3 border-b border-neutral-200 dark:border-neutral-800">
         {tabs.map(({ id, label }) => {
           const selected = tab === id;
           return (
@@ -61,8 +61,8 @@ const NotificationsTabbedPanel = () => {
               onClick={() => selectTab(id)}
               className={`px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
                 selected
-                  ? 'border-primary-500 text-stone-900 dark:text-neutral-100'
-                  : 'border-transparent text-stone-500 dark:text-neutral-400 hover:text-stone-700 dark:hover:text-neutral-200'
+                  ? 'border-primary-500 text-neutral-800 dark:text-neutral-100'
+                  : 'border-transparent text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200'
               }`}>
               {label}
             </button>

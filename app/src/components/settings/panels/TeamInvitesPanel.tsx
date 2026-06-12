@@ -7,7 +7,9 @@ import { useCoreState } from '../../../providers/CoreStateProvider';
 import { teamApi } from '../../../services/api/teamApi';
 import { sanitizeError } from '../../../utils/sanitize';
 import { CenteredLoadingState, ErrorBanner, InlineLoadingStatus, Spinner } from '../../ui';
+import Button from '../../ui/Button';
 import SettingsHeader from '../components/SettingsHeader';
+import { SettingsBadge, SettingsEmptyState, SettingsSection } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 const log = debug('core-rpc:error');
@@ -124,16 +126,19 @@ const TeamInvitesPanel = () => {
         breadcrumbs={breadcrumbs}
       />
 
-      <div>
-        <div className="p-4 space-y-4">
-          {error && <ErrorBanner message={error} />}
+      <div className="p-4 pt-2 space-y-5">
+        {error && <ErrorBanner message={error} />}
 
-          {/* Generate button */}
-          {isAdmin && (
-            <button
-              onClick={handleGenerate}
+        {/* Generate button */}
+        {isAdmin && (
+          <div className="px-1">
+            <Button
+              type="button"
+              variant="primary"
+              size="sm"
+              onClick={() => void handleGenerate()}
               disabled={isGenerating}
-              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium rounded-xl bg-primary-500 hover:bg-primary-600 text-white transition-colors disabled:opacity-50">
+              className="w-full">
               {isGenerating ? (
                 <>
                   <Spinner className="w-4 h-4" />
@@ -152,30 +157,30 @@ const TeamInvitesPanel = () => {
                   {t('invites.generate')}
                 </>
               )}
-            </button>
-          )}
+            </Button>
+          </div>
+        )}
 
-          {/* Refreshing indicator - only when loading and has existing data */}
-          {isLoadingInvites && invites.length > 0 && (
-            <InlineLoadingStatus label={t('invites.refreshing')} />
-          )}
+        {/* Refreshing indicator - only when loading and has existing data */}
+        {isLoadingInvites && invites.length > 0 && (
+          <InlineLoadingStatus label={t('invites.refreshing')} />
+        )}
 
-          {/* Invites list */}
-          {isLoadingInvites && invites.length === 0 ? (
-            <CenteredLoadingState label={t('invites.loading')} />
-          ) : invites.length > 0 ? (
-            <div className="space-y-2">
+        {/* Invites list */}
+        {isLoadingInvites && invites.length === 0 ? (
+          <CenteredLoadingState label={t('invites.loading')} />
+        ) : invites.length > 0 ? (
+          <SettingsSection>
+            <ul>
               {invites.map(invite => {
                 const status = getInviteStatus(invite);
                 const isInactive = status !== 'active';
 
                 return (
-                  <div
+                  <li
                     key={invite._id}
-                    className={`rounded-xl border p-3 ${
-                      isInactive
-                        ? 'border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 opacity-60'
-                        : 'border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900'
+                    className={`px-4 py-3 border-b border-neutral-100 dark:border-neutral-800 last:border-b-0 ${
+                      isInactive ? 'opacity-60' : ''
                     }`}>
                     <div className="flex items-center justify-between mb-2">
                       {/* Code with status label */}
@@ -183,32 +188,28 @@ const TeamInvitesPanel = () => {
                         <code
                           className={`text-sm font-mono px-2 py-1 rounded-lg ${
                             isInactive
-                              ? 'text-stone-500 dark:text-neutral-400 bg-stone-100 dark:bg-neutral-800'
-                              : 'text-stone-900 dark:text-neutral-100 bg-stone-200 dark:bg-neutral-800'
+                              ? 'text-neutral-500 dark:text-neutral-400 bg-neutral-100 dark:bg-neutral-800'
+                              : 'text-neutral-800 dark:text-neutral-100 bg-neutral-200 dark:bg-neutral-800'
                           }`}>
                           {invite.code}
                         </code>
                         {status === 'expired' && (
-                          <span className="px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-coral-500/20 text-coral-400 border border-coral-500/30">
+                          <SettingsBadge variant="danger">
                             {t('rewards.referralSection.statusExpired')}
-                          </span>
+                          </SettingsBadge>
                         )}
                         {status === 'used' && (
-                          <span className="px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30">
-                            {t('invites.usedUp')}
-                          </span>
+                          <SettingsBadge variant="warning">{t('invites.usedUp')}</SettingsBadge>
                         )}
                       </div>
                       <div className="flex items-center gap-1.5">
                         {/* Copy */}
-                        <button
-                          onClick={() => handleCopy(invite.code, invite._id)}
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="xs"
+                          onClick={() => void handleCopy(invite.code, invite._id)}
                           disabled={status !== 'active'}
-                          className={`p-1.5 rounded-lg transition-colors ${
-                            status === 'active'
-                              ? 'text-stone-500 dark:text-neutral-400 hover:text-stone-900 dark:hover:text-neutral-100 hover:bg-stone-100 dark:hover:bg-neutral-800'
-                              : 'text-stone-600 dark:text-neutral-300 cursor-not-allowed'
-                          }`}
                           aria-label={t('invites.copyCodeAria')}>
                           {copiedId === invite._id ? (
                             <svg
@@ -237,14 +238,17 @@ const TeamInvitesPanel = () => {
                               />
                             </svg>
                           )}
-                        </button>
+                        </Button>
                         {/* Revoke - only for active invites */}
                         {isAdmin && status === 'active' && (
-                          <button
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="xs"
                             onClick={() => handleRevoke(invite._id, invite.code)}
                             disabled={revokingId === invite._id}
-                            className="p-1.5 rounded-lg text-stone-500 dark:text-neutral-400 hover:text-coral-400 hover:bg-coral-500/10 transition-colors disabled:opacity-50"
-                            aria-label={t('invites.revokeAria')}>
+                            aria-label={t('invites.revokeAria')}
+                            className="text-neutral-500 dark:text-neutral-400 hover:text-coral-400 hover:bg-coral-500/10">
                             <svg
                               className="w-4 h-4"
                               fill="none"
@@ -257,11 +261,11 @@ const TeamInvitesPanel = () => {
                                 d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
                               />
                             </svg>
-                          </button>
+                          </Button>
                         )}
                       </div>
                     </div>
-                    <div className="flex items-center gap-3 text-xs text-stone-500 dark:text-neutral-400">
+                    <div className="flex items-center gap-3 text-xs text-neutral-500 dark:text-neutral-400">
                       <span>
                         {t('invites.uses')
                           .replace('{current}', String(invite.currentUses))
@@ -276,78 +280,69 @@ const TeamInvitesPanel = () => {
                             )}
                       </span>
                     </div>
-                  </div>
+                  </li>
                 );
               })}
-            </div>
-          ) : (
-            <div className="text-center py-8">
-              <svg
-                className="w-10 h-10 mx-auto text-stone-600 dark:text-neutral-300 mb-3"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={1.5}
-                  d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
-                />
-              </svg>
-              <p className="text-sm text-stone-500 dark:text-neutral-400">{t('invites.empty')}</p>
-              <p className="text-xs text-stone-600 dark:text-neutral-300 mt-1">
-                {t('invites.emptyHint')}
-              </p>
-            </div>
-          )}
+            </ul>
+          </SettingsSection>
+        ) : (
+          <SettingsSection>
+            <SettingsEmptyState label={t('invites.empty')} />
+          </SettingsSection>
+        )}
 
-          {/* Revoke Invite Confirmation Modal */}
-          {inviteToRevoke && (
-            <div className="fixed inset-0 bg-stone-900/50 flex items-center justify-center z-50 p-4">
-              <div className="bg-white dark:bg-neutral-900 rounded-2xl p-6 w-full max-w-md border border-stone-200 dark:border-neutral-800">
-                <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100 mb-4">
-                  {t('invites.revokeTitle')}
-                </h3>
+        {/* Revoke Invite Confirmation Modal */}
+        {inviteToRevoke && (
+          <div className="fixed inset-0 bg-neutral-900/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white dark:bg-neutral-900 rounded-2xl p-6 w-full max-w-md border border-neutral-200 dark:border-neutral-800">
+              <h3 className="text-sm font-semibold text-neutral-800 dark:text-neutral-100 mb-4">
+                {t('invites.revokeTitle')}
+              </h3>
 
-                {error && (
-                  <div className="rounded-xl bg-coral-500/10 border border-coral-500/20 p-3 mb-4">
-                    <p className="text-xs text-coral-400">{error}</p>
-                  </div>
-                )}
+              {error && (
+                <div className="rounded-xl bg-coral-500/10 border border-coral-500/20 p-3 mb-4">
+                  <p className="text-xs text-coral-400">{error}</p>
+                </div>
+              )}
 
-                <div className="space-y-4">
-                  <div className="text-sm text-stone-400 dark:text-neutral-500">
-                    <p>
-                      {t('invites.revokePromptPrefix')}{' '}
-                      <code className="text-stone-900 dark:text-neutral-100 bg-stone-100 dark:bg-neutral-800 px-1.5 py-0.5 rounded font-mono text-xs">
-                        {inviteToRevoke.code}
-                      </code>
-                      ?
-                    </p>
-                    <p className="mt-2 text-amber-400">{t('invites.revokeWarning')}</p>
-                  </div>
+              <div className="space-y-4">
+                <div className="text-sm text-neutral-500 dark:text-neutral-400">
+                  <p>
+                    {t('invites.revokePromptPrefix')}{' '}
+                    <code className="text-neutral-800 dark:text-neutral-100 bg-neutral-100 dark:bg-neutral-800 px-1.5 py-0.5 rounded font-mono text-xs">
+                      {inviteToRevoke.code}
+                    </code>
+                    ?
+                  </p>
+                  <p className="mt-2 text-amber-400">{t('invites.revokeWarning')}</p>
+                </div>
 
-                  <div className="flex gap-2 pt-2">
-                    <button
-                      onClick={() => setInviteToRevoke(null)}
-                      disabled={revokingId === inviteToRevoke.id}
-                      className="flex-1 px-4 py-2 text-sm font-medium rounded-xl bg-stone-100 dark:bg-neutral-800 hover:bg-stone-200 dark:hover:bg-neutral-700 text-stone-700 dark:text-neutral-200 transition-colors disabled:opacity-50">
-                      {t('common.cancel')}
-                    </button>
-                    <button
-                      onClick={confirmRevokeInvite}
-                      disabled={revokingId === inviteToRevoke.id}
-                      className="flex-1 px-4 py-2 text-sm font-medium rounded-xl bg-coral-500 hover:bg-coral-600 text-white transition-colors disabled:opacity-50">
-                      {revokingId === inviteToRevoke.id
-                        ? t('invites.revoking')
-                        : t('invites.revokeAction')}
-                    </button>
-                  </div>
+                <div className="flex gap-2 pt-2">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="md"
+                    className="flex-1"
+                    onClick={() => setInviteToRevoke(null)}
+                    disabled={revokingId === inviteToRevoke.id}>
+                    {t('common.cancel')}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="danger"
+                    size="md"
+                    className="flex-1 bg-coral-500 hover:bg-coral-600 text-white border-0 dark:bg-coral-500 dark:hover:bg-coral-600"
+                    onClick={() => void confirmRevokeInvite()}
+                    disabled={revokingId === inviteToRevoke.id}>
+                    {revokingId === inviteToRevoke.id
+                      ? t('invites.revoking')
+                      : t('invites.revokeAction')}
+                  </Button>
                 </div>
               </div>
             </div>
-          )}
-        </div>
+          </div>
+        )}
       </div>
     </div>
   );

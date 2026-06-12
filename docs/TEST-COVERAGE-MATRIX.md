@@ -181,6 +181,7 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 | 4.2.1 | User Message Handling  | WD+RI | `conversations-web-channel-flow.spec.ts`, `tests/json_rpc_e2e.rs` | ✅     |                             |
 | 4.2.2 | AI Response Generation | WD    | `agent-review.spec.ts`                                            | ✅     | Mock LLM                    |
 | 4.2.3 | Streaming Responses    | RI    | `tests/json_rpc_e2e.rs`                                           | 🟡     | UI streaming assertion thin |
+| 4.2.4 | Parallel inference (cross-thread + within-thread forked turns) | RU+VU | `src/openhuman/channels/providers/web_tests.rs`, `app/src/store/__tests__/chatRuntimeSlice.test.ts`, `app/src/providers/__tests__/ChatRuntimeProvider.test.tsx` | 🟡 | Concurrent same-/cross-thread dispatch, cooperative `CancellationToken` teardown, and parallel-lane stream routing covered; dedicated WD E2E is a follow-up |
 
 ### 4.3 Tool Invocation
 
@@ -192,6 +193,7 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 | 4.3.4 | Subagent Mascot Visualization | VU | `app/src/features/human/SubMascotLayer.test.tsx`, `app/src/features/human/HumanPage.test.tsx` | ✅ | Renders spawned/completed/failed subagent timeline rows as colored companion mascots with activity bubbles |
 | 4.3.5 | Image Tool Contracts | RU | `src/openhuman/image/` | ✅ | High-level `image_generation` / `view_image` schema, gating, serialization, prompt guidance, and contract e2e coverage for #2984 |
 | 4.3.6 | Background Monitor Tools | RU+RI | `src/openhuman/monitor/`, `src/openhuman/tools/ops_tests.rs`, `tests/json_rpc_e2e.rs` | ✅ | First-class monitor domain covers command denial, line streaming, timeout, stop, bounded output, registry exposure, and JSON-RPC list/read surface for #3371 |
+| 4.3.7 | Mascot Avatar Animation | VU | `app/src/features/human/Mascot/RiveMascot.test.tsx`, `app/src/features/human/Mascot/riveMaps.test.ts` | ✅ | Rive `MascotSM` state machine: face→pose mapping, Oculus→`visme_codes` viseme normalization, and idle random pose rotation for the `tiny_mascot.riv` upgrade |
 
 ---
 
@@ -289,6 +291,7 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 | 8.2.1 | Context Injection  | RI    | `tests/autocomplete_memory_e2e.rs`        | ✅     |                                   |
 | 8.2.2 | Memory Consistency | RI    | `tests/memory_graph_sync_e2e.rs`, `tests/worker_c_modules_e2e.rs` | ✅     | Worker C RPC E2E verifies memory-tree ingest is reflected by `memory_sync_status_list` |
 | 8.2.3 | Memory Scaling     | RU    | `src/openhuman/memory/ingestion_tests.rs` | 🟡     | Soak/scale benchmark not asserted |
+| 8.2.4 | Raw-archive sync reconcile   | RU+RI | `src/openhuman/memory_sync/sources/rebuild.rs`, `src/openhuman/memory_sync/workspace/periodic.rs`, `tests/json_rpc_e2e.rs` (`json_rpc_memory_sources_reconcile_reports_pending_raw_files`), `tests/memory_sync_pipeline_e2e.rs` | ✅     | Coverage gate + incremental rebuild + workspace periodic scheduler + `memory_sources_reconcile` RPC |
 
 ### 8.3 Memory Retrieval Benchmarks
 

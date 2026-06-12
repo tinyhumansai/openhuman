@@ -1,3 +1,4 @@
+import debug from 'debug';
 import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
@@ -12,6 +13,8 @@ import ModelCouncilTab from '../components/intelligence/ModelCouncilTab';
 import { ToastContainer } from '../components/intelligence/Toast';
 import WorkflowsTab from '../components/intelligence/WorkflowsTab';
 import PillTabBar from '../components/PillTabBar';
+import SettingsHeader from '../components/settings/components/SettingsHeader';
+import { useSettingsNavigation } from '../components/settings/hooks/useSettingsNavigation';
 import { useDeveloperMode } from '../hooks/useDeveloperMode';
 import {
   useIntelligenceSocket,
@@ -23,6 +26,8 @@ import type {
   ConfirmationModal as ConfirmationModalType,
   ToastNotification,
 } from '../types/intelligence';
+
+const log = debug('settings:intelligence');
 
 type IntelligenceTab =
   | 'memory'
@@ -58,8 +63,14 @@ const makeIsVisibleTab =
 
 export default function Intelligence() {
   const { t } = useT();
+  const { navigateBack, breadcrumbs } = useSettingsNavigation();
   const developerMode = useDeveloperMode();
   const isVisibleTab = makeIsVisibleTab(developerMode);
+
+  // [settings] Intelligence is rendered exclusively at /settings/intelligence.
+  // Always apply the settings shell (SettingsHeader + breadcrumbs) — no need
+  // for an `embedded` prop since this page has no standalone usage.
+  log('rendering with settings shell');
 
   // Tab is URL-backed (`/intelligence?tab=…`) so navigating away — e.g. to
   // Settings → Task Sources from the Agent Tasks tab — and coming back via
@@ -164,8 +175,15 @@ export default function Intelligence() {
   const activeTabDef = tabs.find(tab => tab.id === activeTab);
 
   return (
-    <div className="min-h-full p-4 pt-6">
-      <div className="max-w-4xl mx-auto space-y-4">
+    <div className="z-10 relative">
+      <SettingsHeader
+        title={t('settings.developerMenu.intelligence.title')}
+        showBackButton={true}
+        onBack={navigateBack}
+        breadcrumbs={breadcrumbs}
+      />
+
+      <div className="p-4 space-y-4">
         <PillTabBar
           items={tabs.map(tab => ({ label: tab.label, value: tab.id }))}
           selected={activeTab}
@@ -181,7 +199,7 @@ export default function Intelligence() {
                     className={`rounded-full border px-1.5 py-0.5 text-[10px] ${
                       active
                         ? 'border-white/30 bg-white/15 text-white'
-                        : 'border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 text-stone-500 dark:text-neutral-400'
+                        : 'border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/60 text-neutral-500 dark:text-neutral-400'
                     }`}>
                     {t('misc.beta')}
                   </span>
@@ -191,20 +209,20 @@ export default function Intelligence() {
           }}
         />
 
-        <div className="bg-white dark:bg-neutral-900 rounded-2xl shadow-soft border border-stone-200 dark:border-neutral-800 p-6">
+        <div className="bg-white dark:bg-neutral-900 rounded-2xl shadow-soft border border-neutral-200 dark:border-neutral-800 p-6">
           <div>
-            {/* Header — reflects the active tab so the panel title matches
-                what's shown below it (e.g. "Agent Tasks" on the Tasks tab),
-                rather than a static "Memory". */}
+            {/* Sub-heading — reflects the active tab (e.g. "Agent Tasks") so
+                the panel body title matches what's shown below it, rather than
+                a static page title. The top-level title is now in SettingsHeader. */}
             <div className="flex items-center justify-between mb-6">
               <div className="min-w-0">
-                <h1
-                  className="text-xl font-bold text-stone-900 dark:text-neutral-100"
+                <h2
+                  className="text-xl font-bold text-neutral-800 dark:text-neutral-100"
                   data-walkthrough="intelligence-header">
                   {activeTabDef?.label ?? t('memory.title')}
-                </h1>
+                </h2>
                 {activeTabDef?.description && (
-                  <p className="mt-1 text-sm text-stone-500 dark:text-neutral-400">
+                  <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
                     {activeTabDef.description}
                   </p>
                 )}

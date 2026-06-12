@@ -4641,6 +4641,7 @@ async fn agent_subagent_public_types_cover_task_local_and_error_display_paths() 
         worker_thread_id: Some("thread-1".to_string()),
         initial_history: None,
         checkpoint_dir: None,
+        worktree_action_dir: None,
     };
     assert_eq!(options.skill_filter_override.as_deref(), Some("docs"));
     assert_eq!(options.toolkit_override.as_deref(), Some("github"));

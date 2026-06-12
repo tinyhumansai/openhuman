@@ -551,4 +551,383 @@ describe('VoicePanel', () => {
     await waitFor(() => expect(toggle).toHaveAttribute('aria-checked', 'false'));
     expect(vi.mocked(syncNotchVisibility)).not.toHaveBeenCalled();
   });
+
+  // ─── STT / TTS Test buttons ────────────────────────────────────────────────
+
+  it('clicking Test STT calls testVoiceProvider and shows success result', async () => {
+    vi.mocked(testVoiceProvider).mockResolvedValueOnce({ ok: true, detail: 'STT OK' });
+
+    renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+
+    const testSttBtn = await screen.findByTestId('test-stt-button');
+    fireEvent.click(testSttBtn);
+
+    await waitFor(() => expect(vi.mocked(testVoiceProvider)).toHaveBeenCalledWith('stt', 'cloud'));
+    expect(await screen.findByText('STT OK')).toBeInTheDocument();
+  });
+
+  it('clicking Test STT shows error result when testVoiceProvider rejects', async () => {
+    vi.mocked(testVoiceProvider).mockRejectedValueOnce(new Error('STT timeout'));
+
+    renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+
+    const testSttBtn = await screen.findByTestId('test-stt-button');
+    fireEvent.click(testSttBtn);
+
+    await waitFor(() => expect(screen.getByText('STT timeout')).toBeInTheDocument());
+  });
+
+  it('clicking Test TTS calls testVoiceProvider and shows success result', async () => {
+    vi.mocked(testVoiceProvider).mockResolvedValueOnce({ ok: true, detail: 'TTS OK' });
+
+    renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+
+    const testTtsBtn = await screen.findByTestId('test-tts-button');
+    fireEvent.click(testTtsBtn);
+
+    await waitFor(() => expect(vi.mocked(testVoiceProvider)).toHaveBeenCalledWith('tts', 'cloud'));
+    expect(await screen.findByText('TTS OK')).toBeInTheDocument();
+  });
+
+  it('clicking Test TTS shows error result when testVoiceProvider rejects', async () => {
+    vi.mocked(testVoiceProvider).mockRejectedValueOnce(new Error('TTS unreachable'));
+
+    renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+
+    const testTtsBtn = await screen.findByTestId('test-tts-button');
+    fireEvent.click(testTtsBtn);
+
+    await waitFor(() => expect(screen.getByText('TTS unreachable')).toBeInTheDocument());
+  });
+
+  it('Test TTS with elevenlabs provider includes elevenlabs in provider string', async () => {
+    // Seed voiceSettings with elevenlabs as a registered external provider
+    runtime.voiceSettings = makeVoiceSettings({
+      sttProvider: { kind: 'cloud' },
+      ttsProvider: { kind: 'external', providerSlug: 'elevenlabs', model: '' },
+      voiceProviders: [
+        {
+          id: 'el-tts-test',
+          slug: 'elevenlabs',
+          label: 'ElevenLabs',
+          endpoint: 'https://api.elevenlabs.io/v1',
+          auth_style: 'bearer',
+          capability: 'both',
+          stt_api_style: 'openai_audio',
+          tts_api_style: 'elevenlabs',
+          default_stt_model: 'scribe_v1',
+          default_tts_voice: 'JBFqnCBsd6RMkjVDRZzb',
+          has_api_key: true,
+        },
+      ],
+    });
+
+    vi.mocked(testVoiceProvider).mockResolvedValueOnce({ ok: true, detail: 'EL OK' });
+
+    renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+
+    const ttsSelect = (await screen.findByTestId('tts-provider-select')) as HTMLSelectElement;
+    await waitFor(() => expect(ttsSelect.value).toBe('elevenlabs'));
+
+    const testTtsBtn = await screen.findByTestId('test-tts-button');
+    fireEvent.click(testTtsBtn);
+
+    await waitFor(() =>
+      expect(vi.mocked(testVoiceProvider)).toHaveBeenCalledWith(
+        'tts',
+        expect.stringContaining('elevenlabs')
+      )
+    );
+  });
+
+  // ─── Whisper model picker in routing section ────────────────────────────────
+
+  it('changing the Whisper model select immediately calls persistProviders', async () => {
+    runtime.voiceSettings = makeVoiceSettings({
+      sttProvider: { kind: 'local', engine: 'whisper', model: 'medium' },
+      ttsProvider: { kind: 'cloud' },
+    });
+
+    renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+
+    const sttModelSelect = (await screen.findByTestId('stt-model-select')) as HTMLSelectElement;
+    fireEvent.change(sttModelSelect, { target: { value: 'small' } });
+
+    await waitFor(() =>
+      expect(vi.mocked(openhumanVoiceSetProviders)).toHaveBeenCalledWith(
+        expect.objectContaining({ stt_model: 'small' })
+      )
+    );
+  });
+
+  // ─── TTS voice picker (Piper preset select) ─────────────────────────────────
+
+  it('shows the Piper voice preset select and selecting __custom__ is a no-op', async () => {
+    runtime.voiceSettings = makeVoiceSettings({
+      sttProvider: { kind: 'cloud' },
+      ttsProvider: { kind: 'local', engine: 'piper', model: '' },
+    });
+    runtime.voiceStatus.tts_voice_id = 'en_US-lessac-medium';
+
+    renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+
+    const ttsVoiceSelect = (await screen.findByTestId('tts-voice-select')) as HTMLSelectElement;
+    const beforeCallCount = vi.mocked(openhumanVoiceSetProviders).mock.calls.length;
+
+    // Selecting __custom__ should not trigger persistProviders
+    fireEvent.change(ttsVoiceSelect, { target: { value: '__custom__' } });
+
+    // Give async effects time to fire
+    await new Promise(r => setTimeout(r, 50));
+    expect(vi.mocked(openhumanVoiceSetProviders).mock.calls.length).toBe(beforeCallCount);
+  });
+
+  // ─── Modal: install buttons (whisper / piper in the API-key modal) ─────────
+
+  it('clicking Install Whisper inside the modal triggers handleInstallWhisper', async () => {
+    renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+
+    await screen.findByTestId('voice-providers-section');
+    const whisperChip = await screen.findByTestId('voice-provider-chip-whisper');
+    fireEvent.click(whisperChip);
+
+    await screen.findByTestId('voice-provider-key-modal');
+
+    // The install button label is "Install locally" when engine is not yet installed
+    const installBtn = await screen.findByRole('button', { name: /install locally/i });
+    fireEvent.click(installBtn);
+
+    await waitFor(() => expect(vi.mocked(installWhisper)).toHaveBeenCalled());
+  });
+
+  it('clicking Install Piper inside the modal triggers handleInstallPiper', async () => {
+    renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+
+    await screen.findByTestId('voice-providers-section');
+    const piperChip = await screen.findByTestId('voice-provider-chip-piper');
+    fireEvent.click(piperChip);
+
+    await screen.findByTestId('voice-provider-key-modal');
+
+    const installBtn = await screen.findByRole('button', { name: /install locally/i });
+    fireEvent.click(installBtn);
+
+    await waitFor(() => expect(vi.mocked(installPiper)).toHaveBeenCalled());
+  });
+
+  // ─── Modal: Enable button for local providers ──────────────────────────────
+
+  it('clicking Enable inside the Whisper modal calls persistProviders and closes modal', async () => {
+    renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+
+    await screen.findByTestId('voice-providers-section');
+    const whisperChip = await screen.findByTestId('voice-provider-chip-whisper');
+    fireEvent.click(whisperChip);
+
+    await screen.findByTestId('voice-provider-key-modal');
+
+    const enableBtn = screen.getByRole('button', { name: /^Enable$/i });
+    fireEvent.click(enableBtn);
+
+    // Modal closes
+    await waitFor(() =>
+      expect(screen.queryByTestId('voice-provider-key-modal')).not.toBeInTheDocument()
+    );
+  });
+
+  it('clicking Enable inside the Piper modal calls persistProviders and closes modal', async () => {
+    renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+
+    await screen.findByTestId('voice-providers-section');
+    const piperChip = await screen.findByTestId('voice-provider-chip-piper');
+    fireEvent.click(piperChip);
+
+    await screen.findByTestId('voice-provider-key-modal');
+
+    const enableBtn = screen.getByRole('button', { name: /^Enable$/i });
+    fireEvent.click(enableBtn);
+
+    await waitFor(() =>
+      expect(screen.queryByTestId('voice-provider-key-modal')).not.toBeInTheDocument()
+    );
+  });
+
+  // ─── Modal: Cancel button ──────────────────────────────────────────────────
+
+  it('clicking Cancel inside the Whisper modal closes it without persisting', async () => {
+    renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+
+    await screen.findByTestId('voice-providers-section');
+    const whisperChip = await screen.findByTestId('voice-provider-chip-whisper');
+    fireEvent.click(whisperChip);
+
+    await screen.findByTestId('voice-provider-key-modal');
+    const cancelBtn = screen.getByRole('button', { name: /^Cancel$/i });
+    fireEvent.click(cancelBtn);
+
+    await waitFor(() =>
+      expect(screen.queryByTestId('voice-provider-key-modal')).not.toBeInTheDocument()
+    );
+    // No providers were persisted via RPC
+    expect(vi.mocked(openhumanVoiceSetProviders)).not.toHaveBeenCalled();
+  });
+
+  // ─── External provider (ElevenLabs) modal API-key flow ────────────────────
+
+  it('opening ElevenLabs modal, entering a key, and clicking Save & Enable calls handlers', async () => {
+    vi.mocked(setVoiceProviderKey).mockResolvedValue(undefined);
+    vi.mocked(saveVoiceSettings).mockResolvedValue(undefined);
+
+    renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+
+    await screen.findByTestId('voice-providers-section');
+    const elevenLabsChip = screen.getByTestId('voice-provider-chip-elevenlabs');
+    fireEvent.click(elevenLabsChip);
+
+    await screen.findByTestId('voice-provider-key-modal');
+
+    // Enter an API key (placeholder is 'sk-…' from i18n)
+    const keyInput = screen.getByPlaceholderText(/sk/i);
+    fireEvent.change(keyInput, { target: { value: 'sk-test-key-el-1234567890' } });
+
+    const saveBtn = screen.getByRole('button', { name: /save.*enable/i });
+    fireEvent.click(saveBtn);
+
+    await waitFor(() => expect(vi.mocked(setVoiceProviderKey)).toHaveBeenCalled());
+  });
+
+  it('the ElevenLabs modal Cancel button closes without saving', async () => {
+    renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+
+    await screen.findByTestId('voice-providers-section');
+    const elevenLabsChip = screen.getByTestId('voice-provider-chip-elevenlabs');
+    fireEvent.click(elevenLabsChip);
+
+    await screen.findByTestId('voice-provider-key-modal');
+
+    const cancelBtn = screen.getByRole('button', { name: /^Cancel$/i });
+    fireEvent.click(cancelBtn);
+
+    await waitFor(() =>
+      expect(screen.queryByTestId('voice-provider-key-modal')).not.toBeInTheDocument()
+    );
+    expect(vi.mocked(setVoiceProviderKey)).not.toHaveBeenCalled();
+  });
+
+  // ─── Mascot voice link ─────────────────────────────────────────────────────
+
+  it('shows the mascot voice section link when TTS is not Piper', async () => {
+    renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+
+    // Default TTS = cloud, so the mascot voice link section should appear
+    await screen.findByTestId('mascot-voice-link');
+  });
+
+  it('hides the mascot voice link when TTS provider is piper', async () => {
+    runtime.voiceSettings = makeVoiceSettings({
+      sttProvider: { kind: 'cloud' },
+      ttsProvider: { kind: 'local', engine: 'piper', model: '' },
+    });
+    runtime.voiceStatus.tts_voice_id = 'en_US-lessac-medium';
+
+    renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+
+    const ttsSelect = (await screen.findByTestId('tts-provider-select')) as HTMLSelectElement;
+    await waitFor(() => expect(ttsSelect.value).toBe('piper'));
+
+    expect(screen.queryByTestId('mascot-voice-link')).not.toBeInTheDocument();
+  });
+
+  // ─── ElevenLabs voice select in routing section ────────────────────────────
+
+  it('shows the ElevenLabs voice select when TTS provider is elevenlabs', async () => {
+    runtime.voiceSettings = makeVoiceSettings({
+      sttProvider: { kind: 'cloud' },
+      ttsProvider: { kind: 'cloud' },
+      voiceProviders: [
+        {
+          id: 'el-1',
+          slug: 'elevenlabs',
+          label: 'ElevenLabs',
+          endpoint: 'https://api.elevenlabs.io/v1',
+          auth_style: 'bearer',
+          capability: 'both',
+          stt_api_style: 'openai_audio',
+          tts_api_style: 'elevenlabs',
+          default_stt_model: 'scribe_v1',
+          default_tts_voice: 'JBFqnCBsd6RMkjVDRZzb',
+          has_api_key: true,
+        },
+      ],
+    });
+
+    renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+
+    const ttsSelect = (await screen.findByTestId('tts-provider-select')) as HTMLSelectElement;
+    // Switch to elevenlabs
+    fireEvent.change(ttsSelect, { target: { value: 'elevenlabs' } });
+
+    await waitFor(() =>
+      expect(screen.queryByTestId('elevenlabs-voice-select')).toBeInTheDocument()
+    );
+  });
+
+  it('selecting __custom__ in ElevenLabs voice preset is a no-op (does not update state)', async () => {
+    runtime.voiceSettings = makeVoiceSettings({
+      sttProvider: { kind: 'cloud' },
+      ttsProvider: { kind: 'cloud' },
+      voiceProviders: [
+        {
+          id: 'el-2',
+          slug: 'elevenlabs',
+          label: 'ElevenLabs',
+          endpoint: 'https://api.elevenlabs.io/v1',
+          auth_style: 'bearer',
+          capability: 'both',
+          stt_api_style: 'openai_audio',
+          tts_api_style: 'elevenlabs',
+          default_stt_model: 'scribe_v1',
+          default_tts_voice: 'JBFqnCBsd6RMkjVDRZzb',
+          has_api_key: true,
+        },
+      ],
+    });
+
+    renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+
+    const ttsSelect = (await screen.findByTestId('tts-provider-select')) as HTMLSelectElement;
+    fireEvent.change(ttsSelect, { target: { value: 'elevenlabs' } });
+
+    const elVoiceSelect = (await screen.findByTestId(
+      'elevenlabs-voice-select'
+    )) as HTMLSelectElement;
+    const valueBefore = elVoiceSelect.value;
+    fireEvent.change(elVoiceSelect, { target: { value: '__custom__' } });
+
+    // Value should not change to __custom__
+    await new Promise(r => setTimeout(r, 50));
+    expect(elVoiceSelect.value).toBe(valueBefore);
+  });
+
+  // ─── Save routing with installed whisper ──────────────────────────────────
+
+  it('save routing button shows success notice after persisting', async () => {
+    runtime.voiceSettings = makeVoiceSettings({
+      sttProvider: { kind: 'cloud' },
+      ttsProvider: { kind: 'local', engine: 'piper', model: '' },
+    });
+    runtime.voiceStatus.tts_voice_id = 'en_US-lessac-medium';
+
+    renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+
+    const ttsSelect = (await screen.findByTestId('tts-provider-select')) as HTMLSelectElement;
+    await waitFor(() => expect(ttsSelect.value).toBe('piper'));
+
+    // Switch to cloud and save
+    fireEvent.change(ttsSelect, { target: { value: 'cloud' } });
+    const saveBtn = await screen.findByTestId('save-voice-routing');
+    fireEvent.click(saveBtn);
+
+    await waitFor(() => expect(screen.queryByText(/Voice providers saved/i)).toBeInTheDocument());
+  });
 });

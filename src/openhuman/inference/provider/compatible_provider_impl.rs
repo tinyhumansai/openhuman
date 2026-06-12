@@ -435,7 +435,14 @@ impl Provider for OpenAiCompatibleProvider {
                 let name = function.name?;
                 let arguments = normalize_function_arguments(function.arguments);
                 Some(ProviderToolCall {
-                    id: tc.id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+                    // Treat an empty-string id like a missing one: some providers
+                    // (DashScope/GMI) return `""` rather than omitting it, and an
+                    // empty `tool_call_id` is rejected by the upstream tool-message
+                    // ordering check on the next turn.
+                    id: tc
+                        .id
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
                     name,
                     arguments,
                     // Non-streaming response: preserve Gemini's thought_signature

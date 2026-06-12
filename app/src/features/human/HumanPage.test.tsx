@@ -23,16 +23,6 @@ vi.mock('../../pages/Conversations', () => ({
   default: () => <div data-testid="conversations-stub" />,
 }));
 
-vi.mock('../../components/skills/MeetingBotsCard', () => ({
-  MeetingBotsModal: ({ onClose }: { onClose: () => void }) => (
-    <div role="dialog" aria-label="meeting-bots-modal">
-      <button type="button" onClick={onClose}>
-        Close modal
-      </button>
-    </div>
-  ),
-}));
-
 vi.mock('./Mascot', async importOriginal => {
   const actual = await importOriginal<typeof import('./Mascot')>();
   return {
@@ -130,38 +120,5 @@ describe('HumanPage — speak-replies localStorage persistence', () => {
       'https://example.com/avatar.gif'
     );
     expect(screen.queryByTestId('mascot-stub')).not.toBeInTheDocument();
-  });
-});
-
-describe('HumanPage — join meeting pill', () => {
-  beforeEach(() => {
-    localStorage.clear();
-  });
-
-  afterEach(() => {
-    localStorage.clear();
-  });
-
-  it('renders the join-meeting pill button', () => {
-    renderHumanPage();
-    expect(screen.getByTestId('human-join-meeting-pill')).toBeInTheDocument();
-  });
-
-  it('opens the MeetingBotsModal when the join-meeting pill is clicked', async () => {
-    renderHumanPage();
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByTestId('human-join-meeting-pill'));
-
-    expect(screen.getByRole('dialog')).toBeInTheDocument();
-  });
-
-  it('closes the MeetingBotsModal when onClose is called', async () => {
-    renderHumanPage();
-    fireEvent.click(screen.getByTestId('human-join-meeting-pill'));
-    expect(screen.getByRole('dialog')).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: /close modal/i }));
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 });

@@ -33,7 +33,7 @@ test.describe('Skill discovery (UI + core RPC)', () => {
 
     const text = await page.locator('#root').innerText();
     expect(
-      ['Composio Integrations', 'Apps', 'Messaging', 'Gmail', 'Notion', 'GitHub'].some(marker =>
+      ['Composio Integrations', 'Composio', 'Channels', 'Gmail', 'Notion', 'GitHub'].some(marker =>
         text.includes(marker)
       )
     ).toBe(true);

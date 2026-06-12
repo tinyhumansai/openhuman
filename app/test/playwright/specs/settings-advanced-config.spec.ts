@@ -60,8 +60,10 @@ test.describe('Settings - Advanced Config', () => {
     await gotoSettingsRoute(page, '/settings/developer-options');
 
     await expect(page.getByRole('heading', { name: 'Developer & Diagnostics' })).toBeVisible();
-    await expect(page.getByTestId('settings-nav-ai')).toBeVisible();
-    await expect(page.getByTestId('settings-nav-composio')).toBeVisible();
+    // Developer Options is debug-only now: user-facing sections (AI, Integrations…)
+    // live on their section pages, so Developer Options surfaces diagnostics entries.
+    await expect(page.getByTestId('settings-nav-memory-debug')).toBeVisible();
+    await expect(page.getByTestId('settings-nav-event-log')).toBeVisible();
     await expect(page.getByTestId('settings-nav-build-info')).toBeVisible();
   });
 
@@ -199,7 +201,7 @@ test.describe('Settings - Advanced Config', () => {
     await expect(page.getByText('Software updates')).toBeVisible();
 
     await gotoSettingsRoute(page, '/settings/llm');
-    await expect(page.getByRole('button', { name: 'AI', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'AI & Models', exact: true })).toBeVisible();
     await expect(page.getByText(/Reasoning|Cloud providers|OpenHuman/).first()).toBeVisible();
   });
 });
