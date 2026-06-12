@@ -114,6 +114,28 @@ impl CdpConn {
         }
     }
 
+    /// Same as [`call`](Self::call) but with a caller-supplied response
+    /// timeout. Slack's IDB batch serialisation can run past the default
+    /// 35s; other callers should stick with `call`.
+    pub async fn call_with_timeout(
+        &mut self,
+        method: &str,
+        params: Value,
+        session_id: Option<&str>,
+        timeout: Duration,
+    ) -> Result<Value, String> {
+        match &mut self.backend {
+            Backend::InProcess(transport) => {
+                transport
+                    .call_with_timeout(method, params, session_id, timeout)
+                    .await
+            }
+            // Legacy WS does not honor per-call timeouts; falls back to its
+            // own 35s budget. Migration removes this arm entirely.
+            Backend::LegacyWs(ws) => legacy_ws_call(ws, method, params, session_id).await,
+        }
+    }
+
     /// Subscribe to the transport's event stream and dispatch every
     /// inbound CDP event via the supplied callback until the channel
     /// signals it cannot keep up.

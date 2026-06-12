@@ -91,6 +91,22 @@ impl WebviewCdpTransport {
         params: Value,
         session_id: Option<&str>,
     ) -> Result<Value, String> {
+        self.call_with_timeout(method, params, session_id, CALL_TIMEOUT)
+            .await
+    }
+
+    /// Same as [`call`](Self::call) but with a caller-supplied response
+    /// timeout. Slack's IDB serialise batches can legitimately exceed the
+    /// default 35s budget; the canonical 60s timeout in that module flows
+    /// through here without forcing every other caller to opt into a
+    /// longer wait.
+    pub async fn call_with_timeout(
+        self: &Arc<Self>,
+        method: &str,
+        params: Value,
+        session_id: Option<&str>,
+        timeout: Duration,
+    ) -> Result<Value, String> {
         let id = {
             let mut n = self.next_id.lock().expect("next_id mutex poisoned");
             let id = *n;
@@ -134,7 +150,7 @@ impl WebviewCdpTransport {
             return Err(e);
         }
 
-        match tokio::time::timeout(CALL_TIMEOUT, rx).await {
+        match tokio::time::timeout(timeout, rx).await {
             Ok(Ok(res)) => res,
             Ok(Err(_)) => {
                 // oneshot dropped — transport torn down between dispatch and
