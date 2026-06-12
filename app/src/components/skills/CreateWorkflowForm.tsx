@@ -9,7 +9,7 @@
  *   - All form fields (name, description, scope, license, author,
  *     tags, allowed-tools).
  *   - Slug preview + validation (name and description required).
- *   - Submit handler that calls `skillsApi.createSkill` and surfaces
+ *   - Submit handler that calls `workflowsApi.createWorkflow` and surfaces
  *     the result via `onCreated(skill)` / error string via inline
  *     `<div role="alert">`.
  *
@@ -41,12 +41,12 @@ import {
 
 import { useT } from '../../lib/i18n/I18nContext';
 import {
-  type CreateSkillInput,
-  type CreateSkillInputDef,
-  type SkillScope,
-  type SkillSummary,
-  skillsApi,
-} from '../../services/api/skillsApi';
+  type CreateWorkflowInput,
+  type CreateWorkflowInputDef,
+  type WorkflowScope,
+  type WorkflowSummary,
+  workflowsApi,
+} from '../../services/api/workflowsApi';
 
 /** Mirrors `SkillCreateInputDef` shape used as wire payload, with one
  *  extra `localId` for stable React keys across re-renders (the wire
@@ -80,7 +80,7 @@ const log = debug('skills:create-form');
 export interface CreateSkillFormHandle {
   /** True iff name+description are present and no submit is in flight. */
   isValid: () => boolean;
-  /** True while skillsApi.createSkill is in flight. */
+  /** True while workflowsApi.createWorkflow is in flight. */
   isSubmitting: () => boolean;
   /** Imperatively trigger submit. Resolves once the round-trip finishes. */
   submit: () => Promise<void>;
@@ -94,7 +94,7 @@ export interface CreateSkillFormProps {
    */
   formId: string;
   /** Called with the freshly-created skill on success. */
-  onCreated: (skill: SkillSummary) => void;
+  onCreated: (skill: WorkflowSummary) => void;
   /**
    * Called whenever validity / submission state changes so the
    * wrapper can sync its submit button's disabled state without
@@ -110,7 +110,7 @@ export interface CreateSkillFormProps {
    * allowed-tools (not exposed as editable fields) are carried through so
    * they're preserved on save.
    */
-  editing?: SkillSummary;
+  editing?: WorkflowSummary;
 }
 
 /**
@@ -156,7 +156,7 @@ const CreateWorkflowForm = forwardRef<CreateSkillFormHandle, CreateSkillFormProp
     // dashboard-created skills. Project-scoped skills are still
     // creatable by editing the workspace skill files directly. The
     // backend payload still requires `scope` so we hold it as a const.
-    const scope: SkillScope = 'user';
+    const scope: WorkflowScope = 'user';
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [inputs, setInputs] = useState<InputRow[]>([]);
@@ -217,7 +217,7 @@ const CreateWorkflowForm = forwardRef<CreateSkillFormHandle, CreateSkillFormProp
       let cancelled = false;
       void (async () => {
         try {
-          const desc = await skillsApi.describeSkill(editing.id);
+          const desc = await workflowsApi.describeWorkflow(editing.id);
           if (cancelled) return;
           if (desc.when_to_use) setWhenToUse(desc.when_to_use);
           setInputs(
@@ -243,7 +243,7 @@ const CreateWorkflowForm = forwardRef<CreateSkillFormHandle, CreateSkillFormProp
 
     const submit = useCallback(async () => {
       if (!formValid) return;
-      const payload: CreateSkillInput = {
+      const payload: CreateWorkflowInput = {
         name: name.trim(),
         description: description.trim(),
         scope,
@@ -264,8 +264,8 @@ const CreateWorkflowForm = forwardRef<CreateSkillFormHandle, CreateSkillFormProp
         }
       }
       if (inputs.length > 0) {
-        payload.inputs = inputs.map<CreateSkillInputDef>((r) => {
-          const def: CreateSkillInputDef = {
+        payload.inputs = inputs.map<CreateWorkflowInputDef>((r) => {
+          const def: CreateWorkflowInputDef = {
             name: r.name.trim(),
             required: r.required,
           };
@@ -282,8 +282,8 @@ const CreateWorkflowForm = forwardRef<CreateSkillFormHandle, CreateSkillFormProp
       setError(null);
       try {
         const saved = editing
-          ? await skillsApi.updateSkill(payload)
-          : await skillsApi.createSkill(payload);
+          ? await workflowsApi.updateWorkflow(payload)
+          : await workflowsApi.createWorkflow(payload);
         log('submit-ok id=%s edit=%s', saved.id, isEdit);
         onCreated(saved);
       } catch (err) {

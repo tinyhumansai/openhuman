@@ -74,8 +74,12 @@ test.describe('Memory subsystem round-trip', () => {
       limit: 10,
     });
     let recalled = JSON.stringify(recallAfterForget ?? {});
-    if (recalled.includes(TEST_KEY) || recalled.includes(TEST_CONTENT)) {
-      await new Promise(resolve => setTimeout(resolve, 3_000));
+    for (
+      let attempt = 0;
+      attempt < 10 && (recalled.includes(TEST_KEY) || recalled.includes(TEST_CONTENT));
+      attempt++
+    ) {
+      await new Promise(resolve => setTimeout(resolve, 500));
       const retry = await callCoreRpc<unknown>('openhuman.memory_recall_memories', {
         namespace: TEST_NAMESPACE,
         limit: 10,

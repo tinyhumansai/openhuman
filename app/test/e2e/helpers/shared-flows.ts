@@ -120,12 +120,16 @@ export async function clickFirstMatch(candidates, timeout = 5_000) {
 
 /** Appium Mac2 cannot run W3C Execute Script in WKWebView — use sidebar labels instead. */
 const HASH_TO_SIDEBAR_LABEL = {
-  '/skills': 'Skills',
+  // Phase 2/3 IA revamp: /skills → /connections, /intelligence → /activity
+  '/connections': 'Connections',
+  '/activity': 'Activity',
   '/home': 'Home',
-  '/chat': 'Chat',
+  '/chat': 'Assistant',
   '/notifications': 'Alerts',
   '/settings': 'Settings',
-  '/intelligence': 'Intelligence',
+  // Back-compat: old routes redirect — keep entries so existing callers still work
+  '/skills': 'Connections',
+  '/intelligence': 'Activity',
 };
 
 function normalizeHash(value) {
@@ -143,7 +147,10 @@ function routeReadySelector(hash) {
     '/settings/migration': '[data-testid="migration-form"]',
     '/settings/voice': '[data-testid="voice-providers-section"]',
     '/settings/memory-data': '[data-testid="memory-workspace"]',
-    '/intelligence': '[data-testid="memory-workspace"]',
+    // Phase 3: /intelligence → /activity; memory-workspace is dev-gated (tab=memory).
+    // Use a non-dev-gated selector for the activity route instead.
+    '/intelligence': '[data-testid="intelligence-tasks"]',
+    '/activity': '[data-testid="intelligence-tasks"]',
   };
   return selectors[path] || null;
 }
@@ -425,12 +432,24 @@ export async function navigateToBilling() {
   console.log('[E2E] Billing page loaded (after fallback)');
 }
 
+/** @deprecated Phase 2: use navigateToConnections() instead. Still works via redirect. */
 export async function navigateToSkills() {
-  await navigateViaHash('/skills');
+  await navigateViaHash('/connections');
 }
 
+/** Navigate to the Connections page (was /skills in Phase 1). */
+export async function navigateToConnections() {
+  await navigateViaHash('/connections');
+}
+
+/** @deprecated Phase 3: use navigateToActivity() instead. Still works via redirect. */
 export async function navigateToIntelligence() {
-  await navigateViaHash('/intelligence');
+  await navigateViaHash('/activity');
+}
+
+/** Navigate to the Activity page (was /intelligence in Phase 2). */
+export async function navigateToActivity() {
+  await navigateViaHash('/activity');
 }
 
 export async function navigateToConversations() {

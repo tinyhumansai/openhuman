@@ -12,6 +12,7 @@ use anyhow::{anyhow, Context, Result};
 use parking_lot::Mutex;
 use serde::Serialize;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -21,7 +22,9 @@ use crate::rpc::RpcOutcome;
 
 use super::global::try_global;
 use super::tracker::CostTracker;
-use super::types::{BudgetStatus, CostDashboard, CostSummary, DailyCostEntry, ModelStats};
+use super::types::{
+    BudgetStatus, CostDashboard, CostRecord, CostSummary, DailyCostEntry, ModelStats,
+};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct DailyCostEntryDto {
@@ -70,8 +73,69 @@ pub struct CostSummaryDto {
     pub by_model: Vec<ModelStatsDto>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct UsageLogRecordDto {
+    pub id: String,
+    pub timestamp: String,
+    pub session_id: String,
+    pub model: String,
+    pub provider: Option<String>,
+    pub category: String,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub total_tokens: u64,
+    pub cost_usd: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CategoryStatsDto {
+    pub category: String,
+    pub cost_usd: f64,
+    pub total_tokens: u64,
+    pub request_count: usize,
+    pub percent_of_total: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UsageLogDto {
+    pub records: Vec<UsageLogRecordDto>,
+    pub by_category: Vec<CategoryStatsDto>,
+    pub total_cost_usd: f64,
+    pub total_tokens: u64,
+    pub request_count: usize,
+    pub currency: String,
+    pub days: u32,
+    pub limit: usize,
+}
+
 fn provider_for(model: &str) -> Option<String> {
     model.split_once('/').map(|(prov, _)| prov.to_string())
+}
+
+fn category_for(model: &str) -> String {
+    let lower = model.to_lowercase();
+    if lower.contains("embed") || lower.contains("text-embedding") || lower.contains("voyage") {
+        "Embeddings".to_string()
+    } else if lower.contains("whisper")
+        || lower.contains("tts")
+        || lower.contains("stt")
+        || lower.contains("voice")
+        || lower.contains("audio")
+        || lower.contains("nova-")
+    {
+        "Voice and audio".to_string()
+    } else if lower.contains("image")
+        || lower.contains("dall-e")
+        || lower.contains("gpt-image")
+        || lower.contains("flux")
+        || lower.contains("sdxl")
+    {
+        "Image generation".to_string()
+    } else if lower.contains("rerank") {
+        "Reranking".to_string()
+    } else {
+        "AI chat and reasoning".to_string()
+    }
 }
 
 fn model_stats_to_dto(stats: &ModelStats, total_cost: f64) -> ModelStatsDto {
@@ -87,6 +151,75 @@ fn model_stats_to_dto(stats: &ModelStats, total_cost: f64) -> ModelStatsDto {
         request_count: stats.request_count,
         provider: provider_for(&stats.model),
         percent_of_total,
+    }
+}
+
+fn usage_record_to_dto(record: &CostRecord) -> UsageLogRecordDto {
+    UsageLogRecordDto {
+        id: record.id.clone(),
+        timestamp: record.usage.timestamp.to_rfc3339(),
+        session_id: record.session_id.clone(),
+        model: record.usage.model.clone(),
+        provider: provider_for(&record.usage.model),
+        category: category_for(&record.usage.model),
+        input_tokens: record.usage.input_tokens,
+        output_tokens: record.usage.output_tokens,
+        total_tokens: record.usage.total_tokens,
+        cost_usd: record.usage.cost_usd,
+    }
+}
+
+fn usage_log_to_dto(
+    records: Vec<CostRecord>,
+    currency: String,
+    days: u32,
+    limit: usize,
+) -> UsageLogDto {
+    let total_cost_usd: f64 = records.iter().map(|record| record.usage.cost_usd).sum();
+    let total_tokens: u64 = records.iter().map(|record| record.usage.total_tokens).sum();
+    let request_count = records.len();
+    let mut by_category: HashMap<String, CategoryStatsDto> = HashMap::new();
+
+    for record in &records {
+        let category = category_for(&record.usage.model);
+        let entry = by_category
+            .entry(category.clone())
+            .or_insert_with(|| CategoryStatsDto {
+                category,
+                cost_usd: 0.0,
+                total_tokens: 0,
+                request_count: 0,
+                percent_of_total: 0.0,
+            });
+        entry.cost_usd += record.usage.cost_usd;
+        entry.total_tokens = entry.total_tokens.saturating_add(record.usage.total_tokens);
+        entry.request_count += 1;
+    }
+
+    let mut by_category: Vec<CategoryStatsDto> = by_category.into_values().collect();
+    for category in &mut by_category {
+        category.percent_of_total = if total_cost_usd > 0.0 {
+            (category.cost_usd / total_cost_usd) * 100.0
+        } else {
+            0.0
+        };
+    }
+    by_category.sort_by(|a, b| {
+        b.cost_usd
+            .partial_cmp(&a.cost_usd)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.category.cmp(&b.category))
+    });
+
+    UsageLogDto {
+        records: records.iter().map(usage_record_to_dto).collect(),
+        by_category,
+        total_cost_usd,
+        total_tokens,
+        request_count,
+        currency,
+        days,
+        limit,
     }
 }
 
@@ -300,6 +433,32 @@ pub fn summary(config: &Config) -> Result<RpcOutcome<Value>> {
     Ok(RpcOutcome::new(value, Vec::new()))
 }
 
+/// Return a recent, bounded usage log plus spend distribution by category.
+pub fn usage_log(config: &Config, days: u32, limit: usize) -> Result<RpcOutcome<Value>> {
+    log::debug!(target: "cost_rpc", "[cost_rpc] usage_log.entry days={days} limit={limit}");
+    let tracker = resolve_tracker(config).inspect_err(|err| {
+        log::warn!(target: "cost_rpc", "[cost_rpc] usage_log.resolve_failed err={err:#}");
+    })?;
+    let clamped_days = days.clamp(1, 366);
+    let clamped_limit = limit.clamp(1, 1000);
+    let records = tracker
+        .get_recent_records(clamped_days, clamped_limit)
+        .inspect_err(|err| {
+            log::warn!(target: "cost_rpc", "[cost_rpc] usage_log.query_failed err={err:#}");
+        })
+        .context("cost usage log query failed")?;
+    let request_count = records.len();
+    let dto = usage_log_to_dto(
+        records,
+        config.cost.dashboard.currency.clone(),
+        clamped_days,
+        clamped_limit,
+    );
+    let value = serde_json::to_value(dto).context("cost usage log serialize failed")?;
+    log::debug!(target: "cost_rpc", "[cost_rpc] usage_log.exit records={request_count}");
+    Ok(RpcOutcome::new(value, Vec::new()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -347,6 +506,18 @@ mod tests {
         );
         assert_eq!(provider_for("openai/gpt-5"), Some("openai".to_string()));
         assert_eq!(provider_for("bare-model"), None);
+    }
+
+    #[test]
+    fn category_for_classifies_common_usage_families() {
+        assert_eq!(category_for("voyage/voyage-3"), "Embeddings");
+        assert_eq!(category_for("openai/whisper-1"), "Voice and audio");
+        assert_eq!(category_for("openai/gpt-image-1"), "Image generation");
+        assert_eq!(category_for("cohere/rerank-english"), "Reranking");
+        assert_eq!(
+            category_for("anthropic/claude-sonnet-4"),
+            "AI chat and reasoning"
+        );
     }
 
     #[test]
@@ -427,6 +598,27 @@ mod tests {
     }
 
     #[test]
+    fn usage_log_dto_sorts_categories_and_preserves_records() {
+        let mut chat = CostRecord::new(
+            "session-a",
+            TokenUsage::new("anthropic/claude-sonnet-4", 1000, 500, 0.0, 0.0),
+        );
+        chat.usage.cost_usd = 3.0;
+        let mut embeddings = CostRecord::new(
+            "session-b",
+            TokenUsage::new("voyage/voyage-3", 2000, 0, 0.0, 0.0),
+        );
+        embeddings.usage.cost_usd = 1.0;
+
+        let dto = usage_log_to_dto(vec![chat, embeddings], "USD".to_string(), 30, 100);
+        assert_eq!(dto.records.len(), 2);
+        assert_eq!(dto.by_category.len(), 2);
+        assert_eq!(dto.by_category[0].category, "AI chat and reasoning");
+        assert!((dto.by_category[0].percent_of_total - 75.0).abs() < f64::EPSILON);
+        assert_eq!(dto.total_tokens, 3500);
+    }
+
+    #[test]
     fn dashboard_rpc_returns_value_against_tempdir_workspace() {
         let _lock = tracker_test_lock();
         // Reset FALLBACK_TRACKER state so a previous test's cache cannot
@@ -459,6 +651,27 @@ mod tests {
         let obj = outcome.value.as_object().unwrap();
         assert!(obj.contains_key("session_cost_usd"));
         assert!(obj.contains_key("by_model"));
+    }
+
+    #[test]
+    fn usage_log_rpc_returns_records_and_category_breakdown() {
+        let _lock = tracker_test_lock();
+        if try_global().is_some() {
+            return;
+        }
+        *FALLBACK_TRACKER.lock() = None;
+        let (_tmp, cfg) = tempdir_config();
+        let tracker = resolve_tracker(&cfg).unwrap();
+        let mut usage = TokenUsage::new("anthropic/claude-sonnet-4", 1000, 500, 0.0, 0.0);
+        usage.cost_usd = 1.25;
+        usage.timestamp = Utc::now();
+        tracker.record_usage_unconditional(usage).unwrap();
+
+        let outcome = usage_log(&cfg, 30, 100).expect("usage log should resolve");
+        let obj = outcome.value.as_object().unwrap();
+        assert_eq!(obj["request_count"], 1);
+        assert_eq!(obj["records"].as_array().unwrap().len(), 1);
+        assert_eq!(obj["by_category"].as_array().unwrap().len(), 1);
     }
 
     #[test]

@@ -55,6 +55,7 @@ jobs:
   prepare-build:
     name: Prepare build context
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     # Reuse the Production GitHub Actions environment so Sentry vars
     # (`OPENHUMAN_*_SENTRY_DSN`, `SENTRY_PROJECT_*`, `SENTRY_ORG`,
     # `SENTRY_AUTH_TOKEN`) and `VITE_DEBUG` resolve here too. Staging
@@ -257,6 +258,7 @@ jobs:
     needs: [prepare-build]
     if: inputs.create_tag
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     environment: Production
     steps:
       - name: Checkout build ref
@@ -295,6 +297,7 @@ jobs:
   record-sentry-deploy:
     name: Record Sentry deploy marker
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     environment: Production
     if: inputs.create_tag
     needs: [prepare-build, build-desktop, build-docker]
@@ -336,6 +339,7 @@ jobs:
   cleanup-failed-staging:
     name: Remove staging tag if build failed
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     environment: Production
     needs: [prepare-build, build-desktop, build-docker]
     if: >-

@@ -12,13 +12,13 @@ omit_safety_preamble = false
 omit_skills_catalog = true
 omit_profile = false
 omit_memory_md = false
+trigger_memory_agent = "always"
 
 [model]
 hint = "agentic"
 
 [tools]
 named = [
-    "memory_recall",
     "memory_store",
     "memory_forget",
     "memory_doctor",
@@ -26,8 +26,6 @@ named = [
     "memory_tools_put",
     "remember_preference",
     "save_preference",
-    "query_memory",
-    "memory_tree",
     "workspace_read_persona",
     "workspace_update_persona",
     "workspace_reset_persona",

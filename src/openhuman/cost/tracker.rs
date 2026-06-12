@@ -249,6 +249,37 @@ impl CostTracker {
         Ok(out)
     }
 
+    /// Return recent persisted usage records, newest first.
+    ///
+    /// `days` is clamped to `[1, 366]` and `limit` to `[1, 1000]` to keep
+    /// dashboard calls bounded while still allowing a detailed audit log.
+    pub fn get_recent_records(&self, days: u32, limit: usize) -> Result<Vec<CostRecord>> {
+        let span = days.clamp(1, 366) as i64;
+        let limit = limit.clamp(1, 1000);
+        let now = Utc::now();
+        let earliest = now
+            .checked_sub_signed(Duration::days(span - 1))
+            .ok_or_else(|| anyhow!("Usage log range underflowed"))?;
+
+        let mut records: Vec<CostRecord> = Vec::new();
+        let storage = self.lock_storage();
+        storage.for_each_record(|record| {
+            if record.usage.timestamp < earliest || record.usage.timestamp > now {
+                return;
+            }
+            records.push(record);
+        })?;
+
+        records.sort_by(|a, b| {
+            b.usage
+                .timestamp
+                .cmp(&a.usage.timestamp)
+                .then_with(|| b.id.cmp(&a.id))
+        });
+        records.truncate(limit);
+        Ok(records)
+    }
+
     /// Build the full dashboard payload: 7-day history, period total,
     /// projected monthly pace (daily avg × 30), and budget utilisation
     /// derived from the configured monthly limit and warn/alert thresholds.
@@ -497,6 +528,11 @@ impl CostStorage {
 
     /// Add a new record.
     fn add_record(&mut self, record: CostRecord) -> Result<()> {
+        if let Some(parent) = self.path.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create directory {}", parent.display()))?;
+        }
+
         let mut file = OpenOptions::new()
             .create(true)
             .append(true)

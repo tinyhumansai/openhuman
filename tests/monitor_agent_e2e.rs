@@ -218,6 +218,7 @@ fn tool_response(id: &str, name: &str, arguments: serde_json::Value) -> ChatResp
             id: id.to_string(),
             name: name.to_string(),
             arguments: arguments.to_string(),
+            extra_content: None,
         }],
         usage: None,
         reasoning_content: Some(format!("need {name}")),
@@ -286,7 +287,7 @@ fn build_agent(
         .model_name("monitor-e2e-model".to_string())
         .temperature(0.0)
         .workspace_dir(workspace.to_path_buf())
-        .skills(Vec::new())
+        .workflows(Vec::new())
         .auto_save(false)
         .event_context("monitor-e2e-session", "monitor-e2e-channel")
         .agent_definition_name("orchestrator")

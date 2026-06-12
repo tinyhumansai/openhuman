@@ -531,7 +531,7 @@ fn datetime_section_output_matches_iso8601_date_and_utc_offset_pattern() {
         model_name: "test-model",
         agent_id: "",
         tools: EMPTY_TOOLS,
-        skills: &[],
+        workflows: &[],
         dispatcher_instructions: "",
         learned: crate::openhuman::agent::prompts::LearnedContextData::default(),
         visible_tool_names: &EMPTY_FILTER,

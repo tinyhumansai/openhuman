@@ -146,6 +146,127 @@ fn detects_frequency_penalty_rejection_for_retry() {
     ));
 }
 
+#[test]
+fn endpoint_rejects_frequency_penalty_matches_google_gemini_host() {
+    use super::compatible_request::endpoint_rejects_frequency_penalty as rejects;
+    // The Google Gemini OpenAI-compat shim 400s on the field (TAURI-RUST-4PJ).
+    assert!(rejects(
+        "https://generativelanguage.googleapis.com/v1beta/openai"
+    ));
+    // Host match is case-insensitive and covers a registrable-domain suffix,
+    // so a BYOK provider pointed at a regional/sub-host is covered too.
+    assert!(rejects(
+        "https://GenerativeLanguage.GoogleAPIs.com/v1beta/openai"
+    ));
+    assert!(rejects(
+        "https://eu.generativelanguage.googleapis.com/v1beta/openai"
+    ));
+    // Every other provider keeps the penalty; an unparseable URL is a no-op.
+    assert!(!rejects("https://api.openai.com/v1"));
+    assert!(!rejects("https://api.venice.ai"));
+    // A look-alike host must NOT match (suffix check is dot-anchored).
+    assert!(!rejects(
+        "https://notgenerativelanguage.googleapis.com.evil.test/v1"
+    ));
+    assert!(!rejects("not a url"));
+}
+
+#[test]
+fn effective_frequency_penalty_omitted_for_google_kept_for_others() {
+    // Google Gemini endpoint → field omitted at the source (no rejected
+    // round-trip, no Sentry report).
+    let google = OpenAiCompatibleProvider::new(
+        "google",
+        "https://generativelanguage.googleapis.com/v1beta/openai",
+        None,
+        AuthStyle::Bearer,
+    );
+    assert_eq!(
+        google.effective_frequency_penalty(),
+        None,
+        "Gemini shim rejects frequency_penalty — it must be omitted up front"
+    );
+
+    // Any other OpenAI-compatible provider keeps the repetition-damping value.
+    let other = make_provider("openai", "https://api.openai.com/v1", None);
+    assert_eq!(
+        other.effective_frequency_penalty(),
+        Some(super::compatible_repeat::CHAT_FREQUENCY_PENALTY),
+        "providers that accept the field must still receive it"
+    );
+}
+
+#[tokio::test]
+async fn streaming_chat_frequency_penalty_rejection_not_reported_to_sentry() {
+    // Defense-in-depth (TAURI-RUST-4PJ): an unknown strict provider — one not
+    // covered by the host allow-list, so prevention did not omit the field —
+    // 400s on frequency_penalty. The caller retries without it and succeeds, so
+    // this self-healed condition must NOT page Sentry, while still propagating
+    // as an Err so the retry path fires.
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(400).set_body_string(
+            r#"{"error":{"code":400,"message":"Invalid JSON payload received. Unknown name \"frequency_penalty\": Cannot find field.","status":"INVALID_ARGUMENT"}}"#,
+        ))
+        .mount(&mock_server)
+        .await;
+
+    let transport = TestTransport::new();
+    let sentry_options = sentry::ClientOptions {
+        dsn: Some("https://public@sentry.invalid/1".parse().unwrap()),
+        transport: Some(Arc::new(transport.clone())),
+        ..Default::default()
+    };
+    let sentry_hub = Arc::new(sentry::Hub::new(
+        Some(Arc::new(sentry_options.into())),
+        Arc::new(Default::default()),
+    ));
+    let _sentry_guard = sentry::HubSwitchGuard::new(sentry_hub);
+
+    // Provider URL is the mock host (not the google allow-list host), so the
+    // request DOES carry frequency_penalty and exercises the stream-error
+    // classifier arm rather than the prevent-at-source omission.
+    let provider =
+        OpenAiCompatibleProvider::new("strict_byok", &mock_server.uri(), None, AuthStyle::None);
+    let request = NativeChatRequest {
+        model: "some-model".to_string(),
+        messages: vec![NativeMessage {
+            role: "user".to_string(),
+            content: Some("hello".into()),
+            tool_call_id: None,
+            tool_calls: None,
+            reasoning_content: None,
+        }],
+        temperature: Some(0.7),
+        stream: Some(true),
+        tools: None,
+        tool_choice: None,
+        thread_id: None,
+        stream_options: Some(super::compatible_types::OpenAiStreamOptions {
+            include_usage: true,
+        }),
+        options: None,
+        frequency_penalty: Some(super::compatible_repeat::CHAT_FREQUENCY_PENALTY),
+    };
+    let (delta_tx, _delta_rx) = tokio::sync::mpsc::channel(8);
+
+    let err = provider
+        .stream_native_chat(None, &request, &delta_tx, 0)
+        .await
+        .expect_err(
+            "400 frequency_penalty rejection must still propagate as Err to drive the retry",
+        );
+    assert!(
+        err.to_string().contains("streaming API error"),
+        "err: {err}"
+    );
+    assert!(
+        transport.fetch_and_clear_events().is_empty(),
+        "a self-healed frequency_penalty rejection must not be reported to Sentry"
+    );
+}
+
 /// Streaming responses arrive without `usage` unless the request asks
 /// for `stream_options.include_usage = true` (OpenAI spec). Without it
 /// the OpenHuman backend's `openhuman.billing` block also never lands,
@@ -1036,6 +1157,7 @@ fn parse_native_response_preserves_tool_call_id() {
                     r#"{"command":"pwd"}"#.to_string(),
                 )),
             }),
+            extra_content: None,
         }]),
         function_call: None,
         reasoning_content: None,
@@ -1062,6 +1184,7 @@ fn parse_native_response_captures_reasoning_content() {
                 name: Some("shell".to_string()),
                 arguments: Some(serde_json::Value::String("{}".to_string())),
             }),
+            extra_content: None,
         }]),
         function_call: None,
         reasoning_content: Some("  weighing the options  ".to_string()),
@@ -1110,6 +1233,359 @@ fn convert_messages_for_native_maps_tool_result_payload() {
     assert_eq!(
         serde_json::to_value(&converted[1].content).unwrap(),
         serde_json::json!("done")
+    );
+}
+
+// ── TAURI-RUST-4PK: Gemini thought_signature round-trip ──────────────────────
+
+/// The wire `ToolCall` must capture Gemini's `extra_content` from the response
+/// and re-emit it verbatim on the request, so the thought_signature survives the
+/// round-trip. A tool call without it omits the field entirely (non-Gemini
+/// providers stay byte-identical on the wire).
+#[test]
+fn tool_call_wire_round_trips_extra_content() {
+    let json = r#"{"id":"call_g","type":"function","function":{"name":"shell","arguments":"{}"},"extra_content":{"google":{"thought_signature":"SIG123"}}}"#;
+    let tc: ToolCall = serde_json::from_str(json).unwrap();
+    assert_eq!(
+        tc.extra_content
+            .as_ref()
+            .and_then(|v| v.pointer("/google/thought_signature"))
+            .and_then(|v| v.as_str()),
+        Some("SIG123"),
+        "extra_content must be captured from the Gemini response"
+    );
+    let reemitted = serde_json::to_value(&tc).unwrap();
+    assert_eq!(
+        reemitted
+            .pointer("/extra_content/google/thought_signature")
+            .and_then(|v| v.as_str()),
+        Some("SIG123"),
+        "extra_content must be echoed verbatim on the request body"
+    );
+
+    let bare: ToolCall = serde_json::from_str(
+        r#"{"id":"c","type":"function","function":{"name":"x","arguments":"{}"}}"#,
+    )
+    .unwrap();
+    assert!(bare.extra_content.is_none());
+    assert!(
+        serde_json::to_value(&bare)
+            .unwrap()
+            .get("extra_content")
+            .is_none(),
+        "providers that don't send extra_content keep a byte-identical wire body"
+    );
+}
+
+/// `parse_native_response` lifts the tool-call `extra_content` onto the harness
+/// ToolCall so it can be persisted and echoed (TAURI-RUST-4PK).
+#[test]
+fn parse_native_response_captures_tool_call_extra_content() {
+    let message = ResponseMessage {
+        content: None,
+        tool_calls: Some(vec![ToolCall {
+            id: Some("call_g".to_string()),
+            kind: Some("function".to_string()),
+            function: Some(Function {
+                name: Some("shell".to_string()),
+                arguments: Some(serde_json::Value::String("{}".to_string())),
+            }),
+            extra_content: Some(serde_json::json!({"google":{"thought_signature":"SIG_RESP"}})),
+        }]),
+        function_call: None,
+        reasoning_content: None,
+    };
+    let parsed =
+        OpenAiCompatibleProvider::parse_native_response(wrap_message(message), "google").unwrap();
+    assert_eq!(parsed.tool_calls.len(), 1);
+    assert_eq!(
+        parsed.tool_calls[0]
+            .extra_content
+            .as_ref()
+            .and_then(|v| v.pointer("/google/thought_signature"))
+            .and_then(|v| v.as_str()),
+        Some("SIG_RESP"),
+        "the signature must land on the harness ToolCall"
+    );
+}
+
+/// On rebuild, a persisted assistant tool-call message whose stored JSON carries
+/// `extra_content` must re-emit it on the wire tool_calls, so Gemini sees the
+/// signature on the follow-up turn (TAURI-RUST-4PK).
+#[test]
+fn convert_messages_for_native_echoes_tool_call_extra_content() {
+    let input = vec![
+        ChatMessage::assistant(
+            r#"{"content":"on it","tool_calls":[{"id":"call_g","name":"shell","arguments":"{}","extra_content":{"google":{"thought_signature":"SIG_ECHO"}}}]}"#,
+        ),
+        ChatMessage::tool(r#"{"tool_call_id":"call_g","content":"done"}"#),
+    ];
+    let converted = OpenAiCompatibleProvider::convert_messages_for_native(&input);
+    let tool_calls = converted[0]
+        .tool_calls
+        .as_ref()
+        .expect("assistant tool_calls present");
+    assert_eq!(
+        tool_calls[0]
+            .extra_content
+            .as_ref()
+            .and_then(|v| v.pointer("/google/thought_signature"))
+            .and_then(|v| v.as_str()),
+        Some("SIG_ECHO"),
+        "stored extra_content must be echoed back on the rebuilt request"
+    );
+    assert_eq!(
+        serde_json::to_value(tool_calls)
+            .unwrap()
+            .pointer("/0/extra_content/google/thought_signature")
+            .and_then(|v| v.as_str()),
+        Some("SIG_ECHO"),
+        "echoed signature must appear on the serialized wire body"
+    );
+}
+
+/// A non-Gemini stored tool call (no `extra_content`) rebuilds with the field
+/// omitted — every other provider's wire body stays byte-identical.
+#[test]
+fn convert_messages_for_native_tool_call_without_extra_content_stays_none() {
+    let input = vec![
+        ChatMessage::assistant(
+            r#"{"content":"on it","tool_calls":[{"id":"call_x","name":"shell","arguments":"{}"}]}"#,
+        ),
+        ChatMessage::tool(r#"{"tool_call_id":"call_x","content":"done"}"#),
+    ];
+    let converted = OpenAiCompatibleProvider::convert_messages_for_native(&input);
+    let tool_calls = converted[0]
+        .tool_calls
+        .as_ref()
+        .expect("assistant tool_calls present");
+    assert!(tool_calls[0].extra_content.is_none());
+    assert!(serde_json::to_value(&tool_calls[0])
+        .unwrap()
+        .get("extra_content")
+        .is_none());
+}
+
+/// Streaming: Gemini sends the thought_signature in the tool-call delta's
+/// `extra_content` on the first chunk. The accumulator must preserve it onto the
+/// aggregated tool call so it reaches history (TAURI-RUST-4PK).
+#[tokio::test]
+async fn streaming_tool_call_captures_extra_content() {
+    let mock_server = MockServer::start().await;
+    let body = "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_g\",\"type\":\"function\",\"function\":{\"name\":\"shell\",\"arguments\":\"{}\"},\"extra_content\":{\"google\":{\"thought_signature\":\"SIG_STREAM\"}}}]}}]}\n\n\
+                data: [DONE]\n\n";
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(body, "text/event-stream"))
+        .mount(&mock_server)
+        .await;
+
+    let provider =
+        OpenAiCompatibleProvider::new("google", &mock_server.uri(), None, AuthStyle::None);
+    let request = NativeChatRequest {
+        model: "models/gemini-3.5-flash".to_string(),
+        messages: vec![NativeMessage {
+            role: "user".to_string(),
+            content: Some("hi".into()),
+            tool_call_id: None,
+            tool_calls: None,
+            reasoning_content: None,
+        }],
+        temperature: Some(0.7),
+        stream: Some(true),
+        tools: None,
+        tool_choice: None,
+        thread_id: None,
+        stream_options: Some(super::compatible_types::OpenAiStreamOptions {
+            include_usage: true,
+        }),
+        options: None,
+        frequency_penalty: None,
+    };
+    let (delta_tx, _delta_rx) = tokio::sync::mpsc::channel(64);
+    let resp = provider
+        .stream_native_chat(None, &request, &delta_tx, 0)
+        .await
+        .unwrap();
+    assert_eq!(resp.tool_calls.len(), 1);
+    assert_eq!(
+        resp.tool_calls[0]
+            .extra_content
+            .as_ref()
+            .and_then(|v| v.pointer("/google/thought_signature"))
+            .and_then(|v| v.as_str()),
+        Some("SIG_STREAM"),
+        "streaming must preserve the thought_signature onto the aggregated tool call"
+    );
+}
+
+/// Regression: some providers (DashScope/Qwen, GMI) emit the tool-call `id`
+/// ONLY on the first delta for an index, then send `"id": ""` (empty string,
+/// not omitted) on every argument-continuation delta. The streaming accumulator
+/// must not let those empty continuation ids clobber the resolved id down to
+/// `""` — an empty `tool_call_id` is rejected by the upstream tool-message
+/// ordering check on the next turn (400), dead-ending the conversation.
+#[tokio::test]
+async fn streaming_empty_continuation_id_does_not_clobber_tool_call_id() {
+    let mock_server = MockServer::start().await;
+    // Delta 1 carries the real id + name; deltas 2-3 are arg continuations that
+    // repeat index 0 with an EMPTY id (the DashScope/GMI wire shape).
+    let body = "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_real\",\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"arguments\":\"{}\"}}]}}]}\n\n\
+                data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"\",\"function\":{\"arguments\":\"\"}}]}}]}\n\n\
+                data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"\"}]}}]}\n\n\
+                data: [DONE]\n\n";
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(body, "text/event-stream"))
+        .mount(&mock_server)
+        .await;
+
+    let provider =
+        OpenAiCompatibleProvider::new("dashscope", &mock_server.uri(), None, AuthStyle::None);
+    let request = NativeChatRequest {
+        model: "qwen3.7-plus".to_string(),
+        messages: vec![NativeMessage {
+            role: "user".to_string(),
+            content: Some("weather in paris?".into()),
+            tool_call_id: None,
+            tool_calls: None,
+            reasoning_content: None,
+        }],
+        temperature: Some(0.7),
+        stream: Some(true),
+        tools: None,
+        tool_choice: None,
+        thread_id: None,
+        stream_options: Some(super::compatible_types::OpenAiStreamOptions {
+            include_usage: true,
+        }),
+        options: None,
+        frequency_penalty: None,
+    };
+    let (delta_tx, _delta_rx) = tokio::sync::mpsc::channel(64);
+    let resp = provider
+        .stream_native_chat(None, &request, &delta_tx, 0)
+        .await
+        .unwrap();
+    assert_eq!(resp.tool_calls.len(), 1);
+    assert_eq!(
+        resp.tool_calls[0].id.as_str(),
+        "call_real",
+        "empty-string id on continuation deltas must not clobber the resolved tool_call id"
+    );
+}
+
+/// Regression: a single turn can emit MULTIPLE parallel tool calls. The
+/// per-`index` accumulator must keep each call's first-delta id even when the
+/// empty-id continuation deltas for both indices arrive together — neither may
+/// clobber the other (or itself) to `""`.
+#[tokio::test]
+async fn streaming_parallel_tool_calls_preserve_ids_against_empty_continuations() {
+    let mock_server = MockServer::start().await;
+    // Two parallel calls (index 0 + 1), then one continuation delta carrying
+    // BOTH indices with empty ids.
+    let body = "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_a\",\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"arguments\":\"{}\"}}]}}]}\n\n\
+                data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":1,\"id\":\"call_b\",\"type\":\"function\",\"function\":{\"name\":\"get_time\",\"arguments\":\"{}\"}}]}}]}\n\n\
+                data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"\"},{\"index\":1,\"id\":\"\"}]}}]}\n\n\
+                data: [DONE]\n\n";
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(body, "text/event-stream"))
+        .mount(&mock_server)
+        .await;
+
+    let provider =
+        OpenAiCompatibleProvider::new("dashscope", &mock_server.uri(), None, AuthStyle::None);
+    let request = NativeChatRequest {
+        model: "qwen3.7-plus".to_string(),
+        messages: vec![NativeMessage {
+            role: "user".to_string(),
+            content: Some("weather and time?".into()),
+            tool_call_id: None,
+            tool_calls: None,
+            reasoning_content: None,
+        }],
+        temperature: Some(0.7),
+        stream: Some(true),
+        tools: None,
+        tool_choice: None,
+        thread_id: None,
+        stream_options: Some(super::compatible_types::OpenAiStreamOptions {
+            include_usage: true,
+        }),
+        options: None,
+        frequency_penalty: None,
+    };
+    let (delta_tx, _delta_rx) = tokio::sync::mpsc::channel(64);
+    let resp = provider
+        .stream_native_chat(None, &request, &delta_tx, 0)
+        .await
+        .unwrap();
+    assert_eq!(resp.tool_calls.len(), 2, "both parallel tool calls survive");
+    // Order-independent: each id must be preserved AND mapped to the right tool
+    // (no cross-index contamination).
+    let by_id: std::collections::HashMap<&str, (&str, &str)> = resp
+        .tool_calls
+        .iter()
+        .map(|t| (t.id.as_str(), (t.name.as_str(), t.arguments.as_str())))
+        .collect();
+    assert_eq!(by_id.get("call_a"), Some(&("get_weather", "{}")));
+    assert_eq!(by_id.get("call_b"), Some(&("get_time", "{}")));
+}
+
+/// Counterpart to the DashScope cases: DeepSeek OMITS the `id` key on
+/// argument-continuation deltas (rather than sending `""`). That deserializes
+/// to `None`, so the accumulator already leaves the resolved id alone — assert
+/// the contract holds for the key-absent shape too, and that args still
+/// accumulate across the continuation.
+#[tokio::test]
+async fn streaming_omitted_continuation_id_preserves_tool_call_id() {
+    let mock_server = MockServer::start().await;
+    // Delta 2 has NO `id` key at all (DeepSeek shape) and carries the rest of
+    // the arguments.
+    let body = "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_ds\",\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"arguments\":\"{\"}}]}}]}\n\n\
+                data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"}\"}}]}}]}\n\n\
+                data: [DONE]\n\n";
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(body, "text/event-stream"))
+        .mount(&mock_server)
+        .await;
+
+    let provider =
+        OpenAiCompatibleProvider::new("deepseek", &mock_server.uri(), None, AuthStyle::None);
+    let request = NativeChatRequest {
+        model: "deepseek-v4-flash".to_string(),
+        messages: vec![NativeMessage {
+            role: "user".to_string(),
+            content: Some("weather?".into()),
+            tool_call_id: None,
+            tool_calls: None,
+            reasoning_content: None,
+        }],
+        temperature: Some(0.7),
+        stream: Some(true),
+        tools: None,
+        tool_choice: None,
+        thread_id: None,
+        stream_options: Some(super::compatible_types::OpenAiStreamOptions {
+            include_usage: true,
+        }),
+        options: None,
+        frequency_penalty: None,
+    };
+    let (delta_tx, _delta_rx) = tokio::sync::mpsc::channel(64);
+    let resp = provider
+        .stream_native_chat(None, &request, &delta_tx, 0)
+        .await
+        .unwrap();
+    assert_eq!(resp.tool_calls.len(), 1);
+    assert_eq!(resp.tool_calls[0].id.as_str(), "call_ds");
+    assert_eq!(resp.tool_calls[0].name.as_str(), "get_weather");
+    assert_eq!(
+        resp.tool_calls[0].arguments.as_str(),
+        "{}",
+        "arguments must accumulate across the id-omitted continuation delta"
     );
 }
 
@@ -1429,6 +1905,7 @@ fn enforce_invariants_clears_reasoning_when_assistant_collapses_to_text() {
                     name: Some("web_fetch".to_string()),
                     arguments: Some(serde_json::Value::String("{}".to_string())),
                 }),
+                extra_content: None,
             }]),
             reasoning_content: Some("deep reasoning".to_string()),
         },
@@ -1578,6 +2055,7 @@ fn capabilities_reports_native_tool_calling() {
     let p = make_provider("test", "https://example.com", None);
     let caps = <OpenAiCompatibleProvider as Provider>::capabilities(&p);
     assert!(caps.native_tool_calling);
+    assert!(caps.vision);
 }
 
 // Sub-issue 3 of #3098: Ollama's OpenAI-compat endpoint silently rejects the
@@ -1611,6 +2089,14 @@ fn with_native_tool_calling_is_idempotent() {
         .with_native_tool_calling(false);
     let caps = <OpenAiCompatibleProvider as Provider>::capabilities(&p);
     assert!(!caps.native_tool_calling);
+}
+
+#[test]
+fn with_vision_false_disables_capability() {
+    let p = make_provider("test", "https://example.com", None).with_vision(false);
+    let caps = <OpenAiCompatibleProvider as Provider>::capabilities(&p);
+    assert!(!caps.vision);
+    assert!(!p.supports_vision());
 }
 
 /// `supports_native_tools()` is the gate the agent harness reads
@@ -1767,6 +2253,7 @@ fn response_with_tool_call_object_arguments_deserializes() {
                     name: Some("get_weather".to_string()),
                     arguments: Some(serde_json::json!({"location":"London","unit":"c"})),
                 }),
+                extra_content: None,
             }]),
             function_call: None,
         }),
@@ -2063,6 +2550,36 @@ fn reasoning_alias_captured_in_stream_delta() {
     assert_eq!(
         chunk.choices[0].delta.reasoning_content.as_deref(),
         Some("streamed cot")
+    );
+}
+
+/// Regression for Sentry TAURI-RUST-A5N: a provider that emits BOTH `reasoning`
+/// and `reasoning_content` in the same message object must not fail with
+/// `duplicate field \`reasoning_content\``. Both keys deserialize and fold into
+/// the canonical field, which wins when both are present.
+#[test]
+fn reasoning_and_reasoning_content_both_present_does_not_error() {
+    let json = r#"{"choices":[{"message":{"content":null,"reasoning":"alias cot","reasoning_content":"canonical cot"}}]}"#;
+    let resp: ApiChatResponse = serde_json::from_str(json)
+        .expect("both reasoning keys must parse without a duplicate-field error");
+    assert_eq!(
+        resp.choices[0].message.reasoning_content.as_deref(),
+        Some("canonical cot"),
+        "canonical reasoning_content wins when both keys are present"
+    );
+}
+
+/// Same regression on the streaming delta path (TAURI-RUST-A5N also hits the
+/// native stream parser at `compatible_stream_native.rs`).
+#[test]
+fn reasoning_and_reasoning_content_both_present_in_stream_delta_does_not_error() {
+    let json = r#"{"choices":[{"delta":{"reasoning":"alias cot","reasoning_content":"canonical cot"},"finish_reason":null}]}"#;
+    let chunk: StreamChunkResponse = serde_json::from_str(json)
+        .expect("both reasoning keys must parse without a duplicate-field error");
+    assert_eq!(
+        chunk.choices[0].delta.reasoning_content.as_deref(),
+        Some("canonical cot"),
+        "canonical reasoning_content wins when both keys are present"
     );
 }
 
@@ -2883,4 +3400,52 @@ fn stream_repeat_detector_ignores_varied_and_short_lines() {
     for _ in 0..20 {
         assert!(!d.observe("}\n"), "short repeated lines must not trip");
     }
+}
+
+// ── effective_context_window (#3550 / Sentry TAURI-RUST-6V0) ───────────────
+
+#[tokio::test]
+async fn effective_context_window_cloud_uses_static_table() {
+    // No local provider kind → static trained-max table, unchanged behavior.
+    let p = make_provider("openai", "https://api.openai.com/v1", Some("k"));
+    assert_eq!(p.effective_context_window("gpt-4o").await, Some(128_000));
+    // Unknown cloud model → None (skip trimming), as before.
+    assert_eq!(p.effective_context_window("totally-unknown").await, None);
+}
+
+#[tokio::test]
+async fn effective_context_window_lmstudio_uses_loaded_window() {
+    use crate::openhuman::inference::local::profile::LocalProviderKind;
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v0/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            r#"{"data":[{"id":"qwen2.5-7b","loaded_context_length":4096,"max_context_length":32768}]}"#,
+            "application/json",
+        ))
+        .mount(&server)
+        .await;
+    let p = OpenAiCompatibleProvider::new("lmstudio", &server.uri(), None, AuthStyle::None)
+        .with_local_provider_kind(LocalProviderKind::LmStudio);
+    // Trim to the runtime-loaded n_ctx (4096), NOT the model's trained max.
+    assert_eq!(p.effective_context_window("qwen2.5-7b").await, Some(4096));
+}
+
+#[tokio::test]
+async fn effective_context_window_lmstudio_falls_back_when_native_unavailable() {
+    use crate::openhuman::inference::local::profile::LocalProviderKind;
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v0/models"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&server)
+        .await;
+    let p = OpenAiCompatibleProvider::new("lmstudio", &server.uri(), None, AuthStyle::None)
+        .with_local_provider_kind(LocalProviderKind::LmStudio);
+    // Native probe fails → fall back to the LM Studio profile default (8192),
+    // so unknown local models still get trimmed instead of skipped.
+    assert_eq!(
+        p.effective_context_window("unknown-local-model").await,
+        Some(8_192)
+    );
 }

@@ -125,4 +125,9 @@ export const selectAgentProfiles = (state: { agentProfiles: AgentProfileState })
 export const selectActiveAgentProfileId = (state: { agentProfiles: AgentProfileState }) =>
   state.agentProfiles.activeProfileId;
 
+export const selectActiveAgentProfile = (state: { agentProfiles: AgentProfileState }) =>
+  state.agentProfiles.profiles.find(
+    profile => profile.id === state.agentProfiles.activeProfileId
+  ) ?? null;
+
 export default agentProfileSlice.reducer;

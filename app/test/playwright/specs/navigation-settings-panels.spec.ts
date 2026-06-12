@@ -10,7 +10,8 @@ interface PanelCheck {
 const panels: PanelCheck[] = [
   { hash: '/settings', markers: ['Settings', 'Appearance', 'Notifications'] },
   { hash: '/settings/memory-data', markers: ['Memory', 'Data', 'Storage'] },
-  { hash: '/intelligence', markers: ['Memory', 'Intelligence'] },
+  // Phase 3: /intelligence → /activity; Memory tab is dev-gated, test only always-visible content
+  { hash: '/activity', markers: ['Tasks', 'Automations', 'Activity'] },
   { hash: '/settings/developer-options', markers: ['Developer', 'Debug', 'Advanced'] },
   {
     hash: '/settings/billing',

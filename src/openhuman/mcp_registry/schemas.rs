@@ -1155,7 +1155,7 @@ fn read_optional_json(params: &Map<String, Value>, key: &str) -> Result<Option<V
 }
 
 fn to_json<T: serde::Serialize>(outcome: RpcOutcome<T>) -> Result<Value, String> {
-    outcome.into_cli_compatible_json()
+    serde_json::to_value(outcome.value).map_err(|e| e.to_string())
 }
 
 fn type_name(value: &Value) -> &'static str {

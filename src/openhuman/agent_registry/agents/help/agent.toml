@@ -16,9 +16,12 @@ omit_safety_preamble = true
 omit_skills_catalog = true
 omit_profile = false
 omit_memory_md = false
+# No eager memory pre-fetch. `omit_memory_context = false` keeps the cheap
+# per-turn recall so help can still personalise ("you mentioned earlier…");
+# the deep memory-tree walk is the orchestrator's on-demand concern.
 
 [model]
 hint = "agentic"
 
 [tools]
-named = ["gitbooks_search", "gitbooks_get_page", "memory_recall"]
+named = ["gitbooks_search", "gitbooks_get_page"]

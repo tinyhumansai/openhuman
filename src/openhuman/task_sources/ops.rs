@@ -18,7 +18,7 @@ use crate::rpc::RpcOutcome;
 use super::types::{
     FetchReason, FilterSpec, ProviderSlug, SourceTarget, TaskSource, TaskSourcePatch,
 };
-use super::{filter, pipeline, store};
+use super::{filter, pipeline, route, store};
 
 /// List all configured task sources.
 pub async fn list(config: &Config) -> Result<RpcOutcome<Vec<TaskSource>>, String> {
@@ -104,10 +104,20 @@ pub async fn update(
 
 /// Remove a source by id.
 pub async fn remove(config: &Config, id: &str) -> Result<RpcOutcome<Value>, String> {
+    let ingested = store::list_ingested_refs(config, id).map_err(|e| e.to_string())?;
+    let mut pruned = 0usize;
+    for item in ingested {
+        if let Some(card_id) = item.card_id.as_deref().filter(|id| !id.trim().is_empty()) {
+            route::remove_card(config, card_id)?;
+        }
+        if store::remove_ingested(config, id, &item.external_id).map_err(|e| e.to_string())? {
+            pruned += 1;
+        }
+    }
     store::remove_source(config, id).map_err(|e| e.to_string())?;
-    tracing::debug!(source_id = %id, "[task_sources:ops] removed");
+    tracing::debug!(source_id = %id, pruned, "[task_sources:ops] removed");
     Ok(RpcOutcome::new(
-        json!({ "id": id, "removed": true }),
+        json!({ "id": id, "removed": true, "pruned": pruned }),
         vec![],
     ))
 }
@@ -117,6 +127,26 @@ pub async fn fetch(config: &Config, id: &str) -> Result<RpcOutcome<super::FetchO
     let source = store::get_source(config, id).map_err(|e| e.to_string())?;
     let outcome = pipeline::run_source_once(config, &source, FetchReason::Manual).await;
     Ok(RpcOutcome::new(outcome, vec![]))
+}
+
+/// Manually sync all enabled task sources now.
+pub async fn sync(config: &Config) -> Result<RpcOutcome<Vec<super::FetchOutcome>>, String> {
+    let sources = store::list_sources(config).map_err(|e| e.to_string())?;
+    let mut outcomes = Vec::new();
+    for source in sources.into_iter().filter(|source| source.enabled) {
+        outcomes.push(pipeline::run_source_once(config, &source, FetchReason::Manual).await);
+    }
+    tracing::info!(
+        source_count = outcomes.len(),
+        fetched = outcomes
+            .iter()
+            .map(|outcome| outcome.fetched)
+            .sum::<usize>(),
+        routed = outcomes.iter().map(|outcome| outcome.routed).sum::<usize>(),
+        pruned = outcomes.iter().map(|outcome| outcome.pruned).sum::<usize>(),
+        "[task_sources:ops] sync completed"
+    );
+    Ok(RpcOutcome::new(outcomes, vec![]))
 }
 
 /// Recently ingested tasks for a source (newest first).

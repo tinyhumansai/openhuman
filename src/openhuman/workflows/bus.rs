@@ -14,7 +14,7 @@
 use crate::core::event_bus::{subscribe_global, DomainEvent, EventHandler, SubscriptionHandle};
 use crate::openhuman::workflows::Workflow;
 use async_trait::async_trait;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 // ── Trigger pattern ───────────────────────────────────────────────────────────
 
@@ -109,7 +109,7 @@ impl TriggeredWorkflowIndex {
                         let p = TriggerPattern::parse(t);
                         if p.is_none() {
                             log::warn!(
-                                "[skills::triggered] skill '{}': malformed trigger {:?} — skipping",
+                                "[workflows::triggered] skill '{}': malformed trigger {:?} — skipping",
                                 skill.name,
                                 t
                             );
@@ -184,7 +184,7 @@ impl EventHandler for TriggeredSkillSubscriber {
         tracing::debug!(
             domain = event.domain(),
             skills = ?matched,
-            "[skills::triggered] event matches {} skill trigger(s); \
+            "[workflows::triggered] event matches {} skill trigger(s); \
              activation handoff to integration layer pending",
             matched.len()
         );
@@ -213,13 +213,46 @@ pub fn register_triggered_workflow_subscriber(skills: &[Workflow]) -> Option<Sub
         return None;
     }
     log::info!(
-        "[skills::triggered] registering subscriber for {} skill(s) with event triggers (domains: {:?})",
+        "[workflows::triggered] registering subscriber for {} skill(s) with event triggers (domains: {:?})",
         index.len(),
         index.domains()
     );
     subscribe_global(Arc::new(TriggeredSkillSubscriber {
         index: Arc::new(index),
     }))
+}
+
+/// Process-global parking spot for the triggered-workflow subscription
+/// handle. The RAII [`SubscriptionHandle`] must outlive the process (dropping
+/// it cancels the subscription), and registration must happen exactly once no
+/// matter how many startup paths reach it.
+static TRIGGERED_WORKFLOW_HANDLE: OnceLock<Option<SubscriptionHandle>> = OnceLock::new();
+
+/// Idempotently install the triggered-workflow subscriber.
+///
+/// Loads workflow metadata from `workspace` and registers the subscriber on the
+/// **first** call; subsequent calls are no-ops (the handle is parked in
+/// [`TRIGGERED_WORKFLOW_HANDLE`] so the RAII guard isn't dropped). Safe to call
+/// from every startup path.
+///
+/// Both [`crate::openhuman::channels::start_channels`] (messaging cores) and
+/// [`crate::core::jsonrpc::bootstrap_core_runtime`] (always-run serve boot)
+/// invoke this. `start_channels` is skipped for web-chat-only desktop installs
+/// (no messaging integration connected) and when
+/// `OPENHUMAN_DISABLE_CHANNEL_LISTENERS=1`; registering from
+/// `bootstrap_core_runtime` too means those cores still honour workflow
+/// `triggers:`. The shared `OnceLock` guarantees a single registration
+/// regardless of which path runs first.
+///
+/// NOTE: the subscriber currently only *matches* triggers and logs — the
+/// activation handoff to the integration layer is still pending (see
+/// [`TriggeredSkillSubscriber::handle`]). Registering on web-chat-only cores
+/// enables matching, not yet activation.
+pub fn ensure_triggered_workflow_subscriber(workspace: &std::path::Path) {
+    TRIGGERED_WORKFLOW_HANDLE.get_or_init(|| {
+        let workflows = crate::openhuman::workflows::load_workflow_metadata(workspace);
+        register_triggered_workflow_subscriber(&workflows)
+    });
 }
 
 /// Legacy no-op retained while call-sites migrate to
@@ -240,6 +273,22 @@ mod tests {
             },
             ..Default::default()
         }
+    }
+
+    // ── ensure_triggered_workflow_subscriber (C1 boot-path helper) ───────────
+
+    #[test]
+    fn ensure_triggered_workflow_subscriber_is_idempotent_and_safe() {
+        // Covers the boot-path helper called from both `start_channels` and
+        // `bootstrap_core_runtime`: it loads workflow metadata from the
+        // workspace and registers the subscriber exactly once via the
+        // process-global OnceLock. An empty temp workspace yields no triggered
+        // workflows, so registration resolves to `None`; the call must not
+        // panic and must be safe to repeat (the OnceLock makes the second call
+        // a no-op).
+        let tmp = tempfile::tempdir().expect("tempdir");
+        ensure_triggered_workflow_subscriber(tmp.path());
+        ensure_triggered_workflow_subscriber(tmp.path());
     }
 
     // ── TriggerPattern::parse ────────────────────────────────────────────────

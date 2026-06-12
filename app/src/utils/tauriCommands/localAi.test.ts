@@ -7,7 +7,7 @@ describe('openhumanLocalAiTestConnection', () => {
     vi.clearAllMocks();
   });
 
-  it('calls callCoreRpc with local_ai_test_connection method and url param', async () => {
+  it('calls callCoreRpc with inference_test_connection method and url param', async () => {
     const { callCoreRpc } = await import('../../services/coreRpcClient');
     const mockCallCoreRpc = callCoreRpc as ReturnType<typeof vi.fn>;
     mockCallCoreRpc.mockResolvedValueOnce({ reachable: true, models_count: 4 });
@@ -16,7 +16,7 @@ describe('openhumanLocalAiTestConnection', () => {
     const result = await openhumanLocalAiTestConnection('http://localhost:11434');
 
     expect(mockCallCoreRpc).toHaveBeenCalledWith({
-      method: 'openhuman.local_ai_test_connection',
+      method: 'openhuman.inference_test_connection',
       params: { url: 'http://localhost:11434' },
     });
     expect(result).toEqual({ reachable: true, models_count: 4 });

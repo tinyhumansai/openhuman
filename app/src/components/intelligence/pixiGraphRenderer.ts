@@ -33,6 +33,8 @@ export interface PixiGraphOptions {
   dark: boolean;
   onHover: (node: SimNode | null) => void;
   onOpen: (node: SimNode) => void;
+  /** Fired once the force simulation first cools (graph is laid out). */
+  onReady?: () => void;
 }
 
 export interface PixiGraphHandle {
@@ -86,6 +88,9 @@ export async function mountPixiGraph(
   let dark = opts.dark;
   let dirty = true;
   let hoveredId: string | null = null;
+  // Fires `onReady` exactly once when the sim first cools — the signal a
+  // loading overlay (e.g. the Brain page) waits on before revealing the graph.
+  let readyFired = false;
   // Auto-fit the whole graph into view until the user pans/zooms/drags,
   // so the initial frame is zoomed out to show as much as possible.
   let userInteracted = false;
@@ -150,6 +155,10 @@ export async function mountPixiGraph(
     if (sim.alpha() > sim.alphaMin()) {
       sim.tick();
       changed = true;
+    } else if (!readyFired) {
+      // Simulation has cooled → the layout has settled. Signal readiness once.
+      readyFired = true;
+      opts.onReady?.();
     }
     if (changed) {
       // Keep the whole graph framed while it settles, until the user

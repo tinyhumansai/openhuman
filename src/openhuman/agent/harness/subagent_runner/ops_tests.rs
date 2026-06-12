@@ -63,6 +63,7 @@ fn make_def_named_tools(names: &[&str]) -> AgentDefinition {
         timeout_secs: None,
         sandbox_mode: crate::openhuman::agent::harness::definition::SandboxMode::None,
         background: false,
+        trigger_memory_agent: Default::default(),
         subagents: vec![],
         delegate_name: None,
         agent_tier: crate::openhuman::agent::harness::definition::AgentTier::Worker,
@@ -301,6 +302,7 @@ fn tool_response(name: &str, args: &str) -> ChatResponse {
             id: "call-1".into(),
             name: name.into(),
             arguments: args.into(),
+            extra_content: None,
         }],
         usage: None,
         reasoning_content: None,
@@ -313,6 +315,10 @@ fn make_parent(provider: Arc<dyn Provider>, tools: Vec<Box<dyn Tool>>) -> Parent
     let tool_specs: Vec<crate::openhuman::tools::ToolSpec> =
         tools.iter().map(|t| t.spec()).collect();
     ParentExecutionContext {
+        agent_definition_id: "orchestrator".into(),
+        allowed_subagent_ids: ["test".to_string(), "child".to_string(), "inner".to_string()]
+            .into_iter()
+            .collect(),
         provider,
         all_tools: Arc::new(tools),
         all_tool_specs: Arc::new(tool_specs),
@@ -321,7 +327,7 @@ fn make_parent(provider: Arc<dyn Provider>, tools: Vec<Box<dyn Tool>>) -> Parent
         workspace_dir: std::env::temp_dir(),
         memory: noop_memory(),
         agent_config: crate::openhuman::config::AgentConfig::default(),
-        skills: Arc::new(vec![]),
+        workflows: Arc::new(vec![]),
         memory_context: Arc::new(None),
         session_id: "test-session".into(),
         channel: "test".into(),
@@ -473,6 +479,7 @@ async fn typed_mode_returns_text_through_runner() {
                 worker_thread_id: None,
                 initial_history: None,
                 checkpoint_dir: None,
+                worktree_action_dir: None,
             },
         )
         .await
@@ -584,6 +591,7 @@ async fn typed_mode_filters_tools_by_skill_filter() {
                 worker_thread_id: None,
                 initial_history: None,
                 checkpoint_dir: None,
+                worktree_action_dir: None,
             },
         )
         .await

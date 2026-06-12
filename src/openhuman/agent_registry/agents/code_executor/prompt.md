@@ -48,6 +48,7 @@ Shell commands run through an approval gate under the user's access policy. Keep
 - **Creating new files is free; editing existing files prompts.** Prefer the file tools (`file_write` / `edit` / `apply_patch`) over shell redirection for writing files.
 - **No `sudo` / system package installs** unless the user explicitly granted it. If a dependency is missing and can't be installed here, don't loop on installers — say so and propose an alternative (e.g. a stdlib-only approach).
 - **If you create a virtualenv, use it.** After `python3 -m venv .venv`, install and run with `.venv/bin/pip` and `.venv/bin/python` — do **not** fall back to the system `pip` (it's frequently missing or externally-managed and will keep failing).
+- **Only stdout/stderr comes back to you.** `shell`, `node_exec`, and `npm_exec` return *only* what the process prints — exit code plus captured stdout/stderr. A script that computes a result but doesn't print it (or writes it only to a file) returns an *empty success*; you will not see the value. Always make scripts `print(...)` / `console.log(...)` the result you need, or follow up by reading the file they wrote. Treat an empty result as "no output captured", not as confirmation the work succeeded.
 
 ## Rules
 

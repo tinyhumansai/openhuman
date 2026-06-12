@@ -112,12 +112,44 @@ const LEGACY_ALIASES: &[(&str, &str)] = &[
         "openhuman.inference_apply_preset",
     ),
     (
+        "openhuman.local_ai_agent_chat",
+        "openhuman.inference_agent_chat",
+    ),
+    (
+        "openhuman.local_ai_agent_chat_simple",
+        "openhuman.inference_agent_chat_simple",
+    ),
+    (
+        "openhuman.local_ai_assets_status",
+        "openhuman.inference_assets_status",
+    ),
+    (
         "openhuman.local_ai_device_profile",
         "openhuman.inference_device_profile",
     ),
     (
         "openhuman.local_ai_diagnostics",
         "openhuman.inference_diagnostics",
+    ),
+    (
+        "openhuman.local_ai_download_asset",
+        "openhuman.inference_download_asset",
+    ),
+    (
+        "openhuman.local_ai_downloads_progress",
+        "openhuman.inference_downloads_progress",
+    ),
+    (
+        "openhuman.local_ai_install_piper",
+        "openhuman.inference_install_piper",
+    ),
+    (
+        "openhuman.local_ai_install_whisper",
+        "openhuman.inference_install_whisper",
+    ),
+    (
+        "openhuman.local_ai_piper_install_status",
+        "openhuman.inference_piper_install_status",
     ),
     // bare `health_snapshot` (no namespace prefix) was used by older clients
     // before the canonical `openhuman.health_snapshot` form was established.
@@ -128,6 +160,23 @@ const LEGACY_ALIASES: &[(&str, &str)] = &[
     ("openhuman.system_info", "openhuman.health_system_info"),
     ("openhuman.inference_embed", "openhuman.embeddings_embed"),
     ("openhuman.local_ai_presets", "openhuman.inference_presets"),
+    (
+        "openhuman.local_ai_test_connection",
+        "openhuman.inference_test_connection",
+    ),
+    (
+        "openhuman.local_ai_transcribe",
+        "openhuman.inference_transcribe",
+    ),
+    (
+        "openhuman.local_ai_transcribe_bytes",
+        "openhuman.inference_transcribe_bytes",
+    ),
+    ("openhuman.local_ai_tts", "openhuman.inference_tts"),
+    (
+        "openhuman.local_ai_whisper_install_status",
+        "openhuman.inference_whisper_install_status",
+    ),
     (
         "openhuman.providers_list_models",
         "openhuman.inference_list_models",

@@ -11,10 +11,20 @@
 use std::sync::{Arc, OnceLock};
 
 use crate::core::event_bus::{publish_global, DomainEvent, EventHandler, SubscriptionHandle};
-use crate::openhuman::devices::rpc::{PEER_STATUS, PENDING_KEYPAIRS, PENDING_SESSIONS};
+use crate::openhuman::devices::crypto::{
+    base64url_decode, base64url_encode, derive_session_keys, TunnelCipher, TunnelRole,
+};
+use crate::openhuman::devices::rpc::{
+    ACTIVE_CIPHERS, PEER_STATUS, PENDING_KEYPAIRS, PENDING_SESSIONS,
+};
 use crate::openhuman::devices::store;
-use crate::openhuman::devices::tunnel_client::{resolve_register_ack, TunnelRegisterResponse};
+use crate::openhuman::devices::tunnel_client::{
+    emit_frame, resolve_register_ack, TunnelRegisterResponse,
+};
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use x25519_dalek::{PublicKey, StaticSecret};
 
 static DEVICE_TUNNEL_HANDLE: OnceLock<SubscriptionHandle> = OnceLock::new();
 
@@ -92,6 +102,34 @@ impl EventHandler for DeviceTunnelSubscriber {
 // Handlers
 // ---------------------------------------------------------------------------
 
+#[derive(Debug)]
+struct HandshakePayload {
+    device_pubkey: String,
+    client_ephemeral_pubkey: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct JsonHandshakePayload {
+    device_pubkey: String,
+    client_ephemeral_pubkey: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct TunnelEnvelope {
+    #[serde(rename = "requestId")]
+    request_id: String,
+    kind: String,
+    seq: u64,
+    payload: Value,
+}
+
+#[derive(Debug, Deserialize)]
+struct TunnelRpcPayload {
+    method: String,
+    #[serde(default)]
+    params: Value,
+}
+
 async fn handle_peer_online(channel_id: &str) {
     log::info!("[devices/bus] peer online channel_id={}", channel_id);
     PEER_STATUS
@@ -120,6 +158,23 @@ async fn handle_tunnel_frame(channel_id: &str, payload_b64: &str) {
         payload_b64.len()
     );
 
+    // Decode the outer base64url envelope.
+    let frame_bytes = match crate::openhuman::devices::crypto::base64url_decode(payload_b64) {
+        Ok(b) => b,
+        Err(e) => {
+            log::warn!(
+                "[devices/bus] bad base64url in tunnel:frame channel_id={}: {e}",
+                channel_id
+            );
+            return;
+        }
+    };
+
+    if frame_bytes.first() == Some(&crate::openhuman::devices::crypto::FRAME_VERSION) {
+        handle_encrypted_rpc_frame(channel_id, &frame_bytes).await;
+        return;
+    }
+
     // Look up the pending keypair for this channel.
     let keypair = {
         let map = PENDING_KEYPAIRS.lock().unwrap();
@@ -132,18 +187,6 @@ async fn handle_tunnel_frame(channel_id: &str, payload_b64: &str) {
             channel_id
         );
         return;
-    };
-
-    // Decode the outer base64url envelope.
-    let frame_bytes = match crate::openhuman::devices::crypto::base64url_decode(payload_b64) {
-        Ok(b) => b,
-        Err(e) => {
-            log::warn!(
-                "[devices/bus] bad base64url in tunnel:frame channel_id={}: {e}",
-                channel_id
-            );
-            return;
-        }
     };
 
     // Wire format for the handshake frame:
@@ -161,7 +204,7 @@ async fn handle_tunnel_frame(channel_id: &str, payload_b64: &str) {
     // Fallback: if the frame begins with a printable ASCII character other than
     // 0x01/0x02, treat the entire payload as a base64url(device_pubkey) string
     // for backward compat with any pre-Layer-2 devices.
-    let device_pubkey_b64 = if frame_bytes.first() == Some(&0x01) {
+    let handshake_payload = if frame_bytes.first() == Some(&0x01) {
         // Sealed handshake: eph_pub(32) || nonce(24) || ciphertext+tag
         if frame_bytes.len() < 1 + 32 + 24 + 16 {
             log::warn!(
@@ -207,11 +250,6 @@ async fn handle_tunnel_frame(channel_id: &str, payload_b64: &str) {
         };
         // Decrypt: nonce(24) || ciphertext+tag at offset 33.
         let inner_frame = &frame_bytes[33..];
-        let cipher = crate::openhuman::devices::crypto::TunnelCipher::new(&dh_key);
-        // Reconstruct frame with version byte 0x01 so TunnelCipher::open can
-        // validate the version — prepend it back.
-        let mut framed = vec![0x01u8];
-        framed.extend_from_slice(inner_frame);
         match {
             // TunnelCipher::open expects version(1)||nonce(24)||ct+tag, but we already
             // stripped the eph_pub prefix. Reconstruct a plain open call by using
@@ -230,7 +268,7 @@ async fn handle_tunnel_frame(channel_id: &str, payload_b64: &str) {
             }
         } {
             Ok(plaintext_bytes) => match String::from_utf8(plaintext_bytes) {
-                Ok(s) => s.trim().to_string(),
+                Ok(s) => parse_handshake_payload(&s),
                 Err(_) => {
                     log::warn!(
                         "[devices/bus] decrypted handshake payload is not UTF-8 channel_id={}",
@@ -254,7 +292,7 @@ async fn handle_tunnel_frame(channel_id: &str, payload_b64: &str) {
             channel_id
         );
         match String::from_utf8(frame_bytes) {
-            Ok(s) => s.trim().to_string(),
+            Ok(s) => parse_handshake_payload(&s),
             Err(_) => {
                 log::warn!(
                     "[devices/bus] tunnel:frame payload not valid UTF-8 for channel_id={}",
@@ -264,6 +302,7 @@ async fn handle_tunnel_frame(channel_id: &str, payload_b64: &str) {
             }
         }
     };
+    let device_pubkey_b64 = handshake_payload.device_pubkey;
 
     log::info!(
         "[devices/bus] handshake frame received channel_id={} device_pubkey_len={}",
@@ -272,12 +311,26 @@ async fn handle_tunnel_frame(channel_id: &str, payload_b64: &str) {
     );
 
     // Derive shared secret — if this fails the device sent a bad pubkey.
-    if let Err(e) = keypair.derive_shared_secret(&device_pubkey_b64) {
-        log::error!(
-            "[devices/bus] X25519 key agreement failed channel_id={}: {e}",
-            channel_id
-        );
-        return;
+    let static_dh = match keypair.derive_shared_secret(&device_pubkey_b64) {
+        Ok(secret) => secret,
+        Err(e) => {
+            log::error!(
+                "[devices/bus] X25519 key agreement failed channel_id={}: {e}",
+                channel_id
+            );
+            return;
+        }
+    };
+
+    if let Some(client_eph_pubkey) = handshake_payload.client_ephemeral_pubkey {
+        if let Err(e) = install_v2_cipher_and_ack(channel_id, &static_dh, &client_eph_pubkey).await
+        {
+            log::error!(
+                "[devices/bus] v2 handshake ack failed channel_id={}: {e}",
+                channel_id
+            );
+            return;
+        }
     }
 
     // Persist the paired device.
@@ -329,6 +382,231 @@ async fn handle_tunnel_frame(channel_id: &str, payload_b64: &str) {
     } else {
         log::warn!(
             "[devices/bus] could not load config to persist device channel_id={}",
+            channel_id
+        );
+    }
+}
+
+fn parse_handshake_payload(raw: &str) -> HandshakePayload {
+    let trimmed = raw.trim();
+    match serde_json::from_str::<JsonHandshakePayload>(trimmed) {
+        Ok(payload) => HandshakePayload {
+            device_pubkey: payload.device_pubkey,
+            client_ephemeral_pubkey: payload.client_ephemeral_pubkey,
+        },
+        Err(_) => HandshakePayload {
+            device_pubkey: trimmed.to_string(),
+            client_ephemeral_pubkey: None,
+        },
+    }
+}
+
+async fn install_v2_cipher_and_ack(
+    channel_id: &str,
+    static_dh: &[u8; 32],
+    client_eph_pubkey_b64: &str,
+) -> Result<(), String> {
+    let client_eph_bytes = base64url_decode(client_eph_pubkey_b64)
+        .map_err(|e| format!("[devices/bus] bad client ephemeral pubkey: {e}"))?;
+    if client_eph_bytes.len() != 32 {
+        return Err(format!(
+            "[devices/bus] client ephemeral pubkey must be 32 bytes, got {}",
+            client_eph_bytes.len()
+        ));
+    }
+    let client_eph_arr: [u8; 32] = client_eph_bytes
+        .try_into()
+        .map_err(|_| "[devices/bus] client ephemeral pubkey slice error".to_string())?;
+    let client_eph_pub = PublicKey::from(client_eph_arr);
+
+    let server_eph_secret = StaticSecret::from(rand::random::<[u8; 32]>());
+    let server_eph_pub = PublicKey::from(&server_eph_secret);
+    let eph_dh = server_eph_secret.diffie_hellman(&client_eph_pub);
+    let server_eph_pub_bytes = *server_eph_pub.as_bytes();
+    let keys = derive_session_keys(
+        static_dh,
+        eph_dh.as_bytes(),
+        &client_eph_arr,
+        &server_eph_pub_bytes,
+    );
+
+    ACTIVE_CIPHERS.lock().unwrap().insert(
+        channel_id.to_string(),
+        Arc::new(std::sync::Mutex::new(TunnelCipher::for_role(
+            TunnelRole::Server,
+            &keys,
+        ))),
+    );
+
+    let ack = json!({
+        "kind": "handshake_ack",
+        "server_ephemeral_pubkey": base64url_encode(&server_eph_pub_bytes),
+    });
+    let ack_bytes = serde_json::to_vec(&ack)
+        .map_err(|e| format!("[devices/bus] handshake ack serialize failed: {e}"))?;
+    let bootstrap_cipher = TunnelCipher::new(static_dh);
+    let ack_frame = bootstrap_cipher
+        .seal(&ack_bytes)
+        .map_err(|e| format!("[devices/bus] handshake ack seal failed: {e}"))?;
+    let ack_b64 = base64url_encode(&ack_frame);
+    emit_frame(channel_id, &ack_b64).await?;
+    log::info!(
+        "[devices/bus] v2 tunnel cipher installed channel_id={} server_eph_len={}",
+        channel_id,
+        server_eph_pub_bytes.len()
+    );
+    Ok(())
+}
+
+async fn handle_encrypted_rpc_frame(channel_id: &str, frame_bytes: &[u8]) {
+    let cipher = {
+        let map = ACTIVE_CIPHERS.lock().unwrap();
+        map.get(channel_id).cloned()
+    };
+    let Some(cipher) = cipher else {
+        log::warn!(
+            "[devices/bus] encrypted frame with no active cipher channel_id={}",
+            channel_id
+        );
+        return;
+    };
+
+    let plaintext = {
+        let mut guard = cipher.lock().unwrap();
+        match guard.open(frame_bytes) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                log::warn!(
+                    "[devices/bus] encrypted frame open failed channel_id={}: {e}",
+                    channel_id
+                );
+                return;
+            }
+        }
+    };
+
+    let envelope = match serde_json::from_slice::<TunnelEnvelope>(&plaintext) {
+        Ok(envelope) => envelope,
+        Err(e) => {
+            log::warn!(
+                "[devices/bus] tunnel envelope parse failed channel_id={}: {e}",
+                channel_id
+            );
+            return;
+        }
+    };
+
+    if envelope.kind != "request" {
+        log::debug!(
+            "[devices/bus] ignoring non-request tunnel envelope kind={} channel_id={}",
+            envelope.kind,
+            channel_id
+        );
+        return;
+    }
+
+    let request = match serde_json::from_value::<TunnelRpcPayload>(envelope.payload) {
+        Ok(request) => request,
+        Err(e) => {
+            emit_tunnel_error(
+                channel_id,
+                &cipher,
+                &envelope.request_id,
+                format!("invalid tunnel RPC payload: {e}"),
+            )
+            .await;
+            return;
+        }
+    };
+
+    log::debug!(
+        "[devices/bus] tunnel RPC request channel_id={} method={} request_id={}",
+        channel_id,
+        request.method,
+        envelope.request_id
+    );
+
+    let result = crate::core::jsonrpc::invoke_method(
+        crate::core::jsonrpc::default_state(),
+        &request.method,
+        request.params,
+    )
+    .await;
+
+    match result {
+        Ok(value) => {
+            emit_tunnel_response(channel_id, &cipher, &envelope.request_id, "response", value)
+                .await;
+        }
+        Err(message) => {
+            emit_tunnel_response(
+                channel_id,
+                &cipher,
+                &envelope.request_id,
+                "error",
+                Value::String(message),
+            )
+            .await;
+        }
+    }
+}
+
+async fn emit_tunnel_error(
+    channel_id: &str,
+    cipher: &Arc<std::sync::Mutex<TunnelCipher>>,
+    request_id: &str,
+    message: String,
+) {
+    emit_tunnel_response(
+        channel_id,
+        cipher,
+        request_id,
+        "error",
+        Value::String(message),
+    )
+    .await;
+}
+
+async fn emit_tunnel_response(
+    channel_id: &str,
+    cipher: &Arc<std::sync::Mutex<TunnelCipher>>,
+    request_id: &str,
+    kind: &str,
+    payload: Value,
+) {
+    let response = TunnelEnvelope {
+        request_id: request_id.to_string(),
+        kind: kind.to_string(),
+        seq: 0,
+        payload,
+    };
+    let plaintext = match serde_json::to_vec(&response) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            log::error!(
+                "[devices/bus] tunnel response serialize failed channel_id={}: {e}",
+                channel_id
+            );
+            return;
+        }
+    };
+    let encrypted = {
+        let guard = cipher.lock().unwrap();
+        match guard.seal(&plaintext) {
+            Ok(frame) => frame,
+            Err(e) => {
+                log::error!(
+                    "[devices/bus] tunnel response seal failed channel_id={}: {e}",
+                    channel_id
+                );
+                return;
+            }
+        }
+    };
+    let payload_b64 = base64url_encode(&encrypted);
+    if let Err(e) = emit_frame(channel_id, &payload_b64).await {
+        log::error!(
+            "[devices/bus] tunnel response emit failed channel_id={}: {e}",
             channel_id
         );
     }

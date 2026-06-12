@@ -271,7 +271,7 @@ fn accessors_and_history_reset_expose_agent_runtime_state() {
     });
     let mut agent = make_agent(provider);
     agent.history = vec![ConversationMessage::Chat(ChatMessage::system("sys"))];
-    agent.skills = vec![crate::openhuman::workflows::Workflow {
+    agent.workflows = vec![crate::openhuman::workflows::Workflow {
         name: "demo".into(),
         ..Default::default()
     }];
@@ -283,7 +283,7 @@ fn accessors_and_history_reset_expose_agent_runtime_state() {
     assert_eq!(agent.workspace_dir(), agent.workspace_dir.as_path());
     assert_eq!(agent.model_name(), agent.model_name);
     assert_eq!(agent.temperature(), agent.temperature);
-    assert_eq!(agent.skills().len(), 1);
+    assert_eq!(agent.workflows().len(), 1);
     assert_eq!(
         agent.agent_config().max_tool_iterations,
         agent.config.max_tool_iterations
@@ -312,6 +312,7 @@ fn helper_paths_cover_no_overlap_native_calls_and_truncation() {
         id: "native-1".into(),
         name: "echo".into(),
         arguments: "{}".into(),
+        extra_content: None,
     }];
     let response = crate::openhuman::inference::provider::ChatResponse {
         text: Some(String::new()),

@@ -187,6 +187,7 @@ fn tool_call(id: &str, name: &str, arguments: serde_json::Value) -> ToolCall {
         id: id.to_string(),
         name: name.to_string(),
         arguments: arguments.to_string(),
+        extra_content: None,
     }
 }
 
@@ -250,7 +251,7 @@ fn build_agent_with_tools(
         .model_name("coverage-model".to_string())
         .temperature(0.0)
         .workspace_dir(workspace.to_path_buf())
-        .skills(Vec::new())
+        .workflows(Vec::new())
         .auto_save(false)
         .event_context("coverage-session", "coverage-channel")
         .agent_definition_name(agent_name)
@@ -265,6 +266,14 @@ fn parent_context(workspace: PathBuf, provider: Arc<ScriptedProvider>) -> Parent
     let tools: Vec<Box<dyn Tool>> = vec![Box::new(EchoTool)];
     let tool_specs = tools.iter().map(|tool| tool.spec()).collect();
     ParentExecutionContext {
+        agent_definition_id: "orchestrator".into(),
+        allowed_subagent_ids: [
+            "test".to_string(),
+            "researcher".to_string(),
+            "code_executor".to_string(),
+        ]
+        .into_iter()
+        .collect(),
         provider,
         all_tools: Arc::new(tools),
         all_tool_specs: Arc::new(tool_specs),
@@ -273,7 +282,7 @@ fn parent_context(workspace: PathBuf, provider: Arc<ScriptedProvider>) -> Parent
         workspace_dir: workspace,
         memory: Arc::new(StubMemory),
         agent_config: agent_config(),
-        skills: Arc::new(Vec::new()),
+        workflows: Arc::new(Vec::new()),
         memory_context: Arc::new(Some("parent memory context".to_string())),
         session_id: "parent-session".to_string(),
         channel: "coverage-channel".to_string(),
@@ -310,6 +319,7 @@ fn coverage_definition() -> AgentDefinition {
         timeout_secs: None,
         sandbox_mode: SandboxMode::ReadOnly,
         background: false,
+        trigger_memory_agent: Default::default(),
         subagents: Vec::new(),
         delegate_name: None,
         agent_tier: Default::default(),
@@ -522,6 +532,29 @@ async fn orchestrator_spawn_subagent_round_trip_streams_child_events_and_returns
     let workspace = tempfile::tempdir()?;
     let agents_dir = workspace.path().join("agents");
     std::fs::create_dir_all(&agents_dir)?;
+    std::fs::write(
+        agents_dir.join("coverage_orchestrator.toml"),
+        r#"
+id = "coverage_orchestrator"
+display_name = "Coverage Orchestrator"
+when_to_use = "Deterministic parent agent used by harness cache tests."
+temperature = 0.0
+max_iterations = 3
+agent_tier = "chat"
+omit_identity = true
+omit_memory_context = true
+omit_safety_preamble = true
+omit_skills_catalog = true
+omit_profile = true
+omit_memory_md = true
+
+[system_prompt]
+inline = "Delegate the cache probe and synthesize the result."
+
+[subagents]
+allowlist = ["cache_probe_child"]
+"#,
+    )?;
     std::fs::write(
         agents_dir.join("cache_probe_child.toml"),
         r#"

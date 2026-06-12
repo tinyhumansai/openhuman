@@ -50,6 +50,16 @@ Use this skill for `tinyhumansai/openhuman` when the user wants a branch shipped
 6. Stage only relevant files and create a focused conventional commit message.
 7. If there are no local changes, continue without creating a commit.
 
+### Feature E2E Requirement
+
+Before shipping feature work, verify that the PR includes end-to-end coverage for the new behavior.
+
+- Core, domain, persistence, CLI, or JSON-RPC feature changes need Rust E2E coverage in `tests/*_e2e.rs`, usually targeted through `pnpm test:rust:e2e -- --suite <suite>` or `bash scripts/test-rust-e2e.sh --suite <suite>`.
+- New or changed JSON-RPC surfaces should normally extend `tests/json_rpc_e2e.rs` unless a more focused `*_e2e.rs` suite owns the domain.
+- Frontend user flows need Playwright E2E coverage in `app/test/e2e/specs/*.spec.ts`; build/run targeted web E2E with `pnpm --filter openhuman-app test:e2e:web:build` and `bash app/scripts/e2e-web-session.sh test/e2e/specs/<spec>.spec.ts`.
+- Mock backend calls all the way through. Use the repo mock backend (`scripts/mock-api-server.mjs`, `scripts/mock-api/*`, `app/test/e2e/mock-server.ts`) and admin behavior endpoints; do not hit real backend services or third-party APIs.
+- Unit tests are still expected for narrow logic, but they do not replace E2E coverage for newly built features.
+
 ### Phase 2: Push
 
 1. Push the current branch to `origin`.
@@ -67,6 +77,7 @@ Use this skill for `tinyhumansai/openhuman` when the user wants a branch shipped
 4. If no PR exists:
    - inspect `git log main..HEAD` and `git diff main...HEAD`
    - fill `.github/PULL_REQUEST_TEMPLATE.md` exactly
+   - mark every checklist item as checked; for non-applicable items use `- [x] N/A: <reason>` so `pnpm pr:checklist` accepts it
    - create the PR against `tinyhumansai/openhuman:main` with `--head <fork-owner>:<branch>`
 5. Print the PR URL to the user.
 6. Immediately after opening or reusing the PR, start proactive validation based on the touched area instead of waiting for remote CI to finish:
@@ -118,17 +129,10 @@ Each tick:
    - rerun targeted validation
    - commit
    - push
-10. For incorrect, stale, or out-of-scope review feedback:
-   - reply in the existing review thread with concrete reasoning
-   - do not open a new unrelated review
-   - resolve or dismiss only when the reasoning is explicit and the platform supports it
+10. For incorrect, stale, or out-of-scope review feedback, reply in the existing review thread with concrete reasoning. Do not open a new unrelated review, and resolve or dismiss only when the reasoning is explicit and the platform supports it.
 11. After addressing a review thread, resolve it through the GitHub review-thread API when appropriate.
 12. Track whether new issue-level CodeRabbit comments appeared since the previous tick so the loop does not exit while fresh bot feedback is waiting.
-13. Exit the loop only when all of these are true:
-   - all required checks are `SUCCESS`
-   - no unresolved actionable review threads remain
-   - no new actionable CodeRabbit issue comments remain
-   - the latest fixes are committed and pushed to the PR branch
+13. Exit the loop only when all required checks are `SUCCESS`, no unresolved actionable review threads remain, no new actionable CodeRabbit issue comments remain, and the latest fixes are committed and pushed to the PR branch.
 
 If the loop reaches the hard cap, stop and report the PR URL, current CI snapshot, and any unresolved review threads or comments.
 
@@ -137,10 +141,13 @@ If the loop reaches the hard cap, stop and report the PR URL, current CI snapsho
 - `pnpm typecheck`
 - `pnpm lint`
 - `pnpm format:check`
-- `pnpm test:unit`
+- `pnpm test`
 - `cargo check --manifest-path Cargo.toml`
 - `cargo check --manifest-path app/src-tauri/Cargo.toml`
 - `pnpm test:rust`
+- `pnpm test:rust:e2e -- --suite <suite>`
+- `pnpm --filter openhuman-app test:e2e:web:build`
+- `bash app/scripts/e2e-web-session.sh test/e2e/specs/<spec>.spec.ts`
 
 Prefer targeted test commands when the touched area is narrow, but do not claim validation passed if a command was not run.
 

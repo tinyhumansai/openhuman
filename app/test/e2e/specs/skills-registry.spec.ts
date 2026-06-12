@@ -53,18 +53,21 @@ describe('Skills registry flow', () => {
     await stopMockServer();
   });
 
-  it('navigates to /skills and renders catalog content', async () => {
+  it('navigates to /connections and renders catalog content', async () => {
     clearRequestLog();
+    // Phase 2: navigateToSkills() now navigates to /connections
     await navigateToSkills();
 
     const currentHash = await browser.execute(() => window.location.hash);
-    expect(String(currentHash)).toContain('/skills');
+    // Phase 2: /skills → /connections
+    expect(String(currentHash)).toContain('/connections');
 
     await browser.pause(2_000);
+    // Phase 2: tab labels changed — Apps/Messaging/Tools instead of Composio/Channels/MCP
     const hasSkillsContent =
-      (await textExists('Install')) ||
-      (await textExists('Available')) ||
-      (await textExists('Skills')) ||
+      (await textExists('Apps')) ||
+      (await textExists('Messaging')) ||
+      (await textExists('Tools')) ||
       (await textExists('Telegram')) ||
       (await textExists('Notion'));
 

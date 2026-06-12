@@ -1,0 +1,285 @@
+use crate::openhuman::config::{Config, HeartbeatConfig};
+use crate::openhuman::subconscious::global::get_or_init_engine;
+use anyhow::Result;
+use std::path::Path;
+use tokio::time::{self, Duration};
+use tracing::{info, warn};
+
+/// Heartbeat engine — periodic scheduler that delegates to planner collectors
+/// and optional subconscious model inference.
+pub struct HeartbeatEngine {
+    config: HeartbeatConfig,
+    workspace_dir: std::path::PathBuf,
+}
+
+impl HeartbeatEngine {
+    pub fn new(config: HeartbeatConfig, workspace_dir: std::path::PathBuf) -> Self {
+        Self {
+            config,
+            workspace_dir,
+        }
+    }
+
+    /// Start the heartbeat loop (runs until cancelled).
+    /// Sleeps before the first tick so fresh login never burns budget
+    /// immediately, then reloads config before every tick so UI changes apply
+    /// without an app restart.
+    pub async fn run(&self) -> Result<()> {
+        let mut current = self.config.clone();
+
+        if !current.enabled {
+            info!("[heartbeat] disabled");
+            return Ok(());
+        }
+
+        let mut logged_settings = (
+            current.interval_minutes.max(5),
+            current.inference_enabled,
+            current.notify_meetings,
+            current.notify_reminders,
+            current.notify_relevant_events,
+        );
+        info!(
+            interval_minutes = logged_settings.0,
+            subconscious_inference = logged_settings.1,
+            notify_meetings = logged_settings.2,
+            notify_reminders = logged_settings.3,
+            notify_relevant_events = logged_settings.4,
+            "[heartbeat] started"
+        );
+
+        loop {
+            let sleep_secs = u64::from(current.interval_minutes.max(5)) * 60;
+            time::sleep(Duration::from_secs(sleep_secs)).await;
+
+            let config = match Config::load_or_init().await {
+                Ok(config) => config,
+                Err(error) => {
+                    warn!("[heartbeat] tick skipped: failed to load config: {error}");
+                    continue;
+                }
+            };
+
+            current = config.heartbeat.clone();
+            if !current.enabled {
+                info!("[heartbeat] stopped: disabled in config");
+                return Ok(());
+            }
+
+            let next_settings = (
+                current.interval_minutes.max(5),
+                current.inference_enabled,
+                current.notify_meetings,
+                current.notify_reminders,
+                current.notify_relevant_events,
+            );
+            if next_settings != logged_settings {
+                logged_settings = next_settings;
+                info!(
+                    interval_minutes = logged_settings.0,
+                    subconscious_inference = logged_settings.1,
+                    notify_meetings = logged_settings.2,
+                    notify_reminders = logged_settings.3,
+                    notify_relevant_events = logged_settings.4,
+                    "[heartbeat] settings reloaded"
+                );
+            }
+
+            self.run_event_planner_tick_for_config(&config).await;
+
+            if current.inference_enabled {
+                // Get the shared global engine (same instance as RPC handlers)
+                let lock = match get_or_init_engine().await {
+                    Ok(l) => l,
+                    Err(e) => {
+                        warn!("[heartbeat] failed to get engine: {e}");
+                        continue;
+                    }
+                };
+                let guard = lock.lock().await;
+                let engine = match guard.as_ref() {
+                    Some(e) => e,
+                    None => {
+                        warn!("[heartbeat] engine not initialized");
+                        continue;
+                    }
+                };
+
+                match engine.tick().await {
+                    Ok(result) => {
+                        info!(
+                            "[heartbeat] tick: duration={}ms response_chars={}",
+                            result.duration_ms, result.response_chars
+                        );
+                    }
+                    Err(e) => {
+                        warn!("[heartbeat] subconscious tick error: {e}");
+                    }
+                }
+            } else {
+                // Legacy mode: just count tasks
+                match self.collect_tasks().await {
+                    Ok(tasks) => {
+                        if !tasks.is_empty() {
+                            info!("[heartbeat] {} tasks in HEARTBEAT.md", tasks.len());
+                        }
+                    }
+                    Err(e) => {
+                        warn!("[heartbeat] error reading tasks: {e}");
+                    }
+                }
+            }
+        }
+    }
+
+    async fn run_event_planner_tick_for_config(&self, config: &Config) {
+        if !config.heartbeat.enabled {
+            tracing::debug!("[heartbeat] planner skipped: heartbeat disabled");
+            return;
+        }
+
+        if !(config.heartbeat.notify_meetings
+            || config.heartbeat.notify_reminders
+            || config.heartbeat.notify_relevant_events)
+        {
+            tracing::debug!("[heartbeat] planner skipped: notification categories disabled");
+            return;
+        }
+
+        let summary = crate::openhuman::subconscious::heartbeat::planner::evaluate_and_dispatch(
+            config,
+            chrono::Utc::now(),
+        )
+        .await;
+        tracing::debug!(
+            source_events = summary.source_events,
+            deliveries_attempted = summary.deliveries_attempted,
+            deliveries_sent = summary.deliveries_sent,
+            deliveries_skipped_dedup = summary.deliveries_skipped_dedup,
+            "[heartbeat] planner tick summary"
+        );
+    }
+
+    /// Read HEARTBEAT.md and return all parsed tasks.
+    pub async fn collect_tasks(&self) -> Result<Vec<String>> {
+        let heartbeat_path = self.workspace_dir.join("HEARTBEAT.md");
+        if !heartbeat_path.exists() {
+            return Ok(Vec::new());
+        }
+        let content = tokio::fs::read_to_string(&heartbeat_path).await?;
+        Ok(Self::parse_tasks(&content))
+    }
+
+    /// Parse tasks from HEARTBEAT.md (lines starting with `- `)
+    pub(crate) fn parse_tasks(content: &str) -> Vec<String> {
+        content
+            .lines()
+            .filter_map(|line| {
+                let trimmed = line.trim();
+                trimmed.strip_prefix("- ").map(ToString::to_string)
+            })
+            .collect()
+    }
+
+    /// Create a default HEARTBEAT.md if it doesn't exist
+    pub async fn ensure_heartbeat_file(workspace_dir: &Path) -> Result<()> {
+        let path = workspace_dir.join("HEARTBEAT.md");
+        if !path.exists() {
+            let default = "# Subconscious Instructions\n\
+                           #\n\
+                           # The subconscious loop evaluates pending tasks periodically against\n\
+                           # your workspace state (memory, skills, email, etc.)\n\
+                           # Tasks are managed in the Subconscious UI — this file provides\n\
+                           # additional context and instructions for task evaluation.\n";
+            tokio::fs::write(&path, default).await?;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_tasks_basic() {
+        let content = "# Tasks\n\n- Check email\n- Review calendar\nNot a task\n- Third task";
+        let tasks = HeartbeatEngine::parse_tasks(content);
+        assert_eq!(tasks.len(), 3);
+        assert_eq!(tasks[0], "Check email");
+        assert_eq!(tasks[1], "Review calendar");
+        assert_eq!(tasks[2], "Third task");
+    }
+
+    #[test]
+    fn parse_tasks_empty_content() {
+        assert!(HeartbeatEngine::parse_tasks("").is_empty());
+    }
+
+    #[test]
+    fn parse_tasks_only_comments() {
+        let tasks = HeartbeatEngine::parse_tasks("# No tasks here\n\nJust comments\n# Another");
+        assert!(tasks.is_empty());
+    }
+
+    #[test]
+    fn parse_tasks_with_leading_whitespace() {
+        let content = "  - Indented task\n\t- Tab indented";
+        let tasks = HeartbeatEngine::parse_tasks(content);
+        assert_eq!(tasks.len(), 2);
+    }
+
+    #[test]
+    fn parse_tasks_unicode() {
+        let content = "- Check email 📧\n- Review calendar 📅\n- 日本語タスク";
+        let tasks = HeartbeatEngine::parse_tasks(content);
+        assert_eq!(tasks.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn ensure_heartbeat_file_creates_file_with_defaults() {
+        let dir = std::env::temp_dir().join("openhuman_test_heartbeat_defaults");
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+
+        HeartbeatEngine::ensure_heartbeat_file(&dir).await.unwrap();
+
+        let path = dir.join("HEARTBEAT.md");
+        assert!(path.exists());
+        let content = tokio::fs::read_to_string(&path).await.unwrap();
+        assert!(content.contains("Subconscious Instructions"));
+        // Instructions only — no task lines
+        let tasks = HeartbeatEngine::parse_tasks(&content);
+        assert_eq!(tasks.len(), 0);
+
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    #[tokio::test]
+    async fn ensure_heartbeat_file_does_not_overwrite() {
+        let dir = std::env::temp_dir().join("openhuman_test_heartbeat_no_overwrite");
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+
+        let path = dir.join("HEARTBEAT.md");
+        tokio::fs::write(&path, "- My custom task").await.unwrap();
+
+        HeartbeatEngine::ensure_heartbeat_file(&dir).await.unwrap();
+
+        let content = tokio::fs::read_to_string(&path).await.unwrap();
+        assert_eq!(content, "- My custom task");
+
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    #[tokio::test]
+    async fn run_returns_immediately_when_disabled() {
+        let config = HeartbeatConfig {
+            enabled: false,
+            ..HeartbeatConfig::default()
+        };
+        let engine = HeartbeatEngine::new(config, std::env::temp_dir());
+        let result = engine.run().await;
+        assert!(result.is_ok());
+    }
+}

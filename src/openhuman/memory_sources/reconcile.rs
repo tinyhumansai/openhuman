@@ -12,12 +12,23 @@ use crate::openhuman::config::rpc as config_rpc;
 use crate::openhuman::memory_sources::registry;
 use crate::openhuman::memory_sources::types::{MemorySourceEntry, SourceKind};
 use crate::openhuman::memory_sync::composio;
+use std::collections::HashSet;
 
 /// Current version of the caps migration. Bump when the migration logic changes
 /// so installs that ran an earlier revision re-run it exactly once.
 const CURRENT_CAPS_MIGRATION_VERSION: u32 = 1;
 
-pub async fn ensure_composio_sources() {
+/// Reconcile active Composio connections into the memory sources registry and
+/// return the live active-connection set scanned this call.
+///
+/// Returns `Some(connection_ids)` — the `connection_id`s of every active sync
+/// target — when the live Composio scan **succeeded**, so callers (notably
+/// `rpc::list_rpc`) can filter the listing down to connections that are still
+/// active and dedupe identical rows. Returns `None` when the scan could not run
+/// (config load / network / auth failure); callers must treat `None` as "active
+/// set unavailable" and **not** hide any sources — an empty scan from a transient
+/// blip must never be read as "everything is inactive".
+pub async fn ensure_composio_sources() -> Option<HashSet<String>> {
     tracing::debug!("[memory_sources:reconcile] starting composio reconciliation");
 
     let config = match config_rpc::load_config_with_timeout().await {
@@ -27,7 +38,7 @@ pub async fn ensure_composio_sources() {
                 error = %e,
                 "[memory_sources:reconcile] failed to load config; skipping"
             );
-            return;
+            return None;
         }
     };
 
@@ -40,7 +51,7 @@ pub async fn ensure_composio_sources() {
                 error = %e,
                 "[memory_sources:reconcile] no composio sync targets available; skipping"
             );
-            return;
+            return None;
         }
     };
 
@@ -85,6 +96,12 @@ pub async fn ensure_composio_sources() {
             "[memory_sources:reconcile] caps migration failed (non-fatal, will retry next time)"
         );
     }
+
+    // The scan succeeded — surface the live active-connection set so the list
+    // path can hide rows for connections that are no longer active (re-auth /
+    // token expiry mints a fresh connection_id, stranding the old row) and
+    // collapse identical same-id duplicates.
+    Some(targets.iter().map(|t| t.connection_id.clone()).collect())
 }
 
 /// Apply conservative default caps in-place to every cap-less source.
@@ -140,6 +157,7 @@ fn apply_caps_defaults_to_entries(sources: &mut [MemorySourceEntry]) -> u32 {
 /// re-run it exactly once). Entries the user has already customised (non-None caps)
 /// are left untouched.
 pub async fn apply_composio_source_caps_migration() -> Result<(), String> {
+    let _guard = registry::memory_sources_write_guard().await;
     let mut config = config_rpc::load_config_with_timeout().await?;
 
     if config.composio_source_caps_migration_version >= CURRENT_CAPS_MIGRATION_VERSION {

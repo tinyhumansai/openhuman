@@ -11,7 +11,7 @@ jobs:
   docker-image:
     name: Build & smoke-test core image
     runs-on: ubuntu-22.04
-    timeout-minutes: 45
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -109,7 +109,7 @@ jobs:
   docker-volume-permissions:
     name: Smoke-test core with fresh volume and no pre-set token
     runs-on: ubuntu-22.04
-    timeout-minutes: 45
+    timeout-minutes: 30
     needs: docker-image
     steps:
       - name: Checkout

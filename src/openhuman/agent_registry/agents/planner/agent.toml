@@ -11,6 +11,11 @@ omit_identity = true
 omit_memory_context = false
 omit_safety_preamble = true
 omit_skills_catalog = true
+# Memory is no longer pre-fetched eagerly before every turn. The planner
+# keeps `omit_memory_context = false`, so it still receives the cheap
+# per-turn memory recall; deep memory-tree walks are the orchestrator's
+# on-demand concern (`delegate_retrieve_memory`), and the orchestrator
+# hands the planner grounded context in the delegation prompt.
 
 # Spawn hierarchy: this is the deep-thinking tier (reasoning model hint).
 # The planner produces a DAG of leaf tasks for downstream workers; it
@@ -47,7 +52,6 @@ named = [
     "todowrite",
     "plan_exit",
     "web_fetch",
-    "memory_recall",
     "web_search_tool",
     # Grounded research + market-data lookups so plans can be anchored in
     # real numbers (stock/crypto prices) and current web context, not just

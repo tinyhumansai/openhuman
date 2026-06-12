@@ -345,9 +345,19 @@ mod tests {
         cfg.local_ai.runtime_enabled = true;
         cfg.scheduler_gate.mode = SchedulerGateMode::Off;
 
+        // Double-reset: guard resets on entry, but a concurrent non-guarded
+        // code path (e.g. a tokio task draining after its test dropped its
+        // guard) may have re-set the flags between guard acquisition and here.
+        super::super::clear_semantic_recall_degraded();
+        super::super::clear_structure_degraded();
+
         let report = run_doctor(&cfg);
         // Paused is reported but does NOT make the pipeline unhealthy.
-        assert!(report.healthy);
+        assert!(
+            report.healthy,
+            "expected healthy, failing stages: {:?}",
+            report.stages.iter().filter(|s| !s.ok).collect::<Vec<_>>()
+        );
         let gate = report
             .stages
             .iter()

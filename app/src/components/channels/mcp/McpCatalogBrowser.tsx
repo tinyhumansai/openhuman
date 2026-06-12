@@ -1,5 +1,5 @@
 /**
- * Smithery registry browser with debounced search and pagination.
+ * MCP server catalog browser with debounced search and pagination.
  * Clicking "Install" on a card opens the InstallDialog flow.
  */
 import debug from 'debug';
@@ -7,7 +7,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
 import { mcpClientsApi } from '../../../services/api/mcpClientsApi';
-import SmitheryServerCard from './SmitheryServerCard';
+import McpServerCard from './McpServerCard';
 import type { SmitheryServer } from './types';
 
 const log = debug('mcp-clients:catalog');
@@ -116,10 +116,10 @@ const McpCatalogBrowser = ({ onSelectInstall }: McpCatalogBrowserProps) => {
         <>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {servers.map(server => (
-              <SmitheryServerCard
+              <McpServerCard
                 key={server.qualified_name}
                 server={server}
-                onInstall={onSelectInstall}
+                onSelect={onSelectInstall}
               />
             ))}
           </div>

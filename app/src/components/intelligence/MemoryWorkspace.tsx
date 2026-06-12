@@ -32,22 +32,19 @@
  * configured cloud or local LLM and the new summary nodes appear in
  * the graph after the worker drains.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import type { ToastNotification } from '../../types/intelligence';
 import {
   type GraphExportResponse,
   type GraphMode,
-  memoryTreeFlushNow,
   memoryTreeGraphExport,
-  memoryTreeResetTree,
-  memoryTreeWipeAll,
 } from '../../utils/tauriCommands';
+import { MemoryControls } from './MemoryControls';
 import { MemoryGraph } from './MemoryGraph';
 import { MemorySourcesRegistry } from './MemorySourcesRegistry';
 import { MemoryTreeStatusPanel } from './MemoryTreeStatusPanel';
-import { ObsidianVaultSection } from './ObsidianVaultSection';
 import { SyncAuditPanel } from './SyncAuditPanel';
 import { WhatsAppMemorySection } from './WhatsAppMemorySection';
 
@@ -59,9 +56,6 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
   const { t } = useT();
   const [graph, setGraph] = useState<GraphExportResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [building, setBuilding] = useState(false);
-  const [wiping, setWiping] = useState(false);
-  const [resetting, setResetting] = useState(false);
   const [mode, setMode] = useState<GraphMode>('tree');
 
   const [graphVersion, setGraphVersion] = useState(0);
@@ -127,209 +121,19 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
     return () => clearInterval(id);
   }, []);
 
-  const handleWipe = useCallback(async () => {
-    // Two-step confirm so accidental clicks can't nuke a workspace.
-    const ok = window.confirm(t('workspace.wipeConfirm'));
-    if (!ok) return;
-    setWiping(true);
-    try {
-      const resp = await memoryTreeWipeAll();
-      onToast?.({
-        type: 'success',
-        title: 'Memory wiped',
-        message:
-          `Removed ${resp.rows_deleted.toLocaleString()} row(s) and ` +
-          `${resp.dirs_removed.length} folder(s); cleared ` +
-          `${resp.sync_state_cleared.toLocaleString()} sync-state cursor(s). ` +
-          `Click Sync on a connected source to repopulate.`,
-      });
-      // Re-fetch the (now empty) graph immediately so the canvas
-      // reflects the wipe instead of staying frozen on stale data.
-      try {
-        const next = await memoryTreeGraphExport(mode);
-        setGraph(next);
-      } catch (err) {
-        console.warn('[ui-flow][memory-workspace] post-wipe graph refresh failed', err);
-      }
-    } catch (err) {
-      console.error('[ui-flow][memory-workspace] wipe_all failed', err);
-      onToast?.({
-        type: 'error',
-        title: 'Reset failed',
-        message: err instanceof Error ? err.message : String(err),
-      });
-    } finally {
-      setWiping(false);
-    }
-  }, [onToast, mode]);
-
-  const handleResetTree = useCallback(async () => {
-    const ok = window.confirm(t('workspace.resetTreeConfirm'));
-    if (!ok) return;
-    setResetting(true);
-    try {
-      const resp = await memoryTreeResetTree();
-      onToast?.({
-        type: 'success',
-        title: 'Memory tree rebuilding',
-        message:
-          `Cleared ${resp.tree_rows_deleted.toLocaleString()} tree row(s); ` +
-          `requeued ${resp.chunks_requeued.toLocaleString()} chunk(s) ` +
-          `(${resp.jobs_enqueued.toLocaleString()} extract jobs). ` +
-          `The graph will fill back in as the worker drains.`,
-      });
-      // Stagger the graph re-fetch a bit longer than build_trees does —
-      // reset_tree starts from extract jobs (slower than seal-only).
-      setTimeout(() => {
-        void (async () => {
-          try {
-            const next = await memoryTreeGraphExport(mode);
-            setGraph(next);
-          } catch (err) {
-            console.warn('[ui-flow][memory-workspace] post-reset graph refresh failed', err);
-          }
-        })();
-      }, 8000);
-    } catch (err) {
-      console.error('[ui-flow][memory-workspace] reset_tree failed', err);
-      onToast?.({
-        type: 'error',
-        title: 'Could not reset memory tree',
-        message: err instanceof Error ? err.message : String(err),
-      });
-    } finally {
-      setResetting(false);
-    }
-  }, [onToast, mode]);
-
-  const handleBuildTrees = useCallback(async () => {
-    setBuilding(true);
-    try {
-      const resp = await memoryTreeFlushNow();
-      onToast?.({
-        type: resp.enqueued ? 'success' : 'info',
-        title: resp.enqueued
-          ? `Building summary trees · ${resp.stale_buffers} buffer(s)`
-          : 'Build already in progress',
-        message: resp.enqueued
-          ? 'Force-sealing every L0 buffer through the configured AI summariser. The graph will refresh once the worker drains.'
-          : 'A flush job for today is already queued — no new work needed.',
-      });
-      // Re-fetch the graph after a short delay so newly-sealed
-      // summaries appear in the view. The seal cascade runs async on
-      // the worker pool; 4s is enough for the typical case without
-      // making the UI feel stuck.
-      setTimeout(() => {
-        void (async () => {
-          try {
-            const next = await memoryTreeGraphExport(mode);
-            setGraph(next);
-          } catch (err) {
-            console.warn('[ui-flow][memory-workspace] post-build graph refresh failed', err);
-          }
-        })();
-      }, 4000);
-    } catch (err) {
-      console.error('[ui-flow][memory-workspace] flush_now failed', err);
-      onToast?.({
-        type: 'error',
-        title: 'Could not build summary trees',
-        message: err instanceof Error ? err.message : String(err),
-      });
-    } finally {
-      setBuilding(false);
-    }
-  }, [onToast, mode]);
-
   return (
     <div className="space-y-4" data-testid="memory-workspace">
       <MemoryTreeStatusPanel onToast={onToast} />
       <MemorySourcesRegistry onToast={onToast} />
       <WhatsAppMemorySection />
 
-      <div
-        className="flex flex-wrap items-center justify-between gap-3"
-        data-testid="memory-actions">
-        <ModeToggle mode={mode} onChange={setMode} />
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setGraphVersion(v => v + 1)}
-            data-testid="memory-graph-refresh"
-            className="inline-flex items-center gap-2 rounded-lg
-                       border border-stone-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-4 py-2 text-sm font-semibold
-                       text-stone-700 dark:text-neutral-200 shadow-sm transition-colors hover:bg-stone-50 dark:hover:bg-neutral-800
-                       focus:outline-none focus:ring-2 focus:ring-stone-200"
-            title={t('common.refresh')}>
-            <RefreshIcon /> {t('common.refresh')}
-          </button>
-          <button
-            type="button"
-            onClick={handleWipe}
-            disabled={wiping || building}
-            data-testid="memory-wipe-all"
-            className="inline-flex items-center gap-2 rounded-lg
-                       border border-coral-200 dark:border-coral-500/30 bg-white dark:bg-neutral-900 px-4 py-2 text-sm font-semibold
-                       text-coral-700 dark:text-coral-300 shadow-sm transition-colors hover:bg-coral-50 dark:hover:bg-coral-500/10
-                       disabled:cursor-not-allowed disabled:opacity-50
-                       focus:outline-none focus:ring-2 focus:ring-coral-200"
-            title={t('workspace.wipeTitle')}>
-            {wiping ? (
-              <>
-                <Spinner /> {t('workspace.resetting')}
-              </>
-            ) : (
-              <>
-                <TrashIcon /> {t('workspace.resetMemory')}
-              </>
-            )}
-          </button>
-          <button
-            type="button"
-            onClick={handleResetTree}
-            disabled={resetting || wiping || building}
-            data-testid="memory-reset-tree"
-            className="inline-flex items-center gap-2 rounded-lg
-                       border border-amber-300 dark:border-amber-500/30 bg-white dark:bg-neutral-900 px-4 py-2 text-sm font-semibold
-                       text-amber-800 dark:text-amber-300 shadow-sm transition-colors hover:bg-amber-50 dark:hover:bg-amber-500/10
-                       disabled:cursor-not-allowed disabled:opacity-50
-                       focus:outline-none focus:ring-2 focus:ring-amber-200"
-            title={t('workspace.resetTreeTitle')}>
-            {resetting ? (
-              <>
-                <Spinner /> {t('workspace.rebuilding')}
-              </>
-            ) : (
-              <>
-                <RefreshIcon /> {t('workspace.resetMemoryTree')}
-              </>
-            )}
-          </button>
-          <button
-            type="button"
-            onClick={handleBuildTrees}
-            disabled={building}
-            data-testid="memory-build-trees"
-            className="inline-flex items-center gap-2 rounded-lg
-                       bg-primary-500 px-4 py-2 text-sm font-semibold text-white
-                       shadow-sm transition-colors hover:bg-primary-600
-                       disabled:cursor-not-allowed disabled:opacity-50
-                       focus:outline-none focus:ring-2 focus:ring-primary-200">
-            {building ? (
-              <>
-                <Spinner /> {t('workspace.building')}
-              </>
-            ) : (
-              <>
-                <BrainIcon /> {t('workspace.buildSummaryTrees')}
-              </>
-            )}
-          </button>
-          {graph && (
-            <ObsidianVaultSection contentRootAbs={graph.content_root_abs} onToast={onToast} />
-          )}
-        </div>
-      </div>
+      <MemoryControls
+        mode={mode}
+        onModeChange={setMode}
+        onRefresh={() => setGraphVersion(v => v + 1)}
+        onToast={onToast}
+        contentRootAbs={graph?.content_root_abs}
+      />
 
       {error ? (
         <div className="rounded-lg border border-coral-200 dark:border-coral-500/30 bg-coral-50 dark:bg-coral-500/10 px-4 py-3 text-sm text-coral-800">
@@ -350,124 +154,5 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
         <SyncAuditPanel />
       </div>
     </div>
-  );
-}
-
-interface ModeToggleProps {
-  mode: GraphMode;
-  onChange: (next: GraphMode) => void;
-}
-
-function ModeToggle({ mode, onChange }: ModeToggleProps) {
-  const { t } = useT();
-  const baseBtn =
-    'px-3 py-1.5 text-xs font-medium rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-primary-200';
-  const active = 'bg-primary-500 text-white shadow-sm';
-  const idle =
-    'bg-white dark:bg-neutral-900 text-stone-600 dark:text-neutral-300 hover:bg-stone-50 dark:hover:bg-neutral-800/60';
-  return (
-    <div
-      className="inline-flex items-center gap-1 rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-1"
-      role="tablist"
-      aria-label={t('workspace.graphViewMode')}
-      data-testid="memory-graph-mode-toggle">
-      <button
-        type="button"
-        onClick={() => onChange('tree')}
-        className={`${baseBtn} ${mode === 'tree' ? active : idle}`}
-        role="tab"
-        aria-selected={mode === 'tree'}
-        data-testid="memory-graph-mode-tree">
-        {t('workspace.trees')}
-      </button>
-      <button
-        type="button"
-        onClick={() => onChange('contacts')}
-        className={`${baseBtn} ${mode === 'contacts' ? active : idle}`}
-        role="tab"
-        aria-selected={mode === 'contacts'}
-        data-testid="memory-graph-mode-contacts">
-        {t('workspace.contacts')}
-      </button>
-    </div>
-  );
-}
-
-// ── Tiny inline icons (no extra dep) ────────────────────────────────────
-
-function RefreshIcon() {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true">
-      <path d="M21 12a9 9 0 11-3-6.7" />
-      <path d="M21 4v5h-5" />
-      <path d="M3 12a9 9 0 003 6.7" />
-      <path d="M3 20v-5h5" />
-    </svg>
-  );
-}
-
-function TrashIcon() {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true">
-      <path d="M3 6h18" />
-      <path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2" />
-      <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" />
-      <path d="M10 11v6" />
-      <path d="M14 11v6" />
-    </svg>
-  );
-}
-
-function BrainIcon() {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true">
-      <path d="M9 4.5a2.5 2.5 0 015 0v15a2.5 2.5 0 01-5 0" />
-      <path d="M9 4.5A2.5 2.5 0 116.5 7M9 19.5A2.5 2.5 0 116.5 17" />
-      <path d="M14 4.5A2.5 2.5 0 1117.5 7M14 19.5A2.5 2.5 0 1017.5 17" />
-    </svg>
-  );
-}
-
-function Spinner() {
-  return (
-    <svg
-      className="animate-spin"
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      aria-hidden="true">
-      <circle cx="12" cy="12" r="9" opacity="0.25" />
-      <path d="M21 12a9 9 0 00-9-9" />
-    </svg>
   );
 }

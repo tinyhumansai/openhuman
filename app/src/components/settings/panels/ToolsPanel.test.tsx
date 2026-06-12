@@ -71,4 +71,31 @@ describe('<ToolsPanel />', () => {
       )
     );
   });
+
+  it('renders SettingsHeader when embedded=false (line 110)', () => {
+    // Default embedded=false shows the header
+    render(<ToolsPanel embedded={false} />);
+    expect(screen.getByText('Tools')).toBeInTheDocument();
+  });
+
+  it('does not render SettingsHeader when embedded=true (line 101-108 skipped)', () => {
+    // When embedded, the header section is not rendered
+    render(<ToolsPanel embedded={true} />);
+    // The header mock outputs a <h1> with the title — embedded should NOT show it
+    expect(screen.queryByRole('heading', { name: 'Tools' })).not.toBeInTheDocument();
+  });
+
+  it('shows Save Changes button after toggling a tool (dirty state, line 145-155)', async () => {
+    render(<ToolsPanel />);
+
+    const shellToggle = screen.getByRole('switch', { name: /Shell Commands/ });
+    await waitFor(() => expect(shellToggle).toHaveAttribute('aria-checked', 'true'));
+
+    // Before toggle — no Save button
+    expect(screen.queryByRole('button', { name: 'Save Changes' })).not.toBeInTheDocument();
+
+    // After toggle — dirty=true → Save Changes appears (line 145-155)
+    fireEvent.click(shellToggle);
+    expect(screen.getByRole('button', { name: 'Save Changes' })).toBeInTheDocument();
+  });
 });

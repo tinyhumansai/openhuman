@@ -15,10 +15,10 @@ test.describe('Channels Smoke', () => {
     await waitForAppReady(page);
     await dismissWalkthroughIfPresent(page);
 
-    await expect(page.getByText('Channels')).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Telegram', exact: true })).toBeVisible();
-    await expect(page.getByRole('button', { name: /Telegram Disconnected/ })).toBeVisible();
-    await expect(page.getByRole('button', { name: /Discord Disconnected/ })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Connect' }).first()).toBeVisible();
+    // /channels redirects to /connections?tab=messaging; connectors now render
+    // as ChannelTile buttons named "<Name>, <status>. <cta>." (not headings/
+    // standalone Disconnected buttons).
+    await expect(page.getByRole('button', { name: /Telegram/ }).first()).toBeVisible();
+    await expect(page.getByRole('button', { name: /Discord/ }).first()).toBeVisible();
   });
 });

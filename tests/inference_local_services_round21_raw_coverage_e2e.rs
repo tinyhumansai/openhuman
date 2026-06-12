@@ -21,7 +21,7 @@ use openhuman_core::openhuman::inference::local::ops::{
     LocalAiChatMessage,
 };
 use openhuman_core::openhuman::inference::local::{
-    all_local_ai_registered_controllers, LocalAiService,
+    all_local_inference_registered_controllers, LocalAiService,
 };
 use serde_json::{json, Value};
 use tempfile::{tempdir, TempDir};
@@ -295,7 +295,7 @@ async fn local_services_cover_mocked_inference_assets_speech_and_whisper_install
         "ready"
     );
 
-    let controllers = all_local_ai_registered_controllers();
+    let controllers = all_local_inference_registered_controllers();
     let install = controller(&controllers, "install_whisper");
     let status = controller(&controllers, "whisper_install_status");
 

@@ -6,7 +6,7 @@
 //! is kept verbatim.
 
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 
 use super::{normalize_source_ref, CanonicalisedSource};
 use crate::openhuman::memory_store::chunks::types::{Metadata, SourceKind};
@@ -19,56 +19,6 @@ fn default_provider() -> String {
 
 fn now_utc() -> DateTime<Utc> {
     Utc::now()
-}
-
-/// Deserialise a `DateTime<Utc>` from either:
-/// - a JSON integer = epoch **milliseconds** (legacy callers — back-compat),
-/// - a JSON string = RFC 3339 / ISO-8601 (e.g. `"2026-05-17T19:30:00Z"`), or
-///   a decimal string containing epoch milliseconds.
-///
-/// On an unparseable string a serde error is returned (no silent default).
-fn deserialize_flexible_timestamp<'de, D>(deserializer: D) -> Result<DateTime<Utc>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    /// Untagged helper so serde tries each variant in order.
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum RawTs {
-        Millis(i64),
-        Text(String),
-    }
-
-    let raw = RawTs::deserialize(deserializer)?;
-    match raw {
-        RawTs::Millis(ms) => {
-            tracing::debug!("[memory][document] parsed modified_at as epoch-ms: {ms}");
-            chrono::TimeZone::timestamp_millis_opt(&Utc, ms)
-                .single()
-                .ok_or_else(|| serde::de::Error::custom(format!("invalid epoch-ms: {ms}")))
-        }
-        RawTs::Text(s) => {
-            // Try RFC 3339 / ISO-8601 first.
-            if let Ok(dt) = DateTime::parse_from_rfc3339(&s) {
-                tracing::debug!("[memory][document] parsed modified_at as ISO-8601 string: {s}");
-                return Ok(dt.with_timezone(&Utc));
-            }
-            // Fall back: numeric string = epoch milliseconds.
-            if let Ok(ms) = s.parse::<i64>() {
-                tracing::debug!(
-                    "[memory][document] parsed modified_at as numeric-string epoch-ms: {s}"
-                );
-                return chrono::TimeZone::timestamp_millis_opt(&Utc, ms)
-                    .single()
-                    .ok_or_else(|| {
-                        serde::de::Error::custom(format!("invalid epoch-ms string: {s}"))
-                    });
-            }
-            Err(serde::de::Error::custom(format!(
-                "modified_at: cannot parse '{s}' as RFC 3339 or epoch-ms"
-            )))
-        }
-    }
 }
 
 // ── Input struct ──────────────────────────────────────────────────────────────
@@ -90,7 +40,7 @@ pub struct DocumentInput {
     /// string (fixes CORE-2K), or absent → `Utc::now()` (fixes CORE-2J).
     #[serde(
         default = "now_utc",
-        deserialize_with = "deserialize_flexible_timestamp"
+        deserialize_with = "super::deserialize_flexible_timestamp"
     )]
     pub modified_at: DateTime<Utc>,
     /// Optional pointer back to source (URL, file path, Notion page id).

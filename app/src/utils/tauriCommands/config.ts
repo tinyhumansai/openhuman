@@ -49,6 +49,18 @@ export interface CloudProviderCreds {
   auth_style: AuthStyle;
 }
 
+/**
+ * Per-model registry entry. Mirrors the Rust `ModelRegistryEntry`
+ * (`config/schema/types.rs`). Carries the user-set `vision` flag that lets a
+ * custom/BYOK model accept chat image attachments.
+ */
+export interface ModelRegistryEntry {
+  id: string;
+  provider: string;
+  cost_per_1m_output: number;
+  vision: boolean;
+}
+
 export interface ModelSettingsUpdate {
   /**
    * OpenHuman product backend URL. Almost always left untouched; the
@@ -77,6 +89,12 @@ export interface ModelSettingsUpdate {
    * Each entry: { id?, slug, label?, endpoint, auth_style? }
    */
   cloud_providers?: CloudProviderCreds[] | null;
+  /**
+   * When present, REPLACES `config.model_registry` wholesale. Carries each
+   * model's `vision` flag (Settings → Advanced LLM → custom model → "Supports
+   * vision"). Send `[]` to clear; omit to leave untouched.
+   */
+  model_registry?: ModelRegistryEntry[] | null;
   /** @deprecated No longer used — slug-based routing replaces primary_cloud. */
   primary_cloud?: string | null;
   /** Per-workload provider strings — see Rust `providers::factory` grammar. */
@@ -215,6 +233,8 @@ export interface ClientConfig {
   model_routes: ModelRoute[];
   /** Configured cloud providers (no API keys — those live in auth-profiles.json). */
   cloud_providers: CloudProviderCreds[];
+  /** Per-model registry carrying each model's `vision` flag. */
+  model_registry: ModelRegistryEntry[];
   /** Id of the `cloud_providers` entry resolved by the `"cloud"` sentinel. */
   primary_cloud: string | null;
   /** Per-workload provider strings (e.g. `"cloud"`, `"ollama:llama3.1:8b"`, `"openai:gpt-4o"`). */

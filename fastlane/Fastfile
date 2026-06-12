@@ -1,0 +1,57 @@
+default_platform(:ios)
+
+platform :ios do
+  desc "Push OpenHuman iOS App Store screenshots without uploading a binary"
+  lane :push_screenshots do
+    api_key = app_store_connect_api_key(
+      key_id: ENV.fetch("ASC_KEY_ID"),
+      issuer_id: ENV.fetch("ASC_ISSUER_ID"),
+      key_filepath: ENV.fetch("ASC_KEY_PATH"),
+      duration: 1200,
+      in_house: false
+    )
+
+    deliver(
+      api_key: api_key,
+      app_identifier: "com.tinyhumansai.openhuman",
+      app_version: ENV.fetch("ASC_APP_VERSION", "1.0"),
+      platform: "ios",
+      metadata_path: "fastlane/metadata",
+      screenshots_path: "fastlane/screenshots",
+      skip_binary_upload: true,
+      skip_metadata: true,
+      skip_app_version_update: true,
+      overwrite_screenshots: true,
+      submit_for_review: false,
+      run_precheck_before_submit: false,
+      force: true
+    )
+  end
+
+  desc "Push OpenHuman iOS App Store metadata and screenshots without uploading a binary"
+  lane :push_metadata do
+    api_key = app_store_connect_api_key(
+      key_id: ENV.fetch("ASC_KEY_ID"),
+      issuer_id: ENV.fetch("ASC_ISSUER_ID"),
+      key_filepath: ENV.fetch("ASC_KEY_PATH"),
+      duration: 1200,
+      in_house: false
+    )
+
+    deliver(
+      api_key: api_key,
+      app_identifier: "com.tinyhumansai.openhuman",
+      app_version: ENV.fetch("ASC_APP_VERSION", "1.0"),
+      platform: "ios",
+      metadata_path: "fastlane/metadata",
+      screenshots_path: "fastlane/screenshots",
+      skip_binary_upload: true,
+      skip_metadata: ENV["ASC_FASTLANE_SKIP_METADATA"] == "1",
+      skip_app_version_update: true,
+      overwrite_screenshots: true,
+      submit_for_review: false,
+      run_precheck_before_submit: false,
+      force: true
+    )
+  end
+end

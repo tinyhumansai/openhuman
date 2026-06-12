@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { SkillSummary } from '../../../services/api/skillsApi';
+import type { WorkflowSummary } from '../../../services/api/workflowsApi';
 import WorkflowsTab from '../WorkflowsTab';
 
 vi.mock('../../../lib/i18n/I18nContext', () => ({ useT: () => ({ t: (k: string) => k }) }));
@@ -18,7 +18,7 @@ vi.mock('../../skills/CreateSkillModal', () => ({
     onCreated,
     onClose,
   }: {
-    onCreated: (wf: SkillSummary) => void;
+    onCreated: (wf: WorkflowSummary) => void;
     onClose: () => void;
   }) => (
     <div data-testid="create-modal-stub">
@@ -62,7 +62,7 @@ vi.mock('../../skills/UninstallSkillConfirmDialog', () => ({
   ),
 }));
 
-const seeded = (overrides: Partial<SkillSummary>): SkillSummary => ({
+const seeded = (overrides: Partial<WorkflowSummary>): WorkflowSummary => ({
   id: 'wf-1',
   name: 'WF 1',
   description: 'A workflow.',
@@ -82,22 +82,25 @@ const seeded = (overrides: Partial<SkillSummary>): SkillSummary => ({
   ...overrides,
 });
 
-const listSkills = vi.fn();
-vi.mock('../../../services/api/skillsApi', async () => {
-  const actual = await vi.importActual<typeof import('../../../services/api/skillsApi')>(
-    '../../../services/api/skillsApi'
+const listWorkflows = vi.fn();
+vi.mock('../../../services/api/workflowsApi', async () => {
+  const actual = await vi.importActual<typeof import('../../../services/api/workflowsApi')>(
+    '../../../services/api/workflowsApi'
   );
-  return { ...actual, skillsApi: { ...actual.skillsApi, listSkills: () => listSkills() } };
+  return {
+    ...actual,
+    workflowsApi: { ...actual.workflowsApi, listWorkflows: () => listWorkflows() },
+  };
 });
 
 describe('WorkflowsTab', () => {
   beforeEach(() => {
     navigate.mockReset();
-    listSkills.mockReset();
+    listWorkflows.mockReset();
   });
 
-  it('lists workflows from skillsApi with the create entry point', async () => {
-    listSkills.mockResolvedValue([
+  it('lists workflows from workflowsApi with the create entry point', async () => {
+    listWorkflows.mockResolvedValue([
       seeded({ id: 'user-wf', name: 'User WF', scope: 'user' }),
       seeded({ id: 'project-wf', name: 'Project WF', scope: 'project' }),
     ]);
@@ -115,7 +118,7 @@ describe('WorkflowsTab', () => {
   });
 
   it('navigates to the locked runner page when a card is opened', async () => {
-    listSkills.mockResolvedValue([seeded({ id: 'user-wf', name: 'User WF', scope: 'user' })]);
+    listWorkflows.mockResolvedValue([seeded({ id: 'user-wf', name: 'User WF', scope: 'user' })]);
     render(<WorkflowsTab />);
     await waitFor(() => expect(screen.getByTestId('workflow-open-user-wf')).toBeInTheDocument());
 
@@ -124,7 +127,7 @@ describe('WorkflowsTab', () => {
   });
 
   it('opens create and lands on the new workflow runner after create', async () => {
-    listSkills.mockResolvedValue([]);
+    listWorkflows.mockResolvedValue([]);
     render(<WorkflowsTab />);
     await waitFor(() => expect(screen.getByTestId('workflows-create-btn')).toBeInTheDocument());
 
@@ -133,8 +136,8 @@ describe('WorkflowsTab', () => {
     expect(navigate).toHaveBeenCalledWith('/workflows/run?workflow=new-wf&lock=1');
   });
 
-  it('shows an error panel with retry when listSkills fails (not the empty state)', async () => {
-    listSkills.mockRejectedValueOnce(new Error('backend down'));
+  it('shows an error panel with retry when listWorkflows fails (not the empty state)', async () => {
+    listWorkflows.mockRejectedValueOnce(new Error('backend down'));
     render(<WorkflowsTab />);
 
     await waitFor(() => expect(screen.getByTestId('workflows-load-error')).toBeInTheDocument());
@@ -142,13 +145,15 @@ describe('WorkflowsTab', () => {
     expect(screen.queryByText('workflows.empty.title')).not.toBeInTheDocument();
 
     // Retry re-fetches and renders the list.
-    listSkills.mockResolvedValueOnce([seeded({ id: 'user-wf', name: 'User WF', scope: 'user' })]);
+    listWorkflows.mockResolvedValueOnce([
+      seeded({ id: 'user-wf', name: 'User WF', scope: 'user' }),
+    ]);
     fireEvent.click(screen.getByText('common.retry'));
     await waitFor(() => expect(screen.getByText('User WF')).toBeInTheDocument());
   });
 
   it('removes the workflow from the list after uninstall, keyed by id', async () => {
-    listSkills.mockResolvedValue([seeded({ id: 'user-wf', name: 'User WF', scope: 'user' })]);
+    listWorkflows.mockResolvedValue([seeded({ id: 'user-wf', name: 'User WF', scope: 'user' })]);
     render(<WorkflowsTab />);
     await waitFor(() => expect(screen.getByTestId('workflow-card-user-wf')).toBeInTheDocument());
 
@@ -162,7 +167,7 @@ describe('WorkflowsTab', () => {
   });
 
   it('renders the empty state when no workflows are installed', async () => {
-    listSkills.mockResolvedValue([]);
+    listWorkflows.mockResolvedValue([]);
     render(<WorkflowsTab />);
     await waitFor(() => expect(screen.getByText('workflows.empty.title')).toBeInTheDocument());
     expect(screen.queryByTestId('workflows-list')).not.toBeInTheDocument();

@@ -198,11 +198,13 @@ export function ObsidianVaultSection({ contentRootAbs, onToast }: ObsidianVaultS
         onClick={handleViewVault}
         disabled={checking}
         data-testid="memory-open-in-obsidian"
-        className="inline-flex items-center gap-2 rounded-lg
-                   bg-violet-500 px-4 py-2 text-sm font-semibold text-white
-                   shadow-sm transition-colors hover:bg-violet-600
+        className="inline-flex items-center gap-1.5 rounded-lg
+                   border border-stone-200 bg-white px-3 py-1.5 text-xs font-semibold
+                   text-stone-700 shadow-sm transition-colors hover:bg-stone-50
                    disabled:cursor-not-allowed disabled:opacity-50
-                   focus:outline-none focus:ring-2 focus:ring-violet-300"
+                   focus:outline-none focus:ring-2 focus:ring-stone-200
+                   dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200
+                   dark:hover:bg-neutral-800 dark:focus:ring-neutral-700"
         title={`obsidian://open?path=${contentRootAbs}`}>
         <ExternalLinkIcon />
         {checking ? t('workspace.checkingVault') : t('workspace.viewVault')}
@@ -304,8 +306,8 @@ export function ObsidianVaultSection({ contentRootAbs, onToast }: ObsidianVaultS
 function ExternalLinkIcon() {
   return (
     <svg
-      width="16"
-      height="16"
+      width="14"
+      height="14"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"

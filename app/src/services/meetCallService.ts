@@ -172,6 +172,10 @@ export type BackendMeetJoinInput = {
   respondToParticipant?: string;
   /** Wake phrase the participant must say before the bot responds (empty = no wake phrase). */
   wakePhrase?: string;
+  /** Opaque correlation id echoed on all `bot:*` events for this session. */
+  correlationId?: string;
+  /** When true, the bot joins in listen-only mode (no microphone, no replies). */
+  listenOnly?: boolean;
 };
 
 type CoreBackendMeetJoinResponse = { ok: boolean; meet_url: string; platform: string };
@@ -202,6 +206,8 @@ export async function joinMeetViaBackendBot(
       mascot_id: input.mascotId?.trim() || undefined,
       respond_to_participant: input.respondToParticipant?.trim() || undefined,
       wake_phrase: input.wakePhrase?.trim() || undefined,
+      correlation_id: input.correlationId?.trim() || undefined,
+      listen_only: input.listenOnly ?? undefined,
       rive_colors: (() => {
         if (!input.riveColors) return undefined;
         const primary = input.riveColors.primaryColor?.trim() || undefined;

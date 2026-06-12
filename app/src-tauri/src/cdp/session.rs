@@ -24,7 +24,8 @@ use tokio::task::JoinHandle;
 // elapsed check honours `tokio::time::pause()` / `advance()` in unit tests.
 use tokio::time::{sleep, Instant};
 
-use super::{browser_ws_url, find_page_target_where, CdpConn};
+use super::target::conn_for_account;
+use super::{find_page_target_where, CdpConn};
 use crate::webview_accounts::{emit_load_finished, redact_url_for_log, RevealTrigger};
 
 /// Backoff between failed attach attempts / reconnects. Intentionally
@@ -413,12 +414,14 @@ async fn run_session_cycle<R: Runtime>(
     real_url: &str,
     progress_slot: &ProgressSlot,
 ) -> Result<(), String> {
-    let browser_ws = browser_ws_url().await?;
-    let mut cdp = CdpConn::open(&browser_ws).await?;
+    let mut cdp = conn_for_account(app, account_id)?;
 
-    // Account-unique match. The placeholder URL and the real provider URL
-    // both carry account-specific fragments, so we can use ends_with and
-    // avoid substring collisions like `…account-abc` vs `…account-abcdef`.
+    // Account-unique match. Each webview is itself scoped to one
+    // account, but a webview can host popups (OAuth, attachment
+    // previews, …) that also surface as `kind=page` targets. The
+    // placeholder URL and the real provider URL both carry
+    // account-specific fragments, so we filter explicitly to pick the
+    // primary frame and ignore popups.
     let fragment = target_url_fragment(account_id);
     let target =
         find_page_target_where(&mut cdp, |t| target_matches_account_url(&t.url, account_id))

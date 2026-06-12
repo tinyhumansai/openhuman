@@ -18,6 +18,7 @@ import LocalAIDownloadSnackbar from './components/LocalAIDownloadSnackbar';
 import SecretPromptDialog from './components/mcp-setup/SecretPromptDialog';
 import OpenhumanLinkModal from './components/OpenhumanLinkModal';
 import PersistRehydrationScreen from './components/PersistRehydrationScreen';
+import PttHotkeyManager from './components/PttHotkeyManager';
 import SecurityBanner from './components/SecurityBanner';
 import GlobalUpsellBanner from './components/upsell/GlobalUpsellBanner';
 import AppWalkthrough from './components/walkthrough/AppWalkthrough';
@@ -109,6 +110,7 @@ function App() {
                             <AppShell />
                             <SecurityBanner />
                             {!onMobile && <DictationHotkeyManager />}
+                            {!onMobile && <PttHotkeyManager />}
                             {!onMobile && <LocalAIDownloadSnackbar />}
                             {!onMobile && <AppUpdatePrompt />}
                             <KeyringConsentOverlay />

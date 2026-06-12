@@ -52,7 +52,7 @@
 //!
 //! ## Logging
 //!
-//! Every candidate emits a grep-friendly `[skills:inject]` log line
+//! Every candidate emits a grep-friendly `[workflows:inject]` log line
 //! with `matched=<bool>`, reason, and injected bytes (see
 //! [`render_injection`]). A summary line lives in the caller
 //! (`Agent::turn`).
@@ -265,7 +265,10 @@ fn contains_whole_word(haystack_lower: &str, needle_lower: &str) -> bool {
 
 /// Match installed skills against a user message per the heuristic
 /// documented at the top of this module.
-pub fn match_workflows<'a>(skills: &'a [Workflow], user_message: &str) -> Vec<WorkflowMatch<'a>> {
+pub fn match_workflows<'a>(
+    workflows: &'a [Workflow],
+    user_message: &str,
+) -> Vec<WorkflowMatch<'a>> {
     let mentions = extract_mentions(user_message);
     let mention_set: HashSet<String> = mentions.iter().map(|(n, _)| n.clone()).collect();
     let mention_index = |skill_norm: &str| -> Option<usize> {
@@ -278,7 +281,7 @@ pub fn match_workflows<'a>(skills: &'a [Workflow], user_message: &str) -> Vec<Wo
     let lower_msg = user_message.to_lowercase();
 
     let mut matches: Vec<WorkflowMatch<'a>> = Vec::new();
-    for skill in skills {
+    for skill in workflows {
         let normalised_name = normalise(&skill.name);
         let user_invocable = is_user_invocable(skill);
 
@@ -385,7 +388,7 @@ where
             Some(b) => b,
             None => {
                 log::warn!(
-                    "[skills:inject] matched={} reason={} name={} skipped=body_unavailable",
+                    "[workflows:inject] matched={} reason={} name={} skipped=body_unavailable",
                     false,
                     "body_unavailable",
                     name
@@ -415,7 +418,7 @@ where
         let min_truncated = header_len + footer_trunc_len + 1;
         if remaining < min_truncated {
             log::info!(
-                "[skills:inject] matched={} reason={} name={} skipped=budget_exhausted remaining_bytes={}",
+                "[workflows:inject] matched={} reason={} name={} skipped=budget_exhausted remaining_bytes={}",
                 false,
                 "budget_exhausted",
                 name,
@@ -439,7 +442,7 @@ where
             rendered.push_str(&footer_full);
             let injected = header_len + body.len() + footer_full_len;
             log::debug!(
-                "[skills:inject] matched={} reason={} name={} injected_bytes={} truncated={}",
+                "[workflows:inject] matched={} reason={} name={} injected_bytes={} truncated={}",
                 true,
                 m.reason.as_str(),
                 name,
@@ -469,7 +472,7 @@ where
         truncated_any = true;
         let injected = header_len + truncated_body.len() + footer_trunc_len;
         log::warn!(
-            "[skills:inject] matched={} reason={} name={} injected_bytes={} truncated={} body_bytes_total={} body_bytes_kept={}",
+            "[workflows:inject] matched={} reason={} name={} injected_bytes={} truncated={} body_bytes_total={} body_bytes_kept={}",
             true,
             m.reason.as_str(),
             name,

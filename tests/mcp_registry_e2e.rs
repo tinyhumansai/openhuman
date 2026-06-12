@@ -347,3 +347,87 @@ async fn update_env_on_disabled_server_persists_but_does_not_reconnect() {
         .unwrap();
     assert_eq!(mine.status.as_str(), "disabled");
 }
+
+// ── Reconnect supervisor (#3312) ───────────────────────────────────────────────
+
+#[tokio::test]
+async fn probe_alive_reflects_transport_liveness() {
+    let (_tmp, cfg) = fresh_workspace_config();
+    let server = make_installed_server();
+    store::insert_server(&cfg, &server).expect("insert installed server");
+
+    connections::connect(&cfg, &server).await.expect("connect");
+    assert!(connections::is_connected(&server.server_id).await);
+    assert!(
+        connections::probe_alive(&server.server_id, std::time::Duration::from_secs(8)).await,
+        "a live stub answers the tools/list probe"
+    );
+
+    connections::disconnect(&server.server_id).await;
+    assert!(!connections::is_connected(&server.server_id).await);
+    assert!(
+        !connections::probe_alive(&server.server_id, std::time::Duration::from_secs(8)).await,
+        "a disconnected server is not alive"
+    );
+}
+
+#[tokio::test]
+async fn supervisor_reconnects_a_dropped_server() {
+    use openhuman_core::openhuman::mcp_registry::supervisor;
+
+    let (_tmp, cfg) = fresh_workspace_config();
+    let server = make_installed_server();
+    store::insert_server(&cfg, &server).expect("insert installed server");
+
+    // Bring it up, then simulate a silent transport drop by disconnecting while
+    // it stays installed + enabled in the store.
+    connections::connect(&cfg, &server).await.expect("connect");
+    connections::disconnect(&server.server_id).await;
+    assert!(!connections::is_connected(&server.server_id).await);
+
+    // One supervisor tick should notice the enabled-but-disconnected server and
+    // reconnect it.
+    supervisor::run_single_tick_for_test(&cfg).await;
+
+    assert!(
+        connections::is_connected(&server.server_id).await,
+        "supervisor reconnects a dropped-but-installed server"
+    );
+    assert!(connections::probe_alive(&server.server_id, std::time::Duration::from_secs(8)).await);
+
+    connections::disconnect(&server.server_id).await;
+}
+
+#[tokio::test]
+async fn supervisor_leaves_a_healthy_connection_intact() {
+    use openhuman_core::openhuman::mcp_registry::supervisor;
+
+    let (_tmp, cfg) = fresh_workspace_config();
+    let server = make_installed_server();
+    store::insert_server(&cfg, &server).expect("insert installed server");
+    connections::connect(&cfg, &server).await.expect("connect");
+
+    // A tick over a healthy server must keep it connected (probe succeeds → no
+    // disconnect/reconnect churn).
+    supervisor::run_single_tick_for_test(&cfg).await;
+    assert!(connections::is_connected(&server.server_id).await);
+
+    connections::disconnect(&server.server_id).await;
+}
+
+#[tokio::test]
+async fn supervisor_skips_a_disabled_server() {
+    use openhuman_core::openhuman::mcp_registry::supervisor;
+
+    let (_tmp, cfg) = fresh_workspace_config();
+    let mut server = make_installed_server();
+    server.enabled = false;
+    store::insert_server(&cfg, &server).expect("insert installed server");
+
+    // A disabled server must never be connected by the supervisor.
+    supervisor::run_single_tick_for_test(&cfg).await;
+    assert!(
+        !connections::is_connected(&server.server_id).await,
+        "supervisor does not connect disabled servers"
+    );
+}

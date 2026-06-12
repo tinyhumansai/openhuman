@@ -1,15 +1,10 @@
-//! Heartbeat loop — periodic scheduler that delegates to the subconscious
-//! engine for task-driven evaluation via local model inference.
-//!
-//! HEARTBEAT.md in the workspace defines the task checklist.
-//! The subconscious engine evaluates tasks against workspace state
-//! (memory, graph, skills) using the local Ollama model.
+//! Heartbeat — re-exports from `subconscious::heartbeat` after module
+//! consolidation. Kept as a thin shim so external `crate::openhuman::heartbeat::*`
+//! paths continue to compile without a crate-wide rename.
 
-pub mod engine;
-pub mod planner;
-pub mod rpc;
-mod schemas;
-pub use schemas::{
-    all_controller_schemas as all_heartbeat_controller_schemas,
-    all_registered_controllers as all_heartbeat_registered_controllers,
+pub use crate::openhuman::subconscious::heartbeat::engine;
+pub use crate::openhuman::subconscious::heartbeat::planner;
+pub use crate::openhuman::subconscious::heartbeat::rpc;
+pub use crate::openhuman::subconscious::heartbeat::{
+    all_heartbeat_controller_schemas, all_heartbeat_registered_controllers,
 };

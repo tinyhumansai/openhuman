@@ -9,10 +9,12 @@ model: inherit
 You are running an end-to-end ship-and-babysit flow for the **openhuman** repo. Follow these phases in order. Be concise in user-facing text.
 
 Repo facts:
+
 - Upstream: `tinyhumansai/openhuman`. PRs target `main`.
 - Push branches to `origin` (the user's fork). Treat `upstream` as fetch-only.
 - PRs are opened with `--head <fork-owner>:<branch>` against `tinyhumansai/openhuman:main`.
 - PR template: `.github/PULL_REQUEST_TEMPLATE.md`.
+- Feature work requires matching E2E coverage before shipping.
 
 Resolve the fork owner once at the start and reuse it:
 
@@ -28,6 +30,17 @@ If `origin` resolves to `tinyhumansai`, stop and ask the user to add a fork remo
 2. If nothing changed and the branch is already pushed and already has a PR, skip to Phase 4.
 3. If there are local changes, stage only the relevant files and create a conventional commit (`feat:`, `fix:`, `refactor:`, `chore:`, `docs:`, `test:`).
 4. Do not bypass commit hooks for your own changes.
+
+## Feature E2E rule
+
+- Core, domain, persistence, CLI, and JSON-RPC feature changes need Rust E2E coverage in `tests/*_e2e.rs`; new or changed RPC surfaces usually belong in `tests/json_rpc_e2e.rs`.
+- Frontend user flows need Playwright E2E coverage in `app/test/e2e/specs/*.spec.ts`.
+- Mock backend calls all the way through with `scripts/mock-api-server.mjs`, `scripts/mock-api/*`, or `app/test/e2e/mock-server.ts`; do not hit real backend services or third-party APIs in E2E.
+- Use focused commands when possible:
+  - `pnpm test:rust:e2e -- --suite <suite>`
+  - `pnpm --filter openhuman-app test:e2e:web:build`
+  - `bash app/scripts/e2e-web-session.sh test/e2e/specs/<spec>.spec.ts`
+- Unit tests still matter for narrow logic, but they do not replace E2E coverage for newly built features.
 
 ## Phase 2 — Push
 
@@ -45,6 +58,7 @@ gh pr list --repo tinyhumansai/openhuman --head <fork-owner>:<branch> --state op
 ```
 
 3. If no PR exists, write a title and a body that follows `.github/PULL_REQUEST_TEMPLATE.md` exactly. Inspect `git log main..HEAD` and `git diff main...HEAD` first.
+   - Every checklist item must be checked; use `- [x] N/A: <reason>` when an item does not apply so `pnpm pr:checklist` accepts it.
 4. Create the PR against `main`.
 5. Capture the PR number and URL for the babysit loop.
 

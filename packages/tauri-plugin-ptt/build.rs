@@ -9,6 +9,11 @@ const COMMANDS: &[&str] = &[
 ];
 
 fn main() {
+    std::env::set_var(
+        "IPHONEOS_DEPLOYMENT_TARGET",
+        std::env::var("IPHONEOS_DEPLOYMENT_TARGET").unwrap_or_else(|_| "16.0".to_string()),
+    );
+
     tauri_plugin::Builder::new(COMMANDS)
         .ios_path("ios")
         .try_build()

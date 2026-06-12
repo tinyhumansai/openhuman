@@ -92,6 +92,7 @@ export interface FetchOutcome {
   fetched: number;
   routed: number;
   skippedDupe: number;
+  pruned: number;
   error?: string;
 }
 
@@ -162,9 +163,9 @@ export async function openhumanTaskSourcesUpdate(
 
 export async function openhumanTaskSourcesRemove(
   id: string
-): Promise<{ id: string; removed: boolean }> {
+): Promise<{ id: string; removed: boolean; pruned?: number }> {
   ensureTauri();
-  return await callCoreRpc<{ id: string; removed: boolean }>({
+  return await callCoreRpc<{ id: string; removed: boolean; pruned?: number }>({
     method: 'openhuman.task_sources_remove',
     params: { id },
   });
@@ -176,6 +177,11 @@ export async function openhumanTaskSourcesFetch(id: string): Promise<FetchOutcom
     method: 'openhuman.task_sources_fetch',
     params: { id },
   });
+}
+
+export async function openhumanTaskSourcesSync(): Promise<FetchOutcome[]> {
+  ensureTauri();
+  return await callCoreRpc<FetchOutcome[]>({ method: 'openhuman.task_sources_sync' });
 }
 
 export async function openhumanTaskSourcesListTasks(

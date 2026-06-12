@@ -1,7 +1,7 @@
 use crate::openhuman::agent::hooks::ToolCallRecord;
 use crate::openhuman::inference::provider::ChatMessage;
 
-pub(super) fn assistant_message_has_tool_calls(msg: &ChatMessage) -> bool {
+pub(crate) fn assistant_message_has_tool_calls(msg: &ChatMessage) -> bool {
     if msg.role != "assistant" {
         return false;
     }

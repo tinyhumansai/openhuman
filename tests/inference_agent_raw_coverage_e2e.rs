@@ -172,7 +172,8 @@ use openhuman_core::openhuman::inference::voice::local_speech::{synthesize_piper
 use openhuman_core::openhuman::inference::voice::postprocess::cleanup_transcription;
 use openhuman_core::openhuman::inference::{
     all_inference_controller_schemas, all_inference_registered_controllers,
-    all_local_ai_controller_schemas, all_local_ai_registered_controllers, DeviceProfile,
+    all_local_inference_controller_schemas, all_local_inference_registered_controllers,
+    DeviceProfile,
 };
 use openhuman_core::openhuman::memory::{Memory, MemoryCategory, MemoryEntry, RecallOpts};
 use openhuman_core::openhuman::security::SecurityPolicy;
@@ -1300,7 +1301,7 @@ fn agent_builder_public_paths_cover_required_fields_defaults_and_filters() {
     );
     assert_eq!(agent.temperature(), 0.7);
     assert_eq!(agent.workspace_dir(), std::path::Path::new("."));
-    assert!(agent.skills().is_empty());
+    assert!(agent.workflows().is_empty());
     assert!(agent.history().is_empty());
     assert_eq!(agent.agent_config().max_tool_iterations, 10);
     assert_eq!(agent.tools_arc().len(), 2);
@@ -1577,6 +1578,7 @@ named = ["todo", "plan_exit"]
         timeout_secs: None,
         sandbox_mode: SandboxMode::None,
         background: false,
+        trigger_memory_agent: Default::default(),
         subagents: Vec::new(),
         delegate_name: None,
         agent_tier: AgentTier::Worker,
@@ -2068,7 +2070,7 @@ async fn inference_openhuman_backend_provider_covers_authless_and_streaming_edge
         },
     );
     assert!(provider.supports_native_tools());
-    assert!(!provider.supports_vision());
+    assert!(provider.supports_vision());
     assert!(!provider.supports_streaming());
 
     let missing_session = provider
@@ -3017,13 +3019,13 @@ async fn inference_local_controllers_and_presets_cover_public_paths() {
     let _ollama_bin_guard = EnvVarGuard::set("OLLAMA_BIN", &mock_ollama);
     let _ollama_base_guard = EnvVarGuard::set("OPENHUMAN_OLLAMA_BASE_URL", &provider_base);
 
-    let local_schemas = all_local_ai_controller_schemas();
-    let local_registered = all_local_ai_registered_controllers();
+    let local_schemas = all_local_inference_controller_schemas();
+    let local_registered = all_local_inference_registered_controllers();
     assert_eq!(local_schemas.len(), local_registered.len());
     assert!(local_registered.iter().all(|controller| {
         controller
             .rpc_method_name()
-            .starts_with("openhuman.local_ai_")
+            .starts_with("openhuman.inference_")
     }));
 
     let reachable = call(
@@ -3287,6 +3289,7 @@ fn agent_pformat_and_prompt_renderers_cover_public_paths() {
             unlock_paths: vec!["Open Settings > Connections".into()],
         }],
         connected: false,
+        connections: Vec::new(),
         non_active_status: Some("INITIATED".into()),
     }];
     let learned = LearnedContextData {
@@ -3305,7 +3308,7 @@ fn agent_pformat_and_prompt_renderers_cover_public_paths() {
         model_name: "agentic-v1",
         agent_id: "planner",
         tools: &prompt_tools,
-        skills: &skills,
+        workflows: &skills,
         dispatcher_instructions: "Use tool calls when useful.",
         learned,
         visible_tool_names: &visible_tool_names,
@@ -3414,7 +3417,7 @@ fn agent_builtin_prompt_builders_cover_all_registered_archetypes() {
             model_name: "agentic-v1",
             agent_id: builtin.id,
             tools: &prompt_tools,
-            skills: &skills,
+            workflows: &skills,
             dispatcher_instructions: "Use available tools when needed.",
             learned: LearnedContextData::default(),
             visible_tool_names: &visible_tool_names,
@@ -3795,11 +3798,13 @@ fn agent_dispatchers_and_host_runtime_cover_public_edge_paths() {
                 id: "call-ok".into(),
                 name: "search_docs".into(),
                 arguments: "{\"query\":\"native\"}".into(),
+                extra_content: None,
             },
             ToolCall {
                 id: "call-bad-json".into(),
                 name: "search_docs".into(),
                 arguments: "{not-json".into(),
+                extra_content: None,
             },
         ],
         ..Default::default()
@@ -3832,6 +3837,7 @@ fn agent_dispatchers_and_host_runtime_cover_public_edge_paths() {
                 id: "call-1".into(),
                 name: "search_docs".into(),
                 arguments: "{\"query\":\"paired\"}".into(),
+                extra_content: None,
             }],
             reasoning_content: Some("thinking".into()),
         },
@@ -3845,6 +3851,7 @@ fn agent_dispatchers_and_host_runtime_cover_public_edge_paths() {
                 id: "missing-result".into(),
                 name: "search_docs".into(),
                 arguments: "{}".into(),
+                extra_content: None,
             }],
             reasoning_content: None,
         },
@@ -4634,6 +4641,7 @@ async fn agent_subagent_public_types_cover_task_local_and_error_display_paths() 
         worker_thread_id: Some("thread-1".to_string()),
         initial_history: None,
         checkpoint_dir: None,
+        worktree_action_dir: None,
     };
     assert_eq!(options.skill_filter_override.as_deref(), Some("docs"));
     assert_eq!(options.toolkit_override.as_deref(), Some("github"));

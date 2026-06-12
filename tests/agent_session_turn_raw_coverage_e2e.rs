@@ -487,6 +487,7 @@ fn native_tool_response(id: &str, name: &str, args: serde_json::Value) -> ChatRe
             id: id.to_string(),
             name: name.to_string(),
             arguments: args.to_string(),
+            extra_content: None,
         }],
         usage: Some(UsageInfo {
             input_tokens: 21,
@@ -889,6 +890,13 @@ async fn subagent_runner_parent_context_filters_tools_caps_output_and_reports_er
     ];
     let all_specs = all_tools.iter().map(|tool| tool.spec()).collect::<Vec<_>>();
     let parent = ParentExecutionContext {
+        agent_definition_id: "orchestrator".into(),
+        allowed_subagent_ids: [
+            "round17_child".to_string(),
+            "round17_provider_error".to_string(),
+        ]
+        .into_iter()
+        .collect(),
         provider: provider.clone(),
         all_tools: Arc::new(all_tools),
         all_tool_specs: Arc::new(all_specs),
@@ -900,7 +908,7 @@ async fn subagent_runner_parent_context_filters_tools_caps_output_and_reports_er
             max_tool_iterations: 5,
             ..AgentConfig::default()
         },
-        skills: Arc::new(Vec::new()),
+        workflows: Arc::new(Vec::new()),
         memory_context: Arc::new(Some("parent memory context".to_string())),
         session_id: "round17-parent-session".to_string(),
         channel: "round17-parent-channel".to_string(),
@@ -1010,6 +1018,7 @@ fn definition(
         timeout_secs: None,
         sandbox_mode: SandboxMode::None,
         background: false,
+        trigger_memory_agent: Default::default(),
         subagents: Vec::new(),
         delegate_name: None,
         agent_tier: AgentTier::Worker,

@@ -12,9 +12,13 @@ function makeAttachment(overrides: Partial<Attachment> = {}): Attachment {
   const blob = new Blob([new Uint8Array(256)], { type: 'image/png' });
   return {
     id: 'att-1',
+    kind: 'image',
     file: new File([blob], 'photo.png', { type: 'image/png' }),
     dataUri: 'data:image/png;base64,abc',
     mimeType: 'image/png',
+    originalSizeBytes: 256,
+    payloadSizeBytes: 256,
+    compressed: false,
     ...overrides,
   };
 }

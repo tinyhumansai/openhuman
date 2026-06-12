@@ -215,6 +215,7 @@ async fn round25_direct_mode_ops_use_loopback_factory_for_tools_connections_and_
         &harness.config,
         "GMAIL_FETCH_EMAILS",
         Some(json!({ "query": "label:INBOX" })),
+        None,
     )
     .await
     .expect("direct execute")
@@ -230,6 +231,7 @@ async fn round25_direct_mode_ops_use_loopback_factory_for_tools_connections_and_
         &harness.config,
         "GMAIL_SEND_EMAIL",
         Some(json!({ "to": "person@example.test" })),
+        None,
     )
     .await
     .expect("direct execute provider failure")

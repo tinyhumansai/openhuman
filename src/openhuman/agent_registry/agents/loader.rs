@@ -188,6 +188,26 @@ pub const BUILTINS: &[BuiltinAgent] = &[
         toml: include_str!("mcp_setup/agent.toml"),
         prompt_fn: super::mcp_setup::prompt::build,
     },
+    BuiltinAgent {
+        id: "skill_setup",
+        toml: include_str!("../../skill_registry/agent/skill_setup/agent.toml"),
+        prompt_fn: crate::openhuman::skill_registry::agent::skill_setup::prompt::build,
+    },
+    BuiltinAgent {
+        id: "skill_executor",
+        toml: include_str!("../../skill_runtime/agent/skill_executor/agent.toml"),
+        prompt_fn: crate::openhuman::skill_runtime::agent::skill_executor::prompt::build,
+    },
+    BuiltinAgent {
+        id: "agent_memory",
+        toml: include_str!("../../agent_memory/agent/agent.toml"),
+        prompt_fn: crate::openhuman::agent_memory::agent::prompt::build,
+    },
+    BuiltinAgent {
+        id: "subconscious",
+        toml: include_str!("../../subconscious/agent/agent.toml"),
+        prompt_fn: crate::openhuman::subconscious::agent::prompt::build,
+    },
 ];
 
 /// Parse every entry in [`BUILTINS`] into an [`AgentDefinition`].
@@ -240,12 +260,11 @@ pub fn validate_tier_hierarchy(defs: &[AgentDefinition]) -> Result<()> {
                 SubagentEntry::Skills(_) => continue,
             };
 
-            // Worker leaves: no spawn surface at all.
+            // Worker leaves: no open-ended spawn surface.
             if def.agent_tier == AgentTier::Worker {
                 anyhow::bail!(
-                    "agent `{parent}` is a `worker` tier and must not list `{child}` (or any \
-                     agent) in its subagents — workers are leaf executors. Either remove the \
-                     entry or re-tier `{parent}` as `chat` / `reasoning`.",
+                    "agent `{parent}` is a `worker` tier and must not list `{child}` in its \
+                     subagents — workers are leaf executors.",
                     parent = def.id,
                     child = child_id,
                 );
@@ -312,7 +331,9 @@ fn parse_builtin(b: &BuiltinAgent) -> Result<AgentDefinition> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::openhuman::agent::harness::definition::{ModelSpec, SandboxMode, ToolScope};
+    use crate::openhuman::agent::harness::definition::{
+        ModelSpec, SandboxMode, SubagentEntry, ToolScope, TriggerMemoryAgent,
+    };
 
     #[test]
     fn all_builtins_parse() {
@@ -321,15 +342,39 @@ mod tests {
     }
 
     #[test]
+    fn automatic_memory_agents_do_not_expose_call_memory_agent() {
+        for def in load_builtins().expect("built-in TOML must parse") {
+            if def.trigger_memory_agent != TriggerMemoryAgent::Always {
+                continue;
+            }
+
+            let exposes_call_memory_agent = match &def.tools {
+                ToolScope::Named(tools) => tools.iter().any(|tool| tool == "call_memory_agent"),
+                ToolScope::Wildcard => false,
+            };
+
+            assert!(
+                !exposes_call_memory_agent,
+                "{} uses trigger_memory_agent but still exposes call_memory_agent",
+                def.id
+            );
+            assert!(
+                !def.subagents.iter().any(
+                    |entry| matches!(entry, SubagentEntry::AgentId(id) if id == "agent_memory")
+                ),
+                "{} uses trigger_memory_agent but still lists agent_memory in subagents",
+                def.id
+            );
+        }
+    }
+
+    #[test]
     fn trigger_reactor_has_agentic_hint_and_narrow_tools() {
         let def = find("trigger_reactor");
         assert!(matches!(def.model, ModelSpec::Hint(ref h) if h == "agentic"));
         match &def.tools {
             ToolScope::Named(tools) => {
-                assert!(
-                    tools.iter().any(|t| t == "memory_recall"),
-                    "trigger_reactor needs memory_recall"
-                );
+                assert!(!tools.iter().any(|t| t == "call_memory_agent"));
                 assert!(
                     tools.iter().any(|t| t == "memory_store"),
                     "trigger_reactor needs memory_store"
@@ -432,7 +477,7 @@ mod tests {
                         model_name: "test",
                         agent_id: &def.id,
                         tools: &empty_tools,
-                        skills: &[],
+                        workflows: &[],
                         dispatcher_instructions: "",
                         learned: LearnedContextData::default(),
                         visible_tool_names: &empty_visible,
@@ -492,17 +537,55 @@ mod tests {
                     !tools.iter().any(|t| t == "spawn_subagent"),
                     "spawn_subagent must not appear — removed in #1141"
                 );
-                // consolidated memory_tree* → single memory_tree with mode dispatch
-                assert!(
-                    tools.iter().any(|t| t == "memory_tree"),
-                    "orchestrator must have memory_tree"
-                );
+                assert!(!tools.iter().any(|t| t == "call_memory_agent"));
                 assert!(!tools.iter().any(|t| t == "shell"));
                 assert!(!tools.iter().any(|t| t == "file_write"));
             }
             ToolScope::Wildcard => panic!("orchestrator must have named tool allowlist"),
         }
         assert_eq!(def.max_iterations, 15);
+        // Memory retrieval is on-demand (via the `agent_memory` subagent,
+        // surfaced as `delegate_retrieve_memory`), not an eager pre-turn
+        // pre-fetch. The allowlist entry is what makes that route reachable
+        // (see the `agent_memory::tools` allowlist gate).
+        assert_eq!(def.trigger_memory_agent, TriggerMemoryAgent::Never);
+        assert!(
+            def.subagents.iter().any(|entry| matches!(
+                entry,
+                SubagentEntry::AgentId(id) if id == "agent_memory"
+            )),
+            "orchestrator must allow `agent_memory` for on-demand retrieval"
+        );
+    }
+
+    /// Regression guard for the `resolve_time` wiring. Agents that emit
+    /// timestamp arguments to downstream tools must keep the deterministic
+    /// time resolver in their allowlist — otherwise the model falls back to
+    /// hand-computing epoch seconds, which once produced a ~10-month-wrong
+    /// `oldest` and silently fetched the wrong Slack window. If any of these
+    /// drops `resolve_time`, this test fails loudly.
+    #[test]
+    fn time_sensitive_agents_expose_resolve_time() {
+        for id in [
+            "orchestrator",
+            "integrations_agent",
+            "scheduler_agent",
+            "task_manager_agent",
+            "crypto_agent",
+            "markets_agent",
+        ] {
+            let def = find(id);
+            match def.tools {
+                ToolScope::Named(tools) => assert!(
+                    tools.iter().any(|t| t == "resolve_time"),
+                    "{id} must keep `resolve_time` in its named tool allowlist"
+                ),
+                ToolScope::Wildcard => {
+                    // Wildcard agents inherit the full built-in surface, which
+                    // already includes resolve_time — nothing to assert here.
+                }
+            }
+        }
     }
 
     #[test]
@@ -622,11 +705,14 @@ mod tests {
         match &presentation.tools {
             ToolScope::Named(names) => {
                 assert!(names.iter().any(|name| name == "generate_presentation"));
-                assert!(names.iter().any(|name| name == "memory_tree"));
+                assert!(!names.iter().any(|name| name == "call_memory_agent"));
                 assert!(names.iter().any(|name| name == "web_search_tool"));
             }
             other => panic!("presentation_agent must use Named tool scope, got {other:?}"),
         }
+        // Memory pre-fetch is no longer eager; `omit_memory_context = false`
+        // still gives the deck builder the cheap per-turn recall.
+        assert_eq!(presentation.trigger_memory_agent, TriggerMemoryAgent::Never);
 
         let desktop = find("desktop_control_agent");
         match &desktop.tools {
@@ -678,10 +764,7 @@ mod tests {
                     tools.iter().any(|t| t == "gitbooks_get_page"),
                     "help needs gitbooks_get_page"
                 );
-                assert!(
-                    tools.iter().any(|t| t == "memory_recall"),
-                    "help needs memory_recall for personalisation"
-                );
+                assert!(!tools.iter().any(|t| t == "call_memory_agent"));
                 // Help is docs-only — no write/exec tools.
                 assert!(!tools.iter().any(|t| t == "shell"));
                 assert!(!tools.iter().any(|t| t == "file_write"));
@@ -693,6 +776,9 @@ mod tests {
         assert!(def.omit_identity);
         assert!(def.omit_safety_preamble);
         assert!(!def.omit_memory_context);
+        // Help personalises from the cheap per-turn recall (memory_context on),
+        // so it no longer pre-fetches the full memory agent before every turn.
+        assert_eq!(def.trigger_memory_agent, TriggerMemoryAgent::Never);
     }
 
     #[test]
@@ -806,17 +892,13 @@ mod tests {
                     tools.iter().any(|t| t == "ask_user_clarification"),
                     "crypto_agent needs ask_user_clarification to gate write ops"
                 );
-                // Market grounding + context helpers. Pin the full set so a
-                // TOML edit that silently drops `stock_quote`,
-                // `stock_exchange_rate`, `memory_recall`, or `current_time`
-                // gets caught here — the agent's quote-before-execute
-                // discipline and "ground in user preferences before re-asking"
-                // behaviour both depend on these being present.
+                // Market grounding + time helpers. Memory retrieval is the
+                // orchestrator's on-demand concern — this specialist gets a
+                // grounded request and does not pre-fetch memory itself.
                 for required in [
                     "stock_quote",
                     "stock_exchange_rate",
                     "stock_crypto_series",
-                    "memory_recall",
                     "current_time",
                 ] {
                     assert!(
@@ -824,6 +906,13 @@ mod tests {
                         "crypto_agent needs supporting tool `{required}`"
                     );
                 }
+                // x402 paid HTTP requests — signs on-chain USDC payments
+                // for APIs behind HTTP 402 challenges.
+                assert!(
+                    tools.iter().any(|t| t == "x402_request"),
+                    "crypto_agent needs x402_request for paid API access"
+                );
+                assert!(!tools.iter().any(|t| t == "call_memory_agent"));
                 // Hard exclusions — no broad-surface or write-anywhere tools.
                 // Includes the orchestrator-level delegate_* tools so a future
                 // TOML edit can't accidentally hand crypto writes to the
@@ -860,6 +949,9 @@ mod tests {
         assert!(def.omit_identity);
         assert!(def.omit_memory_context);
         assert!(def.omit_skills_catalog);
+        // Pure-function specialist (omit_memory_context = true) — no eager
+        // memory pre-fetch; the orchestrator hands it a grounded request.
+        assert_eq!(def.trigger_memory_agent, TriggerMemoryAgent::Never);
     }
 
     /// Routing: the orchestrator must list `crypto_agent` in its
@@ -908,16 +1000,16 @@ mod tests {
                     tools.iter().any(|t| t == "ask_user_clarification"),
                     "markets_agent needs ask_user_clarification to gate write ops"
                 );
-                // Context helpers. Pin the full set so a TOML edit that
-                // silently drops `memory_recall` or `current_time` gets
-                // caught here — the agent's "ground in user preferences"
-                // and "as of <when>" framing depend on these.
-                for required in ["memory_recall", "current_time"] {
+                // Time grounding stays as a tool; memory retrieval is the
+                // orchestrator's on-demand concern — this specialist gets a
+                // grounded request and does not pre-fetch memory itself.
+                for required in ["current_time"] {
                     assert!(
                         tools.iter().any(|t| t == required),
                         "markets_agent needs supporting tool `{required}`"
                     );
                 }
+                assert!(!tools.iter().any(|t| t == "call_memory_agent"));
                 // Hard exclusions — no broad-surface tools, no wallet
                 // primitives (those belong to crypto_agent), no
                 // delegation tools (markets_agent is a worker leaf).
@@ -958,6 +1050,9 @@ mod tests {
         assert!(def.omit_identity);
         assert!(def.omit_memory_context);
         assert!(def.omit_skills_catalog);
+        // Pure-function specialist (omit_memory_context = true) — no eager
+        // memory pre-fetch; the orchestrator hands it a grounded request.
+        assert_eq!(def.trigger_memory_agent, TriggerMemoryAgent::Never);
         // Delegate name must be the stable, chat-friendly slug — the
         // orchestrator surfaces it as `delegate_do_prediction_markets`.
         assert_eq!(
@@ -1052,6 +1147,8 @@ mod tests {
 
     #[test]
     fn control_specialists_have_named_tools_and_are_worker_leaves() {
+        use crate::openhuman::agent::harness::definition::SubagentEntry;
+
         for expected in [
             "task_manager_agent",
             "settings_agent",
@@ -1061,7 +1158,18 @@ mod tests {
         ] {
             let def = find(expected);
             assert_eq!(def.agent_tier, AgentTier::Worker);
-            assert!(def.subagents.is_empty(), "{expected} must be a worker leaf");
+            let visible_subagents: Vec<&str> = def
+                .subagents
+                .iter()
+                .filter_map(|entry| match entry {
+                    SubagentEntry::AgentId(id) => Some(id.as_str()),
+                    _ => None,
+                })
+                .collect();
+            assert!(
+                visible_subagents.is_empty(),
+                "{expected} must be a worker leaf"
+            );
             match def.tools {
                 ToolScope::Named(tools) => {
                     assert!(
@@ -1099,13 +1207,13 @@ mod tests {
     #[test]
     fn other_builtins_default_to_worker_tier() {
         for def in load_builtins().unwrap() {
-            if def.id == "orchestrator" || def.id == "planner" {
+            if def.id == "orchestrator" || def.id == "planner" || def.id == "subconscious" {
                 continue;
             }
             assert_eq!(
                 def.agent_tier,
                 AgentTier::Worker,
-                "{} should default to worker tier (only orchestrator/planner are non-worker today)",
+                "{} should default to worker tier (only orchestrator/planner/subconscious are non-worker today)",
                 def.id
             );
         }

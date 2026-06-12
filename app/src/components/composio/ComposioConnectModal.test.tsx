@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import * as composioApi from '../../lib/composio/composioApi';
@@ -150,7 +150,7 @@ describe('<ComposioConnectModal>', () => {
     const connection: ComposioConnection = { id: 'ca_xyz', toolkit: 'gmail', status: 'ACTIVE' };
 
     render(
-      <ComposioConnectModal toolkit={mockToolkit} connection={connection} onClose={() => {}} />
+      <ComposioConnectModal toolkit={mockToolkit} connections={[connection]} onClose={() => {}} />
     );
 
     // Should be in 'connected' phase because connection.status is 'ACTIVE'
@@ -168,7 +168,7 @@ describe('<ComposioConnectModal>', () => {
     };
 
     render(
-      <ComposioConnectModal toolkit={mockToolkit} connection={connection} onClose={() => {}} />
+      <ComposioConnectModal toolkit={mockToolkit} connections={[connection]} onClose={() => {}} />
     );
 
     expect(screen.getByText('(foo@bar.com)')).toBeInTheDocument();
@@ -183,7 +183,7 @@ describe('<ComposioConnectModal>', () => {
     };
 
     render(
-      <ComposioConnectModal toolkit={mockToolkit} connection={connection} onClose={() => {}} />
+      <ComposioConnectModal toolkit={mockToolkit} connections={[connection]} onClose={() => {}} />
     );
 
     expect(screen.getByText('(Acme)')).toBeInTheDocument();
@@ -198,7 +198,7 @@ describe('<ComposioConnectModal>', () => {
     };
 
     render(
-      <ComposioConnectModal toolkit={mockToolkit} connection={connection} onClose={() => {}} />
+      <ComposioConnectModal toolkit={mockToolkit} connections={[connection]} onClose={() => {}} />
     );
 
     expect(screen.getByText('(oxox)')).toBeInTheDocument();
@@ -215,12 +215,78 @@ describe('<ComposioConnectModal>', () => {
     };
 
     render(
-      <ComposioConnectModal toolkit={mockToolkit} connection={connection} onClose={() => {}} />
+      <ComposioConnectModal toolkit={mockToolkit} connections={[connection]} onClose={() => {}} />
     );
 
     expect(screen.getByText('(foo@bar.com)')).toBeInTheDocument();
     expect(screen.queryByText('(Acme)')).not.toBeInTheDocument();
     expect(screen.queryByText('(oxox)')).not.toBeInTheDocument();
+  });
+
+  it('renders multi-connection list when multiple active connections exist', () => {
+    const connections: ComposioConnection[] = [
+      { id: 'ca_1', toolkit: 'gmail', status: 'ACTIVE', accountEmail: 'work@corp.com' },
+      { id: 'ca_2', toolkit: 'gmail', status: 'ACTIVE', accountEmail: 'personal@gmail.com' },
+    ];
+
+    render(
+      <ComposioConnectModal toolkit={mockToolkit} connections={connections} onClose={() => {}} />
+    );
+
+    expect(screen.getByText('work@corp.com')).toBeInTheDocument();
+    expect(screen.getByText('personal@gmail.com')).toBeInTheDocument();
+    expect(screen.getByText(/Add another account/i)).toBeInTheDocument();
+  });
+
+  it('stays in connected phase after disconnecting one of multiple connections', async () => {
+    const connections: ComposioConnection[] = [
+      { id: 'ca_1', toolkit: 'gmail', status: 'ACTIVE', accountEmail: 'work@corp.com' },
+      { id: 'ca_2', toolkit: 'gmail', status: 'ACTIVE', accountEmail: 'personal@gmail.com' },
+    ];
+    vi.mocked(composioApi.deleteConnection).mockResolvedValue({
+      deleted: true,
+      memory_chunks_deleted: 0,
+    });
+
+    render(
+      <ComposioConnectModal toolkit={mockToolkit} connections={connections} onClose={() => {}} />
+    );
+
+    const personalEl = screen.getByText('personal@gmail.com');
+    const row = personalEl.closest('.rounded-lg')!;
+    const disconnectBtn = within(row as HTMLElement).getByText(/Remove/i);
+    fireEvent.click(disconnectBtn);
+
+    await waitFor(() => {
+      expect(composioApi.deleteConnection).toHaveBeenCalledWith('ca_2', { clearMemory: false });
+    });
+  });
+
+  it('shows default label on first connection in multi-connection list', () => {
+    const connections: ComposioConnection[] = [
+      { id: 'ca_1', toolkit: 'gmail', status: 'ACTIVE', accountEmail: 'work@corp.com' },
+      { id: 'ca_2', toolkit: 'gmail', status: 'ACTIVE', accountEmail: 'personal@gmail.com' },
+    ];
+
+    render(
+      <ComposioConnectModal toolkit={mockToolkit} connections={connections} onClose={() => {}} />
+    );
+
+    expect(screen.getByText(/^default$/i)).toBeInTheDocument();
+  });
+
+  it('falls back to toolkit name when connection has no label', () => {
+    const connections: ComposioConnection[] = [
+      { id: 'ca_1', toolkit: 'gmail', status: 'ACTIVE' },
+      { id: 'ca_2', toolkit: 'gmail', status: 'ACTIVE' },
+    ];
+
+    render(
+      <ComposioConnectModal toolkit={mockToolkit} connections={connections} onClose={() => {}} />
+    );
+
+    const gmailTexts = screen.getAllByText('Gmail');
+    expect(gmailTexts.length).toBeGreaterThanOrEqual(2);
   });
 
   it('passes clearMemory only when the disconnect memory checkbox is selected', async () => {
@@ -231,7 +297,7 @@ describe('<ComposioConnectModal>', () => {
     });
 
     render(
-      <ComposioConnectModal toolkit={mockToolkit} connection={connection} onClose={() => {}} />
+      <ComposioConnectModal toolkit={mockToolkit} connections={[connection]} onClose={() => {}} />
     );
 
     fireEvent.click(screen.getByLabelText(/also delete memory/i));
@@ -247,7 +313,7 @@ describe('<ComposioConnectModal>', () => {
     vi.mocked(composioApi.deleteConnection).mockRejectedValueOnce(new Error('backend down'));
 
     render(
-      <ComposioConnectModal toolkit={mockToolkit} connection={connection} onClose={() => {}} />
+      <ComposioConnectModal toolkit={mockToolkit} connections={[connection]} onClose={() => {}} />
     );
 
     const checkbox = screen.getByLabelText(/also delete memory/i);
@@ -272,7 +338,7 @@ describe('<ComposioConnectModal>', () => {
     };
 
     render(
-      <ComposioConnectModal toolkit={mockToolkit} connection={connection} onClose={() => {}} />
+      <ComposioConnectModal toolkit={mockToolkit} connections={[connection]} onClose={() => {}} />
     );
 
     expect(screen.getByText(/Gmail authorization expired/i)).toBeInTheDocument();

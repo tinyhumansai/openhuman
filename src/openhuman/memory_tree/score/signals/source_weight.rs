@@ -56,6 +56,8 @@ fn weight_for(ds: DataSource) -> f32 {
         DataSource::Whatsapp => 0.75,
         DataSource::Telegram => 0.6,
         DataSource::Discord => 0.5,
+        // Agent conversations — high signal, direct interaction with the user
+        DataSource::Conversation => 0.9,
         // Documents: Notion = structured, Drive = mixed, Meeting notes = high value
         DataSource::Notion => 0.75,
         DataSource::DriveDocs => 0.6,

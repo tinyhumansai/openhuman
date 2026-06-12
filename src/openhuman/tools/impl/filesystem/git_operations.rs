@@ -19,6 +19,18 @@ impl GitOperationsTool {
         }
     }
 
+    /// Resolve the working directory for git operations.
+    ///
+    /// Returns the per-worker git-worktree override when one is installed via
+    /// [`crate::openhuman::agent::harness::with_action_dir_override`] (an
+    /// edit-capable worker running with `isolation = "worktree"`), otherwise
+    /// the tool's configured `action_dir`. Keeping `self.action_dir` as the
+    /// fallback preserves the non-isolated behaviour exactly. See #3376.
+    fn effective_action_dir(&self) -> std::path::PathBuf {
+        crate::openhuman::agent::harness::current_action_dir_override()
+            .unwrap_or_else(|| self.action_dir.clone())
+    }
+
     /// Sanitize git arguments to prevent injection attacks
     fn sanitize_git_args(&self, args: &str) -> anyhow::Result<Vec<String>> {
         let mut result = Vec::new();
@@ -68,7 +80,7 @@ impl GitOperationsTool {
     async fn run_git_command(&self, args: &[&str]) -> anyhow::Result<String> {
         let output = tokio::process::Command::new("git")
             .args(args)
-            .current_dir(&self.action_dir)
+            .current_dir(self.effective_action_dir())
             .output()
             .await?;
 
@@ -479,10 +491,12 @@ impl Tool for GitOperationsTool {
             }
         };
 
-        // Check if we're in a git repository
-        if !self.action_dir.join(".git").exists() {
+        // Check if we're in a git repository. A linked worktree's `.git` is a
+        // file (a gitdir pointer), not a directory — `exists()` covers both.
+        let effective_dir = self.effective_action_dir();
+        if !effective_dir.join(".git").exists() {
             // Try to find .git in parent directories
-            let mut current_dir = self.action_dir.as_path();
+            let mut current_dir = effective_dir.as_path();
             let mut found_git = false;
             while current_dir.parent().is_some() {
                 if current_dir.join(".git").exists() {

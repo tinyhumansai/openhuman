@@ -48,6 +48,38 @@ function renderPanel() {
   );
 }
 
+const usageLogPayload = {
+  records: [
+    {
+      id: 'record-1',
+      timestamp: '2026-05-27T12:00:00Z',
+      session_id: 'session-abcdef',
+      model: 'anthropic/claude-sonnet-4',
+      provider: 'anthropic',
+      category: 'AI chat and reasoning',
+      input_tokens: 1000,
+      output_tokens: 500,
+      total_tokens: 1500,
+      cost_usd: 1.25,
+    },
+  ],
+  by_category: [
+    {
+      category: 'AI chat and reasoning',
+      cost_usd: 1.25,
+      total_tokens: 1500,
+      request_count: 1,
+      percent_of_total: 100,
+    },
+  ],
+  total_cost_usd: 1.25,
+  total_tokens: 1500,
+  request_count: 1,
+  currency: 'USD',
+  days: 30,
+  limit: 250,
+};
+
 describe('<CostDashboardPanel />', () => {
   beforeEach(() => {
     mockedCall.mockReset();
@@ -58,42 +90,51 @@ describe('<CostDashboardPanel />', () => {
   });
 
   it('shows the loading state and then renders all sections', async () => {
-    mockedCall.mockResolvedValueOnce({
-      days: Array.from({ length: 7 }, (_, i) => ({
-        date: `2026-05-${21 + i}`,
-        cost_usd: i === 6 ? 1.25 : 0,
-        input_tokens: i === 6 ? 1000 : 0,
-        output_tokens: i === 6 ? 500 : 0,
-        total_tokens: i === 6 ? 1500 : 0,
-        request_count: i === 6 ? 1 : 0,
-        by_model: [],
-      })),
-      period_total_usd: 1.25,
-      monthly_pace_usd: 5.36,
-      budget_limit_monthly_usd: 100,
-      month_to_date_usd: 1.25,
-      budget_utilization: 0.0125,
-      budget_status: 'normal',
-      currency: 'USD',
-      warn_threshold: 0.8,
-      alert_threshold: 0.95,
-      enabled: true,
-      by_model: [
-        {
-          model: 'anthropic/claude-sonnet-4',
-          cost_usd: 1.25,
-          total_tokens: 1500,
-          request_count: 1,
-          provider: 'anthropic',
-          percent_of_total: 100,
-        },
-      ],
-    });
+    mockedCall
+      .mockResolvedValueOnce({
+        days: Array.from({ length: 7 }, (_, i) => ({
+          date: `2026-05-${21 + i}`,
+          cost_usd: i === 6 ? 1.25 : 0,
+          input_tokens: i === 6 ? 1000 : 0,
+          output_tokens: i === 6 ? 500 : 0,
+          total_tokens: i === 6 ? 1500 : 0,
+          request_count: i === 6 ? 1 : 0,
+          by_model: [],
+        })),
+        period_total_usd: 1.25,
+        monthly_pace_usd: 5.36,
+        budget_limit_monthly_usd: 100,
+        month_to_date_usd: 1.25,
+        budget_utilization: 0.0125,
+        budget_status: 'normal',
+        currency: 'USD',
+        warn_threshold: 0.8,
+        alert_threshold: 0.95,
+        enabled: true,
+        by_model: [
+          {
+            model: 'anthropic/claude-sonnet-4',
+            cost_usd: 1.25,
+            total_tokens: 1500,
+            request_count: 1,
+            provider: 'anthropic',
+            percent_of_total: 100,
+          },
+        ],
+      })
+      .mockResolvedValueOnce(usageLogPayload);
     renderPanel();
     await waitFor(() => expect(screen.getByTestId('cost-dashboard-summary')).toBeInTheDocument());
     expect(screen.getByTestId('cost-dashboard-cost-chart')).toBeInTheDocument();
     expect(screen.getByTestId('cost-dashboard-token-chart')).toBeInTheDocument();
     expect(screen.getByTestId('cost-dashboard-model-table')).toBeInTheDocument();
+    expect(screen.getByTestId('cost-dashboard-category-distribution')).toBeInTheDocument();
+    expect(screen.getByTestId('cost-dashboard-usage-log')).toHaveTextContent(
+      'AI chat and reasoning'
+    );
+    expect(mockedCall).toHaveBeenCalledWith(
+      expect.objectContaining({ method: 'openhuman.cost_get_usage_log' })
+    );
   });
 
   it('shows the disabled hint when the payload reports enabled=false', async () => {

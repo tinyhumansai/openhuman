@@ -63,6 +63,10 @@ pub struct ComposioActionTool {
     /// `{"type":"object"}` when the upstream response omits it so the
     /// LLM still gets a valid (if loose) shape.
     parameters: Value,
+    /// When set, all executions through this tool target a specific
+    /// Composio connection. Used when the sub-agent is spawned for a
+    /// particular account (e.g. "send from my work Gmail").
+    connection_id: Option<String>,
 }
 
 impl ComposioActionTool {
@@ -72,12 +76,23 @@ impl ComposioActionTool {
         description: String,
         parameters: Option<Value>,
     ) -> Self {
+        Self::with_connection_id(config, action_name, description, parameters, None)
+    }
+
+    pub fn with_connection_id(
+        config: Arc<Config>,
+        action_name: String,
+        description: String,
+        parameters: Option<Value>,
+        connection_id: Option<String>,
+    ) -> Self {
         let parameters = parameters.unwrap_or_else(|| serde_json::json!({"type": "object"}));
         Self {
             config,
             action_name,
             description,
             parameters,
+            connection_id,
         }
     }
 }
@@ -93,7 +108,16 @@ impl Tool for ComposioActionTool {
     }
 
     fn parameters_schema(&self) -> Value {
-        self.parameters.clone()
+        let mut schema = self.parameters.clone();
+        if let Some(props) = schema.get_mut("properties").and_then(|v| v.as_object_mut()) {
+            props.entry("connection_id").or_insert_with(|| {
+                serde_json::json!({
+                    "type": "string",
+                    "description": "Optional. Target a specific account when multiple are connected. Use the connection_id from Connected Integrations. Omit to use the default."
+                })
+            });
+        }
+        schema
     }
 
     fn permission_level(&self) -> PermissionLevel {
@@ -201,11 +225,23 @@ impl Tool for ComposioActionTool {
         // mapping pipeline. The dispatcher applies `format_provider_error`
         // to failures (transport + provider) so downstream consumers can
         // parse `[composio:error:<class>] …`.
-        let res = super::execute_dispatch::execute_composio_action_kind(
+        // Allow the agent to override the baked-in connection_id via args
+        let runtime_connection_id = args
+            .as_ref()
+            .and_then(|v| v.get("connection_id"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(String::from);
+        let effective_connection_id = runtime_connection_id
+            .as_deref()
+            .or(self.connection_id.as_deref());
+        let res = super::execute_dispatch::execute_composio_action_kind_with_connection(
             kind,
             &self.action_name,
             args,
             &live_config.composio.entity_id,
+            effective_connection_id,
         )
         .await;
         let elapsed_ms = started.elapsed().as_millis() as u64;

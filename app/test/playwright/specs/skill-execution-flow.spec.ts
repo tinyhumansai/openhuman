@@ -24,15 +24,16 @@ test.describe('Skill discovery (UI + core RPC)', () => {
   });
 
   test('skills UI surface shows installed tools', async ({ page }) => {
-    await page.goto('/#/skills');
+    // /skills redirects to /connections (Phase 2 rename)
+    await page.goto('/#/connections');
     await waitForAppReady(page);
 
     const hash = await page.evaluate(() => window.location.hash);
-    expect(String(hash)).toContain('/skills');
+    expect(String(hash)).toContain('/connections');
 
     const text = await page.locator('#root').innerText();
     expect(
-      ['Composio Integrations', 'Channels', 'Gmail', 'Notion', 'GitHub'].some(marker =>
+      ['Composio Integrations', 'Apps', 'Messaging', 'Gmail', 'Notion', 'GitHub'].some(marker =>
         text.includes(marker)
       )
     ).toBe(true);

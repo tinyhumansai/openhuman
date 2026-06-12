@@ -7,7 +7,9 @@ import { useT } from '../../../lib/i18n/I18nContext';
 // TAURI-REACT-6 — into a rejected Promise that the existing try/catch sees
 // as a regular IPC failure.
 import { safeInvoke as invoke, isTauri } from '../../../utils/tauriCommands/common';
+import Button from '../../ui/Button';
 import SettingsHeader from '../components/SettingsHeader';
+import { SettingsSection } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 const log = debug('mcp-server-panel');
@@ -180,13 +182,9 @@ const McpServerPanel = ({ embedded = false }: McpServerPanelProps = {}) => {
       {/* Section 1 — Available Tools                                        */}
       {/* ----------------------------------------------------------------- */}
       <div className="px-4 pt-4 pb-2">
-        <div className="text-sm font-semibold text-slate-900 dark:text-neutral-100 mb-0.5">
-          {t('settings.mcpServer.toolsSectionTitle')}
-        </div>
-        <div className="text-xs text-slate-500 dark:text-neutral-400 mb-3">
-          {t('settings.mcpServer.toolsSectionDesc')}
-        </div>
-        <div className="rounded-xl border border-stone-200 dark:border-neutral-800 divide-y divide-stone-100 dark:divide-neutral-800 overflow-hidden">
+        <SettingsSection
+          title={t('settings.mcpServer.toolsSectionTitle')}
+          description={t('settings.mcpServer.toolsSectionDesc')}>
           {MCP_TOOLS.map(tool => (
             <div
               key={tool.name}
@@ -194,100 +192,100 @@ const McpServerPanel = ({ embedded = false }: McpServerPanelProps = {}) => {
               <span className="font-mono text-xs text-primary-700 dark:text-primary-400 mt-0.5 shrink-0">
                 {tool.name}
               </span>
-              <span className="text-xs text-slate-600 dark:text-neutral-400">
+              <span className="text-xs text-neutral-600 dark:text-neutral-400">
                 {tool.description}
               </span>
             </div>
           ))}
-        </div>
+        </SettingsSection>
       </div>
 
       {/* ----------------------------------------------------------------- */}
       {/* Section 2 — Client Configuration                                   */}
       {/* ----------------------------------------------------------------- */}
       <div className="px-4 pt-4 pb-6">
-        <div className="text-sm font-semibold text-slate-900 dark:text-neutral-100 mb-0.5">
-          {t('settings.mcpServer.configSectionTitle')}
-        </div>
-        <div className="text-xs text-slate-500 dark:text-neutral-400 mb-3">
-          {t('settings.mcpServer.configSectionDesc')}
-        </div>
-
-        {/* Client selector tabs */}
-        <div
-          className="flex gap-1 mb-4 flex-wrap"
-          role="tablist"
-          aria-label={t('settings.mcpServer.clientSelectorAriaLabel')}>
-          {clients.map(client => (
-            <button
-              key={client.id}
-              role="tab"
-              aria-selected={activeClient === client.id}
-              onClick={() => {
-                setActiveClient(client.id);
-                setOpenConfigError(null);
-              }}
-              className={[
-                'px-3 py-1.5 rounded-lg text-xs font-medium transition-colors',
-                activeClient === client.id
-                  ? 'bg-primary-600 text-white'
-                  : 'bg-stone-100 dark:bg-neutral-800 text-slate-700 dark:text-neutral-300 hover:bg-stone-200 dark:hover:bg-neutral-700',
-              ].join(' ')}>
-              {client.label}
-            </button>
-          ))}
-        </div>
-
-        {/* Binary path error banner */}
-        {binaryError && (
-          <div className="mb-3 px-3 py-2 rounded-lg border border-coral-300 dark:border-coral-500/40 bg-coral-50 dark:bg-coral-500/10 text-xs text-coral-900 dark:text-coral-300">
-            {t('settings.mcpServer.binaryPathNotFound')}
+        <SettingsSection
+          title={t('settings.mcpServer.configSectionTitle')}
+          description={t('settings.mcpServer.configSectionDesc')}>
+          {/* Client selector tabs */}
+          <div className="px-4 pt-3">
+            <div
+              className="flex gap-1 flex-wrap"
+              role="tablist"
+              aria-label={t('settings.mcpServer.clientSelectorAriaLabel')}>
+              {clients.map(client => (
+                <button
+                  key={client.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={activeClient === client.id}
+                  onClick={() => {
+                    setActiveClient(client.id);
+                    setOpenConfigError(null);
+                  }}
+                  className={[
+                    'px-3 py-1.5 rounded-lg text-xs font-medium transition-colors',
+                    activeClient === client.id
+                      ? 'bg-primary-600 text-white'
+                      : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-200 dark:hover:bg-neutral-700',
+                  ].join(' ')}>
+                  {client.label}
+                </button>
+              ))}
+            </div>
           </div>
-        )}
 
-        {/* Config file path */}
-        <div className="mb-2 flex items-center gap-2">
-          <span className="text-xs text-slate-500 dark:text-neutral-400 shrink-0">
-            {t('settings.mcpServer.configFilePath')}:
-          </span>
-          <span className="text-xs font-mono text-slate-700 dark:text-neutral-300 truncate">
-            {configPath}
-          </span>
-        </div>
-
-        {/* JSON snippet */}
-        <div className="rounded-xl overflow-hidden border border-stone-200 dark:border-neutral-800 mb-3">
-          <pre className="bg-stone-50 dark:bg-neutral-900/60 px-4 py-3 text-xs font-mono text-slate-800 dark:text-neutral-200 overflow-x-auto whitespace-pre leading-relaxed">
-            {snippet}
-          </pre>
-        </div>
-
-        {/* Action buttons */}
-        <div className="flex items-center gap-2 flex-wrap">
-          <button
-            onClick={handleCopy}
-            className="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-700 hover:bg-slate-600 text-white transition-colors shrink-0">
-            {copied ? t('settings.mcpServer.copied') : t('settings.mcpServer.copySnippet')}
-          </button>
-
-          {isTauri() && (
-            <button
-              onClick={handleOpenConfig}
-              className="px-3 py-1.5 rounded-lg text-xs font-medium bg-stone-100 dark:bg-neutral-800 text-slate-700 dark:text-neutral-300 hover:bg-stone-200 dark:hover:bg-neutral-700 transition-colors shrink-0">
-              {t('settings.mcpServer.openConfigFile')}
-            </button>
+          {/* Binary path error banner */}
+          {binaryError && (
+            <div className="mx-4 mt-3 px-3 py-2 rounded-lg border border-coral-300 dark:border-coral-500/40 bg-coral-50 dark:bg-coral-500/10 text-xs text-coral-900 dark:text-coral-300">
+              {t('settings.mcpServer.binaryPathNotFound')}
+            </div>
           )}
-        </div>
 
-        {/* Open config error */}
-        {openConfigError && (
-          <div
-            role="status"
-            aria-live="polite"
-            className="mt-2 text-xs text-coral-600 dark:text-coral-300">
-            {t('settings.mcpServer.openConfigError')}: {openConfigError}
+          {/* Config file path */}
+          <div className="px-4 mt-3 mb-2 flex items-center gap-2">
+            <span className="text-xs text-neutral-500 dark:text-neutral-400 shrink-0">
+              {t('settings.mcpServer.configFilePath')}:
+            </span>
+            <span className="text-xs font-mono text-neutral-700 dark:text-neutral-300 truncate">
+              {configPath}
+            </span>
           </div>
-        )}
+
+          {/* JSON snippet */}
+          <div className="mx-4 mb-3 rounded-xl overflow-hidden border border-neutral-200 dark:border-neutral-800">
+            <pre className="bg-neutral-50 dark:bg-neutral-900/60 px-4 py-3 text-xs font-mono text-neutral-800 dark:text-neutral-200 overflow-x-auto whitespace-pre leading-relaxed">
+              {snippet}
+            </pre>
+          </div>
+
+          {/* Action buttons */}
+          <div className="px-4 pb-4 flex items-center gap-2 flex-wrap">
+            <Button type="button" variant="secondary" size="xs" onClick={() => void handleCopy()}>
+              {copied ? t('settings.mcpServer.copied') : t('settings.mcpServer.copySnippet')}
+            </Button>
+
+            {isTauri() && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="xs"
+                onClick={() => void handleOpenConfig()}>
+                {t('settings.mcpServer.openConfigFile')}
+              </Button>
+            )}
+          </div>
+
+          {/* Open config error */}
+          {openConfigError && (
+            <div
+              role="status"
+              aria-live="polite"
+              className="px-4 pb-3 text-xs text-coral-600 dark:text-coral-300">
+              {t('settings.mcpServer.openConfigError')}: {openConfigError}
+            </div>
+          )}
+        </SettingsSection>
       </div>
     </div>
   );

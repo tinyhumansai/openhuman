@@ -151,6 +151,59 @@ pub fn claim_next(config: &Config, lock_duration_ms: i64) -> Result<Option<Job>>
     })
 }
 
+/// Claim additional ready `extract_chunk` jobs for the same worker tick.
+///
+/// The caller has already claimed one job through [`claim_next`]. This helper
+/// leases up to `limit` more extract jobs so the handler can batch the
+/// embedding sub-step without widening non-extract scheduling semantics.
+pub fn claim_ready_extract_batch(
+    config: &Config,
+    lock_duration_ms: i64,
+    limit: usize,
+) -> Result<Vec<Job>> {
+    if limit == 0 {
+        return Ok(Vec::new());
+    }
+    with_connection(config, |conn| {
+        let now_ms = Utc::now().timestamp_millis();
+        let lock_until = now_ms.saturating_add(lock_duration_ms);
+        let mut stmt = conn
+            .prepare(
+                "UPDATE mem_tree_jobs
+                    SET status = 'running',
+                        attempts = attempts + 1,
+                        started_at_ms = ?1,
+                        locked_until_ms = ?2,
+                        last_error = NULL
+                  WHERE id IN (
+                      SELECT id FROM mem_tree_jobs
+                       WHERE status = 'ready'
+                         AND kind = 'extract_chunk'
+                         AND available_at_ms <= ?1
+                       ORDER BY available_at_ms ASC
+                       LIMIT ?3
+                  )
+              RETURNING id, kind, payload_json, dedupe_key, status, attempts,
+                        max_attempts, available_at_ms, locked_until_ms, last_error,
+                        created_at_ms, started_at_ms, completed_at_ms,
+                        failure_reason, failure_class",
+            )
+            .context("prepare claim_ready_extract_batch")?;
+        let jobs = stmt
+            .query_map(params![now_ms, lock_until, limit as i64], row_to_job)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .context("query claim_ready_extract_batch")?;
+        if !jobs.is_empty() {
+            log::debug!(
+                "[memory::jobs] claimed extract batch count={} lock_until_ms={}",
+                jobs.len(),
+                lock_until
+            );
+        }
+        Ok(jobs)
+    })
+}
+
 /// Mark a claimed job as `done`. Clears the lock and stamps `completed_at_ms`.
 ///
 /// The UPDATE is gated on `attempts` and `started_at_ms` matching the values

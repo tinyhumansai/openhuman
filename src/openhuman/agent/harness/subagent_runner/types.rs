@@ -56,6 +56,16 @@ pub struct SubagentRunOptions {
     /// sub-agent pauses for user input. Defaults to
     /// `{workspace_dir}/.openhuman/subagent_checkpoints/`.
     pub checkpoint_dir: Option<PathBuf>,
+
+    /// Per-worker `action_dir` override for git-worktree isolation.
+    ///
+    /// When `Some`, the runner installs this path as the
+    /// `current_action_dir_override` task-local around the inner tool-call
+    /// loop, so acting tools (shell, git) operate inside the worker's
+    /// isolated worktree checkout instead of the shared `Config.action_dir`.
+    /// When `None` (the default), behaviour is unchanged — tools fall through
+    /// to `security.action_dir`.
+    pub worktree_action_dir: Option<PathBuf>,
 }
 
 /// Terminal status of a sub-agent run.

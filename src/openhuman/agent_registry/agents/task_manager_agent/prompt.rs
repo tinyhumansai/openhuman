@@ -51,7 +51,7 @@ mod tests {
             model_name: "test",
             agent_id: "task_manager_agent",
             tools: &[],
-            skills: &[],
+            workflows: &[],
             dispatcher_instructions: "",
             learned: LearnedContextData::default(),
             visible_tool_names: &visible,

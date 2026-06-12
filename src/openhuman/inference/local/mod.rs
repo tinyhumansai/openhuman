@@ -49,8 +49,8 @@ pub use core::*;
 pub use ops as rpc;
 pub use ops::*;
 pub use schemas::{
-    all_controller_schemas as all_local_ai_controller_schemas,
-    all_registered_controllers as all_local_ai_registered_controllers,
+    all_controller_schemas as all_local_inference_controller_schemas,
+    all_registered_controllers as all_local_inference_registered_controllers,
 };
 pub(crate) use service::whisper_engine;
 pub use service::LocalAiService;

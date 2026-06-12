@@ -103,6 +103,26 @@ pub struct NamespaceSummary {
 // Connected integrations (Composio toolkits)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Identity of a single active connection within a toolkit.
+///
+/// Surfaced in the system prompt so the orchestrator can disambiguate
+/// multiple accounts for the same toolkit (e.g. "work Gmail" vs
+/// "personal Gmail") and pass the correct `connection_id` to the
+/// execute pipeline.
+#[derive(Debug, Clone)]
+pub struct IntegrationConnection {
+    /// Composio connection ID — passed to execute when the user/agent
+    /// targets a specific account.
+    pub connection_id: String,
+    /// Human-readable label derived from the connection's identity
+    /// fields: `account_email`, `workspace`, or `username` (first
+    /// non-empty wins). `None` when identity hasn't been enriched yet.
+    pub label: Option<String>,
+    /// Whether this is the default connection for the toolkit (oldest
+    /// active connection by `created_at`).
+    pub is_default: bool,
+}
+
 /// An external integration (e.g. a Composio OAuth-backed toolkit)
 /// surfaced in the system prompt so the orchestrator knows which
 /// services are available — both **already connected** and **available
@@ -138,6 +158,10 @@ pub struct ConnectedIntegration {
     /// and the orchestrator must point the user at Settings instead of
     /// attempting to delegate.
     pub connected: bool,
+    /// All active connections for this toolkit, sorted by `created_at`
+    /// ascending (oldest first). The first entry is the default.
+    /// Empty when `connected == false`.
+    pub connections: Vec<IntegrationConnection>,
     /// Raw upstream connection status when a connection row exists but
     /// is not `ACTIVE` — e.g. `"INITIATED"`, `"INITIALIZING"`,
     /// `"FAILED"`, `"EXPIRED"`. `None` means either the user is
@@ -315,7 +339,7 @@ pub struct PromptContext<'a> {
     /// Id of the agent this prompt is being built for.
     pub agent_id: &'a str,
     pub tools: &'a [PromptTool<'a>],
-    pub skills: &'a [Workflow],
+    pub workflows: &'a [Workflow],
     pub dispatcher_instructions: &'a str,
     /// Pre-fetched learned context (empty when learning is disabled).
     pub learned: LearnedContextData,

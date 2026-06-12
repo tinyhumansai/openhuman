@@ -589,6 +589,77 @@ async fn apply_model_settings_replaces_model_routes_when_some_and_keeps_when_non
 }
 
 #[tokio::test]
+async fn apply_model_settings_replaces_model_registry_when_some_and_keeps_when_none() {
+    // Per-model vision registry follows Some=replace / None=keep / empty=clear —
+    // this persists the "Supports vision" flag set in Settings → Advanced LLM.
+    use crate::openhuman::config::schema::ModelRegistryEntry;
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+
+    let set = ModelSettingsPatch {
+        model_registry: Some(vec![ModelRegistryEntry {
+            id: "my-llava".into(),
+            provider: "openai".into(),
+            cost_per_1m_output: 0.0,
+            vision: true,
+        }]),
+        ..Default::default()
+    };
+    let _ = apply_model_settings(&mut cfg, set).await.expect("set");
+    assert_eq!(cfg.model_registry.len(), 1);
+    assert!(cfg
+        .model_registry
+        .iter()
+        .any(|e| e.id == "my-llava" && e.vision));
+
+    // None — leave registry alone.
+    let _ = apply_model_settings(
+        &mut cfg,
+        ModelSettingsPatch {
+            api_url: Some("https://x.test/v1".into()),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("touch");
+    assert_eq!(cfg.model_registry.len(), 1);
+
+    // Empty vec — clear.
+    let _ = apply_model_settings(
+        &mut cfg,
+        ModelSettingsPatch {
+            model_registry: Some(vec![]),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("clear");
+    assert!(cfg.model_registry.is_empty());
+}
+
+#[tokio::test]
+async fn apply_model_settings_trims_model_registry_ids() {
+    // `model_vision_enabled` matches the resolved id exactly, so persisted ids
+    // must be trimmed or stray whitespace would silently disable vision.
+    use crate::openhuman::config::schema::ModelRegistryEntry;
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+
+    let set = ModelSettingsPatch {
+        model_registry: Some(vec![ModelRegistryEntry {
+            id: "  spaced-model  ".into(),
+            provider: "openai".into(),
+            cost_per_1m_output: 0.0,
+            vision: true,
+        }]),
+        ..Default::default()
+    };
+    let _ = apply_model_settings(&mut cfg, set).await.expect("set");
+    assert_eq!(cfg.model_registry.len(), 1);
+    assert_eq!(cfg.model_registry[0].id, "spaced-model");
+}
+
+#[tokio::test]
 async fn apply_model_settings_empty_strings_clear_optional_fields() {
     let tmp = tempdir().unwrap();
     let mut cfg = tmp_config(&tmp);

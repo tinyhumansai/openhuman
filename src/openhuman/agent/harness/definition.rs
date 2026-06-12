@@ -22,7 +22,7 @@
 //! and serialised straight from disk.
 
 use serde::ser::SerializeMap;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::path::PathBuf;
 
 /// Iteration-cap policy for a sub-agent.
@@ -47,6 +47,17 @@ pub enum IterationPolicy {
     Strict,
     /// Raised cap for multi-step specialists. Guards still apply.
     Extended,
+}
+
+/// Policy for running the memory retrieval agent before a normal agent turn.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TriggerMemoryAgent {
+    /// Do not run the memory agent automatically.
+    #[default]
+    Never,
+    /// Run `agent_memory` once before the user's prompt is sent to this agent.
+    Always,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -177,6 +188,12 @@ pub struct AgentDefinition {
     #[serde(default)]
     pub background: bool,
 
+    /// Optional pre-turn memory retrieval hook. When set to `always`, the
+    /// harness runs the built-in `agent_memory` agent once with the user
+    /// prompt and prepends its result to the prompt sent to this agent.
+    #[serde(default)]
+    pub trigger_memory_agent: TriggerMemoryAgent,
+
     // ── delegation surface ─────────────────────────────────────────────
     /// Subagents this agent is allowed to spawn via synthesised
     /// `delegate_*` tools. Each entry expands at agent-build time into
@@ -199,7 +216,7 @@ pub struct AgentDefinition {
     ///
     /// [`ArchetypeDelegationTool`]: crate::openhuman::agent_orchestration::tools::ArchetypeDelegationTool
     /// [`SkillDelegationTool`]: crate::openhuman::agent_orchestration::tools::SkillDelegationTool
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_subagent_entries")]
     pub subagents: Vec<SubagentEntry>,
 
     /// Optional override for the tool name this agent is exposed as when
@@ -225,8 +242,9 @@ pub struct AgentDefinition {
     ///   hands off to `Reasoning` or `Worker`, never to itself.
     /// * `Reasoning` MUST NOT list another `Reasoning` agent in
     ///   `subagents`. Reasoning composes downward into `Worker`s.
-    /// * `Worker` MUST NOT list any subagents. Workers execute; they
-    ///   do not orchestrate.
+    /// * `Worker` MUST NOT list open-ended subagents. Workers execute;
+    ///   they do not orchestrate. Pre-turn memory retrieval is configured
+    ///   separately via [`AgentDefinition::trigger_memory_agent`].
     /// * `{ skills = "*" }` entries expand to the generic
     ///   `integrations_agent` (a `Worker`) so they are always allowed.
     ///
@@ -305,7 +323,8 @@ impl AgentTier {
 /// # TOML shapes
 ///
 /// ```toml
-/// subagents = [
+/// [subagents]
+/// allowlist = [
 ///     "researcher",            # AgentId("researcher")
 ///     "code_executor",         # AgentId("code_executor")
 ///     { skills = "*" },        # Skills { pattern: "*" }
@@ -333,6 +352,24 @@ pub enum SubagentEntry {
 pub struct SkillsWildcard {
     /// Glob / wildcard pattern. Only `"*"` is currently supported.
     pub skills: String,
+}
+
+fn deserialize_subagent_entries<'de, D>(deserializer: D) -> Result<Vec<SubagentEntry>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Wire {
+        Section { allowlist: Vec<SubagentEntry> },
+        LegacyList(Vec<SubagentEntry>),
+    }
+
+    match Option::<Wire>::deserialize(deserializer)? {
+        Some(Wire::Section { allowlist }) => Ok(allowlist),
+        Some(Wire::LegacyList(entries)) => Ok(entries),
+        None => Ok(Vec::new()),
+    }
 }
 
 impl SkillsWildcard {

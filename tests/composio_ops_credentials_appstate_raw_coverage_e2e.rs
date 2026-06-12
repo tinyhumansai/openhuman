@@ -221,6 +221,7 @@ async fn round18_composio_ops_and_agent_tools_cover_backend_errors_and_metadata(
         &harness.config,
         "GMAIL_FETCH_EMAILS",
         Some(json!({ "query": "newer_than:1d" })),
+        None,
     )
     .await
     .expect("execute")

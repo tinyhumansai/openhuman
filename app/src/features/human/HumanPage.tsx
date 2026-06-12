@@ -63,6 +63,7 @@ const HumanPage = () => {
               primaryColor={primaryColor}
               secondaryColor={secondaryColor}
               visemeCode={visemeCode}
+              idlePoseRotation
             />
           )}
         </div>

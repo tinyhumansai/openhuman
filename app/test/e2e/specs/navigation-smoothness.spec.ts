@@ -22,6 +22,11 @@ const USER_ID = 'e2e-navigation-smoothness';
 const ROUTE_TIMEOUT = 10_000;
 
 // Routes to visit, with optional text markers that confirm the panel loaded.
+// Phase 2/3/6 IA revamp:
+//   /skills → /connections (back-compat redirect); use canonical route here
+//   /intelligence → /activity (back-compat redirect); use canonical route here
+//   /channels → /connections?tab=messaging (redirect)
+//   /human → /chat (Phase 6 redirect)
 interface RouteCheck {
   hash: string;
   markers: string[];
@@ -29,36 +34,18 @@ interface RouteCheck {
 
 const ROUTES: RouteCheck[] = [
   { hash: '/chat', markers: ['Threads', 'Chat', 'Message', 'New thread'] },
-  { hash: '/skills', markers: ['Skills', 'Skill', 'Install', 'Browse'] },
-  {
-    hash: '/home',
-    markers: [
-      'Good morning',
-      'Good afternoon',
-      'Good evening',
-      'Message OpenHuman',
-      'Test',
-      'Upgrade',
-    ],
-  },
-  { hash: '/channels', markers: ['Channels', 'Channel', 'Connect', 'Add', 'Gmail', 'Telegram'] },
+  // Connections page (was /skills) — tabs: Apps, Messaging, Tools, Explorer
+  { hash: '/connections', markers: ['Apps', 'Messaging', 'Tools', 'Connections'] },
+  { hash: '/home', markers: ['Ask your assistant anything', 'Your device is connected', 'Home'] },
   {
     hash: '/notifications',
     markers: ['Notifications', 'Alerts', 'Notification', 'No notifications'],
   },
   { hash: '/rewards', markers: ['Rewards', 'Referral', 'Credits', 'Earn', 'Invite'] },
   { hash: '/settings', markers: ['Settings', 'Account', 'Billing', 'Advanced'] },
-  {
-    hash: '/home',
-    markers: [
-      'Good morning',
-      'Good afternoon',
-      'Good evening',
-      'Message OpenHuman',
-      'Test',
-      'Upgrade',
-    ],
-  },
+  // Activity page (was /intelligence) — tabs: Tasks, Automations, Subconscious
+  { hash: '/activity', markers: ['Tasks', 'Automations', 'Subconscious', 'Activity'] },
+  { hash: '/home', markers: ['Ask your assistant anything', 'Your device is connected', 'Home'] },
 ];
 
 async function rootTextLength(): Promise<number> {
@@ -109,7 +96,7 @@ describe('Navigation smoothness', () => {
     console.log(`${LOG_PREFIX} Teardown complete`);
   });
 
-  it('N1.1 — all 8 major routes render without error within timing budget', async () => {
+  it('N1.1 — all major routes render without error within timing budget', async () => {
     console.log(`${LOG_PREFIX} N1.1: first pass — normal navigation`);
     for (const route of ROUTES) {
       console.log(`${LOG_PREFIX} N1.1: navigating to ${route.hash}`);

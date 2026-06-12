@@ -142,7 +142,7 @@ test.describe('Harness - Cron prompt-flow', () => {
     await setMockBehavior('llmStreamChunkDelayMs', '10');
 
     await sendMessage(page, 'remind me every morning at 9am');
-    await expect(page.getByText(CANARY)).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByText(CANARY).first()).toBeVisible({ timeout: 60_000 });
     await expect(page.getByText(/Done! I have set up a daily 9am morning reminder/i)).toBeVisible();
     const log = await requests();
     const llmHits = log.filter(
@@ -154,10 +154,9 @@ test.describe('Harness - Cron prompt-flow', () => {
   test('listing scheduled tasks returns the forced response', async ({ page }) => {
     const CANARY = 'canary-cron-list-c3d4';
     await setMockBehavior(
-      'llmKeywordRules',
+      'llmForcedResponses',
       JSON.stringify([
         {
-          keyword: 'scheduled tasks',
           content: `You have 2 scheduled tasks: daily_standup (weekdays 9am) and weekly_review (Fridays 10am). ${CANARY}`,
         },
       ])
@@ -165,7 +164,7 @@ test.describe('Harness - Cron prompt-flow', () => {
     await setMockBehavior('llmStreamChunkDelayMs', '10');
 
     await sendMessage(page, 'what are my scheduled tasks');
-    await expect(page.getByText(CANARY)).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByText(CANARY).first()).toBeVisible({ timeout: 60_000 });
     await expect(page.getByText(/You have 2 scheduled tasks/i)).toBeVisible();
   });
 
@@ -193,7 +192,7 @@ test.describe('Harness - Cron prompt-flow', () => {
     await setMockBehavior('llmStreamChunkDelayMs', '10');
 
     await sendMessage(page, 'change my morning reminder to 8am');
-    await expect(page.getByText(CANARY)).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByText(CANARY).first()).toBeVisible({ timeout: 60_000 });
     await expect(page.getByText(/changed your morning reminder to 8am/i)).toBeVisible();
   });
 
@@ -218,7 +217,7 @@ test.describe('Harness - Cron prompt-flow', () => {
     await setMockBehavior('llmStreamChunkDelayMs', '10');
 
     await sendMessage(page, 'delete the morning reminder');
-    await expect(page.getByText(CANARY)).toBeVisible({ timeout: 60_000 });
-    await expect(page.getByText(/deleted the morning reminder/i)).toBeVisible();
+    await expect(page.getByText(CANARY).first()).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByText(/deleted the morning reminder/i).first()).toBeVisible();
   });
 });

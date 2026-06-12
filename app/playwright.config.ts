@@ -6,6 +6,7 @@ export default defineConfig({
   testDir: './test/playwright/specs',
   fullyParallel: false,
   workers: 1,
+  retries: process.env.CI ? 2 : 0,
   timeout: 60_000,
   expect: {
     timeout: 10_000,

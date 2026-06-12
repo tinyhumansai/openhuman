@@ -1,6 +1,7 @@
 //! Source reader trait and per-kind implementations.
 
 pub mod composio;
+pub mod conversation;
 pub mod folder;
 pub mod github;
 pub mod rss;
@@ -35,6 +36,7 @@ pub trait SourceReader: Send + Sync {
 pub fn reader_for(kind: &SourceKind) -> Box<dyn SourceReader> {
     match kind {
         SourceKind::Composio => Box::new(composio::ComposioReader),
+        SourceKind::Conversation => Box::new(conversation::ConversationReader),
         SourceKind::Folder => Box::new(folder::FolderReader),
         SourceKind::GithubRepo => Box::new(github::GithubReader),
         SourceKind::TwitterQuery => Box::new(twitter::TwitterReader),

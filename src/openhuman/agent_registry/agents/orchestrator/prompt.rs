@@ -16,6 +16,7 @@ use crate::openhuman::context::prompt::{
     PromptContext,
 };
 use crate::openhuman::tools::orchestrator_tools::sanitise_slug;
+use crate::openhuman::workflows::ops_types::Workflow;
 use anyhow::Result;
 use std::fmt::Write;
 
@@ -35,6 +36,12 @@ pub fn build(ctx: &PromptContext<'_>) -> Result<String> {
     let identities = ctx.connected_identities_md.as_str();
     if !identities.trim().is_empty() {
         out.push_str(identities.trim_end());
+        out.push_str("\n\n");
+    }
+
+    let skills = render_installed_skills(ctx.workflows);
+    if !skills.trim().is_empty() {
+        out.push_str(skills.trim_end());
         out.push_str("\n\n");
     }
 
@@ -63,6 +70,41 @@ pub fn build(ctx: &PromptContext<'_>) -> Result<String> {
     }
 
     Ok(out)
+}
+
+/// Render the `## Installed Skills` section listing locally installed
+/// workflows so the orchestrator knows what's available without calling
+/// `list_workflows` on every turn. Omitted when no skills are installed.
+fn render_installed_skills(skills: &[Workflow]) -> String {
+    if skills.is_empty() {
+        tracing::debug!("[orchestrator-prompt] no installed skills, section omitted");
+        return String::new();
+    }
+    tracing::debug!(
+        count = skills.len(),
+        "[orchestrator-prompt] rendering installed skills section"
+    );
+    let mut out = String::from(
+        "## Installed Skills\n\n\
+         The following skills are installed locally. Run them with `run_workflow` \
+         (pass the skill's id as `workflow_id`). Use `describe_workflow` for full \
+         details. Use `skill_registry_browse` / `skill_registry_search` to find \
+         and install new skills.\n\n",
+    );
+    for skill in skills {
+        let id = if skill.dir_name.is_empty() {
+            &skill.name
+        } else {
+            &skill.dir_name
+        };
+        let desc = if skill.description.is_empty() {
+            "(no description)"
+        } else {
+            &skill.description
+        };
+        let _ = writeln!(out, "- **{id}**: {desc}");
+    }
+    out
 }
 
 /// Render the delegator-voice `## Connected Integrations` block. Only
@@ -105,11 +147,31 @@ fn render_delegation_guide(integrations: &[ConnectedIntegration]) -> String {
         // so the `toolkit` arg the orchestrator emits always matches the
         // enum the synthesised tool accepts.
         let slug = sanitise_slug(&ci.toolkit);
-        let _ = writeln!(
-            out,
-            "- **{}** (`toolkit: \"{}\"`): {}",
-            ci.toolkit, slug, ci.description
-        );
+        if ci.connections.len() > 1 {
+            let _ = writeln!(
+                out,
+                "- **{}** (`toolkit: \"{}\"`, {} accounts connected): {}",
+                ci.toolkit,
+                slug,
+                ci.connections.len(),
+                ci.description
+            );
+            for conn in &ci.connections {
+                let label = conn.label.as_deref().unwrap_or("(unlabeled)");
+                let default_marker = if conn.is_default { " [default]" } else { "" };
+                let _ = writeln!(
+                    out,
+                    "  - `connection_id: \"{}\"` — {}{}",
+                    conn.connection_id, label, default_marker
+                );
+            }
+        } else {
+            let _ = writeln!(
+                out,
+                "- **{}** (`toolkit: \"{}\"`): {}",
+                ci.toolkit, slug, ci.description
+            );
+        }
     }
     // CRITICAL behavioural rule. Without this, the orchestrator answers
     // "can you do X with {toolkit}?" from its training-data priors about
@@ -180,7 +242,7 @@ mod tests {
             model_name: "test",
             agent_id: "orchestrator",
             tools: &[],
-            skills: &[],
+            workflows: &[],
             dispatcher_instructions: "",
             learned: LearnedContextData::default(),
             visible_tool_names: EMPTY_VISIBLE.get_or_init(HashSet::new),
@@ -257,6 +319,7 @@ mod tests {
             tools: Vec::new(),
             gated_tools: Vec::new(),
             connected: true,
+            connections: Vec::new(),
             non_active_status: None,
         }];
         let body = build(&ctx_with(&integrations)).unwrap();
@@ -298,6 +361,7 @@ mod tests {
             tools: Vec::new(),
             gated_tools: Vec::new(),
             connected: true,
+            connections: Vec::new(),
             non_active_status: None,
         }];
         let body = build(&ctx_with(&integrations)).unwrap();
@@ -321,6 +385,7 @@ mod tests {
                 tools: Vec::new(),
                 gated_tools: Vec::new(),
                 connected: true,
+                connections: Vec::new(),
                 non_active_status: None,
             },
             ConnectedIntegration {
@@ -329,6 +394,7 @@ mod tests {
                 tools: Vec::new(),
                 gated_tools: Vec::new(),
                 connected: false,
+                connections: Vec::new(),
                 non_active_status: None,
             },
         ];
@@ -376,6 +442,7 @@ mod tests {
             tools: Vec::new(),
             gated_tools: Vec::new(),
             connected: false,
+            connections: Vec::new(),
             non_active_status: None,
         }];
         let body = build(&ctx_with(&integrations)).unwrap();

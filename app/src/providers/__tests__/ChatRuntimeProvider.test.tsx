@@ -1062,6 +1062,10 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
       ['tool_error', 'A tool call failed during this request.'],
       ['provider_error', 'The AI provider returned an error.'],
       ['model_unavailable', 'The selected model is currently unavailable.'],
+      [
+        'payload_too_large',
+        'Your message or attachment is too large for this model. Shorten it or remove the attachment — or start a new thread.',
+      ],
     ] as const)('forwards server message for error_type %s', async (error_type, serverMessage) => {
       const listeners = renderProvider();
       const threadId = `t-${error_type}`;

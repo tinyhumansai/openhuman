@@ -21,9 +21,11 @@ use anyhow::Result;
 use serde_json::Value;
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory::ingest_pipeline::{ingest_email, IngestResult};
+use crate::openhuman::memory::ingest_pipeline::{
+    ingest_email, ingest_email_with_raw_refs, IngestResult,
+};
 use crate::openhuman::memory::util::redact::redact;
-use crate::openhuman::memory_store::chunks::store::{set_chunk_raw_refs, RawRef};
+use crate::openhuman::memory_store::chunks::store::RawRef;
 use crate::openhuman::memory_store::content::raw::{
     self as raw_store, raw_rel_path, slug_account_email, RawItem, RawKind,
 };
@@ -37,6 +39,12 @@ pub const GMAIL_PROVIDER: &str = "gmail";
 /// Tags attached to every Gmail-ingested chunk. Stable list — retrieval
 /// callers filter on these.
 pub const DEFAULT_TAGS: &[&str] = &["gmail", "ingested"];
+
+#[derive(Debug, Clone, Default)]
+pub struct PageIngestOutcome {
+    pub chunks_written: usize,
+    pub item_ids_ingested: Vec<String>,
+}
 
 /// Group raw page messages by the sorted set of distinct participants
 /// (`from` ∪ `to`-list). CC is deliberately excluded from the bucket key
@@ -238,8 +246,21 @@ pub async fn ingest_page_into_memory_tree(
     account_email: Option<&str>,
     page_messages: &[Value],
 ) -> Result<usize> {
+    Ok(
+        ingest_page_into_memory_tree_with_outcome(config, owner, account_email, page_messages)
+            .await?
+            .chunks_written,
+    )
+}
+
+pub async fn ingest_page_into_memory_tree_with_outcome(
+    config: &Config,
+    owner: &str,
+    account_email: Option<&str>,
+    page_messages: &[Value],
+) -> Result<PageIngestOutcome> {
     if page_messages.is_empty() {
-        return Ok(0);
+        return Ok(PageIngestOutcome::default());
     }
     let account_source_id = account_email
         .filter(|e| !e.trim().is_empty())
@@ -248,13 +269,17 @@ pub async fn ingest_page_into_memory_tree(
     // Best-effort raw archive — runs once per page, before chunking, so
     // a chunker bug doesn't block us from capturing the source bytes.
     if let Some(ref source_id) = account_source_id {
-        if let Err(e) = write_raw_archive(config, source_id, page_messages) {
+        write_raw_archive(config, source_id, page_messages).map_err(|e| {
             log::warn!(
                 "[composio:gmail][ingest] raw archive write failed source_id_hash={} err={:#}",
                 redact(source_id),
                 e
             );
-        }
+            anyhow::anyhow!(
+                "gmail raw archive write failed for {}: {e:#}",
+                redact(source_id)
+            )
+        })?;
     }
 
     // Per-account ingest path: one ingest call per upstream message so
@@ -265,12 +290,14 @@ pub async fn ingest_page_into_memory_tree(
     // legacy participant-bucket path when we can't derive an
     // account-scoped source id (CLI runs / missing profile fetch).
     if let Some(ref source_id) = account_source_id {
-        let total_chunks = ingest_per_message(config, source_id, owner, page_messages).await;
+        let outcome = ingest_per_message(config, source_id, owner, page_messages).await?;
         log::info!(
-            "[composio:gmail][ingest] page_done owner_hash={} chunks={total_chunks} mode=per-account",
+            "[composio:gmail][ingest] page_done owner_hash={} chunks={} items={} mode=per-account",
             redact(owner),
+            outcome.chunks_written,
+            outcome.item_ids_ingested.len(),
         );
-        return Ok(total_chunks);
+        return Ok(outcome);
     }
 
     // Legacy fallback: participant-bucketed thread ingest. No
@@ -280,7 +307,17 @@ pub async fn ingest_page_into_memory_tree(
     let buckets = bucket_by_participants(page_messages);
     let mut total_chunks = 0usize;
     let mut total_buckets = 0usize;
+    let mut item_ids_ingested = Vec::new();
     for (participants, raw_msgs) in &buckets {
+        let ids_in_bucket: Vec<String> = raw_msgs
+            .iter()
+            .filter_map(|raw| {
+                raw.get("id")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+            })
+            .collect();
         let messages: Vec<EmailMessage> = raw_msgs
             .iter()
             .filter_map(|raw| raw_to_email_message(raw))
@@ -304,6 +341,7 @@ pub async fn ingest_page_into_memory_tree(
             Ok(IngestResult { chunks_written, .. }) => {
                 total_chunks += chunks_written;
                 total_buckets += 1;
+                item_ids_ingested.extend(ids_in_bucket);
             }
             Err(e) => {
                 log::warn!(
@@ -319,7 +357,10 @@ pub async fn ingest_page_into_memory_tree(
         "[composio:gmail][ingest] page_done owner_hash={} buckets={total_buckets} chunks={total_chunks} mode=per-participants",
         redact(owner),
     );
-    Ok(total_chunks)
+    Ok(PageIngestOutcome {
+        chunks_written: total_chunks,
+        item_ids_ingested,
+    })
 }
 
 /// Per-account ingest: one `ingest_email` call per upstream message.
@@ -335,8 +376,9 @@ async fn ingest_per_message(
     source_id: &str,
     owner: &str,
     page_messages: &[Value],
-) -> usize {
+) -> Result<PageIngestOutcome> {
     let mut total_chunks = 0usize;
+    let mut item_ids_ingested = Vec::new();
     for raw in page_messages {
         let id = raw
             .get("id")
@@ -346,6 +388,17 @@ async fn ingest_per_message(
         let Some(sent_at) = parse_message_date(raw) else {
             continue;
         };
+        let has_raw_body = raw
+            .get("markdown")
+            .and_then(|v| v.as_str())
+            .is_some_and(|body| !body.trim().is_empty());
+        if !has_raw_body {
+            log::debug!(
+                "[composio:gmail][ingest] skipping empty raw-backed message msg_id_hash={}",
+                redact(msg_id)
+            );
+            continue;
+        }
         let Some(message) = raw_to_email_message(raw) else {
             continue;
         };
@@ -364,22 +417,16 @@ async fn ingest_per_message(
             messages: vec![message],
         };
         let tags = DEFAULT_TAGS.iter().map(|s| (*s).to_string()).collect();
-        match ingest_email(config, source_id, owner, tags, thread).await {
+        let refs = vec![RawRef {
+            path: raw_path.clone(),
+            start: 0,
+            end: None,
+        }];
+        match ingest_email_with_raw_refs(config, source_id, owner, tags, thread, refs).await {
             Ok(result) => {
                 total_chunks += result.chunks_written;
-                let refs = vec![RawRef {
-                    path: raw_path.clone(),
-                    start: 0,
-                    end: None,
-                }];
-                for chunk_id in &result.chunk_ids {
-                    if let Err(e) = set_chunk_raw_refs(config, chunk_id, &refs) {
-                        log::warn!(
-                            "[composio:gmail][ingest] set_chunk_raw_refs failed chunk_id={} err={:#}",
-                            chunk_id,
-                            e
-                        );
-                    }
+                if result.chunks_written > 0 || !result.chunk_ids.is_empty() {
+                    item_ids_ingested.push(msg_id.to_string());
                 }
             }
             Err(e) => {
@@ -388,10 +435,17 @@ async fn ingest_per_message(
                     redact(msg_id),
                     e
                 );
+                return Err(anyhow::anyhow!(
+                    "gmail per-message ingest failed msg_id_hash={}: {e:#}",
+                    redact(msg_id)
+                ));
             }
         }
     }
-    total_chunks
+    Ok(PageIngestOutcome {
+        chunks_written: total_chunks,
+        item_ids_ingested,
+    })
 }
 
 /// Mirror a page of raw Gmail messages into the on-disk raw archive.

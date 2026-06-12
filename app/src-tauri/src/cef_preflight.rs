@@ -195,7 +195,16 @@ pub fn check_cef_cache_lock(cache_path: &Path) -> Result<(), CefLockError> {
     };
 
     if is_pid_alive(pid) {
-        log::error!(
+        // `debug!`, not `error!`: a live lock-holder is the *expected,
+        // self-healing* precondition the caller polls on, not a fault. This is a
+        // pure predicate — severity belongs to the loop, not here. #3337 wrapped
+        // this check in the `wait_for_cache_release` poll loop, so an `error!`
+        // here fired once *per poll* (~3 on a wait that clears, ~11 on one that
+        // times out), flooding Sentry (TAURI-RUST-B7S: 29k events from a single
+        // release). The loop already logs `warn!` per poll and a single `error!`
+        // on give-up, matching the Windows `cef_singleton_wait` sibling. Do not
+        // re-promote this to `error!`.
+        log::debug!(
             "[cef-preflight] CEF cache held by host={} pid={} at {}",
             host,
             pid,

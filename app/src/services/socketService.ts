@@ -428,55 +428,71 @@ class SocketService {
     this.socket.on('agent_meetings:joined', (data: unknown) => {
       const obj = data as Record<string, unknown> | null;
       const meetUrl = typeof obj?.meet_url === 'string' ? obj.meet_url : '';
-      socketLog('agent_meetings:joined meet_url_len=%d', meetUrl.length);
-      store.dispatch(setBackendMeetJoined({ meetUrl }));
+      const correlationId =
+        typeof obj?.correlation_id === 'string' ? obj.correlation_id : undefined;
+      socketLog(
+        'agent_meetings:joined meet_url_len=%d correlation_id=%s',
+        meetUrl.length,
+        correlationId ?? 'none'
+      );
+      store.dispatch(setBackendMeetJoined({ meetUrl, meetingId: correlationId }));
     });
     this.socket.on('agent_meetings:left', (data: unknown) => {
       const obj = data as Record<string, unknown> | null;
       const reason = typeof obj?.reason === 'string' ? obj.reason : 'unknown';
-      socketLog('agent_meetings:left reason=%s', reason);
-      store.dispatch(setBackendMeetLeft({ reason }));
+      const correlationId =
+        typeof obj?.correlation_id === 'string' ? obj.correlation_id : undefined;
+      socketLog('agent_meetings:left reason=%s correlation_id=%s', reason, correlationId ?? 'none');
+      store.dispatch(setBackendMeetLeft({ reason, correlationId }));
     });
     this.socket.on('agent_meetings:reply', (data: unknown) => {
       const obj = data as Record<string, unknown> | null;
       if (!obj) return;
-      socketLog('agent_meetings:reply');
+      const correlationId = typeof obj.correlation_id === 'string' ? obj.correlation_id : undefined;
+      socketLog('agent_meetings:reply correlation_id=%s', correlationId ?? 'none');
       store.dispatch(
         setBackendMeetReply({
           transcript: typeof obj.transcript === 'string' ? obj.transcript : '',
           reply: typeof obj.reply === 'string' ? obj.reply : '',
           emotion: typeof obj.emotion === 'string' ? obj.emotion : 'neutral',
+          correlationId,
         })
       );
     });
     this.socket.on('agent_meetings:harness', (data: unknown) => {
       const obj = data as Record<string, unknown> | null;
       if (!obj) return;
-      socketLog('agent_meetings:harness');
+      const correlationId = typeof obj.correlation_id === 'string' ? obj.correlation_id : undefined;
+      socketLog('agent_meetings:harness correlation_id=%s', correlationId ?? 'none');
       store.dispatch(
         setBackendMeetHarness({
           transcript: typeof obj.transcript === 'string' ? obj.transcript : '',
           instruction: typeof obj.instruction === 'string' ? obj.instruction : '',
           emotion: typeof obj.emotion === 'string' ? obj.emotion : 'neutral',
+          correlationId,
         })
       );
     });
     this.socket.on('agent_meetings:transcript', (data: unknown) => {
       const obj = data as Record<string, unknown> | null;
       if (!obj) return;
-      socketLog('agent_meetings:transcript');
+      const correlationId = typeof obj.correlation_id === 'string' ? obj.correlation_id : undefined;
+      socketLog('agent_meetings:transcript correlation_id=%s', correlationId ?? 'none');
       store.dispatch(
         setBackendMeetTranscript({
           turns: Array.isArray(obj.turns) ? obj.turns : [],
           duration_ms: typeof obj.duration_ms === 'number' ? obj.duration_ms : 0,
+          correlationId,
         })
       );
     });
     this.socket.on('agent_meetings:error', (data: unknown) => {
       const obj = data as Record<string, unknown> | null;
       const error = typeof obj?.error === 'string' ? obj.error : 'Unknown error';
-      socketError('agent_meetings:error %s', error);
-      store.dispatch(setBackendMeetError({ error }));
+      const correlationId =
+        typeof obj?.correlation_id === 'string' ? obj.correlation_id : undefined;
+      socketError('agent_meetings:error %s correlation_id=%s', error, correlationId ?? 'none');
+      store.dispatch(setBackendMeetError({ error, correlationId }));
     });
 
     this.socket.connect();

@@ -350,6 +350,14 @@ fn parent_context(workspace: PathBuf, provider: Arc<ScriptedProvider>) -> Parent
     let tools: Vec<Box<dyn Tool>> = vec![Box::new(EchoTool)];
     let tool_specs = tools.iter().map(|tool| tool.spec()).collect();
     ParentExecutionContext {
+        agent_definition_id: "orchestrator".into(),
+        allowed_subagent_ids: [
+            "test".to_string(),
+            "tools_agent".to_string(),
+            "integrations_agent".to_string(),
+        ]
+        .into_iter()
+        .collect(),
         provider,
         all_tools: Arc::new(tools),
         all_tool_specs: Arc::new(tool_specs),
@@ -361,7 +369,7 @@ fn parent_context(workspace: PathBuf, provider: Arc<ScriptedProvider>) -> Parent
             max_tool_iterations: 3,
             ..Default::default()
         },
-        skills: Arc::new(Vec::new()),
+        workflows: Arc::new(Vec::new()),
         memory_context: Arc::new(Some("parent memory".to_string())),
         session_id: "round16-parent".to_string(),
         channel: "round16-channel".to_string(),
@@ -398,6 +406,7 @@ fn agent_definition(id: &str, max_result_chars: Option<usize>) -> AgentDefinitio
         timeout_secs: None,
         sandbox_mode: SandboxMode::ReadOnly,
         background: false,
+        trigger_memory_agent: Default::default(),
         subagents: Vec::new(),
         delegate_name: None,
         agent_tier: Default::default(),
@@ -716,6 +725,7 @@ async fn round16_agent_builder_turn_uses_public_harness_paths() {
                 id: "call-round16".into(),
                 name: "echo".into(),
                 arguments: json!({ "message": "builder" }).to_string(),
+                extra_content: None,
             }],
         ),
         response(Some("builder final"), Vec::new()),
@@ -732,7 +742,7 @@ async fn round16_agent_builder_turn_uses_public_harness_paths() {
         .model_name("round16-model".to_string())
         .temperature(0.0)
         .workspace_dir(harness.workspace.clone())
-        .skills(Vec::new())
+        .workflows(Vec::new())
         .auto_save(false)
         .event_context("round16-session", "round16-channel")
         .agent_definition_name("round16_builder")

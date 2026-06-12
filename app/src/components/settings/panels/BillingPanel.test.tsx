@@ -12,14 +12,6 @@ vi.mock('../hooks/useSettingsNavigation', () => ({
   }),
 }));
 
-vi.mock('../components/PageBackButton', () => ({
-  default: ({ label, onClick }: { label: string; onClick: () => void }) => (
-    <button type="button" data-testid="page-back-button" onClick={onClick}>
-      {label}
-    </button>
-  ),
-}));
-
 const openUrlMock = vi.fn();
 vi.mock('../../../utils/openUrl', () => ({ openUrl: (url: string) => openUrlMock(url) }));
 
@@ -83,7 +75,9 @@ describe('<BillingPanel />', () => {
     render(<Panel />);
     await waitFor(() => expect(openUrlMock).toHaveBeenCalledTimes(1));
 
-    fireEvent.click(screen.getByTestId('page-back-button'));
+    // The SettingsHeader back button (aria-label "Back") and the inline
+    // "Back to settings" button both route through navigateBack.
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
     fireEvent.click(screen.getByRole('button', { name: 'Back to settings' }));
     expect(navigateBack).toHaveBeenCalledTimes(2);
   });

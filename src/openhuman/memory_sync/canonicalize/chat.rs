@@ -25,8 +25,11 @@ use crate::openhuman::memory_store::chunks::types::{Metadata, SourceKind};
 pub struct ChatMessage {
     /// Author display name or id.
     pub author: String,
-    /// When the message was sent.
-    #[serde(with = "chrono::serde::ts_milliseconds")]
+    /// When the message was sent (epoch-ms integer or RFC 3339 string).
+    #[serde(
+        serialize_with = "chrono::serde::ts_milliseconds::serialize",
+        deserialize_with = "super::deserialize_flexible_timestamp"
+    )]
     pub timestamp: DateTime<Utc>,
     /// Plain text / markdown body.
     pub text: String,
@@ -220,5 +223,40 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(out.metadata.source_ref.is_none());
+    }
+
+    // ── Serde regression tests (CORE-2K / #3568) ────────────────────────────
+
+    #[test]
+    fn timestamp_epoch_ms_integer_still_works() {
+        let json = r#"{
+            "author": "alice",
+            "timestamp": 1700000000000,
+            "text": "hello"
+        }"#;
+        let msg: ChatMessage = serde_json::from_str(json).expect("epoch-ms integer should parse");
+        assert_eq!(msg.timestamp.timestamp_millis(), 1_700_000_000_000);
+    }
+
+    #[test]
+    fn timestamp_iso8601_string_accepted() {
+        let json = r#"{
+            "author": "alice",
+            "timestamp": "2026-05-17T19:30:00Z",
+            "text": "hello"
+        }"#;
+        let msg: ChatMessage = serde_json::from_str(json).expect("ISO-8601 string should parse");
+        assert_eq!(msg.timestamp.timestamp(), 1_779_046_200);
+    }
+
+    #[test]
+    fn timestamp_numeric_string_accepted() {
+        let json = r#"{
+            "author": "alice",
+            "timestamp": "1700000000000",
+            "text": "hello"
+        }"#;
+        let msg: ChatMessage = serde_json::from_str(json).expect("numeric string should parse");
+        assert_eq!(msg.timestamp.timestamp_millis(), 1_700_000_000_000);
     }
 }

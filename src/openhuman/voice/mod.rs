@@ -11,6 +11,8 @@
 
 pub mod always_on;
 pub mod audio_capture;
+pub mod bus;
+pub use bus::publish_ptt_transcript_committed;
 pub(crate) mod cli;
 pub mod command_router;
 pub mod dictation_listener;

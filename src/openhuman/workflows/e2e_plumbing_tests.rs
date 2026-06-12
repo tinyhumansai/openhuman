@@ -32,6 +32,7 @@ use crate::openhuman::agent::tools::RunWorkflowTool;
 use crate::openhuman::config::{Config, MultimodalConfig, MultimodalFileConfig};
 use crate::openhuman::inference::provider::traits::{ChatMessage, ProviderCapabilities};
 use crate::openhuman::inference::provider::{ChatRequest, ChatResponse, Provider, ToolCall};
+use crate::openhuman::skill_runtime::await_run_outcome;
 use crate::openhuman::tools::policy::DefaultToolPolicy;
 use crate::openhuman::tools::traits::Tool;
 use crate::openhuman::workflows::ops_create::{
@@ -40,7 +41,6 @@ use crate::openhuman::workflows::ops_create::{
 use crate::openhuman::workflows::ops_types::WorkflowScope;
 use crate::openhuman::workflows::registry::get_workflow;
 use crate::openhuman::workflows::run_log;
-use crate::openhuman::workflows::schemas::await_run_outcome;
 
 // ── Mock LLM ─────────────────────────────────────────────────────────────
 // Minimal scripted provider: pops queued ChatResponses in order. Mirrors the
@@ -86,6 +86,7 @@ fn tool_call(id: &str, name: &str, args: serde_json::Value) -> ChatResponse {
             id: id.into(),
             name: name.into(),
             arguments: args.to_string(),
+            extra_content: None,
         }],
         usage: None,
         reasoning_content: None,

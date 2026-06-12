@@ -904,6 +904,7 @@ pub async fn direct_execute(
     tool: &str,
     arguments: Option<serde_json::Value>,
     entity_id: &str,
+    connection_id: Option<&str>,
 ) -> anyhow::Result<ComposioExecuteResponse> {
     let tool = tool.trim();
     if tool.is_empty() {
@@ -912,13 +913,15 @@ pub async fn direct_execute(
     let params = arguments.unwrap_or_else(|| serde_json::Value::Object(Default::default()));
     let entity_id = entity_id.trim();
     let entity_id_opt = (!entity_id.is_empty()).then_some(entity_id);
+    let conn_id = connection_id.map(str::trim).filter(|s| !s.is_empty());
     tracing::debug!(
         tool = %tool,
         has_entity = entity_id_opt.is_some(),
+        connection_id = ?conn_id,
         "[composio-direct] execute: invoking v3 /tools/{{slug}}/execute"
     );
     let raw = direct
-        .execute_action(tool, params, entity_id_opt, None)
+        .execute_action(tool, params, entity_id_opt, conn_id)
         .await?;
     // v3 surfaces `successful` + `data` + `error` at the top level. If
     // none are present, treat the call as success so callers see the

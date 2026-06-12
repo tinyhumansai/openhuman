@@ -7,14 +7,22 @@ interface RouteCheck {
   markers: string[];
 }
 
+// Phase 2/3/6 IA revamp:
+//   /skills      → /connections (redirects; test new canonical route)
+//   /intelligence → /activity   (redirects; test new canonical route)
+//   /human       → /chat        (redirects; already covered by /chat entry)
 const routes: RouteCheck[] = [
   { hash: '/chat', markers: ['Threads', 'Chat', 'Message', 'New'] },
-  { hash: '/skills', markers: ['Skills', 'Skill', 'Install', 'Browse'] },
+  // Connections page (was /skills) — tabs: Apps, Messaging, Tools, Explorer
+  { hash: '/connections', markers: ['Apps', 'Messaging', 'Tools', 'Explorer'] },
   { hash: '/home', markers: ['Ask your assistant anything', 'Your device is connected'] },
-  { hash: '/channels', markers: ['Channels', 'Connect', 'Telegram', 'Discord'] },
+  // /channels now redirects to /connections?tab=messaging
+  { hash: '/channels', markers: ['Messaging', 'Connections', 'Telegram', 'Discord'] },
   { hash: '/notifications', markers: ['Notifications', 'Alerts', 'No alerts yet'] },
   { hash: '/rewards', markers: ['Rewards', 'Referral', 'Credits', 'Invite'] },
   { hash: '/settings', markers: ['Settings', 'Account', 'Billing', 'Advanced'] },
+  // Activity page (was /intelligence) — tabs: Tasks, Automations, Subconscious
+  { hash: '/activity', markers: ['Tasks', 'Automations', 'Subconscious'] },
   { hash: '/home', markers: ['Ask your assistant anything', 'Your device is connected'] },
 ];
 
@@ -30,7 +38,7 @@ async function verifyRouteLoaded(
   route: RouteCheck
 ): Promise<void> {
   await waitForAppReady(page);
-  await expect(await rootTextLength(page)).toBeGreaterThan(50);
+  await expect.poll(() => rootTextLength(page), { timeout: 10_000 }).toBeGreaterThan(50);
 }
 
 test.describe('Navigation Smoothness', () => {
@@ -42,14 +50,12 @@ test.describe('Navigation Smoothness', () => {
     for (const route of routes) {
       await page.goto(`/#${route.hash}`);
       await verifyRouteLoaded(page, route);
-      await page.waitForTimeout(400);
     }
   });
 
   test('rapid cycle completes without blank screens', async ({ page }) => {
     for (const route of routes) {
       await page.goto(`/#${route.hash}`);
-      await page.waitForTimeout(350);
       await verifyRouteLoaded(page, route);
     }
   });

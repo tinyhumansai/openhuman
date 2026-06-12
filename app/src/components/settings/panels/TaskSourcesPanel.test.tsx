@@ -20,7 +20,9 @@ const addMock = vi.fn();
 const updateMock = vi.fn();
 const removeMock = vi.fn();
 const fetchMock = vi.fn();
+const syncMock = vi.fn();
 const previewMock = vi.fn();
+const listDatabasesMock = vi.fn();
 
 vi.mock('../../../utils/tauriCommands', () => ({
   openhumanTaskSourcesList: () => listMock(),
@@ -29,7 +31,9 @@ vi.mock('../../../utils/tauriCommands', () => ({
   openhumanTaskSourcesUpdate: (id: string, patch: unknown) => updateMock(id, patch),
   openhumanTaskSourcesRemove: (id: string) => removeMock(id),
   openhumanTaskSourcesFetch: (id: string) => fetchMock(id),
+  openhumanTaskSourcesSync: () => syncMock(),
   openhumanTaskSourcesPreviewFilter: (...args: unknown[]) => previewMock(...args),
+  openhumanTaskSourcesListDatabases: (provider: string) => listDatabasesMock(provider),
 }));
 
 function sampleSource(overrides: Record<string, unknown> = {}) {
@@ -76,8 +80,13 @@ describe('<TaskSourcesPanel />', () => {
       fetched: 3,
       routed: 2,
       skippedDupe: 1,
+      pruned: 0,
     });
+    syncMock.mockResolvedValue([
+      { sourceId: 's-1', provider: 'github', fetched: 3, routed: 2, skippedDupe: 1, pruned: 1 },
+    ]);
     previewMock.mockResolvedValue([{ externalId: '1' }, { externalId: '2' }]);
+    listDatabasesMock.mockResolvedValue([]);
   });
 
   afterEach(() => vi.restoreAllMocks());
@@ -163,7 +172,40 @@ describe('<TaskSourcesPanel />', () => {
     const card = await screen.findByTestId('task-source-s-1');
     fireEvent.click(within(card).getByRole('button', { name: 'Fetch now' }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('s-1'));
-    expect(await screen.findByText(/Routed 2 of 3 task\(s\)/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/Routed 2 of 3 task\(s\); removed 0 stale task\(s\)/)
+    ).toBeInTheDocument();
+  });
+
+  it('syncs all sources and surfaces routed/fetched/pruned counts', async () => {
+    renderPanel();
+    await screen.findByTestId('task-source-s-1');
+    fireEvent.click(screen.getByRole('button', { name: 'Sync all' }));
+    await waitFor(() => expect(syncMock).toHaveBeenCalled());
+    expect(
+      await screen.findByText(/Routed 2 of 3 task\(s\); removed 1 stale task\(s\)/)
+    ).toBeInTheDocument();
+  });
+
+  it('disables refresh while sync is in progress', async () => {
+    let resolveSync: (value: Awaited<ReturnType<typeof syncMock>>) => void = () => {};
+    syncMock.mockReturnValue(
+      new Promise(resolve => {
+        resolveSync = resolve;
+      })
+    );
+
+    renderPanel();
+    await screen.findByTestId('task-source-s-1');
+    fireEvent.click(screen.getByRole('button', { name: 'Sync all' }));
+
+    await waitFor(() => expect(syncMock).toHaveBeenCalled());
+    expect(screen.getByRole('button', { name: 'Refresh' })).toBeDisabled();
+
+    resolveSync([
+      { sourceId: 's-1', provider: 'github', fetched: 3, routed: 2, skippedDupe: 1, pruned: 1 },
+    ]);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled());
   });
 
   it('surfaces a fetch outcome error', async () => {
@@ -173,6 +215,7 @@ describe('<TaskSourcesPanel />', () => {
       fetched: 0,
       routed: 0,
       skippedDupe: 0,
+      pruned: 0,
       error: 'no connection',
     });
     renderPanel();
@@ -207,5 +250,50 @@ describe('<TaskSourcesPanel />', () => {
     expect(screen.getByLabelText('Database (board) ID')).toBeInTheDocument();
     // GitHub-only labels field is gone for Notion.
     expect(screen.queryByLabelText('Labels (comma-separated)')).not.toBeInTheDocument();
+  });
+
+  // ── New coverage for lines 417-418, 422, 425, 428-429, 464, 586 ──────────
+
+  it('shows Notion Browse Databases button when notion provider is selected (lines 417-418)', async () => {
+    renderPanel();
+    await screen.findByTestId('task-source-s-1');
+    // Switch to notion provider
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'notion' } });
+    expect(screen.getByRole('button', { name: /Browse Databases/i })).toBeInTheDocument();
+  });
+
+  it('shows the database dropdown after Browse Databases returns results', async () => {
+    listDatabasesMock.mockResolvedValue([{ id: 'db-1', title: 'My Notion DB' }]);
+    renderPanel();
+    await screen.findByTestId('task-source-s-1');
+
+    // Switch the add-source provider to Notion so the Browse Databases control appears.
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'notion' } });
+    fireEvent.click(screen.getByRole('button', { name: /Browse Databases/i }));
+
+    // The returned database surfaces as a selectable option.
+    expect(await screen.findByRole('option', { name: 'My Notion DB' })).toBeInTheDocument();
+    expect(listDatabasesMock).toHaveBeenCalledWith('notion');
+  });
+
+  it('toggles "Assigned to me" checkbox and it affects state (line 464)', async () => {
+    renderPanel();
+    await screen.findByTestId('task-source-s-1');
+    // The "Assigned to me" checkbox — it starts checked (assignedToMe defaults to true)
+    const checkbox = screen.getByRole('checkbox', { name: /Assigned to me/i });
+    expect(checkbox).toBeChecked();
+    fireEvent.click(checkbox);
+    expect(checkbox).not.toBeChecked();
+  });
+
+  it('clicking Refresh calls load() (line 586)', async () => {
+    renderPanel();
+    await screen.findByTestId('task-source-s-1');
+    // The first listMock call happens on mount; clicking Refresh triggers another
+    const beforeCount = listMock.mock.calls.length;
+    fireEvent.click(screen.getByRole('button', { name: /Refresh/i }));
+    await waitFor(() => {
+      expect(listMock.mock.calls.length).toBeGreaterThan(beforeCount);
+    });
   });
 });

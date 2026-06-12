@@ -101,6 +101,12 @@ interface MemoryGraphProps {
   mode: GraphMode;
   /** Optional override for the empty-state message. */
   emptyHint?: string;
+  /**
+   * Fired exactly once when the graph's force layout first settles (SVG
+   * worker `end`, the synchronous relax fallback, or the Pixi sim cooling).
+   * A loading overlay (e.g. the Brain page) waits on this to reveal the graph.
+   */
+  onReady?: () => void;
 }
 
 interface SummaryPreviewState {
@@ -186,9 +192,22 @@ function relaxLayout(nodes: SimNode[], edges: Array<[number, number]>, iteration
   }
 }
 
-export function MemoryGraph({ nodes, edges, mode, emptyHint }: MemoryGraphProps) {
+export function MemoryGraph({ nodes, edges, mode, emptyHint, onReady }: MemoryGraphProps) {
   const { t } = useT();
   const [hovered, setHovered] = useState<GraphNode | null>(null);
+
+  // Fire `onReady` at most once across this component's lifetime. The latest
+  // callback is held in a ref so `fireReady` stays stable (the SVG layout hook
+  // depends on a stable `onSettled`, and the guard prevents refires on reheat).
+  const onReadyRef = useRef(onReady);
+  onReadyRef.current = onReady;
+  const readyFiredRef = useRef(false);
+  const fireReady = useCallback(() => {
+    if (readyFiredRef.current) return;
+    readyFiredRef.current = true;
+    console.debug('[memory-graph] layout settled → onReady');
+    onReadyRef.current?.();
+  }, []);
   const [preview, setPreview] = useState<SummaryPreviewState | null>(null);
   const [previewingPath, setPreviewingPath] = useState<string | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
@@ -476,6 +495,12 @@ export function MemoryGraph({ nodes, edges, mode, emptyHint }: MemoryGraphProps)
     else run();
   }, [applyPositions]);
 
+  // Frame the graph then signal readiness once the worker layout cools.
+  const onSvgSettled = useCallback(() => {
+    fitToView();
+    fireReady();
+  }, [fitToView, fireReady]);
+
   // SVG fallback layout runs in a worker (off the main thread); positions
   // stream back and are applied imperatively. No-op on WebGL and where workers
   // are unavailable (the synchronous relaxLayout above covers that case).
@@ -487,9 +512,17 @@ export function MemoryGraph({ nodes, edges, mode, emptyHint }: MemoryGraphProps)
     SVG_CENTER,
     sim?.alpha ?? 1,
     scheduleApply,
-    fitToView
+    onSvgSettled
   );
   stopLayoutRef.current = svgLayout.stop;
+
+  // Synchronous-layout path (no WebGL, no Worker — e.g. jsdom under test):
+  // `relaxLayout` already ran inside the `sim` memo, so the graph is laid out
+  // as soon as `sim` exists. Signal readiness on the next tick.
+  useEffect(() => {
+    if (useWebGL || WORKER_SUPPORTED || !sim) return;
+    fireReady();
+  }, [useWebGL, sim, fireReady]);
 
   // Ramp the rest in per-frame batches (setState only inside the rAF callback).
   useEffect(() => {
@@ -593,6 +626,7 @@ export function MemoryGraph({ nodes, edges, mode, emptyHint }: MemoryGraphProps)
             if (n.kind === 'summary') void openSummary(n);
           }}
           onError={() => setPixiFailed(true)}
+          onReady={fireReady}
         />
       ) : (
         <svg

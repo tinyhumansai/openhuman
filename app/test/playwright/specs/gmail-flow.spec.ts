@@ -65,20 +65,15 @@ async function bootSkillsPage(page: Page, userId: string) {
       localStorage.setItem('openhuman:walkthrough_completed', 'true');
       localStorage.removeItem('openhuman:walkthrough_pending');
     } catch {}
-    window.location.hash = '/skills';
+    // Phase 2: /skills → /connections
+    window.location.hash = '/connections';
   });
   await waitForAppReady(page);
   await dismissWalkthroughIfPresent(page);
-  await page.getByRole('tab', { name: 'Composio' }).click();
-  const heading = page.getByRole('heading', { name: 'Composio Integrations' });
-  if (!(await heading.isVisible().catch(() => false))) {
-    const connectionsButton = page.getByRole('button', { name: 'Connections' });
-    if (await connectionsButton.isVisible().catch(() => false)) {
-      await connectionsButton.click({ force: true });
-      await waitForAppReady(page);
-      await dismissWalkthroughIfPresent(page);
-    }
-  }
+  // Tab is "Apps"; the h2 heading reads "Composio Integrations" (skills.integrations)
+  await page.getByRole('tab', { name: 'Apps' }).click();
+  // Wait for the Apps tab grid to be visible — the h2 heading text is "Composio Integrations"
+  const heading = page.getByRole('heading', { name: 'Composio Integrations', exact: true });
   await expect(heading).toBeVisible({ timeout: 20_000 });
 }
 
@@ -103,7 +98,8 @@ test.describe('Gmail Integration Flows', () => {
     await page.reload();
     await waitForAppReady(page);
     await dismissWalkthroughIfPresent(page);
-    await page.getByRole('tab', { name: 'Composio' }).click();
+    // Phase 2: "Composio" tab renamed to "Apps"
+    await page.getByRole('tab', { name: 'Apps' }).click();
 
     await page.getByTestId('skill-install-composio-gmail').click();
     await expect(page.getByRole('dialog', { name: /Connect Gmail/i })).toBeVisible();
@@ -129,13 +125,15 @@ test.describe('Gmail Integration Flows', () => {
     await seedConnector('FAILED');
     await page.reload();
     await waitForAppReady(page);
-    await page.getByRole('tab', { name: 'Composio' }).click();
+    // Phase 2: "Composio" tab renamed to "Apps"
+    await page.getByRole('tab', { name: 'Apps' }).click();
     await expect(page.getByTestId('skill-install-composio-gmail')).toContainText(CONNECTOR_NAME);
 
     await seedConnector('EXPIRED');
     await page.reload();
     await waitForAppReady(page);
-    await page.getByRole('tab', { name: 'Composio' }).click();
+    // Phase 2: "Composio" tab renamed to "Apps"
+    await page.getByRole('tab', { name: 'Apps' }).click();
     await expect(page.getByTestId(`skill-install-composio-${TOOLKIT_SLUG}`)).toContainText(
       /Auth expired|Reconnect/i
     );
@@ -143,8 +141,11 @@ test.describe('Gmail Integration Flows', () => {
 
   test('execute and disconnect routes do not blank the skills page', async ({ page }) => {
     await callCoreRpc('openhuman.composio_execute', { tool: ACTION, arguments: {} });
-    await page.getByRole('tab', { name: 'Composio' }).click();
-    await expect(page.getByRole('heading', { name: 'Composio Integrations' })).toBeVisible();
+    // Tab is "Apps"; the h2 heading reads "Composio Integrations" (skills.integrations)
+    await page.getByRole('tab', { name: 'Apps' }).click();
+    await expect(
+      page.getByRole('heading', { name: 'Composio Integrations', exact: true })
+    ).toBeVisible();
 
     await callCoreRpc('openhuman.composio_delete_connection', { connection_id: CONNECTION_ID });
     const requests = await getRequestLog();

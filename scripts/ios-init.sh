@@ -39,7 +39,12 @@ if [[ -z "$TEAM_ID" ]]; then
   exit 1
 fi
 
+# Keep regeneration deterministic. Previous local builds can leave archives,
+# copied libraries, and patched Xcode project state under gen/apple/.
+rm -rf "$MOBILE_DIR/gen/apple"
+
 npx --package=@tauri-apps/cli@^2 tauri ios init \
+  --ci \
   -c "{\"bundle\":{\"iOS\":{\"developmentTeam\":\"$TEAM_ID\"}}}"
 
 # Overwrite the placeholder AppIcon set Tauri generates with the real
@@ -58,12 +63,42 @@ fi
 # barcode scanner (camera) is mandatory for QR pairing; mic + speech are
 # needed by the PTT plugin. Without these, iOS will hard-crash the app on
 # first use of each API.
-INFO_PLIST=$(find "$MOBILE_DIR/gen/apple" -name "Info.plist" -path "*openhuman-mobile_iOS*" 2>/dev/null | head -1)
-if [[ -n "$INFO_PLIST" ]]; then
+INFO_PLIST="$MOBILE_DIR/gen/apple/openhuman-mobile_iOS/Info.plist"
+if [[ -f "$INFO_PLIST" ]]; then
   echo "[ios-init] injecting privacy keys → $INFO_PLIST"
   /usr/libexec/PlistBuddy -c "Add :NSCameraUsageDescription string 'OpenHuman uses the camera to scan the pairing QR code from your desktop.'" "$INFO_PLIST" 2>/dev/null || true
   /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string 'OpenHuman uses the microphone for push-to-talk voice messages.'" "$INFO_PLIST" 2>/dev/null || true
   /usr/libexec/PlistBuddy -c "Add :NSSpeechRecognitionUsageDescription string 'OpenHuman uses on-device speech recognition to transcribe your voice messages.'" "$INFO_PLIST" 2>/dev/null || true
+fi
+
+# The generated Xcode build phase runs `npm run -- tauri ...` from gen/apple.
+# In this repo that resolves the app-level package script and makes Tauri look
+# for app/src-tauri/gen/apple (desktop) instead of app/src-tauri-mobile/gen/apple.
+# Tauri's `ios xcode-script` also loses access to the installed iOS simulator
+# Rust std in Xcode's script environment. Build the mobile staticlib directly
+# from the mobile crate root and copy it to the location the Xcode target links.
+PROJECT_YML="$MOBILE_DIR/gen/apple/project.yml"
+PBXPROJ="$MOBILE_DIR/gen/apple/openhuman-mobile.xcodeproj/project.pbxproj"
+NEW_SCRIPT='cd ../.. && PATH=$HOME/.cargo/bin:$PATH RUSTUP_TOOLCHAIN=${RUSTUP_TOOLCHAIN:-1.93.0-aarch64-apple-darwin} IPHONEOS_DEPLOYMENT_TARGET=${IPHONEOS_DEPLOYMENT_TARGET:-16.0} RUST_TARGET=aarch64-apple-ios && case "${SDK_NAME:-}" in iphonesimulator*) RUST_TARGET=aarch64-apple-ios-sim ;; esac && cargo build --package openhuman-mobile --manifest-path Cargo.toml --target "$RUST_TARGET" --features=tauri/custom-protocol --lib --release && mkdir -p "gen/apple/Externals/arm64/${CONFIGURATION:-release}" && cp "target/$RUST_TARGET/release/libopenhuman_mobile.a" "gen/apple/Externals/arm64/${CONFIGURATION:-release}/libapp.a"'
+patch_xcode_script() {
+  local file="$1"
+  NEW_SCRIPT="$NEW_SCRIPT" perl -0pi -e 's#(- script: )[^\n]*(?:tauri ios xcode-script|cargo build --package openhuman-mobile)[^\n]*#$1$ENV{NEW_SCRIPT}#g' "$file"
+  NEW_SCRIPT="$NEW_SCRIPT" perl -pi -e '
+    if (/shellScript = / && /(tauri ios xcode-script|cargo build --package openhuman-mobile)/) {
+      my $script = $ENV{NEW_SCRIPT};
+      $script =~ s/\\/\\\\/g;
+      $script =~ s/"/\\"/g;
+      $_ = "\t\t\tshellScript = \"$script\";\n";
+    }
+  ' "$file"
+}
+if [[ -f "$PROJECT_YML" ]]; then
+  echo "[ios-init] patching mobile Rust build phase → $PROJECT_YML"
+  patch_xcode_script "$PROJECT_YML"
+fi
+if [[ -f "$PBXPROJ" ]]; then
+  echo "[ios-init] patching mobile Rust build phase → $PBXPROJ"
+  patch_xcode_script "$PBXPROJ"
 fi
 
 echo ""

@@ -18,7 +18,16 @@ import {
   testEmbeddingsConnection,
   updateEmbeddingsSettings,
 } from '../../../services/api/embeddingsApi';
+import Button from '../../ui/Button';
 import SettingsHeader from '../components/SettingsHeader';
+import {
+  SettingsBadge,
+  SettingsRow,
+  SettingsSection,
+  SettingsSelect,
+  SettingsStatusLine,
+  SettingsTextField,
+} from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 type Status =
@@ -87,7 +96,7 @@ const EmbeddingsPanel = ({ embedded = false }: EmbeddingsPanelProps = {}) => {
           />
         )}
         <div className={embedded ? '' : 'p-4'}>
-          <div className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 text-xs text-stone-500 dark:text-neutral-400">
+          <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 text-xs text-neutral-500 dark:text-neutral-400">
             {status.kind === 'loading'
               ? t('common.loading')
               : status.kind === 'error'
@@ -334,72 +343,66 @@ const EmbeddingsPanel = ({ embedded = false }: EmbeddingsPanelProps = {}) => {
       )}
 
       <div className={embedded ? 'space-y-4' : 'p-4 space-y-4'}>
-        <p className="text-xs text-stone-500 dark:text-neutral-400 leading-relaxed">
+        <p className="text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed">
           {t('settings.embeddings.description')}
         </p>
 
         {/* Provider selection */}
-        <div
-          className="bg-white dark:bg-neutral-900 rounded-xl border border-neutral-200 dark:border-neutral-800 overflow-hidden"
-          role="radiogroup"
-          aria-label={t('settings.embeddings.providerAria')}>
-          {settings.providers.map((entry, idx) => {
-            const selected = entry.slug === selectedProvider;
-            return (
-              <button
-                key={entry.slug}
-                type="button"
-                role="radio"
-                aria-checked={selected}
-                onClick={() => handleProviderClick(entry)}
-                className={`w-full flex items-start gap-3 px-4 py-3 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 ${
-                  idx !== 0 ? 'border-t border-neutral-100 dark:border-neutral-800' : ''
-                } ${
-                  selected
-                    ? 'bg-primary-50 dark:bg-primary-500/10'
-                    : 'hover:bg-neutral-50 dark:hover:bg-neutral-800/60'
-                }`}>
-                <span className="flex-1 min-w-0">
-                  <span className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
-                      {entry.label}
-                    </span>
-                    {entry.requires_api_key && (
-                      <span
-                        className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider ${
-                          entry.has_api_key
-                            ? 'bg-sage-100 text-sage-700 dark:bg-sage-900/40 dark:text-sage-200'
-                            : 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200'
-                        }`}>
-                        {entry.has_api_key
-                          ? t('settings.embeddings.statusConfigured')
-                          : t('settings.embeddings.statusNeedsKey')}
+        <SettingsSection>
+          <div role="radiogroup" aria-label={t('settings.embeddings.providerAria')}>
+            {settings.providers.map((entry, idx) => {
+              const selected = entry.slug === selectedProvider;
+              return (
+                <button
+                  key={entry.slug}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  onClick={() => handleProviderClick(entry)}
+                  className={`w-full flex items-start gap-3 px-4 py-3 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 ${
+                    idx !== 0 ? 'border-t border-neutral-100 dark:border-neutral-800' : ''
+                  } ${
+                    selected
+                      ? 'bg-primary-50 dark:bg-primary-500/10'
+                      : 'hover:bg-neutral-50 dark:hover:bg-neutral-800/60'
+                  }`}>
+                  <span className="flex-1 min-w-0">
+                    <span className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-neutral-800 dark:text-neutral-100">
+                        {entry.label}
                       </span>
-                    )}
+                      {entry.requires_api_key && (
+                        <SettingsBadge variant={entry.has_api_key ? 'success' : 'warning'}>
+                          {entry.has_api_key
+                            ? t('settings.embeddings.statusConfigured')
+                            : t('settings.embeddings.statusNeedsKey')}
+                        </SettingsBadge>
+                      )}
+                    </span>
+                    <span className="block mt-0.5 text-xs text-neutral-500 dark:text-neutral-400">
+                      {entry.description}
+                    </span>
                   </span>
-                  <span className="block mt-0.5 text-xs text-neutral-500 dark:text-neutral-400">
-                    {entry.description}
-                  </span>
-                </span>
-                {selected && (
-                  <svg
-                    className="w-5 h-5 text-primary-500 flex-shrink-0 mt-0.5"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                    aria-hidden>
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M5 13l4 4L19 7"
-                    />
-                  </svg>
-                )}
-              </button>
-            );
-          })}
-        </div>
+                  {selected && (
+                    <svg
+                      className="w-5 h-5 text-primary-500 flex-shrink-0 mt-0.5"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                      aria-hidden>
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M5 13l4 4L19 7"
+                      />
+                    </svg>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </SettingsSection>
 
         {/* Vector search disabled notice */}
         {selectedProvider === 'none' && (
@@ -414,77 +417,83 @@ const EmbeddingsPanel = ({ embedded = false }: EmbeddingsPanelProps = {}) => {
         {currentModels.length > 0 &&
           selectedProvider !== 'custom' &&
           selectedProvider !== 'none' && (
-            <div className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-3 space-y-3">
+            <SettingsSection>
               {currentModels.length > 1 && (
-                <div>
-                  <label className="block text-xs font-semibold text-stone-700 dark:text-neutral-200 mb-1">
-                    {t('settings.embeddings.model')}
-                  </label>
-                  <select
-                    value={settings.model}
-                    onChange={e => void handleModelChange(e.target.value)}
-                    className="w-full px-2 py-1.5 rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-xs text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500">
-                    {currentModels.map(m => (
-                      <option key={m.id} value={m.id}>
-                        {m.label} ({m.id})
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                <SettingsRow
+                  htmlFor="embeddings-model"
+                  label={t('settings.embeddings.model')}
+                  stacked
+                  control={
+                    <SettingsSelect
+                      id="embeddings-model"
+                      value={settings.model}
+                      onChange={e => void handleModelChange(e.target.value)}
+                      className="w-full">
+                      {currentModels.map(m => (
+                        <option key={m.id} value={m.id}>
+                          {m.label} ({m.id})
+                        </option>
+                      ))}
+                    </SettingsSelect>
+                  }
+                />
               )}
 
               {allowedDims.length > 1 && (
-                <div>
-                  <label className="block text-xs font-semibold text-stone-700 dark:text-neutral-200 mb-1">
-                    {t('settings.embeddings.dimensions')}
-                  </label>
-                  <select
-                    value={settings.dimensions}
-                    onChange={e => void handleDimsChange(Number(e.target.value))}
-                    className="w-full px-2 py-1.5 rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-xs text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500">
-                    {allowedDims.map(d => (
-                      <option key={d} value={d}>
-                        {d}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                <SettingsRow
+                  htmlFor="embeddings-dims"
+                  label={t('settings.embeddings.dimensions')}
+                  stacked
+                  control={
+                    <SettingsSelect
+                      id="embeddings-dims"
+                      value={settings.dimensions}
+                      onChange={e => void handleDimsChange(Number(e.target.value))}
+                      className="w-full">
+                      {allowedDims.map(d => (
+                        <option key={d} value={d}>
+                          {d}
+                        </option>
+                      ))}
+                    </SettingsSelect>
+                  }
+                />
               )}
 
               {/* Active provider info + actions */}
-              <div className="flex items-center gap-2 pt-1">
+              <div className="flex items-center gap-2 px-4 py-3">
                 {currentEntry?.requires_api_key && currentEntry.has_api_key && (
-                  <button
+                  <Button
                     type="button"
-                    onClick={() => void handleClearKey()}
-                    className="px-2.5 py-1 rounded-md border border-coral-200 dark:border-coral-500/30 text-[11px] text-coral-600 dark:text-coral-300 hover:bg-coral-50 dark:hover:bg-coral-500/10">
+                    variant="danger"
+                    size="xs"
+                    onClick={() => void handleClearKey()}>
                     {t('settings.embeddings.clearKey')}
-                  </button>
+                  </Button>
                 )}
-                <button
+                <Button
                   type="button"
+                  variant="secondary"
+                  size="xs"
                   onClick={() => void handleTestConnection()}
-                  disabled={selectedProvider === 'none'}
-                  className="px-2.5 py-1 rounded-md border border-stone-200 dark:border-neutral-800 text-[11px] text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800 disabled:opacity-50">
+                  disabled={selectedProvider === 'none'}>
                   {t('settings.embeddings.testConnection')}
-                </button>
+                </Button>
               </div>
-            </div>
+            </SettingsSection>
           )}
 
         {/* Status bar */}
-        <div
-          role="status"
-          aria-live="polite"
-          className="text-xs min-h-[1rem] text-stone-500 dark:text-neutral-400">
-          {status.kind === 'saving' && t('settings.embeddings.saving')}
-          {status.kind === 'saved' && t('settings.embeddings.saved')}
-          {status.kind === 'error' && (
-            <span className="text-coral-600 dark:text-coral-300">
-              {t('settings.embeddings.errorPrefix')}: {status.message}
-            </span>
-          )}
-        </div>
+        <SettingsStatusLine
+          saving={status.kind === 'saving'}
+          savedNote={status.kind === 'saved' ? t('settings.embeddings.saved') : null}
+          error={
+            status.kind === 'error'
+              ? `${t('settings.embeddings.errorPrefix')}: ${status.message}`
+              : null
+          }
+          savingLabel={t('settings.embeddings.saving')}
+        />
       </div>
 
       {/* ── Setup popup (API key entry + test + save) ── */}
@@ -505,55 +514,55 @@ const EmbeddingsPanel = ({ embedded = false }: EmbeddingsPanelProps = {}) => {
               /* Custom endpoint form */
               <div className="space-y-3">
                 <div>
-                  <label className="block text-[11px] font-medium text-stone-600 dark:text-neutral-300 mb-1">
+                  <label className="block text-[11px] font-medium text-neutral-600 dark:text-neutral-300 mb-1">
                     {t('settings.embeddings.customEndpoint')}
                   </label>
-                  <input
+                  <SettingsTextField
                     type="text"
                     value={customEndpoint}
                     onChange={e => setCustomEndpoint(e.target.value)}
                     placeholder="https://your-endpoint.com/v1"
-                    className="w-full px-2.5 py-1.5 rounded-md border border-stone-200 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-xs font-mono text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                    mono
                     autoFocus
                   />
                 </div>
                 <div className="flex gap-2">
                   <div className="flex-1">
-                    <label className="block text-[11px] font-medium text-stone-600 dark:text-neutral-300 mb-1">
+                    <label className="block text-[11px] font-medium text-neutral-600 dark:text-neutral-300 mb-1">
                       {t('settings.embeddings.customModelPlaceholder')}
                     </label>
-                    <input
+                    <SettingsTextField
                       type="text"
                       value={customModel}
                       onChange={e => setCustomModel(e.target.value)}
                       placeholder="text-embedding-3-small"
-                      className="w-full px-2.5 py-1.5 rounded-md border border-stone-200 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-xs font-mono text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                      mono
                     />
                   </div>
                   <div className="w-24">
-                    <label className="block text-[11px] font-medium text-stone-600 dark:text-neutral-300 mb-1">
+                    <label className="block text-[11px] font-medium text-neutral-600 dark:text-neutral-300 mb-1">
                       {t('settings.embeddings.dimensions')}
                     </label>
-                    <input
+                    <SettingsTextField
                       type="number"
                       value={customDims}
                       onChange={e => setCustomDims(e.target.value)}
                       placeholder="1024"
-                      className="w-full px-2.5 py-1.5 rounded-md border border-stone-200 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-xs font-mono text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                      mono
                     />
                   </div>
                 </div>
                 <div>
-                  <label className="block text-[11px] font-medium text-stone-600 dark:text-neutral-300 mb-1">
+                  <label className="block text-[11px] font-medium text-neutral-600 dark:text-neutral-300 mb-1">
                     {t('settings.embeddings.apiKeyLabel').replace('{provider}', 'API')} (
                     {t('settings.embeddings.optional')})
                   </label>
-                  <input
+                  <SettingsTextField
                     type={setupShowKey ? 'text' : 'password'}
                     value={setupKey}
                     onChange={e => setSetupKey(e.target.value)}
                     placeholder={t('settings.embeddings.placeholderKey')}
-                    className="w-full px-2.5 py-1.5 rounded-md border border-stone-200 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-xs font-mono text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                    mono
                   />
                 </div>
               </div>
@@ -564,29 +573,31 @@ const EmbeddingsPanel = ({ embedded = false }: EmbeddingsPanelProps = {}) => {
                   {setupProvider.description}
                 </p>
                 <div>
-                  <label className="block text-[11px] font-medium text-stone-600 dark:text-neutral-300 mb-1">
+                  <label className="block text-[11px] font-medium text-neutral-600 dark:text-neutral-300 mb-1">
                     {t('settings.embeddings.apiKeyLabel').replace(
                       '{provider}',
                       setupProvider.label
                     )}
                   </label>
                   <div className="flex gap-2">
-                    <input
+                    <SettingsTextField
                       type={setupShowKey ? 'text' : 'password'}
                       value={setupKey}
                       onChange={e => setSetupKey(e.target.value)}
                       placeholder={t('settings.embeddings.placeholderKey')}
-                      className="flex-1 px-2.5 py-1.5 rounded-md border border-stone-200 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-xs font-mono text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                      mono
                       autoFocus
+                      className="flex-1"
                     />
-                    <button
+                    <Button
                       type="button"
-                      onClick={() => setSetupShowKey(s => !s)}
-                      className="px-2 py-1.5 rounded-md border border-stone-200 dark:border-neutral-700 text-xs text-stone-600 dark:text-neutral-300 hover:bg-stone-50 dark:hover:bg-neutral-800">
+                      variant="secondary"
+                      size="xs"
+                      onClick={() => setSetupShowKey(s => !s)}>
                       {setupShowKey ? t('settings.embeddings.hide') : t('settings.embeddings.show')}
-                    </button>
+                    </Button>
                   </div>
-                  <p className="mt-1 text-[10px] text-stone-400 dark:text-neutral-500">
+                  <p className="mt-1 text-[10px] text-neutral-400 dark:text-neutral-500">
                     {t('settings.embeddings.keyStoredEncrypted')}
                   </p>
                 </div>
@@ -621,8 +632,10 @@ const EmbeddingsPanel = ({ embedded = false }: EmbeddingsPanelProps = {}) => {
 
             {/* Popup actions */}
             <div className="flex justify-between pt-1">
-              <button
+              <Button
                 type="button"
+                variant="secondary"
+                size="xs"
                 onClick={() => {
                   if (setupProvider.slug !== 'custom') {
                     void setupTest();
@@ -632,22 +645,24 @@ const EmbeddingsPanel = ({ embedded = false }: EmbeddingsPanelProps = {}) => {
                   setupTesting ||
                   setupSaving ||
                   (setupProvider.slug !== 'custom' && !setupKey.trim())
-                }
-                className="px-3 py-1.5 rounded-lg text-xs font-medium border border-stone-200 dark:border-neutral-700 text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800 disabled:opacity-40">
+                }>
                 {setupTesting
                   ? t('settings.embeddings.testing')
                   : t('settings.embeddings.testConnection')}
-              </button>
+              </Button>
 
               <div className="flex gap-2">
-                <button
+                <Button
                   type="button"
-                  onClick={() => setSetupProvider(null)}
-                  className="px-4 py-1.5 rounded-lg text-xs font-medium text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800">
+                  variant="ghost"
+                  size="xs"
+                  onClick={() => setSetupProvider(null)}>
                   {t('settings.embeddings.cancel')}
-                </button>
-                <button
+                </Button>
+                <Button
                   type="button"
+                  variant="primary"
+                  size="xs"
                   onClick={() => {
                     if (setupProvider.slug === 'custom') {
                       void setupSaveCustom();
@@ -661,12 +676,11 @@ const EmbeddingsPanel = ({ embedded = false }: EmbeddingsPanelProps = {}) => {
                       !setupKey.trim() &&
                       !setupProvider.has_api_key) ||
                     (setupProvider.slug === 'custom' && !customEndpoint.trim())
-                  }
-                  className="px-4 py-1.5 rounded-lg text-xs font-medium bg-primary-500 hover:bg-primary-600 text-white disabled:opacity-40">
+                  }>
                   {setupSaving
                     ? t('settings.embeddings.saving')
                     : t('settings.embeddings.saveAndSwitch')}
-                </button>
+                </Button>
               </div>
             </div>
           </div>
@@ -684,18 +698,12 @@ const EmbeddingsPanel = ({ embedded = false }: EmbeddingsPanelProps = {}) => {
               {t('settings.embeddings.wipeBody')}
             </p>
             <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setPendingWipe(null)}
-                className="px-4 py-2 rounded-lg text-xs font-medium text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800">
+              <Button type="button" variant="ghost" size="xs" onClick={() => setPendingWipe(null)}>
                 {t('settings.embeddings.cancel')}
-              </button>
-              <button
-                type="button"
-                onClick={() => void confirmWipe()}
-                className="px-4 py-2 rounded-lg text-xs font-medium bg-coral-500 hover:bg-coral-600 text-white">
+              </Button>
+              <Button type="button" variant="danger" size="xs" onClick={() => void confirmWipe()}>
                 {t('settings.embeddings.confirmWipe')}
-              </button>
+              </Button>
             </div>
           </div>
         </div>

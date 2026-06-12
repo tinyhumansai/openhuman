@@ -236,6 +236,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     ty: TypeSchema::Enum {
                         variants: vec![
                             "composio",
+                            "conversation",
                             "folder",
                             "github_repo",
                             "twitter_query",

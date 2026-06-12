@@ -45,6 +45,7 @@ interface AddMemorySourceDialogProps {
 
 const ALL_KINDS: SourceKind[] = [
   'composio',
+  'conversation',
   'folder',
   'github_repo',
   'rss_feed',
@@ -143,6 +144,8 @@ export function AddMemorySourceDialog({ open, onClose, onAdded }: AddMemorySourc
         case 'composio':
           params.toolkit = toolkit;
           params.connection_id = connectionId;
+          break;
+        case 'conversation':
           break;
         case 'folder':
           params.path = path.trim();
@@ -318,6 +321,8 @@ function isKindFieldsValid(
   switch (kind) {
     case 'composio':
       return fields.connectionId.length > 0;
+    case 'conversation':
+      return true;
     case 'folder':
       return fields.path.trim().length > 0;
     case 'github_repo':
@@ -446,6 +451,8 @@ function KindFields(props: KindFieldsProps) {
   switch (props.kind) {
     case 'composio':
       return <ComposioPicker {...props} />;
+    case 'conversation':
+      return null;
     case 'folder':
       return (
         <>

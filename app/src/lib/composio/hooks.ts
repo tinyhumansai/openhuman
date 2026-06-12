@@ -12,8 +12,10 @@ import type { ComposioConnection } from './types';
 export interface UseComposioIntegrationsResult {
   /** Toolkit slugs enabled on the backend allowlist. */
   toolkits: string[];
-  /** Connections keyed by lowercased toolkit slug. */
+  /** Best (highest-status) connection keyed by lowercased toolkit slug. */
   connectionByToolkit: Map<string, ComposioConnection>;
+  /** All connections keyed by lowercased toolkit slug, sorted by status (ACTIVE first, then by createdAt). */
+  connectionsByToolkit: Map<string, ComposioConnection[]>;
   /** Whether the initial fetch is still in flight. */
   loading: boolean;
   /** Last error message from either fetch, if any. */
@@ -174,16 +176,16 @@ export function useComposioIntegrations(pollIntervalMs = 5_000): UseComposioInte
     return () => window.removeEventListener('composio:config-changed', onConfigChanged);
   }, [isLocalSession, refresh, resolveFetchEnabled]);
 
+  const score = (status: string): number => {
+    const s = status.toUpperCase();
+    if (s === 'ACTIVE' || s === 'CONNECTED') return 3;
+    if (s === 'PENDING' || s === 'INITIATED' || s === 'INITIALIZING') return 2;
+    if (s === 'FAILED' || s === 'ERROR' || s === 'EXPIRED') return 1;
+    return 0;
+  };
+
   const connectionByToolkit = useMemo(() => {
     const map = new Map<string, ComposioConnection>();
-    // Preference order: ACTIVE/CONNECTED > PENDING > anything else.
-    const score = (status: string): number => {
-      const s = status.toUpperCase();
-      if (s === 'ACTIVE' || s === 'CONNECTED') return 3;
-      if (s === 'PENDING' || s === 'INITIATED' || s === 'INITIALIZING') return 2;
-      if (s === 'FAILED' || s === 'ERROR' || s === 'EXPIRED') return 1;
-      return 0;
-    };
     for (const conn of connections) {
       const key = canonicalizeComposioToolkitSlug(conn.toolkit);
       const existing = map.get(key);
@@ -194,7 +196,26 @@ export function useComposioIntegrations(pollIntervalMs = 5_000): UseComposioInte
     return map;
   }, [connections]);
 
-  return { toolkits, connectionByToolkit, loading, error, refresh };
+  const connectionsByToolkit = useMemo(() => {
+    const map = new Map<string, ComposioConnection[]>();
+    for (const conn of connections) {
+      const key = canonicalizeComposioToolkitSlug(conn.toolkit);
+      const existing = map.get(key) ?? [];
+      existing.push(conn);
+      map.set(key, existing);
+    }
+    for (const [key, conns] of map) {
+      conns.sort((a, b) => {
+        const diff = score(b.status) - score(a.status);
+        if (diff !== 0) return diff;
+        return (a.createdAt ?? '').localeCompare(b.createdAt ?? '');
+      });
+      map.set(key, conns);
+    }
+    return map;
+  }, [connections]);
+
+  return { toolkits, connectionByToolkit, connectionsByToolkit, loading, error, refresh };
 }
 
 // ── useAgentReadyComposioToolkits ─────────────────────────────────

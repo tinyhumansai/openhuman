@@ -19,7 +19,7 @@ pub fn build(ctx: &PromptContext<'_>) -> Result<String> {
         agent_id = ctx.agent_id,
         model = ctx.model_name,
         tool_count = ctx.tools.len(),
-        skill_count = ctx.skills.len(),
+        workflow_count = ctx.workflows.len(),
         "[agent_prompt][crypto_agent] build_start"
     );
 
@@ -77,7 +77,7 @@ mod tests {
             model_name: "test",
             agent_id: "crypto_agent",
             tools: &[],
-            skills: &[],
+            workflows: &[],
             dispatcher_instructions: "",
             learned: LearnedContextData::default(),
             visible_tool_names: EMPTY_VISIBLE.get_or_init(HashSet::new),

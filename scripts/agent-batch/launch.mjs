@@ -59,8 +59,39 @@ Tracking: progress for this batch is reported on issue #${spec.tracking_issue}.
 `;
 }
 
+/**
+ * Returns formatted help text for the agent-batch launch CLI.
+ *
+ * Describes the script's purpose, required arguments, and available options.
+ * The operator uses this tool to generate launch comments that are pasted
+ * into Cursor as agent prompts.
+ *
+ * @returns {string} Multi-line help text describing usage, arguments, and flags.
+ */
+function usage() {
+  return [
+    'Usage: node scripts/agent-batch/launch.mjs <spec.json> [options]',
+    '',
+    'Print one launch comment per agent in the batch. The operator pastes each',
+    'into Cursor as the agent prompt.',
+    '',
+    'Arguments:',
+    '  <spec.json>     Path to the batch specification file.',
+    '',
+    'Options:',
+    '  --agent <id>    Print only the agent with this id (default: all agents).',
+    '  --print-only    Print launch comments (default and only mode currently).',
+    '  -h, --help      Show this help and exit.',
+  ].join('\n');
+}
+
 function main() {
-  const { positional, flags } = parseArgs(process.argv.slice(2));
+  const argv = process.argv.slice(2);
+  if (argv.includes('--help') || argv.includes('-h')) {
+    console.log(usage());
+    process.exit(0);
+  }
+  const { positional, flags } = parseArgs(argv);
   const specPath = positional[0];
   if (!specPath) {
     process.stderr.write(

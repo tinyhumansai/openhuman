@@ -8,6 +8,7 @@ jobs:
   smoke-unix:
     name: Smoke install.sh (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
@@ -25,6 +26,7 @@ jobs:
   smoke-windows:
     name: install.ps1 tests + dry-run (windows-latest)
     runs-on: windows-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v5

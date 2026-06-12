@@ -1009,6 +1009,12 @@ fn teardown_account_scanners<R: Runtime>(app: &AppHandle<R>, account_id: &str) {
     {
         registry.inner().forget(account_id);
     }
+    // Drop the in-process CDP transport for this account so a reopen
+    // installs a fresh observer instead of re-using the dead one tied
+    // to the closed webview.
+    if let Some(registry) = app.try_state::<crate::cdp::CdpRegistry>() {
+        registry.inner().forget_account(account_id);
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -2419,6 +2425,22 @@ pub async fn webview_account_open<R: Runtime>(
     let webview = parent_window
         .add_child(builder, initial_position, initial_size)
         .map_err(|e| format!("add_child failed: {e}"))?;
+
+    // Install the in-process CDP transport so the per-account session
+    // opener and the provider scanners can attach without the
+    // `--remote-debugging-port=19222` TCP listener. Failure here is
+    // logged but not fatal — the scanners retry through
+    // `cdp::conn_for_account` once the registry is populated, so a
+    // transient install error just delays first attach by one backoff
+    // tick.
+    if let Err(err) = crate::cdp::install_for_account(&args.account_id) {
+        log::warn!(
+            "[webview-accounts] cdp install_for_account({}) failed: {} \
+             (scanners will retry)",
+            args.account_id,
+            err
+        );
+    }
 
     // Capture the cold-spawn timestamp so the reveal-time log can compute
     // spawn -> frontend reveal latency for the Slack first-load investigation.

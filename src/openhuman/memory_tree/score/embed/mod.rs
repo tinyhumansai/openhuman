@@ -104,16 +104,49 @@ pub(crate) fn check_embed_dim(v: Vec<f32>, label: &str) -> Result<Vec<f32>> {
     Ok(v)
 }
 
-/// Batch-embed `texts` through a unified [`EmbeddingProvider`] in a single
-/// request and adapt the result to the [`Embedder::embed_batch`] contract:
-/// one dimension-checked [`Result`] per input position.
+/// Voyage batch API limits (conservative estimates).
+const MAX_BATCH_ITEMS: usize = 1000;
+const MAX_BATCH_TOKENS: usize = 1_000_000;
+const CHARS_PER_TOKEN_ESTIMATE: usize = 4;
+
+fn estimate_tokens(text: &str) -> usize {
+    (text.len() + CHARS_PER_TOKEN_ESTIMATE - 1) / CHARS_PER_TOKEN_ESTIMATE
+}
+
+/// Split `texts` into sub-batches that respect the batch API limits:
+/// at most `MAX_BATCH_ITEMS` items per batch and at most
+/// `MAX_BATCH_TOKENS` estimated tokens per batch.
+fn split_into_sub_batches<'a>(texts: &[&'a str]) -> Vec<Vec<&'a str>> {
+    let mut batches: Vec<Vec<&'a str>> = Vec::new();
+    let mut current: Vec<&'a str> = Vec::new();
+    let mut current_tokens: usize = 0;
+
+    for &text in texts {
+        let tokens = estimate_tokens(text);
+        if !current.is_empty()
+            && (current.len() >= MAX_BATCH_ITEMS || current_tokens + tokens > MAX_BATCH_TOKENS)
+        {
+            batches.push(std::mem::take(&mut current));
+            current_tokens = 0;
+        }
+        current.push(text);
+        current_tokens += tokens;
+    }
+    if !current.is_empty() {
+        batches.push(current);
+    }
+    batches
+}
+
+/// Batch-embed `texts` through a unified [`EmbeddingProvider`], splitting
+/// into sub-batches that respect the batch API limits (1000 items, ~1M
+/// tokens per request).
 ///
-/// On a wholesale batch failure (network / auth) **or** a length-contract
-/// violation from the provider, this falls back to per-text
-/// [`EmbeddingProvider::embed_one`] so a single transient blip cannot fail —
-/// and, in the backfill, *tombstone* — every row in the batch. That preserves
-/// the resilience of the original per-item loop while keeping the happy-path
-/// single-round-trip win.
+/// Each sub-batch is sent as a single provider `embed()` call. On a
+/// wholesale batch failure **or** a length-contract violation, the failing
+/// sub-batch falls back to per-text [`EmbeddingProvider::embed_one`] so a
+/// single transient blip cannot fail — and, in the backfill, *tombstone* —
+/// every row in the batch.
 pub(crate) async fn embed_batch_via_provider(
     inner: &dyn crate::openhuman::embeddings::EmbeddingProvider,
     label: &str,
@@ -122,14 +155,37 @@ pub(crate) async fn embed_batch_via_provider(
     if texts.is_empty() {
         return Vec::new();
     }
+
+    let sub_batches = split_into_sub_batches(texts);
     log::debug!(
-        "[memory_tree::embed::{label}] embed_batch:enter texts={}",
-        texts.len()
+        "[memory_tree::embed::{label}] embed_batch:enter texts={} sub_batches={}",
+        texts.len(),
+        sub_batches.len()
     );
+
+    let mut all_results: Vec<Result<Vec<f32>>> = Vec::with_capacity(texts.len());
+
+    for (batch_idx, batch) in sub_batches.iter().enumerate() {
+        let batch_results = embed_one_sub_batch(inner, label, batch, batch_idx).await;
+        all_results.extend(batch_results);
+    }
+
+    all_results
+}
+
+/// Embed a single sub-batch via the provider, with per-text fallback on
+/// batch failure.
+async fn embed_one_sub_batch(
+    inner: &dyn crate::openhuman::embeddings::EmbeddingProvider,
+    label: &str,
+    texts: &[&str],
+    batch_idx: usize,
+) -> Vec<Result<Vec<f32>>> {
     match inner.embed(texts).await {
         Ok(vectors) if vectors.len() == texts.len() => {
             log::debug!(
-                "[memory_tree::embed::{label}] embed_batch:success collapsed {} texts into one provider call",
+                "[memory_tree::embed::{label}] embed_batch:success sub_batch={batch_idx} \
+                 collapsed {} texts into one provider call",
                 texts.len()
             );
             vectors
@@ -139,8 +195,8 @@ pub(crate) async fn embed_batch_via_provider(
         }
         Ok(vectors) => {
             log::warn!(
-                "[memory_tree::embed::{label}] embed_batch:fallback batch returned {} vectors for {} texts; \
-                 falling back to per-text embedding",
+                "[memory_tree::embed::{label}] embed_batch:fallback sub_batch={batch_idx} \
+                 returned {} vectors for {} texts; falling back to per-text embedding",
                 vectors.len(),
                 texts.len()
             );
@@ -148,8 +204,8 @@ pub(crate) async fn embed_batch_via_provider(
         }
         Err(e) => {
             log::warn!(
-                "[memory_tree::embed::{label}] embed_batch:fallback batch embed failed ({e:#}); \
-                 falling back to per-text embedding"
+                "[memory_tree::embed::{label}] embed_batch:fallback sub_batch={batch_idx} \
+                 batch embed failed ({e:#}); falling back to per-text embedding"
             );
             embed_each_via_provider(inner, label, texts).await
         }

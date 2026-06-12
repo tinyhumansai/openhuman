@@ -23,8 +23,9 @@ import chatRuntimeReducer, {
   setToolTimelineForThread,
 } from '../../store/chatRuntimeSlice';
 import socketReducer from '../../store/socketSlice';
+import themeReducer from '../../store/themeSlice';
 import threadReducer, { setSelectedThread } from '../../store/threadSlice';
-import type { Thread } from '../../types/thread';
+import type { Thread, ThreadMessage } from '../../types/thread';
 
 // ── Hoisted mock state ─────────────────────────────────────────────────────
 
@@ -172,6 +173,7 @@ function buildStore(preload: Record<string, unknown> = {}) {
       socket: socketReducer,
       chatRuntime: chatRuntimeReducer,
       agentProfiles: agentProfileReducer,
+      theme: themeReducer,
     }),
     preloadedState: preload as never,
   });
@@ -294,6 +296,7 @@ async function submitComposerText(textarea: HTMLElement, text: string) {
 describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    window.localStorage.clear();
     // Reset the mock to defaults for each test
     mockGetThreads.mockResolvedValue({ threads: [], count: 0 });
     mockGetThreadMessages.mockResolvedValue({ messages: [], count: 0 });
@@ -402,6 +405,142 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     await waitFor(() => {
       // The error branch renders "Failed to load messages" static text
       expect(screen.getByText('Failed to load messages')).toBeInTheDocument();
+    });
+  });
+
+  it('renders assistant messages as unframed text when the appearance preference is enabled', async () => {
+    const thread = makeThread({ id: 'view-mode-thread', title: 'View Mode Thread' });
+    const messages: ThreadMessage[] = [
+      {
+        id: 'm-user',
+        sender: 'user',
+        type: 'text',
+        content: 'Can you summarize this?',
+        extraMetadata: {},
+        createdAt: '2026-01-01T00:00:00.000Z',
+      },
+      {
+        id: 'm-agent',
+        sender: 'agent',
+        type: 'text',
+        content: 'Long agent output\n\nwith enough structure to prefer a text view.',
+        extraMetadata: {},
+        createdAt: '2026-01-01T00:01:00.000Z',
+      },
+    ];
+    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
+    mockGetThreadMessages.mockResolvedValue({ messages, count: messages.length });
+
+    await act(async () => {
+      await renderConversations({
+        thread: {
+          ...selectedThreadState(thread),
+          messagesByThreadId: { [thread.id]: messages },
+          messages,
+        },
+        socket: socketState('connected'),
+        theme: {
+          mode: 'system',
+          tabBarLabels: 'hover',
+          fontSize: 'medium',
+          agentMessageViewMode: 'text',
+        },
+      });
+    });
+
+    expect(screen.getByTestId('agent-message-text')).toHaveTextContent(
+      'Long agent output with enough structure to prefer a text view.'
+    );
+    expect(screen.getByText('Can you summarize this?')).toBeInTheDocument();
+  });
+
+  it('keeps bubble mode interactions for assistant citations, copy, and reactions', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    const thread = makeThread({ id: 'bubble-mode-thread', title: 'Bubble Mode Thread' });
+    const agentContent =
+      'First assistant paragraph with enough text to render.\n\nSecond assistant paragraph stays in bubbles.';
+    const messages: ThreadMessage[] = [
+      {
+        id: 'm-agent-bubble',
+        sender: 'agent',
+        type: 'text',
+        content: agentContent,
+        extraMetadata: {
+          citations: [
+            {
+              id: 'cite-1',
+              key: 'memory-key',
+              namespace: 'personal',
+              snippet: 'Remembered preference',
+              timestamp: '2026-01-01T00:00:00.000Z',
+              score: 0.91,
+            },
+          ],
+          myReactions: ['👍'],
+        },
+        createdAt: '2026-01-01T00:01:00.000Z',
+      },
+    ];
+    vi.mocked(threadApi.updateMessage).mockImplementation(
+      async (_threadId, _messageId, extraMetadata) =>
+        ({ ...messages[0], extraMetadata }) as ThreadMessage
+    );
+    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
+    mockGetThreadMessages.mockResolvedValue({ messages, count: messages.length });
+
+    await act(async () => {
+      await renderConversations({
+        thread: {
+          ...selectedThreadState(thread),
+          messagesByThreadId: { [thread.id]: messages },
+          messages,
+        },
+        socket: socketState('connected'),
+        theme: {
+          mode: 'system',
+          tabBarLabels: 'hover',
+          fontSize: 'medium',
+          agentMessageViewMode: 'bubbles',
+        },
+      });
+    });
+
+    expect(screen.queryByTestId('agent-message-text')).not.toBeInTheDocument();
+    expect(
+      screen.getByText('First assistant paragraph with enough text to render.')
+    ).toBeInTheDocument();
+    expect(screen.getByText('personal 91%')).toBeInTheDocument();
+    expect(screen.getByTitle(/Remembered preference/)).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByTitle('Copy response'));
+    });
+    expect(writeText).toHaveBeenCalledWith(agentContent);
+
+    await act(async () => {
+      fireEvent.click(screen.getByTitle('Remove 👍'));
+    });
+    await waitFor(() => {
+      expect(threadApi.updateMessage).toHaveBeenCalledWith(
+        thread.id,
+        'm-agent-bubble',
+        expect.objectContaining({ myReactions: [] })
+      );
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByTitle('Add reaction'));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTitle('🎯'));
+    });
+    await waitFor(() => {
+      expect(threadApi.updateMessage).toHaveBeenCalledWith(
+        thread.id,
+        'm-agent-bubble',
+        expect.objectContaining({ myReactions: expect.arrayContaining(['🎯']) })
+      );
     });
   });
 
@@ -726,7 +865,7 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     expect(chatSend).toHaveBeenCalledWith({
       threadId: thread.id,
       message: 'hello cloud',
-      model: 'reasoning-v1',
+      model: 'hint:chat',
       profileId: 'default',
       locale: 'en',
     });
@@ -750,7 +889,7 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       expect(chatSend).toHaveBeenCalledWith({
         threadId: thread.id,
         message: 'play highway to hell',
-        model: 'reasoning-v1',
+        model: 'hint:chat',
         profileId: 'default',
         locale: 'en',
       });
@@ -802,7 +941,7 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     expect(chatSend).toHaveBeenCalledWith({
       threadId: thread.id,
       message: 'slow backend',
-      model: 'reasoning-v1',
+      model: 'hint:chat',
       profileId: 'default',
       locale: 'en',
     });
@@ -1083,9 +1222,12 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
         screen.getByText('Could not update task; changes were not saved.')
       ).toBeInTheDocument();
     });
+    // With the 5-column model, todo → right → awaiting_approval (not in_progress)
     expect(threadApi.putTaskBoard).toHaveBeenCalledWith(
       'board-thread',
-      expect.arrayContaining([expect.objectContaining({ id: 'task-1', status: 'in_progress' })])
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'task-1', status: 'awaiting_approval' }),
+      ])
     );
   });
 
@@ -1167,7 +1309,7 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       expect(chatSend).toHaveBeenCalledWith({
         threadId: thread.id,
         message: 'enter send',
-        model: 'reasoning-v1',
+        model: 'hint:chat',
         profileId: 'default',
         locale: 'en',
       });
@@ -1242,7 +1384,7 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       expect(chatSend).toHaveBeenCalledWith({
         threadId: thread.id,
         message: '안녕',
-        model: 'reasoning-v1',
+        model: 'hint:chat',
         profileId: 'default',
         locale: 'en',
       });

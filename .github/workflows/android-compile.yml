@@ -1,25 +1,90 @@
 ---
-name: Android Compile Sanity
+name: Android Build and Publish
 
 on:
   workflow_dispatch:
+    inputs:
+      build_ref:
+        description: Git ref/SHA to build. Leave empty to use the selected workflow ref.
+        required: false
+        type: string
+        default: ""
+      publish_to_play:
+        description: Sign and upload the Android App Bundle to Google Play.
+        required: false
+        type: boolean
+        default: false
+      play_track:
+        description: Google Play release track.
+        required: false
+        type: choice
+        default: internal
+        options: [internal, alpha, beta, production]
+      play_status:
+        description: Google Play release status.
+        required: false
+        type: choice
+        default: completed
+        options: [completed, draft, inProgress, halted]
+  workflow_call:
+    inputs:
+      build_ref:
+        description: Git ref/SHA to build.
+        required: true
+        type: string
+      publish_to_play:
+        description: Sign and upload the Android App Bundle to Google Play.
+        required: false
+        type: boolean
+        default: false
+      play_track:
+        description: Google Play release track.
+        required: false
+        type: string
+        default: internal
+      play_status:
+        description: Google Play release status.
+        required: false
+        type: string
+        default: completed
+    secrets:
+      ANDROID_UPLOAD_KEYSTORE_BASE64:
+        description: Base64-encoded Play upload keystore.
+        required: false
+      ANDROID_UPLOAD_KEY_ALIAS:
+        description: Alias for the Play upload key.
+        required: false
+      ANDROID_UPLOAD_KEYSTORE_PASSWORD:
+        description: Password for the Play upload keystore.
+        required: false
+      ANDROID_UPLOAD_KEY_PASSWORD:
+        description: Password for the Play upload key.
+        required: false
+      GOOGLE_PLAY_SERVICE_ACCOUNT_JSON:
+        description: Google Play service account JSON.
+        required: false
 
 permissions:
   contents: read
   pull-requests: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.head_ref || github.ref }}
+  group: ${{ github.workflow }}-${{ inputs.build_ref || github.event.pull_request.number || github.head_ref || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  android-compile:
-    name: Android Compile Check
+  build-android:
+    name: Build Android App Bundle
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      version_name: ${{ steps.version.outputs.version_name }}
+      version_code: ${{ steps.version.outputs.version_code }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
+          ref: ${{ inputs.build_ref || github.ref }}
           fetch-depth: 1
           # Mobile crate uses stock Tauri (no CEF) — no submodules needed.
           submodules: false
@@ -28,7 +93,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.93.0"
-          targets: aarch64-linux-android
+          targets: aarch64-linux-android,armv7-linux-androideabi
 
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
@@ -38,11 +103,29 @@ jobs:
             packages/tauri-plugin-ptt -> target
           cache-on-failure: true
 
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        shell: bash
+        run: |
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-36" \
+            "build-tools;35.0.0" \
+            "ndk;27.0.12077973"
+
       - name: Set up pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v5
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: "24"
           cache: "pnpm"
@@ -50,6 +133,127 @@ jobs:
       - name: Install dependencies
         run: bash scripts/ci-cancel-aware.sh pnpm install --frozen-lockfile
 
-      # Hard gate: mobile Tauri host compiles for Android.
-      - name: cargo check -- mobile host (aarch64-linux-android)
-        run: bash scripts/ci-cancel-aware.sh cargo check --manifest-path app/src-tauri-mobile/Cargo.toml --target aarch64-linux-android
+      - name: Initialize Android project
+        env:
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
+        run: bash scripts/ci-cancel-aware.sh pnpm tauri:android:init
+
+      - name: Verify version sync
+        run: node scripts/release/verify-version-sync.js
+
+      - name: Build Android App Bundle
+        env:
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
+          CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang
+          CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi24-clang
+        run: |
+          bash scripts/ci-cancel-aware.sh \
+            pnpm --filter openhuman-app tauri:android:build --aab --target aarch64 --target armv7
+
+      - name: Resolve AAB
+        id: aab
+        shell: bash
+        run: |
+          mapfile -t bundles < <(find app/src-tauri-mobile/gen/android/app/build/outputs/bundle -type f -name "*.aab" | sort)
+          if [ "${#bundles[@]}" -ne 1 ]; then
+            printf 'Expected exactly one Android App Bundle, found %s:\n' "${#bundles[@]}"
+            printf '  %s\n' "${bundles[@]:-}"
+            exit 1
+          fi
+          mkdir -p android-release
+          cp "${bundles[0]}" android-release/openhuman-android-release-unsigned.aab
+          echo "path=android-release/openhuman-android-release-unsigned.aab" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve Android version
+        id: version
+        shell: bash
+        run: |
+          props="app/src-tauri-mobile/gen/android/app/tauri.properties"
+          version_name="$(grep '^tauri.android.versionName=' "$props" | cut -d= -f2-)"
+          version_code="$(grep '^tauri.android.versionCode=' "$props" | cut -d= -f2-)"
+          if [ -z "$version_name" ] || [ -z "$version_code" ]; then
+            echo "Failed to read Android version from $props"
+            exit 1
+          fi
+          echo "version_name=$version_name" >> "$GITHUB_OUTPUT"
+          echo "version_code=$version_code" >> "$GITHUB_OUTPUT"
+          echo "Android versionName=$version_name versionCode=$version_code"
+
+      - name: Upload unsigned AAB artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openhuman-android-aab-unsigned
+          path: ${{ steps.aab.outputs.path }}
+          if-no-files-found: error
+          retention-days: 14
+
+  publish-play:
+    name: Publish Google Play
+    if: ${{ inputs.publish_to_play }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [build-android]
+    environment: Production
+    steps:
+      - name: Download unsigned AAB
+        uses: actions/download-artifact@v4
+        with:
+          name: openhuman-android-aab-unsigned
+          path: android-release
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Sign Android App Bundle
+        id: sign
+        shell: bash
+        env:
+          ANDROID_UPLOAD_KEYSTORE_BASE64: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_BASE64 }}
+          ANDROID_UPLOAD_KEY_ALIAS: ${{ secrets.ANDROID_UPLOAD_KEY_ALIAS }}
+          ANDROID_UPLOAD_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_PASSWORD }}
+          ANDROID_UPLOAD_KEY_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEY_PASSWORD }}
+        run: |
+          required=(
+            ANDROID_UPLOAD_KEYSTORE_BASE64
+            ANDROID_UPLOAD_KEY_ALIAS
+            ANDROID_UPLOAD_KEYSTORE_PASSWORD
+            ANDROID_UPLOAD_KEY_PASSWORD
+          )
+          for name in "${required[@]}"; do
+            if [ -z "${!name}" ]; then
+              echo "::error::$name is required to sign the Android release."
+              exit 1
+            fi
+          done
+
+          mkdir -p signing signed
+          printf '%s' "$ANDROID_UPLOAD_KEYSTORE_BASE64" | base64 --decode > signing/upload-keystore.jks
+          jarsigner \
+            -keystore signing/upload-keystore.jks \
+            -storepass "$ANDROID_UPLOAD_KEYSTORE_PASSWORD" \
+            -keypass "$ANDROID_UPLOAD_KEY_PASSWORD" \
+            -signedjar signed/openhuman-android-release.aab \
+            android-release/openhuman-android-release-unsigned.aab \
+            "$ANDROID_UPLOAD_KEY_ALIAS"
+          jarsigner -verify -certs -verbose signed/openhuman-android-release.aab >/dev/null
+          echo "path=signed/openhuman-android-release.aab" >> "$GITHUB_OUTPUT"
+
+      - name: Upload signed AAB artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openhuman-android-aab-signed
+          path: ${{ steps.sign.outputs.path }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload to Google Play
+        uses: r0adkll/upload-google-play@v1.1.4
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: com.openhuman.app
+          releaseFiles: ${{ steps.sign.outputs.path }}
+          track: ${{ inputs.play_track }}
+          status: ${{ inputs.play_status }}

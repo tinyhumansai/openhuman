@@ -234,9 +234,10 @@ pub fn classify_embed_error_str(msg: &str) -> PipelineFailure {
             401 | 403 => {
                 PipelineFailure::new(FailureCode::AuthInvalid).with_detail(truncate_detail(msg))
             }
-            402 | 429 => {
+            402 => {
                 PipelineFailure::new(FailureCode::BudgetExhausted).with_detail(truncate_detail(msg))
             }
+            429 => PipelineFailure::new(FailureCode::Transient).with_detail(truncate_detail(msg)),
             // 4xx other than the above is a hard client error retrying won't
             // fix (malformed request, model not found); fail fast but tag it
             // generically as auth_invalid's sibling — use Transient only for
@@ -573,15 +574,17 @@ mod tests {
     }
 
     #[test]
-    fn classify_budget_from_402_and_429() {
-        for status in ["402 Payment Required", "429 Too Many Requests"] {
-            let f = classify_embed_error_str(&format!("Embedding API error ({status}): nope"));
-            assert_eq!(
-                f.code,
-                FailureCode::BudgetExhausted,
-                "status {status} should map to budget_exhausted"
-            );
-        }
+    fn classify_budget_from_402() {
+        let f = classify_embed_error_str("Embedding API error (402 Payment Required): nope");
+        assert_eq!(f.code, FailureCode::BudgetExhausted);
+        assert!(f.is_unrecoverable());
+    }
+
+    #[test]
+    fn classify_429_rate_limit_as_transient() {
+        let f = classify_embed_error_str("Embedding API error (429 Too Many Requests): nope");
+        assert_eq!(f.code, FailureCode::Transient);
+        assert!(!f.is_unrecoverable());
     }
 
     #[test]

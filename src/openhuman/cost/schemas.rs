@@ -17,11 +17,29 @@ struct DailyHistoryParams {
     days: Option<u32>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UsageLogParams {
+    #[serde(default = "default_usage_days")]
+    days: u32,
+    #[serde(default = "default_usage_limit")]
+    limit: usize,
+}
+
+fn default_usage_days() -> u32 {
+    30
+}
+
+fn default_usage_limit() -> usize {
+    250
+}
+
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
         schema_for("cost_get_dashboard"),
         schema_for("cost_get_daily_history"),
         schema_for("cost_get_summary"),
+        schema_for("cost_get_usage_log"),
     ]
 }
 
@@ -38,6 +56,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schema_for("cost_get_summary"),
             handler: handle_cost_get_summary,
+        },
+        RegisteredController {
+            schema: schema_for("cost_get_usage_log"),
+            handler: handle_cost_get_usage_log,
         },
     ]
 }
@@ -80,6 +102,32 @@ fn schema_for(function: &str) -> ControllerSchema {
             outputs: vec![json_output(
                 "summary",
                 "Aggregated cost & token usage for the current session and active period.",
+            )],
+        },
+        "cost_get_usage_log" => ControllerSchema {
+            namespace: "cost",
+            function: "get_usage_log",
+            description: "Fetch a bounded recent cost usage log with per-record rows and spend \
+                          distribution by inferred category.",
+            inputs: vec![
+                FieldSchema {
+                    name: "days",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
+                    comment:
+                        "Number of trailing days to include (default 30, clamped to [1, 366]).",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "limit",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
+                    comment:
+                        "Maximum number of records to return (default 250, clamped to [1, 1000]).",
+                    required: false,
+                },
+            ],
+            outputs: vec![json_output(
+                "usage_log",
+                "Usage records plus category totals, newest records first.",
             )],
         },
         _ => ControllerSchema {
@@ -173,6 +221,42 @@ fn handle_cost_get_summary(_params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+fn handle_cost_get_usage_log(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let cid = new_correlation_id();
+        log::debug!(target: "cost_rpc", "[cost_rpc][{cid}] cost_get_usage_log.entry");
+        let config = config_rpc::load_config_with_timeout().await.inspect_err(|err| {
+            log::warn!(target: "cost_rpc", "[cost_rpc][{cid}] cost_get_usage_log.config_load_failed err={err}");
+        })?;
+        let payload = if params.is_empty() {
+            UsageLogParams {
+                days: default_usage_days(),
+                limit: default_usage_limit(),
+            }
+        } else {
+            serde_json::from_value::<UsageLogParams>(Value::Object(params)).map_err(|e| {
+                let s = format!("invalid params: {e}");
+                log::warn!(target: "cost_rpc", "[cost_rpc][{cid}] cost_get_usage_log.bad_params err={s}");
+                s
+            })?
+        };
+        let outcome = cost_rpc::usage_log(&config, payload.days, payload.limit).map_err(|e| {
+            let s = e.to_string();
+            log::warn!(target: "cost_rpc", "[cost_rpc][{cid}] cost_get_usage_log.error err={s}");
+            s
+        })?;
+        let json = to_json(outcome);
+        log::debug!(
+            target: "cost_rpc",
+            "[cost_rpc][{cid}] cost_get_usage_log.exit days={} limit={} ok={}",
+            payload.days,
+            payload.limit,
+            json.is_ok()
+        );
+        json
+    })
+}
+
 fn to_json(outcome: RpcOutcome<Value>) -> Result<Value, String> {
     outcome.into_cli_compatible_json()
 }
@@ -194,23 +278,25 @@ mod tests {
     fn all_controller_schemas_lists_three_functions() {
         let schemas = all_controller_schemas();
         let names: Vec<&'static str> = schemas.iter().map(|s| s.function).collect();
-        assert_eq!(schemas.len(), 3);
+        assert_eq!(schemas.len(), 4);
         assert!(names.contains(&"get_dashboard"));
         assert!(names.contains(&"get_daily_history"));
         assert!(names.contains(&"get_summary"));
+        assert!(names.contains(&"get_usage_log"));
         for schema in &schemas {
             assert_eq!(schema.namespace, "cost");
         }
     }
 
     #[test]
-    fn all_registered_controllers_has_three_handlers_matching_schemas() {
+    fn all_registered_controllers_has_handlers_matching_schemas() {
         let registered = all_registered_controllers();
-        assert_eq!(registered.len(), 3);
+        assert_eq!(registered.len(), 4);
         let schema_fns: Vec<&'static str> = registered.iter().map(|r| r.schema.function).collect();
         assert!(schema_fns.contains(&"get_dashboard"));
         assert!(schema_fns.contains(&"get_daily_history"));
         assert!(schema_fns.contains(&"get_summary"));
+        assert!(schema_fns.contains(&"get_usage_log"));
     }
 
     #[test]
@@ -236,6 +322,16 @@ mod tests {
         let s = schema_for("cost_get_summary");
         assert_eq!(s.function, "get_summary");
         assert_eq!(s.outputs[0].name, "summary");
+    }
+
+    #[test]
+    fn schema_for_usage_log_has_days_and_limit_inputs() {
+        let s = schema_for("cost_get_usage_log");
+        assert_eq!(s.function, "get_usage_log");
+        assert_eq!(s.inputs.len(), 2);
+        assert_eq!(s.inputs[0].name, "days");
+        assert_eq!(s.inputs[1].name, "limit");
+        assert_eq!(s.outputs[0].name, "usage_log");
     }
 
     #[test]

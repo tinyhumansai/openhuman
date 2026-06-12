@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useT } from '../../../lib/i18n/I18nContext';
 import { callCoreRpc } from '../../../services/coreRpcClient';
 import SettingsHeader from '../components/SettingsHeader';
+import { SettingsStatusLine } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 type ToolPolicyDiagnostics = {
@@ -76,20 +77,18 @@ const ToolPolicyDiagnosticsPanel = () => {
   const body = useMemo(() => {
     if (status.kind === 'loading') {
       return (
-        <div className="px-4 py-3 text-sm text-sage-700 dark:text-sage-200">
+        <div className="px-4 py-3 text-sm text-neutral-500 dark:text-neutral-400">
           {t('devOptions.toolPolicyDiagnostics.loading')}
         </div>
       );
     }
     if (status.kind === 'error') {
       return (
-        <div className="px-4 py-3 rounded-lg border border-coral-300 dark:border-coral-500/40 bg-coral-50 dark:bg-coral-500/10">
-          <div className="text-sm font-semibold text-coral-900 dark:text-coral-200">
+        <div className="px-4 py-3">
+          <div className="text-sm font-semibold text-neutral-800 dark:text-neutral-100 mb-1">
             {t('devOptions.toolPolicyDiagnostics.unavailable')}
           </div>
-          <div className="text-xs text-coral-800 dark:text-coral-200 mt-1 font-mono break-words">
-            {status.message}
-          </div>
+          <SettingsStatusLine saving={false} error={status.message} savingLabel="" />
         </div>
       );
     }

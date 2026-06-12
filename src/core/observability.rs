@@ -268,10 +268,55 @@ pub enum ExpectedErrorKind {
     /// — a genuine keyring/persist failure in `upsert_profile` carries neither
     /// anchor, so a real defect in the import code still reaches Sentry.
     CodexCliAuthUnavailable,
+    /// The managed backend (#870) stamped a stable `errorCode` on this
+    /// inference error response — so the backend **owns** it (it already paged
+    /// its own 5xx, or the code is expected user-state: rate limit, out of
+    /// credits, upstream unavailable, model/routing misconfig, payload too
+    /// large, context overflow, user-param rejection). The provider HTTP layer
+    /// (`api_error`) already demotes its own per-attempt event; this catches
+    /// the **re-report** when the same flattened error is raised again under
+    /// `domain=web_channel` / `agent` (the path
+    /// `channels::providers::web::run_chat_task` →
+    /// `report_error_or_expected`). The FE surfaces actionable copy via
+    /// `classify_inference_error`; Sentry must not double-report (F2/F4).
+    ///
+    /// The single exception — a backend-flagged **malformed** `BAD_REQUEST` —
+    /// is NOT classified here (it is a client-built payload the backend
+    /// couldn't parse, and the FE *does* page for it, F8). See
+    /// [`crate::openhuman::inference::provider::backend_error_code_skips_sentry`].
+    BackendErrorCodeOwned,
 }
 
 pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     let lower = message.to_ascii_lowercase();
+    // F2/F4: a managed-backend `errorCode` (#870) means the backend owns this
+    // error — it already paged its own 5xx, or the code is expected user-state.
+    // Trust it FIRST, before the substring matchers, so a managed 500
+    // `INTERNAL_ERROR` (which no substring matcher below would otherwise demote)
+    // stops double-reporting. The one exception — a backend-flagged malformed
+    // `BAD_REQUEST` — is excluded by `managed_error_skips_sentry` and falls
+    // through to the matchers / capture so the FE still pages (F8). The
+    // decision is gated on the managed-backend envelope so a BYO payload
+    // carrying an `errorCode`-shaped field is not wrongly suppressed
+    // (CodeRabbit).
+    if crate::openhuman::inference::provider::managed_error_skips_sentry(message) {
+        return Some(ExpectedErrorKind::BackendErrorCodeOwned);
+    }
+    // A managed-backend client-guard-leak code (`PAYLOAD_TOO_LARGE` /
+    // `CONTEXT_LENGTH_EXCEEDED`) must PAGE — the client enforces these limits
+    // before sending, so a backend rejection is our guard leaking. Force
+    // capture (return `None`) here, BEFORE the substring matchers below: a real
+    // managed `CONTEXT_LENGTH_EXCEEDED` body carries "context length
+    // exceeded"-style text that `is_context_window_exceeded_message` (further
+    // down) would otherwise re-demote into the suppressed
+    // `ContextWindowExceeded` bucket (CodeRabbit). Gated on the managed envelope
+    // so a BYO provider's own context-overflow — genuine user-state, not our
+    // guard — still flows to that matcher and stays demoted.
+    if crate::openhuman::inference::provider::is_managed_backend_envelope(message)
+        && crate::openhuman::inference::provider::is_backend_client_guard_leak(message)
+    {
+        return None;
+    }
     // Check the Codex-CLI import envelope first: it is highly specific
     // (literal `codex cli auth` / `.codex/auth.json`) and carries no overlap
     // with the generic matchers below, so ordering is for clarity, not
@@ -443,8 +488,22 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
 ///   `"not enough space on the disk"`.
 /// - **Windows `ERROR_HANDLE_DISK_FULL` (39)**: same wire text but errno 39.
 ///   The text anchor already covers it.
+///
+/// A fourth shape comes from call sites that render the `io::ErrorKind` debug
+/// name instead of the `io::Error` Display — notably the auth-profile
+/// lock-create annotation, which emits
+/// `"... (kind=Some(StorageFull), os_code=Some(28))"` (Sentry TAURI-RUST-4SZ).
+/// That string carries no "no space left on device" text, so anchor
+/// additionally on the cross-platform `StorageFull` ErrorKind token (std maps
+/// ENOSPC / `ERROR_DISK_FULL` / `ERROR_HANDLE_DISK_FULL` all to
+/// `ErrorKind::StorageFull`). This is defense-in-depth for the genuinely
+/// unpreventable **write** paths (a write can't succeed on a full disk); the
+/// read path no longer emits this error at all (it degrades to a lock-free
+/// read — see `AuthProfilesStore::load`).
 fn is_disk_full_message(lower: &str) -> bool {
-    lower.contains("no space left on device") || lower.contains("not enough space on the disk")
+    lower.contains("no space left on device")
+        || lower.contains("not enough space on the disk")
+        || lower.contains("storagefull")
 }
 
 /// Detect the literal `"Config loading timed out"` string produced by
@@ -1146,10 +1205,10 @@ fn is_provider_user_state_message(lower: &str) -> bool {
 /// The two canonical wire shapes today both contain `"for this ram tier"`:
 ///
 /// - `"Vision is disabled for this RAM tier. Switch to the 4-8 GB tier or
-///   above to enable it."` — from `local_ai/service/assets.rs::ensure_capability_ready`
+///   above to enable it."` — from `inference/local/service/assets.rs::ensure_capability_ready`
 /// - `"vision summaries are unavailable for this RAM tier. Use OCR-only
 ///   summarization or switch to a higher local AI tier."` —
-///   from `local_ai/service/vision_embed.rs::summarize`
+///   from `inference/local/service/vision_embed.rs::summarize`
 ///
 /// Anchor the classifier to that exact substring so an unrelated message
 /// that merely mentions "RAM tier" out of context is not silenced.
@@ -1621,6 +1680,23 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
                 "[observability] {domain}.{operation} skipped expected codex-cli auth-unavailable error"
             );
         }
+        ExpectedErrorKind::BackendErrorCodeOwned => {
+            // Managed-backend `errorCode` (#870) re-report — the backend owns
+            // this error (already paged its own 5xx, or expected user-state).
+            // The FE surfaces actionable copy via `classify_inference_error`;
+            // Sentry must not double-report (F2/F4). Demote at `warn!` so the
+            // breadcrumb retains the code for triage without spawning an event.
+            let code =
+                crate::openhuman::inference::provider::extract_backend_error_code_token(message)
+                    .unwrap_or_default();
+            tracing::warn!(
+                domain = domain,
+                operation = operation,
+                kind = "backend_error_code",
+                error_code = %code,
+                "[observability] {domain}.{operation} skipped backend-owned errorCode={code} error: {message}"
+            );
+        }
     }
 }
 
@@ -1707,6 +1783,63 @@ pub fn is_transient_provider_http_failure(event: &sentry::protocol::Event<'_>) -
         return false;
     };
     TRANSIENT_PROVIDER_HTTP_STATUSES.contains(&status_u16)
+}
+
+/// Defense-in-depth `before_send` filter for managed-backend `errorCode`
+/// events (#870): drops any Sentry event whose message/exception text carries a
+/// backend `errorCode` that the backend owns (F2/F4) — *except* a backend-flagged
+/// malformed `BAD_REQUEST`, which the client caused and so still pages (F8).
+///
+/// Primary suppression lives at the emit sites (`api_error` /
+/// `compatible_*` streaming gates) and at the higher-layer re-report
+/// classifier (`expected_error_kind` → [`ExpectedErrorKind::BackendErrorCodeOwned`]).
+/// This catches any future call site that re-emits the same flattened error
+/// without routing through those funnels. Delegates the decision to the
+/// single-source [`crate::openhuman::inference::provider::managed_error_skips_sentry`]
+/// (managed-envelope gated, so a BYO payload carrying an `errorCode`-shaped
+/// field is not wrongly dropped) so the layers can't drift.
+pub fn is_backend_error_code_event(event: &sentry::protocol::Event<'_>) -> bool {
+    let direct = event.message.as_deref();
+    let from_logentry = event.logentry.as_ref().map(|log| log.message.as_str());
+    let from_exception = event.exception.last().and_then(|e| e.value.as_deref());
+    [direct, from_logentry, from_exception]
+        .into_iter()
+        .flatten()
+        .any(crate::openhuman::inference::provider::managed_error_skips_sentry)
+}
+
+/// Defense-in-depth `before_send` filter for transient streaming **transport**
+/// failures (F7): drops `domain=llm_provider, failure=transport` events whose
+/// body is a transient transport phrase (timeout / reset / TLS-handshake EOF /
+/// "error sending request"). Flaky-network blips on the streaming send are
+/// recovered by retry/fallback and carry no actionable Sentry signal; a
+/// non-transient transport failure (DNS misconfig, unexpected protocol error)
+/// is not matched and still pages.
+///
+/// Primary gate lives at the two streaming emit sites in
+/// `compatible_provider_impl.rs` (`stream_chat` / `stream_chat_history`); this
+/// catches any future site that reports the same shape without gating.
+///
+/// Scoped to the **streaming** operations on purpose (CodeRabbit): only the
+/// `stream_chat` / `stream_chat_history` transport emits are meant to be
+/// suppressed. A non-streaming `domain=llm_provider, failure=transport` event
+/// carries a different `operation` tag and must keep paging, so the
+/// observability blind spot stays as narrow as F7 intends.
+pub fn is_transient_provider_transport_failure(event: &sentry::protocol::Event<'_>) -> bool {
+    let tags = &event.tags;
+    if tags.get("domain").map(String::as_str) != Some("llm_provider") {
+        return false;
+    }
+    if tags.get("failure").map(String::as_str) != Some("transport") {
+        return false;
+    }
+    if !matches!(
+        tags.get("operation").map(String::as_str),
+        Some("stream_chat") | Some("stream_chat_history")
+    ) {
+        return false;
+    }
+    event_has_transient_transport_phrase(event)
 }
 
 /// Returns true when a Sentry event's message/exception text contains the
@@ -2643,6 +2776,12 @@ mod tests {
             "state snapshot write failed: No space left on device (os error 28)",
             // Windows ERROR_DISK_FULL (112) rendering.
             "log rotation failed: There is not enough space on the disk. (os error 112)",
+            // Outer-only `{}` wire shape that production actually emits for the
+            // auth-profile lock-create failure (Sentry TAURI-RUST-4SZ): the
+            // inner io::Error Display is flattened away at the RPC boundary, so
+            // only the `ErrorKind` debug + os_code survive — no "no space left
+            // on device" text. Must still classify via the StorageFull anchor.
+            "Failed to create auth profile lock (kind=Some(StorageFull), os_code=Some(28))",
         ] {
             assert_eq!(
                 expected_error_kind(raw),
@@ -5189,5 +5328,238 @@ mod tests {
             "supervised_listener",
             &[("channel", "discord")],
         );
+    }
+
+    // ── #870 managed-backend errorCode Sentry ownership (F2/F4/F7/F8) ──
+
+    fn managed_body(status: &str, code: &str) -> String {
+        format!(
+            "OpenHuman API error ({status}): {{\"error\":{{\"errorCode\":\"{code}\",\"message\":\"x\"}}}}"
+        )
+    }
+
+    #[test]
+    fn expected_kind_demotes_every_backend_owned_error_code() {
+        for (status, code) in [
+            ("429", "RATE_LIMITED"),
+            ("402", "USER_INSUFFICIENT_CREDITS"),
+            ("503", "UPSTREAM_UNAVAILABLE"),
+            ("404", "MODEL_UNAVAILABLE"),
+            ("400", "BAD_REQUEST"),
+            ("500", "INTERNAL_ERROR"),
+        ] {
+            let body = managed_body(status, code);
+            assert_eq!(
+                expected_error_kind(&body),
+                Some(ExpectedErrorKind::BackendErrorCodeOwned),
+                "errorCode={code} must be backend-owned (no FE Sentry)"
+            );
+        }
+
+        // Client-guard-leak codes page (None = capture), even with realistic
+        // explanatory text that a later substring matcher would otherwise
+        // re-demote into a suppressed bucket.
+        let payload = "OpenHuman API error (413 Payload Too Large): \
+             {\"error\":{\"errorCode\":\"PAYLOAD_TOO_LARGE\",\"message\":\"request entity too large\"}}";
+        assert_eq!(
+            expected_error_kind(payload),
+            None,
+            "PAYLOAD_TOO_LARGE is a client guard leak and must page"
+        );
+
+        // This body's message matches `is_context_window_exceeded_message`, so
+        // without the early guard-leak bypass it would re-demote to the
+        // suppressed `ContextWindowExceeded` bucket (CodeRabbit).
+        let context = "OpenHuman API error (400 Bad Request): \
+             {\"error\":{\"errorCode\":\"CONTEXT_LENGTH_EXCEEDED\",\"message\":\"This model's maximum context length is 128000 tokens, however you requested more\"}}";
+        assert_eq!(
+            expected_error_kind(context),
+            None,
+            "CONTEXT_LENGTH_EXCEEDED must page even with context-window wording"
+        );
+
+        // Proof the bypass is load-bearing, not a no-op: this body's text DOES
+        // match the context-window matcher, so without the early guard-leak
+        // bypass `expected_error_kind` would have re-demoted it to the
+        // suppressed `ContextWindowExceeded` bucket.
+        assert!(
+            crate::openhuman::inference::provider::is_context_window_exceeded_message(context),
+            "test body must actually trigger the matcher the bypass guards against"
+        );
+    }
+
+    #[test]
+    fn expected_kind_lets_malformed_bad_request_page() {
+        // F8: the one errorCode case that still pages — the backend flagged a
+        // client-built payload as unparseable. `expected_error_kind` must NOT
+        // classify it as expected, so capture proceeds.
+        let body = "OpenHuman API error (400 Bad Request): \
+             {\"error\":{\"errorCode\":\"BAD_REQUEST\",\"malformed\":true}}";
+        assert_eq!(expected_error_kind(body), None);
+    }
+
+    #[test]
+    fn expected_kind_ignores_byo_errors_with_no_code() {
+        // A BYO 401 carries no errorCode — it must NOT be swallowed by the
+        // backend-owned branch (it routes through its own matchers / capture).
+        let body = "openai API error (401 Unauthorized): \
+             {\"error\":{\"message\":\"Incorrect API key provided\"}}";
+        assert_ne!(
+            expected_error_kind(body),
+            Some(ExpectedErrorKind::BackendErrorCodeOwned)
+        );
+    }
+
+    #[test]
+    fn expected_kind_ignores_byo_errors_that_carry_an_error_code_token() {
+        // CodeRabbit: a BYO / direct-provider envelope whose body happens to
+        // carry an `errorCode`-shaped field must NOT be demoted — the
+        // managed-envelope gate keeps it reaching Sentry.
+        let body = "custom_openai API error (500 Internal Server Error): \
+             {\"error\":{\"errorCode\":\"INTERNAL_ERROR\"}}";
+        assert_ne!(
+            expected_error_kind(body),
+            Some(ExpectedErrorKind::BackendErrorCodeOwned)
+        );
+        let event = event_with_message(body);
+        assert!(
+            !is_backend_error_code_event(&event),
+            "BYO body with an errorCode token must not be dropped by before_send"
+        );
+    }
+
+    #[test]
+    fn before_send_filter_drops_backend_owned_error_code_events() {
+        for code in [
+            "RATE_LIMITED",
+            "UPSTREAM_UNAVAILABLE",
+            "MODEL_UNAVAILABLE",
+            "INTERNAL_ERROR",
+            "BAD_REQUEST",
+        ] {
+            let event = event_with_message(&managed_body("500", code));
+            assert!(
+                is_backend_error_code_event(&event),
+                "errorCode={code} event must be dropped by before_send"
+            );
+        }
+
+        // Client-guard-leak codes survive before_send and page (the client
+        // should have caught the limit before sending) — including a realistic
+        // CONTEXT_LENGTH_EXCEEDED body whose wording matches the context-window
+        // substring matcher (the filter keys on the errorCode, not the text).
+        let payload = "OpenHuman API error (413 Payload Too Large): \
+             {\"error\":{\"errorCode\":\"PAYLOAD_TOO_LARGE\",\"message\":\"request entity too large\"}}";
+        let context = "OpenHuman API error (400 Bad Request): \
+             {\"error\":{\"errorCode\":\"CONTEXT_LENGTH_EXCEEDED\",\"message\":\"This model's maximum context length is 128000 tokens\"}}";
+        for body in [payload, context] {
+            let event = event_with_message(body);
+            assert!(
+                !is_backend_error_code_event(&event),
+                "client guard leak must survive before_send: {body}"
+            );
+        }
+    }
+
+    #[test]
+    fn before_send_filter_keeps_malformed_bad_request_event() {
+        let event = event_with_message(
+            "OpenHuman API error (400 Bad Request): \
+             {\"error\":{\"errorCode\":\"BAD_REQUEST\",\"malformed\":true}}",
+        );
+        assert!(
+            !is_backend_error_code_event(&event),
+            "malformed BAD_REQUEST must survive before_send and page (F8)"
+        );
+    }
+
+    #[test]
+    fn before_send_filter_matches_error_code_in_exception_value() {
+        let event = event_with_exception_value(&managed_body("500", "INTERNAL_ERROR"));
+        assert!(is_backend_error_code_event(&event));
+    }
+
+    #[test]
+    fn transient_provider_transport_filter_drops_flaky_network_blips() {
+        // F7: a streaming transport timeout/reset under
+        // domain=llm_provider, failure=transport is recovered by
+        // retry/fallback — drop it.
+        for phrase in [
+            "error sending request for url (https://api.tinyhumans.ai/v1/chat): \
+             operation timed out",
+            "connection reset by peer",
+            "tls handshake eof",
+        ] {
+            for operation in ["stream_chat", "stream_chat_history"] {
+                let event = event_with_tags_and_message(
+                    &[
+                        ("domain", "llm_provider"),
+                        ("failure", "transport"),
+                        ("operation", operation),
+                    ],
+                    phrase,
+                );
+                assert!(
+                    is_transient_provider_transport_failure(&event),
+                    "transient transport phrase must be dropped: {phrase} ({operation})"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn transient_provider_transport_filter_keeps_non_transient_transport() {
+        // A genuine, non-transient transport failure (e.g. an unexpected
+        // protocol error) is NOT a flaky-network blip — keep paging.
+        let event = event_with_tags_and_message(
+            &[
+                ("domain", "llm_provider"),
+                ("failure", "transport"),
+                ("operation", "stream_chat"),
+            ],
+            "invalid URL scheme: unsupported protocol",
+        );
+        assert!(!is_transient_provider_transport_failure(&event));
+    }
+
+    #[test]
+    fn transient_provider_transport_filter_scoped_to_streaming_operations() {
+        // CodeRabbit: a NON-streaming llm_provider transport failure with the
+        // same domain/failure tags but a different operation must keep paging
+        // — the filter is intentionally scoped to the streaming emits.
+        let event = event_with_tags_and_message(
+            &[
+                ("domain", "llm_provider"),
+                ("failure", "transport"),
+                ("operation", "chat_completions"),
+            ],
+            "operation timed out",
+        );
+        assert!(
+            !is_transient_provider_transport_failure(&event),
+            "non-streaming llm_provider transport must not be suppressed"
+        );
+
+        // And with no operation tag at all (older/foreign emit) — keep paging.
+        let no_op = event_with_tags_and_message(
+            &[("domain", "llm_provider"), ("failure", "transport")],
+            "operation timed out",
+        );
+        assert!(!is_transient_provider_transport_failure(&no_op));
+    }
+
+    #[test]
+    fn transient_provider_transport_filter_scoped_to_llm_provider() {
+        // Same shape under a different domain must not be claimed by this
+        // provider-scoped filter.
+        let event = event_with_tags_and_message(
+            &[
+                ("domain", "backend_api"),
+                ("failure", "transport"),
+                ("operation", "stream_chat"),
+            ],
+            "operation timed out",
+        );
+        assert!(!is_transient_provider_transport_failure(&event));
     }
 }

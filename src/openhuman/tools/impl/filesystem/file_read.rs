@@ -25,7 +25,10 @@ impl Tool for FileReadTool {
     }
 
     fn description(&self) -> &str {
-        "Read the contents of a file in the workspace"
+        "Read the contents of a file in your working directory (the action sandbox). \
+         Relative paths resolve against that directory; paths outside it are blocked. \
+         To read a file written by `shell`, confirm its location with `pwd` and use the \
+         same relative path."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

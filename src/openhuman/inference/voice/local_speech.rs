@@ -39,7 +39,7 @@
 //! into `~/.openhuman/bin/piper/`, extracts it, and stages the bundled
 //! `en_US-lessac-medium` voice (`.onnx` + `.onnx.json`) alongside via a
 //! `.part` file + atomic rename. After install the `resolve_piper_binary`
-//! helper in `local_ai/paths.rs` picks it up automatically.
+//! helper in `inference/paths.rs` picks it up automatically.
 //!
 //! **Advanced path:** download Piper from
 //! [rhasspy/piper](https://github.com/rhasspy/piper) releases (one

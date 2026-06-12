@@ -158,7 +158,7 @@ test.describe('Chat Tool Call Flow', () => {
     const threadId = await createNewThread(page);
     await sendMessage(page, PROMPT);
 
-    await expect(page.getByText(CANARY_FINAL)).toBeVisible({ timeout: 40_000 });
+    await expect(page.getByText(CANARY_FINAL).first()).toBeVisible({ timeout: 40_000 });
 
     const names = await expect
       .poll(async () => toolTimelineNames(page, threadId), { timeout: 20_000 })

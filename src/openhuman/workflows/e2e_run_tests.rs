@@ -38,13 +38,12 @@ use crate::openhuman::inference::provider::traits::{
     ChatMessage, ChatRequest, ChatResponse, ProviderCapabilities,
 };
 use crate::openhuman::inference::provider::{Provider, ToolCall};
+use crate::openhuman::skill_runtime::{await_run_outcome, spawn_workflow_run_background};
 use crate::openhuman::todos::ops as board_ops;
 use crate::openhuman::todos::ops::{BoardLocation, CardPatch};
 use crate::openhuman::tools::policy::DefaultToolPolicy;
 use crate::openhuman::tools::traits::Tool;
-use crate::openhuman::workflows::schemas::{
-    await_run_outcome, resolve_workspace_dir, spawn_workflow_run_background,
-};
+use crate::openhuman::workflows::schemas::resolve_workspace_dir;
 
 /// Serialize this module's tests (each touches process-global state).
 fn serial() -> &'static tokio::sync::Mutex<()> {
@@ -98,6 +97,7 @@ fn tool_call_resp(id: &str, name: &str, args: serde_json::Value) -> ChatResponse
             id: id.into(),
             name: name.into(),
             arguments: args.to_string(),
+            extra_content: None,
         }],
         usage: None,
         reasoning_content: None,

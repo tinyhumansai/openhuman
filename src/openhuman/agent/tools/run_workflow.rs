@@ -33,10 +33,9 @@
 use async_trait::async_trait;
 use serde_json::json;
 
+use crate::openhuman::skill_runtime::{await_run_outcome, spawn_workflow_run_background};
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
-use crate::openhuman::workflows::schemas::{
-    await_run_outcome, resolve_workspace_dir, spawn_workflow_run_background,
-};
+use crate::openhuman::workflows::schemas::resolve_workspace_dir;
 
 /// Tool name surfaced to the LLM's function-calling schema.
 pub const RUN_WORKFLOW_TOOL_NAME: &str = "run_workflow";
@@ -97,6 +96,14 @@ mod guard {
             ));
         }
         Ok(())
+    }
+
+    /// Test-only reader for the process-lifetime spawn counter. Used by the
+    /// regression test that asserts a rejected spawn (e.g. unknown workflow
+    /// id) doesn't consume a backstop slot.
+    #[cfg(test)]
+    pub fn total_spawns() -> u64 {
+        TOTAL_SPAWNS.load(Ordering::SeqCst)
     }
 
     /// Acquire an await slot + re-entrancy lock for `key` (a workflow-id +
@@ -553,6 +560,41 @@ mod tests {
         // Free one slot → the next acquire succeeds.
         held.pop();
         super::guard::acquire_await("cap-test-9".to_string()).expect("a freed slot is reusable");
+    }
+
+    #[tokio::test]
+    async fn unknown_workflow_id_does_not_burn_a_spawn_slot() {
+        // Regression: a rejected spawn (unknown workflow id) must NOT consume a
+        // slot against the process-lifetime backstop. `account_spawn` runs only
+        // in the `Ok(started)` arm — after `spawn_workflow_run_background`
+        // succeeds — so an unknown id (which fails synchronously) never accounts
+        // a spawn. Without this ordering, an agent retrying a bad id would
+        // exhaust the 500-spawn budget for legitimate runs. Asserts the counter
+        // DELTA is zero (the counter is global + monotonic, so absolute value is
+        // shared with the backstop test — hence the serial lock + delta check).
+        let _s = guard_serial().lock().unwrap();
+        let before = super::guard::total_spawns();
+        let t = RunWorkflowTool::new();
+        // wait_seconds: 0 → fire-and-forget path (no await slot taken); the
+        // unknown id makes the spawn fail before accounting.
+        let res = t
+            .execute(json!({
+                "workflow_id": "definitely-not-a-real-workflow-zzz",
+                "wait_seconds": 0
+            }))
+            .await
+            .expect("Ok(ToolResult)");
+        assert!(res.is_error, "unknown workflow id must return a tool error");
+        assert!(
+            res.output().contains("unknown") || res.output().contains("workflow"),
+            "error should reference the unknown workflow: {}",
+            res.output()
+        );
+        let after = super::guard::total_spawns();
+        assert_eq!(
+            before, after,
+            "a rejected spawn must not increment the spawn backstop counter"
+        );
     }
 
     #[test]

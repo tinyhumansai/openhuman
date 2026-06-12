@@ -13,12 +13,16 @@ async function openSettings(page: Page, userId: string, hash: string): Promise<v
   await dismissWalkthroughIfPresent(page);
 }
 
-async function themeState(page: Page): Promise<{ mode?: string; tabBarLabels?: string }> {
+async function themeState(
+  page: Page
+): Promise<{ mode?: string; tabBarLabels?: string; agentMessageViewMode?: string }> {
   return page.evaluate(() => {
     const store = (
       window as unknown as {
         __OPENHUMAN_STORE__?: {
-          getState?: () => { theme?: { mode?: string; tabBarLabels?: string } };
+          getState?: () => {
+            theme?: { mode?: string; tabBarLabels?: string; agentMessageViewMode?: string };
+          };
         };
       }
     ).__OPENHUMAN_STORE__;
@@ -26,7 +30,9 @@ async function themeState(page: Page): Promise<{ mode?: string; tabBarLabels?: s
   });
 }
 
-async function persistedThemeState(page: Page): Promise<{ mode?: string; tabBarLabels?: string }> {
+async function persistedThemeState(
+  page: Page
+): Promise<{ mode?: string; tabBarLabels?: string; agentMessageViewMode?: string }> {
   return page.evaluate(() => {
     const raw = localStorage.getItem('persist:theme');
     if (!raw) return {};
@@ -35,6 +41,9 @@ async function persistedThemeState(page: Page): Promise<{ mode?: string; tabBarL
       return {
         mode: parsed.mode ? JSON.parse(parsed.mode) : undefined,
         tabBarLabels: parsed.tabBarLabels ? JSON.parse(parsed.tabBarLabels) : undefined,
+        agentMessageViewMode: parsed.agentMessageViewMode
+          ? JSON.parse(parsed.agentMessageViewMode)
+          : undefined,
       };
     } catch {
       return {};
@@ -50,7 +59,7 @@ function unwrap<T>(value: T | { result: T }): T {
 }
 
 test.describe('Settings leaf workflows', () => {
-  test('appearance theme mode and tab bar label preference persist in app state', async ({
+  test('appearance theme, tab bar, and chat rendering preferences persist in app state', async ({
     page,
   }) => {
     await openSettings(page, 'pw-settings-appearance', '/settings/appearance');
@@ -61,19 +70,23 @@ test.describe('Settings leaf workflows', () => {
     if ((await labelSwitch.getAttribute('aria-checked')) !== 'true') {
       await labelSwitch.click();
     }
+    const assistantTextSwitch = page.getByRole('switch', { name: /Plain assistant responses/ });
+    if ((await assistantTextSwitch.getAttribute('aria-checked')) !== 'true') {
+      await assistantTextSwitch.click();
+    }
 
     await expect
       .poll(() => themeState(page))
-      .toMatchObject({ mode: 'dark', tabBarLabels: 'always' });
+      .toMatchObject({ mode: 'dark', tabBarLabels: 'always', agentMessageViewMode: 'text' });
     await expect
       .poll(() => persistedThemeState(page))
-      .toMatchObject({ mode: 'dark', tabBarLabels: 'always' });
+      .toMatchObject({ mode: 'dark', tabBarLabels: 'always', agentMessageViewMode: 'text' });
 
     await page.reload();
     await waitForAppReady(page);
     await expect
       .poll(() => themeState(page))
-      .toMatchObject({ mode: 'dark', tabBarLabels: 'always' });
+      .toMatchObject({ mode: 'dark', tabBarLabels: 'always', agentMessageViewMode: 'text' });
   });
 
   test('embeddings custom endpoint setup writes provider, model, and dimensions', async ({
@@ -121,7 +134,7 @@ test.describe('Settings leaf workflows', () => {
 
     await expect(page.getByRole('heading', { name: 'New agent' })).toBeVisible();
     await page.getByRole('textbox', { name: 'Name' }).fill('Playwright Researcher');
-    await page.getByRole('textbox', { name: /ID Lowercase/ }).fill(agentId);
+    await page.getByRole('textbox', { name: 'ID', exact: true }).fill(agentId);
     await page.getByLabel('Description').fill('Validates settings agent authoring in E2E.');
     await page.getByLabel('Model (optional)').selectOption('hint:reasoning');
     await page

@@ -51,7 +51,7 @@ fi
 
 echo "[android-init] Running tauri android init from $MOBILE_DIR ..."
 cd "$MOBILE_DIR"
-npx --package=@tauri-apps/cli@^2 tauri android init
+"$REPO_ROOT/app/node_modules/.bin/tauri" android init
 
 # Overwrite the placeholder launcher icons Tauri generates with the
 # OpenHuman brand icons committed under icons/android/. The Android Studio

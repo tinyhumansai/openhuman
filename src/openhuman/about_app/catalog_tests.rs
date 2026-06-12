@@ -7,6 +7,36 @@ fn lookup_returns_expected_capability() {
     assert_eq!(capability.status, CapabilityStatus::Beta);
 }
 
+/// PR #3090: the global push-to-talk feature is user-facing and must be
+/// discoverable in the capability catalog so the in-app /about surface and
+/// settings search can describe it. Pins the id, category, and the rough
+/// shape of the how_to / description so a future rewrite can't silently
+/// drop the entry or split it from the Conversation umbrella where the
+/// related voice capabilities live.
+#[test]
+fn capability_list_includes_voice_ptt() {
+    let caps = all_capabilities();
+    assert!(
+        caps.iter().any(|c| c.id == "voice.ptt"),
+        "voice.ptt capability must be registered"
+    );
+
+    let ptt = lookup("voice.ptt").expect("voice.ptt should be registered");
+    assert_eq!(ptt.category, CapabilityCategory::Conversation);
+    assert_eq!(ptt.domain, "voice");
+    assert!(
+        ptt.how_to.contains("Push-to-Talk") || ptt.how_to.contains("push-to-talk"),
+        "how_to must mention Push-to-Talk, got: {}",
+        ptt.how_to
+    );
+    assert!(
+        ptt.description.to_lowercase().contains("hold")
+            && ptt.description.to_lowercase().contains("hotkey"),
+        "description must describe the hold-to-talk hotkey behaviour, got: {}",
+        ptt.description
+    );
+}
+
 #[test]
 fn composio_direct_mode_capabilities_are_registered() {
     // PR #1710 PR3: ensure the direct-mode capability and the trigger-gap

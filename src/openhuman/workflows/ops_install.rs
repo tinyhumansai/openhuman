@@ -37,6 +37,7 @@ pub const MAX_INSTALL_URL_LEN: usize = 2048;
 /// a few KB; the 1 MiB cap here is a defensive limit against a hostile or
 /// misconfigured host streaming an unbounded response into memory.
 pub const MAX_WORKFLOW_MD_BYTES: usize = 1024 * 1024;
+const ALLOW_LOCAL_HTTP_ENV: &str = "OPENHUMAN_SKILL_INSTALL_ALLOW_LOCAL_HTTP";
 
 /// Input for [`install_workflow_from_url`]. Mirrors the `skills.install_from_url`
 /// JSON-RPC payload.
@@ -132,7 +133,9 @@ pub async fn install_workflow_from_url(
     // resolver may see different answers than ours. Closing that gap requires
     // pinning a `SocketAddr` and passing it to reqwest via a custom resolver,
     // tracked separately.
-    validate_resolved_host(&fetch_url).await?;
+    if !allow_local_http_install_url(&fetch_url) {
+        validate_resolved_host(&fetch_url).await?;
+    }
 
     let redacted_raw_url = redact_url(&raw_url);
     let redacted_fetch_url = redact_url(&fetch_url);
@@ -642,6 +645,9 @@ pub fn validate_install_url(raw: &str) -> Result<(), String> {
     }
     let parsed = url::Url::parse(trimmed).map_err(|e| format!("invalid url {trimmed:?}: {e}"))?;
     if parsed.scheme() != "https" {
+        if allow_local_http_install_url(trimmed) {
+            return Ok(());
+        }
         return Err(format!(
             "url scheme {:?} not allowed; https only",
             parsed.scheme()
@@ -659,6 +665,22 @@ pub fn validate_install_url(raw: &str) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+fn allow_local_http_install_url(raw: &str) -> bool {
+    if std::env::var(ALLOW_LOCAL_HTTP_ENV).ok().as_deref() != Some("1") {
+        return false;
+    }
+    let Ok(parsed) = url::Url::parse(raw) else {
+        return false;
+    };
+    if parsed.scheme() != "http" {
+        return false;
+    }
+    let Some(host) = parsed.host_str() else {
+        return false;
+    };
+    matches!(host, "localhost" | "127.0.0.1" | "::1")
 }
 
 /// Resolve the host in the given URL and reject if any returned IP falls in

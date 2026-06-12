@@ -905,6 +905,73 @@ mod tests {
         assert_eq!(listed.len(), first.chunks_written);
     }
 
+    /// Regression #3568 / CORE-2K: chat payloads with RFC-3339 timestamps must
+    /// be accepted — not rejected with "expected unix timestamp in milliseconds".
+    #[tokio::test]
+    async fn ingest_chat_accepts_rfc3339_timestamps() {
+        let (_tmp, cfg) = test_config();
+        let outcome = ingest_rpc(
+            &cfg,
+            IngestRequest {
+                source_kind: SourceKind::Chat,
+                source_id: "slack:#rfc3339-test".into(),
+                owner: "alice".into(),
+                tags: vec![],
+                payload: json!({
+                    "platform": "slack",
+                    "channel_label": "#eng",
+                    "messages": [
+                        {
+                            "author": "alice",
+                            "timestamp": "2026-05-17T19:30:00Z",
+                            "text": "planning the launch"
+                        },
+                        {
+                            "author": "bob",
+                            "timestamp": 1779046260000_i64,
+                            "text": "confirmed"
+                        }
+                    ]
+                }),
+            },
+        )
+        .await
+        .unwrap();
+        assert!(!outcome.value.chunk_ids.is_empty());
+    }
+
+    /// Regression #3568 / CORE-2K: email payloads with RFC-3339 timestamps must
+    /// be accepted.
+    #[tokio::test]
+    async fn ingest_email_accepts_rfc3339_timestamps() {
+        let (_tmp, cfg) = test_config();
+        let outcome = ingest_rpc(
+            &cfg,
+            IngestRequest {
+                source_kind: SourceKind::Email,
+                source_id: "gmail:rfc3339-test".into(),
+                owner: "alice@example.com".into(),
+                tags: vec![],
+                payload: json!({
+                    "provider": "gmail",
+                    "thread_subject": "Launch",
+                    "messages": [
+                        {
+                            "from": "bob@example.com",
+                            "to": ["alice@example.com"],
+                            "subject": "Launch",
+                            "sent_at": "2026-05-17T19:30:00Z",
+                            "body": "Let's ship this."
+                        }
+                    ]
+                }),
+            },
+        )
+        .await
+        .unwrap();
+        assert!(!outcome.value.chunk_ids.is_empty());
+    }
+
     #[tokio::test]
     async fn ingest_rpc_rejects_invalid_document_payload() {
         let (_tmp, cfg) = test_config();
@@ -1134,18 +1201,20 @@ mod tests {
         );
         // No jobs running. Provider availability differs between local and CI
         // harnesses, so a completed ingest may be fully running or degraded
-        // because semantic recall was skipped. Both are terminal, non-syncing
-        // states and both preserve the aggregate counters asserted above.
+        // because semantic recall or wiki structure was skipped. Both are
+        // terminal, non-syncing states and both preserve the aggregate counters
+        // asserted above.
         match out.status.as_str() {
             "running" => assert!(out.reason.is_none()),
-            "degraded" => assert!(
-                out.reason
-                    .as_deref()
-                    .unwrap_or_default()
-                    .contains("semantic recall disabled"),
-                "degraded status should explain semantic recall loss: {:?}",
-                out.reason
-            ),
+            "degraded" => {
+                let reason = out.reason.as_deref().unwrap_or_default();
+                assert!(
+                    reason.contains("semantic recall disabled")
+                        || reason.contains("wiki structure incomplete"),
+                    "degraded status should explain recall or structure loss: {:?}",
+                    out.reason
+                );
+            }
             other => panic!("expected running or degraded after ingest, got {other}"),
         }
         assert!(!out.is_syncing);

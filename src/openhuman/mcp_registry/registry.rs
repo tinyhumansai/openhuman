@@ -3,7 +3,8 @@
 //! `registry_search` fans out to every registry in
 //! [`super::registries::enabled_registries`], runs them in parallel, and
 //! returns merged results (failed registries are logged and skipped so one
-//! flaky upstream doesn't blank the UI).
+//! flaky upstream doesn't blank the UI). The official modelcontextprotocol.io
+//! registry is listed first so its results take priority.
 //!
 //! `registry_get` routes by [`super::types::SmitheryServerDetail::source`].
 //! The caller can pass an explicit source prefix using

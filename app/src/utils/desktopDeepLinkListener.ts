@@ -292,7 +292,7 @@ const handleOAuthDeepLink = async (parsed: URL) => {
       `[DeepLink] OAuth success for integration=${integrationId}${toolkit ? ` toolkit=${toolkit}` : ''}`
     );
     window.dispatchEvent(new CustomEvent('oauth:success', { detail: { integrationId, toolkit } }));
-    window.location.hash = '/skills';
+    window.location.hash = '/connections';
   } else if (path === 'error') {
     const provider = sanitizeOAuthDiagnosticValue(
       parsed.searchParams.get('provider'),

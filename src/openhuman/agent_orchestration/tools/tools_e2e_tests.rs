@@ -106,6 +106,7 @@ async fn skill_delegation_tool_runs_integrations_agent_e2e() {
                 tools: Vec::new(),
                 gated_tools: Vec::new(),
                 connected: true,
+                connections: Vec::new(),
                 non_active_status: None,
             }],
         ),
@@ -180,6 +181,10 @@ fn parent_context(
     connected_integrations: Vec<ConnectedIntegration>,
 ) -> ParentExecutionContext {
     ParentExecutionContext {
+        agent_definition_id: "orchestrator".into(),
+        allowed_subagent_ids: ["researcher".to_string(), "integrations_agent".to_string()]
+            .into_iter()
+            .collect(),
         provider,
         all_tools: Arc::new(Vec::new()),
         all_tool_specs: Arc::new(Vec::new()),
@@ -188,7 +193,7 @@ fn parent_context(
         workspace_dir: workspace_dir.to_path_buf(),
         memory: Arc::new(NoopMemory),
         agent_config: Default::default(),
-        skills: Arc::new(Vec::new()),
+        workflows: Arc::new(Vec::new()),
         memory_context: Arc::new(None),
         session_id: "tools-e2e-session".into(),
         channel: "test".into(),

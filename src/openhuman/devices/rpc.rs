@@ -16,7 +16,9 @@ use std::sync::{Arc, Mutex};
 use chrono::Utc;
 
 use crate::openhuman::config::Config;
-use crate::openhuman::devices::crypto::{base64url_decode, base64url_encode, DeviceKeypair};
+use crate::openhuman::devices::crypto::{
+    base64url_decode, base64url_encode, DeviceKeypair, TunnelCipher,
+};
 use crate::openhuman::devices::store;
 use crate::openhuman::devices::tunnel_client;
 use crate::openhuman::devices::types::{
@@ -48,6 +50,11 @@ pub(crate) static PENDING_SESSIONS: once_cell::sync::Lazy<Mutex<HashMap<String, 
 /// Live peer-online status (keyed by channel_id). Updated by bus.rs on `tunnel:peer-status`.
 pub(crate) static PEER_STATUS: once_cell::sync::Lazy<Mutex<HashMap<String, bool>>> =
     once_cell::sync::Lazy::new(|| Mutex::new(HashMap::new()));
+
+/// Active post-handshake tunnel ciphers (keyed by channel_id).
+pub(crate) static ACTIVE_CIPHERS: once_cell::sync::Lazy<
+    Mutex<HashMap<String, Arc<Mutex<TunnelCipher>>>>,
+> = once_cell::sync::Lazy::new(|| Mutex::new(HashMap::new()));
 
 // ---------------------------------------------------------------------------
 // create_pairing
@@ -210,6 +217,7 @@ pub async fn devices_revoke(
     PENDING_SESSIONS.lock().unwrap().remove(&channel_id);
     PEER_STATUS.lock().unwrap().remove(&channel_id);
     PERSISTED_KEYPAIRS.lock().unwrap().remove(&channel_id);
+    ACTIVE_CIPHERS.lock().unwrap().remove(&channel_id);
 
     // Publish DeviceRevoked so UI and other subscribers are notified.
     crate::core::event_bus::publish_global(crate::core::event_bus::DomainEvent::DeviceRevoked {

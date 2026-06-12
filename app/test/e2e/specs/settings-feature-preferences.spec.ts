@@ -75,15 +75,16 @@ describe('Settings - Feature Preferences', () => {
     await waitForText('Features', 15_000);
     // Settings uses t('pages.settings.features.screenAwareness') = 'Screen awareness'
     await waitForText('Screen awareness', 15_000);
-    // Settings uses t('pages.settings.features.messagingChannels') = 'Messaging channels'
-    await waitForText('Messaging channels', 15_000);
+    // Phase 2: default messaging channel moved to /connections (Messaging tab);
+    // the settings/features panel no longer has a "Messaging channels" entry.
     await waitForText('Notifications', 15_000);
     await waitForText('Tools', 15_000);
   });
 
   it('persists the default messaging channel through redux state', async () => {
-    // Default Messaging Channel moved from /settings/messaging to /skills (channels tab).
-    await navigateViaHash('/skills?tab=channels');
+    // Phase 2: Default Messaging Channel moved to /connections (Messaging tab).
+    // Old /skills?tab=channels → /connections?tab=messaging.
+    await navigateViaHash('/connections?tab=messaging');
 
     await waitForText('Default Messaging Channel', 15_000);
     await clickText('Discord', 10_000);

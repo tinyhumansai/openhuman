@@ -88,7 +88,26 @@ fn render_connected_integrations(integrations: &[ConnectedIntegration]) -> Strin
          their typed parameter schemas — call them by name.\n\n",
     );
     for ci in connected {
-        let _ = writeln!(out, "- **{}** — {}", ci.toolkit, ci.description);
+        if ci.connections.len() > 1 {
+            let _ = writeln!(
+                out,
+                "- **{}** ({} accounts) — {}",
+                ci.toolkit,
+                ci.connections.len(),
+                ci.description
+            );
+            for conn in &ci.connections {
+                let label = conn.label.as_deref().unwrap_or("(unlabeled)");
+                let default_marker = if conn.is_default { " [default]" } else { "" };
+                let _ = writeln!(
+                    out,
+                    "  - `connection_id: \"{}\"` — {}{}",
+                    conn.connection_id, label, default_marker
+                );
+            }
+        } else {
+            let _ = writeln!(out, "- **{}** — {}", ci.toolkit, ci.description);
+        }
     }
 
     // Surface pref-gated tools so the agent can honestly say "I have this
@@ -166,7 +185,7 @@ mod tests {
             model_name: "test",
             agent_id: "integrations_agent",
             tools: &[],
-            skills: &[],
+            workflows: &[],
             dispatcher_instructions: "",
             learned: LearnedContextData::default(),
             visible_tool_names: EMPTY_VISIBLE.get_or_init(HashSet::new),
@@ -199,6 +218,7 @@ mod tests {
             tools: Vec::new(),
             gated_tools: Vec::new(),
             connected: true,
+            connections: Vec::new(),
             non_active_status: None,
         }];
         let body = build(&ctx_with(&integrations)).unwrap();
@@ -229,6 +249,7 @@ mod tests {
             tools: Vec::new(),
             gated_tools: Vec::new(),
             connected: false,
+            connections: Vec::new(),
             non_active_status: None,
         }];
         let body = build(&ctx_with(&integrations)).unwrap();

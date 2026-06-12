@@ -14,7 +14,7 @@ const WorkflowRunnerPanel = () => {
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="z-10 relative flex flex-col h-full">
       <SettingsHeader
         title={t('settings.developerMenu.skillsRunner.title')}
         showBackButton={true}

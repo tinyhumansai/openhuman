@@ -8,9 +8,13 @@ function makeAttachment(overrides: Partial<Attachment> = {}): Attachment {
   const blob = new Blob([new Uint8Array(512)], { type: 'image/png' });
   return {
     id: 'att-1',
+    kind: 'image',
     file: new File([blob], 'test.png', { type: 'image/png' }),
     dataUri: 'data:image/png;base64,abc',
     mimeType: 'image/png',
+    originalSizeBytes: 512,
+    payloadSizeBytes: 512,
+    compressed: false,
     ...overrides,
   };
 }
@@ -33,6 +37,21 @@ describe('AttachmentPreview', () => {
     render(<AttachmentPreview attachments={[att]} onRemove={vi.fn()} />);
     const img = screen.getByAltText('test.png') as HTMLImageElement;
     expect(img.src).toBe('data:image/png;base64,xyz');
+  });
+
+  it('renders a document icon for non-image files', () => {
+    const file = new File([new Uint8Array(128)], 'doc.pdf', { type: 'application/pdf' });
+    const att = makeAttachment({
+      kind: 'file',
+      file,
+      dataUri: 'data:application/pdf;base64,abc',
+      mimeType: 'application/pdf',
+      originalSizeBytes: 128,
+      payloadSizeBytes: 128,
+    });
+    render(<AttachmentPreview attachments={[att]} onRemove={vi.fn()} />);
+    expect(screen.getByText('doc.pdf')).toBeInTheDocument();
+    expect(screen.queryByAltText('doc.pdf')).not.toBeInTheDocument();
   });
 
   it('calls onRemove with the attachment id when × is clicked', () => {

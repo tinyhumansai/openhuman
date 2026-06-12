@@ -68,6 +68,9 @@ pub enum DataSource {
     Telegram,
     Whatsapp,
 
+    // ── Agent conversations (stored as durable memory) ────────────────
+    Conversation,
+
     // ── Email threads (grouped by thread) ──────────────────────────────
     Gmail,
     /// Catch-all for non-Gmail providers (Outlook, FastMail, generic IMAP, …).
@@ -83,7 +86,9 @@ impl DataSource {
     /// Which [`SourceKind`] this provider feeds into.
     pub fn kind(self) -> SourceKind {
         match self {
-            Self::Discord | Self::Telegram | Self::Whatsapp => SourceKind::Chat,
+            Self::Discord | Self::Telegram | Self::Whatsapp | Self::Conversation => {
+                SourceKind::Chat
+            }
             Self::Gmail | Self::OtherEmail => SourceKind::Email,
             Self::Notion | Self::MeetingNotes | Self::DriveDocs => SourceKind::Document,
         }
@@ -95,6 +100,7 @@ impl DataSource {
             Self::Discord => "discord",
             Self::Telegram => "telegram",
             Self::Whatsapp => "whatsapp",
+            Self::Conversation => "conversation",
             Self::Gmail => "gmail",
             Self::OtherEmail => "other_email",
             Self::Notion => "notion",
@@ -109,6 +115,7 @@ impl DataSource {
             "discord" => Ok(Self::Discord),
             "telegram" => Ok(Self::Telegram),
             "whatsapp" => Ok(Self::Whatsapp),
+            "conversation" => Ok(Self::Conversation),
             "gmail" => Ok(Self::Gmail),
             "other_email" => Ok(Self::OtherEmail),
             "notion" => Ok(Self::Notion),
@@ -127,6 +134,7 @@ impl DataSource {
             Self::Discord,
             Self::Telegram,
             Self::Whatsapp,
+            Self::Conversation,
             Self::Gmail,
             Self::OtherEmail,
             Self::Notion,
@@ -291,6 +299,58 @@ pub fn approx_token_count(text: &str) -> u32 {
     chars.saturating_add(3) / 4
 }
 
+/// Per-character weight in **quarter-token** units for
+/// [`conservative_token_estimate`]. Deliberately pessimistic so the chunker and
+/// the embed backstop never under-split: real SentencePiece/WordPiece output for
+/// hash-, code-, and markdown-dense text approaches ~1 token/char — far above
+/// the `chars/4` GPT heuristic in [`approx_token_count`].
+fn char_token_quarters(ch: char) -> u32 {
+    if ch.is_ascii_alphanumeric() {
+        2 // 0.50 token/char — alphanumeric runs pack ~2-4 chars per token
+    } else if ch.is_whitespace() {
+        1 // 0.25 token/char — whitespace usually merges into adjacent pieces
+    } else {
+        4 // 1.00 token/char — ASCII punctuation/symbols AND all non-ASCII
+          // (Hebrew/CJK/emoji), which tokenise ~1 piece per char or worse
+    }
+}
+
+/// Conservative (over-estimating) token count, for embed-safety decisions only.
+///
+/// [`approx_token_count`] (`chars/4`) under-counts dense markdown/hash/code by
+/// ~5× and let oversized chunks reach bge-m3 (HTTP 500 "input length exceeds the
+/// context length"). This weights characters by class so the result is an
+/// upper-ish bound on real tokeniser output. It does **not** replace
+/// `approx_token_count`, which still drives summariser/seal token budgeting.
+pub fn conservative_token_estimate(text: &str) -> u32 {
+    let quarters: u64 = text
+        .chars()
+        .map(|c| u64::from(char_token_quarters(c)))
+        .sum();
+    let tokens = (quarters + 3) / 4; // ceil(quarters / 4)
+    tokens.min(u64::from(u32::MAX)) as u32
+}
+
+/// Largest leading slice of `text` whose [`conservative_token_estimate`] is
+/// ≤ `budget`, ending on a UTF-8 char boundary. Returns the whole string when
+/// already within budget. Used as the embed-path backstop so an over-long body
+/// can never be sent to the embedder above its input limit.
+pub fn truncate_to_conservative_tokens(text: &str, budget: u32) -> &str {
+    if conservative_token_estimate(text) <= budget {
+        return text;
+    }
+    let cap = u64::from(budget).saturating_mul(4); // quarter-tokens
+    let mut acc: u64 = 0;
+    for (idx, ch) in text.char_indices() {
+        let q = u64::from(char_token_quarters(ch));
+        if acc + q > cap {
+            return &text[..idx];
+        }
+        acc += q;
+    }
+    text
+}
+
 mod time_range_serde {
     use chrono::{DateTime, TimeZone, Utc};
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -341,6 +401,43 @@ mod tests {
     }
 
     #[test]
+    fn conservative_estimate_weights_by_char_class() {
+        assert_eq!(conservative_token_estimate("abcd"), 2); // 4 alnum × 2q / 4
+        assert_eq!(conservative_token_estimate("    "), 1); // 4 ws × 1q / 4
+        assert_eq!(conservative_token_estimate("....,,,,"), 8); // 8 punct × 4q / 4
+        assert_eq!(conservative_token_estimate("שלום"), 4); // 4 non-ascii × 4q / 4
+        assert_eq!(conservative_token_estimate(""), 0);
+    }
+
+    #[test]
+    fn conservative_estimate_exceeds_approx_for_dense_content() {
+        // Hash/path/punctuation-dense ASCII — exactly the content that defeated
+        // the chars/4 heuristic and overflowed bge-m3.
+        let dense =
+            "claude-memory:openhuman:MEMORY.md:67d6fe2727d431b16d41630babfdcf1cdf61bda7b9ba\n"
+                .repeat(40);
+        assert!(
+            conservative_token_estimate(&dense) > approx_token_count(&dense),
+            "conservative estimate must exceed chars/4 on dense content",
+        );
+    }
+
+    #[test]
+    fn truncate_respects_budget_and_char_boundaries() {
+        let text = "שלום עולם ".repeat(100); // Hebrew, ~1 token/char
+        let out = truncate_to_conservative_tokens(&text, 10);
+        assert!(conservative_token_estimate(out) <= 10);
+        assert!(text.starts_with(out)); // valid prefix on a char boundary
+        assert!(out.len() < text.len());
+    }
+
+    #[test]
+    fn truncate_is_noop_within_budget() {
+        let text = "short and sweet";
+        assert_eq!(truncate_to_conservative_tokens(text, 1000), text);
+    }
+
+    #[test]
     fn chunk_id_varies_with_seq() {
         let a = chunk_id(SourceKind::Chat, "slack:#eng", 0, "hello");
         let b = chunk_id(SourceKind::Chat, "slack:#eng", 1, "hello");
@@ -386,15 +483,14 @@ mod tests {
     }
 
     #[test]
-    fn data_source_has_all_eight_variants_from_m_excalidraw() {
-        // Guard against accidental drift from the canonical provider list.
-        assert_eq!(DataSource::all().len(), 8);
+    fn data_source_has_all_variants() {
+        assert_eq!(DataSource::all().len(), 9);
     }
 
     #[test]
     fn data_source_kind_mapping() {
         use DataSource::*;
-        for ds in [Discord, Telegram, Whatsapp] {
+        for ds in [Discord, Telegram, Whatsapp, Conversation] {
             assert_eq!(ds.kind(), SourceKind::Chat);
         }
         for ds in [Gmail, OtherEmail] {

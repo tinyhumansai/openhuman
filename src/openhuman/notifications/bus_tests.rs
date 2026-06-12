@@ -206,6 +206,7 @@ fn publish_and_subscribe_deliver_event() {
         body: "Test body".into(),
         deep_link: None,
         timestamp_ms: 0,
+        actions: None,
     };
 
     let sent = publish_core_notification(evt.clone());
@@ -241,6 +242,7 @@ fn publish_with_no_subscribers_does_not_panic() {
         body: "nobody is listening".into(),
         deep_link: None,
         timestamp_ms: 42,
+        actions: None,
     });
     // count is 0 when no subscribers, but the call itself must not panic.
     let _ = count;

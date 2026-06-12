@@ -1,0 +1,8 @@
+{
+  "name": "openhuman-mobile-tauri",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "tauri": "../node_modules/.bin/tauri"
+  }
+}

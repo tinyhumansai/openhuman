@@ -10,6 +10,7 @@ import AgentChatPanel from '../components/settings/panels/AgentChatPanel';
 import AgentEditorPage from '../components/settings/panels/AgentEditorPage';
 import AgentsPanel from '../components/settings/panels/AgentsPanel';
 import AIPanel from '../components/settings/panels/AIPanel';
+import AnalysisViewsPanel from '../components/settings/panels/AnalysisViewsPanel';
 import AppearancePanel from '../components/settings/panels/AppearancePanel';
 import ApprovalHistoryPanel from '../components/settings/panels/ApprovalHistoryPanel';
 import AutocompleteDebugPanel from '../components/settings/panels/AutocompleteDebugPanel';
@@ -32,9 +33,11 @@ import MascotPanel from '../components/settings/panels/MascotPanel';
 import McpServerPanel from '../components/settings/panels/McpServerPanel';
 import MemoryDataPanel from '../components/settings/panels/MemoryDataPanel';
 import MemoryDebugPanel from '../components/settings/panels/MemoryDebugPanel';
+import MemorySyncPanel from '../components/settings/panels/MemorySyncPanel';
 import MigrationPanel from '../components/settings/panels/MigrationPanel';
 import ModelHealthPanel from '../components/settings/panels/ModelHealthPanel';
 import NotificationsTabbedPanel from '../components/settings/panels/NotificationsTabbedPanel';
+import PermissionsPanel from '../components/settings/panels/PermissionsPanel';
 import PersonaPanel from '../components/settings/panels/PersonaPanel';
 import PrivacyPanel from '../components/settings/panels/PrivacyPanel';
 import RecoveryPhrasePanel from '../components/settings/panels/RecoveryPhrasePanel';
@@ -44,6 +47,7 @@ import ScreenIntelligencePanel from '../components/settings/panels/ScreenIntelli
 import SearchPanel from '../components/settings/panels/SearchPanel';
 import SecurityPanel from '../components/settings/panels/SecurityPanel';
 import TaskSourcesPanel from '../components/settings/panels/TaskSourcesPanel';
+import TasksPanel from '../components/settings/panels/TasksPanel';
 import TeamInvitesPanel from '../components/settings/panels/TeamInvitesPanel';
 import TeamManagementPanel from '../components/settings/panels/TeamManagementPanel';
 import TeamMembersPanel from '../components/settings/panels/TeamMembersPanel';
@@ -120,16 +124,6 @@ const ScreenIcon = (
       strokeLinejoin="round"
       strokeWidth={2}
       d="M3 5h18v12H3zM8 21h8m-4-4v4"
-    />
-  </svg>
-);
-const MessagingIcon = (
-  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth={2}
-      d="M8 10h.01M12 10h.01M16 10h.01M21 11c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 19l1.395-3.72C3.512 14.042 3 12.574 3 11c0-4.418 4.03-8 9-8s9 3.582 9 8z"
     />
   </svg>
 );
@@ -211,17 +205,6 @@ const AgentAccessIcon = (
   </svg>
 );
 
-const PersonaIcon = (
-  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth={2}
-      d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
-    />
-  </svg>
-);
-
 const WalletIcon = (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path
@@ -235,7 +218,9 @@ const WalletIcon = (
 
 const WrappedSettingsPage = ({
   children,
-  maxWidthClass = 'max-w-lg',
+  // Default widened ~30% (max-w-lg 512px → max-w-2xl 672px) for a roomier
+  // settings list per design feedback.
+  maxWidthClass = 'max-w-2xl',
 }: {
   children: ReactNode;
   maxWidthClass?: string;
@@ -341,20 +326,7 @@ const Settings = () => {
       icon: ScreenIcon,
     },
     // Autocomplete + Voice Dictation hidden per #717 (routes retained for re-enable).
-    {
-      id: 'messaging',
-      title: t('pages.settings.features.messagingChannels'),
-      description: t('pages.settings.features.messagingChannelsDesc'),
-      route: 'messaging',
-      icon: MessagingIcon,
-    },
-    {
-      id: 'notifications',
-      title: t('pages.settings.features.notifications'),
-      description: t('pages.settings.features.notificationsDesc'),
-      route: 'notifications',
-      icon: NotificationsIcon,
-    },
+    // notifications moved to notifications-hub section (no longer duplicated here).
     {
       id: 'tools',
       title: t('pages.settings.features.tools'),
@@ -371,6 +343,8 @@ const Settings = () => {
     },
   ];
 
+  // agent-chat and local-model-debug are debug tools — they live only in
+  // Developer & Diagnostics, not in the AI section page.
   const aiSettingsItems = [
     {
       id: 'llm',
@@ -392,20 +366,6 @@ const Settings = () => {
       description: t('pages.settings.ai.voiceDesc'),
       route: 'voice',
       icon: VoiceIcon,
-    },
-    {
-      id: 'agent-chat',
-      title: t('settings.developerMenu.agentChat.title'),
-      description: t('settings.developerMenu.agentChat.desc'),
-      route: 'agent-chat',
-      icon: LlmIcon,
-    },
-    {
-      id: 'local-model-debug',
-      title: t('settings.developerMenu.localModelDebug.title'),
-      description: t('settings.developerMenu.localModelDebug.desc'),
-      route: 'local-model-debug',
-      icon: LlmIcon,
     },
     {
       id: 'heartbeat',
@@ -430,6 +390,7 @@ const Settings = () => {
     },
   ];
 
+  // persona has its own canonical home entry (Assistant group) — not duplicated here.
   const agentsSettingsItems = [
     {
       id: 'agents',
@@ -437,13 +398,6 @@ const Settings = () => {
       description: t('settings.agents.subtitle'),
       route: 'agents',
       icon: ToolsIcon,
-    },
-    {
-      id: 'persona',
-      title: t('settings.persona.menuTitle'),
-      description: t('settings.persona.menuDesc'),
-      route: 'persona',
-      icon: PersonaIcon,
     },
     {
       id: 'autonomy',
@@ -588,8 +542,7 @@ const Settings = () => {
         />
         <Route path="team/members" element={wrapSettingsPage(<TeamMembersPanel />)} />
         <Route path="team/invites" element={wrapSettingsPage(<TeamInvitesPanel />)} />
-        {/* BillingPanel intentionally uses its own wider layout. */}
-        <Route path="billing" element={<BillingPanel />} />
+        <Route path="billing" element={wrapSettingsPage(<BillingPanel />)} />
         <Route path="privacy" element={wrapSettingsPage(<PrivacyPanel />)} />
         <Route path="security" element={wrapSettingsPage(<SecurityPanel />)} />
         <Route path="migration" element={wrapSettingsPage(<MigrationPanel />)} />
@@ -603,6 +556,7 @@ const Settings = () => {
         <Route path="persona" element={wrapSettingsPage(<PersonaPanel />)} />
         <Route path="appearance" element={wrapSettingsPage(<AppearancePanel />)} />
         <Route path="agent-access" element={wrapSettingsPage(<AgentAccessPanel />)} />
+        <Route path="permissions" element={wrapSettingsPage(<PermissionsPanel />)} />
         <Route path="activity-level" element={wrapSettingsPage(<AgentActivityPanel />)} />
         <Route path="sandbox-settings" element={wrapSettingsPage(<SandboxSettingsPanel />)} />
         <Route path="approval-history" element={wrapSettingsPage(<ApprovalHistoryPanel />)} />
@@ -644,6 +598,7 @@ const Settings = () => {
         <Route path="agent-chat" element={wrapSettingsPage(<AgentChatPanel />)} />
         <Route path="cron-jobs" element={wrapSettingsPage(<CronJobsPanel />)} />
         <Route path="task-sources" element={wrapSettingsPage(<TaskSourcesPanel />)} />
+        <Route path="tasks" element={wrapSettingsPage(<TasksPanel />)} />
         <Route path="dev-workflow" element={wrapSettingsPage(<DevWorkflowPanel />)} />
         <Route path="skills-runner" element={wrapSettingsPage(<WorkflowRunnerPanel />)} />
         <Route
@@ -659,10 +614,24 @@ const Settings = () => {
           path="model-health"
           element={wrapSettingsPage(<ModelHealthPanel />, { maxWidthClass: 'max-w-4xl' })}
         />
+        <Route
+          path="memory-sync"
+          element={wrapSettingsPage(<MemorySyncPanel />, { maxWidthClass: 'max-w-4xl' })}
+        />
         <Route path="memory-data" element={wrapSettingsPage(<MemoryDataPanel />)} />
         <Route path="memory-debug" element={wrapSettingsPage(<MemoryDebugPanel />)} />
-        <Route path="intelligence" element={<Intelligence />} />
-        <Route path="webhooks-triggers" element={<Webhooks />} />
+        <Route
+          path="analysis-views"
+          element={wrapSettingsPage(<AnalysisViewsPanel />, { maxWidthClass: 'max-w-4xl' })}
+        />
+        <Route
+          path="intelligence"
+          element={wrapSettingsPage(<Intelligence />, { maxWidthClass: 'max-w-4xl' })}
+        />
+        <Route
+          path="webhooks-triggers"
+          element={wrapSettingsPage(<Webhooks />, { maxWidthClass: 'max-w-4xl' })}
+        />
         <Route path="composio-triggers" element={wrapSettingsPage(<ComposioTriagePanel />)} />
         <Route path="composio-routing" element={wrapSettingsPage(<ComposioPanel />)} />
         {/* Mobile devices */}

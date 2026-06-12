@@ -144,7 +144,8 @@ suiteRunner('Conversations web channel flow', () => {
     expect(sent).toBe(true);
 
     await waitForText(uniquePayload, 20_000);
-    await navigateViaHash('/skills');
+    // Phase 2: /skills → /connections
+    await navigateViaHash('/connections');
     await browser.pause(1_500);
     await navigateToConversations();
 

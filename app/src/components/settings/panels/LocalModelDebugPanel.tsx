@@ -50,9 +50,9 @@ const statusTone = (state: string): string => {
     case 'degraded':
       return 'text-amber-700 dark:text-amber-300';
     case 'disabled':
-      return 'text-stone-500 dark:text-neutral-400';
+      return 'text-neutral-500 dark:text-neutral-400';
     default:
-      return 'text-stone-700 dark:text-neutral-200';
+      return 'text-neutral-700 dark:text-neutral-200';
   }
 };
 
@@ -378,7 +378,7 @@ const LocalModelDebugPanel = () => {
   };
 
   return (
-    <div>
+    <div className="z-10 relative">
       <SettingsHeader
         title={t('localModel.debugTitle')}
         showBackButton={true}

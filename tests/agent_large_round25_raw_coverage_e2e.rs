@@ -294,6 +294,7 @@ fn integrations_definition() -> AgentDefinition {
         timeout_secs: None,
         sandbox_mode: SandboxMode::None,
         background: false,
+        trigger_memory_agent: Default::default(),
         subagents: Vec::new(),
         delegate_name: None,
         agent_tier: Default::default(),
@@ -305,6 +306,14 @@ fn parent(workspace_dir: PathBuf, provider: Arc<ScriptedProvider>) -> ParentExec
     let tools: Vec<Box<dyn Tool>> = vec![Box::new(LargePayloadTool)];
     let specs = tools.iter().map(|tool| tool.spec()).collect();
     ParentExecutionContext {
+        agent_definition_id: "orchestrator".into(),
+        allowed_subagent_ids: [
+            "test".to_string(),
+            "researcher".to_string(),
+            "code_executor".to_string(),
+        ]
+        .into_iter()
+        .collect(),
         provider,
         all_tools: Arc::new(tools),
         all_tool_specs: Arc::new(specs),
@@ -313,7 +322,7 @@ fn parent(workspace_dir: PathBuf, provider: Arc<ScriptedProvider>) -> ParentExec
         workspace_dir,
         memory: Arc::new(StubMemory),
         agent_config: AgentConfig::default(),
-        skills: Arc::new(Vec::new()),
+        workflows: Arc::new(Vec::new()),
         memory_context: Arc::new(Some("round25 inherited parent context".to_string())),
         session_id: "round25-session".to_string(),
         channel: "round25".to_string(),
@@ -327,6 +336,7 @@ fn parent(workspace_dir: PathBuf, provider: Arc<ScriptedProvider>) -> ParentExec
             }],
             gated_tools: Vec::new(),
             connected: true,
+            connections: Vec::new(),
             non_active_status: None,
         }],
         tool_call_format: ToolCallFormat::PFormat,

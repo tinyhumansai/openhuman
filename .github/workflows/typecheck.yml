@@ -15,6 +15,7 @@ jobs:
   typecheck:
     name: Type Check TypeScript
     runs-on: ubuntu-22.04
+    timeout-minutes: 15
     container:
       image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
     steps:
@@ -46,6 +47,7 @@ jobs:
   rust-quality:
     name: Rust Quality (fmt + clippy)
     runs-on: ubuntu-22.04
+    timeout-minutes: 20
     container:
       image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
     steps:

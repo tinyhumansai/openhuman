@@ -25,6 +25,13 @@ use super::TaskKind;
 /// Stable thread id whose board collects every ingested task.
 pub const TASK_SOURCES_THREAD_ID: &str = "task-sources";
 
+fn task_sources_location(config: &Config) -> BoardLocation {
+    BoardLocation::Thread {
+        workspace_dir: config.workspace_dir.clone(),
+        thread_id: TASK_SOURCES_THREAD_ID.to_string(),
+    }
+}
+
 /// Route an enriched task: append a todo card, then (for proactive
 /// sources) dispatch a triage turn. Returns the new card id on success.
 pub async fn route_enriched(
@@ -65,16 +72,13 @@ fn add_card(
     enriched: &EnrichedTask,
     stale_card_id: Option<&str>,
 ) -> Result<String, String> {
-    let location = BoardLocation::Thread {
-        workspace_dir: config.workspace_dir.clone(),
-        thread_id: TASK_SOURCES_THREAD_ID.to_string(),
-    };
+    let location = task_sources_location(config);
 
     // Remove stale card from the previous ingestion of this task (if any)
     // before creating the replacement, so the board never accumulates
     // duplicate cards for the same upstream item.
     if let Some(old_id) = stale_card_id {
-        match todo_remove(&location, old_id) {
+        match remove_card(config, old_id) {
             Ok(_) => {
                 tracing::debug!(
                     source_id = %source.id,
@@ -230,10 +234,7 @@ async fn dispatch_triage(
     // Link the envelope to the board card so triage's escalation arm routes
     // it through the deterministic dispatcher (claim → autonomous run →
     // write-back) instead of the one-shot triage sub-agent.
-    let location = BoardLocation::Thread {
-        workspace_dir: config.workspace_dir.clone(),
-        thread_id: TASK_SOURCES_THREAD_ID.to_string(),
-    };
+    let location = task_sources_location(config);
     let envelope = TriggerEnvelope::from_external(
         &format!("task_sources:{}", source.id),
         "external task ingested",
@@ -289,11 +290,26 @@ fn provider_label(provider: &str) -> String {
 pub fn board_cards(
     config: &Config,
 ) -> Result<Vec<crate::openhuman::agent::task_board::TaskBoardCard>, String> {
-    let location = BoardLocation::Thread {
-        workspace_dir: config.workspace_dir.clone(),
-        thread_id: TASK_SOURCES_THREAD_ID.to_string(),
-    };
+    let location = task_sources_location(config);
     todos::ops::list(&location).map(|snap| snap.cards)
+}
+
+/// Remove a task-source board card. Missing cards are treated as already
+/// reconciled so ledger cleanup can still proceed.
+pub fn remove_card(config: &Config, card_id: &str) -> Result<bool, String> {
+    let location = task_sources_location(config);
+    match todo_remove(&location, card_id) {
+        Ok(_) => Ok(true),
+        Err(e) if e.contains("not found") => {
+            tracing::debug!(
+                card_id,
+                error = %e,
+                "[task_sources:route] card already absent during reconciliation"
+            );
+            Ok(false)
+        }
+        Err(e) => Err(e),
+    }
 }
 
 #[cfg(test)]

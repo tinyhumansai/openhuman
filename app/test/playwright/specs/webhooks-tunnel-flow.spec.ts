@@ -42,11 +42,13 @@ async function waitForRequest(
   timeoutMs = 10_000
 ): Promise<RequestLogEntry | undefined> {
   const deadline = Date.now() + timeoutMs;
+  let delay = 200;
   while (Date.now() < deadline) {
     const log = await getRequestLog();
     const match = log.find(entry => entry.method === method && entry.url?.includes(urlFragment));
     if (match) return match;
-    await new Promise(resolve => setTimeout(resolve, 250));
+    await new Promise(resolve => setTimeout(resolve, delay));
+    delay = Math.min(delay * 1.5, 1_000);
   }
   return undefined;
 }

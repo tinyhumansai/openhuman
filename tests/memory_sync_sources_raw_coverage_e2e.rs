@@ -401,6 +401,7 @@ async fn github_reader_uses_fake_gh_for_list_and_read_paths() {
     std::fs::create_dir_all(&bin).expect("bin dir");
     let script = bin.join("gh");
     write_fake_gh(&script);
+    write_fake_git(&bin.join("git"));
     let old_path = std::env::var("PATH").unwrap_or_default();
     let _path = EnvGuard::set("PATH", format!("{}:{old_path}", bin.display()));
 
@@ -757,5 +758,31 @@ esac
             .permissions();
         perms.set_mode(0o755);
         std::fs::set_permissions(path, perms).expect("chmod fake gh");
+    }
+}
+
+fn write_fake_git(path: &PathBuf) {
+    let script = r#"#!/usr/bin/env bash
+# Fake git that fails on clone/fetch so the GitHub reader falls through to the
+# gh CLI API path (which is intercepted by write_fake_gh).
+case "${1:-}" in
+  clone|fetch)
+    echo "fatal: repository not found" >&2
+    exit 128
+    ;;
+  *)
+    exec /usr/bin/git "$@"
+    ;;
+esac
+"#;
+    std::fs::write(path, script).expect("write fake git");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(path)
+            .expect("fake git metadata")
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(path, perms).expect("chmod fake git");
     }
 }

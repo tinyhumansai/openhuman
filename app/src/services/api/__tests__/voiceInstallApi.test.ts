@@ -33,7 +33,7 @@ describe('voiceInstallApi', () => {
       vi.mocked(callCoreRpc).mockResolvedValueOnce(buildStatus({ engine: 'whisper' }));
       const result = await installWhisper({ modelSize: 'tiny', force: true });
       expect(callCoreRpc).toHaveBeenCalledWith({
-        method: 'openhuman.local_ai_install_whisper',
+        method: 'openhuman.inference_install_whisper',
         params: { model_size: 'tiny', force: true },
       });
       expect(result.engine).toBe('whisper');
@@ -45,7 +45,7 @@ describe('voiceInstallApi', () => {
       vi.mocked(callCoreRpc).mockResolvedValueOnce(buildStatus());
       await installWhisper();
       expect(callCoreRpc).toHaveBeenCalledWith({
-        method: 'openhuman.local_ai_install_whisper',
+        method: 'openhuman.inference_install_whisper',
         params: { model_size: undefined, force: undefined },
       });
     });
@@ -65,7 +65,7 @@ describe('voiceInstallApi', () => {
       );
       const result = await installPiper({ voiceId: 'en_US-lessac-medium', force: false });
       expect(callCoreRpc).toHaveBeenCalledWith({
-        method: 'openhuman.local_ai_install_piper',
+        method: 'openhuman.inference_install_piper',
         params: { voice_id: 'en_US-lessac-medium', force: false },
       });
       expect(result.state).toBe('installing');
@@ -77,7 +77,7 @@ describe('voiceInstallApi', () => {
       vi.mocked(callCoreRpc).mockResolvedValueOnce(buildStatus({ engine: 'piper' }));
       await installPiper();
       expect(callCoreRpc).toHaveBeenCalledWith({
-        method: 'openhuman.local_ai_install_piper',
+        method: 'openhuman.inference_install_piper',
         params: { voice_id: undefined, force: undefined },
       });
     });
@@ -91,7 +91,7 @@ describe('voiceInstallApi', () => {
       );
       const result = await whisperInstallStatus();
       expect(callCoreRpc).toHaveBeenCalledWith({
-        method: 'openhuman.local_ai_whisper_install_status',
+        method: 'openhuman.inference_whisper_install_status',
         params: {},
       });
       expect(result.state).toBe('missing');
@@ -106,7 +106,7 @@ describe('voiceInstallApi', () => {
       );
       const result = await piperInstallStatus();
       expect(callCoreRpc).toHaveBeenCalledWith({
-        method: 'openhuman.local_ai_piper_install_status',
+        method: 'openhuman.inference_piper_install_status',
         params: {},
       });
       expect(result.state).toBe('error');

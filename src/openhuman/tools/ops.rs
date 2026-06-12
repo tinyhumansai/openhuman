@@ -4,6 +4,7 @@ use crate::openhuman::agent::host_runtime::{NativeRuntime, RuntimeAdapter};
 use crate::openhuman::config::{Config, DelegateAgentConfig};
 use crate::openhuman::javascript::NodeBootstrap;
 use crate::openhuman::memory::Memory;
+use crate::openhuman::runtime_python::PythonBootstrap;
 use crate::openhuman::security::{AuditLogger, SecurityPolicy};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -113,21 +114,29 @@ pub fn all_tools_with_runtime(
         );
         None
     };
-
-    let shell: Box<dyn Tool> = if let Some(bootstrap) = node_bootstrap.as_ref() {
-        Box::new(ShellTool::with_node_bootstrap(
-            security.clone(),
-            Arc::clone(&runtime),
-            Arc::clone(&audit),
-            Arc::clone(bootstrap),
-        ))
+    let python_bootstrap: Option<Arc<PythonBootstrap>> = if root_config.runtime_python.enabled {
+        tracing::debug!(
+            minimum_version = %root_config.runtime_python.minimum_version,
+            prefer_system = root_config.runtime_python.prefer_system,
+            "[tools::ops] python runtime enabled — constructing shared PythonBootstrap"
+        );
+        Some(Arc::new(PythonBootstrap::new(
+            root_config.runtime_python.clone(),
+        )))
     } else {
-        Box::new(ShellTool::new(
-            security.clone(),
-            Arc::clone(&runtime),
-            Arc::clone(&audit),
-        ))
+        tracing::debug!(
+            "[tools::ops] python runtime disabled — shell python/pip PATH injection suppressed"
+        );
+        None
     };
+
+    let shell: Box<dyn Tool> = Box::new(ShellTool::with_language_bootstraps(
+        security.clone(),
+        Arc::clone(&runtime),
+        Arc::clone(&audit),
+        node_bootstrap.as_ref().map(Arc::clone),
+        python_bootstrap.as_ref().map(Arc::clone),
+    ));
 
     let mut tools: Vec<Box<dyn Tool>> = vec![
         shell,
@@ -168,12 +177,19 @@ pub fn all_tools_with_runtime(
         // Workflow composition: `run_workflow` runs another workflow as a
         // subagent and (by default) waits on its result like a function call;
         // `await_workflow` re-attaches to a run that outlived its inline wait.
-        // Both wrap `workflows::schemas::spawn_workflow_run_background` +
+        // Both wrap `skill_runtime::spawn_workflow_run_background` +
         // `await_run_outcome` — the same spawn path `openhuman.workflows_run`
         // JSON-RPC uses, so RPC and tool callers stay in sync.
         Box::new(RunWorkflowTool::new()),
         Box::new(AwaitWorkflowTool::new()),
         Box::new(CurrentTimeTool::new()),
+        // Deterministic time-expression → timestamp resolver. `current_time`
+        // only returns *now*, leaving the model to do epoch arithmetic by hand
+        // (a real incident had an agent compute "24h ago" ~10 months off, then
+        // fetch Slack history ascending from that wrong floor and miss the
+        // latest messages). `resolve_time` does the conversion and returns the
+        // value ready to paste into a tool argument.
+        Box::new(ResolveTimeTool::new()),
         Box::new(LaunchAppTool::new()),
         Box::new(AxInteractTool::new(
             root_config.computer_control.ax_interact_mutations,
@@ -217,6 +233,14 @@ pub fn all_tools_with_runtime(
         Box::new(MemoryQueryTool),
         Box::new(MemoryQueryWalkTool),
         Box::new(SmartMemoryWalkTool),
+        // memory_search tools — vector search, chunk context, hybrid search,
+        // and previously unregistered raw store tools.
+        Box::new(MemoryVectorSearchTool),
+        Box::new(MemoryChunkContextTool),
+        Box::new(MemoryHybridSearchTool),
+        Box::new(MemoryStoreRawSearchTool),
+        Box::new(MemoryStoreRawChunksTool),
+        Box::new(MemoryStoreKindsTool),
         // Explicit user-preference pinning — always registered so the model
         // can save user-stated preferences regardless of whether the full
         // inference-based learning subsystem is enabled.  The preference
@@ -284,6 +308,17 @@ pub fn all_tools_with_runtime(
         // `tools::user_filter` (install also fetches remote content).
         Box::new(WorkflowListTool::new(config.clone())),
         Box::new(WorkflowDescribeTool::new(config.clone())),
+        // Skill registry tools — browse/search/install from remote registries.
+        // Browse and search are read-only (default-ON); install is a write
+        // operation (fetches remote content and writes to disk).
+        Box::new(SkillRegistryBrowseTool),
+        Box::new(SkillRegistrySearchTool),
+        Box::new(SkillRegistryInstallTool::new(config.clone())),
+        Box::new(SkillRegistrySourcesTool),
+        Box::new(SkillRegistryUninstallTool),
+        // Skill runtime probes — resolve the reusable Node/Python runtimes
+        // that skill execution relies on before a script-backed skill runs.
+        Box::new(SkillRuntimeResolveRuntimesTool::new(config.clone())),
         Box::new(WorkflowReadResourceTool::new(config.clone())),
         Box::new(WorkflowRecentRunsTool::new(config.clone())),
         Box::new(WorkflowReadRunLogTool::new(config.clone())),
@@ -458,6 +493,14 @@ pub fn all_tools_with_runtime(
         Box::new(WorkspaceInitTool),
     ];
 
+    log::debug!(
+        "[tools::ops][memory_search] registered memory_vector_search, memory_chunk_context, \
+         memory_hybrid_search, memory_store_raw_search, memory_store_raw_chunks, memory_store_kinds"
+    );
+
+    // Subconscious scratchpad tools — persistent working memory across ticks.
+    tools.extend(crate::openhuman::subconscious::scratchpad::tools::all_scratchpad_tools());
+
     // Presentation generation (#2778). Native-Rust engine (ppt-rs
     // backed) as of the #2780-follow-up rust-engine refactor — no
     // managed Python venv, no first-call install latency. Always
@@ -509,6 +552,13 @@ pub fn all_tools_with_runtime(
         http_config.max_response_size,
         http_config.timeout_secs,
     )));
+
+    // x402 — dedicated tool for making paid HTTP requests to x402-enabled
+    // APIs (Base USDC / Solana USDC). Handles the 402 challenge, EIP-3009
+    // or SPL payment signing, and ledger recording.
+    tools.push(Box::new(
+        crate::openhuman::x402::tools::X402RequestTool::new(),
+    ));
 
     // Coding-harness baseline `web_fetch` (issue #1205) — single-purpose
     // GET-and-read primitive that reuses the same allowed-domains gate

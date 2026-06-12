@@ -870,7 +870,7 @@ mod tests {
             model_name: "test-model",
             agent_id: "orchestrator",
             tools: &[],
-            skills: &[],
+            workflows: &[],
             dispatcher_instructions: "",
             learned: LearnedContextData::default(),
             visible_tool_names: &visible_tool_names,

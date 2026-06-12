@@ -1056,35 +1056,50 @@ pub(super) fn with_cors_headers(mut response: Response, origin: Option<&str>) ->
 }
 
 /// Handler for the health check endpoint.
+///
+/// Liveness is granular (#3312): a single degraded *background* component
+/// (scheduler, channels, update_checker, …) no longer 503s the whole container.
+/// `/health` returns 503 only when a *critical* component is unhealthy (see
+/// `health::CRITICAL_COMPONENTS`); otherwise it returns 200 — with a `degraded`
+/// flag and per-component buckets in the body so readiness probes and operators
+/// can still see partial failures.
 async fn health_handler() -> impl IntoResponse {
     let snapshot = crate::openhuman::health::snapshot();
-    let unhealthy: Vec<&str> = snapshot
-        .components
-        .iter()
-        .filter_map(|(name, c)| {
-            if c.status == "ok" || c.status == "starting" {
-                None
-            } else {
-                Some(name.as_str())
-            }
-        })
-        .collect();
-    let is_ok = unhealthy.is_empty();
+    let verdict = crate::openhuman::health::verdict(&snapshot);
 
-    let status = if is_ok {
+    let status = if verdict.healthy {
         StatusCode::OK
     } else {
         StatusCode::SERVICE_UNAVAILABLE
     };
 
+    // Augment the snapshot body with the verdict so the components map stays
+    // backward-compatible while exposing overall liveness/readiness.
+    let mut body = serde_json::to_value(&snapshot).unwrap_or_else(|_| serde_json::json!({}));
+    if let Some(obj) = body.as_object_mut() {
+        obj.insert("healthy".to_string(), serde_json::json!(verdict.healthy));
+        obj.insert("degraded".to_string(), serde_json::json!(verdict.degraded));
+        obj.insert(
+            "critical_unhealthy".to_string(),
+            serde_json::json!(verdict.critical_unhealthy),
+        );
+        obj.insert(
+            "degraded_components".to_string(),
+            serde_json::json!(verdict.degraded_components),
+        );
+    }
+
     tracing::debug!(
-        "[health] status={} components={} unhealthy={:?}",
+        "[health] status={} components={} healthy={} degraded={} critical_unhealthy={:?} degraded_components={:?}",
         status.as_u16(),
         snapshot.components.len(),
-        unhealthy
+        verdict.healthy,
+        verdict.degraded,
+        verdict.critical_unhealthy,
+        verdict.degraded_components,
     );
 
-    (status, Json(snapshot))
+    (status, Json(body))
 }
 
 /// Handler for the schema discovery endpoint.
@@ -1493,6 +1508,15 @@ async fn run_server_inner(
         // sets OPENHUMAN_WORKSPACE to a writable path, then restarts.
         match crate::openhuman::config::Config::load_or_init().await {
             Ok(cfg) => {
+                let keyring_dir =
+                    crate::openhuman::keyring::store::workspace_dir_for_file_backend();
+                log::info!(
+                    "[boot] paths: config={} workspace={} keyring_dir={} keyring_backend={}",
+                    cfg.config_path.display(),
+                    cfg.workspace_dir.display(),
+                    keyring_dir.display(),
+                    crate::openhuman::keyring::backend_name(),
+                );
                 match crate::openhuman::memory::global::init(cfg.workspace_dir.clone()) {
                     Ok(_) => log::info!(
                         "[boot] memory::global initialized (workspace={})",
@@ -1883,13 +1907,15 @@ fn register_domain_subscribers(
         crate::openhuman::memory_conversations::register_conversation_persistence_subscriber(
             workspace_dir.clone(),
         );
-        crate::openhuman::memory::sync::register_sync_stage_bridge();
+        crate::openhuman::memory::sync::register_sync_stage_bridge(&config);
         if let Err(error) = crate::openhuman::composio::init_composio_trigger_history(
             workspace_dir.clone(),
         ) {
             log::warn!("[composio][history] failed to initialize trigger archive: {error}");
         }
         crate::openhuman::composio::register_composio_trigger_subscriber();
+        crate::openhuman::agent_meetings::calendar::register_meet_calendar_subscriber();
+        crate::openhuman::agent_meetings::bus::register_meeting_event_subscriber();
         crate::openhuman::composio::start_periodic_sync();
         // Task-sources proactive ingestion: connection-created hook + poll.
         crate::openhuman::task_sources::bus::register_task_sources_subscriber();
@@ -1919,13 +1945,19 @@ fn register_domain_subscribers(
             }
             Ok(None) => {
                 log::info!(
-                    "[auth] no session token at startup — scheduler gate set to signed_out"
+                    "[auth] no session token at startup — scheduler gate set to signed_out \
+                     (config_path={}, keyring_backend={})",
+                    config.config_path.display(),
+                    crate::openhuman::keyring::backend_name(),
                 );
                 crate::openhuman::scheduler_gate::set_signed_out(true);
             }
             Err(err) => {
                 log::warn!(
-                    "[auth] failed to read session token at startup ({err}) — assuming signed_out"
+                    "[auth] failed to read session token at startup ({err}) — assuming signed_out \
+                     (config_path={}, keyring_backend={})",
+                    config.config_path.display(),
+                    crate::openhuman::keyring::backend_name(),
                 );
                 crate::openhuman::scheduler_gate::set_signed_out(true);
             }
@@ -1996,7 +2028,6 @@ fn register_domain_subscribers(
 /// surface a banner; under CLI / Docker the override is honored (with a
 /// noisy log + a domain event so any connected dashboard can flag it).
 pub async fn bootstrap_core_runtime(host_kind: crate::core::types::HostKind) {
-    use crate::core::types::HostKind;
     use crate::openhuman::socket::{set_global_socket_manager, SocketManager};
     use std::sync::Arc;
     // `embedded_core` derived from host_kind so the rest of the function (which
@@ -2019,6 +2050,10 @@ pub async fn bootstrap_core_runtime(host_kind: crate::core::types::HostKind) {
     // Uses a Once guard so repeated calls to bootstrap_core_runtime()
     // cannot double-subscribe.
     register_domain_subscribers(workspace_dir.clone(), cfg.clone(), embedded_core);
+    // Warm the remote skills catalog on every core load. This updates the
+    // cached registry used by skill discovery/search, but runs best-effort in
+    // the background so Hermes/network latency cannot block core readiness.
+    crate::openhuman::skill_registry::ops::start_boot_catalog_refresh();
 
     // --- Turn-state recovery -------------------------------------------
     // Any per-thread turn snapshots left on disk from a previous process
@@ -2046,6 +2081,15 @@ pub async fn bootstrap_core_runtime(host_kind: crate::core::types::HostKind) {
     // surface (`openhuman.cost_get_dashboard`) and `record_provider_usage`
     // share one JSONL-backed store. Idempotent.
     crate::openhuman::cost::init_global(cfg.cost.clone(), &workspace_dir);
+
+    // --- x402 payment ledger ---
+    // Initializes the JSONL-backed spending ledger for machine-payable API
+    // payments (x402 protocol). Budget defaults can be overridden via
+    // the `openhuman.x402_update_budget` RPC.
+    {
+        let x402_session = format!("x402-{}", uuid::Uuid::new_v4());
+        crate::openhuman::x402::init_ledger(&workspace_dir, &x402_session);
+    }
 
     // --- Sub-agent definition registry bootstrap ---
     // Loads built-in archetype definitions plus any custom TOML files
@@ -2091,6 +2135,16 @@ pub async fn bootstrap_core_runtime(host_kind: crate::core::types::HostKind) {
         workspace_dir.clone(),
         action_dir,
     );
+
+    // --- Triggered-workflow subscriber ---
+    // Install on the always-run serve boot, not only inside `start_channels`
+    // (skipped for web-chat-only cores with no messaging integrations, and when
+    // `OPENHUMAN_DISABLE_CHANNEL_LISTENERS=1`). Without this, any workflow
+    // declaring `triggers:` was silently ignored on web-chat-only desktop
+    // installs. Idempotent — shares a process-global OnceLock with the
+    // `start_channels` site so it registers exactly once regardless of which
+    // path runs first. (Matching only for now; activation handoff still pending.)
+    crate::openhuman::workflows::bus::ensure_triggered_workflow_subscriber(&workspace_dir);
 
     // --- Approval gate (#1339) ---
     // ON by default; opt out with `OPENHUMAN_APPROVAL_GATE=0` (or `false`).
@@ -2202,6 +2256,29 @@ pub async fn bootstrap_core_runtime(host_kind: crate::core::types::HostKind) {
         let cfg = cfg.clone();
         tokio::spawn(async move {
             crate::openhuman::mcp_registry::boot::spawn_installed_servers(&cfg).await;
+        });
+    }
+
+    // --- MCP registry reconnect supervisor (#3312) -----------------------
+    // Keep installed MCP servers connected for the life of the process:
+    // transports drop silently over long uptimes (subprocess exits, HTTP
+    // session expires) and the boot spawn above only runs once. The
+    // supervisor periodically probes each connection and reconnects dropped
+    // ones with per-server backoff. First tick is delayed so it doesn't race
+    // the boot spawn.
+    //
+    // Guarded by `Once`: `bootstrap_core_runtime` is documented idempotent, and
+    // unlike the one-shot boot spawn above the supervisor is an infinite tick
+    // loop — a second instance would race the first on the shared connections
+    // registry (duplicate probes, reconnect thrashing, nondeterministic backoff).
+    {
+        use std::sync::Once;
+        static SUPERVISOR_SPAWNED: Once = Once::new();
+        SUPERVISOR_SPAWNED.call_once(|| {
+            let cfg = cfg.clone();
+            tokio::spawn(async move {
+                crate::openhuman::mcp_registry::supervisor::run(cfg).await;
+            });
         });
     }
 

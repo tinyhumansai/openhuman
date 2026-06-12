@@ -32,6 +32,7 @@ jobs:
   build-cli-linux-arm64:
     name: Build Linux arm64 CLI tarball
     runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
     steps:
       - name: Checkout tag
         uses: actions/checkout@v5
@@ -91,6 +92,7 @@ jobs:
   update-homebrew:
     name: Update Homebrew tap formula
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: [build-cli-linux-arm64]
     steps:
       - name: Checkout main repo (for formula template)
@@ -122,6 +124,7 @@ jobs:
   build-apt-repo:
     name: Build apt repository
     runs-on: ubuntu-22.04
+    timeout-minutes: 15
     needs: [build-cli-linux-arm64]
     steps:
       - name: Checkout tag
@@ -162,6 +165,7 @@ jobs:
   publish-npm:
     name: Publish npm package
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout tag
         uses: actions/checkout@v5
@@ -187,6 +191,7 @@ jobs:
   smoke-homebrew:
     name: Smoke — Homebrew (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     needs: [update-homebrew]
     continue-on-error: true
     strategy:
@@ -212,6 +217,7 @@ jobs:
   smoke-apt:
     name: Smoke — apt (ubuntu-22.04)
     runs-on: ubuntu-22.04
+    timeout-minutes: 10
     needs: [build-apt-repo]
     continue-on-error: true
     steps:
@@ -235,6 +241,7 @@ jobs:
   smoke-npm:
     name: Smoke — npm (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
     needs: [publish-npm]
     continue-on-error: true
     strategy:
@@ -263,6 +270,7 @@ jobs:
   create-backlog-issue:
     name: Create backlog issue (once)
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Create issue if it doesn't exist
         uses: actions/github-script@v8

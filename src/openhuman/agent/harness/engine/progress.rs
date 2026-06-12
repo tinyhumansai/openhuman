@@ -70,27 +70,46 @@ impl TurnProgress {
     }
 }
 
+/// Emit a lifecycle progress event **without ever blocking** the agent's
+/// control flow. Progress is pure observability, but the sink is a bounded
+/// channel shared by the orchestrator, every inline sub-agent run, and their
+/// delta forwarders. A blocking `send().await` here can park a sub-agent's main
+/// loop when the channel is momentarily full — which hangs the parent turn,
+/// because the orchestrator is `await`ing that sub-agent's tool call and never
+/// makes its next LLM request (the subagent-stall flake). So drop the event on
+/// `Full` (a missed UI tick, not a correctness issue) and `trace` on `Closed`
+/// (no listener). Streaming *text deltas* keep their own blocking backpressure
+/// in their forwarder tasks, so visible message text is unaffected.
+fn emit(sink: &tokio::sync::mpsc::Sender<AgentProgress>, event: AgentProgress) {
+    use tokio::sync::mpsc::error::TrySendError;
+    match sink.try_send(event) {
+        Ok(()) => {}
+        Err(TrySendError::Full(_)) => {
+            log::trace!("[agent_loop] progress channel full — dropping lifecycle event");
+        }
+        Err(TrySendError::Closed(_)) => {
+            log::trace!("[agent_loop] progress sink closed — dropping lifecycle event");
+        }
+    }
+}
+
 #[async_trait]
 impl ProgressReporter for TurnProgress {
     async fn turn_started(&self) {
         if let Some(ref sink) = self.sink {
-            if let Err(e) = sink.send(AgentProgress::TurnStarted).await {
-                log::warn!("[agent_loop] progress sink closed at TurnStarted: {e}");
-            }
+            emit(sink, AgentProgress::TurnStarted);
         }
     }
 
     async fn iteration_started(&self, iteration: u32, max_iterations: u32) {
         if let Some(ref sink) = self.sink {
-            if let Err(e) = sink
-                .send(AgentProgress::IterationStarted {
+            emit(
+                sink,
+                AgentProgress::IterationStarted {
                     iteration,
                     max_iterations,
-                })
-                .await
-            {
-                log::warn!("[agent_loop] progress sink closed at IterationStarted: {e}");
-            }
+                },
+            );
         }
     }
 
@@ -104,17 +123,13 @@ impl ProgressReporter for TurnProgress {
                 cached_input_tokens: cost.cached_input_tokens,
                 total_usd: cost.total_usd(),
             };
-            if let Err(e) = sink.send(event).await {
-                log::warn!("[agent_loop] progress sink closed at TurnCostUpdated: {e}");
-            }
+            emit(sink, event);
         }
     }
 
     async fn turn_completed(&self, iterations: u32) {
         if let Some(ref sink) = self.sink {
-            if let Err(e) = sink.send(AgentProgress::TurnCompleted { iterations }).await {
-                log::warn!("[agent_loop] progress sink closed at TurnCompleted: {e}");
-            }
+            emit(sink, AgentProgress::TurnCompleted { iterations });
         }
     }
 
@@ -126,17 +141,15 @@ impl ProgressReporter for TurnProgress {
         iteration: u32,
     ) {
         if let Some(ref sink) = self.sink {
-            if let Err(e) = sink
-                .send(AgentProgress::ToolCallStarted {
+            emit(
+                sink,
+                AgentProgress::ToolCallStarted {
                     call_id: call_id.to_string(),
                     tool_name: tool_name.to_string(),
                     arguments: arguments.clone(),
                     iteration,
-                })
-                .await
-            {
-                log::warn!("[agent_loop] progress sink closed while emitting ToolCallStarted: {e}");
-            }
+                },
+            );
         }
     }
 
@@ -150,21 +163,17 @@ impl ProgressReporter for TurnProgress {
         iteration: u32,
     ) {
         if let Some(ref sink) = self.sink {
-            if let Err(e) = sink
-                .send(AgentProgress::ToolCallCompleted {
+            emit(
+                sink,
+                AgentProgress::ToolCallCompleted {
                     call_id: call_id.to_string(),
                     tool_name: tool_name.to_string(),
                     success,
                     output_chars,
                     elapsed_ms,
                     iteration,
-                })
-                .await
-            {
-                log::warn!(
-                    "[agent_loop] progress sink closed while emitting ToolCallCompleted: {e}"
-                );
-            }
+                },
+            );
         }
     }
 
@@ -191,15 +200,16 @@ pub(crate) struct SubagentProgress {
 impl ProgressReporter for SubagentProgress {
     async fn iteration_started(&self, iteration: u32, max_iterations: u32) {
         if let Some(ref sink) = self.sink {
-            let _ = sink
-                .send(AgentProgress::SubagentIterationStarted {
+            emit(
+                sink,
+                AgentProgress::SubagentIterationStarted {
                     agent_id: self.agent_id.clone(),
                     task_id: self.task_id.clone(),
                     iteration,
                     max_iterations,
                     extended_policy: self.extended_policy,
-                })
-                .await;
+                },
+            );
         }
     }
 
@@ -211,15 +221,16 @@ impl ProgressReporter for SubagentProgress {
         iteration: u32,
     ) {
         if let Some(ref sink) = self.sink {
-            let _ = sink
-                .send(AgentProgress::SubagentToolCallStarted {
+            emit(
+                sink,
+                AgentProgress::SubagentToolCallStarted {
                     agent_id: self.agent_id.clone(),
                     task_id: self.task_id.clone(),
                     call_id: call_id.to_string(),
                     tool_name: tool_name.to_string(),
                     iteration,
-                })
-                .await;
+                },
+            );
         }
     }
 
@@ -233,8 +244,9 @@ impl ProgressReporter for SubagentProgress {
         iteration: u32,
     ) {
         if let Some(ref sink) = self.sink {
-            let _ = sink
-                .send(AgentProgress::SubagentToolCallCompleted {
+            emit(
+                sink,
+                AgentProgress::SubagentToolCallCompleted {
                     agent_id: self.agent_id.clone(),
                     task_id: self.task_id.clone(),
                     call_id: call_id.to_string(),
@@ -243,8 +255,8 @@ impl ProgressReporter for SubagentProgress {
                     output_chars,
                     elapsed_ms,
                     iteration,
-                })
-                .await;
+                },
+            );
         }
     }
 

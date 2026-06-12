@@ -302,7 +302,7 @@ impl Workflow {
     pub fn read_body(&self) -> Option<String> {
         if self.legacy {
             log::debug!(
-                "[skills:inject] read_body skipped for legacy skill.json skill name={}",
+                "[workflows:inject] read_body skipped for legacy skill.json skill name={}",
                 self.name
             );
             return None;
@@ -312,7 +312,7 @@ impl Workflow {
             Some((_, body, _)) => Some(body),
             None => {
                 log::warn!(
-                    "[skills:inject] read_body failed to parse {} for skill {}",
+                    "[workflows:inject] read_body failed to parse {} for skill {}",
                     path.display(),
                     self.name
                 );

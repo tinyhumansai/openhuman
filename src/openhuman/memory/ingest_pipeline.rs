@@ -13,7 +13,7 @@ use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::config::Config;
 use crate::openhuman::memory::util::redact::redact;
 use crate::openhuman::memory_queue::{self as jobs, ExtractChunkPayload, NewJob};
-use crate::openhuman::memory_store::chunks::store as chunk_store;
+use crate::openhuman::memory_store::chunks::store::{self as chunk_store, RawRef};
 use crate::openhuman::memory_store::chunks::types::SourceKind;
 use crate::openhuman::memory_store::chunks::{chunk_markdown, ChunkerInput, ChunkerOptions};
 use crate::openhuman::memory_store::content as content_store;
@@ -88,7 +88,7 @@ pub async fn ingest_chat(
             Some(c) => c,
             None => return Ok(IngestResult::empty(source_id)),
         };
-    persist(config, source_id, canonical, None).await
+    persist(config, source_id, canonical, None, None).await
 }
 
 /// Ingest an email thread: canonicalise → chunk → fast-score → persist → enqueue
@@ -110,7 +110,28 @@ pub async fn ingest_email(
             Some(c) => c,
             None => return Ok(IngestResult::empty(source_id)),
         };
-    persist(config, source_id, canonical, None).await
+    persist(config, source_id, canonical, None, None).await
+}
+
+/// Ingest an email thread whose chunk bodies are backed by a raw archive file.
+///
+/// Raw refs are committed in the same transaction as the chunk rows and
+/// `extract_chunk` jobs, so workers can never observe a raw-backed email chunk
+/// without a resolvable body source.
+pub async fn ingest_email_with_raw_refs(
+    config: &Config,
+    source_id: &str,
+    owner: &str,
+    tags: Vec<String>,
+    thread: EmailThread,
+    raw_refs: Vec<RawRef>,
+) -> Result<IngestResult> {
+    let canonical =
+        match email::canonicalise(source_id, owner, &tags, thread).map_err(anyhow::Error::msg)? {
+            Some(c) => c,
+            None => return Ok(IngestResult::empty(source_id)),
+        };
+    persist(config, source_id, canonical, None, Some(raw_refs)).await
 }
 
 /// Ingest a single document: canonicalise → chunk → fast-score → persist →
@@ -175,7 +196,7 @@ pub async fn ingest_document_versioned(
         Some(c) => c,
         None => return Ok(IngestResult::empty(source_id)),
     };
-    persist(config, source_id, canonical, version_ms).await
+    persist(config, source_id, canonical, version_ms, None).await
 }
 
 /// Best-effort pre-canonicalisation check. The transactional claim inside
@@ -198,6 +219,7 @@ async fn persist(
     source_id: &str,
     canonical: CanonicalisedSource,
     gate_version_ms: Option<i64>,
+    raw_refs_for_chunks: Option<Vec<RawRef>>,
 ) -> Result<IngestResult> {
     let source_kind_for_store = canonical.metadata.source_kind;
 
@@ -266,6 +288,7 @@ async fn persist(
     let staged_for_store = staged.clone();
     let results_for_store = all_results.clone();
     let source_id_for_store = source_id.to_string();
+    let raw_refs_for_store = raw_refs_for_chunks.clone();
     let written = tokio::task::spawn_blocking(move || -> Result<Option<usize>> {
         use std::collections::{HashMap, HashSet};
         chunk_store::with_connection(&config_owned, |conn| {
@@ -346,6 +369,12 @@ async fn persist(
             }
 
             let n = chunk_store::upsert_staged_chunks_tx(&tx, &staged_for_store)?;
+
+            if let Some(ref refs) = raw_refs_for_store {
+                for s in &staged_for_store {
+                    chunk_store::set_chunk_raw_refs_tx(&tx, &s.chunk.id, refs)?;
+                }
+            }
 
             // Re-ingest of identical content (same chunk_id) must NOT
             // downgrade chunks that have already progressed through the

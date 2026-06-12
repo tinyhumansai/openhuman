@@ -155,8 +155,8 @@ type Phase =
 
 interface ComposioConnectModalProps {
   toolkit: ComposioToolkitMeta;
-  /** Existing connection (if any) from the hook. */
-  connection?: ComposioConnection;
+  /** All existing connections for this toolkit (if any) from the hook. */
+  connections?: ComposioConnection[];
   /** Connected, but not yet exposed to the agent tool surface. */
   agentUnsupported?: boolean;
   /** Invoked on successful connect/disconnect so the parent can refresh. */
@@ -169,7 +169,7 @@ const POLL_TIMEOUT_MS = 5 * 60 * 1_000;
 
 export default function ComposioConnectModal({
   toolkit,
-  connection,
+  connections,
   agentUnsupported = false,
   onChanged,
   onClose,
@@ -183,6 +183,7 @@ export default function ComposioConnectModal({
   const connectInFlightRef = useRef<boolean>(false);
   const [connectInFlight, setConnectInFlight] = useState(false);
 
+  const connection = connections?.[0];
   const initialState = deriveComposioState(connection);
   const initiallyConnected = initialState === 'connected';
   const initiallyExpired = initialState === 'expired';
@@ -207,6 +208,9 @@ export default function ComposioConnectModal({
   const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
+  const [activeConnections, setActiveConnections] = useState<ComposioConnection[]>(
+    connections?.filter(c => deriveComposioState(c) === 'connected') ?? []
+  );
   const [activeConnection, setActiveConnection] = useState<ComposioConnection | undefined>(
     connection
   );
@@ -273,11 +277,16 @@ export default function ComposioConnectModal({
       inFlightRef.current = true;
       try {
         const resp = await listConnections();
-        const hit = resp.connections.find(
+        const allForToolkit = resp.connections.filter(
           c => c.toolkit.toLowerCase() === toolkit.slug.toLowerCase()
         );
+        const hit =
+          allForToolkit.find(
+            c => deriveComposioState(c) !== 'connected' && deriveComposioState(c) !== 'disconnected'
+          ) ?? allForToolkit[0];
         if (hit) {
           setActiveConnection(hit);
+          setActiveConnections(allForToolkit.filter(c => deriveComposioState(c) === 'connected'));
           const state = deriveComposioState(hit);
           if (state === 'connected') {
             stopPolling();
@@ -507,23 +516,35 @@ export default function ComposioConnectModal({
     [savingScope, scopes, t, toolkit.slug]
   );
 
-  const handleDisconnect = useCallback(async () => {
-    if (!activeConnection) return;
-    setPhase('disconnecting');
-    setError(null);
-    try {
-      await deleteConnection(activeConnection.id, { clearMemory: clearMemoryOnDisconnect });
-      setActiveConnection(undefined);
-      setClearMemoryOnDisconnect(false);
-      setPhase('idle');
-      onChanged?.();
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setPhase('error');
-      setError(`${t('composio.connect.disconnectFailed')}: ${msg}`);
-      setClearMemoryOnDisconnect(false);
-    }
-  }, [activeConnection, clearMemoryOnDisconnect, onChanged, t]);
+  const handleDisconnect = useCallback(
+    async (targetConnection?: ComposioConnection) => {
+      const conn = targetConnection ?? activeConnection;
+      if (!conn) return;
+      setPhase('disconnecting');
+      setError(null);
+      try {
+        await deleteConnection(conn.id, { clearMemory: clearMemoryOnDisconnect });
+        const remaining = activeConnections.filter(c => c.id !== conn.id);
+        setActiveConnections(remaining);
+        if (remaining.length > 0) {
+          setActiveConnection(remaining[0]);
+          setClearMemoryOnDisconnect(false);
+          setPhase('connected');
+        } else {
+          setActiveConnection(undefined);
+          setClearMemoryOnDisconnect(false);
+          setPhase('idle');
+        }
+        onChanged?.();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setPhase('error');
+        setError(`${t('composio.connect.disconnectFailed')}: ${msg}`);
+        setClearMemoryOnDisconnect(false);
+      }
+    },
+    [activeConnection, activeConnections, clearMemoryOnDisconnect, onChanged, t]
+  );
 
   const handleBackdropClick = (e: React.MouseEvent) => {
     if (e.target === e.currentTarget) onClose();
@@ -716,17 +737,52 @@ export default function ComposioConnectModal({
 
           {phase === 'connected' && (
             <>
-              <div className="flex items-center gap-2 text-sm text-sage-700">
-                <div className="w-2 h-2 rounded-full bg-sage-500" />
-                <div>
-                  {`${toolkit.name} ${t('composio.connect.isConnected')}`} &nbsp;
-                  {activeConnection && deriveConnectionLabel(activeConnection) && (
-                    <span className="text-[11px] text-stone-400 dark:text-neutral-500 font-mono">
-                      ({deriveConnectionLabel(activeConnection)})
-                    </span>
-                  )}
+              {/* Single connection: inline status (backward-compatible view) */}
+              {activeConnections.length <= 1 && (
+                <div className="flex items-center gap-2 text-sm text-sage-700">
+                  <div className="w-2 h-2 rounded-full bg-sage-500" />
+                  <div>
+                    {`${toolkit.name} ${t('composio.connect.isConnected')}`} &nbsp;
+                    {(activeConnections[0] ?? activeConnection) &&
+                      deriveConnectionLabel(activeConnections[0] ?? activeConnection!) && (
+                        <span className="text-[11px] text-stone-400 dark:text-neutral-500 font-mono">
+                          ({deriveConnectionLabel((activeConnections[0] ?? activeConnection)!)})
+                        </span>
+                      )}
+                  </div>
                 </div>
-              </div>
+              )}
+              {/* Multiple connections: list with per-connection controls */}
+              {activeConnections.length > 1 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-medium text-stone-500 dark:text-neutral-400 uppercase tracking-wide">
+                    {t('composio.connect.connectedAccounts')} ({activeConnections.length})
+                  </p>
+                  {activeConnections.map(conn => (
+                    <div
+                      key={conn.id}
+                      className="flex items-center justify-between gap-2 rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-3 py-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div className="w-2 h-2 rounded-full bg-sage-500 shrink-0" />
+                        <span className="text-sm text-stone-800 dark:text-neutral-100 truncate">
+                          {deriveConnectionLabel(conn) ?? toolkit.name}
+                        </span>
+                        {conn.id === activeConnections[0]?.id && (
+                          <span className="text-[10px] font-medium text-primary-600 dark:text-primary-400 bg-primary-50 dark:bg-primary-500/10 px-1.5 py-0.5 rounded-full shrink-0">
+                            {t('composio.connect.defaultLabel')}
+                          </span>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void handleDisconnect(conn)}
+                        className="text-[11px] text-coral-600 hover:text-coral-700 font-medium shrink-0">
+                        {t('composio.connect.disconnectAccount')}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
               {agentUnsupported && (
                 <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 dark:border-amber-500/30 dark:bg-amber-500/10">
                   <div className="flex items-center gap-2 text-sm font-medium text-amber-800 dark:text-amber-200">
@@ -751,6 +807,13 @@ export default function ComposioConnectModal({
                   connectionId={activeConnection.id}
                 />
               )}
+              <button
+                type="button"
+                disabled={connectInFlight}
+                onClick={() => void handleConnect()}
+                className="w-full rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-stone-700 dark:text-neutral-200 text-sm font-medium py-2.5 hover:bg-stone-50 dark:hover:bg-neutral-800/60 transition-colors disabled:opacity-60 disabled:cursor-not-allowed">
+                {t('composio.connect.addAnotherAccount')}
+              </button>
               <label className="flex items-start gap-2 rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-3 py-2">
                 <input
                   type="checkbox"

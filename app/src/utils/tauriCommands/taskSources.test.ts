@@ -19,6 +19,7 @@ import {
   openhumanTaskSourcesPreviewFilter,
   openhumanTaskSourcesRemove,
   openhumanTaskSourcesStatus,
+  openhumanTaskSourcesSync,
   openhumanTaskSourcesUpdate,
 } from './taskSources';
 
@@ -87,6 +88,12 @@ describe('tauriCommands/taskSources', () => {
     });
   });
 
+  test('sync forwards the sync method with no params', async () => {
+    mockCallCoreRpc.mockResolvedValue([]);
+    await openhumanTaskSourcesSync();
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({ method: 'openhuman.task_sources_sync' });
+  });
+
   test('listTasks forwards id + default limit', async () => {
     mockCallCoreRpc.mockResolvedValue([]);
     await openhumanTaskSourcesListTasks('s-1');
@@ -139,6 +146,7 @@ describe('tauriCommands/taskSources', () => {
     await expect(openhumanTaskSourcesUpdate('x', {})).rejects.toThrow('Not running in Tauri');
     await expect(openhumanTaskSourcesRemove('x')).rejects.toThrow('Not running in Tauri');
     await expect(openhumanTaskSourcesFetch('x')).rejects.toThrow('Not running in Tauri');
+    await expect(openhumanTaskSourcesSync()).rejects.toThrow('Not running in Tauri');
     await expect(openhumanTaskSourcesListTasks('x')).rejects.toThrow('Not running in Tauri');
     await expect(
       openhumanTaskSourcesPreviewFilter('github', { provider: 'github' })

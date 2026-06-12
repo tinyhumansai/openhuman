@@ -209,18 +209,23 @@ pub struct ConnStatus {
 // ── Smithery registry DTOs ───────────────────────────────────────────────────
 
 /// Summary record returned by `GET /servers`.
+///
+/// Field aliases accept both camelCase (Smithery wire format) and snake_case
+/// (internal / RPC) on deserialization; serialization always produces
+/// snake_case so the frontend receives the field names it expects.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct SmitheryServerSummary {
+    #[serde(alias = "qualifiedName")]
     pub qualified_name: String,
+    #[serde(alias = "displayName")]
     pub display_name: String,
     #[serde(default)]
     pub description: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "iconUrl")]
     pub icon_url: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "useCount")]
     pub use_count: u64,
-    #[serde(default)]
+    #[serde(default, alias = "isDeployed")]
     pub is_deployed: bool,
     /// Upstream registry id (`"smithery"` | `"mcp_official"`). Always set
     /// by the dispatcher in `super::registries` so the frontend can attribute
@@ -235,13 +240,14 @@ pub struct SmitheryServerSummary {
 
 /// Detail record returned by `GET /servers/{qualifiedName}`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct SmitheryServerDetail {
+    #[serde(alias = "qualifiedName")]
     pub qualified_name: String,
+    #[serde(alias = "displayName")]
     pub display_name: String,
     #[serde(default)]
     pub description: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "iconUrl")]
     pub icon_url: Option<String>,
     #[serde(default)]
     pub connections: Vec<SmitheryConnection>,
@@ -254,15 +260,14 @@ pub struct SmitheryServerDetail {
 
 /// One connection type listed on a server detail.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct SmitheryConnection {
     /// `"stdio"` or `"http"`.
     pub r#type: String,
-    #[serde(default)]
+    #[serde(default, alias = "deploymentUrl")]
     pub deployment_url: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "configSchema")]
     pub config_schema: Option<Value>,
-    #[serde(default)]
+    #[serde(default, alias = "exampleConfig")]
     pub example_config: Option<Value>,
     #[serde(default)]
     pub published: bool,
@@ -272,15 +277,14 @@ pub struct SmitheryConnection {
 
 /// Pagination wrapper from Smithery's `/servers` endpoint.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
 pub struct SmitheryPagination {
-    #[serde(default)]
+    #[serde(default, alias = "currentPage")]
     pub current_page: u32,
-    #[serde(default)]
+    #[serde(default, alias = "pageSize")]
     pub page_size: u32,
-    #[serde(default)]
+    #[serde(default, alias = "totalPages")]
     pub total_pages: u32,
-    #[serde(default)]
+    #[serde(default, alias = "totalCount")]
     pub total_count: u64,
 }
 
@@ -455,6 +459,142 @@ mod tests {
             s.enabled,
             "enabled should default to true when field is absent"
         );
+    }
+
+    /// Smithery API sends camelCase; the official adapter builds snake_case
+    /// in `into_summary()`. Both must deserialize into the same struct.
+    #[test]
+    fn smithery_summary_deserializes_from_snake_case() {
+        let raw = json!({
+            "qualified_name": "@test/snake",
+            "display_name": "Snake Test",
+            "icon_url": "https://example.com/icon.png",
+            "use_count": 42,
+            "is_deployed": true,
+        });
+        let s: SmitheryServerSummary = serde_json::from_value(raw).unwrap();
+        assert_eq!(s.qualified_name, "@test/snake");
+        assert_eq!(s.display_name, "Snake Test");
+        assert_eq!(s.icon_url.as_deref(), Some("https://example.com/icon.png"));
+        assert_eq!(s.use_count, 42);
+        assert!(s.is_deployed);
+    }
+
+    /// RPC responses to the frontend must use snake_case field names.
+    /// This pins the serialization format so a future serde annotation
+    /// change doesn't silently break the frontend.
+    #[test]
+    fn smithery_summary_serializes_as_snake_case() {
+        let s = SmitheryServerSummary {
+            qualified_name: "@test/ser".to_string(),
+            display_name: "Ser Test".to_string(),
+            description: Some("desc".to_string()),
+            icon_url: Some("https://example.com/i.png".to_string()),
+            use_count: 10,
+            is_deployed: true,
+            source: "mcp_official".to_string(),
+            extra: Default::default(),
+        };
+        let v = serde_json::to_value(&s).unwrap();
+        assert!(
+            v.get("qualified_name").is_some(),
+            "expected snake_case qualified_name"
+        );
+        assert!(
+            v.get("display_name").is_some(),
+            "expected snake_case display_name"
+        );
+        assert!(v.get("icon_url").is_some(), "expected snake_case icon_url");
+        assert!(
+            v.get("use_count").is_some(),
+            "expected snake_case use_count"
+        );
+        assert!(
+            v.get("is_deployed").is_some(),
+            "expected snake_case is_deployed"
+        );
+        // Must NOT have camelCase keys
+        assert!(
+            v.get("qualifiedName").is_none(),
+            "must not serialize as camelCase"
+        );
+        assert!(
+            v.get("displayName").is_none(),
+            "must not serialize as camelCase"
+        );
+    }
+
+    /// Same snake_case serialization pin for SmitheryServerDetail.
+    #[test]
+    fn smithery_detail_serializes_as_snake_case() {
+        let d = SmitheryServerDetail {
+            qualified_name: "@test/d".to_string(),
+            display_name: "Detail".to_string(),
+            description: None,
+            icon_url: None,
+            connections: vec![],
+            source: "smithery".to_string(),
+            extra: Default::default(),
+        };
+        let v = serde_json::to_value(&d).unwrap();
+        assert!(
+            v.get("qualified_name").is_some(),
+            "expected snake_case qualified_name"
+        );
+        assert!(
+            v.get("display_name").is_some(),
+            "expected snake_case display_name"
+        );
+        assert!(
+            v.get("qualifiedName").is_none(),
+            "must not serialize as camelCase"
+        );
+    }
+
+    /// SmitheryConnection must serialize with snake_case for the frontend.
+    #[test]
+    fn smithery_connection_serializes_as_snake_case() {
+        let c = SmitheryConnection {
+            r#type: "stdio".to_string(),
+            deployment_url: Some("https://x.com".to_string()),
+            config_schema: None,
+            example_config: Some(json!({"command": "npx"})),
+            published: true,
+            extra: Default::default(),
+        };
+        let v = serde_json::to_value(&c).unwrap();
+        assert!(
+            v.get("deployment_url").is_some(),
+            "expected snake_case deployment_url"
+        );
+        assert!(
+            v.get("config_schema").is_some(),
+            "expected snake_case config_schema"
+        );
+        assert!(
+            v.get("example_config").is_some(),
+            "expected snake_case example_config"
+        );
+        assert!(
+            v.get("deploymentUrl").is_none(),
+            "must not serialize as camelCase"
+        );
+    }
+
+    /// SmitheryConnection must also deserialize from Smithery's camelCase wire format.
+    #[test]
+    fn smithery_connection_deserializes_from_camel_case() {
+        let raw = json!({
+            "type": "stdio",
+            "deploymentUrl": "https://x.com",
+            "configSchema": { "properties": {} },
+            "exampleConfig": { "command": "npx" },
+            "published": true,
+        });
+        let c: SmitheryConnection = serde_json::from_value(raw).unwrap();
+        assert_eq!(c.deployment_url.as_deref(), Some("https://x.com"));
+        assert!(c.config_schema.is_some());
+        assert!(c.example_config.is_some());
     }
 
     #[test]

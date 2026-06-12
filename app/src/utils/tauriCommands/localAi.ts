@@ -298,7 +298,7 @@ export async function openhumanLocalAiTranscribe(
   audioPath: string
 ): Promise<CommandResponse<LocalAiSpeechResult>> {
   return await callCoreRpc<CommandResponse<LocalAiSpeechResult>>({
-    method: 'openhuman.local_ai_transcribe',
+    method: 'openhuman.inference_transcribe',
     params: { audio_path: audioPath },
   });
 }
@@ -308,7 +308,7 @@ export async function openhumanLocalAiTranscribeBytes(
   extension?: string
 ): Promise<CommandResponse<LocalAiSpeechResult>> {
   return await callCoreRpc<CommandResponse<LocalAiSpeechResult>>({
-    method: 'openhuman.local_ai_transcribe_bytes',
+    method: 'openhuman.inference_transcribe_bytes',
     params: { audio_bytes: audioBytes, extension },
   });
 }
@@ -318,7 +318,7 @@ export async function openhumanLocalAiTts(
   outputPath?: string
 ): Promise<CommandResponse<LocalAiTtsResult>> {
   return await callCoreRpc<CommandResponse<LocalAiTtsResult>>({
-    method: 'openhuman.local_ai_tts',
+    method: 'openhuman.inference_tts',
     params: { text, output_path: outputPath },
   });
 }
@@ -354,7 +354,7 @@ export async function openhumanLocalAiAssetsStatus(): Promise<
   CommandResponse<LocalAiAssetsStatus>
 > {
   return await callCoreRpc<CommandResponse<LocalAiAssetsStatus>>({
-    method: 'openhuman.local_ai_assets_status',
+    method: 'openhuman.inference_assets_status',
   });
 }
 
@@ -362,7 +362,7 @@ export async function openhumanLocalAiDownloadsProgress(): Promise<
   CommandResponse<LocalAiDownloadsProgress>
 > {
   return await callCoreRpc<CommandResponse<LocalAiDownloadsProgress>>({
-    method: 'openhuman.local_ai_downloads_progress',
+    method: 'openhuman.inference_downloads_progress',
   });
 }
 
@@ -370,7 +370,7 @@ export async function openhumanLocalAiDownloadAsset(
   capability: 'chat' | 'vision' | 'embedding' | 'stt' | 'tts'
 ): Promise<CommandResponse<LocalAiAssetsStatus>> {
   return await callCoreRpc<CommandResponse<LocalAiAssetsStatus>>({
-    method: 'openhuman.local_ai_download_asset',
+    method: 'openhuman.inference_download_asset',
     params: { capability },
   });
 }
@@ -407,7 +407,7 @@ export async function openhumanLocalAiTestConnection(
   url: string
 ): Promise<OllamaConnectionTestResult> {
   return await callCoreRpc<OllamaConnectionTestResult>({
-    method: 'openhuman.local_ai_test_connection',
+    method: 'openhuman.inference_test_connection',
     params: { url },
   });
 }

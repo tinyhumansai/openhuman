@@ -312,6 +312,7 @@ async fn composio_connected_integrations_public_helpers_handle_empty_auth_and_id
         tools: Vec::new(),
         gated_tools: Vec::new(),
         connected: true,
+        connections: Vec::new(),
         non_active_status: None,
     };
     let second = ConnectedIntegration {
@@ -320,6 +321,7 @@ async fn composio_connected_integrations_public_helpers_handle_empty_auth_and_id
         tools: Vec::new(),
         gated_tools: Vec::new(),
         connected: true,
+        connections: Vec::new(),
         non_active_status: None,
     };
     let disconnected = ConnectedIntegration {
@@ -328,6 +330,7 @@ async fn composio_connected_integrations_public_helpers_handle_empty_auth_and_id
         tools: Vec::new(),
         gated_tools: Vec::new(),
         connected: false,
+        connections: Vec::new(),
         non_active_status: Some("EXPIRED".into()),
     };
     assert_eq!(
@@ -342,6 +345,7 @@ async fn composio_connected_integrations_public_helpers_handle_empty_auth_and_id
             tools: Vec::new(),
             gated_tools: Vec::new(),
             connected: true,
+            connections: Vec::new(),
             non_active_status: None,
         }])
     );
@@ -692,7 +696,7 @@ async fn composio_backend_client_local_validation_rejects_bad_inputs_before_http
         Some("entity-1"),
         Arc::new(SecurityPolicy::default()),
     ));
-    let blank_direct_execute = direct_execute(&direct_tool, " ", None, "entity-1")
+    let blank_direct_execute = direct_execute(&direct_tool, " ", None, "entity-1", None)
         .await
         .expect_err("blank direct tool should fail before HTTP");
     assert!(blank_direct_execute.to_string().contains("tool slug"));
@@ -883,7 +887,7 @@ fn composio_controller_schema_catalog_covers_all_declared_functions() {
         ("authorize", 2, "connectUrl"),
         ("delete_connection", 2, "deleted"),
         ("list_tools", 2, "tools"),
-        ("execute", 2, "result"),
+        ("execute", 3, "result"),
         ("list_github_repos", 1, "result"),
         ("create_trigger", 3, "result"),
         ("get_user_profile", 1, "profile"),

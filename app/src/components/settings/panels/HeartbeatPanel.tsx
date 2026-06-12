@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { useT } from '../../../lib/i18n/I18nContext';
 import { type AISettings, loadAISettings } from '../../../services/api/aiSettingsApi';
 import SettingsHeader from '../components/SettingsHeader';
+import { SettingsStatusLine } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 import { BackgroundLoopControls } from './AIPanel';
 
@@ -34,12 +35,8 @@ const HeartbeatPanel = () => {
         onBack={navigateBack}
         breadcrumbs={breadcrumbs}
       />
-      <div className="p-4">
-        {loadError && (
-          <div className="mb-3 rounded-md border border-coral-200 dark:border-coral-500/30 bg-coral-50 dark:bg-coral-500/10 px-3 py-2 text-xs text-coral-700 dark:text-coral-300">
-            {loadError}
-          </div>
-        )}
+      <div className="p-4 space-y-3">
+        <SettingsStatusLine saving={false} error={loadError} savingLabel="" />
         {snapshot ? (
           <BackgroundLoopControls
             view="heartbeat"
@@ -47,9 +44,11 @@ const HeartbeatPanel = () => {
             routing={snapshot.routing}
             cloudProviders={snapshot.cloudProviders}
           />
-        ) : (
-          <div className="text-xs text-stone-500 dark:text-neutral-400">{t('common.loading')}</div>
-        )}
+        ) : !loadError ? (
+          <div className="text-xs text-neutral-500 dark:text-neutral-400">
+            {t('common.loading')}
+          </div>
+        ) : null}
       </div>
     </div>
   );

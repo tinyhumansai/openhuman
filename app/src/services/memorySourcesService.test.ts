@@ -87,6 +87,7 @@ describe('memorySourcesService', () => {
   it('exposes labels and icons for every source kind', () => {
     const kinds = [
       'composio',
+      'conversation',
       'folder',
       'github_repo',
       'twitter_query',
@@ -97,6 +98,28 @@ describe('memorySourcesService', () => {
       expect(SOURCE_KIND_LABEL_KEYS[kind]).toBeTruthy();
       expect(SOURCE_KIND_ICONS[kind]).toBeTruthy();
     }
+  });
+
+  it('addMemorySource sends conversation source with no extra fields', async () => {
+    mockedCall.mockResolvedValue({
+      result: {
+        source: { id: 'src_conv', kind: 'conversation', label: 'Conversations', enabled: true },
+      },
+      logs: [],
+    } as never);
+
+    const result = await addMemorySource({
+      kind: 'conversation',
+      label: 'Conversations',
+      enabled: true,
+    });
+
+    expect(mockedCall).toHaveBeenCalledWith({
+      method: 'openhuman.memory_sources_add',
+      params: { kind: 'conversation', label: 'Conversations', enabled: true },
+    });
+    expect(result.id).toBe('src_conv');
+    expect(result.kind).toBe('conversation');
   });
 
   // ---------------------------------------------------------------------------

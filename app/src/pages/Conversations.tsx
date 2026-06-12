@@ -17,10 +17,9 @@ import MicComposer from '../features/human/MicComposer';
 import { useStickToBottom } from '../hooks/useStickToBottom';
 import { useUsageState } from '../hooks/useUsageState';
 import {
-  ALLOWED_IMAGE_MIME_TYPES,
   type Attachment,
+  ATTACHMENT_MAX_FILES,
   ATTACHMENT_MAX_IMAGES,
-  ATTACHMENT_MAX_SIZE_BYTES,
   buildMessageWithAttachments,
   parseMessageImages,
   validateAndReadFile,
@@ -78,7 +77,12 @@ import {
   openhumanVoiceTts,
 } from '../utils/tauriCommands';
 import { formatTimelineEntry } from '../utils/toolTimelineFormatting';
-import { AgentMessageBubble, BubbleMarkdown } from './conversations/components/AgentMessageBubble';
+import {
+  AgentMessageBubble,
+  AgentMessageText,
+  BubbleMarkdown,
+} from './conversations/components/AgentMessageBubble';
+import { AgentProcessSourcePanel } from './conversations/components/AgentProcessSourcePanel';
 import { CitationChips, type MessageCitation } from './conversations/components/CitationChips';
 import { SubagentDrawer } from './conversations/components/SubagentDrawer';
 import { TaskKanbanBoard } from './conversations/components/TaskKanbanBoard';
@@ -99,13 +103,12 @@ import {
 import {
   GENERAL_TAB_VALUE,
   isThreadVisibleInTab,
+  MEETINGS_TAB_VALUE,
   SUBCONSCIOUS_TAB_VALUE,
   TASKS_TAB_VALUE,
 } from './conversations/utils/threadFilter';
 
-// Chat uses the reasoning model; `agentic-v1` is reserved for sub-agents
-// that execute tool calls, not the primary user-facing conversation.
-const CHAT_MODEL_ID = 'reasoning-v1';
+const CHAT_MODEL_HINT = 'hint:chat';
 /** Maximum trailing characters rendered in the live-streaming assistant
  *  preview bubble. The full response is revealed via `addInferenceResponse`
  *  on `chat_done` — this is purely a ticker-tape affordance to signal
@@ -205,6 +208,9 @@ const Conversations = ({
   // Sub-agent whose full live transcript is open in the drawer, keyed by the
   // owning timeline row's spawn `taskId`. Null when the drawer is closed.
   const [openSubagentTaskId, setOpenSubagentTaskId] = useState<string | null>(null);
+  // Whether the consolidated "Agent Process Source" panel is open (the full
+  // agent-run timeline + visited sources for the current thread).
+  const [showProcessSource, setShowProcessSource] = useState(false);
   const [inputMode, setInputMode] = useState<InputMode>('text');
   const [replyMode, setReplyMode] = useState<ReplyMode>('text');
   const [isRecording, setIsRecording] = useState(false);
@@ -238,6 +244,9 @@ const Conversations = ({
   const streamingAssistantByThread = useAppSelector(
     state => state.chatRuntime.streamingAssistantByThread
   );
+  const agentMessageViewMode = useAppSelector(
+    state => state.theme?.agentMessageViewMode ?? 'bubbles'
+  );
   const inferenceTurnLifecycleByThread = useAppSelector(
     state => state.chatRuntime.inferenceTurnLifecycleByThread
   );
@@ -264,20 +273,36 @@ const Conversations = ({
     onCancel: () => {},
   });
   const [resolvedModel, setResolvedModel] = useState<string | null>(null);
+  // Whether the resolved model for the active profile accepts image input.
+  // Managed tiers do; custom/BYOK models only when the user flagged them. Gates
+  // the composer's image-attachment affordance (docs flow regardless). Resolved
+  // against the non-attachment hint so the affordance is stable as you attach.
+  const [modelSupportsVision, setModelSupportsVision] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
         const profile = agentProfiles.find(p => p.id === selectedAgentProfileId);
-        const hint = profile?.modelOverride ?? 'hint:chat';
-        const res = await callCoreRpc<{ model: string }>({
+        // Resolve the actually-selected profile's model so `modelSupportsVision`
+        // reflects the real tier. Attachments never override the model: images
+        // are rejected up-front on non-vision profiles (validateAndReadFile →
+        // image_not_supported), and documents are text-extracted so any model
+        // handles them.
+        const hint = profile?.modelOverride ?? CHAT_MODEL_HINT;
+        const res = await callCoreRpc<{ model: string; vision?: boolean }>({
           method: 'openhuman.inference_resolve_model',
           params: { hint },
         });
-        if (!cancelled) setResolvedModel(res.model);
+        if (!cancelled) {
+          setResolvedModel(res.model);
+          setModelSupportsVision(res.vision === true);
+        }
       } catch {
-        if (!cancelled) setResolvedModel(null);
+        if (!cancelled) {
+          setResolvedModel(null);
+          setModelSupportsVision(false);
+        }
       }
     })();
     return () => {
@@ -391,9 +416,11 @@ const Conversations = ({
           setSelectedLabel(
             isThreadVisibleInTab(openThread, TASKS_TAB_VALUE)
               ? TASKS_TAB_VALUE
-              : isThreadVisibleInTab(openThread, SUBCONSCIOUS_TAB_VALUE)
-                ? SUBCONSCIOUS_TAB_VALUE
-                : GENERAL_TAB_VALUE
+              : isThreadVisibleInTab(openThread, MEETINGS_TAB_VALUE)
+                ? MEETINGS_TAB_VALUE
+                : isThreadVisibleInTab(openThread, SUBCONSCIOUS_TAB_VALUE)
+                  ? SUBCONSCIOUS_TAB_VALUE
+                  : GENERAL_TAB_VALUE
           );
           dispatch(setSelectedThread(openThread.id));
           void dispatch(loadThreadMessages(openThread.id));
@@ -668,20 +695,29 @@ const Conversations = ({
 
   const handleAttachFiles = async (files: FileList | null) => {
     if (!files) return;
-    let acceptedCount = attachments.length;
+    let acceptedImageCount = attachments.filter(attachment => attachment.kind === 'image').length;
+    let acceptedFileCount = attachments.filter(attachment => attachment.kind === 'file').length;
     for (const file of Array.from(files)) {
-      const result = await validateAndReadFile(file, acceptedCount);
+      const result = await validateAndReadFile(
+        file,
+        acceptedImageCount,
+        acceptedFileCount,
+        modelSupportsVision
+      );
       if ('error' in result) {
         const { error } = result;
-        if (error.code === 'too_many') {
+        if (error.code === 'image_not_supported') {
           setAttachError(
-            chatSendError(
-              'attachment_invalid',
-              t('chat.attachment.tooMany').replace('{max}', String(ATTACHMENT_MAX_IMAGES))
-            )
+            chatSendError('attachment_invalid', t('chat.attachment.imageNotSupported'))
+          );
+        } else if (error.code === 'too_many') {
+          const key =
+            error.kind === 'image' ? 'chat.attachment.tooMany' : 'chat.attachment.tooManyFiles';
+          setAttachError(
+            chatSendError('attachment_invalid', t(key).replace('{max}', String(error.max)))
           );
         } else if (error.code === 'too_large') {
-          const maxMb = (ATTACHMENT_MAX_SIZE_BYTES / (1024 * 1024)).toFixed(0);
+          const maxMb = (error.maxBytes / (1024 * 1024)).toFixed(0);
           setAttachError(
             chatSendError(
               'attachment_invalid',
@@ -695,7 +731,11 @@ const Conversations = ({
         }
         return;
       }
-      acceptedCount++;
+      if (result.attachment.kind === 'image') {
+        acceptedImageCount++;
+      } else {
+        acceptedFileCount++;
+      }
       setAttachments(prev => [...prev, result.attachment]);
     }
   };
@@ -748,6 +788,8 @@ const Conversations = ({
     pendingSendRef.current = sendingThreadId;
     setPendingSendingThreadId(sendingThreadId);
     const pendingAttachments = attachments.slice();
+    const modelOverride =
+      agentProfiles.find(p => p.id === selectedAgentProfileId)?.modelOverride ?? CHAT_MODEL_HINT;
     const messageText = buildMessageWithAttachments(trimmed, pendingAttachments);
     const userMessage: ThreadMessage = {
       id: `msg_${globalThis.crypto.randomUUID()}`,
@@ -758,7 +800,11 @@ const Conversations = ({
           ? {
               attachmentCount: pendingAttachments.length,
               attachmentNames: pendingAttachments.map(a => a.file.name),
-              attachmentDataUris: pendingAttachments.map(a => a.dataUri),
+              attachmentKinds: pendingAttachments.map(a => a.kind),
+              attachmentDataUris: pendingAttachments
+                .filter(a => a.kind === 'image')
+                .map(a => a.previewUri ?? a.dataUri),
+              attachmentCompressed: pendingAttachments.map(a => a.compressed),
             }
           : {},
       sender: 'user',
@@ -811,7 +857,7 @@ const Conversations = ({
       await chatSend({
         threadId: sendingThreadId,
         message: messageText,
-        model: CHAT_MODEL_ID,
+        model: modelOverride,
         profileId: selectedAgentProfileId,
         locale: uiLocale,
       });
@@ -1224,6 +1270,7 @@ const Conversations = ({
   // filter state remains unambiguous regardless of what threads exist.
   const labelTabs = [
     { label: t('chat.filter.general'), value: GENERAL_TAB_VALUE },
+    { label: t('chat.filter.meetings'), value: MEETINGS_TAB_VALUE },
     { label: t('chat.filter.subconscious'), value: SUBCONSCIOUS_TAB_VALUE },
     { label: t('chat.filter.tasks'), value: TASKS_TAB_VALUE },
   ];
@@ -1627,214 +1674,281 @@ const Conversations = ({
                   }}
                 />
               )}
-              {visibleMessages.map(msg => (
-                <div key={msg.id}>
-                  {shouldRenderTimelineBeforeLatestAgentMessage &&
-                    latestVisibleAgentMessage?.id === msg.id && (
-                      <ToolTimelineBlock
-                        entries={selectedThreadToolTimeline}
-                        onViewSubagent={sub => setOpenSubagentTaskId(sub.taskId)}
-                      />
-                    )}
-                  <div
-                    className={`group/msg flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
-                    <div className="relative w-fit max-w-[75%]">
-                      {msg.sender === 'agent' ? (
-                        <div className="space-y-1">
-                          {splitAgentMessageIntoBubbles(msg.content).map(
-                            (segment, index, parts) => {
-                              const position: AgentBubblePosition =
-                                parts.length === 1
-                                  ? 'single'
-                                  : index === 0
-                                    ? 'first'
-                                    : index === parts.length - 1
-                                      ? 'last'
-                                      : 'middle';
-
-                              return (
-                                <AgentMessageBubble
-                                  key={`${msg.id}:${index}`}
-                                  content={segment}
-                                  position={position}
-                                />
-                              );
-                            }
-                          )}
-                          {(() => {
-                            const raw = msg.extraMetadata?.citations;
-                            if (!Array.isArray(raw)) return null;
-                            const citations = raw.filter(
-                              (item): item is MessageCitation =>
-                                typeof item === 'object' &&
-                                item !== null &&
-                                typeof (item as MessageCitation).id === 'string' &&
-                                typeof (item as MessageCitation).key === 'string' &&
-                                typeof (item as MessageCitation).snippet === 'string' &&
-                                typeof (item as MessageCitation).timestamp === 'string'
-                            );
-                            if (citations.length === 0) return null;
-                            return <CitationChips citations={citations} />;
-                          })()}
-                          {latestVisibleMessage?.id === msg.id && (
-                            <p className="px-1 text-[10px] text-stone-400 dark:text-neutral-500">
-                              {formatRelativeTime(msg.createdAt)}
-                            </p>
-                          )}
-                        </div>
-                      ) : (
-                        <div className="flex flex-col items-end gap-1">
-                          {(() => {
-                            const dataUris = Array.isArray(msg.extraMetadata?.attachmentDataUris)
-                              ? (msg.extraMetadata.attachmentDataUris as string[])
-                              : parseMessageImages(msg.content ?? '').dataUris;
-                            const hasImages = dataUris.length > 0;
-                            const showTime = latestVisibleMessage?.id === msg.id;
-                            return (
-                              <>
-                                {hasImages && (
-                                  <div className="flex flex-wrap gap-1.5 justify-end">
-                                    {dataUris.map((uri, i) => (
-                                      <img
-                                        key={i}
-                                        src={uri}
-                                        alt=""
-                                        className="max-w-[200px] max-h-[200px] rounded-2xl object-cover"
-                                      />
-                                    ))}
-                                  </div>
-                                )}
-                                {(msg.content || showTime) && (
-                                  <div className="rounded-2xl px-4 py-2.5 bg-primary-500 text-white rounded-br-md break-words overflow-hidden">
-                                    {msg.content && (
-                                      <BubbleMarkdown content={msg.content} tone="user" />
-                                    )}
-                                    {showTime && (
-                                      <p
-                                        className={`${msg.content ? 'mt-1' : ''} text-[10px] text-white/60`}>
-                                        {formatRelativeTime(msg.createdAt)}
-                                      </p>
-                                    )}
-                                  </div>
-                                )}
-                              </>
-                            );
-                          })()}
-                        </div>
+              {visibleMessages.map(msg => {
+                const isAgentTextMode = msg.sender === 'agent' && agentMessageViewMode === 'text';
+                return (
+                  <div key={msg.id}>
+                    {shouldRenderTimelineBeforeLatestAgentMessage &&
+                      latestVisibleAgentMessage?.id === msg.id && (
+                        <ToolTimelineBlock
+                          entries={selectedThreadToolTimeline}
+                          onViewSubagent={sub => setOpenSubagentTaskId(sub.taskId)}
+                        />
                       )}
-                      <button
-                        type="button"
-                        data-analytics-id="chat-message-copy"
-                        onClick={() => handleCopyMessage(msg.id, msg.content)}
-                        className={`absolute -top-1 ${msg.sender === 'user' ? '-left-8' : '-right-8'} p-1 rounded-md opacity-0 group-hover/msg:opacity-100 hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 dark:hover:bg-neutral-800 text-stone-400 dark:text-neutral-500 hover:text-stone-600 dark:hover:text-neutral-300 transition-all`}
-                        title={t('chat.copyResponse')}>
-                        {copiedMessageId === msg.id ? (
-                          <svg
-                            className="w-3.5 h-3.5 text-sage-500"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24">
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              strokeWidth={2}
-                              d="M5 13l4 4L19 7"
-                            />
-                          </svg>
-                        ) : (
-                          <svg
-                            className="w-3.5 h-3.5"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24">
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              strokeWidth={2}
-                              d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-                            />
-                          </svg>
-                        )}
-                      </button>
-                      {(() => {
-                        if (latestVisibleMessage?.id !== msg.id) return null;
-                        const myReactions =
-                          (msg.extraMetadata?.myReactions as string[] | undefined) ?? [];
-                        const hasReactions = myReactions.length > 0;
-                        // Show reaction row only for the most recent visible message.
-                        if (!hasReactions && msg.sender !== 'agent') return null;
-                        return (
-                          <div className="mt-1 flex items-center gap-1 flex-wrap min-h-[20px]">
-                            {myReactions.map(emoji => (
-                              <button
-                                key={emoji}
-                                type="button"
-                                data-analytics-id="chat-message-reaction-remove"
-                                onClick={() =>
-                                  selectedThreadId &&
-                                  void dispatch(
-                                    persistReaction({
-                                      threadId: selectedThreadId,
-                                      messageId: msg.id,
-                                      emoji,
-                                    })
-                                  )
+                    <div
+                      className={`group/msg flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
+                      <div
+                        className={`relative ${
+                          isAgentTextMode ? 'w-full max-w-full' : 'w-fit max-w-[75%]'
+                        }`}>
+                        {msg.sender === 'agent' ? (
+                          <div className="space-y-1">
+                            {agentMessageViewMode === 'text' ? (
+                              <AgentMessageText content={msg.content} />
+                            ) : (
+                              splitAgentMessageIntoBubbles(msg.content).map(
+                                (segment, index, parts) => {
+                                  const position: AgentBubblePosition =
+                                    parts.length === 1
+                                      ? 'single'
+                                      : index === 0
+                                        ? 'first'
+                                        : index === parts.length - 1
+                                          ? 'last'
+                                          : 'middle';
+
+                                  return (
+                                    <AgentMessageBubble
+                                      key={`${msg.id}:${index}`}
+                                      content={segment}
+                                      position={position}
+                                    />
+                                  );
                                 }
-                                className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-primary-100 border border-primary-200 text-xs transition-colors hover:bg-primary-200"
-                                title={t('chat.removeReaction').replace('{emoji}', emoji)}>
-                                {emoji}
-                              </button>
-                            ))}
-                            {msg.sender === 'agent' &&
-                              (reactionPickerMsgId === msg.id ? (
-                                <div className="flex items-center gap-0.5 px-1 py-0.5 rounded-full bg-stone-100 dark:bg-neutral-800">
-                                  {['👍', '❤️', '😂', '🔥', '👀', '🎯'].map(emoji => (
-                                    <button
-                                      key={emoji}
-                                      type="button"
-                                      data-analytics-id="chat-message-reaction-pick"
-                                      onClick={() => {
-                                        if (selectedThreadId) {
-                                          void dispatch(
-                                            persistReaction({
-                                              threadId: selectedThreadId,
-                                              messageId: msg.id,
-                                              emoji,
-                                            })
-                                          );
-                                        }
-                                        setReactionPickerMsgId(null);
-                                      }}
-                                      className="px-0.5 rounded text-sm hover:scale-125 transition-transform"
-                                      title={emoji}>
-                                      {emoji}
-                                    </button>
-                                  ))}
-                                  <button
-                                    type="button"
-                                    data-analytics-id="chat-message-reaction-close"
-                                    onClick={() => setReactionPickerMsgId(null)}
-                                    className="ml-0.5 text-stone-600 dark:text-neutral-300 hover:text-stone-400 dark:hover:text-neutral-500 text-xs px-0.5">
-                                    ✕
-                                  </button>
-                                </div>
-                              ) : (
+                              )
+                            )}
+                            {(() => {
+                              const raw = msg.extraMetadata?.citations;
+                              if (!Array.isArray(raw)) return null;
+                              const citations = raw.filter(
+                                (item): item is MessageCitation =>
+                                  typeof item === 'object' &&
+                                  item !== null &&
+                                  typeof (item as MessageCitation).id === 'string' &&
+                                  typeof (item as MessageCitation).key === 'string' &&
+                                  typeof (item as MessageCitation).snippet === 'string' &&
+                                  typeof (item as MessageCitation).timestamp === 'string'
+                              );
+                              if (citations.length === 0) return null;
+                              return <CitationChips citations={citations} />;
+                            })()}
+                            {shouldRenderTimelineBeforeLatestAgentMessage &&
+                              latestVisibleAgentMessage?.id === msg.id && (
                                 <button
                                   type="button"
-                                  data-analytics-id="chat-message-reaction-open"
-                                  onClick={() => setReactionPickerMsgId(msg.id)}
-                                  className="opacity-0 group-hover/msg:opacity-100 flex items-center px-1.5 py-0.5 rounded-full bg-stone-50 dark:bg-neutral-800/60 hover:bg-stone-200 dark:bg-neutral-800 dark:hover:bg-neutral-800 text-stone-500 dark:text-neutral-400 hover:text-stone-300 dark:hover:text-neutral-600 text-xs transition-all"
-                                  title={t('chat.addReaction')}>
-                                  +
+                                  onClick={() => setShowProcessSource(true)}
+                                  data-testid="view-process-source"
+                                  className="px-1 text-[11px] font-medium text-primary-600 hover:underline dark:text-primary-300">
+                                  {t('conversations.agentTaskInsights.viewProcessSource')} →
+                                </button>
+                              )}
+                            {latestVisibleMessage?.id === msg.id && (
+                              <p className="px-1 text-[10px] text-stone-400 dark:text-neutral-500">
+                                {formatRelativeTime(msg.createdAt)}
+                              </p>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="flex flex-col items-end gap-1">
+                            {(() => {
+                              const dataUris = Array.isArray(msg.extraMetadata?.attachmentDataUris)
+                                ? (msg.extraMetadata.attachmentDataUris as string[])
+                                : parseMessageImages(msg.content ?? '').dataUris;
+                              const hasImages = dataUris.length > 0;
+                              // Document attachments carry no image data-URI (only
+                              // images do); surface them as filename chips from the
+                              // persisted attachmentKinds/attachmentNames metadata.
+                              const kinds = Array.isArray(msg.extraMetadata?.attachmentKinds)
+                                ? (msg.extraMetadata.attachmentKinds as string[])
+                                : [];
+                              const names = Array.isArray(msg.extraMetadata?.attachmentNames)
+                                ? (msg.extraMetadata.attachmentNames as string[])
+                                : [];
+                              const fileNames = kinds
+                                .map((k, i) => (k === 'file' ? names[i] : null))
+                                .filter((n): n is string => Boolean(n));
+                              const showTime = latestVisibleMessage?.id === msg.id;
+                              return (
+                                <>
+                                  {hasImages && (
+                                    <div className="flex flex-wrap gap-1.5 justify-end">
+                                      {dataUris.map((uri, i) => (
+                                        <img
+                                          key={i}
+                                          src={uri}
+                                          alt=""
+                                          className="max-w-[200px] max-h-[200px] rounded-2xl object-cover"
+                                        />
+                                      ))}
+                                    </div>
+                                  )}
+                                  {fileNames.length > 0 && (
+                                    <div className="flex flex-wrap gap-1.5 justify-end">
+                                      {fileNames.map((name, i) => (
+                                        <div
+                                          key={i}
+                                          className="flex items-center gap-2 rounded-lg border border-stone-200 dark:border-neutral-700 bg-stone-50 dark:bg-neutral-800 px-2.5 py-1.5 text-xs text-stone-700 dark:text-neutral-300 max-w-[220px]">
+                                          <svg
+                                            className="w-4 h-4 flex-shrink-0 text-stone-500 dark:text-neutral-400"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            viewBox="0 0 24 24">
+                                            <path
+                                              strokeLinecap="round"
+                                              strokeLinejoin="round"
+                                              strokeWidth={1.8}
+                                              d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"
+                                            />
+                                            <path
+                                              strokeLinecap="round"
+                                              strokeLinejoin="round"
+                                              strokeWidth={1.8}
+                                              d="M14 2v6h6"
+                                            />
+                                          </svg>
+                                          <span className="truncate font-medium">{name}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                  {(msg.content || showTime) && (
+                                    <div className="rounded-2xl px-4 py-2.5 bg-primary-500 text-white rounded-br-md break-words overflow-hidden">
+                                      {msg.content && (
+                                        <BubbleMarkdown content={msg.content} tone="user" />
+                                      )}
+                                      {showTime && (
+                                        <p
+                                          className={`${msg.content ? 'mt-1' : ''} text-[10px] text-white/60`}>
+                                          {formatRelativeTime(msg.createdAt)}
+                                        </p>
+                                      )}
+                                    </div>
+                                  )}
+                                </>
+                              );
+                            })()}
+                          </div>
+                        )}
+                        <button
+                          type="button"
+                          data-analytics-id="chat-message-copy"
+                          onClick={() => handleCopyMessage(msg.id, msg.content)}
+                          className={`absolute -top-1 ${
+                            isAgentTextMode
+                              ? 'right-0'
+                              : msg.sender === 'user'
+                                ? '-left-8'
+                                : '-right-8'
+                          } p-1 rounded-md opacity-0 group-hover/msg:opacity-100 hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 dark:hover:bg-neutral-800 text-stone-400 dark:text-neutral-500 hover:text-stone-600 dark:hover:text-neutral-300 transition-all`}
+                          title={t('chat.copyResponse')}>
+                          {copiedMessageId === msg.id ? (
+                            <svg
+                              className="w-3.5 h-3.5 text-sage-500"
+                              fill="none"
+                              stroke="currentColor"
+                              viewBox="0 0 24 24">
+                              <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                strokeWidth={2}
+                                d="M5 13l4 4L19 7"
+                              />
+                            </svg>
+                          ) : (
+                            <svg
+                              className="w-3.5 h-3.5"
+                              fill="none"
+                              stroke="currentColor"
+                              viewBox="0 0 24 24">
+                              <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                strokeWidth={2}
+                                d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+                              />
+                            </svg>
+                          )}
+                        </button>
+                        {(() => {
+                          if (latestVisibleMessage?.id !== msg.id) return null;
+                          const myReactions =
+                            (msg.extraMetadata?.myReactions as string[] | undefined) ?? [];
+                          const hasReactions = myReactions.length > 0;
+                          // Show reaction row only for the most recent visible message.
+                          if (!hasReactions && msg.sender !== 'agent') return null;
+                          return (
+                            <div className="mt-1 flex items-center gap-1 flex-wrap min-h-[20px]">
+                              {myReactions.map(emoji => (
+                                <button
+                                  key={emoji}
+                                  type="button"
+                                  data-analytics-id="chat-message-reaction-remove"
+                                  onClick={() =>
+                                    selectedThreadId &&
+                                    void dispatch(
+                                      persistReaction({
+                                        threadId: selectedThreadId,
+                                        messageId: msg.id,
+                                        emoji,
+                                      })
+                                    )
+                                  }
+                                  className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-primary-100 border border-primary-200 text-xs transition-colors hover:bg-primary-200"
+                                  title={t('chat.removeReaction').replace('{emoji}', emoji)}>
+                                  {emoji}
                                 </button>
                               ))}
-                          </div>
-                        );
-                      })()}
+                              {msg.sender === 'agent' &&
+                                (reactionPickerMsgId === msg.id ? (
+                                  <div className="flex items-center gap-0.5 px-1 py-0.5 rounded-full bg-stone-100 dark:bg-neutral-800">
+                                    {['👍', '❤️', '😂', '🔥', '👀', '🎯'].map(emoji => (
+                                      <button
+                                        key={emoji}
+                                        type="button"
+                                        data-analytics-id="chat-message-reaction-pick"
+                                        onClick={() => {
+                                          if (selectedThreadId) {
+                                            void dispatch(
+                                              persistReaction({
+                                                threadId: selectedThreadId,
+                                                messageId: msg.id,
+                                                emoji,
+                                              })
+                                            );
+                                          }
+                                          setReactionPickerMsgId(null);
+                                        }}
+                                        className="px-0.5 rounded text-sm hover:scale-125 transition-transform"
+                                        title={emoji}>
+                                        {emoji}
+                                      </button>
+                                    ))}
+                                    <button
+                                      type="button"
+                                      data-analytics-id="chat-message-reaction-close"
+                                      onClick={() => setReactionPickerMsgId(null)}
+                                      className="ml-0.5 text-stone-600 dark:text-neutral-300 hover:text-stone-400 dark:hover:text-neutral-500 text-xs px-0.5">
+                                      ✕
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    data-analytics-id="chat-message-reaction-open"
+                                    onClick={() => setReactionPickerMsgId(msg.id)}
+                                    className="opacity-0 group-hover/msg:opacity-100 flex items-center px-1.5 py-0.5 rounded-full bg-stone-50 dark:bg-neutral-800/60 hover:bg-stone-200 dark:bg-neutral-800 dark:hover:bg-neutral-800 text-stone-500 dark:text-neutral-400 hover:text-stone-300 dark:hover:text-neutral-600 text-xs transition-all"
+                                    title={t('chat.addReaction')}>
+                                    +
+                                  </button>
+                                ))}
+                            </div>
+                          );
+                        })()}
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
               {isSending &&
                 // Suppress the legacy 3-dot placeholder once streaming
                 // output (visible text or thinking) has started — the
@@ -1889,43 +2003,50 @@ const Conversations = ({
                     </div>
                   </div>
                 )}
-              {/* Inference status indicator */}
-              {selectedInferenceStatus && (
-                <div className="flex items-center gap-2 px-1 py-1.5 text-xs text-stone-500 dark:text-neutral-400">
-                  <span className="inline-block w-2 h-2 rounded-full bg-primary-400 animate-pulse" />
-                  <span>
-                    {selectedInferenceStatus.phase === 'thinking' &&
-                      (selectedInferenceStatus.iteration > 0
-                        ? t('chat.thinkingIteration').replace(
-                            '{n}',
-                            String(selectedInferenceStatus.iteration)
-                          )
-                        : t('chat.thinkingDots'))}
-                    {selectedInferenceStatus.phase === 'tool_use' &&
-                      `${
-                        formatTimelineEntry(
-                          activeToolTimelineEntry ?? {
-                            id: 'active-tool',
-                            name: selectedInferenceStatus.activeTool ?? 'tool',
-                            round: selectedInferenceStatus.iteration,
-                            status: 'running',
-                          }
-                        ).title
-                      }...`}
-                    {selectedInferenceStatus.phase === 'subagent' &&
-                      `${
-                        formatTimelineEntry(
-                          activeSubagentTimelineEntry ?? {
-                            id: 'active-subagent',
-                            name: `subagent:${selectedInferenceStatus.activeSubagent ?? ''}`,
-                            round: selectedInferenceStatus.iteration,
-                            status: 'running',
-                          }
-                        ).title
-                      }...`}
-                  </span>
-                </div>
-              )}
+              {/* Inference status indicator.
+                  For the tool_use / subagent phases this line just restates the
+                  active row already shown in the agentic-task-insights timeline,
+                  so suppress it once that timeline is on screen — keep it only
+                  for the `thinking` phase (which has no timeline row yet) or when
+                  there is no timeline to fall back on. */}
+              {selectedInferenceStatus &&
+                (selectedInferenceStatus.phase === 'thinking' ||
+                  selectedThreadToolTimeline.length === 0) && (
+                  <div className="flex items-center gap-2 px-1 py-1.5 text-xs text-stone-500 dark:text-neutral-400">
+                    <span className="inline-block w-2 h-2 rounded-full bg-primary-400 animate-pulse" />
+                    <span>
+                      {selectedInferenceStatus.phase === 'thinking' &&
+                        (selectedInferenceStatus.iteration > 0
+                          ? t('chat.thinkingIteration').replace(
+                              '{n}',
+                              String(selectedInferenceStatus.iteration)
+                            )
+                          : t('chat.thinkingDots'))}
+                      {selectedInferenceStatus.phase === 'tool_use' &&
+                        `${
+                          formatTimelineEntry(
+                            activeToolTimelineEntry ?? {
+                              id: 'active-tool',
+                              name: selectedInferenceStatus.activeTool ?? 'tool',
+                              round: selectedInferenceStatus.iteration,
+                              status: 'running',
+                            }
+                          ).title
+                        }...`}
+                      {selectedInferenceStatus.phase === 'subagent' &&
+                        `${
+                          formatTimelineEntry(
+                            activeSubagentTimelineEntry ?? {
+                              id: 'active-subagent',
+                              name: `subagent:${selectedInferenceStatus.activeSubagent ?? ''}`,
+                              round: selectedInferenceStatus.iteration,
+                              status: 'running',
+                            }
+                          ).title
+                        }...`}
+                    </span>
+                  </div>
+                )}
               {/* Tool call timeline */}
               {selectedThreadToolTimeline.length > 0 &&
                 !shouldRenderTimelineBeforeLatestAgentMessage && (
@@ -2170,8 +2291,11 @@ const Conversations = ({
               handleInputKeyDown={handleInputKeyDown}
               inlineCompletionSuffix={inlineCompletionSuffix}
               isComposingTextRef={isComposingTextRef}
-              maxAttachments={ATTACHMENT_MAX_IMAGES}
-              allowedMimeTypes={ALLOWED_IMAGE_MIME_TYPES}
+              maxAttachments={ATTACHMENT_MAX_IMAGES + ATTACHMENT_MAX_FILES}
+              // Empty → no native `accept` filter (it greys valid files on
+              // macOS/CEF). Type enforcement happens in handleAttachFiles via
+              // validateAndReadFile, which honors modelSupportsVision.
+              allowedMimeTypes={[]}
               attachmentsEnabled={CHAT_ATTACHMENTS_ENABLED}
             />
           ) : (
@@ -2230,6 +2354,11 @@ const Conversations = ({
         subagent={openSubagentEntry?.subagent ?? null}
         status={openSubagentEntry?.status}
         onClose={() => setOpenSubagentTaskId(null)}
+      />
+      <AgentProcessSourcePanel
+        open={showProcessSource}
+        entries={selectedThreadToolTimeline}
+        onClose={() => setShowProcessSource(false)}
       />
     </div>
   );

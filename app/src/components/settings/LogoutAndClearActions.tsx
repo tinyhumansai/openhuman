@@ -65,7 +65,7 @@ const LogoutAndClearActions = () => {
   const showInlineError = error !== null && !showLogoutAndClearModal;
 
   return (
-    <div className="mt-6">
+    <div>
       <SettingsMenuItem
         icon={arrowOutIcon}
         title={t('settings.clearAppData')}

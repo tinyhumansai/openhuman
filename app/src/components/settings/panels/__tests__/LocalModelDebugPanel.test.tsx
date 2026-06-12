@@ -10,6 +10,12 @@ vi.mock('../../hooks/useSettingsNavigation', () => ({
   useSettingsNavigation: () => ({ navigateBack: mockNavigateBack, breadcrumbs: [] }),
 }));
 
+// No i18n mock: the context default resolves real English translations via resolveEn(),
+// which is needed by existing tests that assert on actual English text (e.g. 'Test Connection',
+// 'Reachable', 'http://localhost:11434' placeholder). New tests must also use real strings.
+
+vi.mock('../components/SettingsHeader', () => ({ default: () => null }));
+
 const mockGetConfig = vi.fn();
 vi.mock('../../../../utils/tauriCommands/config', () => ({
   openhumanGetConfig: (...args: unknown[]) => mockGetConfig(...args),
@@ -46,6 +52,25 @@ function renderPanel() {
   );
 }
 
+const makeDiagnostics = (overrides: Record<string, unknown> = {}) => ({
+  ok: true,
+  ollama_running: false,
+  ollama_base_url: null,
+  ollama_binary_path: null,
+  installed_models: [],
+  expected: {
+    chat_model: 'llama3',
+    chat_found: false,
+    embedding_model: 'nomic-embed-text',
+    embedding_found: false,
+    vision_model: 'llava',
+    vision_found: false,
+  },
+  issues: [],
+  repair_actions: [],
+  ...overrides,
+});
+
 describe('LocalModelDebugPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -53,23 +78,7 @@ describe('LocalModelDebugPanel', () => {
     mockLocalAiAssetsStatus.mockResolvedValue({ result: null });
     mockLocalAiDownloadsProgress.mockResolvedValue({ result: null });
     mockGetConfig.mockResolvedValue({ result: { config: {} } });
-    mockLocalAiDiagnostics.mockResolvedValue({
-      ok: true,
-      ollama_running: false,
-      ollama_base_url: null,
-      ollama_binary_path: null,
-      installed_models: [],
-      expected: {
-        chat_model: '',
-        chat_found: false,
-        embedding_model: '',
-        embedding_found: false,
-        vision_model: '',
-        vision_found: false,
-      },
-      issues: [],
-      repair_actions: [],
-    });
+    mockLocalAiDiagnostics.mockResolvedValue(makeDiagnostics());
   });
 
   afterEach(() => {
@@ -153,5 +162,146 @@ describe('LocalModelDebugPanel', () => {
     });
     const urlInput = screen.getByPlaceholderText('http://localhost:11434') as HTMLInputElement;
     expect(urlInput.value).toBe('http://localhost:11434');
+  });
+
+  // ── statusTone function (line 53) — exercised via ModelStatusSection rendering
+
+  it('renders ready state tone (line 53 — statusTone "ready")', async () => {
+    mockLocalAiStatus.mockResolvedValue({
+      result: {
+        state: 'ready',
+        provider: 'ollama',
+        model_id: 'llama3',
+        active_backend: 'cpu',
+        last_latency_ms: 120,
+        gen_toks_per_sec: 15.5,
+        download_progress: null,
+        downloaded_bytes: null,
+        total_bytes: null,
+        download_speed_bps: null,
+        eta_seconds: null,
+        error_category: null,
+        error_detail: null,
+        warning: null,
+        backend_reason: null,
+        model_path: null,
+      },
+    });
+    renderPanel();
+    // 'Runtime Status' is the English translation of 'settings.localModel.status.runtimeStatus'
+    await waitFor(() => expect(screen.getByText('Runtime Status')).toBeInTheDocument());
+    // statusTone('ready') → 'text-green-600 dark:text-green-300' (just confirm no crash)
+  });
+
+  it('renders degraded state (line 53 — statusTone "degraded")', async () => {
+    mockLocalAiStatus.mockResolvedValue({
+      result: {
+        state: 'degraded',
+        provider: null,
+        model_id: null,
+        active_backend: 'cpu',
+        last_latency_ms: null,
+        gen_toks_per_sec: null,
+        download_progress: null,
+        downloaded_bytes: null,
+        total_bytes: null,
+        download_speed_bps: null,
+        eta_seconds: null,
+        error_category: 'install',
+        error_detail: 'checksum mismatch',
+        warning: null,
+        backend_reason: null,
+        model_path: null,
+      },
+    });
+    renderPanel();
+    await waitFor(() => expect(screen.getByText('Runtime Status')).toBeInTheDocument());
+  });
+
+  it('renders disabled state (line 53 — statusTone "disabled")', async () => {
+    mockLocalAiStatus.mockResolvedValue({
+      result: {
+        state: 'disabled',
+        provider: null,
+        model_id: null,
+        active_backend: null,
+        last_latency_ms: null,
+        gen_toks_per_sec: null,
+        download_progress: null,
+        downloaded_bytes: null,
+        total_bytes: null,
+        download_speed_bps: null,
+        eta_seconds: null,
+        error_category: null,
+        error_detail: null,
+        warning: null,
+        backend_reason: null,
+        model_path: null,
+      },
+    });
+    renderPanel();
+    await waitFor(() => expect(screen.getByText('Runtime Status')).toBeInTheDocument());
+  });
+
+  // ── ModelStatusSection: statusError display (line 405) ────────────────────
+
+  it('runs diagnostics via Run Diagnostics button', async () => {
+    const diagnostics = makeDiagnostics({
+      ok: true,
+      ollama_running: true,
+      ollama_base_url: 'http://localhost:11434',
+      ollama_binary_path: '/usr/local/bin/ollama',
+      installed_models: [
+        {
+          name: 'llama3:8b',
+          size: 4815162342,
+          eligibility: { status: 'ok', context_length: 8192, required: 2048 },
+        },
+      ],
+    });
+    mockLocalAiDiagnostics.mockResolvedValue(diagnostics);
+    renderPanel();
+
+    // 'Run Diagnostics' is the English translation of 'settings.localModel.status.runDiagnostics'
+    fireEvent.click(screen.getByText('Run Diagnostics'));
+
+    await waitFor(() => expect(mockLocalAiDiagnostics).toHaveBeenCalled());
+    // After diagnostics run: 'All checks passed' (translation of 'settings.localModel.status.allChecksPassed')
+    await waitFor(() => expect(screen.getByText('All checks passed')).toBeInTheDocument());
+  });
+
+  it('renders installed models with eligibility badge (line 446 — diagnostics flow)', async () => {
+    mockLocalAiDiagnostics.mockResolvedValue(
+      makeDiagnostics({
+        ok: false,
+        ollama_running: true,
+        installed_models: [
+          {
+            name: 'tiny-model',
+            size: 100000,
+            eligibility: { status: 'below_minimum', context_length: 512, required: 2048 },
+          },
+        ],
+        issues: ['Chat model not installed'],
+      })
+    );
+    renderPanel();
+
+    fireEvent.click(screen.getByText('Run Diagnostics'));
+
+    await waitFor(() => expect(screen.getByText('tiny-model')).toBeInTheDocument());
+    expect(screen.getByText(/512/)).toBeInTheDocument();
+  });
+
+  it('shows issues found when diagnostics has issues (line 446)', async () => {
+    mockLocalAiDiagnostics.mockResolvedValue(
+      makeDiagnostics({ ok: false, issues: ['Chat model not found', 'Embedding model not found'] })
+    );
+    renderPanel();
+
+    fireEvent.click(screen.getByText('Run Diagnostics'));
+
+    await waitFor(() => expect(screen.getByText('Chat model not found')).toBeInTheDocument());
+    expect(screen.getByText('Embedding model not found')).toBeInTheDocument();
   });
 });

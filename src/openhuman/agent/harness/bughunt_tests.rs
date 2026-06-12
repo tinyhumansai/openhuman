@@ -80,6 +80,7 @@ async fn native_tool_call_decodes_json_encoded_arguments_string() {
             id: "c1".into(),
             name: "captured".into(),
             arguments: "{\"city\":\"Berlin\",\"n\":3}".to_string(),
+            extra_content: None,
         }],
         usage: None,
         reasoning_content: None,
@@ -143,6 +144,7 @@ async fn documents_silent_drop_of_non_json_arguments_string() {
             name: "captured".into(),
             // Not valid JSON — the model "meant" a plain string.
             arguments: "world".to_string(),
+            extra_content: None,
         }],
         usage: None,
         reasoning_content: None,
@@ -353,6 +355,7 @@ async fn native_tool_calls_take_precedence_over_xml_in_text() {
             id: "c1".into(),
             name: "tool_a".into(),
             arguments: "{\"src\":\"native\"}".into(),
+            extra_content: None,
         }],
         usage: None,
         reasoning_content: None,

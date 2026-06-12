@@ -5,7 +5,7 @@
  * The Intelligence page's "Workflows" tab — the single home for installed
  * workflows (the unified primitive: a goal + the procedure to reach it,
  * authored as SKILL.md bundles and served by the `workflows_*` JSON-RPC via
- * `skillsApi`).
+ * `workflowsApi`).
  *
  * Owns the full workflow surface that used to live on the Connections page:
  *   - lists discovered workflows as cards,
@@ -21,7 +21,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { useT } from '../../lib/i18n/I18nContext';
-import { skillsApi, type SkillSummary } from '../../services/api/skillsApi';
+import { workflowsApi, type WorkflowSummary } from '../../services/api/workflowsApi';
 import type { ToastNotification } from '../../types/intelligence';
 import CreateSkillModal from '../skills/CreateSkillModal';
 import UnifiedSkillCard from '../skills/SkillCard';
@@ -34,10 +34,10 @@ const log = debug('intelligence:workflows');
 export default function WorkflowsTab() {
   const { t } = useT();
   const navigate = useNavigate();
-  const [workflows, setWorkflows] = useState<SkillSummary[]>([]);
+  const [workflows, setWorkflows] = useState<WorkflowSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [createModalOpen, setCreateModalOpen] = useState(false);
-  const [uninstallCandidate, setUninstallCandidate] = useState<SkillSummary | null>(null);
+  const [uninstallCandidate, setUninstallCandidate] = useState<WorkflowSummary | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [toasts, setToasts] = useState<ToastNotification[]>([]);
 
@@ -49,9 +49,9 @@ export default function WorkflowsTab() {
     setToasts(prev => prev.filter(toast => toast.id !== id));
   }, []);
 
-  const refresh = useCallback(async (): Promise<SkillSummary[]> => {
+  const refresh = useCallback(async (): Promise<WorkflowSummary[]> => {
     try {
-      const list = await skillsApi.listSkills();
+      const list = await workflowsApi.listWorkflows();
       log('listWorkflows ok count=%d', list.length);
       setLoadError(null);
       setWorkflows(list);
@@ -100,7 +100,7 @@ export default function WorkflowsTab() {
         </div>
       </div>
 
-      {/* Load error — shown instead of the empty state when listSkills fails,
+      {/* Load error — shown instead of the empty state when listWorkflows fails,
           so an outage doesn't read as "you have no workflows". */}
       {loadError && !loading ? (
         <div

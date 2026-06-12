@@ -1,6 +1,6 @@
 import React from 'react';
 
-import { GhostyDefs } from './Defs';
+import { GhostyDefs, type GhostyVariant } from './Defs';
 import { ARM_PATH, BODY_PATH, LEFT_LEG_PATH, RIGHT_LEG_PATH, VIEWBOX } from './paths';
 import { useMascotClock } from './useMascotClock';
 import { visemePath, VISEMES, type VisemeShape } from './visemes';
@@ -67,6 +67,18 @@ export interface GhostyProps {
   /** Override SVG element size; defaults to filling the parent. */
   size?: number | string;
   idPrefix?: string;
+  /**
+   * Drive the idle bob/blink/wave animation. Defaults to `true`. Pass `false`
+   * for a frozen, zero-RAF pose — cheap enough to render many times or in
+   * compact always-on UI (e.g. the "Talk to Tiny" chip avatar).
+   */
+  animated?: boolean;
+  /**
+   * Body shading style. `'shaded'` (default) is the moody full-size look;
+   * `'flat'` is a bright, body-colour-dominant fill that matches the Rive
+   * mascot for compact avatars.
+   */
+  variant?: GhostyVariant;
 }
 
 interface FacePreset {
@@ -258,8 +270,10 @@ export const Ghosty: React.FC<GhostyProps> = ({
   viseme,
   size = '100%',
   idPrefix = 'mascot',
+  animated = true,
+  variant = 'shaded',
 }) => {
-  const t = useMascotClock();
+  const t = useMascotClock(animated);
   const preset = presetFor(face);
 
   // Gentle bob for the whole character.
@@ -297,7 +311,7 @@ export const Ghosty: React.FC<GhostyProps> = ({
       viewBox={`0 0 ${VIEWBOX} ${VIEWBOX}`}
       style={{ overflow: 'visible', display: 'block' }}
       data-face={face}>
-      <GhostyDefs idPrefix={idPrefix} bodyColor={bodyColor} />
+      <GhostyDefs idPrefix={idPrefix} bodyColor={bodyColor} variant={variant} />
 
       <g
         transform={`translate(500, 970) scale(${1 - bob / 600}, 1)`}
@@ -331,7 +345,17 @@ export const Ghosty: React.FC<GhostyProps> = ({
         <g clipPath={`url(#${id('body-clip')})`}>
           <g filter={`url(#${id('soft')})`}>
             <ellipse cx={340} cy={380} rx={220} ry={160} fill="#ffffff" opacity={0.09} />
-            <ellipse cx={720} cy={800} rx={280} ry={170} fill="#000000" opacity={0.45} />
+            {/* Inner edge shadow. Kept subtle in the flat (bright) variant so the
+                compact mascot stays vivid like the Rive stage; full strength in
+                the moody full-size variant. */}
+            <ellipse
+              cx={720}
+              cy={800}
+              rx={280}
+              ry={170}
+              fill="#000000"
+              opacity={variant === 'flat' ? 0.14 : 0.45}
+            />
           </g>
           <rect x={0} y={0} width={1000} height={1000} filter={`url(#${id('grain')})`} />
         </g>

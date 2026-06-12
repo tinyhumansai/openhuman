@@ -175,6 +175,46 @@ async fn edited_task_reroutes_as_new_card() {
 }
 
 #[tokio::test]
+async fn task_missing_from_latest_fetch_is_pruned() {
+    let _guard = registry_lock();
+    register_provider(Arc::new(StubProvider {
+        tasks: vec![
+            canned_task("1", "Keep task", "2025-01-01T00:00:00Z"),
+            canned_task("2", "Closed task", "2025-01-02T00:00:00Z"),
+        ],
+    }));
+
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    let source = add_github_source(&config);
+
+    let first = run_source_once(&config, &source, FetchReason::Manual).await;
+    assert_eq!(first.routed, 2, "error={:?}", first.error);
+    assert_eq!(route::board_cards(&config).unwrap().len(), 2);
+
+    // Simulate the provider returning only currently-open/matching tasks:
+    // task 2 was closed or no longer matches the source filter.
+    register_provider(Arc::new(StubProvider {
+        tasks: vec![canned_task("1", "Keep task", "2025-01-01T00:00:00Z")],
+    }));
+
+    let second = run_source_once(&config, &source, FetchReason::Manual).await;
+    assert_eq!(second.fetched, 1);
+    assert_eq!(second.routed, 0);
+    assert_eq!(second.skipped_dupe, 1);
+    assert_eq!(second.pruned, 1);
+    assert!(second.error.is_none());
+
+    let cards = route::board_cards(&config).unwrap();
+    assert_eq!(cards.len(), 1);
+    assert!(cards[0].title.contains("Keep task"));
+
+    let ingested = store::list_ingested(&config, &source.id, 10).unwrap();
+    assert_eq!(ingested.len(), 1);
+    assert_eq!(ingested[0].external_id, "1");
+}
+
+#[tokio::test]
 async fn missing_provider_surfaces_error_in_outcome() {
     let _guard = registry_lock();
     let tmp = TempDir::new().unwrap();

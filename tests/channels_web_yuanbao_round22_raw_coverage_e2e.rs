@@ -15,6 +15,7 @@ use axum::{
 use openhuman_core::openhuman::channels::providers::telegram::TelegramChannel;
 use openhuman_core::openhuman::channels::providers::web::{
     cancel_chat, start_chat, subscribe_web_channel_events, test_support as web_test_support,
+    ChatRequestMetadata,
 };
 use openhuman_core::openhuman::channels::providers::yuanbao::{
     connection::test_support as yuanbao_connection_test_support,
@@ -189,15 +190,35 @@ fn isolated_config() -> (tempfile::TempDir, Config) {
 #[tokio::test]
 async fn web_start_chat_validation_forced_error_and_cancel_paths_are_structured() {
     assert_eq!(
-        start_chat(" ", "thread", "hello", None, None, None, None, None)
-            .await
-            .unwrap_err(),
+        start_chat(
+            " ",
+            "thread",
+            "hello",
+            None,
+            None,
+            None,
+            None,
+            None,
+            ChatRequestMetadata::default()
+        )
+        .await
+        .unwrap_err(),
         "client_id is required"
     );
     assert_eq!(
-        start_chat("client", " ", "hello", None, None, None, None, None)
-            .await
-            .unwrap_err(),
+        start_chat(
+            "client",
+            " ",
+            "hello",
+            None,
+            None,
+            None,
+            None,
+            None,
+            ChatRequestMetadata::default()
+        )
+        .await
+        .unwrap_err(),
         "thread_id is required"
     );
 
@@ -215,6 +236,7 @@ async fn web_start_chat_validation_forced_error_and_cancel_paths_are_structured(
         None,
         None,
         None,
+        ChatRequestMetadata::default(),
     )
     .await
     .expect("accepted");

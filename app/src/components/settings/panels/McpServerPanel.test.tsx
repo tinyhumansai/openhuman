@@ -247,4 +247,29 @@ describe('McpServerPanel — open config file', () => {
     // The button should not appear
     expect(screen.queryByRole('button', { name: /Open Config File/i })).toBeNull();
   });
+
+  test('shows openConfigError in role=status div when invoke rejects (line 280)', async () => {
+    hoisted.invoke.mockImplementation((cmd: string) => {
+      if (cmd === 'mcp_resolve_binary_path') return Promise.resolve(DEFAULT_BINARY_INFO);
+      if (cmd === 'mcp_open_client_config') return Promise.reject(new Error('permission denied'));
+      return Promise.resolve();
+    });
+
+    vi.resetModules();
+    const Panel = await importPanel();
+    renderWithProviders(<Panel />);
+
+    await waitFor(() => {
+      expect(hoisted.invoke).toHaveBeenCalledWith('mcp_resolve_binary_path');
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Open Config File/i }));
+
+    // The error message should appear inside a role=status element (line 280-286)
+    await waitFor(() => {
+      const statusEl = document.querySelector('[role="status"]');
+      expect(statusEl).not.toBeNull();
+      expect(statusEl!.textContent).toContain('permission denied');
+    });
+  });
 });

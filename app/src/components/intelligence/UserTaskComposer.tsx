@@ -17,11 +17,15 @@ import type { TaskBoard, TaskBoardCardStatus } from '../../types/turnState';
 
 const log = debug('intelligence:task-composer');
 
-// Tasks use three states only: Pending / Working / Done.
+// All user-facing task statuses available in the composer.
 const STATUS_OPTIONS: { value: TaskBoardCardStatus; labelKey: string }[] = [
   { value: 'todo', labelKey: 'conversations.taskKanban.pending' },
+  { value: 'awaiting_approval', labelKey: 'conversations.taskKanban.awaitingApproval' },
+  { value: 'ready', labelKey: 'conversations.taskKanban.ready' },
   { value: 'in_progress', labelKey: 'conversations.taskKanban.working' },
+  { value: 'blocked', labelKey: 'conversations.taskKanban.blocked' },
   { value: 'done', labelKey: 'conversations.taskKanban.done' },
+  { value: 'rejected', labelKey: 'conversations.taskKanban.rejected' },
 ];
 
 interface UserTaskComposerProps {

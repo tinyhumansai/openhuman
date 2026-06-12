@@ -148,6 +148,22 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         privacy: DERIVED_TO_BACKEND,
     },
     Capability {
+        id: "voice.ptt",
+        name: "Global push-to-talk",
+        domain: "voice",
+        category: CapabilityCategory::Conversation,
+        description: "Hold a global hotkey from anywhere on the desktop to dictate into the \
+                      active chat thread. Press opens the mic, release commits the transcript, \
+                      and an always-on-top overlay shows listening/idle state without stealing \
+                      focus. Cross-platform via tauri-plugin-global-shortcut (macOS, Windows, \
+                      Linux/X11); requires microphone access and a global shortcut binding. \
+                      Optional speak_reply plays the agent's response through local TTS.",
+        how_to: "Settings → Voice → Push-to-Talk: pick a shortcut, grant microphone access, \
+                 then hold the configured hotkey from any window.",
+        status: CapabilityStatus::Beta,
+        privacy: DERIVED_TO_BACKEND,
+    },
+    Capability {
         id: "conversation.inline_autocomplete",
         name: "Inline Autocomplete",
         domain: "conversation",
@@ -722,6 +738,16 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         category: CapabilityCategory::Workflows,
         description: "Quote and execute cross-chain swaps and bridges (deBridge) plus generic EVM dapp contract calls, built on the local wallet's signing. EVM/Solana(/BTC); signing stays local.",
         how_to: "Use web3_swap.* / web3_bridge.* / web3_dapp.* RPC methods (quote/execute, web3_swap.routes) via the agent or core_rpc_relay.",
+        status: CapabilityStatus::Beta,
+        privacy: LOCAL_CREDENTIALS,
+    },
+    Capability {
+        id: "workflows.x402_payments",
+        name: "x402 Machine Payments",
+        domain: "x402",
+        category: CapabilityCategory::Workflows,
+        description: "Automatic HTTP 402 payment handling for machine-payable APIs via the x402 protocol. When an API returns 402 Payment Required, the agent pays with USDC on Solana using the local wallet and retries. Budget enforcement with per-request, daily, and monthly caps.",
+        how_to: "Use x402.* RPC methods (get_summary, list_payments, update_budget) to manage spending. Payments happen automatically when the http_request tool encounters a 402 with a PAYMENT-REQUIRED header.",
         status: CapabilityStatus::Beta,
         privacy: LOCAL_CREDENTIALS,
     },

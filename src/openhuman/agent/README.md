@@ -22,7 +22,7 @@ Multi-agent orchestration domain. Owns the LLM tool-calling loop, sub-agent disp
 - `src/openhuman/tools/` — `Tool` / `ToolSpec` execution surface invoked from the tool loop.
 - `src/openhuman/memory/` — episodic indexing + memory-loader context injection.
 - `src/openhuman/context/` — prompt sections, tool-call format selection.
-- `src/openhuman/local_ai/` — `agent_chat` / `agent_chat_simple` execution backend.
+- `src/openhuman/inference/local/` — `agent_chat` / `agent_chat_simple` execution backend.
 - `src/openhuman/config/` — runtime config load via `config::rpc::load_config_with_timeout`.
 - `src/core/event_bus/` — emits `DomainEvent::Agent(*)` and `Trigger*` events; subscribers in `agent/bus.rs`.
 

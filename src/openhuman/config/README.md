@@ -24,7 +24,7 @@ Authoritative TOML-backed configuration layer. Owns the `Config` schema (every d
 ## Called by
 
 - ~177 sites across the workspace — every domain pulls `Config` for its slice.
-- Hot consumers: `src/openhuman/agent/` (model + autonomy), `src/openhuman/channels/` (provider tokens), `src/openhuman/memory/` (storage paths), `src/openhuman/cron/` (scheduler poll), `src/openhuman/local_ai/` (Ollama / device routing), `src/openhuman/security/` (sandbox backend), `src/openhuman/voice/`, `src/openhuman/notifications/`, `src/openhuman/tools/`, `src/openhuman/encryption/`, `src/openhuman/tree_summarizer/`, `src/openhuman/referral/`.
+- Hot consumers: `src/openhuman/agent/` (model + autonomy), `src/openhuman/channels/` (provider tokens), `src/openhuman/memory/` (storage paths), `src/openhuman/cron/` (scheduler poll), `src/openhuman/inference/local/` (Ollama / device routing), `src/openhuman/security/` (sandbox backend), `src/openhuman/voice/`, `src/openhuman/notifications/`, `src/openhuman/tools/`, `src/openhuman/encryption/`, `src/openhuman/tree_summarizer/`, `src/openhuman/referral/`.
 - `src/core/all.rs` — registers `all_config_*`.
 
 ## Tests

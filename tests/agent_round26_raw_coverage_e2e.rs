@@ -240,7 +240,7 @@ fn prompt_context<'a>(
         model_name: "round26-model",
         agent_id: "round26-agent",
         tools,
-        skills: &[] as &[Workflow],
+        workflows: &[] as &[Workflow],
         dispatcher_instructions: "round26 dispatcher instructions",
         learned: LearnedContextData {
             reflections: vec![

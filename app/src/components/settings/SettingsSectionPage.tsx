@@ -39,14 +39,15 @@ const SettingsSectionPage = ({ title, description, items, footer }: SettingsSect
         breadcrumbs={breadcrumbs}
       />
 
-      <div>
+      {/* Mirror the SettingsHome layout: padded container, items in a single
+          rounded-border card, and the optional footer in its own matching card
+          so section pages and the home list look identical. */}
+      <div className="px-4 pb-5">
         {description && (
-          <p className="mt-1 text-xs text-stone-500 dark:text-neutral-400 px-5 pb-3">
-            {description}
-          </p>
+          <p className="mb-3 px-1 text-xs text-stone-500 dark:text-neutral-400">{description}</p>
         )}
 
-        <div>
+        <div className="rounded-3xl overflow-hidden border border-stone-200 dark:border-neutral-800">
           {items.map((item, index) => (
             <SettingsMenuItem
               key={item.id}
@@ -61,7 +62,16 @@ const SettingsSectionPage = ({ title, description, items, footer }: SettingsSect
           ))}
         </div>
 
-        {footer}
+        {footer && (
+          <>
+            {/* Divider + card, mirroring how SettingsHome separates its
+                trailing groups (e.g. the destructive logout/clear card). */}
+            <div className="mx-1 mt-6 mb-2 border-t border-stone-200 dark:border-neutral-800" />
+            <div className="rounded-3xl overflow-hidden border border-stone-200 dark:border-neutral-800">
+              {footer}
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

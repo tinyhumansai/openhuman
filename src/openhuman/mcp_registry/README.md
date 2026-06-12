@@ -28,6 +28,7 @@ The transport primitives themselves (stdio + HTTP MCP clients) live in the sibli
 | `src/openhuman/mcp_registry/registries/mcp_official.rs` | Official modelcontextprotocol/registry adapter; cursor→page mapping with a bounded sequential cursor walk; optional `MCP_OFFICIAL_REGISTRY_*` env overrides. |
 | `src/openhuman/mcp_registry/connections.rs` | Global in-process connection registry; `connect`/`disconnect`/`call_tool`/`all_status`/`all_connected_tools`; dispatches stdio vs HTTP via `ActiveClient`. |
 | `src/openhuman/mcp_registry/boot.rs` | `spawn_installed_servers` — boot-time connect of all installs; per-server failures logged, never fatal. |
+| `src/openhuman/mcp_registry/supervisor.rs` | Background reconnect loop (#3312): every 60s probes each connected transport (`connections::probe_alive`) and reconnects dropped/never-connected enabled servers with per-server exponential backoff. Spawned once at startup after the boot pass; connectivity-only (publishes no health events). |
 | `src/openhuman/mcp_registry/ops.rs` | `mcp_clients_*` RPC handler implementations + `resolve_command` + `config_assist` inference call. |
 | `src/openhuman/mcp_registry/setup.rs` | Opaque secret-ref machinery (`SecretRef`, mint/fulfill/await/resolve/consume/gc) for the setup agent. |
 | `src/openhuman/mcp_registry/setup_ops.rs` | `mcp_setup_*` RPC handlers (search/get/request_secret/submit_secret/test_connection/install_and_connect) + connection `pick_connection`. |
@@ -41,7 +42,7 @@ From `mod.rs`:
 - `mcp_registry_schemas` (`schemas::schemas`).
 - Types `ConnStatus`, `InstalledServer`, `McpTool`.
 
-`pub mod boot`, `bus`, `connections`, `setup`, `setup_ops`, `store`, `types` are public; `ops`, `registries`, `registry`, `schemas` are private (reached via the schema handlers). Notably `connections::all_connected_tools()` is consumed by `tool_registry`, and `boot::spawn_installed_servers` is called from core startup.
+`pub mod boot`, `bus`, `connections`, `setup`, `setup_ops`, `store`, `supervisor`, `types` are public; `ops`, `registries`, `registry`, `schemas` are private (reached via the schema handlers). Notably `connections::all_connected_tools()` is consumed by `tool_registry`, and both `boot::spawn_installed_servers` and `supervisor::run` are spawned from core startup.
 
 ## RPC / controllers
 

@@ -14,9 +14,60 @@ pub mod document;
 pub mod email;
 pub mod email_clean;
 
-use serde::{Deserialize, Serialize};
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::openhuman::memory_store::chunks::types::{Metadata, SourceRef};
+
+/// Deserialise a `DateTime<Utc>` from either:
+/// - a JSON integer = epoch **milliseconds** (legacy callers — back-compat),
+/// - a JSON string = RFC 3339 / ISO-8601 (e.g. `"2026-05-17T19:30:00Z"`), or
+///   a decimal string containing epoch milliseconds.
+///
+/// On an unparseable string a serde error is returned (no silent default).
+/// Shared across chat, email, and document canonicalisers.
+pub(crate) fn deserialize_flexible_timestamp<'de, D>(
+    deserializer: D,
+) -> Result<DateTime<Utc>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum RawTs {
+        Millis(i64),
+        Text(String),
+    }
+
+    let raw = RawTs::deserialize(deserializer)?;
+    match raw {
+        RawTs::Millis(ms) => {
+            tracing::debug!("[memory][canonicalize] parsed timestamp as epoch-ms: {ms}");
+            chrono::TimeZone::timestamp_millis_opt(&Utc, ms)
+                .single()
+                .ok_or_else(|| serde::de::Error::custom(format!("invalid epoch-ms: {ms}")))
+        }
+        RawTs::Text(s) => {
+            if let Ok(dt) = DateTime::parse_from_rfc3339(&s) {
+                tracing::debug!("[memory][canonicalize] parsed timestamp as ISO-8601 string: {s}");
+                return Ok(dt.with_timezone(&Utc));
+            }
+            if let Ok(ms) = s.parse::<i64>() {
+                tracing::debug!(
+                    "[memory][canonicalize] parsed timestamp as numeric-string epoch-ms: {s}"
+                );
+                return chrono::TimeZone::timestamp_millis_opt(&Utc, ms)
+                    .single()
+                    .ok_or_else(|| {
+                        serde::de::Error::custom(format!("invalid epoch-ms string: {s}"))
+                    });
+            }
+            Err(serde::de::Error::custom(format!(
+                "cannot parse '{s}' as RFC 3339 or epoch-ms"
+            )))
+        }
+    }
+}
 
 /// Output of a canonicaliser — one per logical source record
 /// (a chat batch, an email, a document).

@@ -26,17 +26,17 @@ Run the helper script from the repo root. It calls `tauri ios init` with the cor
 bash scripts/ios-init.sh
 ```
 
-`tauri ios init` scaffolds `app/src-tauri/gen/apple/`. That directory is **gitignored** (it contains bundle-identifier-specific Xcode project files that differ per developer account).
+`tauri ios init` scaffolds `app/src-tauri-mobile/gen/apple/`. That directory is **gitignored** (it contains bundle-identifier-specific Xcode project files that differ per developer account).
 
 ### Info.plist privacy keys
 
 `tauri ios init` creates a generated `Info.plist` at:
 
 ```
-app/src-tauri/gen/apple/<bundle-id>_iOS/Info.plist
+app/src-tauri-mobile/gen/apple/<bundle-id>_iOS/Info.plist
 ```
 
-You must copy the three privacy keys from `app/src-tauri/Info.ios.plist` into that generated file before building:
+`scripts/ios-init.sh` injects these privacy keys into the generated plist:
 
 ```xml
 <key>NSCameraUsageDescription</key>
@@ -48,10 +48,6 @@ You must copy the three privacy keys from `app/src-tauri/Info.ios.plist` into th
 <key>NSSpeechRecognitionUsageDescription</key>
 <string>OpenHuman uses on-device speech recognition to transcribe your voice messages.</string>
 ```
-
-**Option A (recommended for now):** Manual copy after each `tauri ios init` run.
-
-**Option B (automate in a follow-up PR):** Set the `bundle.iOS.template` key in `app/src-tauri/tauri.conf.json` to point at a hand-crafted `Info.plist` template once Tauri v2 stabilises its iOS template pipeline. Until that happens, Option A is simpler and less brittle.
 
 ---
 
@@ -78,6 +74,63 @@ pnpm tauri:ios:build
 # or from repo root:
 pnpm tauri:ios:build
 ```
+
+---
+
+## App Store Connect delivery
+
+`.github/workflows/ios-appstore.yml` builds a signed `iphoneos` archive, exports an IPA, uploads the IPA to App Store Connect/TestFlight with `altool`, and stores the IPA + dSYMs as GitHub Actions artifacts.
+
+Run it from GitHub Actions > iOS App Store. Inputs:
+
+- `ref` -- optional git ref to build.
+- `build_number` -- optional `CFBundleVersion`; defaults to `github.run_number`.
+- `upload_to_app_store_connect` -- set `false` for a signed archive/export dry run.
+
+Required GitHub environment: `App-Store`.
+
+Required secrets:
+
+- `APPLE_TEAM_ID` -- Apple Developer Team ID.
+- `IOS_KEYCHAIN_PASSWORD` -- temporary CI keychain password.
+- `IOS_DISTRIBUTION_CERTIFICATE_BASE64` -- base64-encoded `.p12` Apple Distribution certificate.
+- `IOS_DISTRIBUTION_CERTIFICATE_PASSWORD` -- password for that `.p12`.
+- `IOS_APPSTORE_PROVISIONING_PROFILE_BASE64` -- base64-encoded App Store provisioning profile for `com.tinyhumansai.openhuman`.
+- `APP_STORE_CONNECT_API_KEY_ID` -- App Store Connect API key ID.
+- `APP_STORE_CONNECT_ISSUER_ID` -- App Store Connect issuer ID.
+- `APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64` -- base64-encoded `AuthKey_<key id>.p8`.
+
+Local encoding helpers:
+
+```bash
+base64 -i ios_distribution.p12 | pbcopy
+base64 -i OpenHuman_AppStore.mobileprovision | pbcopy
+base64 -i AuthKey_XXXXXXXXXX.p8 | pbcopy
+```
+
+The workflow uploads a build to App Store Connect. It does not submit the build for App Review; that remains a deliberate App Store Connect action.
+
+### Local upload script
+
+After downloading an App Store provisioning profile and App Store Connect API key, you can build/export/upload from this Mac:
+
+```bash
+TEAM_ID=XXXXXXXXXX \
+IOS_APPSTORE_PROVISIONING_PROFILE_PATH=/path/to/OpenHuman_AppStore.mobileprovision \
+ASC_KEY_ID=XXXXXXXXXX \
+ASC_ISSUER_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx \
+ASC_KEY_PATH=/path/to/AuthKey_XXXXXXXXXX.p8 \
+UPLOAD=1 \
+scripts/ios-appstore-upload.sh
+```
+
+Use `UPLOAD=0` to stop after IPA export.
+
+### Updating without a new App Store build
+
+iOS cannot self-update native code or replace the installed app binary outside App Store/TestFlight distribution. For OpenHuman, this means changes to Rust, Tauri plugins, native permissions, bundled frontend code, or the app shell need a new reviewed build.
+
+Safe server-side updates include model/provider configuration, feature flags, prompt/content changes, remote data, and backend behavior that the shipped client already knows how to render. Be conservative with remote JavaScript or plugin-style features: Apple allows some software/content delivered outside the binary under specific rules, but it must stay within App Review limits and must not expose native platform APIs without permission.
 
 ---
 
@@ -109,6 +162,7 @@ Desktop                              iOS
 ```
 
 Transport selection (handled by `TransportManager`):
+
 1. LAN HTTP -- fast, zero-latency, requires same network.
 2. Socket.io tunnel -- E2E encrypted via XChaCha20-Poly1305 over X25519 key agreement.
 3. Cloud HTTP -- fallback when LAN and tunnel are unreachable.
@@ -130,20 +184,18 @@ Transport selection (handled by `TransportManager`):
 - Single backend instance only (no multi-region failover).
 - No APNs push notifications -- app must be foregrounded for real-time delivery.
 - Event-driven pairing detection on the desktop side uses 2-second polling until an SSE/socket event bridge lands.
-- Xcode signing must be set manually in the generated project (no CI automation yet).
 
 ---
 
 ## CI
 
-The `.github/workflows/ios-compile.yml` workflow runs on every PR that touches iOS-related paths. It provides:
+The `.github/workflows/ios-compile.yml` workflow runs as an iOS compile sanity check. It provides:
 
-- **Hard gate:** `cargo check` on the host target for `app/src-tauri` and `packages/tauri-plugin-ptt`.
+- **Hard gate:** `cargo check` on the iOS target for `app/src-tauri-mobile` and a host-target check for `packages/tauri-plugin-ptt`.
 - **Hard gate:** TypeScript compile (`pnpm compile`).
 - **Hard gate:** iOS-related Vitest suites.
-- **Soft gate (`continue-on-error: true`):** `cargo check --target aarch64-apple-ios` -- this catches gross API breakage but may fail on third-party C deps that need full Xcode. Failures are flagged but do not block merge.
 
-Full iOS builds (simulator + device) require macOS runners with Xcode installed. This is tracked as a follow-up to this PR.
+Full signed App Store builds run through `.github/workflows/ios-appstore.yml`.
 
 ---
 

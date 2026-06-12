@@ -13,7 +13,7 @@ use openhuman_core::openhuman::channels::test_support::{
 use openhuman_core::openhuman::channels::web::{
     all_web_channel_controller_schemas, all_web_channel_registered_controllers, channel_web_cancel,
     channel_web_chat, schemas, start_chat, subscribe_web_channel_events,
-    test_support as web_test_support,
+    test_support as web_test_support, ChatRequestMetadata,
 };
 use openhuman_core::openhuman::config::Config;
 use tempfile::tempdir;
@@ -113,9 +113,19 @@ async fn web_controllers_validate_inputs_and_emit_structured_forced_errors() {
     assert_eq!(all_web_channel_registered_controllers().len(), 4);
     assert_eq!(schemas("missing").function, "unknown");
 
-    let err = channel_web_chat("client", "thread", "   ", None, None, None, None, None)
-        .await
-        .expect_err("blank messages are rejected");
+    let err = channel_web_chat(
+        "client",
+        "thread",
+        "   ",
+        None,
+        None,
+        None,
+        None,
+        None,
+        ChatRequestMetadata::default(),
+    )
+    .await
+    .expect_err("blank messages are rejected");
     assert!(err.contains("message is required"));
 
     let cancel = channel_web_cancel("client", "missing-thread")
@@ -140,6 +150,7 @@ async fn web_controllers_validate_inputs_and_emit_structured_forced_errors() {
         None,
         Some("zh-CN".to_string()),
         None,
+        ChatRequestMetadata::default(),
     )
     .await
     .expect("chat request accepted")
@@ -185,6 +196,7 @@ async fn web_chat_cancel_aborts_in_flight_thread_without_real_provider() {
         None,
         None,
         None,
+        ChatRequestMetadata::default(),
     )
     .await
     .expect("start chat");

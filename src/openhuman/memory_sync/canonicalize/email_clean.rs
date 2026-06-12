@@ -223,13 +223,24 @@ fn strip_day_of_week_prefix(s: &str) -> Option<&str> {
 /// on the raw `serde_json::Value` so callers that work off the slim
 /// envelope JSON don't have to reshape it first.
 pub fn parse_message_date(m: &Value) -> Option<DateTime<Utc>> {
-    let raw = m.get("date")?;
+    if let Some(dt) = m.get("date").and_then(parse_date_value) {
+        return Some(dt);
+    }
+    if let Some(dt) = m.get("internalDate").and_then(parse_date_value) {
+        return Some(dt);
+    }
+    m.get("data")
+        .and_then(|data| data.get("internalDate"))
+        .and_then(parse_date_value)
+}
+
+fn parse_date_value(raw: &Value) -> Option<DateTime<Utc>> {
     if let Some(s) = raw.as_str() {
         let s = s.trim();
         if s.is_empty() {
             return None;
         }
-        // Epoch millis as a string?
+        // Epoch millis as a string? Gmail's `internalDate` uses this form.
         if let Ok(ms) = s.parse::<i64>() {
             return DateTime::from_timestamp_millis(ms);
         }
@@ -254,10 +265,7 @@ pub fn parse_message_date(m: &Value) -> Option<DateTime<Utc>> {
             return d.and_hms_opt(0, 0, 0).map(|n| n.and_utc());
         }
     }
-    if let Some(ms) = raw.as_i64() {
-        return DateTime::from_timestamp_millis(ms);
-    }
-    None
+    raw.as_i64().and_then(DateTime::from_timestamp_millis)
 }
 
 #[cfg(test)]
@@ -370,11 +378,15 @@ mod tests {
         let rfc = json!({"date": "Mon, 21 Apr 2026 10:00:00 +0000"});
         let ms = json!({"date": 1745236800000_i64});
         let ms_str = json!({"date": "1745236800000"});
+        let internal_ms_str = json!({"internalDate": "1745236800000"});
+        let nested_internal_ms_str = json!({"data": {"internalDate": "1745236800000"}});
         let date_only = json!({"date": "2026-04-21"});
         assert!(parse_message_date(&iso).is_some());
         assert!(parse_message_date(&rfc).is_some());
         assert!(parse_message_date(&ms).is_some());
         assert!(parse_message_date(&ms_str).is_some());
+        assert!(parse_message_date(&internal_ms_str).is_some());
+        assert!(parse_message_date(&nested_internal_ms_str).is_some());
         assert!(parse_message_date(&date_only).is_some());
     }
 

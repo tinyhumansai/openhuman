@@ -6,7 +6,7 @@
  * - Escape key closes (but not while submitting).
  * - Backdrop click closes (but not while submitting).
  * - Submit is disabled when name or description is empty.
- * - Submit rekeys `allowedTools` → `'allowed-tools'` via skillsApi.createSkill.
+ * - Submit rekeys `allowedTools` → `'allowed-tools'` via workflowsApi.createWorkflow.
  * - Submit calls `onCreated` with the returned skill.
  * - Submit failure surfaces an error banner and re-enables the button.
  * - Slug preview updates as the name changes.
@@ -14,18 +14,18 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { SkillSummary } from '../../../services/api/skillsApi';
+import type { WorkflowSummary } from '../../../services/api/workflowsApi';
 import CreateSkillModal from '../CreateSkillModal';
 
-vi.mock('../../../services/api/skillsApi', () => ({
-  skillsApi: {
-    createSkill: vi.fn(),
-    updateSkill: vi.fn(),
-    describeSkill: vi.fn().mockResolvedValue({ id: 'e', name: 'e', when_to_use: '', inputs: [] }),
+vi.mock('../../../services/api/workflowsApi', () => ({
+  workflowsApi: {
+    createWorkflow: vi.fn(),
+    updateWorkflow: vi.fn(),
+    describeWorkflow: vi.fn().mockResolvedValue({ id: 'e', name: 'e', when_to_use: '', inputs: [] }),
   },
 }));
 
-function builtSkill(overrides: Partial<SkillSummary> = {}): SkillSummary {
+function builtSkill(overrides: Partial<WorkflowSummary> = {}): WorkflowSummary {
   return {
     id: 'my-skill',
     name: 'My Skill',
@@ -49,8 +49,8 @@ function builtSkill(overrides: Partial<SkillSummary> = {}): SkillSummary {
 
 describe('CreateSkillModal', () => {
   beforeEach(async () => {
-    const { skillsApi } = await import('../../../services/api/skillsApi');
-    vi.mocked(skillsApi.createSkill).mockReset();
+    const { workflowsApi } = await import('../../../services/api/workflowsApi');
+    vi.mocked(workflowsApi.createWorkflow).mockReset();
   });
 
   it('renders title and required fields', () => {
@@ -94,13 +94,13 @@ describe('CreateSkillModal', () => {
     // form is now Name + Description + the `[[inputs]]` editor only — see
     // ScheduledCronCard / CreateWorkflowForm.tsx), so the inputs are no longer
     // collectable from the modal UI. The rekey itself still happens in
-    // `skillsApi.createSkill` (services/api/skillsApi.ts → params build) and
-    // is covered by the skillsApi unit tests; this test now just guards the
-    // modal's submit-pipeline shape: name + description → createSkill →
+    // `workflowsApi.createWorkflow` (services/api/workflowsApi.ts → params build) and
+    // is covered by the workflowsApi unit tests; this test now just guards the
+    // modal's submit-pipeline shape: name + description → createWorkflow →
     // onCreated.
-    const { skillsApi } = await import('../../../services/api/skillsApi');
+    const { workflowsApi } = await import('../../../services/api/workflowsApi');
     const created = builtSkill();
-    vi.mocked(skillsApi.createSkill).mockResolvedValueOnce(created);
+    vi.mocked(workflowsApi.createWorkflow).mockResolvedValueOnce(created);
 
     const onCreated = vi.fn();
     const onClose = vi.fn();
@@ -114,7 +114,7 @@ describe('CreateSkillModal', () => {
       fireEvent.click(submit);
     });
 
-    expect(vi.mocked(skillsApi.createSkill)).toHaveBeenCalledWith(
+    expect(vi.mocked(workflowsApi.createWorkflow)).toHaveBeenCalledWith(
       expect.objectContaining({
         name: 'My Skill',
         description: 'does stuff',
@@ -125,8 +125,8 @@ describe('CreateSkillModal', () => {
   });
 
   it('surfaces error and re-enables submit on failure', async () => {
-    const { skillsApi } = await import('../../../services/api/skillsApi');
-    vi.mocked(skillsApi.createSkill).mockRejectedValueOnce(new Error('slug already exists'));
+    const { workflowsApi } = await import('../../../services/api/workflowsApi');
+    vi.mocked(workflowsApi.createWorkflow).mockRejectedValueOnce(new Error('slug already exists'));
 
     render(<CreateSkillModal onClose={vi.fn()} onCreated={vi.fn()} />);
     fireEvent.change(screen.getByLabelText(/Name/), { target: { value: 'dup' } });

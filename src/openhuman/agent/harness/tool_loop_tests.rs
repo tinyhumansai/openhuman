@@ -398,6 +398,7 @@ async fn run_tool_call_loop_persists_native_tool_results_as_tool_messages() {
                     id: "call-1".into(),
                     name: "echo".into(),
                     arguments: "{}".into(),
+                    extra_content: None,
                 }],
                 usage: None,
                 reasoning_content: None,
@@ -444,6 +445,95 @@ async fn run_tool_call_loop_persists_native_tool_results_as_tool_messages() {
         .expect("native tool result should be persisted");
     assert!(tool_msg.content.contains("\"tool_call_id\":\"call-1\""));
     assert!(tool_msg.content.contains("echo-out"));
+}
+
+/// Behavioral end-to-end test of the `resolve_time` fix through the *real*
+/// agent tool loop. The model is scripted only to *decide* to call
+/// `resolve_time` (the part a live LLM does); the loop then dispatches to the
+/// real registered tool, executes it, and threads the result back into the
+/// conversation — exactly the path that was broken when the integrations
+/// agent hand-computed "24h ago" as a ~10-month-wrong epoch. We assert the
+/// resolved value the next turn would consume is the *correct* timestamp.
+#[tokio::test]
+async fn run_tool_call_loop_executes_real_resolve_time_and_threads_back_correct_epoch() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(vec![
+            // Turn 1: the model asks to resolve the caller's window. This is
+            // the only thing we script — the value comes from the real tool.
+            Ok(ChatResponse {
+                text: Some(String::new()),
+                tool_calls: vec![crate::openhuman::inference::provider::ToolCall {
+                    id: "call-rt".into(),
+                    name: "resolve_time".into(),
+                    arguments: "{\"expr\":\"2026-06-09T19:12:00Z\"}".into(),
+                    extra_content: None,
+                }],
+                usage: None,
+                reasoning_content: None,
+            }),
+            // Turn 2: model wraps up once it has the resolved value.
+            Ok(ChatResponse {
+                text: Some("done".into()),
+                tool_calls: vec![],
+                usage: None,
+                reasoning_content: None,
+            }),
+        ]),
+        native_tools: true,
+        vision: false,
+    };
+    let mut history = vec![ChatMessage::user(
+        "messages since 2026-06-09T19:12:00Z please",
+    )];
+    // The REAL tool, resolved + executed by the loop (not a stub).
+    let tools: Vec<Box<dyn Tool>> = vec![Box::new(crate::openhuman::tools::ResolveTimeTool::new())];
+
+    let result = run_tool_call_loop(
+        &provider,
+        &mut history,
+        &tools,
+        "test-provider",
+        "model",
+        0.0,
+        true,
+        "channel",
+        &crate::openhuman::config::MultimodalConfig::default(),
+        &crate::openhuman::config::MultimodalFileConfig::default(),
+        2,
+        None,
+        None,
+        &[],
+        None,
+        None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
+    )
+    .await
+    .expect("resolve_time tool flow should succeed");
+
+    assert_eq!(result, "done");
+    let tool_msg = history
+        .iter()
+        .find(|msg| msg.role == "tool")
+        .expect("resolve_time result should be persisted as a tool message");
+    // The correct epoch for 2026-06-09T19:12:00Z. The real incident's agent
+    // hand-computed this as 1752189120 (2025-07-10) — ~10 months wrong — and
+    // fetched the wrong Slack window. The tool returns the right value, ready
+    // for the next turn to pass as `oldest`.
+    assert!(
+        tool_msg.content.contains("1781032320"),
+        "expected the correctly resolved unix_s in the tool result; got: {}",
+        tool_msg.content
+    );
+    assert!(
+        tool_msg.content.contains("1781032320.000000"),
+        "expected the slack_ts representation in the tool result; got: {}",
+        tool_msg.content
+    );
+    // The ~10-month-wrong value the unfixed path produced must never appear.
+    assert!(
+        !tool_msg.content.contains("1752189120"),
+        "tool result must not contain the miscomputed epoch"
+    );
 }
 
 #[tokio::test]

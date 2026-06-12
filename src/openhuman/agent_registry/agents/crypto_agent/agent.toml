@@ -1,7 +1,7 @@
 id = "crypto_agent"
 display_name = "Crypto Agent"
 delegate_name = "do_crypto"
-when_to_use = "Crypto wallet & market specialist — drives wallet balances, quotes, transfers, swaps, contract calls, and exchange trading workflows on the user's connected wallet identities. Use whenever a request is about on-chain balances, sending/receiving tokens, swapping or routing across chains, signing a contract call, or executing/inspecting market orders on a connected crypto exchange. Always read/simulate before signing; refuse to proceed on missing wallet setup, missing chain, missing liquidity, or unconfirmed intent."
+when_to_use = "Crypto wallet & market specialist — drives wallet balances, quotes, transfers, swaps, contract calls, exchange trading workflows, and x402 paid API requests on the user's connected wallet identities. Use whenever a request is about on-chain balances, sending/receiving tokens, swapping or routing across chains, signing a contract call, executing/inspecting market orders on a connected crypto exchange, or making HTTP requests to x402-payable APIs (HTTP 402 Payment Required with on-chain USDC settlement). Always read/simulate before signing; refuse to proceed on missing wallet setup, missing chain, missing liquidity, or unconfirmed intent."
 temperature = 0.2
 max_iterations = 8
 sandbox_mode = "none"
@@ -14,6 +14,9 @@ omit_identity = true
 omit_memory_context = true
 omit_safety_preamble = false
 omit_skills_catalog = true
+# No eager memory pre-fetch. A pure-function wallet/market specialist with
+# `omit_memory_context = true`; the orchestrator hands it a focused, already-
+# grounded request, so it never needed the per-turn memory-tree walk.
 
 [model]
 hint = "agentic"
@@ -63,15 +66,17 @@ named = [
     "stock_quote",
     "stock_exchange_rate",
     "stock_crypto_series",
-    # Memory recall lets the agent ground execution in the user's
-    # previously-stated preferences (default chain, slippage tolerance,
-    # named addresses) instead of re-asking every time.
-    "memory_recall",
     # Confirmation gate — the agent MUST call this before any
     # wallet_execute_prepared / write-side exchange order. The runtime
     # routes the prompt to the user and blocks until they reply.
     "ask_user_clarification",
     # Time grounding for "as of <when>" framing and freshness checks on
-    # quotes before execute.
+    # quotes before execute. `resolve_time` converts relative/absolute time
+    # expressions into exact timestamps for any time-bounded data query.
     "current_time",
+    "resolve_time",
+    # x402 HTTP 402 payment protocol — makes paid API requests by signing
+    # an on-chain payment (EVM EIP-3009 on Base/Ethereum or Solana SPL)
+    # and retrying with a PAYMENT-SIGNATURE header.
+    "x402_request",
 ]

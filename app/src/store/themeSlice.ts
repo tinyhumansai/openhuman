@@ -2,6 +2,7 @@ import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
 
 export type ThemeMode = 'light' | 'dark' | 'system';
 export type TabBarLabels = 'hover' | 'always';
+export type AgentMessageViewMode = 'bubbles' | 'text';
 /**
  * Global app font size (issue #3120). Drives the root `<html>` font-size, which
  * scales every rem-based Tailwind text utility — including chat messages and the
@@ -26,9 +27,24 @@ interface ThemeState {
   mode: ThemeMode;
   tabBarLabels: TabBarLabels;
   fontSize: FontSize;
+  agentMessageViewMode: AgentMessageViewMode;
+  /**
+   * Runtime Developer Mode (default OFF).
+   * When true, all developer and diagnostic surfaces become visible.
+   * Combines with the build-time `IS_DEV` flag — either one enables the gate.
+   * Gating is UI-only: the Rust SecurityPolicy / autonomy tier enforcement
+   * is authoritative and is never relaxed by this toggle.
+   */
+  developerMode: boolean;
 }
 
-const initialState: ThemeState = { mode: 'system', tabBarLabels: 'hover', fontSize: 'medium' };
+const initialState: ThemeState = {
+  mode: 'system',
+  tabBarLabels: 'hover',
+  fontSize: 'medium',
+  agentMessageViewMode: 'bubbles',
+  developerMode: false,
+};
 
 const themeSlice = createSlice({
   name: 'theme',
@@ -43,11 +59,30 @@ const themeSlice = createSlice({
     setFontSize(state, action: PayloadAction<FontSize>) {
       state.fontSize = action.payload;
     },
+    setAgentMessageViewMode(state, action: PayloadAction<AgentMessageViewMode>) {
+      state.agentMessageViewMode = action.payload;
+    },
+    setDeveloperMode(state, action: PayloadAction<boolean>) {
+      state.developerMode = action.payload;
+    },
   },
 });
 
-export const { setThemeMode, setTabBarLabels, setFontSize } = themeSlice.actions;
+export const {
+  setThemeMode,
+  setTabBarLabels,
+  setFontSize,
+  setAgentMessageViewMode,
+  setDeveloperMode,
+} = themeSlice.actions;
 export default themeSlice.reducer;
+
+/**
+ * Selector for the persisted `developerMode` preference.
+ * Use {@link useDeveloperMode} in components — it combines this with `IS_DEV`.
+ */
+export const selectDeveloperMode = (state: { theme: ThemeState }): boolean =>
+  state.theme.developerMode;
 
 /**
  * Resolves a `ThemeMode` to the concrete `light` or `dark` value that should

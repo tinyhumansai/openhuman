@@ -19,6 +19,7 @@ import {
 const MATH_REMARK_PLUGINS = [remarkMath];
 const MATH_REHYPE_PLUGINS = [rehypeKatex];
 const EMPTY_PLUGINS: [] = [];
+type ParsedMarkdownTable = NonNullable<ReturnType<typeof parseMarkdownTable>>;
 
 /**
  * Pill rendered below an agent bubble for each
@@ -122,6 +123,49 @@ export function TableCellMarkdown({ content }: { content: string }) {
   );
 }
 
+function AgentMarkdownTable({
+  table,
+  className,
+}: {
+  table: ParsedMarkdownTable;
+  className: string;
+}) {
+  return (
+    <div className={className}>
+      <div className="overflow-x-auto">
+        <table className="w-max min-w-full border-collapse text-left text-sm text-stone-800 dark:text-neutral-100">
+          <thead className="bg-stone-100 dark:bg-neutral-800/90">
+            <tr>
+              {table.headers.map(header => (
+                <th
+                  key={header}
+                  className="max-w-[25vw] border-b border-stone-200 dark:border-neutral-800 px-4 py-2.5 text-xs font-semibold uppercase tracking-[0.08em] text-stone-500 dark:text-neutral-400">
+                  {header}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {table.rows.map((row, rowIndex) => (
+              <tr
+                key={`${rowIndex}:${row.join('|')}`}
+                className="odd:bg-white dark:odd:bg-neutral-900 even:bg-stone-50 dark:even:bg-neutral-800/60">
+                {row.map((cell, cellIndex) => (
+                  <td
+                    key={`${rowIndex}:${cellIndex}:${cell}`}
+                    className="max-w-[25vw] border-t border-stone-200 dark:border-neutral-800 px-4 py-3 align-top text-sm text-stone-700 dark:text-neutral-200">
+                    <TableCellMarkdown content={cell} />
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 export function AgentMessageBubble({
   content,
   position = 'single',
@@ -144,39 +188,10 @@ export function AgentMessageBubble({
 
   if (table) {
     return (
-      <div
-        className={`w-full max-w-full overflow-hidden border border-stone-200 dark:border-neutral-800 bg-white/90 dark:bg-neutral-900/90 shadow-sm ${bubbleChrome}`}>
-        <div className="overflow-x-auto">
-          <table className="w-max min-w-full border-collapse text-left text-sm text-stone-800 dark:text-neutral-100">
-            <thead className="bg-stone-100 dark:bg-neutral-800/90">
-              <tr>
-                {table.headers.map(header => (
-                  <th
-                    key={header}
-                    className="max-w-[25vw] border-b border-stone-200 dark:border-neutral-800 px-4 py-2.5 text-xs font-semibold uppercase tracking-[0.08em] text-stone-500 dark:text-neutral-400">
-                    {header}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {table.rows.map((row, rowIndex) => (
-                <tr
-                  key={`${rowIndex}:${row.join('|')}`}
-                  className="odd:bg-white dark:odd:bg-neutral-900 even:bg-stone-50 dark:even:bg-neutral-800/60">
-                  {row.map((cell, cellIndex) => (
-                    <td
-                      key={`${rowIndex}:${cellIndex}:${cell}`}
-                      className="max-w-[25vw] border-t border-stone-200 dark:border-neutral-800 px-4 py-3 align-top text-sm text-stone-700 dark:text-neutral-200">
-                      <TableCellMarkdown content={cell} />
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      <AgentMarkdownTable
+        table={table}
+        className={`w-full max-w-full overflow-hidden border border-stone-200 dark:border-neutral-800 bg-white/90 dark:bg-neutral-900/90 shadow-sm ${bubbleChrome}`}
+      />
     );
   }
 
@@ -200,5 +215,41 @@ export function AgentMessageBubble({
         </div>
       )}
     </>
+  );
+}
+
+export function AgentMessageText({ content }: { content: string }) {
+  const segments = parseBubbleSegments(content);
+  const textContent = segments
+    .filter(s => s.kind === 'text')
+    .map(s => s.text)
+    .join('')
+    .trim();
+  const linkSegments = segments.filter(
+    (s): s is Extract<typeof s, { kind: 'link' }> => s.kind === 'link'
+  );
+  const table = parseMarkdownTable(textContent);
+
+  return (
+    <div
+      className="w-full min-w-0 px-1 py-1 text-stone-900 dark:text-neutral-100"
+      data-testid="agent-message-text">
+      {table ? (
+        <AgentMarkdownTable table={table} className="w-full max-w-full overflow-hidden" />
+      ) : (
+        textContent && <BubbleMarkdown content={textContent} />
+      )}
+      {linkSegments.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-2">
+          {linkSegments.map((segment, idx) => (
+            <OpenhumanLinkPill
+              key={`pill-${idx}-${segment.path}`}
+              path={segment.path}
+              label={segment.label}
+            />
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

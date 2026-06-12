@@ -3,6 +3,7 @@ use crate::openhuman::config::HttpRequestConfig;
 use crate::openhuman::security::SecurityPolicy;
 use crate::openhuman::tools::traits::{Tool, ToolResult};
 use async_trait::async_trait;
+use base64::engine::Engine as _;
 use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration;
@@ -134,6 +135,141 @@ impl HttpRequestTool {
         Ok(request.send().await?)
     }
 
+    async fn handle_x402_payment(
+        &self,
+        _initial_response: reqwest::Response,
+        url: &str,
+        method: reqwest::Method,
+        headers: Vec<(String, String)>,
+        body: Option<&str>,
+    ) -> Result<reqwest::Response, String> {
+        use crate::openhuman::x402;
+
+        log::debug!("[tool.http_request] 402 received with PAYMENT-REQUIRED, attempting x402 payment for {url}");
+
+        let initial_headers = _initial_response.headers().clone();
+        let payment_result = x402::handle_402_and_pay(&initial_headers, url)
+            .await
+            .map_err(|e| format!("x402 payment failed: {e}"))?;
+
+        let record = x402::PaymentRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            url: payment_result.url.clone(),
+            asset: payment_result.asset.clone(),
+            amount_atomic: payment_result.amount_atomic,
+            amount_display: format!(
+                "{:.6} USDC",
+                payment_result.amount_atomic as f64 / 1_000_000.0
+            ),
+            recipient: payment_result.recipient.clone(),
+            network: payment_result.network.clone(),
+            tx_signature: None,
+            status: x402::PaymentStatus::Pending,
+            timestamp: chrono::Utc::now(),
+            session_id: String::new(),
+        };
+
+        let record_id = record.id.clone();
+        let _ = x402::store::with_ledger_mut(|l| l.record_payment(record));
+
+        log::debug!(
+            "[tool.http_request] retrying with x402 payment header amount={} asset={}",
+            payment_result.amount_atomic,
+            payment_result.asset
+        );
+
+        let mut retry_headers = headers;
+        retry_headers.push(("PAYMENT-SIGNATURE".to_string(), payment_result.header_value));
+
+        let response = self
+            .execute_request(url, method, retry_headers, body)
+            .await
+            .map_err(|e| format!("x402 retry request failed: {e}"))?;
+
+        let settled_status = if response.status().is_success() {
+            x402::PaymentStatus::Settled
+        } else {
+            x402::PaymentStatus::Failed
+        };
+        let tx_sig = response
+            .headers()
+            .get("PAYMENT-RESPONSE")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|b64| base64::engine::general_purpose::STANDARD.decode(b64).ok())
+            .and_then(|bytes| serde_json::from_slice::<x402::SettlementResponse>(&bytes).ok())
+            .and_then(|r| {
+                if r.success && !r.transaction.is_empty() {
+                    Some(r.transaction)
+                } else {
+                    None
+                }
+            });
+
+        let _ = x402::store::with_ledger_mut(|l| {
+            if let Some(rec) = l
+                .recent_payments(100)
+                .into_iter()
+                .find(|r| r.id == record_id)
+            {
+                let mut updated = rec;
+                updated.status = settled_status;
+                updated.tx_signature = tx_sig.clone();
+                l.record_payment(updated);
+            }
+        });
+
+        if settled_status == x402::PaymentStatus::Settled {
+            log::debug!(
+                "[tool.http_request] x402 payment settled for {url} tx={:?}",
+                tx_sig
+            );
+        } else {
+            log::warn!(
+                "[tool.http_request] x402 payment retry returned status {}",
+                response.status()
+            );
+        }
+
+        Ok(response)
+    }
+
+    async fn format_response(&self, response: reqwest::Response) -> anyhow::Result<ToolResult> {
+        let status = response.status();
+        let status_code = status.as_u16();
+
+        let response_headers = response.headers().iter();
+        let headers_text = response_headers
+            .map(|(k, _)| {
+                let is_sensitive = k.as_str().to_lowercase().contains("set-cookie");
+                if is_sensitive {
+                    format!("{}: ***REDACTED***", k.as_str())
+                } else {
+                    format!("{}: {:?}", k.as_str(), k.as_str())
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        let response_text = match response.text().await {
+            Ok(text) => self.truncate_response(&text),
+            Err(e) => format!("[Failed to read response body: {e}]"),
+        };
+
+        let output = format!(
+            "Status: {} {}\nResponse Headers: {}\n\nResponse Body:\n{}",
+            status_code,
+            status.canonical_reason().unwrap_or("Unknown"),
+            headers_text,
+            response_text
+        );
+
+        if status.is_success() {
+            Ok(ToolResult::success(output))
+        } else {
+            Ok(ToolResult::error(format!("HTTP {}", status_code)))
+        }
+    }
+
     fn truncate_response(&self, text: &str) -> String {
         if text.len() > self.max_response_size {
             let mut truncated = text
@@ -218,48 +354,32 @@ impl Tool for HttpRequestTool {
 
         let request_headers = self.parse_headers(&headers_val);
 
-        match self
-            .execute_request(&url, method, request_headers, body)
+        let response = match self
+            .execute_request(&url, method.clone(), request_headers.clone(), body)
             .await
         {
-            Ok(response) => {
-                let status = response.status();
-                let status_code = status.as_u16();
+            Ok(r) => r,
+            Err(e) => return Ok(ToolResult::error(format!("HTTP request failed: {e}"))),
+        };
 
-                let response_headers = response.headers().iter();
-                let headers_text = response_headers
-                    .map(|(k, _)| {
-                        let is_sensitive = k.as_str().to_lowercase().contains("set-cookie");
-                        if is_sensitive {
-                            format!("{}: ***REDACTED***", k.as_str())
-                        } else {
-                            format!("{}: {:?}", k.as_str(), k.as_str())
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .join(", ");
-
-                let response_text = match response.text().await {
-                    Ok(text) => self.truncate_response(&text),
-                    Err(e) => format!("[Failed to read response body: {e}]"),
-                };
-
-                let output = format!(
-                    "Status: {} {}\nResponse Headers: {}\n\nResponse Body:\n{}",
-                    status_code,
-                    status.canonical_reason().unwrap_or("Unknown"),
-                    headers_text,
-                    response_text
-                );
-
-                if status.is_success() {
-                    Ok(ToolResult::success(output))
-                } else {
-                    Ok(ToolResult::error(format!("HTTP {}", status_code)))
-                }
+        // x402: if the server returns 402 with a PAYMENT-REQUIRED header,
+        // attempt to pay using the wallet's Solana key and retry.
+        let response = if response.status() == reqwest::StatusCode::PAYMENT_REQUIRED
+            && (response.headers().get("PAYMENT-REQUIRED").is_some()
+                || response.headers().get("X-PAYMENT-REQUIRED").is_some())
+        {
+            match self
+                .handle_x402_payment(response, &url, method, request_headers, body)
+                .await
+            {
+                Ok(paid_response) => paid_response,
+                Err(msg) => return Ok(ToolResult::error(msg)),
             }
-            Err(e) => Ok(ToolResult::error(format!("HTTP request failed: {e}"))),
-        }
+        } else {
+            response
+        };
+
+        self.format_response(response).await
     }
 }
 

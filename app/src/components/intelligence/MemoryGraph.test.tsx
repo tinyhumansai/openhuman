@@ -68,6 +68,22 @@ describe('<MemoryGraph />', () => {
     expect(screen.getByTestId('memory-graph-empty')).toBeInTheDocument();
   });
 
+  it('fires onReady once the layout settles (synchronous SVG path under jsdom)', async () => {
+    const onReady = vi.fn();
+    const nodes = [
+      makeSummaryNode({ id: 'root', level: 0, parent_id: null }),
+      makeSummaryNode({ id: 'child', level: 1, parent_id: 'root' }),
+    ];
+    render(<MemoryGraph nodes={nodes} edges={[]} mode="tree" onReady={onReady} />);
+    await waitFor(() => expect(onReady).toHaveBeenCalledTimes(1));
+  });
+
+  it('does not fire onReady for an empty graph (nothing to lay out)', () => {
+    const onReady = vi.fn();
+    render(<MemoryGraph nodes={[]} edges={[]} mode="tree" onReady={onReady} />);
+    expect(onReady).not.toHaveBeenCalled();
+  });
+
   it('renders an SVG with one circle per node in tree mode', () => {
     const nodes = [
       makeSummaryNode({ id: 'root', level: 0, parent_id: null }),

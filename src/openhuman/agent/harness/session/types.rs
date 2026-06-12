@@ -8,6 +8,7 @@
 
 use crate::openhuman::agent::dispatcher::ToolDispatcher;
 use crate::openhuman::agent::harness::archivist::ArchivistHook;
+use crate::openhuman::agent::harness::definition::TriggerMemoryAgent;
 use crate::openhuman::agent::hooks::PostTurnHook;
 use crate::openhuman::agent::memory_loader::MemoryLoader;
 use crate::openhuman::agent::progress::AgentProgress;
@@ -52,10 +53,15 @@ pub struct Agent {
     pub(super) memory_loader: Box<dyn MemoryLoader>,
     pub(super) config: crate::openhuman::config::AgentConfig,
     pub(super) model_name: String,
+    /// User-configured vision capability for [`Self::model_name`], evaluated at
+    /// session build from `model_vision_enabled(&model, config)`. Surfaced to the
+    /// turn engine's image gate via the `current_model_vision` task-local so a
+    /// custom/BYOK model the user flagged can forward images. Defaults to `false`.
+    pub(super) model_vision: bool,
     pub(super) temperature: f64,
     pub(super) workspace_dir: std::path::PathBuf,
     pub(super) action_dir: std::path::PathBuf,
-    pub(super) skills: Vec<crate::openhuman::workflows::Workflow>,
+    pub(super) workflows: Vec<crate::openhuman::workflows::Workflow>,
     /// Agent workflows discovered at session start.
     pub(super) auto_save: bool,
     /// Last memory context loaded for the current turn. Stored so it can
@@ -168,6 +174,10 @@ pub struct Agent {
     /// summarizer sub-agent before they enter agent history.
     pub(super) payload_summarizer:
         Option<Arc<dyn crate::openhuman::agent::harness::payload_summarizer::PayloadSummarizer>>,
+    /// Mirrors the agent definition's `trigger_memory_agent` policy.
+    /// `Always` runs the dedicated memory retrieval agent once before
+    /// the user's prompt is sent to this agent.
+    pub(super) trigger_memory_agent: TriggerMemoryAgent,
     /// Pre-execution policy hook for tool calls in this session. The
     /// default policy allows all calls so existing agents keep their
     /// behaviour unless a caller opts into stricter policy.
@@ -267,10 +277,12 @@ pub struct AgentBuilder {
     /// [`crate::openhuman::config::ContextConfig::default`].
     pub(super) context_config: Option<crate::openhuman::config::ContextConfig>,
     pub(super) model_name: Option<String>,
+    /// User vision flag for the resolved model; `None` → `false` in `build()`.
+    pub(super) model_vision: Option<bool>,
     pub(super) temperature: Option<f64>,
     pub(super) workspace_dir: Option<std::path::PathBuf>,
     pub(super) action_dir: Option<std::path::PathBuf>,
-    pub(super) skills: Option<Vec<crate::openhuman::workflows::Workflow>>,
+    pub(super) workflows: Option<Vec<crate::openhuman::workflows::Workflow>>,
     /// Agent workflows to surface in the prompt. Populated from `load_workflows`
     /// at session start; defaults to empty when not explicitly set.
     pub(super) auto_save: Option<bool>,
@@ -298,6 +310,8 @@ pub struct AgentBuilder {
     /// to a `SubagentPayloadSummarizer` instance.
     pub(super) payload_summarizer:
         Option<Arc<dyn crate::openhuman::agent::harness::payload_summarizer::PayloadSummarizer>>,
+    /// Forwarded to [`Agent::trigger_memory_agent`] at build time.
+    pub(super) trigger_memory_agent: Option<TriggerMemoryAgent>,
     /// Optional pre-execution tool policy. Defaults to allow-all.
     pub(super) tool_policy: Option<Arc<dyn ToolPolicy>>,
     /// Optional reference to the production `ArchivistHook`. Set when

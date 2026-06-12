@@ -218,6 +218,26 @@ impl Tool for SpawnSubagentTool {
             }
         };
 
+        if let Some(parent_ctx) = current_parent() {
+            if !parent_ctx.allowed_subagent_ids.contains(&definition.id) {
+                log::warn!(
+                    "[spawn_subagent] blocked subagent outside parent allowlist parent_agent={} requested_agent={} allowed={:?}",
+                    parent_ctx.agent_definition_id,
+                    definition.id,
+                    parent_ctx.allowed_subagent_ids
+                );
+                return Ok(ToolResult::error(format!(
+                    "spawn_subagent: agent '{}' is not in parent agent '{}' subagents.allowlist",
+                    definition.id, parent_ctx.agent_definition_id
+                )));
+            }
+            log::debug!(
+                "[spawn_subagent] subagent allowlist check passed parent_agent={} requested_agent={}",
+                parent_ctx.agent_definition_id,
+                definition.id
+            );
+        }
+
         // ── integrations_agent toolkit gate ──────────────────────────────────
         // integrations_agent is a platform-parameterised specialist. Every
         // spawn MUST name a CONNECTED toolkit so the sub-agent only
@@ -438,6 +458,7 @@ impl Tool for SpawnSubagentTool {
             worker_thread_id: worker_thread_id.clone(),
             initial_history: None,
             checkpoint_dir: None,
+            worktree_action_dir: None,
         };
 
         let progress_sink = current_parent().and_then(|p| p.on_progress.clone());

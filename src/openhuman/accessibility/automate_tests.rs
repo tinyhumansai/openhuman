@@ -128,6 +128,13 @@ impl AutomateBackend for ScriptedBackend {
         self.acts.lock().unwrap().push(format!("open_url:{url}"));
         Ok(format!("Opened {url}"))
     }
+    async fn key(&self, keys: &[String]) -> Result<String, String> {
+        self.acts
+            .lock()
+            .unwrap()
+            .push(format!("key:{}", keys.join("+")));
+        Ok(format!("Executed {}", keys.join("+")))
+    }
     async fn settle(&self, _app: &str) {}
     async fn wait(&self, _ms: u64) {}
 }
@@ -191,12 +198,36 @@ async fn set_value_routes_app_override() {
 }
 
 #[tokio::test]
+async fn hotkey_verb_sends_chord_to_backend() {
+    // The model can drive an app shortcut via the general loop instead of
+    // hunting AX labels. Use a neutral app/goal so no fast-path intercepts and
+    // the loop's `hotkey` verb is what runs.
+    let backend = ScriptedBackend::new(&[
+        r#"{"action":"hotkey","keys":["Cmd","L"]}"#,
+        r#"{"action":"done","summary":"sent shortcut"}"#,
+    ]);
+    let out = run("Notes", "do a thing", &backend, opts(5)).await;
+    assert!(out.success, "expected success, got {out:?}");
+    assert_eq!(
+        backend.acts(),
+        vec!["launch:Notes", "key:Cmd+L"] // foreground-first, then the chord
+    );
+}
+
+#[tokio::test]
 async fn budget_exhaustion_fails() {
     // Script always lists → never done → budget guard ends the run.
     let backend = ScriptedBackend::new(&[r#"{"action":"list","filter":"x"}"#]);
     let out = run("Music", "never finishes", &backend, opts(3)).await;
     assert!(!out.success);
     assert!(out.summary.contains("budget"), "got: {}", out.summary);
+    // #2: surfaces what was on screen + a "try a different approach" steer.
+    assert!(out.summary.contains("On screen:"), "got: {}", out.summary);
+    assert!(
+        out.summary.to_lowercase().contains("different approach"),
+        "got: {}",
+        out.summary
+    );
 }
 
 #[tokio::test]
@@ -211,7 +242,14 @@ async fn no_progress_guard_aborts_repeated_action() {
     let out = run("Photos", "do something", &backend, opts(10)).await;
     assert!(!out.success);
     assert!(
-        out.summary.contains("stuck repeating"),
+        out.summary.to_lowercase().contains("stuck repeating"),
+        "got: {}",
+        out.summary
+    );
+    // #1/#2: actionable — names the screen and tells it to switch tactics.
+    assert!(out.summary.contains("On screen:"), "got: {}", out.summary);
+    assert!(
+        out.summary.to_lowercase().contains("switch tactics"),
         "got: {}",
         out.summary
     );

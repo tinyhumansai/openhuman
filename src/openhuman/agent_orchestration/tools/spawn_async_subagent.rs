@@ -168,6 +168,19 @@ impl Tool for SpawnAsyncSubagentTool {
             }
         };
 
+        if !parent.allowed_subagent_ids.contains(&definition.id) {
+            log::warn!(
+                "[spawn_async_subagent] blocked subagent outside allowlist parent={} requested={} allowed={:?}",
+                parent.agent_definition_id,
+                definition.id,
+                parent.allowed_subagent_ids
+            );
+            return Ok(ToolResult::error(format!(
+                "spawn_async_subagent: agent '{}' is not in parent agent '{}' subagents.allowlist",
+                definition.id, parent.agent_definition_id
+            )));
+        }
+
         if definition.id == "integrations_agent" && toolkit_override.is_none() {
             return Ok(ToolResult::error(
                 "spawn_async_subagent(integrations_agent): the `toolkit` argument is required",
@@ -231,6 +244,7 @@ impl Tool for SpawnAsyncSubagentTool {
                 worker_thread_id: background_worker_thread_id.clone(),
                 initial_history: None,
                 checkpoint_dir: None,
+                worktree_action_dir: None,
             };
 
             let result = with_parent_context(background_parent, async move {

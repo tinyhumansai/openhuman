@@ -3,7 +3,7 @@
  * Skill lifecycle smoke (issue #224).
  *
  * Drives auth → onboarding → Skills page and asserts:
- *   1. The route mounts (`#/skills`).
+ *   1. The route mounts (`#/connections` — was `#/skills` before Phase 2).
  *   2. The Skills shell renders one of the well-known affordances
  *      (Skills/Install/Available header).
  *
@@ -33,21 +33,26 @@ describe('Skill lifecycle smoke', () => {
     await stopMockServer();
   });
 
-  it('Skills page mounts and fetched the registry', async () => {
+  it('Connections page mounts and fetched the registry', async () => {
+    // Phase 2: navigateToSkills() now points to /connections
     await navigateToSkills();
     await browser.waitUntil(
-      async () => String(await browser.execute(() => window.location.hash)).includes('/skills'),
-      { timeout: 10_000, interval: 250, timeoutMsg: 'Skills route did not mount in time' }
+      // Phase 2: /skills redirects to /connections
+      async () =>
+        String(await browser.execute(() => window.location.hash)).includes('/connections'),
+      { timeout: 10_000, interval: 250, timeoutMsg: 'Connections route did not mount in time' }
     );
 
     const hash = await browser.execute(() => window.location.hash);
-    expect(String(hash)).toContain('/skills');
+    // Phase 2: /skills → /connections
+    expect(String(hash)).toContain('/connections');
 
-    // Skills page now shows "Connections" title with Composio/Channels/MCP tabs.
+    // Connections page shows tabs: Apps (was Composio), Messaging (was Channels), Tools (was MCP)
     const visible =
-      (await textExists('Connections')) ||
-      (await textExists('Composio')) ||
-      (await textExists('MCP Servers'));
+      (await textExists('Apps')) ||
+      (await textExists('Messaging')) ||
+      (await textExists('Tools')) ||
+      (await textExists('Connections'));
     expect(visible).toBe(true);
 
     // Verify the core RPC route for skills is reachable. The Skills page

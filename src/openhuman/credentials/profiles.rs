@@ -11,7 +11,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 #[cfg(test)]
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 #[cfg(test)]
 use std::sync::Arc;
 
@@ -233,6 +233,13 @@ pub struct AuthProfilesStore {
     /// before this split).
     #[cfg(test)]
     force_transient_failures_rename: Arc<AtomicUsize>,
+    /// `#[cfg(test)]` failure injection — when set, the next `acquire_lock`
+    /// call consumes the flag and returns a synthetic `StorageFull`
+    /// lock-create failure, exercising the lock-free read-only fallback in
+    /// [`AuthProfilesStore::load`] (Sentry TAURI-RUST-4SZ). Production
+    /// binaries never see this field.
+    #[cfg(test)]
+    force_lock_unwritable: Arc<AtomicBool>,
 }
 
 impl AuthProfilesStore {
@@ -278,6 +285,8 @@ impl AuthProfilesStore {
             force_transient_failures_write: Arc::new(AtomicUsize::new(0)),
             #[cfg(test)]
             force_transient_failures_rename: Arc::new(AtomicUsize::new(0)),
+            #[cfg(test)]
+            force_lock_unwritable: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -370,8 +379,28 @@ impl AuthProfilesStore {
     }
 
     pub fn load(&self) -> Result<AuthProfilesData> {
-        let _lock = self.acquire_lock()?;
-        self.load_locked()
+        match self.acquire_lock() {
+            Ok(_lock) => self.load_locked(),
+            Err(e) if is_lock_create_unwritable_fs(&e) => {
+                // RCA Sentry TAURI-RUST-4SZ: a full / read-only filesystem
+                // can't create the exclusive lock file, but the store already
+                // exists and writers publish via atomic tmp+rename, so a
+                // lock-free read is still consistent. The read path is the
+                // hot caller here (`app_state_snapshot` polls it every tick),
+                // so failing it strands the UI AND floods Sentry once per
+                // poll. Degrade to a lock-free read-only load instead — the
+                // user keeps their session view, and because no error is
+                // produced the noise stops at the source rather than being
+                // suppressed downstream. Opportunistic migrations are skipped
+                // (they couldn't persist on a full disk anyway).
+                log::warn!(
+                    "[auth] auth-profile lock could not be created ({e}); \
+                     serving lock-free read-only load (likely disk full / read-only FS)"
+                );
+                self.load_unlocked_readonly()
+            }
+            Err(e) => Err(e),
+        }
     }
 
     pub fn upsert_profile(&self, mut profile: AuthProfile, set_active: bool) -> Result<()> {
@@ -460,6 +489,28 @@ impl AuthProfilesStore {
     }
 
     fn load_locked(&self) -> Result<AuthProfilesData> {
+        self.load_resolved(true)
+    }
+
+    /// Lock-free read-only load used as the [`AuthProfilesStore::load`]
+    /// fallback when the exclusive lock can't be created because the
+    /// filesystem won't accept the lock file (disk full / read-only mount —
+    /// Sentry TAURI-RUST-4SZ). Safe without the lock because writers publish
+    /// the store atomically (tmp + `fs::rename`), so a bare read always sees
+    /// a complete file. Skips the opportunistic migration / dropped-profile
+    /// rewrite that `load_locked` performs — that write needs both the lock
+    /// and a writable disk, and this path runs precisely when neither holds.
+    fn load_unlocked_readonly(&self) -> Result<AuthProfilesData> {
+        self.load_resolved(false)
+    }
+
+    /// Shared read + in-memory resolution worker. Reads the persisted store,
+    /// resolves/migrates secrets and drops unrecoverable profiles in memory,
+    /// and — only when `persist` is true — writes back any resulting cleanup.
+    /// The returned `AuthProfilesData` reflects the in-memory cleanup either
+    /// way, so the lock-free read path (`persist = false`) still returns a
+    /// correct, fully-resolved view without touching disk.
+    fn load_resolved(&self, persist: bool) -> Result<AuthProfilesData> {
         let mut persisted = self.read_persisted_locked()?;
         // `migrated` tracks enc: → enc2: XOR-cipher upgrades (original behavior).
         let mut migrated = false;
@@ -766,6 +817,9 @@ impl AuthProfilesStore {
         // any `active_profiles` pointers that referenced them, so the
         // next read returns a clean "no active session" state.
         if !dropped_ids.is_empty() {
+            // Always apply the cleanup to the in-memory view so the returned
+            // data is correct even on the lock-free read path; the on-disk
+            // rewrite below is what's gated by `persist`.
             for id in &dropped_ids {
                 persisted.profiles.remove(id);
             }
@@ -779,8 +833,13 @@ impl AuthProfilesStore {
                 dropped_ids.len(),
                 self.path.display(),
             );
-            self.write_persisted_locked(&persisted)?;
-        } else if migrated || keychain_migrated {
+        }
+        // Persist opportunistic cleanup / migrations only on the locked write
+        // path. The lock-free read-only fallback (`persist = false`, used when
+        // the disk can't accept the lock file) intentionally skips this — the
+        // write would fail on a full disk anyway, and the in-memory view above
+        // is already correct.
+        if persist && (!dropped_ids.is_empty() || migrated || keychain_migrated) {
             self.write_persisted_locked(&persisted)?;
         }
 
@@ -1080,6 +1139,14 @@ impl AuthProfilesStore {
         self.force_transient_failures_rename.load(Ordering::SeqCst)
     }
 
+    /// Queue a single test-only forced `StorageFull` lock-create failure. The
+    /// next `acquire_lock` returns the synthetic disk-full error so tests can
+    /// drive the lock-free read-only fallback in [`AuthProfilesStore::load`].
+    #[cfg(test)]
+    pub(super) fn force_next_lock_unwritable(&self) {
+        self.force_lock_unwritable.store(true, Ordering::SeqCst);
+    }
+
     fn encrypt_optional(&self, value: Option<&str>) -> Result<Option<String>> {
         match value {
             Some(value) if !value.is_empty() => self.secret_store.encrypt(value).map(Some),
@@ -1098,6 +1165,16 @@ impl AuthProfilesStore {
     }
 
     fn acquire_lock(&self) -> Result<AuthProfileLockGuard> {
+        // Test-only: simulate a full / read-only filesystem that can't create
+        // the lock file, to drive the read-only fallback in `load`.
+        #[cfg(test)]
+        if self.force_lock_unwritable.swap(false, Ordering::SeqCst) {
+            let io = std::io::Error::from(std::io::ErrorKind::StorageFull);
+            return Err(annotate_lock_create_failure(
+                anyhow::Error::new(io).context("open lock file"),
+            ));
+        }
+
         if let Some(parent) = self.lock_path.parent() {
             fs::create_dir_all(parent)
                 .with_context(|| "Failed to create auth profile lock directory".to_string())?;
@@ -1335,6 +1412,27 @@ impl AuthProfilesStore {
 /// of [`AuthProfilesStore::acquire_lock`] so unit tests can drive the
 /// formatting directly without depending on filesystem permissions (CI runs
 /// as root and bypasses `chmod 0500`).
+/// True when a lock-create failure was caused by the filesystem refusing to
+/// accept the lock file itself — disk full (`StorageFull`, POSIX `ENOSPC` /
+/// Windows `ERROR_DISK_FULL`) or a read-only mount (`ReadOnlyFilesystem`,
+/// `EROFS`). These are exactly the conditions where the **read** path can
+/// safely skip the exclusive lock: the store already exists, writers publish
+/// atomically, and the failing operation is the *creation of a new lock file*,
+/// not the read. Lock *contention* (`AlreadyExists` / the busy-wait timeout)
+/// and every other error deliberately do NOT match — those still propagate so
+/// genuine problems stay visible. See [`AuthProfilesStore::load`].
+fn is_lock_create_unwritable_fs(err: &anyhow::Error) -> bool {
+    err.chain()
+        .find_map(|cause| cause.downcast_ref::<std::io::Error>())
+        .map(|io| {
+            matches!(
+                io.kind(),
+                std::io::ErrorKind::StorageFull | std::io::ErrorKind::ReadOnlyFilesystem
+            )
+        })
+        .unwrap_or(false)
+}
+
 fn annotate_lock_create_failure(err: anyhow::Error) -> anyhow::Error {
     let io = err.chain().find_map(|c| c.downcast_ref::<std::io::Error>());
     let kind = io.map(|ioe| ioe.kind());

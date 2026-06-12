@@ -21,6 +21,7 @@ omit_profile = false
 # reactive follow-ups stay coherent with what came before. Frozen per
 # session (KV-cache contract on `omit_memory_md`).
 omit_memory_md = false
+trigger_memory_agent = "always"
 
 [model]
 # Always remote. Reactive work hits write-path tools and needs
@@ -31,12 +32,11 @@ hint = "agentic"
 
 [tools]
 # Small, deliberately narrow tool surface:
-#   - memory_recall / memory_store: look up and persist context
+#   - trigger_memory_agent / memory_store: look up and persist context
 #   - read_workspace_state: understand what the user is working on
 #   - spawn_subagent: escalate to a real specialist if the reaction
 #     turns out to be bigger than the triage agent expected
 named = [
-    "memory_recall",
     "memory_store",
     "read_workspace_state",
     "spawn_subagent",

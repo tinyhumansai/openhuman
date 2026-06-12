@@ -87,7 +87,7 @@ export function createWalkthroughSteps(navigate: NavigateFunction): Step[] {
       },
     },
 
-    // ── Step 4 — /skills ──────────────────────────────────────────────────
+    // ── Step 4 — /connections (Apps tab) ─────────────────────────────────
     {
       target: '[data-walkthrough="skills-grid"]',
       title: 'Connect your world',
@@ -96,12 +96,12 @@ export function createWalkthroughSteps(navigate: NavigateFunction): Step[] {
       placement: 'top',
       skipBeacon: true,
       before: async () => {
-        navigate('/skills');
+        navigate('/connections');
         await waitForTarget('skills-grid');
       },
     },
 
-    // ── Step 5 — /skills (channels) ─────────────────────────────────────
+    // ── Step 5 — /connections (Messaging tab) ────────────────────────────
     {
       target: '[data-walkthrough="skills-channels"]',
       title: 'Chat where you already are',
@@ -114,16 +114,16 @@ export function createWalkthroughSteps(navigate: NavigateFunction): Step[] {
       },
     },
 
-    // ── Step 6 — /intelligence ────────────────────────────────────────────
+    // ── Step 6 — /activity (Activity) ────────────────────────────────────
     {
       target: '[data-walkthrough="intelligence-header"]',
-      title: "Your assistant's brain",
+      title: 'Your activity hub',
       content:
         'This is where your assistant learns and remembers. It gets smarter the more you use it.',
       placement: 'bottom',
       skipBeacon: true,
       before: async () => {
-        navigate('/intelligence');
+        navigate('/activity');
         await waitForTarget('intelligence-header');
       },
     },
@@ -157,7 +157,7 @@ export function createWalkthroughSteps(navigate: NavigateFunction): Step[] {
 
     // ── Step 8 — /home (already there) ───────────────────────────────────
     {
-      target: '[data-walkthrough="tab-notifications"]',
+      target: '[data-walkthrough="tab-activity"]',
       title: 'Stay in the loop',
       content: 'Alerts and automations live here — briefings, notifications, background activity.',
       placement: 'top',

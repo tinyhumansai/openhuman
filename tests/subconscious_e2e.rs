@@ -42,14 +42,13 @@ async fn ingest_doc(
     result.document_id
 }
 
-/// Two-tick E2E test — verifies the agent-per-tick model produces
-/// thoughts from ingested memory data.
+/// Two-tick E2E test — verifies the agent-per-tick model can process
+/// ingested memory data and persist tick state.
 #[tokio::test]
 #[ignore] // requires running Ollama
 async fn two_tick_e2e_with_real_ollama() {
     use openhuman_core::openhuman::embeddings::NoopEmbedding;
     use openhuman_core::openhuman::memory::{MemoryClient, UnifiedMemory};
-    use openhuman_core::openhuman::subconscious::reflection_store;
     use openhuman_core::openhuman::subconscious::store;
 
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -90,15 +89,11 @@ async fn two_tick_e2e_with_real_ollama() {
     println!("\n=== TICK 1 ===");
     let result1 = engine.tick().await.expect("tick 1 should succeed");
     println!("  Duration: {}ms", result1.duration_ms);
-    println!("  Thoughts: {}", result1.thoughts_count);
-    println!("  Thread: {:?}", result1.thread_id);
+    println!("  Response chars: {}", result1.response_chars);
 
-    // Check reflections in DB
-    let reflections1 = store::with_connection(workspace, |conn| {
-        reflection_store::list_recent(conn, 50, None)
-    })
-    .expect("list reflections");
-    println!("  Reflections in DB: {}", reflections1.len());
+    let last_tick1 =
+        store::with_connection(workspace, store::get_last_tick_at).expect("read last tick");
+    assert!(last_tick1 >= result1.tick_at);
 
     // Tick 2 with new data
     println!("\n=== TICK 2 ===");
@@ -114,8 +109,7 @@ async fn two_tick_e2e_with_real_ollama() {
 
     let result2 = engine.tick().await.expect("tick 2 should succeed");
     println!("  Duration: {}ms", result2.duration_ms);
-    println!("  Thoughts: {}", result2.thoughts_count);
-    println!("  Thread: {:?}", result2.thread_id);
+    println!("  Response chars: {}", result2.response_chars);
 
     let status = engine.status().await;
     println!("\n--- Status ---");

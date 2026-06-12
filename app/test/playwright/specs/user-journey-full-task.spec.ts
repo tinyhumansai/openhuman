@@ -135,7 +135,7 @@ test.describe('User journey - full research task', () => {
     expect(typeof threadId).toBe('string');
 
     await sendMessage(page, PROMPT);
-    await expect(page.getByText(CANARY_FINAL)).toBeVisible({ timeout: 45_000 });
+    await expect(page.getByText(CANARY_FINAL).first()).toBeVisible({ timeout: 45_000 });
 
     await page.goto('/#/home');
     await waitForAppReady(page);
@@ -145,6 +145,6 @@ test.describe('User journey - full research task', () => {
 
     await page.goto('/#/chat');
     await waitForAppReady(page);
-    await expect(page.getByText(CANARY_FINAL)).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText(CANARY_FINAL).first()).toBeVisible({ timeout: 15_000 });
   });
 });

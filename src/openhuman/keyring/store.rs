@@ -9,6 +9,13 @@ use std::sync::OnceLock;
 
 use crate::openhuman::keyring::backend::{self, KeyringBackend};
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum BackendKind {
+    Os,
+    File,
+    EncryptedFile,
+}
+
 // ── Global state ─────────────────────────────────────────────────────────────
 
 /// The workspace directory provided by the caller at startup.
@@ -42,20 +49,21 @@ pub(super) fn backend() -> &'static dyn KeyringBackend {
 pub(super) fn build_backend() -> Box<dyn KeyringBackend> {
     // Priority 1: explicit env var override.
     if let Ok(env_val) = std::env::var("OPENHUMAN_KEYRING_BACKEND") {
-        match env_val.trim() {
-            "os" => {
+        match backend_kind_from_env_value(&env_val) {
+            Some(BackendKind::Os) => {
                 log::info!("[keyring] backend=os (OPENHUMAN_KEYRING_BACKEND override)");
                 return Box::new(backend::OsBackend);
             }
-            "file" => {
+            Some(BackendKind::File) => {
                 let path = workspace_dir_for_file_backend();
                 log::info!(
-                    "[keyring] backend=file path={} (OPENHUMAN_KEYRING_BACKEND override)",
+                    "[keyring] backend=file dir={} file={}/dev-keychain.json (OPENHUMAN_KEYRING_BACKEND override)",
+                    path.display(),
                     path.display()
                 );
                 return Box::new(backend::FileBackend::new(&path));
             }
-            "encrypted_file" => {
+            Some(BackendKind::EncryptedFile) => {
                 let path = workspace_dir_for_file_backend();
                 log::info!(
                     "[keyring] backend=encrypted_file path={} (OPENHUMAN_KEYRING_BACKEND override)",
@@ -65,9 +73,10 @@ pub(super) fn build_backend() -> Box<dyn KeyringBackend> {
                     &path,
                 ));
             }
-            other => {
+            None => {
                 log::warn!(
-                    "[keyring] unknown OPENHUMAN_KEYRING_BACKEND={other:?}; falling through to defaults"
+                    "[keyring] unknown OPENHUMAN_KEYRING_BACKEND={:?}; falling through to defaults",
+                    env_val.trim()
                 );
             }
         }
@@ -90,7 +99,8 @@ pub(super) fn build_backend() -> Box<dyn KeyringBackend> {
         ))
     } else {
         log::info!(
-            "[keyring] backend=file path={} (dev environment)",
+            "[keyring] backend=file dir={} file={}/dev-keychain.json (dev environment)",
+            path.display(),
             path.display()
         );
         Box::new(backend::FileBackend::new(&path))
@@ -98,10 +108,46 @@ pub(super) fn build_backend() -> Box<dyn KeyringBackend> {
 }
 
 fn is_staging_or_production() -> bool {
-    matches!(
-        std::env::var("OPENHUMAN_APP_ENV").as_deref(),
-        Ok("staging") | Ok("production")
+    is_staging_or_production_value(std::env::var("OPENHUMAN_APP_ENV").as_deref().ok())
+}
+
+pub(super) fn effective_backend_kind() -> BackendKind {
+    effective_backend_kind_for(
+        std::env::var("OPENHUMAN_APP_ENV").as_deref().ok(),
+        std::env::var("OPENHUMAN_KEYRING_BACKEND").as_deref().ok(),
+        cfg!(test),
     )
+}
+
+fn effective_backend_kind_for(
+    app_env: Option<&str>,
+    backend_override: Option<&str>,
+    cfg_test: bool,
+) -> BackendKind {
+    if let Some(kind) = backend_override.and_then(backend_kind_from_env_value) {
+        return kind;
+    }
+    if cfg_test {
+        return BackendKind::File;
+    }
+    if is_staging_or_production_value(app_env) {
+        BackendKind::EncryptedFile
+    } else {
+        BackendKind::File
+    }
+}
+
+fn backend_kind_from_env_value(value: &str) -> Option<BackendKind> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "os" => Some(BackendKind::Os),
+        "file" => Some(BackendKind::File),
+        "encrypted_file" => Some(BackendKind::EncryptedFile),
+        _ => None,
+    }
+}
+
+fn is_staging_or_production_value(app_env: Option<&str>) -> bool {
+    matches!(app_env.map(str::trim), Some("staging") | Some("production"))
 }
 
 /// Derive the directory for keyring files (`secrets.enc`, `dev-keychain.json`).
@@ -115,7 +161,9 @@ pub fn workspace_dir_for_file_backend() -> PathBuf {
     }
 
     if let Ok(custom) = std::env::var("OPENHUMAN_WORKSPACE") {
-        return PathBuf::from(custom);
+        if !custom.trim().is_empty() {
+            return PathBuf::from(custom);
+        }
     }
 
     let home = dirs::home_dir().unwrap_or_else(|| {
@@ -126,4 +174,41 @@ pub fn workspace_dir_for_file_backend() -> PathBuf {
         _ => home.join(".openhuman"),
     };
     openhuman_dir
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{effective_backend_kind_for, BackendKind};
+
+    #[test]
+    fn explicit_file_backend_wins_over_staging_environment() {
+        assert_eq!(
+            effective_backend_kind_for(Some("staging"), Some("file"), false),
+            BackendKind::File
+        );
+    }
+
+    #[test]
+    fn explicit_encrypted_file_backend_wins_in_dev_environment() {
+        assert_eq!(
+            effective_backend_kind_for(Some("development"), Some("encrypted_file"), false),
+            BackendKind::EncryptedFile
+        );
+    }
+
+    #[test]
+    fn staging_defaults_to_encrypted_file_without_override() {
+        assert_eq!(
+            effective_backend_kind_for(Some(" staging "), None, false),
+            BackendKind::EncryptedFile
+        );
+    }
+
+    #[test]
+    fn unknown_backend_override_falls_back_to_environment_default() {
+        assert_eq!(
+            effective_backend_kind_for(Some("production"), Some("bogus"), false),
+            BackendKind::EncryptedFile
+        );
+    }
 }

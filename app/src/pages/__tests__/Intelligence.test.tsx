@@ -40,6 +40,10 @@ vi.mock('../../hooks/useIntelligenceSocket', () => ({
   useIntelligenceSocket: () => ({ isConnected: true }),
   useIntelligenceSocketManager: () => ({}),
 }));
+// useDeveloperMode needs a Redux Provider; mock it so tests render without one.
+// All tabs are visible (developer mode on) — the test exercises URL routing,
+// not the dev gate, so a stable open-gate is fine here.
+vi.mock('../../hooks/useDeveloperMode', () => ({ useDeveloperMode: () => true }));
 vi.mock('../../hooks/useSubconscious', () => ({
   useSubconscious: () => ({
     status: 'idle',

@@ -418,7 +418,7 @@ async fn render_integrations_agent(config: &Config, toolkit: &str) -> Result<Dum
         model_name: &model_name,
         agent_id: INTEGRATIONS_AGENT_ID,
         tools: &prompt_tools,
-        skills: agent.skills(),
+        workflows: agent.workflows(),
         dispatcher_instructions: "",
         learned: LearnedContextData::default(),
         visible_tool_names: &empty_visible,

@@ -948,6 +948,10 @@ impl Tool for ComposioExecuteTool {
                 "arguments": {
                     "type": "object",
                     "description": "Action-specific arguments. Shape depends on the tool."
+                },
+                "connection_id": {
+                    "type": "string",
+                    "description": "Optional. Target a specific account when multiple are connected for a toolkit. Use the connection_id from '## Connected Integrations'. Omit to use the default account."
                 }
             },
             "required": ["tool"],

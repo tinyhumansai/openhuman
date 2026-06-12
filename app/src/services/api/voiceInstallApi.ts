@@ -1,5 +1,5 @@
 /**
- * Voice engine installer API — wraps the four new `local_ai.*` RPCs that
+ * Voice engine installer API — wraps the `inference.*` RPCs that
  * orchestrate downloads of the Whisper GGML model + binary and the Piper
  * binary + bundled voice into the workspace.
  *
@@ -15,7 +15,7 @@ import { callCoreRpc } from '../coreRpcClient';
 const log = debug('voiceInstallApi');
 
 /**
- * Stable wire shape of [`crate::openhuman::local_ai::voice_install_common::VoiceInstallState`].
+ * Stable wire shape of [`crate::openhuman::inference::local::voice_install_common::VoiceInstallState`].
  *
  * The Rust enum serializes via `#[serde(rename_all = "snake_case")]` so
  * the TypeScript union mirrors the lowercase variants exactly.
@@ -67,7 +67,7 @@ export async function installWhisper(
 ): Promise<VoiceInstallStatus> {
   log('[voice-install:whisper] kick-off %o', params);
   const result = await callCoreRpc<VoiceInstallStatus>({
-    method: 'openhuman.local_ai_install_whisper',
+    method: 'openhuman.inference_install_whisper',
     params: { model_size: params.modelSize, force: params.force },
   });
   log('[voice-install:whisper] result state=%s stage=%s', result.state, result.stage ?? '<none>');
@@ -81,7 +81,7 @@ export async function installWhisper(
 export async function installPiper(params: InstallPiperParams = {}): Promise<VoiceInstallStatus> {
   log('[voice-install:piper] kick-off %o', params);
   const result = await callCoreRpc<VoiceInstallStatus>({
-    method: 'openhuman.local_ai_install_piper',
+    method: 'openhuman.inference_install_piper',
     params: { voice_id: params.voiceId, force: params.force },
   });
   log('[voice-install:piper] result state=%s stage=%s', result.state, result.stage ?? '<none>');
@@ -96,7 +96,7 @@ export async function installPiper(params: InstallPiperParams = {}): Promise<Voi
  */
 export async function whisperInstallStatus(): Promise<VoiceInstallStatus> {
   return await callCoreRpc<VoiceInstallStatus>({
-    method: 'openhuman.local_ai_whisper_install_status',
+    method: 'openhuman.inference_whisper_install_status',
     params: {},
   });
 }
@@ -107,7 +107,7 @@ export async function whisperInstallStatus(): Promise<VoiceInstallStatus> {
  */
 export async function piperInstallStatus(): Promise<VoiceInstallStatus> {
   return await callCoreRpc<VoiceInstallStatus>({
-    method: 'openhuman.local_ai_piper_install_status',
+    method: 'openhuman.inference_piper_install_status',
     params: {},
   });
 }

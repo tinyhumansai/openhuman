@@ -37,6 +37,9 @@
 mod client;
 mod registry;
 pub mod sanitize;
+pub mod setup_agent;
+#[cfg(test)]
+mod setup_agent_integration_test;
 mod stdio;
 
 pub use client::{

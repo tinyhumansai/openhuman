@@ -20,7 +20,6 @@ const hoisted = vi.hoisted(() => ({
   updateTitle: vi.fn(),
   appendMessage: vi.fn(),
   chatSend: vi.fn(),
-  listAgentDefinitions: vi.fn(),
   todosList: vi.fn(),
   todosAdd: vi.fn(),
   todosEdit: vi.fn(),
@@ -46,10 +45,6 @@ vi.mock('../../../services/api/threadApi', () => ({
 }));
 
 vi.mock('../../../services/chatService', () => ({ chatSend: hoisted.chatSend }));
-
-vi.mock('../../../services/api/agentLibraryApi', () => ({
-  agentLibraryApi: { listDefinitions: hoisted.listAgentDefinitions },
-}));
 
 vi.mock('../../../services/api/todosApi', () => ({
   TASK_SOURCES_THREAD_ID: 'task-sources',
@@ -186,7 +181,6 @@ describe('IntelligenceTasksTab', () => {
     hoisted.updateTitle.mockReset();
     hoisted.appendMessage.mockReset();
     hoisted.chatSend.mockReset();
-    hoisted.listAgentDefinitions.mockReset();
     hoisted.todosList.mockReset();
     hoisted.todosAdd.mockReset();
     hoisted.todosEdit.mockReset();
@@ -234,25 +228,6 @@ describe('IntelligenceTasksTab', () => {
     // by default — otherwise the awaited `.catch()` chain stalls the handler
     // before it reaches chatSend.
     hoisted.todosSetSessionThread.mockResolvedValue(makeBoard('user-tasks', []));
-    hoisted.listAgentDefinitions.mockResolvedValue([
-      {
-        id: 'researcher',
-        display_name: 'Researcher',
-        when_to_use: 'Use for focused research.',
-        tier: 'worker',
-        model: { kind: 'hint', value: 'reasoning' },
-        direct_tool_count: 1,
-        direct_tool_names: ['web_search'],
-        uses_wildcard_tools: false,
-        subagent_ids: [],
-        includes_profile: false,
-        includes_memory_md: false,
-        includes_memory_context: false,
-        can_run_as_user_facing_worker: true,
-        write_capable: false,
-        source: 'builtin',
-      },
-    ]);
     hoisted.todosList.mockImplementation((threadId: string) =>
       Promise.resolve(makeBoard(threadId, []))
     );
@@ -276,12 +251,13 @@ describe('IntelligenceTasksTab', () => {
     });
   });
 
-  test('always shows the personal board with an empty-state CTA', async () => {
+  test('always shows the personal board (even when empty) and the new-task button', async () => {
     vi.resetModules();
     const Tab = await importTab();
     renderTab(Tab);
     await waitFor(() => {
-      expect(screen.getByText('No personal tasks yet')).toBeInTheDocument();
+      // The personal board kanban stub is always rendered — the threadId is displayed
+      expect(screen.getByText('user-tasks')).toBeInTheDocument();
     });
     expect(screen.getByText('Agent Tasks')).toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: /New task/ }).length).toBeGreaterThan(0);
@@ -595,44 +571,6 @@ describe('IntelligenceTasksTab', () => {
           locale: 'en',
         })
       )
-    );
-  });
-
-  test('starts a labeled task thread from an explicit library agent selection', async () => {
-    hoisted.todosUpdateStatus.mockResolvedValue(makeBoard('user-tasks', []));
-
-    vi.resetModules();
-    const Tab = await importTab();
-    renderTab(Tab);
-    await waitFor(() => {
-      expect(screen.getByText('Researcher')).toBeInTheDocument();
-    });
-
-    fireEvent.change(screen.getByPlaceholderText(/task for this agent/i), {
-      target: { value: 'Find the current API docs' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: /Run task/i }));
-
-    await waitFor(() =>
-      expect(hoisted.createNewThread).toHaveBeenCalledWith(['tasks', 'agent-library'])
-    );
-    expect(hoisted.appendMessage).toHaveBeenCalledWith(
-      'thread-agent-task',
-      expect.objectContaining({
-        content: expect.stringContaining('@agent:researcher'),
-        extraMetadata: expect.objectContaining({
-          source: 'agent-library',
-          explicitAgentId: 'researcher',
-        }),
-      })
-    );
-    expect(hoisted.chatSend).toHaveBeenCalledWith(
-      expect.objectContaining({
-        threadId: 'thread-agent-task',
-        message: expect.stringContaining('Find the current API docs'),
-        model: 'reasoning-v1',
-        profileId: 'agent-profile-1',
-      })
     );
   });
 

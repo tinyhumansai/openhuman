@@ -4,8 +4,11 @@
 //! - A non-negative integer: delta-seconds from now (e.g. `Retry-After: 30`)
 //! - An HTTP-date string: absolute point in time (e.g. `Retry-After: Wed, 21 Oct 2015 07:28:00 GMT`)
 //!
-//! This module prefers the delta-seconds form and falls back to exponential
-//! backoff when the header is absent or unparseable. See RFC 9110 §10.2.4.
+//! This module prefers the delta-seconds form, accepts the common HTTP-date
+//! form, and falls back to exponential backoff when the header is absent or
+//! unparseable. See RFC 9110 §10.2.4.
+
+use chrono::{DateTime, Utc};
 
 /// Maximum number of 429/503 retries before giving up.
 ///
@@ -34,10 +37,25 @@ pub const MAX_BACKOFF_MS: u64 = 30_000;
 /// Returns `None` when the header is absent, empty, or not a valid
 /// non-negative integer.
 pub fn parse_retry_after_ms(header_value: Option<&str>) -> Option<u64> {
+    parse_retry_after_ms_at(header_value, Utc::now())
+}
+
+fn parse_retry_after_ms_at(header_value: Option<&str>, now: DateTime<Utc>) -> Option<u64> {
     let s = header_value?.trim();
-    // Only accept the delta-seconds form: a non-negative integer.
-    let secs: u64 = s.parse().ok()?;
-    Some(secs.saturating_mul(1_000).min(MAX_BACKOFF_MS))
+    if s.is_empty() {
+        return None;
+    }
+    if let Ok(secs) = s.parse::<u64>() {
+        return Some(secs.saturating_mul(1_000).min(MAX_BACKOFF_MS));
+    }
+    let retry_at = DateTime::parse_from_rfc2822(s).ok()?.with_timezone(&Utc);
+    let delay = retry_at.signed_duration_since(now);
+    if delay.num_milliseconds() <= 0 {
+        return Some(0);
+    }
+    u64::try_from(delay.num_milliseconds())
+        .ok()
+        .map(|ms| ms.min(MAX_BACKOFF_MS))
 }
 
 /// Compute the delay for attempt `n` (0-indexed) with optional `Retry-After`
@@ -81,10 +99,23 @@ mod tests {
 
     #[test]
     fn returns_none_for_http_date() {
-        // HTTP-date form — not parsed; fall through to exponential backoff.
+        let now = DateTime::parse_from_rfc2822("Wed, 21 Oct 2015 07:27:55 GMT")
+            .unwrap()
+            .with_timezone(&Utc);
         assert_eq!(
-            parse_retry_after_ms(Some("Wed, 21 Oct 2015 07:28:00 GMT")),
-            None
+            parse_retry_after_ms_at(Some("Wed, 21 Oct 2015 07:28:00 GMT"), now),
+            Some(5_000)
+        );
+    }
+
+    #[test]
+    fn http_date_in_the_past_returns_zero() {
+        let now = DateTime::parse_from_rfc2822("Wed, 21 Oct 2015 07:28:05 GMT")
+            .unwrap()
+            .with_timezone(&Utc);
+        assert_eq!(
+            parse_retry_after_ms_at(Some("Wed, 21 Oct 2015 07:28:00 GMT"), now),
+            Some(0)
         );
     }
 

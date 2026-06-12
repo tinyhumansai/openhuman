@@ -12,6 +12,7 @@ const log = debug('memory-sources');
 
 export type SourceKind =
   | 'composio'
+  | 'conversation'
   | 'folder'
   | 'github_repo'
   | 'twitter_query'
@@ -206,6 +207,7 @@ export async function applyAllIn(): Promise<ApplyAllInResult> {
 /// without each call site duplicating the switch.
 export const SOURCE_KIND_LABEL_KEYS: Record<SourceKind, string> = {
   composio: 'memorySources.kind.composio',
+  conversation: 'memorySources.kind.conversation',
   folder: 'memorySources.kind.folder',
   github_repo: 'memorySources.kind.github_repo',
   twitter_query: 'memorySources.kind.twitter_query',
@@ -215,6 +217,7 @@ export const SOURCE_KIND_LABEL_KEYS: Record<SourceKind, string> = {
 
 export const SOURCE_KIND_ICONS: Record<SourceKind, string> = {
   composio: '🔗',
+  conversation: '💬',
   folder: '📁',
   github_repo: '🐙',
   twitter_query: '🐦',

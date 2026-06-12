@@ -238,6 +238,7 @@ module.exports = {
         'glow-pulse': 'glowPulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
         'float': 'float 3s ease-in-out infinite',
         'ticker': 'ticker 30s linear infinite',
+        'wiggle': 'wiggle 0.5s ease-in-out',
       },
 
       keyframes: {
@@ -276,6 +277,11 @@ module.exports = {
         ticker: {
           '0%': { transform: 'translateX(0)' },
           '100%': { transform: 'translateX(-50%)' },
+        },
+        wiggle: {
+          '0%, 100%': { transform: 'rotate(0deg)' },
+          '25%': { transform: 'rotate(-9deg)' },
+          '75%': { transform: 'rotate(9deg)' },
         },
       },
 

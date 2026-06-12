@@ -225,6 +225,55 @@ async fn connect_inner(config: &Config, server: &InstalledServer) -> anyhow::Res
     Ok(tools)
 }
 
+/// Whether `server_id` currently has a live entry in the connection
+/// registry. Note this only reflects map membership — a silently-dropped
+/// transport stays in the map until something probes it. Use
+/// [`probe_alive`] for an actual liveness check.
+pub async fn is_connected(server_id: &str) -> bool {
+    connections().read().await.contains_key(server_id)
+}
+
+/// Actively probe a connected server's transport by issuing a `tools/list`
+/// round-trip under `timeout`. Returns `true` only when the call succeeds.
+///
+/// This is the detection mechanism the reconnect supervisor (#3312) relies
+/// on: MCP transports can drop silently (subprocess exits, HTTP session
+/// expires) while their `Connection` stays in the registry, so "is it in the
+/// map" (`is_connected`) is not enough — a dead transport only surfaces on the
+/// next actual call. A periodic lightweight probe converts that latent failure
+/// into an observable one so the supervisor can disconnect + reconnect.
+///
+/// Returns `false` (rather than erroring) for a missing connection, a transport
+/// error, or a timeout — all of which mean "not usable, reconnect".
+pub async fn probe_alive(server_id: &str, timeout: std::time::Duration) -> bool {
+    tracing::trace!("[mcp-registry] probe_alive server_id={server_id} timeout={timeout:?}");
+    let conn = {
+        let map = connections().read().await;
+        map.get(server_id).cloned()
+    };
+    let Some(conn) = conn else {
+        return false;
+    };
+    match tokio::time::timeout(timeout, conn.client.list_tools()).await {
+        Ok(Ok(_)) => {
+            tracing::trace!("[mcp-registry] probe_alive server_id={server_id} alive");
+            true
+        }
+        Ok(Err(err)) => {
+            tracing::debug!(
+                "[mcp-registry] probe_alive server_id={server_id} transport error: {err}"
+            );
+            false
+        }
+        Err(_) => {
+            tracing::debug!(
+                "[mcp-registry] probe_alive server_id={server_id} timed out after {timeout:?}"
+            );
+            false
+        }
+    }
+}
+
 /// Disconnect and remove from the registry. Also clears any recorded
 /// connect error so the next status poll starts from a clean slate.
 pub async fn disconnect(server_id: &str) -> bool {

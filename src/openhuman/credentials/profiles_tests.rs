@@ -785,6 +785,123 @@ fn write_stage_exhausts_retries_on_persistent_transient() {
     );
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Disk-full auth-profile read resilience (Sentry TAURI-RUST-4SZ)
+// ─────────────────────────────────────────────────────────────────────────
+
+/// When the exclusive lock can't be created because the filesystem is full,
+/// the READ path must degrade to a lock-free read of the existing store
+/// rather than failing — otherwise `app_state_snapshot` strands the UI and
+/// floods Sentry once per poll. Writers publish atomically, so the lock-free
+/// read is consistent.
+#[tokio::test]
+async fn load_falls_back_to_lock_free_read_when_disk_full() {
+    let tmp = TempDir::new().unwrap();
+    let store = AuthProfilesStore::new(tmp.path(), true);
+
+    let profile = AuthProfile::new_token("openai-codex", "default", "tok-abc".into());
+    store.upsert_profile(profile.clone(), true).unwrap();
+
+    // Next acquire_lock simulates a StorageFull (ENOSPC) lock-create failure.
+    store.force_next_lock_unwritable();
+
+    // load() must still return the persisted profile via the read-only fallback.
+    let data = store
+        .load()
+        .expect("load must degrade to lock-free read on disk-full");
+    assert!(
+        data.profiles.contains_key(&profile.id),
+        "lock-free fallback must still surface the existing session profile"
+    );
+
+    // The flag is one-shot: the next load takes the lock normally.
+    let again = store
+        .load()
+        .expect("subsequent load takes the lock normally");
+    assert!(again.profiles.contains_key(&profile.id));
+}
+
+/// The lock-free read path must return the same resolved data as the locked
+/// path for a healthy store — it differs only in that it skips the
+/// opportunistic on-disk rewrite, never in what it returns.
+#[tokio::test]
+async fn load_unlocked_readonly_matches_locked_load() {
+    let tmp = TempDir::new().unwrap();
+    let store = AuthProfilesStore::new(tmp.path(), true);
+
+    let profile = AuthProfile::new_token("slack", "default", "tok-xyz".into());
+    store.upsert_profile(profile.clone(), true).unwrap();
+
+    let locked = store.load().unwrap();
+    let unlocked = store.load_unlocked_readonly().unwrap();
+
+    assert_eq!(
+        locked.profiles.keys().collect::<Vec<_>>(),
+        unlocked.profiles.keys().collect::<Vec<_>>(),
+        "lock-free read must resolve the same profile set as the locked load"
+    );
+    assert_eq!(locked.active_profiles, unlocked.active_profiles);
+}
+
+/// Polarity guard for the read-path fallback predicate: only genuine
+/// filesystem-unwritable conditions (disk full / read-only mount) degrade the
+/// read; lock contention and unrelated errors must still propagate.
+#[test]
+fn is_lock_create_unwritable_fs_polarity() {
+    let storage_full = annotate_lock_create_failure(
+        anyhow::Error::new(std::io::Error::from(std::io::ErrorKind::StorageFull))
+            .context("open lock file"),
+    );
+    assert!(is_lock_create_unwritable_fs(&storage_full));
+
+    let read_only = annotate_lock_create_failure(
+        anyhow::Error::new(std::io::Error::from(std::io::ErrorKind::ReadOnlyFilesystem))
+            .context("open lock file"),
+    );
+    assert!(is_lock_create_unwritable_fs(&read_only));
+
+    // Lock contention / timeout — must NOT degrade the read.
+    let timeout = anyhow::anyhow!("Timed out waiting for auth profile lock");
+    assert!(!is_lock_create_unwritable_fs(&timeout));
+
+    // A different FS error (permissions) is a real problem — keep it visible.
+    let perm = annotate_lock_create_failure(
+        anyhow::Error::new(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+            .context("open lock file"),
+    );
+    assert!(!is_lock_create_unwritable_fs(&perm));
+}
+
+/// Drift guard coupling the Sentry `DiskFull` classifier to the ACTUAL
+/// producer output. `annotate_lock_create_failure` embeds the `io::ErrorKind`
+/// debug name (`StorageFull`) instead of the io Display, and at the RPC
+/// boundary the error is flattened single-line (`{}`), so the inner "no space
+/// left on device" text never reaches the classifier. This asserts the
+/// rendered producer string both (a) lacks that legacy anchor and (b) still
+/// classifies as DiskFull — so a future format!() / std rename fails CI here
+/// instead of silently re-leaking the flood.
+#[test]
+fn disk_full_lock_failure_string_classifies_as_disk_full() {
+    use crate::core::observability::{expected_error_kind, ExpectedErrorKind};
+
+    let err = annotate_lock_create_failure(
+        anyhow::Error::new(std::io::Error::from(std::io::ErrorKind::StorageFull))
+            .context("open lock file"),
+    );
+    // The single-line Display form is what production flattens to.
+    let rendered = format!("{err}");
+
+    assert!(
+        !rendered.to_lowercase().contains("no space left on device"),
+        "outer-only render must NOT carry the legacy anchor (that's the whole bug): {rendered}"
+    );
+    assert_eq!(
+        expected_error_kind(&rendered),
+        Some(ExpectedErrorKind::DiskFull),
+        "producer output must classify as DiskFull via the StorageFull anchor: {rendered}"
+    );
+}
+
 #[test]
 fn rename_stage_retries_one_shot_transient() {
     let tmp = TempDir::new().unwrap();

@@ -163,3 +163,20 @@ export function deriveComposioState(
   if (status === 'FAILED' || status === 'ERROR') return 'error';
   return 'disconnected';
 }
+
+export interface ComposioConnectionsState {
+  primary: ComposioConnectionState;
+  count: number;
+}
+
+/**
+ * Derive composite state from multiple connections for a toolkit.
+ * Uses the first connection's state as primary (caller must ensure
+ * connections are sorted by priority/age), and reports the total count.
+ */
+export function deriveComposioStates(
+  connections: ComposioConnection[] | undefined
+): ComposioConnectionsState {
+  if (!connections || connections.length === 0) return { primary: 'disconnected', count: 0 };
+  return { primary: deriveComposioState(connections[0]), count: connections.length };
+}
