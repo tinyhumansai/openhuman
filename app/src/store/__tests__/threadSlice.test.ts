@@ -10,9 +10,11 @@ import threadReducer, {
   clearAllThreads,
   clearSelectedThread,
   clearStaleThread,
+  clearThreadInferenceActive,
   generateThreadTitleIfNeeded,
   loadThreadMessages,
   loadThreads,
+  markThreadInferenceActive,
   setActiveThread,
   setSelectedThread,
   setWelcomeThreadId,
@@ -77,7 +79,7 @@ describe('threadSlice synchronous reducers', () => {
     const state = store.getState().thread;
     expect(state.threads).toEqual([]);
     expect(state.selectedThreadId).toBeNull();
-    expect(state.activeThreadId).toBeNull();
+    expect(state.activeThreadIds).toEqual({});
     expect(state.messagesByThreadId).toEqual({});
     expect(state.messages).toEqual([]);
     expect(state.isLoadingThreads).toBe(false);
@@ -133,12 +135,22 @@ describe('threadSlice synchronous reducers', () => {
     expect(state.messagesByThreadId['t-1']).toHaveLength(1);
   });
 
-  it('setActiveThread only touches the active id', () => {
+  it('setActiveThread marks a thread active; null clears the whole set', () => {
     const store = createStore();
     store.dispatch(setActiveThread('t-active'));
-    expect(store.getState().thread.activeThreadId).toBe('t-active');
+    expect(store.getState().thread.activeThreadIds).toEqual({ 't-active': true });
     store.dispatch(setActiveThread(null));
-    expect(store.getState().thread.activeThreadId).toBeNull();
+    expect(store.getState().thread.activeThreadIds).toEqual({});
+  });
+
+  it('tracks multiple concurrently-active threads independently', () => {
+    const store = createStore();
+    store.dispatch(markThreadInferenceActive('t-1'));
+    store.dispatch(markThreadInferenceActive('t-2'));
+    expect(store.getState().thread.activeThreadIds).toEqual({ 't-1': true, 't-2': true });
+    // Clearing one leaves the other running — the core of parallel inference.
+    store.dispatch(clearThreadInferenceActive('t-1'));
+    expect(store.getState().thread.activeThreadIds).toEqual({ 't-2': true });
   });
 
   it('clearAllThreads wipes threads, messages, and selection', async () => {
@@ -161,7 +173,7 @@ describe('threadSlice synchronous reducers', () => {
     expect(state.threads).toEqual([]);
     expect(state.messagesByThreadId).toEqual({});
     expect(state.selectedThreadId).toBeNull();
-    expect(state.activeThreadId).toBeNull();
+    expect(state.activeThreadIds).toEqual({});
     expect(state.messages).toEqual([]);
   });
 
@@ -186,7 +198,7 @@ describe('threadSlice synchronous reducers', () => {
     expect(state.threads.map(thread => thread.id)).toEqual(['t-2']);
     expect(state.messagesByThreadId['t-1']).toBeUndefined();
     expect(state.selectedThreadId).toBeNull();
-    expect(state.activeThreadId).toBeNull();
+    expect(state.activeThreadIds).toEqual({});
     expect(state.messages).toEqual([]);
   });
 });
@@ -352,7 +364,7 @@ describe('threadSlice addMessageLocal thunk', () => {
     expect(mockedThreadApi.generateTitleIfNeeded).not.toHaveBeenCalled();
     expect(mockedThreadApi.getThreads).toHaveBeenCalledTimes(2);
     expect(store.getState().thread.selectedThreadId).toBeNull();
-    expect(store.getState().thread.activeThreadId).toBeNull();
+    expect(store.getState().thread.activeThreadIds).toEqual({});
   });
 });
 
@@ -361,7 +373,7 @@ describe('threadSlice addInferenceResponse thunk', () => {
     vi.clearAllMocks();
   });
 
-  it('appends to the supplied thread even when activeThreadId is null', async () => {
+  it('appends to the supplied thread regardless of active/selected state', async () => {
     const store = createStore();
     const persisted = makeMessage({ id: 'srv-1', sender: 'agent', content: 'ack' });
     mockedThreadApi.appendMessage.mockResolvedValueOnce(persisted);
@@ -371,25 +383,26 @@ describe('threadSlice addInferenceResponse thunk', () => {
     expect(result.type).toBe('thread/addInferenceResponse/fulfilled');
     const state = store.getState().thread;
     expect(state.messagesByThreadId['t-1']).toEqual([persisted]);
-    // activeThreadId must not be mutated by this thunk — only ChatRuntimeProvider clears it.
-    expect(state.activeThreadId).toBeNull();
+    // Active markers must not be mutated by this thunk — only ChatRuntimeProvider clears them.
+    expect(state.activeThreadIds).toEqual({});
   });
 
-  it('falls back to activeThreadId when no threadId is supplied', async () => {
+  it('falls back to the selected thread when no threadId is supplied', async () => {
+    // Under parallel inference there is no single "active" thread to fall back
+    // to, so the legacy fallback target is now the selected thread.
     const store = createStore();
-    store.dispatch(setActiveThread('t-active'));
+    store.dispatch(setSelectedThread('t-selected'));
     mockedThreadApi.appendMessage.mockResolvedValueOnce(makeMessage({ sender: 'agent' }));
 
     await store.dispatch(addInferenceResponse({ content: 'ack' }));
     expect(mockedThreadApi.appendMessage).toHaveBeenCalledWith(
-      't-active',
+      't-selected',
       expect.objectContaining({ sender: 'agent', content: 'ack' })
     );
-    // activeThreadId must not be cleared by this thunk — ChatRuntimeProvider owns that.
-    expect(store.getState().thread.activeThreadId).toBe('t-active');
+    expect(store.getState().thread.selectedThreadId).toBe('t-selected');
   });
 
-  it('rejects cleanly when neither threadId nor activeThreadId is set', async () => {
+  it('rejects cleanly when neither threadId nor a selected thread is set', async () => {
     const store = createStore();
     const result = await store.dispatch(addInferenceResponse({ content: 'ack' }));
     expect(result.type).toBe('thread/addInferenceResponse/rejected');
@@ -398,7 +411,8 @@ describe('threadSlice addInferenceResponse thunk', () => {
 
   it('clears stale active thread when assistant append returns ThreadNotFound', async () => {
     const store = createStore();
-    store.dispatch(setActiveThread('t-active'));
+    store.dispatch(setSelectedThread('t-active'));
+    store.dispatch(markThreadInferenceActive('t-active'));
     mockedThreadApi.appendMessage.mockRejectedValueOnce(
       new CoreRpcError('thread t-active not found', 'thread_not_found', undefined, {
         kind: 'ThreadNotFound',
@@ -412,7 +426,7 @@ describe('threadSlice addInferenceResponse thunk', () => {
     expect(result.type).toBe('thread/addInferenceResponse/rejected');
     expect(result.payload).toBe(THREAD_NOT_FOUND_MESSAGE);
     expect(mockedThreadApi.appendMessage).toHaveBeenCalledTimes(1);
-    expect(store.getState().thread.activeThreadId).toBeNull();
+    expect(store.getState().thread.activeThreadIds).toEqual({});
   });
 });
 

@@ -12,7 +12,15 @@ interface ThreadState {
   threads: Thread[];
   selectedThreadId: string | null;
   threadSidebarVisible: boolean;
-  activeThreadId: string | null;
+  /**
+   * Set of threads that currently have an in-flight inference turn, keyed by
+   * thread id. Replaces the legacy single `activeThreadId` so that turns on
+   * different threads can run concurrently — each thread tracks its own
+   * in-flight state and the composer is gated per-thread (see
+   * `isComposerInteractionBlocked`) rather than globally. Stored as a plain
+   * object (not a `Set`) to stay redux-persist serializable.
+   */
+  activeThreadIds: Record<string, true>;
   /**
    * @deprecated — welcome-agent replaced by Joyride walkthrough. Always null
    * for new users; retained for redux-persist deserialization compatibility.
@@ -29,7 +37,7 @@ const initialState: ThreadState = {
   threads: [],
   selectedThreadId: null,
   threadSidebarVisible: false,
-  activeThreadId: null,
+  activeThreadIds: {},
   welcomeThreadId: null,
   messagesByThreadId: {},
   messages: [],
@@ -189,7 +197,11 @@ export const addInferenceResponse = createAsyncThunk(
     { dispatch, getState, rejectWithValue }
   ) => {
     const state = getState() as { thread: ThreadState };
-    const targetThreadId = payload.threadId ?? state.thread.activeThreadId;
+    // All real callers pass an explicit `threadId` (the event's `thread_id`).
+    // The fallback to the selected thread is a last-resort for legacy callers
+    // that omit it; under parallel inference there is no single "active" thread
+    // to fall back to, so we cannot use `activeThreadIds` here.
+    const targetThreadId = payload.threadId ?? state.thread.selectedThreadId;
     if (!targetThreadId) return rejectWithValue('No target thread');
 
     const message: ThreadMessage = {
@@ -336,8 +348,27 @@ const threadSlice = createSlice({
       state.messages = [];
       state.messagesError = null;
     },
+    /**
+     * Back-compat shim retained for existing call sites:
+     *  - `setActiveThread(threadId)` marks that thread's inference turn active.
+     *  - `setActiveThread(null)` clears ALL in-flight markers (legacy global
+     *    clear). Prefer `clearThreadInferenceActive(threadId)` when the
+     *    finishing thread is known so unrelated concurrent turns are untouched.
+     */
     setActiveThread: (state, action: { payload: string | null }) => {
-      state.activeThreadId = action.payload;
+      if (action.payload === null) {
+        state.activeThreadIds = {};
+      } else {
+        state.activeThreadIds[action.payload] = true;
+      }
+    },
+    /** Mark a single thread as having an in-flight inference turn. */
+    markThreadInferenceActive: (state, action: PayloadAction<string>) => {
+      state.activeThreadIds[action.payload] = true;
+    },
+    /** Clear the in-flight marker for a single thread (on done/error/timeout). */
+    clearThreadInferenceActive: (state, action: PayloadAction<string>) => {
+      delete state.activeThreadIds[action.payload];
     },
     setThreadSidebarVisible: (state, action: PayloadAction<boolean>) => {
       state.threadSidebarVisible = action.payload;
@@ -351,9 +382,7 @@ const threadSlice = createSlice({
         state.messages = [];
         state.messagesError = null;
       }
-      if (state.activeThreadId === threadId) {
-        state.activeThreadId = null;
-      }
+      delete state.activeThreadIds[threadId];
       if (state.welcomeThreadId === threadId) {
         state.welcomeThreadId = null;
       }
@@ -363,7 +392,7 @@ const threadSlice = createSlice({
       state.messagesByThreadId = {};
       state.selectedThreadId = null;
       state.messages = [];
-      state.activeThreadId = null;
+      state.activeThreadIds = {};
       state.welcomeThreadId = null;
     },
     // Like `clearAllThreads` but keeps `selectedThreadId`. Used on the
@@ -376,7 +405,7 @@ const threadSlice = createSlice({
       state.threads = [];
       state.messagesByThreadId = {};
       state.messages = [];
-      state.activeThreadId = null;
+      state.activeThreadIds = {};
       state.welcomeThreadId = null;
     },
     // [#1123] True no-op — welcome-agent onboarding replaced by Joyride walkthrough.
@@ -400,8 +429,10 @@ const threadSlice = createSlice({
           state.messages = [];
           state.messagesError = null;
         }
-        if (state.activeThreadId && !liveThreadIds.has(state.activeThreadId)) {
-          state.activeThreadId = null;
+        for (const activeId of Object.keys(state.activeThreadIds)) {
+          if (!liveThreadIds.has(activeId)) {
+            delete state.activeThreadIds[activeId];
+          }
         }
       })
       .addCase(loadThreads.rejected, state => {
@@ -464,6 +495,8 @@ export const {
   setSelectedThread,
   clearSelectedThread,
   setActiveThread,
+  markThreadInferenceActive,
+  clearThreadInferenceActive,
   setThreadSidebarVisible,
   clearStaleThread,
   clearAllThreads,
