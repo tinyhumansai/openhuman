@@ -2427,8 +2427,7 @@ pub async fn webview_account_open<R: Runtime>(
         .map_err(|e| format!("add_child failed: {e}"))?;
 
     // Install the in-process CDP transport so the per-account session
-    // opener and the provider scanners can attach without the
-    // `--remote-debugging-port=19222` TCP listener. Failure here is
+    // opener and the provider scanners can attach. Failure here is
     // logged but not fatal — the scanners retry through
     // `cdp::conn_for_account` once the registry is populated, so a
     // transient install error just delays first attach by one backoff
