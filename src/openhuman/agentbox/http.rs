@@ -10,7 +10,6 @@ use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde_json::json;
-use std::sync::Arc;
 use std::time::Duration;
 
 use super::invoker::SharedInvoker;
@@ -33,15 +32,15 @@ pub fn router(store: JobStore, invoker: SharedInvoker, job_timeout: Duration) ->
     Router::new()
         .route("/run", post(post_run))
         .route("/jobs/{job_id}", get(get_job))
-        .with_state(Arc::new(HttpState {
+        .with_state(HttpState {
             store,
             invoker,
             job_timeout,
-        }))
+        })
 }
 
 async fn post_run(
-    State(state): State<Arc<HttpState>>,
+    State(state): State<HttpState>,
     body: Result<Json<RunRequest>, axum::extract::rejection::JsonRejection>,
 ) -> impl IntoResponse {
     let Json(req) = match body {
@@ -74,7 +73,7 @@ async fn post_run(
 }
 
 async fn get_job(
-    State(_state): State<Arc<HttpState>>,
+    State(_state): State<HttpState>,
     axum::extract::Path(_job_id): axum::extract::Path<String>,
 ) -> impl IntoResponse {
     // Implemented in Task 6.
