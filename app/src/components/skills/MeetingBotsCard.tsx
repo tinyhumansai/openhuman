@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { type MascotFace, RiveMascot } from '../../features/human/Mascot';
 import { useT } from '../../lib/i18n/I18nContext';
@@ -36,14 +36,39 @@ interface Props {
   onToast?: (toast: Toast) => void;
 }
 
+interface MeetingBotsInlineProps extends Props {
+  hasSubmittedRef: RefObject<boolean>;
+}
+
 export default function MeetingBotsCard({ onToast }: Props) {
+  const { t } = useT();
   const status = useAppSelector(selectBackendMeetStatus);
   const showActive = status === 'active';
+
+  // `hasSubmittedRef` lives in this always-mounted parent so the success toast
+  // fires reliably. When a join succeeds, `status` flips to 'active' and this
+  // component swaps `MeetingBotsInline` → `ActiveMeetingView`, unmounting the
+  // inline form before any effect inside it could observe 'active' (#3611
+  // flattened these into a mutually-exclusive ternary). The inline form sets
+  // this ref on submit; we fire the success toast here. The error path stays in
+  // the inline form, which remains mounted during the 'error' state.
+  const hasSubmittedRef = useRef(false);
+  useEffect(() => {
+    if (!hasSubmittedRef.current) return;
+    if (status === 'active') {
+      hasSubmittedRef.current = false;
+      onToast?.({
+        type: 'success',
+        title: t('skills.meetingBots.joiningTitle'),
+        message: t('skills.meetingBots.joiningMessage'),
+      });
+    }
+  }, [status, onToast, t]);
 
   return showActive ? (
     <ActiveMeetingView onToast={onToast} />
   ) : (
-    <MeetingBotsInline onToast={onToast} />
+    <MeetingBotsInline onToast={onToast} hasSubmittedRef={hasSubmittedRef} />
   );
 }
 
@@ -173,7 +198,7 @@ function ActiveMeetingView({ onToast }: Props) {
   );
 }
 
-function MeetingBotsInline({ onToast }: Props) {
+function MeetingBotsInline({ onToast, hasSubmittedRef }: MeetingBotsInlineProps) {
   const { t } = useT();
   const dispatch = useAppDispatch();
   const [meetUrl, setMeetUrl] = useState('');
@@ -188,7 +213,6 @@ function MeetingBotsInline({ onToast }: Props) {
   const [error, setError] = useState<string | null>(null);
   const meetStatus = useAppSelector(selectBackendMeetStatus);
   const meetError = useAppSelector(selectBackendMeetError);
-  const hasSubmittedRef = useRef(false);
   const [recentCalls, setRecentCalls] = useState<MeetCallRecord[] | null>(null);
   const [recentError, setRecentError] = useState<string | null>(null);
 
@@ -218,18 +242,12 @@ function MeetingBotsInline({ onToast }: Props) {
       ? { primaryColor: customPrimaryColor, secondaryColor: customSecondaryColor }
       : undefined;
 
+  // Success ('active') is handled by the parent MeetingBotsCard, which stays
+  // mounted across the inline→active view swap. The error path lives here
+  // because the inline form remains mounted during the 'error' state and needs
+  // to surface the failure inline (setError/setSubmitting) alongside the toast.
   useEffect(() => {
     if (!hasSubmittedRef.current) return;
-    if (meetStatus === 'active') {
-      hasSubmittedRef.current = false;
-      onToast?.({
-        type: 'success',
-        title: t('skills.meetingBots.joiningTitle'),
-        message: t('skills.meetingBots.joiningMessage'),
-      });
-      setMeetUrl('');
-      return;
-    }
     if (meetStatus === 'error') {
       hasSubmittedRef.current = false;
       const message = meetError?.trim() || t('skills.meetingBots.failedToStart');
@@ -237,7 +255,7 @@ function MeetingBotsInline({ onToast }: Props) {
       setSubmitting(false);
       onToast?.({ type: 'error', title: t('skills.meetingBots.couldNotStartTitle'), message });
     }
-  }, [meetStatus, meetError, onToast, t]);
+  }, [meetStatus, meetError, onToast, t, hasSubmittedRef]);
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();

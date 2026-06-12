@@ -16,6 +16,13 @@ export interface ChatComposerProps {
   fileInputRef: React.RefObject<HTMLInputElement | null>;
   composerInteractionBlocked: boolean;
   isSending: boolean;
+  /**
+   * When true, the selected thread has an in-flight turn but the user may still
+   * type and send a PARALLEL branch (Cmd/Ctrl+Enter). Keeps the textarea
+   * editable even though `composerInteractionBlocked` is set, and surfaces a
+   * hint. The normal Send button / plain Enter stay gated.
+   */
+  allowParallelSend?: boolean;
   attachments: Attachment[];
   onAttachFiles: (files: FileList | null) => Promise<void>;
   onRemoveAttachment: (id: string) => void;
@@ -46,6 +53,7 @@ export default function ChatComposer({
   fileInputRef,
   composerInteractionBlocked,
   isSending,
+  allowParallelSend = false,
   attachments,
   onAttachFiles,
   onRemoveAttachment,
@@ -61,6 +69,9 @@ export default function ChatComposer({
   const { t } = useT();
 
   const hasContent = inputValue.trim().length > 0 || attachments.length > 0 || isSending;
+  // The textarea stays editable when a parallel branch is allowed even though
+  // the primary composer interaction is blocked by an in-flight turn.
+  const textareaDisabled = (composerInteractionBlocked && !allowParallelSend) || isSending;
 
   // Auto-resize textarea: grow with content, cap at COMPOSER_MAX_HEIGHT, then scroll.
   useEffect(() => {
@@ -150,9 +161,9 @@ export default function ChatComposer({
               isComposingTextRef.current = false;
             }}
             onKeyDown={handleInputKeyDown}
-            placeholder={t('chat.typeMessage')}
+            placeholder={allowParallelSend ? t('chat.parallelBranchHint') : t('chat.typeMessage')}
             rows={1}
-            disabled={composerInteractionBlocked || isSending}
+            disabled={textareaDisabled}
             className="relative z-10 w-full resize-none border-0 bg-transparent py-0.5 px-0.5 text-sm leading-5 whitespace-pre-wrap break-words font-sans text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0 overflow-hidden disabled:opacity-50 disabled:cursor-not-allowed"
           />
         </div>
