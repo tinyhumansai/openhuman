@@ -179,12 +179,35 @@ pub async fn inference_test_provider_model(
             output_len = outcome.value.reply.len(),
             "{LOG_PREFIX} test_provider_model:ok"
         ),
-        Err(err) => error!(
-            workload,
-            provider,
-            error = %err,
-            "{LOG_PREFIX} test_provider_model:error"
-        ),
+        Err(err) => {
+            // The "Test model" diagnostic probes an arbitrary user-supplied
+            // provider/model, so a config-rejection (unknown model, bad key,
+            // region/subscription gate, …) is user-state — already returned to
+            // the UI as `Err`. Logging it at `error!` would fire a Sentry event
+            // directly via `sentry_tracing_layer` (Level::ERROR -> Event),
+            // bypassing the JSON-RPC `report_error_or_expected` classifier and
+            // flooding Sentry (TAURI-RUST-4M6, ~1.3k events). Route the log
+            // through the shared `expected_error_kind` classifier so the test op
+            // demotes exactly the set the rest of the app already treats as
+            // expected — no duplicated matcher list, no phrasing drift. Genuinely
+            // unexpected failures (classifier returns `None`) still escalate.
+            // Mirrors the `inference_list_models` user-config demotion above.
+            if crate::core::observability::expected_error_kind(err).is_some() {
+                warn!(
+                    workload,
+                    provider,
+                    error = %err,
+                    "{LOG_PREFIX} test_provider_model:rejected"
+                );
+            } else {
+                error!(
+                    workload,
+                    provider,
+                    error = %err,
+                    "{LOG_PREFIX} test_provider_model:error"
+                );
+            }
+        }
     }
     result
 }

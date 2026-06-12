@@ -112,6 +112,70 @@ async fn inference_test_provider_model_routes_ollama_prefix_through_provider_lay
     assert_eq!(outcome.value.reply, "OLLAMA_PROVIDER_OK");
 }
 
+/// Couples the TAURI-RUST-4M6 Sentry-noise fix to the real payload: the verbatim
+/// flood body must classify as an expected error so `inference_test_provider_model`
+/// demotes it to `warn!` instead of firing a Sentry event. If the classifier's
+/// phrase list drifts away from this shape, this test fails in CI rather than the
+/// flood silently returning.
+#[test]
+fn test_provider_model_config_rejection_classifies_for_sentry_demotion() {
+    // Exact body from TAURI-RUST-4M6 (provider=`ollama:claude-opus-4-8`).
+    let flood_body = "ollama API error (404 Not Found): {\"error\":{\"message\":\"model \
+        'claude-opus-4-8' not found\",\"type\":\"not_found_error\",\"param\":null,\"code\":null}}\n; \
+        check that your endpoint URL is correct and the model name exists on your provider";
+    assert!(
+        crate::core::observability::expected_error_kind(flood_body).is_some(),
+        "TAURI-RUST-4M6 config-rejection body must classify as expected (demote to warn!): {flood_body}"
+    );
+
+    // A genuinely unexpected failure during a test must NOT be demoted — it still
+    // carries actionable Sentry signal.
+    assert!(
+        crate::core::observability::expected_error_kind(
+            "internal invariant violated: provider factory returned a null handle"
+        )
+        .is_none(),
+        "an unexpected internal failure must remain an error! (Sentry event)"
+    );
+}
+
+/// End-to-end: an Ollama 404 `not_found_error` from the provider layer must (a)
+/// still propagate to the UI as `Err`, and (b) classify as expected so the
+/// call-site log is demoted. Couples the *provider-produced* message (not a
+/// hand-written string) to the classifier.
+#[tokio::test]
+async fn inference_test_provider_model_config_rejection_returns_err_and_classifies() {
+    let (config, _tmp) = disabled_config();
+    let app = Router::new().route(
+        "/v1/chat/completions",
+        post(|Json(_body): Json<serde_json::Value>| async move {
+            (
+                axum::http::StatusCode::NOT_FOUND,
+                Json(serde_json::json!({
+                    "error": {
+                        "message": "model 'claude-opus-4-8' not found",
+                        "type": "not_found_error",
+                        "param": serde_json::Value::Null,
+                        "code": serde_json::Value::Null,
+                    }
+                })),
+            )
+        }),
+    );
+    let base = spawn_mock(app).await;
+    let mut config = config;
+    config.local_ai.base_url = Some(base);
+
+    let err =
+        inference_test_provider_model(&config, "reasoning", "ollama:claude-opus-4-8", "Hello")
+            .await
+            .expect_err("config-rejection must propagate to the UI as Err");
+    assert!(
+        crate::core::observability::expected_error_kind(&err).is_some(),
+        "provider-produced config-rejection must classify as expected, got: {err}"
+    );
+}
+
 #[tokio::test]
 async fn inference_should_react_short_circuits_for_empty_message() {
     let (config, _tmp) = disabled_config();
