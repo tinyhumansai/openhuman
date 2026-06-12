@@ -26,6 +26,7 @@ import {
 import SkillSearchBar from '../components/skills/SkillSearchBar';
 import SkillsExplorerTab from '../components/skills/SkillsExplorerTab';
 import VoiceSetupModal from '../components/skills/VoiceSetupModal';
+import BetaBanner from '../components/ui/BetaBanner';
 import { useAutocompleteSkillStatus } from '../features/autocomplete/useAutocompleteSkillStatus';
 import { useScreenIntelligenceSkillStatus } from '../features/screen-intelligence/useScreenIntelligenceSkillStatus';
 import { useVoiceSkillStatus } from '../features/voice/useVoiceSkillStatus';
@@ -349,13 +350,13 @@ interface SkillItem {
  * Phase 2 rename mapping (old → new):
  *   composio  → apps
  *   channels  → messaging
- *   mcp       → tools   (meetings content folded in under Tools)
- *   skills    → explorer (kept secondary)
+ *   mcp       → mcp
+ *   skills    → skills (kept secondary)
  *
  * Back-compat: the old ?tab= values (composio, channels, mcp, meetings) are
  * normalised to the new values so existing deep links continue to work.
  */
-type ConnectionsTab = 'apps' | 'messaging' | 'tools' | 'explorer' | 'talents';
+type ConnectionsTab = 'composio' | 'channels' | 'mcp' | 'skills' | 'meetings';
 
 export default function Skills() {
   const { t } = useT();
@@ -363,30 +364,38 @@ export default function Skills() {
   const location = useLocation();
   const navigate = useNavigate();
   const isLocalSession = isLocalSessionToken(getCoreStateSnapshot().snapshot.sessionToken);
-  // Honour `?tab=<apps|messaging|tools|explorer>` so deep links land on the
+  // Honour `?tab=<apps|messaging|mcp|skills>` so deep links land on the
   // right sub-tab.  Also normalise legacy tab names from the old /skills route
   // so that e.g. `/skills?tab=composio` still works after the redirect.
-  const initialTab: ConnectionsTab = (() => {
+  const activeTab = useMemo<ConnectionsTab>(() => {
     const params = new URLSearchParams(location.search);
     const raw = params.get('tab');
     // New canonical values
     if (
-      raw === 'apps' ||
-      raw === 'messaging' ||
-      raw === 'tools' ||
-      raw === 'explorer' ||
-      raw === 'talents'
+      raw === 'composio' ||
+      raw === 'channels' ||
+      raw === 'mcp' ||
+      raw === 'skills' ||
+      raw === 'meetings'
     )
       return raw;
     // Legacy back-compat aliases
-    if (raw === 'composio') return 'apps';
-    if (raw === 'channels') return 'messaging';
-    if (raw === 'mcp') return 'tools';
-    if (raw === 'meetings') return 'talents';
-    if (raw === 'skills') return 'explorer';
-    return 'apps';
-  })();
-  const [activeTab, setActiveTab] = useState<ConnectionsTab>(initialTab);
+    if (raw === 'apps') return 'composio';
+    if (raw === 'messaging') return 'channels';
+    if (raw === 'tools') return 'mcp';
+    if (raw === 'talents') return 'meetings';
+    if (raw === 'explorer') return 'skills';
+    return 'composio';
+  }, [location.search]);
+
+  const handleTabChange = useCallback(
+    (tab: ConnectionsTab) => {
+      const params = new URLSearchParams(location.search);
+      params.set('tab', tab);
+      navigate({ pathname: location.pathname, search: `?${params.toString()}` });
+    },
+    [location.pathname, location.search, navigate]
+  );
   const dispatch = useAppDispatch();
   const [defaultChannelBusy, setDefaultChannelBusy] = useState<ChannelType | null>(null);
   const handleSetDefaultChannel = useCallback(
@@ -815,18 +824,18 @@ export default function Skills() {
 
             <PillTabBar<ConnectionsTab>
               selected={activeTab}
-              onChange={setActiveTab}
+              onChange={handleTabChange}
               items={[
-                { value: 'apps', label: t('connections.tabs.apps') },
-                { value: 'messaging', label: t('connections.tabs.messaging') },
-                { value: 'tools', label: t('connections.tabs.tools') },
-                { value: 'explorer', label: t('connections.tabs.explorer') },
-                { value: 'talents', label: t('connections.tabs.talents') },
+                { value: 'composio', label: t('connections.tabs.composio') },
+                { value: 'channels', label: t('connections.tabs.channels') },
+                { value: 'mcp', label: t('connections.tabs.mcp') },
+                { value: 'skills', label: t('connections.tabs.skills') },
+                { value: 'meetings', label: t('connections.tabs.meetings') },
               ]}
             />
             {
               <>
-                {activeTab === 'messaging' && channelsGroup && (
+                {activeTab === 'channels' && channelsGroup && (
                   <div className="rounded-2xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-3 shadow-soft animate-fade-up">
                     <div className="px-1 pb-3 pt-1">
                       <h2
@@ -888,7 +897,7 @@ export default function Skills() {
                   </div>
                 )}
 
-                {activeTab === 'apps' && (
+                {activeTab === 'composio' && (
                   <div className="rounded-2xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-3 shadow-soft animate-fade-up">
                     <div className="px-1 pb-3 pt-1">
                       <div className="flex items-center gap-2">
@@ -964,20 +973,27 @@ export default function Skills() {
                   </div>
                 )}
 
-                {activeTab === 'apps' && otherGroups.map(group => renderGroup(group))}
+                {activeTab === 'composio' && otherGroups.map(group => renderGroup(group))}
 
-                {activeTab === 'explorer' && <SkillsExplorerTab onToast={addToast} />}
-
-                {activeTab === 'tools' && (
-                  <div className="space-y-4 animate-fade-up">
-                    {/* MCP Servers */}
-                    <McpServersTab />
+                {activeTab === 'skills' && (
+                  <div className="space-y-3 animate-fade-up">
+                    <BetaBanner />
+                    <SkillsExplorerTab onToast={addToast} />
                   </div>
                 )}
 
-                {activeTab === 'talents' && (
-                  <div className="space-y-4 animate-fade-up">
-                    {/* Meeting bots live under Talents (moved out of Tools) */}
+                {activeTab === 'mcp' && (
+                  <div className="space-y-3 animate-fade-up">
+                    <BetaBanner />
+                    <div className="rounded-2xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 shadow-soft">
+                      <McpServersTab />
+                    </div>
+                  </div>
+                )}
+
+                {activeTab === 'meetings' && (
+                  <div className="space-y-3 animate-fade-up">
+                    <BetaBanner />
                     <MeetingBotsCard onToast={addToast} />
                   </div>
                 )}

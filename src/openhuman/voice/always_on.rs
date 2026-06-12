@@ -248,12 +248,27 @@ pub async fn start_if_enabled(app_config: &Config) {
     // Privacy hook: pause capture while the screen is locked.
     spawn_lock_watcher();
 
+    let onset_threshold = vad.onset_threshold;
     tokio::spawn(async move {
         let mut seg = VadSegmenter::new(vad);
         let mut pending: Vec<f32> = Vec::new();
         let mut utterance: Vec<f32> = Vec::new();
+        // Test-build diagnostics: confirm audio actually flows from the mic and
+        // surface live input levels vs the onset threshold (every ~5s) so the VAD
+        // can be tuned per mic/room without guessing. Levels are loudness, not PII.
+        let mut first_chunk_logged = false;
+        let mut level_peak: f32 = 0.0;
+        let mut level_frames: u32 = 0;
+        let mut last_level_log = std::time::Instant::now();
 
         while let Some(chunk) = rx.recv().await {
+            if !first_chunk_logged {
+                first_chunk_logged = true;
+                log::info!(
+                    "{LOG_PREFIX} first audio chunk received from mic (samples={}) — capture pipeline live",
+                    chunk.len()
+                );
+            }
             // Drop audio and abandon any in-flight utterance while paused
             // (screen locked) or toggled off — nothing is captured or sent.
             if PAUSED.load(Ordering::Relaxed) || !ENABLED.load(Ordering::Relaxed) {
@@ -268,8 +283,26 @@ pub async fn start_if_enabled(app_config: &Config) {
             while pending.len() >= FRAME_SAMPLES {
                 let frame: Vec<f32> = pending.drain(..FRAME_SAMPLES).collect();
                 let rms = chunk_rms(&frame);
+                level_peak = level_peak.max(rms);
+                level_frames += 1;
+                if last_level_log.elapsed() >= std::time::Duration::from_secs(5) {
+                    log::info!(
+                        "{LOG_PREFIX} mic level peak_rms={level_peak:.4} onset={onset_threshold:.4} frames={level_frames} ({})",
+                        if level_peak >= onset_threshold {
+                            "speech would trigger"
+                        } else {
+                            "below onset — lower vad_onset_threshold or check mic gain"
+                        }
+                    );
+                    level_peak = 0.0;
+                    level_frames = 0;
+                    last_level_log = std::time::Instant::now();
+                }
                 match seg.push_frame(rms, FRAME_MS) {
                     Some(VadEvent::SpeechStart) => {
+                        log::info!(
+                            "{LOG_PREFIX} speech onset rms={rms:.4} (onset={onset_threshold:.4})"
+                        );
                         utterance.clear();
                         utterance.extend_from_slice(&frame);
                         notch_status("Listening", 2500); // pill: capturing speech
@@ -328,6 +361,7 @@ fn notch_status(status: &str, ttl_ms: u32) {
 /// hotkey dictation uses.
 async fn transcribe_and_deliver(config: &Config, samples_16k: Vec<f32>) {
     use base64::Engine as _;
+    let sample_count = samples_16k.len();
     let wav = match encode_wav_16k(&samples_16k) {
         Ok(w) => w,
         Err(e) => {
@@ -340,6 +374,12 @@ async fn transcribe_and_deliver(config: &Config, samples_16k: Vec<f32>) {
     // honors the user's choice instead of forcing local whisper.
     let provider_name = crate::openhuman::voice::effective_stt_provider(config);
     let model = crate::openhuman::voice::DEFAULT_WHISPER_MODEL.to_string();
+    // Which STT backend is doing the work matters when diagnosing slow/failed
+    // transcription across machines (local whisper download state vs cloud).
+    log::info!(
+        "{LOG_PREFIX} transcribing utterance: provider={provider_name} model={model} samples={sample_count} wav_bytes={}",
+        wav.len()
+    );
     let provider =
         match crate::openhuman::voice::create_stt_provider(&provider_name, &model, config) {
             Ok(p) => p,
@@ -349,6 +389,7 @@ async fn transcribe_and_deliver(config: &Config, samples_16k: Vec<f32>) {
             }
         };
     let audio_b64 = base64::engine::general_purpose::STANDARD.encode(&wav);
+    let stt_started = std::time::Instant::now();
     // Force English transcription. Auto-detect was rendering the English wake
     // word "Hey Tiny" in Hindi/Bengali/etc. script ("हे टाइनी"), which could never
     // match the Latin wake word. The wake word + commands here are English.
@@ -364,8 +405,13 @@ async fn transcribe_and_deliver(config: &Config, samples_16k: Vec<f32>) {
     {
         Ok(outcome) => {
             let text = outcome.value.text.trim().to_string();
+            log::info!(
+                "{LOG_PREFIX} transcription ok in {}ms (provider={provider_name}, chars={})",
+                stt_started.elapsed().as_millis(),
+                text.len()
+            );
             if text.is_empty() {
-                log::debug!("{LOG_PREFIX} empty transcript dropped");
+                log::info!("{LOG_PREFIX} empty transcript dropped");
                 return;
             }
             // Wake-word gate: only act on utterances addressed to the agent
@@ -387,7 +433,10 @@ async fn transcribe_and_deliver(config: &Config, samples_16k: Vec<f32>) {
                 }
             }
         }
-        Err(e) => log::warn!("{LOG_PREFIX} transcription failed ({provider_name}): {e}"),
+        Err(e) => log::warn!(
+            "{LOG_PREFIX} transcription failed ({provider_name}) after {}ms: {e}",
+            stt_started.elapsed().as_millis()
+        ),
     }
 }
 
@@ -613,14 +662,24 @@ fn capture_on_thread(
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
     use cpal::{SampleFormat, StreamConfig};
 
-    if matches!(detect_microphone_permission(), PermissionState::Denied) {
+    // Surface the mic permission state explicitly — a denied/Unknown state is the
+    // most common reason always-on "does nothing" and it differs per OS (macOS TCC
+    // prompt, Windows privacy settings), so log it on every test build.
+    let permission = detect_microphone_permission();
+    log::info!("{LOG_PREFIX} microphone permission: {permission:?}");
+    if matches!(permission, PermissionState::Denied) {
+        log::error!("{LOG_PREFIX} microphone permission denied — always-on cannot capture audio");
         return Err("microphone permission denied".to_string());
     }
 
     let host = cpal::default_host();
+    log::info!("{LOG_PREFIX} audio host: {:?}", host.id());
     let device = host
         .default_input_device()
         .ok_or_else(|| "no default audio input device".to_string())?;
+    let device_name = device
+        .name()
+        .unwrap_or_else(|e| format!("<unknown: {e}>"));
     let supported = device
         .default_input_config()
         .map_err(|e| format!("no default input config: {e}"))?;
@@ -628,8 +687,11 @@ fn capture_on_thread(
     let channels = supported.channels() as usize;
     let sample_format = supported.sample_format();
     let stream_config: StreamConfig = supported.into();
+    // Name + source rate/channels/format vary across M-chip, Intel, and Windows
+    // mics; capturing them makes a "wrong device" or "unsupported format" failure
+    // obvious from the log alone. We resample everything to 16 kHz mono downstream.
     log::info!(
-        "{LOG_PREFIX} capture device ready rate={source_rate} channels={channels} format={sample_format:?}"
+        "{LOG_PREFIX} capture device ready name='{device_name}' rate={source_rate}->{TARGET_SAMPLE_RATE} channels={channels} format={sample_format:?}"
     );
 
     // Forward one resampled-to-16k mono chunk per callback.
@@ -704,7 +766,7 @@ fn spawn_lock_watcher() {
     });
     #[cfg(not(target_os = "macos"))]
     {
-        log::debug!("{LOG_PREFIX} screen-lock watcher unavailable on this platform");
+        log::info!("{LOG_PREFIX} screen-lock watcher unavailable on this platform");
     }
 }
 

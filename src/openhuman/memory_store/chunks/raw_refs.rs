@@ -80,6 +80,49 @@ pub fn get_chunk_raw_refs(config: &Config, chunk_id: &str) -> Result<Option<Vec<
     })
 }
 
+/// Collect every raw-archive path referenced by ANY chunk row whose
+/// `raw_refs_json` is set, restricted to paths under `rel_prefix` (e.g.
+/// `"raw/gmail-acct/"`). Rust-side prefix filter so `_` / `%` in slugs
+/// are treated literally.
+///
+/// Used by the raw-coverage reconcile: a raw file referenced by a
+/// persisted chunk is already ingested through the chunk pipeline and
+/// must not be re-summarised by the rebuild path.
+pub fn list_chunk_raw_ref_paths_with_prefix(
+    config: &Config,
+    rel_prefix: &str,
+) -> Result<std::collections::HashSet<String>> {
+    with_connection(config, |conn| {
+        let mut stmt = conn.prepare(
+            "SELECT raw_refs_json FROM mem_tree_chunks \
+              WHERE raw_refs_json IS NOT NULL AND raw_refs_json != ''",
+        )?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        let mut out: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for row in rows {
+            let json = row?;
+            // Tolerate individually-corrupt rows: skip with a warning
+            // rather than failing the whole coverage scan.
+            match serde_json::from_str::<Vec<RawRef>>(&json) {
+                Ok(refs) => {
+                    for raw_ref in refs {
+                        if raw_ref.path.starts_with(rel_prefix) {
+                            out.insert(raw_ref.path);
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::warn!(
+                        "[memory::chunk_store] skipping unparseable raw_refs_json during \
+                         coverage scan: {e}"
+                    );
+                }
+            }
+        }
+        Ok(out)
+    })
+}
+
 /// Return both `content_path` and `content_sha256` stored in SQLite for `chunk_id`.
 ///
 /// Returns `Ok(None)` if the chunk does not exist or has no content_path recorded yet.

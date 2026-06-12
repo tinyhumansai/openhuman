@@ -7,22 +7,15 @@ interface RouteCheck {
   markers: string[];
 }
 
-// Phase 2/3/6 IA revamp:
-//   /skills      → /connections (redirects; test new canonical route)
-//   /intelligence → /activity   (redirects; test new canonical route)
-//   /human       → /chat        (redirects; already covered by /chat entry)
 const routes: RouteCheck[] = [
   { hash: '/chat', markers: ['Threads', 'Chat', 'Message', 'New'] },
-  // Connections page (was /skills) — tabs: Apps, Messaging, Tools, Explorer
-  { hash: '/connections', markers: ['Apps', 'Messaging', 'Tools', 'Explorer'] },
+  { hash: '/connections', markers: ['Composio', 'Channels', 'MCP Servers', 'Skills'] },
   { hash: '/home', markers: ['Ask your assistant anything', 'Your device is connected'] },
-  // /channels now redirects to /connections?tab=messaging
-  { hash: '/channels', markers: ['Messaging', 'Connections', 'Telegram', 'Discord'] },
+  { hash: '/channels', markers: ['Channels', 'Connections', 'Telegram', 'Discord'] },
   { hash: '/notifications', markers: ['Notifications', 'Alerts', 'No alerts yet'] },
   { hash: '/rewards', markers: ['Rewards', 'Referral', 'Credits', 'Invite'] },
   { hash: '/settings', markers: ['Settings', 'Account', 'Billing', 'Advanced'] },
-  // Activity page (was /intelligence) — tabs: Tasks, Automations, Subconscious
-  { hash: '/activity', markers: ['Tasks', 'Automations', 'Subconscious'] },
+  { hash: '/settings/notifications-hub', markers: ['Notifications'] },
   { hash: '/home', markers: ['Ask your assistant anything', 'Your device is connected'] },
 ];
 

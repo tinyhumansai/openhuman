@@ -4,10 +4,9 @@ import type { ChatSendError } from '../../chat/chatSendError';
 import type { Attachment } from '../../lib/attachments';
 import { useT } from '../../lib/i18n/I18nContext';
 import AttachmentPreview from './AttachmentPreview';
-import CycleUsagePill from './CycleUsagePill';
 
-/** Max composer height ≈ 4 lines of text-sm + padding. */
-const COMPOSER_MAX_HEIGHT = 96;
+/** Max composer height ≈ 8 lines of text-sm + padding. */
+const COMPOSER_MAX_HEIGHT = 192;
 
 export interface ChatComposerProps {
   inputValue: string;
@@ -35,11 +34,9 @@ export interface ChatComposerProps {
 }
 
 /**
- * Two-row chat composer:
- *   Row 1 — full-width textarea with inline ghost completion
- *   Row 2 — toolbar: [+] · CycleUsagePill on left | voice · send on right
- *
- * All buttons live inside the rounded container — no external pill buttons.
+ * Single-row chat composer: [+] textarea [mic] [send]
+ * Buttons sit at the bottom-end of the row so they stay anchored when the
+ * textarea grows with multiline input.
  */
 export default function ChatComposer({
   inputValue,
@@ -107,128 +104,123 @@ export default function ChatComposer({
         </div>
       )}
 
-      {/* Row 1: Textarea with inline ghost completion */}
-      <div className="relative flex items-center">
-        {/* Ghost overlay for inline completion suffix */}
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-4 py-2.5 text-sm leading-normal font-sans">
-          <span className="invisible">{inputValue}</span>
-          <span className="text-stone-500 dark:text-neutral-400/50">{inlineCompletionSuffix}</span>
-        </div>
-        <textarea
-          ref={textInputRef}
-          value={inputValue}
-          onChange={e => setInputValue(e.target.value)}
-          onCompositionStart={() => {
-            isComposingTextRef.current = true;
-          }}
-          onCompositionEnd={() => {
-            isComposingTextRef.current = false;
-          }}
-          onKeyDown={handleInputKeyDown}
-          placeholder={t('chat.typeMessage')}
-          rows={1}
-          disabled={composerInteractionBlocked || isSending}
-          className="relative z-10 w-full resize-none border-0 bg-transparent px-4 py-2.5 text-sm leading-normal whitespace-pre-wrap break-words font-sans text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0 overflow-hidden disabled:opacity-50 disabled:cursor-not-allowed"
-        />
-      </div>
-
-      {/* Row 2: Toolbar */}
-      <div className="flex items-center justify-between px-3 pb-2.5 pt-0.5">
-        {/* Left: attachment + button, then usage pill */}
-        <div className="flex items-center gap-2">
-          {attachmentsEnabled && (
-            <button
-              type="button"
-              data-analytics-id="chat-composer-attach-file"
-              aria-label={t('composer.attachFile')}
-              title={t('composer.attachFile')}
-              onClick={() => fileInputRef.current?.click()}
-              disabled={
-                composerInteractionBlocked || isSending || attachments.length >= maxAttachments
-              }
-              className="flex items-center justify-center text-stone-400 dark:text-neutral-500 hover:text-stone-600 dark:hover:text-neutral-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={1.8}
-                  d="M12 5v14m-7-7h14"
-                />
-              </svg>
-            </button>
-          )}
-          <CycleUsagePill />
-        </div>
-
-        {/* Right: voice mode + send */}
-        <div className="flex items-center gap-2">
-          {/* Voice mode — switches to mic-cloud mode */}
+      {/* Single row: [+] textarea [mic] [send] */}
+      <div className="flex items-center gap-2 p-3">
+        {/* Attach button */}
+        {attachmentsEnabled && (
           <button
             type="button"
-            data-analytics-id="chat-composer-voice-mode"
-            aria-label={t('composer.voiceMode')}
-            title={t('composer.voiceMode')}
-            onClick={onSwitchToMicCloud}
-            disabled={composerInteractionBlocked || isSending}
-            className="flex items-center justify-center text-stone-400 dark:text-neutral-500 hover:text-stone-600 dark:hover:text-neutral-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            data-analytics-id="chat-composer-attach-file"
+            aria-label={t('composer.attachFile')}
+            title={t('composer.attachFile')}
+            onClick={() => fileInputRef.current?.click()}
+            disabled={
+              composerInteractionBlocked || isSending || attachments.length >= maxAttachments
+            }
+            className="flex-shrink-0 flex items-center justify-center w-6 h-6 text-stone-400 dark:text-neutral-500 hover:text-stone-600 dark:hover:text-neutral-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
                 strokeLinecap="round"
                 strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"
-              />
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M19 10v2a7 7 0 01-14 0v-2M12 19v4m-4 0h8"
+                strokeWidth={1.8}
+                d="M12 5v14m-7-7h14"
               />
             </svg>
           </button>
+        )}
 
-          {/* Send button — always visible */}
-          <button
-            type="button"
-            data-analytics-id="chat-composer-send"
-            data-testid="send-message-button"
-            aria-label={t('chat.send')}
-            title={t('chat.send')}
-            onClick={() => {
-              void onSend();
+        {/* Textarea with ghost completion */}
+        <div className="relative flex-1 align-middle flex min-w-0">
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words py-0.5 text-sm leading-5 font-sans">
+            <span className="invisible">{inputValue}</span>
+            <span className="text-stone-500 dark:text-neutral-400/50">
+              {inlineCompletionSuffix}
+            </span>
+          </div>
+          <textarea
+            ref={textInputRef}
+            value={inputValue}
+            onChange={e => setInputValue(e.target.value)}
+            onCompositionStart={() => {
+              isComposingTextRef.current = true;
             }}
-            disabled={!hasContent || composerInteractionBlocked || isSending}
-            className="flex items-center justify-center w-7 h-7 rounded-full bg-primary-500 hover:bg-primary-600 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
-            {isSending ? (
-              <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
-                <circle
-                  className="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  strokeWidth="4"
-                />
-                <path
-                  className="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                />
-              </svg>
-            ) : (
-              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2.5}
-                  d="M9 5l7 7-7 7"
-                />
-              </svg>
-            )}
-          </button>
+            onCompositionEnd={() => {
+              isComposingTextRef.current = false;
+            }}
+            onKeyDown={handleInputKeyDown}
+            placeholder={t('chat.typeMessage')}
+            rows={1}
+            disabled={composerInteractionBlocked || isSending}
+            className="relative z-10 w-full resize-none border-0 bg-transparent py-0.5 px-0.5 text-sm leading-5 whitespace-pre-wrap break-words font-sans text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0 overflow-hidden disabled:opacity-50 disabled:cursor-not-allowed"
+          />
         </div>
+
+        {/* Voice mode */}
+        <button
+          type="button"
+          data-analytics-id="chat-composer-voice-mode"
+          aria-label={t('composer.voiceMode')}
+          title={t('composer.voiceMode')}
+          onClick={onSwitchToMicCloud}
+          disabled={composerInteractionBlocked || isSending}
+          className="flex-shrink-0 flex items-center justify-center w-6 h-6 text-stone-400 dark:text-neutral-500 hover:text-stone-600 dark:hover:text-neutral-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"
+            />
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M19 10v2a7 7 0 01-14 0v-2M12 19v4m-4 0h8"
+            />
+          </svg>
+        </button>
+
+        {/* Send button */}
+        <button
+          type="button"
+          data-analytics-id="chat-composer-send"
+          data-testid="send-message-button"
+          aria-label={t('chat.send')}
+          title={t('chat.send')}
+          onClick={() => {
+            void onSend();
+          }}
+          disabled={!hasContent || composerInteractionBlocked || isSending}
+          className="flex-shrink-0 flex items-center justify-center w-6 h-6 rounded-full bg-primary-500 hover:bg-primary-600 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+          {isSending ? (
+            <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+              <circle
+                className="opacity-25"
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                strokeWidth="4"
+              />
+              <path
+                className="opacity-75"
+                fill="currentColor"
+                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+              />
+            </svg>
+          ) : (
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2.5}
+                d="M9 5l7 7-7 7"
+              />
+            </svg>
+          )}
+        </button>
       </div>
     </div>
   );

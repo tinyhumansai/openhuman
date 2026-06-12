@@ -57,6 +57,11 @@ pub fn build(ctx: &PromptContext<'_>) -> Result<String> {
         out.push_str("\n\n");
     }
 
+    // NOTE: the shared grounding / anti-hallucination contract is appended
+    // centrally by `SystemPromptBuilder::build` (and the narrow sub-agent
+    // renderer), so every agent inherits it without each `prompt.rs` having
+    // to splice it in. Do not render it here, or it will appear twice.
+
     let datetime = render_datetime(ctx)?;
     if !datetime.trim().is_empty() {
         out.push_str(datetime.trim_end());

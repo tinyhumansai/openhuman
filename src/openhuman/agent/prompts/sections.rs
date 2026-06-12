@@ -139,6 +139,9 @@ impl PromptSection for DynamicPromptSection {
 pub struct IdentitySection;
 pub struct ToolsSection;
 pub struct SafetySection;
+/// Renders the canonical grounding / anti-hallucination contract
+/// ([`GROUNDING_BODY`]). Always included; never gated.
+pub struct GroundingSection;
 // `WorkflowsSection` and `ConnectedIntegrationsSection` previously lived
 // here and branched on `ctx.agent_id` to pick between the skill-
 // executor and delegator voice. They've been removed — each agent's
@@ -392,6 +395,45 @@ impl PromptSection for SafetySection {
 
     fn build(&self, _ctx: &PromptContext<'_>) -> Result<String> {
         Ok("## Safety\n\n- Do not exfiltrate private data.\n- Do not run destructive commands without asking.\n- Do not bypass oversight or approval mechanisms.\n- Prefer `trash` over `rm`.\n- When in doubt, ask before acting externally.".into())
+    }
+}
+
+/// Canonical grounding / anti-hallucination contract.
+///
+/// This is the **single source of truth** for the tool-use and
+/// anti-fabrication rules every agent inherits. Before this block existed,
+/// the same "never invent ids / a tool not in your list does not exist"
+/// paragraph was copy-pasted (and slowly drifting) across crypto, markets,
+/// integrations, account-admin, mcp-setup, morning-briefing, researcher, …
+/// agent prompts. Centralising it kills that drift and guarantees a uniform
+/// floor of grounding discipline.
+///
+/// Inspired by Hermes's named guidance blocks (`TOOL_USE_ENFORCEMENT_GUIDANCE`
+/// "use tools to act, never end a turn with a promise", `TASK_COMPLETION_GUIDANCE`
+/// "never substitute fabricated output for results you couldn't produce").
+///
+/// Deliberately **generic**: every clause must be true for *every* agent,
+/// including the integrations executor. Agent-specific routing (e.g. "delegate
+/// external services", "pull slugs from `composio_list_tools`") stays in that
+/// agent's own `prompt.md`, not here.
+///
+/// Byte-stable (no time / RNG / host) so it lives in the KV-cache-friendly
+/// prefix. Must contain no em-dashes per [`super::builder::GLOBAL_STYLE_SUFFIX`].
+pub const GROUNDING_BODY: &str = "## Grounding and tool use\n\n\
+    - Your tools are exactly the ones listed in this prompt. You can only act through them. If a capability is not one of your tools, say so plainly rather than pretending it exists.\n\
+    - Never invent tool names, arguments, ids, slugs, file paths, URLs, chain ids, addresses, quotes, metrics, or any other value. If you do not have it from a tool result or the user, ask for it or look it up with a tool.\n\
+    - Use your tools to act. Do not just describe what you would do and stop, and never end a turn with a promise of future action: do it now, or hand back a concrete result.\n\
+    - Never substitute plausible looking but fabricated output (made up data, invented file contents, synthesised tool or API responses) for results you could not actually produce. If a step failed, say it failed.\n\
+    - Ground every factual claim in evidence you actually observed: a tool result, the user's message, or cited memory. If the evidence is missing, partial, or truncated, say so or fetch more instead of guessing.\n\
+    - Skills run only via `run_workflow`, and only the skills listed as installed exist. Do not invent skill ids.";
+
+impl PromptSection for GroundingSection {
+    fn name(&self) -> &str {
+        "grounding"
+    }
+
+    fn build(&self, _ctx: &PromptContext<'_>) -> Result<String> {
+        Ok(GROUNDING_BODY.into())
     }
 }
 

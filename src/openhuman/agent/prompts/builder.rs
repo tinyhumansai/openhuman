@@ -248,6 +248,16 @@ impl SystemPromptBuilder {
             output.push_str(part.trim_end());
             output.push_str("\n\n");
         }
+        // Grounding / anti-hallucination contract is appended centrally here
+        // (and in the narrow sub-agent renderer) rather than per-section, so
+        // EVERY agent inherits the same anti-fabrication floor — including the
+        // ~26 dynamic `agents/<id>/prompt.rs` builders that each hand-assemble
+        // their own body via the `render_*` helpers and would otherwise have
+        // to splice it in individually. Single source of truth: GROUNDING_BODY.
+        // Placed near the tail (just before the output-style rules) so it reads
+        // as a closing contract; byte-stable, so it stays cache-friendly.
+        output.push_str(GROUNDING_BODY);
+        output.push_str("\n\n");
         output.push_str(GLOBAL_STYLE_SUFFIX);
         output.push('\n');
         Ok(output)

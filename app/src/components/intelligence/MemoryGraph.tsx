@@ -38,6 +38,8 @@ import {
 } from 'react';
 
 import { useT } from '../../lib/i18n/I18nContext';
+import { useAppSelector } from '../../store/hooks';
+import { resolveTheme, type ThemeMode } from '../../store/themeSlice';
 import { type GraphEdge, type GraphMode, type GraphNode } from '../../utils/tauriCommands';
 import { openWorkspacePath, previewWorkspaceText } from '../../utils/tauriCommands/workspacePaths';
 import {
@@ -194,6 +196,8 @@ function relaxLayout(nodes: SimNode[], edges: Array<[number, number]>, iteration
 
 export function MemoryGraph({ nodes, edges, mode, emptyHint, onReady }: MemoryGraphProps) {
   const { t } = useT();
+  const themeMode = useAppSelector(state => state.theme?.mode ?? 'system') as ThemeMode;
+  const isDark = resolveTheme(themeMode) === 'dark';
   const [hovered, setHovered] = useState<GraphNode | null>(null);
 
   // Fire `onReady` at most once across this component's lifetime. The latest
@@ -456,29 +460,12 @@ export function MemoryGraph({ nodes, edges, mode, emptyHint, onReady }: MemoryGr
     if (!s || userInteractedRef.current) return;
     const ns = s.sim;
     if (ns.length === 0) return;
-    let minX = Infinity;
-    let minY = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-    for (const n of ns) {
-      if (n.x < minX) minX = n.x;
-      if (n.y < minY) minY = n.y;
-      if (n.x > maxX) maxX = n.x;
-      if (n.y > maxY) maxY = n.y;
-    }
-    if (!Number.isFinite(minX)) return;
-    const pad = 48;
-    const w = Math.max(1, maxX - minX);
-    const h = Math.max(1, maxY - minY);
-    const scale = Math.min(
-      ZOOM_MAX,
-      Math.max(ZOOM_MIN, Math.min((VIEWPORT_W - pad) / w, (VIEWPORT_H - pad) / h))
-    );
-    setView({
-      scale,
-      tx: VIEWPORT_W / 2 - ((minX + maxX) / 2) * scale,
-      ty: VIEWPORT_H / 2 - ((minY + maxY) / 2) * scale,
-    });
+    // Center on the root node at a fixed comfortable zoom.
+    const root = ns.find(n => n.kind === 'root');
+    const cx = root?.x ?? 0;
+    const cy = root?.y ?? 0;
+    const scale = 0.17;
+    setView({ scale, tx: VIEWPORT_W / 2 - cx * scale, ty: VIEWPORT_H / 2 - cy * scale });
   }, []);
   fitRef.current = fitToView;
 
@@ -645,7 +632,10 @@ export function MemoryGraph({ nodes, edges, mode, emptyHint, onReady }: MemoryGr
           data-testid="memory-graph-svg">
           {/* Pan / zoom group — drag the background to pan, scroll to zoom. */}
           <g transform={`translate(${view.tx} ${view.ty}) scale(${view.scale})`}>
-            <g stroke="#cbd5e1" strokeWidth={0.6} opacity={0.7}>
+            <g
+              stroke={isDark ? '#cbd5e1' : '#475569'}
+              strokeWidth={isDark ? 0.6 : 1.2}
+              opacity={isDark ? 0.7 : 0.7}>
               {sim.edges.map(([ai, bi], idx) => {
                 // Only draw edges whose endpoints are both mounted yet.
                 if (ai >= svgVisible || bi >= svgVisible) return null;
@@ -684,7 +674,9 @@ export function MemoryGraph({ nodes, edges, mode, emptyHint, onReady }: MemoryGr
                     cy={n.y}
                     r={isHover ? r + 2 : r}
                     fill={fill}
-                    stroke={isHover ? '#0f172a' : '#ffffff'}
+                    stroke={
+                      isHover ? (isDark ? '#0f172a' : '#1e293b') : isDark ? '#ffffff' : '#e2e8f0'
+                    }
                     strokeWidth={isHover ? 1.4 : 0.8}
                     style={{ cursor: grabbing ? 'grabbing' : 'pointer', filter: glow }}
                     onPointerDown={e => onNodePointerDown(e, n)}
@@ -708,7 +700,11 @@ export function MemoryGraph({ nodes, edges, mode, emptyHint, onReady }: MemoryGr
         <div
           className="border-t border-stone-100 dark:border-neutral-800 bg-stone-50/70 dark:bg-neutral-900/70 px-4 py-2 text-xs text-stone-700 dark:text-neutral-200"
           data-testid="memory-graph-tooltip">
-          {hovered.kind === 'source' ? (
+          {hovered.kind === 'root' ? (
+            <span className="font-medium text-violet-600 dark:text-violet-400">
+              {hovered.label}
+            </span>
+          ) : hovered.kind === 'source' ? (
             <span className="font-medium text-orange-600 dark:text-orange-400">
               {hovered.label}
             </span>
@@ -778,8 +774,7 @@ export function MemoryGraph({ nodes, edges, mode, emptyHint, onReady }: MemoryGr
 }
 
 function tooltipFor(n: GraphNode, t: (key: string, fallback?: string) => string): string {
-  // NOTE: the underlying t() does not interpolate params; placeholders in the
-  // translated string are rendered as-is. Preserved to match prior behavior.
+  if (n.kind === 'root') return n.label;
   if (n.kind === 'summary') return t('graph.tooltip.summary');
   if (n.kind === 'contact') return t('graph.tooltip.contact');
   return n.label || t('graph.document');

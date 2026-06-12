@@ -75,8 +75,8 @@ async function bootSkillsPage(page: Page, userId: string) {
     .toContain('/connections');
   await waitForAppReady(page);
   await dismissWalkthroughIfPresent(page);
-  // Phase 2: "Composio" tab renamed to "Apps"
-  await page.getByRole('tab', { name: 'Apps' }).click();
+  // Navigate to the Composio tab
+  await page.getByRole('tab', { name: 'Composio' }).click();
   const heading = page.getByRole('heading', { name: 'Composio Integrations', exact: true });
   if (!(await heading.isVisible().catch(() => false))) {
     const connectionsButton = page.getByRole('button', { name: 'Connections' });
@@ -99,7 +99,7 @@ async function reloadSkills(page: Page) {
 }
 
 async function ensureComposioSurface(page: Page) {
-  // Phase 2: /skills → /connections, "Composio" tab renamed to "Apps"
+  // Navigate to /connections and click the Composio tab
   const heading = page.getByRole('heading', { name: 'Composio Integrations', exact: true });
   for (let attempt = 0; attempt < 3; attempt++) {
     await page.evaluate(() => {
@@ -110,7 +110,7 @@ async function ensureComposioSurface(page: Page) {
       .toContain('/connections');
     await waitForAppReady(page);
     await dismissWalkthroughIfPresent(page);
-    await page.getByRole('tab', { name: 'Apps' }).click();
+    await page.getByRole('tab', { name: 'Composio' }).click();
     if (await heading.isVisible().catch(() => false)) {
       return;
     }
@@ -119,7 +119,7 @@ async function ensureComposioSurface(page: Page) {
       await connectionsButton.click({ force: true });
       await waitForAppReady(page);
       await dismissWalkthroughIfPresent(page);
-      await page.getByRole('tab', { name: 'Apps' }).click();
+      await page.getByRole('tab', { name: 'Composio' }).click();
       if (await heading.isVisible().catch(() => false)) {
         return;
       }

@@ -39,7 +39,7 @@ describe('<PixiGraph />', () => {
       HTMLElement,
       { simNodes: unknown[]; links: unknown[] },
     ];
-    expect(opts.simNodes).toHaveLength(2);
+    expect(opts.simNodes).toHaveLength(3); // 2 data nodes + synthetic root hub
     expect(opts.links).toHaveLength(1); // leaf -> root
   });
 

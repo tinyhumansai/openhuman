@@ -6,10 +6,19 @@
  * `WORKER_SUPPORTED` is captured at module load, so Worker must be stubbed
  * before MemoryGraph is imported — hence the dynamic import in beforeAll.
  */
+import { configureStore } from '@reduxjs/toolkit';
 import { act, fireEvent, render } from '@testing-library/react';
+import type { PropsWithChildren } from 'react';
+import { Provider } from 'react-redux';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import themeReducer from '../../store/themeSlice';
 import type { GraphNode } from '../../utils/tauriCommands';
+
+function ReduxWrapper({ children }: PropsWithChildren) {
+  const store = configureStore({ reducer: { theme: themeReducer } });
+  return <Provider store={store}>{children}</Provider>;
+}
 
 vi.mock('../../utils/openUrl', () => ({ openUrl: vi.fn() }));
 vi.mock('../../utils/tauriCommands/workspacePaths', () => ({
@@ -73,7 +82,9 @@ describe('<MemoryGraph /> worker-backed SVG path', () => {
   });
 
   it('spins up a worker and applies streamed positions imperatively', () => {
-    const { container } = render(<MemoryGraph nodes={treeNodes(3)} edges={[]} mode="tree" />);
+    const { container } = render(<MemoryGraph nodes={treeNodes(3)} edges={[]} mode="tree" />, {
+      wrapper: ReduxWrapper,
+    });
     const w = last();
     expect(w).toBeTruthy();
     expect(w.posted[0].type).toBe('init');
@@ -93,7 +104,9 @@ describe('<MemoryGraph /> worker-backed SVG path', () => {
   });
 
   it('frames the graph on settle (end → fit transform)', () => {
-    const { container } = render(<MemoryGraph nodes={treeNodes(3)} edges={[]} mode="tree" />);
+    const { container } = render(<MemoryGraph nodes={treeNodes(3)} edges={[]} mode="tree" />, {
+      wrapper: ReduxWrapper,
+    });
     const w = last();
     act(() =>
       w.emit({
@@ -108,7 +121,9 @@ describe('<MemoryGraph /> worker-backed SVG path', () => {
   });
 
   it('freezes the worker on a drag, but NOT on a plain click', () => {
-    const { container } = render(<MemoryGraph nodes={treeNodes(3)} edges={[]} mode="tree" />);
+    const { container } = render(<MemoryGraph nodes={treeNodes(3)} edges={[]} mode="tree" />, {
+      wrapper: ReduxWrapper,
+    });
     const svg = container.querySelector('[data-testid="memory-graph-svg"]') as Element;
     withCTM(svg);
     const w = last();
@@ -125,7 +140,9 @@ describe('<MemoryGraph /> worker-backed SVG path', () => {
   });
 
   it('reheats gently and carries positions over on an incremental update', () => {
-    const { rerender } = render(<MemoryGraph nodes={treeNodes(3)} edges={[]} mode="tree" />);
+    const { rerender } = render(<MemoryGraph nodes={treeNodes(3)} edges={[]} mode="tree" />, {
+      wrapper: ReduxWrapper,
+    });
     const first = last();
     act(() =>
       first.emit({
@@ -144,13 +161,16 @@ describe('<MemoryGraph /> worker-backed SVG path', () => {
 
   it('mounts a large graph progressively without throwing', () => {
     expect(() =>
-      render(<MemoryGraph nodes={treeNodes(900)} edges={[]} mode="tree" />)
+      render(<MemoryGraph nodes={treeNodes(900)} edges={[]} mode="tree" />, {
+        wrapper: ReduxWrapper,
+      })
     ).not.toThrow();
   });
 
   it('handles node drag, wheel zoom, and reset view', () => {
     const { container, getByTestId } = render(
-      <MemoryGraph nodes={treeNodes(3)} edges={[]} mode="tree" />
+      <MemoryGraph nodes={treeNodes(3)} edges={[]} mode="tree" />,
+      { wrapper: ReduxWrapper }
     );
     const svg = container.querySelector('[data-testid="memory-graph-svg"]') as Element;
     withCTM(svg);

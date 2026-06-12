@@ -1917,6 +1917,11 @@ fn register_domain_subscribers(
         crate::openhuman::agent_meetings::calendar::register_meet_calendar_subscriber();
         crate::openhuman::agent_meetings::bus::register_meeting_event_subscriber();
         crate::openhuman::composio::start_periodic_sync();
+        // Workspace-kind memory sources (GitHub repos, folders, RSS, web
+        // pages) get their own cadence loop — the Composio scheduler above
+        // only walks Composio connections, so without this they only sync
+        // on manual "Sync now" and silently go stale.
+        crate::openhuman::memory_sync::workspace::start_workspace_periodic_sync();
         // Task-sources proactive ingestion: connection-created hook + poll.
         crate::openhuman::task_sources::bus::register_task_sources_subscriber();
         crate::openhuman::task_sources::start_periodic_poll();

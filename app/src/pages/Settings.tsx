@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { Navigate, Route, Routes, useNavigate } from 'react-router-dom';
 
 import CostDashboardPanel from '../components/dashboard/CostDashboardPanel';
+import WorkflowsTab from '../components/intelligence/WorkflowsTab';
 import LogoutAndClearActions from '../components/settings/LogoutAndClearActions';
 import AboutPanel from '../components/settings/panels/AboutPanel';
 import AgentAccessPanel from '../components/settings/panels/AgentAccessPanel';
@@ -283,11 +284,16 @@ const Settings = () => {
   // notification preferences/routing panel under one section page.
   const notificationsHubItems = [
     {
+      id: 'automations',
+      title: t('activity.tabs.automations'),
+      description: t('activity.tabs.automationsDescription'),
+      route: 'automations',
+      icon: NotificationsIcon,
+    },
+    {
       id: 'alerts',
       title: t('nav.alerts'),
       description: t('settings.alertsDesc'),
-      // Alerts is the top-level inbox at `/notifications`, outside the settings
-      // tree, so navigate explicitly instead of via `navigateToSettings`.
       onClick: () => navigate('/notifications'),
       icon: NotificationsIcon,
     },
@@ -599,6 +605,10 @@ const Settings = () => {
         <Route path="cron-jobs" element={wrapSettingsPage(<CronJobsPanel />)} />
         <Route path="task-sources" element={wrapSettingsPage(<TaskSourcesPanel />)} />
         <Route path="tasks" element={wrapSettingsPage(<TasksPanel />)} />
+        <Route
+          path="automations"
+          element={wrapSettingsPage(<WorkflowsTab />, { maxWidthClass: 'max-w-4xl' })}
+        />
         <Route path="dev-workflow" element={wrapSettingsPage(<DevWorkflowPanel />)} />
         <Route path="skills-runner" element={wrapSettingsPage(<WorkflowRunnerPanel />)} />
         <Route

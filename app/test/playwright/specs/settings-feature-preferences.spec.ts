@@ -103,7 +103,7 @@ test.describe('Settings - Feature Preferences', () => {
     // Phase 2: default messaging channel moved to /connections (Messaging tab)
     await openAuthenticatedRoute(page, 'pw-settings-default-channel', '/connections?tab=messaging');
 
-    const messagingTab = page.getByRole('tab', { name: 'Messaging', exact: true });
+    const messagingTab = page.getByRole('tab', { name: 'Channels', exact: true });
     if (await messagingTab.isVisible().catch(() => false)) {
       await messagingTab.click();
     }

@@ -93,17 +93,11 @@ test.describe('Top-level functional flows', () => {
 
   test('major top-level pages render actionable UI without blanking', async ({ page }) => {
     await bootAuthenticatedPage(page, 'pw-top-level-ui', '/home');
-    // Phase 2/3 IA revamp:
-    //   /skills → /connections (back-compat redirect tested; use new canonical route here)
-    //   /intelligence → /activity (back-compat redirect; use new canonical route here)
-    //   Connections tabs renamed: Composio→Apps, Channels→Messaging, MCP→Tools
-    //   Activity tabs: Tasks, Automations, Subconscious
-    //   Memory/Agents/Council are dev-gated; test against the always-visible tabs only
     const routes: Array<[string, RegExp]> = [
       ['/home', /Ask your assistant anything|Start/],
-      ['/connections', /Composio Integrations|Apps|Messaging|Tools/],
+      ['/connections', /Composio Integrations|Composio|Channels|MCP Servers/],
       ['/chat', /How can I help you today|No messages yet|Threads/],
-      ['/activity', /Tasks|Automations|Subconscious/],
+      ['/settings/notifications-hub', /Notifications/],
       ['/notifications', /Notifications|System Events/],
       ['/rewards', /Rewards|Referrals|Redeem/],
     ];

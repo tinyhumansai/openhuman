@@ -317,16 +317,14 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
 
   // Covers line 906: const effectiveShowSidebar = threadSidebarVisible;
   // Covers line 941: <div className="flex-1 overflow-y-auto"> (always rendered in page mode)
-  it('renders the Threads sidebar header in page mode', async () => {
+  it('renders the sidebar pill tabs in page mode', async () => {
     await act(async () => {
       await renderConversations({ thread: emptyThreadState });
     });
 
-    // Sidebar is hidden by default — open it first.
     await openSidebar();
 
-    // The "Threads" header is always rendered in page mode (sidebar guard removed)
-    expect(screen.getByText('Threads')).toBeInTheDocument();
+    expect(screen.getByText('General')).toBeInTheDocument();
   });
 
   it('restores and updates the persisted thread sidebar visibility', async () => {
@@ -337,14 +335,14 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       });
     });
 
-    expect(screen.getByText('Threads')).toBeInTheDocument();
+    expect(screen.getByText('General')).toBeInTheDocument();
 
     await act(async () => {
       fireEvent.click(screen.getByTitle('Hide sidebar'));
     });
 
     await waitFor(() => {
-      expect(screen.queryByText('Threads')).not.toBeInTheDocument();
+      expect(screen.queryByText('General')).not.toBeInTheDocument();
     });
     expect(renderedStore?.getState().thread.threadSidebarVisible).toBe(false);
   });
@@ -616,25 +614,8 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     });
   });
 
-  // Covers line 919: onClick={() => void handleCreateNewThread()} — sidebar "New thread" button
-  // Covers line 1061: onClick={() => void handleCreateNewThread()} — header "+ New" button
-  it('clicking "New thread" sidebar button calls handleCreateNewThread', async () => {
-    await act(async () => {
-      await renderConversations({ thread: emptyThreadState });
-    });
-
-    // Sidebar is hidden by default — open it first.
-    await openSidebar();
-
-    // The sidebar "New thread" button has title="New thread"
-    const newThreadBtn = screen.getByTitle('New thread');
-    await act(async () => {
-      fireEvent.click(newThreadBtn);
-    });
-
-    // createNewThread was called — verifies line 919 callback executed
-    expect(threadApi.createNewThread).toHaveBeenCalled();
-  });
+  // Sidebar "New thread" button was removed in the composer flattening refactor.
+  // The "+ New" header button (tested below) is the remaining create-thread entry point.
 
   it('clicking "+ New" header button calls handleCreateNewThread', async () => {
     // Need a selected thread so the header renders

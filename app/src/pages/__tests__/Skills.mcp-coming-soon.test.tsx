@@ -49,11 +49,11 @@ vi.mock('../../services/api/mcpClientsApi', () => ({
   },
 }));
 
-describe('Skills page — Tools tab (MCP + Meeting bots, Phase 2)', () => {
-  it('renders the MCP servers table in the Tools tab', async () => {
+describe('Skills page — MCP Servers tab (MCP + Meeting bots)', () => {
+  it('renders the MCP servers table in the MCP Servers tab', async () => {
     renderWithProviders(<Skills />, { initialEntries: ['/connections'] });
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Tools' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'MCP Servers' }));
 
     // The Tools tab shows filter chips (All / Installed / Registry) and a search input
     await waitFor(() => {
@@ -63,10 +63,10 @@ describe('Skills page — Tools tab (MCP + Meeting bots, Phase 2)', () => {
     expect(screen.getByRole('button', { name: 'Registry' })).toBeInTheDocument();
   });
 
-  it('shows the table header columns on the Tools tab', async () => {
+  it('shows the table header columns on the MCP Servers tab', async () => {
     renderWithProviders(<Skills />, { initialEntries: ['/connections'] });
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Tools' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'MCP Servers' }));
 
     // Wait for initial load to complete
     await waitFor(() => {
@@ -81,7 +81,7 @@ describe('Skills page — Tools tab (MCP + Meeting bots, Phase 2)', () => {
   it('shows empty-installed state when Installed chip is clicked', async () => {
     renderWithProviders(<Skills />, { initialEntries: ['/connections'] });
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Tools' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'MCP Servers' }));
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /Installed/i })).toBeInTheDocument();
@@ -93,10 +93,13 @@ describe('Skills page — Tools tab (MCP + Meeting bots, Phase 2)', () => {
     });
   });
 
-  it('supports direct links via legacy ?tab=mcp (normalised to tools)', async () => {
+  it('supports direct links via legacy ?tab=mcp (normalised to mcp-servers)', async () => {
     renderWithProviders(<Skills />, { initialEntries: ['/connections?tab=mcp'] });
 
-    expect(screen.getByRole('tab', { name: 'Tools' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'MCP Servers' })).toHaveAttribute(
+      'aria-selected',
+      'true'
+    );
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'All' })).toBeInTheDocument();
     });

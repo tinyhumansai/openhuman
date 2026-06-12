@@ -11623,6 +11623,94 @@ async fn json_rpc_memory_sources_conversation_crud() {
     rpc_join.abort();
 }
 
+/// Raw-archive coverage reconcile over JSON-RPC: a GitHub source whose raw
+/// archive holds files that no tree summary covers must be reported as
+/// pending by `openhuman.memory_sources_reconcile` (report-only mode).
+/// Regression for the silent divergence where thousands of raw files sat
+/// unsummarised with no way to see or repair it.
+#[tokio::test]
+async fn json_rpc_memory_sources_reconcile_reports_pending_raw_files() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _ws_guard = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", home);
+    let _action_guard = EnvVarGuard::set_to_path("OPENHUMAN_ACTION_DIR", home);
+    let _backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{rpc_addr}");
+
+    // 1. Register a GitHub repo source (no sync — we plant the archive).
+    let add_resp = post_json_rpc(
+        &rpc_base,
+        9601,
+        "openhuman.memory_sources_add",
+        json!({
+            "kind": "github_repo",
+            "label": "Repo",
+            "enabled": true,
+            "url": "https://github.com/owner/repo"
+        }),
+    )
+    .await;
+    let add_result = assert_no_jsonrpc_error(&add_resp, "memory_sources_add github_repo");
+    let source_id = add_result
+        .get("source")
+        .and_then(|s| s.get("id"))
+        .and_then(Value::as_str)
+        .expect("source must have id")
+        .to_string();
+
+    // 2. Plant two uncovered raw archive files where a fetch would write
+    //    them: <workspace>/memory_tree/content/raw/github-com-owner-repo/.
+    //    With OPENHUMAN_WORKSPACE=$home and no config.toml, the resolved
+    //    workspace dir is $home/workspace (resolve_config_dir_for_workspace).
+    let commits_dir = home
+        .join("workspace")
+        .join("memory_tree")
+        .join("content")
+        .join("raw")
+        .join("github-com-owner-repo")
+        .join("commits");
+    std::fs::create_dir_all(&commits_dir).expect("create raw commits dir");
+    std::fs::write(commits_dir.join("1000_aaa.md"), "commit one").expect("write raw");
+    std::fs::write(commits_dir.join("2000_bbb.md"), "commit two").expect("write raw");
+
+    // 3. Report-only reconcile must surface both files as pending.
+    let reconcile_resp = post_json_rpc(
+        &rpc_base,
+        9602,
+        "openhuman.memory_sources_reconcile",
+        json!({ "source_id": source_id }),
+    )
+    .await;
+    let reconcile_result = assert_no_jsonrpc_error(&reconcile_resp, "memory_sources_reconcile");
+    let scopes = reconcile_result
+        .get("scopes")
+        .and_then(Value::as_array)
+        .expect("reconcile should return scopes array");
+    assert_eq!(scopes.len(), 1, "one scope for one github source");
+    let scope = &scopes[0];
+    assert_eq!(
+        scope.get("tree_scope").and_then(Value::as_str),
+        Some("github:owner/repo")
+    );
+    assert_eq!(
+        scope.get("total_raw_files").and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(scope.get("covered").and_then(Value::as_u64), Some(0));
+    assert_eq!(scope.get("pending").and_then(Value::as_u64), Some(2));
+    assert_eq!(
+        scope.get("started").and_then(Value::as_bool),
+        Some(false),
+        "report-only call must not start a reconcile"
+    );
+
+    rpc_join.abort();
+}
+
 // ── Memory sources: active-connection filtering over JSON-RPC ────────────────
 
 /// Mock Composio v3 `/connected_accounts`. Returns a single ACTIVE Gmail

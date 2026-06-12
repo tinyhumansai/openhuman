@@ -1,14 +1,11 @@
 /**
  * Tests for BottomTabBar — verifies that:
- *  - 6 tabs are rendered (no Rewards tab; Human restored), Activity label is present
- *  - Assistant tab is present (was "Chat", id stays 'chat', label now 'Assistant')
- *  - Walkthrough attributes reflect the new ids (tab-connections, tab-activity)
+ *  - 6 tabs are rendered (no Rewards or Activity tab; Human restored; Chat is a regular tab)
+ *  - Chat tab is present (id 'chat', label 'Chat')
+ *  - Walkthrough attributes reflect the new ids (tab-connections)
  *  - Avatar menu opens and shows Account / Billing / Rewards / Invites / Wallet
  *  - Clicking an avatar menu item navigates or opens URL
  *  - The bar is hidden on '/' and '/login' paths
- *
- * Human tab restored as a first-class entry (after the IA Phase 6 merge into
- * Assistant); Chat keeps its "Assistant" label.
  */
 import { configureStore } from '@reduxjs/toolkit';
 import { fireEvent, render, screen } from '@testing-library/react';
@@ -167,14 +164,10 @@ describe('BottomTabBar', () => {
     agentProfilesApiMock.select.mockResolvedValue(testProfiles);
   });
 
-  it('renders exactly 6 regular tab buttons (Assistant is rendered separately)', async () => {
+  it('renders exactly 6 regular tab buttons (Chat is a regular tab)', async () => {
     await renderBottomTabBar('/home');
-    // Query only the regular pill tabs inside <nav>: exclude the avatar button
-    // (aria-haspopup) and the special raised Assistant center button (tab-chat).
     const nav = document.querySelector('nav');
-    const navButtons = nav?.querySelectorAll(
-      'button:not([aria-haspopup]):not([data-walkthrough="tab-chat"])'
-    );
+    const navButtons = nav?.querySelectorAll('button:not([aria-haspopup])');
     expect(navButtons).toHaveLength(6);
   });
 
@@ -188,19 +181,18 @@ describe('BottomTabBar', () => {
     expect(humanBtn.querySelector('.truncate')).not.toBeNull();
   });
 
-  it('renders the raised Assistant center button with data-walkthrough="tab-chat"', async () => {
+  it('renders the Chat tab with data-walkthrough="tab-chat"', async () => {
     await renderBottomTabBar('/home');
-    const assistantBtn = screen.getByRole('button', { name: 'Assistant' });
-    expect(assistantBtn).toBeInTheDocument();
-    expect(assistantBtn).toHaveAttribute('data-walkthrough', 'tab-chat');
-    expect(assistantBtn).toHaveClass('center-fab');
+    const chatBtn = screen.getByRole('button', { name: 'Chat' });
+    expect(chatBtn).toBeInTheDocument();
+    expect(chatBtn).toHaveAttribute('data-walkthrough', 'tab-chat');
   });
 
-  it('navigates to /chat and tracks the change when the Assistant center button is clicked', async () => {
+  it('navigates to /chat and tracks the change when the Chat tab is clicked', async () => {
     const { trackEvent } = await import('../../services/analytics');
     await renderBottomTabBar('/home');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Assistant' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Chat' }));
 
     expect(trackEvent).toHaveBeenCalledWith('tab_bar_change', {
       from_tab: 'home',
@@ -236,9 +228,9 @@ describe('BottomTabBar', () => {
     });
   });
 
-  it('renders the Activity tab', async () => {
+  it('does NOT render an Activity tab', async () => {
     await renderBottomTabBar('/home');
-    expect(screen.getByRole('button', { name: 'Activity' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Activity' })).toBeNull();
   });
 
   it('renders the Brain tab in the regular row with data-walkthrough="tab-brain"', async () => {
@@ -246,8 +238,6 @@ describe('BottomTabBar', () => {
     const brainBtn = screen.getByRole('button', { name: 'Brain' });
     expect(brainBtn).toBeInTheDocument();
     expect(brainBtn).toHaveAttribute('data-walkthrough', 'tab-brain');
-    // It's a regular pill tab now, not the raised center FAB.
-    expect(brainBtn).not.toHaveClass('center-fab');
   });
 
   it('renders the Connections tab with data-walkthrough="tab-connections"', async () => {
@@ -255,12 +245,6 @@ describe('BottomTabBar', () => {
     const connectionsBtn = screen.getByRole('button', { name: 'Connections' });
     expect(connectionsBtn).toBeInTheDocument();
     expect(connectionsBtn).toHaveAttribute('data-walkthrough', 'tab-connections');
-  });
-
-  it('renders Activity tab with data-walkthrough="tab-activity"', async () => {
-    await renderBottomTabBar('/home');
-    const activityBtn = screen.getByRole('button', { name: 'Activity' });
-    expect(activityBtn).toHaveAttribute('data-walkthrough', 'tab-activity');
   });
 
   it('renders Settings tab with data-walkthrough="tab-settings"', async () => {

@@ -31,7 +31,8 @@ const en: TranslationMap = {
 
   // Brain — full-page memory knowledge-graph surface
   'brain.subtitle': 'Your knowledge graph, memory sources, and controls.',
-  'brain.loading': 'Gathering your memories…',
+  'brain.tabs.memory': 'Memory',
+  'brain.tabs.subconscious': 'Subconscious',
   'brain.empty': 'Your brain is empty for now — connect a source to start building memory.',
   'brain.error': "Couldn't load your brain. Please try again.",
 
@@ -79,6 +80,9 @@ const en: TranslationMap = {
   'common.continue': 'Continue',
   'common.comingSoon': 'Coming Soon',
   'common.breadcrumb': 'Breadcrumb',
+  'common.beta': 'Beta',
+  'common.betaDisclaimer':
+    'This feature is in beta. It may change or have rough edges — your feedback helps us improve it.',
 
   // Settings Home
   'settings.general': 'General',
@@ -417,11 +421,11 @@ const en: TranslationMap = {
   'skills.tabs.meetings': 'Google Meet',
   'skills.tabs.mcp': 'MCP Servers',
   // Connections page tabs (Phase 2 rename)
-  'connections.tabs.apps': 'Apps',
-  'connections.tabs.messaging': 'Messaging',
-  'connections.tabs.tools': 'Tools',
-  'connections.tabs.explorer': 'Explorer',
-  'connections.tabs.talents': 'Talents',
+  'connections.tabs.composio': 'Composio',
+  'connections.tabs.channels': 'Channels',
+  'connections.tabs.mcp': 'MCP Servers',
+  'connections.tabs.skills': 'Skills',
+  'connections.tabs.meetings': 'Meetings',
   // Intelligence / Memory
   'memory.title': 'Memory',
   'memory.search': 'Search memories...',
@@ -2420,6 +2424,15 @@ const en: TranslationMap = {
   'token.planClickForDetails': 'plan - click for details',
   'token.sessionTokens': 'In: {in} | Out: {out} | Turns: {turns}',
   'token.limit': 'Limit Reached',
+  'token.inLabel': 'IN',
+  'token.outLabel': 'OUT',
+  'token.inputTokens': 'Input tokens this session',
+  'token.outputTokens': 'Output tokens this session',
+  'token.turnsCount': 'Inference turns this session',
+  'token.turn': 'turn',
+  'token.turns': 'turns',
+  'token.ctxLabel': 'CTX',
+  'token.contextWindow': 'Context window usage (last turn)',
 
   // Catalog
   'catalog.noCapabilityBinding': 'No capability binding',

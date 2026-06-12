@@ -306,17 +306,18 @@ pub async fn cascade_all_from(
 
 /// Level-aware seal gate.
 ///
-/// L0 buffers gate on **either** `token_sum >= INPUT_TOKEN_BUDGET`
-/// (so the summariser's input stays bounded) **or** sibling count
-/// `>= SUMMARY_FANOUT` (so leaves form predictably for sources whose
-/// chunks are individually small — without the count fallback,
-/// hundreds of tiny emails can sit unsealed waiting to hit 50k
-/// tokens).
+/// L0 buffers gate on `token_sum >= INPUT_TOKEN_BUDGET` **only** — no
+/// sibling-count fallback. Token-only gating is deliberate (see the
+/// module header): small-token items (commit messages, short emails)
+/// accumulate into large batches so each L1 summary covers a
+/// meaningful span instead of 10 tiny items. Small buffers that never
+/// reach the budget are sealed by time instead:
 ///
 /// Time-based sealing for low-volume sources is handled separately
 /// by `flush_stale_buffers` (see [`crate::openhuman::memory_tree::
 /// tree::flush::flush_stale_buffers`]), which filters buffers
-/// by `oldest_at` before calling the cascade. Keeping the time gate
+/// by `oldest_at` before calling the cascade (the 3-hourly
+/// `memory_queue` scheduler drives it). Keeping the time gate
 /// out of `should_seal` avoids prematurely sealing buffers during
 /// normal `append_leaf` calls when test/restored data carries older
 /// timestamps.

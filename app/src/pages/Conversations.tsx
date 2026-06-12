@@ -9,6 +9,7 @@ import ApprovalRequestCard from '../components/chat/ApprovalRequestCard';
 import ArtifactCard from '../components/chat/ArtifactCard';
 import ChatComposer from '../components/chat/ChatComposer';
 import ChatFilesChip from '../components/chat/ChatFilesChip';
+import ComposerTokenStats from '../components/chat/ComposerTokenStats';
 import { ConfirmationModal } from '../components/intelligence/ConfirmationModal';
 import PillTabBar from '../components/PillTabBar';
 import UpsellBanner from '../components/upsell/UpsellBanner';
@@ -103,7 +104,6 @@ import {
 import {
   GENERAL_TAB_VALUE,
   isThreadVisibleInTab,
-  MEETINGS_TAB_VALUE,
   SUBCONSCIOUS_TAB_VALUE,
   TASKS_TAB_VALUE,
 } from './conversations/utils/threadFilter';
@@ -416,11 +416,9 @@ const Conversations = ({
           setSelectedLabel(
             isThreadVisibleInTab(openThread, TASKS_TAB_VALUE)
               ? TASKS_TAB_VALUE
-              : isThreadVisibleInTab(openThread, MEETINGS_TAB_VALUE)
-                ? MEETINGS_TAB_VALUE
-                : isThreadVisibleInTab(openThread, SUBCONSCIOUS_TAB_VALUE)
-                  ? SUBCONSCIOUS_TAB_VALUE
-                  : GENERAL_TAB_VALUE
+              : isThreadVisibleInTab(openThread, SUBCONSCIOUS_TAB_VALUE)
+                ? SUBCONSCIOUS_TAB_VALUE
+                : GENERAL_TAB_VALUE
           );
           dispatch(setSelectedThread(openThread.id));
           void dispatch(loadThreadMessages(openThread.id));
@@ -1270,7 +1268,6 @@ const Conversations = ({
   // filter state remains unambiguous regardless of what threads exist.
   const labelTabs = [
     { label: t('chat.filter.general'), value: GENERAL_TAB_VALUE },
-    { label: t('chat.filter.meetings'), value: MEETINGS_TAB_VALUE },
     { label: t('chat.filter.subconscious'), value: SUBCONSCIOUS_TAB_VALUE },
     { label: t('chat.filter.tasks'), value: TASKS_TAB_VALUE },
   ];
@@ -1319,27 +1316,7 @@ const Conversations = ({
           is clamped to true) so the single onboarding thread is always visible. */}
       {!isSidebar && effectiveShowSidebar && (
         <div className="w-64 flex-shrink-0 flex flex-col bg-white dark:bg-neutral-900 rounded-2xl shadow-soft border border-stone-200 dark:border-neutral-800 overflow-hidden">
-          <div className="flex items-center justify-between px-4 py-3 border-b border-stone-100 dark:border-neutral-800">
-            <h2 className="text-sm font-semibold text-stone-700 dark:text-neutral-200">
-              {t('chat.threads')}
-            </h2>
-            <button
-              data-testid="new-thread-sidebar-button"
-              data-analytics-id="chat-sidebar-new-thread"
-              onClick={() => void handleCreateNewThread()}
-              className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 dark:hover:bg-neutral-800/60 text-stone-500 dark:text-neutral-400 hover:text-stone-700 dark:hover:text-neutral-200 dark:text-neutral-200 dark:hover:text-neutral-200 transition-colors"
-              title={t('chat.newThread')}>
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M12 4v16m8-8H4"
-                />
-              </svg>
-            </button>
-          </div>
-          <div className="px-4 py-2 border-b border-stone-50 dark:border-neutral-800">
+          <div className="px-2 py-2 border-b border-stone-50 dark:border-neutral-800">
             <PillTabBar
               items={labelTabs}
               selected={selectedLabel}
@@ -1373,14 +1350,14 @@ const Conversations = ({
                       void dispatch(loadThreadMessages(thread.id));
                     }
                   }}
-                  className={`w-full text-left px-4 py-3 border-b border-stone-50 dark:border-neutral-800 transition-colors group cursor-pointer ${
+                  className={`w-full text-left px-3 py-1.5 border-b border-stone-100/60 dark:border-neutral-800/60 transition-colors group cursor-pointer ${
                     selectedThreadId === thread.id
                       ? 'bg-primary-50 dark:bg-primary-900/30 border-l-2 border-l-primary-500'
                       : 'hover:bg-stone-50 dark:hover:bg-neutral-800/60'
                   }`}>
                   <div className="flex items-center justify-between">
                     <p
-                      className={`text-sm truncate flex-1 ${
+                      className={`text-xs truncate flex-1 ${
                         selectedThreadId === thread.id
                           ? 'font-medium text-primary-700 dark:text-primary-200'
                           : 'text-stone-700 dark:text-neutral-200'
@@ -2344,6 +2321,7 @@ const Conversations = ({
               </p>
             </div>
           )}
+          <ComposerTokenStats />
         </div>
       </div>
       <ConfirmationModal

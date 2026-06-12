@@ -290,6 +290,7 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 | 8.2.1 | Context Injection  | RI    | `tests/autocomplete_memory_e2e.rs`        | ✅     |                                   |
 | 8.2.2 | Memory Consistency | RI    | `tests/memory_graph_sync_e2e.rs`, `tests/worker_c_modules_e2e.rs` | ✅     | Worker C RPC E2E verifies memory-tree ingest is reflected by `memory_sync_status_list` |
 | 8.2.3 | Memory Scaling     | RU    | `src/openhuman/memory/ingestion_tests.rs` | 🟡     | Soak/scale benchmark not asserted |
+| 8.2.4 | Raw-archive sync reconcile   | RU+RI | `src/openhuman/memory_sync/sources/rebuild.rs`, `src/openhuman/memory_sync/workspace/periodic.rs`, `tests/json_rpc_e2e.rs` (`json_rpc_memory_sources_reconcile_reports_pending_raw_files`), `tests/memory_sync_pipeline_e2e.rs` | ✅     | Coverage gate + incremental rebuild + workspace periodic scheduler + `memory_sources_reconcile` RPC |
 
 ### 8.3 Memory Retrieval Benchmarks
 

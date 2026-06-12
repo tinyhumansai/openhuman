@@ -354,6 +354,113 @@ pub async fn sync_rpc(req: SyncRequest) -> Result<RpcOutcome<SyncResponse>, Stri
     ))
 }
 
+// ── Reconcile ──
+
+#[derive(Debug, Default, serde::Deserialize)]
+pub struct ReconcileRequest {
+    /// Restrict to one source; omit to inspect every enabled source.
+    #[serde(default)]
+    pub source_id: Option<String>,
+    /// When true, kick off background summarise+ingest for every scope
+    /// with pending files. When false (default), report-only.
+    #[serde(default)]
+    pub execute: bool,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct ReconcileScopeReport {
+    pub source_id: String,
+    pub tree_scope: String,
+    /// Raw `.md` files on disk for this scope.
+    pub total_raw_files: usize,
+    /// Files already covered by a tree summary.
+    pub covered: usize,
+    /// Files awaiting summarisation into the tree.
+    pub pending: usize,
+    /// True when `execute` was set and a background reconcile was started.
+    pub started: bool,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct ReconcileResponse {
+    pub scopes: Vec<ReconcileScopeReport>,
+}
+
+/// Report (and optionally repair) raw-archive → tree coverage for memory
+/// sources. The same incremental reconcile runs automatically after every
+/// sync; this RPC exposes it for inspection and manual triggering.
+pub async fn reconcile_rpc(req: ReconcileRequest) -> Result<RpcOutcome<ReconcileResponse>, String> {
+    use crate::openhuman::memory_sources::sync::derive_scopes;
+    use crate::openhuman::memory_sync::sources::rebuild::{raw_coverage, rebuild_tree_from_raw};
+
+    tracing::info!(
+        source_id = ?req.source_id,
+        execute = req.execute,
+        "[memory_sources] reconcile_rpc: entry"
+    );
+
+    let config = config_rpc::load_config_with_timeout().await?;
+    let sources: Vec<MemorySourceEntry> = match &req.source_id {
+        Some(id) => vec![registry::get_source(id)
+            .await?
+            .ok_or_else(|| format!("source '{id}' not found"))?],
+        None => registry::list_sources().await?,
+    };
+
+    let mut reports: Vec<ReconcileScopeReport> = Vec::new();
+    for source in sources.iter().filter(|s| s.enabled) {
+        for scope in derive_scopes(source, &config) {
+            let coverage = raw_coverage(&config, &scope.tree_scope, &scope.archive_source_id)
+                .map_err(|e| format!("coverage for {}: {e:#}", scope.tree_scope))?;
+            let pending = coverage.pending.len();
+            let mut started = false;
+            if req.execute && pending > 0 {
+                let cfg = config.clone();
+                let tree_scope = scope.tree_scope.clone();
+                let archive = scope.archive_source_id.clone();
+                tokio::spawn(async move {
+                    match rebuild_tree_from_raw(&cfg, &tree_scope, &archive).await {
+                        Ok(outcome) => tracing::info!(
+                            tree_scope = %tree_scope,
+                            files = outcome.files_read,
+                            batches = outcome.batches,
+                            "[memory_sources] reconcile_rpc: background reconcile complete"
+                        ),
+                        Err(e) => tracing::warn!(
+                            tree_scope = %tree_scope,
+                            error = %format!("{e:#}"),
+                            "[memory_sources] reconcile_rpc: background reconcile failed"
+                        ),
+                    }
+                });
+                started = true;
+            }
+            tracing::debug!(
+                source_id = %source.id,
+                tree_scope = %scope.tree_scope,
+                total = coverage.total,
+                covered = coverage.covered,
+                pending = pending,
+                started = started,
+                "[memory_sources] reconcile_rpc: scope report"
+            );
+            reports.push(ReconcileScopeReport {
+                source_id: source.id.clone(),
+                tree_scope: scope.tree_scope,
+                total_raw_files: coverage.total,
+                covered: coverage.covered,
+                pending,
+                started,
+            });
+        }
+    }
+
+    Ok(RpcOutcome::new(
+        ReconcileResponse { scopes: reports },
+        vec![],
+    ))
+}
+
 // ── Status List ──
 
 #[derive(Debug, serde::Serialize)]
