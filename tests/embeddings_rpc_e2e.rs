@@ -645,13 +645,24 @@ async fn embeddings_embed_with_custom_openai_endpoint_round_trips_vectors_and_ap
     );
 
     let requests = mock_state.requests.lock().expect("mock requests lock");
-    assert_eq!(requests.len(), 1, "custom endpoint should be called once");
+    // Two hits: (0) the save-time connectivity probe update_settings now runs
+    // against custom endpoints (TAURI-RUST-5JR prevention), (1) the real embed.
     assert_eq!(
-        requests[0].get("model").and_then(Value::as_str),
-        Some("mock-embedding-model")
+        requests.len(),
+        2,
+        "expected one save-time probe + one embed call"
     );
     assert_eq!(
         requests[0].pointer("/input/0").and_then(Value::as_str),
+        Some("connection test"),
+        "first call must be the save-time validation probe"
+    );
+    assert_eq!(
+        requests[1].get("model").and_then(Value::as_str),
+        Some("mock-embedding-model")
+    );
+    assert_eq!(
+        requests[1].pointer("/input/0").and_then(Value::as_str),
         Some("first custom text")
     );
     drop(requests);
