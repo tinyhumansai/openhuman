@@ -143,7 +143,10 @@ async function assertSessionNotNuked(page: Page) {
         };
         const snapshot = win.__OPENHUMAN_CORE_STATE__?.()?.snapshot;
         return {
-          hash: window.location.hash,
+          // The connections page now appends an active-tab query (e.g.
+          // `#/connections?tab=composio`); strip it so we assert we're still on
+          // the connections route (session not nuked), not the exact sub-tab.
+          hash: window.location.hash.replace(/\?.*$/, ''),
           hasToken: Boolean(snapshot?.sessionToken),
           hasUser: Boolean(snapshot?.currentUser?._id),
         };

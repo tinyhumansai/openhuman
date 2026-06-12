@@ -231,7 +231,7 @@ async function renderWithSelectedThread() {
     thread: {
       threads: [thread],
       selectedThreadId: thread.id,
-      activeThreadId: null,
+      activeThreadIds: {},
       welcomeThreadId: null,
       messagesByThreadId: { [thread.id]: [] },
       messages: [],
@@ -548,7 +548,7 @@ describe('Conversations — attachment feature', () => {
       thread: {
         threads: [thread],
         selectedThreadId: thread.id,
-        activeThreadId: null,
+        activeThreadIds: {},
         welcomeThreadId: null,
         messagesByThreadId: { [thread.id]: [message] },
         messages: [message],
@@ -597,7 +597,7 @@ describe('Conversations — attachment feature', () => {
       thread: {
         threads: [thread],
         selectedThreadId: thread.id,
-        activeThreadId: null,
+        activeThreadIds: {},
         welcomeThreadId: null,
         messagesByThreadId: { [thread.id]: [message] },
         messages: [message],

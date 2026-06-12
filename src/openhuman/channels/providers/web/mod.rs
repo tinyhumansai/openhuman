@@ -27,6 +27,8 @@ pub use event_bus::{
 };
 
 // Public API — operations
+#[cfg(any(test, debug_assertions))]
+pub use ops::parallel_in_flight_entries_for_test;
 pub use ops::{
     cancel_chat, channel_web_cancel, channel_web_chat, channel_web_queue_clear,
     channel_web_queue_status, in_flight_entries_for_test, invalidate_thread_sessions, start_chat,
@@ -51,6 +53,8 @@ pub(crate) use schemas::{
 // Test helpers (debug/test builds only)
 #[cfg(any(test, debug_assertions))]
 pub use ops::set_test_forced_run_chat_task_error;
+#[cfg(any(test, debug_assertions))]
+pub use ops::{set_test_run_chat_task_block, TestRunChatTaskBlock};
 
 #[cfg(any(test, debug_assertions))]
 pub(crate) use ops::THREAD_SESSIONS;
