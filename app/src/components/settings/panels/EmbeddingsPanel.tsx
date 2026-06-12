@@ -285,6 +285,18 @@ const EmbeddingsPanel = ({ embedded = false }: EmbeddingsPanelProps = {}) => {
         custom_endpoint: customEndpoint.trim(),
         confirm_wipe: false,
       });
+      // The endpoint responded but exposes no embeddings API (e.g. a chat-only
+      // base URL like DeepSeek). Keep the setup popup open and surface the
+      // actionable message so the user can correct the endpoint — TAURI-RUST-5JR.
+      if (result.error === 'EMBEDDINGS_ENDPOINT_NO_API') {
+        setSetupError(
+          typeof result.message === 'string'
+            ? result.message
+            : 'This endpoint has no embeddings API. Choose an embeddings-capable provider or a different endpoint.'
+        );
+        setStatus({ kind: 'idle' });
+        return;
+      }
       if (result.error === 'EMBEDDINGS_DIMENSION_CHANGE_REQUIRES_WIPE') {
         setPendingWipe({
           provider: 'custom',
