@@ -2140,8 +2140,7 @@ pub fn is_insufficient_credits_event(event: &sentry::protocol::Event<'_>) -> boo
         // bare "402" would false-positive on body digits (e.g. a 400 error
         // whose body says "can only afford 402 tokens"), which is NOT this
         // user-state and must keep reaching Sentry.
-        let is_402_status =
-            lower.contains("(402") || lower.contains("402 payment required");
+        let is_402_status = lower.contains("(402") || lower.contains("402 payment required");
         is_402_status
             && crate::openhuman::inference::provider::body_indicates_insufficient_credits(text)
     }
