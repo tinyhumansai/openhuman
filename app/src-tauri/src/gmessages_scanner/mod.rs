@@ -24,12 +24,12 @@
 //!     in the UI — "scroll to backfill older history."
 //!
 //! CDP wiring TODO:
-//!   * The CEF remote-debugging port + per-account target selection lives
-//!     in `whatsapp_scanner::mod` today (`CDP_HOST`/`CDP_PORT`,
-//!     `Target.getTargets` filter). When this module is promoted from
-//!     scaffold to running scanner, lift that plumbing into a shared
-//!     `cdp` module and point this scanner at the Google Messages Web
-//!     target (`messages.google.com/web`). Until then `run_scanner` is a
+//!   * Reuse the shared in-process CDP transport (`crate::cdp::conn_for_account` /
+//!     `crate::cdp::connect_and_attach_matching_in_process`) the way the
+//!     whatsapp, telegram, slack, discord, wechat, and meet scanners do.
+//!     When this module is promoted from scaffold to running scanner,
+//!     point it at the Google Messages Web target
+//!     (`messages.google.com/web`). Until then `run_scanner` is a
 //!     stub that logs and exits — the PR ships the normalization +
 //!     memory-doc shape so downstream can iterate without the full CDP
 //!     loop landed.

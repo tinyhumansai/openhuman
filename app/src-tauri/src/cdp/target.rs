@@ -3,17 +3,15 @@
 //! Each CEF webview is its own browser instance with its own DevTools
 //! channel (see [`super::in_process`]), so the multi-target multiplexer
 //! that used to live in this module has been simplified — there is no
-//! more `browser_ws_url()` HTTP discovery and no remote attach. The
-//! remaining helpers (`Target.getTargets` walk, `Target.attachToTarget`
+//! HTTP `/json/version` discovery and no remote attach. The remaining
+//! helpers (`Target.getTargets` walk, `Target.attachToTarget`
 //! flatten-attach, detach) still apply because the page itself may
 //! contain iframes / workers that the scanners care about.
-
-use std::time::Duration;
 
 use serde_json::{json, Value};
 use tauri::{AppHandle, Manager, Runtime};
 
-use super::{in_process::CdpRegistry, CdpConn, CDP_HOST, CDP_PORT};
+use super::{in_process::CdpRegistry, CdpConn};
 
 #[derive(Debug, Clone)]
 pub struct CdpTarget {
@@ -21,44 +19,6 @@ pub struct CdpTarget {
     pub kind: String,
     pub url: String,
     pub title: String,
-}
-
-/// Legacy TCP WebSocket discovery — kept for the per-scanner `CdpConn`
-/// duplicates that have not yet migrated to the in-process transport.
-/// New code paths use [`conn_for_account`] which goes through the
-/// in-process channel installed by `webview_accounts::open`.
-///
-/// Returns the browser-level WebSocket URL by hitting
-/// `http://{CDP_HOST}:{CDP_PORT}/json/version`. Requires Chromium to
-/// have been spawned with `--remote-debugging-port=<CDP_PORT>` — see
-/// `app/src-tauri/src/lib.rs`.
-pub async fn browser_ws_url() -> Result<String, String> {
-    let client = reqwest::Client::builder()
-        .user_agent("openhuman-cdp/1.0")
-        .timeout(Duration::from_secs(5))
-        .build()
-        .map_err(|e| format!("reqwest build: {e}"))?;
-    let mut last_err: Option<String> = None;
-    for host in [CDP_HOST, "localhost"] {
-        let url = format!("http://{host}:{CDP_PORT}/json/version");
-        match client.get(&url).send().await {
-            Ok(resp) => match resp.json::<Value>().await {
-                Ok(v) => {
-                    if let Some(ws) = v.get("webSocketDebuggerUrl").and_then(|x| x.as_str()) {
-                        return Ok(ws.to_string());
-                    }
-                    last_err = Some(format!("no webSocketDebuggerUrl in {url}"));
-                }
-                Err(e) => {
-                    last_err = Some(format!("parse {url}: {e}"));
-                }
-            },
-            Err(e) => {
-                last_err = Some(format!("GET {url}: {e}"));
-            }
-        }
-    }
-    Err(last_err.unwrap_or_else(|| "failed to resolve CDP websocket URL".to_string()))
 }
 
 /// Parse the response of a `Target.getTargets` CDP call into a list of
@@ -186,32 +146,6 @@ async fn attach_matching_on_conn<F>(
 where
     F: Fn(&CdpTarget) -> bool,
 {
-    let target = find_page_target_where(&mut cdp, pred).await?;
-    let attach = cdp
-        .call(
-            "Target.attachToTarget",
-            json!({ "targetId": target.id, "flatten": true }),
-            None,
-        )
-        .await?;
-    let session = attach
-        .get("sessionId")
-        .and_then(|x| x.as_str())
-        .ok_or_else(|| "attach missing sessionId".to_string())?
-        .to_string();
-    Ok((cdp, session))
-}
-
-/// Legacy TCP-WS attach helper, kept for the per-scanner `CdpConn`
-/// duplicates that still discover targets via the global
-/// `Target.getTargets` walk. New code paths use
-/// [`connect_and_attach_matching_in_process`].
-pub async fn connect_and_attach_matching<F>(pred: F) -> Result<(CdpConn, String), String>
-where
-    F: Fn(&CdpTarget) -> bool,
-{
-    let ws = browser_ws_url().await?;
-    let mut cdp = CdpConn::open_ws(&ws).await?;
     let target = find_page_target_where(&mut cdp, pred).await?;
     let attach = cdp
         .call(
