@@ -198,3 +198,98 @@ describe('agentTeamApi.shutdownMember', () => {
     expect(mockCall).not.toHaveBeenCalled();
   });
 });
+
+describe('agentTeamApi.messageMember', () => {
+  it('narrows the { message } event and omits absent optional fields', async () => {
+    mockCall.mockResolvedValueOnce({
+      message: {
+        runId: 'team-1',
+        sequence: 5,
+        eventType: 'team_message',
+        payload: { from: 'lead', to: 'm1', content: 'go', visibility: 'team' },
+        timestamp: '2026-01-01T00:00:00Z',
+      },
+    });
+    const msg = await agentTeamApi.messageMember({
+      teamId: 'team-1',
+      toMemberId: 'm1',
+      content: 'go',
+    });
+    expect(msg.payload).toEqual({ from: 'lead', to: 'm1', content: 'go', visibility: 'team' });
+    // fromMemberId omitted → lead origin; no empty keys forwarded.
+    expect(mockCall).toHaveBeenCalledWith({
+      method: 'openhuman.agent_team_message_member',
+      params: { teamId: 'team-1', content: 'go', toMemberId: 'm1' },
+    });
+  });
+
+  it('forwards fromMemberId for teammate-to-teammate messages', async () => {
+    mockCall.mockResolvedValueOnce({
+      message: {
+        runId: 'team-1',
+        sequence: 6,
+        eventType: 'team_message',
+        payload: { from: 'm1', to: 'm2', content: 'hi', visibility: 'team' },
+        timestamp: '2026-01-01T00:00:00Z',
+      },
+    });
+    await agentTeamApi.messageMember({
+      teamId: 'team-1',
+      fromMemberId: 'm1',
+      toMemberId: 'm2',
+      content: 'hi',
+    });
+    expect(mockCall).toHaveBeenCalledWith({
+      method: 'openhuman.agent_team_message_member',
+      params: { teamId: 'team-1', content: 'hi', fromMemberId: 'm1', toMemberId: 'm2' },
+    });
+  });
+
+  it('throws on empty content or teamId, without calling core', async () => {
+    await expect(agentTeamApi.messageMember({ teamId: '', content: 'x' })).rejects.toThrow(
+      'teamId is required'
+    );
+    await expect(agentTeamApi.messageMember({ teamId: 'team-1', content: '  ' })).rejects.toThrow(
+      'content is required'
+    );
+    expect(mockCall).not.toHaveBeenCalled();
+  });
+});
+
+describe('agentTeamApi.startMember', () => {
+  it('unwraps { result } and forwards an explicit taskId', async () => {
+    mockCall.mockResolvedValueOnce({
+      result: { kind: 'started', runId: 'teamrun-1', task: { id: 'task-1' } },
+    });
+    const outcome = await agentTeamApi.startMember({
+      teamId: 'team-1',
+      memberId: 'm1',
+      taskId: 'task-1',
+    });
+    expect(outcome).toEqual({ kind: 'started', runId: 'teamrun-1', task: { id: 'task-1' } });
+    expect(mockCall).toHaveBeenCalledWith({
+      method: 'openhuman.agent_team_start_member',
+      params: { teamId: 'team-1', memberId: 'm1', taskId: 'task-1' },
+    });
+  });
+
+  it('omits taskId when auto-picking and surfaces a blocked outcome', async () => {
+    mockCall.mockResolvedValueOnce({ result: { kind: 'blocked', unmet: ['task-a'] } });
+    const outcome = await agentTeamApi.startMember({ teamId: 'team-1', memberId: 'm1' });
+    expect(outcome).toEqual({ kind: 'blocked', unmet: ['task-a'] });
+    expect(mockCall).toHaveBeenCalledWith({
+      method: 'openhuman.agent_team_start_member',
+      params: { teamId: 'team-1', memberId: 'm1' },
+    });
+  });
+
+  it('throws when teamId or memberId is empty, without calling core', async () => {
+    await expect(agentTeamApi.startMember({ teamId: '', memberId: 'm1' })).rejects.toThrow(
+      'required'
+    );
+    await expect(agentTeamApi.startMember({ teamId: 'team-1', memberId: '' })).rejects.toThrow(
+      'required'
+    );
+    expect(mockCall).not.toHaveBeenCalled();
+  });
+});
