@@ -32,7 +32,7 @@ test.describe('Settings - Channels & Permissions', () => {
     await waitForAppReady(page);
     await dismissWalkthroughIfPresent(page);
 
-    const messagingTab = page.getByRole('tab', { name: 'Messaging', exact: true });
+    const messagingTab = page.getByRole('tab', { name: 'Channels', exact: true });
     if (await messagingTab.isVisible().catch(() => false)) {
       await messagingTab.click();
     }

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
-import { AVATAR_MENU_ITEMS, CENTER_TAB, NAV_TABS } from '../config/navConfig';
+import { AVATAR_MENU_ITEMS, NAV_TABS } from '../config/navConfig';
 import { useT } from '../lib/i18n/I18nContext';
 import { useCoreState } from '../providers/CoreStateProvider';
 import { trackEvent } from '../services/analytics';
@@ -16,10 +16,8 @@ import { resolveUserName } from '../utils/userName';
 
 // ── SVG icons, keyed by tab id ────────────────────────────────────────────────
 
-function TabIcon({ id, large = false }: { id: string; large?: boolean }) {
-  // Regular pill tabs render small (w-4); the raised center FAB renders large
-  // (w-6) so its glyph reads as the centerpiece.
-  const cls = large ? 'w-6 h-6' : 'w-4 h-4';
+function TabIcon({ id }: { id: string }) {
+  const cls = 'w-4 h-4';
   switch (id) {
     case 'home':
       return (
@@ -95,8 +93,7 @@ function TabIcon({ id, large = false }: { id: string; large?: boolean }) {
         </svg>
       );
     case 'brain':
-      // Two symmetric lobes — reads clearly as a brain. Rendered larger and
-      // white inside the raised center circle.
+      // Two symmetric lobes — reads clearly as a brain.
       return (
         <svg className={cls} fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path
@@ -282,43 +279,8 @@ const BottomTabBar = () => {
     );
   };
 
-  // The Assistant — a raised circular button rising out of the center of the
-  // bar. The bg-colored ring fakes a notch cut into the pill's top edge.
-  // `center-fab` marks the button (test/identification hook); it renders a
-  // static glow when active — no pulse.
-  //
-  // `-my-3` collapses the button's 48px (h-12) layout footprint so it no longer
-  // forces the nav row taller than the ~32px pill tabs — the bar height is
-  // driven by the tabs, while `-translate-y-4` still lifts the circle above the
-  // top edge. Without it the lower half of the raised circle left a dead band
-  // of empty bar height beneath the tabs.
-  const renderCenterButton = () => {
-    const active = isActive(CENTER_TAB.path);
-    const centerTab = { ...CENTER_TAB, label: t(CENTER_TAB.labelKey) };
-    return (
-      <button
-        key={CENTER_TAB.id}
-        type="button"
-        data-walkthrough={CENTER_TAB.walkthroughAttr}
-        onClick={() => handleTabClick(centerTab, active)}
-        aria-label={centerTab.label}
-        title={centerTab.label}
-        className={`center-fab group relative mx-1 flex h-12 w-12 -my-3 -translate-y-4 items-center justify-center rounded-full text-white shadow-soft ring-4 ring-stone-200 transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] cursor-pointer dark:ring-neutral-900 ${
-          active
-            ? 'bg-primary-600 shadow-[0_0_16px_rgba(74,131,221,0.55)] scale-105'
-            : 'bg-primary-500 hover:bg-primary-600 hover:scale-105'
-        }`}>
-        <TabIcon id={CENTER_TAB.id} large />
-      </button>
-    );
-  };
-
-  // Home is a normal pill tab now (no longer pinned/icon-only). The regular
-  // tabs split evenly around the centered Assistant button; only the avatar
-  // stays pinned to the far-right behind a divider:
-  //   | home · human · brain  ( 💬 )  connections · activity · settings | [ avatar ]
-  const leftTabs = tabs.slice(0, 3);
-  const rightTabs = tabs.slice(3);
+  // All tabs render as uniform pill buttons in a single row; the avatar
+  // stays pinned to the far-right behind a divider.
 
   return (
     // pointer-events-none on the full-width shell so transparent areas (e.g.
@@ -344,9 +306,7 @@ const BottomTabBar = () => {
           if (!e.currentTarget.contains(e.relatedTarget as Node)) setRevealed(false);
         }}>
         <nav className="pointer-events-auto inline-flex items-center gap-1 rounded-sm border border-stone-300 dark:border-neutral-700 bg-stone-200 dark:bg-neutral-900 shadow-soft px-1 py-1">
-          {leftTabs.map(tab => renderTab(tab))}
-          {renderCenterButton()}
-          {rightTabs.map(tab => renderTab(tab))}
+          {tabs.map(tab => renderTab(tab))}
           <div
             className="relative ml-1 border-l border-stone-300 pl-1 dark:border-neutral-700"
             ref={profileMenuRef}>

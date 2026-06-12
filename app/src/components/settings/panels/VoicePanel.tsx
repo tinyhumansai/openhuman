@@ -18,7 +18,6 @@ import {
   type VoiceProviderView,
   type VoiceSettings,
 } from '../../../services/api/voiceSettingsApi';
-import { IS_DEV_LIKE } from '../../../utils/config';
 import {
   openhumanGetVoiceServerSettings,
   openhumanUpdateVoiceServerSettings,
@@ -96,11 +95,6 @@ interface VoicePanelProps {
    *  inside the onboarding custom wizard). */
   embedded?: boolean;
 }
-
-/** Always-on listening toggle is hidden in production for now, but shown in
- *  dev/debug builds so the feature can be exercised. Set unconditionally to
- *  `true` to expose it everywhere. See docs/voice-system-actions.md. */
-const SHOW_ALWAYS_ON_TOGGLE = IS_DEV_LIKE;
 
 const VoicePanel = ({ embedded = false }: VoicePanelProps = {}) => {
   const { t } = useT();
@@ -504,8 +498,7 @@ const VoicePanel = ({ embedded = false }: VoicePanelProps = {}) => {
 
       <div className={embedded ? 'space-y-4' : 'p-4 space-y-4'}>
         {/* ─── Always-on listening (Phase 2) ──────────────────────────── */}
-        {/* Gated on SHOW_ALWAYS_ON_TOGGLE — shown in dev/debug builds, hidden in prod. */}
-        {SHOW_ALWAYS_ON_TOGGLE && settings && (
+        {settings && (
           <SettingsSection>
             <SettingsRow
               htmlFor="switch-always-on-main"
