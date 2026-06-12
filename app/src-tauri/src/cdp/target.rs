@@ -120,6 +120,28 @@ pub fn conn_for_account<R: Runtime>(
     Ok(CdpConn::new(transport))
 }
 
+/// Get a [`CdpConn`] for a webview keyed by its concrete label
+/// (e.g. `"meet-call-<request_id>"`). Generic counterpart of
+/// [`conn_for_account`] for webviews that aren't account scanners.
+///
+/// Falls back to [`super::in_process::install_for_label`] on a cache
+/// miss so a transient install race at window creation doesn't
+/// permanently lock the surface out of CDP.
+pub fn conn_for_label<R: Runtime>(
+    app: &AppHandle<R>,
+    label: &str,
+) -> Result<CdpConn, String> {
+    let registry = app
+        .try_state::<CdpRegistry>()
+        .ok_or_else(|| "CdpRegistry not managed by app".to_string())?;
+    if let Some(transport) = registry.by_label(label) {
+        return Ok(CdpConn::new(transport));
+    }
+    let transport = super::in_process::install_for_label(label)
+        .map_err(|e| format!("no cdp transport for label {label} (install retry: {e})"))?;
+    Ok(CdpConn::new(transport))
+}
+
 /// Full short-lived attach sequence on the account's webview via the
 /// in-process channel: look up the [`CdpRegistry`] transport for the
 /// given account, find the matching page target via
@@ -136,7 +158,34 @@ where
     R: Runtime,
     F: Fn(&CdpTarget) -> bool,
 {
-    let mut cdp = conn_for_account(app, account_id)?;
+    let cdp = conn_for_account(app, account_id)?;
+    attach_matching_on_conn(cdp, pred).await
+}
+
+/// Same as [`connect_and_attach_matching_in_process`] but keyed by the
+/// webview's concrete label rather than an account id. Used by Meet
+/// (window label `meet-call-{request_id}`) and any other CEF surface
+/// that isn't an account scanner.
+pub async fn connect_and_attach_matching_in_process_by_label<R, F>(
+    app: &AppHandle<R>,
+    label: &str,
+    pred: F,
+) -> Result<(CdpConn, String), String>
+where
+    R: Runtime,
+    F: Fn(&CdpTarget) -> bool,
+{
+    let cdp = conn_for_label(app, label)?;
+    attach_matching_on_conn(cdp, pred).await
+}
+
+async fn attach_matching_on_conn<F>(
+    mut cdp: CdpConn,
+    pred: F,
+) -> Result<(CdpConn, String), String>
+where
+    F: Fn(&CdpTarget) -> bool,
+{
     let target = find_page_target_where(&mut cdp, pred).await?;
     let attach = cdp
         .call(

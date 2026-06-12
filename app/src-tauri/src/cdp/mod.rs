@@ -34,8 +34,8 @@ pub mod target;
 
 pub use conn::CdpConn;
 pub use in_process::{
-    install_for_account, install_for_webview, set_cef_app_handle, CdpRegistry, EventFrame,
-    WebviewCdpTransport, CALL_TIMEOUT,
+    install_for_account, install_for_label, install_for_webview, set_cef_app_handle, CdpRegistry,
+    EventFrame, WebviewCdpTransport, CALL_TIMEOUT,
 };
 pub use session::{
     placeholder_marker, placeholder_url, spawn_session, target_url_fragment, SpawnedSession,
