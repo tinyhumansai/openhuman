@@ -18,6 +18,8 @@ pub use http::router as agentbox_router;
 pub use store::JobStore;
 
 #[cfg(test)]
+mod disabled_mode_tests;
+#[cfg(test)]
 mod env_tests;
 #[cfg(test)]
 mod http_tests;
