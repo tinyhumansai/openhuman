@@ -442,7 +442,7 @@ pub trait Provider: Send + Sync {
         temperature: f64,
     ) -> anyhow::Result<ChatResponse> {
         if let Some(cap) = request.max_tokens {
-            log::warn!(
+            log::debug!(
                 "[provider] default chat() for model={model} ignores max_tokens={cap} — \
                  this provider does not override chat() and chat_with_history() carries no \
                  output budget; the cap will not reach the wire"

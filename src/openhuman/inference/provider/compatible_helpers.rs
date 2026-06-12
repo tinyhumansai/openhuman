@@ -30,6 +30,13 @@ impl OpenAiCompatibleProvider {
             );
         }
 
+        log::debug!(
+            "[provider] {} responses-path model={model} max_output_tokens={:?} input_msgs={}",
+            self.name,
+            max_output_tokens,
+            input.len(),
+        );
+
         // #3201: the Codex/ChatGPT OAuth Responses endpoint rejects `stream: false`
         // outright. This branch lifts the constraint for that endpoint specifically
         // and parses the resulting SSE body so the existing non-streaming call

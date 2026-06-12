@@ -2135,7 +2135,14 @@ pub fn is_budget_event(event: &sentry::protocol::Event<'_>) -> bool {
 pub fn is_insufficient_credits_event(event: &sentry::protocol::Event<'_>) -> bool {
     fn text_is_insufficient_credits_402(text: &str) -> bool {
         let lower = text.to_ascii_lowercase();
-        (lower.contains("402") || lower.contains("payment required"))
+        // Anchor the 402 to a status shape — the emit sites format the message
+        // as "<provider> API error (402 Payment Required): <body>". Matching a
+        // bare "402" would false-positive on body digits (e.g. a 400 error
+        // whose body says "can only afford 402 tokens"), which is NOT this
+        // user-state and must keep reaching Sentry.
+        let is_402_status =
+            lower.contains("(402") || lower.contains("402 payment required");
+        is_402_status
             && crate::openhuman::inference::provider::body_indicates_insufficient_credits(text)
     }
 
@@ -5022,6 +5029,16 @@ mod tests {
         // 400/500 that merely mentions balance) so a real defect still pages.
         assert!(!is_insufficient_credits_event(&event_with_message(
             "provider API error (500): internal error, insufficient memory"
+        )));
+    }
+
+    #[test]
+    fn insufficient_credits_filter_ignores_402_digits_in_a_non_402_body() {
+        // A non-402 error whose body merely contains the digits "402" and a
+        // credit phrase must NOT be suppressed — the 402 must be the status,
+        // not an arbitrary number in the body.
+        assert!(!is_insufficient_credits_event(&event_with_message(
+            "provider API error (400): can only afford 402 tokens"
         )));
     }
 
