@@ -151,7 +151,10 @@ fn schema_for(function: &str) -> ControllerSchema {
             description: "Send a message from one member to another (or broadcast to the team).",
             inputs: vec![
                 required_str("teamId", "Team id."),
-                required_str("fromMemberId", "Sender member id."),
+                optional_str(
+                    "fromMemberId",
+                    "Sender member id; omit for a lead/user-originated message.",
+                ),
                 optional_str("toMemberId", "Recipient member id (omit to broadcast)."),
                 required_str("content", "Message content."),
                 optional_str("visibility", "Message visibility (default team)."),
@@ -337,14 +340,16 @@ fn handle_message_member(params: Map<String, Value>) -> ControllerFuture {
             log::warn!(target: "agent_team_rpc", "[agent_team_rpc][{cid}] message_member.config_failed err={err}");
         })?;
         let team_id = require_str(&params, "teamId")?;
-        let from = require_str(&params, "fromMemberId")?;
+        // `fromMemberId` is optional: omitted ⇒ lead/user-originated message
+        // (stored as `from = "lead"`); present ⇒ teammate-to-teammate.
+        let from = opt_str(&params, "fromMemberId");
         let to = opt_str(&params, "toMemberId");
         let content = require_str(&params, "content")?;
         let visibility = opt_str(&params, "visibility");
         let event = ops::message_member(
             &config,
             &team_id,
-            &from,
+            from.as_deref(),
             to.as_deref(),
             &content,
             visibility.as_deref(),
