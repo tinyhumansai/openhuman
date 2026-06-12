@@ -264,25 +264,18 @@ describe('SettingsHome', () => {
       expect(screen.queryByText('Billing & Usage')).not.toBeInTheDocument();
     });
 
-    it('navigates to developer-options when "Developer & Diagnostics" is clicked (developerMode=true)', async () => {
+    it('navigates to developer-options when "Developer & Diagnostics" is clicked', async () => {
       const user = userEvent.setup();
-      renderSettingsHome({ developerMode: true });
+      renderSettingsHome();
 
       await user.click(screen.getByTestId('settings-nav-developer-options'));
       expect(mockNavigateToSettings).toHaveBeenCalledWith('developer-options');
     });
   });
 
-  describe('developer mode gate', () => {
-    it('hides the developer-options entry when developerMode is off', () => {
+  describe('developer & diagnostics (always visible)', () => {
+    it('shows the developer-options entry regardless of the developerMode preference', () => {
       renderSettingsHome({ developerMode: false });
-      expect(screen.queryByTestId('settings-nav-developer-options')).not.toBeInTheDocument();
-      // The English resolved text should also be absent
-      expect(screen.queryByText('Developer & Diagnostics')).not.toBeInTheDocument();
-    });
-
-    it('shows the developer-options entry when developerMode is on', () => {
-      renderSettingsHome({ developerMode: true });
       expect(screen.getByTestId('settings-nav-developer-options')).toBeInTheDocument();
       // useT() resolves to English even without I18nProvider
       expect(screen.getByText('Developer & Diagnostics')).toBeInTheDocument();
