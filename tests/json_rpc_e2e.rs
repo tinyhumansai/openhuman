@@ -12250,8 +12250,16 @@ async fn json_rpc_agent_team_live_member_run_roundtrip_inner() {
         .get("members")
         .and_then(Value::as_array)
         .expect("members");
-    let alice_id = members[0].get("id").and_then(Value::as_str).unwrap().to_string();
-    let bob_id = members[1].get("id").and_then(Value::as_str).unwrap().to_string();
+    let alice_id = members[0]
+        .get("id")
+        .and_then(Value::as_str)
+        .unwrap()
+        .to_string();
+    let bob_id = members[1]
+        .get("id")
+        .and_then(Value::as_str)
+        .unwrap()
+        .to_string();
 
     // Task A (no deps) owned by alice; Task B depends on A, owned by bob.
     let assign_a = post_json_rpc(

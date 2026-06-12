@@ -244,7 +244,12 @@ async fn drive_member_completes_task_with_worker_output_as_evidence() {
     // Claim + mark running, mirroring what start_member_run does pre-spawn.
     run_ledger::claim_agent_team_task(&config, "team-1", "task-a", "m1", "teamrun-x").unwrap();
     run_ledger::mark_agent_team_member_running(
-        &config, "team-1", "m1", "task-a", "teamrun-x", "teamrun-x",
+        &config,
+        "team-1",
+        "m1",
+        "task-a",
+        "teamrun-x",
+        "teamrun-x",
     )
     .unwrap();
     let task = run_ledger::get_agent_team_task(&config, "task-a")
@@ -301,7 +306,12 @@ async fn drive_member_releases_task_when_worker_fails() {
     );
     run_ledger::claim_agent_team_task(&config, "team-1", "task-a", "m1", "teamrun-x").unwrap();
     run_ledger::mark_agent_team_member_running(
-        &config, "team-1", "m1", "task-a", "teamrun-x", "teamrun-x",
+        &config,
+        "team-1",
+        "m1",
+        "task-a",
+        "teamrun-x",
+        "teamrun-x",
     )
     .unwrap();
     let task = run_ledger::get_agent_team_task(&config, "task-a")

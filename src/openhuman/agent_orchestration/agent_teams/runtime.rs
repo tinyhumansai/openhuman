@@ -114,7 +114,12 @@ pub async fn start_member_run(
     // Mark active synchronously so the polling UI reflects the running member
     // before the (async) worker even starts.
     run_ledger::mark_agent_team_member_running(
-        config, team_id, member_id, &claimed.id, &run_id, &run_id,
+        config,
+        team_id,
+        member_id,
+        &claimed.id,
+        &run_id,
+        &run_id,
     )?;
 
     let agent_id = member
@@ -166,8 +171,16 @@ async fn run_member_loop(
     let outcome = match build_root_parent(config, "agent_team_runtime", "team", "teamrun").await {
         Ok(parent) => {
             with_parent_context(parent, async {
-                drive_member(config, team_id, member_id, agent_id, &task, run_id, model_override)
-                    .await
+                drive_member(
+                    config,
+                    team_id,
+                    member_id,
+                    agent_id,
+                    &task,
+                    run_id,
+                    model_override,
+                )
+                .await
             })
             .await
         }
@@ -389,7 +402,13 @@ fn deliver_pending_messages(
     Ok(contents)
 }
 
-fn record_failure_event(config: &Config, team_id: &str, member_id: &str, task_id: &str, reason: &str) {
+fn record_failure_event(
+    config: &Config,
+    team_id: &str,
+    member_id: &str,
+    task_id: &str,
+    reason: &str,
+) {
     let _ = run_ledger::append_run_event(
         config,
         RunEventAppend {

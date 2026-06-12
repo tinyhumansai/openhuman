@@ -1140,9 +1140,7 @@ pub fn mark_agent_team_member_idle(
     team_id: &str,
     member_id: &str,
 ) -> Result<Option<AgentTeamMember>> {
-    log::debug!(
-        "{LOG_PREFIX} mark_agent_team_member_idle.entry team={team_id} member={member_id}"
-    );
+    log::debug!("{LOG_PREFIX} mark_agent_team_member_idle.entry team={team_id} member={member_id}");
     crate::openhuman::session_db::store::with_connection(config, |conn| {
         init_run_ledger_schema(conn)?;
         let now = Utc::now();
@@ -1581,11 +1579,10 @@ mod tests {
         seed_task(&config, "team-1", "task-a", vec![]);
         claim_agent_team_task(&config, "team-1", "task-a", "m1", "tok-1").unwrap();
 
-        let running = mark_agent_team_member_running(
-            &config, "team-1", "m1", "task-a", "worker-x", "run-x",
-        )
-        .unwrap()
-        .expect("member updated");
+        let running =
+            mark_agent_team_member_running(&config, "team-1", "m1", "task-a", "worker-x", "run-x")
+                .unwrap()
+                .expect("member updated");
         assert_eq!(running.member_status, AgentTeamMemberStatus::Active);
         assert_eq!(running.current_task_id.as_deref(), Some("task-a"));
         assert_eq!(running.worker_thread_id.as_deref(), Some("worker-x"));
