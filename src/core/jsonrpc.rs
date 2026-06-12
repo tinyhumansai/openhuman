@@ -864,7 +864,7 @@ const MAX_RPC_BODY_BYTES: usize = 64 * 1024 * 1024;
 /// 2. `rpc_auth_middleware`   — validates `Authorization: Bearer <token>` on protected paths
 /// 3. `http_request_log_middleware` — logs non-RPC HTTP requests with timing
 pub fn build_core_http_router(socketio_enabled: bool) -> Router {
-    let router = Router::new()
+    let mut router = Router::new()
         .route("/", get(root_handler))
         .route("/health", get(health_handler))
         .route("/schema", get(schema_handler))
@@ -890,13 +890,55 @@ pub fn build_core_http_router(socketio_enabled: bool) -> Router {
         .route("/auth/telegram", get(telegram_auth_handler))
         // OpenAI-compatible inference endpoint (/v1/chat/completions, /v1/models)
         .nest("/v1", crate::openhuman::inference::http::router())
-        .fallback(not_found_handler)
-        .layer(middleware::from_fn(http_request_log_middleware))
-        .layer(middleware::from_fn(crate::core::auth::rpc_auth_middleware))
-        .layer(middleware::from_fn(cors_middleware))
+        // Apply `AppState` here (before any state-less sub-routers such as
+        // AgentBox are merged below) so the outer router becomes
+        // `Router<()>` and matches them.
         .with_state(AppState {
             core_version: env!("CARGO_PKG_VERSION").to_string(),
         });
+
+    // Mount AgentBox marketplace routes when explicitly enabled.
+    //
+    // Gate is strict literal "1" — "true"/"yes"/etc. do NOT enable it. Auth
+    // bypass for `/run` and `/jobs/{id}` is unconditional in
+    // [`crate::core::auth`]; the router-side gate is what actually exposes
+    // the handlers. The spawned sweep loop lives until process exit.
+    if std::env::var("OPENHUMAN_AGENTBOX_MODE").as_deref() == Ok("1") {
+        let store = crate::openhuman::agentbox::JobStore::new(std::time::Duration::from_secs(3600));
+        let invoker: std::sync::Arc<dyn crate::openhuman::agentbox::invoker::AgentInvoker> =
+            std::sync::Arc::new(crate::openhuman::agentbox::invoker::CoreAgentInvoker);
+        let job_timeout = std::env::var("OPENHUMAN_AGENTBOX_JOB_TIMEOUT_SECS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .map(std::time::Duration::from_secs)
+            .unwrap_or_else(|| std::time::Duration::from_secs(600));
+
+        // Spawn sweep loop — bounds memory under sustained traffic.
+        let sweep_store = store.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                tick.tick().await;
+                let evicted = sweep_store.sweep_now();
+                if evicted > 0 {
+                    log::info!("[agentbox] sweep evicted {} terminal jobs", evicted);
+                }
+            }
+        });
+
+        log::info!("[agentbox] enabled; public routes: POST /run, GET /jobs/{{id}}, GET /health");
+        router = router.merge(crate::openhuman::agentbox::agentbox_router(
+            store,
+            invoker,
+            job_timeout,
+        ));
+    }
+
+    let router = router
+        .fallback(not_found_handler)
+        .layer(middleware::from_fn(http_request_log_middleware))
+        .layer(middleware::from_fn(crate::core::auth::rpc_auth_middleware))
+        .layer(middleware::from_fn(cors_middleware));
 
     if socketio_enabled {
         let (socket_layer, io) = crate::core::socketio::attach_socketio();
