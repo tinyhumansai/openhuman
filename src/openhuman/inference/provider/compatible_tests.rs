@@ -67,6 +67,7 @@ fn native_request_emits_thread_id_when_present() {
         stream_options: None,
         options: None,
         frequency_penalty: None,
+        max_tokens: None,
     };
     let json = serde_json::to_value(&req).unwrap();
     assert_eq!(
@@ -86,6 +87,7 @@ fn native_request_emits_thread_id_when_present() {
         stream_options: None,
         options: None,
         frequency_penalty: None,
+        max_tokens: None,
     };
     let json_no_thread = serde_json::to_value(&req_no_thread).unwrap();
     assert!(
@@ -107,6 +109,7 @@ fn native_request_serializes_frequency_penalty_only_when_set() {
         stream_options: None,
         options: None,
         frequency_penalty: Some(0.3),
+        max_tokens: None,
     };
     let json = serde_json::to_value(&base).unwrap();
     assert_eq!(
@@ -124,6 +127,42 @@ fn native_request_serializes_frequency_penalty_only_when_set() {
     assert!(
         json_none.get("frequency_penalty").is_none(),
         "absent frequency_penalty must be omitted so providers that reject it are unaffected"
+    );
+}
+
+#[test]
+fn native_request_serializes_max_tokens_only_when_set() {
+    // A set cap must reach the wire as OpenAI `max_tokens` so a credit-metered
+    // provider prices the request against a realistic output budget rather than
+    // the model's full window (TAURI-RUST-C62).
+    let with_cap = super::NativeChatRequest {
+        model: "anthropic/claude-fable-5".to_string(),
+        messages: Vec::new(),
+        temperature: Some(0.0),
+        stream: Some(false),
+        tools: None,
+        tool_choice: None,
+        thread_id: None,
+        stream_options: None,
+        options: None,
+        frequency_penalty: None,
+        max_tokens: Some(8192),
+    };
+    let json = serde_json::to_value(&with_cap).unwrap();
+    assert_eq!(
+        json.get("max_tokens").and_then(serde_json::Value::as_u64),
+        Some(8192),
+        "a set max_tokens must be forwarded so the provider's balance pre-flight is bounded"
+    );
+
+    let no_cap = super::NativeChatRequest {
+        max_tokens: None,
+        ..with_cap
+    };
+    let json_none = serde_json::to_value(&no_cap).unwrap();
+    assert!(
+        json_none.get("max_tokens").is_none(),
+        "absent max_tokens must be omitted so open-ended generations are unaffected"
     );
 }
 
@@ -248,6 +287,7 @@ async fn streaming_chat_frequency_penalty_rejection_not_reported_to_sentry() {
         }),
         options: None,
         frequency_penalty: Some(super::compatible_repeat::CHAT_FREQUENCY_PENALTY),
+        max_tokens: None,
     };
     let (delta_tx, _delta_rx) = tokio::sync::mpsc::channel(8);
 
@@ -287,6 +327,7 @@ fn streaming_request_sets_stream_options_include_usage() {
         }),
         options: None,
         frequency_penalty: None,
+        max_tokens: None,
     };
     let json = serde_json::to_value(&req).unwrap();
     assert_eq!(
@@ -310,6 +351,7 @@ fn non_streaming_request_omits_stream_options() {
         stream_options: None,
         options: None,
         frequency_penalty: None,
+        max_tokens: None,
     };
     let json = serde_json::to_value(&req).unwrap();
     assert!(
@@ -333,6 +375,7 @@ fn ollama_options_num_ctx_serializes_correctly() {
             num_ctx: Some(32768),
         }),
         frequency_penalty: None,
+        max_tokens: None,
     };
     let json = serde_json::to_value(&req).unwrap();
     assert_eq!(
@@ -355,6 +398,7 @@ fn ollama_options_none_is_omitted() {
         stream_options: None,
         options: None,
         frequency_penalty: None,
+        max_tokens: None,
     };
     let json = serde_json::to_value(&req).unwrap();
     assert!(
@@ -936,6 +980,7 @@ async fn streaming_chat_config_rejection_propagates_error_without_sentry_report(
         }),
         options: None,
         frequency_penalty: None,
+        max_tokens: None,
     };
     let (delta_tx, _delta_rx) = tokio::sync::mpsc::channel(8);
 
@@ -1401,6 +1446,7 @@ async fn streaming_tool_call_captures_extra_content() {
         }),
         options: None,
         frequency_penalty: None,
+        max_tokens: None,
     };
     let (delta_tx, _delta_rx) = tokio::sync::mpsc::channel(64);
     let resp = provider
@@ -1461,6 +1507,7 @@ async fn streaming_empty_continuation_id_does_not_clobber_tool_call_id() {
         }),
         options: None,
         frequency_penalty: None,
+        max_tokens: None,
     };
     let (delta_tx, _delta_rx) = tokio::sync::mpsc::channel(64);
     let resp = provider
@@ -1515,6 +1562,7 @@ async fn streaming_parallel_tool_calls_preserve_ids_against_empty_continuations(
         }),
         options: None,
         frequency_penalty: None,
+        max_tokens: None,
     };
     let (delta_tx, _delta_rx) = tokio::sync::mpsc::channel(64);
     let resp = provider
@@ -1573,6 +1621,7 @@ async fn streaming_omitted_continuation_id_preserves_tool_call_id() {
         }),
         options: None,
         frequency_penalty: None,
+        max_tokens: None,
     };
     let (delta_tx, _delta_rx) = tokio::sync::mpsc::channel(64);
     let resp = provider

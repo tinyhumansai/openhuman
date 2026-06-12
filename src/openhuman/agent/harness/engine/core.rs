@@ -373,6 +373,7 @@ pub(crate) async fn run_turn_engine(
                     messages: &prepared_messages_vec,
                     tools: request_tools,
                     stream: delta_tx_opt.as_ref(),
+                    max_tokens: None,
                 },
                 model,
                 temperature,

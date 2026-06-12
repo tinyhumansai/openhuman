@@ -23,6 +23,12 @@ pub struct ChatPrompt {
     pub user: String,
     pub temperature: f64,
     pub kind: &'static str,
+    /// Optional output-token cap forwarded to the provider as `max_tokens`.
+    /// `None` leaves generation open-ended. Memory callers with a bounded
+    /// response (entity extraction) set a small value so credit-metered
+    /// providers don't reserve the model's full output window in their
+    /// balance pre-flight (TAURI-RUST-C62).
+    pub max_tokens: Option<u32>,
 }
 
 /// Pluggable LLM surface used by the memory layer.
@@ -101,6 +107,7 @@ impl InferenceChatProvider {
             messages: &messages,
             tools: None,
             stream: None,
+            max_tokens: prompt.max_tokens,
         };
 
         let response = self
@@ -318,6 +325,7 @@ mod tests {
             user: "u".into(),
             temperature: 0.0,
             kind: "test",
+            max_tokens: None,
         };
         assert_eq!(p.chat_for_json(&prompt).await.unwrap(), "hello");
         assert_eq!(p.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
@@ -335,6 +343,7 @@ mod tests {
             user: "u".into(),
             temperature: 0.0,
             kind: "test",
+            max_tokens: None,
         };
         let (text, usage) = p.chat_for_text_with_usage(&prompt).await.unwrap();
         assert_eq!(text, "summary text");

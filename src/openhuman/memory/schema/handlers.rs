@@ -283,6 +283,7 @@ pub(super) fn handle_smart_walk(params: Map<String, Value>) -> ControllerFuture 
                     user: message.to_string(),
                     temperature,
                     kind: "memory_smart_walk_rpc",
+                    max_tokens: None,
                 };
                 self.inner.chat_for_text(&prompt).await
             }
