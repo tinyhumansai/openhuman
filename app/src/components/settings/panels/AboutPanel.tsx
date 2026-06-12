@@ -7,27 +7,21 @@
  * here would race with that component's own state machine.
  */
 import { invoke } from '@tauri-apps/api/core';
-import debug from 'debug';
 import { useEffect, useState } from 'react';
 
 import { useAppUpdate } from '../../../hooks/useAppUpdate';
-import { useDeveloperMode } from '../../../hooks/useDeveloperMode';
 import { useT } from '../../../lib/i18n/I18nContext';
-import { useAppDispatch, useAppSelector } from '../../../store/hooks';
-import { selectDeveloperMode, setDeveloperMode } from '../../../store/themeSlice';
+import { useAppSelector } from '../../../store/hooks';
 import { APP_VERSION, LATEST_APP_DOWNLOAD_URL } from '../../../utils/config';
 import { isTauriEnvironment } from '../../../utils/configPersistence';
 import { openUrl } from '../../../utils/openUrl';
 import Button from '../../ui/Button';
 import SettingsHeader from '../components/SettingsHeader';
-import { SettingsRow, SettingsSection, SettingsSwitch } from '../controls';
+import { SettingsRow, SettingsSection } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
-
-const log = debug('settings:developer-mode');
 
 const AboutPanel = () => {
   const { t } = useT();
-  const dispatch = useAppDispatch();
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
   // The auto-cadence is already running via the global <AppUpdatePrompt />;
   // disable it here so opening the panel doesn't double-trigger probes.
@@ -35,12 +29,6 @@ const AboutPanel = () => {
   const [lastCheckedAt, setLastCheckedAt] = useState<Date | null>(null);
   const coreMode = useAppSelector(state => state.coreMode.mode);
   const [rpcUrl, setRpcUrl] = useState<string | null>(null);
-  // Persisted developer mode preference (not the combined IS_DEV || developerMode).
-  // We read the raw preference here so the toggle reflects only the user's choice,
-  // not whether the build is a dev build.
-  const developerModePref = useAppSelector(selectDeveloperMode);
-  // Combined gate — true when IS_DEV or the pref is on. Used for the helper text.
-  const developerModeActive = useDeveloperMode();
 
   // Local mode picks a dynamic port at app launch, so the authoritative
   // value lives in the Tauri shell (`core_rpc_url` command) rather than the
@@ -160,33 +148,6 @@ const AboutPanel = () => {
             </p>
           </div>
         </SettingsSection>
-
-        {/* Developer Mode toggle — always visible so users can enable it
-            without needing it to be on first (chicken-and-egg avoidance). */}
-        <div data-testid="developer-mode-section">
-          <SettingsSection>
-            <SettingsRow
-              htmlFor="switch-developer-mode"
-              label={t('settings.developerMode.title')}
-              description={
-                developerModeActive && !developerModePref
-                  ? t('settings.developerMode.enabledByBuild')
-                  : t('settings.developerMode.description')
-              }
-              control={
-                <SettingsSwitch
-                  id="switch-developer-mode"
-                  checked={developerModePref}
-                  onCheckedChange={next => {
-                    log('toggled to %s', String(next));
-                    dispatch(setDeveloperMode(next));
-                  }}
-                  aria-label={t('settings.developerMode.title')}
-                />
-              }
-            />
-          </SettingsSection>
-        </div>
 
         {/* Releases */}
         <SettingsSection>

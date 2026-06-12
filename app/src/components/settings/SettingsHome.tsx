@@ -1,6 +1,5 @@
 import { type ReactNode, useState } from 'react';
 
-import { useDeveloperMode } from '../../hooks/useDeveloperMode';
 import { useT } from '../../lib/i18n/I18nContext';
 import LanguageSelect from '../LanguageSelect';
 import SettingsHeader from './components/SettingsHeader';
@@ -229,7 +228,6 @@ const GroupHeader = ({ label }: { label: string }) =>
 const SettingsHome = () => {
   const { navigateToSettings } = useSettingsNavigation();
   const { t } = useT();
-  const developerMode = useDeveloperMode();
 
   // Global settings search. While a query is active the normal menu is hidden
   // and the search bar renders its own ranked result list instead.
@@ -375,26 +373,22 @@ const SettingsHome = () => {
     ],
   };
 
-  // --- Developer & Diagnostics (gated) ---
-  // Hidden when developer mode is off.
-  // About is always accessible — that's where the toggle lives.
-  const developerGroup: SettingsGroup | null = developerMode
-    ? {
-        id: 'developer',
-        label: '',
-        items: [
-          {
-            id: 'developer-options',
-            title: t('settings.developerDiagnostics'),
-            description: t('settings.developerDiagnosticsDesc'),
-            icon: DeveloperIcon,
-            onClick: () => navigateToSettings('developer-options'),
-          },
-        ],
-      }
-    : null;
+  // --- Developer & Diagnostics (always visible) ---
+  const developerGroup: SettingsGroup = {
+    id: 'developer',
+    label: '',
+    items: [
+      {
+        id: 'developer-options',
+        title: t('settings.developerDiagnostics'),
+        description: t('settings.developerDiagnosticsDesc'),
+        icon: DeveloperIcon,
+        onClick: () => navigateToSettings('developer-options'),
+      },
+    ],
+  };
 
-  const trailingGroups: SettingsGroup[] = [...(developerGroup ? [developerGroup] : []), aboutGroup];
+  const trailingGroups: SettingsGroup[] = [developerGroup, aboutGroup];
 
   return (
     <div className="z-10 relative">
