@@ -16,7 +16,6 @@
 
 pub mod about_app;
 pub mod accessibility;
-pub mod agentbox;
 pub mod agent;
 pub mod agent_experience;
 pub mod agent_meetings;
@@ -24,6 +23,7 @@ pub mod agent_memory;
 pub mod agent_orchestration;
 pub mod agent_registry;
 pub mod agent_tool_policy;
+pub mod agentbox;
 pub mod app_state;
 pub mod approval;
 pub mod artifacts;
