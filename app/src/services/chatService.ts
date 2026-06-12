@@ -943,7 +943,7 @@ export function subscribeChatEvents(listeners: ChatEventListeners): () => void {
   };
 }
 
-export type QueueMode = 'interrupt' | 'steer' | 'followup' | 'collect';
+export type QueueMode = 'interrupt' | 'steer' | 'followup' | 'collect' | 'parallel';
 
 export interface ChatSendParams {
   threadId: string;
@@ -987,15 +987,19 @@ export interface ChatSendParams {
  * The Rust core spawns the agent loop asynchronously and streams events
  * (tool_call, tool_result, chat_done, chat_error) back over the socket
  * connection using the `client_id` (socket ID) for routing.
+ *
+ * Returns the turn's `request_id` (from the RPC ack) when the core provides
+ * one — used by `parallel` sends to register the forked turn's stream lane.
+ * `undefined` if the ack carried no id.
  */
-export async function chatSend(params: ChatSendParams): Promise<void> {
+export async function chatSend(params: ChatSendParams): Promise<string | undefined> {
   const socket = socketService.getSocket();
   const clientId = socket?.id;
   if (!clientId) {
     throw new Error('Socket not connected — no client ID for event routing');
   }
 
-  await callCoreRpc({
+  const result = await callCoreRpc({
     method: 'openhuman.channel_web_chat',
     params: {
       client_id: clientId,
@@ -1010,6 +1014,9 @@ export async function chatSend(params: ChatSendParams): Promise<void> {
       queue_mode: params.queueMode ?? undefined,
     },
   });
+
+  const requestId = (result as { request_id?: unknown } | null)?.request_id;
+  return typeof requestId === 'string' ? requestId : undefined;
 }
 
 /**

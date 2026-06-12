@@ -9,9 +9,10 @@
  * background and emits MemorySyncStageChanged events.
  */
 import debug from 'debug';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useT } from '../../lib/i18n/I18nContext';
+import { CoreStateContext } from '../../providers/coreStateContext';
 import {
   applyAllIn,
   type FreshnessLabel,
@@ -122,6 +123,12 @@ export function MemorySourcesRegistry({
   pollIntervalMs = 5000,
 }: MemorySourcesRegistryProps) {
   const { t } = useT();
+  // Read the core snapshot directly (not via the throwing `useCoreState`
+  // hook) so this component still renders in unit tests that mount it
+  // without a CoreStateProvider — there `ctx` is null and `isAuthenticated`
+  // stays a stable `false`, so the load effect behaves exactly as before.
+  const coreState = useContext(CoreStateContext);
+  const isAuthenticated = coreState?.snapshot.auth.isAuthenticated ?? false;
   const [sources, setSources] = useState<MemorySourceEntry[]>([]);
   const [statuses, setStatuses] = useState<SourceStatus[]>([]);
   const [loading, setLoading] = useState(true);
@@ -282,9 +289,16 @@ export function MemorySourcesRegistry({
     }
   }, []);
 
+  // Load on mount AND whenever the session transitions to authenticated.
+  // After a page reload the registry can mount (e.g. via a persisted
+  // `?tab=memory` deep link) *before* CoreStateProvider has restored the
+  // session, so the initial fetch runs against a not-yet-ready core and
+  // surfaces nothing. Re-running when `isAuthenticated` flips true picks up
+  // sources immediately instead of waiting for the next 5s poll — which
+  // under CI load was racing the E2E visibility timeout (#3449).
   useEffect(() => {
     void refresh();
-  }, [refresh]);
+  }, [refresh, isAuthenticated]);
 
   useEffect(() => {
     if (!pollIntervalMs) return undefined;

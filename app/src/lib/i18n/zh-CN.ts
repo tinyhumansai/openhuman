@@ -307,6 +307,8 @@ const messages: TranslationMap = {
   'chat.newThread': '新对话',
   'chat.typeMessage': '今天我能帮您做什么？',
   'chat.send': '发送',
+  'chat.parallelBranchHint': '输入并行分支 — ⌘/Ctrl+Enter 发送',
+  'chat.parallelBranchLabel': '并行分支',
   'chat.thinking': '思考中...',
   'chat.noMessages': '暂无消息',
   'chat.startConversation': '开始对话',

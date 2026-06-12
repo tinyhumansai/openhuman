@@ -266,10 +266,16 @@ class SocketService {
       // room and a per-thread room (see socketio.rs `emit_web_channel_event`);
       // because a reconnect produces a NEW client_id, the new socket must
       // re-subscribe to the thread room to keep receiving the stream.
+      // With parallel inference several threads may be streaming at once, so
+      // re-subscribe to every active thread room (plus the selected thread) —
+      // not just a single "active" thread — to keep all in-flight streams alive.
       const threadState = store.getState().thread;
-      const activeThreadId = threadState?.selectedThreadId ?? threadState?.activeThreadId;
-      if (activeThreadId) {
-        this.socket?.emit('thread:subscribe', { thread_id: activeThreadId });
+      const roomThreadIds = new Set<string>(Object.keys(threadState?.activeThreadIds ?? {}));
+      if (threadState?.selectedThreadId) {
+        roomThreadIds.add(threadState.selectedThreadId);
+      }
+      for (const threadId of roomThreadIds) {
+        this.socket?.emit('thread:subscribe', { thread_id: threadId });
       }
     });
 

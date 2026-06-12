@@ -327,6 +327,8 @@ const messages: TranslationMap = {
   'chat.newThread': 'Новый чат',
   'chat.typeMessage': 'Чем я могу помочь тебе сегодня?',
   'chat.send': 'Отправить сообщение',
+  'chat.parallelBranchHint': 'Введите параллельную ветку — ⌘/Ctrl+Enter для отправки',
+  'chat.parallelBranchLabel': 'Параллельная ветка',
   'chat.thinking': 'Думаю...',
   'chat.noMessages': 'Сообщений пока нет',
   'chat.startConversation': 'Начни разговор',

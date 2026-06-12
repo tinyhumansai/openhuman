@@ -325,6 +325,8 @@ const messages: TranslationMap = {
   'chat.newThread': 'Thread baru',
   'chat.typeMessage': 'Apa yang bisa saya bantu hari ini?',
   'chat.send': 'Kirim pesan',
+  'chat.parallelBranchHint': 'Ketik cabang paralel — ⌘/Ctrl+Enter untuk mengirim',
+  'chat.parallelBranchLabel': 'Cabang paralel',
   'chat.thinking': 'Berpikir...',
   'chat.noMessages': 'Belum ada pesan',
   'chat.startConversation': 'Mulai percakapan',

@@ -322,6 +322,8 @@ const messages: TranslationMap = {
   'chat.newThread': '새 스레드',
   'chat.typeMessage': '오늘 무엇을 도와드릴까요?',
   'chat.send': '메시지 보내기',
+  'chat.parallelBranchHint': '병렬 분기 입력 — 보내려면 ⌘/Ctrl+Enter',
+  'chat.parallelBranchLabel': '병렬 분기',
   'chat.thinking': '생각 중...',
   'chat.noMessages': '아직 메시지가 없습니다',
   'chat.startConversation': '대화 시작',

@@ -318,6 +318,8 @@ const messages: TranslationMap = {
   'chat.newThread': 'محادثة جديدة',
   'chat.typeMessage': 'كيف يمكنني مساعدتك اليوم؟',
   'chat.send': 'إرسال الرسالة',
+  'chat.parallelBranchHint': 'فرع متوازٍ — ⌘/Ctrl+Enter للإرسال',
+  'chat.parallelBranchLabel': 'فرع متوازٍ',
   'chat.thinking': 'جارٍ التفكير...',
   'chat.noMessages': 'لا توجد رسائل بعد',
   'chat.startConversation': 'ابدأ محادثة',

@@ -322,6 +322,8 @@ const messages: TranslationMap = {
   'chat.newThread': 'নতুন থ্রেড',
   'chat.typeMessage': 'আজ আমি আপনাকে কীভাবে সাহায্য করতে পারি?',
   'chat.send': 'বার্তা পাঠান',
+  'chat.parallelBranchHint': 'সমান্তরাল শাখা টাইপ করুন — পাঠাতে ⌘/Ctrl+Enter',
+  'chat.parallelBranchLabel': 'সমান্তরাল শাখা',
   'chat.thinking': 'ভাবছে...',
   'chat.noMessages': 'এখনো কোনো বার্তা নেই',
   'chat.startConversation': 'একটি কথোপকথন শুরু করুন',
