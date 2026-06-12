@@ -3230,7 +3230,7 @@ async fn json_rpc_agent_team_coordination_roundtrip() {
             "summary": "ship feature",
             "members": [
                 { "name": "alice", "agentId": "researcher" },
-                { "name": "bob", "agentId": "code_executor" }
+                { "name": "bob", "agentId": "researcher" }
             ]
         }),
     )
@@ -12175,4 +12175,261 @@ async fn json_rpc_workflow_run_engine_executes_builtin_to_completion_inner() {
 
     rpc_join.abort();
     mock_join.abort();
+}
+
+#[test]
+fn json_rpc_agent_team_live_member_run_roundtrip() {
+    run_json_rpc_e2e_on_agent_stack(
+        "json_rpc_agent_team_live_member_run_roundtrip",
+        json_rpc_agent_team_live_member_run_roundtrip_inner,
+    );
+}
+
+/// End-to-end proof that a teammate actually *runs* (#3374 PR4): the lead creates
+/// two teammate tasks (B depends on A), messages a named teammate, then starts
+/// each member live. Each member's worker drives a real sub-agent against the
+/// mock backend (pinned via `modelOverride`), completes its task through the
+/// quality gate with the worker output as evidence, and returns to idle —
+/// surfaced by polling `agent_team_get`.
+async fn json_rpc_agent_team_live_member_run_roundtrip_inner() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+
+    write_min_config(&openhuman_home, &mock_origin);
+    let user_scoped_dir = openhuman_home.join("users").join("e2e-user");
+    write_min_config(&user_scoped_dir, &mock_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Authenticate so the spawned workers' provider has a backend session.
+    let store = post_json_rpc(
+        &rpc_base,
+        38_000_1,
+        "openhuman.auth_store_session",
+        json!({ "token": "e2e-test-jwt", "user_id": "e2e-user" }),
+    )
+    .await;
+    assert_no_jsonrpc_error(&store, "store_session");
+
+    // Lead creates a team with two named teammates.
+    let created = post_json_rpc(
+        &rpc_base,
+        38_000_2,
+        "openhuman.agent_team_create",
+        json!({
+            "leadAgentId": "lead",
+            "summary": "live run e2e",
+            "members": [
+                { "name": "alice", "agentId": "researcher" },
+                { "name": "bob", "agentId": "researcher" }
+            ]
+        }),
+    )
+    .await;
+    let created_body = assert_no_jsonrpc_error(&created, "agent_team_create");
+    let team_id = created_body
+        .get("team")
+        .and_then(|t| t.get("id"))
+        .and_then(Value::as_str)
+        .expect("team id")
+        .to_string();
+    let members = created_body
+        .get("members")
+        .and_then(Value::as_array)
+        .expect("members");
+    let alice_id = members[0].get("id").and_then(Value::as_str).unwrap().to_string();
+    let bob_id = members[1].get("id").and_then(Value::as_str).unwrap().to_string();
+
+    // Task A (no deps) owned by alice; Task B depends on A, owned by bob.
+    let assign_a = post_json_rpc(
+        &rpc_base,
+        38_000_3,
+        "openhuman.agent_team_assign_task",
+        json!({ "teamId": team_id, "title": "Task A", "ownerMemberId": alice_id, "dependsOn": [] }),
+    )
+    .await;
+    let task_a_id = assert_no_jsonrpc_error(&assign_a, "assign A")
+        .get("task")
+        .and_then(|t| t.get("id"))
+        .and_then(Value::as_str)
+        .unwrap()
+        .to_string();
+    let assign_b = post_json_rpc(
+        &rpc_base,
+        38_000_4,
+        "openhuman.agent_team_assign_task",
+        json!({ "teamId": team_id, "title": "Task B", "ownerMemberId": bob_id, "dependsOn": [task_a_id.clone()] }),
+    )
+    .await;
+    let task_b_id = assert_no_jsonrpc_error(&assign_b, "assign B")
+        .get("task")
+        .and_then(|t| t.get("id"))
+        .and_then(Value::as_str)
+        .unwrap()
+        .to_string();
+
+    // Lead messages a named teammate (fromMemberId omitted → lead origin).
+    let msg = post_json_rpc(
+        &rpc_base,
+        38_000_5,
+        "openhuman.agent_team_message_member",
+        json!({ "teamId": team_id, "toMemberId": alice_id, "content": "please start Task A" }),
+    )
+    .await;
+    assert_no_jsonrpc_error(&msg, "message_member");
+
+    // Start alice live on Task A → kind "started".
+    let start_a = post_json_rpc(
+        &rpc_base,
+        38_000_6,
+        "openhuman.agent_team_start_member",
+        json!({ "teamId": team_id, "memberId": alice_id, "taskId": task_a_id, "modelOverride": "e2e-mock-model" }),
+    )
+    .await;
+    assert_eq!(
+        assert_no_jsonrpc_error(&start_a, "start alice")
+            .get("result")
+            .and_then(|r| r.get("kind"))
+            .and_then(Value::as_str),
+        Some("started"),
+        "alice start should dispatch a worker: {start_a}"
+    );
+
+    // Poll until Task A is done.
+    assert!(
+        poll_team_task_status(&rpc_base, &team_id, &task_a_id, "done").await,
+        "Task A must reach done"
+    );
+
+    // With A done, start bob live on Task B.
+    let start_b = post_json_rpc(
+        &rpc_base,
+        38_000_7,
+        "openhuman.agent_team_start_member",
+        json!({ "teamId": team_id, "memberId": bob_id, "taskId": task_b_id, "modelOverride": "e2e-mock-model" }),
+    )
+    .await;
+    assert_eq!(
+        assert_no_jsonrpc_error(&start_b, "start bob")
+            .get("result")
+            .and_then(|r| r.get("kind"))
+            .and_then(Value::as_str),
+        Some("started"),
+        "bob start should dispatch a worker: {start_b}"
+    );
+    assert!(
+        poll_team_task_status(&rpc_base, &team_id, &task_b_id, "done").await,
+        "Task B must reach done"
+    );
+
+    // Final state: both tasks done with evidence, both members idle, and the
+    // lead message is in the team timeline.
+    let got = post_json_rpc(
+        &rpc_base,
+        38_000_8,
+        "openhuman.agent_team_get",
+        json!({ "teamId": team_id }),
+    )
+    .await;
+    let team_view = assert_no_jsonrpc_error(&got, "agent_team_get")
+        .get("team")
+        .cloned()
+        .expect("team view");
+    let tasks = team_view
+        .get("tasks")
+        .and_then(Value::as_array)
+        .expect("tasks");
+    for task in tasks {
+        assert_eq!(
+            task.get("status").and_then(Value::as_str),
+            Some("done"),
+            "every task done: {task}"
+        );
+        assert!(
+            task.get("evidence")
+                .and_then(Value::as_array)
+                .map(|e| !e.is_empty())
+                .unwrap_or(false),
+            "completed task carries worker-output evidence: {task}"
+        );
+    }
+    let view_members = team_view
+        .get("members")
+        .and_then(Value::as_array)
+        .expect("members");
+    for m in view_members {
+        assert_eq!(
+            m.get("memberStatus").and_then(Value::as_str),
+            Some("idle"),
+            "members return to idle: {m}"
+        );
+    }
+
+    let messages = post_json_rpc(
+        &rpc_base,
+        38_000_9,
+        "openhuman.agent_team_list_messages",
+        json!({ "teamId": team_id }),
+    )
+    .await;
+    let msgs = assert_no_jsonrpc_error(&messages, "list_messages")
+        .get("messages")
+        .and_then(Value::as_array)
+        .expect("messages");
+    assert!(
+        msgs.iter().any(|m| m
+            .get("payload")
+            .and_then(|p| p.get("from"))
+            .and_then(Value::as_str)
+            == Some("lead")),
+        "lead message present in timeline: {msgs:?}"
+    );
+
+    rpc_join.abort();
+    mock_join.abort();
+}
+
+/// Poll `agent_team_get` until the named task reaches `want` status (or time out).
+async fn poll_team_task_status(rpc_base: &str, team_id: &str, task_id: &str, want: &str) -> bool {
+    for attempt in 0..160 {
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        let got = post_json_rpc(
+            rpc_base,
+            38_100_000 + attempt,
+            "openhuman.agent_team_get",
+            json!({ "teamId": team_id }),
+        )
+        .await;
+        let view = assert_no_jsonrpc_error(&got, "agent_team_get poll");
+        // `agent_team_get` answers `{ team: TeamView }`, and TeamView itself nests
+        // `{ team, members, tasks }`.
+        let tasks = view
+            .get("team")
+            .and_then(|tv| tv.get("tasks"))
+            .and_then(Value::as_array);
+        if let Some(tasks) = tasks {
+            if let Some(task) = tasks
+                .iter()
+                .find(|t| t.get("id").and_then(Value::as_str) == Some(task_id))
+            {
+                if task.get("status").and_then(Value::as_str) == Some(want) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
