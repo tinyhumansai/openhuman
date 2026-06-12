@@ -167,6 +167,38 @@ fn native_request_serializes_max_tokens_only_when_set() {
 }
 
 #[test]
+fn responses_request_serializes_max_output_tokens_only_when_set() {
+    // The Responses-API branch must carry the cap as `max_output_tokens` so a
+    // capped request isn't silently uncapped when responses_api_primary is on
+    // (TAURI-RUST-C62).
+    let with_cap = super::compatible_types::ResponsesRequest {
+        model: "gpt-x".to_string(),
+        input: vec![],
+        instructions: None,
+        stream: Some(false),
+        store: Some(false),
+        max_output_tokens: Some(8192),
+    };
+    let json = serde_json::to_value(&with_cap).unwrap();
+    assert_eq!(
+        json.get("max_output_tokens")
+            .and_then(serde_json::Value::as_u64),
+        Some(8192),
+        "a set cap must reach the Responses API as max_output_tokens"
+    );
+
+    let no_cap = super::compatible_types::ResponsesRequest {
+        max_output_tokens: None,
+        ..with_cap
+    };
+    let json_none = serde_json::to_value(&no_cap).unwrap();
+    assert!(
+        json_none.get("max_output_tokens").is_none(),
+        "absent cap must be omitted"
+    );
+}
+
+#[test]
 fn detects_frequency_penalty_rejection_for_retry() {
     use super::OpenAiCompatibleProvider as P;
     // Strict providers that 400 on the field → retry without it.
@@ -922,6 +954,7 @@ async fn chat_via_responses_requires_non_system_message() {
             Some("test-key"),
             &[ChatMessage::system("policy")],
             "gpt-test",
+            None,
         )
         .await
         .expect_err("system-only fallback payload should fail");

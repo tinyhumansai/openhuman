@@ -20,6 +20,7 @@ impl OpenAiCompatibleProvider {
         credential: Option<&str>,
         messages: &[ChatMessage],
         model: &str,
+        max_output_tokens: Option<u32>,
     ) -> anyhow::Result<String> {
         let (instructions, input) = build_responses_prompt(messages);
         if input.is_empty() {
@@ -51,6 +52,7 @@ impl OpenAiCompatibleProvider {
             instructions,
             stream: Some(is_codex_oauth_responses),
             store: Some(false),
+            max_output_tokens,
         };
 
         let url = self.responses_url();
