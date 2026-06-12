@@ -87,10 +87,7 @@ pub fn conn_for_account<R: Runtime>(
 /// Falls back to [`super::in_process::install_for_label`] on a cache
 /// miss so a transient install race at window creation doesn't
 /// permanently lock the surface out of CDP.
-pub fn conn_for_label<R: Runtime>(
-    app: &AppHandle<R>,
-    label: &str,
-) -> Result<CdpConn, String> {
+pub fn conn_for_label<R: Runtime>(app: &AppHandle<R>, label: &str) -> Result<CdpConn, String> {
     let registry = app
         .try_state::<CdpRegistry>()
         .ok_or_else(|| "CdpRegistry not managed by app".to_string())?;
@@ -139,10 +136,7 @@ where
     attach_matching_on_conn(cdp, pred).await
 }
 
-async fn attach_matching_on_conn<F>(
-    mut cdp: CdpConn,
-    pred: F,
-) -> Result<(CdpConn, String), String>
+async fn attach_matching_on_conn<F>(mut cdp: CdpConn, pred: F) -> Result<(CdpConn, String), String>
 where
     F: Fn(&CdpTarget) -> bool,
 {

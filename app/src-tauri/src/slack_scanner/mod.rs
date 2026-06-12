@@ -74,7 +74,15 @@ pub fn spawn_scanner<R: Runtime>(
         // multi-account session (CodeRabbit #3162652711).
         let mut pinned_target_id: Option<String> = None;
         loop {
-            match scan_once(&app, &account_id, &url_prefix, &fragment, &mut pinned_target_id).await {
+            match scan_once(
+                &app,
+                &account_id,
+                &url_prefix,
+                &fragment,
+                &mut pinned_target_id,
+            )
+            .await
+            {
                 Ok(dump) => {
                     let team_id = infer_team_id(&dump);
                     let (messages, users, channels, workspace_name) = extract::harvest(&dump);
@@ -599,8 +607,14 @@ fn spawn_dom_poll<R: Runtime>(
         // `scan_once` for rationale.
         let mut pinned_target_id: Option<String> = None;
         loop {
-            match dom_scan_once(&app, &account_id, &url_prefix, &fragment, &mut pinned_target_id)
-                .await
+            match dom_scan_once(
+                &app,
+                &account_id,
+                &url_prefix,
+                &fragment,
+                &mut pinned_target_id,
+            )
+            .await
             {
                 Ok(scan) => {
                     let current_unread_by_channel: HashMap<String, u32> = scan
@@ -686,11 +700,7 @@ async fn dom_scan_once<R: Runtime>(
 
     let chosen = pinned_target_id
         .as_ref()
-        .and_then(|pid| {
-            candidates
-                .iter()
-                .find(|t| &t.id == pid && t.kind == "page")
-        })
+        .and_then(|pid| candidates.iter().find(|t| &t.id == pid && t.kind == "page"))
         .or_else(|| {
             candidates.iter().find(|t| {
                 t.kind == "page" && t.url.starts_with(url_prefix) && t.url.ends_with(url_fragment)

@@ -518,9 +518,8 @@ async fn wait_for_meet_target<R: Runtime>(
     let mut last_err = String::new();
     while tokio::time::Instant::now() < deadline {
         let meet_url_owned = meet_url.to_string();
-        let pred = move |t: &crate::cdp::target::CdpTarget| -> bool {
-            t.url.starts_with(&meet_url_owned)
-        };
+        let pred =
+            move |t: &crate::cdp::target::CdpTarget| -> bool { t.url.starts_with(&meet_url_owned) };
         match cdp::target::connect_and_attach_matching_in_process_by_label::<R, _>(
             app, &label, pred,
         )

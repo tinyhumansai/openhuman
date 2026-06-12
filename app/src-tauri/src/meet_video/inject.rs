@@ -133,18 +133,18 @@ pub fn spawn_diagnostics_poller<R: tauri::Runtime>(
         let pred = move |t: &crate::cdp::target::CdpTarget| -> bool {
             t.url.starts_with(&meet_url_for_pred)
         };
-        let (mut cdp, session) = match crate::cdp::target::connect_and_attach_matching_in_process_by_label::<
-            R,
-            _,
-        >(&app, &label, pred)
-        .await
-        {
-            Ok(pair) => pair,
-            Err(err) => {
-                log::warn!("[meet-camera-diag] cdp attach failed: {err}");
-                return;
-            }
-        };
+        let (mut cdp, session) =
+            match crate::cdp::target::connect_and_attach_matching_in_process_by_label::<R, _>(
+                &app, &label, pred,
+            )
+            .await
+            {
+                Ok(pair) => pair,
+                Err(err) => {
+                    log::warn!("[meet-camera-diag] cdp attach failed: {err}");
+                    return;
+                }
+            };
         let mut last_frames: u64 = 0;
         let mut last_dropped: u64 = 0;
         let mut tick = 0u64;

@@ -110,9 +110,7 @@ async fn scan_once<R: Runtime>(
     let (mut cdp, session) =
         crate::cdp::target::connect_and_attach_matching_in_process::<R, _>(app, account_id, pred)
             .await
-            .map_err(|e| {
-                format!("attach: {e} (prefix={url_prefix} fragment={url_fragment})")
-            })?;
+            .map_err(|e| format!("attach: {e} (prefix={url_prefix} fragment={url_fragment})"))?;
 
     let result = idb::walk(&mut cdp, &session).await;
 

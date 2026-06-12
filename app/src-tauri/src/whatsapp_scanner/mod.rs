@@ -295,13 +295,9 @@ async fn scan_once<R: Runtime>(
         t.url.starts_with(&url_prefix_owned) && t.url.ends_with(&url_fragment_owned)
     };
     let (mut cdp, page_session) =
-        crate::cdp::target::connect_and_attach_matching_in_process::<R, _>(
-            app,
-            account_id,
-            pred,
-        )
-        .await
-        .map_err(|e| format!("attach: {e} (prefix={url_prefix} fragment={url_fragment})"))?;
+        crate::cdp::target::connect_and_attach_matching_in_process::<R, _>(app, account_id, pred)
+            .await
+            .map_err(|e| format!("attach: {e} (prefix={url_prefix} fragment={url_fragment})"))?;
 
     // IDB + DOM are independent — run IDB first (the heavier of the two)
     // so a DOM failure doesn't mask IDB errors. Errors are captured on
@@ -378,13 +374,9 @@ async fn scan_dom_once<R: Runtime>(
         t.url.starts_with(&url_prefix_owned) && t.url.ends_with(&url_fragment_owned)
     };
     let (mut cdp, page_session) =
-        crate::cdp::target::connect_and_attach_matching_in_process::<R, _>(
-            app,
-            account_id,
-            pred,
-        )
-        .await
-        .map_err(|e| format!("attach: {e} (prefix={url_prefix} fragment={url_fragment})"))?;
+        crate::cdp::target::connect_and_attach_matching_in_process::<R, _>(app, account_id, pred)
+            .await
+            .map_err(|e| format!("attach: {e} (prefix={url_prefix} fragment={url_fragment})"))?;
     let captured = dom_snapshot::capture_messages(&mut cdp, &page_session).await;
     // Detach no matter what — otherwise dangling sessions pile up on long
     // runs and eventually the CDP endpoint refuses new attachments.

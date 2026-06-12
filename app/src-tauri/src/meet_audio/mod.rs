@@ -180,24 +180,26 @@ pub async fn start<R: Runtime>(
             let captions_pred = move |t: &crate::cdp::target::CdpTarget| -> bool {
                 t.url.starts_with(&captions_meet_url)
             };
-            let captions = match crate::cdp::target::connect_and_attach_matching_in_process_by_label::<
-                R,
-                _,
-            >(&app, &captions_label, captions_pred)
-            .await
-            {
-                Ok((cdp_for_captions, session_for_captions)) => caption_listener::start(
-                    request_id.clone(),
-                    cdp_for_captions,
-                    session_for_captions,
-                ),
-                Err(err) => {
-                    log::warn!(
+            let captions =
+                match crate::cdp::target::connect_and_attach_matching_in_process_by_label::<R, _>(
+                    &app,
+                    &captions_label,
+                    captions_pred,
+                )
+                .await
+                {
+                    Ok((cdp_for_captions, session_for_captions)) => caption_listener::start(
+                        request_id.clone(),
+                        cdp_for_captions,
+                        session_for_captions,
+                    ),
+                    Err(err) => {
+                        log::warn!(
                         "[meet-audio] caption listener cdp attach failed request_id={request_id} err={err}"
                     );
-                    caption_listener_disabled(request_id.clone())
-                }
-            };
+                        caption_listener_disabled(request_id.clone())
+                    }
+                };
             let speak = speak_pump::start(app.clone(), request_id.clone(), cdp, session);
             (speak, captions)
         }
