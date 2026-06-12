@@ -1,6 +1,6 @@
 import { convertFileSrc } from '@tauri-apps/api/core';
 import debugFactory from 'debug';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
 import { type ChatSendError, chatSendError } from '../chat/chatSendError';
@@ -42,7 +42,7 @@ import {
   beginInferenceTurn,
   clearRuntimeForThread,
   fetchAndHydrateTurnState,
-  type InferenceStatus,
+  registerParallelRequest,
   setTaskBoardForThread,
   setToolTimelineForThread,
 } from '../store/chatRuntimeSlice';
@@ -50,12 +50,13 @@ import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { selectSocketStatus } from '../store/socketSelectors';
 import {
   addMessageLocal,
+  clearThreadInferenceActive,
   createNewThread,
   deleteThread,
   loadThreadMessages,
   loadThreads,
+  markThreadInferenceActive,
   persistReaction,
-  setActiveThread,
   setSelectedThread,
   setThreadSidebarVisible,
   THREAD_NOT_FOUND_MESSAGE,
@@ -138,11 +139,17 @@ interface ConversationsProps {
   composer?: 'text' | 'mic-cloud';
 }
 
+// Stable empty reference so the `activeThreadIds` selector returns the same
+// object identity when the slice field is absent (narrow test stores),
+// avoiding spurious re-renders.
+const EMPTY_ACTIVE_THREADS: Record<string, true> = {};
+
 export function isComposerInteractionBlocked(args: {
-  activeThreadId: string | null;
+  /** Whether the *currently selected* thread has an in-flight inference turn. */
+  selectedThreadActive: boolean;
   rustChat: boolean;
 }): boolean {
-  return !args.rustChat || Boolean(args.activeThreadId);
+  return !args.rustChat || args.selectedThreadActive;
 }
 
 interface ImeKeyboardEventLike {
@@ -198,8 +205,19 @@ const Conversations = ({
     messages,
     isLoadingMessages,
     messagesError,
-    activeThreadId,
   } = useAppSelector(state => state.thread);
+  // Optional-chain + default: narrow test stores may omit `activeThreadIds`.
+  const activeThreadIds = useAppSelector(
+    state => state.thread.activeThreadIds ?? EMPTY_ACTIVE_THREADS
+  );
+  // Per-thread inference tracking (parallel inference): the selected thread's
+  // own in-flight state gates the composer; a turn running on a *different*
+  // thread no longer locks this one. `firstActiveThreadId` is a best-effort
+  // fallback for thread-scoped chips/panels when no thread is selected.
+  const selectedThreadActive = selectedThreadId
+    ? Boolean(activeThreadIds[selectedThreadId])
+    : false;
+  const firstActiveThreadId = Object.keys(activeThreadIds)[0] ?? null;
 
   const [inputValue, setInputValue] = useState('');
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -223,7 +241,28 @@ const Conversations = ({
   const [attachError, setAttachError] = useState<ChatSendError | null>(null);
   const [sendAdvisory, setSendAdvisory] = useState<string | null>(null);
   const [openRouterStatus, setOpenRouterStatus] = useState<'idle' | 'saving' | 'error'>('idle');
-  const [pendingSendingThreadId, setPendingSendingThreadId] = useState<string | null>(null);
+  // Threads whose send is mid-flight (dispatched locally, backend not yet
+  // accepted). A Set so concurrent sends to different threads each track their
+  // own pending state instead of clobbering a single slot.
+  const [pendingSendingThreadIds, setPendingSendingThreadIds] = useState<ReadonlySet<string>>(
+    () => new Set()
+  );
+  const addPendingSendingThread = useCallback((threadId: string) => {
+    setPendingSendingThreadIds(prev => {
+      if (prev.has(threadId)) return prev;
+      const next = new Set(prev);
+      next.add(threadId);
+      return next;
+    });
+  }, []);
+  const removePendingSendingThread = useCallback((threadId: string) => {
+    setPendingSendingThreadIds(prev => {
+      if (!prev.has(threadId)) return prev;
+      const next = new Set(prev);
+      next.delete(threadId);
+      return next;
+    });
+  }, []);
   const socketStatus = useAppSelector(selectSocketStatus);
   const agentProfiles = useAppSelector(selectAgentProfiles);
   const selectedAgentProfileId = useAppSelector(selectActiveAgentProfileId);
@@ -243,6 +282,9 @@ const Conversations = ({
   );
   const streamingAssistantByThread = useAppSelector(
     state => state.chatRuntime.streamingAssistantByThread
+  );
+  const parallelStreamsByThread = useAppSelector(
+    state => state.chatRuntime.parallelStreamsByThread
   );
   const agentMessageViewMode = useAppSelector(
     state => state.theme?.agentMessageViewMode ?? 'bubbles'
@@ -312,7 +354,10 @@ const Conversations = ({
 
   const textInputRef = useRef<HTMLTextAreaElement>(null);
   const isComposingTextRef = useRef(false);
-  const pendingSendRef = useRef<string | null>(null);
+  // Threads with an in-flight send, guarding against double-submit to the SAME
+  // thread. Per-thread (a Set) so a send to thread B isn't blocked by an
+  // in-flight send to thread A.
+  const pendingSendsRef = useRef<Set<string>>(new Set());
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -320,17 +365,21 @@ const Conversations = ({
   const lastSpokenMessageIdRef = useRef<string | null>(null);
   const autocompleteDebounceRef = useRef<number | null>(null);
   const autocompleteRequestSeqRef = useRef(0);
-  const sendingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Thread id whose send started the current silence timer. Tracked separately
-  // from `selectedThreadId` so switching threads mid-turn doesn't move the
-  // timer's reference point.
-  const sendingThreadIdRef = useRef<string | null>(null);
+  // Per-thread silence timers. Each in-flight turn gets its own 120s safety
+  // timer keyed by thread id, so concurrent turns on different threads don't
+  // share (and clobber) a single timeout.
+  const sendingTimeoutsRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   // Ref so the mount-time dictation event handler can call the latest send fn.
   const handleSendMessageRef = useRef<((text?: string) => Promise<void>) | null>(null);
-  // Previous inference status for the sending thread; lets the rearm effect
-  // distinguish "status was just cleared (chat_done / chat_error)" from
-  // "status was never set yet (in-flight turn pre-status)".
-  const prevInferenceStatusRef = useRef<InferenceStatus | undefined>(undefined);
+  // Per-thread "turn signature": the last-seen tuple of progress-slice
+  // references [inferenceStatus, streamingAssistant, toolTimeline, taskBoard]
+  // for each thread that owns a live silence timer. Redux Toolkit (immer)
+  // only produces new references for the thread whose slice actually changed,
+  // so comparing references lets the rearm effect (a) detect a turn completing
+  // (status defined → undefined) and (b) rearm a thread's timer ONLY when that
+  // thread's own state changed — unrelated threads' activity must not keep a
+  // foreground turn's timer alive.
+  const turnSignatureByThreadRef = useRef<Map<string, readonly unknown[]>>(new Map());
 
   const getAudioExtension = (mimeType: string): string => {
     const lower = mimeType.toLowerCase();
@@ -524,24 +573,30 @@ const Conversations = ({
     }
   }, [inputValue, sendAdvisory, sendError]);
 
+  const clearSilenceTimer = useCallback((threadId: string) => {
+    const existing = sendingTimeoutsRef.current.get(threadId);
+    if (existing) {
+      clearTimeout(existing);
+      sendingTimeoutsRef.current.delete(threadId);
+    }
+  }, []);
+
   const armSilenceTimer = (threadId: string) => {
-    if (sendingTimeoutRef.current) clearTimeout(sendingTimeoutRef.current);
-    sendingThreadIdRef.current = threadId;
-    sendingTimeoutRef.current = setTimeout(() => {
-      debug('armSilenceTimer: no inference signal for 120s — clearing runtime');
+    clearSilenceTimer(threadId);
+    const timeout = setTimeout(() => {
+      debug(`armSilenceTimer: no inference signal for 120s — clearing runtime (${threadId})`);
       setSendError(chatSendError('safety_timeout', t('chat.safetyTimeout')));
       dispatch(clearRuntimeForThread({ threadId }));
-      dispatch(setActiveThread(null));
-      sendingTimeoutRef.current = null;
-      sendingThreadIdRef.current = null;
-      // Reset so the NEXT send starts from a clean "never had a status"
-      // baseline — otherwise the rearm effect could read this turn's last
-      // status as a stale "previous" and falsely treat the next send's
-      // first signal as a chat-done transition.
-      prevInferenceStatusRef.current = undefined;
-      pendingSendRef.current = null;
-      setPendingSendingThreadId(null);
+      dispatch(clearThreadInferenceActive(threadId));
+      sendingTimeoutsRef.current.delete(threadId);
+      // Reset so the NEXT send to this thread starts from a clean baseline —
+      // otherwise the rearm effect could read this turn's last signature as a
+      // stale "previous" and mis-handle the next send's first signal.
+      turnSignatureByThreadRef.current.delete(threadId);
+      pendingSendsRef.current.delete(threadId);
+      removePendingSendingThread(threadId);
     }, 120_000);
+    sendingTimeoutsRef.current.set(threadId, timeout);
   };
 
   // Rearm the silence timer on every inference signal for the sending
@@ -556,42 +611,47 @@ const Conversations = ({
   // (chat_done / chat_error), drop the timer — the completion handlers
   // own UI cleanup.
   //
-  // `prevInferenceStatusRef` distinguishes "status was just cleared
-  // (chat_done / chat_error transition: defined → undefined)" from "status
-  // was never set yet (the Send handler also dispatches
-  // `setToolTimelineForThread({ entries: [] })` to reset the timeline,
-  // which fires this effect immediately after `armSilenceTimer` — at
-  // that instant the inference status hasn't been published yet)". Only
-  // the real transition should clear our timer.
+  // Rearm each live silence timer when its OWN thread shows progress, and drop
+  // it when that thread's turn completes. With parallel inference several
+  // timers may be live at once, so we iterate every thread that currently owns
+  // a timer. Per-thread reference comparison (see `turnSignatureByThreadRef`)
+  // ensures an unrelated thread's activity does NOT rearm this thread's timer,
+  // while still catching pure-text streams and sub-agent tool/board activity
+  // that bump the other slices without re-emitting a top-level status.
+  //
+  // The done-transition (status defined → undefined) is detected per thread to
+  // distinguish "turn just finished (chat_done / chat_error)" from "status
+  // never set yet" — the Send handler dispatches `setToolTimelineForThread([])`
+  // immediately after arming, firing this effect before any status publishes.
   useEffect(() => {
-    const threadId = sendingThreadIdRef.current;
-    if (!threadId || !sendingTimeoutRef.current) return;
-    const status = inferenceStatusByThread[threadId];
-    if (status === undefined && prevInferenceStatusRef.current !== undefined) {
-      clearTimeout(sendingTimeoutRef.current);
-      sendingTimeoutRef.current = null;
-      sendingThreadIdRef.current = null;
-      prevInferenceStatusRef.current = undefined;
-      return;
+    for (const threadId of Array.from(sendingTimeoutsRef.current.keys())) {
+      const current = [
+        inferenceStatusByThread[threadId],
+        streamingAssistantByThread[threadId],
+        toolTimelineByThread[threadId],
+        taskBoardByThread[threadId],
+      ] as const;
+      const previous = turnSignatureByThreadRef.current.get(threadId);
+      const status = current[0];
+      const previousStatus = previous?.[0];
+      if (status === undefined && previousStatus !== undefined) {
+        clearSilenceTimer(threadId);
+        turnSignatureByThreadRef.current.delete(threadId);
+        continue;
+      }
+      const changed = !previous || previous.some((value, index) => value !== current[index]);
+      if (!changed) continue;
+      turnSignatureByThreadRef.current.set(threadId, current);
+      armSilenceTimer(threadId);
     }
-    prevInferenceStatusRef.current = status;
-    armSilenceTimer(threadId);
-    // Scope the dependencies to the SENDING thread's slices only, keyed by the
-    // reactive `activeThreadId` (set on send, cleared on done/error/timeout —
-    // so it tracks the in-flight turn for the timer's whole lifetime, unlike
-    // `pendingSendingThreadId` which is released the moment the backend accepts
-    // the send). Depending on the whole maps would rearm this thread's timer
-    // whenever ANY other thread's state changed — unrelated background activity
-    // shouldn't keep a foreground turn's timer alive. armSilenceTimer is stable
-    // (refs + dispatch), so listing the per-thread values is enough to rearm on
-    // every progress event for this thread.
+    // armSilenceTimer / clearSilenceTimer are stable (refs + dispatch);
+    // depending on the progress maps rearms live timers on every signal.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    activeThreadId,
-    activeThreadId ? inferenceStatusByThread[activeThreadId] : undefined,
-    activeThreadId ? streamingAssistantByThread[activeThreadId] : undefined,
-    activeThreadId ? toolTimelineByThread[activeThreadId] : undefined,
-    activeThreadId ? taskBoardByThread[activeThreadId] : undefined,
+    inferenceStatusByThread,
+    streamingAssistantByThread,
+    toolTimelineByThread,
+    taskBoardByThread,
   ]);
 
   useEffect(() => {
@@ -599,7 +659,7 @@ const Conversations = ({
       !isTauri() ||
       !rustChat ||
       inputMode !== 'text' ||
-      Boolean(activeThreadId) ||
+      selectedThreadActive ||
       inputValue.trim().length < AUTOCOMPLETE_MIN_CONTEXT_CHARS
     ) {
       setInlineSuggestionValue('');
@@ -631,7 +691,7 @@ const Conversations = ({
         autocompleteDebounceRef.current = null;
       }
     };
-  }, [activeThreadId, inputValue, inputMode, rustChat]);
+  }, [selectedThreadActive, inputValue, inputMode, rustChat]);
 
   useEffect(() => {
     return () => {
@@ -739,7 +799,9 @@ const Conversations = ({
   };
 
   const handleSendMessage = async (text?: string) => {
-    if (pendingSendRef.current) return;
+    // Guard double-submit to the SAME thread only; a send to another thread
+    // may proceed concurrently.
+    if (selectedThreadId && pendingSendsRef.current.has(selectedThreadId)) return;
 
     const normalized = text ?? inputValue;
     const trimmedInput = normalized.trim();
@@ -783,8 +845,8 @@ const Conversations = ({
 
     const sendingThreadId = selectedThreadId;
     if (!sendingThreadId) return;
-    pendingSendRef.current = sendingThreadId;
-    setPendingSendingThreadId(sendingThreadId);
+    pendingSendsRef.current.add(sendingThreadId);
+    addPendingSendingThread(sendingThreadId);
     const pendingAttachments = attachments.slice();
     const modelOverride =
       agentProfiles.find(p => p.id === selectedAgentProfileId)?.modelOverride ?? CHAT_MODEL_HINT;
@@ -818,14 +880,14 @@ const Conversations = ({
       // unrelated errors whose `.toString()` happens to equal the sentinel.
       if (error === THREAD_NOT_FOUND_MESSAGE) {
         setSendError(null);
-        pendingSendRef.current = null;
-        setPendingSendingThreadId(null);
+        pendingSendsRef.current.delete(sendingThreadId);
+        removePendingSendingThread(sendingThreadId);
         return;
       }
       const msg = error instanceof Error ? error.message : String(error);
       setSendError(chatSendError('cloud_send_failed', msg));
-      pendingSendRef.current = null;
-      setPendingSendingThreadId(null);
+      pendingSendsRef.current.delete(sendingThreadId);
+      removePendingSendingThread(sendingThreadId);
       return;
     }
     setInputValue('');
@@ -841,11 +903,11 @@ const Conversations = ({
     // Fresh send: clear the previous-status baseline before arming so the
     // first inference signal of this turn isn't misread as a chat-done
     // transition (defined → undefined) left over from the prior turn.
-    prevInferenceStatusRef.current = undefined;
+    turnSignatureByThreadRef.current.delete(sendingThreadId);
     armSilenceTimer(sendingThreadId);
     dispatch(setToolTimelineForThread({ threadId: sendingThreadId, entries: [] }));
     dispatch(beginInferenceTurn({ threadId: sendingThreadId }));
-    dispatch(setActiveThread(sendingThreadId));
+    dispatch(markThreadInferenceActive(sendingThreadId));
 
     // ── Cloud socket path ─────────────────────────────────────────────────────
     // Always route primary chat through the cloud backend via socket.
@@ -863,18 +925,14 @@ const Conversations = ({
       // Backend accepted the send; lifecycle ('started' → 'streaming') now
       // owns the `isSending` UI lock. Release the pending guard so the next
       // user turn isn't blocked by a stale ref/state.
-      pendingSendRef.current = null;
-      setPendingSendingThreadId(null);
+      pendingSendsRef.current.delete(sendingThreadId);
+      removePendingSendingThread(sendingThreadId);
 
       // Active-thread reset happens in the global ChatRuntimeProvider events.
     } catch (err) {
       // Chat loop errors are emitted via socket events; this catch handles emit-level failures.
-      if (sendingTimeoutRef.current) {
-        clearTimeout(sendingTimeoutRef.current);
-        sendingTimeoutRef.current = null;
-      }
-      sendingThreadIdRef.current = null;
-      prevInferenceStatusRef.current = undefined;
+      clearSilenceTimer(sendingThreadId);
+      turnSignatureByThreadRef.current.delete(sendingThreadId);
       const msg = err instanceof Error ? err.message : String(err);
       if (
         msg.toLowerCase().includes('blocked by a security policy') ||
@@ -888,13 +946,82 @@ const Conversations = ({
         setSendError(chatSendError('cloud_send_failed', msg));
       }
       dispatch(clearRuntimeForThread({ threadId: sendingThreadId }));
-      dispatch(setActiveThread(null));
-      pendingSendRef.current = null;
-      setPendingSendingThreadId(null);
+      dispatch(clearThreadInferenceActive(sendingThreadId));
+      pendingSendsRef.current.delete(sendingThreadId);
+      removePendingSendingThread(sendingThreadId);
     }
   };
 
   handleSendMessageRef.current = handleSendMessage;
+
+  // Send a PARALLEL (forked) turn on the selected thread — runs concurrently
+  // with the in-flight turn instead of interrupting it (queue_mode 'parallel').
+  // Kept separate from `handleSendMessage` so it never touches the primary
+  // turn's lifecycle (silence timer, active marker, pending guard); the forked
+  // turn streams into its own lane (registered via `registerParallelRequest`)
+  // and renders as an interleaved branch bubble.
+  const handleSendParallel = async (text?: string) => {
+    if (!rustChat || !selectedThreadId) return;
+    const threadId = selectedThreadId;
+    const normalized = (text ?? inputValue).trim();
+    if (!normalized && attachments.length === 0) return;
+
+    const pendingAttachments = attachments.slice();
+    const modelOverride =
+      agentProfiles.find(p => p.id === selectedAgentProfileId)?.modelOverride ?? CHAT_MODEL_HINT;
+    const messageText = buildMessageWithAttachments(normalized, pendingAttachments);
+    const userMessage: ThreadMessage = {
+      id: `msg_${globalThis.crypto.randomUUID()}`,
+      content: normalized,
+      type: 'text',
+      extraMetadata:
+        pendingAttachments.length > 0
+          ? {
+              attachmentCount: pendingAttachments.length,
+              attachmentNames: pendingAttachments.map(a => a.file.name),
+              attachmentKinds: pendingAttachments.map(a => a.kind),
+              attachmentDataUris: pendingAttachments
+                .filter(a => a.kind === 'image')
+                .map(a => a.previewUri ?? a.dataUri),
+              attachmentCompressed: pendingAttachments.map(a => a.compressed),
+              parallelBranch: true,
+            }
+          : { parallelBranch: true },
+      sender: 'user',
+      createdAt: new Date().toISOString(),
+    };
+
+    try {
+      await dispatch(addMessageLocal({ threadId, message: userMessage })).unwrap();
+    } catch (error) {
+      if (error === THREAD_NOT_FOUND_MESSAGE) return;
+      const msg = error instanceof Error ? error.message : String(error);
+      setSendError(chatSendError('cloud_send_failed', msg));
+      return;
+    }
+
+    setInputValue('');
+    setAttachments([]);
+    setSendError(null);
+
+    try {
+      const requestId = await chatSend({
+        threadId,
+        message: messageText,
+        model: modelOverride,
+        profileId: selectedAgentProfileId,
+        locale: uiLocale,
+        queueMode: 'parallel',
+      });
+      if (requestId) {
+        dispatch(registerParallelRequest({ threadId, requestId }));
+      }
+      trackEvent('chat_parallel_message_sent');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setSendError(chatSendError('cloud_send_failed', msg));
+    }
+  };
 
   const transcribeAndSendAudio = async (mimeType: string) => {
     setIsRecording(false);
@@ -958,7 +1085,7 @@ const Conversations = ({
   };
 
   const handleVoiceRecordToggle = async () => {
-    if (!rustChat || Boolean(activeThreadId) || isTranscribing) return;
+    if (!rustChat || selectedThreadActive || isTranscribing) return;
     if (!canUseMicrophoneApi) {
       setSendError(
         chatSendError(
@@ -1106,6 +1233,18 @@ const Conversations = ({
       return;
     }
 
+    // Cmd/Ctrl+Enter sends a PARALLEL branch when the selected thread already
+    // has a turn in flight (otherwise it behaves like a normal send).
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      if (selectedThreadActive) {
+        void handleSendParallel();
+      } else {
+        void handleSendMessage();
+      }
+      return;
+    }
+
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       void handleSendMessage();
@@ -1151,10 +1290,18 @@ const Conversations = ({
   const selectedStreamingAssistant = selectedThreadId
     ? (streamingAssistantByThread[selectedThreadId] ?? null)
     : null;
+  // Live streams for concurrent parallel (forked) turns on the selected thread,
+  // rendered as separate interleaved branch bubbles.
+  const selectedParallelStreams = selectedThreadId
+    ? Object.values(parallelStreamsByThread[selectedThreadId] ?? {})
+    : [];
   const inlineCompletionSuffix = getInlineCompletionSuffix(inputValue, inlineSuggestionValue);
   // Blocks all composer interaction while a turn is in-flight or Rust chat is unavailable.
   // isSending: the *selected* thread is in-flight (drives selected-thread UI only).
-  const composerInteractionBlocked = isComposerInteractionBlocked({ activeThreadId, rustChat });
+  const composerInteractionBlocked = isComposerInteractionBlocked({
+    selectedThreadActive,
+    rustChat,
+  });
   // Auto-focus the composer when a thread becomes selected and the composer
   // isn't blocked. Without this, navigating into a thread from elsewhere in
   // the app (e.g. acting on a subconscious reflection in the Intelligence
@@ -1193,7 +1340,7 @@ const Conversations = ({
 
   const isSending = Boolean(
     selectedThreadId &&
-    (pendingSendingThreadId === selectedThreadId ||
+    (pendingSendingThreadIds.has(selectedThreadId) ||
       inferenceTurnLifecycleByThread[selectedThreadId] === 'started' ||
       inferenceTurnLifecycleByThread[selectedThreadId] === 'streaming')
   );
@@ -1560,8 +1707,8 @@ const Conversations = ({
                   {t('chat.agentProfile.reasoning')}
                 </button>
               </div>
-              {(selectedThreadId ?? activeThreadId) && (
-                <ChatFilesChip threadId={(selectedThreadId ?? activeThreadId) as string} />
+              {(selectedThreadId ?? firstActiveThreadId) && (
+                <ChatFilesChip threadId={(selectedThreadId ?? firstActiveThreadId) as string} />
               )}
               <button
                 type="button"
@@ -1980,6 +2127,33 @@ const Conversations = ({
                     </div>
                   </div>
                 )}
+              {/* Parallel (forked) branch streams — concurrent turns on this
+                  thread, each its own labeled bubble so they don't collide with
+                  the primary stream above. */}
+              {selectedParallelStreams.map(
+                branch =>
+                  (branch.content.length > 0 || branch.thinking.length > 0) && (
+                    <div key={branch.requestId} className="flex justify-start">
+                      <div className="relative w-fit max-w-[75%]">
+                        <div className="mb-1 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wide text-primary-500 dark:text-primary-400">
+                          <span className="inline-block w-1.5 h-1.5 rounded-full bg-primary-400 animate-pulse" />
+                          <span>{t('chat.parallelBranchLabel')}</span>
+                        </div>
+                        {branch.content.length > 0 && (
+                          <div className="rounded-2xl rounded-bl-md px-3 py-1.5 bg-stone-200/80 dark:bg-neutral-800 text-stone-900 dark:text-neutral-100 border-l-2 border-primary-400/60">
+                            <p className="text-xs text-stone-700 dark:text-neutral-200 font-mono whitespace-pre-wrap break-words leading-snug">
+                              {branch.content.length > STREAMING_PREVIEW_CHARS && (
+                                <span className="text-stone-400 dark:text-neutral-500">…</span>
+                              )}
+                              {branch.content.slice(-STREAMING_PREVIEW_CHARS)}
+                              <span className="inline-block w-1 h-3 ml-0.5 align-middle bg-primary-400 animate-pulse" />
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )
+              )}
               {/* Inference status indicator.
                   For the tool_use / subagent phases this line just restates the
                   active row already shown in the agentic-task-insights timeline,
@@ -2200,7 +2374,7 @@ const Conversations = ({
           {(() => {
             // Surface a parked ApprovalGate request for the shown thread just
             // above the composer, so it stays visible regardless of scroll.
-            const approvalThreadId = selectedThreadId ?? activeThreadId;
+            const approvalThreadId = selectedThreadId ?? firstActiveThreadId;
             const pendingApproval = approvalThreadId
               ? pendingApprovalByThread[approvalThreadId]
               : undefined;
@@ -2225,7 +2399,7 @@ const Conversations = ({
             // tool call) is tracked in follow-up issue #3162. The
             // failed-card UI still surfaces the truncated error reason;
             // the button just stays hidden until #3162 lands.
-            const artifactThreadId = selectedThreadId ?? activeThreadId;
+            const artifactThreadId = selectedThreadId ?? firstActiveThreadId;
             const all = artifactThreadId ? (artifactsByThread[artifactThreadId] ?? []) : [];
             const live = all.filter(a => a.status !== 'ready');
             if (live.length === 0) return null;
@@ -2260,6 +2434,7 @@ const Conversations = ({
               fileInputRef={fileInputRef}
               composerInteractionBlocked={composerInteractionBlocked}
               isSending={isSending}
+              allowParallelSend={selectedThreadActive}
               attachments={attachments}
               onAttachFiles={handleAttachFiles}
               onRemoveAttachment={id => setAttachments(prev => prev.filter(a => a.id !== id))}
