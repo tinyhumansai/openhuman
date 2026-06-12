@@ -73,13 +73,15 @@ async fn post_run(
 }
 
 async fn get_job(
-    State(_state): State<HttpState>,
-    axum::extract::Path(_job_id): axum::extract::Path<String>,
+    State(state): State<HttpState>,
+    axum::extract::Path(job_id): axum::extract::Path<String>,
 ) -> impl IntoResponse {
-    // Implemented in Task 6.
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        Json(json!({ "error": "not yet" })),
-    )
-        .into_response()
+    match state.store.get(&job_id) {
+        Some(view) => (StatusCode::OK, Json(view)).into_response(),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "job not found" })),
+        )
+            .into_response(),
+    }
 }

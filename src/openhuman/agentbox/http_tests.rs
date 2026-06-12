@@ -97,3 +97,55 @@ async fn post_run_malformed_json_returns_400() {
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
+
+#[tokio::test]
+async fn get_unknown_job_returns_404() {
+    let (app, _store) = make_app();
+    let req = Request::builder()
+        .method("GET")
+        .uri("/jobs/does-not-exist")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let body = body_json(resp).await;
+    assert_eq!(body.get("error").and_then(|v| v.as_str()), Some("job not found"));
+}
+
+#[tokio::test]
+async fn run_then_poll_until_completed_returns_assistant_message() {
+    let (app, _store) = make_app();
+
+    // Submit
+    let submit = Request::builder()
+        .method("POST")
+        .uri("/run")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({ "payload": { "message": "ping", "thread_id": "t-ext" } }).to_string(),
+        ))
+        .unwrap();
+    let resp = app.clone().oneshot(submit).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let id = body_json(resp).await["job_id"].as_str().unwrap().to_string();
+
+    // Poll until completed (EchoInvoker is fast — bounded retries)
+    let mut last = None;
+    for _ in 0..50 {
+        let poll = Request::builder()
+            .method("GET")
+            .uri(format!("/jobs/{id}"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(poll).await.unwrap();
+        let body = body_json(resp).await;
+        if body["status"] == "completed" {
+            last = Some(body);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let body = last.expect("job did not complete in time");
+    assert_eq!(body["result"]["message"], "echo: ping");
+    assert_eq!(body["result"]["thread_id"], "t-ext");
+}
