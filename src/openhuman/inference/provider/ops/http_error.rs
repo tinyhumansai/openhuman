@@ -172,9 +172,19 @@ pub fn log_provider_access_policy_denied_http_403(
 /// 402 is not swallowed. The phrase list is covered by a verbatim-body test
 /// so a provider wording drift fails CI instead of silently leaking events.
 pub fn is_provider_insufficient_credits_402(status: reqwest::StatusCode, body: &str) -> bool {
-    if status != reqwest::StatusCode::PAYMENT_REQUIRED {
-        return false;
-    }
+    status == reqwest::StatusCode::PAYMENT_REQUIRED && body_indicates_insufficient_credits(body)
+}
+
+/// Phrase-level matcher for an insufficient-credits / out-of-balance provider
+/// error body. Single source of truth for the credit-phrase set, shared by the
+/// emit-site guard [`is_provider_insufficient_credits_402`] (which adds the 402
+/// status gate) and the `before_send` defense-in-depth filter
+/// [`crate::core::observability::is_insufficient_credits_event`] (which matches
+/// the formatted `<provider> API error (402 …): <body>` message so the demotion
+/// reaches every compatible-provider HTTP path — `chat_with_system`,
+/// `chat_with_history`, the streaming gates, and `api_error` — not just
+/// `Provider::chat()`'s `native_chat` cascade). TAURI-RUST-C62.
+pub fn body_indicates_insufficient_credits(body: &str) -> bool {
     let lower = body.to_ascii_lowercase();
     lower.contains("requires more credits")
         || lower.contains("more credits")
