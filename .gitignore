@@ -67,6 +67,7 @@ scripts/ci-secrets.local.json
 *.sln
 *.sw?
 references/
+!.codex/skills/construction-contract-analysis/references/
 app/src-tauri/runtime-skill-*
 .mypy_cache
 .ruff_cache

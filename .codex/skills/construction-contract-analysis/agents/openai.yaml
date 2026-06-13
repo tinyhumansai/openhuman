@@ -1,0 +1,4 @@
+interface:
+  display_name: "施工合同纠纷全流程分析"
+  short_description: "建设工程施工合同纠纷全流程分析，覆盖23类条款、工程款核算、四大争议焦点、索赔抗辩及证据组织"
+  default_prompt: "Use $construction-contract-analysis to analyze construction contracts, calculate payment interest, organize evidence, analyze disputes, and handle claims, settlements, and litigation procedures."

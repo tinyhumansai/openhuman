@@ -1,0 +1,10 @@
+Copyright (c) 2026 - 合同工具审查工作区
+
+本 Skill 及其所有组件（SKILL.md、参考文件、Python 脚本）
+为专有软件，保留所有权利。
+
+未经权利人明确书面许可，不得复制、修改、分发、
+反编译或以任何形式使用本软件的全部或部分内容。
+
+THIS SKILL AND ALL ITS COMPONENTS ARE PROPRIETARY.
+ALL RIGHTS RESERVED.
