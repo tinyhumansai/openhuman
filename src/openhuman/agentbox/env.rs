@@ -115,6 +115,20 @@ fn register_gmi_with_inference_catalog(cfg: &GmiConfig) {
         }
     };
 
+    // `block_in_place` panics on a current-thread runtime — only multi-thread
+    // runtimes support it. Today's callers (`run_server_inner` from `cli.rs`
+    // and `lib.rs`) are multi-thread, but the contract says this function must
+    // never panic. Detect the flavor up front and bail with a warning if a
+    // current-thread runtime is in use (consistent with the no-runtime branch).
+    if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::CurrentThread {
+        log::warn!(
+            "[agentbox::gmi] current-thread tokio runtime detected — skipping \
+             GMI MaaS provider registration (multi-thread runtime required for \
+             block_in_place)"
+        );
+        return;
+    }
+
     let cfg_clone = cfg.clone();
     let result = tokio::task::block_in_place(|| {
         handle.block_on(async move { apply_gmi_to_runtime(&cfg_clone).await })
