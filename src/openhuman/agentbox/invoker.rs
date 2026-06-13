@@ -7,6 +7,7 @@
 
 use async_trait::async_trait;
 use std::sync::Arc;
+use tokio::sync::broadcast::error::RecvError;
 
 use crate::openhuman::channels::providers::web::{
     start_chat, subscribe_web_channel_events, ChatRequestMetadata,
@@ -117,10 +118,16 @@ impl AgentInvoker for CoreAgentInvoker {
         //    pick up an unrelated turn that happens to share the same
         //    thread/client.
         loop {
-            let event = events
-                .recv()
-                .await
-                .map_err(|err| format!("agentbox: event stream closed: {err}"))?;
+            let event = match events.recv().await {
+                Ok(ev) => ev,
+                Err(RecvError::Lagged(n)) => {
+                    log::warn!("[agentbox] event bus lagged, skipped {n} events");
+                    continue;
+                }
+                Err(RecvError::Closed) => {
+                    return Err("agentbox: event stream closed".into());
+                }
+            };
 
             if event.request_id != request_id {
                 continue;
@@ -129,6 +136,11 @@ impl AgentInvoker for CoreAgentInvoker {
             match event.event.as_str() {
                 "chat_done" | "chat:done" => {
                     let reply = event.full_response.unwrap_or_default();
+                    if reply.is_empty() {
+                        log::warn!(
+                            "[agentbox] chat_done with empty full_response request_id={request_id}"
+                        );
+                    }
                     log::info!(
                         "[agentbox] chat completed thread_id={} request_id={} reply_chars={}",
                         resolved_thread_id,
@@ -140,7 +152,7 @@ impl AgentInvoker for CoreAgentInvoker {
                         thread_id: resolved_thread_id,
                     });
                 }
-                "chat_error" => {
+                "chat_error" | "chat:error" => {
                     let detail = event
                         .message
                         .clone()
