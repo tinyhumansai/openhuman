@@ -809,6 +809,35 @@ fn is_param_validation_error_does_not_match_unrelated_errors() {
 }
 
 #[test]
+fn is_jsonrpc_probe_unknown_method_matches_only_generic_probe_misses() {
+    for method in [
+        "rpc.discover",
+        "list_methods",
+        "status",
+        "auth.status",
+        "config/get",
+    ] {
+        assert!(
+            is_jsonrpc_probe_unknown_method(method, &format!("unknown method: {method}")),
+            "{method} should be treated as probe noise only for its exact unknown-method error"
+        );
+    }
+
+    assert!(!is_jsonrpc_probe_unknown_method(
+        "openhuman.totally_made_up_xyz",
+        "unknown method: openhuman.totally_made_up_xyz"
+    ));
+    assert!(!is_jsonrpc_probe_unknown_method(
+        "status",
+        "status handler failed"
+    ));
+    assert!(!is_jsonrpc_probe_unknown_method(
+        "rpc.discover",
+        "unknown method: auth.status"
+    ));
+}
+
+#[test]
 fn is_session_expired_error_matches_missing_backend_session_token() {
     // Composio / web search / billing / team / webhooks / referral all surface
     // a "no backend session token" variant when the auth profile is gone. Each
@@ -937,6 +966,35 @@ async fn thread_not_found_rpc_error_does_not_report_to_sentry() {
     assert!(
         transport.fetch_and_clear_events().is_empty(),
         "ThreadNotFound should not reach Sentry"
+    );
+
+    for method in [
+        "rpc.discover",
+        "list_methods",
+        "status",
+        "auth.status",
+        "config/get",
+    ] {
+        let probe_request = crate::core::types::RpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: json!(method),
+            method: method.to_string(),
+            params: json!({}),
+        };
+        let response = rpc_handler(State(default_state()), Json(probe_request)).await;
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("response body");
+        let body: serde_json::Value = serde_json::from_slice(&body).expect("json response");
+        assert_eq!(
+            body["error"]["message"],
+            format!("unknown method: {method}"),
+            "{method} should still return the JSON-RPC unknown-method error"
+        );
+    }
+    assert!(
+        transport.fetch_and_clear_events().is_empty(),
+        "generic JSON-RPC probes should not reach Sentry"
     );
 
     let unrelated_error_request = crate::core::types::RpcRequest {

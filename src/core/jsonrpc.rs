@@ -103,6 +103,12 @@ pub async fn rpc_handler(State(state): State<AppState>, Json(req): Json<RpcReque
                     "[rpc] expected-user-state error — skipping Sentry: {}",
                     display_message
                 );
+            } else if is_jsonrpc_probe_unknown_method(method.as_str(), &display_message) {
+                tracing::info!(
+                    method = %method,
+                    elapsed_ms = ms as u64,
+                    "[rpc] JSON-RPC probe unknown-method noise (skip-report)"
+                );
             } else if is_param_validation_error(&display_message) {
                 tracing::info!(
                     method = %method,
@@ -320,6 +326,17 @@ fn is_param_validation_error(msg: &str) -> bool {
     msg.starts_with("unknown param '")
         || msg.starts_with("missing required param '")
         || msg.starts_with("invalid params: ")
+}
+
+/// Returns true for generic JSON-RPC discovery/auth/status probes that are
+/// expected to miss OpenHuman's method table. They should still return the
+/// normal JSON-RPC error to the caller, but they do not carry actionable
+/// product signal for Sentry.
+fn is_jsonrpc_probe_unknown_method(method: &str, msg: &str) -> bool {
+    matches!(
+        method,
+        "rpc.discover" | "list_methods" | "status" | "auth.status" | "config/get"
+    ) && msg == format!("unknown method: {method}")
 }
 
 /// Internal method invocation logic.
