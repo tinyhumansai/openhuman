@@ -43,3 +43,21 @@ fn collect_treats_blank_string_as_missing() {
     });
     assert!(cfg.is_err());
 }
+
+#[test]
+fn collect_trims_leading_and_trailing_whitespace() {
+    let cfg = collect_gmi_config(|k| match k {
+        "GMI_MAAS_BASE_URL" => Some("  https://api.gmi-serving.com\n".into()),
+        "GMI_MAAS_API_KEY" => Some(" sk-test ".into()),
+        "GMI_MODELS" => Some("\tdeepseek-ai/DeepSeek-V4-Pro\t".into()),
+        _ => None,
+    });
+    assert_eq!(
+        cfg,
+        Ok(GmiConfig {
+            base_url: "https://api.gmi-serving.com".into(),
+            api_key: "sk-test".into(),
+            model: "deepseek-ai/DeepSeek-V4-Pro".into(),
+        })
+    );
+}

@@ -55,7 +55,9 @@ where
 }
 
 fn nonblank<F: Fn(&str) -> Option<String>>(get: &F, key: &str) -> Option<String> {
-    get(key).filter(|v| !v.trim().is_empty())
+    get(key)
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
 }
 
 /// Read env and register the GMI MaaS provider on startup if available.
@@ -69,10 +71,21 @@ pub fn register_gmi_provider_if_present() {
     let cfg = match collect_gmi_config(|k| std::env::var(k).ok()) {
         Ok(cfg) => cfg,
         Err(reason) => {
-            log::warn!(
-                "[agentbox::gmi] not registering GMI MaaS provider: {}",
-                reason
-            );
+            // Only surface as a warning when AgentBox mode is actually enabled.
+            // Otherwise (desktop / CLI default), this is the expected steady
+            // state and operators would treat the warn as noise.
+            let agentbox_enabled = std::env::var("OPENHUMAN_AGENTBOX_MODE").as_deref() == Ok("1");
+            if agentbox_enabled {
+                log::warn!(
+                    "[agentbox::gmi] not registering GMI MaaS provider: {}",
+                    reason
+                );
+            } else {
+                log::debug!(
+                    "[agentbox::gmi] not registering GMI MaaS provider (AgentBox mode off): {}",
+                    reason
+                );
+            }
             return;
         }
     };
@@ -201,14 +214,11 @@ async fn apply_gmi_to_runtime(cfg: &GmiConfig) -> Result<(), String> {
     config.learning_provider = Some(provider_string.clone());
     config.subconscious_provider = Some(provider_string);
 
-    config.save().await.map_err(|e| e.to_string())?;
-    log::debug!(
-        "[agentbox::gmi] config saved to {}",
-        config.config_path.display()
-    );
-
-    // 3. Store the API key in the auth-profile store keyed by `provider:gmi-maas`.
-    //    The factory looks up the token at call time via `auth_key_for_slug`.
+    // 3. Store the API key BEFORE persisting the config to disk. If the token
+    //    write fails we don't want config.toml to advertise a `gmi-maas` entry
+    //    whose credential lookup will 401 the next /run. The reverse order
+    //    (current pre-fix code) is harder to recover from than an orphaned
+    //    token, which is overwritten cleanly on the next idempotent re-register.
     //    NOTE: never log `cfg.api_key`.
     let auth = AuthService::from_config(&config);
     let auth_key = auth_key_for_slug(GMI_MAAS_SLUG);
@@ -223,6 +233,12 @@ async fn apply_gmi_to_runtime(cfg: &GmiConfig) -> Result<(), String> {
     log::debug!(
         "[agentbox::gmi] stored API key in auth profile store keyed by {}",
         auth_key
+    );
+
+    config.save().await.map_err(|e| e.to_string())?;
+    log::debug!(
+        "[agentbox::gmi] config saved to {}",
+        config.config_path.display()
     );
 
     Ok(())

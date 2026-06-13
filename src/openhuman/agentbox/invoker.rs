@@ -55,11 +55,21 @@ impl AgentInvoker for CoreAgentInvoker {
         thread_id: Option<&str>,
         message: &str,
     ) -> Result<InvocationOutput, String> {
+        log::debug!(
+            "[agentbox] invoke start thread_id_supplied={} message_chars={}",
+            thread_id.is_some(),
+            message.chars().count()
+        );
+
         // 1. Resolve thread — caller-supplied id wins; otherwise create a
         //    fresh thread via the same op the UI uses so the conversation is
         //    discoverable from the desktop client.
         let resolved_thread_id = match thread_id {
-            Some(id) if !id.trim().is_empty() => id.trim().to_string(),
+            Some(id) if !id.trim().is_empty() => {
+                let id = id.trim().to_string();
+                log::debug!("[agentbox] using caller-supplied thread_id={id}");
+                id
+            }
             _ => {
                 let outcome = thread_create_new(CreateConversationThreadRequest {
                     labels: None,
@@ -67,13 +77,15 @@ impl AgentInvoker for CoreAgentInvoker {
                 })
                 .await
                 .map_err(|err| format!("agentbox: thread_create_new failed: {err}"))?;
-                outcome
+                let id = outcome
                     .value
                     .data
                     .ok_or_else(|| {
                         "agentbox: thread_create_new returned no data envelope".to_string()
                     })?
-                    .id
+                    .id;
+                log::debug!("[agentbox] created new thread_id={id}");
+                id
             }
         };
 
@@ -121,7 +133,7 @@ impl AgentInvoker for CoreAgentInvoker {
             let event = match events.recv().await {
                 Ok(ev) => ev,
                 Err(RecvError::Lagged(n)) => {
-                    log::warn!("[agentbox] event bus lagged, skipped {n} events");
+                    log::warn!("[agentbox] event bus lagged request_id={request_id} skipped={n}");
                     continue;
                 }
                 Err(RecvError::Closed) => {
@@ -130,6 +142,12 @@ impl AgentInvoker for CoreAgentInvoker {
             };
 
             if event.request_id != request_id {
+                log::trace!(
+                    "[agentbox] ignoring unrelated event event={} event_request_id={} our_request_id={}",
+                    event.event,
+                    event.request_id,
+                    request_id
+                );
                 continue;
             }
 

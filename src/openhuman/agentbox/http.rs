@@ -46,6 +46,7 @@ async fn post_run(
     let Json(req) = match body {
         Ok(j) => j,
         Err(rej) => {
+            log::debug!("[agentbox] /run rejected: JSON parse/validation failed: {rej}");
             return (
                 StatusCode::BAD_REQUEST,
                 Json(json!({ "error": rej.to_string() })),
@@ -55,6 +56,7 @@ async fn post_run(
     };
 
     if req.payload.message.trim().is_empty() {
+        log::debug!("[agentbox] /run rejected: empty payload.message");
         return (
             StatusCode::BAD_REQUEST,
             Json(json!({ "error": "payload.message must be a non-empty string" })),
