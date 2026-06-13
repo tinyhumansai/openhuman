@@ -6,6 +6,7 @@
 //! (`MockProvider`, `RecordingProvider`, `MockTool`) are defined here.
 
 use super::types::{Agent, AgentBuilder};
+use crate::core::event_bus::{init_global, publish_global, DomainEvent};
 use crate::openhuman::agent::dispatcher::{NativeToolDispatcher, XmlToolDispatcher};
 use crate::openhuman::inference::provider::{ChatRequest, ConversationMessage, Provider};
 use crate::openhuman::memory::Memory;
@@ -43,6 +44,7 @@ impl Provider for MockProvider {
                 text: Some("done".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             });
         }
         Ok(guard.remove(0))
@@ -99,6 +101,7 @@ impl Provider for RecordingProvider {
                 text: Some("done".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             });
         }
         Ok(guard.remove(0))
@@ -154,8 +157,9 @@ fn build_minimal_agent_with_definition_name(definition_name: Option<&str>) -> Ag
         backend: "none".into(),
         ..crate::openhuman::config::MemoryConfig::default()
     };
-    let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&memory_cfg, &workspace_path).unwrap());
+    let mem: Arc<dyn Memory> = Arc::from(
+        crate::openhuman::memory_store::create_memory(&memory_cfg, &workspace_path).unwrap(),
+    );
 
     let mut builder = Agent::builder()
         .provider(provider)
@@ -171,6 +175,22 @@ fn build_minimal_agent_with_definition_name(definition_name: Option<&str>) -> Ag
     builder.build().expect("minimal agent build should succeed")
 }
 
+fn integration_delegate_toolkit_enum(agent: &Agent) -> Vec<String> {
+    let spec = agent
+        .tool_specs()
+        .iter()
+        .find(|spec| spec.name == "delegate_to_integrations_agent")
+        .expect("delegate_to_integrations_agent tool spec should be present");
+    let mut out: Vec<String> = spec.parameters["properties"]["toolkit"]["enum"]
+        .as_array()
+        .expect("toolkit enum should be an array")
+        .iter()
+        .filter_map(|v| v.as_str().map(ToString::to_string))
+        .collect();
+    out.sort();
+    out
+}
+
 /// Regression test for the `build_session_agent_inner` agent-id
 /// threading bug.
 ///
@@ -181,37 +201,22 @@ fn build_minimal_agent_with_definition_name(definition_name: Option<&str>) -> Ag
 /// `Agent::from_config_for_agent` carried `agent_definition_name =
 /// "main"` at runtime regardless of which id the caller asked for.
 ///
-/// In the current codebase only two ids actually reach
-/// `from_config_for_agent` in production: `"orchestrator"` (via the
-/// `Agent::from_config` legacy wrapper and the post-onboarding web
-/// dispatch path) and `"welcome"` (via `welcome_proactive` and the
-/// pre-onboarding web dispatch path). The orchestrator case is
-/// benign — `"main"` is already an alias for orchestrator everywhere
-/// downstream, so the behavior is a no-op. The welcome case is the
-/// one the user sees: welcome sessions were being misfiled on disk
-/// as `sessions/DDMMYYYY/main_*.md` instead of `welcome_*.md`, and
-/// the `agent:` line inside each transcript's `<!-- session_transcript
-/// -->` metadata header stamped `agent: main` instead of
-/// `agent: welcome`. Skills_agent and the other typed sub-agents are
+/// In the current codebase the user-facing path is `"orchestrator"`,
+/// and the same builder is also used by several direct session agents.
+/// A fallback to `"main"` silently misfiles transcripts on disk and
+/// stamps the wrong agent metadata into them. Typed sub-agents are
 /// unaffected because they're spawned through `subagent_runner` and
 /// never touch the `from_config_for_agent` / builder fallback path.
 ///
 /// This test pins the builder contract the fix relies on: calling
 /// `.agent_definition_name(id)` on the builder chain produces an
 /// `Agent` whose [`Agent::agent_definition_name`] accessor returns
-/// that id verbatim. `"welcome"` and `"orchestrator"` exercise the
-/// two ids that reach `from_config_for_agent` today; `"integrations_agent"`
-/// and `"trigger_triage"` are defensive coverage so that if a
-/// future commit adds a new top-level caller for one of those ids
-/// the builder contract is already pinned.
+/// that id verbatim. `"orchestrator"` covers the user-facing chat path;
+/// the others are defensive coverage so a future top-level caller still
+/// inherits the contract.
 #[test]
 fn agent_builder_threads_agent_definition_name_when_set() {
-    for expected in [
-        "welcome",
-        "integrations_agent",
-        "orchestrator",
-        "trigger_triage",
-    ] {
+    for expected in ["integrations_agent", "orchestrator", "trigger_triage"] {
         let agent = build_minimal_agent_with_definition_name(Some(expected));
         assert_eq!(
             agent.agent_definition_name(),
@@ -228,10 +233,8 @@ fn agent_builder_threads_agent_definition_name_when_set() {
 /// direct builder users (tests, CLI harnesses) rely on, and
 /// documents the exact misbehaviour the threading fix prevents —
 /// `build_session_agent_inner` used to hit this fallback even when
-/// a caller asked for `welcome`, because the `.agent_definition_name`
-/// setter was missing from the builder chain. The result was that
-/// welcome sessions landed on disk as `main_*.md` with `agent: main`
-/// stamped into their transcript metadata header.
+/// a caller asked for a concrete agent id, because the
+/// `.agent_definition_name` setter was missing from the builder chain.
 #[test]
 fn agent_builder_falls_back_to_main_when_definition_name_unset() {
     let agent = build_minimal_agent_with_definition_name(None);
@@ -239,6 +242,174 @@ fn agent_builder_falls_back_to_main_when_definition_name_unset() {
         agent.agent_definition_name(),
         "main",
         "AgentBuilder::build should default agent_definition_name to \"main\" when unset"
+    );
+}
+
+#[test]
+fn set_connected_integrations_marks_session_initialized_and_updates_hash() {
+    let mut agent = build_minimal_agent_with_definition_name(Some("orchestrator"));
+    assert!(
+        !agent.connected_integrations_initialized,
+        "fresh builder-built agents should start with placeholder integration state"
+    );
+
+    agent.set_connected_integrations(vec![
+        crate::openhuman::context::prompt::ConnectedIntegration {
+            toolkit: "gmail".into(),
+            description: "Email".into(),
+            tools: vec![],
+            gated_tools: vec![],
+            connected: true,
+            connections: Vec::new(),
+            non_active_status: None,
+        },
+    ]);
+
+    assert!(agent.connected_integrations_initialized);
+    assert_eq!(agent.connected_integrations().len(), 1);
+    assert_eq!(agent.connected_integrations()[0].toolkit, "gmail");
+    assert_eq!(
+        agent.last_seen_integrations_hash,
+        crate::openhuman::composio::connected_set_hash(agent.connected_integrations())
+    );
+}
+
+#[test]
+fn refresh_delegation_tools_updates_schema_even_when_tool_arc_is_shared() {
+    use crate::openhuman::agent::harness::AgentDefinitionRegistry;
+
+    AgentDefinitionRegistry::init_global_builtins().unwrap();
+    let mut agent = build_minimal_agent_with_definition_name(Some("orchestrator"));
+    agent.set_connected_integrations(vec![
+        crate::openhuman::context::prompt::ConnectedIntegration {
+            toolkit: "gmail".into(),
+            description: "Email".into(),
+            tools: vec![],
+            gated_tools: vec![],
+            connected: true,
+            connections: Vec::new(),
+            non_active_status: None,
+        },
+    ]);
+
+    assert!(agent.refresh_delegation_tools());
+    assert_eq!(
+        integration_delegate_toolkit_enum(&agent),
+        vec!["gmail".to_string()]
+    );
+
+    // Simulate an in-flight turn holding a shared Arc clone.
+    let _shared_tools = agent.tools_arc();
+    agent.set_connected_integrations(vec![
+        crate::openhuman::context::prompt::ConnectedIntegration {
+            toolkit: "gmail".into(),
+            description: "Email".into(),
+            tools: vec![],
+            gated_tools: vec![],
+            connected: true,
+            connections: Vec::new(),
+            non_active_status: None,
+        },
+        crate::openhuman::context::prompt::ConnectedIntegration {
+            toolkit: "notion".into(),
+            description: "Docs".into(),
+            tools: vec![],
+            gated_tools: vec![],
+            connected: true,
+            connections: Vec::new(),
+            non_active_status: None,
+        },
+    ]);
+
+    assert!(agent.refresh_delegation_tools());
+    assert_eq!(
+        integration_delegate_toolkit_enum(&agent),
+        vec!["gmail".to_string(), "notion".to_string()]
+    );
+}
+
+/// Regression for #3044: repeated mid-session connects while the `tools`
+/// Arc stays shared (the normal `before_dispatch` path, where
+/// `AgentToolSource` holds a clone) must not accumulate duplicate
+/// synthesised `ToolSpec`s.
+///
+/// Before the fix, a failed `tools` reconcile rolled `synthesized_tool_names`
+/// back to the *old* mask. On the next refresh the spec `retain` used that
+/// stale mask and failed to drop the intervening refresh's specs, so the
+/// synthesised delegate spec piled up once per connect.
+#[test]
+fn refresh_delegation_tools_no_duplicate_specs_across_shared_arc_connects() {
+    use crate::openhuman::agent::harness::AgentDefinitionRegistry;
+
+    AgentDefinitionRegistry::init_global_builtins().unwrap();
+    let mut agent = build_minimal_agent_with_definition_name(Some("orchestrator"));
+
+    let conn = |slug: &str, desc: &str| crate::openhuman::context::prompt::ConnectedIntegration {
+        toolkit: slug.into(),
+        description: desc.into(),
+        tools: vec![],
+        gated_tools: vec![],
+        connected: true,
+        connections: Vec::new(),
+        non_active_status: None,
+    };
+
+    let delegate_spec_count = |agent: &Agent| -> usize {
+        agent
+            .tool_specs()
+            .iter()
+            .filter(|s| s.name == "delegate_to_integrations_agent")
+            .count()
+    };
+
+    // Turn 1: gmail connects.
+    agent.set_connected_integrations(vec![conn("gmail", "Email")]);
+    assert!(agent.refresh_delegation_tools());
+
+    // Hold a shared clone across every subsequent refresh so `Arc::get_mut`
+    // always fails — exactly what happens during an in-flight turn.
+    let _shared_tools = agent.tools_arc();
+
+    // Turn 2: notion connects mid-session.
+    agent.set_connected_integrations(vec![conn("gmail", "Email"), conn("notion", "Docs")]);
+    assert!(agent.refresh_delegation_tools());
+
+    // Turn 3: slack connects mid-session — this is where the old code
+    // produced a duplicate `delegate_to_integrations_agent` spec.
+    agent.set_connected_integrations(vec![
+        conn("gmail", "Email"),
+        conn("notion", "Docs"),
+        conn("slack", "Chat"),
+    ]);
+    assert!(agent.refresh_delegation_tools());
+
+    assert_eq!(
+        delegate_spec_count(&agent),
+        1,
+        "exactly one synthesised delegate spec must remain after repeated shared-Arc connects"
+    );
+    assert_eq!(
+        integration_delegate_toolkit_enum(&agent),
+        vec![
+            "gmail".to_string(),
+            "notion".to_string(),
+            "slack".to_string()
+        ]
+    );
+}
+
+#[test]
+fn composio_listener_drains_integrations_changed_events() {
+    let _ = init_global(64);
+    let mut agent = build_minimal_agent_with_definition_name(Some("orchestrator"));
+    agent.ensure_composio_integrations_listener();
+    publish_global(DomainEvent::ComposioIntegrationsChanged {
+        toolkits: vec!["gmail".into()],
+    });
+    assert!(agent.drain_composio_integrations_changed_events());
+    assert!(
+        !agent.drain_composio_integrations_changed_events(),
+        "event queue should be drained after one pass"
     );
 }
 
@@ -252,6 +423,7 @@ async fn turn_without_tools_returns_text() {
             text: Some("hello".into()),
             tool_calls: vec![],
             usage: None,
+            reasoning_content: None,
         }]),
     });
 
@@ -259,8 +431,9 @@ async fn turn_without_tools_returns_text() {
         backend: "none".into(),
         ..crate::openhuman::config::MemoryConfig::default()
     };
-    let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&memory_cfg, &workspace_path).unwrap());
+    let mem: Arc<dyn Memory> = Arc::from(
+        crate::openhuman::memory_store::create_memory(&memory_cfg, &workspace_path).unwrap(),
+    );
 
     let mut agent = Agent::builder()
         .provider(provider)
@@ -288,13 +461,16 @@ async fn turn_with_native_dispatcher_handles_tool_results_variant() {
                     id: "tc1".into(),
                     name: "echo".into(),
                     arguments: "{}".into(),
+                    extra_content: None,
                 }],
                 usage: None,
+                reasoning_content: None,
             },
             crate::openhuman::inference::provider::ChatResponse {
                 text: Some("done".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             },
         ]),
     });
@@ -303,8 +479,9 @@ async fn turn_with_native_dispatcher_handles_tool_results_variant() {
         backend: "none".into(),
         ..crate::openhuman::config::MemoryConfig::default()
     };
-    let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&memory_cfg, &workspace_path).unwrap());
+    let mem: Arc<dyn Memory> = Arc::from(
+        crate::openhuman::memory_store::create_memory(&memory_cfg, &workspace_path).unwrap(),
+    );
 
     let mut agent = Agent::builder()
         .provider(provider)
@@ -337,11 +514,13 @@ async fn turn_with_native_dispatcher_persists_fallback_tool_calls() {
                 ),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             },
             crate::openhuman::inference::provider::ChatResponse {
                 text: Some("done".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             },
         ]),
     });
@@ -350,8 +529,9 @@ async fn turn_with_native_dispatcher_persists_fallback_tool_calls() {
         backend: "none".into(),
         ..crate::openhuman::config::MemoryConfig::default()
     };
-    let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&memory_cfg, &workspace_path).unwrap());
+    let mem: Arc<dyn Memory> = Arc::from(
+        crate::openhuman::memory_store::create_memory(&memory_cfg, &workspace_path).unwrap(),
+    );
 
     let mut agent = Agent::builder()
         .provider(provider)
@@ -425,18 +605,22 @@ async fn turn_dispatches_spawn_subagent_through_full_path() {
                         "prompt": "find out about X"
                     })
                     .to_string(),
+                    extra_content: None,
                 }],
                 usage: None,
+                reasoning_content: None,
             },
             crate::openhuman::inference::provider::ChatResponse {
                 text: Some("X is Y".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             },
             crate::openhuman::inference::provider::ChatResponse {
                 text: Some("Based on the research, X is Y.".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             },
         ]),
     });
@@ -445,8 +629,9 @@ async fn turn_dispatches_spawn_subagent_through_full_path() {
         backend: "none".into(),
         ..crate::openhuman::config::MemoryConfig::default()
     };
-    let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&memory_cfg, &workspace_path).unwrap());
+    let mem: Arc<dyn Memory> = Arc::from(
+        crate::openhuman::memory_store::create_memory(&memory_cfg, &workspace_path).unwrap(),
+    );
 
     // Tools include SpawnSubagentTool so the parent can call it.
     let tools: Vec<Box<dyn Tool>> = vec![Box::new(SpawnSubagentTool::new())];
@@ -514,16 +699,19 @@ async fn system_prompt_and_model_are_byte_stable_across_turns() {
                 text: Some("first".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             },
             crate::openhuman::inference::provider::ChatResponse {
                 text: Some("second".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             },
             crate::openhuman::inference::provider::ChatResponse {
                 text: Some("third".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             },
         ]),
         captures: Mutex::new(Vec::new()),
@@ -533,8 +721,9 @@ async fn system_prompt_and_model_are_byte_stable_across_turns() {
         backend: "none".into(),
         ..crate::openhuman::config::MemoryConfig::default()
     };
-    let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&memory_cfg, &workspace_path).unwrap());
+    let mem: Arc<dyn Memory> = Arc::from(
+        crate::openhuman::memory_store::create_memory(&memory_cfg, &workspace_path).unwrap(),
+    );
 
     let mut agent = Agent::builder()
         .provider_arc(provider.clone() as Arc<dyn Provider>)
@@ -730,4 +919,95 @@ fn seed_resume_from_messages_preserves_unmatched_trailing_user() {
     assert_eq!(cached.len(), 4);
     assert_eq!(cached[3].role, "user");
     assert_eq!(cached[3].content, "stranded follow-up");
+}
+
+#[test]
+fn seed_resume_from_messages_respects_history_window_bound() {
+    let mut agent = build_minimal_agent_with_definition_name(Some("orchestrator"));
+    agent.config.max_history_messages = 4;
+    let prior = vec![
+        ("user".to_string(), "u1".to_string()),
+        ("agent".to_string(), "a1".to_string()),
+        ("user".to_string(), "u2".to_string()),
+        ("agent".to_string(), "a2".to_string()),
+        ("user".to_string(), "u3".to_string()),
+        ("agent".to_string(), "a3".to_string()),
+    ];
+    agent
+        .seed_resume_from_messages(prior, "new turn")
+        .expect("seed");
+
+    let cached = agent
+        .cached_transcript_messages
+        .as_ref()
+        .expect("cache populated");
+    // max_history_messages=4 keeps [system + last 3 messages].
+    assert_eq!(cached.len(), 4);
+    assert_eq!(cached[0].role, "system");
+    assert_eq!(cached[1].content, "a2");
+    assert_eq!(cached[2].content, "u3");
+    assert_eq!(cached[3].content, "a3");
+}
+
+#[test]
+fn bound_cached_transcript_messages_without_system_prefix_keeps_tail() {
+    let mut agent = build_minimal_agent_with_definition_name(Some("orchestrator"));
+    agent.config.max_history_messages = 3;
+
+    let messages = vec![
+        crate::openhuman::inference::provider::ChatMessage::user("u1"),
+        crate::openhuman::inference::provider::ChatMessage::assistant("a1"),
+        crate::openhuman::inference::provider::ChatMessage::user("u2"),
+        crate::openhuman::inference::provider::ChatMessage::assistant("a2"),
+        crate::openhuman::inference::provider::ChatMessage::user("u3"),
+    ];
+    let bounded = agent.bound_cached_transcript_messages(messages);
+    assert_eq!(bounded.len(), 3);
+    assert_eq!(bounded[0].content, "u2");
+    assert_eq!(bounded[1].content, "a2");
+    assert_eq!(bounded[2].content, "u3");
+}
+
+/// The cached-transcript resume path operates on wire-form `ChatMessage`s. When
+/// the window cut lands so the tail opens on a `tool` result whose `tool_calls`
+/// opener fell outside the window, `bound_cached_transcript_messages` must snap
+/// past it — a leading `tool` message has no preceding `tool_calls` and the
+/// provider 400s (surfacing as "Something went wrong").
+#[test]
+fn bound_cached_transcript_messages_snaps_past_leading_orphan_tool() {
+    use crate::openhuman::inference::provider::ChatMessage;
+
+    let mut agent = build_minimal_agent_with_definition_name(Some("orchestrator"));
+    agent.config.max_history_messages = 3;
+
+    // 5 messages, cap 3: the tail slice is [tool(a), user(u2), assistant(a2)];
+    // the assistant `tool_calls` opener fell outside the window.
+    let messages = vec![
+        ChatMessage::assistant(
+            r#"{"content":"calling","tool_calls":[{"id":"call_a","name":"shell","arguments":"{}"}]}"#,
+        ),
+        ChatMessage::tool(r#"{"tool_call_id":"call_a","content":"orphaned"}"#),
+        ChatMessage::user("u2"),
+        ChatMessage::assistant("a2"),
+        ChatMessage::user("u3"),
+    ];
+
+    let bounded = agent.bound_cached_transcript_messages(messages);
+
+    assert!(
+        bounded.first().map(|m| m.role.as_str()) != Some("tool"),
+        "window must not open on an orphaned tool result"
+    );
+    assert!(
+        !bounded.iter().any(|m| m.role == "tool"),
+        "the orphaned tool result must be dropped"
+    );
+    // tail [tool, u2, a2, u3] -> drop leading tool -> [u2, a2, u3].
+    assert_eq!(
+        bounded
+            .iter()
+            .map(|m| m.content.as_str())
+            .collect::<Vec<_>>(),
+        vec!["u2", "a2", "u3"]
+    );
 }

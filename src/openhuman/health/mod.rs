@@ -2,6 +2,7 @@ pub mod bus;
 mod core;
 pub mod ops;
 mod schemas;
+pub mod tools;
 
 pub use core::*;
 pub use ops as rpc;

@@ -1,7 +1,7 @@
 //! Built-in [`AgentDefinition`]s.
 //!
 //! The authoritative list of built-in agents lives in
-//! [`crate::openhuman::agent::agents`] — each agent is a subfolder
+//! [`crate::openhuman::agent_registry::agents`] — each agent is a subfolder
 //! containing `agent.toml` + `prompt.md`. This module is a thin
 //! wrapper that loads that set.
 //!
@@ -17,8 +17,8 @@ use super::definition::DefinitionSource;
 /// Panics if the baked-in built-in TOML fails to parse. `include_str!`
 /// guarantees at compile time that each file exists, but the actual
 /// TOML parse happens at runtime; the unit tests in
-/// [`crate::openhuman::agent::agents`] verify in CI that every entry in
-/// [`crate::openhuman::agent::agents::BUILTINS`] still parses cleanly.
+/// [`crate::openhuman::agent_registry::agents`] verify in CI that every entry in
+/// [`crate::openhuman::agent_registry::agents::BUILTINS`] still parses cleanly.
 ///
 /// In `#[cfg(test)]` builds the list additionally contains
 /// [`test_inherit_echo_def`] — a sub-agent with `ModelSpec::Inherit`
@@ -29,14 +29,59 @@ use super::definition::DefinitionSource;
 /// test's `MockProvider`). It is never compiled into release builds.
 pub fn all() -> Vec<AgentDefinition> {
     #[allow(unused_mut)]
-    let mut defs = crate::openhuman::agent::agents::load_builtins()
+    let mut defs = crate::openhuman::agent_registry::agents::load_builtins()
         .expect("built-in agent TOML must always parse (see agents/*/agent.toml)");
     #[cfg(test)]
     {
+        defs.push(test_main_def());
         defs.push(test_inherit_echo_def());
         defs.push(test_inherit_parallel_worker_def());
     }
     defs
+}
+
+/// Test-only parent used by `AgentBuilder`'s default `agent_definition_name = "main"`.
+///
+/// Production builds do not ship a `main` agent definition. In tests, the
+/// default builder path drives inherit-based fake subagents through the real
+/// delegation tools, so the parent must explicitly allow those test children.
+#[cfg(test)]
+pub(crate) fn test_main_def() -> AgentDefinition {
+    use super::definition::{
+        AgentTier, ModelSpec, PromptSource, SandboxMode, SubagentEntry, ToolScope,
+    };
+    AgentDefinition {
+        id: "main".into(),
+        when_to_use: "test-only default parent agent".into(),
+        display_name: None,
+        system_prompt: PromptSource::Inline("You are the test parent agent.".into()),
+        omit_identity: true,
+        omit_memory_context: true,
+        omit_safety_preamble: true,
+        omit_skills_catalog: true,
+        omit_profile: true,
+        omit_memory_md: true,
+        model: ModelSpec::Inherit,
+        temperature: 0.0,
+        tools: ToolScope::Wildcard,
+        disallowed_tools: vec![],
+        skill_filter: None,
+        extra_tools: vec![],
+        max_iterations: 8,
+        iteration_policy: Default::default(),
+        max_result_chars: None,
+        timeout_secs: None,
+        sandbox_mode: SandboxMode::None,
+        background: false,
+        trigger_memory_agent: Default::default(),
+        subagents: vec![
+            SubagentEntry::AgentId("__test_inherit_echo".into()),
+            SubagentEntry::AgentId("__test_inherit_parallel_worker".into()),
+        ],
+        delegate_name: None,
+        agent_tier: AgentTier::Chat,
+        source: DefinitionSource::Builtin,
+    }
 }
 
 /// Test-only sub-agent: `ModelSpec::Inherit`, wildcard tools, minimal
@@ -67,12 +112,15 @@ pub(crate) fn test_inherit_echo_def() -> AgentDefinition {
         skill_filter: None,
         extra_tools: vec![],
         max_iterations: 3,
+        iteration_policy: Default::default(),
         max_result_chars: None,
         timeout_secs: None,
         sandbox_mode: SandboxMode::None,
         background: false,
+        trigger_memory_agent: Default::default(),
         subagents: vec![],
         delegate_name: None,
+        agent_tier: crate::openhuman::agent::harness::definition::AgentTier::Worker,
         source: DefinitionSource::Builtin,
     }
 }
@@ -101,12 +149,15 @@ pub(crate) fn test_inherit_parallel_worker_def() -> AgentDefinition {
         skill_filter: None,
         extra_tools: vec![],
         max_iterations: 6,
+        iteration_policy: Default::default(),
         max_result_chars: None,
         timeout_secs: None,
         sandbox_mode: SandboxMode::None,
         background: false,
+        trigger_memory_agent: Default::default(),
         subagents: vec![],
         delegate_name: None,
+        agent_tier: crate::openhuman::agent::harness::definition::AgentTier::Worker,
         source: DefinitionSource::Builtin,
     }
 }
@@ -118,11 +169,30 @@ mod tests {
     #[test]
     fn all_definitions_present() {
         let defs = all();
-        // +2 for the cfg(test) inherit-based test defs appended by all().
+        // +3 for the cfg(test) default parent and inherit-based test defs appended by all().
         assert_eq!(
             defs.len(),
-            crate::openhuman::agent::agents::BUILTINS.len() + 2
+            crate::openhuman::agent_registry::agents::BUILTINS.len() + 3
         );
+    }
+
+    #[test]
+    fn test_main_allows_test_inherit_workers() {
+        use super::super::definition::SubagentEntry;
+        let def = all()
+            .into_iter()
+            .find(|d| d.id == "main")
+            .expect("test-only main agent must be registered in test builds");
+        let allowed = def
+            .subagents
+            .iter()
+            .filter_map(|entry| match entry {
+                SubagentEntry::AgentId(id) => Some(id.as_str()),
+                SubagentEntry::Skills(_) => None,
+            })
+            .collect::<std::collections::HashSet<_>>();
+        assert!(allowed.contains("__test_inherit_echo"));
+        assert!(allowed.contains("__test_inherit_parallel_worker"));
     }
 
     #[test]
@@ -175,6 +245,11 @@ mod tests {
             "planner",
             "code_executor",
             "integrations_agent",
+            "task_manager_agent",
+            "settings_agent",
+            "profile_memory_agent",
+            "account_admin_agent",
+            "screen_awareness_agent",
             "tool_maker",
             "skill_creator",
             "researcher",

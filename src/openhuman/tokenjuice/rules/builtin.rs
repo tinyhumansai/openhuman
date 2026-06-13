@@ -24,6 +24,14 @@ pub static BUILTIN_RULE_JSONS: &[(&str, &str)] = &[
         include_str!("../vendor/rules/archive__zip.json"),
     ),
     (
+        "build/cargo-build",
+        include_str!("../vendor/rules/build__cargo-build.json"),
+    ),
+    (
+        "build/cargo-doc",
+        include_str!("../vendor/rules/build__cargo-doc.json"),
+    ),
+    (
         "build/esbuild",
         include_str!("../vendor/rules/build__esbuild.json"),
     ),
@@ -167,6 +175,14 @@ pub static BUILTIN_RULE_JSONS: &[(&str, &str)] = &[
     (
         "lint/biome",
         include_str!("../vendor/rules/lint__biome.json"),
+    ),
+    (
+        "lint/cargo-clippy",
+        include_str!("../vendor/rules/lint__cargo-clippy.json"),
+    ),
+    (
+        "lint/cargo-fmt",
+        include_str!("../vendor/rules/lint__cargo-fmt.json"),
     ),
     (
         "lint/eslint",

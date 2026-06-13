@@ -7,7 +7,9 @@ pub mod ops;
 pub mod profiles;
 pub mod responses;
 mod schemas;
+pub mod sentry_scope;
 pub mod session_support;
+pub mod tools;
 
 pub use crate::api::rest::{
     decrypt_handoff_blob, user_id_from_auth_me_payload, user_id_from_profile_payload,

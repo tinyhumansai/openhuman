@@ -20,4 +20,16 @@ async function invokeCmd<T>(cmd: string, args?: Record<string, unknown>): Promis
   return invoke<T>(cmd, args);
 }
 
-export const bootCheckTransport: BootCheckTransport = { callRpc, invokeCmd };
+/**
+ * Invoke the `recover_port_conflict` Tauri command to reap stale OpenHuman
+ * processes and restart the embedded core on any available port.
+ */
+export async function recoverPortConflict(): Promise<{
+  success: boolean;
+  message: string;
+  new_port?: number;
+}> {
+  return invokeCmd('recover_port_conflict');
+}
+
+export const bootCheckTransport: BootCheckTransport = { callRpc, invokeCmd, recoverPortConflict };

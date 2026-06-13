@@ -24,8 +24,8 @@ AES-256-GCM at-rest crypto for AI memory storage and the encrypt/decrypt RPC sur
 
 - `src/openhuman/credentials/` — uses the same `EncryptedPayload` / `EncryptionKey` primitives directly when storing per-channel secrets.
 - `src/core/all.rs` — registers `all_encryption_*` controllers so the shell + CLI can encrypt configuration secrets.
-- Indirect: `src/openhuman/memory/`, `src/openhuman/channels/`, and `src/openhuman/local_ai/` rely on the credentials domain (which in turn uses this layer) for secrets at rest.
+- Indirect: `src/openhuman/memory/`, `src/openhuman/channels/`, and `src/openhuman/inference/local/` rely on the credentials domain (which in turn uses this layer) for secrets at rest.
 
 ## Tests
 
-- This domain has no `*_tests.rs` siblings; the underlying crypto round-trips are exercised by `src/openhuman/security/secrets_tests.rs` and the credentials tests, which both cover encrypt/decrypt happy paths and tampered-ciphertext rejection.
+- This domain has no `*_tests.rs` siblings; the underlying crypto round-trips are exercised by `src/openhuman/keyring/encrypted_store_tests.rs` and the credentials tests, which both cover encrypt/decrypt happy paths and tampered-ciphertext rejection.

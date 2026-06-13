@@ -6,9 +6,10 @@
 //! the sibling `mod.rs` so type edits don't pull in the whole 2 000-line
 //! renderer.
 
-use crate::openhuman::skills::Skill;
 use crate::openhuman::tools::Tool;
+use crate::openhuman::workflows::Workflow;
 use anyhow::Result;
+use chrono::{DateTime, Utc};
 use std::path::Path;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -68,14 +69,59 @@ pub struct LearnedContextData {
     /// subsystem is off or no reflections have been captured yet.
     pub reflections: Vec<String>,
     /// Pre-fetched root-level summaries from the tree summarizer, one per
-    /// namespace that has a root node on disk. Each entry is
-    /// `(namespace, body)`. Empty when the tree summarizer hasn't run.
-    pub tree_root_summaries: Vec<(String, String)>,
+    /// namespace that has a root node on disk. Empty when the tree
+    /// summarizer hasn't run.
+    ///
+    /// Each entry carries the namespace's root `updated_at` so the
+    /// renderer can stamp how current the memory is. Without that stamp
+    /// the model treats distilled memory as present-tense and can serve
+    /// a stale summary as today's update (#2944).
+    pub tree_root_summaries: Vec<NamespaceSummary>,
+}
+
+/// A single memory-namespace root summary fetched from the tree
+/// summarizer, paired with the timestamp of its root node.
+///
+/// `updated_at` is rendered as an absolute date (not a relative
+/// "N days ago") on purpose: this block sits near the front of the
+/// KV-cache-stable system prompt, so a label that changes every day
+/// would bust the cached prefix for everything after it. An absolute
+/// date only changes when the underlying memory does; the model judges
+/// freshness by comparing it against the `## Current Date & Time`
+/// section. See [`LearnedContextData::tree_root_summaries`] (#2944).
+#[derive(Debug, Clone)]
+pub struct NamespaceSummary {
+    /// Memory namespace this root summary belongs to (e.g. `activities`).
+    pub namespace: String,
+    /// The distilled root summary text.
+    pub body: String,
+    /// When the namespace's root node was last updated on disk.
+    pub updated_at: DateTime<Utc>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Connected integrations (Composio toolkits)
 // ─────────────────────────────────────────────────────────────────────────────
+
+/// Identity of a single active connection within a toolkit.
+///
+/// Surfaced in the system prompt so the orchestrator can disambiguate
+/// multiple accounts for the same toolkit (e.g. "work Gmail" vs
+/// "personal Gmail") and pass the correct `connection_id` to the
+/// execute pipeline.
+#[derive(Debug, Clone)]
+pub struct IntegrationConnection {
+    /// Composio connection ID — passed to execute when the user/agent
+    /// targets a specific account.
+    pub connection_id: String,
+    /// Human-readable label derived from the connection's identity
+    /// fields: `account_email`, `workspace`, or `username` (first
+    /// non-empty wins). `None` when identity hasn't been enriched yet.
+    pub label: Option<String>,
+    /// Whether this is the default connection for the toolkit (oldest
+    /// active connection by `created_at`).
+    pub is_default: bool,
+}
 
 /// An external integration (e.g. a Composio OAuth-backed toolkit)
 /// surfaced in the system prompt so the orchestrator knows which
@@ -89,12 +135,78 @@ pub struct ConnectedIntegration {
     pub description: String,
     /// Per-action catalogue (only populated when `connected == true`).
     pub tools: Vec<ConnectedIntegrationTool>,
+    /// Per-action catalogue for actions that the toolkit **does** support but
+    /// the user has **not** unlocked via their per-toolkit scope preferences.
+    /// The prompt renderer surfaces these descriptively (name + one-line +
+    /// which scope is missing) so the agent can honestly answer "do you have
+    /// X?" with "yes, but you need to flip the {scope} toggle in
+    /// Connections → {toolkit}" — instead of silently claiming the
+    /// capability doesn't exist (which is what happens when the agent has
+    /// zero awareness of pref-gated actions).
+    ///
+    /// The agent CANNOT directly invoke these (no `parameters` schema is
+    /// exposed; the LLM lacks the function definition) and it cannot flip
+    /// the gating scope itself — there is no agent-callable scope-elevate
+    /// tool. Intended flow: agent sees a gated tool → tells the user what
+    /// it does + names the `unlock_paths` from the data → the user toggles
+    /// the scope in the Connections UI → on the next turn the action
+    /// graduates from `gated_tools` to `tools` and becomes callable.
+    pub gated_tools: Vec<GatedIntegrationTool>,
     /// Whether the user has an active OAuth connection for this
     /// toolkit. When `false`, the toolkit is in the backend allowlist
     /// but no authorization has been completed yet — `tools` is empty
     /// and the orchestrator must point the user at Settings instead of
     /// attempting to delegate.
     pub connected: bool,
+    /// All active connections for this toolkit, sorted by `created_at`
+    /// ascending (oldest first). The first entry is the default.
+    /// Empty when `connected == false`.
+    pub connections: Vec<IntegrationConnection>,
+    /// Raw upstream connection status when a connection row exists but
+    /// is not `ACTIVE` — e.g. `"INITIATED"`, `"INITIALIZING"`,
+    /// `"FAILED"`, `"EXPIRED"`. `None` means either the user is
+    /// `ACTIVE` (use `connected = true`) OR there is no connection
+    /// row at all (truly disconnected).
+    ///
+    /// Used by the `integrations_agent` spawn-gate to surface the
+    /// real reason a delegation can't proceed — see issue #2365
+    /// ("Agent says Gmail is disconnected when sending email"). The
+    /// gate previously emitted the same "not authorized yet" message
+    /// regardless of whether OAuth was mid-flight, the token had
+    /// expired, or the user had simply never started the flow.
+    pub non_active_status: Option<String>,
+}
+
+/// A toolkit action that exists in the catalog but is currently hidden from
+/// the agent's callable function list because the user's scope preference
+/// for this toolkit does not allow the action's required scope.
+///
+/// Deliberately no `parameters` field: the LLM should NOT be able to construct
+/// a call envelope for a gated tool — it can only describe its existence and
+/// point the user at the unlock path. The agent has no scope-elevate tool;
+/// once the user toggles the gating scope in the Connections UI, the action
+/// moves from `ConnectedIntegration.gated_tools` to `ConnectedIntegration.tools`
+/// on the next prompt rebuild and becomes a real callable function.
+#[derive(Debug, Clone)]
+pub struct GatedIntegrationTool {
+    /// Action slug, e.g. `"GMAIL_BATCH_DELETE_MESSAGES"`.
+    pub name: String,
+    /// One-line description of the action.
+    pub description: String,
+    /// Which scope the user must enable for this action to become callable.
+    /// Lowercase: `"read"`, `"write"`, `"admin"`. The vast majority of gated
+    /// rows are `"admin"` (destructive actions); `"write"` only appears for
+    /// users who have explicitly turned write off, which is unusual.
+    pub required_scope: String,
+    /// Literal lines the agent should show the user, verbatim, when offering
+    /// to unlock this action — one entry per available path (typically: the
+    /// agent-side meta-tool, and the manual UI toggle). Populated at
+    /// partition time in `composio::ops`. The prompt-side rule is "show
+    /// these to the user, don't substitute your own framing" — keeping the
+    /// text in the data (not in the system prompt) lets us tweak wording
+    /// without invalidating the KV-cache prefix and avoids biasing the
+    /// model toward a memorized template that drops options.
+    pub unlock_paths: Vec<String>,
 }
 
 /// A single action available on a connected integration.
@@ -212,13 +324,22 @@ pub struct CuratedMemoryPromptSnapshot {
 // Prompt context (everything a section needs)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// An entry in the master agent's personality roster prompt section.
+#[derive(Debug, Clone, Default)]
+pub struct PersonalityRosterEntry {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub memory_summary: Option<String>,
+}
+
 pub struct PromptContext<'a> {
     pub workspace_dir: &'a Path,
     pub model_name: &'a str,
     /// Id of the agent this prompt is being built for.
     pub agent_id: &'a str,
     pub tools: &'a [PromptTool<'a>],
-    pub skills: &'a [Skill],
+    pub workflows: &'a [Workflow],
     pub dispatcher_instructions: &'a str,
     /// Pre-fetched learned context (empty when learning is disabled).
     pub learned: LearnedContextData,
@@ -249,6 +370,17 @@ pub struct PromptContext<'a> {
     /// session, tests). Pre-fetched by the caller from the
     /// `auth_get_me` cache so prompt builders never reach the network.
     pub user_identity: Option<UserIdentity>,
+    /// Personality-specific SOUL.md content. When `Some`, the
+    /// `IdentitySection` uses this instead of reading the workspace
+    /// root `SOUL.md`. `None` falls back to existing behavior.
+    pub personality_soul_md: Option<String>,
+    /// Personality-specific MEMORY.md content. When `Some`, the
+    /// `UserFilesSection` uses this instead of reading the workspace
+    /// root `MEMORY.md`. `None` falls back to existing behavior.
+    pub personality_memory_md: Option<String>,
+    /// Non-self personality roster entries for the master agent's prompt.
+    /// Empty for non-master agents.
+    pub personality_roster: Vec<PersonalityRosterEntry>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

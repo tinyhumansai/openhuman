@@ -86,22 +86,16 @@ describe('evaluateComposerSend', () => {
 });
 
 describe('handleComposerSlashCommand', () => {
-  it('consumes /new and blocks thread reset when welcome lock is active', () => {
-    expect(handleComposerSlashCommand('/new', true)).toEqual({
-      kind: 'new_or_clear',
-      blockedByWelcomeLock: true,
-    });
+  it('consumes /new command', () => {
+    expect(handleComposerSlashCommand('/new')).toEqual({ kind: 'new_or_clear' });
   });
 
-  it('consumes /clear when welcome lock is inactive', () => {
-    expect(handleComposerSlashCommand('/CLEAR', false)).toEqual({
-      kind: 'new_or_clear',
-      blockedByWelcomeLock: false,
-    });
+  it('consumes /clear command (case-insensitive)', () => {
+    expect(handleComposerSlashCommand('/CLEAR')).toEqual({ kind: 'new_or_clear' });
   });
 
   it('ignores normal chat text', () => {
-    expect(handleComposerSlashCommand('hello', false)).toEqual({ kind: 'not_handled' });
+    expect(handleComposerSlashCommand('hello')).toEqual({ kind: 'not_handled' });
   });
 });
 
@@ -130,19 +124,17 @@ describe('shouldSendComposerKeyDown', () => {
 });
 
 describe('getComposerBlockedSendFeedback', () => {
-  it('returns modal and error feedback for usage-limit blocking', () => {
+  it('returns error feedback for usage-limit blocking', () => {
     expect(getComposerBlockedSendFeedback('usage_limit_reached')).toEqual({
-      showLimitModal: true,
       error: {
         code: 'usage_limit_reached',
-        message: 'Usage limit reached. Upgrade or wait for reset.',
+        message: 'Included budget exhausted. Top up credits or upgrade to continue.',
       },
     });
   });
 
   it('returns send error feedback for socket-disconnected blocking', () => {
     expect(getComposerBlockedSendFeedback('socket_disconnected')).toEqual({
-      showLimitModal: false,
       error: {
         code: 'socket_disconnected',
         message:

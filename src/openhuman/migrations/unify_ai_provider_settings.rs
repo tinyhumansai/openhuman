@@ -143,12 +143,41 @@ fn seed_cloud_providers(config: &mut Config, stats: &mut MigrationStats) {
     }
 }
 
-/// Default `primary_cloud` to the OpenHuman entry (the first one we just
-/// seeded, by construction). Idempotent — only sets if currently `None`.
+/// Default `primary_cloud` to the legacy custom inference entry when one was
+/// present; otherwise use the OpenHuman entry. This preserves pre-migration
+/// behavior where a configured `inference_url` handled chat instead of the
+/// hosted OpenHuman budget.
 fn set_primary_cloud(config: &mut Config, stats: &mut MigrationStats) {
     if config.primary_cloud.is_some() {
         return;
     }
+    let legacy_custom = config
+        .inference_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|url| !url.is_empty() && !looks_like_openhuman(url))
+        .and_then(|url| {
+            let normalized = url.trim_end_matches('/').to_ascii_lowercase();
+            config.cloud_providers.iter().find(|entry| {
+                entry.slug != "openhuman"
+                    && entry
+                        .endpoint
+                        .trim()
+                        .trim_end_matches('/')
+                        .to_ascii_lowercase()
+                        == normalized
+            })
+        });
+    if let Some(entry) = legacy_custom {
+        config.primary_cloud = Some(entry.id.clone());
+        stats.primary_cloud_set = true;
+        log::debug!(
+            "[migrations][unify-ai] primary_cloud set to legacy custom entry id={}",
+            entry.id
+        );
+        return;
+    }
+
     let oh = config
         .cloud_providers
         .iter()
@@ -248,6 +277,9 @@ fn looks_like_openhuman(url: &str) -> bool {
     let host_no_port = host.split(':').next().unwrap_or(host);
     host_no_port == "api.openhuman.ai"
         || host_no_port.ends_with(".openhuman.ai")
+        || host_no_port == "api.tinyhumans.ai"
+        || host_no_port == "staging-api.tinyhumans.ai"
+        || host_no_port.ends_with(".tinyhumans.ai")
         // Allow bare "openhuman" for local/dev names (e.g. Docker compose service names).
         || host_no_port == "openhuman"
 }

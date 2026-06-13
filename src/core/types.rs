@@ -141,6 +141,110 @@ pub struct AppState {
     pub core_version: String,
 }
 
+/// Identifies the host process that started the core runtime. Threaded into
+/// `bootstrap_core_runtime` so policy-sensitive boot decisions (currently the
+/// approval-gate env-override evaluation, future host-specific defaults) can
+/// be made deterministically rather than guessed from the absence of other
+/// signals.
+///
+/// Mapping:
+/// - [`HostKind::TauriShell`] — the desktop app shell embedded the core as an
+///   in-process tokio task. Operator-supplied env-as-config is treated as
+///   advisory only; the gate ALWAYS installs.
+/// - [`HostKind::Cli`] — `openhuman-core` standalone binary spawned by an
+///   operator on the command line. Env-as-config is the operator's chosen
+///   override surface; the gate honours it.
+/// - [`HostKind::Docker`] — containerised deployment. Same env honour-rule as
+///   CLI; the host shell is not the user's desktop so there is no UI surface
+///   to route an approval prompt to.
+///
+/// [`HostKind::detect_standalone`] picks `Docker` vs `Cli` for standalone
+/// invocations using the standard Docker signals (`/.dockerenv` or
+/// `OPENHUMAN_DOCKER=1`). Tauri-shell callers MUST pass `TauriShell`
+/// explicitly — there is no env detection because the embedding shell is the
+/// only authority on this fact.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostKind {
+    TauriShell,
+    Cli,
+    Docker,
+}
+
+impl HostKind {
+    /// Choose between [`HostKind::Cli`] and [`HostKind::Docker`] for a
+    /// standalone-core invocation. Tauri-shell callers must NOT use this —
+    /// they pass [`HostKind::TauriShell`] directly because the shell is the
+    /// only authority on whether the core is embedded.
+    pub fn detect_standalone() -> Self {
+        if std::env::var("OPENHUMAN_DOCKER")
+            .map(|v| {
+                let t = v.trim();
+                t == "1" || t.eq_ignore_ascii_case("true") || t.eq_ignore_ascii_case("yes")
+            })
+            .unwrap_or(false)
+            || std::path::Path::new("/.dockerenv").exists()
+        {
+            HostKind::Docker
+        } else {
+            HostKind::Cli
+        }
+    }
+
+    /// True when the host is the desktop Tauri shell. Used by the approval
+    /// gate to decide whether the `OPENHUMAN_APPROVAL_GATE=0` env override
+    /// is honoured (CLI / Docker) or ignored with a UI-routable warning
+    /// event (Tauri shell).
+    pub fn is_desktop_shell(self) -> bool {
+        matches!(self, HostKind::TauriShell)
+    }
+
+    /// Short tag used in structured logs / event payloads. Stable —
+    /// downstream subscribers may key on the exact string.
+    pub fn tag(self) -> &'static str {
+        match self {
+            HostKind::TauriShell => "tauri-shell",
+            HostKind::Cli => "cli",
+            HostKind::Docker => "docker",
+        }
+    }
+}
+
+/// Pure decision helper for the approval-gate host-aware bootstrap branch.
+/// Takes the host kind and whether an `OPENHUMAN_APPROVAL_GATE=0` env
+/// override was observed; returns:
+/// - `install_gate`: true when the gate should be installed at boot
+/// - `override_ignored`: true when an env override was seen but suppressed
+///   (Tauri shell with override-requested)
+/// - `gate_disabled_by_override`: true when an env override was honored and
+///   the gate is intentionally not installed (CLI / Docker)
+///
+/// Extracted as a pure function so the host-aware policy can be exercised
+/// in isolation without standing up the full `bootstrap_core_runtime` path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ApprovalGateBootDecision {
+    pub install_gate: bool,
+    pub override_ignored: bool,
+    pub gate_disabled_by_override: bool,
+}
+
+pub fn approval_gate_boot_decision(
+    host: HostKind,
+    env_override_requested: bool,
+) -> ApprovalGateBootDecision {
+    match host {
+        HostKind::TauriShell => ApprovalGateBootDecision {
+            install_gate: true,
+            override_ignored: env_override_requested,
+            gate_disabled_by_override: false,
+        },
+        HostKind::Cli | HostKind::Docker => ApprovalGateBootDecision {
+            install_gate: !env_override_requested,
+            override_ignored: false,
+            gate_disabled_by_override: env_override_requested,
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -261,5 +365,83 @@ mod tests {
         };
         let cloned = state.clone();
         assert_eq!(cloned.core_version, "0.1.0");
+    }
+
+    #[test]
+    fn host_kind_tag_is_stable() {
+        // Downstream consumers (event-bus subscribers, log shippers) key
+        // on the exact tag strings; pin them so a rename is loud.
+        assert_eq!(HostKind::TauriShell.tag(), "tauri-shell");
+        assert_eq!(HostKind::Cli.tag(), "cli");
+        assert_eq!(HostKind::Docker.tag(), "docker");
+    }
+
+    #[test]
+    fn host_kind_is_desktop_shell_only_for_tauri() {
+        assert!(HostKind::TauriShell.is_desktop_shell());
+        assert!(!HostKind::Cli.is_desktop_shell());
+        assert!(!HostKind::Docker.is_desktop_shell());
+    }
+
+    #[test]
+    fn desktop_shell_ignores_env_override() {
+        // Operator sets OPENHUMAN_APPROVAL_GATE=0 inside a Tauri-shell
+        // boot — the gate MUST still install, and the override-ignored
+        // signal MUST fire so the UI can banner.
+        let d = approval_gate_boot_decision(HostKind::TauriShell, true);
+        assert!(d.install_gate, "tauri shell must always install the gate");
+        assert!(
+            d.override_ignored,
+            "tauri shell must surface that an override was attempted + ignored"
+        );
+        assert!(
+            !d.gate_disabled_by_override,
+            "desktop path never reports the gate as disabled by env"
+        );
+    }
+
+    #[test]
+    fn desktop_shell_with_no_override_keeps_gate_silent() {
+        // Normal Tauri boot, no env override — gate installs, no banners,
+        // no warning event. This is the steady-state desktop path.
+        let d = approval_gate_boot_decision(HostKind::TauriShell, false);
+        assert!(d.install_gate);
+        assert!(!d.override_ignored);
+        assert!(!d.gate_disabled_by_override);
+    }
+
+    #[test]
+    fn standalone_cli_honors_env_override_with_warning_signal() {
+        let d = approval_gate_boot_decision(HostKind::Cli, true);
+        assert!(!d.install_gate, "CLI must honor the operator env override");
+        assert!(
+            d.gate_disabled_by_override,
+            "CLI must surface the elevated-privilege state via the disabled event"
+        );
+        assert!(
+            !d.override_ignored,
+            "CLI doesn't ignore; it honors — only desktop ignores"
+        );
+    }
+
+    #[test]
+    fn standalone_docker_honors_env_override_with_warning_signal() {
+        let d = approval_gate_boot_decision(HostKind::Docker, true);
+        assert!(!d.install_gate);
+        assert!(d.gate_disabled_by_override);
+        assert!(!d.override_ignored);
+    }
+
+    #[test]
+    fn standalone_with_no_env_override_installs_gate_silently() {
+        for host in [HostKind::Cli, HostKind::Docker] {
+            let d = approval_gate_boot_decision(host, false);
+            assert!(
+                d.install_gate,
+                "{host:?} with no override must install the gate"
+            );
+            assert!(!d.override_ignored);
+            assert!(!d.gate_disabled_by_override);
+        }
     }
 }

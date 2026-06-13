@@ -28,6 +28,7 @@ pub fn new_provider(
     remote: Box<dyn Provider>,
     local_ai_config: &LocalAiConfig,
     remote_fallback_model: &str,
+    temperature_unsupported_models: &[String],
 ) -> IntelligentRoutingProvider {
     // Allow operators to point the local routing tier at an OpenAI-compatible
     // server other than Ollama (e.g. llama-server for Gemma 4 E2B, which
@@ -114,12 +115,10 @@ pub fn new_provider(
     } else {
         AuthStyle::None
     };
-    let local: Box<dyn Provider> = Box::new(OpenAiCompatibleProvider::new(
-        provider_label,
-        &local_base,
-        local_api_key,
-        local_auth_style,
-    ));
+    let local: Box<dyn Provider> = Box::new(
+        OpenAiCompatibleProvider::new(provider_label, &local_base, local_api_key, local_auth_style)
+            .with_temperature_unsupported_models(temperature_unsupported_models.to_vec()),
+    );
 
     IntelligentRoutingProvider::new(
         remote,
@@ -166,7 +165,7 @@ mod tests {
     }
 
     fn make_provider(config: &LocalAiConfig) -> IntelligentRoutingProvider {
-        new_provider(Box::new(StubProvider), config, "remote-fallback")
+        new_provider(Box::new(StubProvider), config, "remote-fallback", &[])
     }
 
     /// Test that construction does not panic and the provider is usable.

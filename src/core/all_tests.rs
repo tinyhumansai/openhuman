@@ -110,6 +110,7 @@ fn namespace_description_known_namespaces() {
     assert!(namespace_description("config").is_some());
     assert!(namespace_description("health").is_some());
     assert!(namespace_description("security").is_some());
+    assert!(namespace_description("tool_registry").is_some());
     assert!(namespace_description("voice").is_some());
     assert!(namespace_description("webhooks").is_some());
     assert!(namespace_description("notification").is_some());
@@ -202,6 +203,26 @@ fn schema_for_rpc_method_finds_security_policy_info() {
     let s = schema.unwrap();
     assert_eq!(s.namespace, "security");
     assert_eq!(s.function, "policy_info");
+}
+
+#[test]
+fn schema_for_rpc_method_finds_internal_mcp_audit_list() {
+    let schema = schema_for_rpc_method("openhuman.mcp_audit_list");
+    assert!(
+        schema.is_some(),
+        "mcp_audit.list should be internally routable"
+    );
+    let s = schema.unwrap();
+    assert_eq!(s.namespace, "mcp_audit");
+    assert_eq!(s.function, "list");
+}
+
+#[test]
+fn rpc_method_from_parts_does_not_expose_internal_mcp_audit_list() {
+    assert!(
+        rpc_method_from_parts("mcp_audit", "list").is_none(),
+        "internal MCP audit RPC must not appear in the public controller registry"
+    );
 }
 
 #[test]

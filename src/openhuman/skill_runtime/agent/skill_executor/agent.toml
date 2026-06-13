@@ -1,0 +1,29 @@
+id = "skill_executor"
+display_name = "Skill Executor Agent"
+delegate_name = "run_skill"
+when_to_use = "Skill execution specialist — runs installed agent skills. Loads skill instructions from SKILL.md, follows the skill's procedure, and executes any bundled scripts. Use when the user invokes a skill by name or asks to run a specific installed skill."
+temperature = 0.4
+max_iterations = 15
+iteration_policy = "extended"
+sandbox_mode = "none"
+agent_tier = "worker"
+omit_identity = true
+omit_memory_context = true
+omit_safety_preamble = false
+omit_skills_catalog = false
+
+[model]
+hint = "agentic"
+
+[tools]
+named = [
+    "list_workflows",
+    "describe_workflow",
+    "read_workflow_resource",
+    "skill_runtime_resolve_runtimes",
+    "run_workflow",
+    "shell",
+    "file_read",
+    "file_write",
+    "ask_user_clarification",
+]

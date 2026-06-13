@@ -388,7 +388,7 @@ async fn regression_reasoning_hint_routes_remote_with_backend_model_name() {
 }
 
 #[tokio::test]
-async fn regression_chat_hint_routes_remote_as_reasoning_quick_v1() {
+async fn regression_chat_hint_routes_remote_as_chat_v1() {
     let local = MockProvider::new("local", "l");
     let remote = MockProvider::new("remote", "r");
     let health = LocalHealthChecker::seeded(true);
@@ -403,10 +403,10 @@ async fn regression_chat_hint_routes_remote_as_reasoning_quick_v1() {
         .await
         .unwrap();
 
-    // hint:chat must be translated to the backend's reasoning-quick-v1 tier
-    // (Kimi K2.6 Turbo). Sending the literal "hint:chat" would 400 on the
-    // backend since modelRegistry has no `hint:*` aliases.
-    assert_eq!(remote.last_model(), "reasoning-quick-v1");
+    // hint:chat must be translated to the backend's chat-v1 tier. Sending the
+    // literal "hint:chat" would 400 on the backend since modelRegistry has no
+    // `hint:*` aliases.
+    assert_eq!(remote.last_model(), "chat-v1");
     assert_eq!(local.calls(), 0);
 }
 

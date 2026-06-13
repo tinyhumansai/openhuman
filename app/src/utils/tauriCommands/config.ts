@@ -1,6 +1,7 @@
 /**
  * Config and settings commands.
  */
+import { invoke } from '@tauri-apps/api/core';
 import debug from 'debug';
 
 import { callCoreRpc } from '../../services/coreRpcClient';
@@ -24,7 +25,13 @@ export interface ModelRoute {
 export type AuthStyle = 'bearer' | 'anthropic' | 'openhuman_jwt' | 'none';
 
 /** @deprecated Use AuthStyle. Kept for back-compat with old wire format. */
-export type CloudProviderType = 'openhuman' | 'openai' | 'anthropic' | 'openrouter' | 'custom';
+export type CloudProviderType =
+  | 'openhuman'
+  | 'openai'
+  | 'anthropic'
+  | 'openrouter'
+  | 'orcarouter'
+  | 'custom';
 
 /**
  * Endpoint config for one cloud LLM provider (new slug-keyed shape).
@@ -40,6 +47,18 @@ export interface CloudProviderCreds {
   label: string;
   endpoint: string;
   auth_style: AuthStyle;
+}
+
+/**
+ * Per-model registry entry. Mirrors the Rust `ModelRegistryEntry`
+ * (`config/schema/types.rs`). Carries the user-set `vision` flag that lets a
+ * custom/BYOK model accept chat image attachments.
+ */
+export interface ModelRegistryEntry {
+  id: string;
+  provider: string;
+  cost_per_1m_output: number;
+  vision: boolean;
 }
 
 export interface ModelSettingsUpdate {
@@ -70,9 +89,16 @@ export interface ModelSettingsUpdate {
    * Each entry: { id?, slug, label?, endpoint, auth_style? }
    */
   cloud_providers?: CloudProviderCreds[] | null;
+  /**
+   * When present, REPLACES `config.model_registry` wholesale. Carries each
+   * model's `vision` flag (Settings → Advanced LLM → custom model → "Supports
+   * vision"). Send `[]` to clear; omit to leave untouched.
+   */
+  model_registry?: ModelRegistryEntry[] | null;
   /** @deprecated No longer used — slug-based routing replaces primary_cloud. */
   primary_cloud?: string | null;
   /** Per-workload provider strings — see Rust `providers::factory` grammar. */
+  chat_provider?: string | null;
   reasoning_provider?: string | null;
   agentic_provider?: string | null;
   coding_provider?: string | null;
@@ -207,9 +233,12 @@ export interface ClientConfig {
   model_routes: ModelRoute[];
   /** Configured cloud providers (no API keys — those live in auth-profiles.json). */
   cloud_providers: CloudProviderCreds[];
+  /** Per-model registry carrying each model's `vision` flag. */
+  model_registry: ModelRegistryEntry[];
   /** Id of the `cloud_providers` entry resolved by the `"cloud"` sentinel. */
   primary_cloud: string | null;
   /** Per-workload provider strings (e.g. `"cloud"`, `"ollama:llama3.1:8b"`, `"openai:gpt-4o"`). */
+  chat_provider: string | null;
   reasoning_provider: string | null;
   agentic_provider: string | null;
   coding_provider: string | null;
@@ -227,6 +256,79 @@ export async function openhumanGetClientConfig(): Promise<CommandResponse<Client
   return await callCoreRpc<CommandResponse<ClientConfig>>({
     method: 'openhuman.inference_get_client_config',
   });
+}
+
+/**
+ * Status payload for the Claude Code CLI provider — mirrors Rust
+ * `claude_code::types::CliStatus`. The `status` discriminator is the
+ * snake_case Serde rename; `path` and `version` may be absent depending
+ * on which variant fired.
+ */
+export type ClaudeCodeStatus =
+  | { status: 'ok'; version: string; path: string }
+  | { status: 'not_installed' }
+  | { status: 'outdated'; version: string; min_required: string; path: string }
+  | { status: 'unusable'; path: string; reason: string };
+
+/**
+ * Probe the local `claude` CLI binary (Claude Code CLI provider). Returns
+ * install + version status; never throws on a missing binary — the
+ * `not_installed` variant signals that case explicitly.
+ */
+export async function openhumanClaudeCodeStatus(): Promise<CommandResponse<ClaudeCodeStatus>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<ClaudeCodeStatus>>({
+    method: 'openhuman.inference_claude_code_status',
+  });
+}
+
+/**
+ * Auth state for the Claude Code CLI provider — mirrors Rust
+ * `claude_code::auth_status::AuthSource`. The `source` discriminator is
+ * the snake_case Serde rename. `account_email` / `expires_at` are
+ * best-effort: absent when the CLI's credentials schema drifts.
+ */
+export type ClaudeCodeAuthStatus =
+  | {
+      source: 'subscription';
+      account_email: string | null;
+      expires_at: string | null;
+      last_checked: number;
+    }
+  | { source: 'api_key_env'; last_checked: number }
+  | { source: 'none'; last_checked: number };
+
+/**
+ * Detect Claude Code CLI auth state (Pro/Max subscription via
+ * `~/.claude/.credentials.json`, `ANTHROPIC_API_KEY` env, or none).
+ * Pure FS — no CLI spawn, safe to call on a tight refresh loop.
+ */
+export async function openhumanClaudeCodeAuthStatus(): Promise<
+  CommandResponse<ClaudeCodeAuthStatus>
+> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<ClaudeCodeAuthStatus>>({
+    method: 'openhuman.inference_claude_code_auth_status',
+  });
+}
+
+/**
+ * Open the user's native terminal and run `claude login` inside it. The
+ * CLI's OAuth flow is interactive, so we can't host it in-app — we
+ * detach into a terminal window and let the user complete the flow
+ * there, then click Recheck back in the settings card.
+ *
+ * Returns the name of the terminal emulator that was launched.
+ */
+export async function openhumanClaudeCodeLoginLaunch(): Promise<string> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await invoke<string>('claude_code_login_launch');
 }
 
 export async function openhumanUpdateModelSettings(
@@ -289,6 +391,250 @@ export async function openhumanUpdateScreenIntelligenceSettings(
   });
 }
 
+// ── Agent access mode (autonomy / filesystem permissions) ───────────────────
+
+export type AutonomyLevel = 'readonly' | 'supervised' | 'full';
+export type TrustedAccess = 'read' | 'readwrite';
+
+export interface TrustedRoot {
+  path: string;
+  access: TrustedAccess;
+}
+
+/** The full [autonomy] block as returned by config_get_autonomy_settings. */
+export interface AutonomySettings {
+  level: AutonomyLevel;
+  workspace_only: boolean;
+  allowed_commands: string[];
+  forbidden_paths: string[];
+  trusted_roots: TrustedRoot[];
+  allow_tool_install: boolean;
+  max_actions_per_hour: number;
+  /** "Always allow" allowlist — tool names the agent runs without a prompt. */
+  auto_approve: string[];
+  /** Require approval before an agent executes a task-board plan. */
+  require_task_plan_approval?: boolean;
+}
+
+/** Partial update — omitted fields are left unchanged. */
+export interface AutonomySettingsUpdate {
+  level?: AutonomyLevel;
+  workspace_only?: boolean;
+  allowed_commands?: string[];
+  forbidden_paths?: string[];
+  trusted_roots?: TrustedRoot[];
+  allow_tool_install?: boolean;
+  max_actions_per_hour?: number;
+  /** Replaces the "Always allow" allowlist wholesale. */
+  auto_approve?: string[];
+  require_task_plan_approval?: boolean;
+}
+
+export async function openhumanGetAutonomySettings(): Promise<CommandResponse<AutonomySettings>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<AutonomySettings>>({
+    method: CORE_RPC_METHODS.configGetAutonomySettings,
+  });
+}
+
+/**
+ * Agent filesystem roots returned by `config_get_agent_paths`. All three are
+ * already-canonicalised path strings; the UI renders them verbatim instead of
+ * hard-coding defaults like `~/OpenHuman/projects`.
+ *
+ * - `action_dir` — agent CWD for `shell` / `node_exec` / `npm_exec` / file
+ *   writes. Defaults to `projects_dir`; overridable via `OPENHUMAN_ACTION_DIR`.
+ * - `workspace_dir` — internal product state (memory / sessions / vault).
+ *   Agent-blocked.
+ * - `projects_dir` — default projects home; matches `action_dir` when no
+ *   override is set.
+ * - `action_dir_source` — where the effective `action_dir` came from:
+ *   `'env'` (pinned by OPENHUMAN_ACTION_DIR — UI must disable editing),
+ *   `'override'` (a persisted user choice), or `'default'`.
+ */
+export interface AgentPaths {
+  action_dir: string;
+  workspace_dir: string;
+  projects_dir: string;
+  action_dir_source: 'env' | 'override' | 'default';
+}
+
+export async function openhumanGetAgentPaths(): Promise<CommandResponse<AgentPaths>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<AgentPaths>>({
+    method: CORE_RPC_METHODS.configGetAgentPaths,
+  });
+}
+
+/** Partial update for the agent's editable filesystem roots (issue #3240). */
+export interface AgentPathsUpdate {
+  action_dir?: string;
+}
+
+export async function openhumanUpdateAgentPaths(
+  update: AgentPathsUpdate
+): Promise<CommandResponse<AgentPaths>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<AgentPaths>>({
+    method: CORE_RPC_METHODS.configUpdateAgentPaths,
+    params: update,
+  });
+}
+
+export async function openhumanUpdateAutonomySettings(
+  update: AutonomySettingsUpdate
+): Promise<CommandResponse<ConfigSnapshot>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<ConfigSnapshot>>({
+    method: CORE_RPC_METHODS.configUpdateAutonomySettings,
+    params: update,
+  });
+}
+
+// ── Sandbox execution backend settings ───────────────────────────────────────
+
+export type SandboxBackendId = 'auto' | 'docker' | 'landlock' | 'firejail' | 'bubblewrap' | 'none';
+
+/** Current sandbox settings returned by config_get_sandbox_settings. */
+export interface SandboxSettings {
+  enabled: boolean;
+  backend: SandboxBackendId;
+  docker_image: string;
+  docker_memory_limit_mb: number | null;
+  docker_cpu_limit: number | null;
+  docker_available: boolean;
+  detected_backend: string;
+  env_passthrough: string[];
+}
+
+/** Partial update — omitted fields are left unchanged. */
+export interface SandboxSettingsUpdate {
+  backend?: SandboxBackendId;
+  enabled?: boolean;
+  docker_image?: string;
+  docker_memory_limit_mb?: number | null;
+  docker_cpu_limit?: number | null;
+  env_passthrough?: string[];
+}
+
+export async function openhumanGetSandboxSettings(): Promise<CommandResponse<SandboxSettings>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<SandboxSettings>>({
+    method: CORE_RPC_METHODS.configGetSandboxSettings,
+  });
+}
+
+export async function openhumanUpdateSandboxSettings(
+  update: SandboxSettingsUpdate
+): Promise<CommandResponse<ConfigSnapshot>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<ConfigSnapshot>>({
+    method: CORE_RPC_METHODS.configUpdateSandboxSettings,
+    params: update,
+  });
+}
+
+// ── Memory sync schedule (#3302) ─────────────────────────────────────────────
+
+/** Global memory-sync schedule returned by config_get_memory_sync_settings. */
+export interface MemorySyncSettings {
+  /** Stored value: null = use the default cadence, 0 = Manual only, n>0 = seconds. */
+  sync_interval_secs: number | null;
+  /** Resolved cadence to highlight in the UI (the default when unset; 0 for manual). */
+  selected_secs: number;
+  /** True when the user picked "Manual only" (stored value is 0). */
+  is_manual: boolean;
+  /** True when no explicit choice is stored (falls back to `default_secs`). */
+  is_default: boolean;
+  /** The effective default cadence (seconds) applied when unset (24h). */
+  default_secs: number;
+  /** Preset cadences (seconds) offered in the UI: 4h / 12h / 24h. */
+  presets: number[];
+}
+
+/** Partial update — set `sync_interval_secs` to `null` to reset to default. */
+export interface MemorySyncSettingsUpdate {
+  /** null = default, 0 = Manual only, n>0 = sync every n seconds. */
+  sync_interval_secs?: number | null;
+}
+
+export async function openhumanGetMemorySyncSettings(): Promise<
+  CommandResponse<MemorySyncSettings>
+> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<MemorySyncSettings>>({
+    method: CORE_RPC_METHODS.configGetMemorySyncSettings,
+  });
+}
+
+export async function openhumanUpdateMemorySyncSettings(
+  update: MemorySyncSettingsUpdate
+): Promise<CommandResponse<MemorySyncSettings>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<MemorySyncSettings>>({
+    method: CORE_RPC_METHODS.configUpdateMemorySyncSettings,
+    params: update,
+  });
+}
+
+// ── Agent execution settings (action/tool timeout) ──────────────────────────
+
+/** Agent execution settings as returned by config_get_agent_settings. */
+export interface AgentSettings {
+  /** Configured wall-clock timeout for a single tool/action, in seconds. */
+  agent_timeout_secs: number;
+  /** Runtime-effective timeout (may differ from configured when env-overridden). */
+  effective_timeout_secs: number;
+  /** True when OPENHUMAN_TOOL_TIMEOUT_SECS overrides the configured value. */
+  env_override: boolean;
+  /** Lowest accepted timeout (seconds). */
+  min_timeout_secs: number;
+  /** Highest accepted timeout (seconds). */
+  max_timeout_secs: number;
+}
+
+/** Partial update — omitted fields are left unchanged. */
+export interface AgentSettingsUpdate {
+  agent_timeout_secs?: number;
+}
+
+export async function openhumanGetAgentSettings(): Promise<CommandResponse<AgentSettings>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<AgentSettings>>({
+    method: CORE_RPC_METHODS.configGetAgentSettings,
+  });
+}
+
+export async function openhumanUpdateAgentSettings(
+  update: AgentSettingsUpdate
+): Promise<CommandResponse<ConfigSnapshot>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<ConfigSnapshot>>({
+    method: CORE_RPC_METHODS.configUpdateAgentSettings,
+    params: update,
+  });
+}
+
 export async function openhumanUpdateLocalAiSettings(
   update: LocalAiSettingsUpdate
 ): Promise<CommandResponse<ConfigSnapshot>> {
@@ -344,6 +690,87 @@ export async function openhumanGetMeetSettings(): Promise<
   }
   return await callCoreRpc<CommandResponse<{ auto_orchestrator_handoff: boolean }>>({
     method: 'openhuman.config_get_meet_settings',
+  });
+}
+
+export type SearchEngineId = 'disabled' | 'managed' | 'parallel' | 'brave' | 'querit';
+
+export interface SearchSettingsUpdate {
+  engine?: SearchEngineId;
+  max_results?: number;
+  timeout_secs?: number;
+  /** Empty string clears the stored key. */
+  parallel_api_key?: string;
+  /** Empty string clears the stored key. */
+  brave_api_key?: string;
+  /** Empty string clears the stored key. */
+  querit_api_key?: string;
+  /**
+   * Websites the assistant may open/read (web_fetch / curl). Exact hosts
+   * match their subdomains; `"*"` allows all public sites; an empty list
+   * blocks all web access.
+   */
+  allowed_domains?: string[];
+  /**
+   * "Allow all sites" toggle. true → allowlist becomes `["*"]`.
+   * NOTE: `allow_all` is applied AFTER `allowed_domains` server-side, so when
+   * both are sent in one patch `allow_all` wins (true → `["*"]`, false → the
+   * `"*"` wildcard is dropped). Don't send both with conflicting intent.
+   */
+  allow_all?: boolean;
+}
+
+export interface SearchSettings {
+  engine: SearchEngineId | string;
+  effective_engine: SearchEngineId;
+  max_results: number;
+  timeout_secs: number;
+  parallel_configured: boolean;
+  brave_configured: boolean;
+  querit_configured: boolean;
+  /** Current allowed-websites host list (may contain `"*"`). */
+  allowed_domains: string[];
+  /** True when the allowlist contains the `"*"` wildcard. */
+  allow_all: boolean;
+}
+
+export interface DiagramViewerSettings {
+  enabled: boolean;
+  source_url: string;
+  refresh_interval_seconds: number;
+}
+
+export interface DashboardSettings {
+  diagram_viewer: DiagramViewerSettings;
+}
+
+export async function openhumanGetDashboardSettings(): Promise<CommandResponse<DashboardSettings>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<DashboardSettings>>({
+    method: CORE_RPC_METHODS.configGetDashboardSettings,
+  });
+}
+
+export async function openhumanGetSearchSettings(): Promise<CommandResponse<SearchSettings>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<SearchSettings>>({
+    method: CORE_RPC_METHODS.configGetSearchSettings,
+  });
+}
+
+export async function openhumanUpdateSearchSettings(
+  update: SearchSettingsUpdate
+): Promise<CommandResponse<ConfigSnapshot>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<ConfigSnapshot>>({
+    method: CORE_RPC_METHODS.configUpdateSearchSettings,
+    params: update,
   });
 }
 

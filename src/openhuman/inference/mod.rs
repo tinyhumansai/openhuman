@@ -9,13 +9,15 @@
 //!                 (moved from `src/openhuman/voice/`)
 //! - `http/`     — OpenAI-compatible `/v1/chat/completions` endpoint
 //!
-//! The RPC surface remains under the `inference.*` and `local_ai.*` namespaces
-//! for backwards compatibility.
+//! The RPC surface is `inference.*`; old `local_ai_*` RPC names are resolved
+//! by the legacy alias layer for backwards compatibility.
 
 pub mod device;
 pub mod http;
 pub mod local;
+pub mod model_context;
 pub mod model_ids;
+pub mod openai_oauth;
 pub mod ops;
 pub mod parse;
 pub mod paths;
@@ -34,8 +36,9 @@ pub use schemas::{
 
 // Re-export the types that external callers (voice, agent, etc.) import from inference
 pub use device::DeviceProfile;
-pub use local::all_local_ai_controller_schemas;
-pub use local::all_local_ai_registered_controllers;
+pub use local::all_local_inference_controller_schemas;
+pub use local::all_local_inference_registered_controllers;
+pub use model_context::context_window_for_model;
 pub use presets::{ModelPreset, ModelTier, VisionMode};
 pub use sentiment::SentimentResult;
 pub use types::{

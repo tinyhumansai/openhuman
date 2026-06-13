@@ -297,63 +297,50 @@ describe('creditsApi coupon helpers', () => {
 });
 
 describe('normalizeTeamUsage', () => {
-  it('passes through well-formed camelCase fields', () => {
+  it('passes through well-formed payload', () => {
     const input = {
       remainingUsd: 12.5,
       cycleBudgetUsd: 25,
-      cycleLimit5hr: 3.2,
-      cycleLimit7day: 18,
-      fiveHourCapUsd: 5,
-      fiveHourResetsAt: '2026-04-09T18:00:00Z',
+      cycleSpentUsd: 12.5,
       cycleStartDate: '2026-04-07T00:00:00Z',
       cycleEndsAt: '2026-04-14T00:00:00Z',
-      bypassCycleLimit: false,
+      plan: {
+        plan: 'BASIC',
+        name: 'Basic',
+        marginPercent: 25,
+        payAsYouGoMarginPercent: 50,
+        discountVsPayAsYouGoPercent: 50,
+      },
+      insights: {
+        period: { startDate: '2026-04-07T00:00:00Z', endDate: '2026-04-14T00:00:00Z' },
+        totals: {
+          inferenceUsd: 8,
+          integrationsUsd: 4.5,
+          totalUsd: 12.5,
+          inferenceCalls: 120,
+          integrationCalls: 7,
+        },
+        dailySeries: [{ date: '2026-04-08', inferenceUsd: 3, integrationsUsd: 1, totalUsd: 4 }],
+        topModels: [{ model: 'sonnet-4-6', provider: 'anthropic', spentUsd: 6, calls: 80 }],
+        topIntegrations: [{ provider: 'gmail', action: 'send', spentUsd: 2, calls: 3 }],
+      },
     };
     expect(normalizeTeamUsage(input)).toEqual(input);
-  });
-
-  it('maps snake_case backend fields to camelCase', () => {
-    const result = normalizeTeamUsage({
-      remaining_usd: 10,
-      cycle_budget_usd: 20,
-      five_hour_spend_usd: 2.5,
-      cycle_limit_7day: 15,
-      five_hour_cap_usd: 5,
-      five_hour_resets_at: '2026-04-09T18:00:00Z',
-      cycle_start_date: '2026-04-07T00:00:00Z',
-      cycle_ends_at: '2026-04-14T00:00:00Z',
-      bypass_cycle_limit: true,
-    });
-    expect(result.remainingUsd).toBe(10);
-    expect(result.cycleBudgetUsd).toBe(20);
-    expect(result.cycleLimit5hr).toBe(2.5);
-    expect(result.cycleLimit7day).toBe(15);
-    expect(result.fiveHourCapUsd).toBe(5);
-    expect(result.fiveHourResetsAt).toBe('2026-04-09T18:00:00Z');
-    expect(result.bypassCycleLimit).toBe(true);
-  });
-
-  it('maps legacy fiveHourSpendUsd to cycleLimit5hr', () => {
-    const result = normalizeTeamUsage({ fiveHourSpendUsd: 4.0 });
-    expect(result.cycleLimit5hr).toBe(4.0);
   });
 
   it('returns safe defaults for empty object', () => {
     const result = normalizeTeamUsage({});
     expect(result.remainingUsd).toBe(0);
     expect(result.cycleBudgetUsd).toBe(0);
-    expect(result.cycleLimit5hr).toBe(0);
-    expect(result.cycleLimit7day).toBe(0);
-    expect(result.fiveHourCapUsd).toBe(0);
-    expect(result.fiveHourResetsAt).toBeNull();
-    expect(result.bypassCycleLimit).toBe(false);
+    expect(result.cycleSpentUsd).toBe(0);
+    expect(result.plan.plan).toBe('FREE');
+    expect(result.plan.discountVsPayAsYouGoPercent).toBe(0);
+    expect(result.insights.totals.totalUsd).toBe(0);
+    expect(result.insights.dailySeries).toEqual([]);
+    expect(result.insights.topModels).toEqual([]);
+    expect(result.insights.topIntegrations).toEqual([]);
     expect(typeof result.cycleStartDate).toBe('string');
     expect(typeof result.cycleEndsAt).toBe('string');
-  });
-
-  it('maps bypassRateLimit to bypassCycleLimit', () => {
-    const result = normalizeTeamUsage({ bypassRateLimit: true });
-    expect(result.bypassCycleLimit).toBe(true);
   });
 
   it('handles invalid payload types gracefully', () => {
@@ -361,28 +348,8 @@ describe('normalizeTeamUsage', () => {
     expect(() => normalizeTeamUsage(12345)).not.toThrow();
     expect(() => normalizeTeamUsage(true)).not.toThrow();
     expect(() => normalizeTeamUsage([])).not.toThrow();
-
-    const stringResult = normalizeTeamUsage('string payload');
-    expect(stringResult.remainingUsd).toBe(0);
-
-    const arrayResult = normalizeTeamUsage(['a', 'b']);
-    // Arrays pass typeof object check but don't have the expected properties
-    expect(arrayResult.remainingUsd).toBe(0);
-  });
-
-  it('falls back to current time for invalid date fields', () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date('2026-05-10T12:00:00.000Z'));
-
-    const result = normalizeTeamUsage({
-      cycleStartDate: 12345, // invalid type
-      cycleEndsAt: null, // invalid type
-    });
-
-    expect(result.cycleStartDate).toBe('2026-05-10T12:00:00.000Z');
-    expect(result.cycleEndsAt).toBe('2026-05-10T12:00:00.000Z');
-
-    vi.useRealTimers();
+    expect(normalizeTeamUsage('string payload').remainingUsd).toBe(0);
+    expect(normalizeTeamUsage(['a', 'b']).remainingUsd).toBe(0);
   });
 
   it('does not crash on null or undefined input', () => {
@@ -390,16 +357,71 @@ describe('normalizeTeamUsage', () => {
     expect(() => normalizeTeamUsage(undefined)).not.toThrow();
     const result = normalizeTeamUsage(null);
     expect(result.remainingUsd).toBe(0);
-    expect(result.cycleLimit5hr).toBe(0);
+    expect(result.insights.totals.totalUsd).toBe(0);
   });
 
   it('getTeamUsage normalizes the RPC response', async () => {
-    mockCallCoreCommand.mockResolvedValueOnce({ remaining_usd: 8, cycle_budget_usd: 25 });
+    mockCallCoreCommand.mockResolvedValueOnce({
+      remainingUsd: 8,
+      cycleBudgetUsd: 25,
+      cycleSpentUsd: 17,
+      cycleStartDate: '2026-04-07T00:00:00Z',
+      cycleEndsAt: '2026-04-14T00:00:00Z',
+    });
 
     const result = await creditsApi.getTeamUsage();
     expect(result.remainingUsd).toBe(8);
     expect(result.cycleBudgetUsd).toBe(25);
-    expect(result.cycleLimit5hr).toBe(0);
+    expect(result.cycleSpentUsd).toBe(17);
     expect(mockCallCoreCommand).toHaveBeenCalledWith('openhuman.team_get_usage');
+  });
+
+  it('normalizes insights sub-rows with missing fields to safe defaults', () => {
+    const result = normalizeTeamUsage({
+      insights: {
+        period: { startDate: '2026-05-01', endDate: '2026-05-31' },
+        totals: {},
+        // Rows with missing optional fields — exercises normalizeDailyPoint,
+        // normalizeModelRow, and normalizeIntegrationRow default branches.
+        dailySeries: [{ date: '2026-05-01' }],
+        topModels: [{ provider: 'anthropic' }],
+        topIntegrations: [{ provider: 'gmail' }],
+      },
+    });
+
+    expect(result.insights.dailySeries).toHaveLength(1);
+    expect(result.insights.dailySeries[0].inferenceUsd).toBe(0);
+    expect(result.insights.dailySeries[0].integrationsUsd).toBe(0);
+    expect(result.insights.dailySeries[0].totalUsd).toBe(0);
+
+    expect(result.insights.topModels).toHaveLength(1);
+    expect(result.insights.topModels[0].model).toBe('');
+    expect(result.insights.topModels[0].provider).toBe('anthropic');
+    expect(result.insights.topModels[0].spentUsd).toBe(0);
+    expect(result.insights.topModels[0].calls).toBe(0);
+
+    expect(result.insights.topIntegrations).toHaveLength(1);
+    expect(result.insights.topIntegrations[0].action).toBe('');
+    expect(result.insights.topIntegrations[0].spentUsd).toBe(0);
+    expect(result.insights.topIntegrations[0].calls).toBe(0);
+  });
+
+  it('normalizes plan summary with missing fields to safe defaults', () => {
+    const result = normalizeTeamUsage({ plan: { name: 'Custom' } });
+    expect(result.plan.plan).toBe('FREE');
+    expect(result.plan.name).toBe('Custom');
+    expect(result.plan.marginPercent).toBe(0);
+    expect(result.plan.payAsYouGoMarginPercent).toBe(0);
+    expect(result.plan.discountVsPayAsYouGoPercent).toBe(0);
+  });
+
+  it('normalizes insights period using cycle dates as fallback when period is absent', () => {
+    const result = normalizeTeamUsage({
+      cycleStartDate: '2026-05-01T00:00:00Z',
+      cycleEndsAt: '2026-05-31T00:00:00Z',
+      insights: { totals: {}, dailySeries: [], topModels: [], topIntegrations: [] },
+    });
+    expect(result.insights.period.startDate).toBe('2026-05-01T00:00:00Z');
+    expect(result.insights.period.endDate).toBe('2026-05-31T00:00:00Z');
   });
 });

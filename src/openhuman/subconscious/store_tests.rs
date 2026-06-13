@@ -7,152 +7,93 @@ fn test_conn() -> Connection {
 }
 
 #[test]
-fn crud_tasks() {
+fn last_tick_at_round_trip() {
     let conn = test_conn();
-    let task = add_task(&conn, "Check email", TaskSource::User, TaskRecurrence::Once).unwrap();
-    assert_eq!(task.title, "Check email");
-    assert!(!task.completed);
-
-    let fetched = get_task(&conn, &task.id).unwrap();
-    assert_eq!(fetched.title, "Check email");
-
-    let all = list_tasks(&conn, false).unwrap();
-    assert_eq!(all.len(), 1);
-
-    update_task(
-        &conn,
-        &task.id,
-        &TaskPatch {
-            title: Some("Check Gmail".into()),
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    let updated = get_task(&conn, &task.id).unwrap();
-    assert_eq!(updated.title, "Check Gmail");
-
-    mark_task_completed(&conn, &task.id).unwrap();
-    let done = get_task(&conn, &task.id).unwrap();
-    assert!(done.completed);
-
-    remove_task(&conn, &task.id).unwrap();
-    assert!(get_task(&conn, &task.id).is_err());
+    assert_eq!(get_last_tick_at(&conn).unwrap(), 0.0);
+    set_last_tick_at(&conn, 12345.678).unwrap();
+    assert_eq!(get_last_tick_at(&conn).unwrap(), 12345.678);
 }
 
 #[test]
-fn due_tasks_filters_correctly() {
+fn last_tick_at_upsert() {
     let conn = test_conn();
-    let now = now_secs();
-
-    // Task with no next_run_at — should be due
-    add_task(
-        &conn,
-        "No schedule",
-        TaskSource::User,
-        TaskRecurrence::Pending,
-    )
-    .unwrap();
-
-    // Task with future next_run_at — should NOT be due
-    let future_task =
-        add_task(&conn, "Future task", TaskSource::User, TaskRecurrence::Once).unwrap();
-    update_task_run_times(&conn, &future_task.id, now, Some(now + 3600.0)).unwrap();
-
-    // Task with past next_run_at — should be due
-    let past_task = add_task(&conn, "Past due", TaskSource::User, TaskRecurrence::Once).unwrap();
-    update_task_run_times(&conn, &past_task.id, now - 7200.0, Some(now - 3600.0)).unwrap();
-
-    let due = due_tasks(&conn, now).unwrap();
-    assert_eq!(due.len(), 2); // "No schedule" + "Past due"
-    assert!(due.iter().any(|t| t.title == "No schedule"));
-    assert!(due.iter().any(|t| t.title == "Past due"));
-    assert!(!due.iter().any(|t| t.title == "Future task"));
+    set_last_tick_at(&conn, 1.0).unwrap();
+    set_last_tick_at(&conn, 2.0).unwrap();
+    assert_eq!(get_last_tick_at(&conn).unwrap(), 2.0);
 }
 
 #[test]
-fn crud_log_entries() {
+fn schema_ddl_creates_tables() {
     let conn = test_conn();
-    let task = add_task(&conn, "Test", TaskSource::User, TaskRecurrence::Once).unwrap();
-    let now = now_secs();
-
-    let entry = add_log_entry(
-        &conn,
-        &task.id,
-        now,
-        "act",
-        Some("Did the thing"),
-        Some(150),
-    )
-    .unwrap();
-    assert_eq!(entry.decision, "act");
-
-    let entries = list_log_entries(&conn, Some(&task.id), 10).unwrap();
-    assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].result.as_deref(), Some("Did the thing"));
-
-    let all_entries = list_log_entries(&conn, None, 10).unwrap();
-    assert_eq!(all_entries.len(), 1);
+    let count: i32 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name LIKE 'subconscious_%'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(count >= 4);
 }
 
 #[test]
-fn crud_escalations() {
-    let conn = test_conn();
-    let task = add_task(&conn, "Test", TaskSource::User, TaskRecurrence::Once).unwrap();
-
-    let esc = add_escalation(
-        &conn,
-        &task.id,
-        None,
-        "Deadline moved",
-        "The API deadline was moved to tomorrow",
-        &EscalationPriority::Critical,
-    )
-    .unwrap();
-    assert_eq!(esc.status, EscalationStatus::Pending);
-
-    let pending = list_escalations(&conn, Some(&EscalationStatus::Pending)).unwrap();
-    assert_eq!(pending.len(), 1);
-
-    assert_eq!(pending_escalation_count(&conn).unwrap(), 1);
-
-    resolve_escalation(&conn, &esc.id, &EscalationStatus::Approved).unwrap();
-    let resolved = get_escalation(&conn, &esc.id).unwrap();
-    assert_eq!(resolved.status, EscalationStatus::Approved);
-    assert!(resolved.resolved_at.is_some());
-
-    assert_eq!(pending_escalation_count(&conn).unwrap(), 0);
-}
-
-#[test]
-fn seed_default_tasks_creates_system_tasks() {
-    let conn = test_conn();
-
-    let count = seed_default_tasks(&conn).unwrap();
-    assert_eq!(count, DEFAULT_SYSTEM_TASKS.len());
-
-    // Second seed should not duplicate
-    let count2 = seed_default_tasks(&conn).unwrap();
-    assert_eq!(count2, 0);
-
-    let tasks = list_tasks(&conn, false).unwrap();
-    assert_eq!(tasks.len(), DEFAULT_SYSTEM_TASKS.len());
-    assert!(tasks.iter().all(|t| t.source == TaskSource::System));
-}
-
-#[test]
-fn recurrence_roundtrip() {
-    assert_eq!(
-        string_to_recurrence(&recurrence_to_string(&TaskRecurrence::Once)),
-        TaskRecurrence::Once
+fn schema_ddl_has_no_journal_mode_pragma() {
+    // Journal-mode selection must stay out of the DDL batch so a filesystem
+    // that can't back WAL's `-shm` segment degrades via `apply_journal_mode`
+    // instead of aborting schema init (issue #3231 / TAURI-RUST-8WM).
+    assert!(
+        !SCHEMA_DDL.to_ascii_lowercase().contains("journal_mode"),
+        "SCHEMA_DDL must not set journal_mode — it is applied separately with a WAL fallback"
     );
-    assert_eq!(
-        string_to_recurrence(&recurrence_to_string(&TaskRecurrence::Pending)),
-        TaskRecurrence::Pending
+}
+
+#[test]
+fn open_and_initialize_creates_usable_db_on_real_fs() {
+    // A real on-disk DB exercises the actual journal-mode path (in-memory DBs
+    // can never be WAL). The DB must be usable for reads/writes afterward.
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("subconscious.db");
+
+    let conn = open_and_initialize(&db_path).unwrap();
+    set_last_tick_at(&conn, 99.5).unwrap();
+    assert_eq!(get_last_tick_at(&conn).unwrap(), 99.5);
+
+    // On a normal local filesystem WAL succeeds; assert we landed on a valid
+    // persistent journal mode (wal when supported, otherwise the truncate
+    // fallback — never an unusable state).
+    let mode: String = conn
+        .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+        .unwrap();
+    assert!(
+        matches!(mode.to_ascii_lowercase().as_str(), "wal" | "truncate"),
+        "expected wal or truncate journal mode, got {mode}"
     );
-    assert_eq!(
-        string_to_recurrence(&recurrence_to_string(&TaskRecurrence::Cron(
-            "0 8 * * *".into()
-        ))),
-        TaskRecurrence::Cron("0 8 * * *".into())
-    );
+}
+
+#[test]
+fn with_connection_creates_parent_dir_and_db() {
+    // `with_connection` must create the `subconscious/` subdir under a fresh
+    // workspace and initialize a working DB end-to-end.
+    let workspace = tempfile::tempdir().unwrap();
+    let tick = with_connection(workspace.path(), |conn| {
+        set_last_tick_at(conn, 7.0)?;
+        get_last_tick_at(conn)
+    })
+    .unwrap();
+    assert_eq!(tick, 7.0);
+    assert!(workspace
+        .path()
+        .join("subconscious")
+        .join("subconscious.db")
+        .exists());
+}
+
+#[test]
+fn apply_journal_mode_falls_back_without_panicking() {
+    // In-memory DBs always report `memory` and can never switch to WAL, so this
+    // drives the fallback branch of `apply_journal_mode`. It must not panic and
+    // must leave the connection fully usable for the table DDL.
+    let conn = Connection::open_in_memory().unwrap();
+    apply_journal_mode(&conn);
+    conn.execute_batch(SCHEMA_DDL).unwrap();
+    assert_eq!(get_last_tick_at(&conn).unwrap(), 0.0);
 }

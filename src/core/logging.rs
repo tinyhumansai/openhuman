@@ -14,7 +14,7 @@
 use std::fmt;
 use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
-use std::sync::{Once, OnceLock};
+use std::sync::{Mutex, Once, OnceLock};
 
 use nu_ansi_term::{Color, Style};
 use tracing::{Event, Level};
@@ -28,10 +28,19 @@ use tracing_subscriber::Layer;
 
 static INIT: Once = Once::new();
 
-/// Holds the non-blocking writer guard for the file appender. Must live for
-/// the entire process lifetime — dropping it stops the background flushing
-/// thread and silently swallows pending log records.
-static FILE_GUARD: OnceLock<WorkerGuard> = OnceLock::new();
+/// Holds the non-blocking writer guard for the file appender. Dropping it
+/// stops the background flushing thread and releases the OS file handle on
+/// the active `openhuman-YYYY-MM-DD.log`, which on Windows is required
+/// before the parent `<data_dir>/logs/` directory can be removed (issue
+/// #1615 — the file is held by the Tauri host process, not the embedded
+/// core, so `CoreProcessHandle::shutdown` alone does not release it).
+///
+/// Wrapped in `Mutex<Option<_>>` instead of `OnceLock` so [`shutdown_file_guard`]
+/// can `take` and drop the guard mid-process during `reset_local_data`.
+/// After a `take`, the file layer's writer becomes a no-op (the background
+/// thread has exited); see [`shutdown_file_guard`] docs for the consequence
+/// on subsequent log records.
+static FILE_GUARD: Mutex<Option<WorkerGuard>> = Mutex::new(None);
 
 /// Resolved path to the active log file directory. Populated by
 /// [`init_for_embedded`] so UI commands (e.g. `reveal_logs_folder`) can find
@@ -289,7 +298,9 @@ pub fn init_for_embedded(data_dir: &Path, verbose: bool) {
         {
             Ok(()) => {
                 if let Some((_, guard, dir)) = pending_file {
-                    let _ = FILE_GUARD.set(guard);
+                    if let Ok(mut slot) = FILE_GUARD.lock() {
+                        *slot = Some(guard);
+                    }
                     let _ = LOG_DIR.set(dir);
                 }
             }
@@ -313,6 +324,37 @@ pub fn init_for_embedded(data_dir: &Path, verbose: bool) {
 /// CLI runs).
 pub fn log_directory() -> Option<&'static Path> {
     LOG_DIR.get().map(PathBuf::as_path)
+}
+
+/// Drop the file appender's worker guard so the rolling `openhuman-*.log`
+/// file handle held by *this* process is released.
+///
+/// Returns `true` if a guard was taken (and dropped here), `false` if no
+/// guard was installed (CLI run, init failed, or already shut down). After
+/// this call:
+///
+///   * the non-blocking writer's background thread exits as part of `drop`,
+///   * the OS file handle on today's log file is closed,
+///   * subsequent `tracing::*` records routed to the file layer are silently
+///     discarded (the writer becomes a no-op) until the process restarts.
+///
+/// **Used by**: the Tauri shell's `reset_local_data` command, which must be
+/// able to `remove_dir_all(<data_dir>)` on Windows. Without releasing this
+/// guard the host process holds an open handle inside `<data_dir>/logs/`
+/// and Windows returns `ERROR_SHARING_VIOLATION` (os error 32). The stderr
+/// and Sentry layers stay attached because they don't keep files open.
+///
+/// **Not idempotent in the recover-after-call sense**: there is no re-init
+/// path. A subsequent `init_for_embedded` is a no-op (the `Once` guard has
+/// already fired), so file logging stays off until the next process launch.
+/// `reset_local_data` is followed by `ensure_running()` which restarts the
+/// embedded core but does *not* re-install the subscriber — by design, the
+/// user is expected to restart the app shortly after a reset.
+pub fn shutdown_file_guard() -> bool {
+    let Ok(mut slot) = FILE_GUARD.lock() else {
+        return false;
+    };
+    slot.take().is_some()
 }
 
 fn seed_rust_log(verbose: bool, default_scope: CliLogDefault) {
@@ -377,6 +419,14 @@ mod tests {
     /// Cargo runs unit tests in parallel threads in the same process, so
     /// concurrent env-var writes would race.
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Serialize tests that mutate the process-global `FILE_GUARD` static.
+    /// Without this, `shutdown_file_guard_takes_installed_guard` can race
+    /// any concurrent test that calls `init_for_embedded` (or that itself
+    /// stashes / takes the guard), making one of them observe a guard it
+    /// did not install. Mirror of the `SCHEDULE_LOCK` pattern in
+    /// `app/src-tauri/src/reset_reboot_schedule.rs::tests`.
+    static FILE_GUARD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     fn with_clean_rust_log<R>(f: impl FnOnce() -> R) -> R {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -486,6 +536,45 @@ mod tests {
         // error rather than launching against an empty path.
         if LOG_DIR.get().is_none() {
             assert!(log_directory().is_none());
+        }
+    }
+
+    #[test]
+    fn shutdown_file_guard_takes_installed_guard() {
+        let _g = FILE_GUARD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Simulate `init_for_embedded` having stashed a writer guard, then
+        // assert that `shutdown_file_guard` empties the slot and reports
+        // truthfully.
+        let dir = tempfile::tempdir().expect("tempdir for guard test");
+        let appender = tracing_appender::rolling::Builder::new()
+            .rotation(tracing_appender::rolling::Rotation::DAILY)
+            .filename_prefix("guard-test")
+            .filename_suffix("log")
+            .build(dir.path())
+            .expect("rolling appender for guard test");
+        let (_writer, guard) = tracing_appender::non_blocking(appender);
+        {
+            let mut slot = FILE_GUARD.lock().expect("file guard mutex poisoned");
+            // Save any pre-existing guard (a prior test in this process may
+            // have installed one) and restore it after the assertion runs.
+            let prior = slot.replace(guard);
+            drop(slot);
+
+            assert!(
+                shutdown_file_guard(),
+                "expected shutdown_file_guard to take the installed guard"
+            );
+            assert!(
+                !shutdown_file_guard(),
+                "second call must be a no-op when the slot is already empty"
+            );
+
+            // Restore the prior guard so unrelated tests that depend on
+            // `init_for_embedded` having installed one are not surprised.
+            if let Ok(mut slot) = FILE_GUARD.lock() {
+                *slot = prior;
+            }
         }
     }
 }

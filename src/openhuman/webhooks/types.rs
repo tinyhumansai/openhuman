@@ -56,7 +56,7 @@ pub struct TunnelRegistration {
     /// Registration target kind (`skill`, `channel`, or `echo`).
     #[serde(default = "default_webhook_target_kind")]
     pub target_kind: String,
-    /// Skill ID that owns and handles this tunnel.
+    /// Workflow ID that owns and handles this tunnel.
     pub skill_id: String,
     /// Human-readable tunnel name (optional, for display).
     #[serde(default)]
@@ -88,7 +88,7 @@ pub struct WebhookActivityEntry {
     pub path: String,
     /// Response status code (None if timed out or no handler).
     pub status_code: Option<u16>,
-    /// Skill that handled the request (None if unrouted).
+    /// Workflow that handled the request (None if unrouted).
     pub skill_id: Option<String>,
     /// Unix timestamp in milliseconds.
     pub timestamp: u64,

@@ -77,7 +77,7 @@ const ConnectionIndicator = ({
 
   return (
     <div className={`${className}`}>
-      <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-stone-50 border border-stone-200">
+      <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-stone-50 dark:bg-neutral-800/60 border border-stone-200 dark:border-neutral-800">
         <div
           className={`w-2 h-2 ${config.color} rounded-full ${config.pulse ? 'animate-pulse' : ''}`}
         />

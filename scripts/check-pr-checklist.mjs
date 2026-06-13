@@ -2,10 +2,18 @@
 import { readFileSync } from 'node:fs';
 import { parseChecklist, summarize } from './lib/checklist-parser.mjs';
 
+function usage() {
+  return 'Usage: check-pr-checklist.mjs [body-file|-]';
+}
+
 function readBody() {
   const [source, extra] = process.argv.slice(2);
+  if (source === '--help' || source === '-h') {
+    console.log(usage());
+    process.exit(0);
+  }
   if (extra) {
-    console.error('Usage: check-pr-checklist.mjs [body-file|-]');
+    console.error(usage());
     process.exit(2);
   }
   if (source === '-') {

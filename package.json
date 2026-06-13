@@ -11,6 +11,7 @@
     "dev": "pnpm --filter openhuman-app dev",
     "dev:app": "pnpm --filter openhuman-app dev:app",
     "dev:app:win": "pnpm --filter openhuman-app dev:app:win",
+    "dev:staging": "bash scripts/dev-staging.sh",
     "dev:cef": "pnpm --filter openhuman-app dev:cef",
     "format": "pnpm --filter openhuman-app format",
     "format:check": "pnpm --filter openhuman-app format:check",
@@ -25,10 +26,18 @@
     "test:coverage": "pnpm --filter openhuman-app test:coverage",
     "test:rust": "pnpm --filter openhuman-app test:rust",
     "test:rust:e2e": "bash scripts/test-rust-e2e.sh",
+    "test:rust:e2e:coverage": "node scripts/check-domain-e2e-coverage.mjs",
+    "test:release-notes": "node --test scripts/__tests__/generate-release-notes.test.mjs",
+    "test:e2e": "pnpm --filter openhuman-app test:e2e:all",
+    "test:e2e:flows": "pnpm --filter openhuman-app test:e2e:all:flows",
     "mascot:render": "pnpm --dir remotion render:runtime-assets",
     "merge-pr": "bash scripts/shortcuts/review/merge.sh",
     "mock:api": "node scripts/mock-api-server.mjs",
+    "council:seed": "node scripts/seed-councils.mjs",
     "pr:checklist": "node scripts/check-pr-checklist.mjs",
+    "pr:sync-main": "node scripts/merge-main-into-open-prs.mjs",
+    "release:notes": "node scripts/release/generate-release-notes.mjs",
+    "release:notes:preview": "bash -c 'source scripts/load-dotenv.sh && node scripts/release/generate-release-notes.mjs --from latest-release --to main --output CHANGELOG.preview.md'",
     "rabbit": "bash scripts/rabbit/cli.sh",
     "reset": "bash scripts/shortcuts/ws-reset.sh",
     "deep-work": "bash scripts/deep-work/cli.sh",
@@ -39,13 +48,26 @@
     "debug": "bash scripts/debug/cli.sh",
     "test:install-ps1": "pwsh -NoProfile -File scripts/tests/OpenHumanWindowsInstall.Tests.ps1",
     "rust:check": "pnpm --filter openhuman-app rust:check",
-    "typecheck": "pnpm --filter openhuman-app compile"
+    "typecheck": "pnpm --filter openhuman-app compile",
+    "tauri:ios:init": "bash scripts/ios-init.sh",
+    "tauri:ios:dev": "pnpm --filter openhuman-app tauri:ios:dev",
+    "tauri:ios:build": "pnpm --filter openhuman-app tauri:ios:build",
+    "tauri:android:init": "bash scripts/android-init.sh",
+    "tauri:android:dev": "pnpm --filter openhuman-app tauri:android:dev",
+    "tauri:android:build": "pnpm --filter openhuman-app tauri:android:build",
+    "i18n:check": "tsx scripts/i18n-coverage.ts",
+    "i18n:english:check": "tsx scripts/i18n-find-english.ts",
+    "i18n:react:check": "tsx scripts/i18n-react-audit.ts",
+    "i18n:bundle:check": "node scripts/verify-i18n-bundle.mjs",
+    "i18n:dump": "tsx scripts/i18n-coverage.ts --no-unused --out tmp/i18n-coverage"
   },
   "devDependencies": {
     "husky": "^9.1.7",
+    "tsx": "^4.20.3",
     "ws": "^8.20.0"
   },
   "dependencies": {
+    "@rive-app/react-canvas": "^4.28.6",
     "@tauri-apps/api": "2.10.1"
   }
 }

@@ -40,6 +40,7 @@ impl Provider for StubProvider {
             text: Some("ok".into()),
             tool_calls: Vec::new(),
             usage: None,
+            reasoning_content: None,
         })
     }
 }
@@ -117,12 +118,18 @@ fn sample_turn() -> TurnContext {
         }],
         turn_duration_ms: 15,
         session_id: Some("s1".into()),
+        agent_id: None,
+        entrypoint: None,
         iteration_count: 1,
     }
 }
 
 fn stub_parent_context() -> ParentExecutionContext {
     ParentExecutionContext {
+        agent_definition_id: "orchestrator".into(),
+        allowed_subagent_ids: ["test".to_string(), "researcher".to_string()]
+            .into_iter()
+            .collect(),
         provider: Arc::new(StubProvider),
         all_tools: Arc::new(vec![]),
         all_tool_specs: Arc::new(vec![]),
@@ -131,7 +138,7 @@ fn stub_parent_context() -> ParentExecutionContext {
         workspace_dir: std::path::PathBuf::from("/tmp"),
         memory: Arc::new(StubMemory),
         agent_config: AgentConfig::default(),
-        skills: Arc::new(vec![]),
+        workflows: Arc::new(vec![]),
         memory_context: Arc::new(Some("ctx".into())),
         session_id: "test-session".into(),
         channel: "test-channel".into(),
@@ -140,6 +147,7 @@ fn stub_parent_context() -> ParentExecutionContext {
         session_key: "test-session".into(),
         session_parent_prefix: None,
         on_progress: None,
+        run_queue: None,
     }
 }
 

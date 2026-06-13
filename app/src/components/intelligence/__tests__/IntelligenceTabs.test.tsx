@@ -4,7 +4,6 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { renderWithProviders } from '../../../test/test-utils';
 import type { ActionableItem, TimeGroup } from '../../../types/intelligence';
-import IntelligenceDreamsTab from '../IntelligenceDreamsTab';
 import IntelligenceMemoryTab from '../IntelligenceMemoryTab';
 
 vi.mock('../ActionableCard', () => ({
@@ -59,14 +58,6 @@ function renderMemoryTab(
 }
 
 describe('Intelligence tab panels', () => {
-  it('renders the dreams placeholder copy', () => {
-    renderWithProviders(<IntelligenceDreamsTab />);
-
-    expect(screen.getByRole('heading', { name: 'Dreams' })).toBeInTheDocument();
-    expect(screen.getByText(/generate a dream|AI-generated reflections/i)).toBeInTheDocument();
-    expect(screen.getByText('Coming soon')).toBeInTheDocument();
-  });
-
   it('wires search and source filters', () => {
     const props = renderMemoryTab();
 

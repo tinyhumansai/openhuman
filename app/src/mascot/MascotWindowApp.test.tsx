@@ -3,6 +3,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import MascotWindowApp from './MascotWindowApp';
 
+vi.mock('../features/human/Mascot', async importOriginal => {
+  const actual = await importOriginal<typeof import('../features/human/Mascot')>();
+  return {
+    ...actual,
+    RiveMascot: ({ face }: { face?: string }) => <div data-testid="rive-mascot" data-face={face} />,
+  };
+});
+
 describe('MascotWindowApp', () => {
   beforeEach(() => {
     vi.useFakeTimers();

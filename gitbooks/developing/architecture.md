@@ -15,10 +15,10 @@ OpenHuman is a cross-platform communication and automation platform purpose-buil
 
 | Path                    | Contents                                                                                                                                                           |
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **`app/`**              | Yarn workspace **`openhuman-app`**: Vite/React UI (`app/src/`), Tauri shell (`app/src-tauri/`), Vitest tests                                                       |
+| **`app/`**              | pnpm workspace **`openhuman-app`**: Vite/React UI (`app/src/`), Tauri shell (`app/src-tauri/`), Vitest tests                                                       |
 | **Repo root `src/`**    | Rust **`openhuman_core`** library + **`openhuman-core`** CLI binary - core server, JSON-RPC, first-class JavaScript runtime (`src/openhuman/javascript/`) backed by a managed Node.js implementation, channels, memory, etc. |
 | **`Cargo.toml`** (root) | Builds the `openhuman-core` binary (`cargo build --bin openhuman-core`) staged into `app/src-tauri/binaries/` for the desktop bundle                                 |
-| **`skills/`**           | Skill packages consumed by the runtime                                                                                                                             |
+| **`src/openhuman/skills/`** | **Metadata-only** skill helpers (`ops_create`, `ops_discover`, `ops_install`, `ops_parse`, `inject`, `schemas`, `types`). The legacy QuickJS / `rquickjs` skill execution runtime was removed; skills now contribute metadata + tool descriptors that get injected into agent prompts, while tool execution flows through native Rust handlers and Node-backed helpers via `runtime_node`. |
 | **`docs/`**             | This book + per-tree guides (`docs/src/`, `docs/src-tauri/`)                                                                                                       |
 
 The desktop app **WebView** loads the UI from `app/`; heavy RPC and skills run in the **`openhuman-core`** process, reachable over HTTP from the Tauri host (`core_rpc_relay`).
@@ -57,13 +57,13 @@ Tauri v2 compiles the Rust core into native binaries per platform, embedding the
 |                        Rust Core Engine                           |
 |                                                                  |
 |  +------------------+  +------------------+  +-----------------+ |
-|  |  QuickJS Skills  |  |  Socket Manager  |  |  AI Encryption  | |
-|  |  Runtime Engine   |  |  (Persistent WS) |  |  & Memory Store | |
+|  |   Tool Runtime   |  |  Socket Manager  |  |  AI Encryption  | |
+|  |  (native + Node) |  |  (Persistent WS) |  |  & Memory Store | |
 |  +------------------+  +------------------+  +-----------------+ |
 |                                                                  |
 |  +------------------+  +------------------+  +-----------------+ |
-|  |  Skill Registry  |  |  Cron Scheduler  |  |  Session & Auth | |
-|  |  & Bridge APIs   |  |  (5s tick loop)  |  |  Management     | |
+|  |  Skill Metadata  |  |  Cron Scheduler  |  |  Session & Auth | |
+|  |  & Tool Registry |  |  (5s tick loop)  |  |  Management     | |
 |  +------------------+  +------------------+  +-----------------+ |
 |                                                                  |
 |  +------------------+  +------------------+  +-----------------+ |
@@ -78,7 +78,7 @@ Tauri v2 compiles the Rust core into native binaries per platform, embedding the
      (Socket.io Server)        (Telegram, etc.)
 ```
 
-The frontend communicates with the **openhuman** Rust core in two ways: **Tauri IPC** for a small set of shell commands (windows, AI file helpers, **`core_rpc_relay`**) and **HTTP JSON-RPC** to the core process for business logic and skills. The core owns persistent connections where applicable, cryptographic work for memory/features, and **QuickJS** sandboxed skill execution.
+The frontend communicates with the **openhuman** Rust core in two ways: **Tauri IPC** for a small set of shell commands (windows, AI file helpers, **`core_rpc_relay`**) and **HTTP JSON-RPC** to the core process for business logic and tools. The core owns persistent connections where applicable, cryptographic work for memory/features, and tool execution — native Rust handlers plus Node-backed helpers via `runtime_node`, gated by the `security/` sandbox policy. Skills no longer execute in-process; the `src/openhuman/skills/` domain contributes metadata + tool descriptors that get injected into agent prompts.
 
 ---
 
@@ -88,8 +88,8 @@ OpenHuman chose Tauri + Rust over Electron for fundamental performance and secur
 
 | Metric                    | OpenHuman (Tauri + Rust)                                 | Typical Electron App         |
 | ------------------------- | -------------------------------------------------------- | ---------------------------- |
-| Binary size               | Feature-dependent (CEF runtime + skills bundle dominate) | ~150 MB+                     |
-| Memory per skill context  | ~1-2 MB (QuickJS)                                        | ~150 MB+ (Chromium renderer) |
+| Binary size               | Feature-dependent (CEF runtime dominates)                | ~150 MB+                     |
+| Memory per tool execution | Native Rust (no per-tool VM); shared managed Node runtime for helper calls | ~150 MB+ (Chromium renderer per process) |
 | Cold startup              | Sub-500ms                                                | 2-5 seconds                  |
 | Garbage collection pauses | None (Rust ownership model)                              | V8 GC pauses                 |
 | Memory safety             | Compile-time guaranteed                                  | Runtime exceptions           |
@@ -217,16 +217,16 @@ AI Model (Backend)
     |
     |  2. Decides which tool to call
     |
-    |  3. mcp:toolCall { skillId__toolName, arguments }
+    |  3. mcp:toolCall { tool_name, arguments }
     |         |
     |         v
-    |     Socket Manager routes to Skill Registry
+    |     Socket Manager routes to the unified Tool Registry
     |         |
     |         v
-    |     QuickJS Skill Instance executes tool
+    |     Native Rust handler (or Node helper via `runtime_node`) executes
     |         |
     |         v
-    |     Bridge API call (HTTP, DB, etc.)
+    |     External call (HTTP via reqwest, SQLite, etc.) — gated by SecurityPolicy
     |         |
     |  <-- mcp:toolCallResponse { result }
     |
@@ -259,9 +259,9 @@ Memory encryption keys derive from user credentials via Argon2id, ensuring memor
 |                      Security Layers                              |
 |                                                                   |
 |  +------------------+  +------------------+  +------------------+ |
-|  |  OS Keychain     |  |  AES-256-GCM     |  |  Sandboxed       | |
-|  |  (macOS/Win/Lin) |  |  Memory Encrypt  |  |  QuickJS per     | |
-|  |  for credentials |  |  + Argon2id KDF  |  |  skill (64 MB)   | |
+|  |  OS Keychain     |  |  AES-256-GCM     |  |  Tool sandbox    | |
+|  |  (macOS/Win/Lin) |  |  Memory Encrypt  |  |  (Docker / bwrap | |
+|  |  for credentials |  |  + Argon2id KDF  |  |  firejail / etc) | |
 |  +------------------+  +------------------+  +------------------+ |
 |                                                                   |
 |  +------------------+  +------------------+  +------------------+ |
@@ -274,7 +274,7 @@ Memory encryption keys derive from user credentials via Argon2id, ensuring memor
 
 - **Credential storage**: OS keychain integration via the `keyring` crate (macOS Keychain, Windows Credential Manager, Linux Secret Service), desktop only
 - **Memory encryption**: AES-256-GCM with Argon2id key derivation. All AI memory is encrypted at rest
-- **Skill sandboxing**: Each QuickJS instance has enforced memory limits (64 MB default) and stack limits (512 KB). No cross-skill memory access
+- **Tool sandboxing**: Executable tools run through `SecurityPolicy` (`src/openhuman/security/policy.rs`) and a host-appropriate sandbox backend selected at runtime — Docker, Bubblewrap, Firejail, Landlock, or Noop (`src/openhuman/security/{docker,bubblewrap,firejail,landlock}.rs`, `detect.rs`). The legacy per-skill QuickJS memory/stack limit model is gone
 - **Auth handoff**: Web-to-desktop authentication uses single-use login tokens with 5-minute TTL, exchanged via Rust HTTP client (bypasses CORS)
 - **Network TLS**: All WebSocket and HTTP connections use rustls, no dependency on platform OpenSSL
 - **State management**: Sensitive data lives in Redux (memory) and OS keychain (persistent). No localStorage for credentials or tokens
@@ -299,25 +299,25 @@ AI model receives prompt + tool catalog (via tool:sync)
 AI decides to invoke a skill tool (e.g., send Telegram message)
           |
           v
-mcp:toolCall event sent over Socket.io
+mcp:toolCall event sent over Socket.io (or local invocation)
           |
           v
-Socket Manager (Rust) receives event, parses skillId__toolName
+Socket Manager (Rust) receives event, parses the tool name
           |
           v
-Skill Registry routes message to correct QuickJS instance via MPSC channel
+Tool Registry routes to the registered handler (native Rust or Node helper via `runtime_node`)
           |
           v
-QuickJS skill executes tool handler
+Handler executes through `SecurityPolicy` + the active sandbox backend
           |
           v
-Bridge API: net.rs makes HTTP request via reqwest (CORS-free, rustls TLS)
+External call: reqwest HTTP request via rustls (no browser CORS), SQLite, OS keychain, etc.
           |
           v
-External service responds (e.g., Telegram API)
+External service responds
           |
           v
-Result flows back: Bridge -> QuickJS -> Registry -> Socket -> MCP -> AI -> UI
+Result flows back: Handler -> Registry -> Socket -> MCP -> AI -> UI
           |
           v
 User sees the result in the chat interface
@@ -349,3 +349,55 @@ Every layer is async and non-blocking. The Rust core processes thousands of conc
 | **AI**         | MCP (JSON-RPC 2.0)              | Standardized tool protocol for LLM integration           |
 | **Search**     | OpenAI embeddings + SQLite FTS5 | Hybrid semantic + keyword search                         |
 | **Graph**      | Neo4j                           | Entity relationship knowledge graph                      |
+
+---
+
+## iOS Client (experimental)
+
+The iOS client is a Tauri v2 app that shares the React/TypeScript UI codebase but ships **no Rust core binary on-device**. All AI, RPC, and domain logic remain on the desktop core; the iOS app is a thin transport client.
+
+### Transport architecture
+
+```
+iOS App (React + Tauri iOS shell)
+  |
+  TransportManager  (app/src/services/transport/TransportManager.ts)
+  |-- LanHttpTransport     direct HTTP to desktop core (same LAN)
+  |-- TunnelTransport      socket.io relay; E2E encrypted
+  |-- CloudHttpTransport   fallback via cloud backend API
+```
+
+Transport is selected by `ConnectionProfile` stored in secure storage. On pairing, the iOS app stores `{channelId, sessionToken, corePubkey, devicePrivkey}`.
+
+### Pairing flow
+
+1. Desktop: `devices_create_pairing` RPC -> backend issues `{channelId, pairingToken, sessionToken}`.
+2. Desktop shows QR: `openhuman://pair?cid=<>&pt=<>&cpk=<>&rpc=<>&exp=<>`.
+3. iOS scans QR, generates X25519 keypair, connects to backend (`tunnel:connect`, `role:client`).
+4. Backend consumes `pairingToken` (single-use) and returns iOS `sessionToken`.
+5. X25519 key agreement over `tunnel:frame` -> XChaCha20-Poly1305 symmetric key.
+6. Desktop emits `DomainEvent::DevicePaired`; device appears in the Devices panel.
+
+### Key paths
+
+| Path | Purpose |
+| --- | --- |
+| `src/openhuman/devices/` | Rust devices domain (pairing, store, crypto, event bus) |
+| `app/src/services/transport/` | TS transport strategies + manager |
+| `app/src/lib/tunnel/` | TS tunnel crypto (X25519 + XChaCha20-Poly1305) |
+| `app/src/pages/ios/` | iOS-specific screens (PairScreen, MascotScreen) |
+| `packages/tauri-plugin-ptt/` | Swift PTT plugin (AVAudioEngine + SFSpeechRecognizer) |
+| `app/src-tauri/Info.ios.plist` | Privacy strings for iOS Info.plist |
+| `docs/ios/SETUP.md` | Developer setup guide |
+
+### Security
+
+- Tunnel backend is a blind forwarder -- never sees plaintext payloads.
+- `pairingToken` is single-use, TTL'd, hashed at rest on backend.
+- `sessionToken` is per-peer and revocable from the desktop Devices panel.
+- Speech recognition runs on-device (Apple Speech framework); audio never leaves the device.
+- **TODO:** migrate iOS symmetric session key to Keychain for persistence across restarts.
+
+### Backend dependency
+
+`tinyhumansai/backend#709` implements the `tunnel:register` / `tunnel:connect` / `tunnel:frame` socket.io protocol. End-to-end pairing does not work until that PR is merged and deployed.

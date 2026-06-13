@@ -21,6 +21,30 @@ pub struct StartSessionRequest {
     /// sending. Validated on entry.
     #[serde(default = "default_sample_rate")]
     pub sample_rate_hz: u32,
+    /// Display name of the call owner — the human who launched the
+    /// bot. Used by the wake-word gate in [`crate::openhuman::meet_agent::session`]
+    /// as the *only* speaker allowed to issue tool calls. Captions
+    /// from any other participant are dropped without recording an
+    /// event. Empty string fails closed (no wake fires) so a
+    /// misconfigured shell can never expose the user's tool surface.
+    /// Defaulted so older shells / smoke tests that don't yet set
+    /// the field still parse the payload.
+    #[serde(default)]
+    pub owner_display_name: String,
+    /// Display name the bot uses as its Meet participant tile.
+    /// Captions whose `speaker` matches this name are treated as the
+    /// bot's own TTS echoing back and dropped — without an explicit
+    /// filter the bot would re-wake on its own voice. Empty disables
+    /// the filter; dedup + cooldown still apply but it's a weaker
+    /// posture.
+    #[serde(default)]
+    pub bot_display_name: String,
+    /// Normalised Meet URL the call joined. Persisted into the
+    /// recent-calls log so the UI can show "Joined `…/abc-defg-hij`
+    /// — 12 min ago". Defaulted so older shells that haven't been
+    /// updated to forward the URL still parse the payload.
+    #[serde(default)]
+    pub meet_url: String,
 }
 
 fn default_sample_rate() -> u32 {
@@ -109,6 +133,31 @@ pub struct PushCaptionResponse {
     /// True when this caption tripped the wake-word and a brain turn
     /// is now in flight.
     pub turn_started: bool,
+}
+
+/// Inputs to `openhuman.meet_agent_list_calls`.
+///
+/// Returns the most recently completed Meet calls (newest first) so
+/// the Skills "Meeting Bots" card can render a history list inside
+/// the same modal the user used to launch the call. Capped server-
+/// side at `store::MAX_RECENT_CALLS` so a misconfigured client
+/// can't request an unbounded read.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ListCallsRequest {
+    /// Maximum rows to return. Defaults to 50 if absent. Hard cap
+    /// applied server-side regardless of what the caller asks for.
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+/// Outputs from `openhuman.meet_agent_list_calls`.
+#[derive(Debug, Clone, Serialize)]
+pub struct ListCallsResponse {
+    pub ok: bool,
+    pub calls: Vec<super::store::MeetCallRecord>,
+    /// Number of rows in `calls`. Convenient for the UI when
+    /// rendering a header like "Recent calls (12)".
+    pub count: usize,
 }
 
 /// Inputs to `openhuman.meet_agent_stop_session`.

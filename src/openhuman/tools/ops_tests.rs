@@ -1,6 +1,7 @@
 use super::*;
 use crate::openhuman::config::{BrowserConfig, Config, MemoryConfig};
 use crate::openhuman::credentials::{AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME};
+use crate::openhuman::security::AuditLogger;
 use tempfile::TempDir;
 
 #[path = "../integrations/test_support.rs"]
@@ -9,6 +10,7 @@ mod integration_test_support;
 fn test_config(tmp: &TempDir) -> Config {
     Config {
         workspace_dir: tmp.path().join("workspace"),
+        action_dir: tmp.path().join("workspace"),
         config_path: tmp.path().join("config.toml"),
         ..Config::default()
     }
@@ -19,7 +21,7 @@ fn test_memory(tmp: &TempDir) -> Arc<dyn Memory> {
         backend: "markdown".into(),
         ..MemoryConfig::default()
     };
-    Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap())
+    Arc::from(crate::openhuman::memory_store::create_memory(&mem_cfg, tmp.path()).unwrap())
 }
 
 fn tool_names(tools: &[Box<dyn Tool>]) -> Vec<String> {
@@ -53,8 +55,14 @@ fn integration_test_config(tmp: &TempDir, backend_url: &str) -> Config {
     cfg.integrations.apify.enabled = true;
     cfg.integrations.google_places.enabled = true;
     cfg.integrations.parallel.enabled = true;
+    cfg.integrations.tinyfish.enabled = true;
     cfg.integrations.stock_prices.enabled = true;
     cfg.integrations.twilio.enabled = true;
+    // Parallel tools (search/extract/chat/research/enrich/dataset) are
+    // registered by the unified search-engine selector, so flip the
+    // engine to `parallel` in test setup.
+    cfg.search.engine = crate::openhuman::config::SEARCH_ENGINE_PARALLEL.into();
+    cfg.search.parallel.api_key = Some("test-parallel-key".into());
     cfg
 }
 
@@ -66,6 +74,7 @@ fn integration_tools_for_config(tmp: &TempDir, cfg: &Config) -> Vec<Box<dyn Tool
     all_tools(
         Arc::new(cfg.clone()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -103,7 +112,7 @@ fn all_tools_includes_spawn_subagent() {
         ..MemoryConfig::default()
     };
     let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
+        Arc::from(crate::openhuman::memory_store::create_memory(&mem_cfg, tmp.path()).unwrap());
 
     let browser = BrowserConfig {
         enabled: false,
@@ -117,6 +126,7 @@ fn all_tools_includes_spawn_subagent() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -132,7 +142,7 @@ fn all_tools_includes_spawn_subagent() {
 }
 
 #[test]
-fn all_tools_includes_spawn_parallel_agents() {
+fn all_tools_includes_spawn_async_subagent() {
     let tmp = TempDir::new().unwrap();
     let security = Arc::new(SecurityPolicy::default());
     let mem_cfg = MemoryConfig {
@@ -140,7 +150,7 @@ fn all_tools_includes_spawn_parallel_agents() {
         ..MemoryConfig::default()
     };
     let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
+        Arc::from(crate::openhuman::memory_store::create_memory(&mem_cfg, tmp.path()).unwrap());
     let browser = BrowserConfig {
         enabled: false,
         allowed_domains: vec![],
@@ -153,6 +163,44 @@ fn all_tools_includes_spawn_parallel_agents() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
+        mem,
+        &browser,
+        &http,
+        tmp.path(),
+        &HashMap::new(),
+        &cfg,
+    );
+    let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
+    assert!(
+        names.contains(&"spawn_async_subagent"),
+        "spawn_async_subagent must be registered for fire-and-forget background orchestration; got: {names:?}"
+    );
+}
+
+#[test]
+fn all_tools_includes_spawn_parallel_agents() {
+    let tmp = TempDir::new().unwrap();
+    let security = Arc::new(SecurityPolicy::default());
+    let mem_cfg = MemoryConfig {
+        backend: "markdown".into(),
+        ..MemoryConfig::default()
+    };
+    let mem: Arc<dyn Memory> =
+        Arc::from(crate::openhuman::memory_store::create_memory(&mem_cfg, tmp.path()).unwrap());
+    let browser = BrowserConfig {
+        enabled: false,
+        allowed_domains: vec![],
+        session_name: None,
+        ..BrowserConfig::default()
+    };
+    let http = crate::openhuman::config::HttpRequestConfig::default();
+    let cfg = test_config(&tmp);
+
+    let tools = all_tools(
+        Arc::new(Config::default()),
+        &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -180,7 +228,7 @@ fn all_tools_always_registers_curl() {
         ..MemoryConfig::default()
     };
     let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
+        Arc::from(crate::openhuman::memory_store::create_memory(&mem_cfg, tmp.path()).unwrap());
 
     let browser = BrowserConfig::default();
     let http = crate::openhuman::config::HttpRequestConfig::default();
@@ -189,6 +237,7 @@ fn all_tools_always_registers_curl() {
     let tools = all_tools(
         Arc::new(cfg.clone()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -212,7 +261,7 @@ fn all_tools_registers_gitbooks_when_enabled() {
         ..MemoryConfig::default()
     };
     let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
+        Arc::from(crate::openhuman::memory_store::create_memory(&mem_cfg, tmp.path()).unwrap());
     let browser = BrowserConfig::default();
     let http = crate::openhuman::config::HttpRequestConfig::default();
     let mut cfg = test_config(&tmp);
@@ -221,6 +270,7 @@ fn all_tools_registers_gitbooks_when_enabled() {
     let tools = all_tools(
         Arc::new(cfg.clone()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -255,6 +305,8 @@ fn all_tools_registers_generic_mcp_bridge_tools_when_servers_exist() {
             cwd: None,
             description: Some("Example docs MCP".into()),
             enabled: true,
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
             timeout_secs: 30,
             auth: crate::openhuman::config::McpAuthConfig::None,
         });
@@ -276,7 +328,7 @@ fn all_tools_skips_gitbooks_when_disabled() {
         ..MemoryConfig::default()
     };
     let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
+        Arc::from(crate::openhuman::memory_store::create_memory(&mem_cfg, tmp.path()).unwrap());
     let browser = BrowserConfig::default();
     let http = crate::openhuman::config::HttpRequestConfig::default();
     let mut cfg = test_config(&tmp);
@@ -285,6 +337,7 @@ fn all_tools_skips_gitbooks_when_disabled() {
     let tools = all_tools(
         Arc::new(cfg.clone()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -304,45 +357,6 @@ fn all_tools_skips_gitbooks_when_disabled() {
 }
 
 #[test]
-fn all_tools_includes_complete_onboarding() {
-    // Regression guard: the `complete_onboarding` tool must be
-    // present so the welcome agent can check setup status and
-    // finalize onboarding.
-    let tmp = TempDir::new().unwrap();
-    let security = Arc::new(SecurityPolicy::default());
-    let mem_cfg = MemoryConfig {
-        backend: "markdown".into(),
-        ..MemoryConfig::default()
-    };
-    let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
-
-    let browser = BrowserConfig::default();
-    let http = crate::openhuman::config::HttpRequestConfig::default();
-    let cfg = test_config(&tmp);
-
-    let tools = all_tools(
-        Arc::new(Config::default()),
-        &security,
-        mem,
-        &browser,
-        &http,
-        tmp.path(),
-        &HashMap::new(),
-        &cfg,
-    );
-    let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
-    assert!(
-        names.contains(&"complete_onboarding"),
-        "complete_onboarding must be registered in the default tool list; got: {names:?}"
-    );
-    assert!(
-        names.contains(&"check_onboarding_status"),
-        "check_onboarding_status must be registered in the default tool list; got: {names:?}"
-    );
-}
-
-#[test]
 fn all_tools_includes_current_time() {
     let tmp = TempDir::new().unwrap();
     let security = Arc::new(SecurityPolicy::default());
@@ -351,7 +365,7 @@ fn all_tools_includes_current_time() {
         ..MemoryConfig::default()
     };
     let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
+        Arc::from(crate::openhuman::memory_store::create_memory(&mem_cfg, tmp.path()).unwrap());
 
     let browser = BrowserConfig::default();
     let http = crate::openhuman::config::HttpRequestConfig::default();
@@ -360,6 +374,7 @@ fn all_tools_includes_current_time() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -389,6 +404,7 @@ fn all_tools_default_registry_contains_expected_baseline_surface() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -411,12 +427,12 @@ fn all_tools_default_registry_contains_expected_baseline_surface() {
             "apply_patch",
             "csv_export",
             "spawn_subagent",
+            "spawn_async_subagent",
             "spawn_parallel_agents",
             "todo",
             "plan_exit",
-            "check_onboarding_status",
-            "complete_onboarding",
             "current_time",
+            "resolve_time",
             "cron_add",
             "cron_list",
             "cron_remove",
@@ -427,6 +443,10 @@ fn all_tools_default_registry_contains_expected_baseline_surface() {
             "memory_recall",
             "memory_forget",
             "memory_tree",
+            "monitor",
+            "monitor_list",
+            "monitor_stop",
+            "monitor_read",
             "whatsapp_data_list_chats",
             "whatsapp_data_list_messages",
             "whatsapp_data_search_messages",
@@ -466,6 +486,7 @@ fn all_tools_default_registry_has_no_duplicate_tool_names() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -491,7 +512,7 @@ fn all_tools_excludes_browser_when_disabled() {
         ..MemoryConfig::default()
     };
     let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
+        Arc::from(crate::openhuman::memory_store::create_memory(&mem_cfg, tmp.path()).unwrap());
 
     let browser = BrowserConfig {
         enabled: false,
@@ -505,6 +526,7 @@ fn all_tools_excludes_browser_when_disabled() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -520,6 +542,32 @@ fn all_tools_excludes_browser_when_disabled() {
 }
 
 #[test]
+fn browser_allowed_domains_shares_fetch_list_minus_wildcard() {
+    // Unified web-access firewall: the browser tool derives its host allowlist
+    // from `http_request.allowed_domains`, but the `"*"` allow-all wildcard is
+    // stripped so a fetch-side "Allow all" never silently opens the browser.
+
+    // Explicit hosts pass straight through (shared with fetch).
+    assert_eq!(
+        browser_allowed_domains(&["reuters.com".into(), "github.com".into()]),
+        vec!["reuters.com".to_string(), "github.com".to_string()],
+    );
+
+    // `"*"` (fetch allow-all, and the http_request default) yields an EMPTY
+    // browser list — browser stays closed unless OPENHUMAN_BROWSER_ALLOW_ALL.
+    assert!(browser_allowed_domains(&["*".into()]).is_empty());
+
+    // Mixed: wildcard dropped, explicit hosts kept.
+    assert_eq!(
+        browser_allowed_domains(&["*".into(), "intranet.corp".into()]),
+        vec!["intranet.corp".to_string()],
+    );
+
+    // Block-all (empty fetch list) -> empty browser list.
+    assert!(browser_allowed_domains(&[]).is_empty());
+}
+
+#[test]
 fn all_tools_includes_browser_when_enabled() {
     let tmp = TempDir::new().unwrap();
     let security = Arc::new(SecurityPolicy::default());
@@ -528,7 +576,7 @@ fn all_tools_includes_browser_when_enabled() {
         ..MemoryConfig::default()
     };
     let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
+        Arc::from(crate::openhuman::memory_store::create_memory(&mem_cfg, tmp.path()).unwrap());
 
     let browser = BrowserConfig {
         enabled: true,
@@ -542,6 +590,7 @@ fn all_tools_includes_browser_when_enabled() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -649,7 +698,7 @@ fn all_tools_includes_delegate_when_agents_configured() {
         ..MemoryConfig::default()
     };
     let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
+        Arc::from(crate::openhuman::memory_store::create_memory(&mem_cfg, tmp.path()).unwrap());
 
     let browser = BrowserConfig::default();
     let http = crate::openhuman::config::HttpRequestConfig::default();
@@ -669,6 +718,7 @@ fn all_tools_includes_delegate_when_agents_configured() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -689,7 +739,7 @@ fn all_tools_excludes_delegate_when_no_agents() {
         ..MemoryConfig::default()
     };
     let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
+        Arc::from(crate::openhuman::memory_store::create_memory(&mem_cfg, tmp.path()).unwrap());
 
     let browser = BrowserConfig::default();
     let http = crate::openhuman::config::HttpRequestConfig::default();
@@ -698,6 +748,7 @@ fn all_tools_excludes_delegate_when_no_agents() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -722,7 +773,7 @@ fn all_tools_registers_node_exec_when_node_enabled() {
         ..MemoryConfig::default()
     };
     let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
+        Arc::from(crate::openhuman::memory_store::create_memory(&mem_cfg, tmp.path()).unwrap());
 
     let browser = BrowserConfig::default();
     let http = crate::openhuman::config::HttpRequestConfig::default();
@@ -731,6 +782,7 @@ fn all_tools_registers_node_exec_when_node_enabled() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -758,7 +810,7 @@ fn all_tools_excludes_node_exec_when_node_disabled() {
         ..MemoryConfig::default()
     };
     let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
+        Arc::from(crate::openhuman::memory_store::create_memory(&mem_cfg, tmp.path()).unwrap());
 
     let browser = BrowserConfig::default();
     let http = crate::openhuman::config::HttpRequestConfig::default();
@@ -768,6 +820,7 @@ fn all_tools_excludes_node_exec_when_node_disabled() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -795,7 +848,7 @@ fn all_tools_excludes_computer_control_when_disabled() {
         ..MemoryConfig::default()
     };
     let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
+        Arc::from(crate::openhuman::memory_store::create_memory(&mem_cfg, tmp.path()).unwrap());
 
     let browser = BrowserConfig::default();
     let http = crate::openhuman::config::HttpRequestConfig::default();
@@ -805,6 +858,7 @@ fn all_tools_excludes_computer_control_when_disabled() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -832,7 +886,7 @@ fn all_tools_includes_computer_control_when_enabled() {
         ..MemoryConfig::default()
     };
     let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
+        Arc::from(crate::openhuman::memory_store::create_memory(&mem_cfg, tmp.path()).unwrap());
 
     let browser = BrowserConfig::default();
     let http = crate::openhuman::config::HttpRequestConfig::default();
@@ -842,6 +896,7 @@ fn all_tools_includes_computer_control_when_enabled() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -872,14 +927,19 @@ fn all_tools_registers_integration_families_when_enabled_and_signed_in() {
     cfg.integrations.apify.enabled = true;
     cfg.integrations.google_places.enabled = true;
     cfg.integrations.parallel.enabled = true;
+    cfg.integrations.tinyfish.enabled = true;
     cfg.integrations.stock_prices.enabled = true;
     cfg.integrations.twilio.enabled = true;
     cfg.composio.enabled = true;
+    // Parallel tools now register through the unified search-engine selector.
+    cfg.search.engine = crate::openhuman::config::SEARCH_ENGINE_PARALLEL.into();
+    cfg.search.parallel.api_key = Some("test-parallel-key".into());
     store_test_session_token(&cfg);
 
     let tools = all_tools(
         Arc::new(cfg.clone()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -903,6 +963,9 @@ fn all_tools_registers_integration_families_when_enabled_and_signed_in() {
             "parallel_research",
             "parallel_enrich",
             "parallel_dataset",
+            "tinyfish_search",
+            "tinyfish_fetch",
+            "tinyfish_agent_run",
             "stock_quote",
             "stock_exchange_rate",
             "stock_options",
@@ -919,14 +982,19 @@ fn all_tools_registers_integration_families_when_enabled_and_signed_in() {
 }
 
 #[test]
-fn all_tools_registers_seltz_lsp_and_tool_stats_when_enabled() {
+fn all_tools_registers_brave_engine_lsp_and_tool_stats_when_enabled() {
+    // The legacy seltz/searxng tools are no longer registered — the
+    // unified `search.engine` selector replaces them. This test now
+    // verifies that picking `brave` layers in its full tool surface
+    // alongside lsp + tool_stats.
     let tmp = TempDir::new().unwrap();
     let security = Arc::new(SecurityPolicy::default());
     let mem = test_memory(&tmp);
     let browser = BrowserConfig::default();
     let http = crate::openhuman::config::HttpRequestConfig::default();
     let mut cfg = test_config(&tmp);
-    cfg.seltz.enabled = true;
+    cfg.search.engine = crate::openhuman::config::SEARCH_ENGINE_BRAVE.into();
+    cfg.search.brave.api_key = Some("test-brave-key".into());
     cfg.learning.enabled = true;
     cfg.learning.tool_tracking_enabled = true;
 
@@ -943,6 +1011,7 @@ fn all_tools_registers_seltz_lsp_and_tool_stats_when_enabled() {
     let tools = all_tools(
         Arc::new(cfg.clone()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -951,10 +1020,91 @@ fn all_tools_registers_seltz_lsp_and_tool_stats_when_enabled() {
         &cfg,
     );
     let names = tool_names(&tools);
-    assert_contains_all(&names, &["seltz_search", "lsp", "tool_stats"]);
+    assert_contains_all(
+        &names,
+        &[
+            "web_search_tool",
+            "brave_news_search",
+            "brave_image_search",
+            "brave_video_search",
+            "lsp",
+            "tool_stats",
+        ],
+    );
 
     unsafe {
         std::env::remove_var(crate::openhuman::tools::implementations::LSP_ENABLED_ENV);
+    }
+}
+
+#[test]
+fn all_tools_registers_querit_engine_when_enabled() {
+    let tmp = TempDir::new().unwrap();
+    let security = Arc::new(SecurityPolicy::default());
+    let mem = test_memory(&tmp);
+    let browser = BrowserConfig::default();
+    let http = crate::openhuman::config::HttpRequestConfig::default();
+    let mut cfg = test_config(&tmp);
+    cfg.search.engine = crate::openhuman::config::SEARCH_ENGINE_QUERIT.into();
+    cfg.search.querit.api_key = Some("test-querit-key".into());
+
+    let tools = all_tools(
+        Arc::new(cfg.clone()),
+        &security,
+        AuditLogger::disabled(),
+        mem,
+        &browser,
+        &http,
+        tmp.path(),
+        &HashMap::new(),
+        &cfg,
+    );
+    let names = tool_names(&tools);
+    assert_contains_all(&names, &["web_search_tool", "querit_search"]);
+}
+
+#[test]
+fn all_tools_omits_search_surface_when_search_is_disabled() {
+    let tmp = TempDir::new().unwrap();
+    let security = Arc::new(SecurityPolicy::default());
+    let mem = test_memory(&tmp);
+    let browser = BrowserConfig::default();
+    let http = crate::openhuman::config::HttpRequestConfig::default();
+    let mut cfg = test_config(&tmp);
+    cfg.api_url = Some("https://backend.example.test".to_string());
+    cfg.search.engine = crate::openhuman::config::SEARCH_ENGINE_DISABLED.into();
+    cfg.search.brave.api_key = Some("test-brave-key".into());
+    cfg.search.querit.api_key = Some("test-querit-key".into());
+    cfg.integrations.tinyfish.enabled = true;
+    store_test_session_token(&cfg);
+
+    let tools = all_tools(
+        Arc::new(cfg.clone()),
+        &security,
+        AuditLogger::disabled(),
+        mem,
+        &browser,
+        &http,
+        tmp.path(),
+        &HashMap::new(),
+        &cfg,
+    );
+    let names = tool_names(&tools);
+
+    for search_tool in [
+        "web_search_tool",
+        "brave_news_search",
+        "brave_image_search",
+        "brave_video_search",
+        "querit_search",
+        "tinyfish_search",
+        "tinyfish_fetch",
+        "tinyfish_agent_run",
+    ] {
+        assert!(
+            !names.iter().any(|name| name == search_tool),
+            "did not expect search tool `{search_tool}` when search is disabled; got: {names:?}"
+        );
     }
 }
 
@@ -1162,6 +1312,77 @@ async fn all_tools_executes_parallel_and_web_search_family_against_fake_backend(
 }
 
 #[tokio::test]
+async fn all_tools_executes_tinyfish_family_against_fake_backend() {
+    let backend = integration_test_support::spawn_fake_integration_backend().await;
+    let tmp = TempDir::new().unwrap();
+    let cfg = integration_test_config(&tmp, &backend.base_url);
+    store_test_session_token(&cfg);
+    let tools = integration_tools_for_config(&tmp, &cfg);
+
+    let search = find_tool(&tools, "tinyfish_search")
+        .execute(serde_json::json!({
+            "query": "web automation",
+            "location": "US",
+            "language": "en",
+            "page": 2,
+            "include_thumbnail": true
+        }))
+        .await
+        .expect("tinyfish_search execute");
+    assert!(search
+        .output()
+        .contains("TinyFish returned 1 search result(s)"));
+    assert!(search
+        .output()
+        .contains("TinyFish result for web automation"));
+
+    let fetch = find_tool(&tools, "tinyfish_fetch")
+        .execute(serde_json::json!({
+            "urls": ["https://example.com/a"],
+            "format": "markdown",
+            "links": true,
+            "image_links": true
+        }))
+        .await
+        .expect("tinyfish_fetch execute");
+    assert!(fetch.output().contains("TinyFish fetched 1 page(s)"));
+    assert!(fetch
+        .output()
+        .contains("TinyFish content for https://example.com/a"));
+
+    let run = find_tool(&tools, "tinyfish_agent_run")
+        .execute(serde_json::json!({
+            "url": "https://example.com/shop",
+            "goal": "Extract product names. Return JSON.",
+            "browser_profile": "stealth",
+            "proxy_country_code": "US",
+            "output_schema": { "type": "object" }
+        }))
+        .await
+        .expect("tinyfish_agent_run execute");
+    assert!(run.output().contains("TinyFish automation finished."));
+    assert!(run.output().contains("run_tinyfish_fake"));
+    assert!(run.output().contains("\"ok\":true"));
+
+    let requests = backend.requests();
+    let paths: Vec<&str> = requests.iter().map(|req| req.path.as_str()).collect();
+    assert_eq!(
+        paths,
+        vec![
+            "/agent-integrations/tinyfish/search",
+            "/agent-integrations/tinyfish/fetch",
+            "/agent-integrations/tinyfish/agent/run",
+        ]
+    );
+    assert_eq!(requests[0].body["location"], serde_json::json!("US"));
+    assert_eq!(requests[1].body["links"], serde_json::json!(true));
+    assert_eq!(
+        requests[2].body["proxy_config"]["country_code"],
+        serde_json::json!("US")
+    );
+}
+
+#[tokio::test]
 async fn all_tools_executes_stock_and_twilio_family_against_fake_backend() {
     let backend = integration_test_support::spawn_fake_integration_backend().await;
     let tmp = TempDir::new().unwrap();
@@ -1242,4 +1463,673 @@ async fn all_tools_executes_stock_and_twilio_family_against_fake_backend() {
     );
     assert_eq!(requests[2].body["requireGreeks"], serde_json::json!(true));
     assert_eq!(requests[5].body["to"], serde_json::json!("+14155551234"));
+}
+
+/// Every acting tool gates on `can_act()` and returns its own read-only refusal
+/// string. Each of those must carry [`POLICY_BLOCKED_MARKER`] so the agent
+/// harness recognizes the block as a hard reject and halts on a verbatim repeat
+/// (see `agent::harness::tool_loop::hard_reject_kind`). This pins every tool's
+/// literal to the marker const — drift between them fails here rather than
+/// silently letting the agent grind on a doomed call. Args are the minimum
+/// needed to reach the `can_act()` check in each tool.
+#[tokio::test]
+async fn readonly_acting_tools_carry_policy_blocked_marker() {
+    use crate::openhuman::security::{AutonomyLevel, POLICY_BLOCKED_MARKER};
+
+    let tmp = TempDir::new().unwrap();
+    let sec = Arc::new(SecurityPolicy {
+        autonomy: AutonomyLevel::ReadOnly,
+        workspace_dir: tmp.path().to_path_buf(),
+        action_dir: tmp.path().to_path_buf(),
+        ..SecurityPolicy::default()
+    });
+
+    let cases: Vec<(Box<dyn Tool>, serde_json::Value)> = vec![
+        (
+            Box::new(ApplyPatchTool::new(sec.clone())),
+            serde_json::json!({ "edits": [{ "path": "a.txt", "old_string": "x", "new_string": "y" }] }),
+        ),
+        (
+            Box::new(CsvExportTool::new(sec.clone())),
+            serde_json::json!({ "data": "col1\nval1", "filename": "x.csv" }),
+        ),
+        (
+            Box::new(KeyboardTool::new(sec.clone())),
+            serde_json::json!({}),
+        ),
+        (Box::new(MouseTool::new(sec.clone())), serde_json::json!({})),
+        (
+            Box::new(BrowserOpenTool::new(sec.clone(), vec![])),
+            serde_json::json!({ "url": "https://example.com" }),
+        ),
+        (
+            Box::new(HttpRequestTool::new(sec.clone(), vec![], 0, 0)),
+            serde_json::json!({ "url": "https://example.com" }),
+        ),
+    ];
+
+    for (tool, args) in cases {
+        let name = tool.name().to_string();
+        let out = tool.execute(args).await.unwrap();
+        assert!(out.is_error, "{name} should error under read-only autonomy");
+        assert!(
+            out.output().contains(POLICY_BLOCKED_MARKER),
+            "{name} read-only block must carry {POLICY_BLOCKED_MARKER}, got: {}",
+            out.output()
+        );
+    }
+}
+
+// ── Agent-tool expansion: shared e2e harness ────────────────────────────────
+//
+// Both themes (Task & workflow productivity; Knowledge & memory) exercise the
+// full `all_tools` registry: that every tool registers, that the overextending
+// siblings are stripped by the user-filter when not opted in (and restored
+// when opted in), and a couple of real executions through the boxed `dyn Tool`
+// surface.
+
+/// Build the full tool registry with a disabled browser and a tmp-scoped
+/// workspace — enough to exercise the expansion tools end-to-end.
+fn expansion_tools_for(tmp: &TempDir) -> Vec<Box<dyn Tool>> {
+    let security = Arc::new(SecurityPolicy::default());
+    let mem = test_memory(tmp);
+    let browser = BrowserConfig {
+        enabled: false,
+        allowed_domains: vec![],
+        session_name: None,
+        ..BrowserConfig::default()
+    };
+    let http = crate::openhuman::config::HttpRequestConfig::default();
+    let cfg = test_config(tmp);
+    all_tools(
+        Arc::new(cfg.clone()),
+        &security,
+        AuditLogger::disabled(),
+        mem,
+        &browser,
+        &http,
+        tmp.path(),
+        &HashMap::new(),
+        &cfg,
+    )
+}
+
+// ── Theme: Task & workflow productivity ─────────────────────────────────────
+
+const PRODUCTIVITY_TOOLS: &[&str] = &[
+    // NOTE: the old `agent_workflow_*` tools were removed when the
+    // `agent_workflows` domain was dissolved into `workflows`; workflow
+    // discovery/run tools now live under the Knowledge theme
+    // (`list_workflows`, `run_workflow`, …).
+    "artifact_list",
+    "artifact_get",
+    "artifact_delete",
+    "todo_list",
+    "todo_add",
+    "todo_edit",
+    "todo_update_status",
+    "todo_decide_plan",
+    "todo_remove",
+    "todo_replace",
+    "todo_clear",
+    "task_source_list",
+    "task_source_get",
+    "task_source_fetch",
+    "task_source_list_tasks",
+    "task_source_preview_filter",
+    "task_source_status",
+    "task_source_add",
+    "task_source_update",
+    "task_source_remove",
+];
+
+const PRODUCTIVITY_DEFAULT_OFF: &[&str] = &[
+    "artifact_delete",
+    "todo_remove",
+    "todo_replace",
+    "todo_clear",
+    "task_source_add",
+    "task_source_update",
+    "task_source_remove",
+];
+
+const PRODUCTIVITY_ALWAYS_ON: &[&str] = &[
+    "artifact_list",
+    "artifact_get",
+    "todo_list",
+    "todo_add",
+    "task_source_fetch",
+    "task_source_status",
+];
+
+#[test]
+fn productivity_tools_are_registered() {
+    let tmp = TempDir::new().unwrap();
+    let names = tool_names(&expansion_tools_for(&tmp));
+    assert_contains_all(&names, PRODUCTIVITY_TOOLS);
+}
+
+#[test]
+fn productivity_default_off_tools_are_filtered_when_not_opted_in() {
+    let tmp = TempDir::new().unwrap();
+    let mut tools = expansion_tools_for(&tmp);
+    filter_tools_by_user_preference(&mut tools, &["file_read".to_string()]);
+    let names = tool_names(&tools);
+    for off in PRODUCTIVITY_DEFAULT_OFF {
+        assert!(
+            !names.iter().any(|n| n == off),
+            "default-off tool `{off}` must be filtered out when not opted in; got: {names:?}"
+        );
+    }
+    for on in PRODUCTIVITY_ALWAYS_ON {
+        assert!(
+            names.iter().any(|n| n == on),
+            "always-on tool `{on}` must be retained regardless of preferences"
+        );
+    }
+}
+
+#[test]
+fn productivity_default_off_tools_retained_when_opted_in() {
+    let tmp = TempDir::new().unwrap();
+    let mut tools = expansion_tools_for(&tmp);
+    filter_tools_by_user_preference(
+        &mut tools,
+        &[
+            "todo_destructive".to_string(),
+            "task_source_manage".to_string(),
+            "artifact_delete".to_string(),
+        ],
+    );
+    let names = tool_names(&tools);
+    for on in PRODUCTIVITY_DEFAULT_OFF {
+        assert!(
+            names.iter().any(|n| n == on),
+            "opted-in tool `{on}` must be retained; got: {names:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn todo_tools_add_then_list_through_registry() {
+    // Drive the boxed `dyn Tool` surface exactly as the agent loop would: add
+    // a card, then list it back. Thread-scoped (file-backed under the tmp
+    // workspace) so the board is isolated from the process-global scratch
+    // store and from parallel tests.
+    let tmp = TempDir::new().unwrap();
+    let tools = expansion_tools_for(&tmp);
+
+    let add = find_tool(&tools, "todo_add");
+    let added = add
+        .execute(serde_json::json!({ "thread_id": "e2e-thread", "content": "registry e2e task" }))
+        .await
+        .expect("todo_add execute");
+    assert!(added.output_for_llm(false).contains("registry e2e task"));
+
+    let list = find_tool(&tools, "todo_list");
+    let listed = list
+        .execute(serde_json::json!({ "thread_id": "e2e-thread" }))
+        .await
+        .expect("todo_list execute");
+    assert!(listed.output_for_llm(false).contains("registry e2e task"));
+}
+
+#[tokio::test]
+async fn artifact_list_through_registry_returns_envelope() {
+    let tmp = TempDir::new().unwrap();
+    let tools = expansion_tools_for(&tmp);
+    let out = find_tool(&tools, "artifact_list")
+        .execute(serde_json::json!({ "limit": 10 }))
+        .await
+        .expect("artifact_list execute");
+    let body = out.output_for_llm(false);
+    assert!(body.contains("artifacts"), "envelope missing: {body}");
+    assert!(body.contains("total"), "envelope missing total: {body}");
+}
+
+// ── Theme: Knowledge & memory ───────────────────────────────────────────────
+
+const KNOWLEDGE_TOOLS: &[&str] = &[
+    "people_list",
+    "people_resolve",
+    "people_score",
+    "people_get",
+    "people_add_alias",
+    "people_record_interaction",
+    "people_refresh_address_book",
+    "list_workflows",
+    "describe_workflow",
+    "read_workflow_resource",
+    "list_workflow_runs",
+    "read_workflow_run_log",
+    "create_workflow",
+    "install_workflow_from_url",
+    "uninstall_workflow",
+    "thread_list",
+    "thread_read",
+    "thread_create",
+    "thread_update_title",
+    "thread_update_labels",
+    "thread_message_list",
+    "thread_message_append",
+    "thread_message_update",
+    "thread_title_generate",
+    "thread_turn_state_get",
+    "thread_turn_state_list",
+    "thread_turn_state_clear",
+    "thread_task_board_read",
+    "thread_task_board_write",
+    "thread_delete",
+    "thread_purge_all",
+    "learning_list_facets",
+    "learning_get_facet",
+    "learning_cache_stats",
+    "learning_update_facet",
+    "learning_pin_facet",
+    "learning_unpin_facet",
+    "learning_forget_facet",
+    "learning_rebuild_cache",
+    "learning_reset_cache",
+    "learning_save_profile",
+    "learning_enrich_profile",
+];
+
+const KNOWLEDGE_DEFAULT_OFF: &[&str] = &[
+    "people_refresh_address_book",
+    "create_workflow",
+    "install_workflow_from_url",
+    "uninstall_workflow",
+    "thread_delete",
+    "thread_purge_all",
+    "learning_update_facet",
+    "learning_pin_facet",
+    "learning_unpin_facet",
+    "learning_forget_facet",
+    "learning_rebuild_cache",
+    "learning_reset_cache",
+    "learning_save_profile",
+    "learning_enrich_profile",
+];
+
+const KNOWLEDGE_ALWAYS_ON: &[&str] = &[
+    "people_list",
+    "people_resolve",
+    "list_workflows",
+    "list_workflow_runs",
+    "thread_list",
+    "thread_create",
+    "learning_list_facets",
+    "learning_cache_stats",
+];
+
+#[test]
+fn knowledge_tools_are_registered() {
+    let tmp = TempDir::new().unwrap();
+    let names = tool_names(&expansion_tools_for(&tmp));
+    assert_contains_all(&names, KNOWLEDGE_TOOLS);
+}
+
+#[test]
+fn knowledge_default_off_tools_are_filtered_when_not_opted_in() {
+    let tmp = TempDir::new().unwrap();
+    let mut tools = expansion_tools_for(&tmp);
+    filter_tools_by_user_preference(&mut tools, &["file_read".to_string()]);
+    let names = tool_names(&tools);
+    for off in KNOWLEDGE_DEFAULT_OFF {
+        assert!(
+            !names.iter().any(|n| n == off),
+            "default-off tool `{off}` must be filtered out when not opted in; got: {names:?}"
+        );
+    }
+    for on in KNOWLEDGE_ALWAYS_ON {
+        assert!(
+            names.iter().any(|n| n == on),
+            "always-on tool `{on}` must be retained regardless of preferences"
+        );
+    }
+}
+
+#[test]
+fn knowledge_default_off_tools_retained_when_opted_in() {
+    let tmp = TempDir::new().unwrap();
+    let mut tools = expansion_tools_for(&tmp);
+    filter_tools_by_user_preference(
+        &mut tools,
+        &[
+            "people_refresh_address_book".to_string(),
+            "workflow_manage".to_string(),
+            "thread_destructive".to_string(),
+            "learning_manage".to_string(),
+        ],
+    );
+    let names = tool_names(&tools);
+    for on in KNOWLEDGE_DEFAULT_OFF {
+        assert!(
+            names.iter().any(|n| n == on),
+            "opted-in tool `{on}` must be retained; got: {names:?}"
+        );
+    }
+}
+
+// ── Theme: System & self-management (observability + service) ───────────────
+
+const SYSTEM_TOOLS: &[&str] = &[
+    "doctor_health",
+    "doctor_models",
+    "health_snapshot",
+    "health_system_info",
+    "cost_get_dashboard",
+    "cost_get_daily_history",
+    "cost_get_summary",
+    "dashboard_model_health",
+    "security_policy_info",
+    "service_status",
+    "daemon_host_prefs_get",
+    "service_start",
+    "service_stop",
+    "service_restart",
+    "service_shutdown",
+    "service_install",
+    "service_uninstall",
+    "daemon_host_prefs_set",
+    "config_snapshot",
+    "config_get_client_config",
+    "config_get_autonomy",
+    "config_get_search",
+    "config_get_runtime_flags",
+    "config_resolve_api_url",
+    "config_get_data_paths",
+];
+
+const SYSTEM_DEFAULT_OFF: &[&str] = &[
+    "service_start",
+    "service_stop",
+    "service_restart",
+    "service_shutdown",
+    "service_install",
+    "service_uninstall",
+    "daemon_host_prefs_set",
+];
+
+const SYSTEM_ALWAYS_ON: &[&str] = &[
+    "doctor_health",
+    "health_snapshot",
+    "cost_get_summary",
+    "dashboard_model_health",
+    "security_policy_info",
+    "service_status",
+    "daemon_host_prefs_get",
+    "config_snapshot",
+    "config_get_autonomy",
+];
+
+#[test]
+fn system_tools_are_registered() {
+    let tmp = TempDir::new().unwrap();
+    let names = tool_names(&expansion_tools_for(&tmp));
+    assert_contains_all(&names, SYSTEM_TOOLS);
+}
+
+#[test]
+fn system_default_off_tools_are_filtered_when_not_opted_in() {
+    let tmp = TempDir::new().unwrap();
+    let mut tools = expansion_tools_for(&tmp);
+    filter_tools_by_user_preference(&mut tools, &["file_read".to_string()]);
+    let names = tool_names(&tools);
+    for off in SYSTEM_DEFAULT_OFF {
+        assert!(
+            !names.iter().any(|n| n == off),
+            "default-off tool `{off}` must be filtered out when not opted in; got: {names:?}"
+        );
+    }
+    for on in SYSTEM_ALWAYS_ON {
+        assert!(
+            names.iter().any(|n| n == on),
+            "always-on tool `{on}` must be retained regardless of preferences"
+        );
+    }
+}
+
+#[test]
+fn system_default_off_tools_retained_when_opted_in() {
+    let tmp = TempDir::new().unwrap();
+    let mut tools = expansion_tools_for(&tmp);
+    filter_tools_by_user_preference(&mut tools, &["service_lifecycle".to_string()]);
+    let names = tool_names(&tools);
+    for on in SYSTEM_DEFAULT_OFF {
+        assert!(
+            names.iter().any(|n| n == on),
+            "opted-in tool `{on}` must be retained; got: {names:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn health_system_info_through_registry() {
+    let tmp = TempDir::new().unwrap();
+    let tools = expansion_tools_for(&tmp);
+    let out = find_tool(&tools, "health_system_info")
+        .execute(serde_json::json!({}))
+        .await
+        .expect("health_system_info");
+    assert!(out.output_for_llm(false).contains("os"));
+}
+
+// ── Theme: Account & money ──────────────────────────────────────────────────
+
+const MONEY_TOOLS: &[&str] = &[
+    "referral_get_stats",
+    "referral_claim",
+    "billing_get_plan",
+    "billing_get_balance",
+    "billing_list_transactions",
+    "billing_get_auto_recharge",
+    "billing_list_cards",
+    "billing_list_coupons",
+    "billing_create_stripe_portal",
+    "billing_purchase_plan",
+    "billing_top_up_credits",
+    "billing_create_coinbase_charge",
+    "billing_create_setup_intent",
+    "billing_update_card",
+    "billing_delete_card",
+    "billing_redeem_coupon",
+    "billing_update_auto_recharge",
+    "team_list",
+    "team_get_usage",
+    "team_get",
+    "team_list_members",
+    "team_list_invites",
+    "team_create",
+    "team_update",
+    "team_delete",
+    "team_switch",
+    "team_join",
+    "team_leave",
+    "team_create_invite",
+    "team_revoke_invite",
+    "team_remove_member",
+    "team_change_member_role",
+    "credential_list",
+    "session_state",
+    "session_get_user",
+    "oauth_connect_url",
+    "oauth_list",
+];
+
+const MONEY_DEFAULT_OFF: &[&str] = &[
+    "billing_purchase_plan",
+    "billing_top_up_credits",
+    "billing_create_coinbase_charge",
+    "billing_create_setup_intent",
+    "billing_update_card",
+    "billing_delete_card",
+    "billing_redeem_coupon",
+    "billing_update_auto_recharge",
+    "team_create",
+    "team_update",
+    "team_delete",
+    "team_switch",
+    "team_join",
+    "team_leave",
+    "team_create_invite",
+    "team_revoke_invite",
+    "team_remove_member",
+    "team_change_member_role",
+];
+
+const MONEY_ALWAYS_ON: &[&str] = &[
+    "billing_get_plan",
+    "billing_list_cards",
+    "team_list",
+    "team_get",
+    "credential_list",
+    "session_state",
+    "oauth_list",
+    "referral_get_stats",
+];
+
+#[test]
+fn money_tools_are_registered() {
+    let tmp = TempDir::new().unwrap();
+    let names = tool_names(&expansion_tools_for(&tmp));
+    assert_contains_all(&names, MONEY_TOOLS);
+}
+
+#[test]
+fn money_default_off_tools_are_filtered_when_not_opted_in() {
+    let tmp = TempDir::new().unwrap();
+    let mut tools = expansion_tools_for(&tmp);
+    filter_tools_by_user_preference(&mut tools, &["file_read".to_string()]);
+    let names = tool_names(&tools);
+    for off in MONEY_DEFAULT_OFF {
+        assert!(
+            !names.iter().any(|n| n == off),
+            "default-off tool `{off}` must be filtered out when not opted in; got: {names:?}"
+        );
+    }
+    for on in MONEY_ALWAYS_ON {
+        assert!(
+            names.iter().any(|n| n == on),
+            "always-on tool `{on}` must be retained regardless of preferences"
+        );
+    }
+}
+
+#[test]
+fn money_default_off_tools_retained_when_opted_in() {
+    let tmp = TempDir::new().unwrap();
+    let mut tools = expansion_tools_for(&tmp);
+    filter_tools_by_user_preference(
+        &mut tools,
+        &["billing_writes".to_string(), "team_admin".to_string()],
+    );
+    let names = tool_names(&tools);
+    for on in MONEY_DEFAULT_OFF {
+        assert!(
+            names.iter().any(|n| n == on),
+            "opted-in tool `{on}` must be retained; got: {names:?}"
+        );
+    }
+}
+
+// ── Theme: Desktop perception, MCP registry, workspace ──────────────────────
+
+const DESKTOP_TOOLS: &[&str] = &[
+    "screen_intelligence_status",
+    "screen_intelligence_capture_image_ref",
+    "screen_intelligence_vision_recent",
+    "screen_intelligence_vision_flush",
+    "screen_intelligence_refresh_permissions",
+    "screen_intelligence_capture_now",
+    "screen_intelligence_capture_test",
+    "screen_intelligence_session_start",
+    "screen_intelligence_session_stop",
+    "screen_intelligence_input_action",
+    "screen_intelligence_globe_listener_start",
+    "screen_intelligence_globe_listener_poll",
+    "screen_intelligence_globe_listener_stop",
+    "screen_intelligence_request_permissions",
+    "screen_intelligence_request_permission",
+    "mcp_registry_search",
+    "mcp_registry_get",
+    "mcp_registry_installed_list",
+    "mcp_registry_status",
+    "mcp_registry_connect",
+    "mcp_registry_disconnect",
+    "mcp_registry_tool_call",
+    "mcp_registry_config_assist",
+    "mcp_registry_install",
+    "mcp_registry_uninstall",
+    "workspace_read_persona",
+    "workspace_update_persona",
+    "workspace_reset_persona",
+    "workspace_init",
+];
+
+const DESKTOP_DEFAULT_OFF: &[&str] = &[
+    "screen_intelligence_request_permissions",
+    "screen_intelligence_request_permission",
+    "mcp_registry_install",
+    "mcp_registry_uninstall",
+    "workspace_update_persona",
+    "workspace_reset_persona",
+    "workspace_init",
+];
+
+const DESKTOP_ALWAYS_ON: &[&str] = &[
+    "screen_intelligence_status",
+    "screen_intelligence_capture_now",
+    "mcp_registry_search",
+    "mcp_registry_tool_call",
+    "mcp_registry_connect",
+    "workspace_read_persona",
+];
+
+#[test]
+fn desktop_tools_are_registered() {
+    let tmp = TempDir::new().unwrap();
+    let names = tool_names(&expansion_tools_for(&tmp));
+    assert_contains_all(&names, DESKTOP_TOOLS);
+}
+
+#[test]
+fn desktop_default_off_tools_are_filtered_when_not_opted_in() {
+    let tmp = TempDir::new().unwrap();
+    let mut tools = expansion_tools_for(&tmp);
+    filter_tools_by_user_preference(&mut tools, &["file_read".to_string()]);
+    let names = tool_names(&tools);
+    for off in DESKTOP_DEFAULT_OFF {
+        assert!(
+            !names.iter().any(|n| n == off),
+            "default-off tool `{off}` must be filtered out when not opted in; got: {names:?}"
+        );
+    }
+    for on in DESKTOP_ALWAYS_ON {
+        assert!(
+            names.iter().any(|n| n == on),
+            "always-on tool `{on}` must be retained regardless of preferences"
+        );
+    }
+}
+
+#[test]
+fn desktop_default_off_tools_retained_when_opted_in() {
+    let tmp = TempDir::new().unwrap();
+    let mut tools = expansion_tools_for(&tmp);
+    filter_tools_by_user_preference(
+        &mut tools,
+        &[
+            "screen_permissions".to_string(),
+            "mcp_manage".to_string(),
+            "workspace_manage".to_string(),
+        ],
+    );
+    let names = tool_names(&tools);
+    for on in DESKTOP_DEFAULT_OFF {
+        assert!(
+            names.iter().any(|n| n == on),
+            "opted-in tool `{on}` must be retained; got: {names:?}"
+        );
+    }
 }

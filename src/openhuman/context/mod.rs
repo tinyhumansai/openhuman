@@ -34,6 +34,7 @@ pub mod manager;
 pub mod microcompact;
 pub mod pipeline;
 pub mod prompt;
+pub mod segment_recap_summarizer;
 pub mod session_memory;
 pub mod summarizer;
 pub mod tool_result_budget;
@@ -49,6 +50,7 @@ pub use prompt::{
     PromptSection, PromptTool, RuntimeSection, SafetySection, SystemPromptBuilder, ToolsSection,
     WorkspaceSection,
 };
+pub use segment_recap_summarizer::SegmentRecapSummarizer;
 pub use session_memory::{
     SessionMemoryConfig, SessionMemoryState, ARCHIVIST_EXTRACTION_PROMPT, DEFAULT_MIN_TOKEN_GROWTH,
     DEFAULT_MIN_TOOL_CALLS, DEFAULT_MIN_TURNS_BETWEEN,

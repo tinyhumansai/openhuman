@@ -38,4 +38,39 @@ Trailing prose.`;
     expect(parsed.rows[0].id).toBe('4.4.4');
     expect(parsed.errors).toHaveLength(1);
   });
+
+  it('reports line-numbered errors for invalid ID and status', () => {
+    const md = `header line
+| 1.1.1 | Good | RU | a.rs | ✅ | ok |
+| 2.2.2 | Bad status | RU | b.rs | ⚠️ | nope |`;
+    const parsed = parseMatrix(md);
+    expect(parsed.errors[0]).toMatch(/^Line 3 \(2\.2\.2\): invalid status/);
+  });
+
+  it('handles a row with empty notes', () => {
+    const md = `| 6.6.6 | No notes | RU | a.rs | ✅ |  |`;
+    const parsed = parseMatrix(md);
+    expect(parsed.rows).toHaveLength(1);
+    expect(parsed.rows[0].notes).toBe('');
+  });
+
+  it('matches rows with trailing whitespace after final pipe', () => {
+    const md = `| 7.7.7 | Trailing | RU | a.rs | ✅ | ok |   `;
+    const parsed = parseMatrix(md);
+    expect(parsed.rows).toHaveLength(1);
+    expect(parsed.rows[0].id).toBe('7.7.7');
+  });
+
+  it('returns totalRows and uniqueRows from validateAgainstCatalog', () => {
+    const rows = [
+      { id: '1.1.1', name: 'A', layer: 'RU', path: 'a', status: '✅', notes: '' },
+      { id: '1.1.1', name: 'B', layer: 'RU', path: 'b', status: '✅', notes: '' },
+      { id: '2.2.2', name: 'C', layer: 'RU', path: 'c', status: '✅', notes: '' },
+    ];
+    const result = validateAgainstCatalog(rows, ['1.1.1', '2.2.2']);
+    expect(result.totalRows).toBe(3);
+    expect(result.uniqueRows).toBe(2);
+    expect(result.duplicates).toEqual(['1.1.1']);
+    expect(result.missingFromMatrix).toEqual([]);
+  });
 });

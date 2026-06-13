@@ -5,7 +5,15 @@ import {
   openhumanGetComposioTriggerSettings,
   openhumanUpdateComposioTriggerSettings,
 } from '../../../utils/tauriCommands';
+import Button from '../../ui/Button';
 import SettingsHeader from '../components/SettingsHeader';
+import {
+  SettingsRow,
+  SettingsSection,
+  SettingsStatusLine,
+  SettingsSwitch,
+  SettingsTextField,
+} from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 const ComposioTriagePanel = () => {
@@ -75,7 +83,7 @@ const ComposioTriagePanel = () => {
 
   if (loading) {
     return (
-      <div>
+      <div className="z-10 relative">
         <SettingsHeader
           title={t('composio.triageTitle')}
           showBackButton
@@ -83,14 +91,16 @@ const ComposioTriagePanel = () => {
           breadcrumbs={breadcrumbs}
         />
         <div className="p-4">
-          <p className="text-sm text-stone-500">Loading…</p>
+          <p className="text-sm text-neutral-500 dark:text-neutral-400">
+            {t('settings.composio.loading')}
+          </p>
         </div>
       </div>
     );
   }
 
   return (
-    <div>
+    <div className="z-10 relative">
       <SettingsHeader
         title={t('composio.triageTitle')}
         showBackButton
@@ -98,73 +108,64 @@ const ComposioTriagePanel = () => {
         breadcrumbs={breadcrumbs}
       />
 
-      <div className="p-4 space-y-5">
-        <p className="text-sm text-stone-500">
+      <div className="p-4 pt-2 space-y-5">
+        <p className="text-sm text-neutral-500 dark:text-neutral-400">
           {t('composio.triageDesc')}{' '}
           <span className="font-mono">OPENHUMAN_TRIGGER_TRIAGE_DISABLED</span>{' '}
           {t('composio.envVarOverrides')}
         </p>
 
-        <div className="rounded-2xl border border-stone-200 bg-stone-50/60 p-4 space-y-1">
-          <button
-            type="button"
-            role="switch"
-            aria-checked={triageDisabled}
-            aria-label="Disable AI triage for all triggers"
-            onClick={() => setTriageDisabled(v => !v)}
-            className="w-full flex items-center justify-between">
-            <div className="text-left">
-              <span className="text-sm font-medium text-stone-900">
-                {t('composio.disableAllTriage')}
-              </span>
-              <p className="text-xs text-stone-500 mt-0.5">{t('composio.triggersStillRecorded')}</p>
-            </div>
-            <div
-              className={`ml-3 flex-shrink-0 w-9 h-5 rounded-full transition-colors relative ${
-                triageDisabled ? 'bg-coral-400' : 'bg-stone-200'
-              }`}>
-              <div
-                className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${
-                  triageDisabled ? 'translate-x-4' : 'translate-x-0.5'
-                }`}
+        <SettingsSection>
+          <SettingsRow
+            htmlFor="switch-triage-disabled"
+            label={t('composio.disableAllTriage')}
+            description={t('composio.triggersStillRecorded')}
+            control={
+              <SettingsSwitch
+                id="switch-triage-disabled"
+                checked={triageDisabled}
+                onCheckedChange={next => setTriageDisabled(next)}
+                aria-label={t('composio.disableAllTriage')}
               />
-            </div>
-          </button>
-        </div>
+            }
+          />
+        </SettingsSection>
 
-        <div className={`space-y-2 ${triageDisabled ? 'opacity-40 pointer-events-none' : ''}`}>
-          <label className="block text-sm font-medium text-stone-800" htmlFor="disabled-toolkits">
-            {t('composio.disableSpecificIntegrations')}
-          </label>
-          <p className="text-xs text-stone-500">
-            Comma-separated integration slugs, e.g. <span className="font-mono">gmail, slack</span>.
-            Case-insensitive.
-          </p>
-          <input
-            id="disabled-toolkits"
-            type="text"
-            value={disabledToolkits}
-            onChange={e => setDisabledToolkits(e.target.value)}
-            placeholder="gmail, slack, ..."
+        <SettingsSection
+          title={t('composio.disableSpecificIntegrations')}
+          description={`${t('composio.integrationSlugsHelp')} ${t('composio.integrationSlugsExample')}. ${t('composio.integrationSlugsCaseInsensitive')}`}>
+          <SettingsRow
+            stacked
             disabled={triageDisabled}
-            className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 placeholder-stone-400 focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-400 disabled:cursor-not-allowed"
+            control={
+              <SettingsTextField
+                id="disabled-toolkits"
+                value={disabledToolkits}
+                onChange={e => setDisabledToolkits(e.target.value)}
+                placeholder={t('composio.integrationSlugsPlaceholder')}
+                disabled={triageDisabled}
+                aria-label={t('composio.disableSpecificIntegrations')}
+              />
+            }
+          />
+        </SettingsSection>
+
+        <div className="flex items-center gap-3">
+          <Button
+            type="button"
+            variant="primary"
+            size="sm"
+            onClick={() => void handleSave()}
+            disabled={saving}>
+            {saving ? t('common.loading') : t('common.save')}
+          </Button>
+          <SettingsStatusLine
+            saving={saving}
+            savedNote={saveStatus === 'saved' ? t('composio.settingsSaved') : null}
+            error={saveStatus === 'error' ? t('composio.saveFailed') : null}
+            savingLabel={t('common.loading')}
           />
         </div>
-
-        <button
-          type="button"
-          onClick={handleSave}
-          disabled={saving}
-          className="w-full py-2 rounded-xl bg-primary-600 text-white text-sm font-medium hover:bg-primary-500 transition-colors disabled:opacity-50">
-          {saving ? t('common.loading') : t('common.save')}
-        </button>
-
-        {saveStatus === 'saved' && (
-          <p className="text-xs text-center text-green-600">{t('composio.settingsSaved')}</p>
-        )}
-        {saveStatus === 'error' && (
-          <p className="text-xs text-center text-red-500">{t('composio.saveFailed')}</p>
-        )}
       </div>
     </div>
   );

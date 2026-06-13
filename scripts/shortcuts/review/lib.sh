@@ -28,6 +28,62 @@ require() {
   done
 }
 
+# Run the picked agent CLI on a single positional prompt. Each known agent
+# is launched in its equivalent "yolo" mode so headless / detached runs
+# (CI, background tasks, tmux workers) don't stall on per-tool permission
+# prompts that have no responder. Set REVIEW_AGENT_SAFE=1 to keep the
+# prompts (e.g. an interactive local run where you want to vet each step).
+#
+# Mirrors the precedent in bin/spawn-issue, which already passes
+# --dangerously-skip-permissions to its detached claude workers, and brings
+# the claude path in line with the existing codex / cursor handling.
+agent_exec() {
+  local agent="$1"
+  local prompt="$2"
+  if [ "${REVIEW_AGENT_SAFE:-0}" = "1" ]; then
+    case "$agent" in
+      codex) exec codex "$prompt" ;;
+      claude) exec claude "$prompt" ;;
+      *) exec "$agent" "$prompt" ;;
+    esac
+    return
+  fi
+  case "$agent" in
+    claude)
+      exec claude --dangerously-skip-permissions "$prompt"
+      ;;
+    codex)
+      exec codex --dangerously-bypass-approvals-and-sandbox "$prompt"
+      ;;
+    cursor|cursor-agent)
+      exec cursor-agent --yolo "$prompt"
+      ;;
+    *)
+      exec "$agent" "$prompt"
+      ;;
+  esac
+}
+
+gh_assign_self_issue() {
+  local issue="$1"
+  local repo="$2"
+  if gh issue edit "$issue" -R "$repo" --add-assignee "@me" >/dev/null 2>&1; then
+    info "assigned issue #$issue to @me"
+  else
+    warn "could not assign issue #$issue to @me; continuing"
+  fi
+}
+
+gh_assign_self_pr() {
+  local pr="$1"
+  local repo="$2"
+  if gh pr edit "$pr" -R "$repo" --add-assignee "@me" >/dev/null 2>&1; then
+    info "assigned PR #$pr to @me"
+  else
+    warn "could not assign PR #$pr to @me; continuing"
+  fi
+}
+
 # Summarize free-form text via a local LLM CLI (expects `-p <prompt>`).
 # Usage: summarize_text <tool> <input>
 # Tools used here: gemini (default for summaries), claude, or any CLI that

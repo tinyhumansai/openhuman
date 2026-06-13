@@ -59,6 +59,24 @@ fn main() {
             if openhuman_core::core::observability::is_transient_provider_http_failure(&event) {
                 return None;
             }
+            // Defense-in-depth: drop managed-backend `errorCode` events (#870)
+            // the backend owns (F2/F4) — primary suppression lives in
+            // `api_error` / the streaming gates and the `web_channel`
+            // re-report classifier. The malformed `BAD_REQUEST` carve-out
+            // (F8) is excluded by the underlying decision, so a client-built
+            // bad payload still pages.
+            if openhuman_core::core::observability::is_backend_error_code_event(&event) {
+                return None;
+            }
+            // Defense-in-depth: drop transient streaming transport blips
+            // (domain=llm_provider, failure=transport) — flaky-network
+            // timeouts/resets recovered by retry/fallback (F7). The primary
+            // gate lives at the `stream_chat` / `stream_chat_history` emit
+            // sites.
+            if openhuman_core::core::observability::is_transient_provider_transport_failure(&event)
+            {
+                return None;
+            }
             // Defense-in-depth for budget-exhausted 400s. Emit sites demote the
             // known backend responses before they hit Sentry; this catches any
             // future non_2xx/status=400 event that carries the same tight body
@@ -81,6 +99,13 @@ fn main() {
                 || openhuman_core::core::observability::is_transient_integrations_failure(&event)
                 || openhuman_core::core::observability::is_updater_transient_event(&event)
             {
+                return None;
+            }
+            // Defense-in-depth: 404 on PATCH/DELETE to a channel-message path
+            // is an expected state (provider-side delete or backend GC). Primary
+            // suppression lives in `authed_json`; this catches any future call
+            // site that bypasses it. Targets OPENHUMAN-TAURI-R7 (28 events).
+            if openhuman_core::core::observability::is_channel_message_not_found_event(&event) {
                 return None;
             }
             // Drop 401 "Session expired. Please log in again." bodies surfaced
@@ -111,19 +136,33 @@ fn main() {
             // Attach the cached account uid so Sentry can count unique users
             // affected by an issue. We only carry `id` — never email, name,
             // or IP — so this stays consistent with `send_default_pii: false`.
-            // Empty/missing on early-startup events (cache populates after
-            // the first `auth_get_me` RPC); that's expected.
-            event.user = openhuman_core::openhuman::app_state::peek_cached_current_user_identity()
-                .and_then(|identity| identity.id)
-                .map(|id| sentry::User {
-                    id: Some(id),
-                    ..Default::default()
-                });
-            // Scrub exception messages for secrets
+            //
+            // Issue #3135: the primary source for `event.user` is now the
+            // Sentry scope, bound proactively at session boundaries
+            // (credentials::store_session / clear_session) and at server boot
+            // (run_server_inner). The `app_state_snapshot` cache is kept as a
+            // fallback so any pre-boot / pre-login event that still rides
+            // the legacy path retains its previous attribution behaviour —
+            // but we only consult it when the scope hasn't already bound a
+            // user, otherwise we'd silently clobber the scope binding when
+            // the cache is empty (root cause of the original userCount=0).
+            if event.user.is_none() {
+                event.user =
+                    openhuman_core::openhuman::app_state::peek_cached_current_user_identity()
+                        .and_then(|identity| identity.id)
+                        .map(|id| sentry::User {
+                            id: Some(id),
+                            ..Default::default()
+                        });
+            }
+            // Scrub secrets from exception values and top-level message.
             for exc in &mut event.exception.values {
                 if let Some(ref value) = exc.value {
                     exc.value = Some(scrub_secrets(value));
                 }
+            }
+            if let Some(msg) = event.message.take() {
+                event.message = Some(scrub_secrets(&msg));
             }
             Some(event)
         })),
@@ -185,8 +224,8 @@ fn resolve_environment() -> String {
 // Secret scrubbing
 // ---------------------------------------------------------------------------
 
-/// A static list of regular expression patterns used to identify and redact
-/// sensitive information such as API keys and bearer tokens.
+/// Ordered most-specific → least-specific. Keep in sync with
+/// `src/openhuman/memory/safety/mod.rs`.
 static SECRET_PATTERNS: Lazy<Vec<(Regex, &'static str)>> = Lazy::new(|| {
     vec![
         // Matches "Bearer <token>" and redacts the token.
@@ -196,32 +235,96 @@ static SECRET_PATTERNS: Lazy<Vec<(Regex, &'static str)>> = Lazy::new(|| {
             Regex::new(r"(?i)(api[_-]?key[=:\s]+)\S+").unwrap(),
             "${1}[REDACTED]",
         ),
-        // Matches "token: <token>" or "token=<token>" and redacts the token.
+        // \b anchor prevents matching `cancellation_token=` etc.
         (
-            Regex::new(r"(?i)(token[=:\s]+)\S+").unwrap(),
+            Regex::new(r"(?i)\b(token[=:\s]+)\S+").unwrap(),
             "${1}[REDACTED]",
         ),
-        // Matches OpenAI-style secret keys (sk-...) and redacts them.
+        // Anthropic keys (sk-ant-api03-...) contain hyphens the generic
+        // sk- pattern below won't match.
+        (
+            Regex::new(r"sk-ant-[A-Za-z0-9\-_]{16,}").unwrap(),
+            "[REDACTED]",
+        ),
+        // OpenAI admin keys (sk-admin-...).
+        (
+            Regex::new(r"sk-admin-[A-Za-z0-9\-_]{12,}").unwrap(),
+            "[REDACTED]",
+        ),
+        // OpenAI project-scoped and org-scoped keys (sk-proj-... / sk-org-...).
+        (
+            Regex::new(r"sk-(?:proj|org)-[A-Za-z0-9\-_]{12,}").unwrap(),
+            "[REDACTED]",
+        ),
+        // Generic catch-all for any sk- format not covered above.
         (Regex::new(r"sk-[a-zA-Z0-9]{20,}").unwrap(), "[REDACTED]"),
     ]
 });
 
 /// Replaces patterns that look like secrets with `[REDACTED]`.
-///
-/// This function iterates through a predefined list of sensitive data patterns
-/// and applies them to the input string.
-///
-/// # Arguments
-///
-/// * `input` - A string slice that potentially contains sensitive information.
-///
-/// # Returns
-///
-/// A new `String` with sensitive patterns replaced by `[REDACTED]`.
 fn scrub_secrets(input: &str) -> String {
     let mut result = input.to_string();
     for (re, replacement) in SECRET_PATTERNS.iter() {
         result = re.replace_all(&result, *replacement).into_owned();
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scrubs_bearer_token() {
+        assert_eq!(
+            scrub_secrets("Authorization: Bearer abc123xyz"),
+            "Authorization: Bearer [REDACTED]"
+        );
+    }
+
+    #[test]
+    fn scrubs_api_key() {
+        assert_eq!(scrub_secrets("api_key=sk-abc123"), "api_key=[REDACTED]");
+    }
+
+    #[test]
+    fn scrubs_anthropic_key() {
+        assert_eq!(
+            scrub_secrets("key: sk-ant-api03-abcdefghijklmnop"),
+            "key: [REDACTED]"
+        );
+    }
+
+    #[test]
+    fn scrubs_openai_admin_key() {
+        assert_eq!(
+            scrub_secrets("key: sk-admin-abcdefghijkl"),
+            "key: [REDACTED]"
+        );
+    }
+
+    #[test]
+    fn scrubs_openai_proj_key() {
+        assert_eq!(
+            scrub_secrets("key: sk-proj-abcdefghijkl"),
+            "key: [REDACTED]"
+        );
+    }
+
+    #[test]
+    fn scrubs_generic_sk_key() {
+        assert_eq!(scrub_secrets("sk-abcdefghijklmnopqrstuvwx"), "[REDACTED]");
+    }
+
+    #[test]
+    fn token_word_boundary_no_false_positive() {
+        let input = "cancellation_token=abc123 next_page_token=xyz789";
+        let result = scrub_secrets(input);
+        assert_eq!(result, input, "should not scrub compound token fields");
+    }
+
+    #[test]
+    fn standalone_token_is_scrubbed() {
+        assert_eq!(scrub_secrets("token=secret_value_here"), "token=[REDACTED]");
+    }
 }

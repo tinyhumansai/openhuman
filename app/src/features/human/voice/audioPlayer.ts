@@ -2,6 +2,9 @@
  * Lightweight base64 → playable HTMLAudio wrapper. We don't need WebAudio
  * graph here; the viseme scheduler reads `currentTime` directly.
  */
+import debug from 'debug';
+
+const audioLog = debug('human:audio-player');
 
 /**
  * Sentinel thrown by the `ended` promise when `stop()` is called. Callers that
@@ -49,10 +52,25 @@ export interface PlaybackHandle {
   ended: Promise<void>;
 }
 
+/**
+ * Options for {@link playBase64Audio}.
+ */
+export interface PlaybackOptions {
+  /**
+   * Auto-stop playback after this many milliseconds as a safety bound against
+   * runaway TTS. If the audio finishes naturally before the deadline the timer
+   * is cleared — the option has no effect on normal, reasonably-sized replies.
+   * When omitted, no duration limit is applied.
+   */
+  maxDurationMs?: number;
+}
+
 export async function playBase64Audio(
   base64: string,
-  mime: string = 'audio/mpeg'
+  mime: string = 'audio/mpeg',
+  options: PlaybackOptions = {}
 ): Promise<PlaybackHandle> {
+  const { maxDurationMs } = options;
   const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
   const blob = new Blob([bytes], { type: mime });
   const url = URL.createObjectURL(blob);
@@ -68,16 +86,26 @@ export async function playBase64Audio(
     rejectEnded = rej;
   });
 
+  // Max-duration safety timer — cleared on any terminal event so it never
+  // fires after playback has already ended.
+  let durationTimer: number | null = null;
+
   const cleanup = () => {
+    if (durationTimer != null) {
+      window.clearTimeout(durationTimer);
+      durationTimer = null;
+    }
     URL.revokeObjectURL(url);
   };
 
   audio.addEventListener('ended', () => {
     endedNaturally = true;
+    audioLog('playback ended naturally mime=%s', mime);
     cleanup();
     resolveEnded();
   });
   audio.addEventListener('error', () => {
+    audioLog('playback decoder error mime=%s', mime);
     cleanup();
     rejectEnded(new Error('audio playback error'));
   });
@@ -95,6 +123,7 @@ export async function playBase64Audio(
   audio.addEventListener(
     'loadedmetadata',
     () => {
+      audioLog('playback metadata ready duration=%ss mime=%s', audio.duration.toFixed(2), mime);
       resolveMetadata();
     },
     { once: true }
@@ -104,6 +133,14 @@ export async function playBase64Audio(
   // the text-length estimate path in that case.
   window.setTimeout(() => resolveMetadata(), 500);
 
+  const stop = () => {
+    if (stopped) return;
+    stopped = true;
+    audio.pause();
+    cleanup();
+    rejectEnded(new AudioStoppedError());
+  };
+
   try {
     await audio.play();
   } catch (err) {
@@ -112,17 +149,29 @@ export async function playBase64Audio(
     throw err;
   }
 
+  audioLog('playback started mime=%s maxDurationMs=%s', mime, maxDurationMs ?? 'none');
+
+  // Arm the max-duration safety timer after `play()` succeeds. Fires only if
+  // the audio hasn't ended naturally by then (e.g. very long TTS response or a
+  // decoder that never emits `ended`).
+  if (maxDurationMs != null) {
+    durationTimer = window.setTimeout(() => {
+      durationTimer = null;
+      if (!stopped && !endedNaturally) {
+        audioLog(
+          'playback auto-stopped after maxDurationMs=%d — preventing runaway TTS',
+          maxDurationMs
+        );
+        stop();
+      }
+    }, maxDurationMs);
+  }
+
   return {
     currentMs: () => (endedNaturally || stopped ? -1 : audio.currentTime * 1000),
     durationMs: () => (Number.isFinite(audio.duration) ? audio.duration * 1000 : 0),
     metadataReady,
-    stop: () => {
-      if (stopped) return;
-      stopped = true;
-      audio.pause();
-      cleanup();
-      rejectEnded(new AudioStoppedError());
-    },
+    stop,
     ended,
   };
 }

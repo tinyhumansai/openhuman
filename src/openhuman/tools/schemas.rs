@@ -11,6 +11,7 @@ use serde_json::{json, Map, Value};
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 use crate::openhuman::config::rpc as config_rpc;
+use crate::openhuman::search::tools::SEARXNG_MAX_RESULTS;
 use crate::openhuman::tools::traits::Tool;
 use crate::rpc::RpcOutcome;
 
@@ -19,7 +20,10 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         tools_schemas("tools_composio_execute"),
         tools_schemas("tools_web_search"),
         tools_schemas("tools_seltz_search"),
+        tools_schemas("tools_querit_search"),
+        tools_schemas("tools_searxng_search"),
         tools_schemas("tools_apify_linkedin_scrape"),
+        tools_schemas("tools_polymarket_execute"),
     ]
 }
 
@@ -38,8 +42,20 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
             handler: handle_seltz_search,
         },
         RegisteredController {
+            schema: tools_schemas("tools_querit_search"),
+            handler: handle_querit_search,
+        },
+        RegisteredController {
+            schema: tools_schemas("tools_searxng_search"),
+            handler: handle_searxng_search,
+        },
+        RegisteredController {
             schema: tools_schemas("tools_apify_linkedin_scrape"),
             handler: handle_apify_linkedin_scrape,
+        },
+        RegisteredController {
+            schema: tools_schemas("tools_polymarket_execute"),
+            handler: handle_polymarket_execute,
         },
     ]
 }
@@ -189,6 +205,140 @@ pub fn tools_schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "tools_querit_search" => ControllerSchema {
+            namespace: "tools",
+            function: "querit_search",
+            description: "Web search via the Querit API. Returns current results with URLs, \
+                          snippets, site names, and page age. Supports site filters, \
+                          time ranges, country filters, and language filters.",
+            inputs: vec![
+                FieldSchema {
+                    name: "query",
+                    ty: TypeSchema::String,
+                    comment: "Search query string.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "max_results",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
+                    comment: "Max results (1-20, default 10).",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "count",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
+                    comment: "Querit-native alias for max_results.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "filters",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Json)),
+                    comment:
+                        "Querit-native filters object with sites, timeRange, geo, and languages.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "include_domains",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Array(Box::new(
+                        TypeSchema::String,
+                    )))),
+                    comment: "Only fetch results from these domains.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "exclude_domains",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Array(Box::new(
+                        TypeSchema::String,
+                    )))),
+                    comment: "Exclude results from these domains.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "time_range",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Querit date filter: d7, w2, m6, y1, or YYYY-MM-DDtoYYYY-MM-DD.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "from_date",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Start date for a Querit date-range filter (YYYY-MM-DD).",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "to_date",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "End date for a Querit date-range filter (YYYY-MM-DD).",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "countries",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Array(Box::new(
+                        TypeSchema::String,
+                    )))),
+                    comment: "Country filters, e.g. united states, japan, germany.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "languages",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Array(Box::new(
+                        TypeSchema::String,
+                    )))),
+                    comment: "Language filters, e.g. english, japanese, german.",
+                    required: false,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "results",
+                ty: TypeSchema::String,
+                comment: "Formatted Querit search results.",
+                required: true,
+            }],
+        },
+        "tools_searxng_search" => ControllerSchema {
+            namespace: "tools",
+            function: "searxng_search",
+            description:
+                "Web search via a user-configured SearXNG instance. Returns normalized \
+                          results with title, URL, snippet, and source. Intended for private, \
+                          self-hosted search without routing queries through the OpenHuman backend.",
+            inputs: vec![
+                FieldSchema {
+                    name: "query",
+                    ty: TypeSchema::String,
+                    comment: "Search query string.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "categories",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Array(Box::new(
+                        TypeSchema::Enum {
+                            variants: vec!["web", "general", "news", "images"],
+                        },
+                    )))),
+                    comment: "Optional SearXNG categories. `web` maps to SearXNG `general`.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "language",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Optional language code, e.g. `en`, `zh-CN`, or `fr`.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "max_results",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
+                    comment: "Max results (1-50, default from searxng.max_results).",
+                    required: false,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "results",
+                ty: TypeSchema::Array(Box::new(TypeSchema::Json)),
+                comment: "Each item: {title, url, snippet, source}.",
+                required: true,
+            }],
+        },
         "tools_apify_linkedin_scrape" => ControllerSchema {
             namespace: "tools",
             function: "apify_linkedin_scrape",
@@ -215,6 +365,33 @@ pub fn tools_schemas(function: &str) -> ControllerSchema {
                     required: true,
                 },
             ],
+        },
+        "tools_polymarket_execute" => ControllerSchema {
+            namespace: "tools",
+            function: "polymarket_execute",
+            description: "Execute a Polymarket action (Gamma + CLOB APIs, including authenticated reads and trading writes). \
+                          Exposed for Tauri-driven smoke + admin flows. Agent-facing path \
+                          goes through the normal harness tool registry.",
+            inputs: vec![
+                FieldSchema {
+                    name: "action",
+                    ty: TypeSchema::String,
+                    comment: "Polymarket action: list_markets | get_market | list_events | get_orderbook | get_price | get_positions | get_balance | get_open_orders | get_usdc_allowance | place_order | cancel_order.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "arguments",
+                    ty: TypeSchema::Json,
+                    comment: "Per-action argument object (market_id, slug, token_id, side, limit, ...).",
+                    required: false,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "data",
+                ty: TypeSchema::Json,
+                comment: "Tool result payload (provider response wrapped with action/source).",
+                required: true,
+            }],
         },
         _ => ControllerSchema {
             namespace: "tools",
@@ -268,9 +445,15 @@ fn handle_composio_execute(params: Map<String, Value>) -> ControllerFuture {
             }
             ComposioClientKind::Direct(direct) => {
                 tracing::debug!(action = %action, "[tools][composio_execute] branch=direct");
-                direct_execute(&direct, &action, action_args, &config.composio.entity_id)
-                    .await
-                    .map_err(|e| format!("composio execute_tool (direct) failed: {e:#}"))?
+                direct_execute(
+                    &direct,
+                    &action,
+                    action_args,
+                    &config.composio.entity_id,
+                    None,
+                )
+                .await
+                .map_err(|e| format!("composio execute_tool (direct) failed: {e:#}"))?
             }
         };
         tracing::debug!(
@@ -340,7 +523,7 @@ fn handle_web_search(params: Map<String, Value>) -> ControllerFuture {
         });
 
         let resp = client
-            .post::<crate::openhuman::integrations::parallel::SearchResponse>(
+            .post::<crate::openhuman::search::tools::SearchResponse>(
                 "/agent-integrations/parallel/search",
                 &body,
             )
@@ -391,7 +574,7 @@ fn handle_seltz_search(params: Map<String, Value>) -> ControllerFuture {
             "[rpc][tools.seltz_search] start"
         );
 
-        let tool = crate::openhuman::integrations::SeltzSearchTool::new(
+        let tool = crate::openhuman::search::tools::SeltzSearchTool::new(
             config.seltz.api_key.clone(),
             config.seltz.api_url.clone(),
             max_results,
@@ -427,6 +610,155 @@ fn handle_seltz_search(params: Map<String, Value>) -> ControllerFuture {
             "[rpc][tools.seltz_search] success query_len={} max_results={}",
             query.chars().count(),
             max_results
+        )];
+        RpcOutcome::new(payload, log).into_cli_compatible_json()
+    })
+}
+
+fn handle_querit_search(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let query = params
+            .get("query")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .ok_or_else(|| "missing or empty `query`".to_string())?;
+        let max_results = params
+            .get("max_results")
+            .or_else(|| params.get("count"))
+            .and_then(Value::as_u64)
+            .map(|n| n.clamp(1, 20) as usize)
+            .unwrap_or(10);
+
+        let config = config_rpc::load_config_with_timeout().await?;
+        if !config.search.querit.has_key() {
+            tracing::debug!("[rpc][tools.querit_search] querit not configured — rejecting");
+            return Err("Querit search is not enabled. Set QUERIT_API_KEY to enable.".to_string());
+        }
+
+        let has_include_domains = params.get("include_domains").is_some();
+        let has_exclude_domains = params.get("exclude_domains").is_some();
+        let has_time_range = params.get("time_range").is_some();
+        let has_countries = params.get("countries").is_some();
+        let has_languages = params.get("languages").is_some();
+        let has_native_filters = params.get("filters").is_some();
+
+        tracing::debug!(
+            query_len = query.chars().count(),
+            max_results,
+            has_include_domains,
+            has_exclude_domains,
+            has_time_range,
+            has_countries,
+            has_languages,
+            has_native_filters,
+            "[rpc][tools.querit_search] start"
+        );
+
+        let tool = crate::openhuman::search::tools::QueritSearchTool::new(
+            config.search.querit.api_key.clone(),
+            None,
+            max_results,
+            config.search.timeout_secs,
+        );
+
+        let mut args = json!({ "query": query, "max_results": max_results });
+        let args_map = args.as_object_mut().unwrap();
+        for key in [
+            "count",
+            "filters",
+            "include_domains",
+            "exclude_domains",
+            "time_range",
+            "from_date",
+            "to_date",
+            "countries",
+            "languages",
+        ] {
+            if let Some(v) = params.get(key) {
+                args_map.insert(key.to_string(), v.clone());
+            }
+        }
+
+        let result = tool
+            .execute(args)
+            .await
+            .map_err(|e| format!("querit search failed: {e:#}"))?;
+
+        let payload = json!({ "results": result.output() });
+        let log = vec![format!(
+            "[rpc][tools.querit_search] success query_len={} max_results={}",
+            query.chars().count(),
+            max_results
+        )];
+        RpcOutcome::new(payload, log).into_cli_compatible_json()
+    })
+}
+
+fn handle_searxng_search(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let query = params
+            .get("query")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .ok_or_else(|| "missing or empty `query`".to_string())?;
+        let max_results = params
+            .get("max_results")
+            .and_then(Value::as_u64)
+            .map(|n| n.clamp(1, SEARXNG_MAX_RESULTS as u64) as usize);
+        let categories = optional_string_array(&params, "categories")?;
+        let language = params
+            .get("language")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+
+        let config = config_rpc::load_config_with_timeout().await?;
+        if !config.searxng.enabled {
+            tracing::debug!("[rpc][tools.searxng_search] searxng disabled — rejecting");
+            return Err(
+                "SearXNG search is not enabled. Set searxng.enabled=true or OPENHUMAN_SEARXNG_ENABLED=true."
+                    .to_string(),
+            );
+        }
+
+        tracing::debug!(
+            query_len = query.chars().count(),
+            max_results = max_results.unwrap_or(config.searxng.max_results),
+            category_count = categories.len(),
+            has_language = language.is_some(),
+            base_url = %config.searxng.base_url,
+            "[rpc][tools.searxng_search] start"
+        );
+
+        let tool = crate::openhuman::search::tools::SearxngSearchTool::new(
+            config.searxng.base_url.clone(),
+            config.searxng.max_results,
+            config.searxng.default_language.clone(),
+            config.searxng.timeout_secs,
+        );
+
+        let response = tool
+            .search(crate::openhuman::search::tools::SearxngSearchArgs {
+                query,
+                categories,
+                language,
+                max_results,
+            })
+            .await
+            .map_err(|e| format!("searxng search failed: {e:#}"))?;
+
+        let result_count = response.results.len();
+        let payload = json!({
+            "query": response.query,
+            "results": response.results,
+        });
+        let log = vec![format!(
+            "[rpc][tools.searxng_search] success results={result_count}"
         )];
         RpcOutcome::new(payload, log).into_cli_compatible_json()
     })
@@ -468,18 +800,108 @@ fn handle_apify_linkedin_scrape(params: Map<String, Value>) -> ControllerFuture 
     })
 }
 
+fn optional_string_array(params: &Map<String, Value>, key: &str) -> Result<Vec<String>, String> {
+    let Some(value) = params.get(key) else {
+        return Ok(Vec::new());
+    };
+    if value.is_null() {
+        return Ok(Vec::new());
+    }
+    let items = value
+        .as_array()
+        .ok_or_else(|| format!("`{key}` must be an array of strings"))?;
+    items
+        .iter()
+        .filter_map(|item| match item.as_str() {
+            Some(value) => {
+                let trimmed = value.trim();
+                (!trimmed.is_empty()).then(|| Ok(trimmed.to_string()))
+            }
+            None => Some(Err(format!("`{key}` must contain only strings"))),
+        })
+        .collect()
+}
+
+fn handle_polymarket_execute(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let action = params
+            .get("action")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .ok_or_else(|| "missing or empty `action`".to_string())?;
+        let arguments = params.get("arguments").cloned();
+
+        let config = config_rpc::load_config_with_timeout().await?;
+        let enabled = config.integrations.polymarket.enabled;
+        tracing::debug!(
+            action = %action,
+            enabled,
+            has_arguments = arguments.is_some(),
+            "[tools] polymarket_execute: entry"
+        );
+        if !enabled {
+            tracing::debug!(action = %action, "[tools] polymarket_execute: disabled");
+            return Err("Polymarket integration is disabled in config.".to_string());
+        }
+
+        let security = std::sync::Arc::new(crate::openhuman::security::SecurityPolicy::default());
+        let tool = crate::openhuman::tools::implementations::network::PolymarketTool::new(
+            &config.integrations.polymarket,
+            security,
+        );
+
+        let mut args = match arguments {
+            Some(Value::Object(map)) => Value::Object(map),
+            Some(_) => {
+                tracing::debug!(
+                    action = %action,
+                    "[tools] polymarket_execute: invalid arguments shape"
+                );
+                return Err("`arguments` must be a JSON object when provided".to_string());
+            }
+            None => json!({}),
+        };
+        if let Value::Object(ref mut map) = args {
+            map.insert("action".to_string(), Value::String(action.clone()));
+        }
+        tracing::trace!(action = %action, args = ?args, "[tools] polymarket_execute: dispatch");
+
+        let result = tool.execute(args).await.map_err(|e| {
+            tracing::error!(
+                action = %action,
+                enabled,
+                error = %e,
+                "[tools] polymarket_execute: execution failed"
+            );
+            format!("polymarket execute failed: {e:#}")
+        })?;
+
+        tracing::debug!(
+            action = %action,
+            is_error = result.is_error,
+            "[tools] polymarket_execute: success"
+        );
+
+        let payload = json!({ "data": result.output() });
+        let log = vec![format!("tools.polymarket_execute: action={action}")];
+        RpcOutcome::new(payload, log).into_cli_compatible_json()
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn all_schemas_returns_four() {
-        assert_eq!(all_controller_schemas().len(), 4);
+    fn all_schemas_returns_seven() {
+        assert_eq!(all_controller_schemas().len(), 7);
     }
 
     #[test]
-    fn all_controllers_returns_four() {
-        assert_eq!(all_registered_controllers().len(), 4);
+    fn all_controllers_returns_seven() {
+        assert_eq!(all_registered_controllers().len(), 7);
     }
 
     #[test]
@@ -509,6 +931,42 @@ mod tests {
         assert!(s.inputs.iter().any(|f| f.name == "query" && f.required));
         assert!(s.inputs.iter().any(|f| f.name == "include_domains"));
         assert!(s.inputs.iter().any(|f| f.name == "scope"));
+    }
+
+    #[test]
+    fn querit_search_schema_shape() {
+        let s = tools_schemas("tools_querit_search");
+        assert_eq!(s.namespace, "tools");
+        assert_eq!(s.function, "querit_search");
+        assert!(s.inputs.iter().any(|f| f.name == "query" && f.required));
+        assert!(s.inputs.iter().any(|f| f.name == "filters"));
+        assert!(s.inputs.iter().any(|f| f.name == "count"));
+        assert!(s.inputs.iter().any(|f| f.name == "include_domains"));
+        assert!(s.inputs.iter().any(|f| f.name == "time_range"));
+        assert!(s.inputs.iter().any(|f| f.name == "from_date"));
+        assert!(s.inputs.iter().any(|f| f.name == "to_date"));
+        assert!(s.inputs.iter().any(|f| f.name == "countries"));
+        assert!(s.inputs.iter().any(|f| f.name == "languages"));
+    }
+
+    #[test]
+    fn searxng_search_schema_shape() {
+        let s = tools_schemas("tools_searxng_search");
+        assert_eq!(s.namespace, "tools");
+        assert_eq!(s.function, "searxng_search");
+        assert!(s.inputs.iter().any(|f| f.name == "query" && f.required));
+        assert!(s.inputs.iter().any(|f| f.name == "categories"));
+        assert!(s.inputs.iter().any(|f| f.name == "language"));
+    }
+
+    #[test]
+    fn optional_string_array_trims_and_drops_blank_entries() {
+        let params =
+            Map::from_iter([("categories".to_string(), json!([" web ", "", "  ", "news"]))]);
+
+        let values = optional_string_array(&params, "categories").expect("string array");
+
+        assert_eq!(values, vec!["web", "news"]);
     }
 
     #[test]

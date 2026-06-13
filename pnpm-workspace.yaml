@@ -1,2 +1,8 @@
 packages:
   - "app"
+  # PTT plugin's guest-js bindings — TS sources consumed by the mobile crate.
+  # We intentionally do NOT use `packages/*` here because `packages/npm/` ships
+  # a `postinstall` that downloads a pre-built openhuman binary from a GitHub
+  # release; that release does not exist at version 0.0.0 (the placeholder
+  # version on the npm package), and CI would fail the install step every time.
+  - "packages/tauri-plugin-ptt"

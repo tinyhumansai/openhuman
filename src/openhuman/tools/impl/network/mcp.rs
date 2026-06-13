@@ -52,6 +52,8 @@ impl Tool for McpListServersTool {
                     "endpoint": server.endpoint,
                     "description": server.description,
                     "timeout_secs": server.timeout_secs,
+                    "allowed_tools": server.allowed_tools,
+                    "disallowed_tools": server.disallowed_tools,
                     "auth": server.auth,
                     "source": server.source,
                 })
@@ -82,6 +84,18 @@ impl Tool for McpListServersTool {
                 ));
                 if let Some(description) = server.description.as_deref() {
                     md.push_str(&format!("\n  - {description}"));
+                }
+                if !server.allowed_tools.is_empty() {
+                    md.push_str(&format!(
+                        "\n  - allowed tools: `{}`",
+                        server.allowed_tools.join("`, `")
+                    ));
+                }
+                if !server.disallowed_tools.is_empty() {
+                    md.push_str(&format!(
+                        "\n  - disallowed tools: `{}`",
+                        server.disallowed_tools.join("`, `")
+                    ));
                 }
             }
             md
@@ -148,8 +162,8 @@ impl Tool for McpListToolsTool {
             .map(|tool| {
                 json!({
                     "name": tool.name,
-                    "title": tool.title,
-                    "description": tool.description,
+                    "title": tool.display_title(),
+                    "description": tool.display_description(),
                     "input_schema": tool.input_schema,
                 })
             })
@@ -160,10 +174,13 @@ impl Tool for McpListToolsTool {
             markdown.push_str("\nNo tools were returned by the remote server.");
         } else {
             for tool in &tools {
+                let desc = tool
+                    .display_description()
+                    .unwrap_or_else(|| "No description.".to_string());
                 markdown.push_str(&format!(
                     "\n- **{}**: {}\n  - schema: `{}`",
                     tool.name,
-                    tool.description.as_deref().unwrap_or("No description."),
+                    desc,
                     serde_json::to_string(&tool.input_schema).unwrap_or_else(|_| "{}".into())
                 ));
             }
@@ -290,6 +307,8 @@ mod tests {
             cwd: None,
             description: Some("Docs MCP".into()),
             enabled: true,
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
             timeout_secs: 30,
             auth: crate::openhuman::config::McpAuthConfig::None,
         });

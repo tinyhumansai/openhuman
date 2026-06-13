@@ -8,7 +8,7 @@ use crate::openhuman::inference::types::LocalAiStatus;
 use super::LocalAiService;
 
 impl LocalAiService {
-    pub(crate) fn new(config: &Config) -> Self {
+    pub fn new(config: &Config) -> Self {
         let model_id = model_ids::effective_chat_model_id(config);
         let vision_model_id = model_ids::effective_vision_model_id(config);
         let embedding_model_id = model_ids::effective_embedding_model_id(config);
@@ -223,7 +223,7 @@ impl LocalAiService {
                     log::trace!(
                         "[local_ai] LM Studio bootstrap embedding ensure_ollama_model_available start model={embedding_model}"
                     );
-                    self.ensure_ollama_model_available(&embedding_model, "embedding")
+                    self.ensure_ollama_model_available(&effective_config, &embedding_model, "embedding")
                         .await?;
                     log::trace!(
                         "[local_ai] LM Studio bootstrap embedding ensure_ollama_model_available succeeded model={embedding_model}"

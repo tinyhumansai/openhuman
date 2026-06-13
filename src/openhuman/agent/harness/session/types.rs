@@ -7,9 +7,13 @@
 //! crate gaining field access.
 
 use crate::openhuman::agent::dispatcher::ToolDispatcher;
+use crate::openhuman::agent::harness::archivist::ArchivistHook;
+use crate::openhuman::agent::harness::definition::TriggerMemoryAgent;
 use crate::openhuman::agent::hooks::PostTurnHook;
 use crate::openhuman::agent::memory_loader::MemoryLoader;
 use crate::openhuman::agent::progress::AgentProgress;
+use crate::openhuman::agent::tool_policy::ToolPolicy;
+use crate::openhuman::agent_tool_policy::ToolPolicySession;
 use crate::openhuman::context::prompt::SystemPromptBuilder;
 use crate::openhuman::context::ContextManager;
 use crate::openhuman::inference::provider::{ChatMessage, ConversationMessage, Provider};
@@ -31,23 +35,34 @@ pub struct Agent {
     /// Full tool specs — sub-agents receive these via
     /// [`ParentExecutionContext::all_tool_specs`].
     pub(super) tool_specs: Arc<Vec<ToolSpec>>,
-    /// Tool specs filtered by `visible_tool_names`. These are the specs
-    /// actually sent to the provider in the main agent's chat requests.
-    /// When `visible_tool_names` is empty this equals `tool_specs`.
+    /// Tool specs filtered by the visible-tool allowlist and session
+    /// permission policy. These are the specs actually sent to the
+    /// provider in the main agent's chat requests.
     pub(super) visible_tool_specs: Arc<Vec<ToolSpec>>,
     /// When non-empty, only these tool names are visible in the main
     /// agent's prompt and callable by the main agent. Sub-agents ignore
     /// this filter — they apply per-definition whitelists in the runner.
     /// Empty = no filter (all tools visible, backward compat).
     pub(super) visible_tool_names: std::collections::HashSet<String>,
+    pub(super) tool_policy_session: ToolPolicySession,
     pub(super) memory: Arc<dyn Memory>,
-    pub(super) tool_dispatcher: Box<dyn ToolDispatcher>,
+    // `Arc` (not `Box`) so the turn engine's parser seam can hold a cheap clone
+    // of the dispatcher without borrowing the `Agent` (which the turn observer
+    // borrows mutably) — see `engine::DispatcherParser`.
+    pub(super) tool_dispatcher: Arc<dyn ToolDispatcher>,
     pub(super) memory_loader: Box<dyn MemoryLoader>,
     pub(super) config: crate::openhuman::config::AgentConfig,
     pub(super) model_name: String,
+    /// User-configured vision capability for [`Self::model_name`], evaluated at
+    /// session build from `model_vision_enabled(&model, config)`. Surfaced to the
+    /// turn engine's image gate via the `current_model_vision` task-local so a
+    /// custom/BYOK model the user flagged can forward images. Defaults to `false`.
+    pub(super) model_vision: bool,
     pub(super) temperature: f64,
     pub(super) workspace_dir: std::path::PathBuf,
-    pub(super) skills: Vec<crate::openhuman::skills::Skill>,
+    pub(super) action_dir: std::path::PathBuf,
+    pub(super) workflows: Vec<crate::openhuman::workflows::Workflow>,
+    /// Agent workflows discovered at session start.
     pub(super) auto_save: bool,
     /// Last memory context loaded for the current turn. Stored so it can
     /// be forwarded to subagents via `ParentExecutionContext`.
@@ -56,16 +71,12 @@ pub struct Agent {
     /// Consumed by web-channel delivery to render source chips in the UI.
     pub(super) last_turn_citations: Vec<crate::openhuman::agent::memory_loader::MemoryCitation>,
     pub(super) history: Vec<ConversationMessage>,
-    /// Wall-clock timestamp of the last successful memory-tree prefetch
-    /// for this session. Drives the 30-minute refresh cadence in the turn
-    /// loop — `None` means "never fetched, fetch now"; otherwise we only
-    /// re-run `TreeContextLoader::load` when the elapsed time exceeds
-    /// `tree_loader::REFRESH_INTERVAL`. Updated on every successful call
-    /// (even when the digest came back empty) so an empty workspace
-    /// doesn't get hammered every turn.
-    pub(super) last_tree_prefetch_at: Option<std::time::Instant>,
     pub(super) post_turn_hooks: Vec<Arc<dyn PostTurnHook>>,
     pub(super) learning_enabled: bool,
+    /// When `true`, pinned preferences stored via `remember_preference` are
+    /// fetched from the `user_profile` namespace and injected into the system
+    /// prompt on every turn, independent of `learning_enabled`.
+    pub(super) explicit_preferences_enabled: bool,
     pub(super) event_session_id: String,
     pub(super) event_channel: String,
     /// Human-readable agent definition name (e.g. `"main"`,
@@ -126,11 +137,26 @@ pub struct Agent {
     /// this channel so callers (e.g. web channel) can surface live
     /// tool-call and iteration updates to the UI.
     pub(super) on_progress: Option<tokio::sync::mpsc::Sender<AgentProgress>>,
+    /// Optional active-run queue for mid-turn steering. When set, the
+    /// engine drains steers/collects at iteration boundaries.
+    pub(super) run_queue: Option<Arc<crate::openhuman::agent::harness::run_queue::RunQueue>>,
     /// Active Composio integrations the user has connected. Populated at
     /// agent build time and threaded into each agent's `prompt.rs` so
     /// the delegator / skill-executor voices can render their own
     /// integration blocks.
     pub(super) connected_integrations: Vec<crate::openhuman::context::prompt::ConnectedIntegration>,
+    /// Whether `connected_integrations` is an authoritative session-start
+    /// snapshot (prewarmed from the shared Composio cache or fetched
+    /// explicitly) versus the default empty placeholder installed by
+    /// `AgentBuilder::build`. Turn 1 uses this to decide whether it must
+    /// still pay the cold-start fetch cost before freezing the system prompt.
+    pub(super) connected_integrations_initialized: bool,
+    /// Full runtime config snapshot for integration-cache reads and the
+    /// best-effort fallback fetch path. Session agents built from
+    /// `Config` carry this directly so the turn loop does not need to
+    /// re-run `Config::load_or_init()` on the hot path just to key into
+    /// the Composio cache.
+    pub(super) integration_runtime_config: Option<crate::openhuman::config::Config>,
     /// Mirrors the agent definition's `omit_profile` flag. Threaded into
     /// [`PromptContext::include_profile`] in `turn::build_system_prompt`
     /// so only user-facing agents (welcome, orchestrator, triggers)
@@ -148,6 +174,14 @@ pub struct Agent {
     /// summarizer sub-agent before they enter agent history.
     pub(super) payload_summarizer:
         Option<Arc<dyn crate::openhuman::agent::harness::payload_summarizer::PayloadSummarizer>>,
+    /// Mirrors the agent definition's `trigger_memory_agent` policy.
+    /// `Always` runs the dedicated memory retrieval agent once before
+    /// the user's prompt is sent to this agent.
+    pub(super) trigger_memory_agent: TriggerMemoryAgent,
+    /// Pre-execution policy hook for tool calls in this session. The
+    /// default policy allows all calls so existing agents keep their
+    /// behaviour unless a caller opts into stricter policy.
+    pub(super) tool_policy: Arc<dyn ToolPolicy>,
     /// Hash of the Composio connection set this Agent last reconciled
     /// against. Compared at top-of-turn to a fresh hash computed from
     /// [`crate::openhuman::composio::cached_active_integrations`]; on
@@ -161,6 +195,35 @@ pub struct Agent {
     /// dormant on session startup and only fires when integrations
     /// actually change mid-conversation.
     pub(super) last_seen_integrations_hash: u64,
+    /// Per-session raw receiver for `DomainEvent::ComposioIntegrationsChanged`.
+    /// Armed lazily on first turn when the global event bus is available.
+    /// Drained before each provider dispatch so a connection that flips to
+    /// ACTIVE mid-turn can refresh the delegation schema in the same thread.
+    pub(super) composio_integrations_rx:
+        Option<tokio::sync::broadcast::Receiver<crate::core::event_bus::DomainEvent>>,
+    /// Toolkit slugs already surfaced to the model as freshly-connected
+    /// this session. Seeded at turn 1 with the startup connected set, then
+    /// extended whenever a mid-session connect is announced — so each new
+    /// toolkit is announced exactly once, never re-announced per turn.
+    pub(super) announced_integrations: std::collections::HashSet<String>,
+    /// Toolkit slugs that connected mid-session and still need announcing on
+    /// the next user message ("X connected this session, use it now"). Parked
+    /// by `refresh_delegation_tools_from_cached_integrations` and rendered +
+    /// cleared when the next user message is built — the note rides on the
+    /// user turn (NOT the system prompt) so the KV-cache prefix stays
+    /// byte-identical.
+    ///
+    /// Accumulated as a list (not a single rendered string) so two connects
+    /// between consecutive user turns both surface: a second connect appends
+    /// its slug instead of overwriting the first's note. Order-preserving +
+    /// de-duped on insert.
+    pub(super) pending_integration_announcement: Vec<String>,
+    /// Optional reference to the `ArchivistHook` registered in
+    /// `post_turn_hooks`. Kept separately so the turn loop can call
+    /// `flush_open_segment` at session-memory-extraction time (the
+    /// closest available signal to "session is ending") to finalize the
+    /// trailing open segment with an LLM recap + embedding.
+    pub(super) archivist_hook: Option<Arc<ArchivistHook>>,
     /// Names of every tool currently in [`Agent::tools`] that was
     /// produced by [`crate::openhuman::tools::orchestrator_tools::collect_orchestrator_tools`]
     /// (i.e. `delegate_<toolkit>` skill tools and archetype-delegation
@@ -174,7 +237,28 @@ pub struct Agent {
     ///
     /// Populated by `refresh_delegation_tools` itself; empty at
     /// construction time.
+    ///
+    /// Invariant: this tracks the names whose **`tool_specs`** are currently
+    /// live. `tool_specs` reconcile on every refresh (they're cloneable
+    /// data), so this set always equals the most recent synthesised set —
+    /// even when the executable `tools` Vec could not be reconciled because
+    /// its `Arc` was shared. Removing stale `tools` entries is tracked
+    /// separately by [`Self::pending_synthesized_tools_mask`].
     pub(super) synthesized_tool_names: std::collections::HashSet<String>,
+    /// Names of synthesised tool *instances* still present in [`Agent::tools`]
+    /// that a future unique-owner refresh must drop.
+    ///
+    /// When `refresh_delegation_tools` updates `tool_specs` but cannot
+    /// reconcile `tools` (the `Arc` is shared — the normal case while
+    /// `AgentToolSource` holds a clone during `before_dispatch`), the
+    /// previously-synthesised tool objects remain in `tools`. Their names are
+    /// accumulated here so the next refresh that *does* own `tools` uniquely
+    /// removes them — instead of overloading `synthesized_tool_names` (which
+    /// must stay in sync with `tool_specs`) and corrupting the spec
+    /// reconciliation on the following refresh (duplicate `ToolSpec`s, #3044).
+    ///
+    /// Empty at construction time and whenever `tools` is fully reconciled.
+    pub(super) pending_synthesized_tools_mask: std::collections::HashSet<String>,
 }
 
 /// A builder for creating `Agent` instances with custom configuration.
@@ -193,12 +277,18 @@ pub struct AgentBuilder {
     /// [`crate::openhuman::config::ContextConfig::default`].
     pub(super) context_config: Option<crate::openhuman::config::ContextConfig>,
     pub(super) model_name: Option<String>,
+    /// User vision flag for the resolved model; `None` → `false` in `build()`.
+    pub(super) model_vision: Option<bool>,
     pub(super) temperature: Option<f64>,
     pub(super) workspace_dir: Option<std::path::PathBuf>,
-    pub(super) skills: Option<Vec<crate::openhuman::skills::Skill>>,
+    pub(super) action_dir: Option<std::path::PathBuf>,
+    pub(super) workflows: Option<Vec<crate::openhuman::workflows::Workflow>>,
+    /// Agent workflows to surface in the prompt. Populated from `load_workflows`
+    /// at session start; defaults to empty when not explicitly set.
     pub(super) auto_save: Option<bool>,
     pub(super) post_turn_hooks: Vec<Arc<dyn PostTurnHook>>,
     pub(super) learning_enabled: bool,
+    pub(super) explicit_preferences_enabled: bool,
     pub(super) event_session_id: Option<String>,
     pub(super) event_channel: Option<String>,
     pub(super) agent_definition_name: Option<String>,
@@ -220,6 +310,22 @@ pub struct AgentBuilder {
     /// to a `SubagentPayloadSummarizer` instance.
     pub(super) payload_summarizer:
         Option<Arc<dyn crate::openhuman::agent::harness::payload_summarizer::PayloadSummarizer>>,
+    /// Forwarded to [`Agent::trigger_memory_agent`] at build time.
+    pub(super) trigger_memory_agent: Option<TriggerMemoryAgent>,
+    /// Optional pre-execution tool policy. Defaults to allow-all.
+    pub(super) tool_policy: Option<Arc<dyn ToolPolicy>>,
+    /// Optional reference to the production `ArchivistHook`. Set when
+    /// `config.learning.episodic_capture_enabled` is true. Used to call
+    /// `flush_open_segment` at the closest available session-end signal.
+    pub(super) archivist_hook: Option<Arc<ArchivistHook>>,
+    /// Phase 1.5 — when `true` AND `archivist_hook` is `Some`, the
+    /// `ContextManager`'s summarizer is wrapped with a
+    /// `SegmentRecapSummarizer` that routes compaction through the
+    /// archivist's rolling segment recap (one summarizer, soft-fallback).
+    /// When `false` (or archivist absent), the plain `ProviderSummarizer`
+    /// is used and Phase 1.5 is completely absent from the hot path.
+    /// Default: `true` (mirrors `LearningConfig::unified_compaction_enabled`).
+    pub(super) unified_compaction_enabled: bool,
 }
 
 impl Default for AgentBuilder {

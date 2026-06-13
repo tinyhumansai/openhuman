@@ -197,6 +197,80 @@ pub fn clear_all_jobs(config: &Config) -> Result<usize> {
     Ok(removed)
 }
 
+/// Remove duplicate cron jobs that share the same `name`.
+///
+/// Older builds used a non-atomic check-then-insert in `seed_proactive_agents`,
+/// which allowed two identical rows (e.g. two `morning_briefing` entries) to
+/// land in the database when the function raced or was called twice before the
+/// first insert committed. The `cron_jobs` table has no `UNIQUE` constraint on
+/// `name`, so both rows persist and the Routines screen renders two cards.
+///
+/// For each duplicated name this function keeps the row with the most
+/// `cron_runs` history (ties broken by earliest `created_at`) and deletes
+/// all others. Returns the total number of rows removed across all names.
+///
+/// Idempotent: calling it on a database with no duplicates removes nothing
+/// and returns `Ok(0)`.
+pub fn dedup_named_jobs(config: &Config) -> Result<usize> {
+    with_connection(config, |conn| {
+        // 1. Find all names that appear more than once.
+        let duplicated_names: Vec<String> = {
+            let mut stmt = conn.prepare(
+                "SELECT name FROM cron_jobs \
+                 WHERE name IS NOT NULL \
+                 GROUP BY name \
+                 HAVING COUNT(*) > 1",
+            )?;
+            let names = stmt.query_map([], |row| row.get::<_, String>(0))?;
+            let mut out = Vec::new();
+            for n in names {
+                out.push(n?);
+            }
+            out
+        };
+
+        if duplicated_names.is_empty() {
+            return Ok(0);
+        }
+
+        let mut canonical_stmt = conn.prepare(
+            "SELECT j.id \
+             FROM cron_jobs j \
+             LEFT JOIN cron_runs r ON r.job_id = j.id \
+             WHERE j.name = ?1 \
+             GROUP BY j.id \
+             ORDER BY COUNT(r.id) DESC, j.created_at ASC, j.id ASC \
+             LIMIT 1",
+        )?;
+
+        let mut total_removed = 0usize;
+        for name in &duplicated_names {
+            // 2. Find the canonical id: most run history, tie-break earliest created_at.
+            let canonical_id: Option<String> = {
+                let mut rows = canonical_stmt.query(params![name])?;
+                rows.next()?.map(|r| r.get::<_, String>(0)).transpose()?
+            };
+
+            let Some(keep_id) = canonical_id else {
+                continue;
+            };
+
+            // 3. Delete every other row sharing this name.
+            let deleted = conn.execute(
+                "DELETE FROM cron_jobs WHERE name = ?1 AND id != ?2",
+                params![name, keep_id],
+            )?;
+            log::info!(
+                "[cron] dedup_named_jobs: removed {deleted} duplicate(s) of '{name}' \
+                 (keeping id={keep_id})"
+            );
+            total_removed += deleted;
+        }
+
+        Ok(total_removed)
+    })
+}
+
 pub fn due_jobs(config: &Config, now: DateTime<Utc>) -> Result<Vec<CronJob>> {
     let lim = i64::try_from(config.scheduler.max_tasks.max(1))
         .context("Scheduler max_tasks overflows i64")?;
@@ -391,6 +465,18 @@ pub fn record_run(
         tx.commit()
             .context("Failed to commit cron run transaction")?;
         Ok(())
+    })
+}
+
+/// Remove all "queued" placeholder records for a given job so that only the
+/// real (ok/error) result row remains in the run history.
+pub fn delete_queued_runs(config: &Config, job_id: &str) -> Result<usize> {
+    with_connection(config, |conn| {
+        let deleted = conn.execute(
+            "DELETE FROM cron_runs WHERE job_id = ?1 AND status = 'queued'",
+            params![job_id],
+        )?;
+        Ok(deleted)
     })
 }
 

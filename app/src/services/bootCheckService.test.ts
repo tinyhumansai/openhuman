@@ -36,3 +36,23 @@ describe('bootCheckTransport', () => {
     expect(invokeMock).toHaveBeenCalledWith('start_core_process', {});
   });
 });
+
+describe('recoverPortConflict', () => {
+  it('calls the recover_port_conflict Tauri command and returns the result', async () => {
+    const fakeOutcome = { success: true, message: 'Core recovered on port 7789', new_port: 7789 };
+    invokeMock.mockResolvedValueOnce(fakeOutcome);
+
+    const { recoverPortConflict } = await import('./bootCheckService');
+    const result = await recoverPortConflict();
+
+    expect(result).toEqual(fakeOutcome);
+    expect(invokeMock).toHaveBeenCalledWith('recover_port_conflict', undefined);
+  });
+
+  it('propagates errors from the Tauri command', async () => {
+    invokeMock.mockRejectedValueOnce(new Error('IPC failure'));
+
+    const { recoverPortConflict } = await import('./bootCheckService');
+    await expect(recoverPortConflict()).rejects.toThrow('IPC failure');
+  });
+});

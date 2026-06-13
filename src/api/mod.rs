@@ -18,7 +18,8 @@ pub use config::{
 };
 pub use jwt::{bearer_authorization_value, get_session_token};
 pub use rest::{
-    decrypt_handoff_blob, user_id_from_auth_me_payload, user_id_from_profile_payload,
-    BackendOAuthClient, ConnectResponse, IntegrationSummary, IntegrationTokensHandoff,
+    decrypt_handoff_blob, flatten_authed_error, user_id_from_auth_me_payload,
+    user_id_from_profile_payload, BackendApiError, BackendOAuthClient, ConnectResponse,
+    IntegrationSummary, IntegrationTokensHandoff,
 };
 pub use socket::websocket_url;

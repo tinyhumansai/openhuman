@@ -27,7 +27,13 @@ The `summaries/` folder is laid out hierarchically, by date for the global tree,
 
 ## Open the vault
 
-In the desktop app, the **Memory** tab has a **"View vault in Obsidian"** button. It uses an `obsidian://open?path=...` deep link, so you need Obsidian installed.
+In the desktop app, the **Memory** tab has a **"View vault in Obsidian"** button. It uses an `obsidian://open?path=...` deep link, which only resolves once the folder is **registered** as a vault in Obsidian — the deep link can't register it for you. So the first time:
+
+1. Click **View vault in Obsidian**. If the folder isn't a registered vault yet, OpenHuman shows inline guidance instead of silently failing.
+2. In Obsidian, choose **"Open folder as vault"** and pick the path shown — you only need to do this once.
+3. Click **View vault in Obsidian** again; it now opens straight into the vault.
+
+If Obsidian is installed somewhere non-standard (Flatpak/Snap/portable), use **Open in Obsidian anyway**, or point OpenHuman at its config folder under **Advanced** so detection works. Don't have Obsidian? The guidance links to the download page, and **Reveal Folder** always opens the vault directory in your OS file manager.
 
 You can also open the folder in any editor, it's just Markdown. Links between files use standard `[[wiki-link]]` syntax, so Obsidian's graph view, backlinks, and tag explorer all work out of the box.
 

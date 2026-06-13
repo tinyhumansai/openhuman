@@ -90,11 +90,33 @@ export const DEV_FORCE_ONBOARDING =
 export const CONSUMER_FIRST_SESSION_ENABLED =
   import.meta.env.VITE_CONSUMER_FIRST_SESSION === 'true';
 
+/**
+ * Chat multimodal attachments (image + supported file markers). Disabled by
+ * default — the attach affordance and file-picker path are off. Opt in for a
+ * build by setting `VITE_CHAT_ATTACHMENTS=true`.
+ */
+export const CHAT_ATTACHMENTS_ENABLED = import.meta.env.VITE_CHAT_ATTACHMENTS === 'true';
+
 export const SKILLS_GITHUB_REPO =
   import.meta.env.VITE_SKILLS_GITHUB_REPO || 'tinyhumansai/openhuman-skills';
 
-/** Google Analytics 4 Measurement ID. Leave blank to disable GA. Skipped in dev builds. */
+/** Google Analytics 4 Measurement ID. Leave blank to disable GA. */
 export const GA_MEASUREMENT_ID = import.meta.env.VITE_GA_MEASUREMENT_ID as string | undefined;
+
+/** When true, allow GA in dev builds (for local debugging). Set `VITE_GA_FORCE_DEV=true` in `.env.local`. */
+export const GA_FORCE_DEV = import.meta.env.VITE_GA_FORCE_DEV === 'true';
+
+/** OpenPanel project client id. Leave blank to disable OpenPanel analytics. */
+export const OPENPANEL_CLIENT_ID = (
+  (import.meta.env.VITE_OPENPANEL_CLIENT_ID as string | undefined) ??
+  'e9c996d5-497f-4eec-9bde-630019ad525b'
+).trim();
+
+/** OpenPanel API base URL. */
+export const OPENPANEL_API_URL = (
+  (import.meta.env.VITE_OPENPANEL_API_URL as string | undefined) ??
+  'https://panel.tinyhumans.ai/api'
+).trim();
 
 /** Sentry DSN for error reporting. Leave blank to disable. */
 export const SENTRY_DSN = import.meta.env.VITE_SENTRY_DSN as string | undefined;
@@ -124,6 +146,19 @@ export const DEV_JWT_TOKEN = import.meta.env.DEV
   : undefined;
 
 export const APP_VERSION = packageJson.version;
+
+/** Desktop binary/package version reported with analytics events. */
+export const APP_BINARY_VERSION =
+  (import.meta.env.VITE_OPENHUMAN_BINARY_VERSION as string | undefined)?.trim() || APP_VERSION;
+
+/** Root Rust core crate version reported with analytics events. */
+export const CORE_CARGO_VERSION =
+  (import.meta.env.VITE_OPENHUMAN_CORE_CARGO_VERSION as string | undefined)?.trim() || APP_VERSION;
+
+/** Tauri shell Cargo crate version reported with analytics events. */
+export const TAURI_CARGO_VERSION =
+  (import.meta.env.VITE_OPENHUMAN_TAURI_CARGO_VERSION as string | undefined)?.trim() ||
+  APP_BINARY_VERSION;
 
 /**
  * Deployment environment reported to Sentry and other observability surfaces.
@@ -181,9 +216,22 @@ export const LATEST_APP_DOWNLOAD_URL =
 export const SENTRY_SMOKE_TEST = import.meta.env.VITE_SENTRY_SMOKE_TEST === 'true';
 
 /**
- * ElevenLabs voice ID used for the mascot's reply speech. Picked to sound
- * like a friendly cartoon character rather than a human narrator. Override
- * with `VITE_MASCOT_VOICE_ID` to A/B alternative voices without a code change.
+ * ElevenLabs voice ID used for the mascot's reply speech. `JBFqnCBsd6RMkjVDRZzb`
+ * is "George" — a warm multilingual voice that pairs cleanly with the
+ * `eleven_multilingual_v2` model (`MASCOT_VOICE_MODEL_ID` below) so the
+ * mascot can speak any locale we ship without a voice swap. Override with
+ * `VITE_MASCOT_VOICE_ID` to A/B alternatives without a code change.
  */
 export const MASCOT_VOICE_ID =
-  (import.meta.env.VITE_MASCOT_VOICE_ID as string | undefined)?.trim() || 'ljX1ZrXuDIIRVcmiVSyR';
+  (import.meta.env.VITE_MASCOT_VOICE_ID as string | undefined)?.trim() || 'JBFqnCBsd6RMkjVDRZzb';
+
+/**
+ * ElevenLabs model used for mascot reply speech. `eleven_multilingual_v2`
+ * speaks every locale we ship; the older `eleven_monolingual_v1` would
+ * choke on non-Latin scripts. Override with `VITE_MASCOT_VOICE_MODEL_ID`
+ * to pin a different model (e.g. `eleven_turbo_v2_5` for lower latency
+ * at the cost of accent fidelity).
+ */
+export const MASCOT_VOICE_MODEL_ID =
+  (import.meta.env.VITE_MASCOT_VOICE_MODEL_ID as string | undefined)?.trim() ||
+  'eleven_multilingual_v2';

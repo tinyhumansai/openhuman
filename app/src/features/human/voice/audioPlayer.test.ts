@@ -150,6 +150,52 @@ describe('playBase64Audio', () => {
     // Idempotent — second stop() is a no-op.
     handle.stop();
   });
+
+  it('auto-stops after maxDurationMs and rejects ended with AudioStoppedError', async () => {
+    vi.useFakeTimers();
+    try {
+      installAudio(url => new FakeAudio(url));
+      const handle = await playBase64Audio('AAA=', 'audio/mpeg', { maxDurationMs: 1000 });
+      // Before the deadline, ended is still pending.
+      let settled: 'resolved' | 'rejected' | null = null;
+      handle.ended
+        .then(() => {
+          settled = 'resolved';
+        })
+        .catch(() => {
+          settled = 'rejected';
+        });
+      await Promise.resolve();
+      expect(settled).toBeNull();
+      // Advance past the deadline.
+      await vi.advanceTimersByTimeAsync(1010);
+      expect(settled).toBe('rejected');
+      const err = await handle.ended.catch(e => e);
+      expect(err).toBeInstanceOf(AudioStoppedError);
+      expect(handle.currentMs()).toBe(-1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('maxDurationMs timer is cleared when audio ends naturally before the deadline', async () => {
+    vi.useFakeTimers();
+    const clearTimeoutSpy = vi.spyOn(window, 'clearTimeout');
+    try {
+      const created = installAudio(url => new FakeAudio(url));
+      const handle = await playBase64Audio('AAA=', 'audio/mpeg', { maxDurationMs: 5000 });
+      // Simulate natural end before the 5s deadline.
+      created[0].emit('ended');
+      await Promise.resolve();
+      // clearTimeout must have been called to cancel the timer.
+      expect(clearTimeoutSpy).toHaveBeenCalled();
+      // ended resolves without error.
+      await expect(handle.ended).resolves.toBeUndefined();
+    } finally {
+      clearTimeoutSpy.mockRestore();
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe('isAudioStopped / swallowAudioStop', () => {

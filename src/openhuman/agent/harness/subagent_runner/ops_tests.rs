@@ -1,6 +1,44 @@
 use super::*;
 use crate::openhuman::agent::harness::definition::{ModelSpec, ToolScope};
 
+#[test]
+fn lazy_resolver_tolerates_near_miss_slugs() {
+    use crate::openhuman::context::prompt::ConnectedIntegrationTool;
+    let mk = |name: &str| ConnectedIntegrationTool {
+        name: name.into(),
+        description: "d".into(),
+        parameters: None,
+    };
+    let resolver = LazyToolkitResolver {
+        config: std::sync::Arc::new(crate::openhuman::config::Config::default()),
+        actions: vec![mk("GOOGLESLIDES_BATCH_UPDATE"), mk("GMAIL_LIST_MESSAGES")],
+    };
+    // Exact, case-insensitive, and separator/prefix drift all resolve
+    // (bug-report-2026-05-26 A2).
+    assert!(resolver.resolve("GMAIL_LIST_MESSAGES").is_some());
+    assert!(resolver.resolve("gmail_list_messages").is_some());
+    assert!(resolver.resolve("googleslides_batch_update").is_some());
+    // A fabricated slug stays unresolved → routed to the "available tools"
+    // error so the model self-corrects, not silently mis-dispatched.
+    assert!(resolver.resolve("GMAIL_GET_LAST_3_MESSAGES").is_none());
+}
+
+#[test]
+fn normalize_slug_collapses_separators_and_case() {
+    assert_eq!(
+        normalize_slug("GOOGLESLIDES_BATCH_UPDATE"),
+        "googleslidesbatchupdate"
+    );
+    assert_eq!(
+        normalize_slug("googleslides_batch_update"),
+        "googleslidesbatchupdate"
+    );
+    assert_ne!(
+        normalize_slug("GMAIL_GET_LAST_3_MESSAGES"),
+        normalize_slug("GMAIL_LIST_MESSAGES")
+    );
+}
+
 fn make_def_named_tools(names: &[&str]) -> AgentDefinition {
     AgentDefinition {
         id: "test".into(),
@@ -20,12 +58,15 @@ fn make_def_named_tools(names: &[&str]) -> AgentDefinition {
         skill_filter: None,
         extra_tools: vec![],
         max_iterations: 5,
+        iteration_policy: Default::default(),
         max_result_chars: None,
         timeout_secs: None,
         sandbox_mode: crate::openhuman::agent::harness::definition::SandboxMode::None,
         background: false,
+        trigger_memory_agent: Default::default(),
         subagents: vec![],
         delegate_name: None,
+        agent_tier: crate::openhuman::agent::harness::definition::AgentTier::Worker,
         source: crate::openhuman::agent::harness::definition::DefinitionSource::Builtin,
     }
 }
@@ -122,6 +163,10 @@ fn append_subagent_role_contract_adds_role_and_brevity_rules() {
     assert!(rendered.contains("## Sub-agent Role Contract"));
     assert!(rendered.contains("You are a sub-agent working for a parent OpenHuman agent"));
     assert!(rendered.contains("Keep your final response concise and synthesis-ready"));
+    assert!(rendered.contains("## Sub-agent Result Contract"));
+    assert!(rendered.contains("Evidence used"));
+    assert!(rendered.contains("Do not include facts in Answer that are not supported"));
+    assert!(rendered.contains("truncated, partial, or too large"));
 }
 
 #[test]
@@ -134,8 +179,9 @@ fn append_subagent_role_contract_is_idempotent() {
 // ── End-to-end runner tests with mock provider ────────────────────────
 
 use crate::openhuman::agent::harness::fork_context::with_parent_context;
+use crate::openhuman::agent::harness::run_queue::{QueueMode, QueuedMessage, RunQueue};
 use crate::openhuman::inference::provider::{
-    ChatRequest as PChatRequest, ChatResponse, Provider, ToolCall,
+    ChatRequest as PChatRequest, ChatResponse, Provider, ProviderDelta, ToolCall,
 };
 use parking_lot::Mutex;
 use std::sync::Arc;
@@ -186,15 +232,45 @@ impl Provider for ScriptedProvider {
             tool_count: request.tools.map_or(0, |tools| tools.len()),
             model: model.to_string(),
         });
-        let mut q = self.responses.lock();
-        if q.is_empty() {
-            return Ok(ChatResponse {
-                text: Some(String::new()),
-                tool_calls: vec![],
-                usage: None,
-            });
+        let response = {
+            let mut q = self.responses.lock();
+            if q.is_empty() {
+                ChatResponse {
+                    text: Some(String::new()),
+                    tool_calls: vec![],
+                    usage: None,
+                    reasoning_content: None,
+                }
+            } else {
+                q.remove(0)
+            }
+        };
+        // Mirror a real streaming provider: when the caller attached a
+        // `stream` sink, forward this response's reasoning then visible
+        // text as `ProviderDelta`s before returning the aggregate. Lets
+        // the subagent runner's per-iteration sink exercise the
+        // `SubagentThinkingDelta` / `SubagentTextDelta` forwarding path.
+        if let Some(sink) = request.stream {
+            if let Some(reasoning) = response.reasoning_content.as_deref() {
+                if !reasoning.is_empty() {
+                    let _ = sink
+                        .send(ProviderDelta::ThinkingDelta {
+                            delta: reasoning.to_string(),
+                        })
+                        .await;
+                }
+            }
+            if let Some(text) = response.text.as_deref() {
+                if !text.is_empty() {
+                    let _ = sink
+                        .send(ProviderDelta::TextDelta {
+                            delta: text.to_string(),
+                        })
+                        .await;
+                }
+            }
         }
-        Ok(q.remove(0))
+        Ok(response)
     }
 
     fn supports_native_tools(&self) -> bool {
@@ -207,6 +283,16 @@ fn text_response(text: &str) -> ChatResponse {
         text: Some(text.into()),
         tool_calls: vec![],
         usage: None,
+        reasoning_content: None,
+    }
+}
+
+fn text_response_with_reasoning(text: &str, reasoning: &str) -> ChatResponse {
+    ChatResponse {
+        text: Some(text.into()),
+        tool_calls: vec![],
+        usage: None,
+        reasoning_content: Some(reasoning.into()),
     }
 }
 
@@ -217,8 +303,10 @@ fn tool_response(name: &str, args: &str) -> ChatResponse {
             id: "call-1".into(),
             name: name.into(),
             arguments: args.into(),
+            extra_content: None,
         }],
         usage: None,
+        reasoning_content: None,
     }
 }
 
@@ -228,6 +316,10 @@ fn make_parent(provider: Arc<dyn Provider>, tools: Vec<Box<dyn Tool>>) -> Parent
     let tool_specs: Vec<crate::openhuman::tools::ToolSpec> =
         tools.iter().map(|t| t.spec()).collect();
     ParentExecutionContext {
+        agent_definition_id: "orchestrator".into(),
+        allowed_subagent_ids: ["test".to_string(), "child".to_string(), "inner".to_string()]
+            .into_iter()
+            .collect(),
         provider,
         all_tools: Arc::new(tools),
         all_tool_specs: Arc::new(tool_specs),
@@ -236,7 +328,7 @@ fn make_parent(provider: Arc<dyn Provider>, tools: Vec<Box<dyn Tool>>) -> Parent
         workspace_dir: std::env::temp_dir(),
         memory: noop_memory(),
         agent_config: crate::openhuman::config::AgentConfig::default(),
-        skills: Arc::new(vec![]),
+        workflows: Arc::new(vec![]),
         memory_context: Arc::new(None),
         session_id: "test-session".into(),
         channel: "test".into(),
@@ -245,6 +337,7 @@ fn make_parent(provider: Arc<dyn Provider>, tools: Vec<Box<dyn Tool>>) -> Parent
         session_key: "0_test".into(),
         session_parent_prefix: None,
         on_progress: None,
+        run_queue: None,
     }
 }
 
@@ -385,6 +478,10 @@ async fn typed_mode_returns_text_through_runner() {
                 model_override: None,
                 task_id: Some("t1".into()),
                 worker_thread_id: None,
+                initial_history: None,
+                checkpoint_dir: None,
+                worktree_action_dir: None,
+                run_queue: None,
             },
         )
         .await
@@ -396,6 +493,66 @@ async fn typed_mode_returns_text_through_runner() {
     assert_eq!(outcome.iterations, 1);
     assert_eq!(outcome.mode, SubagentMode::Typed);
     assert_eq!(outcome.task_id, "t1");
+}
+
+#[tokio::test]
+async fn run_queue_steer_lands_in_subagent_history() {
+    // End-to-end proof that flipping the subagent loop's run-queue arg from
+    // `None` to `Some(queue)` wires steering all the way through: a message
+    // pushed to the queue before the run is drained by the inner
+    // `run_turn_engine` and appears as a `[User steering message]:` user turn
+    // in the exact request sent to the provider. This is the mechanism behind
+    // the `steer_subagent` tool.
+    let provider = ScriptedProvider::new(vec![text_response("acknowledged")]);
+    let parent = make_parent(provider.clone(), vec![stub("file_read")]);
+    let def = make_def_named_tools(&[]);
+
+    let run_queue = RunQueue::new();
+    run_queue
+        .push(QueuedMessage {
+            text: "switch focus to memory safety".into(),
+            mode: QueueMode::Steer,
+            client_id: "steer_subagent".into(),
+            thread_id: "t-steer".into(),
+            queued_at_ms: 0,
+            model_override: None,
+            temperature: None,
+            profile_id: None,
+            locale: None,
+        })
+        .await;
+
+    let outcome = with_parent_context(parent, async {
+        run_subagent(
+            &def,
+            "investigate the bug",
+            SubagentRunOptions {
+                task_id: Some("t-steer".into()),
+                run_queue: Some(run_queue),
+                ..Default::default()
+            },
+        )
+        .await
+    })
+    .await
+    .expect("runner should succeed");
+
+    assert_eq!(outcome.output, "acknowledged");
+
+    let captured = provider.captured.lock();
+    let steered = captured[0]
+        .messages
+        .iter()
+        .any(|m| m.role == "user" && m.content.contains("switch focus to memory safety"));
+    assert!(
+        steered,
+        "steer message should be injected into the sub-agent's first request, got: {:?}",
+        captured[0]
+            .messages
+            .iter()
+            .map(|m| (&m.role, &m.content))
+            .collect::<Vec<_>>()
+    );
 }
 
 #[tokio::test]
@@ -494,6 +651,10 @@ async fn typed_mode_filters_tools_by_skill_filter() {
                 model_override: None,
                 task_id: None,
                 worker_thread_id: None,
+                initial_history: None,
+                checkpoint_dir: None,
+                worktree_action_dir: None,
+                run_queue: None,
             },
         )
         .await
@@ -597,6 +758,124 @@ async fn runner_errors_outside_parent_context() {
 }
 
 #[tokio::test]
+async fn subagent_emits_checkpoint_at_iteration_cap_instead_of_erroring() {
+    // A sub-agent that keeps calling tools and never finishes must hit its
+    // cap and return a graceful partial-progress checkpoint (Ok), not a bare
+    // MaxIterationsExceeded that discards its work — so the delegating agent
+    // can continue from what it got (bug-report-2026-05-26 A1, mirrors the
+    // main agent). Two tool rounds (max_iterations=2), then the summarize
+    // call returns prose which becomes the checkpoint.
+    let provider = ScriptedProvider::new(vec![
+        tool_response("file_read", "{}"),
+        tool_response("file_read", "{}"),
+        text_response("Progress so far: read the file. Remaining: keep going."),
+    ]);
+    let parent = make_parent(provider.clone(), vec![stub("file_read")]);
+    let mut def = make_def_named_tools(&["file_read"]);
+    def.max_iterations = 2;
+
+    let outcome = with_parent_context(parent, async {
+        run_subagent(&def, "keep reading forever", SubagentRunOptions::default()).await
+    })
+    .await
+    .expect("hitting the iteration cap should return a checkpoint, not error");
+
+    assert!(
+        outcome.output.contains("Progress so far"),
+        "expected the model-written checkpoint, got: {}",
+        outcome.output
+    );
+}
+
+#[tokio::test]
+async fn subagent_checkpoint_falls_back_to_deterministic_when_summary_empty() {
+    // Same cap, but the summarize call yields nothing (response queue
+    // exhausted → empty). The runner must fall back to a deterministic
+    // partial-progress digest so the parent still gets a usable result
+    // (bug-report-2026-05-26 A1).
+    let provider = ScriptedProvider::new(vec![
+        tool_response("file_read", "{}"),
+        tool_response("file_read", "{}"),
+    ]);
+    let parent = make_parent(provider.clone(), vec![stub("file_read")]);
+    let mut def = make_def_named_tools(&["file_read"]);
+    def.max_iterations = 2;
+
+    let outcome = with_parent_context(parent, async {
+        run_subagent(&def, "keep reading forever", SubagentRunOptions::default()).await
+    })
+    .await
+    .expect("empty summary should fall back, not error");
+
+    assert!(
+        outcome.output.contains("tool-call limit"),
+        "expected the deterministic fallback checkpoint, got: {}",
+        outcome.output
+    );
+    assert!(
+        outcome.output.contains("file_read"),
+        "deterministic checkpoint should list the tool work done, got: {}",
+        outcome.output
+    );
+}
+
+#[tokio::test]
+async fn runner_allows_spawn_at_max_depth() {
+    let provider = ScriptedProvider::new(vec![text_response("ok")]);
+    let parent = make_parent(provider.clone(), vec![]);
+    let def = make_def_named_tools(&[]);
+
+    let outcome = with_parent_context(parent, async {
+        with_spawn_depth(MAX_SPAWN_DEPTH - 1, async {
+            run_subagent(&def, "x", SubagentRunOptions::default()).await
+        })
+        .await
+    })
+    .await
+    .expect("runner should allow the configured maximum depth");
+
+    assert_eq!(outcome.output, "ok");
+    assert_eq!(provider.captured.lock().len(), 1);
+    assert_eq!(
+        current_spawn_depth(),
+        0,
+        "depth task-local must not leak after the run"
+    );
+}
+
+#[tokio::test]
+async fn runner_rejects_spawn_beyond_max_depth() {
+    let provider = ScriptedProvider::new(vec![text_response("should not be called")]);
+    let parent = make_parent(provider.clone(), vec![]);
+    let def = make_def_named_tools(&[]);
+
+    let result = with_parent_context(parent, async {
+        with_spawn_depth(MAX_SPAWN_DEPTH, async {
+            run_subagent(&def, "x", SubagentRunOptions::default()).await
+        })
+        .await
+    })
+    .await;
+
+    assert!(matches!(
+        result,
+        Err(SubagentRunError::SpawnDepthExceeded {
+            attempted_depth,
+            max_depth
+        }) if attempted_depth == MAX_SPAWN_DEPTH + 1 && max_depth == MAX_SPAWN_DEPTH
+    ));
+    assert!(
+        provider.captured.lock().is_empty(),
+        "depth rejection must happen before provider dispatch"
+    );
+    assert_eq!(
+        current_spawn_depth(),
+        0,
+        "depth task-local must not leak after rejection"
+    );
+}
+
+#[tokio::test]
 async fn typed_mode_model_override_pins_exact_model_for_spawn() {
     let provider = ScriptedProvider::new(vec![text_response("ok")]);
     let parent = make_parent(provider.clone(), vec![]);
@@ -697,6 +976,91 @@ async fn typed_mode_emits_child_progress_events_when_sink_attached() {
     assert_eq!(tool_done[0].0, tool_starts[0].0, "matching call_id pair");
     assert!(tool_done[0].1, "stub tool returns ok");
     assert_eq!(tool_done[0].2, 1);
+}
+
+/// A sub-agent's streamed visible text and reasoning are forwarded to the
+/// parent's progress sink as `SubagentTextDelta` / `SubagentThinkingDelta`
+/// events tagged with the child's `agent_id` / `task_id`, in order, and
+/// the concatenated text deltas reconstruct the final assistant text. The
+/// web-channel bridge turns these into `subagent_text_delta` /
+/// `subagent_thinking_delta` socket events the parent thread renders live.
+#[tokio::test]
+async fn typed_mode_forwards_child_text_and_thinking_deltas() {
+    use crate::openhuman::agent::progress::AgentProgress;
+
+    let provider = ScriptedProvider::new(vec![text_response_with_reasoning(
+        "the final answer",
+        "let me reason about this",
+    )]);
+    let mut parent = make_parent(provider, vec![]);
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<AgentProgress>(64);
+    parent.on_progress = Some(tx);
+
+    let def = make_def_named_tools(&[]);
+    let outcome = with_parent_context(parent, async {
+        run_subagent(&def, "answer me", SubagentRunOptions::default()).await
+    })
+    .await
+    .expect("runner should succeed");
+    assert_eq!(outcome.output, "the final answer");
+
+    let mut events = Vec::new();
+    while let Some(ev) = rx.recv().await {
+        events.push(ev);
+    }
+
+    let thinking: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            AgentProgress::SubagentThinkingDelta {
+                agent_id,
+                task_id,
+                delta,
+                iteration,
+            } => Some((agent_id.clone(), task_id.clone(), delta.clone(), *iteration)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(thinking.len(), 1, "one thinking delta forwarded");
+    assert_eq!(thinking[0].2, "let me reason about this");
+    assert_eq!(thinking[0].3, 1, "tagged with the child iteration");
+    assert!(!thinking[0].1.is_empty(), "carries the child task id");
+
+    let text: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            AgentProgress::SubagentTextDelta {
+                agent_id,
+                task_id,
+                delta,
+                iteration,
+            } => Some((agent_id.clone(), task_id.clone(), delta.clone(), *iteration)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(text.len(), 1, "one text delta forwarded");
+    assert_eq!(text[0].2, "the final answer");
+    assert_eq!(text[0].3, 1);
+    // Same child identity on both delta kinds so the UI attributes them to
+    // one subagent row.
+    assert_eq!(text[0].0, thinking[0].0, "same agent_id");
+    assert_eq!(text[0].1, thinking[0].1, "same task_id");
+
+    // Ordering: the thinking delta precedes the text delta within the
+    // iteration, matching the provider's emission order.
+    let thinking_pos = events
+        .iter()
+        .position(|e| matches!(e, AgentProgress::SubagentThinkingDelta { .. }))
+        .unwrap();
+    let text_pos = events
+        .iter()
+        .position(|e| matches!(e, AgentProgress::SubagentTextDelta { .. }))
+        .unwrap();
+    assert!(
+        thinking_pos < text_pos,
+        "thinking streams before visible text"
+    );
 }
 
 /// Runs without an attached sink must remain backwards compatible — the
@@ -906,11 +1270,12 @@ fn resolve_subagent_provider_hint_with_config_routes_via_factory() {
     // `{workload}-v1` synthesis.
     use crate::openhuman::config::Config;
     let mut config = Config::default();
-    // Route `agentic` to OpenHuman backend explicitly. The backend
-    // returns the configured default_model, which we set to a known
-    // string so the assertion is meaningful.
+    // Route `agentic` to OpenHuman backend explicitly. The backend returns
+    // the configured default_model. Use `coding-v1` — a recognized tier
+    // that the factory validation accepts and that differs from the old
+    // `agentic-v1` synthesis, making the assertion meaningful.
     config.agentic_provider = Some("openhuman".to_string());
-    config.default_model = Some("agentic-specific-model".to_string());
+    config.default_model = Some("coding-v1".to_string());
 
     let parent: Arc<dyn Provider> = ScriptedProvider::new(vec![]);
     let (_resolved_provider, resolved_model) = super::resolve_subagent_provider(
@@ -923,7 +1288,7 @@ fn resolve_subagent_provider_hint_with_config_routes_via_factory() {
         None,
     );
     assert_eq!(
-        resolved_model, "agentic-specific-model",
+        resolved_model, "coding-v1",
         "Hint must use the factory-resolved exact model, not synthesise `agentic-v1` \
          and not fall back to parent's model"
     );
@@ -996,5 +1361,99 @@ fn unsigned_in_user_fails_probe() {
     assert!(
         !user_is_signed_in_to_composio(&config),
         "user with neither backend session nor direct key must NOT be reported as signed in"
+    );
+}
+
+/// Sanity-check: a parent agent delegating to a sub-agent must complete
+/// without panicking, even on a worker thread with a tight stack — this
+/// is the same recursion shape that crashed the
+/// `chat-harness-subagent` Playwright lane in production with
+/// `thread 'tokio-rt-worker' has overflowed its stack, fatal runtime
+/// error: stack overflow`.
+///
+/// The deep ground-truth regression catcher for this is the
+/// `chat-harness-subagent.spec.ts` Playwright spec, which exercises the
+/// real orchestrator → researcher dispatch end-to-end (real provider
+/// stream, real config load, real tool registry). The scripted unit
+/// path here has much smaller per-frame state than production, so a
+/// single stack size doesn't cleanly bracket boxed-vs-unboxed — we use
+/// the loose 1 MiB worker stack as a smoke check that the dispatch
+/// path remains poll-bounded after refactors. See `subagent_runner/
+/// ops.rs` `Box::pin` callsites for the structural fix.
+#[test]
+fn nested_subagent_dispatch_runs_on_a_constrained_worker_stack() {
+    use async_trait::async_trait;
+    use std::sync::Arc;
+
+    struct RecursiveDelegateTool {
+        inner_def: AgentDefinition,
+    }
+
+    #[async_trait]
+    impl Tool for RecursiveDelegateTool {
+        fn name(&self) -> &str {
+            "delegate_inner"
+        }
+        fn description(&self) -> &str {
+            "Dispatches a nested sub-agent — reproduces the recursive engine poll."
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({"type":"object","properties":{}})
+        }
+        fn permission_level(&self) -> PermissionLevel {
+            PermissionLevel::Execute
+        }
+        async fn execute(&self, _args: serde_json::Value) -> anyhow::Result<ToolResult> {
+            let outcome = run_subagent(&self.inner_def, "inner go", SubagentRunOptions::default())
+                .await
+                .map_err(|e| anyhow::anyhow!("nested run_subagent failed: {e}"))?;
+            Ok(ToolResult::success(outcome.output))
+        }
+    }
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .thread_stack_size(1024 * 1024)
+        .enable_all()
+        .build()
+        .expect("build constrained-stack tokio runtime");
+
+    let outcome = runtime.block_on(async {
+        // Three scripted responses, shared by outer + inner runs
+        // (providers are Arc-cloned, so both pull from the same queue):
+        //   [0] outer round 1: call `delegate_inner`
+        //   [1] inner round 1: return final text
+        //   [2] outer round 2: return final text using the tool result
+        let provider = ScriptedProvider::new(vec![
+            tool_response("delegate_inner", "{}"),
+            text_response("inner-final"),
+            text_response("outer-final: inner-final"),
+        ]);
+
+        let inner_def = make_def_named_tools(&[]);
+        let delegate_tool: Box<dyn Tool> = Box::new(RecursiveDelegateTool { inner_def });
+        let parent = make_parent(
+            Arc::clone(&(provider.clone() as Arc<dyn Provider>)),
+            vec![delegate_tool],
+        );
+        let outer_def = make_def_named_tools(&["delegate_inner"]);
+
+        with_parent_context(parent, async {
+            run_subagent(&outer_def, "outer go", SubagentRunOptions::default()).await
+        })
+        .await
+    });
+
+    let outcome = outcome.expect(
+        "nested run_subagent must complete on a 1 MiB worker stack — \
+         a stack overflow here means the recursion boundary in \
+         `run_typed_mode` regressed (see `Box::pin` callsites around \
+         `run_inner_loop` and `run_turn_engine`).",
+    );
+    assert!(
+        outcome.output.contains("inner-final"),
+        "outer should fold the inner sub-agent's result into its final \
+         answer, got: {}",
+        outcome.output
     );
 }

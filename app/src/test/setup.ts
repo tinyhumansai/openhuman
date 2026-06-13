@@ -84,6 +84,24 @@ function ensureStorage(name: 'localStorage' | 'sessionStorage') {
 ensureStorage('localStorage');
 ensureStorage('sessionStorage');
 
+// Polyfill window.matchMedia — used by Rive (@rive-app/react-webgl2) and
+// some media-query hooks; not implemented in jsdom.
+if (typeof window.matchMedia === 'undefined') {
+  Object.defineProperty(window, 'matchMedia', {
+    writable: true,
+    value: vi.fn((query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })),
+  });
+}
+
 // Polyfill ResizeObserver for cmdk/Radix components in jsdom
 if (typeof globalThis.ResizeObserver === 'undefined') {
   globalThis.ResizeObserver = class ResizeObserver {
@@ -112,7 +130,10 @@ if (typeof Element !== 'undefined' && !Element.prototype.scrollIntoView) {
 // Mock Tauri APIs (not available in test env)
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(), isTauri: vi.fn(() => false) }));
 
-vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(), emit: vi.fn() }));
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: vi.fn().mockResolvedValue(vi.fn()),
+  emit: vi.fn(),
+}));
 
 vi.mock('@tauri-apps/plugin-deep-link', () => ({ onOpenUrl: vi.fn(), getCurrent: vi.fn() }));
 
@@ -159,14 +180,26 @@ vi.mock('../utils/config', () => ({
   E2E_DEFAULT_CORE_MODE: '',
   E2E_RESTART_APP_AS_RELOAD: false,
   DEV_FORCE_ONBOARDING: false,
+  CHAT_ATTACHMENTS_ENABLED: true,
   SKILLS_GITHUB_REPO: 'test/skills',
+  GA_MEASUREMENT_ID: undefined,
+  OPENPANEL_API_URL: 'https://panel.tinyhumans.ai/api',
+  OPENPANEL_CLIENT_ID: undefined,
   SENTRY_DSN: undefined,
+  SENTRY_RELEASE: 'openhuman@test',
+  SENTRY_SMOKE_TEST: false,
   BACKEND_URL: mockApiUrl,
   TELEGRAM_BOT_USERNAME: 'openhuman_bot',
   LATEST_APP_DOWNLOAD_URL: 'https://github.com/tinyhumansai/openhuman/releases/latest',
   APP_VERSION: '0.0.0-test',
+  APP_BINARY_VERSION: '0.0.0-test',
+  APP_ENVIRONMENT: 'test',
+  BUILD_SHA: 'test',
+  CORE_CARGO_VERSION: '0.0.0-test',
+  TAURI_CARGO_VERSION: '0.0.0-test',
   DEV_JWT_TOKEN: undefined,
-  MASCOT_VOICE_ID: 'ljX1ZrXuDIIRVcmiVSyR',
+  MASCOT_VOICE_ID: 'JBFqnCBsd6RMkjVDRZzb',
+  MASCOT_VOICE_MODEL_ID: 'eleven_multilingual_v2',
 }));
 
 vi.mock('../services/backendUrl', () => ({
@@ -226,9 +259,14 @@ vi.mock('@sentry/react', () => ({
   setUser: vi.fn(),
 }));
 
-// Silence console during tests to keep output clean
+// Silence console during tests to keep output clean. `debug`/`info` are
+// included because error-path diagnostics across the app (e.g. VoicePanel
+// "voice settings load failed", threadSlice "title refresh failed") use
+// `console.debug`, which otherwise floods the test output with expected noise.
 if (!process.env.DEBUG_TESTS) {
   vi.spyOn(console, 'log').mockImplementation(() => {});
+  vi.spyOn(console, 'info').mockImplementation(() => {});
+  vi.spyOn(console, 'debug').mockImplementation(() => {});
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   vi.spyOn(console, 'error').mockImplementation(() => {});
 }

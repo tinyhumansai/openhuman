@@ -44,12 +44,12 @@ const LocalAIStep = ({ onNext, onBack: _onBack, onDownloadError }: LocalAIStepPr
     // Fire-and-forget: start bootstrap in the background — the global snackbar tracks progress.
     void bootstrapLocalAiWithRecommendedPreset(false, '[LocalAIStep]').catch((err: unknown) => {
       console.warn('[LocalAIStep] Local AI bootstrap failed:', err);
-      onDownloadError?.('Local AI setup encountered an issue');
+      onDownloadError?.(t('onboarding.localAI.setupIssue'));
     });
 
     // Advance to next step immediately
     onNext({ consentGiven: true, downloadStarted: true });
-  }, [onNext, onDownloadError]);
+  }, [onNext, onDownloadError, t]);
 
   const handleSkip = useCallback(() => {
     console.debug('[LocalAIStep] skipping local AI — using cloud fallback');
@@ -64,9 +64,9 @@ const LocalAIStep = ({ onNext, onBack: _onBack, onDownloadError }: LocalAIStepPr
   // Low-RAM device: show cloud fallback option as the primary path.
   if (recommendDisabled) {
     return (
-      <div className="rounded-2xl border border-stone-200 bg-white p-8 shadow-soft animate-fade-up">
+      <div className="rounded-2xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-8 shadow-soft animate-fade-up">
         <div className="flex flex-col items-center mb-5">
-          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary-50 mb-3">
+          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary-50 dark:bg-primary-500/15 mb-3">
             <svg
               className="h-8 w-8 text-primary-500"
               fill="none"
@@ -80,38 +80,51 @@ const LocalAIStep = ({ onNext, onBack: _onBack, onDownloadError }: LocalAIStepPr
               />
             </svg>
           </div>
-          <h1 className="text-xl font-bold mb-2 text-stone-900">{t('onboarding.localAI')}</h1>
-          <p className="text-stone-600 text-sm text-center">{t('onboarding.localAIDesc')}</p>
+          <h1 className="text-xl font-bold mb-2 text-stone-900 dark:text-neutral-100">
+            {t('onboarding.localAI')}
+          </h1>
+          <p className="text-stone-600 dark:text-neutral-300 text-sm text-center">
+            {t('onboarding.localAIDesc')}
+          </p>
         </div>
 
         <div className="space-y-2 mb-5">
-          <div className="rounded-xl border border-primary-200 bg-primary-50 px-3 py-2">
-            <p className="text-xs text-stone-700">
+          <div className="rounded-xl border border-primary-200 dark:border-primary-500/30 bg-primary-50 dark:bg-primary-500/15 px-3 py-2">
+            <p className="text-xs text-stone-700 dark:text-neutral-200">
               <span className="font-semibold">{t('onboarding.localAI')}</span>
-              <span className="text-stone-600">&nbsp;— {t('onboarding.localAIDesc')}</span>
+              <span className="text-stone-600 dark:text-neutral-300">
+                &nbsp;— {t('onboarding.localAIDesc')}
+              </span>
             </p>
           </div>
-          <div className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-2">
-            <p className="text-xs text-stone-700">
+          <div className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-3 py-2">
+            <p className="text-xs text-stone-700 dark:text-neutral-200">
               <span className="font-semibold">{t('common.download')}</span>
-              <span className="text-stone-600">&nbsp;— {t('misc.downloading')}</span>
+              <span className="text-stone-600 dark:text-neutral-300">
+                &nbsp;— {t('misc.downloading')}
+              </span>
             </p>
           </div>
-          <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
-            <p className="text-xs text-stone-700">
+          <div className="rounded-xl border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 px-3 py-2">
+            <p className="text-xs text-stone-700 dark:text-neutral-200">
               <span className="font-semibold">{t('welcome.connect')}</span>
-              <span className="text-stone-600">&nbsp;— {t('onboarding.localAIDesc')}</span>
+              <span className="text-stone-600 dark:text-neutral-300">
+                &nbsp;— {t('onboarding.localAIDesc')}
+              </span>
             </p>
           </div>
         </div>
 
-        <OnboardingNextButton label="Continue with Cloud" onClick={handleSkip} />
+        <OnboardingNextButton
+          label={t('onboarding.localAI.continueWithCloud')}
+          onClick={handleSkip}
+        />
 
         <button
           type="button"
           onClick={handleConsent}
-          className="mt-3 w-full text-center text-xs text-stone-400 hover:text-stone-600 transition-colors">
-          Use local AI anyway (not recommended for your device)
+          className="mt-3 w-full text-center text-xs text-stone-400 dark:text-neutral-500 hover:text-stone-600 dark:text-neutral-300 transition-colors">
+          {t('onboarding.localAI.useLocalAnyway')}
         </button>
       </div>
     );
@@ -120,9 +133,9 @@ const LocalAIStep = ({ onNext, onBack: _onBack, onDownloadError }: LocalAIStepPr
   // Sufficient RAM: local AI is opt-in. Present cloud as the primary path and
   // local AI as an explicit choice for users who want full privacy.
   return (
-    <div className="rounded-2xl border border-stone-200 bg-white p-8 shadow-soft animate-fade-up">
+    <div className="rounded-2xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-8 shadow-soft animate-fade-up">
       <div className="flex flex-col items-center mb-5">
-        <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary-50 mb-3">
+        <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary-50 dark:bg-primary-500/15 mb-3">
           <svg
             className="h-8 w-8 text-primary-500"
             fill="none"
@@ -136,38 +149,51 @@ const LocalAIStep = ({ onNext, onBack: _onBack, onDownloadError }: LocalAIStepPr
             />
           </svg>
         </div>
-        <h1 className="text-xl font-bold mb-2 text-stone-900">{t('onboarding.localAI')}</h1>
-        <p className="text-stone-600 text-sm text-center">{t('onboarding.localAIDesc')}</p>
+        <h1 className="text-xl font-bold mb-2 text-stone-900 dark:text-neutral-100">
+          {t('onboarding.localAI')}
+        </h1>
+        <p className="text-stone-600 dark:text-neutral-300 text-sm text-center">
+          {t('onboarding.localAIDesc')}
+        </p>
       </div>
 
       <div className="space-y-2 mb-5">
-        <div className="rounded-xl border border-primary-200 bg-primary-50 px-3 py-2">
-          <p className="text-xs text-stone-700">
+        <div className="rounded-xl border border-primary-200 dark:border-primary-500/30 bg-primary-50 dark:bg-primary-500/15 px-3 py-2">
+          <p className="text-xs text-stone-700 dark:text-neutral-200">
             <span className="font-semibold">{t('onboarding.localAI')}</span>
-            <span className="text-stone-600">&nbsp;— {t('onboarding.localAIDesc')}</span>
+            <span className="text-stone-600 dark:text-neutral-300">
+              &nbsp;— {t('onboarding.localAIDesc')}
+            </span>
           </p>
         </div>
-        <div className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-2">
-          <p className="text-xs text-stone-700">
+        <div className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-3 py-2">
+          <p className="text-xs text-stone-700 dark:text-neutral-200">
             <span className="font-semibold">{t('onboarding.localAI')}</span>
-            <span className="text-stone-600">&nbsp;— {t('onboarding.localAIDesc')}</span>
+            <span className="text-stone-600 dark:text-neutral-300">
+              &nbsp;— {t('onboarding.localAIDesc')}
+            </span>
           </p>
         </div>
-        <div className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-2">
-          <p className="text-xs text-stone-700">
+        <div className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-3 py-2">
+          <p className="text-xs text-stone-700 dark:text-neutral-200">
             <span className="font-semibold">{t('common.refresh')}</span>
-            <span className="text-stone-600">&nbsp;— {t('onboarding.localAIDesc')}</span>
+            <span className="text-stone-600 dark:text-neutral-300">
+              &nbsp;— {t('onboarding.localAIDesc')}
+            </span>
           </p>
         </div>
       </div>
 
-      <OnboardingNextButton label="Continue with Cloud" onClick={handleSkip} />
+      <OnboardingNextButton
+        label={t('onboarding.localAI.continueWithCloud')}
+        onClick={handleSkip}
+      />
 
       <button
         type="button"
         onClick={handleConsent}
-        className="mt-3 w-full text-center text-xs text-stone-400 hover:text-stone-600 transition-colors">
-        Use local AI instead (connect Ollama now)
+        className="mt-3 w-full text-center text-xs text-stone-400 dark:text-neutral-500 hover:text-stone-600 dark:text-neutral-300 transition-colors">
+        {t('onboarding.localAI.useLocalInstead')}
       </button>
     </div>
   );

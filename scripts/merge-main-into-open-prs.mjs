@@ -23,7 +23,7 @@ Options:
   --pr <number>               Restrict to one PR number. May be passed multiple times.
   --include-drafts            Include draft PRs (default: false)
   --execute                   Actually merge and push. Dry-run by default.
-  --help                      Show this message.
+  -h, --help                  Show this message.
 
 Examples:
   node scripts/merge-main-into-open-prs.mjs
@@ -79,7 +79,7 @@ function parseArgs(argv) {
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
-    if (arg === '--help') {
+    if (arg === '--help' || arg === '-h') {
       printUsage();
       process.exit(0);
     }

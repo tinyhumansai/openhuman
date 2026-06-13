@@ -7,9 +7,12 @@ import {
   getDefaultEnabledTools,
   getEnabledRustToolNames,
   getToolsByCategory,
+  normalizeEnabledToolList,
   TOOL_CATEGORIES,
 } from '../../../utils/toolDefinitions';
+import Button from '../../ui/Button';
 import SettingsHeader from '../components/SettingsHeader';
+import { SettingsRow, SettingsSection, SettingsStatusLine, SettingsSwitch } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 interface ToolsPanelProps {
@@ -38,7 +41,14 @@ const ToolsPanel = ({ embedded = false }: ToolsPanelProps = {}) => {
   useEffect(() => {
     if (savingRef.current) return;
     const persisted = onboardingTasks?.enabledTools;
-    const enabledList = persisted && persisted.length > 0 ? persisted : getDefaultEnabledTools();
+    // normalizeEnabledToolList converts persisted Rust tool names (e.g.
+    // "web_search_tool") back to UI toggle IDs ("web_search") so the
+    // includes() check below works regardless of what format was saved
+    // (fixes #2742: web_search toggle auto-reverts to OFF).
+    const enabledList =
+      persisted && persisted.length > 0
+        ? normalizeEnabledToolList(persisted)
+        : getDefaultEnabledTools();
     const map: Record<string, boolean> = {};
     for (const cat of TOOL_CATEGORIES) {
       for (const tool of toolsByCategory[cat]) {
@@ -87,7 +97,7 @@ const ToolsPanel = ({ embedded = false }: ToolsPanelProps = {}) => {
   };
 
   return (
-    <div>
+    <div className="z-10 relative">
       {!embedded && (
         <SettingsHeader
           title={t('settings.features.tools')}
@@ -97,69 +107,59 @@ const ToolsPanel = ({ embedded = false }: ToolsPanelProps = {}) => {
         />
       )}
 
-      <div className={embedded ? 'space-y-4' : 'p-4 space-y-4'}>
-        <p className="text-stone-500 text-sm">{t('settings.tools.chooseCapabilities')}</p>
+      <div className={embedded ? 'space-y-4' : 'p-4 pt-2 space-y-4'}>
+        <p className="text-neutral-500 dark:text-neutral-400 text-sm">
+          {t('settings.tools.chooseCapabilities')}
+        </p>
 
         <div className="max-h-[420px] overflow-y-auto pr-1 space-y-4">
           {TOOL_CATEGORIES.map(category => {
             const tools = toolsByCategory[category];
             if (tools.length === 0) return null;
             return (
-              <div key={category}>
-                <div className="mb-2">
-                  <h2 className="text-xs font-semibold uppercase tracking-wide text-stone-500">
-                    {category}
-                  </h2>
-                  <p className="text-xs text-stone-400">{CATEGORY_DESCRIPTIONS[category]}</p>
-                </div>
-                <div className="space-y-1">
-                  {tools.map(tool => (
-                    <button
-                      key={tool.id}
-                      type="button"
-                      onClick={() => toggle(tool.id)}
-                      className="w-full flex items-center justify-between p-2.5 rounded-xl border border-stone-200 bg-white hover:border-stone-300 transition-colors text-left">
-                      <div className="min-w-0 flex-1">
-                        <span className="text-sm font-medium text-stone-900">
-                          {tool.displayName}
-                        </span>
-                        <p className="text-xs text-stone-500 mt-0.5">{tool.description}</p>
-                      </div>
-                      <div
-                        className={`ml-3 flex-shrink-0 w-9 h-5 rounded-full transition-colors relative ${
-                          enabled[tool.id] ? 'bg-sage-500' : 'bg-stone-200'
-                        }`}>
-                        <div
-                          className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${
-                            enabled[tool.id] ? 'translate-x-4' : 'translate-x-0.5'
-                          }`}
-                        />
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              </div>
+              <SettingsSection
+                key={category}
+                title={category}
+                description={CATEGORY_DESCRIPTIONS[category]}>
+                {tools.map(tool => (
+                  <SettingsRow
+                    key={tool.id}
+                    htmlFor={`tool-switch-${tool.id}`}
+                    label={tool.displayName}
+                    description={tool.description}
+                    control={
+                      <SettingsSwitch
+                        id={`tool-switch-${tool.id}`}
+                        checked={Boolean(enabled[tool.id])}
+                        onCheckedChange={() => toggle(tool.id)}
+                        aria-label={tool.displayName}
+                      />
+                    }
+                  />
+                ))}
+              </SettingsSection>
             );
           })}
         </div>
 
         {dirty && (
-          <button
+          <Button
             type="button"
-            onClick={handleSave}
-            disabled={saving}
-            className="mt-4 w-full py-2 rounded-xl bg-primary-600 text-white text-sm font-medium hover:bg-primary-500 transition-colors disabled:opacity-50">
-            {saving ? 'Saving...' : t('settings.tools.saveChanges')}
-          </button>
+            variant="primary"
+            size="md"
+            className="w-full"
+            onClick={() => void handleSave()}
+            disabled={saving}>
+            {saving ? t('autonomy.statusSaving') : t('settings.tools.saveChanges')}
+          </Button>
         )}
-        {saveStatus === 'saved' && (
-          <p className="text-xs text-center text-green-600 mt-1">
-            {t('settings.tools.preferencesSaved')}
-          </p>
-        )}
-        {saveStatus === 'error' && (
-          <p className="text-xs text-center text-red-500 mt-1">{t('settings.tools.saveFailed')}</p>
-        )}
+
+        <SettingsStatusLine
+          saving={false}
+          savedNote={saveStatus === 'saved' ? t('settings.tools.preferencesSaved') : null}
+          error={saveStatus === 'error' ? t('settings.tools.saveFailed') : null}
+          savingLabel=""
+        />
       </div>
     </div>
   );

@@ -179,6 +179,67 @@ mod tests {
         assert_eq!(temperature_for_model("gpt-5-turbo", 0.7, &config), None);
     }
 
+    // -- #2076: Moonshot Kimi K2 family — only accepts temperature: 1 -------
+
+    #[test]
+    fn temperature_suppressed_for_kimi_k2() {
+        // Regression for #2076 (146 Sentry events). The upstream API returns
+        //   "invalid temperature: only 1 is allowed for this model"
+        // when a non-1 temperature is sent for any Kimi K2 variant. Omitting
+        // the field entirely is correct — upstream defaults to 1.0.
+        let config = Config::default();
+        assert_eq!(temperature_for_model("kimi-k2.6", 0.7, &config), None);
+        assert_eq!(
+            temperature_for_model("kimi-k2-instruct", 0.5, &config),
+            None
+        );
+        assert_eq!(temperature_for_model("kimi-k2-pro", 1.2, &config), None);
+    }
+
+    #[test]
+    fn temperature_suppressed_for_moonshot_namespaced_kimi() {
+        // OpenRouter and similar gateways namespace Kimi under
+        // `moonshot/...` or `moonshotai/...`. The same temperature
+        // constraint applies regardless of how the model id is namespaced.
+        let config = Config::default();
+        assert_eq!(
+            temperature_for_model("moonshot/kimi-k2.6", 0.7, &config),
+            None
+        );
+        assert_eq!(
+            temperature_for_model("moonshotai/kimi-k2-instruct", 0.5, &config),
+            None
+        );
+        assert_eq!(temperature_for_model("moonshot-v1-8k", 0.3, &config), None);
+    }
+
+    #[test]
+    fn temperature_still_allowed_for_unrelated_models_after_kimi_additions() {
+        // Regression guard: adding the `kimi-k2*` / `moonshot*` patterns
+        // must NOT start suppressing temperature for unrelated models.
+        // Pin a few common ones that share substrings.
+        let config = Config::default();
+        // "ki..." prefix that isn't kimi.
+        assert_eq!(
+            temperature_for_model("kimichat-legacy", 0.7, &config),
+            Some(0.7)
+        );
+        // "moon..." prefix without the rest of the moonshot stem.
+        assert_eq!(
+            temperature_for_model("moonshine-asr", 0.7, &config),
+            Some(0.7)
+        );
+        // Claude / GPT non-5 / Gemini all stay unaffected.
+        assert_eq!(
+            temperature_for_model("claude-sonnet-4.6", 0.5, &config),
+            Some(0.5)
+        );
+        assert_eq!(
+            temperature_for_model("gemini-2.5-pro", 0.3, &config),
+            Some(0.3)
+        );
+    }
+
     #[test]
     fn temperature_uses_custom_unsupported_list() {
         let config = config_with_unsupported(vec!["custom-*".to_string()]);

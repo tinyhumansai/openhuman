@@ -6,7 +6,8 @@
 //! exactly once in the file (so the model can't accidentally edit
 //! every match). Set `replace_all` to override.
 
-use crate::openhuman::security::SecurityPolicy;
+use crate::openhuman::file_state;
+use crate::openhuman::security::{CommandClass, GateDecision, SecurityPolicy};
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
@@ -56,6 +57,13 @@ impl Tool for EditFileTool {
         PermissionLevel::Write
     }
 
+    /// `edit` always modifies an **existing** file → in ask-before-edit it
+    /// routes through the human approval gate; in Full it runs; read-only is
+    /// blocked in `execute`.
+    fn external_effect_with_args(&self, _args: &serde_json::Value) -> bool {
+        self.security.gate_decision(CommandClass::Write) == GateDecision::Prompt
+    }
+
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         let path = args
             .get("path")
@@ -84,17 +92,14 @@ impl Tool for EditFileTool {
         }
 
         if !self.security.can_act() {
-            return Ok(ToolResult::error("Action blocked: autonomy is read-only"));
+            return Ok(ToolResult::error(
+                "[policy-blocked] Action blocked: autonomy is read-only",
+            ));
         }
         if self.security.is_rate_limited() {
             return Ok(ToolResult::error(
                 "Rate limit exceeded: too many actions in the last hour",
             ));
-        }
-        if !self.security.is_path_allowed(path) {
-            return Ok(ToolResult::error(format!(
-                "Path not allowed by security policy: {path}"
-            )));
         }
         if !self.security.record_action() {
             return Ok(ToolResult::error(
@@ -102,7 +107,7 @@ impl Tool for EditFileTool {
             ));
         }
 
-        let full = self.security.workspace_dir.join(path);
+        let full = self.security.action_dir.join(path);
 
         // Symlink check must happen on the *unresolved* path —
         // `canonicalize` resolves symlinks, so checking after that point
@@ -116,16 +121,11 @@ impl Tool for EditFileTool {
             }
         }
 
-        let resolved = match tokio::fs::canonicalize(&full).await {
+        // Security check: validate path string, resolve symlinks, confirm workspace containment.
+        let resolved = match self.security.validate_path(path).await {
             Ok(p) => p,
-            Err(e) => return Ok(ToolResult::error(format!("Failed to resolve path: {e}"))),
+            Err(msg) => return Ok(ToolResult::error(msg)),
         };
-        if !self.security.is_resolved_path_allowed(&resolved) {
-            return Ok(ToolResult::error(format!(
-                "Resolved path escapes workspace: {}",
-                resolved.display()
-            )));
-        }
 
         if let Ok(meta) = tokio::fs::metadata(&resolved).await {
             if meta.len() > MAX_FILE_BYTES {
@@ -133,6 +133,29 @@ impl Tool for EditFileTool {
                     "File too large: {} bytes (limit: {MAX_FILE_BYTES} bytes)",
                     meta.len()
                 )));
+            }
+        }
+
+        // Acquire per-path lock for the read-modify-write section.
+        let _path_guard = file_state::acquire_path_lock(&resolved).await;
+
+        // File-state guard: reject edits based on stale or partial reads.
+        if let Some(agent_id) = file_state::current_file_state_agent_id() {
+            if let Some(msg) = file_state::check_stale_read(&agent_id, &resolved) {
+                tracing::debug!(
+                    agent = %agent_id,
+                    path = %resolved.display(),
+                    "[file_state] edit blocked: stale read"
+                );
+                return Ok(ToolResult::error(msg));
+            }
+            if let Some(msg) = file_state::check_partial_read(&agent_id, &resolved) {
+                tracing::debug!(
+                    agent = %agent_id,
+                    path = %resolved.display(),
+                    "[file_state] edit blocked: partial read"
+                );
+                return Ok(ToolResult::error(msg));
             }
         }
 
@@ -161,9 +184,14 @@ impl Tool for EditFileTool {
         };
 
         match tokio::fs::write(&resolved, &updated).await {
-            Ok(()) => Ok(ToolResult::success(format!(
-                "Edited {path}: {count} replacement(s)"
-            ))),
+            Ok(()) => {
+                if let Some(agent_id) = file_state::current_file_state_agent_id() {
+                    file_state::record_write(&agent_id, resolved);
+                }
+                Ok(ToolResult::success(format!(
+                    "Edited {path}: {count} replacement(s)"
+                )))
+            }
             Err(e) => Ok(ToolResult::error(format!("Failed to write file: {e}"))),
         }
     }
@@ -177,7 +205,8 @@ mod tests {
     fn test_security(workspace: std::path::PathBuf) -> Arc<SecurityPolicy> {
         Arc::new(SecurityPolicy {
             autonomy: AutonomyLevel::Supervised,
-            workspace_dir: workspace,
+            workspace_dir: workspace.clone(),
+            action_dir: workspace,
             ..SecurityPolicy::default()
         })
     }
@@ -185,7 +214,8 @@ mod tests {
     fn test_security_readonly(workspace: std::path::PathBuf) -> Arc<SecurityPolicy> {
         Arc::new(SecurityPolicy {
             autonomy: AutonomyLevel::ReadOnly,
-            workspace_dir: workspace,
+            workspace_dir: workspace.clone(),
+            action_dir: workspace,
             ..SecurityPolicy::default()
         })
     }

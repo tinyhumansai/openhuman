@@ -25,6 +25,7 @@ export default [
       'target/**',
       '**/target/**',
       'dist/**',
+      'dist-web/**',
       'coverage/**',
       'app/**',
       'src-tauri/**',
@@ -253,9 +254,9 @@ export default [
     },
   },
 
-  // E2E test files (Appium/WebDriverIO) — use tsconfig.e2e.json for parsing
+  // E2E test files (WDIO + Playwright) — use tsconfig.e2e.json for parsing
   {
-    files: ['test/e2e/**/*.ts', 'test/wdio.conf.ts'],
+    files: ['test/e2e/**/*.ts', 'test/playwright/**/*.ts', 'test/wdio.conf.ts'],
     languageOptions: {
       parser: tsparser,
       parserOptions: {
@@ -288,6 +289,18 @@ export default [
       ],
       '@typescript-eslint/no-explicit-any': 'off',
       'no-undef': 'off',
+    },
+  },
+
+  // Playwright test helpers/specs are intentionally more permissive:
+  // empty catch blocks are used for best-effort browser-lane fallbacks and
+  // many helpers keep optional args/imports for parity with the WDIO suite.
+  {
+    files: ['test/playwright/**/*.ts'],
+    rules: {
+      'no-empty': 'off',
+      'no-unused-vars': 'off',
+      '@typescript-eslint/no-unused-vars': 'off',
     },
   },
 

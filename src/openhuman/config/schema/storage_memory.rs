@@ -47,6 +47,14 @@ pub struct MemoryConfig {
     pub embedding_model: String,
     #[serde(default = "default_embedding_dims")]
     pub embedding_dimensions: usize,
+    /// Outbound embedding-request budget for cloud providers, in requests per
+    /// minute. Cloud backends (OpenHuman/Voyage, OpenAI, remote `custom:`
+    /// endpoints) cap requests per account; the client throttles to stay under
+    /// that quota rather than tripping 429s. `0` disables throttling. Loopback
+    /// endpoints are always exempt. Env override:
+    /// `OPENHUMAN_MEMORY_EMBED_RATE_LIMIT`.
+    #[serde(default = "default_embedding_rate_limit_per_min")]
+    pub embedding_rate_limit_per_min: u32,
     #[serde(default = "default_min_relevance_score")]
     pub min_relevance_score: f64,
     #[serde(default)]
@@ -97,6 +105,11 @@ fn default_embedding_dims() -> usize {
     // Keep this in sync with `embeddings::cloud::DEFAULT_CLOUD_EMBEDDING_DIMENSIONS`.
     1024
 }
+fn default_embedding_rate_limit_per_min() -> u32 {
+    // Cloud embedding backends cap requests at ~60/min per account. Keep in
+    // sync with `embeddings::rate_limit::DEFAULT_EMBEDDING_RATE_LIMIT_PER_MIN`.
+    60
+}
 fn default_min_relevance_score() -> f64 {
     0.4
 }
@@ -109,6 +122,7 @@ impl Default for MemoryConfig {
             embedding_provider: default_embedding_provider(),
             embedding_model: default_embedding_model(),
             embedding_dimensions: default_embedding_dims(),
+            embedding_rate_limit_per_min: default_embedding_rate_limit_per_min(),
             min_relevance_score: default_min_relevance_score(),
             sqlite_open_timeout_secs: None,
             agentmemory_url: None,
@@ -131,6 +145,10 @@ impl std::fmt::Debug for MemoryConfig {
             .field("embedding_provider", &self.embedding_provider)
             .field("embedding_model", &self.embedding_model)
             .field("embedding_dimensions", &self.embedding_dimensions)
+            .field(
+                "embedding_rate_limit_per_min",
+                &self.embedding_rate_limit_per_min,
+            )
             .field("min_relevance_score", &self.min_relevance_score)
             .field("sqlite_open_timeout_secs", &self.sqlite_open_timeout_secs)
             .field("agentmemory_url", &self.agentmemory_url)
@@ -320,6 +338,25 @@ pub struct MemoryTreeConfig {
     /// Env override: `OPENHUMAN_MEMORY_TREE_CLOUD_LLM_MODEL`.
     #[serde(default = "default_cloud_llm_model")]
     pub cloud_llm_model: Option<String>,
+
+    /// Provider:model string for the smart_walk retrieval agent (e.g.
+    /// `"deepseek:deepseek-chat"`). When set, the smart walk loop uses this
+    /// model instead of the general memory/chat provider. Fast, cheap models
+    /// work best here since the walker makes many short-turn calls.
+    ///
+    /// Env override: `OPENHUMAN_MEMORY_TREE_SMART_WALK_MODEL`.
+    #[serde(default)]
+    pub smart_walk_model: Option<String>,
+
+    /// Explicit opt-in to cloud-based summarization when local AI is disabled.
+    ///
+    /// Default `false` — "Build Summary Trees" was local-only before #002.
+    /// Enabling this routes workspace memory summaries to the configured cloud
+    /// provider. Set to `true` via Settings → AI → Memory or the env var
+    /// `OPENHUMAN_MEMORY_TREE_CLOUD_SUMMARIZATION=true` to acknowledge that
+    /// memory content will be sent to an external service.
+    #[serde(default)]
+    pub cloud_summarization_opt_in: bool,
 }
 
 /// Returns `None` so that existing installs that never opted into Phase 4
@@ -420,6 +457,8 @@ impl Default for MemoryTreeConfig {
             content_dir: default_memory_tree_content_dir(),
             llm_backend: default_llm_backend(),
             cloud_llm_model: default_cloud_llm_model(),
+            smart_walk_model: None,
+            cloud_summarization_opt_in: false,
         }
     }
 }

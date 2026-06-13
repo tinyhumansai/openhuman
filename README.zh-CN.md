@@ -1,5 +1,5 @@
-<p align="right">
-  🌐 <a href="./README.md">English</a> | <a href="./README.zh-CN.md">简体中文</a>
+<p align="center">
+  🇺🇸 <a href="./README.md">English</a> | 🇨🇳 <a href="./README.zh-CN.md">简体中文</a> | 🇯🇵 <a href="./README.ja-JP.md">日本語</a> | 🇰🇷 <a href="./README.ko.md">한국어</a> | 🇩🇪 <a href="./README.de.md">Deutsch</a> | 🇵🇰 <a href="./README.ur-pk.md">اردو</a>
 </p>
 
 <h1 align="center">OpenHuman</h1>
@@ -11,15 +11,16 @@
 <p align="center" style="display: inline-block">
  <a href="https://trendshift.io/repositories/23680" target="_blank" style="display: inline-block">
   <img src="https://trendshift.io/api/badge/repositories/23680" alt="tinyhumansai%2Fopenhuman | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/>
+ </a> 
+ &nbsp;
+ <a href="https://www.producthunt.com/products/openhuman?embed=true&amp;utm_source=badge-top-post-badge&amp;utm_medium=badge&amp;utm_campaign=badge-openhuman" target="_blank" rel="noopener noreferrer">
+  <img alt="OpenHuman - An open source AI harness built with the human in mind | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/top-post-badge.svg?post_id=1136902&amp;theme=light&amp;period=daily&amp;t=1778916022823">
  </a>
-</p>
-
-<p align="center" style="display: inline-block">
- <a href="https://www.producthunt.com/products/openhuman?embed=true&amp;utm_source=badge-featured&amp;utm_medium=badge&amp;utm_campaign=badge-openhuman" target="_blank" rel="noopener noreferrer"><img alt="OpenHuman - An open source AI harness built with the human in mind | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1136902&amp;theme=light&amp;t=1778829432446"></a>
+ 
 </p>
 
 <p align="center">
- <strong>OpenHuman 是你的个人 AI 超级智能。私密、简洁、极其强大。</strong>
+ <strong>OpenHuman 是你的个人 AI 超级智能：本地记忆，按需托管服务，简洁而强大。</strong>
 </p>
 
 
@@ -37,14 +38,20 @@
  <a href="https://github.com/tinyhumansai/openhuman/stargazers"><img src="https://img.shields.io/github/stars/tinyhumansai/openhuman?style=flat" alt="GitHub Stars" /></a>
  <a href="./LICENSE"><img src="https://img.shields.io/github/license/tinyhumansai/openhuman" alt="许可证" /></a>
  <a href="./README.md"><img src="https://img.shields.io/badge/lang-English-blue" alt="English" /></a>
+ <a href="./README.ja-JP.md"><img src="https://img.shields.io/badge/lang-日本語-blue" alt="日本語" /></a>
+ <a href="./README.ko.md"><img src="https://img.shields.io/badge/lang-한국어-blue" alt="한국어" /></a>
+ <a href="./README.de.md"><img src="https://img.shields.io/badge/lang-Deutsch-blue" alt="Deutsch" /></a>
+ <a href="./README.ur-pk.md"><img src="https://img.shields.io/badge/lang-اردو-blue" alt="اردو" /></a>
 </p>
 
 > **早期测试版**：正在积极开发中，可能存在不完善之处。
 
+> **本地 + 托管服务，upfront：** OpenHuman 将记忆树、Obsidian 风格 Markdown 仓库、工作区配置和本地运行时状态存储在你的机器上。默认的托管体验仍然使用 OpenHuman 托管服务进行账户登录、模型路由、网页搜索代理，以及通过 Composio 连接器层的托管集成/OAuth 流程。如果你想自带模型、搜索或 Composio 凭据，请选择自定义/本地设置；某些实时触发器和托管功能仍然需要托管后端。
+
 要安装或开始使用，请从 [tinyhumans.ai/openhuman](https://tinyhumans.ai/openhuman?utm_source=github&utm_medium=readme) 下载，或在终端中运行：
 
 ```bash
-# 从 https://tinyhumans.ai/openhuman?utm_source=github&utm_medium=readme 下载 DMG、EXE，或在终端中运行
+# 从 https://tinyhumans.ai/openhuman 下载 DMG、EXE，或在终端中运行
 
 # macOS 或 Linux x64
 curl -fsSL https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/install.sh | bash
@@ -52,6 +59,12 @@ curl -fsSL https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts
 # Windows
 irm https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/install.ps1 | iex
 ```
+
+<!-- TODO: translate (zh-CN) — English source mirrored from README.md so non-EN readers get the same install caveats. Please translate. -->
+> **Linux:** the AppImage can crash on launch under Wayland (and on Arch-based distros with `sharun: Interpreter not found!`) — see [#2463](https://github.com/tinyhumansai/openhuman/issues/2463) for the cause and env-var workarounds.
+Arch Linux package maintainers can use the [`openhuman-bin` AUR recipe](./packages/arch/openhuman-bin/);
+once published, Arch users can install it with `yay -S openhuman-bin`.
+<!-- /TODO -->
 
 # 什么是 OpenHuman？
 
@@ -61,11 +74,13 @@ OpenHuman 是一个开源智能助手，旨在融入你的日常生活。以下�
 
 - **[118+ 第三方集成](https://tinyhumans.gitbook.io/openhuman/features/integrations) + [自动拉取](https://tinyhumans.gitbook.io/openhuman/features/obsidian-wiki/auto-fetch)**：通过**一键 OAuth** 接入 Gmail、Notion、GitHub、Slack、Stripe、Calendar、Drive、Linear、Jira 以及你技术栈中的其他服务。每个连接都以类型化工具的形式暴露给智能体，核心每 20 分钟遍历每个活跃连接并将新数据拉入[记忆树](https://tinyhumans.gitbook.io/openhuman/features/integrations/auto-fetch)中。无需提示词，无需手动编写轮询循环，智能体在每天早上就已经拥有当天的上下文。
 
+  托管集成使用 OpenHuman 的 Composio 连接器层。OAuth 握手和集成工具调用默认通过托管后端代理。如果你想直接运行 Composio，请使用你自己的 Composio API key 配置直连模式；实时触发器 webhook 则需要由你自行托管和接入。
+
 - **[记忆树](https://tinyhumans.gitbook.io/openhuman/features/memory-tree) + [Obsidian Wiki](https://tinyhumans.gitbook.io/openhuman/features/obsidian-wiki)**：一个基于你的数据和活动构建的本地优先知识库。你连接的所有内容都被规范化为不超过 3k token 的 Markdown 片段，经过评分后折叠成层级化的摘要树，存储在**你本机的 SQLite** 中。同样的片段以 `.md` 文件形式落地到兼容 Obsidian 的仓库中，你可以打开、浏览和编辑，灵感来源于 Karpathy 的 [obsidian-wiki 工作流](https://x.com/karpathy/status/2039805659525644595)。
 
-- **开箱即用**：默认内置网络搜索、网页抓取[爬虫](https://tinyhumans.gitbook.io/openhuman/features/native-tools)、完整的编码工具集（文件系统、git、lint、test、grep）以及[原生语音](https://tinyhumans.gitbook.io/openhuman/features/voice)（STT 输入、ElevenLabs TTS 输出、吉祥物口型同步、实时 Google Meet 智能体）。[模型路由](https://tinyhumans.gitbook.io/openhuman/features/model-routing)在一个订阅下将每个任务分派到合适的 LLM（推理型、快速型或视觉型）。没有"安装插件才能读文件"的摩擦。[可选通过 Ollama 使用本地 AI](https://tinyhumans.gitbook.io/openhuman/features/model-routing/local-ai) 处理端侧工作负载。
+- **开箱即用**：默认内置网络搜索、网页抓取[爬虫](https://tinyhumans.gitbook.io/openhuman/features/native-tools)、完整的编码工具集（文件系统、git、lint、test、grep）以及[原生语音](https://tinyhumans.gitbook.io/openhuman/features/voice)（STT 输入、ElevenLabs TTS 输出、吉祥物口型同步、实时 Google Meet 智能体）。默认情况下，[模型路由](https://tinyhumans.gitbook.io/openhuman/features/model-routing)使用 OpenHuman 后端来选择和代理每个工作负载的合适 LLM（推理型、快速型或视觉型）。一个订阅包含所有模型。没有"安装插件才能读文件"的摩擦。[可选通过 Ollama 使用本地 AI](https://tinyhumans.gitbook.io/openhuman/features/model-routing/local-ai) 处理端侧工作负载。
 
-- **[智能 Token 压缩（TokenJuice）](https://tinyhumans.gitbook.io/openhuman/features/token-compression)**：每个工具调用、抓取结果、邮件正文和搜索载荷在触达任何 LLM 模型之前都会经过 token 压缩层处理。HTML 被转换为 Markdown，长 URL 被缩短，非 ASCII 字符被移除等等。你获得相同的信息，但 token 消耗仅为原来的几分之一。最多可降低 80% 的成本和延迟。
+- **[智能 Token 压缩（TokenJuice）](https://tinyhumans.gitbook.io/openhuman/features/token-compression)**：每个工具调用、抓取结果、邮件正文和搜索载荷在触达任何 LLM 模型之前都会经过 token 压缩层处理。HTML 被转换为 Markdown，长 URL 被缩短，冗长的工具输出会通过可配置的规则层去重并摘要等等。中文、emoji 等多字节字符按字形（grapheme）完整保留，绝不丢弃。你获得相同的信息，但 token 消耗仅为原来的几分之一。最多可降低 80% 的成本和延迟。
 
 - **[消息渠道](https://tinyhumans.gitbook.io/openhuman/features/integrations#messaging-channels)** 与 **[隐私与安全](https://tinyhumans.gitbook.io/openhuman/features/privacy-and-security)**：通过你日常使用的渠道进行收发，工作流数据保留在设备上，本地加密，始终属于你。
 

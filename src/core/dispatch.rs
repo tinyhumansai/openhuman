@@ -96,15 +96,72 @@ pub async fn dispatch(
 fn try_core_dispatch(
     state: &AppState,
     method: &str,
-    _params: serde_json::Value,
+    params: serde_json::Value,
 ) -> Option<Result<InvocationResult, String>> {
     match method {
         "core.ping" => Some(InvocationResult::ok(json!({ "ok": true }))),
         "core.version" => Some(InvocationResult::ok(
             json!({ "version": state.core_version }),
         )),
+        "core.events_subscribe_token" => Some(handle_events_subscribe_token(params)),
         _ => None,
     }
+}
+
+/// Mint a single-shot bind token for the SSE `/events` stream.
+///
+/// Browser `EventSource` cannot attach an `Authorization` header, so an
+/// authenticated holder of the per-process RPC bearer first asks for a
+/// short-lived token here (this RPC is gated by the same bearer-token
+/// middleware as the rest of `/rpc`) and then opens
+/// `/events?client_id=<id>&token=<bind>`. The `/events` handler removes
+/// the token from the store on first use, so a leaked URL cannot be
+/// replayed by a second subscriber.
+fn handle_events_subscribe_token(params: serde_json::Value) -> Result<InvocationResult, String> {
+    let obj = params.as_object();
+    let client_id = obj
+        .and_then(|m| m.get("client_id"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| {
+            log::warn!(
+                "[events-bind] reject mint: missing or empty client_id (param_keys={:?})",
+                obj.map(|m| m.keys().collect::<Vec<_>>())
+            );
+            "missing or empty 'client_id' parameter".to_string()
+        })?;
+    let ttl = obj
+        .and_then(|m| m.get("ttl_secs"))
+        .and_then(|v| v.as_u64())
+        .map(std::time::Duration::from_secs);
+
+    let issued =
+        crate::core::event_bind_tokens::issue(client_id.to_string(), ttl).ok_or_else(|| {
+            log::warn!(
+                "[events-bind] reject mint: store at capacity (client_id_len={} ttl_secs={:?})",
+                client_id.len(),
+                ttl.map(|d| d.as_secs())
+            );
+            "events bind-token store at capacity; try again shortly".to_string()
+        })?;
+
+    let ttl_remaining_secs = issued
+        .valid_until
+        .checked_duration_since(std::time::Instant::now())
+        .unwrap_or_default()
+        .as_secs();
+
+    log::debug!(
+        "[events-bind] minted token for client_id_len={} ttl_secs={}",
+        client_id.len(),
+        ttl_remaining_secs
+    );
+
+    InvocationResult::ok(json!({
+        "token": issued.token,
+        "ttl_secs": ttl_remaining_secs,
+    }))
 }
 
 async fn try_registry_dispatch(

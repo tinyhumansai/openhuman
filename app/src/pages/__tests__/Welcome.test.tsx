@@ -10,14 +10,18 @@ import {
   clearStoredCoreToken,
   storeRpcUrl,
 } from '../../utils/configPersistence';
+import { PRIVACY_POLICY_URL, TERMS_OF_USE_URL } from '../../utils/links';
+import { openUrl } from '../../utils/openUrl';
 import Welcome from '../Welcome';
+
+const mockStoreSessionToken = vi.fn().mockResolvedValue(undefined);
+
+vi.mock('../../providers/CoreStateProvider', () => ({
+  useCoreState: () => ({ storeSessionToken: mockStoreSessionToken }),
+}));
 
 const oauthButtonSpy = vi.fn();
 const oauthOverrideSpy = vi.fn();
-
-vi.mock('../../components/RotatingTetrahedronCanvas', () => ({
-  default: () => <div data-testid="welcome-logo" />,
-}));
 
 vi.mock('../../components/oauth/OAuthProviderButton', () => ({
   default: ({
@@ -52,12 +56,20 @@ vi.mock('../../components/oauth/providerConfigs', () => ({
 
 vi.mock('../../store/deepLinkAuthState', () => ({ useDeepLinkAuthState: vi.fn() }));
 
+const mockNavigate = vi.fn();
+vi.mock('react-router-dom', async () => {
+  const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
+  return { ...actual, useNavigate: () => mockNavigate };
+});
+
 const { mockClearAllAppData } = vi.hoisted(() => ({
   mockClearAllAppData: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock('../../utils/clearAllAppData', () => ({
   clearAllAppData: (...args: unknown[]) => mockClearAllAppData(...args),
 }));
+
+vi.mock('../../utils/openUrl', () => ({ openUrl: vi.fn().mockResolvedValue(undefined) }));
 
 vi.mock('../../services/coreRpcClient', () => ({
   clearCoreRpcUrlCache: vi.fn(),
@@ -98,6 +110,7 @@ describe('Welcome auth entrypoint', () => {
   beforeEach(() => {
     oauthButtonSpy.mockReset();
     oauthOverrideSpy.mockReset();
+    vi.mocked(openUrl).mockClear();
     vi.mocked(useDeepLinkAuthState).mockReturnValue({
       isProcessing: false,
       errorMessage: null,
@@ -114,6 +127,22 @@ describe('Welcome auth entrypoint', () => {
     expect(screen.getByRole('button', { name: 'github' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'twitter' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'discord' })).not.toBeInTheDocument();
+  });
+
+  it('renders legal links with valid targets and opens them externally', () => {
+    renderWithProviders(<Welcome />);
+
+    const termsLink = screen.getByRole('link', { name: 'Terms' });
+    const privacyLink = screen.getByRole('link', { name: 'Privacy Policy' });
+
+    expect(termsLink).toHaveAttribute('href', TERMS_OF_USE_URL);
+    expect(privacyLink).toHaveAttribute('href', PRIVACY_POLICY_URL);
+
+    fireEvent.click(termsLink);
+    fireEvent.click(privacyLink);
+
+    expect(openUrl).toHaveBeenNthCalledWith(1, TERMS_OF_USE_URL);
+    expect(openUrl).toHaveBeenNthCalledWith(2, PRIVACY_POLICY_URL);
   });
 
   it('delegates OAuth clicks to OAuthProviderButton without an override', () => {
@@ -290,5 +319,59 @@ describe('Welcome — OAuth buttons presence', () => {
     renderWithProviders(<Welcome />);
 
     expect(screen.queryByRole('button', { name: 'google' })).not.toBeInTheDocument();
+  });
+});
+
+describe('Welcome — local login', () => {
+  beforeEach(() => {
+    mockStoreSessionToken.mockReset().mockResolvedValue(undefined);
+    mockNavigate.mockReset();
+    vi.mocked(useDeepLinkAuthState).mockReturnValue({
+      isProcessing: false,
+      errorMessage: null,
+      requiresAppDataReset: false,
+    });
+  });
+
+  it('renders the "Continue locally" button regardless of runtime mode', () => {
+    renderWithProviders(<Welcome />);
+
+    expect(screen.getByRole('button', { name: /Continue locally/i })).toBeInTheDocument();
+  });
+
+  it('renders the "Continue locally" button in cloud mode too', () => {
+    renderWithProviders(<Welcome />, {
+      preloadedState: { coreMode: { mode: { kind: 'cloud', url: 'http://x', token: 't' } } },
+    });
+
+    expect(screen.getByRole('button', { name: /Continue locally/i })).toBeInTheDocument();
+  });
+
+  it('calls storeSessionToken with a local session token and navigates to /home', async () => {
+    renderWithProviders(<Welcome />);
+
+    const localBtn = screen.getByRole('button', { name: /Continue locally/i });
+    fireEvent.click(localBtn);
+
+    await waitFor(() => {
+      expect(mockStoreSessionToken).toHaveBeenCalledTimes(1);
+    });
+    const [tokenArg, userArg] = mockStoreSessionToken.mock.calls[0];
+    expect(tokenArg).toContain('local');
+    expect(userArg).toEqual(expect.objectContaining({ id: 'local' }));
+    expect(mockNavigate).toHaveBeenCalledWith('/onboarding/custom/inference', { replace: true });
+  });
+
+  it('shows error when storeSessionToken rejects', async () => {
+    mockStoreSessionToken.mockRejectedValueOnce(new Error('token save failed'));
+
+    renderWithProviders(<Welcome />);
+
+    const localBtn = screen.getByRole('button', { name: /Continue locally/i });
+    fireEvent.click(localBtn);
+
+    await waitFor(() => {
+      expect(screen.getByText(/token save failed/)).toBeInTheDocument();
+    });
   });
 });

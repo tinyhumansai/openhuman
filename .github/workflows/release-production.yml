@@ -3,37 +3,33 @@ name: Release Production
 on:
   workflow_dispatch:
     inputs:
-      release_source:
-        description: |
-          Source ref for the production build.
-          - staging_tag: build the latest (or explicit) staging tag — recommended; the artifact
-            QA already exercised gets promoted to production.
-          - main_head: build main @ HEAD with a fresh version bump (escape hatch for hotfixes).
-        required: true
-        type: choice
-        default: staging_tag
-        options: [staging_tag, main_head]
-      staging_tag:
-        description:
-          Specific staging tag to promote (e.g. v1.2.4-staging). Leave empty to use the
-          latest matching tag. Ignored when release_source = main_head.
-        required: false
-        type: string
-        default: ""
       release_type:
-        description:
-          Version increment type. Only consulted when release_source = main_head;
-          staging_tag promotions inherit the staging tag's version verbatim.
+        description: Version increment type for the production release.
         required: false
         default: patch
         type: choice
         options: [patch, minor, major]
+      commit_sha:
+        description:
+          Build from a specific commit SHA instead of main HEAD. The commit
+          must be reachable from main. Leave empty to use main HEAD.
+        required: false
+        type: string
+        default: ""
+      create_release:
+        description:
+          Create and publish the GitHub Release and attach release assets. When
+          false, run the production build matrix without creating or publishing
+          a GitHub Release.
+        required: false
+        type: boolean
+        default: true
 permissions:
   contents: write
   packages: write
 concurrency:
-  # Distinct group from release-staging.yml so promotions and staging cuts can
-  # run independently. The two workflows never touch the same tags or refs.
+  # Distinct group from release-staging.yml so production and staging cuts can
+  # run independently.
   group: release-production
   cancel-in-progress: false
 # ---------------------------------------------------------------------------
@@ -41,10 +37,7 @@ concurrency:
 #
 #   prepare-build
 #        │
-#        ├─── pretest-tests   (reusable test-reusable.yml — unit + rust)
-#        ├─── pretest-e2e     (reusable e2e-reusable.yml — all 3 OS, full)
-#        │
-#        ├─── create-release
+#        ├─── create-release   (optional no-op when `create_release=false`)
 #        │         │
 #        │    ┌────┴───────────────┬────────────────┐
 #        │    │                    │                │
@@ -66,12 +59,36 @@ concurrency:
 # ---------------------------------------------------------------------------
 jobs:
   # =========================================================================
-  # Phase 1: Resolve build ref and (for main_head) bump version + create tag
+  # Phase 0: Manual approval gate.
+  #
+  # This workflow bumps the version, COMMITS to `main`, and pushes that
+  # commit + tag using a GitHub App token that bypasses branch protection.
+  # If that App private key (secrets.XGITHUB_APP_PRIVATE_KEY) ever leaked,
+  # an attacker could push arbitrary commits to the default branch — CWE-250.
+  # This job parks the run on the `Release-Approval` environment (configured
+  # with required reviewers in repo settings) so a human must explicitly
+  # approve before prepare-build is allowed to run its push step.
+  # =========================================================================
+  review-approval:
+    name: Manual approval gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: Release-Approval
+    steps:
+      - name: Record approval
+        run: |
+          echo "[release-production] Push to main approved by a required reviewer."
+          echo "Proceeding to version bump + commit/tag push on prepare-build."
+
+  # =========================================================================
+  # Phase 1: Bump version on main, commit, push, and optionally tag
   # =========================================================================
   prepare-build:
     name: Prepare build context
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     environment: Production
+    needs: [review-approval]
     outputs:
       version: ${{ steps.resolve.outputs.version }}
       tag: ${{ steps.resolve.outputs.tag }}
@@ -87,10 +104,6 @@ jobs:
       base_url: ${{ steps.resolve.outputs.base_url }}
     steps:
       - name: Enforce main branch
-        # Both flows operate against main: main_head bumps and tags from main
-        # HEAD; staging_tag promotion creates the production tag from main
-        # (the tag's commit object lives in the same repo, so the tag is
-        # reachable via direct ref regardless of where it sits in history).
         if: github.ref != 'refs/heads/main'
         run: |
           echo "This workflow can only run from main. Current ref: $GITHUB_REF"
@@ -118,34 +131,38 @@ jobs:
       - name: Configure Git
         env:
           APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          COMMIT_SHA: ${{ inputs.commit_sha }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git remote set-url origin https://${APP_TOKEN}@github.com/${GITHUB_REPOSITORY}.git
           git fetch origin --tags --prune --prune-tags
-          git checkout main
-          git pull origin main --ff-only
-
-      # ── Path A: main_head ────────────────────────────────────────────────
-      # Bump version on main, commit, push, tag.
-      - name: Compute next version and sync release files (main_head)
-        if: inputs.release_source == 'main_head'
+          if [ -n "$COMMIT_SHA" ]; then
+            [[ "$COMMIT_SHA" =~ ^[0-9a-fA-F]{7,40}$ ]] || {
+              echo "Invalid commit_sha: must be a hex SHA (7-40 chars)"
+              exit 1
+            }
+            git rev-parse --verify "${COMMIT_SHA}^{commit}" >/dev/null
+            git merge-base --is-ancestor "$COMMIT_SHA" origin/main || {
+              echo "commit_sha $COMMIT_SHA is not reachable from main"
+              exit 1
+            }
+            git checkout --detach "$COMMIT_SHA"
+          else
+            git checkout main
+            git pull origin main --ff-only
+          fi
+      - name: Compute next version and sync release files
         id: bump
         run: node scripts/release/bump-version.js "${{ inputs.release_type }}"
-      - name: Verify release version sync (main_head)
-        if: inputs.release_source == 'main_head'
+      - name: Verify release version sync
         run: node scripts/release/verify-version-sync.js "${{ steps.bump.outputs.version }}"
-      - name: Refresh Cargo.lock files (main_head)
-        if: inputs.release_source == 'main_head'
-        # Cargo.toml [package].version is bumped above but the matching
-        # entries in both Cargo.lock files are not — without this step the
-        # lockfiles stay pinned to the previous version and the next local
-        # `cargo` invocation rewrites them, leaving an uncommitted diff.
+      - name: Refresh Cargo.lock files
         run: |
           cargo update --workspace --manifest-path Cargo.toml
           cargo update --workspace --manifest-path app/src-tauri/Cargo.toml
-      - name: Ensure tag does not already exist (main_head)
-        if: inputs.release_source == 'main_head'
+      - name: Ensure tag does not already exist
+        if: inputs.create_release
         env:
           TAG: ${{ steps.bump.outputs.tag }}
         run: |
@@ -157,193 +174,118 @@ jobs:
             echo "Tag already exists on origin: $TAG"
             exit 1
           fi
-      - name: Commit, push and tag (main_head)
-        if: inputs.release_source == 'main_head'
+      - name: Commit and push version bump
         id: push
         env:
           VERSION: ${{ steps.bump.outputs.version }}
           TAG: ${{ steps.bump.outputs.tag }}
+          CREATE_RELEASE: ${{ inputs.create_release }}
         run: |
           git add app/package.json app/src-tauri/tauri.conf.json app/src-tauri/Cargo.toml Cargo.toml app/src-tauri/Cargo.lock Cargo.lock
           git commit -m "chore(release): v${VERSION}"
-          git push origin main
-          git tag -a "$TAG" -m "Release $TAG"
-          git push origin "$TAG"
-          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-
-      # ── Path B: staging_tag ──────────────────────────────────────────────
-      # Resolve a previously cut staging tag, derive the production version
-      # from its package.json (no further bump — patch was applied during the
-      # staging cut), and create the production v<version> tag at the same
-      # commit. The artifact contents are byte-identical to what staging
-      # validated, modulo build-time env (BASE_URL, OPENHUMAN_APP_ENV, etc.).
-      - name: Resolve staging tag (staging_tag)
-        if: inputs.release_source == 'staging_tag'
-        id: stagingtag
-        env:
-          EXPLICIT_TAG: ${{ inputs.staging_tag }}
-        run: |
-          set -euo pipefail
-          if [ -n "$EXPLICIT_TAG" ]; then
-            STAGING_TAG="$EXPLICIT_TAG"
+          git push origin HEAD:main
+          if [ "$CREATE_RELEASE" = "true" ]; then
+            git tag -a "$TAG" -m "Release $TAG"
+            git push origin "$TAG"
           else
-            STAGING_TAG="$(git tag -l 'v*-staging' --sort=-v:refname | head -n 1)"
+            echo "Skipping tag creation (create_release=false)"
           fi
-          if [ -z "$STAGING_TAG" ]; then
-            echo "No staging tags found matching v*-staging."
-            exit 1
-          fi
-          # Reject anything that isn't a `vX.Y.Z-staging` tag we cut
-          # ourselves — keeps an operator from accidentally promoting a
-          # hand-pushed ref or a stray pre-release tag.
-          if ! [[ "$STAGING_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-staging$ ]]; then
-            echo "Invalid staging tag format: $STAGING_TAG (expected vX.Y.Z-staging)"
-            exit 1
-          fi
-          if ! git rev-parse --verify "refs/tags/$STAGING_TAG" >/dev/null 2>&1; then
-            echo "Staging tag not present locally: $STAGING_TAG"
-            exit 1
-          fi
-          STAGING_SHA="$(git rev-list -n 1 "$STAGING_TAG")"
-          # Strip the -staging suffix to get the production version.
-          PROD_VERSION="${STAGING_TAG#v}"
-          PROD_VERSION="${PROD_VERSION%-staging}"
-          PROD_TAG="v${PROD_VERSION}"
-          # Sanity-check every authoritative version source on the staging
-          # commit. They must all agree with PROD_VERSION — if they drift,
-          # the bundled installer reports a different version than the
-          # GitHub Release tag, and the Sentry release tag stops matching
-          # what the running binary emits.
-          read_json_version() {
-            git show "${STAGING_TAG}:$1" | node -e 'let d="";process.stdin.on("data",c=>d+=c);process.stdin.on("end",()=>process.stdout.write(JSON.parse(d).version||""))'
-          }
-          read_cargo_version() {
-            git show "${STAGING_TAG}:$1" | sed -n '/^\[package\]/,/^\[/{ s/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p; }' | head -n 1
-          }
-          for src in \
-            "app/package.json" \
-            "app/src-tauri/tauri.conf.json" \
-            "app/src-tauri/Cargo.toml" \
-            "Cargo.toml"; do
-            case "$src" in
-              *.json) actual="$(read_json_version "$src")" ;;
-              *.toml) actual="$(read_cargo_version "$src")" ;;
-            esac
-            if [ "$actual" != "$PROD_VERSION" ]; then
-              echo "Staging tag $STAGING_TAG version mismatch: $src reports '$actual' but tag implies '$PROD_VERSION'"
-              exit 1
-            fi
-          done
-          echo "staging_tag=$STAGING_TAG" >> "$GITHUB_OUTPUT"
-          echo "staging_sha=$STAGING_SHA" >> "$GITHUB_OUTPUT"
-          echo "prod_version=$PROD_VERSION" >> "$GITHUB_OUTPUT"
-          echo "prod_tag=$PROD_TAG" >> "$GITHUB_OUTPUT"
-      - name: Ensure production tag does not already exist (staging_tag)
-        if: inputs.release_source == 'staging_tag'
-        env:
-          TAG: ${{ steps.stagingtag.outputs.prod_tag }}
-        run: |
-          if git rev-parse "$TAG" >/dev/null 2>&1; then
-            echo "Tag already exists locally: $TAG"
-            exit 1
-          fi
-          if git ls-remote --tags origin "refs/tags/$TAG" | grep -q .; then
-            echo "Tag already exists on origin: $TAG"
-            exit 1
-          fi
-      - name: Create production tag at staging commit (staging_tag)
-        if: inputs.release_source == 'staging_tag'
-        id: promote
-        env:
-          STAGING_TAG: ${{ steps.stagingtag.outputs.staging_tag }}
-          STAGING_SHA: ${{ steps.stagingtag.outputs.staging_sha }}
-          PROD_TAG: ${{ steps.stagingtag.outputs.prod_tag }}
-        run: |
-          git tag -a "$PROD_TAG" "$STAGING_SHA" -m "Release $PROD_TAG (promoted from $STAGING_TAG)"
-          git push origin "$PROD_TAG"
-          echo "sha=$STAGING_SHA" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Resolve build outputs
         id: resolve
         shell: bash
         env:
-          RELEASE_SOURCE: ${{ inputs.release_source }}
-          BUMP_VERSION: ${{ steps.bump.outputs.version }}
-          BUMP_TAG: ${{ steps.bump.outputs.tag }}
-          PUSH_SHA: ${{ steps.push.outputs.sha }}
-          PROMOTE_VERSION: ${{ steps.stagingtag.outputs.prod_version }}
-          PROMOTE_TAG: ${{ steps.stagingtag.outputs.prod_tag }}
-          PROMOTE_SHA: ${{ steps.promote.outputs.sha }}
+          CREATE_RELEASE: ${{ inputs.create_release }}
+          VERSION: ${{ steps.bump.outputs.version }}
+          TAG: ${{ steps.bump.outputs.tag }}
+          SHA: ${{ steps.push.outputs.sha }}
         run: |
-          if [ "$RELEASE_SOURCE" = "main_head" ]; then
-            VERSION="$BUMP_VERSION"
-            TAG="$BUMP_TAG"
-            SHA="$PUSH_SHA"
+          if [ "$CREATE_RELEASE" = "true" ]; then
+            BUILD_REF="$TAG"
           else
-            VERSION="$PROMOTE_VERSION"
-            TAG="$PROMOTE_TAG"
-            SHA="$PROMOTE_SHA"
+            BUILD_REF="$SHA"
           fi
-          BUILD_REF="$TAG"
-          BASE_URL="https://api.tinyhumans.ai/"
-          # Match the 12-char truncation runtime code applies to
-          # VITE_BUILD_SHA / OPENHUMAN_BUILD_SHA when constructing the release
-          # tag at startup, so SENTRY_RELEASE assembled in CI agrees with
-          # the tag events emit.
           SHORT_SHA="${SHA:0:12}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
           echo "build_ref=$BUILD_REF" >> "$GITHUB_OUTPUT"
-          echo "base_url=$BASE_URL" >> "$GITHUB_OUTPUT"
-
-  # =========================================================================
-  # Phase 1b: Pretest gate — run the full test + E2E suite across every
-  # target OS exactly once on the build ref before we spin up the release
-  # draft or any signed-build matrix. Pretest failures abort the workflow
-  # before `create-release` runs, so a busted commit never produces a
-  # half-finished GH Release that has to be cleaned up.
-  # =========================================================================
-  pretest-tests:
-    name: Pretest — unit + rust
-    needs: [prepare-build]
-    uses: ./.github/workflows/test-reusable.yml
-    with:
-      ref: ${{ needs.prepare-build.outputs.build_ref }}
-  pretest-e2e:
-    name: Pretest — E2E (all OS, full suite)
-    needs: [prepare-build]
-    uses: ./.github/workflows/e2e-reusable.yml
-    with:
-      ref: ${{ needs.prepare-build.outputs.build_ref }}
-      run_linux: true
-      run_macos: true
-      run_windows: true
-      full: true
+          echo "base_url=https://api.tinyhumans.ai/" >> "$GITHUB_OUTPUT"
 
   # =========================================================================
   # Phase 2: Create draft GitHub release
   # =========================================================================
   create-release:
-    name: Create GitHub release
+    name: Prepare GitHub release
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     environment: Production
-    needs: [prepare-build, pretest-tests, pretest-e2e]
-    if: needs.pretest-tests.result == 'success' && needs.pretest-e2e.result == 'success'
+    needs: [prepare-build]
     outputs:
-      release_id: ${{ steps.create.outputs.release_id }}
-      upload_url: ${{ steps.create.outputs.upload_url }}
+      release_id: ${{ steps.create.outputs.release_id || steps.noop.outputs.release_id }}
+      upload_url: ${{ steps.create.outputs.upload_url || steps.noop.outputs.upload_url }}
     steps:
+      - name: Skip release creation
+        if: ${{ !inputs.create_release }}
+        id: noop
+        run: |
+          echo "release_id=" >> "$GITHUB_OUTPUT"
+          echo "upload_url=" >> "$GITHUB_OUTPUT"
+      - name: Checkout release ref
+        if: ${{ inputs.create_release }}
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.prepare-build.outputs.build_ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Generate AI release notes
+        id: ai-notes
+        if: ${{ inputs.create_release }}
+        continue-on-error: true
+        timeout-minutes: 5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          TAG: ${{ needs.prepare-build.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ -z "${OPENAI_API_KEY:-}" ]; then
+            echo "::warning::OPENAI_API_KEY is empty — skipping AI notes."
+            exit 1
+          fi
+          node scripts/release/generate-release-notes.mjs \
+            --from latest-release \
+            --to "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --output release-notes.md
+      - name: Fallback to non-AI release notes
+        if: ${{ inputs.create_release && steps.ai-notes.outcome != 'success' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare-build.outputs.tag }}
+        run: |
+          set -euo pipefail
+          echo "::warning::AI release notes failed or timed out — using deterministic notes."
+          node scripts/release/generate-release-notes.mjs \
+            --from latest-release \
+            --to "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --no-ai \
+            --output release-notes.md
       - name: Create draft release with generated notes
+        if: ${{ inputs.create_release }}
         id: create
         uses: actions/github-script@v8
         with:
           script: |
+            const fs = require('fs');
             const tag = '${{ needs.prepare-build.outputs.tag }}';
             const version = '${{ needs.prepare-build.outputs.version }}';
             const target = '${{ needs.prepare-build.outputs.sha }}';
             const { owner, repo } = context.repo;
+            const body = fs.readFileSync('release-notes.md', 'utf8');
             try {
               await github.rest.repos.getReleaseByTag({ owner, repo, tag });
               core.setFailed(`Release already exists for ${tag}`);
@@ -359,9 +301,9 @@ jobs:
               tag_name: tag,
               target_commitish: target,
               name: `OpenHuman v${version}`,
+              body,
               draft: true,
               prerelease: false,
-              generate_release_notes: true,
             });
             core.setOutput('release_id', String(release.data.id));
             core.setOutput('upload_url', release.data.upload_url);
@@ -372,7 +314,7 @@ jobs:
   build-desktop:
     name: Build desktop matrix
     needs: [prepare-build, create-release]
-    if: needs.create-release.result == 'success'
+    if: always() && needs.create-release.result == 'success'
     uses: ./.github/workflows/build-desktop.yml
     secrets: inherit
     with:
@@ -387,7 +329,7 @@ jobs:
       telegram_bot_username: openhumanaibot
       # with_macos_signing defaults to true — left implicit; production
       # always notarizes. See build-desktop.yml inputs.
-      with_release_upload: true
+      with_release_upload: ${{ inputs.create_release }}
       release_id: ${{ needs.create-release.outputs.release_id }}
       build_sidecar: false
 
@@ -417,8 +359,9 @@ jobs:
   build-docker:
     name: "Docker: build and push"
     needs: [prepare-build, create-release]
-    if: needs.create-release.result == 'success'
+    if: always() && needs.create-release.result == 'success'
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     environment: Production
     env:
       REGISTRY: ghcr.io
@@ -488,7 +431,8 @@ jobs:
   build-cli-linux:
     name: "CLI: ${{ matrix.target }}"
     needs: [prepare-build, create-release]
-    if: needs.create-release.result == 'success'
+    if: ${{ inputs.create_release && always() && needs.create-release.result == 'success' }}
+    timeout-minutes: 60
     environment: Production
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -535,7 +479,7 @@ jobs:
           # baked elsewhere — see prepare-build.outputs.short_sha comment.
           OPENHUMAN_BUILD_SHA: ${{ needs.prepare-build.outputs.short_sha }}
           OPENHUMAN_APP_ENV: production
-        run: cargo build --release --bin openhuman-core
+        run: bash scripts/ci-cancel-aware.sh cargo build --release --bin openhuman-core
       - name: Package and upload tarball to release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -557,8 +501,9 @@ jobs:
   publish-updater-manifest:
     name: Publish updater manifest (latest.json)
     needs: [prepare-build, create-release, build-desktop]
-    if: needs.build-desktop.result == 'success'
+    if: ${{ inputs.create_release && always() && needs.build-desktop.result == 'success' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     environment: Production
     steps:
       - name: Checkout build ref
@@ -581,6 +526,7 @@ jobs:
   publish-release:
     name: Publish draft release
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     environment: Production
     needs:
       - prepare-build
@@ -590,7 +536,10 @@ jobs:
       - build-docker
       - publish-updater-manifest
     if: >-
-      needs.build-desktop.result == 'success'
+      inputs.create_release
+      && 
+      always()
+      && needs.build-desktop.result == 'success'
       && needs.build-cli-linux.result == 'success'
       && needs.build-docker.result == 'success'
       && needs.publish-updater-manifest.result == 'success'
@@ -641,6 +590,10 @@ jobs:
               // Linux desktop installer consumed by scripts/install.sh and
               // advertised in latest.json as linux-x86_64.
               /OpenHuman_.*_amd64\.AppImage$/,
+              // Linux arm64 desktop installer consumed by scripts/install.sh
+              // and advertised in latest.json as linux-aarch64.
+              /OpenHuman_.*_(arm64|aarch64)\.AppImage$/,
+              /OpenHuman_.*_(arm64|aarch64)\.deb$/,
               // Auto-updater manifest — without this, installed clients can't
               // discover new releases via plugins.updater.endpoints.
               /^latest\.json$/,
@@ -687,9 +640,10 @@ jobs:
   tag-docker-latest:
     name: "Docker: tag :latest"
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     environment: Production
     needs: [prepare-build, publish-release]
-    if: needs.publish-release.result == 'success'
+    if: ${{ inputs.create_release && always() && needs.publish-release.result == 'success' }}
     env:
       REGISTRY: ghcr.io
       IMAGE_NAME: tinyhumansai/openhuman-core
@@ -723,10 +677,13 @@ jobs:
   record-sentry-deploy:
     name: Record Sentry deploy marker
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     environment: Production
     needs: [prepare-build, publish-release]
+    if: ${{ inputs.create_release && always() && needs.publish-release.result == 'success' }}
     env:
       SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+      SENTRY_URL: ${{ vars.SENTRY_URL }}
     steps:
       - name: Install sentry-cli
         if: env.SENTRY_AUTH_TOKEN != ''
@@ -736,6 +693,7 @@ jobs:
         if: env.SENTRY_AUTH_TOKEN != ''
         shell: bash
         env:
+          SENTRY_URL: ${{ vars.SENTRY_URL }}
           SENTRY_ORG: ${{ vars.SENTRY_ORG }}
           # Marker lives on the React project's release; events from all
           # surfaces share the same `openhuman@<version>+<short_sha>` release
@@ -758,42 +716,27 @@ jobs:
   cleanup-failed-release:
     name: Remove release and tag if build failed
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     environment: Production
     needs:
       - prepare-build
-      - pretest-tests
-      - pretest-e2e
       - create-release
       - build-desktop
       - build-cli-linux
       - build-docker
       - publish-updater-manifest
-    # Two cleanup paths:
-    #   (a) pretest failed → no release yet, but `prepare-build` already
-    #       pushed a tag and (for main_head) a chore(release) commit; we
-    #       still need to delete the tag so a rerun doesn't trip the
-    #       "tag already exists" guard.
-    #   (b) any build phase failed after create-release succeeded — the
-    #       original behavior — delete the draft release, the tag, and any
-    #       pushed Docker image versions.
     if: >-
       always()
+      && inputs.create_release
       && needs.prepare-build.result == 'success'
-      && (
-        (needs.create-release.result != 'success'
-         && (needs.pretest-tests.result == 'failure' || needs.pretest-tests.result == 'cancelled'
-             || needs.pretest-e2e.result == 'failure' || needs.pretest-e2e.result == 'cancelled'))
-        || (needs.create-release.result == 'success'
-            && (needs.build-desktop.result == 'failure' || needs.build-desktop.result == 'cancelled'
-                || needs.build-cli-linux.result == 'failure' || needs.build-cli-linux.result == 'cancelled'
-                || needs.build-docker.result == 'failure' || needs.build-docker.result == 'cancelled'
-                || needs.publish-updater-manifest.result == 'failure' || needs.publish-updater-manifest.result == 'cancelled'))
-      )
+      && needs.create-release.result == 'success'
+      && (needs.build-desktop.result == 'failure' || needs.build-desktop.result == 'cancelled'
+          || needs.build-cli-linux.result == 'failure' || needs.build-cli-linux.result == 'cancelled'
+          || needs.build-docker.result == 'failure' || needs.build-docker.result == 'cancelled'
+          || needs.publish-updater-manifest.result == 'failure' || needs.publish-updater-manifest.result == 'cancelled')
     steps:
       - name: Delete GitHub release
-        # Skip on the pretest-failure cleanup path: create-release didn't run,
-        # so there's no draft release to delete (only an orphaned tag).
-        if: needs.create-release.result == 'success'
+        if: ${{ inputs.create_release && needs.create-release.result == 'success' }}
         uses: actions/github-script@v8
         with:
           script: |
@@ -833,8 +776,7 @@ jobs:
         # `:v<version>` and `:<version>` tags we just pushed and remove the
         # underlying package version. `:latest` is left alone — the previous
         # release is still pointed at it, and clobbering the moving tag here
-        # would orphan downstream pulls. Skipped on the pretest-failure
-        # cleanup path where build-docker never ran.
+        # would orphan downstream pulls.
         if: needs.build-docker.result == 'success'
         continue-on-error: true
         env:

@@ -20,6 +20,10 @@ fn mm() -> crate::openhuman::config::MultimodalConfig {
     crate::openhuman::config::MultimodalConfig::default()
 }
 
+fn mff() -> crate::openhuman::config::MultimodalFileConfig {
+    crate::openhuman::config::MultimodalFileConfig::default()
+}
+
 struct ArgsCapturingTool {
     name_str: String,
     captured: Arc<Mutex<Vec<serde_json::Value>>>,
@@ -76,8 +80,10 @@ async fn native_tool_call_decodes_json_encoded_arguments_string() {
             id: "c1".into(),
             name: "captured".into(),
             arguments: "{\"city\":\"Berlin\",\"n\":3}".to_string(),
+            extra_content: None,
         }],
         usage: None,
+        reasoning_content: None,
     });
 
     let (tool, captured) = ArgsCapturingTool::new("captured", "captured-ok");
@@ -92,15 +98,16 @@ async fn native_tool_call_decodes_json_encoded_arguments_string() {
         "m",
         0.0,
         true,
-        None,
         "channel",
         &mm(),
+        &mff(),
         3,
         None,
         None,
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .unwrap();
@@ -137,8 +144,10 @@ async fn documents_silent_drop_of_non_json_arguments_string() {
             name: "captured".into(),
             // Not valid JSON — the model "meant" a plain string.
             arguments: "world".to_string(),
+            extra_content: None,
         }],
         usage: None,
+        reasoning_content: None,
     });
 
     let (tool, captured) = ArgsCapturingTool::new("captured", "captured-ok");
@@ -153,15 +162,16 @@ async fn documents_silent_drop_of_non_json_arguments_string() {
         "m",
         0.0,
         true,
-        None,
         "channel",
         &mm(),
+        &mff(),
         3,
         None,
         None,
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .unwrap();
@@ -194,6 +204,7 @@ async fn parallel_tool_calls_in_single_iteration_all_execute() {
         ),
         tool_calls: vec![],
         usage: None,
+        reasoning_content: None,
     });
 
     let (a, a_calls) = ArgsCapturingTool::new("tool_a", "tool_a-ok");
@@ -209,15 +220,16 @@ async fn parallel_tool_calls_in_single_iteration_all_execute() {
         "m",
         0.0,
         true,
-        None,
         "channel",
         &mm(),
+        &mff(),
         5,
         None,
         None,
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .unwrap();
@@ -251,15 +263,16 @@ async fn same_named_tool_in_registry_first_match_wins() {
         "m",
         0.0,
         true,
-        None,
         "channel",
         &mm(),
+        &mff(),
         5,
         None,
         None,
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .unwrap();
@@ -289,6 +302,7 @@ async fn markdown_fenced_tool_call_block_is_parsed() {
         ),
         tool_calls: vec![],
         usage: None,
+        reasoning_content: None,
     });
 
     let (a, a_calls) = ArgsCapturingTool::new("tool_a", "tool_a-ok");
@@ -303,15 +317,16 @@ async fn markdown_fenced_tool_call_block_is_parsed() {
         "m",
         0.0,
         true,
-        None,
         "channel",
         &mm(),
+        &mff(),
         5,
         None,
         None,
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .unwrap();
@@ -340,8 +355,10 @@ async fn native_tool_calls_take_precedence_over_xml_in_text() {
             id: "c1".into(),
             name: "tool_a".into(),
             arguments: "{\"src\":\"native\"}".into(),
+            extra_content: None,
         }],
         usage: None,
+        reasoning_content: None,
     });
 
     let (a, a_calls) = ArgsCapturingTool::new("tool_a", "tool_a-ok");
@@ -356,15 +373,16 @@ async fn native_tool_calls_take_precedence_over_xml_in_text() {
         "m",
         0.0,
         true,
-        None,
         "channel",
         &mm(),
+        &mff(),
         5,
         None,
         None,
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .unwrap();
@@ -415,15 +433,16 @@ async fn per_tool_max_result_size_caps_history_payload() {
         "m",
         0.0,
         true,
-        None,
         "channel",
         &mm(),
+        &mff(),
         5,
         None,
         None,
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .unwrap();
@@ -453,6 +472,7 @@ async fn empty_response_with_no_tool_calls_terminates_with_empty_text() {
         text: Some(String::new()),
         tool_calls: vec![],
         usage: None,
+        reasoning_content: None,
     });
 
     let tools: Vec<Box<dyn Tool>> = vec![];
@@ -466,15 +486,16 @@ async fn empty_response_with_no_tool_calls_terminates_with_empty_text() {
         "m",
         0.0,
         true,
-        None,
         "channel",
         &mm(),
+        &mff(),
         5,
         None,
         None,
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .unwrap();
@@ -509,15 +530,16 @@ async fn progress_sink_emits_lifecycle_events_in_order() {
         "m",
         0.0,
         true,
-        None,
         "channel",
         &mm(),
+        &mff(),
         5,
         None,
         None,
         &[],
         Some(tx),
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .unwrap();

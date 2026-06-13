@@ -1461,3 +1461,353 @@ fn head_tail_n_greater_than_line_count() {
     let result = head_tail(&lines, 5, 5);
     assert_eq!(result, lines);
 }
+
+// --- Rust toolchain reduction integration tests ---
+
+#[test]
+fn cargo_clippy_strips_compiling_preserves_warnings() {
+    let stdout = "\
+   Compiling serde v1.0.200
+   Compiling serde_json v1.0.120
+   Compiling openhuman v0.1.0 (/home/user/project)
+    Checking openhuman v0.1.0 (/home/user/project)
+warning: unused variable: `x`
+ --> src/main.rs:10:9
+  |
+10 |     let x = 42;
+  |         ^ help: if this is intentional, prefix it with an underscore: `_x`
+  |
+  = note: `#[warn(unused_variables)]` on by default
+
+warning: unused import: `std::collections::HashMap`
+ --> src/lib.rs:3:5
+  |
+3  | use std::collections::HashMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: `openhuman` (lib) generated 2 warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.32s
+";
+
+    let input = ToolExecutionInput {
+        tool_name: "exec".to_owned(),
+        argv: Some(vec!["cargo".to_owned(), "clippy".to_owned()]),
+        stdout: Some(stdout.to_owned()),
+        exit_code: Some(0),
+        ..Default::default()
+    };
+    let result = run(input);
+
+    // Warnings must survive
+    assert!(
+        result.inline_text.contains("unused variable"),
+        "clippy warning text must be preserved, got: {}",
+        result.inline_text
+    );
+    assert!(
+        result.inline_text.contains("unused import"),
+        "clippy warning text must be preserved, got: {}",
+        result.inline_text
+    );
+
+    // Compiling noise must be stripped
+    assert!(
+        !result.inline_text.contains("Compiling serde v1.0.200"),
+        "Compiling lines should be stripped, got: {}",
+        result.inline_text
+    );
+    assert!(
+        !result.inline_text.contains("Checking openhuman"),
+        "Checking lines should be stripped, got: {}",
+        result.inline_text
+    );
+
+    // Classification
+    assert_eq!(
+        result.classification.matched_reducer.as_deref(),
+        Some("lint/cargo-clippy")
+    );
+    assert_eq!(result.classification.family, "lint-results");
+
+    // Counters should have counted warnings
+    if let Some(facts) = &result.facts {
+        if let Some(&warning_count) = facts.get("warning") {
+            assert!(
+                warning_count >= 2,
+                "expected at least 2 warnings counted, got {}",
+                warning_count
+            );
+        }
+    }
+}
+
+#[test]
+fn cargo_build_failure_preserves_errors() {
+    let stdout = "\
+   Compiling serde v1.0.200
+   Compiling serde_json v1.0.120
+   Compiling openhuman v0.1.0 (/home/user/project)
+error[E0308]: mismatched types
+ --> src/main.rs:15:20
+  |
+15 |     let x: u32 = \"hello\";
+  |            ---   ^^^^^^^ expected `u32`, found `&str`
+  |            |
+  |            expected due to this
+
+error[E0425]: cannot find value `undefined_var` in this scope
+ --> src/main.rs:20:5
+  |
+20 |     undefined_var
+  |     ^^^^^^^^^^^^^ not found in this scope
+
+error: aborting due to 2 previous errors
+
+Some errors have detailed explanations: E0308, E0425.
+For more information about an error, try `rustc --explain E0308`.
+error: could not compile `openhuman` (bin \"openhuman\") due to 2 previous errors
+";
+
+    let input = ToolExecutionInput {
+        tool_name: "exec".to_owned(),
+        argv: Some(vec!["cargo".to_owned(), "build".to_owned()]),
+        stdout: Some(stdout.to_owned()),
+        exit_code: Some(101),
+        ..Default::default()
+    };
+    let result = run(input);
+
+    // Errors must survive
+    assert!(
+        result.inline_text.contains("mismatched types"),
+        "error diagnostic must be preserved, got: {}",
+        result.inline_text
+    );
+    assert!(
+        result.inline_text.contains("cannot find value"),
+        "error diagnostic must be preserved, got: {}",
+        result.inline_text
+    );
+
+    // Compiling noise must be stripped
+    assert!(
+        !result.inline_text.contains("Compiling serde v1.0.200"),
+        "Compiling lines should be stripped, got: {}",
+        result.inline_text
+    );
+
+    // Classification
+    assert_eq!(
+        result.classification.matched_reducer.as_deref(),
+        Some("build/cargo-build")
+    );
+    assert_eq!(result.classification.family, "build-rust");
+
+    // Error counter
+    if let Some(facts) = &result.facts {
+        if let Some(&error_count) = facts.get("error") {
+            assert!(
+                error_count >= 2,
+                "expected at least 2 errors counted, got {}",
+                error_count
+            );
+        }
+    }
+}
+
+#[test]
+fn cargo_check_classifies_as_cargo_build() {
+    let stdout = "\
+   Checking serde v1.0.200
+   Checking openhuman v0.1.0 (/home/user/project)
+warning: unused variable: `y`
+ --> src/lib.rs:5:9
+  |
+5 |     let y = 10;
+  |         ^
+
+warning: `openhuman` (lib) generated 1 warning
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.23s
+";
+
+    let input = ToolExecutionInput {
+        tool_name: "exec".to_owned(),
+        argv: Some(vec!["cargo".to_owned(), "check".to_owned()]),
+        stdout: Some(stdout.to_owned()),
+        exit_code: Some(0),
+        ..Default::default()
+    };
+    let result = run(input);
+
+    // Should classify as build/cargo-build (not cargo-test)
+    assert_eq!(
+        result.classification.matched_reducer.as_deref(),
+        Some("build/cargo-build"),
+        "cargo check should classify as build/cargo-build"
+    );
+
+    // Checking noise stripped
+    assert!(
+        !result.inline_text.contains("Checking serde"),
+        "Checking lines should be stripped, got: {}",
+        result.inline_text
+    );
+
+    // Warning preserved
+    assert!(
+        result.inline_text.contains("unused variable"),
+        "warnings must be preserved, got: {}",
+        result.inline_text
+    );
+}
+
+#[test]
+fn cargo_fmt_check_preserves_diff_hunks() {
+    let stdout = "\
+Diff in /home/user/project/src/main.rs at line 5:
+-    let     x=42;
++    let x = 42;
+Diff in /home/user/project/src/lib.rs at line 10:
+-fn foo(){
++fn foo() {
+";
+
+    let input = ToolExecutionInput {
+        tool_name: "exec".to_owned(),
+        argv: Some(vec![
+            "cargo".to_owned(),
+            "fmt".to_owned(),
+            "--check".to_owned(),
+        ]),
+        stdout: Some(stdout.to_owned()),
+        exit_code: Some(1),
+        ..Default::default()
+    };
+    let result = run(input);
+
+    // Classification
+    assert_eq!(
+        result.classification.matched_reducer.as_deref(),
+        Some("lint/cargo-fmt"),
+        "cargo fmt should classify as lint/cargo-fmt"
+    );
+    assert_eq!(result.classification.family, "lint-results");
+
+    // Diff headers must survive
+    assert!(
+        result.inline_text.contains("Diff in"),
+        "Diff in lines must be preserved, got: {}",
+        result.inline_text
+    );
+
+    // Counter should count unformatted files
+    if let Some(facts) = &result.facts {
+        if let Some(&file_count) = facts.get("unformatted file") {
+            assert_eq!(
+                file_count, 2,
+                "expected 2 unformatted files counted, got {}",
+                file_count
+            );
+        }
+    }
+}
+
+#[test]
+fn cargo_doc_strips_documenting_noise() {
+    let stdout = "\
+   Compiling serde v1.0.200
+   Compiling openhuman v0.1.0 (/home/user/project)
+ Documenting openhuman v0.1.0 (/home/user/project)
+warning: missing documentation for a public function
+ --> src/lib.rs:10:1
+  |
+10 | pub fn undocumented() {}
+  | ^^^^^^^^^^^^^^^^^^^^^
+
+warning: unresolved link to `NonExistent`
+ --> src/lib.rs:5:10
+  |
+5  | /// See [`NonExistent`]
+  |          ^^^^^^^^^^^^^ no item named `NonExistent` in scope
+
+    Finished `doc` profile [unoptimized + debuginfo] target(s) in 3.45s
+";
+
+    let input = ToolExecutionInput {
+        tool_name: "exec".to_owned(),
+        argv: Some(vec!["cargo".to_owned(), "doc".to_owned()]),
+        stdout: Some(stdout.to_owned()),
+        exit_code: Some(0),
+        ..Default::default()
+    };
+    let result = run(input);
+
+    // Classification
+    assert_eq!(
+        result.classification.matched_reducer.as_deref(),
+        Some("build/cargo-doc"),
+        "cargo doc should classify as build/cargo-doc"
+    );
+    assert_eq!(result.classification.family, "build-rust");
+
+    // Documenting noise stripped
+    assert!(
+        !result.inline_text.contains("Documenting openhuman"),
+        "Documenting lines should be stripped, got: {}",
+        result.inline_text
+    );
+
+    // Compiling noise stripped
+    assert!(
+        !result.inline_text.contains("Compiling serde"),
+        "Compiling lines should be stripped, got: {}",
+        result.inline_text
+    );
+
+    // Warnings preserved
+    assert!(
+        result.inline_text.contains("missing documentation"),
+        "doc warnings must be preserved, got: {}",
+        result.inline_text
+    );
+}
+
+#[test]
+fn cargo_build_success_compacts_output() {
+    // Large successful build output with many Compiling lines — should compress heavily
+    let mut lines = Vec::new();
+    for i in 0..80 {
+        lines.push(format!("   Compiling dep-{} v0.{}.0", i, i));
+    }
+    lines.push("   Compiling my-project v0.1.0 (/home/user/project)".to_owned());
+    lines.push(
+        "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 12.34s".to_owned(),
+    );
+    let stdout = lines.join("\n");
+
+    let input = ToolExecutionInput {
+        tool_name: "exec".to_owned(),
+        argv: Some(vec!["cargo".to_owned(), "build".to_owned()]),
+        stdout: Some(stdout.clone()),
+        exit_code: Some(0),
+        ..Default::default()
+    };
+    let result = run(input);
+
+    // All Compiling lines should be stripped
+    assert!(
+        !result.inline_text.contains("Compiling dep-"),
+        "Compiling lines should be stripped, got: {}",
+        result.inline_text
+    );
+
+    // Output should be significantly shorter than input
+    assert!(
+        result.stats.reduced_chars < result.stats.raw_chars,
+        "expected compaction: reduced={} raw={}",
+        result.stats.reduced_chars,
+        result.stats.raw_chars
+    );
+}

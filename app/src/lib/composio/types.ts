@@ -9,6 +9,17 @@ export interface ComposioToolkitsResponse {
   toolkits: string[];
 }
 
+/**
+ * Sorted list of toolkit slugs that ship a curated agent-ready
+ * catalog on the core side. Used by the Skills grid to label
+ * connected-but-uncurated toolkits as preview / coming soon so
+ * users don't trigger the max-iterations failure documented in
+ * issue #2283.
+ */
+export interface ComposioAgentReadyToolkitsResponse {
+  toolkits: string[];
+}
+
 export interface ComposioConnection {
   id: string;
   toolkit: string;
@@ -36,6 +47,7 @@ export interface ComposioAuthorizeResponse {
 
 export interface ComposioDeleteResponse {
   deleted: boolean;
+  memory_chunks_deleted?: number;
 }
 
 export interface ComposioToolFunction {
@@ -69,6 +81,22 @@ export interface ComposioUserScopePref {
   read: boolean;
   write: boolean;
   admin: boolean;
+}
+
+// ── GitHub repos ──────────────────────────────────────────────────
+
+export interface ComposioGithubRepo {
+  owner: string;
+  repo: string;
+  fullName: string;
+  private?: boolean;
+  defaultBranch?: string;
+  htmlUrl?: string;
+}
+
+export interface ComposioGithubReposResponse {
+  connectionId: string;
+  repositories: ComposioGithubRepo[];
 }
 
 // ── Trigger management ─────────────────────────────────────────────
@@ -134,4 +162,21 @@ export function deriveComposioState(
   if (status === 'EXPIRED') return 'expired';
   if (status === 'FAILED' || status === 'ERROR') return 'error';
   return 'disconnected';
+}
+
+export interface ComposioConnectionsState {
+  primary: ComposioConnectionState;
+  count: number;
+}
+
+/**
+ * Derive composite state from multiple connections for a toolkit.
+ * Uses the first connection's state as primary (caller must ensure
+ * connections are sorted by priority/age), and reports the total count.
+ */
+export function deriveComposioStates(
+  connections: ComposioConnection[] | undefined
+): ComposioConnectionsState {
+  if (!connections || connections.length === 0) return { primary: 'disconnected', count: 0 };
+  return { primary: deriveComposioState(connections[0]), count: connections.length };
 }

@@ -92,6 +92,14 @@ pub fn publish_transcription(text: String) -> usize {
 /// Reads the `dictation` config section and registers the global hotkey.
 /// When the hotkey fires, publishes a `DictationEvent` to the broadcast
 /// channel that the Socket.IO bridge forwards to all connected clients.
+///
+/// **macOS note**: this function is a no-op on macOS. Starting with macOS 26,
+/// `TSMGetInputSourceProperty` is enforced to run on the main dispatch queue;
+/// rdev's CGEventTap callback fires on a background thread and crashes with
+/// `EXC_BREAKPOINT` (`dispatch_assert_queue_fail`) on the first key press. The
+/// Tauri host already registers the shortcut via `tauri-plugin-global-shortcut`
+/// (main-thread-safe) and emits `dictation://toggle` to the frontend, making
+/// the core-side rdev listener redundant on macOS. (#2677)
 pub async fn start_if_enabled(config: &Config) {
     if !config.dictation.enabled {
         log::info!("{LOG_PREFIX} dictation disabled in config, skipping hotkey listener");
@@ -104,13 +112,33 @@ pub async fn start_if_enabled(config: &Config) {
         return;
     }
 
+    // On macOS the rdev listener must not start: rdev's CGEventTap callback
+    // calls TSMGetInputSourceProperty off the main thread, crashing with
+    // EXC_BREAKPOINT on macOS 26 (dispatch_assert_queue_fail). The Tauri host
+    // handles this shortcut via tauri-plugin-global-shortcut instead. (#2677)
+    #[cfg(target_os = "macos")]
+    {
+        log::info!(
+            "{LOG_PREFIX} macOS: skipping rdev hotkey listener — \
+             handled by Tauri host via tauri-plugin-global-shortcut (issue #2677)"
+        );
+        return;
+    }
+
+    // Non-macOS: start the rdev-based listener.
+    #[cfg(not(target_os = "macos"))]
+    start_rdev_listener(hotkey_str, config).await;
+}
+
+#[cfg(not(target_os = "macos"))]
+async fn start_rdev_listener(hotkey_str: String, config: &Config) {
     // Map DictationActivationMode to our hotkey ActivationMode.
     let mode = match config.dictation.activation_mode {
         crate::openhuman::config::DictationActivationMode::Push => ActivationMode::Push,
         crate::openhuman::config::DictationActivationMode::Toggle => ActivationMode::Tap,
     };
 
-    // Normalize the hotkey string for rdev (CmdOrCtrl → cmd on macOS, ctrl on others).
+    // Normalize the hotkey string for rdev (CmdOrCtrl → ctrl on non-macOS).
     let normalized = normalize_hotkey_for_rdev(&hotkey_str);
 
     log::info!(
@@ -307,6 +335,39 @@ mod tests {
         config.dictation.enabled = true;
         config.dictation.hotkey = "not a real hotkey".into();
         start_if_enabled(&config).await;
+    }
+
+    // On macOS the rdev listener must never start — TSMGetInputSourceProperty
+    // must run on the main dispatch queue; rdev fires its callback on a
+    // background thread and crashes with EXC_BREAKPOINT on macOS 26. (#2677)
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn start_if_enabled_is_noop_on_macos_with_valid_hotkey() {
+        let mut config = Config::default();
+        config.dictation.enabled = true;
+        config.dictation.hotkey = "ctrl+space".into();
+        // Must return without panicking or spawning the rdev listener.
+        start_if_enabled(&config).await;
+        // No rdev thread was started: the global handle remains None.
+        let guard = LISTENER_HANDLE.lock().expect("lock");
+        assert!(
+            guard.is_none(),
+            "rdev listener must not be started on macOS"
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn start_if_enabled_is_noop_on_macos_with_fn_hotkey() {
+        let mut config = Config::default();
+        config.dictation.enabled = true;
+        config.dictation.hotkey = "fn".into();
+        start_if_enabled(&config).await;
+        let guard = LISTENER_HANDLE.lock().expect("lock");
+        assert!(
+            guard.is_none(),
+            "rdev listener must not be started on macOS"
+        );
     }
 
     #[test]

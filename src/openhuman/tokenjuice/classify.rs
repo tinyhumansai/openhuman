@@ -484,4 +484,107 @@ mod tests {
         // but confidence should be low (0.2)
         assert_eq!(result.confidence, 0.2);
     }
+
+    // --- Rust toolchain classification tests ---
+
+    #[test]
+    fn cargo_clippy_matches_lint_cargo_clippy() {
+        let rules = load_builtin_rules();
+        let input = make_input("exec", &["cargo", "clippy"]);
+        let result = classify_execution(&input, &rules, None);
+        assert_eq!(
+            result.matched_reducer.as_deref(),
+            Some("lint/cargo-clippy"),
+            "cargo clippy should match lint/cargo-clippy"
+        );
+        assert_eq!(result.family, "lint-results");
+    }
+
+    #[test]
+    fn cargo_clippy_with_flags_matches() {
+        let rules = load_builtin_rules();
+        let input = make_input("exec", &["cargo", "clippy", "--", "-D", "warnings"]);
+        let result = classify_execution(&input, &rules, None);
+        assert_eq!(
+            result.matched_reducer.as_deref(),
+            Some("lint/cargo-clippy"),
+            "cargo clippy with flags should still match lint/cargo-clippy"
+        );
+    }
+
+    #[test]
+    fn cargo_build_matches_build_cargo_build() {
+        let rules = load_builtin_rules();
+        let input = make_input("exec", &["cargo", "build"]);
+        let result = classify_execution(&input, &rules, None);
+        assert_eq!(
+            result.matched_reducer.as_deref(),
+            Some("build/cargo-build"),
+            "cargo build should match build/cargo-build"
+        );
+        assert_eq!(result.family, "build-rust");
+    }
+
+    #[test]
+    fn cargo_check_matches_build_cargo_build() {
+        let rules = load_builtin_rules();
+        let input = make_input("exec", &["cargo", "check"]);
+        let result = classify_execution(&input, &rules, None);
+        assert_eq!(
+            result.matched_reducer.as_deref(),
+            Some("build/cargo-build"),
+            "cargo check should match build/cargo-build via argvIncludesAny"
+        );
+        assert_eq!(result.family, "build-rust");
+    }
+
+    #[test]
+    fn cargo_fmt_matches_lint_cargo_fmt() {
+        let rules = load_builtin_rules();
+        let input = make_input("exec", &["cargo", "fmt", "--check"]);
+        let result = classify_execution(&input, &rules, None);
+        assert_eq!(
+            result.matched_reducer.as_deref(),
+            Some("lint/cargo-fmt"),
+            "cargo fmt should match lint/cargo-fmt"
+        );
+        assert_eq!(result.family, "lint-results");
+    }
+
+    #[test]
+    fn cargo_doc_matches_build_cargo_doc() {
+        let rules = load_builtin_rules();
+        let input = make_input("exec", &["cargo", "doc"]);
+        let result = classify_execution(&input, &rules, None);
+        assert_eq!(
+            result.matched_reducer.as_deref(),
+            Some("build/cargo-doc"),
+            "cargo doc should match build/cargo-doc"
+        );
+        assert_eq!(result.family, "build-rust");
+    }
+
+    #[test]
+    fn cargo_clippy_does_not_match_cargo_test() {
+        let rules = load_builtin_rules();
+        let input = make_input("exec", &["cargo", "clippy"]);
+        let result = classify_execution(&input, &rules, None);
+        assert_ne!(
+            result.matched_reducer.as_deref(),
+            Some("tests/cargo-test"),
+            "cargo clippy must NOT match tests/cargo-test"
+        );
+    }
+
+    #[test]
+    fn cargo_build_does_not_match_cargo_test() {
+        let rules = load_builtin_rules();
+        let input = make_input("exec", &["cargo", "build"]);
+        let result = classify_execution(&input, &rules, None);
+        assert_ne!(
+            result.matched_reducer.as_deref(),
+            Some("tests/cargo-test"),
+            "cargo build must NOT match tests/cargo-test"
+        );
+    }
 }

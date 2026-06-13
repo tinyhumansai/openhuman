@@ -30,6 +30,8 @@ This is the headline use case and has its own page, see [Meeting Agents](meeting
 
 The mascot has mood states (idle, thinking, listening, talking, surprised, dreaming) and it transitions between them based on what the agent is doing. When you start typing it shifts into a listening pose. When the model is reasoning, it shows that. When a tool call returns something noteworthy, it reacts. When you stop interacting for a while, it drifts into idle.
 
+After a turn finishes, the desktop mascot also reads the conversation-level cue that arrives with the chat result. A success cue produces a short happy acknowledgement, uncertainty produces a confused acknowledgement, and warnings or failed outcomes produce a concerned acknowledgement. If no strong cue is present, it keeps the existing calm post-turn acknowledgement and falls back to idle.
+
 It is meant to feel alive, not animated-on-rails.
 
 ### It remembers you

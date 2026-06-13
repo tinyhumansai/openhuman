@@ -1,10 +1,7 @@
 //! Telegram channel — outbound message sending: text chunking, media uploads, reaction sending,
 //! and attachment dispatch.
 
-use super::attachments::{
-    is_http_url, parse_attachment_markers, parse_path_only_attachment, TelegramAttachment,
-    TelegramAttachmentKind,
-};
+use super::attachments::{is_http_url, TelegramAttachment, TelegramAttachmentKind};
 use super::channel_types::TelegramChannel;
 use super::text::split_message_for_telegram;
 use crate::core::event_bus::{publish_global, DomainEvent};

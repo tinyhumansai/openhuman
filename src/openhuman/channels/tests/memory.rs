@@ -7,7 +7,8 @@ use super::super::{traits, Channel};
 use super::common::{HistoryCaptureProvider, NoopMemory, RecordingChannel};
 use crate::openhuman::embeddings::NoopEmbedding;
 use crate::openhuman::inference::provider;
-use crate::openhuman::memory::{Memory, MemoryCategory, UnifiedMemory};
+use crate::openhuman::memory::{Memory, MemoryCategory};
+use crate::openhuman::memory_store::UnifiedMemory;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
@@ -157,6 +158,7 @@ async fn process_channel_message_restores_per_sender_history_on_follow_ups() {
         workspace_dir: Arc::new(std::env::temp_dir()),
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
         multimodal: crate::openhuman::config::MultimodalConfig::default(),
+        multimodal_files: crate::openhuman::config::MultimodalFileConfig::default(),
     });
 
     process_channel_message(
@@ -240,6 +242,7 @@ async fn process_channel_message_uses_autosaved_memory_after_history_is_cleared(
         workspace_dir: Arc::new(std::env::temp_dir()),
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
         multimodal: crate::openhuman::config::MultimodalConfig::default(),
+        multimodal_files: crate::openhuman::config::MultimodalFileConfig::default(),
     });
 
     let first = traits::ChannelMessage {

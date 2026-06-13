@@ -15,6 +15,7 @@ mod security;
 #[path = "types.rs"]
 mod types;
 
+#[allow(unused_imports)]
 pub(super) use action_parser::{
     backend_name, is_computer_use_only_action, is_supported_browser_action, parse_browser_action,
     unavailable_action_for_backend_error,
@@ -831,7 +832,9 @@ impl Tool for BrowserTool {
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         // Security checks
         if !self.security.can_act() {
-            return Ok(ToolResult::error("Action blocked: autonomy is read-only"));
+            return Ok(ToolResult::error(
+                "[policy-blocked] Action blocked: autonomy is read-only",
+            ));
         }
 
         if !self.security.record_action() {

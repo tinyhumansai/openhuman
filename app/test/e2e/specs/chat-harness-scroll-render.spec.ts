@@ -22,7 +22,12 @@
  * thread for the scroll asserts.
  */
 import { waitForApp } from '../helpers/app-helpers';
-import { clickByTitle, clickSend, typeIntoComposer } from '../helpers/chat-harness';
+import {
+  clickByTitle,
+  clickSend,
+  typeIntoComposer,
+  waitForSocketConnected,
+} from '../helpers/chat-harness';
 import { textExists } from '../helpers/element-helpers';
 import { resetApp } from '../helpers/reset-app';
 import { navigateViaHash } from '../helpers/shared-flows';
@@ -89,7 +94,8 @@ async function scrollMessageColumn(top: number): Promise<void> {
 }
 
 describe('Chat harness — scroll + markdown render', () => {
-  before(async () => {
+  before(async function beforeSuite() {
+    this.timeout(90_000);
     await startMockServer();
     await waitForApp();
     await resetApp(USER_ID);
@@ -110,7 +116,8 @@ describe('Chat harness — scroll + markdown render', () => {
   // case rely on state produced by the previous one — a fragile shape
   // CodeRabbit flagged. Keeping the asserts together also keeps the
   // failure-mode obvious: if streaming dies, no later check executes.
-  it('streams long markdown, renders it, auto-anchors to bottom, releases on scroll-up', async () => {
+  it('streams long markdown, renders it, auto-anchors to bottom, releases on scroll-up', async function () {
+    this.timeout(90_000);
     await navigateViaHash('/chat');
     await browser.waitUntil(async () => await textExists('Threads'), {
       timeout: 15_000,
@@ -119,6 +126,12 @@ describe('Chat harness — scroll + markdown render', () => {
     expect(await clickByTitle('New thread', 8_000)).toBe(true);
 
     await typeIntoComposer('Reply with the markdown sample please.');
+    const socketReady = await waitForSocketConnected(30_000);
+    if (!socketReady) {
+      console.warn(
+        '[chat-harness-scroll-render] socket did not connect within 30 s — send may fail'
+      );
+    }
     expect(
       await browser.waitUntil(async () => await clickSend(), {
         timeout: 5_000,

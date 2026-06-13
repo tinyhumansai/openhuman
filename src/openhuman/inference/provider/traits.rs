@@ -59,6 +59,14 @@ pub struct ToolCall {
     pub id: String,
     pub name: String,
     pub arguments: String,
+    /// Provider-specific passthrough metadata for this call, captured from the
+    /// response and echoed back verbatim on the next assistant turn. Carries
+    /// Google Gemini's required `extra_content.google.thought_signature` so
+    /// multi-turn tool calling round-trips without a 400 (TAURI-RUST-4PK).
+    /// `None`/omitted for every provider that doesn't emit it, so non-Gemini
+    /// history stays byte-identical.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extra_content: Option<serde_json::Value>,
 }
 
 /// Token usage information returned by the provider after an inference call.
@@ -81,7 +89,7 @@ pub struct UsageInfo {
 }
 
 /// An LLM response that may contain text, tool calls, or both.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ChatResponse {
     /// Text content of the response (may be empty if only tool calls).
     pub text: Option<String>,
@@ -89,6 +97,15 @@ pub struct ChatResponse {
     pub tool_calls: Vec<ToolCall>,
     /// Token usage info from the provider (if available).
     pub usage: Option<UsageInfo>,
+    /// Raw reasoning/thinking content returned by thinking models (e.g.
+    /// DeepSeek-R1, Qwen3) in the `reasoning_content` field. This must be
+    /// passed back verbatim on the next turn — the API returns HTTP 400
+    /// ("reasoning_content in thinking mode must be passed back") if it is
+    /// omitted from the assistant message in a multi-turn conversation.
+    ///
+    /// Stored separately from `text` so callers can preserve it through
+    /// the conversation history without merging it into the visible reply.
+    pub reasoning_content: Option<String>,
 }
 
 impl ChatResponse {
@@ -160,6 +177,8 @@ pub enum ConversationMessage {
     AssistantToolCalls {
         text: Option<String>,
         tool_calls: Vec<ToolCall>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reasoning_content: Option<String>,
     },
     /// Results of tool executions, fed back to the LLM.
     ToolResults(Vec<ToolResultMessage>),
@@ -439,6 +458,7 @@ pub trait Provider: Send + Sync {
                     text: Some(text),
                     tool_calls: Vec::new(),
                     usage: None,
+                    reasoning_content: None,
                 });
             }
         }
@@ -457,6 +477,7 @@ pub trait Provider: Send + Sync {
             text: Some(text),
             tool_calls: Vec::new(),
             usage: None,
+            reasoning_content: None,
         })
     }
 
@@ -468,6 +489,21 @@ pub trait Provider: Send + Sync {
     /// Whether provider supports multimodal vision input.
     fn supports_vision(&self) -> bool {
         self.capabilities().vision
+    }
+
+    /// Effective context window (in tokens) for `model`, used for
+    /// pre-dispatch history trimming.
+    ///
+    /// Defaults to the static model table
+    /// ([`crate::openhuman::inference::context_window_for_model`]), which
+    /// reflects a model's *trained maximum* context. Local providers
+    /// override this to report the model's **runtime-loaded** window — e.g.
+    /// LM Studio lets the user load a model with a smaller `n_ctx` than its
+    /// trained maximum, and budgeting against the max overflows the loaded
+    /// window so the request is rejected (issue #3550 / Sentry
+    /// TAURI-RUST-6V0). `None` means "unknown — skip pre-dispatch trimming".
+    async fn effective_context_window(&self, model: &str) -> Option<u64> {
+        crate::openhuman::inference::context_window_for_model(model)
     }
 
     /// Warm up the HTTP connection pool (TLS handshake, DNS, HTTP/2 setup).
@@ -491,6 +527,7 @@ pub trait Provider: Send + Sync {
             text: Some(text),
             tool_calls: Vec::new(),
             usage: None,
+            reasoning_content: None,
         })
     }
 

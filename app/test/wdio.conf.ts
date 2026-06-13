@@ -77,7 +77,10 @@ export const config: Options.Testrunner & Record<string, unknown> = {
     },
   ],
   logLevel: 'warn',
-  bail: 0,
+  // `bail` is the number of failing specs to tolerate before WDIO stops the
+  // run. `--bail` on e2e-run-all-flows.sh sets E2E_BAIL_ON_FAILURE=1 so we
+  // flip this to 1 (= stop after the first failed spec).
+  bail: process.env.E2E_BAIL_ON_FAILURE === '1' ? 1 : 0,
   waitforTimeout: 10_000,
   connectionRetryTimeout: 120_000,
   connectionRetryCount: 3,
@@ -85,8 +88,11 @@ export const config: Options.Testrunner & Record<string, unknown> = {
   reporters: ['spec'],
   mochaOpts: {
     ui: 'bdd',
-    // Billing/settings flows poll on real timers; keep the generous budget.
-    timeout: 120_000,
+    // Cap individual `it` budget at 30s so broken specs fail fast instead
+    // of burning the prior 2-minute ceiling on every hung `waitForX`.
+    // Genuinely-slow flows (billing polling) should use scoped
+    // `this.timeout(60_000)` inside the specific `it` that needs it.
+    timeout: 30_000,
   },
   autoCompileOpts: { tsNodeOpts: { project: tsconfigE2ePath } },
   /**

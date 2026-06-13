@@ -15,13 +15,20 @@ use tower::ServiceExt;
 
 use crate::core::auth::CORE_TOKEN_ENV_VAR;
 use crate::core::jsonrpc::build_core_http_router;
+use crate::openhuman::inference::http::server::strip_temperature_suffix;
 
 const TEST_RPC_TOKEN: &str = "inference-http-tests-token";
 
 /// Initialize the per-process RPC bearer token exactly once, so that the
 /// auth middleware can answer 401 instead of 500 ("auth subsystem not
 /// initialized") in tests that don't spin up a real core.
-fn ensure_test_rpc_auth() {
+///
+/// Returns the bearer that is actually installed in `RPC_TOKEN` after init.
+/// This may not equal `TEST_RPC_TOKEN`: the `RPC_TOKEN` `OnceLock` is shared
+/// across the whole test binary, and a sibling test (e.g. the in-memory-seed
+/// regression in `src/core/auth.rs`) may have populated it first. Token-
+/// agnostic callers should treat the return value as the source of truth.
+fn ensure_test_rpc_auth() -> String {
     static INIT: Once = Once::new();
     INIT.call_once(|| {
         // SAFETY: test-only init; we serialize via `Once`, and live_routing_e2e
@@ -31,11 +38,14 @@ fn ensure_test_rpc_auth() {
         let tmp = tempfile::tempdir().expect("tempdir for token file");
         crate::core::auth::init_rpc_token(tmp.path()).expect("init rpc auth token for http tests");
     });
+    crate::core::auth::get_rpc_token()
+        .expect("rpc bearer must be installed after ensure_test_rpc_auth")
+        .to_string()
 }
 
 /// Build the test router (Socket.IO disabled — no real runtime needed).
 fn test_router() -> axum::Router {
-    ensure_test_rpc_auth();
+    let _ = ensure_test_rpc_auth();
     build_core_http_router(false)
 }
 
@@ -92,9 +102,10 @@ async fn test_models_no_bearer_returns_401() {
 /// test only asserts that auth passed.
 #[tokio::test]
 async fn test_chat_completions_with_bearer_not_rejected_as_auth_error() {
-    // Use the same token that `ensure_test_rpc_auth` installed via the
-    // `Once` initializer in this module.
-    let token = TEST_RPC_TOKEN.to_string();
+    // Read whatever token is actually installed in `RPC_TOKEN`. A sibling
+    // test in `src/core/auth.rs` may seed the `OnceLock` first with its
+    // own value, so we cannot rely on `TEST_RPC_TOKEN` matching.
+    let token = ensure_test_rpc_auth();
 
     let body = serde_json::json!({
         "model": "ollama:llama3",
@@ -121,4 +132,11 @@ async fn test_chat_completions_with_bearer_not_rejected_as_auth_error() {
         StatusCode::FORBIDDEN,
         "403 must not fire when bearer is present"
     );
+}
+
+#[test]
+fn strip_temperature_suffix_only_removes_numeric_suffixes() {
+    assert_eq!(strip_temperature_suffix("gpt-4o@0.7"), "gpt-4o");
+    assert_eq!(strip_temperature_suffix("llama3.1:8b@1"), "llama3.1:8b");
+    assert_eq!(strip_temperature_suffix("gpt@beta"), "gpt@beta");
 }

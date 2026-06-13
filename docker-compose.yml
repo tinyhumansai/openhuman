@@ -22,10 +22,18 @@ services:
     image: openhuman-core:local
     container_name: openhuman-core
     restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp
     ports:
       - "${OPENHUMAN_CORE_PORT:-7788}:7788"
     env_file:
-      - .env
+      - path: .env
+        required: false
     environment:
       # Bind to 0.0.0.0 inside the container so port-forwarding works regardless
       # of what `.env` says. The Dockerfile already sets this default, but make
@@ -33,9 +41,13 @@ services:
       OPENHUMAN_CORE_HOST: 0.0.0.0
       OPENHUMAN_CORE_PORT: "7788"
       OPENHUMAN_WORKSPACE: /home/openhuman/.openhuman
+      XDG_CACHE_HOME: /home/openhuman/.openhuman/cache
+      TMPDIR: /tmp
       RUST_LOG: ${RUST_LOG:-info}
     volumes:
       - openhuman-workspace:/home/openhuman/.openhuman
+    mem_limit: ${OPENHUMAN_CORE_MEM_LIMIT:-4g}
+    cpus: ${OPENHUMAN_CORE_CPUS:-2.0}
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:7788/health"]
       interval: 30s

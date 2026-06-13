@@ -14,8 +14,8 @@ use super::types::{
     ExtractedEntity, ExtractedRelation, ExtractionAccumulator, ExtractionMode, ExtractionUnit,
     MemoryIngestionConfig, ParsedIngestion, RawEntity, RawRelation, DEFAULT_CHUNK_TOKENS,
 };
-use crate::openhuman::memory::store::types::NamespaceDocumentInput;
-use crate::openhuman::memory::UnifiedMemory;
+use crate::openhuman::memory_store::types::NamespaceDocumentInput;
+use crate::openhuman::memory_store::UnifiedMemory;
 
 // ── Chunking helpers ──────────────────────────────────────────────────────────
 
@@ -249,6 +249,9 @@ pub(super) fn enrich_document_metadata(
             category: input.category.clone(),
             session_id: input.session_id.clone(),
             document_id: input.document_id.clone(),
+            // Carry the caller's provenance forward — parsing is a pure
+            // metadata-enrichment step, so ingest taint must survive it.
+            taint: input.taint,
         },
         tags,
     )
@@ -933,3 +936,7 @@ pub(super) async fn parse_document(
         decision_count: accumulator.decisions.len(),
     }
 }
+
+#[cfg(test)]
+#[path = "parse_tests.rs"]
+mod tests;

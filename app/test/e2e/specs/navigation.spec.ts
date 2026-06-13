@@ -17,6 +17,7 @@ import { waitForApp, waitForAppReady } from '../helpers/app-helpers';
 import { hasAppChrome } from '../helpers/element-helpers';
 import { resetApp } from '../helpers/reset-app';
 import { navigateViaHash, waitForHomePage } from '../helpers/shared-flows';
+import { startMockServer, stopMockServer } from '../mock-server';
 
 const USER_ID = 'e2e-navigation';
 
@@ -27,12 +28,15 @@ interface Route {
   minChars?: number;
 }
 
+// Phase 2/3/6 IA revamp:
+//   /human       → /chat        (Phase 6 — back-compat redirect)
+//   /skills      → /connections (Phase 2 — back-compat redirect)
+//   /intelligence → /activity   (Phase 3 — back-compat redirect)
 const ROUTES: Route[] = [
   { hash: '/home' },
-  { hash: '/human' },
   { hash: '/chat' },
-  { hash: '/skills' },
-  { hash: '/intelligence' },
+  { hash: '/connections' },
+  { hash: '/activity' },
   { hash: '/rewards' },
   { hash: '/settings' },
 ];
@@ -44,9 +48,15 @@ async function rootTextLength(): Promise<number> {
 }
 
 describe('Navigation', () => {
-  before(async () => {
+  before(async function () {
+    this.timeout(90_000);
+    await startMockServer();
     await waitForApp();
     await resetApp(USER_ID);
+  });
+
+  after(async () => {
+    await stopMockServer();
   });
 
   it('app chrome stays visible', async () => {
@@ -55,7 +65,13 @@ describe('Navigation', () => {
 
   it('lands on /home after onboarding', async () => {
     await waitForAppReady(10_000);
-    const homeText = await waitForHomePage(15_000);
+    let homeText = await waitForHomePage(15_000);
+    if (!homeText) {
+      // resetApp may have landed on /chat instead of /home; navigate explicitly.
+      await navigateViaHash('/home');
+      await waitForAppReady(10_000);
+      homeText = await waitForHomePage(15_000);
+    }
     expect(homeText).toBeTruthy();
   });
 

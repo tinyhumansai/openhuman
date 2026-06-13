@@ -3,13 +3,14 @@ use super::Provider;
 use async_trait::async_trait;
 use std::collections::HashMap;
 
-/// Maps OpenHuman's abstract tier model names (`reasoning-v1`,
+/// Maps OpenHuman's abstract tier model names (`reasoning-v1`, `chat-v1`,
 /// `reasoning-quick-v1`, `agentic-v1`, `coding-v1`, `summarization-v1`)
 /// to the hint slot in `model_routes`. Returns `None` for any model the
 /// router shouldn't rewrite.
 fn openhuman_tier_to_hint(model: &str) -> Option<&'static str> {
     match model {
         "reasoning-v1" => Some("reasoning"),
+        "chat-v1" => Some("chat"),
         "reasoning-quick-v1" => Some("chat"),
         "agentic-v1" => Some("agentic"),
         "coding-v1" => Some("coding"),
@@ -23,6 +24,8 @@ fn openhuman_tier_to_hint(model: &str) -> Option<&'static str> {
 pub struct Route {
     pub provider_name: String,
     pub model: String,
+    /// Known context window for `model` when discoverable (tokens).
+    pub context_window: Option<u64>,
 }
 
 /// Multi-model router — routes requests to different provider+model combos
@@ -88,8 +91,8 @@ impl RouterProvider {
     ///
     /// Resolution order:
     /// 1. `hint:<name>` — direct hint lookup (e.g. `hint:reasoning`).
-    /// 2. OpenHuman abstract tier names — `reasoning-v1`, `agentic-v1`,
-    ///    `coding-v1`, `summarization-v1` map onto the corresponding hints
+    /// 2. OpenHuman abstract tier names — `reasoning-v1`, `chat-v1`,
+    ///    `agentic-v1`, `coding-v1`, `summarization-v1` map onto the corresponding hints
     ///    so a custom provider gets the user-configured model id instead of
     ///    the literal tier name (which is only meaningful to the OpenHuman
     ///    backend and would 404 on OpenAI/Anthropic/etc.).
@@ -125,11 +128,25 @@ impl RouterProvider {
                 );
                 return (*idx, resolved_model.clone());
             }
+            // Tier name matched but the user hasn't configured a route for
+            // this hint. Passing the literal alias (`reasoning-v1`,
+            // `agentic-v1`, etc.) verbatim to an upstream API will 400 —
+            // these are OpenHuman-internal aliases that only the hosted
+            // backend resolves. Fall back to the default provider's
+            // default_model so the request at least has a chance of
+            // succeeding against a custom_openai / OpenRouter / DeepSeek
+            // endpoint. See #2079 (39 events in Sentry from a user routed
+            // to DeepSeek who saw "The supported API model names are
+            // deepseek-v4-pro or deepseek-v4-flash, but you passed
+            // reasoning-v1").
             log::warn!(
-                "[router] tier {} matched hint={} but no route configured — passing through unchanged",
+                "[router] tier {} matched hint={} but no route configured — falling back to default_model={} on default provider (idx={})",
                 model,
-                hint
+                hint,
+                self.default_model,
+                self.default_index
             );
+            return (self.default_index, self.default_model.clone());
         }
 
         // Not a hint or hint not found — use default provider with the model as-is
@@ -228,5 +245,5 @@ impl Provider for RouterProvider {
 }
 
 #[cfg(test)]
-#[path = "router_test.rs"]
-mod router_test;
+#[path = "router_tests.rs"]
+mod router_tests;

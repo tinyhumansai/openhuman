@@ -134,3 +134,111 @@ pub async fn graph_query(
         .await?;
     Ok(RpcOutcome::single_log(rows, "memory graph queried"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ensure_memory_client() {
+        crate::openhuman::memory::ops::ensure_shared_memory_client();
+    }
+
+    fn unique_namespace(prefix: &str) -> String {
+        let short = &uuid::Uuid::new_v4().as_simple().to_string()[..12];
+        format!("{prefix}{short}")
+    }
+
+    #[tokio::test]
+    async fn kv_handlers_roundtrip_scoped_values() {
+        let _serial = crate::openhuman::memory::ops::GLOBAL_MEMORY_TEST_LOCK
+            .lock()
+            .await;
+        ensure_memory_client();
+        let namespace = unique_namespace("kv-graph-kv");
+        let key = format!(
+            "state{}",
+            &uuid::Uuid::new_v4().as_simple().to_string()[..12]
+        );
+
+        let set = kv_set(KvSetParams {
+            namespace: Some(namespace.clone()),
+            key: key.clone(),
+            value: serde_json::json!({"open": true}),
+        })
+        .await
+        .expect("kv set");
+        assert!(set.value);
+
+        let get = kv_get(KvGetDeleteParams {
+            namespace: Some(namespace.clone()),
+            key: key.clone(),
+        })
+        .await
+        .expect("kv get");
+        assert_eq!(get.value, Some(serde_json::json!({"open": true})));
+
+        let listed = kv_list_namespace(super::super::documents::NamespaceOnlyParams {
+            namespace: namespace.clone(),
+        })
+        .await
+        .expect("kv list namespace");
+        assert!(listed
+            .value
+            .iter()
+            .any(|row| row["key"] == key && row["value"] == serde_json::json!({"open": true})));
+
+        let deleted = kv_delete(KvGetDeleteParams {
+            namespace: Some(namespace.clone()),
+            key: key.clone(),
+        })
+        .await
+        .expect("kv delete");
+        assert!(deleted.value);
+
+        let after = kv_get(KvGetDeleteParams {
+            namespace: Some(namespace),
+            key,
+        })
+        .await
+        .expect("kv get after delete");
+        assert!(after.value.is_none());
+    }
+
+    #[tokio::test]
+    async fn graph_handlers_roundtrip_relation_rows() {
+        let _serial = crate::openhuman::memory::ops::GLOBAL_MEMORY_TEST_LOCK
+            .lock()
+            .await;
+        ensure_memory_client();
+        let namespace = unique_namespace("kv-graph-rel");
+        let subject = format!(
+            "alice{}",
+            &uuid::Uuid::new_v4().as_simple().to_string()[..12]
+        );
+
+        let upsert = graph_upsert(GraphUpsertParams {
+            namespace: Some(namespace.clone()),
+            subject: subject.clone(),
+            predicate: "OWNS".into(),
+            object: "Atlas".into(),
+            attrs: serde_json::json!({"source": "test", "confidence": 0.9}),
+        })
+        .await
+        .expect("graph upsert");
+        assert!(upsert.value);
+
+        let queried = graph_query(GraphQueryParams {
+            namespace: Some(namespace),
+            subject: Some(subject.clone()),
+            predicate: Some("OWNS".into()),
+        })
+        .await
+        .expect("graph query");
+
+        assert_eq!(queried.logs, vec!["memory graph queried".to_string()]);
+        assert_eq!(queried.value.len(), 1);
+        assert_eq!(queried.value[0]["subject"], subject.to_uppercase());
+        assert_eq!(queried.value[0]["predicate"], "OWNS");
+        assert_eq!(queried.value[0]["object"], "ATLAS");
+    }
+}

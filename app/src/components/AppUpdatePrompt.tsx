@@ -108,7 +108,7 @@ const AppUpdatePrompt = (props: AppUpdatePromptProps) => {
             <button
               onClick={phase === 'error' ? handleDismissError : handleLater}
               className="p-1 text-stone-500 hover:text-stone-300 transition-colors"
-              aria-label="Dismiss update notification">
+              aria-label={t('app.update.dismissNotification')}>
               <CloseIcon className="w-3.5 h-3.5" />
             </button>
           )}

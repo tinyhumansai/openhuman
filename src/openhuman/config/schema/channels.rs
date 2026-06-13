@@ -23,6 +23,7 @@ pub struct ChannelsConfig {
     pub lark: Option<LarkConfig>,
     pub dingtalk: Option<DingTalkConfig>,
     pub qq: Option<QQConfig>,
+    pub yuanbao: Option<crate::openhuman::channels::providers::yuanbao::YuanbaoConfig>,
     #[serde(default = "default_channel_message_timeout_secs")]
     pub message_timeout_secs: u64,
     /// The user's preferred *external* channel for proactive messages
@@ -61,6 +62,7 @@ impl ChannelsConfig {
             || self.lark.is_some()
             || self.dingtalk.is_some()
             || self.qq.is_some()
+            || self.yuanbao.is_some()
             || self.matrix.is_some()
             || self.whatsapp.is_some()
     }
@@ -85,6 +87,7 @@ impl Default for ChannelsConfig {
             lark: None,
             dingtalk: None,
             qq: None,
+            yuanbao: None,
             message_timeout_secs: default_channel_message_timeout_secs(),
             active_channel: None,
         }

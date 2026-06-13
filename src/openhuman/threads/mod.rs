@@ -8,10 +8,13 @@ pub mod error;
 pub mod ops;
 pub mod schemas;
 pub mod title;
+pub mod tools;
 pub mod turn_state;
+pub mod welcome_migration;
 
 pub use error::{ThreadsError, THREAD_NOT_FOUND_KIND};
 pub use schemas::{
     all_controller_schemas as all_threads_controller_schemas,
     all_registered_controllers as all_threads_registered_controllers,
 };
+pub use welcome_migration::{migrate_welcome_agent_artifacts, WelcomeMigrationResult};

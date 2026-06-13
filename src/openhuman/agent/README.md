@@ -13,7 +13,7 @@ Multi-agent orchestration domain. Owns the LLM tool-calling loop, sub-agent disp
 - `pub trait ToolDispatcher` / `pub struct ParsedToolCall` / `pub struct ToolExecutionResult` — `dispatcher.rs:14-50` — pluggable tool-call format (XML / JSON / P-Format).
 - `pub mod triage` (`run_triage`, `apply_decision`, `TriggerEnvelope`, `TriageDecision`, `TriageAction`) — `triage/mod.rs:34-45` — classify external triggers, escalate to sub-agents.
 - `pub mod prompts::SystemPromptBuilder` — `prompts/` — system-prompt section composer.
-- `pub mod agents` — `agents/mod.rs` — built-in archetypes (orchestrator, planner, researcher, code_executor, summarizer, archivist, trigger_triage, trigger_reactor, etc.).
+- Built-in archetypes live in `src/openhuman/agent_registry/agents/`; this module stays focused on harness/runtime behavior.
 - RPC `agent.chat`, `agent.chat_simple`, `agent.server_status`, `agent.list_definitions`, `agent.get_definition`, `agent.reload_definitions`, `agent.triage_evaluate` — `schemas.rs:17-158`.
 
 ## Calls into
@@ -22,7 +22,7 @@ Multi-agent orchestration domain. Owns the LLM tool-calling loop, sub-agent disp
 - `src/openhuman/tools/` — `Tool` / `ToolSpec` execution surface invoked from the tool loop.
 - `src/openhuman/memory/` — episodic indexing + memory-loader context injection.
 - `src/openhuman/context/` — prompt sections, tool-call format selection.
-- `src/openhuman/local_ai/` — `agent_chat` / `agent_chat_simple` execution backend.
+- `src/openhuman/inference/local/` — `agent_chat` / `agent_chat_simple` execution backend.
 - `src/openhuman/config/` — runtime config load via `config::rpc::load_config_with_timeout`.
 - `src/core/event_bus/` — emits `DomainEvent::Agent(*)` and `Trigger*` events; subscribers in `agent/bus.rs`.
 
@@ -34,7 +34,7 @@ Multi-agent orchestration domain. Owns the LLM tool-calling loop, sub-agent disp
 - `src/openhuman/composio/bus.rs` — Composio trigger envelopes go through `agent::triage`.
 - `src/openhuman/notifications/rpc.rs` — surfaces agent runs to the UI.
 - `src/openhuman/learning/{reflection,tool_tracker,user_profile}.rs` — read transcripts + tool outcomes.
-- `src/openhuman/tools/impl/agent/{dispatch,spawn_subagent}.rs` — `spawn_subagent` tool delegates here.
+- `src/openhuman/agent_orchestration/tools/{dispatch,spawn_subagent}.rs` — `spawn_subagent` tool delegates here.
 - `src/core/all.rs` — controller registry wires `all_agent_registered_controllers`.
 
 ## Tests

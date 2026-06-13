@@ -5,9 +5,7 @@ export type ComposerSendBlockReason =
   | 'usage_limit_reached'
   | 'socket_disconnected';
 
-export type SlashCommandDecision =
-  | { kind: 'new_or_clear'; blockedByWelcomeLock: boolean }
-  | { kind: 'not_handled' };
+export type SlashCommandDecision = { kind: 'new_or_clear' } | { kind: 'not_handled' };
 
 export interface ComposerSendDecisionArgs {
   rawText: string;
@@ -24,7 +22,6 @@ export interface ComposerSendDecision {
 }
 
 export interface ComposerBlockedSendFeedback {
-  showLimitModal: boolean;
   error: { code: 'usage_limit_reached' | 'socket_disconnected'; message: string };
 }
 
@@ -36,13 +33,10 @@ export interface ComposerKeyDownEventLike {
   nativeEvent?: { isComposing?: boolean; keyCode?: number };
 }
 
-export const handleComposerSlashCommand = (
-  command: string,
-  welcomeLocked: boolean
-): SlashCommandDecision => {
+export const handleComposerSlashCommand = (command: string): SlashCommandDecision => {
   const cmd = command.toLowerCase();
   if (cmd === '/new' || cmd === '/clear') {
-    return { kind: 'new_or_clear', blockedByWelcomeLock: welcomeLocked };
+    return { kind: 'new_or_clear' };
   }
   return { kind: 'not_handled' };
 };
@@ -94,17 +88,15 @@ export const getComposerBlockedSendFeedback = (
 ): ComposerBlockedSendFeedback | null => {
   if (blockReason === 'usage_limit_reached') {
     return {
-      showLimitModal: true,
       error: {
         code: 'usage_limit_reached',
-        message: 'Usage limit reached. Upgrade or wait for reset.',
+        message: 'Included budget exhausted. Top up credits or upgrade to continue.',
       },
     };
   }
 
   if (blockReason === 'socket_disconnected') {
     return {
-      showLimitModal: false,
       error: {
         code: 'socket_disconnected',
         message:

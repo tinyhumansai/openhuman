@@ -3,11 +3,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { FALLBACK_DEFINITIONS } from '../../../lib/channels/definitions';
 import { channelConnectionsApi } from '../../../services/api/channelConnectionsApi';
-import { renderWithProviders } from '../../../test/test-utils';
+import { upsertChannelConnection } from '../../../store/channelConnectionsSlice';
+import { createTestStore, renderWithProviders } from '../../../test/test-utils';
 import { openUrl } from '../../../utils/openUrl';
 import TelegramConfig from '../TelegramConfig';
 
 const telegramDef = FALLBACK_DEFINITIONS.find(d => d.id === 'telegram')!;
+const coreStateMock = vi.hoisted(() => vi.fn(() => ({ snapshot: { sessionToken: 'jwt-abc' } })));
 
 vi.mock('../../../services/api/channelConnectionsApi', () => ({
   channelConnectionsApi: {
@@ -21,9 +23,11 @@ vi.mock('../../../services/api/channelConnectionsApi', () => ({
 }));
 
 vi.mock('../../../utils/openUrl', () => ({ openUrl: vi.fn() }));
+vi.mock('../../../providers/CoreStateProvider', () => ({ useCoreState: () => coreStateMock() }));
 
 afterEach(() => {
   vi.clearAllMocks();
+  coreStateMock.mockReturnValue({ snapshot: { sessionToken: 'jwt-abc' } });
 });
 
 describe('TelegramConfig', () => {
@@ -36,6 +40,13 @@ describe('TelegramConfig', () => {
     renderWithProviders(<TelegramConfig definition={telegramDef} />);
     expect(screen.getAllByText(/Bot Token/i).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText('Login with OpenHuman')).toBeInTheDocument();
+  });
+
+  it('documents Telegram remote-control commands', () => {
+    renderWithProviders(<TelegramConfig definition={telegramDef} />);
+    expect(screen.getByText('Remote control (Telegram)')).toBeInTheDocument();
+    expect(screen.getByText(/send \/status, \/sessions, \/new, or \/help/i)).toBeInTheDocument();
+    expect(screen.getByText(/Model routing still uses \/model and \/models/i)).toBeInTheDocument();
   });
 
   it('shows credential fields for bot_token mode', () => {
@@ -56,6 +67,35 @@ describe('TelegramConfig', () => {
     expect(disconnectButtons.length).toBe(2);
     disconnectButtons.forEach(btn => {
       expect(btn).toBeDisabled();
+    });
+  });
+
+  it('passes clearMemory when disconnecting with the memory checkbox selected', async () => {
+    const store = createTestStore();
+    store.dispatch(
+      upsertChannelConnection({
+        channel: 'telegram',
+        authMode: 'bot_token',
+        patch: { status: 'connected', capabilities: ['read', 'write'] },
+      })
+    );
+    vi.mocked(channelConnectionsApi.disconnectChannel).mockResolvedValue(undefined);
+
+    renderWithProviders(<TelegramConfig definition={telegramDef} />, { store });
+
+    fireEvent.click(screen.getByLabelText(/also delete memory/i));
+    const disconnectButton = screen
+      .getAllByRole('button', { name: 'Disconnect' })
+      .find(button => !button.hasAttribute('disabled'));
+    expect(disconnectButton).toBeDefined();
+    fireEvent.click(disconnectButton!);
+
+    await waitFor(() => {
+      expect(channelConnectionsApi.disconnectChannel).toHaveBeenCalledWith(
+        'telegram',
+        'bot_token',
+        { clearMemory: true }
+      );
     });
   });
 
@@ -90,5 +130,17 @@ describe('TelegramConfig', () => {
       expect(channelConnectionsApi.telegramLoginCheck).toHaveBeenCalledWith('link-token-abc');
     });
     expect(await screen.findByText('Connected')).toBeInTheDocument();
+  });
+
+  it('hides managed channel auth modes for local users', () => {
+    coreStateMock.mockReturnValue({ snapshot: { sessionToken: 'header.payload.local' } });
+
+    renderWithProviders(<TelegramConfig definition={telegramDef} />);
+
+    expect(
+      screen.getByText('Managed channels are not available for local users.')
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Login with OpenHuman')).not.toBeInTheDocument();
+    expect(screen.getAllByText(/Bot Token/i).length).toBeGreaterThanOrEqual(1);
   });
 });

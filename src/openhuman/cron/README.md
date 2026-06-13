@@ -54,4 +54,4 @@ current channel + reply target — that is the routing path for the Telegram
 
 - Unit: `ops_tests.rs`, `scheduler_tests.rs`, `store_tests.rs`.
 - Schema/parsing coverage lives inside `schedule.rs` and `schemas.rs` `#[cfg(test)] mod tests` blocks.
-- Delivery validation: `tools::impl::cron::add::tests` (announce-mode `allowed_users` checks).
+- Delivery validation: `cron::tools::add::tests` (announce-mode `allowed_users` checks).

@@ -1,0 +1,51 @@
+id = "settings_agent"
+display_name = "Settings Agent"
+delegate_name = "manage_settings"
+when_to_use = "Settings and system specialist — inspects app/core config, health, model diagnostics, service lifecycle, daemon preferences, proxy setup, updates, cost dashboards, and security policy. Use for 'change settings', 'is the app healthy', 'restart/install/stop the service', 'update OpenHuman', proxy/runtime questions, or local diagnostic requests."
+temperature = 0.2
+max_iterations = 8
+sandbox_mode = "none"
+agent_tier = "worker"
+omit_identity = true
+omit_memory_context = true
+omit_safety_preamble = false
+omit_skills_catalog = true
+omit_profile = true
+omit_memory_md = true
+
+[model]
+hint = "agentic"
+
+[tools]
+named = [
+    "config_snapshot",
+    "config_get_client_config",
+    "config_get_autonomy",
+    "config_get_search",
+    "config_get_runtime_flags",
+    "config_resolve_api_url",
+    "config_get_data_paths",
+    "doctor_health",
+    "doctor_models",
+    "health_snapshot",
+    "health_system_info",
+    "dashboard_model_health",
+    "cost_get_dashboard",
+    "cost_get_daily_history",
+    "cost_get_summary",
+    "security_policy_info",
+    "service_status",
+    "daemon_host_prefs_get",
+    "daemon_host_prefs_set",
+    "service_start",
+    "service_stop",
+    "service_restart",
+    "service_shutdown",
+    "service_install",
+    "service_uninstall",
+    "proxy_config",
+    "update_check",
+    "update_apply",
+    "current_time",
+    "ask_user_clarification",
+]

@@ -69,8 +69,8 @@ export function isAllowedExternalHref(rawHref: string): boolean {
 }
 
 /**
- * Custom inline tag the welcome agent (and any future agent) can drop
- * inside a chat bubble to render an in-app navigation pill, e.g.
+ * Custom inline tag any agent can drop inside a chat bubble to render
+ * an in-app navigation pill, e.g.
  *
  *     <openhuman-link path="settings/notifications">Allow notifications</openhuman-link>
  *

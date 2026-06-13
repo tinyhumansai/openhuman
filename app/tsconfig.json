@@ -16,7 +16,10 @@
 
     /* Path aliases */
     "baseUrl": ".",
-    "paths": { "@openhuman/skill-types": ["src/lib/skills/types.ts"] },
+    "paths": {
+      "@openhuman/skill-types": ["src/lib/skills/types.ts"],
+      "tauri-plugin-ptt-api": ["../packages/tauri-plugin-ptt/guest-js/index.ts"]
+    },
 
     /* Linting */
     "strict": true,
@@ -24,7 +27,12 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src", "test/*.test.ts", "test/*.test.tsx"],
+  "include": [
+    "src",
+    "test/*.test.ts",
+    "test/*.test.tsx",
+    "../packages/tauri-plugin-ptt/guest-js/index.ts"
+  ],
   "exclude": ["skills"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

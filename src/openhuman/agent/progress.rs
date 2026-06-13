@@ -68,6 +68,15 @@ pub enum AgentProgress {
         /// whether to render the prompt detail inline or behind a
         /// "show more" affordance.
         prompt_chars: usize,
+        /// Persistent worker sub-thread id backing this delegation, when
+        /// one was created (`worker-<uuid>`). The UI uses it to reopen the
+        /// full parent↔subagent conversation from memory after the live
+        /// turn ends. `None` for live-only runs (no parent context).
+        worker_thread_id: Option<String>,
+        /// Human-readable display name from the agent registry (e.g.
+        /// "Researcher", "Coding Agent"). Falls back to `agent_id` in
+        /// the UI when absent.
+        display_name: Option<String>,
     },
 
     /// A sub-agent completed successfully.
@@ -91,6 +100,16 @@ pub enum AgentProgress {
         error: String,
     },
 
+    /// A sub-agent paused and is waiting for user input relayed via
+    /// `continue_subagent`. The orchestrator surfaces the question to
+    /// the user and calls `continue_subagent` with the answer.
+    SubagentAwaitingUser {
+        agent_id: String,
+        task_id: String,
+        question: String,
+        worker_thread_id: Option<String>,
+    },
+
     /// A sub-agent's inner LLM iteration is starting. Emitted **only
     /// from inside [`crate::openhuman::agent::harness::subagent_runner`]**
     /// when the parent context carries an `on_progress` sink — the
@@ -104,6 +123,9 @@ pub enum AgentProgress {
         iteration: u32,
         /// Maximum iterations configured for this child run.
         max_iterations: u32,
+        /// `true` when the agent uses [`IterationPolicy::Extended`](crate::openhuman::agent::harness::definition::IterationPolicy::Extended).
+        /// The UI uses this to show "step N" instead of "turn N/M".
+        extended_policy: bool,
     },
 
     /// A sub-agent is about to execute a tool. Distinct from
@@ -128,6 +150,34 @@ pub enum AgentProgress {
         success: bool,
         output_chars: usize,
         elapsed_ms: u64,
+        /// 1-based child iteration index.
+        iteration: u32,
+    },
+
+    /// A chunk of a sub-agent's visible assistant text arrived from the
+    /// provider while the child iteration is still in flight. Distinct
+    /// from [`Self::TextDelta`] so the parent thread can attribute the
+    /// streamed token to a specific live subagent row (via `task_id`)
+    /// and render it inside that row's transcript instead of merging it
+    /// into the parent's own streaming buffer. Emitted **only from
+    /// inside [`crate::openhuman::agent::harness::subagent_runner`]** when
+    /// the parent context carries an `on_progress` sink.
+    SubagentTextDelta {
+        agent_id: String,
+        task_id: String,
+        delta: String,
+        /// 1-based child iteration index this delta belongs to.
+        iteration: u32,
+    },
+
+    /// A chunk of a sub-agent's model reasoning / thinking output
+    /// arrived (for models that emit `reasoning_content`). Counterpart
+    /// to [`Self::ThinkingDelta`] scoped to a child run — see
+    /// [`Self::SubagentTextDelta`] for the attribution rationale.
+    SubagentThinkingDelta {
+        agent_id: String,
+        task_id: String,
+        delta: String,
         /// 1-based child iteration index.
         iteration: u32,
     },

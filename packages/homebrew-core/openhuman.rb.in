@@ -18,7 +18,7 @@ class Openhuman < Formula
     ENV["OPENSSL_NO_VENDOR"] = "1" if OS.linux?
 
     system "cargo", "install", "--bin", "openhuman-core", *std_cargo_args
-    bin.install_symlink bin/"openhuman-core" => "openhuman"
+    bin.install_symlink "openhuman-core" => "openhuman"
   end
 
   test do

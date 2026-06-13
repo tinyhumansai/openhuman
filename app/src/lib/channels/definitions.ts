@@ -118,4 +118,122 @@ export const FALLBACK_DEFINITIONS: ChannelDefinition[] = [
     ],
     capabilities: ['send_text', 'send_rich_text', 'receive_text'],
   },
+  // Lark / Feishu — fields must stay aligned with `LarkConfig` in
+  // `src/openhuman/config/schema/channels.rs` and `lark_definition()` in
+  // `src/openhuman/channels/controllers/definitions.rs`. See #2048.
+  {
+    id: 'lark',
+    display_name: 'Lark / Feishu',
+    description: 'Send and receive via Lark (international) or Feishu (中国版).',
+    icon: 'lark',
+    auth_modes: [
+      {
+        mode: 'api_key',
+        description: 'Provide your Lark/Feishu app credentials from the Open Platform.',
+        fields: [
+          {
+            key: 'app_id',
+            label: 'App ID',
+            field_type: 'string',
+            required: true,
+            placeholder: 'cli_xxxxxxxxxxxx',
+          },
+          {
+            key: 'app_secret',
+            label: 'App Secret',
+            field_type: 'secret',
+            required: true,
+            placeholder: 'Your Lark app secret',
+          },
+          {
+            key: 'encrypt_key',
+            label: 'Encrypt Key',
+            field_type: 'secret',
+            required: false,
+            placeholder: 'Optional — required only if you enabled message encryption',
+          },
+          {
+            key: 'verification_token',
+            label: 'Verification Token',
+            field_type: 'secret',
+            required: false,
+            placeholder: 'Optional — used for HTTP webhook verification',
+          },
+          {
+            key: 'use_feishu',
+            label: 'Use Feishu (中国版)',
+            field_type: 'boolean',
+            required: false,
+            placeholder: 'On = open.feishu.cn (China); off = open.larksuite.com',
+          },
+          {
+            key: 'receive_mode',
+            label: 'Receive Mode',
+            field_type: 'string',
+            required: false,
+            placeholder: 'websocket (default) or webhook',
+          },
+          {
+            key: 'port',
+            label: 'Webhook Port',
+            // Numeric — field_type stays 'string' because the schema-driven
+            // form renderer only accepts 'string' | 'secret' | 'boolean'.
+            // LarkConfig parses it back to u16. Keep aligned with the Rust
+            // lark_definition() entry.
+            field_type: 'string',
+            required: false,
+            placeholder: 'Optional — local HTTP port when receive_mode = webhook (e.g. 8080)',
+          },
+          {
+            key: 'allowed_users',
+            label: 'Allowed Users',
+            field_type: 'string',
+            required: false,
+            placeholder: 'Comma-separated open_id / union_id; leave empty to allow any',
+          },
+        ],
+        auth_action: undefined,
+      },
+    ],
+    capabilities: ['send_text', 'receive_text', 'threaded_replies'],
+  },
+  // DingTalk (钉钉) — fields must stay aligned with `DingTalkConfig` in
+  // `src/openhuman/config/schema/channels.rs`. See #2048.
+  {
+    id: 'dingtalk',
+    display_name: 'DingTalk (钉钉)',
+    description: 'Send and receive via DingTalk Stream Mode (钉钉).',
+    icon: 'dingtalk',
+    auth_modes: [
+      {
+        mode: 'api_key',
+        description: 'Provide your DingTalk app credentials from the developer console.',
+        fields: [
+          {
+            key: 'client_id',
+            label: 'Client ID (AppKey)',
+            field_type: 'string',
+            required: true,
+            placeholder: 'ding_xxxxxxxxxxxx',
+          },
+          {
+            key: 'client_secret',
+            label: 'Client Secret (AppSecret)',
+            field_type: 'secret',
+            required: true,
+            placeholder: 'Your DingTalk app secret',
+          },
+          {
+            key: 'allowed_users',
+            label: 'Allowed Users',
+            field_type: 'string',
+            required: false,
+            placeholder: 'Comma-separated DingTalk userIds; leave empty to allow any',
+          },
+        ],
+        auth_action: undefined,
+      },
+    ],
+    capabilities: ['send_text', 'receive_text'],
+  },
 ];

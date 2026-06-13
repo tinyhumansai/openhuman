@@ -4,7 +4,7 @@
 //! "autocomplete" namespace and fed back as dynamic style examples on the
 //! next inference cycle, giving the model in-context personalisation.
 
-use crate::openhuman::memory::{MemoryClient, NamespaceDocumentInput};
+use crate::openhuman::memory_store::{MemoryClient, NamespaceDocumentInput};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -132,6 +132,8 @@ pub async fn save_completion_to_local_docs(
         category: "daily".to_string(),
         session_id: None,
         document_id: None,
+        // Autocomplete acceptances are first-party UI signals.
+        taint: crate::openhuman::memory::MemoryTaint::Internal,
     };
 
     if let Err(e) = client.put_doc(input).await {

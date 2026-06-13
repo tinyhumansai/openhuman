@@ -7,10 +7,12 @@
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Mutex;
 
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection};
 
+use crate::openhuman::whatsapp_data::sqlite_retry::{retry_on_sqlite_busy, BUSY_TIMEOUT};
 use crate::openhuman::whatsapp_data::types::{
     ChatMeta, IngestMessage, ListChatsRequest, ListMessagesRequest, SearchMessagesRequest,
     WhatsAppChat, WhatsAppMessage,
@@ -19,6 +21,9 @@ use crate::openhuman::whatsapp_data::types::{
 /// SQLite-backed store for WhatsApp chats and messages.
 pub struct WhatsAppDataStore {
     db_path: std::path::PathBuf,
+    /// Serializes write paths (upsert + prune) so concurrent ingest RPCs do not
+    /// open competing writers on the same `whatsapp_data.db` file.
+    write_lock: Mutex<()>,
 }
 
 impl WhatsAppDataStore {
@@ -31,7 +36,10 @@ impl WhatsAppDataStore {
                 .with_context(|| format!("create whatsapp_data dir: {}", parent.display()))?;
         }
         log::debug!("[whatsapp_data] opening store at {}", db_path.display());
-        let store = Self { db_path };
+        let store = Self {
+            db_path,
+            write_lock: Mutex::new(()),
+        };
         store.init_schema()?;
         Ok(store)
     }
@@ -77,8 +85,27 @@ impl WhatsAppDataStore {
     }
 
     fn open_conn(&self) -> Result<Connection> {
-        Connection::open(&self.db_path)
-            .with_context(|| format!("open whatsapp_data db: {}", self.db_path.display()))
+        let conn = Connection::open(&self.db_path)
+            .with_context(|| format!("open whatsapp_data db: {}", self.db_path.display()))?;
+        Self::configure_connection(&conn)?;
+        Ok(conn)
+    }
+
+    /// Per-connection pragmas: busy handler + WAL (idempotent on existing DBs).
+    fn configure_connection(conn: &Connection) -> Result<()> {
+        conn.busy_timeout(BUSY_TIMEOUT)
+            .context("configure whatsapp_data busy_timeout")?;
+        if let Err(wal_err) = conn.execute_batch("PRAGMA journal_mode=WAL;") {
+            log::warn!(
+                "[whatsapp_data] failed to enable WAL (filesystem may not support it): {wal_err}"
+            );
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn open_conn_for_test(&self) -> Result<Connection> {
+        self.open_conn()
     }
 
     fn now_secs() -> i64 {
@@ -97,6 +124,20 @@ impl WhatsAppDataStore {
         if chats.is_empty() {
             return Ok(0);
         }
+        let _write_guard = self
+            .write_lock
+            .lock()
+            .map_err(|e| anyhow::anyhow!("whatsapp_data write lock poisoned: {e}"))?;
+        retry_on_sqlite_busy("upsert_chats", || {
+            self.upsert_chats_inner(account_id, chats)
+        })
+    }
+
+    fn upsert_chats_inner(
+        &self,
+        account_id: &str,
+        chats: &HashMap<String, ChatMeta>,
+    ) -> Result<usize> {
         let conn = self.open_conn()?;
         let now = Self::now_secs();
         let mut count = 0usize;
@@ -127,6 +168,16 @@ impl WhatsAppDataStore {
         if msgs.is_empty() {
             return Ok(0);
         }
+        let _write_guard = self
+            .write_lock
+            .lock()
+            .map_err(|e| anyhow::anyhow!("whatsapp_data write lock poisoned: {e}"))?;
+        retry_on_sqlite_busy("upsert_messages", || {
+            self.upsert_messages_inner(account_id, msgs)
+        })
+    }
+
+    fn upsert_messages_inner(&self, account_id: &str, msgs: &[IngestMessage]) -> Result<usize> {
         let conn = self.open_conn()?;
         let now = Self::now_secs();
         let mut count = 0usize;
@@ -210,6 +261,16 @@ impl WhatsAppDataStore {
     /// `last_message_ts` for every chat that lost rows, so `list_chats`
     /// returns accurate counts and ordering immediately.
     pub fn prune_old_messages(&self, cutoff_ts: i64) -> Result<u64> {
+        let _write_guard = self
+            .write_lock
+            .lock()
+            .map_err(|e| anyhow::anyhow!("whatsapp_data write lock poisoned: {e}"))?;
+        retry_on_sqlite_busy("prune_old_messages", || {
+            self.prune_old_messages_inner(cutoff_ts)
+        })
+    }
+
+    fn prune_old_messages_inner(&self, cutoff_ts: i64) -> Result<u64> {
         let conn = self.open_conn()?;
         let now = Self::now_secs();
 

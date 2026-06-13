@@ -84,15 +84,6 @@ on:
           the Tauri shell since #1061).
         type: boolean
         default: false
-      skip_pretests:
-        description:
-          Metadata-only flag propagated by caller workflows when they
-          intentionally bypass the upstream pretest phase. This reusable build
-          workflow does not execute pretests itself, but it logs the policy so
-          the build run captures whether the normal release gate was relaxed for
-          this invocation.
-        type: boolean
-        default: false
       with_updater:
         description:
           When true, set `WITH_UPDATER=true` so the Tauri bundler emits the
@@ -107,6 +98,7 @@ jobs:
   build:
     name: "Desktop: ${{ matrix.settings.artifact_suffix }}"
     runs-on: ${{ matrix.settings.platform }}
+    timeout-minutes: 60
     environment: Production
     strategy:
       fail-fast: false
@@ -120,10 +112,14 @@ jobs:
             args: --target x86_64-apple-darwin
             target: x86_64-apple-darwin
             artifact_suffix: x86_64-apple-darwin
-          - platform: ubuntu-22.04
+          - platform: ubuntu-24.04
             args: --target x86_64-unknown-linux-gnu --bundles deb appimage
             target: x86_64-unknown-linux-gnu
             artifact_suffix: ubuntu
+          - platform: ubuntu-24.04-arm
+            args: --target aarch64-unknown-linux-gnu --bundles deb appimage
+            target: aarch64-unknown-linux-gnu
+            artifact_suffix: ubuntu-arm64
           - platform: windows-latest
             args: --target x86_64-pc-windows-msvc
             target: x86_64-pc-windows-msvc
@@ -143,7 +139,7 @@ jobs:
       - name: Log build policy
         shell: bash
         run: |
-          echo "[build-desktop] tag=${{ inputs.tag }} build_ref=${{ inputs.build_ref }} skip_pretests=${{ inputs.skip_pretests }}"
+          echo "[build-desktop] tag=${{ inputs.tag }} build_ref=${{ inputs.build_ref }}"
       - name: Set Xcode version
         if: matrix.settings.platform == 'macos-latest'
         uses: maxim-lobanov/setup-xcode@v1
@@ -162,13 +158,13 @@ jobs:
         with:
           targets: ${{ matrix.settings.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
       - name: Install Tauri dependencies (ubuntu only)
-        if: matrix.settings.platform == 'ubuntu-22.04'
+        if: startsWith(matrix.settings.platform, 'ubuntu-')
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
             patchelf cmake libasound2-dev libxdo-dev libxtst-dev libx11-dev libxi-dev \
-            libevdev-dev libssl-dev libclang-dev \
+            libevdev-dev libssl-dev libclang-dev desktop-file-utils \
             libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
             libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
             libgbm1 libpango-1.0-0 libcairo2 libatspi2.0-0 libxshmfence1 libu2f-udev
@@ -218,29 +214,36 @@ jobs:
       # Upstream @tauri-apps/cli doesn't bundle CEF framework files into the
       # produced installer. Only the fork at vendor/tauri-cef does. Build and
       # install that CLI so `cargo tauri build` invokes the cef-aware bundler.
+      #
+      # The cache key must include runner.arch, not just runner.os: cargo-tauri
+      # is a host-arch binary, and the Linux matrix runs on both x86_64
+      # (ubuntu-24.04) and aarch64 (ubuntu-24.04-arm) runners that share
+      # runner.os == 'Linux'. Keying on runner.os alone lets one arch restore
+      # the other arch's binary, which then fails to exec ("ELF ...: not found"
+      # / "Syntax error: word unexpected") when `cargo tauri build` runs it.
       - name: Cache vendored tauri-cli binary (unix)
         if: matrix.settings.platform != 'windows-latest'
         id: tauri-cli-cache-unix
         uses: actions/cache@v5
         with:
           path: ~/.cargo/bin/cargo-tauri
-          key: vendored-tauri-cli-${{ runner.os }}-${{ hashFiles('app/src-tauri/vendor/tauri-cef/crates/tauri-cli/Cargo.toml') }}
+          key: vendored-tauri-cli-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('app/src-tauri/vendor/tauri-cef/crates/tauri-cli/Cargo.toml') }}
       - name: Cache vendored tauri-cli binary (windows)
         if: matrix.settings.platform == 'windows-latest'
         id: tauri-cli-cache-windows
         uses: actions/cache@v5
         with:
           path: ~/.cargo/bin/cargo-tauri.exe
-          key: vendored-tauri-cli-${{ runner.os }}-${{ hashFiles('app/src-tauri/vendor/tauri-cef/crates/tauri-cli/Cargo.toml') }}
+          key: vendored-tauri-cli-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('app/src-tauri/vendor/tauri-cef/crates/tauri-cli/Cargo.toml') }}
       - name: Install vendored tauri-cli (cef-aware bundler)
         if:
           (matrix.settings.platform == 'windows-latest' && steps.tauri-cli-cache-windows.outputs.cache-hit
           != 'true') || (matrix.settings.platform != 'windows-latest' && steps.tauri-cli-cache-unix.outputs.cache-hit
           != 'true')
         shell: bash
-        run: cargo install --locked --path app/src-tauri/vendor/tauri-cef/crates/tauri-cli
+        run: bash scripts/ci-cancel-aware.sh cargo install --locked --path app/src-tauri/vendor/tauri-cef/crates/tauri-cli
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: bash scripts/ci-cancel-aware.sh pnpm install --frozen-lockfile
 
       - name: Validate signing prerequisites
         # The minisign pubkey is baked into the static tauri.conf.json, not
@@ -349,7 +352,7 @@ jobs:
           if [ -z "${OPENHUMAN_CORE_SENTRY_DSN}" ]; then
             echo "::warning::vars.OPENHUMAN_CORE_SENTRY_DSN (or legacy vars.OPENHUMAN_SENTRY_DSN) is empty — the standalone CLI artifact will ship without crash reporting."
           fi
-          cargo build \
+          bash scripts/ci-cancel-aware.sh cargo build \
             --manifest-path "$CORE_MANIFEST" \
             --target "$MATRIX_TARGET" \
             --bin "$CORE_BIN_NAME"
@@ -398,6 +401,7 @@ jobs:
           # here would tag uploads against a different release than events.
           SENTRY_RELEASE: openhuman@${{ inputs.version }}+${{ inputs.short_sha }}
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_URL: ${{ vars.SENTRY_URL }}
           SENTRY_ORG: ${{ vars.SENTRY_ORG }}
           # SENTRY_PROJECT here is consumed by sentry-vite-plugin during the
           # Vite build that runs inside `cargo tauri build` — it uploads
@@ -439,7 +443,7 @@ jobs:
           # macOS / Windows take the original single-call path.
           if [ "${RUNNER_OS}" = "Linux" ]; then
             echo "[appimage-fix] linux split build: compile first to fetch CEF"
-            NODE_OPTIONS="--max-old-space-size=8192" cargo tauri build --no-bundle $PROFILE_FLAG -c "$TAURI_CONFIG_OVERRIDE" $MATRIX_ARGS
+            NODE_OPTIONS="--max-old-space-size=8192" bash ../scripts/ci-cancel-aware.sh cargo tauri build --no-bundle $PROFILE_FLAG -c "$TAURI_CONFIG_OVERRIDE" $MATRIX_ARGS
             CEF_LIB_DIR="$(find "$HOME/.cache/tauri-cef" -name libcef.so -printf '%h\n' 2>/dev/null | head -1)"
             if [ -z "$CEF_LIB_DIR" ]; then
               echo "::error::libcef.so not found under ~/.cache/tauri-cef after --no-bundle compile; cannot satisfy lib4bin ldd resolution." >&2
@@ -448,7 +452,7 @@ jobs:
             echo "[appimage-fix] prepending CEF lib dir to LD_LIBRARY_PATH: $CEF_LIB_DIR"
             export LD_LIBRARY_PATH="$CEF_LIB_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
           fi
-          NODE_OPTIONS="--max-old-space-size=8192" cargo tauri build $PROFILE_FLAG -c "$TAURI_CONFIG_OVERRIDE" $MATRIX_ARGS
+          NODE_OPTIONS="--max-old-space-size=8192" bash ../scripts/ci-cancel-aware.sh cargo tauri build $PROFILE_FLAG -c "$TAURI_CONFIG_OVERRIDE" $MATRIX_ARGS
 
       # Diagnostic for the recurring quick-sharun "is missing libraries!
       # Aborting..." error on the AppImage bundler — the upstream script
@@ -457,7 +461,7 @@ jobs:
       # ensures this still runs when `cargo tauri build` failed at bundling
       # (the binary itself is produced before bundling starts).
       - name: Dump linked libraries of built binary (ubuntu debug)
-        if: always() && matrix.settings.platform == 'ubuntu-22.04'
+        if: always() && startsWith(matrix.settings.platform, 'ubuntu-')
         shell: bash
         env:
           PROFILE: ${{ inputs.build_profile }}
@@ -477,6 +481,27 @@ jobs:
             fi
           done
 
+      # Strip host graphics libraries (Mesa/libdrm/libva/libgbm) that lib4bin
+      # ldd-walks into the AppImage. Those drivers must come from the user's
+      # host system — even on a current Ubuntu runner the bundled Mesa can
+      # fail to initialize newer GPUs (RDNA3, Intel Arc, Lovelace) and
+      # crashes CEF on launch because the bundled libs shadow the host's
+      # working ones on LD_LIBRARY_PATH. CEF's own SwiftShader subdir is
+      # untouched. Re-signs the AppImage + updater tarball when signing
+      # is enabled.
+      - name: Strip host graphics libs from AppImage
+        if: startsWith(matrix.settings.platform, 'ubuntu-')
+        shell: bash
+        env:
+          MATRIX_TARGET: ${{ matrix.settings.target }}
+          PROFILE: ${{ inputs.build_profile }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY || secrets.UPDATER_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || secrets.UPDATER_PRIVATE_KEY_PASSWORD }}
+        run: |
+          bash scripts/release/strip-appimage-graphics-libs.sh \
+            "app/src-tauri/target/${MATRIX_TARGET}/${PROFILE}/bundle" \
+            "target/${MATRIX_TARGET}/${PROFILE}/bundle"
+
       # Regression guard for #1403: if @sentry/vite-plugin silently no-op'd
       # (e.g. SENTRY_AUTH_TOKEN missing, or the `sourcemaps.assets` glob
       # didn't match dist/assets) production events arrive in Sentry as
@@ -489,6 +514,7 @@ jobs:
         shell: bash
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_URL: ${{ vars.SENTRY_URL }}
         run: node scripts/release/verify-sentry-sourcemaps.mjs
 
       # ---- Sentry DIF uploads ------------------------------------------------
@@ -504,6 +530,7 @@ jobs:
         shell: bash
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_URL: ${{ vars.SENTRY_URL }}
           SENTRY_ORG: ${{ vars.SENTRY_ORG }}
           SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT_TAURI }}
           SENTRY_RELEASE: openhuman@${{ inputs.version }}+${{ inputs.short_sha }}
@@ -533,6 +560,7 @@ jobs:
         shell: bash
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_URL: ${{ vars.SENTRY_URL }}
           SENTRY_ORG: ${{ vars.SENTRY_ORG }}
           SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT_CORE }}
           SENTRY_RELEASE: openhuman@${{ inputs.version }}+${{ inputs.short_sha }}

@@ -14,7 +14,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { type BootCheckResult, runBootCheck } from '../../lib/bootCheck';
 import { useT } from '../../lib/i18n/I18nContext';
-import { bootCheckTransport } from '../../services/bootCheckService';
+import { bootCheckTransport, recoverPortConflict } from '../../services/bootCheckService';
 import {
   clearCoreRpcTokenCache,
   clearCoreRpcUrlCache,
@@ -26,6 +26,7 @@ import {
   clearStoredCoreMode,
   clearStoredCoreToken,
   isLocalOrPrivateNetworkHost,
+  normalizeRpcUrl,
   storeCoreMode,
   storeCoreToken,
   storeRpcUrl,
@@ -36,6 +37,29 @@ import LanguageSelect from '../LanguageSelect';
 
 const log = debug('boot-check');
 const logError = debug('boot-check:error');
+
+/**
+ * Plain HTTP to a public host is insecure (unencrypted traffic), but we no
+ * longer block it — return a non-blocking warning string so the UI can nudge
+ * the user toward HTTPS while still letting them proceed. Returns null when the
+ * URL is empty, unparseable, HTTPS, or points at a local/private host.
+ */
+function httpPublicHostWarning(
+  rawUrl: string,
+  t: (key: string, fallback?: string) => string
+): string | null {
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return null;
+  try {
+    const parsed = new URL(normalizeRpcUrl(trimmed));
+    if (parsed.protocol === 'http:' && !isLocalOrPrivateNetworkHost(parsed.hostname)) {
+      return t('bootCheck.httpPublicWarning');
+    }
+  } catch {
+    // Unparseable URL — the error path in validateInputs handles messaging.
+  }
+  return null;
+}
 
 // ---------------------------------------------------------------------------
 // Internal types
@@ -56,9 +80,11 @@ interface PanelProps {
 
 function Panel({ children }: PanelProps) {
   return (
-    <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-[#f5f5f5] p-4">
+    <div
+      className="fixed inset-0 z-[10000] flex items-center justify-center p-4"
+      style={{ backgroundColor: 'var(--color-background)' }}>
       <AppBackground />
-      <div className="relative z-10 w-full max-w-xl rounded-2xl border border-stone-200 bg-white p-10 shadow-soft animate-fade-up">
+      <div className="relative z-10 w-full max-w-xl rounded-2xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-6 shadow-soft animate-fade-up">
         {children}
       </div>
     </div>
@@ -104,6 +130,7 @@ function ModePicker({ onConfirm }: PickerProps) {
   const [cloudUrl, setCloudUrl] = useState('');
   const [cloudToken, setCloudToken] = useState('');
   const [urlError, setUrlError] = useState<string | null>(null);
+  const [urlWarning, setUrlWarning] = useState<string | null>(null);
   const [tokenError, setTokenError] = useState<string | null>(null);
   const [testStatus, setTestStatus] = useState<TestStatus>({ kind: 'idle' });
 
@@ -120,21 +147,16 @@ function ModePicker({ onConfirm }: PickerProps) {
    * paths are passed through verbatim without the bearer value.
    */
   const validateInputs = (): { url: string; token: string } | null => {
-    const trimmedUrl = cloudUrl.trim();
-    if (!trimmedUrl) {
+    const rawUrl = cloudUrl.trim();
+    if (!rawUrl) {
       setUrlError(t('bootCheck.invalidUrl'));
       return null;
     }
+    const normalizedUrl = normalizeRpcUrl(rawUrl);
     try {
-      const parsed = new URL(trimmedUrl);
+      const parsed = new URL(normalizedUrl);
       if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
         setUrlError(t('bootCheck.urlMustStartWith'));
-        return null;
-      }
-      if (parsed.protocol === 'http:' && !isLocalOrPrivateNetworkHost(parsed.hostname)) {
-        setUrlError(
-          'HTTP core URLs are only allowed for localhost or private network hosts. Use HTTPS for public hosts.'
-        );
         return null;
       }
     } catch {
@@ -150,7 +172,7 @@ function ModePicker({ onConfirm }: PickerProps) {
     }
     setTokenError(null);
 
-    return { url: trimmedUrl, token: trimmedToken };
+    return { url: normalizedUrl, token: trimmedToken };
   };
 
   const handleTestConnection = async () => {
@@ -212,16 +234,16 @@ function ModePicker({ onConfirm }: PickerProps) {
   return (
     <Panel>
       <BootCheckLanguageSelect />
-      <h2 className="text-xl font-semibold text-stone-900">
+      <h2 className="text-xl font-semibold text-stone-900 dark:text-neutral-100">
         {isDesktop ? t('bootCheck.chooseCoreMode') : t('bootCheck.connectToCore')}
       </h2>
-      <p className="mt-2 text-sm text-stone-600">
+      <p className="mt-2 text-sm text-stone-600 dark:text-neutral-300">
         {isDesktop ? t('bootCheck.desktopDescription') : t('bootCheck.webDescription')}
       </p>
 
       {!isDesktop && (
         <div
-          className="mt-4 rounded-xl border border-stone-200 bg-stone-50 p-3 text-xs text-stone-600"
+          className="mt-4 rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-3 text-xs text-stone-600 dark:text-neutral-300"
           data-testid="web-download-cta">
           {t('bootCheck.preferDesktop')}{' '}
           <a
@@ -244,11 +266,13 @@ function ModePicker({ onConfirm }: PickerProps) {
             aria-pressed={selected === 'local'}
             className={`rounded-xl border-2 p-5 text-left transition-colors focus:outline-none ${
               selected === 'local'
-                ? '!border-primary-500 bg-primary-50 text-stone-900 shadow-sm'
-                : '!border-stone-200 bg-white text-stone-700 hover:!border-stone-300 hover:bg-stone-50'
+                ? '!border-primary-500 bg-primary-50 dark:bg-primary-500/15 text-stone-900 dark:text-neutral-100 shadow-sm'
+                : '!border-stone-200 dark:!border-neutral-700 bg-white dark:bg-neutral-900 text-stone-700 dark:text-neutral-200 hover:!border-stone-300 dark:hover:!border-neutral-600 hover:bg-stone-50 dark:hover:bg-neutral-800/60'
             }`}>
             <div className="font-medium">{t('bootCheck.localRecommended')}</div>
-            <div className="mt-0.5 text-xs text-stone-500">{t('bootCheck.localDescription')}</div>
+            <div className="mt-0.5 text-xs text-stone-500 dark:text-neutral-400">
+              {t('bootCheck.localDescription')}
+            </div>
           </button>
         )}
 
@@ -260,18 +284,20 @@ function ModePicker({ onConfirm }: PickerProps) {
             aria-pressed={selected === 'cloud'}
             className={`rounded-xl border-2 p-5 text-left transition-colors focus:outline-none ${
               selected === 'cloud'
-                ? '!border-primary-500 bg-primary-50 text-stone-900 shadow-sm'
-                : '!border-stone-200 bg-white text-stone-700 hover:!border-stone-300 hover:bg-stone-50'
+                ? '!border-primary-500 bg-primary-50 dark:bg-primary-500/15 text-stone-900 dark:text-neutral-100 shadow-sm'
+                : '!border-stone-200 dark:!border-neutral-700 bg-white dark:bg-neutral-900 text-stone-700 dark:text-neutral-200 hover:!border-stone-300 dark:hover:!border-neutral-600 hover:bg-stone-50 dark:hover:bg-neutral-800/60'
             }`}>
             <div className="font-medium">{t('bootCheck.cloudMode')}</div>
-            <div className="mt-0.5 text-xs text-stone-500">{t('bootCheck.cloudDescription')}</div>
+            <div className="mt-0.5 text-xs text-stone-500 dark:text-neutral-400">
+              {t('bootCheck.cloudDescription')}
+            </div>
           </button>
         )}
 
         {selected === 'cloud' && (
           <div className="mt-1 flex flex-col gap-3">
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-medium text-stone-700">
+              <label className="text-xs font-medium text-stone-700 dark:text-neutral-200">
                 {t('bootCheck.coreRpcUrl')}
               </label>
               <input
@@ -279,23 +305,30 @@ function ModePicker({ onConfirm }: PickerProps) {
                 placeholder={t('bootCheck.rpcUrlPlaceholder')}
                 value={cloudUrl}
                 onChange={e => {
-                  setCloudUrl(e.target.value);
+                  const next = e.target.value;
+                  setCloudUrl(next);
                   setUrlError(null);
+                  setUrlWarning(httpPublicHostWarning(next, t));
                   setTestStatus({ kind: 'idle' });
                 }}
-                className="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm text-stone-900 placeholder-stone-400 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                className="rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 placeholder-stone-400 dark:placeholder-neutral-500 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
               />
               {urlError && <p className="text-xs text-red-600">{urlError}</p>}
+              {!urlError && urlWarning && (
+                <p className="text-xs text-amber-600 dark:text-amber-500">{urlWarning}</p>
+              )}
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-medium text-stone-700">
+              <label className="text-xs font-medium text-stone-700 dark:text-neutral-200">
                 {t('bootCheck.authToken')} (
                 <code className="text-[10px]">OPENHUMAN_CORE_TOKEN</code>)
               </label>
               <input
-                type="password"
+                type="text"
                 autoComplete="off"
                 spellCheck={false}
+                data-1p-ignore
+                data-lpignore="true"
                 placeholder={t('bootCheck.bearerTokenPlaceholder')}
                 value={cloudToken}
                 onChange={e => {
@@ -303,11 +336,12 @@ function ModePicker({ onConfirm }: PickerProps) {
                   setTokenError(null);
                   setTestStatus({ kind: 'idle' });
                 }}
-                className="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm text-stone-900 placeholder-stone-400 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                className="rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 placeholder-stone-400 dark:placeholder-neutral-500 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
               />
               {tokenError && <p className="text-xs text-red-600">{tokenError}</p>}
-              <p className="text-[11px] text-stone-500 leading-snug">
-                {t('bootCheck.storedLocally')} <code>Authorization: Bearer …</code> on every RPC.
+              <p className="text-[11px] text-stone-500 dark:text-neutral-400 leading-snug">
+                {t('bootCheck.storedLocally')} <code>Authorization: Bearer …</code>{' '}
+                {t('bootCheck.rpcAuthSuffix')}
               </p>
             </div>
 
@@ -316,7 +350,7 @@ function ModePicker({ onConfirm }: PickerProps) {
                 type="button"
                 onClick={handleTestConnection}
                 disabled={testStatus.kind === 'testing'}
-                className="rounded-lg border border-stone-300 bg-white px-3 py-1.5 text-xs text-stone-700 hover:bg-stone-50 disabled:opacity-60">
+                className="rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-1.5 text-xs text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60 disabled:opacity-60">
                 {testStatus.kind === 'testing'
                   ? t('bootCheck.testing')
                   : t('bootCheck.testConnection')}
@@ -362,8 +396,10 @@ function CheckingScreen() {
   return (
     <Panel>
       <div className="flex flex-col items-center gap-4 py-4">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-stone-300 border-t-primary-500" />
-        <p className="text-sm text-stone-600">{t('bootCheck.checkingCore')}</p>
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-stone-300 dark:border-neutral-700 border-t-primary-500" />
+        <p className="text-sm text-stone-600 dark:text-neutral-300">
+          {t('bootCheck.checkingCore')}
+        </p>
       </div>
     </Panel>
   );
@@ -396,31 +432,50 @@ function ResultScreen({
   if (result.kind === 'match') return null;
 
   if (result.kind === 'unreachable') {
+    const isPortConflict = result.portConflict === true;
     return (
       <Panel>
-        <h2 className="text-xl font-semibold text-stone-900">{t('bootCheck.cannotReach')}</h2>
-        <p className="mt-2 text-sm text-stone-600">
-          {result.reason || t('bootCheck.cannotReachDesc')}
+        <h2 className="text-xl font-semibold text-stone-900 dark:text-neutral-100">
+          {isPortConflict ? t('bootCheck.portConflictTitle') : t('bootCheck.cannotReach')}
+        </h2>
+        <p className="mt-2 text-sm text-stone-600 dark:text-neutral-300">
+          {isPortConflict
+            ? t('bootCheck.portConflictBody')
+            : result.reason || t('bootCheck.cannotReachDesc')}
         </p>
         {actionError && <p className="mt-3 text-xs text-red-600 font-medium">{actionError}</p>}
-        <div className="mt-5 flex gap-3">
+        <div className="mt-5 flex gap-3 flex-wrap">
+          {isPortConflict && (
+            <button
+              type="button"
+              onClick={onAction}
+              disabled={actionBusy}
+              data-testid="fix-automatically-btn"
+              className="rounded-lg bg-primary-500 px-4 py-2 text-sm font-medium text-white hover:bg-primary-600 disabled:opacity-60">
+              {actionBusy
+                ? t('bootCheck.portConflictFixing')
+                : t('bootCheck.portConflictFixButton')}
+            </button>
+          )}
           <button
             type="button"
             onClick={onRetry}
             disabled={actionBusy}
-            className="rounded-lg border border-stone-300 bg-white px-4 py-2 text-sm text-stone-700 hover:bg-stone-50 disabled:opacity-60">
+            className="rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-4 py-2 text-sm text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60 disabled:opacity-60">
             {t('common.retry')}
           </button>
           <button
             type="button"
             onClick={onSwitchMode}
-            className="rounded-lg border border-stone-300 bg-white px-4 py-2 text-sm text-stone-700 hover:bg-stone-50">
+            disabled={actionBusy}
+            className="rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-4 py-2 text-sm text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60 disabled:opacity-60">
             {t('bootCheck.switchMode')}
           </button>
           <button
             type="button"
             onClick={onQuit}
-            className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700">
+            disabled={actionBusy}
+            className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-60">
             {t('bootCheck.quit')}
           </button>
         </div>
@@ -431,8 +486,12 @@ function ResultScreen({
   if (result.kind === 'daemonDetected') {
     return (
       <Panel>
-        <h2 className="text-xl font-semibold text-stone-900">{t('bootCheck.legacyDetected')}</h2>
-        <p className="mt-2 text-sm text-stone-600">{t('bootCheck.legacyDescription')}</p>
+        <h2 className="text-xl font-semibold text-stone-900 dark:text-neutral-100">
+          {t('bootCheck.legacyDetected')}
+        </h2>
+        <p className="mt-2 text-sm text-stone-600 dark:text-neutral-300">
+          {t('bootCheck.legacyDescription')}
+        </p>
         {actionError && <p className="mt-3 text-xs text-red-600 font-medium">{actionError}</p>}
         <div className="mt-5 flex gap-3">
           <button
@@ -446,7 +505,7 @@ function ResultScreen({
             type="button"
             onClick={onSwitchMode}
             disabled={actionBusy}
-            className="rounded-lg border border-stone-300 bg-white px-4 py-2 text-sm text-stone-700 hover:bg-stone-50 disabled:opacity-60">
+            className="rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-4 py-2 text-sm text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60 disabled:opacity-60">
             {t('bootCheck.switchMode')}
           </button>
         </div>
@@ -457,8 +516,12 @@ function ResultScreen({
   if (result.kind === 'outdatedLocal') {
     return (
       <Panel>
-        <h2 className="text-xl font-semibold text-stone-900">{t('bootCheck.localNeedsRestart')}</h2>
-        <p className="mt-2 text-sm text-stone-600">{t('bootCheck.localNeedsRestartDesc')}</p>
+        <h2 className="text-xl font-semibold text-stone-900 dark:text-neutral-100">
+          {t('bootCheck.localNeedsRestart')}
+        </h2>
+        <p className="mt-2 text-sm text-stone-600 dark:text-neutral-300">
+          {t('bootCheck.localNeedsRestartDesc')}
+        </p>
         {actionError && <p className="mt-3 text-xs text-red-600 font-medium">{actionError}</p>}
         <div className="mt-5 flex gap-3">
           <button
@@ -472,7 +535,7 @@ function ResultScreen({
             type="button"
             onClick={onSwitchMode}
             disabled={actionBusy}
-            className="rounded-lg border border-stone-300 bg-white px-4 py-2 text-sm text-stone-700 hover:bg-stone-50 disabled:opacity-60">
+            className="rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-4 py-2 text-sm text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60 disabled:opacity-60">
             {t('bootCheck.switchMode')}
           </button>
         </div>
@@ -483,8 +546,12 @@ function ResultScreen({
   if (result.kind === 'outdatedCloud') {
     return (
       <Panel>
-        <h2 className="text-xl font-semibold text-stone-900">{t('bootCheck.cloudNeedsUpdate')}</h2>
-        <p className="mt-2 text-sm text-stone-600">{t('bootCheck.cloudNeedsUpdateDesc')}</p>
+        <h2 className="text-xl font-semibold text-stone-900 dark:text-neutral-100">
+          {t('bootCheck.cloudNeedsUpdate')}
+        </h2>
+        <p className="mt-2 text-sm text-stone-600 dark:text-neutral-300">
+          {t('bootCheck.cloudNeedsUpdateDesc')}
+        </p>
         {actionError && <p className="mt-3 text-xs text-red-600 font-medium">{actionError}</p>}
         <div className="mt-5 flex gap-3">
           <button
@@ -498,7 +565,7 @@ function ResultScreen({
             type="button"
             onClick={onSwitchMode}
             disabled={actionBusy}
-            className="rounded-lg border border-stone-300 bg-white px-4 py-2 text-sm text-stone-700 hover:bg-stone-50 disabled:opacity-60">
+            className="rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-4 py-2 text-sm text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60 disabled:opacity-60">
             {t('bootCheck.switchMode')}
           </button>
         </div>
@@ -509,8 +576,12 @@ function ResultScreen({
   // noVersionMethod — treat like outdated, user picks which flavor of action
   return (
     <Panel>
-      <h2 className="text-xl font-semibold text-stone-900">{t('bootCheck.versionCheckFailed')}</h2>
-      <p className="mt-2 text-sm text-stone-600">{t('bootCheck.versionCheckFailedDesc')}</p>
+      <h2 className="text-xl font-semibold text-stone-900 dark:text-neutral-100">
+        {t('bootCheck.versionCheckFailed')}
+      </h2>
+      <p className="mt-2 text-sm text-stone-600 dark:text-neutral-300">
+        {t('bootCheck.versionCheckFailedDesc')}
+      </p>
       {actionError && <p className="mt-3 text-xs text-red-600 font-medium">{actionError}</p>}
       <div className="mt-5 flex gap-3">
         <button
@@ -524,7 +595,7 @@ function ResultScreen({
           type="button"
           onClick={onSwitchMode}
           disabled={actionBusy}
-          className="rounded-lg border border-stone-300 bg-white px-4 py-2 text-sm text-stone-700 hover:bg-stone-50 disabled:opacity-60">
+          className="rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-4 py-2 text-sm text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60 disabled:opacity-60">
           {t('bootCheck.switchMode')}
         </button>
       </div>
@@ -574,15 +645,8 @@ export default function BootCheckGate({ children }: BootCheckGateProps) {
       try {
         const checkResult = await runBootCheck(mode, transport);
         log('[boot-check] gate — check result=%s', checkResult.kind);
-
-        if (checkResult.kind === 'match') {
-          // Gate resolves — render children.
-          setPhase('result');
-          setResult(checkResult);
-        } else {
-          setPhase('result');
-          setResult(checkResult);
-        }
+        setPhase('result');
+        setResult(checkResult);
       } catch (err) {
         logError('[boot-check] gate — unexpected error: %o', err);
         setPhase('result');
@@ -699,6 +763,18 @@ export default function BootCheckGate({ children }: BootCheckGateProps) {
         log('[boot-check] gate — triggering cloud core update');
         await transport.callRpc('openhuman.update_run', {});
         log('[boot-check] gate — cloud core update triggered');
+      } else if (result.kind === 'unreachable' && result.portConflict) {
+        log('[boot-check-gate] port conflict — invoking recover_port_conflict');
+        const recovery = await recoverPortConflict();
+        log(
+          '[boot-check-gate] recovery result: success=%s message=%s',
+          recovery.success,
+          recovery.message
+        );
+        if (!recovery.success) {
+          setActionError(t('bootCheck.portConflictFixFailed'));
+          return;
+        }
       }
 
       // Re-run the full check after the action.

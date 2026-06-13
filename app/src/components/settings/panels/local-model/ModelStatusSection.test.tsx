@@ -1,8 +1,45 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
-import type { LocalAiDiagnostics } from '../../../../utils/tauriCommands';
+import type { LocalAiDiagnostics, LocalAiStatus } from '../../../../utils/tauriCommands';
 import ModelStatusSection from './ModelStatusSection';
+
+/**
+ * Minimal LocalAiStatus fixture for tests — casts to satisfy the interface.
+ * Only fields needed by specific test scenarios are provided; the rest are
+ * empty-string defaults that satisfy TypeScript's required-string constraints.
+ */
+const makeStatus = (overrides: Partial<LocalAiStatus> = {}): LocalAiStatus =>
+  ({
+    state: 'ready',
+    provider: 'ollama',
+    model_id: 'llama3',
+    chat_model_id: 'llama3',
+    vision_model_id: '',
+    embedding_model_id: '',
+    stt_model_id: '',
+    tts_voice_id: '',
+    quantization: '',
+    vision_state: 'disabled',
+    vision_mode: 'off',
+    embedding_state: 'ready',
+    stt_state: 'ready',
+    tts_state: 'ready',
+    active_backend: 'cpu',
+    last_latency_ms: null,
+    gen_toks_per_sec: null,
+    download_progress: null,
+    downloaded_bytes: null,
+    total_bytes: null,
+    download_speed_bps: null,
+    eta_seconds: null,
+    error_category: null,
+    error_detail: null,
+    warning: null,
+    backend_reason: null,
+    model_path: null,
+    ...overrides,
+  }) as LocalAiStatus;
 
 const defaultProps = {
   status: null,
@@ -25,6 +62,11 @@ const defaultProps = {
   etaText: '',
   statusTone: (_state: string) => '',
   runtimeEnabled: true,
+  ollamaBaseUrlInput: 'http://localhost:11434',
+  isTestingConnection: false,
+  connectionTestResult: null,
+  isSavingUrl: false,
+  savedOllamaBaseUrl: 'http://localhost:11434',
   onRefreshStatus: vi.fn(),
   onTriggerDownload: vi.fn(),
   onSetOllamaPath: vi.fn(),
@@ -33,6 +75,10 @@ const defaultProps = {
   onToggleErrorDetail: vi.fn(),
   onRunDiagnostics: vi.fn(),
   onRepairAction: vi.fn(),
+  onSetOllamaBaseUrlInput: vi.fn(),
+  onTestConnection: vi.fn(),
+  onSaveOllamaBaseUrl: vi.fn(),
+  onResetOllamaBaseUrl: vi.fn(),
 };
 
 const makeDiagnostics = (overrides: Partial<LocalAiDiagnostics> = {}): LocalAiDiagnostics => ({
@@ -327,5 +373,316 @@ describe('ModelStatusSection diagnostics', () => {
     expect(screen.queryByRole('button', { name: 'Install Ollama' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Set Path' })).toBeNull();
     expect(screen.getByRole('link', { name: 'Ollama docs' })).toBeTruthy();
+  });
+
+  it('accepts a model that meets the context minimum', () => {
+    render(
+      <ModelStatusSection
+        {...defaultProps}
+        diagnostics={makeDiagnostics({
+          installed_models: [
+            {
+              name: 'bge-m3:latest',
+              context_length: 8192,
+              eligibility: { status: 'ok', context_length: 8192 },
+            },
+          ],
+        })}
+      />
+    );
+    expect(screen.getByText('8,192 ctx ✓')).toBeTruthy();
+  });
+
+  it('rejects and visually flags a model below the context minimum', () => {
+    render(
+      <ModelStatusSection
+        {...defaultProps}
+        diagnostics={makeDiagnostics({
+          installed_models: [
+            {
+              name: 'tiny-embed:latest',
+              context_length: 2048,
+              eligibility: { status: 'below_minimum', context_length: 2048, required: 8192 },
+            },
+          ],
+          issues: [
+            'Embedding model `tiny-embed:latest` has a 2048-token context window; the memory layer requires at least 8192.',
+          ],
+          ok: false,
+        })}
+      />
+    );
+    expect(screen.getByText('2,048 ctx - below 8,192 min')).toBeTruthy();
+    // Model name is rendered in the rejection (red) treatment.
+    const name = screen.getByTitle('tiny-embed:latest');
+    expect(name.className).toContain('text-red-700');
+  });
+
+  it('marks an unknown context window without rejecting it', () => {
+    render(
+      <ModelStatusSection
+        {...defaultProps}
+        diagnostics={makeDiagnostics({
+          installed_models: [
+            { name: 'mystery:latest', eligibility: { status: 'unknown', required: 8192 } },
+          ],
+        })}
+      />
+    );
+    expect(screen.getByText('ctx unknown')).toBeTruthy();
+  });
+
+  it('renders models with no eligibility (older core) without a badge', () => {
+    render(
+      <ModelStatusSection
+        {...defaultProps}
+        diagnostics={makeDiagnostics({ installed_models: [{ name: 'legacy:latest', size: 1234 }] })}
+      />
+    );
+    expect(screen.getByText('legacy:latest')).toBeTruthy();
+    expect(screen.queryByText(/ctx/)).toBeNull();
+  });
+});
+
+describe('ModelStatusSection — Ollama server URL', () => {
+  it('renders the URL input with the default value', () => {
+    render(<ModelStatusSection {...defaultProps} />);
+    const input = screen.getByPlaceholderText('http://localhost:11434') as HTMLInputElement;
+    expect(input).toBeTruthy();
+    expect(input.value).toBe('http://localhost:11434');
+  });
+
+  it('shows a validation error for a bad URL', () => {
+    render(
+      <ModelStatusSection
+        {...defaultProps}
+        ollamaBaseUrlInput="not-a-url"
+        savedOllamaBaseUrl="http://localhost:11434"
+      />
+    );
+    expect(screen.getByText(/http:\/\/ or https:\/\//i)).toBeTruthy();
+  });
+
+  it('disables Save when URL is unchanged', () => {
+    render(
+      <ModelStatusSection
+        {...defaultProps}
+        ollamaBaseUrlInput="http://localhost:11434"
+        savedOllamaBaseUrl="http://localhost:11434"
+      />
+    );
+    const saveBtn = screen.getByRole('button', { name: 'Save' });
+    expect((saveBtn as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('enables Save when URL has changed and is valid', () => {
+    render(
+      <ModelStatusSection
+        {...defaultProps}
+        ollamaBaseUrlInput="http://192.168.1.5:11434"
+        savedOllamaBaseUrl="http://localhost:11434"
+      />
+    );
+    const saveBtn = screen.getByRole('button', { name: 'Save' });
+    expect((saveBtn as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('shows reachable status after a successful test', () => {
+    render(
+      <ModelStatusSection
+        {...defaultProps}
+        connectionTestResult={{ reachable: true, models_count: 3 }}
+      />
+    );
+    expect(screen.getByText(/Reachable/)).toBeTruthy();
+    expect(screen.getByText(/3 models/)).toBeTruthy();
+  });
+
+  it('shows unreachable status after a failed test', () => {
+    render(
+      <ModelStatusSection
+        {...defaultProps}
+        connectionTestResult={{ reachable: false, error: 'connection refused', models_count: null }}
+      />
+    );
+    expect(screen.getByText(/Unreachable/)).toBeTruthy();
+    expect(screen.getByText(/connection refused/)).toBeTruthy();
+  });
+
+  it('calls onTestConnection when Test Connection is clicked', async () => {
+    const onTestConnection = vi.fn();
+    render(
+      <ModelStatusSection
+        {...defaultProps}
+        ollamaBaseUrlInput="http://localhost:11434"
+        onTestConnection={onTestConnection}
+      />
+    );
+    const testBtn = screen.getByRole('button', { name: /Test Connection/ });
+    testBtn.click();
+    expect(onTestConnection).toHaveBeenCalledTimes(1);
+  });
+
+  it('calls onResetOllamaBaseUrl when Reset to default is clicked', () => {
+    const onResetOllamaBaseUrl = vi.fn();
+    render(<ModelStatusSection {...defaultProps} onResetOllamaBaseUrl={onResetOllamaBaseUrl} />);
+    const resetBtn = screen.getByRole('button', { name: /Reset to default/ });
+    resetBtn.click();
+    expect(onResetOllamaBaseUrl).toHaveBeenCalledTimes(1);
+  });
+
+  it('calls onSetOllamaBaseUrlInput when the URL input changes', () => {
+    const onSetOllamaBaseUrlInput = vi.fn();
+    render(
+      <ModelStatusSection {...defaultProps} onSetOllamaBaseUrlInput={onSetOllamaBaseUrlInput} />
+    );
+    const input = screen.getByPlaceholderText('http://localhost:11434');
+    fireEvent.change(input, { target: { value: 'http://192.168.1.5:11434' } });
+    expect(onSetOllamaBaseUrlInput).toHaveBeenCalledWith('http://192.168.1.5:11434');
+  });
+
+  it('shows spinner when isTestingConnection is true', () => {
+    render(<ModelStatusSection {...defaultProps} isTestingConnection={true} />);
+    const testBtn = screen.getByRole('button', { name: /Test Connection/i });
+    expect(testBtn.querySelector('.animate-spin')).toBeTruthy();
+  });
+
+  it('shows reachable result with model count when models_count is a number', () => {
+    render(
+      <ModelStatusSection
+        {...defaultProps}
+        connectionTestResult={{ reachable: true, models_count: 7 }}
+      />
+    );
+    expect(screen.getByText(/Reachable/)).toBeTruthy();
+    expect(screen.getByText(/7 models/)).toBeTruthy();
+  });
+
+  it('shows unreachable result with error text when reachable is false', () => {
+    render(
+      <ModelStatusSection
+        {...defaultProps}
+        connectionTestResult={{ reachable: false, error: 'dial tcp refused', models_count: null }}
+      />
+    );
+    expect(screen.getByText(/Unreachable/)).toBeTruthy();
+    expect(screen.getByText(/dial tcp refused/)).toBeTruthy();
+  });
+
+  it('shows validation error message for an invalid URL', () => {
+    render(
+      <ModelStatusSection
+        {...defaultProps}
+        ollamaBaseUrlInput="ftp://bad-scheme"
+        savedOllamaBaseUrl="http://localhost:11434"
+      />
+    );
+    expect(screen.getByText(/http:\/\/ or https:\/\//i)).toBeTruthy();
+  });
+});
+
+describe('ModelStatusSection — statusError and diagnosticsLoading (lines 405, 446)', () => {
+  it('renders statusError message when statusError is non-empty (line 405)', () => {
+    render(
+      <ModelStatusSection {...defaultProps} statusError="summarization failed: out of memory" />
+    );
+    expect(screen.getByText('summarization failed: out of memory')).toBeTruthy();
+  });
+
+  it('shows checking label while diagnostics is loading (line 446)', () => {
+    render(<ModelStatusSection {...defaultProps} isDiagnosticsLoading={true} />);
+    // Translation: 'settings.localModel.status.checking' → 'Checking...' (three dots)
+    expect(screen.getByRole('button', { name: 'Checking...' })).toBeTruthy();
+    expect(
+      (screen.getByRole('button', { name: 'Checking...' }) as HTMLButtonElement).disabled
+    ).toBe(true);
+  });
+
+  it('shows run diagnostics label when not loading (line 446)', () => {
+    render(<ModelStatusSection {...defaultProps} isDiagnosticsLoading={false} />);
+    expect(screen.getByRole('button', { name: 'Run Diagnostics' })).toBeTruthy();
+  });
+
+  it('renders diagnosticsError message when diagnostics fails (line 462)', () => {
+    render(<ModelStatusSection {...defaultProps} diagnosticsError="failed to connect to ollama" />);
+    expect(screen.getByText('failed to connect to ollama')).toBeTruthy();
+  });
+
+  it('shows isDiagnosticsLoading spinner while loading (line 456-460)', () => {
+    render(<ModelStatusSection {...defaultProps} isDiagnosticsLoading={true} />);
+    // Spinner div should be present
+    const spinnerEl = document.querySelector('.animate-spin');
+    expect(spinnerEl).toBeTruthy();
+  });
+
+  it('renders status model_path when present (line 391-395)', () => {
+    render(
+      <ModelStatusSection
+        {...defaultProps}
+        status={makeStatus({
+          last_latency_ms: 55,
+          gen_toks_per_sec: 12.3,
+          model_path: '/home/user/.ollama/models/llama3',
+        })}
+      />
+    );
+    // model_path is a text node inside a div that also has t('artifact') prefix —
+    // use body.textContent to avoid split-text-node matching issues.
+    expect(document.body.textContent).toContain('/home/user/.ollama/models/llama3');
+  });
+
+  it('renders backend_reason when present (line 397-401)', () => {
+    render(
+      <ModelStatusSection
+        {...defaultProps}
+        status={makeStatus({ active_backend: 'gpu', backend_reason: 'GPU detected and enabled' })}
+      />
+    );
+    expect(screen.getByText('GPU detected and enabled')).toBeTruthy();
+  });
+
+  it('renders warning when present (line 402-404)', () => {
+    render(
+      <ModelStatusSection
+        {...defaultProps}
+        status={makeStatus({
+          state: 'degraded',
+          warning: 'model context window is smaller than recommended',
+        })}
+      />
+    );
+    expect(screen.getByText('model context window is smaller than recommended')).toBeTruthy();
+  });
+
+  it('shows error_detail toggle and hides detail by default (lines 407-433)', () => {
+    render(
+      <ModelStatusSection
+        {...defaultProps}
+        status={makeStatus({
+          state: 'degraded',
+          error_category: 'install',
+          error_detail: 'checksum mismatch on model file',
+        })}
+        showErrorDetail={false}
+      />
+    );
+    // Translation: 'settings.localModel.status.showErrorDetails' → 'Show error details' (lowercase d)
+    expect(screen.getByText('Show error details')).toBeTruthy();
+    expect(screen.queryByText('checksum mismatch on model file')).toBeNull();
+  });
+
+  it('shows error_detail when showErrorDetail is true (lines 416-420)', () => {
+    render(
+      <ModelStatusSection
+        {...defaultProps}
+        status={makeStatus({
+          state: 'degraded',
+          error_category: 'install',
+          error_detail: 'checksum mismatch on model file',
+        })}
+        showErrorDetail={true}
+      />
+    );
+    expect(screen.getByText('checksum mismatch on model file')).toBeTruthy();
   });
 });

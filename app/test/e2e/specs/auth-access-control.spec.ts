@@ -38,6 +38,7 @@ import {
   navigateToBilling,
   navigateToHome,
   navigateToSettings,
+  navigateViaHash,
   waitForHomePage,
   walkOnboarding,
 } from '../helpers/shared-flows';
@@ -143,7 +144,8 @@ async function performFullLogin(token = 'e2e-test-token') {
 // ===========================================================================
 
 describe('Auth & Access Control', () => {
-  before(async () => {
+  before(async function beforeSuite() {
+    this.timeout(90_000);
     await startMockServer();
     resetMockBehavior();
     setMockBehavior('composioConnections', '[]');
@@ -164,14 +166,33 @@ describe('Auth & Access Control', () => {
   // 1. Authentication
   // -------------------------------------------------------------------------
 
-  it('new user registers via deep link and reaches home', async () => {
+  it('new user registers via deep link and reaches home', async function () {
+    this.timeout(120_000);
     await performFullLogin('e2e-auth-token');
   });
 
   it('re-authenticating with a new token for the same user returns to home', async () => {
     clearRequestLog();
     await triggerAuthDeepLink('e2e-auth-reauth-token');
-    await browser.pause(5_000);
+
+    // Wait until the app has processed the deep-link and navigated away from
+    // any loading state — poll for a home marker or the auth token consume
+    // request, whichever comes first.
+    await browser.waitUntil(
+      async () => {
+        const homeText = await waitForHomePage(500);
+        if (homeText) return true;
+        const consumed = getRequestLog().find(
+          r => r.method === 'POST' && r.url.includes('/telegram/login-tokens/')
+        );
+        return !!consumed;
+      },
+      {
+        timeout: 10_000,
+        interval: 500,
+        timeoutMsg: 'Timed out waiting for re-auth deep-link to be processed',
+      }
+    );
 
     const homeText = await waitForHomePage(15_000);
     if (!homeText) {
@@ -185,7 +206,21 @@ describe('Auth & Access Control', () => {
   it('second device token is accepted and processed', async () => {
     clearRequestLog();
     await triggerAuthDeepLink('e2e-auth-device2-token');
-    await browser.pause(5_000);
+
+    // Wait for the deep-link to be consumed before asserting home state.
+    await browser.waitUntil(
+      async () => {
+        const consumed = getRequestLog().find(
+          r => r.method === 'POST' && r.url.includes('/telegram/login-tokens/')
+        );
+        return !!consumed;
+      },
+      {
+        timeout: 10_000,
+        interval: 500,
+        timeoutMsg: 'Timed out waiting for device-2 token consume call',
+      }
+    );
 
     const homeText = await waitForHomePage(15_000);
     if (!homeText) {
@@ -218,7 +253,7 @@ describe('Auth & Access Control', () => {
     }
     expect(hasHandoff).toBe(true);
 
-    await expectBillingMarkers(['Open dashboard']);
+    await expectBillingMarkers(['Open billing dashboard']);
 
     console.log('[AuthAccess] 3.1.1 — Billing web handoff verified');
     await navigateToHome();
@@ -232,7 +267,7 @@ describe('Auth & Access Control', () => {
     await navigateToBilling();
     clearRequestLog();
 
-    await expectBillingMarkers(['Open dashboard', 'TinyHumans on the web']);
+    await expectBillingMarkers(['Open billing dashboard', 'TinyHumans on the web']);
 
     console.log('[AuthAccess] 3.2.1 — Billing dashboard entry point verified');
     await navigateToHome();
@@ -254,7 +289,7 @@ describe('Auth & Access Control', () => {
     await expectBillingMarkers([
       'Billing moved to the web',
       'Subscription changes',
-      'Open dashboard',
+      'Open billing dashboard',
     ]);
 
     console.log('[AuthAccess] 3.3.1 — Subscription management handoff verified');
@@ -270,7 +305,7 @@ describe('Auth & Access Control', () => {
     await navigateToBilling();
     await browser.pause(3_000);
 
-    await expectBillingMarkers(['Open dashboard']);
+    await expectBillingMarkers(['Open billing dashboard']);
 
     console.log('[AuthAccess] 3.3.3 — Dashboard handoff verified');
     resetMockBehavior();
@@ -285,14 +320,31 @@ describe('Auth & Access Control', () => {
     // Re-auth to get a clean session for logout
     clearRequestLog();
     await triggerAuthDeepLink('e2e-pre-logout-token');
-    await browser.pause(5_000);
+
+    // Wait for the consume call rather than using a fixed delay.
+    await browser.waitUntil(
+      async () => {
+        const consumed = getRequestLog().find(
+          r => r.method === 'POST' && r.url.includes('/telegram/login-tokens/')
+        );
+        return !!consumed;
+      },
+      {
+        timeout: 10_000,
+        interval: 500,
+        timeoutMsg: 'Timed out waiting for pre-logout token consume call',
+      }
+    );
 
     const homeCheck = await waitForHomePage(10_000);
     if (!homeCheck) {
       await navigateToHome();
     }
 
-    await navigateToSettings();
+    // Log out + Clear App Data moved out of the main /settings page and
+    // into the Account section in PR #2550 (LogoutAndClearActions footer
+    // on /settings/account).
+    await navigateViaHash('/settings/account');
 
     // Click "Log out" via JS — the settings menu item text is "Log out"
     // with description "Sign out of your account"
@@ -388,7 +440,8 @@ describe('Auth & Access Control', () => {
     console.log(`[AuthAccess] Logout verified: welcomeUI=${onWelcome}, tokenCleared=${!hasToken}`);
   });
 
-  it('revoked session auto-logs out the user', async () => {
+  it('revoked session auto-logs out the user', async function () {
+    this.timeout(120_000);
     // Login fresh
     clearRequestLog();
     resetMockBehavior();
@@ -400,7 +453,28 @@ describe('Auth & Access Control', () => {
 
     // Trigger a re-auth which will fail with 401
     await triggerAuthDeepLink('e2e-revoked-check-token');
-    await browser.pause(8_000);
+
+    // Wait for the app to process the revoked token. The app should either
+    // navigate away from Home (auto-logout) or the token consume call should
+    // arrive. Poll with a generous timeout since 401 handling involves an
+    // async auth state update.
+    await browser.waitUntil(
+      async () => {
+        // Either the app has logged us out (no home markers) or the
+        // consume request arrived so we can proceed to the assertion.
+        const homeText = await waitForHomePage(500);
+        if (!homeText) return true; // navigated away — auto-logout happened
+        const consumed = getRequestLog().find(
+          r => r.method === 'POST' && r.url.includes('/telegram/login-tokens/')
+        );
+        return !!consumed;
+      },
+      {
+        timeout: 12_000,
+        interval: 500,
+        timeoutMsg: 'Timed out waiting for revoked-session response',
+      }
+    );
 
     // The app should auto-log out when it gets a 401
     const stillOnHome = await waitForHomePage(5_000);

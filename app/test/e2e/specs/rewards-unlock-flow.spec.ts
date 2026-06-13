@@ -60,6 +60,15 @@ async function navigateToRewards(): Promise<void> {
   // sidebar/bottom-tab affordances are icon-only buttons and existing
   // `clickButton('Rewards')` matches conflict with the page header text
   // "Earn Rewards & Discord Roles".
+  //
+  // Navigate to /home first so the React component always re-mounts when
+  // we arrive at /rewards. Without this, if the page is already at /rewards
+  // setting the same hash is a no-op and the component never re-fetches
+  // the mock scenario that was just primed.
+  await browser.execute(() => {
+    window.location.hash = '/home';
+  });
+  await browser.pause(1_000);
   await browser.execute(() => {
     window.location.hash = '/rewards';
   });
@@ -201,9 +210,8 @@ describe('Rewards role-unlock flows', () => {
     expect(await textExists('1 of 3 achievements unlocked')).toBe(true);
 
     // The plan-leg unlock must NOT also flip the integration label — discord
-    // remains not-linked in this scenario, so the membership badge says
-    // "Not linked". This rules out a regression where the snapshot
-    // copy-paste logic accidentally promoted the discord branch.
-    expect(await textExists('Not linked')).toBe(true);
+    // remains disconnected in this scenario. This rules out a regression where
+    // the snapshot copy-paste logic accidentally promoted the discord branch.
+    expect(await textExists('Discord not connected')).toBe(true);
   });
 });

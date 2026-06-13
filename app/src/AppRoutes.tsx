@@ -1,22 +1,34 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 
+import AppRoutesIOS from './AppRoutesIOS';
 import DefaultRedirect from './components/DefaultRedirect';
 import ProtectedRoute from './components/ProtectedRoute';
 import PublicRoute from './components/PublicRoute';
 import HumanPage from './features/human/HumanPage';
+import { getIsMobile } from './lib/platform';
 import Accounts from './pages/Accounts';
-import Channels from './pages/Channels';
+import Brain from './pages/Brain';
+import AgentInsightsPreview from './pages/dev/AgentInsightsPreview';
 import Home from './pages/Home';
-import Intelligence from './pages/Intelligence';
 import Invites from './pages/Invites';
 import Notifications from './pages/Notifications';
 import Onboarding from './pages/onboarding/Onboarding';
+import { PttOverlayPage } from './pages/PttOverlayPage';
 import Rewards from './pages/Rewards';
 import Settings from './pages/Settings';
 import Skills from './pages/Skills';
+import WebCallbackPage from './pages/WebCallbackPage';
 import Welcome from './pages/Welcome';
+import WorkflowNew from './pages/WorkflowNew';
+import WorkflowsRun from './pages/WorkflowsRun';
 
 const AppRoutes = () => {
+  // Mobile target (iOS or Android): pair → Human/Chat/Settings only.
+  // Desktop routes are not rendered.
+  if (getIsMobile()) {
+    return <AppRoutesIOS />;
+  }
+
   return (
     <Routes>
       {/* Public routes - redirect to /home if logged in */}
@@ -28,6 +40,9 @@ const AppRoutes = () => {
           </PublicRoute>
         }
       />
+
+      <Route path="/callback/:kind" element={<WebCallbackPage />} />
+      <Route path="/callback/:kind/:status" element={<WebCallbackPage />} />
 
       {/* Onboarding (full-page stepper, gated by onboarding_completed) */}
       <Route
@@ -49,6 +64,9 @@ const AppRoutes = () => {
         }
       />
 
+      {/* Human — first-class destination again (restored after the IA Phase 6
+          merge into Assistant). Renders the Human/mascot surface. iOS serves
+          /human via AppRoutesIOS. */}
       <Route
         path="/human"
         element={
@@ -58,23 +76,58 @@ const AppRoutes = () => {
         }
       />
 
+      {/* Brain — the centerpiece memory knowledge-graph surface, reached from
+          the raised center button in the bottom bar. Full-page, graph-only. */}
       <Route
-        path="/intelligence"
+        path="/brain"
         element={
           <ProtectedRoute requireAuth={true}>
-            <Intelligence />
+            <Brain />
+          </ProtectedRoute>
+        }
+      />
+
+      {/* Back-compat: /activity and /intelligence → settings notifications page. */}
+      <Route path="/activity" element={<Navigate to="/settings/notifications" replace />} />
+      <Route path="/intelligence" element={<Navigate to="/settings/notifications" replace />} />
+
+      {/* Connections page lives at /connections (Phase 2 rename from /skills).
+          The old /skills path is kept as a back-compat redirect so bookmarks
+          and deep links continue to work.  `?tab=` query params are preserved
+          by Navigate (replace) so existing deep links still land on the right
+          sub-tab.
+          `/workflows/new` is the create-a-skill authoring page.
+          Order matters: keep `/workflows/new` before `/connections` so it wins
+          the prefix match. */}
+      <Route
+        path="/workflows/new"
+        element={
+          <ProtectedRoute requireAuth={true}>
+            <WorkflowNew />
           </ProtectedRoute>
         }
       />
 
       <Route
-        path="/skills"
+        path="/workflows/run"
+        element={
+          <ProtectedRoute requireAuth={true}>
+            <WorkflowsRun />
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/connections"
         element={
           <ProtectedRoute requireAuth={true}>
             <Skills />
           </ProtectedRoute>
         }
       />
+
+      {/* Back-compat: /skills → /connections (preserves ?tab= deep links). */}
+      <Route path="/skills" element={<Navigate to="/connections" replace />} />
 
       {/* Unified chat = agent + connected web apps. Replaces the old
           /conversations and /accounts routes. */}
@@ -87,14 +140,9 @@ const AppRoutes = () => {
         }
       />
 
-      <Route
-        path="/channels"
-        element={
-          <ProtectedRoute requireAuth={true}>
-            <Channels />
-          </ProtectedRoute>
-        }
-      />
+      {/* Back-compat: /channels was an orphaned standalone page; it now
+          redirects to the unified Connections page on the Messaging tab. */}
+      <Route path="/channels" element={<Navigate to="/connections?tab=messaging" replace />} />
 
       <Route
         path="/invites"
@@ -114,6 +162,11 @@ const AppRoutes = () => {
         }
       />
 
+      {/* Back-compat: /routines was an orphaned dead page (superseded by the
+          Cron Jobs settings panel).  Redirect to Activity → Automations so
+          any surviving deep links land somewhere sensible. */}
+      <Route path="/routines" element={<Navigate to="/settings/automations" replace />} />
+
       <Route
         path="/rewards"
         element={
@@ -123,7 +176,9 @@ const AppRoutes = () => {
         }
       />
 
-      <Route path="/webhooks" element={<Navigate to="/settings/webhooks-triggers" replace />} />
+      <Route path="/workflows" element={<Navigate to="/settings/automations" replace />} />
+
+      <Route path="/webhooks" element={<Navigate to="/settings/integrations#webhooks" replace />} />
 
       <Route
         path="/settings/*"
@@ -133,6 +188,11 @@ const AppRoutes = () => {
           </ProtectedRoute>
         }
       />
+
+      <Route path="/ptt-overlay" element={<PttOverlayPage />} />
+
+      {/* Dev-only visual preview of the Agentic task insights surface. */}
+      <Route path="/dev/agent-insights" element={<AgentInsightsPreview />} />
 
       {/* Default redirect based on auth status */}
       <Route path="*" element={<DefaultRedirect />} />

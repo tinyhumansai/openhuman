@@ -112,6 +112,26 @@ impl IngestionState {
         snap.queue_depth = self.inner.queue_depth.load(Ordering::SeqCst);
         snap
     }
+
+    /// Reset the queue depth counter and running snapshot to idle.
+    ///
+    /// Neutralises residue from background ingestion workers that outlived a
+    /// prior test's lock scope. Call at the start of each test body that
+    /// asserts exact `queue_depth` or `running` state.
+    ///
+    /// Preserves `last_completed_at`, `last_document_id`, and `last_success`
+    /// so tests that assert completion history still work.
+    #[cfg(test)]
+    pub fn reset_for_test(&self) {
+        self.inner.queue_depth.store(0, Ordering::SeqCst);
+        let mut snap = self.inner.snapshot.write();
+        snap.running = false;
+        snap.current_document_id = None;
+        snap.current_title = None;
+        snap.current_namespace = None;
+        // Preserve last_completed_at, last_document_id, last_success so
+        // tests that assert completion history still work.
+    }
 }
 
 #[cfg(test)]
@@ -178,5 +198,40 @@ mod tests {
         assert_eq!(snap.last_document_id.as_deref(), Some("doc-1"));
         assert_eq!(snap.last_success, Some(true));
         assert_eq!(snap.last_completed_at, Some(12345));
+    }
+
+    #[test]
+    fn reset_for_test_clears_queue_depth_and_running_state() {
+        let state = IngestionState::new();
+        state.enqueue();
+        state.enqueue();
+        state.mark_running("doc-x", "title", "ns");
+
+        state.reset_for_test();
+
+        let snap = state.snapshot();
+        assert_eq!(snap.queue_depth, 0, "queue_depth must be zero after reset");
+        assert!(!snap.running, "running must be false after reset");
+        assert!(snap.current_document_id.is_none());
+    }
+
+    #[test]
+    fn reset_for_test_preserves_completion_history() {
+        let state = IngestionState::new();
+        state.enqueue();
+        state.mark_running("doc-y", "title", "ns");
+        state.mark_completed("doc-y", true, 99999);
+        state.dequeue();
+
+        state.reset_for_test();
+
+        let snap = state.snapshot();
+        assert_eq!(snap.queue_depth, 0);
+        assert_eq!(
+            snap.last_document_id.as_deref(),
+            Some("doc-y"),
+            "completion history should survive reset"
+        );
+        assert_eq!(snap.last_success, Some(true));
     }
 }

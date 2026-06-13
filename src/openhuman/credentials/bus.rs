@@ -55,22 +55,43 @@ impl EventHandler for SessionExpiredSubscriber {
             return;
         };
 
-        tracing::warn!(
-            source = %source,
-            reason = %reason,
-            "[auth] SessionExpired received — pausing background LLM work and clearing session"
-        );
-
-        // (1) Stand down background workers immediately. Cheap atomic — safe
-        //     even if called repeatedly from concurrent publishers.
+        // (1) Stand down background workers immediately — before any async work.
+        //     Cheap atomic flip; safe to call repeatedly from concurrent publishers.
+        //     We may override this back to `false` below if the current session
+        //     turns out to be a local offline session (never truly expired).
         scheduler_gate::set_signed_out(true);
 
-        // (2) Tear down the session. We must call clear_session against a
-        //     loaded config; if the config can't load (rare — disk issue),
-        //     we've at least pinned the scheduler gate so background work
-        //     can't make things worse.
         match crate::openhuman::config::rpc::load_config_with_timeout().await {
             Ok(config) => {
+                let is_local_session = crate::api::jwt::get_session_token(&config)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|token| {
+                        crate::openhuman::credentials::session_support::is_local_session_token(
+                            &token,
+                        )
+                    });
+                if is_local_session {
+                    tracing::warn!(
+                        source = %source,
+                        reason = %reason,
+                        "[auth] SessionExpired ignored for local offline session — re-enabling scheduler gate"
+                    );
+                    // Undo the eager flip: local sessions are never truly expired.
+                    scheduler_gate::set_signed_out(false);
+                    return;
+                }
+
+                tracing::warn!(
+                    source = %source,
+                    reason = %reason,
+                    "[auth] SessionExpired received — pausing background LLM work and clearing session"
+                );
+
+                // (2) Tear down the session. We must call clear_session against a
+                //     loaded config; if the config can't load (rare — disk issue),
+                //     we've at least pinned the scheduler gate so background work
+                //     can't make things worse.
                 if let Err(err) = crate::openhuman::credentials::rpc::clear_session(&config).await {
                     tracing::warn!(
                         source = %source,
@@ -85,6 +106,8 @@ impl EventHandler for SessionExpiredSubscriber {
                 }
             }
             Err(err) => {
+                // set_signed_out(true) was already called above; scheduler gate
+                // is pinned even though we cannot clear the JWT this cycle.
                 tracing::warn!(
                     source = %source,
                     error = %err,

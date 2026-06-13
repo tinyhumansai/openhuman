@@ -9,17 +9,21 @@ vi.mock('../../services/coreRpcClient', () => ({ callCoreRpc: vi.fn() }));
 describe('tauriCommands/config', () => {
   const mockIsTauri = isTauri as Mock;
   const mockCallCoreRpc = callCoreRpc as Mock;
+  let openhumanGetAutonomySettings: typeof import('./config').openhumanGetAutonomySettings;
+  let openhumanGetMeetSettings: typeof import('./config').openhumanGetMeetSettings;
+  let openhumanUpdateAutonomySettings: typeof import('./config').openhumanUpdateAutonomySettings;
   let openhumanUpdateLocalAiSettings: typeof import('./config').openhumanUpdateLocalAiSettings;
   let openhumanUpdateMeetSettings: typeof import('./config').openhumanUpdateMeetSettings;
-  let openhumanGetMeetSettings: typeof import('./config').openhumanGetMeetSettings;
 
   beforeEach(async () => {
     vi.clearAllMocks();
     mockIsTauri.mockReturnValue(true);
     const actual = await vi.importActual<typeof import('./config')>('./config');
+    openhumanGetAutonomySettings = actual.openhumanGetAutonomySettings;
+    openhumanGetMeetSettings = actual.openhumanGetMeetSettings;
+    openhumanUpdateAutonomySettings = actual.openhumanUpdateAutonomySettings;
     openhumanUpdateLocalAiSettings = actual.openhumanUpdateLocalAiSettings;
     openhumanUpdateMeetSettings = actual.openhumanUpdateMeetSettings;
-    openhumanGetMeetSettings = actual.openhumanGetMeetSettings;
   });
 
   afterEach(() => {
@@ -94,6 +98,45 @@ describe('tauriCommands/config', () => {
         method: 'openhuman.config_get_meet_settings',
       });
       expect(out.result.auto_orchestrator_handoff).toBe(true);
+    });
+  });
+
+  describe('openhumanUpdateAutonomySettings', () => {
+    test('throws when not running in Tauri', async () => {
+      mockIsTauri.mockReturnValue(false);
+      await expect(openhumanUpdateAutonomySettings({ max_actions_per_hour: 100 })).rejects.toThrow(
+        'Not running in Tauri'
+      );
+      expect(mockCallCoreRpc).not.toHaveBeenCalled();
+    });
+
+    test('forwards the patch to openhuman.config_update_autonomy_settings', async () => {
+      mockCallCoreRpc.mockResolvedValue({
+        result: { config: {}, workspace_dir: '/tmp', config_path: '/tmp/cfg.toml' },
+        logs: [],
+      });
+      await openhumanUpdateAutonomySettings({ max_actions_per_hour: 100 });
+      expect(mockCallCoreRpc).toHaveBeenCalledWith({
+        method: 'openhuman.config_update_autonomy_settings',
+        params: { max_actions_per_hour: 100 },
+      });
+    });
+  });
+
+  describe('openhumanGetAutonomySettings', () => {
+    test('throws when not running in Tauri', async () => {
+      mockIsTauri.mockReturnValue(false);
+      await expect(openhumanGetAutonomySettings()).rejects.toThrow('Not running in Tauri');
+      expect(mockCallCoreRpc).not.toHaveBeenCalled();
+    });
+
+    test('reads via openhuman.config_get_autonomy_settings', async () => {
+      mockCallCoreRpc.mockResolvedValue({ result: { max_actions_per_hour: 250 }, logs: [] });
+      const out = await openhumanGetAutonomySettings();
+      expect(mockCallCoreRpc).toHaveBeenCalledWith({
+        method: 'openhuman.config_get_autonomy_settings',
+      });
+      expect(out.result.max_actions_per_hour).toBe(250);
     });
   });
 

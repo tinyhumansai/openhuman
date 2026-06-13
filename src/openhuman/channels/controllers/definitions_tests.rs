@@ -135,6 +135,160 @@ fn serialization_produces_expected_structure() {
     assert_eq!(caps.len(), def.capabilities.len());
 }
 
+// -- #2048: Lark / Feishu + DingTalk channel definitions ------------------
+
+#[test]
+fn lark_definition_is_registered() {
+    let def = find_channel_definition("lark").expect("lark definition not registered");
+    assert_eq!(def.display_name, "Lark / Feishu");
+    assert_eq!(def.icon, "lark");
+}
+
+#[test]
+fn lark_uses_api_key_auth_with_app_id_and_secret_required() {
+    let def = find_channel_definition("lark").expect("lark not found");
+    let spec = def
+        .auth_mode_spec(ChannelAuthMode::ApiKey)
+        .expect("lark must support ApiKey auth mode");
+
+    // The two non-negotiable fields are app_id + app_secret — every
+    // Lark/Feishu open-platform app gets these from the developer console.
+    let app_id = spec
+        .fields
+        .iter()
+        .find(|f| f.key == "app_id")
+        .expect("missing app_id field");
+    assert!(app_id.required, "app_id must be required");
+    assert_eq!(app_id.field_type, "string");
+
+    let app_secret = spec
+        .fields
+        .iter()
+        .find(|f| f.key == "app_secret")
+        .expect("missing app_secret field");
+    assert!(app_secret.required, "app_secret must be required");
+    assert_eq!(
+        app_secret.field_type, "secret",
+        "app_secret must be a secret-typed field"
+    );
+
+    // Optional but supported: encrypt_key, verification_token, use_feishu,
+    // receive_mode, port, allowed_users. Field names map 1:1 to `LarkConfig`
+    // in `src/openhuman/config/schema/channels.rs` — any rename on the
+    // backend side will fail this assertion before the UI silently breaks.
+    for key in [
+        "encrypt_key",
+        "verification_token",
+        "use_feishu",
+        "receive_mode",
+        "port",
+        "allowed_users",
+    ] {
+        let field = spec
+            .fields
+            .iter()
+            .find(|f| f.key == key)
+            .unwrap_or_else(|| panic!("lark spec missing optional field: {}", key));
+        assert!(
+            !field.required,
+            "lark optional field {} must not be required",
+            key
+        );
+    }
+
+    let use_feishu = spec.fields.iter().find(|f| f.key == "use_feishu").unwrap();
+    assert_eq!(use_feishu.field_type, "boolean");
+}
+
+#[test]
+fn lark_validate_credentials_rejects_missing_app_secret() {
+    let def = find_channel_definition("lark").expect("lark not found");
+    let mut creds = serde_json::Map::new();
+    creds.insert("app_id".into(), serde_json::Value::String("cli_xx".into()));
+    // app_secret intentionally omitted.
+    let err = def
+        .validate_credentials(ChannelAuthMode::ApiKey, &creds)
+        .expect_err("must reject when app_secret is missing");
+    assert!(err.contains("app_secret"), "{err}");
+}
+
+#[test]
+fn dingtalk_definition_is_registered() {
+    let def = find_channel_definition("dingtalk").expect("dingtalk definition not registered");
+    assert_eq!(def.display_name, "DingTalk (钉钉)");
+    assert_eq!(def.icon, "dingtalk");
+}
+
+#[test]
+fn dingtalk_requires_client_id_and_client_secret() {
+    let def = find_channel_definition("dingtalk").expect("dingtalk not found");
+    let spec = def
+        .auth_mode_spec(ChannelAuthMode::ApiKey)
+        .expect("dingtalk must support ApiKey auth mode");
+
+    let client_id = spec
+        .fields
+        .iter()
+        .find(|f| f.key == "client_id")
+        .expect("missing client_id field");
+    assert!(client_id.required);
+    assert_eq!(client_id.field_type, "string");
+
+    let client_secret = spec
+        .fields
+        .iter()
+        .find(|f| f.key == "client_secret")
+        .expect("missing client_secret field");
+    assert!(client_secret.required);
+    assert_eq!(
+        client_secret.field_type, "secret",
+        "client_secret must be a secret-typed field"
+    );
+
+    // DingTalkConfig in `src/openhuman/config/schema/channels.rs` also
+    // accepts `allowed_users` (Vec<String>, defaults to empty). Pin it
+    // as an optional field here for the same reason we pin Lark's
+    // optional set — schema renames blow up at test time, not in
+    // production UI.
+    let allowed_users = spec
+        .fields
+        .iter()
+        .find(|f| f.key == "allowed_users")
+        .expect("dingtalk spec missing optional allowed_users field");
+    assert!(
+        !allowed_users.required,
+        "dingtalk allowed_users must not be required"
+    );
+    assert_eq!(allowed_users.field_type, "string");
+}
+
+#[test]
+fn dingtalk_validate_credentials_rejects_missing_client_secret() {
+    let def = find_channel_definition("dingtalk").expect("dingtalk not found");
+    let mut creds = serde_json::Map::new();
+    creds.insert(
+        "client_id".into(),
+        serde_json::Value::String("ding_xx".into()),
+    );
+    let err = def
+        .validate_credentials(ChannelAuthMode::ApiKey, &creds)
+        .expect_err("must reject when client_secret is missing");
+    assert!(err.contains("client_secret"), "{err}");
+}
+
+#[test]
+fn all_definitions_include_lark_and_dingtalk() {
+    let ids: Vec<&str> = all_channel_definitions().iter().map(|d| d.id).collect();
+    assert!(
+        ids.contains(&"lark"),
+        "lark missing from all_channel_definitions"
+    );
+    assert!(
+        ids.contains(&"dingtalk"),
+        "dingtalk missing from all_channel_definitions"
+    );
+}
+
 #[test]
 fn auth_mode_display_and_parse() {
     for mode in [

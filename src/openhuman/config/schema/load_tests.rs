@@ -1,4 +1,5 @@
 use super::*;
+use crate::openhuman::config::schema::{StreamMode, TelegramConfig};
 
 #[test]
 fn read_active_user_returns_none_when_no_file() {
@@ -249,6 +250,56 @@ fn apply_env_overrides_web_search_max_results_and_timeout_clamped() {
 }
 
 #[test]
+fn apply_env_overrides_searxng_config() {
+    let _g = env_lock();
+    clear_env(&[
+        "OPENHUMAN_SEARXNG_ENABLED",
+        "SEARXNG_ENABLED",
+        "OPENHUMAN_SEARXNG_BASE_URL",
+        "SEARXNG_BASE_URL",
+        "OPENHUMAN_SEARXNG_MAX_RESULTS",
+        "SEARXNG_MAX_RESULTS",
+        "OPENHUMAN_SEARXNG_DEFAULT_LANGUAGE",
+        "SEARXNG_DEFAULT_LANGUAGE",
+        "OPENHUMAN_SEARXNG_TIMEOUT_SECS",
+        "OPENHUMAN_SEARXNG_TIMEOUT_SECONDS",
+        "SEARXNG_TIMEOUT_SECS",
+        "SEARXNG_TIMEOUT_SECONDS",
+    ]);
+
+    let mut cfg = Config::default();
+    unsafe {
+        std::env::set_var("OPENHUMAN_SEARXNG_ENABLED", "yes");
+        std::env::set_var("OPENHUMAN_SEARXNG_BASE_URL", "http://127.0.0.1:8081");
+        std::env::set_var("OPENHUMAN_SEARXNG_MAX_RESULTS", "25");
+        std::env::set_var("OPENHUMAN_SEARXNG_DEFAULT_LANGUAGE", "zh-CN");
+        std::env::set_var("OPENHUMAN_SEARXNG_TIMEOUT_SECONDS", "12");
+    }
+
+    cfg.apply_env_overrides();
+
+    assert!(cfg.searxng.enabled);
+    assert_eq!(cfg.searxng.base_url, "http://127.0.0.1:8081");
+    assert_eq!(cfg.searxng.max_results, 25);
+    assert_eq!(cfg.searxng.default_language, "zh-CN");
+    assert_eq!(cfg.searxng.timeout_secs, 12);
+    clear_env(&[
+        "OPENHUMAN_SEARXNG_ENABLED",
+        "OPENHUMAN_SEARXNG_BASE_URL",
+        "OPENHUMAN_SEARXNG_MAX_RESULTS",
+        "OPENHUMAN_SEARXNG_DEFAULT_LANGUAGE",
+        "OPENHUMAN_SEARXNG_TIMEOUT_SECONDS",
+    ]);
+}
+
+#[test]
+fn searxng_timeout_seconds_alias_deserializes() {
+    let cfg: crate::openhuman::config::SearxngConfig =
+        toml::from_str(r#"timeout_seconds = 7"#).expect("deserialize searxng config");
+    assert_eq!(cfg.timeout_secs, 7);
+}
+
+#[test]
 fn apply_env_overrides_picks_up_sentry_dsn() {
     let _g = env_lock();
     clear_env(&["OPENHUMAN_CORE_SENTRY_DSN", "OPENHUMAN_SENTRY_DSN"]);
@@ -423,8 +474,9 @@ impl EnvLookup for HashMapEnv {
 }
 
 #[test]
-fn env_overlay_model_prefers_openhuman_over_alias() {
-    // Both set → OPENHUMAN_MODEL wins.
+fn env_overlay_model_only_honours_namespaced_var() {
+    // Both set → OPENHUMAN_MODEL wins; bare MODEL is ignored even when
+    // OPENHUMAN_MODEL is absent.
     let env = HashMapEnv::new()
         .with("OPENHUMAN_MODEL", "specific-v2")
         .with("MODEL", "alias-fallback");
@@ -432,11 +484,30 @@ fn env_overlay_model_prefers_openhuman_over_alias() {
     cfg.apply_env_overlay_with(&env);
     assert_eq!(cfg.default_model.as_deref(), Some("specific-v2"));
 
-    // Only alias set → alias wins.
-    let env = HashMapEnv::new().with("MODEL", "alias-only");
+    // Only bare MODEL set → must NOT clobber default_model. Vendor
+    // asset-tag env vars (e.g. Dell OptiPlex `MODEL=7080`) would otherwise
+    // hijack the LLM model name and 400 every backend call
+    // (Sentry OPENHUMAN-TAURI-J8).
+    let env = HashMapEnv::new().with("MODEL", "7080");
     let mut cfg = Config::default();
+    let original = cfg.default_model.clone();
     cfg.apply_env_overlay_with(&env);
-    assert_eq!(cfg.default_model.as_deref(), Some("alias-only"));
+    assert_eq!(
+        cfg.default_model, original,
+        "bare MODEL env var must not override default_model"
+    );
+
+    // Whitespace-only OPENHUMAN_MODEL must not clobber either. Some
+    // shells/CI runners pass an unset-but-declared env var through as
+    // `"   "`, which `is_empty()` alone wouldn't reject.
+    let env = HashMapEnv::new().with("OPENHUMAN_MODEL", "   ");
+    let mut cfg = Config::default();
+    let original = cfg.default_model.clone();
+    cfg.apply_env_overlay_with(&env);
+    assert_eq!(
+        cfg.default_model, original,
+        "whitespace-only OPENHUMAN_MODEL must not clobber default_model"
+    );
 }
 
 #[test]
@@ -473,6 +544,71 @@ fn env_overlay_temperature_accepts_valid_and_ignores_out_of_range_or_garbage() {
     assert_eq!(cfg.default_temperature, 0.0);
     cfg.apply_env_overlay_with(&HashMapEnv::new().with("OPENHUMAN_TEMPERATURE", "2"));
     assert_eq!(cfg.default_temperature, 2.0);
+}
+
+#[test]
+fn env_overlay_autonomy_max_actions_per_hour_accepts_valid_u32() {
+    let mut cfg = Config::default();
+    cfg.autonomy.max_actions_per_hour = 20;
+
+    cfg.apply_env_overlay_with(&HashMapEnv::new().with("OPENHUMAN_MAX_ACTIONS_PER_HOUR", "64"));
+    assert_eq!(cfg.autonomy.max_actions_per_hour, 64);
+
+    cfg.apply_env_overlay_with(&HashMapEnv::new().with("OPENHUMAN_MAX_ACTIONS_PER_HOUR", "  "));
+    assert_eq!(
+        cfg.autonomy.max_actions_per_hour, 64,
+        "blank env value must leave the configured limit unchanged"
+    );
+
+    cfg.apply_env_overlay_with(&HashMapEnv::new().with("OPENHUMAN_MAX_ACTIONS_PER_HOUR", "NaN"));
+    assert_eq!(
+        cfg.autonomy.max_actions_per_hour, 64,
+        "invalid env value must leave the configured limit unchanged"
+    );
+}
+
+#[test]
+fn env_overlay_memory_sync_interval_parses_and_honours_zero() {
+    let mut cfg = Config::default();
+    assert!(cfg.memory_sync_interval_secs.is_none());
+
+    // A positive value is stored verbatim.
+    cfg.apply_env_overlay_with(&HashMapEnv::new().with(MEMORY_SYNC_INTERVAL_SECS_ENV_VAR, "14400"));
+    assert_eq!(cfg.memory_sync_interval_secs, Some(14_400));
+
+    // `0` is honoured as the "Manual only" sentinel (unlike the per-provider
+    // override which rejects it).
+    cfg.apply_env_overlay_with(&HashMapEnv::new().with(MEMORY_SYNC_INTERVAL_SECS_ENV_VAR, "0"));
+    assert_eq!(cfg.memory_sync_interval_secs, Some(0));
+
+    // A non-numeric value is ignored, leaving the previous value intact.
+    cfg.apply_env_overlay_with(&HashMapEnv::new().with(MEMORY_SYNC_INTERVAL_SECS_ENV_VAR, "nope"));
+    assert_eq!(cfg.memory_sync_interval_secs, Some(0));
+
+    // A blank value is ignored too.
+    cfg.apply_env_overlay_with(&HashMapEnv::new().with(MEMORY_SYNC_INTERVAL_SECS_ENV_VAR, "  "));
+    assert_eq!(cfg.memory_sync_interval_secs, Some(0));
+}
+
+#[test]
+fn env_overlay_output_language_accepts_non_empty_value() {
+    let mut cfg = Config::default();
+    assert!(cfg.output_language.is_none());
+
+    cfg.apply_env_overlay_with(&HashMapEnv::new().with("OPENHUMAN_OUTPUT_LANGUAGE", "zh-CN"));
+    assert_eq!(cfg.output_language.as_deref(), Some("zh-CN"));
+    assert!(cfg
+        .output_language_directive()
+        .as_deref()
+        .unwrap_or_default()
+        .contains("Simplified Chinese"));
+
+    cfg.apply_env_overlay_with(&HashMapEnv::new().with("OPENHUMAN_OUTPUT_LANGUAGE", "   "));
+    assert_eq!(
+        cfg.output_language.as_deref(),
+        Some("zh-CN"),
+        "blank env value must not clear an explicit config value"
+    );
 }
 
 #[test]
@@ -541,6 +677,40 @@ fn env_overlay_web_search_limits_validated() {
     // Bare aliases also accepted when the OPENHUMAN-prefixed variant is absent.
     cfg.apply_env_overlay_with(&HashMapEnv::new().with("WEB_SEARCH_MAX_RESULTS", "4"));
     assert_eq!(cfg.web_search.max_results, 4);
+}
+
+#[test]
+fn env_overlay_searxng_config_validated() {
+    let mut cfg = Config::default();
+
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new()
+            .with("OPENHUMAN_SEARXNG_ENABLED", "true")
+            .with("OPENHUMAN_SEARXNG_BASE_URL", "http://127.0.0.1:8888")
+            .with("OPENHUMAN_SEARXNG_MAX_RESULTS", "40")
+            .with("OPENHUMAN_SEARXNG_DEFAULT_LANGUAGE", "fr")
+            .with("OPENHUMAN_SEARXNG_TIMEOUT_SECS", "9"),
+    );
+
+    assert!(cfg.searxng.enabled);
+    assert_eq!(cfg.searxng.base_url, "http://127.0.0.1:8888");
+    assert_eq!(cfg.searxng.max_results, 40);
+    assert_eq!(cfg.searxng.default_language, "fr");
+    assert_eq!(cfg.searxng.timeout_secs, 9);
+
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new()
+            .with("OPENHUMAN_SEARXNG_ENABLED", "no")
+            .with("OPENHUMAN_SEARXNG_MAX_RESULTS", "0")
+            .with("OPENHUMAN_SEARXNG_TIMEOUT_SECS", "0"),
+    );
+
+    assert!(!cfg.searxng.enabled);
+    assert_eq!(cfg.searxng.max_results, 40);
+    assert_eq!(cfg.searxng.timeout_secs, 9);
+
+    cfg.apply_env_overlay_with(&HashMapEnv::new().with("SEARXNG_TIMEOUT_SECONDS", "11"));
+    assert_eq!(cfg.searxng.timeout_secs, 11);
 }
 
 #[test]
@@ -1066,6 +1236,7 @@ async fn test_save_preserves_backup_file() {
     let mut config = Config {
         config_path: config_path.clone(),
         workspace_dir: tmp.path().join("workspace"),
+        action_dir: tmp.path().join("workspace"),
         ..Default::default()
     };
 
@@ -1092,6 +1263,7 @@ async fn test_save_then_corrupt_then_recover() {
     let mut config = Config {
         config_path: config_path.clone(),
         workspace_dir: tmp.path().join("workspace"),
+        action_dir: tmp.path().join("workspace"),
         default_temperature: 1.3,
         ..Default::default()
     };
@@ -1321,6 +1493,68 @@ default_temperature = 0.7
     );
 }
 
+#[tokio::test]
+async fn load_or_init_reads_valid_config_through_retry_wrapper() {
+    // OPENHUMAN-TAURI-9R regression: the config read is wrapped in
+    // `retry_with_backoff_async`. Confirm the happy path is untouched —
+    // a present, readable, valid config loads on the first attempt with
+    // no behavior change from the wrapper.
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+
+    write_file(
+        &root.join("config.toml"),
+        r#"default_model = "gpt-through-retry"
+default_temperature = 0.5
+"#,
+    )
+    .await;
+
+    let config = load_or_init_for_workspace(root).await;
+
+    assert_eq!(
+        config.default_model.as_deref(),
+        Some("gpt-through-retry"),
+        "valid config must load on first attempt through the retry wrapper"
+    );
+}
+
+#[tokio::test]
+async fn load_or_init_read_failure_embeds_path_in_error_context() {
+    // OPENHUMAN-TAURI-9R (~8k events, Windows): the read at the
+    // `config_path.exists()` branch raced `Config::save`'s atomic rename
+    // and surfaced the opaque "Failed to read config file" with no path
+    // or underlying cause. The fix retries transient Windows locking
+    // errors AND embeds the config path in the context so any residual
+    // non-transient failure is triageable in Sentry.
+    //
+    // Simulate a non-transient read failure portably by placing a
+    // *directory* at the config path: `exists()` is true (so we enter the
+    // read branch), but `read_to_string` fails with EISDIR (unix) /
+    // ERROR_ACCESS_DENIED (windows) — neither is classified transient by
+    // `is_transient_fs_error`, so the retry bails immediately and returns
+    // the path-embedded context.
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let config_path = root.join("config.toml");
+    std::fs::create_dir(&config_path).unwrap();
+
+    let env = MapEnv::default().with("OPENHUMAN_WORKSPACE", root.to_str().unwrap());
+    let err = Config::load_or_init_with_env_lookup(root, &root.join("workspace"), &env)
+        .await
+        .expect_err("reading a directory as config.toml must fail");
+
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("Failed to read config file"),
+        "error must carry the read-failure context: {msg}"
+    );
+    assert!(
+        msg.contains("config.toml"),
+        "error context must embed the config path so Sentry titles are triageable: {msg}"
+    );
+}
+
 #[test]
 fn redact_url_strips_basic_auth_and_query() {
     let out = redact_url_for_log(
@@ -1383,5 +1617,346 @@ fn migrate_legacy_inference_url_is_noop_when_inference_url_set() {
     assert_eq!(
         cfg.inference_url.as_deref(),
         Some("https://existing.example/v1/chat/completions")
+    );
+}
+
+#[test]
+fn migrate_cloud_provider_slugs_routes_cloud_to_legacy_custom_when_primary_is_openhuman() {
+    let mut cfg = Config::default();
+    cfg.inference_url = Some("https://api.example.com/v1".into());
+    cfg.primary_cloud = Some("p_oh".into());
+    cfg.memory_provider = Some("cloud".into());
+    cfg.reasoning_provider = Some("openhuman".into());
+    cfg.cloud_providers = vec![
+        crate::openhuman::config::schema::CloudProviderCreds {
+            id: "p_oh".into(),
+            slug: "openhuman".into(),
+            label: "OpenHuman".into(),
+            endpoint: "https://api.openhuman.ai/v1".into(),
+            auth_style: crate::openhuman::config::schema::AuthStyle::OpenhumanJwt,
+            ..Default::default()
+        },
+        crate::openhuman::config::schema::CloudProviderCreds {
+            id: "p_custom".into(),
+            slug: "custom".into(),
+            label: "Custom".into(),
+            endpoint: "https://api.example.com/v1/".into(),
+            auth_style: crate::openhuman::config::schema::AuthStyle::Bearer,
+            default_model: Some("gpt-4o-mini".into()),
+            ..Default::default()
+        },
+    ];
+
+    migrate_cloud_provider_slugs(&mut cfg);
+
+    assert_eq!(cfg.memory_provider.as_deref(), Some("custom:"));
+    assert_eq!(
+        cfg.reasoning_provider.as_deref(),
+        Some("openhuman"),
+        "explicit OpenHuman routing must stay explicit"
+    );
+}
+
+#[test]
+fn migrate_cloud_provider_slugs_keeps_cloud_on_openhuman_without_legacy_custom() {
+    let mut cfg = Config::default();
+    cfg.primary_cloud = Some("p_oh".into());
+    cfg.memory_provider = Some("cloud".into());
+    cfg.cloud_providers = vec![crate::openhuman::config::schema::CloudProviderCreds {
+        id: "p_oh".into(),
+        slug: "openhuman".into(),
+        label: "OpenHuman".into(),
+        endpoint: "https://api.tinyhumans.ai/v1".into(),
+        auth_style: crate::openhuman::config::schema::AuthStyle::OpenhumanJwt,
+        ..Default::default()
+    }];
+
+    migrate_cloud_provider_slugs(&mut cfg);
+
+    assert_eq!(cfg.memory_provider.as_deref(), Some("openhuman"));
+}
+
+#[test]
+fn migrate_cloud_provider_slugs_does_not_pick_unmatched_custom_provider() {
+    let mut cfg = Config::default();
+    cfg.inference_url = Some("https://api.example.com/v1".into());
+    cfg.primary_cloud = Some("p_oh".into());
+    cfg.memory_provider = Some("cloud".into());
+    cfg.cloud_providers = vec![
+        crate::openhuman::config::schema::CloudProviderCreds {
+            id: "p_oh".into(),
+            slug: "openhuman".into(),
+            label: "OpenHuman".into(),
+            endpoint: "https://api.openhuman.ai/v1".into(),
+            auth_style: crate::openhuman::config::schema::AuthStyle::OpenhumanJwt,
+            ..Default::default()
+        },
+        crate::openhuman::config::schema::CloudProviderCreds {
+            id: "p_other".into(),
+            slug: "other".into(),
+            label: "Other".into(),
+            endpoint: "https://other.example.com/v1".into(),
+            auth_style: crate::openhuman::config::schema::AuthStyle::Bearer,
+            ..Default::default()
+        },
+    ];
+
+    migrate_cloud_provider_slugs(&mut cfg);
+
+    assert_eq!(cfg.memory_provider.as_deref(), Some("openhuman"));
+}
+
+/// Regression test for #1900: secrets are encrypted on save and decrypted on load.
+///
+/// Verifies that:
+/// 1. Channel tokens are NOT stored in plaintext on disk
+/// 2. The backup file (.bak) is encrypted even when overwriting a plaintext config
+/// 3. Loading the config back decrypts secrets correctly
+#[tokio::test]
+async fn config_secrets_encrypted_on_save_decrypted_on_load() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config_path = tmp.path().join("config.toml");
+    let known_secret = "my-telegram-bot-token-abc123";
+
+    // ── Phase 1: Simulate a pre-upgrade plaintext config on disk ──────
+    // Write a raw TOML file containing the secret in plaintext, just like
+    // a user who upgraded from a build before encryption was wired in.
+    // save() requires the workspace dir to exist, so create it first.
+    let workspace_dir = tmp.path().join("workspace");
+    std::fs::create_dir_all(&workspace_dir).unwrap();
+
+    let plaintext_toml = format!(
+        r#"[channels_config.telegram]
+bot_token = "{known_secret}"
+allowed_users = ["@admin"]
+"#
+    );
+    std::fs::write(&config_path, plaintext_toml.as_bytes()).unwrap();
+
+    // Build a Config pointing at the existing plaintext file.
+    // We set a fresh secret to force a changed value — the save path
+    // will encrypt this new value and write it to disk.
+    let mut cfg = Config {
+        config_path: config_path.clone(),
+        workspace_dir,
+        ..Default::default()
+    };
+    cfg.channels_config.telegram = Some(TelegramConfig {
+        bot_token: known_secret.to_string(),
+        allowed_users: vec!["@admin".to_string()],
+        stream_mode: StreamMode::Off,
+        draft_update_interval_ms: 1000,
+        silent_streaming: true,
+        mention_only: false,
+    });
+
+    // ── Phase 2: Save (encrypts + creates backup from old file) ──────
+    cfg.save().await.unwrap();
+
+    // The primary config must NOT contain the plaintext secret.
+    let raw_contents = std::fs::read_to_string(&config_path).expect("config.toml should exist");
+    assert!(
+        !raw_contents.contains(known_secret),
+        "SECURITY BUG: secret '{known_secret}' found in plaintext in config.toml!"
+    );
+
+    // The backup file is created by copying the old on-disk file BEFORE
+    // the atomic replace. Our fix ensures the backup comes from the
+    // encrypted bytes, NOT the plaintext original.
+    let backup_path = config_path.with_extension("toml.bak");
+    assert!(
+        backup_path.exists(),
+        "config.toml.bak should exist after overwriting an existing config"
+    );
+    let backup_contents = std::fs::read_to_string(&backup_path).unwrap();
+    assert!(
+        !backup_contents.contains(known_secret),
+        "SECURITY BUG: secret found in plaintext in config.toml.bak!\n\
+         Backup contents:\n{backup_contents}"
+    );
+
+    // ── Phase 3: Reload — secrets must decrypt back correctly ────────
+    let reloaded = load_or_init_for_workspace(tmp.path()).await;
+    let reloaded_token = reloaded
+        .channels_config
+        .telegram
+        .as_ref()
+        .map(|t| t.bot_token.as_str());
+    assert_eq!(
+        reloaded_token,
+        Some(known_secret),
+        "decrypt path broken: reloaded bot_token '{reloaded_token:?}' \
+         does not match original '{known_secret}'"
+    );
+}
+
+/// Regression for keyring-loss scenario: if a channel token was encrypted with
+/// a key that is no longer accessible (e.g. keyring reset, machine migration),
+/// config load must NOT fail hard. The field should be cleared and a warning
+/// logged, so the rest of the app continues to work.
+#[tokio::test]
+async fn config_load_succeeds_when_decryption_key_inaccessible() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config_path = tmp.path().join("config.toml");
+    let workspace_dir = tmp.path().join("workspace");
+    std::fs::create_dir_all(&workspace_dir).unwrap();
+
+    // Write a config whose discord.bot_token is encrypted with a key from a
+    // *different* workspace so the current SecretStore (keyed to `tmp`) cannot
+    // decrypt it. The `enc2:` prefix makes `is_encrypted()` return true.
+    // The hex blob is garbage — intentionally undecryptable.
+    let stale_ciphertext =
+        "enc2:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
+    let toml_content = format!(
+        r#"[secrets]
+encrypt = true
+
+[channels_config.discord]
+bot_token = "{stale_ciphertext}"
+"#
+    );
+    std::fs::write(&config_path, toml_content.as_bytes()).unwrap();
+
+    // Config load must succeed even though the token cannot be decrypted.
+    let reloaded = load_or_init_for_workspace(tmp.path()).await;
+
+    // Discord config should be cleared (None bot_token → channel won't start)
+    // rather than crashing the entire config load.
+    let discord_token = reloaded
+        .channels_config
+        .discord
+        .as_ref()
+        .map(|d| d.bot_token.as_str());
+    assert!(
+        discord_token.map_or(true, |t| t.is_empty()),
+        "Expected discord.bot_token to be cleared after decryption failure, got: {discord_token:?}"
+    );
+}
+
+/// Backwards-compatibility regression for #1900: a pre-upgrade `config.toml`
+/// that contains plaintext secrets (written by a build from before encryption
+/// was wired in) must continue to load with `secrets.encrypt = true`. The
+/// load path should hand the raw plaintext to channel code rather than
+/// erroring or returning a ciphertext placeholder. The next `save()` is what
+/// migrates the values to `enc2:` on disk.
+#[tokio::test]
+async fn plaintext_legacy_config_still_loads_with_encryption_enabled() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config_path = tmp.path().join("config.toml");
+    let known_secret = "legacy-plaintext-bot-token-xyz789";
+
+    let plaintext_toml = format!(
+        r#"[secrets]
+encrypt = true
+
+[channels_config.telegram]
+bot_token = "{known_secret}"
+allowed_users = ["@admin"]
+"#
+    );
+    std::fs::write(&config_path, plaintext_toml.as_bytes()).unwrap();
+
+    let reloaded = load_or_init_for_workspace(tmp.path()).await;
+    let reloaded_token = reloaded
+        .channels_config
+        .telegram
+        .as_ref()
+        .map(|t| t.bot_token.as_str());
+    assert_eq!(
+        reloaded_token,
+        Some(known_secret),
+        "backwards-compat broken: legacy plaintext bot_token did not load as cleartext \
+         (got {reloaded_token:?})"
+    );
+}
+
+// ── resolve_action_dir precedence (env > override > default), issue #3240 ──────
+
+#[test]
+fn resolve_action_dir_env_beats_override_and_default() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    unsafe {
+        std::env::set_var(ACTION_DIR_ENV_VAR, "/tmp/env-action-dir");
+    }
+    let over = Some(PathBuf::from("/tmp/override-action-dir"));
+    assert_eq!(
+        resolve_action_dir(&over),
+        PathBuf::from("/tmp/env-action-dir"),
+        "env var must win over a persisted override"
+    );
+    unsafe {
+        std::env::remove_var(ACTION_DIR_ENV_VAR);
+    }
+}
+
+#[test]
+fn resolve_action_dir_override_beats_default_when_no_env() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    unsafe {
+        std::env::remove_var(ACTION_DIR_ENV_VAR);
+    }
+    let over = Some(PathBuf::from("/tmp/override-action-dir"));
+    assert_eq!(
+        resolve_action_dir(&over),
+        PathBuf::from("/tmp/override-action-dir"),
+        "override must be used when no env var is set"
+    );
+}
+
+#[test]
+fn resolve_action_dir_falls_back_to_default_when_none() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    unsafe {
+        std::env::remove_var(ACTION_DIR_ENV_VAR);
+    }
+    assert_eq!(
+        resolve_action_dir(&None),
+        default_projects_dir(),
+        "no env + no override must fall back to the default projects dir"
+    );
+}
+
+#[test]
+fn resolve_action_dir_blank_env_does_not_pin() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    unsafe {
+        std::env::set_var(ACTION_DIR_ENV_VAR, "   ");
+    }
+    let over = Some(PathBuf::from("/tmp/override-action-dir"));
+    assert_eq!(
+        resolve_action_dir(&over),
+        PathBuf::from("/tmp/override-action-dir"),
+        "blank env var must be ignored so the override still applies"
+    );
+    unsafe {
+        std::env::remove_var(ACTION_DIR_ENV_VAR);
+    }
+}
+
+#[test]
+fn resolve_action_dir_rejects_relative_override() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    unsafe {
+        std::env::remove_var(ACTION_DIR_ENV_VAR);
+    }
+    let over = Some(PathBuf::from("relative/projects"));
+    assert_eq!(
+        resolve_action_dir(&over),
+        default_projects_dir(),
+        "relative override must be ignored, falling back to default"
+    );
+}
+
+#[test]
+fn resolve_action_dir_rejects_empty_override() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    unsafe {
+        std::env::remove_var(ACTION_DIR_ENV_VAR);
+    }
+    let over = Some(PathBuf::from(""));
+    assert_eq!(
+        resolve_action_dir(&over),
+        default_projects_dir(),
+        "empty override must be ignored, falling back to default"
     );
 }

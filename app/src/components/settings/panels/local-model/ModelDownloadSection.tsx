@@ -6,6 +6,13 @@ import type {
   LocalAiSpeechResult,
   LocalAiTtsResult,
 } from '../../../../utils/tauriCommands';
+import Button from '../../../ui/Button';
+import {
+  SettingsSection,
+  SettingsStatusLine,
+  SettingsTextArea,
+  SettingsTextField,
+} from '../../controls';
 
 interface ModelDownloadSectionProps {
   assets: LocalAiAssetsStatus | null;
@@ -103,265 +110,303 @@ const ModelDownloadSection = ({
   onRunTtsTest,
 }: ModelDownloadSectionProps) => {
   const { t } = useT();
+  const capabilityCards = [
+    ['settings.localModel.download.capabilityChat', 'chat', assets?.chat],
+    ['settings.localModel.download.capabilityVision', 'vision', assets?.vision],
+    ['settings.localModel.download.capabilityEmbedding', 'embedding', assets?.embedding],
+    ['settings.localModel.download.capabilityStt', 'stt', assets?.stt],
+    ['settings.localModel.download.capabilityTts', 'tts', assets?.tts],
+  ] as const;
+
   return (
     <>
-      <section className="space-y-3">
-        <h3 className="text-sm font-semibold text-stone-900">
-          {t('settings.localModel.download.capabilityAssets')}
-        </h3>
-        <div className="bg-stone-50 rounded-lg border border-stone-200 p-4 space-y-3">
-          <div className="text-xs text-stone-500">
+      <SettingsSection title={t('settings.localModel.download.capabilityAssets')}>
+        <div className="px-4 py-3 space-y-3">
+          <div className="text-xs text-neutral-500 dark:text-neutral-400">
             {t('settings.localModel.download.quantizationPref')} {assets?.quantization ?? 'q4'}
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-            {[
-              { label: 'Chat', key: 'chat' as const, item: assets?.chat },
-              { label: 'Vision', key: 'vision' as const, item: assets?.vision },
-              { label: 'Embedding', key: 'embedding' as const, item: assets?.embedding },
-              { label: 'STT', key: 'stt' as const, item: assets?.stt },
-              { label: 'TTS', key: 'tts' as const, item: assets?.tts },
-            ].map(({ label, key, item }) => (
-              <div key={String(label)} className="rounded-md border border-stone-200 p-2">
-                <div className="text-stone-500 text-xs uppercase tracking-wide">{label}</div>
-                <div className="text-stone-800 mt-1 break-all">{item?.id ?? 'n/a'}</div>
+            {capabilityCards.map(([labelKey, key, item]) => (
+              <div
+                key={key}
+                className="rounded-md border border-neutral-200 dark:border-neutral-800 p-2">
+                <div className="text-neutral-500 dark:text-neutral-400 text-xs uppercase tracking-wide">
+                  {t(labelKey)}
+                </div>
+                <div className="text-neutral-800 dark:text-neutral-100 mt-1 break-all">
+                  {item?.id ?? t('settings.localModel.download.notAvailable')}
+                </div>
                 <div className={`text-xs mt-1 ${statusTone(item?.state ?? 'idle')}`}>
                   {statusLabel(item?.state ?? 'idle')}
                 </div>
                 {item?.path && (
-                  <div className="text-[10px] text-stone-500 mt-1 break-all">{item.path}</div>
+                  <div className="text-[10px] text-neutral-500 dark:text-neutral-400 mt-1 break-all">
+                    {item.path}
+                  </div>
                 )}
                 {item?.provider === 'ollama' || item?.provider === 'lm_studio' ? (
-                  <div className="mt-2 text-[10px] text-stone-500">
+                  <div className="mt-2 text-[10px] text-neutral-500 dark:text-neutral-400">
                     {t('settings.localModel.download.manageExternal')}
                   </div>
                 ) : (
-                  <button
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="xs"
+                    className="mt-2"
                     onClick={() => onTriggerAssetDownload(key)}
-                    disabled={!runtimeEnabled || assetDownloadBusy[key]}
-                    className="mt-2 px-2 py-1 text-[10px] rounded border border-stone-200 hover:border-stone-300 disabled:opacity-60 text-stone-600">
+                    disabled={!runtimeEnabled || assetDownloadBusy[key]}>
                     {assetDownloadBusy[key]
                       ? t('settings.localModel.download.downloading')
                       : t('common.download')}
-                  </button>
+                  </Button>
                 )}
               </div>
             ))}
           </div>
         </div>
-      </section>
+      </SettingsSection>
 
-      <section className="space-y-3">
-        <h3 className="text-sm font-semibold text-stone-900">
-          {t('settings.localModel.download.testSummarization')}
-        </h3>
-        <div className="bg-stone-50 rounded-lg border border-stone-200 p-4 space-y-3">
-          <textarea
+      <SettingsSection title={t('settings.localModel.download.testSummarization')}>
+        <div className="px-4 py-3 space-y-3">
+          <SettingsTextArea
             value={summaryInput}
             onChange={e => onSetSummaryInput(e.target.value)}
             placeholder={t('settings.localModel.download.summarizePlaceholder')}
-            className="w-full min-h-28 rounded-md bg-white border border-stone-200 px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:outline-none focus:ring-1 focus:ring-primary-500"
+            rows={4}
+            aria-label={t('settings.localModel.download.testSummarization')}
           />
           <div className="flex items-center justify-between">
-            <div className="text-xs text-stone-500">
-              Calls `openhuman.inference_summarize` via Rust core
+            <div className="text-xs text-neutral-500 dark:text-neutral-400">
+              {t('settings.localModel.download.summaryHelper')}
             </div>
-            <button
+            <Button
+              type="button"
+              variant="secondary"
+              size="xs"
               onClick={onRunSummaryTest}
-              disabled={!runtimeEnabled || isSummaryLoading || !summaryInput.trim()}
-              className="px-3 py-1.5 text-xs rounded-md bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white">
+              disabled={!runtimeEnabled || isSummaryLoading || !summaryInput.trim()}>
               {isSummaryLoading
                 ? t('settings.localModel.download.running')
                 : t('settings.localModel.download.runSummaryTest')}
-            </button>
+            </Button>
           </div>
           {summaryOutput && (
-            <pre className="whitespace-pre-wrap rounded-md bg-stone-50 border border-stone-200 p-3 text-xs text-stone-700">
+            <pre className="whitespace-pre-wrap rounded-md bg-neutral-50 dark:bg-neutral-800/60 border border-neutral-200 dark:border-neutral-800 p-3 text-xs text-neutral-700 dark:text-neutral-200">
               {summaryOutput}
             </pre>
           )}
         </div>
-      </section>
+      </SettingsSection>
 
-      <section className="space-y-3">
-        <h3 className="text-sm font-semibold text-stone-900">
-          {t('settings.localModel.download.testCustomPrompt')}
-        </h3>
-        <div className="bg-stone-50 rounded-lg border border-stone-200 p-4 space-y-3">
-          <textarea
+      <SettingsSection title={t('settings.localModel.download.testCustomPrompt')}>
+        <div className="px-4 py-3 space-y-3">
+          <SettingsTextArea
             value={promptInput}
             onChange={e => onSetPromptInput(e.target.value)}
             placeholder={t('settings.localModel.download.promptPlaceholder')}
-            className="w-full min-h-28 rounded-md bg-white border border-stone-200 px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:outline-none focus:ring-1 focus:ring-primary-500"
+            rows={4}
+            aria-label={t('settings.localModel.download.testCustomPrompt')}
           />
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <label className="flex items-center gap-2 text-xs text-stone-700">
+            <label className="flex items-center gap-2 text-xs text-neutral-700 dark:text-neutral-200">
               <input
                 type="checkbox"
                 checked={promptNoThink}
                 onChange={e => onSetPromptNoThink(e.target.checked)}
-                className="h-3.5 w-3.5 rounded border-stone-300 bg-white text-primary-500 focus:ring-primary-500"
+                className="h-3.5 w-3.5 rounded border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-primary-500 focus:ring-primary-500"
               />
               {t('settings.localModel.download.noThinkMode')}
             </label>
-            <button
+            <Button
+              type="button"
+              variant="secondary"
+              size="xs"
               onClick={onRunPromptTest}
-              disabled={!runtimeEnabled || isPromptLoading || !promptInput.trim()}
-              className="px-3 py-1.5 text-xs rounded-md bg-primary-600 hover:bg-primary-700 disabled:opacity-60 text-white">
+              disabled={!runtimeEnabled || isPromptLoading || !promptInput.trim()}>
               {isPromptLoading
                 ? t('settings.localModel.download.running')
                 : t('settings.localModel.download.runPromptTest')}
-            </button>
+            </Button>
           </div>
           {isPromptLoading && (
-            <div className="flex items-center gap-2 text-xs text-primary-600">
+            <div className="flex items-center gap-2 text-xs text-primary-600 dark:text-primary-300">
               <div className="h-3 w-3 rounded-full border-2 border-blue-400 border-t-transparent animate-spin" />
               {t('settings.localModel.download.runningPrompt')}
             </div>
           )}
-          {promptError && (
-            <div className="rounded-md bg-red-50 border border-red-300 p-3 text-xs text-red-600">
-              {promptError}
-            </div>
-          )}
+          {promptError && <SettingsStatusLine saving={false} error={promptError} savingLabel="" />}
           {promptOutput && (
-            <pre className="whitespace-pre-wrap rounded-md bg-stone-50 border border-stone-200 p-3 text-xs text-stone-700 max-h-64 overflow-auto">
+            <pre className="whitespace-pre-wrap rounded-md bg-neutral-50 dark:bg-neutral-800/60 border border-neutral-200 dark:border-neutral-800 p-3 text-xs text-neutral-700 dark:text-neutral-200 max-h-64 overflow-auto">
               {promptOutput}
             </pre>
           )}
         </div>
-      </section>
+      </SettingsSection>
 
-      <section className="space-y-3">
-        <h3 className="text-sm font-semibold text-stone-900">
-          {t('settings.localModel.download.testVisionPrompt')}
-        </h3>
-        <div className="bg-stone-50 rounded-lg border border-stone-200 p-4 space-y-3">
-          <textarea
+      <SettingsSection title={t('settings.localModel.download.testVisionPrompt')}>
+        <div className="px-4 py-3 space-y-3">
+          <SettingsTextArea
             value={visionPromptInput}
             onChange={e => onSetVisionPromptInput(e.target.value)}
             placeholder={t('settings.localModel.download.visionPromptPlaceholder')}
-            className="w-full min-h-20 rounded-md bg-white border border-stone-200 px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:outline-none focus:ring-1 focus:ring-primary-400"
+            rows={3}
+            aria-label={t('settings.localModel.download.visionPromptPlaceholder')}
           />
-          <textarea
+          <SettingsTextArea
             value={visionImageInput}
             onChange={e => onSetVisionImageInput(e.target.value)}
             placeholder={t('settings.localModel.download.visionImagePlaceholder')}
-            className="w-full min-h-20 rounded-md bg-white border border-stone-200 px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:outline-none focus:ring-1 focus:ring-primary-400"
+            rows={3}
+            aria-label={t('settings.localModel.download.visionImagePlaceholder')}
           />
-          <button
+          <Button
+            type="button"
+            variant="secondary"
+            size="xs"
             onClick={onRunVisionTest}
             disabled={
               !runtimeEnabled ||
               isVisionLoading ||
               !visionPromptInput.trim() ||
               !visionImageInput.trim()
-            }
-            className="px-3 py-1.5 text-xs rounded-md bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white">
+            }>
             {isVisionLoading
               ? t('settings.localModel.download.running')
               : t('settings.localModel.download.runVisionTest')}
-          </button>
+          </Button>
           {visionOutput && (
-            <pre className="whitespace-pre-wrap rounded-md bg-stone-50 border border-stone-200 p-3 text-xs text-stone-700">
+            <pre className="whitespace-pre-wrap rounded-md bg-neutral-50 dark:bg-neutral-800/60 border border-neutral-200 dark:border-neutral-800 p-3 text-xs text-neutral-700 dark:text-neutral-200">
               {visionOutput}
             </pre>
           )}
         </div>
-      </section>
+      </SettingsSection>
 
-      <section className="space-y-3">
-        <h3 className="text-sm font-semibold text-stone-900">
-          {t('settings.localModel.download.testEmbeddings')}
-        </h3>
-        <div className="bg-stone-50 rounded-lg border border-stone-200 p-4 space-y-3">
-          <textarea
+      <SettingsSection title={t('settings.localModel.download.testEmbeddings')}>
+        <div className="px-4 py-3 space-y-3">
+          <SettingsTextArea
             value={embeddingInput}
             onChange={e => onSetEmbeddingInput(e.target.value)}
             placeholder={t('settings.localModel.download.embeddingPlaceholder')}
-            className="w-full min-h-20 rounded-md bg-white border border-stone-200 px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:outline-none focus:ring-1 focus:ring-primary-400"
+            rows={3}
+            aria-label={t('settings.localModel.download.embeddingPlaceholder')}
           />
-          <button
+          <Button
+            type="button"
+            variant="secondary"
+            size="xs"
             onClick={onRunEmbeddingTest}
-            disabled={!runtimeEnabled || isEmbeddingLoading || !embeddingInput.trim()}
-            className="px-3 py-1.5 text-xs rounded-md bg-teal-600 hover:bg-teal-700 disabled:opacity-60 text-white">
+            disabled={!runtimeEnabled || isEmbeddingLoading || !embeddingInput.trim()}>
             {isEmbeddingLoading
               ? t('settings.localModel.download.running')
               : t('settings.localModel.download.runEmbeddingTest')}
-          </button>
+          </Button>
           {embeddingOutput && (
-            <div className="rounded-md bg-stone-50 border border-stone-200 p-3 text-xs text-stone-700 space-y-1">
-              <div>Model: {embeddingOutput.model_id}</div>
-              <div>Dimensions: {embeddingOutput.dimensions}</div>
-              <div>Vectors: {embeddingOutput.vectors.length}</div>
+            <div className="rounded-md bg-neutral-50 dark:bg-neutral-800/60 border border-neutral-200 dark:border-neutral-800 p-3 text-xs text-neutral-700 dark:text-neutral-200 space-y-1">
+              <div>
+                {t('settings.localModel.download.embeddingModel').replace(
+                  '{modelId}',
+                  embeddingOutput.model_id
+                )}
+              </div>
+              <div>
+                {t('settings.localModel.download.embeddingDimensions').replace(
+                  '{dimensions}',
+                  String(embeddingOutput.dimensions)
+                )}
+              </div>
+              <div>
+                {t('settings.localModel.download.embeddingVectors').replace(
+                  '{count}',
+                  String(embeddingOutput.vectors.length)
+                )}
+              </div>
             </div>
           )}
         </div>
-      </section>
+      </SettingsSection>
 
-      <section className="space-y-3">
-        <h3 className="text-sm font-semibold text-stone-900">
-          {t('settings.localModel.download.testVoiceInput')}
-        </h3>
-        <div className="bg-stone-50 rounded-lg border border-stone-200 p-4 space-y-3">
-          <input
+      <SettingsSection title={t('settings.localModel.download.testVoiceInput')}>
+        <div className="px-4 py-3 space-y-3">
+          <SettingsTextField
             value={audioPathInput}
             onChange={e => onSetAudioPathInput(e.target.value)}
             placeholder={t('settings.localModel.download.audioPathPlaceholder')}
-            className="w-full rounded-md bg-white border border-stone-200 px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:outline-none focus:ring-1 focus:ring-primary-400"
+            aria-label={t('settings.localModel.download.audioPathPlaceholder')}
           />
-          <button
+          <Button
+            type="button"
+            variant="secondary"
+            size="xs"
             onClick={onRunTranscribeTest}
-            disabled={!runtimeEnabled || isTranscribeLoading || !audioPathInput.trim()}
-            className="px-3 py-1.5 text-xs rounded-md bg-purple-600 hover:bg-purple-700 disabled:opacity-60 text-white">
+            disabled={!runtimeEnabled || isTranscribeLoading || !audioPathInput.trim()}>
             {isTranscribeLoading
               ? t('settings.localModel.download.running')
               : t('settings.localModel.download.runTranscriptionTest')}
-          </button>
+          </Button>
           {transcribeOutput && (
-            <div className="rounded-md bg-stone-50 border border-stone-200 p-3 text-xs text-stone-700 space-y-2">
-              <div>Model: {transcribeOutput.model_id}</div>
+            <div className="rounded-md bg-neutral-50 dark:bg-neutral-800/60 border border-neutral-200 dark:border-neutral-800 p-3 text-xs text-neutral-700 dark:text-neutral-200 space-y-2">
               <div>
-                <span className="text-stone-400">Transcript:</span>
+                {t('settings.localModel.download.embeddingModel').replace(
+                  '{modelId}',
+                  transcribeOutput.model_id
+                )}
+              </div>
+              <div>
+                <span className="text-neutral-500 dark:text-neutral-400">
+                  {t('settings.localModel.download.transcript')}
+                </span>
                 <pre className="whitespace-pre-wrap mt-1">{transcribeOutput.text}</pre>
               </div>
             </div>
           )}
         </div>
-      </section>
+      </SettingsSection>
 
-      <section className="space-y-3">
-        <h3 className="text-sm font-semibold text-stone-900">
-          {t('settings.localModel.download.testVoiceOutput')}
-        </h3>
-        <div className="bg-stone-50 rounded-lg border border-stone-200 p-4 space-y-3">
-          <textarea
+      <SettingsSection title={t('settings.localModel.download.testVoiceOutput')}>
+        <div className="px-4 py-3 space-y-3">
+          <SettingsTextArea
             value={ttsInput}
             onChange={e => onSetTtsInput(e.target.value)}
             placeholder={t('settings.localModel.download.ttsPlaceholder')}
-            className="w-full min-h-20 rounded-md bg-white border border-stone-200 px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:outline-none focus:ring-1 focus:ring-primary-400"
+            rows={3}
+            aria-label={t('settings.localModel.download.ttsPlaceholder')}
           />
-          <input
+          <SettingsTextField
             value={ttsOutputPath}
             onChange={e => onSetTtsOutputPath(e.target.value)}
             placeholder={t('settings.localModel.download.ttsOutputPlaceholder')}
-            className="w-full rounded-md bg-white border border-stone-200 px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:outline-none focus:ring-1 focus:ring-primary-400"
+            aria-label={t('settings.localModel.download.ttsOutputPlaceholder')}
           />
-          <button
+          <Button
+            type="button"
+            variant="secondary"
+            size="xs"
             onClick={onRunTtsTest}
-            disabled={!runtimeEnabled || isTtsLoading || !ttsInput.trim()}
-            className="px-3 py-1.5 text-xs rounded-md bg-rose-600 hover:bg-rose-700 disabled:opacity-60 text-white">
+            disabled={!runtimeEnabled || isTtsLoading || !ttsInput.trim()}>
             {isTtsLoading
               ? t('settings.localModel.download.running')
               : t('settings.localModel.download.runTtsTest')}
-          </button>
+          </Button>
           {ttsOutput && (
-            <div className="rounded-md bg-stone-50 border border-stone-200 p-3 text-xs text-stone-700 space-y-1">
-              <div>Voice: {ttsOutput.voice_id}</div>
-              <div className="break-all">Output: {ttsOutput.output_path}</div>
+            <div className="rounded-md bg-neutral-50 dark:bg-neutral-800/60 border border-neutral-200 dark:border-neutral-800 p-3 text-xs text-neutral-700 dark:text-neutral-200 space-y-1">
+              <div>
+                {t('settings.localModel.download.ttsVoice').replace(
+                  '{voiceId}',
+                  ttsOutput.voice_id
+                )}
+              </div>
+              <div className="break-all">
+                {t('settings.localModel.download.ttsOutput').replace(
+                  '{outputPath}',
+                  ttsOutput.output_path
+                )}
+              </div>
             </div>
           )}
         </div>
-      </section>
+      </SettingsSection>
     </>
   );
 };

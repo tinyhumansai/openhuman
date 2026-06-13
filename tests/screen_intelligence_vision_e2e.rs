@@ -36,8 +36,8 @@ use image::{ImageBuffer, Rgb, RgbImage};
 use tempfile::tempdir;
 
 use openhuman_core::openhuman::embeddings::NoopEmbedding;
-use openhuman_core::openhuman::memory::store::types::NamespaceDocumentInput;
-use openhuman_core::openhuman::memory::store::UnifiedMemory;
+use openhuman_core::openhuman::memory_store::types::NamespaceDocumentInput;
+use openhuman_core::openhuman::memory_store::UnifiedMemory;
 use openhuman_core::openhuman::screen_intelligence::CaptureFrame;
 use openhuman_core::openhuman::screen_intelligence::{
     global_engine, AccessibilityEngine, VisionSummary,
@@ -86,6 +86,36 @@ fn env_lock() -> std::sync::MutexGuard<'static, ()> {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
     }
+}
+
+fn expected_vision_summary_memory_key_for_json(summary: &serde_json::Value) -> String {
+    expected_vision_summary_memory_key(
+        summary["id"].as_str().expect("summary id"),
+        summary["captured_at_ms"]
+            .as_i64()
+            .expect("summary captured_at_ms"),
+    )
+}
+
+fn expected_vision_summary_memory_key_for_summary(summary: &VisionSummary) -> String {
+    expected_vision_summary_memory_key(&summary.id, summary.captured_at_ms)
+}
+
+fn expected_vision_summary_memory_key(id: &str, captured_at_ms: i64) -> String {
+    format!(
+        "screen_intelligence_{}_{}",
+        captured_at_ms,
+        stable_decimal_hash(id)
+    )
+}
+
+fn stable_decimal_hash(value: &str) -> u64 {
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in value.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -243,7 +273,7 @@ async fn vision_pipeline_compress_parse_persist() {
     // ── Step 4: Persist to memory ───────────────────────────────────
     let mem = open_test_memory(tmp.path());
     let content = serde_json::to_string(&summary).expect("serialize summary");
-    let key = format!("screen_intelligence_{}", summary["id"].as_str().unwrap());
+    let key = expected_vision_summary_memory_key_for_json(&summary);
     mem.upsert_document(NamespaceDocumentInput {
         namespace: "background".to_string(),
         key: key.clone(),
@@ -256,6 +286,7 @@ async fn vision_pipeline_compress_parse_persist() {
         category: "screen_intelligence".to_string(),
         session_id: None,
         document_id: None,
+        taint: openhuman_core::openhuman::memory::MemoryTaint::Internal,
     })
     .await
     .expect("upsert_document");
@@ -317,7 +348,7 @@ async fn multiple_vision_summaries_persist_and_query() {
         });
 
         let content = serde_json::to_string(&summary).expect("serialize");
-        let key = format!("screen_intelligence_{}", summary["id"].as_str().unwrap());
+        let key = expected_vision_summary_memory_key_for_json(&summary);
         mem.upsert_document(NamespaceDocumentInput {
             namespace: "background".to_string(),
             key,
@@ -330,6 +361,7 @@ async fn multiple_vision_summaries_persist_and_query() {
             category: "screen_intelligence".to_string(),
             session_id: None,
             document_id: None,
+            taint: openhuman_core::openhuman::memory::MemoryTaint::Internal,
         })
         .await
         .expect("upsert");
@@ -442,6 +474,7 @@ async fn vision_summary_upsert_is_idempotent() {
         category: "screen_intelligence".to_string(),
         session_id: None,
         document_id: None,
+        taint: openhuman_core::openhuman::memory::MemoryTaint::Internal,
     })
     .await
     .expect("first upsert");
@@ -459,6 +492,7 @@ async fn vision_summary_upsert_is_idempotent() {
         category: "screen_intelligence".to_string(),
         session_id: None,
         document_id: None,
+        taint: openhuman_core::openhuman::memory::MemoryTaint::Internal,
     })
     .await
     .expect("second upsert");
@@ -632,9 +666,9 @@ async fn vision_summary_struct_persist_and_deserialize_roundtrip() {
     );
 
     // ── Step 2: persist to UnifiedMemory, verify queryable by key ─────────
-    // Matches exactly what persist_vision_summary() does (namespace, key format, tags).
+    // Mirrors the PII-safe key contract used by persist_vision_summary().
     let mem = open_test_memory(tmp.path());
-    let key = format!("screen_intelligence_{}", summary.id);
+    let key = expected_vision_summary_memory_key_for_summary(&summary);
     mem.upsert_document(NamespaceDocumentInput {
         namespace: "background".to_string(),
         key: key.clone(),
@@ -647,6 +681,7 @@ async fn vision_summary_struct_persist_and_deserialize_roundtrip() {
         category: "screen_intelligence".to_string(),
         session_id: None,
         document_id: None,
+        taint: openhuman_core::openhuman::memory::MemoryTaint::Internal,
     })
     .await
     .expect("upsert_document");
@@ -696,7 +731,7 @@ async fn engine_pipeline_with_mocked_local_vision_persists_to_memory() {
         .as_array()
         .cloned()
         .expect("documents array");
-    let key = format!("screen_intelligence_{}", summary.id);
+    let key = expected_vision_summary_memory_key_for_summary(&summary);
     assert!(
         docs.iter().any(|doc| doc["key"].as_str() == Some(&key)),
         "expected persisted summary key in memory: {key}"
@@ -767,7 +802,7 @@ async fn macos_real_capture_cycle_persists_summary() {
         .as_array()
         .cloned()
         .expect("documents array");
-    let key = format!("screen_intelligence_{}", summary.id);
+    let key = expected_vision_summary_memory_key_for_summary(&summary);
     assert!(
         docs.iter().any(|doc| doc["key"].as_str() == Some(&key)),
         "expected persisted summary key after real capture cycle: {key}"

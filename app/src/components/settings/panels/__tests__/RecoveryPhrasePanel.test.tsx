@@ -39,10 +39,10 @@ describe('RecoveryPhrasePanel — trust-surface polish', () => {
     expect(screen.getByText(/Enter your recovery phrase below/i)).toBeTruthy();
   });
 
-  it('uses palette token text-stone-700 on the confirm-checkbox label (not opacity)', () => {
+  it('uses palette token text-neutral-700 on the confirm-checkbox label (not opacity)', () => {
     const { container } = renderWithProviders(<RecoveryPhrasePanel />);
     const label = screen.getByText(/consent to using it for local wallet setup/i);
-    expect(label.className).toContain('text-stone-700');
+    expect(label.className).toContain('text-neutral-700');
     // Sanity: the old opacity hack is gone from this label.
     expect(label.className).not.toContain('opacity-80');
     expect(container).toBeTruthy();

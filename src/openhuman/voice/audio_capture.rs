@@ -16,7 +16,7 @@ use tokio::sync::oneshot;
 const LOG_PREFIX: &str = "[voice_capture]";
 
 /// Target sample rate for whisper (16 kHz mono).
-const TARGET_SAMPLE_RATE: u32 = 16_000;
+pub(crate) const TARGET_SAMPLE_RATE: u32 = 16_000;
 
 /// RMS threshold below which audio is considered silence.
 const SILENCE_RMS_THRESHOLD: f32 = 0.002;
@@ -102,8 +102,35 @@ impl SilenceGate {
     }
 }
 
+/// Encode already-16 kHz mono f32 samples to a 16-bit PCM WAV byte buffer.
+/// Shared by the one-shot recorder's finalize path and the always-on loop
+/// (`voice::always_on`), so both produce identical WAV that whisper accepts.
+pub(crate) fn encode_wav_16k(samples_16k: &[f32]) -> Result<Vec<u8>, String> {
+    let spec = WavSpec {
+        channels: 1,
+        sample_rate: TARGET_SAMPLE_RATE,
+        bits_per_sample: 16,
+        sample_format: HoundFormat::Int,
+    };
+    let mut buf = Cursor::new(Vec::new());
+    {
+        let mut writer =
+            WavWriter::new(&mut buf, spec).map_err(|e| format!("WAV writer error: {e}"))?;
+        for &sample in samples_16k {
+            let clamped = sample.clamp(-1.0, 1.0);
+            writer
+                .write_sample((clamped * 32767.0) as i16)
+                .map_err(|e| format!("WAV write error: {e}"))?;
+        }
+        writer
+            .finalize()
+            .map_err(|e| format!("WAV finalize error: {e}"))?;
+    }
+    Ok(buf.into_inner())
+}
+
 /// Compute RMS energy for a chunk of mono samples.
-fn chunk_rms(samples: &[f32]) -> f32 {
+pub(crate) fn chunk_rms(samples: &[f32]) -> f32 {
     if samples.is_empty() {
         return 0.0;
     }
@@ -493,7 +520,7 @@ pub fn list_input_devices() -> Result<Vec<String>, String> {
 }
 
 /// Convert interleaved multi-channel samples to mono by averaging channels.
-fn to_mono(samples: &[f32], channels: usize) -> Vec<f32> {
+pub(crate) fn to_mono(samples: &[f32], channels: usize) -> Vec<f32> {
     if channels <= 1 {
         return samples.to_vec();
     }
@@ -506,7 +533,7 @@ fn to_mono(samples: &[f32], channels: usize) -> Vec<f32> {
 
 /// Resample mono f32 samples from `source_rate` to `TARGET_SAMPLE_RATE` using
 /// linear interpolation. Good enough for voice dictation quality.
-fn resample(samples: &[f32], source_rate: u32) -> Vec<f32> {
+pub(crate) fn resample(samples: &[f32], source_rate: u32) -> Vec<f32> {
     if source_rate == TARGET_SAMPLE_RATE {
         return samples.to_vec();
     }

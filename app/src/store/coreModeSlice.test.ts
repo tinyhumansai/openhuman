@@ -67,7 +67,10 @@ describe('coreModeSlice — sync-localStorage-derived initial state', () => {
   it('uses local mode when the E2E default core mode config is local', async () => {
     localStorage.clear();
     vi.resetModules();
-    vi.doMock('../utils/config', () => ({ E2E_DEFAULT_CORE_MODE: 'local' }));
+    vi.doMock('../utils/config', () => ({
+      CORE_RPC_URL: 'http://127.0.0.1:7788/rpc',
+      E2E_DEFAULT_CORE_MODE: 'local',
+    }));
     try {
       const mod = await import('./coreModeSlice');
       const state = mod.default(undefined, { type: '@@INIT' });
@@ -100,6 +103,20 @@ describe('coreModeSlice — sync-localStorage-derived initial state', () => {
     });
   });
 
+  it('normalizes restored cloud base URLs to the /rpc endpoint', async () => {
+    localStorage.clear();
+    localStorage.setItem('openhuman_core_mode', 'cloud');
+    localStorage.setItem('openhuman_core_rpc_url', 'https://example.trycloudflare.com/');
+    localStorage.setItem('openhuman_core_rpc_token', 'tok-abc');
+    const mod = await freshImport();
+    const state = mod.default(undefined, { type: '@@INIT' });
+    expect(state.mode).toEqual({
+      kind: 'cloud',
+      url: 'https://example.trycloudflare.com/rpc',
+      token: 'tok-abc',
+    });
+  });
+
   it('falls back to unset when cloud marker exists but URL or token is missing', async () => {
     localStorage.clear();
     localStorage.setItem('openhuman_core_mode', 'cloud');
@@ -115,5 +132,33 @@ describe('coreModeSlice — sync-localStorage-derived initial state', () => {
     const mod = await freshImport();
     const state = mod.default(undefined, { type: '@@INIT' });
     expect(state.mode).toEqual({ kind: 'unset' });
+  });
+
+  it('keeps the synchronous local marker when redux-persist rehydrates stale unset state', async () => {
+    localStorage.clear();
+    localStorage.setItem('openhuman_core_mode', 'local');
+
+    const mod = await freshImport();
+    const { persistReducer } =
+      await vi.importActual<typeof import('redux-persist')>('redux-persist');
+    const persistedReducer = persistReducer(
+      {
+        key: 'coreMode',
+        storage: { getItem: vi.fn(), setItem: vi.fn(), removeItem: vi.fn() },
+        whitelist: ['mode'],
+      },
+      mod.default
+    );
+
+    const next = persistedReducer(
+      { mode: { kind: 'local' }, _persist: { version: -1, rehydrated: false } },
+      {
+        type: 'persist/REHYDRATE',
+        key: 'coreMode',
+        payload: { mode: { kind: 'unset' } },
+      } as Parameters<typeof persistedReducer>[1]
+    );
+
+    expect(next.mode).toEqual({ kind: 'local' });
   });
 });

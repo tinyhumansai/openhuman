@@ -587,6 +587,16 @@ const result = await callCoreRpc<MyType>({
 
 Implementation: `invoke('core_rpc_relay', { request: { method, params, serviceManaged } })` → `app/src-tauri/src/commands/core_relay.rs` → HTTP client in `app/src-tauri/src/core_rpc.rs`.
 
+### Knowledge Vault Write State
+
+`VaultPanel` in `app/src/components/intelligence/` renders user-added knowledge vaults from the core `vault.*` controller surface. Each vault row must show the core-provided `write_state`:
+
+- `writable` means approved markdown/wiki writes can be saved under the vault root.
+- `read_only` means the folder exists but local permissions report it as read-only.
+- `unavailable` means the folder is missing, no longer a directory, or cannot be inspected on this device.
+
+The UI should not infer writability from the path string alone. It maps the core-provided `write_state_reason` code through i18n so unsupported write states are visible instead of failing silently. Approved artifact creation uses `openhuman.vault_write_markdown`; callers must pass `approved: true`, a relative `.md` or `.markdown` path, and content. The core rejects absolute paths, `..` traversal, non-markdown files, symlink escapes, and updates without `overwrite: true`.
+
 ### Service integration with providers
 
 #### SocketProvider
@@ -840,6 +850,34 @@ test('SocketProvider connects when token is available', () => {
   expect(socketService.connect).toHaveBeenCalledWith('test-token');
 });
 ```
+
+***
+
+## Human Mascot Surface
+
+The Human page (`app/src/features/human/HumanPage.tsx`) renders the main
+`YellowMascot` beside the conversation sidebar. The mascot face still comes
+from `useHumanMascot`, which subscribes to chat lifecycle events for thinking,
+speaking, acknowledgement, and error states.
+
+Sub-agent delegation is visualized by `SubMascotLayer`. It does not introduce a
+new socket protocol. Instead, it reads the selected or active thread's
+`chatRuntime.toolTimelineByThread` entries that `ChatRuntimeProvider` already
+builds from `subagent_spawned`, `subagent_completed`, `subagent_failed`,
+`subagent_iteration_start`, `subagent_tool_call`, and `subagent_tool_result`.
+
+Lifecycle mapping:
+
+| Runtime timeline state | Sub-mascot state |
+| ---------------------- | ---------------- |
+| `running`              | Small colored mascot in a thinking face with a short activity bubble |
+| `success`              | Same mascot resolves to a happy face and completion bubble |
+| `error`                | Same mascot resolves to a concerned face and failure bubble |
+
+Activity bubble text is intentionally compact: current child tool call, child
+iteration, the delegation prompt excerpt, or final status. The thread timeline
+remains the authoritative detailed view; sub-mascots are only the glanceable
+orchestration layer around the main mascot.
 
 ***
 

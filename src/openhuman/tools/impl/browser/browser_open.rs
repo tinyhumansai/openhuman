@@ -83,7 +83,9 @@ impl Tool for BrowserOpenTool {
             .ok_or_else(|| anyhow::anyhow!("Missing 'url' parameter"))?;
 
         if !self.security.can_act() {
-            return Ok(ToolResult::error("Action blocked: autonomy is read-only"));
+            return Ok(ToolResult::error(
+                "[policy-blocked] Action blocked: autonomy is read-only",
+            ));
         }
 
         if !self.security.record_action() {

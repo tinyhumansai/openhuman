@@ -1,14 +1,25 @@
-import Markdown from 'react-markdown';
+import type { ReactNode } from 'react';
+import Markdown, { defaultUrlTransform } from 'react-markdown';
+import rehypeKatex from 'rehype-katex';
+import remarkMath from 'remark-math';
 
 import { OPENHUMAN_LINK_EVENT } from '../../../components/OpenhumanLinkModal';
 import { parseMarkdownTable } from '../../../utils/agentMessageBubbles';
+import { hasLatexContent, normalizeLatexDelimiters } from '../../../utils/latex';
 import { openUrl } from '../../../utils/openUrl';
+import { openWorkspacePath } from '../../../utils/tauriCommands/workspacePaths';
+import { parseWorkspaceHref } from '../../../utils/workspaceLinks';
 import {
   type AgentBubblePosition,
   getAgentBubbleChrome,
   isAllowedExternalHref,
   parseBubbleSegments,
 } from '../utils/format';
+
+const MATH_REMARK_PLUGINS = [remarkMath];
+const MATH_REHYPE_PLUGINS = [rehypeKatex];
+const EMPTY_PLUGINS: [] = [];
+type ParsedMarkdownTable = NonNullable<ReturnType<typeof parseMarkdownTable>>;
 
 /**
  * Pill rendered below an agent bubble for each
@@ -37,6 +48,34 @@ function OpenhumanLinkPill({ path, label }: { path: string; label: string }) {
   );
 }
 
+function transformMarkdownUrl(url: string): string {
+  return parseWorkspaceHref(url) ? url : defaultUrlTransform(url);
+}
+
+function MarkdownAnchor({ href, children }: { href?: string; children?: ReactNode }) {
+  return (
+    <a
+      href={href}
+      onClick={e => {
+        e.preventDefault();
+        const workspaceTarget = parseWorkspaceHref(href);
+        if (workspaceTarget) {
+          void openWorkspacePath(workspaceTarget.path).catch(err => {
+            console.error('workspace open failed:', err);
+          });
+          return;
+        }
+        if (!href || !isAllowedExternalHref(href)) return;
+        void openUrl(href).catch(() => {
+          // Ignore launcher errors from OS URL handler failures.
+        });
+      }}
+      className="cursor-pointer underline">
+      {children}
+    </a>
+  );
+}
+
 export function BubbleMarkdown({
   content,
   tone = 'agent',
@@ -47,7 +86,10 @@ export function BubbleMarkdown({
   const proseTone =
     tone === 'user'
       ? 'prose-invert prose-p:text-white prose-li:text-white prose-a:text-white prose-code:text-white prose-strong:text-white prose-headings:text-white [&_li::marker]:text-white/85'
-      : 'prose-a:text-primary-500 prose-code:text-primary-700 prose-headings:text-sm [&_li::marker]:text-stone-700';
+      : 'dark:prose-invert prose-a:text-primary-500 prose-code:text-primary-700 dark:prose-code:text-primary-300 prose-headings:text-sm [&_li::marker]:text-stone-700 dark:[&_li::marker]:text-neutral-300';
+
+  const hasMath = hasLatexContent(content);
+  const rendered = hasMath ? normalizeLatexDelimiters(content) : content;
 
   return (
     <div
@@ -55,50 +97,71 @@ export function BubbleMarkdown({
         tone === 'user' ? 'prose-pre:bg-white/10' : 'prose-pre:bg-stone-300/50'
       } [&_ul]:my-0 [&_ol]:my-0 [&_ul]:pl-0 [&_ol]:pl-0 [&_ul]:list-inside [&_ol]:list-inside [&_li]:my-0 [&_li]:pl-0 [&_li_p]:inline [&_li_p]:m-0`}>
       <Markdown
-        components={{
-          a: ({ href, children }) => (
-            <a
-              href={href}
-              onClick={e => {
-                e.preventDefault();
-                if (!href || !isAllowedExternalHref(href)) return;
-                void openUrl(href).catch(() => {
-                  // Ignore launcher errors from OS URL handler failures.
-                });
-              }}
-              className="cursor-pointer underline">
-              {children}
-            </a>
-          ),
-        }}>
-        {content}
+        urlTransform={transformMarkdownUrl}
+        components={{ a: MarkdownAnchor }}
+        remarkPlugins={hasMath ? MATH_REMARK_PLUGINS : EMPTY_PLUGINS}
+        rehypePlugins={hasMath ? MATH_REHYPE_PLUGINS : EMPTY_PLUGINS}>
+        {rendered}
       </Markdown>
     </div>
   );
 }
 
 export function TableCellMarkdown({ content }: { content: string }) {
+  const hasMath = hasLatexContent(content);
+  const rendered = hasMath ? normalizeLatexDelimiters(content) : content;
   return (
-    <div className="prose prose-sm max-w-none text-sm text-stone-700 prose-p:my-0 prose-ul:my-0 prose-ol:my-0 prose-li:my-0 prose-code:text-xs prose-code:text-primary-700 prose-a:text-primary-500 prose-strong:text-stone-900 prose-headings:text-sm prose-headings:font-semibold [&_li::marker]:text-stone-700 [&_ul]:my-0 [&_ol]:my-0 [&_ul]:pl-0 [&_ol]:pl-0 [&_ul]:list-inside [&_ol]:list-inside [&_li]:pl-0 [&_li_p]:inline [&_li_p]:m-0">
+    <div className="prose prose-sm dark:prose-invert max-w-none text-sm text-stone-700 dark:text-neutral-200 prose-p:my-0 prose-ul:my-0 prose-ol:my-0 prose-li:my-0 prose-code:text-xs prose-code:text-primary-700 dark:prose-code:text-primary-300 prose-a:text-primary-500 prose-strong:text-stone-900 dark:prose-strong:text-neutral-100 prose-headings:text-sm prose-headings:font-semibold [&_li::marker]:text-stone-700 dark:[&_li::marker]:text-neutral-300 [&_ul]:my-0 [&_ol]:my-0 [&_ul]:pl-0 [&_ol]:pl-0 [&_ul]:list-inside [&_ol]:list-inside [&_li]:pl-0 [&_li_p]:inline [&_li_p]:m-0">
       <Markdown
-        components={{
-          a: ({ href, children }) => (
-            <a
-              href={href}
-              onClick={e => {
-                e.preventDefault();
-                if (!href || !isAllowedExternalHref(href)) return;
-                void openUrl(href).catch(() => {
-                  // Ignore launcher errors from OS URL handler failures.
-                });
-              }}
-              className="cursor-pointer underline">
-              {children}
-            </a>
-          ),
-        }}>
-        {content}
+        urlTransform={transformMarkdownUrl}
+        components={{ a: MarkdownAnchor }}
+        remarkPlugins={hasMath ? MATH_REMARK_PLUGINS : EMPTY_PLUGINS}
+        rehypePlugins={hasMath ? MATH_REHYPE_PLUGINS : EMPTY_PLUGINS}>
+        {rendered}
       </Markdown>
+    </div>
+  );
+}
+
+function AgentMarkdownTable({
+  table,
+  className,
+}: {
+  table: ParsedMarkdownTable;
+  className: string;
+}) {
+  return (
+    <div className={className}>
+      <div className="overflow-x-auto">
+        <table className="w-max min-w-full border-collapse text-left text-sm text-stone-800 dark:text-neutral-100">
+          <thead className="bg-stone-100 dark:bg-neutral-800/90">
+            <tr>
+              {table.headers.map(header => (
+                <th
+                  key={header}
+                  className="max-w-[25vw] border-b border-stone-200 dark:border-neutral-800 px-4 py-2.5 text-xs font-semibold uppercase tracking-[0.08em] text-stone-500 dark:text-neutral-400">
+                  {header}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {table.rows.map((row, rowIndex) => (
+              <tr
+                key={`${rowIndex}:${row.join('|')}`}
+                className="odd:bg-white dark:odd:bg-neutral-900 even:bg-stone-50 dark:even:bg-neutral-800/60">
+                {row.map((cell, cellIndex) => (
+                  <td
+                    key={`${rowIndex}:${cellIndex}:${cell}`}
+                    className="max-w-[25vw] border-t border-stone-200 dark:border-neutral-800 px-4 py-3 align-top text-sm text-stone-700 dark:text-neutral-200">
+                    <TableCellMarkdown content={cell} />
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -125,46 +188,18 @@ export function AgentMessageBubble({
 
   if (table) {
     return (
-      <div
-        className={`w-full max-w-full overflow-hidden border border-stone-200 bg-white/90 shadow-sm ${bubbleChrome}`}>
-        <div className="overflow-x-auto">
-          <table className="w-max min-w-full border-collapse text-left text-sm text-stone-800">
-            <thead className="bg-stone-100/90">
-              <tr>
-                {table.headers.map(header => (
-                  <th
-                    key={header}
-                    className="max-w-[25vw] border-b border-stone-200 px-4 py-2.5 text-xs font-semibold uppercase tracking-[0.08em] text-stone-500">
-                    {header}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {table.rows.map((row, rowIndex) => (
-                <tr
-                  key={`${rowIndex}:${row.join('|')}`}
-                  className="odd:bg-white even:bg-stone-50/70">
-                  {row.map((cell, cellIndex) => (
-                    <td
-                      key={`${rowIndex}:${cellIndex}:${cell}`}
-                      className="max-w-[25vw] border-t border-stone-200 px-4 py-3 align-top text-sm text-stone-700">
-                      <TableCellMarkdown content={cell} />
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      <AgentMarkdownTable
+        table={table}
+        className={`w-full max-w-full overflow-hidden border border-stone-200 dark:border-neutral-800 bg-white/90 dark:bg-neutral-900/90 shadow-sm ${bubbleChrome}`}
+      />
     );
   }
 
   return (
     <>
       {textContent && (
-        <div className={`bg-stone-200/80 px-4 py-2.5 text-stone-900 ${bubbleChrome}`}>
+        <div
+          className={`bg-stone-200 dark:bg-neutral-800/80 px-4 py-2.5 text-stone-900 dark:text-neutral-100 ${bubbleChrome}`}>
           <BubbleMarkdown content={textContent} />
         </div>
       )}
@@ -180,5 +215,41 @@ export function AgentMessageBubble({
         </div>
       )}
     </>
+  );
+}
+
+export function AgentMessageText({ content }: { content: string }) {
+  const segments = parseBubbleSegments(content);
+  const textContent = segments
+    .filter(s => s.kind === 'text')
+    .map(s => s.text)
+    .join('')
+    .trim();
+  const linkSegments = segments.filter(
+    (s): s is Extract<typeof s, { kind: 'link' }> => s.kind === 'link'
+  );
+  const table = parseMarkdownTable(textContent);
+
+  return (
+    <div
+      className="w-full min-w-0 px-1 py-1 text-stone-900 dark:text-neutral-100"
+      data-testid="agent-message-text">
+      {table ? (
+        <AgentMarkdownTable table={table} className="w-full max-w-full overflow-hidden" />
+      ) : (
+        textContent && <BubbleMarkdown content={textContent} />
+      )}
+      {linkSegments.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-2">
+          {linkSegments.map((segment, idx) => (
+            <OpenhumanLinkPill
+              key={`pill-${idx}-${segment.path}`}
+              path={segment.path}
+              label={segment.label}
+            />
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

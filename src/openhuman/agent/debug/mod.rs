@@ -92,7 +92,7 @@ pub struct DumpedPrompt {
     pub text: String,
     /// Tool names that made it into the rendered prompt, in order.
     pub tool_names: Vec<String>,
-    /// Number of `ToolCategory::Skill` tools in the dump.
+    /// Number of `ToolCategory::Workflow` tools in the dump.
     pub skill_tool_count: usize,
 }
 
@@ -231,7 +231,7 @@ async fn render_via_session(config: &Config, agent_id: &str) -> Result<DumpedPro
     let tool_names: Vec<String> = tools.iter().map(|t| t.name().to_string()).collect();
     let skill_tool_count = tools
         .iter()
-        .filter(|t| t.category() == ToolCategory::Skill)
+        .filter(|t| t.category() == ToolCategory::Workflow)
         .count();
 
     Ok(DumpedPrompt {
@@ -248,7 +248,7 @@ async fn render_via_session(config: &Config, agent_id: &str) -> Result<DumpedPro
 
 /// Render the integrations_agent prompt bound to a single Composio
 /// toolkit. Mirrors the subagent_runner's per-toolkit path: strips
-/// Skill-category parent tools, injects one [`ComposioActionTool`] per
+/// Workflow-category parent tools, injects one [`ComposioActionTool`] per
 /// action in the toolkit, and narrows the `connected_integrations`
 /// slice to only the requested toolkit before calling the agent's
 /// dynamic prompt builder.
@@ -297,6 +297,7 @@ async fn render_integrations_agent(config: &Config, toolkit: &str) -> Result<Dum
             match crate::openhuman::composio::fetch_toolkit_actions(
                 composio_client,
                 &integration.toolkit,
+                None,
             )
             .await
             {
@@ -417,7 +418,7 @@ async fn render_integrations_agent(config: &Config, toolkit: &str) -> Result<Dum
         model_name: &model_name,
         agent_id: INTEGRATIONS_AGENT_ID,
         tools: &prompt_tools,
-        skills: agent.skills(),
+        workflows: agent.workflows(),
         dispatcher_instructions: "",
         learned: LearnedContextData::default(),
         visible_tool_names: &empty_visible,
@@ -428,6 +429,9 @@ async fn render_integrations_agent(config: &Config, toolkit: &str) -> Result<Dum
         include_memory_md: !definition.omit_memory_md,
         curated_snapshot: None,
         user_identity: None,
+        personality_soul_md: None,
+        personality_memory_md: None,
+        personality_roster: vec![],
     };
 
     let mut text = build(&ctx)
@@ -461,7 +465,7 @@ async fn render_integrations_agent(config: &Config, toolkit: &str) -> Result<Dum
         .collect();
     let skill_tool_count = rendered_tools
         .iter()
-        .filter(|t| t.category() == ToolCategory::Skill)
+        .filter(|t| t.category() == ToolCategory::Workflow)
         .count();
 
     Ok(DumpedPrompt {

@@ -73,6 +73,10 @@ pub struct ToolTimelineEntry {
 pub struct SubagentActivity {
     pub task_id: String,
     pub agent_id: String,
+    /// High-level status: `"running"`, `"awaiting_user"`, `"completed"`,
+    /// `"failed"`. `None` for legacy snapshots written before this field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mode: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -87,6 +91,11 @@ pub struct SubagentActivity {
     pub elapsed_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_chars: Option<usize>,
+    /// Persistent worker sub-thread backing this delegation, when one was
+    /// created. Lets the UI reopen the full parent↔subagent conversation
+    /// from memory after a cold boot / interrupted turn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worker_thread_id: Option<String>,
     #[serde(default)]
     pub tool_calls: Vec<SubagentToolCall>,
 }

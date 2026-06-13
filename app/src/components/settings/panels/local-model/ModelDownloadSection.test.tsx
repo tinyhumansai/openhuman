@@ -48,6 +48,9 @@ const makeProps = () => ({
   onRunTtsTest: vi.fn(),
 });
 
+// No i18n mock: existing tests assert on real English strings (e.g. 'Run Summary Test').
+// New tests must also use real English translation strings.
+
 describe('ModelDownloadSection runtime gate', () => {
   it('does not invoke local-AI test actions when runtime is disabled', () => {
     const props = makeProps();
@@ -98,5 +101,121 @@ describe('ModelDownloadSection runtime gate', () => {
       screen.getAllByText('Manage this model in your external runtime.').length
     ).toBeGreaterThan(0);
     expect(screen.getAllByRole('button', { name: 'Download' }).length).toBeGreaterThan(0);
+  });
+});
+
+describe('ModelDownloadSection — promptError, outputs (line 238)', () => {
+  const baseProps = () => ({
+    assets: null,
+    assetDownloadBusy: {},
+    statusTone: (_state: string) => '',
+    runtimeEnabled: true,
+    onTriggerAssetDownload: vi.fn(),
+    summaryInput: '',
+    summaryOutput: '',
+    isSummaryLoading: false,
+    onSetSummaryInput: vi.fn(),
+    onRunSummaryTest: vi.fn(),
+    promptInput: 'test prompt',
+    promptOutput: '',
+    promptError: '',
+    isPromptLoading: false,
+    promptNoThink: true,
+    onSetPromptInput: vi.fn(),
+    onSetPromptNoThink: vi.fn(),
+    onRunPromptTest: vi.fn(),
+    visionPromptInput: '',
+    visionImageInput: '',
+    visionOutput: '',
+    isVisionLoading: false,
+    onSetVisionPromptInput: vi.fn(),
+    onSetVisionImageInput: vi.fn(),
+    onRunVisionTest: vi.fn(),
+    embeddingInput: '',
+    embeddingOutput: null,
+    isEmbeddingLoading: false,
+    onSetEmbeddingInput: vi.fn(),
+    onRunEmbeddingTest: vi.fn(),
+    audioPathInput: '',
+    transcribeOutput: null,
+    isTranscribeLoading: false,
+    onSetAudioPathInput: vi.fn(),
+    onRunTranscribeTest: vi.fn(),
+    ttsInput: '',
+    ttsOutputPath: '',
+    ttsOutput: null,
+    isTtsLoading: false,
+    onSetTtsInput: vi.fn(),
+    onSetTtsOutputPath: vi.fn(),
+    onRunTtsTest: vi.fn(),
+  });
+
+  it('renders promptError status line when promptError is non-empty (line 238)', () => {
+    render(
+      <ModelDownloadSection
+        {...baseProps()}
+        promptError="model returned an error: context exceeded"
+      />
+    );
+    expect(screen.getByText('model returned an error: context exceeded')).toBeTruthy();
+  });
+
+  it('renders promptOutput pre when promptOutput is non-empty (line 239-243)', () => {
+    render(
+      <ModelDownloadSection {...baseProps()} promptOutput="The capital of France is Paris." />
+    );
+    expect(screen.getByText('The capital of France is Paris.')).toBeTruthy();
+  });
+
+  it('renders summaryOutput pre when summaryOutput is non-empty', () => {
+    render(
+      <ModelDownloadSection
+        {...baseProps()}
+        summaryInput="some text to summarize"
+        summaryOutput="Summary: concise result"
+      />
+    );
+    expect(screen.getByText('Summary: concise result')).toBeTruthy();
+  });
+
+  it('renders embeddingOutput details when non-null', () => {
+    render(
+      <ModelDownloadSection
+        {...baseProps()}
+        embeddingInput="word1\nword2"
+        embeddingOutput={{ model_id: 'nomic-embed', dimensions: 768, vectors: [[0.1, 0.2]] }}
+      />
+    );
+    expect(screen.getByText(/nomic-embed/)).toBeTruthy();
+    expect(screen.getByText(/768/)).toBeTruthy();
+  });
+
+  it('renders transcribeOutput when non-null', () => {
+    render(
+      <ModelDownloadSection
+        {...baseProps()}
+        audioPathInput="/tmp/test.wav"
+        transcribeOutput={{ model_id: 'whisper-tiny', text: 'hello world' }}
+      />
+    );
+    expect(screen.getByText('hello world')).toBeTruthy();
+  });
+
+  it('renders ttsOutput when non-null', () => {
+    render(
+      <ModelDownloadSection
+        {...baseProps()}
+        ttsInput="speak this"
+        ttsOutput={{ voice_id: 'en_US', output_path: '/tmp/output.wav' }}
+      />
+    );
+    expect(screen.getByText(/en_US/)).toBeTruthy();
+    expect(screen.getByText(/\/tmp\/output\.wav/)).toBeTruthy();
+  });
+
+  it('shows running prompt spinner when isPromptLoading (line 232-236)', () => {
+    render(<ModelDownloadSection {...baseProps()} isPromptLoading={true} />);
+    // Translation: 'settings.localModel.download.runningPrompt' → 'Running prompt'
+    expect(screen.getByText('Running prompt')).toBeTruthy();
   });
 });

@@ -1,5 +1,7 @@
 use super::detect_tab_artifact_suffix;
 use super::is_low_quality_suggestion;
+use super::{AutocompleteEngine, AutocompleteStatus};
+use crate::openhuman::config::Config;
 
 #[test]
 fn low_quality_rejects_too_short() {
@@ -51,4 +53,35 @@ fn returns_zero_when_context_does_not_match_expected_tail() {
 #[test]
 fn returns_zero_when_no_tab_like_suffix_present() {
     assert_eq!(detect_tab_artifact_suffix("hello world", "hello worldx"), 0);
+}
+
+#[tokio::test]
+async fn status_with_config_returns_valid_status_without_disk_load() {
+    let engine = AutocompleteEngine::new();
+    let config = Config::default();
+
+    let status: AutocompleteStatus = engine.status_with_config(&config).await;
+
+    assert_eq!(status.enabled, config.autocomplete.enabled);
+    assert!(!status.running, "fresh engine should not be running");
+    assert_eq!(status.phase, "idle");
+    assert_eq!(status.model_id, config.local_ai.chat_model_id);
+    assert!(status.last_error.is_none());
+    assert!(status.suggestion.is_none());
+}
+
+#[tokio::test]
+async fn status_with_config_reflects_provided_config_not_disk() {
+    let engine = AutocompleteEngine::new();
+    let mut config = Config::default();
+    config.autocomplete.enabled = false;
+    config.local_ai.chat_model_id = "test-model-xyz".to_string();
+
+    let status = engine.status_with_config(&config).await;
+
+    assert!(
+        !status.enabled,
+        "should reflect the passed-in config, not disk state"
+    );
+    assert_eq!(status.model_id, "test-model-xyz");
 }

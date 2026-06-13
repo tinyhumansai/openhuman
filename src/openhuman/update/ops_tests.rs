@@ -224,6 +224,7 @@ async fn update_run_rejected_when_rpc_mutations_disabled() {
     // Write a config with mutations disabled.
     let mut cfg = crate::openhuman::config::Config {
         workspace_dir: tmp.path().join("workspace"),
+        action_dir: tmp.path().join("workspace"),
         config_path: tmp.path().join("config.toml"),
         ..crate::openhuman::config::Config::default()
     };

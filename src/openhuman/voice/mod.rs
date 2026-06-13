@@ -9,8 +9,12 @@
 //! `crate::openhuman::inference::voice` so all inference concerns share a
 //! single domain root.
 
+pub mod always_on;
 pub mod audio_capture;
+pub mod bus;
+pub use bus::publish_ptt_transcript_committed;
 pub(crate) mod cli;
+pub mod command_router;
 pub mod dictation_listener;
 pub mod factory;
 pub mod hotkey;
@@ -32,6 +36,7 @@ pub use crate::openhuman::inference::voice::streaming;
 
 pub use factory::{
     create_stt_provider, create_tts_provider, default_stt_provider, default_tts_provider,
+    effective_stt_provider, effective_tts_provider, ExternalSttProvider, ExternalTtsProvider,
     SttProvider, SttResult, TtsProvider, DEFAULT_PIPER_VOICE, DEFAULT_WHISPER_MODEL,
     WHISPER_MODEL_PRESETS,
 };

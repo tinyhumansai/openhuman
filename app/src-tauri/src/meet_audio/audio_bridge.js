@@ -97,6 +97,29 @@
     return out;
   }
 
+  // Track every scheduled AudioBufferSource so __openhumanFlushAudio
+  // can stop them on barge-in (user re-asks during a long bot reply).
+  // Without this list, only the queue tail past `nextStartTime` would
+  // be cancellable; anything already start()-ed plays to completion.
+  var activeSources = [];
+
+  // Stop in-flight playback and reset the schedule cursor. Called by
+  // the Rust shell when the brain cancels outbound (new wake fires
+  // mid-reply). Returns the number of sources that were stopped, so
+  // the shell can log how much speech got cut.
+  window.__openhumanFlushAudio = function () {
+    var stopped = 0;
+    while (activeSources.length) {
+      var s = activeSources.pop();
+      try { s.stop(); stopped++; } catch (_) {}
+      try { s.disconnect(); } catch (_) {}
+    }
+    if (ctx) {
+      nextStartTime = ctx.currentTime;
+    }
+    return stopped;
+  };
+
   // Public push API. Returns the duration in seconds the chunk added
   // to the queue, mostly for diagnostics; the shell ignores it.
   window.__openhumanFeedPcm = function (b64) {
@@ -110,6 +133,16 @@
       var src = ctx.createBufferSource();
       src.buffer = buffer;
       src.connect(dest);
+      // Also pipe to the page's default audio output so the bot is
+      // audible on the host machine (the openhuman app's speakers).
+      // Without this, bot audio only flows up Meet's gUM intercept
+      // and the user has to be receiving the meeting on a separate
+      // endpoint (other browser tab / phone) to hear it. Playing
+      // locally too costs nothing audio-quality-wise and removes the
+      // "captions appear but no sound" foot-gun. Follow-up #20
+      // (mute bot CEF at OS level) will re-introduce a clean off
+      // switch once we have a config toggle.
+      src.connect(ctx.destination);
       // Schedule strictly after the previous chunk so successive
       // 100 ms feeds line up gaplessly. If the queue has emptied
       // (caller fell behind), restart at currentTime so we don't try
@@ -118,6 +151,11 @@
         nextStartTime = ctx.currentTime;
       }
       src.start(nextStartTime);
+      activeSources.push(src);
+      src.onended = function () {
+        var idx = activeSources.indexOf(src);
+        if (idx !== -1) activeSources.splice(idx, 1);
+      };
       nextStartTime += buffer.duration;
       // High-frequency log gated by a counter so we don't drown the
       // console at 10 Hz; emit ~1 in 50 frames (~5 s cadence at the

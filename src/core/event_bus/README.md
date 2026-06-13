@@ -28,7 +28,7 @@ In-process pub/sub plus typed request/response. Owns the global `EventBus` singl
 ## Called by
 
 - ~33 sites across the workspace. Hot consumers:
-- `src/openhuman/agent/bus.rs`, `agent/triage/{events,evaluator,escalation}.rs`, `tools/impl/agent/{dispatch,spawn_subagent}.rs` — agent + sub-agent events.
+- `src/openhuman/agent/bus.rs`, `agent/triage/{events,evaluator,escalation}.rs`, `agent_registry/tools/{dispatch,spawn_subagent}.rs` — agent + sub-agent events.
 - `src/openhuman/memory/conversations/bus.rs` — conversation persistence subscriber.
 - `src/openhuman/channels/bus.rs` — `ChannelInboundSubscriber`.
 - `src/openhuman/cron/{bus,scheduler}.rs` — `CronDeliverySubscriber` + `CronJobTriggered` emission.

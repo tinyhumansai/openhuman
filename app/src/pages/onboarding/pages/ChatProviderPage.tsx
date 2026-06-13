@@ -32,15 +32,17 @@ const ChatProviderPage = () => {
   return (
     <div
       data-testid="onboarding-chat-provider-step"
-      className="rounded-2xl border border-stone-200 bg-white p-8 shadow-soft animate-fade-up">
+      className="rounded-2xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-8 shadow-soft animate-fade-up">
       <div className="text-center mb-5">
-        <h1 className="text-xl font-bold mb-2 text-stone-900">{t('onboarding.chatProvider')}</h1>
-        <p className="text-stone-500 text-sm leading-relaxed max-w-sm mx-auto">
+        <h1 className="text-xl font-bold mb-2 text-stone-900 dark:text-neutral-100">
+          {t('onboarding.chatProvider')}
+        </h1>
+        <p className="text-stone-500 dark:text-neutral-400 text-sm leading-relaxed max-w-sm mx-auto">
           {t('onboarding.chatProviderDesc')}
         </p>
       </div>
 
-      <div className="rounded-xl border border-dashed border-stone-200 bg-stone-50 p-6 mb-5 text-center text-sm text-stone-500">
+      <div className="rounded-xl border border-dashed border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-6 mb-5 text-center text-sm text-stone-500 dark:text-neutral-400">
         {t('misc.beta')}
       </div>
 

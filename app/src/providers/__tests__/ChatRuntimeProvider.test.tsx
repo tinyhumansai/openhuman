@@ -6,10 +6,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as chatService from '../../services/chatService';
 import { threadApi } from '../../services/api/threadApi';
 import { store } from '../../store';
-import { clearAllChatRuntime } from '../../store/chatRuntimeSlice';
+import {
+  clearAllChatRuntime,
+  registerParallelRequest,
+  resetSessionTokenUsage,
+} from '../../store/chatRuntimeSlice';
 import { setStatusForUser } from '../../store/socketSlice';
 import { clearAllThreads, loadThreads, setSelectedThread } from '../../store/threadSlice';
-import ChatRuntimeProvider from '../ChatRuntimeProvider';
+import ChatRuntimeProvider, { findPendingDelegationContext } from '../ChatRuntimeProvider';
 
 vi.mock('../../services/chatService', async () => {
   const actual = await vi.importActual<typeof chatService>('../../services/chatService');
@@ -64,6 +68,10 @@ function resetRuntimeState() {
   // selection that clears ambient state.
   store.dispatch(clearAllThreads());
   store.dispatch(clearAllChatRuntime());
+  // `clearAllChatRuntime` intentionally preserves cumulative session token
+  // usage; reset it here so usage-recording tests stay isolated regardless of
+  // run order.
+  store.dispatch(resetSessionTokenUsage());
   store.dispatch(setStatusForUser({ userId: '__pending__', status: 'disconnected' }));
 }
 
@@ -80,6 +88,34 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
   });
 
   describe('dedupe', () => {
+    it('finds pending spawn and async delegation tool rows', () => {
+      const entries = [
+        { id: 'ignored', name: 'search', round: 0, status: 'running' },
+        {
+          id: 'spawn',
+          name: 'spawn_async_subagent',
+          round: 0,
+          status: 'running',
+          argsBuffer: '{"prompt":"Archive preferences."}',
+        },
+      ] as Parameters<typeof findPendingDelegationContext>[0];
+
+      expect(findPendingDelegationContext(entries, 0)).toEqual({
+        sourceToolName: 'spawn_async_subagent',
+        prompt: 'Archive preferences.',
+        spawnEntryId: 'spawn',
+      });
+
+      expect(
+        findPendingDelegationContext(
+          [{ id: 'sync', name: 'spawn_subagent', round: 1, status: 'running' }] as Parameters<
+            typeof findPendingDelegationContext
+          >[0],
+          1
+        )
+      ).toMatchObject({ sourceToolName: 'spawn_subagent', spawnEntryId: 'sync' });
+    });
+
     it('stores task board updates from socket events', () => {
       const listeners = renderProvider();
       const board = {
@@ -123,6 +159,207 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
       expect(timeline).toHaveLength(1);
       expect(timeline[0]?.name).toBe('search');
       expect(timeline[0]?.status).toBe('running');
+    });
+
+    it('collapses a spawn_subagent tool-call row into the subagent row', () => {
+      const listeners = renderProvider();
+
+      act(() => {
+        // Parent invokes the delegation tool — creates a "spawn_subagent" row.
+        listeners.onToolCall?.({
+          thread_id: 't1',
+          request_id: 'r1',
+          round: 0,
+          tool_name: 'spawn_subagent',
+          skill_id: 'orchestration',
+          args: {},
+          tool_call_id: 'call-spawn',
+        });
+        // The delegation prompt streams in as the tool's args JSON.
+        listeners.onToolArgsDelta?.({
+          thread_id: 't1',
+          request_id: 'r1',
+          round: 0,
+          tool_call_id: 'call-spawn',
+          tool_name: 'spawn_subagent',
+          delta: '{"prompt":"Research Q3 revenue."}',
+        });
+        // The child spawns — should REPLACE the tool-call row, not add a second.
+        listeners.onSubagentSpawned?.({
+          thread_id: 't1',
+          request_id: 'r1',
+          round: 0,
+          tool_name: 'researcher',
+          skill_id: 'sub-1',
+          message: 'spawned',
+          subagent: { mode: 'typed' },
+        });
+      });
+
+      const timeline = store.getState().chatRuntime.toolTimelineByThread['t1'] ?? [];
+      expect(timeline).toHaveLength(1);
+      expect(timeline[0]?.name).toBe('subagent:researcher');
+      // The parent's delegation prompt is carried onto the subagent so the
+      // drawer can open the conversation with it.
+      expect(timeline[0]?.subagent?.prompt).toContain('Research Q3 revenue');
+    });
+
+    it('collapses a spawn_async_subagent tool-call row into the subagent row', () => {
+      const listeners = renderProvider();
+
+      act(() => {
+        listeners.onToolCall?.({
+          thread_id: 't1',
+          request_id: 'r1',
+          round: 0,
+          tool_name: 'spawn_async_subagent',
+          skill_id: 'orchestration',
+          args: {},
+          tool_call_id: 'call-spawn-async',
+        });
+        listeners.onToolArgsDelta?.({
+          thread_id: 't1',
+          request_id: 'r1',
+          round: 0,
+          tool_call_id: 'call-spawn-async',
+          tool_name: 'spawn_async_subagent',
+          delta: '{"prompt":"Archive these preferences."}',
+        });
+        listeners.onSubagentSpawned?.({
+          thread_id: 't1',
+          request_id: 'r1',
+          round: 0,
+          tool_name: 'archivist',
+          skill_id: 'sub-async-1',
+          message: 'spawned',
+          subagent: { mode: 'async' },
+        });
+      });
+
+      const timeline = store.getState().chatRuntime.toolTimelineByThread['t1'] ?? [];
+      expect(timeline).toHaveLength(1);
+      expect(timeline[0]?.name).toBe('subagent:archivist');
+      expect(timeline[0]?.sourceToolName).toBe('spawn_async_subagent');
+      expect(timeline[0]?.subagent?.prompt).toContain('Archive these preferences');
+    });
+
+    it('appends streamed subagent text & thinking deltas to the subagent transcript', () => {
+      const listeners = renderProvider();
+
+      act(() => {
+        listeners.onSubagentSpawned?.({
+          thread_id: 't1',
+          request_id: 'r1',
+          round: 0,
+          tool_name: 'researcher',
+          skill_id: 'sub-1',
+          message: 'spawned',
+          subagent: { mode: 'typed' },
+        });
+        listeners.onSubagentThinkingDelta?.({
+          thread_id: 't1',
+          request_id: 'r1',
+          round: 0,
+          delta: 'let me think',
+          subagent: { task_id: 'sub-1', agent_id: 'researcher', child_iteration: 1 },
+        });
+        listeners.onSubagentTextDelta?.({
+          thread_id: 't1',
+          request_id: 'r1',
+          round: 0,
+          delta: 'the answer',
+          subagent: { task_id: 'sub-1', agent_id: 'researcher', child_iteration: 1 },
+        });
+      });
+
+      const row = (store.getState().chatRuntime.toolTimelineByThread['t1'] ?? []).find(
+        e => e.subagent?.taskId === 'sub-1'
+      );
+      expect(row?.subagent?.transcript).toEqual([
+        { kind: 'thinking', iteration: 1, text: 'let me think' },
+        { kind: 'text', iteration: 1, text: 'the answer' },
+      ]);
+    });
+
+    it('ignores subagent deltas missing task/agent/delta', () => {
+      const listeners = renderProvider();
+      act(() => {
+        listeners.onSubagentSpawned?.({
+          thread_id: 't1',
+          request_id: 'r1',
+          round: 0,
+          tool_name: 'researcher',
+          skill_id: 'sub-1',
+          message: 'spawned',
+          subagent: { mode: 'typed' },
+        });
+        // No agent_id → dropped.
+        listeners.onSubagentTextDelta?.({
+          thread_id: 't1',
+          request_id: 'r1',
+          round: 0,
+          delta: 'x',
+          subagent: { task_id: 'sub-1' },
+        });
+      });
+      const row = (store.getState().chatRuntime.toolTimelineByThread['t1'] ?? []).find(
+        e => e.subagent?.taskId === 'sub-1'
+      );
+      expect(row?.subagent?.transcript).toEqual([]);
+    });
+
+    it('routes a parallel (forked) turn into its own lane, leaving the primary stream untouched', () => {
+      const listeners = renderProvider();
+
+      // Primary turn streams on the thread.
+      act(() => {
+        listeners.onTextDelta?.({
+          thread_id: 't-par',
+          request_id: 'primary',
+          round: 0,
+          delta: 'P',
+        });
+      });
+      // A parallel turn is registered and streams concurrently on the SAME thread.
+      act(() => {
+        store.dispatch(registerParallelRequest({ threadId: 't-par', requestId: 'branch' }));
+        listeners.onTextDelta?.({
+          thread_id: 't-par',
+          request_id: 'branch',
+          round: 0,
+          delta: 'B1',
+        });
+        listeners.onTextDelta?.({
+          thread_id: 't-par',
+          request_id: 'branch',
+          round: 0,
+          delta: 'B2',
+        });
+      });
+
+      const mid = store.getState().chatRuntime;
+      // Primary stream is not clobbered by the parallel branch.
+      expect(mid.streamingAssistantByThread['t-par']?.content).toBe('P');
+      expect(mid.parallelStreamsByThread['t-par']?.['branch']?.content).toBe('B1B2');
+
+      // The parallel turn's chat_done resolves ONLY its lane; the primary
+      // stream and its (still-running) state survive.
+      act(() => {
+        listeners.onDone?.({
+          thread_id: 't-par',
+          request_id: 'branch',
+          full_response: 'branch done',
+          rounds_used: 1,
+          total_input_tokens: 0,
+          total_output_tokens: 0,
+          segment_total: 0,
+        });
+      });
+
+      const after = store.getState().chatRuntime;
+      expect(after.parallelStreamsByThread['t-par']).toBeUndefined();
+      expect(after.parallelRequestThreads['branch']).toBeUndefined();
+      expect(after.streamingAssistantByThread['t-par']?.content).toBe('P');
     });
 
     it('drops duplicate chat_done events with the same thread/request', async () => {
@@ -579,15 +816,20 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
       expect(store.getState().chatRuntime.inferenceStatusByThread['t-err']).toBeUndefined();
     });
 
-    it('adds a sanitized user-facing error bubble with Discord report action on chat_error', async () => {
+    it('forwards the server-provided inference error message verbatim', async () => {
       const listeners = renderProvider();
+      // Transport-level failures yield no provider `error.message` body, so
+      // `with_provider_detail()` in web_errors.rs returns just the friendly
+      // generic message with no raw URL appended — the FE forwards it as-is
+      // (backend owns sanitization; see web_errors_tests.rs).
+      const serverMessage =
+        'Something went wrong. Please try again.\nThis error has been reported. You can also report it on Discord.\n<openhuman-link path="community/discord-report">Report on Discord</openhuman-link>';
 
       act(() => {
         listeners.onError?.({
           thread_id: 't-err-sanitized',
           request_id: 'r1',
-          message:
-            'agent job failed: error sending request for url (https://staging-api.alphahuman.xyz/openai/v1/chat/completions)',
+          message: serverMessage,
           error_type: 'inference',
           round: 0,
         });
@@ -596,36 +838,20 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
       await waitFor(() =>
         expect(threadApi.appendMessage).toHaveBeenCalledWith(
           't-err-sanitized',
-          expect.objectContaining({
-            sender: 'agent',
-            content: expect.stringContaining('Something went wrong. Please try again.'),
-          })
+          expect.objectContaining({ sender: 'agent', content: serverMessage })
         )
-      );
-      expect(threadApi.appendMessage).toHaveBeenCalledWith(
-        't-err-sanitized',
-        expect.objectContaining({
-          content: expect.stringContaining(
-            '<openhuman-link path="community/discord">Report on Discord</openhuman-link>'
-          ),
-        })
-      );
-      expect(threadApi.appendMessage).not.toHaveBeenCalledWith(
-        't-err-sanitized',
-        expect.objectContaining({
-          content: expect.stringContaining('https://staging-api.alphahuman.xyz'),
-        })
       );
     });
 
-    it('does not append duplicate fallback error bubble when the previous message already matches', async () => {
+    it('does not append a duplicate error bubble when the previous message already matches', async () => {
       const listeners = renderProvider();
+      const repeated = 'Your AI provider is temporarily unavailable. Please try again later.';
 
       act(() => {
         listeners.onError?.({
           thread_id: 't-err-dedupe',
           request_id: 'r1',
-          message: 'transport fail one',
+          message: repeated,
           error_type: 'inference',
           round: 0,
         });
@@ -634,9 +860,7 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
       await waitFor(() =>
         expect(threadApi.appendMessage).toHaveBeenCalledWith(
           't-err-dedupe',
-          expect.objectContaining({
-            content: expect.stringContaining('Something went wrong. Please try again.'),
-          })
+          expect.objectContaining({ content: repeated })
         )
       );
 
@@ -644,7 +868,7 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
         listeners.onError?.({
           thread_id: 't-err-dedupe',
           request_id: 'r2',
-          message: 'transport fail two',
+          message: repeated,
           error_type: 'inference',
           round: 0,
         });
@@ -657,7 +881,7 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
             call =>
               call[0] === 't-err-dedupe' &&
               typeof call[1]?.content === 'string' &&
-              call[1].content.includes('Something went wrong. Please try again.')
+              call[1].content.includes(repeated)
           );
         expect(matchingCalls).toHaveLength(1);
       });
@@ -830,7 +1054,7 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
         );
       });
 
-      expect(store.getState().thread.activeThreadId).toBe(threadId);
+      expect(store.getState().thread.activeThreadIds[threadId]).toBe(true);
       expect(store.getState().chatRuntime.inferenceTurnLifecycleByThread[threadId]).toBe('started');
 
       await act(async () => {
@@ -838,7 +1062,7 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
       });
 
       await waitFor(() => {
-        expect(store.getState().thread.activeThreadId).toBeNull();
+        expect(store.getState().thread.activeThreadIds[threadId]).toBeUndefined();
         expect(
           store.getState().chatRuntime.inferenceTurnLifecycleByThread[threadId]
         ).toBeUndefined();
@@ -869,7 +1093,7 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
       });
 
       await waitFor(() => {
-        expect(store.getState().thread.activeThreadId).toBeNull();
+        expect(store.getState().thread.activeThreadIds[threadId]).toBeUndefined();
       });
       expect(store.getState().chatRuntime.streamingAssistantByThread[threadId]).toMatchObject({
         content: 'Hello there, partial',
@@ -879,15 +1103,16 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
 
   // Error classifier full set — Batch-5 coverage (#1506, pr#1566).
   //
-  // For the generic 'inference' error type the raw server message is
-  // replaced with USER_FACING_AGENT_ERROR_MESSAGE.  For all classified
-  // types (rate_limited, auth_error, budget_exhausted, context_overflow,
-  // timeout, network, tool_error, provider_error, model_unavailable) the
-  // server already provides a user-friendly message, which is forwarded
-  // directly.  'cancelled' produces no bubble at all.
+  // Every error_type — including the generic 'inference' fallback — carries a
+  // user-friendly `message` from classify_inference_error() in web_errors.rs,
+  // which is forwarded directly so the user sees the real reason (for
+  // 'inference' that message is a friendly summary plus the sanitized upstream
+  // provider error as a `> quote` block). The USER_FACING_FALLBACK constant is
+  // only used when the server sends an empty/missing message. 'cancelled'
+  // produces no bubble at all.
   describe('inference error classifier — full type set', () => {
     const USER_FACING_FALLBACK =
-      'Something went wrong. Please try again.\nThis error has been reported. You can also report it on Discord.\n<openhuman-link path="community/discord">Report on Discord</openhuman-link>';
+      'Something went wrong. Please try again.\nThis error has been reported. You can also report it on Discord.\n<openhuman-link path="community/discord-report">Report on Discord</openhuman-link>';
 
     it.each([
       ['rate_limited', 'You have been rate limited. Please try again later.'],
@@ -899,6 +1124,10 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
       ['tool_error', 'A tool call failed during this request.'],
       ['provider_error', 'The AI provider returned an error.'],
       ['model_unavailable', 'The selected model is currently unavailable.'],
+      [
+        'payload_too_large',
+        'Your message or attachment is too large for this model. Shorten it or remove the attachment — or start a new thread.',
+      ],
     ] as const)('forwards server message for error_type %s', async (error_type, serverMessage) => {
       const listeners = renderProvider();
       const threadId = `t-${error_type}`;
@@ -921,15 +1150,42 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
       );
     });
 
-    it('replaces raw internal message with user-facing constant for inference type', async () => {
+    it('surfaces the server inference message (friendly summary + sanitized provider detail)', async () => {
       const listeners = renderProvider();
-      const threadId = 't-raw-inference';
+      const threadId = 't-inference-detail';
+      // Shape produced by web_errors.rs `with_provider_detail(generic, err)`:
+      // the friendly summary, then the real upstream reason as a `> quote`
+      // block (already secret-scrubbed and length-capped server-side).
+      const serverMessage =
+        'Something went wrong. Please try again.\n\n> Project `proj_x` does not have access to model `gpt-5.5`.';
 
       act(() => {
         listeners.onError?.({
           thread_id: threadId,
           request_id: 'r1',
-          message: 'internal panic: channel closed unexpectedly at line 42',
+          message: serverMessage,
+          error_type: 'inference',
+          round: 0,
+        });
+      });
+
+      await waitFor(() =>
+        expect(threadApi.appendMessage).toHaveBeenCalledWith(
+          threadId,
+          expect.objectContaining({ content: serverMessage, sender: 'agent' })
+        )
+      );
+    });
+
+    it('falls back to the constant when an inference error has no message', async () => {
+      const listeners = renderProvider();
+      const threadId = 't-inference-empty';
+
+      act(() => {
+        listeners.onError?.({
+          thread_id: threadId,
+          request_id: 'r1',
+          message: '',
           error_type: 'inference',
           round: 0,
         });
@@ -940,11 +1196,6 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
           threadId,
           expect.objectContaining({ content: USER_FACING_FALLBACK, sender: 'agent' })
         )
-      );
-      // The raw server string must NOT leak through.
-      expect(threadApi.appendMessage).not.toHaveBeenCalledWith(
-        threadId,
-        expect.objectContaining({ content: expect.stringContaining('channel closed unexpectedly') })
       );
     });
 

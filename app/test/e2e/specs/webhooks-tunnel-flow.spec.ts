@@ -81,10 +81,10 @@ describe('Webhook tunnel CRUD (UI + core RPC + mock backend)', () => {
   });
 
   it('reached the logged-in shell after onboarding', async () => {
+    // Home.tsx: t('home.askAssistant') is the stable home page CTA button text.
     const atHome =
-      (await textExists('Message OpenHuman')) ||
-      (await textExists('Good morning')) ||
-      (await textExists('Upgrade to Premium'));
+      (await textExists('Ask your assistant anything')) ||
+      (await textExists('Your device is connected'));
     expect(atHome).toBe(true);
   });
 

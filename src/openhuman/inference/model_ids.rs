@@ -15,9 +15,9 @@ pub(crate) const DEFAULT_OLLAMA_VISION_MODEL: &str = "";
 pub(crate) const DEFAULT_LOW_VISION_MODEL: &str = "moondream:1.8b-v2-q4_K_S";
 pub(crate) const DEFAULT_OLLAMA_EMBED_MODEL: &str = "bge-m3";
 
-/// Chat models allowed in the current MVP build (2–4 GB tier only).
+/// Chat models allowed in the current local Ollama build.
 /// Any resolved chat model ID not listed here is redirected to `MVP_DEFAULT_CHAT_MODEL`.
-const MVP_ALLOWED_CHAT_MODELS: &[&str] = &["gemma3:1b-it-qat"];
+const MVP_ALLOWED_CHAT_MODELS: &[&str] = &["gemma3:1b-it-qat", "gemma4:e4b-it-q8_0"];
 const MVP_DEFAULT_CHAT_MODEL: &str = "gemma3:1b-it-qat";
 
 /// Vision models allowed in MVP — only disabled (empty string) since the
@@ -205,6 +205,13 @@ mod tests {
     }
 
     #[test]
+    fn chat_model_allows_requested_ollama_gemma4_q8() {
+        let mut config = test_config();
+        config.local_ai.chat_model_id = "gemma4:e4b-it-q8_0".to_string();
+        assert_eq!(effective_chat_model_id(&config), "gemma4:e4b-it-q8_0");
+    }
+
+    #[test]
     fn chat_model_allows_custom_ids_for_lm_studio() {
         let mut config = test_config();
         config.local_ai.provider = "lm_studio".to_string();
@@ -230,7 +237,7 @@ mod tests {
     #[test]
     fn chat_model_rejects_non_mvp_models() {
         let mut config = test_config();
-        // All models outside the single MVP-allowed model are rejected.
+        // All models outside the local allowlist are rejected.
         config.local_ai.chat_model_id = "gemma3:4b-it-qat".to_string();
         assert_eq!(effective_chat_model_id(&config), MVP_DEFAULT_CHAT_MODEL);
 

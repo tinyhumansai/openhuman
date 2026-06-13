@@ -4,7 +4,7 @@
 //! work. Rather than exposing a single generic
 //! `spawn_subagent(agent_id, prompt)` mega-tool, we synthesise one named
 //! tool per [`SubagentEntry::AgentId`] in the orchestrator's
-//! `subagents = [...]` TOML field, so the LLM's function-calling schema
+//! `[subagents] allowlist = [...]` TOML section, so the LLM's function-calling schema
 //! contains discoverable, well-named tools like `research`, `plan`,
 //! `run_code`, etc.
 //!
@@ -274,12 +274,15 @@ mod tests {
             skill_filter: None,
             extra_tools: vec![],
             max_iterations: 8,
+            iteration_policy: Default::default(),
             max_result_chars: None,
             timeout_secs: None,
             sandbox_mode: SandboxMode::None,
             background: false,
+            trigger_memory_agent: Default::default(),
             subagents: vec![],
             delegate_name: delegate_name.map(String::from),
+            agent_tier: crate::openhuman::agent::harness::definition::AgentTier::Worker,
             source: DefinitionSource::Builtin,
         }
     }
@@ -319,7 +322,10 @@ mod tests {
             toolkit: toolkit.into(),
             description: description.into(),
             tools: vec![],
+            gated_tools: vec![],
             connected: true,
+            connections: Vec::new(),
+            non_active_status: None,
         }
     }
 
@@ -408,6 +414,44 @@ mod tests {
         assert_eq!(names, vec!["research", "delegate_archivist"]);
     }
 
+    /// An AgentId entry whose target carries a `delegate_name` override
+    /// must surface that override as the synthesised tool name — the
+    /// orchestrator LLM sees `do_prediction_markets`, not
+    /// `delegate_markets_agent`. Mirrors the existing
+    /// `crypto_agent → do_crypto` precedent (#1397) for the new
+    /// `markets_agent → do_prediction_markets` slot from #2427.
+    #[test]
+    fn markets_agent_subagent_synthesises_do_prediction_markets_delegate() {
+        let mut orch = def("orchestrator", "test", None);
+        orch.subagents = vec![SubagentEntry::AgentId("markets_agent".into())];
+        let mut reg = registry_with_targets();
+        reg.insert(def(
+            "markets_agent",
+            "Prediction-market & event-contract trading specialist — drives Polymarket and Kalshi.",
+            Some("do_prediction_markets"),
+        ));
+        let tools = collect_orchestrator_tools(&orch, &reg, &[]);
+        let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
+        assert_eq!(
+            names,
+            vec!["do_prediction_markets"],
+            "markets_agent subagent entry must synthesise a tool named after its \
+             `delegate_name` override (`do_prediction_markets`), not the default \
+             `delegate_markets_agent`"
+        );
+        // Description must come from the target's `when_to_use` blurb so
+        // the orchestrator's LLM has venue-specific routing signal.
+        let tool = tools
+            .iter()
+            .find(|t| t.name() == "do_prediction_markets")
+            .unwrap();
+        assert!(
+            tool.description().contains("Polymarket") || tool.description().contains("Kalshi"),
+            "synthesised tool description must surface the venue blurb so the LLM \
+             can route prediction-market intents to it"
+        );
+    }
+
     /// An AgentId entry that points at an id not present in the registry
     /// should be logged and silently skipped, rather than panicking or
     /// aborting tool assembly. The orchestrator still builds.
@@ -426,11 +470,11 @@ mod tests {
     }
 
     /// An empty `subagents` list should produce zero tools — regular
-    /// non-delegating agents (welcome, code_executor, etc.) reach this
+    /// non-delegating agents (code_executor, etc.) reach this
     /// path without any subagents and must not pick up stray tools.
     #[test]
     fn empty_subagents_produces_no_tools() {
-        let orch = def("welcome", "First agent", None);
+        let orch = def("code_executor", "First agent", None);
         let reg = registry_with_targets();
         let tools = collect_orchestrator_tools(&orch, &reg, &[]);
         assert!(tools.is_empty());
@@ -461,7 +505,10 @@ mod tests {
                 toolkit: "github".into(),
                 description: "GitHub access.".into(),
                 tools: vec![],
+                gated_tools: vec![],
                 connected: false, // not connected — must not appear in the enum
+                connections: Vec::new(),
+                non_active_status: None,
             },
             integration("notion", "Read and write pages."),
         ];
@@ -534,7 +581,10 @@ mod tests {
                 toolkit: "Brand.New".into(),
                 description: "   ".into(),
                 tools: vec![],
+                gated_tools: vec![],
                 connected: true,
+                connections: Vec::new(),
+                non_active_status: None,
             },
             integration("gmail", "Email."),
         ];

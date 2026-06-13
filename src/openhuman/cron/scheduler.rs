@@ -1,4 +1,5 @@
 use crate::core::event_bus::{publish_global, DomainEvent};
+use crate::openhuman::agent::error::AgentError;
 use crate::openhuman::config::Config;
 use crate::openhuman::cron::{
     due_jobs, next_run_for_schedule, record_last_run, record_run, remove_job, reschedule_after_run,
@@ -15,13 +16,123 @@ use tokio::time::{self, Duration};
 
 const MIN_POLL_SECONDS: u64 = 5;
 const SHELL_JOB_TIMEOUT_SECS: u64 = 120;
-const AGENT_JOB_USER_FAILURE_MESSAGE: &str = "Something went wrong. Please try again.\nThis error has been reported. You can also report it on Discord.\n<openhuman-link path=\"community/discord\">Report on Discord</openhuman-link>";
+const AGENT_JOB_USER_FAILURE_MESSAGE: &str = "Something went wrong. Please try again.\nThis error has been reported. You can also report it on Discord.\n<openhuman-link path=\"community/discord-report\">Report on Discord</openhuman-link>";
+const MORNING_BRIEFING_AGENT_ID: &str = "morning_briefing";
+const MORNING_BRIEFING_FAILURE_NOTIFICATION: &str = "Morning briefing could not run. Check your AI provider, API key, and connected apps, then run it again from Settings > Cron Jobs.";
+
+/// Map a typed [`AgentError`] to a canned, user-facing message for cron-job
+/// failure notifications.
+///
+/// **Contract (load-bearing — see `scheduler_tests::classifier_does_not_leak_error_content`):**
+/// this function returns only static `&'static str` constants. It MUST NEVER
+/// interpolate any field of `err` into its output (no `format!`, no
+/// `err.to_string()`, no `Debug`/`Display`). `last_agent_error` carries stack
+/// traces, provider URLs with query tokens, partial response bodies and
+/// occasionally user input — routing any of that into a user-visible
+/// notification would be a data-exposure regression.
+///
+/// Variants for which we have no concrete user action (e.g.
+/// [`AgentError::ToolExecutionError`], [`AgentError::Other`]) fall back to
+/// [`AGENT_JOB_USER_FAILURE_MESSAGE`], preserving today's behaviour.
+fn agent_error_to_user_message(err: &AgentError) -> &'static str {
+    match err {
+        AgentError::ProviderError { retryable: true, .. } => {
+            "The model provider is temporarily unavailable. The next run will retry automatically."
+        }
+        AgentError::ProviderError { retryable: false, .. } => {
+            "The model provider rejected the request. Check your provider credentials in Settings \u{2192} AI \u{2192} LLM."
+        }
+        AgentError::ContextLimitExceeded { .. } => {
+            "The conversation grew too long for the model. Start a new session or pick a model with a larger context window."
+        }
+        AgentError::CostBudgetExceeded { .. } => {
+            "You've reached the daily cost budget for this agent. Raise it in Settings \u{2192} Billing or wait for the next budget window."
+        }
+        AgentError::MaxIterationsExceeded { .. } => {
+            "The agent stopped after too many tool iterations. Raise the iteration cap in Settings \u{2192} AI \u{2192} LLM or simplify the task."
+        }
+        AgentError::EmptyProviderResponse { .. } => {
+            "The model returned an empty response. Try a different model or check your local provider in Settings \u{2192} AI \u{2192} LLM."
+        }
+        AgentError::CompactionFailed { .. } => {
+            "Automatic history compaction failed. The next run will start with a fresh context."
+        }
+        AgentError::PermissionDenied { .. } => {
+            "The agent needs a tool that isn't allowed on this channel. Adjust the permissions in Settings."
+        }
+        // ToolExecutionError and Other have no actionable canned message —
+        // their error bodies are too freeform to summarise safely without
+        // interpolating contents. Fall back to the generic copy.
+        AgentError::ToolExecutionError { .. } | AgentError::Other(_) => {
+            AGENT_JOB_USER_FAILURE_MESSAGE
+        }
+    }
+}
+
+/// Classify an [`anyhow::Error`] returned by the agent runtime into a canned
+/// user-facing message. If the underlying error is a typed [`AgentError`],
+/// route through [`agent_error_to_user_message`]; otherwise fall back to the
+/// generic message.
+fn classify_agent_anyhow_for_user(err: &anyhow::Error) -> &'static str {
+    match err.downcast_ref::<AgentError>() {
+        Some(agent_err) => agent_error_to_user_message(agent_err),
+        None => AGENT_JOB_USER_FAILURE_MESSAGE,
+    }
+}
 
 fn agent_session_target_tag(target: &SessionTarget) -> &'static str {
     match target {
         SessionTarget::Main => "main",
         SessionTarget::Isolated => "isolated",
     }
+}
+
+fn is_morning_briefing_job(job: &CronJob) -> bool {
+    job.name.as_deref() == Some(MORNING_BRIEFING_AGENT_ID)
+        || job.agent_id.as_deref() == Some(MORNING_BRIEFING_AGENT_ID)
+}
+
+fn strip_openhuman_link_markup(input: &str) -> String {
+    const OPEN_TAG: &str = "<openhuman-link";
+    const CLOSE_TAG: &str = "</openhuman-link>";
+
+    let mut output = String::with_capacity(input.len());
+    let mut rest = input;
+
+    while let Some(start) = rest.find(OPEN_TAG) {
+        output.push_str(&rest[..start]);
+        let tag_and_after = &rest[start..];
+
+        let Some(open_end) = tag_and_after.find('>') else {
+            output.push_str(tag_and_after);
+            return output;
+        };
+        let label_and_after = &tag_and_after[open_end + 1..];
+
+        let Some(close_start) = label_and_after.find(CLOSE_TAG) else {
+            output.push_str(tag_and_after);
+            return output;
+        };
+
+        output.push_str(&label_and_after[..close_start]);
+        rest = &label_and_after[close_start + CLOSE_TAG.len()..];
+    }
+
+    output.push_str(rest);
+    output
+}
+
+fn cron_alert_body(job: &CronJob, output: &str) -> String {
+    let trimmed = output.trim();
+    if matches!(job.job_type, JobType::Agent)
+        && trimmed == AGENT_JOB_USER_FAILURE_MESSAGE
+        && is_morning_briefing_job(job)
+    {
+        return MORNING_BRIEFING_FAILURE_NOTIFICATION.to_string();
+    }
+
+    let body = strip_openhuman_link_markup(output);
+    crate::openhuman::util::truncate_with_ellipsis(&body, 512)
 }
 
 pub async fn run(config: Config) -> Result<()> {
@@ -35,30 +146,111 @@ pub async fn run(config: Config) -> Result<()> {
     let security = Arc::new(SecurityPolicy::from_config(
         &config.autonomy,
         &config.workspace_dir,
+        &config.action_dir,
     ));
 
     publish_global(DomainEvent::SystemStartup {
         component: "scheduler".to_string(),
     });
 
+    // Track the most recently *emitted* scheduler health so we only
+    // publish `HealthChanged` on a state transition. Without this the
+    // bus would carry a steady `healthy: true` event every poll
+    // interval — typically 30 s, forever — churn for any subscriber
+    // that logs / persists / reacts to health events. `None` means
+    // "nothing emitted yet for this run", so the first successful tick
+    // is treated as a transition and emits.
+    let mut last_emitted_health: Option<bool> = None;
+
     loop {
         interval.tick().await;
+        tick_once(&config, &security, &mut last_emitted_health).await;
+    }
+}
 
-        let jobs = match due_jobs(&config, Utc::now()) {
-            Ok(jobs) => jobs,
-            Err(e) => {
+/// Single poll cycle of the scheduler loop, extracted so tests can drive
+/// it without owning `tokio::time::interval`.
+///
+/// Emits a `scheduler` health signal in three cases:
+/// - Poll itself failed (DB read) → `healthy: false` with the DB error.
+/// - Poll succeeded, queue empty or not → `healthy: true` (#3312
+///   recovery signal). Without this, a single transient job failure
+///   that flipped the component to `error` via [`process_due_jobs`]
+///   would stay there indefinitely while the queue was idle — no later
+///   event would clear it, the health endpoint would keep returning
+///   503, and Docker would mark the container `unhealthy` for hours
+///   until a manual restart. Tick-level "still polling" beats
+///   job-level success as the recovery signal because the queue is
+///   empty most of the time.
+/// - Per-job results (handled inside `process_due_jobs`) continue to
+///   flip the component back to `healthy: false` on a failure; the
+///   next tick that survives the DB read will re-flip it to
+///   `healthy: true`, exactly the auto-recovery behaviour the Docker
+///   health check needs.
+pub(crate) async fn tick_once(
+    config: &Config,
+    security: &Arc<SecurityPolicy>,
+    last_emitted_health: &mut Option<bool>,
+) {
+    tracing::debug!("[cron:scheduler] tick poll begin");
+    let jobs = match due_jobs(config, Utc::now()) {
+        Ok(jobs) => jobs,
+        Err(e) => {
+            tracing::warn!("[cron:scheduler] tick poll db_error: {e}");
+            // Transition-only emission: only publish on the first
+            // failure after a previous healthy (or unknown) state.
+            // Repeat DB failures stay quiet so subscribers don't see
+            // an event-storm during a long outage.
+            if *last_emitted_health != Some(false) {
                 publish_global(DomainEvent::HealthChanged {
                     component: "scheduler".to_string(),
                     healthy: false,
                     message: Some(e.to_string()),
                 });
-                tracing::warn!("Scheduler query failed: {e}");
-                continue;
+                *last_emitted_health = Some(false);
             }
-        };
+            return;
+        }
+    };
 
-        process_due_jobs(&config, &security, jobs).await;
+    let due_count = jobs.len();
+    // Transition-only emission for the recovery / healthy signal: a
+    // long idle stretch with no transitions stays silent on the bus,
+    // so subscribers don't pay per-poll work for a steady `healthy:
+    // true` event every poll interval — the nit oxoxDev caught on
+    // #3329. The very first successful tick after boot (or after a
+    // failure) is the one that fires; subsequent successful ticks
+    // are no-ops on the wire.
+    if *last_emitted_health != Some(true) {
+        tracing::debug!(
+            "[cron:scheduler] tick poll ok due_count={due_count} (recovery signal: healthy=true)"
+        );
+        publish_global(DomainEvent::HealthChanged {
+            component: "scheduler".to_string(),
+            healthy: true,
+            message: None,
+        });
+        *last_emitted_health = Some(true);
+    } else {
+        tracing::trace!(
+            "[cron:scheduler] tick poll ok due_count={due_count} (steady state, no event)"
+        );
     }
+
+    if due_count == 0 {
+        tracing::trace!("[cron:scheduler] tick end (no due jobs)");
+        return;
+    }
+
+    process_due_jobs(config, security, jobs).await;
+    tracing::debug!("[cron:scheduler] tick end due_count={due_count} (jobs processed)");
+
+    // `process_due_jobs` itself may have published `healthy: false` on
+    // a job failure, but it does so directly on the bus without
+    // touching our local tracker. Reset so the next successful tick
+    // is again treated as a transition and re-emits `healthy: true` —
+    // exactly the auto-recovery behaviour #3312 requires.
+    *last_emitted_health = None;
 }
 
 /// Public entry point for delivering a job's output via the configured
@@ -75,8 +267,58 @@ pub async fn deliver_job(config: &Config, job: &CronJob, output: &str) {
 }
 
 pub async fn execute_job_now(config: &Config, job: &CronJob) -> (bool, String) {
-    let security = SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir);
+    let security =
+        SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir, &config.action_dir);
     execute_job_with_retry(config, &security, job).await
+}
+
+/// Did this failed agent-job attempt hit the backend session-expired state?
+///
+/// When the OpenHuman backend returns 401 because the user's app JWT has
+/// lapsed, [`inference::provider::ops::api_error`] already publishes
+/// [`crate::core::event_bus::DomainEvent::SessionExpired`] (via
+/// `publish_backend_session_expired`) and the credentials subscriber clears
+/// the stored session + flips the scheduler-gate `signed_out` override. The
+/// gate then halts downstream LLM work until the user re-auths.
+///
+/// The cron retry loop pre-dates that gate handshake: it sleeps with
+/// exponential backoff and retries the same job N times, every attempt
+/// hitting the same global 401, then calls `report_error` with
+/// `failure=retries_exhausted`. That generated TAURI-RUST-N (7,038 events /
+/// 5 users): a cron-fired `morning_briefing` agent grinding through retries
+/// after a single JWT lapse, every retries-exhausted capture pointing at a
+/// problem the user can only fix from the UI.
+///
+/// The right move is the same halt-on-first-occurrence pattern as
+/// `agent::harness::tool_loop::BACKEND_USER_STATE_MARKER` (#3334): the
+/// condition is global and retries can't recover it, so we stop after the
+/// first attempt. Skipping the `report_error` call too is correct because
+/// the existing classifier
+/// [`crate::core::observability::is_session_expired_message`] already
+/// considers this expected user state (`observability.rs` — anchored on
+/// `OpenHuman API error (401` + `"error":"Invalid token"`).
+///
+/// We match on `last_agent_error` first because cron's `run_agent_job`
+/// routes the raw anyhow chain there (containing the provider's wire
+/// message), while `last_output` only carries the canned user-facing
+/// notification (`AGENT_JOB_USER_FAILURE_MESSAGE` / per-variant copy). For
+/// the canned-message branch we still fall back to `last_output` so a
+/// future code path that surfaces the raw error there isn't a silent miss.
+///
+/// Restricted to `JobType::Agent`: shell jobs that happen to echo a
+/// 401-shaped string don't go through the inference layer's
+/// `SessionExpired` publish, so halting them based on stdout would skip
+/// retries the operator may want.
+fn is_session_expired_failure(
+    job_type: &JobType,
+    last_agent_error: Option<&str>,
+    last_output: &str,
+) -> bool {
+    if !matches!(job_type, JobType::Agent) {
+        return false;
+    }
+    let signal = last_agent_error.unwrap_or(last_output);
+    crate::core::observability::is_session_expired_message(signal)
 }
 
 async fn execute_job_with_retry(
@@ -88,6 +330,7 @@ async fn execute_job_with_retry(
     let mut last_agent_error: Option<String> = None;
     let retries = config.reliability.scheduler_retries;
     let mut backoff_ms = config.reliability.provider_backoff_ms.max(200);
+    let mut session_expired = false;
 
     for attempt in 0..=retries {
         let (success, output, agent_error) = match job.job_type {
@@ -111,6 +354,20 @@ async fn execute_job_with_retry(
             return (false, last_output);
         }
 
+        if is_session_expired_failure(
+            &job.job_type,
+            last_agent_error.as_deref(),
+            last_output.as_str(),
+        ) {
+            // Halt on the first occurrence — the inference layer already
+            // published `SessionExpired`, retries cannot recover until the
+            // user re-auths, and the classifier considers this expected
+            // user state (TAURI-RUST-N). See `is_session_expired_failure`
+            // for the full rationale.
+            session_expired = true;
+            break;
+        }
+
         if attempt < retries {
             let jitter_ms = u64::from(Utc::now().timestamp_subsec_millis() % 250);
             time::sleep(Duration::from_millis(backoff_ms + jitter_ms)).await;
@@ -118,7 +375,7 @@ async fn execute_job_with_retry(
         }
     }
 
-    if matches!(job.job_type, JobType::Agent) {
+    if matches!(job.job_type, JobType::Agent) && !session_expired {
         let report_message = last_agent_error
             .as_deref()
             .unwrap_or_else(|| last_output.as_str());
@@ -311,7 +568,22 @@ async fn run_agent_job(config: &Config, job: &CronJob) -> (bool, String, Option<
                     // cron-triggered turns. `cron` is the channel so the
                     // event bus can filter from other flows (`cli`, `web`…).
                     agent.set_event_context(format!("cron:{}", job.id), "cron");
-                    agent.run_single(&prefixed_prompt).await
+                    // Scope a `TrustedAutomation { Cron }` origin around the
+                    // turn. The approval gate treats this as user-authorized
+                    // automation and lets external_effect tools run without
+                    // an in-app prompt — the user explicitly created this
+                    // cron job and authorized its prompt at the same time.
+                    let origin =
+                        crate::openhuman::agent::turn_origin::AgentTurnOrigin::TrustedAutomation {
+                            job_id: job.id.clone(),
+                            source:
+                                crate::openhuman::agent::turn_origin::TrustedAutomationSource::Cron,
+                        };
+                    crate::openhuman::agent::turn_origin::with_origin(
+                        origin,
+                        agent.run_single(&prefixed_prompt),
+                    )
+                    .await
                 }
                 Err(e) => Err(e),
             }
@@ -328,11 +600,17 @@ async fn run_agent_job(config: &Config, job: &CronJob) -> (bool, String, Option<
             },
             None,
         ),
-        Err(e) => (
-            false,
-            AGENT_JOB_USER_FAILURE_MESSAGE.to_string(),
-            Some(e.to_string()),
-        ),
+        Err(e) => {
+            // Classify into a canned user-facing message *before* logging
+            // anything that touches `e`. The classifier output is a
+            // `&'static str` — it never contains any data derived from `e`.
+            // The raw error is preserved as `last_agent_error` for the
+            // observability pipeline (`report_error`), where stack traces
+            // and provider URLs are appropriate; it must NOT reach the
+            // user-visible notification body.
+            let user_message = classify_agent_anyhow_for_user(&e);
+            (false, user_message.to_string(), Some(e.to_string()))
+        }
     }
 }
 
@@ -490,14 +768,14 @@ fn push_cron_alert(config: &Config, job: &CronJob, output: &str) {
     use crate::openhuman::notifications::types::{IntegrationNotification, NotificationStatus};
 
     let name = job.name.as_deref().unwrap_or("Cron job");
-    let truncated = crate::openhuman::util::truncate_with_ellipsis(output, 512);
+    let body = cron_alert_body(job, output);
 
     let notification = IntegrationNotification {
         id: uuid::Uuid::new_v4().to_string(),
         provider: "cron".to_string(),
         account_id: Some(job.id.clone()),
         title: name.to_string(),
-        body: truncated,
+        body,
         raw_payload: serde_json::json!({
             "job_id": job.id,
             "job_name": job.name,
@@ -511,17 +789,26 @@ fn push_cron_alert(config: &Config, job: &CronJob, output: &str) {
         scored_at: Some(Utc::now()),
     };
 
-    if let Err(e) = notif_store::insert(config, &notification) {
-        tracing::warn!(
-            job_id = %job.id,
-            error = %e,
-            "[cron] failed to push notification alert"
-        );
-    } else {
-        tracing::debug!(
-            job_id = %job.id,
-            "[cron] pushed notification alert to alerts tab"
-        );
+    match notif_store::insert_if_not_recent(config, &notification) {
+        Ok(true) => {
+            tracing::debug!(
+                job_id = %job.id,
+                "[cron] pushed notification alert to alerts tab"
+            );
+        }
+        Ok(false) => {
+            tracing::debug!(
+                job_id = %job.id,
+                "[cron] skipped duplicate notification alert"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(
+                job_id = %job.id,
+                error = %e,
+                "[cron] failed to push notification alert"
+            );
+        }
     }
 }
 
@@ -574,7 +861,7 @@ fn forbidden_path_argument(security: &SecurityPolicy, command: &str) -> Option<S
                 || candidate.starts_with("~/")
                 || candidate.contains('/');
 
-            if looks_like_path && !security.is_path_allowed(candidate) {
+            if looks_like_path && !security.is_path_string_allowed(candidate) {
                 return Some(candidate.to_string());
             }
         }
@@ -644,7 +931,7 @@ async fn run_job_command_with_timeout(
     let child = match Command::new("sh")
         .arg("-lc")
         .arg(&job.command)
-        .current_dir(&config.workspace_dir)
+        .current_dir(&config.action_dir)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

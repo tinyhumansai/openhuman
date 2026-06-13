@@ -4,7 +4,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Tunnel, TunnelRegistration, WebhookActivityEntry } from '../features/webhooks/types';
 import { useCoreState } from '../providers/CoreStateProvider';
 import { tunnelsApi } from '../services/api/tunnelsApi';
-import { getCoreHttpBaseUrl } from '../services/coreRpcClient';
+import {
+  buildWebhookEventsUrl,
+  getCoreHttpBaseUrl,
+  getCoreRpcToken,
+  subscribeCoreRpcTokenInvalidated,
+} from '../services/coreRpcClient';
 import {
   openhumanWebhooksListLogs,
   openhumanWebhooksListRegistrations,
@@ -44,6 +49,7 @@ export function useWebhooks() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [coreConnected, setCoreConnected] = useState(false);
+  const [coreRpcToken, setCoreRpcToken] = useState<string | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
 
   // ── Load registrations + logs from core RPC ──────────────────────────────
@@ -88,16 +94,59 @@ export function useWebhooks() {
     }
   }, []);
 
-  // ── Subscribe to SSE for real-time webhook events ────────────────────────
+  // Resolve the core RPC bearer used to authenticate the SSE stream. We
+  // re-resolve when:
+  //   - the session token flips (login / logout / cloud-mode switch), OR
+  //   - the core RPC token cache is invalidated (core restart per #1922 —
+  //     the new core mints a fresh `OPENHUMAN_CORE_TOKEN`, so the old SSE
+  //     stream is now authenticated against a dead bearer and must be
+  //     torn down).
   useEffect(() => {
     let cancelled = false;
+    const resolve = () => {
+      void getCoreRpcToken()
+        .then(resolved => {
+          if (!cancelled) setCoreRpcToken(resolved ?? null);
+        })
+        .catch(() => {
+          if (!cancelled) setCoreRpcToken(null);
+        });
+    };
+    resolve();
+    const unsubscribe = subscribeCoreRpcTokenInvalidated(resolve);
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [token]);
+
+  // ── Subscribe to SSE for real-time webhook events ────────────────────────
+  // The token is part of the dep array so a rotation tears down the current
+  // EventSource and opens a fresh one with the new credential. Without a
+  // token the stream is unauthenticated, so we skip rather than open a
+  // request that the server will reject and EventSource will reconnect to
+  // forever.
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!coreRpcToken) {
+      log('SSE skip: no core RPC token available yet');
+      return () => {
+        cancelled = true;
+      };
+    }
 
     const connect = async () => {
       try {
         const baseUrl = await getCoreHttpBaseUrl();
         if (cancelled) return;
 
-        const es = new EventSource(`${baseUrl}/events/webhooks`);
+        const url = buildWebhookEventsUrl(baseUrl, coreRpcToken);
+        if (!url) {
+          log('SSE skip: buildWebhookEventsUrl returned null');
+          return;
+        }
+        const es = new EventSource(url);
         eventSourceRef.current = es;
 
         es.addEventListener('webhooks_debug', () => {
@@ -129,7 +178,7 @@ export function useWebhooks() {
       }
       setCoreConnected(false);
     };
-  }, [loadCoreData]);
+  }, [coreRpcToken, loadCoreData]);
 
   // ── Initial data load ────────────────────────────────────────────────────
   useEffect(() => {

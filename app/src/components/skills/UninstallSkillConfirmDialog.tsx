@@ -3,8 +3,8 @@
  * ---------------------------
  *
  * Small centered confirm modal for destructive uninstall of a user-scope
- * SKILL.md skill. Wraps `skillsApi.uninstallSkill` which calls
- * `openhuman.skills_uninstall` on the Rust side — that RPC only accepts
+ * SKILL.md skill. Wraps `workflowsApi.uninstallWorkflow` which calls
+ * `openhuman.skill_registry_uninstall` on the Rust side — that RPC only accepts
  * user-scope installs (`~/.openhuman/skills/<name>/`) and refuses project
  * and legacy scopes. The card that opens this dialog is responsible for
  * not surfacing the Uninstall action for non-user-scope entries.
@@ -29,23 +29,23 @@ import debug from 'debug';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import {
-  skillsApi,
-  type SkillSummary,
-  type UninstallSkillResult,
-} from '../../services/api/skillsApi';
+  workflowsApi,
+  type WorkflowSummary,
+  type UninstallWorkflowResult,
+} from '../../services/api/workflowsApi';
 import { trackEvent } from '../../services/analytics';
 
 const log = debug('skills:uninstall-dialog');
 
 interface Props {
-  skill: SkillSummary;
+  skill: WorkflowSummary;
   onClose: () => void;
   /**
    * Fires when the backend reports the uninstall succeeded. Parent is
    * responsible for refetching the skills list and closing any detail
    * panels that were showing this skill.
    */
-  onUninstalled: (result: UninstallSkillResult) => void;
+  onUninstalled: (result: UninstallWorkflowResult) => void;
 }
 
 export default function UninstallSkillConfirmDialog({ skill, onClose, onUninstalled }: Props) {
@@ -82,7 +82,7 @@ export default function UninstallSkillConfirmDialog({ skill, onClose, onUninstal
       // `skill.id` is the on-disk slug (directory under ~/.openhuman/skills/).
       // `skill.name` is the frontmatter display name and may diverge from the
       // slug — the backend resolves by slug, so pass `id`.
-      const result = await skillsApi.uninstallSkill(skill.id);
+      const result = await workflowsApi.uninstallWorkflow(skill.id);
       log('confirm: done removedPath=%s', result.removedPath);
       trackEvent('skill_uninstall', { skill_id: skill.id });
       onUninstalled(result);
@@ -104,21 +104,21 @@ export default function UninstallSkillConfirmDialog({ skill, onClose, onUninstal
       onMouseDown={e => {
         if (e.target === e.currentTarget && !submitting) onClose();
       }}>
-      <div className="w-[420px] max-w-[90vw] rounded-2xl bg-white p-5 shadow-2xl">
-        <h2 id="uninstall-skill-title" className="text-base font-semibold text-stone-900">
-          {t('skills.uninstall.title')} {skill.name}?
+      <div className="w-[420px] max-w-[90vw] rounded-2xl bg-white dark:bg-neutral-900 p-5 shadow-2xl">
+        <h2 id="uninstall-skill-title" className="text-base font-semibold text-stone-900 dark:text-neutral-100">
+          {t('common.delete')} {skill.name}?
         </h2>
-        <p className="mt-2 text-sm text-stone-600">
+        <p className="mt-2 text-sm text-stone-600 dark:text-neutral-300">
           {t('skills.uninstall.description')}
         </p>
         {skill.location && (
-          <p className="mt-3 break-all rounded-lg bg-stone-50 px-3 py-2 font-mono text-[11px] text-stone-600">
-            {skill.location.replace(/\/SKILL\.md$/i, '')}
+          <p className="mt-3 break-all rounded-lg bg-stone-50 dark:bg-neutral-800/60 px-3 py-2 font-mono text-[11px] text-stone-600 dark:text-neutral-300">
+            {skill.location.replace(/\/(WORKFLOW|SKILL)\.md$/i, '')}
           </p>
         )}
         {error && (
           <div className="mt-3 rounded-lg border border-coral-200 bg-coral-50 px-3 py-2 text-xs text-coral-700">
-            <div className="font-medium">{t('skills.uninstall.couldNotUninstall')}</div>
+            <div className="font-medium">{t('workflows.deleteError')}</div>
             <div className="mt-1 break-words font-mono text-[11px] text-coral-700/90">{error}</div>
           </div>
         )}
@@ -128,7 +128,7 @@ export default function UninstallSkillConfirmDialog({ skill, onClose, onUninstal
             type="button"
             disabled={submitting}
             onClick={onClose}
-            className="rounded-lg border border-stone-200 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50">
+            className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-1.5 text-xs font-medium text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60 disabled:cursor-not-allowed disabled:opacity-50">
             {t('common.cancel')}
           </button>
           <button
@@ -137,7 +137,7 @@ export default function UninstallSkillConfirmDialog({ skill, onClose, onUninstal
             onClick={handleConfirm}
             data-testid="uninstall-skill-confirm"
             className="rounded-lg border border-coral-300 bg-coral-50 px-3 py-1.5 text-xs font-medium text-coral-700 hover:bg-coral-100 disabled:cursor-not-allowed disabled:opacity-50">
-            {submitting ? t('skills.uninstall.uninstalling') : t('skills.uninstall.uninstallBtn')}
+            {submitting ? t('team.deleting') : t('common.delete')}
           </button>
         </div>
       </div>

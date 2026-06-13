@@ -31,8 +31,22 @@ impl Tool for GmailUnsubscribeTool {
     }
 
     fn category(&self) -> ToolCategory {
-        ToolCategory::Skill
+        ToolCategory::Workflow
     }
+
+    // Intentionally NOT marked external_effect=true in v1.
+    //
+    // `execute()` below does NOT perform the unsubscribe itself —
+    // it returns a `pending_approval` JSON payload that the React
+    // UI intercepts and gates with its own legacy confirmation
+    // flow. Marking this tool external_effect=true would route the
+    // call through the new `ApprovalGate` AND the legacy UI prompt,
+    // so users would see two consecutive approval dialogs while the
+    // real side effect still lived outside core enforcement.
+    //
+    // Follow-up #1339-v3: move the actual outbound unsubscribe
+    // into `execute()`, retire the legacy UI prompt, and then flip
+    // `external_effect = true` here.
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         let sender = args

@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+appdir=/opt/openhuman
+export SHARUN_LDNAME="${SHARUN_LDNAME:-ld-linux-x86-64.so.2}"
+export LD_LIBRARY_PATH="${appdir}/shared/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+
+exec "${appdir}/shared/bin/OpenHuman" "$@"

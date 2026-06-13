@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { ToolTimelineEntry } from '../../store/chatRuntimeSlice';
-import { formatTimelineEntry } from '../toolTimelineFormatting';
+import { formatTimelineEntry, formatToolName } from '../toolTimelineFormatting';
 
 function entry(overrides: Partial<ToolTimelineEntry>): ToolTimelineEntry {
   return { id: 'x', name: 'delegate_notion', round: 1, status: 'running', ...overrides };
@@ -125,5 +125,123 @@ describe('formatTimelineEntry', () => {
       title: 'Viewing your Connections',
       detail: undefined,
     });
+  });
+
+  it('formats shell tool with truncated command detail', () => {
+    expect(
+      formatTimelineEntry(
+        entry({ name: 'shell', argsBuffer: JSON.stringify({ command: 'cargo test --lib' }) })
+      )
+    ).toEqual({ title: 'Running command', detail: 'cargo test --lib' });
+  });
+
+  it('formats web_fetch with hostname in title', () => {
+    expect(
+      formatTimelineEntry(
+        entry({
+          name: 'web_fetch',
+          argsBuffer: JSON.stringify({ url: 'https://docs.example.com/api/v2/users' }),
+        })
+      )
+    ).toEqual({
+      title: 'Fetching docs.example.com',
+      detail: 'https://docs.example.com/api/v2/users',
+    });
+  });
+
+  it('formats web_search with query in title', () => {
+    expect(
+      formatTimelineEntry(
+        entry({ name: 'web_search', argsBuffer: JSON.stringify({ query: 'rust async trait' }) })
+      )
+    ).toEqual({ title: 'Searching: rust async trait' });
+  });
+
+  it('formats file_read with shortened path', () => {
+    expect(
+      formatTimelineEntry(
+        entry({
+          name: 'file_read',
+          argsBuffer: JSON.stringify({ path: 'src/openhuman/agent/progress.rs' }),
+        })
+      )
+    ).toEqual({ title: 'Reading file', detail: '…/agent/progress.rs' });
+  });
+
+  it('formats edit tool with file path', () => {
+    expect(
+      formatTimelineEntry(
+        entry({
+          name: 'edit',
+          argsBuffer: JSON.stringify({ file_path: 'app/src/components/App.tsx' }),
+        })
+      )
+    ).toEqual({ title: 'Editing file', detail: '…/components/App.tsx' });
+  });
+
+  it('formats grep with pattern in title', () => {
+    expect(
+      formatTimelineEntry(
+        entry({ name: 'grep', argsBuffer: JSON.stringify({ pattern: 'SubagentSpawned' }) })
+      )
+    ).toEqual({ title: 'Searching: SubagentSpawned' });
+  });
+
+  it('formats git_operations with subcommand', () => {
+    expect(
+      formatTimelineEntry(
+        entry({ name: 'git_operations', argsBuffer: JSON.stringify({ command: 'diff --stat' }) })
+      )
+    ).toEqual({ title: 'Git diff', detail: 'diff --stat' });
+  });
+
+  it('formats screenshot as a simple label', () => {
+    expect(formatTimelineEntry(entry({ name: 'screenshot' }))).toEqual({
+      title: 'Taking screenshot',
+    });
+  });
+
+  it('formats glob with pattern detail', () => {
+    expect(
+      formatTimelineEntry(
+        entry({ name: 'glob', argsBuffer: JSON.stringify({ pattern: '**/*.test.ts' }) })
+      )
+    ).toEqual({ title: 'Finding: **/*.test.ts' });
+  });
+
+  it('formats list with directory path', () => {
+    expect(
+      formatTimelineEntry(
+        entry({ name: 'list', argsBuffer: JSON.stringify({ path: 'src/openhuman/tools' }) })
+      )
+    ).toEqual({ title: 'Listing directory', detail: 'src/openhuman/tools' });
+  });
+
+  it('formats browser_open with hostname', () => {
+    expect(
+      formatTimelineEntry(
+        entry({
+          name: 'browser_open',
+          argsBuffer: JSON.stringify({ url: 'https://github.com/tinyhumansai/openhuman' }),
+        })
+      )
+    ).toEqual({ title: 'Browsing github.com' });
+  });
+});
+
+describe('formatToolName', () => {
+  it('returns human-readable names for known tools', () => {
+    expect(formatToolName('shell')).toBe('Running command');
+    expect(formatToolName('web_fetch')).toBe('Fetching');
+    expect(formatToolName('file_read')).toBe('Reading file');
+    expect(formatToolName('edit')).toBe('Editing file');
+    expect(formatToolName('grep')).toBe('Searching code');
+    expect(formatToolName('git_operations')).toBe('Git operation');
+    expect(formatToolName('screenshot')).toBe('Taking screenshot');
+    expect(formatToolName('lsp')).toBe('Code intelligence');
+  });
+
+  it('falls back to humanized identifier for unknown tools', () => {
+    expect(formatToolName('custom_fancy_tool')).toBe('Custom Fancy Tool');
   });
 });

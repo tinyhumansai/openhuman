@@ -219,7 +219,7 @@ function comparePaths(p1, p2) {
 }
 
 // CLI helper: parse argv after the script name and return { positional, flags }.
-// Recognizes `--flag` and `--flag=value` and `--flag value`.
+// Recognizes `--flag`, `--flag=value`, `--flag value`, and short help flags.
 export function parseArgs(argv) {
   const positional = [];
   const flags = {};
@@ -239,6 +239,8 @@ export function parseArgs(argv) {
           i++;
         }
       }
+    } else if (a === "-h" || a === "-?") {
+      flags[a.slice(1)] = true;
     } else {
       positional.push(a);
     }

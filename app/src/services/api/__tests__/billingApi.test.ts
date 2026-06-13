@@ -28,7 +28,6 @@ describe('billingApi', () => {
         },
         monthlyBudgetUsd: 20,
         weeklyBudgetUsd: 10,
-        fiveHourCapUsd: 3,
       };
       mockCallCoreCommand.mockResolvedValue(planData);
 
@@ -46,7 +45,6 @@ describe('billingApi', () => {
         subscription: null,
         monthlyBudgetUsd: 0,
         weeklyBudgetUsd: 0,
-        fiveHourCapUsd: 0,
       };
       mockCallCoreCommand.mockResolvedValue(planData);
 

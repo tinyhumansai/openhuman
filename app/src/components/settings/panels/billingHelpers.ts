@@ -12,8 +12,10 @@ export interface PlanMeta {
   annualPrice: number;
   monthlyBudgetUsd: number;
   weeklyBudgetUsd: number;
-  /** USD cap per 10-hour rolling inference window; amount scales with `tier` (FREE / BASIC / PRO). */
-  fiveHourCapUsd: number;
+  /**
+   * Discount on the per-call margin vs the FREE pay-as-you-go baseline.
+   * Mirrors backend `plan.discountVsPayAsYouGoPercent` (PR #790).
+   */
   discountPercent: number;
   features: PlanFeature[];
   recommended?: boolean;
@@ -28,13 +30,11 @@ export const PLANS: PlanMeta[] = [
     annualPrice: 0,
     monthlyBudgetUsd: 0,
     weeklyBudgetUsd: 0,
-    fiveHourCapUsd: 0,
     discountPercent: 0,
     tagline: 'Get started at no cost',
     features: [
       { text: 'Access to Everything', included: true },
-      { text: 'Heavy Rate Limits', included: true },
-      { text: 'Pay-as-you-go', included: true },
+      { text: 'Pay-as-you-go pricing', included: true },
       { text: 'No discounts', included: false },
     ],
   },
@@ -45,13 +45,12 @@ export const PLANS: PlanMeta[] = [
     annualPrice: 199,
     monthlyBudgetUsd: 20,
     weeklyBudgetUsd: 10,
-    fiveHourCapUsd: 3,
-    discountPercent: 20,
+    discountPercent: 50,
     recommended: true,
     tagline: 'Best value for most users',
     features: [
       { text: 'Everything in Free', included: true },
-      { text: '20x more usage', included: true },
+      { text: '50% cheaper per call than pay-as-you-go', included: true },
       { text: 'Cloud features enabled', included: true },
     ],
   },
@@ -62,13 +61,11 @@ export const PLANS: PlanMeta[] = [
     annualPrice: 1799.99,
     monthlyBudgetUsd: 199,
     weeklyBudgetUsd: 99,
-    fiveHourCapUsd: 30,
-    discountPercent: 40,
+    discountPercent: 90,
     tagline: 'For power users and teams',
     features: [
       { text: 'Everything in Basic', included: true },
-      { text: '40x more usage', included: true },
-      { text: 'Higher Rate Limits', included: true },
+      { text: '90% cheaper per call than pay-as-you-go', included: true },
     ],
   },
 ];

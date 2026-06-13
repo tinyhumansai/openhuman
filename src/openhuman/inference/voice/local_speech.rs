@@ -39,7 +39,7 @@
 //! into `~/.openhuman/bin/piper/`, extracts it, and stages the bundled
 //! `en_US-lessac-medium` voice (`.onnx` + `.onnx.json`) alongside via a
 //! `.part` file + atomic rename. After install the `resolve_piper_binary`
-//! helper in `local_ai/paths.rs` picks it up automatically.
+//! helper in `inference/paths.rs` picks it up automatically.
 //!
 //! **Advanced path:** download Piper from
 //! [rhasspy/piper](https://github.com/rhasspy/piper) releases (one
@@ -196,12 +196,18 @@ pub async fn synthesize_piper(
         output.stderr.len()
     );
     if !output.status.success() {
-        // Best-effort cleanup of the partial output.
         let _ = tokio::fs::remove_file(&out_path).await;
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let detail = stderr.trim();
+        if detail.contains("libespeak-ng") || detail.contains("Library not loaded") {
+            return Err(format!(
+                "{LOG_PREFIX} piper requires espeak-ng which is not installed. \
+                 Run: brew install espeak-ng"
+            ));
+        }
         return Err(format!(
-            "{LOG_PREFIX} piper failed (exit={:?}): {}",
+            "{LOG_PREFIX} piper failed (exit={:?}): {detail}",
             exit_code,
-            String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
 

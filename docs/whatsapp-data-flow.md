@@ -42,10 +42,10 @@ Both ingest endpoints fire on every scan tick; both are `tokio::spawn` fire-and-
 
 ## Why two paths
 
-| Path | Backing store | Strength | Use it for |
-|------|---------------|----------|------------|
-| **Direct** | `whatsapp_data.db` (SQLite) | Exact, structured, paginated | "List my WhatsApp chats", "show the last 50 messages with Alice", "search for `invoice` across WhatsApp" |
-| **Memory tree** | Per-source memory tree + embeddings | Semantic, cross-source | "Summarise this week of WhatsApp", "find action items across email and WhatsApp", "what did the team agree on?" |
+| Path            | Backing store                       | Strength                     | Use it for                                                                                                      |
+| --------------- | ----------------------------------- | ---------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| **Direct**      | `whatsapp_data.db` (SQLite)         | Exact, structured, paginated | "List my WhatsApp chats", "show the last 50 messages with Alice", "search for `invoice` across WhatsApp"        |
+| **Memory tree** | Per-source memory tree + embeddings | Semantic, cross-source       | "Summarise this week of WhatsApp", "find action items across email and WhatsApp", "what did the team agree on?" |
 
 The same scan tick populates both stores. Idempotency keys make the dual-write safe to retry:
 
@@ -60,8 +60,8 @@ The scanner write-path RPCs are registered as **internal-only** in [`src/core/al
 
 The agent surfaces are exclusively read-only:
 
-- [`src/openhuman/tools/impl/whatsapp_data/`](../src/openhuman/tools/impl/whatsapp_data/) — `whatsapp_data_list_chats`, `whatsapp_data_list_messages`, `whatsapp_data_search_messages`. All three wrap their RPC counterparts and emit a `"provider": "whatsapp"` tag in the response so the agent can cite WhatsApp as the source.
-- [`src/openhuman/tools/impl/memory/tree/`](../src/openhuman/tools/impl/memory/tree/) — generic `memory_tree_*` tools. Filter by `source_kind: "chat"` or query directly; WhatsApp chat-day transcripts are tagged `whatsapp` so they surface in cross-source flows.
+- [`src/openhuman/whatsapp_data/tools/`](../src/openhuman/whatsapp_data/tools/) — `whatsapp_data_list_chats`, `whatsapp_data_list_messages`, `whatsapp_data_search_messages`. All three wrap their RPC counterparts and emit a `"provider": "whatsapp"` tag in the response so the agent can cite WhatsApp as the source.
+- [`src/openhuman/memory/query/`](../src/openhuman/memory/query/) — generic `memory_tree_*` tools. Filter by `source_kind: "chat"` or query directly; WhatsApp chat-day transcripts are tagged `whatsapp` so they surface in cross-source flows.
 
 ## Why the orchestrator only lists three of these
 

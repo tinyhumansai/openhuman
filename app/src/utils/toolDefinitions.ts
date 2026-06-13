@@ -29,6 +29,32 @@ export const TOOL_CATALOG: ToolDefinition[] = [
     rustToolNames: ['shell'],
   },
   {
+    id: 'launch_app',
+    displayName: 'Launch Applications',
+    description: 'Open apps on your desktop by name (e.g. Music, Spotify, Safari).',
+    category: 'System',
+    defaultEnabled: true,
+    rustToolNames: ['launch_app'],
+  },
+  {
+    id: 'ax_interact',
+    displayName: 'App UI Control',
+    description:
+      'Interact with desktop app UI by element label via the platform accessibility API — click buttons, type in fields, without needing screen coordinates.',
+    category: 'System',
+    defaultEnabled: true,
+    rustToolNames: ['ax_interact'],
+  },
+  {
+    id: 'automate',
+    displayName: 'App Automation',
+    description:
+      'Accomplish a multi-step goal in an app in one go (e.g. "play a song in Music", "message someone in Slack") — the agent drives the UI step by step.',
+    category: 'System',
+    defaultEnabled: true,
+    rustToolNames: ['automate'],
+  },
+  {
     id: 'git_operations',
     displayName: 'Git Operations',
     description: 'Run git commands in your workspace.',
@@ -188,4 +214,37 @@ export function getEnabledRustToolNames(enabledIds: string[]): string[] {
     }
   }
   return result;
+}
+
+/**
+ * Normalise a persisted enabledTools list that may contain Rust tool names
+ * (written by handleSave via getEnabledRustToolNames) back into UI toggle IDs
+ * so the ToolsPanel read path can compare them against tool.id.
+ *
+ * Handles three cases:
+ *   - Entry is already a UI toggle ID  → kept as-is
+ *   - Entry is a Rust tool name        → converted to its UI toggle ID
+ *   - Entry is unknown                 → dropped
+ *
+ * Multiple Rust names that belong to the same UI toggle (e.g. "cron_add",
+ * "cron_list" both map to "cron") are deduplicated in the output.
+ */
+export function normalizeEnabledToolList(raw: string[]): string[] {
+  const rustToUiId = new Map<string, string>();
+  for (const tool of TOOL_CATALOG) {
+    for (const rustName of tool.rustToolNames) {
+      rustToUiId.set(rustName, tool.id);
+    }
+  }
+  const allUiIds = new Set(TOOL_CATALOG.map(t => t.id));
+  const result = new Set<string>();
+  for (const entry of raw) {
+    if (allUiIds.has(entry)) {
+      result.add(entry);
+    } else {
+      const uiId = rustToUiId.get(entry);
+      if (uiId !== undefined) result.add(uiId);
+    }
+  }
+  return Array.from(result);
 }

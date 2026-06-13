@@ -56,7 +56,7 @@ pub(crate) async fn execute_with_auth_retry(
     slug: &str,
     args: Option<serde_json::Value>,
 ) -> anyhow::Result<ComposioExecuteResponse> {
-    execute_with_auth_retry_inner(client, slug, args, AUTH_RETRY_BACKOFF).await
+    execute_with_auth_retry_inner(client, slug, args, AUTH_RETRY_BACKOFF, None).await
 }
 
 /// Test-visible inner form that takes an explicit backoff so unit tests
@@ -66,6 +66,7 @@ pub(crate) async fn execute_with_auth_retry_inner(
     slug: &str,
     args: Option<serde_json::Value>,
     backoff: Duration,
+    connection_id: Option<&str>,
 ) -> anyhow::Result<ComposioExecuteResponse> {
     let tool = slug.trim();
     if tool.is_empty() {
@@ -78,12 +79,16 @@ pub(crate) async fn execute_with_auth_retry_inner(
     }
     let arguments = args.unwrap_or(serde_json::Value::Object(Default::default()));
     let has_args = arguments.as_object().is_some_and(|a| !a.is_empty());
-    let body = serde_json::json!({ "tool": tool, "arguments": arguments });
+    let mut body = serde_json::json!({ "tool": tool, "arguments": arguments });
+    if let Some(cid) = connection_id.map(str::trim).filter(|s| !s.is_empty()) {
+        body["connectionId"] = serde_json::json!(cid);
+    }
 
     tracing::debug!(
         target: "composio",
         slug = %tool,
         has_args,
+        connection_id = ?connection_id,
         "[composio][auth_retry] execute start"
     );
     client

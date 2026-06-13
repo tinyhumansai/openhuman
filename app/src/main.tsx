@@ -1,5 +1,6 @@
 // IMPORTANT: Polyfills must be imported FIRST
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import 'katex/dist/katex.min.css';
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 
@@ -7,11 +8,13 @@ import App from './App';
 import './index.css';
 import { getCoreStateSnapshot } from './lib/coreState/store';
 import MascotWindowApp from './mascot/MascotWindowApp';
+import NotchApp from './notch/NotchApp';
 import OverlayApp from './overlay/OverlayApp';
 import './polyfills';
-import { initGA, initSentry, trackEvent } from './services/analytics';
+import { initGA, initSentry, startUiInteractionTracking, trackEvent } from './services/analytics';
 import { setStoreForApiClient } from './services/apiClient';
 import { primeActiveUserId } from './store/userScopedStorage';
+import './styles/theme.css';
 import { APP_VERSION } from './utils/config';
 import { setupDesktopDeepLinkListener } from './utils/desktopDeepLinkListener';
 import { getActiveUserIdFromCore } from './utils/tauriCommands';
@@ -35,13 +38,16 @@ const urlWindowParam = (() => {
   }
 })();
 const isMascotWindow = urlWindowParam === 'mascot';
+const isNotchWindow = urlWindowParam === 'notch';
 const currentWindowLabel = isMascotWindow
   ? 'mascot'
-  : tauriRuntimeAvailable()
-    ? getCurrentWindow().label
-    : 'main';
+  : isNotchWindow
+    ? 'notch'
+    : tauriRuntimeAvailable()
+      ? getCurrentWindow().label
+      : 'main';
 const isOverlayWindow = currentWindowLabel === 'overlay';
-const isStandaloneWindow = isOverlayWindow || isMascotWindow;
+const isStandaloneWindow = isOverlayWindow || isMascotWindow || isNotchWindow;
 
 const ensureDefaultHashRoute = () => {
   const hash = window.location.hash;
@@ -58,6 +64,7 @@ const ensureDefaultHashRoute = () => {
 initSentry();
 initGA();
 if (!isStandaloneWindow) {
+  startUiInteractionTracking();
   trackEvent('app_open', { version: APP_VERSION });
 }
 document.documentElement.dataset.window = currentWindowLabel;
@@ -80,17 +87,26 @@ if (!isStandaloneWindow) {
 // namespace from the first storage call. (#900)
 function bootRender() {
   const root = ReactDOM.createRoot(document.getElementById('root') as HTMLElement);
-  const tree = isMascotWindow ? <MascotWindowApp /> : isOverlayWindow ? <OverlayApp /> : <App />;
+  const tree = isMascotWindow ? (
+    <MascotWindowApp />
+  ) : isNotchWindow ? (
+    <NotchApp />
+  ) : isOverlayWindow ? (
+    <OverlayApp />
+  ) : (
+    <App />
+  );
   root.render(<React.StrictMode>{tree}</React.StrictMode>);
 }
 
-// The mascot lives in a native WKWebView (no Tauri IPC), so
+// The mascot and notch windows live in native WKWebViews (no Tauri IPC), so
 // `getActiveUserIdFromCore()` would just reject after a roundtrip and
-// delay first paint for nothing. Skip the bootstrap entirely in that
-// path — the mascot UI doesn't read user-scoped storage anyway.
-const activeUserBootstrap = isMascotWindow
-  ? Promise.resolve<string | null>(null)
-  : getActiveUserIdFromCore();
+// delay first paint for nothing. Skip the bootstrap entirely in those
+// paths — neither UI reads user-scoped storage.
+const activeUserBootstrap =
+  isMascotWindow || isNotchWindow
+    ? Promise.resolve<string | null>(null)
+    : getActiveUserIdFromCore();
 
 activeUserBootstrap
   .then(id => primeActiveUserId(id))

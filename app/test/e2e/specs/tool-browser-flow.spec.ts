@@ -82,7 +82,9 @@ describe('System tools — Browser (open URL + automation registry)', () => {
     const status = await callOpenhumanRpc<ServerStatus>('openhuman.agent_server_status', {});
     stepLog('agent_server_status response', status);
     expect(status.ok).toBe(true);
-    expect(status.result?.running).toBe(true);
+    // agent_server_status uses single_log → result is {result: {running, url}, logs: [...]}
+    const statusPayload = (status.result as any)?.result ?? status.result;
+    expect(statusPayload?.running).toBe(true);
 
     const list = await callOpenhumanRpc<ListDefinitionsResult>(
       'openhuman.agent_list_definitions',

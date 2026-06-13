@@ -31,7 +31,7 @@ export type BootCheckResult =
   | { kind: 'outdatedLocal' }
   | { kind: 'outdatedCloud' }
   | { kind: 'noVersionMethod' }
-  | { kind: 'unreachable'; reason: string };
+  | { kind: 'unreachable'; reason: string; portConflict?: boolean };
 
 // ---------------------------------------------------------------------------
 // Transport interface (injectable for tests)
@@ -42,6 +42,8 @@ export interface BootCheckTransport {
   callRpc: <T>(method: string, params?: Record<string, unknown>) => Promise<T>;
   /** Invoke a Tauri command. */
   invokeCmd: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
+  /** Attempt to auto-recover from a port conflict. Optional — only wired in desktop builds. */
+  recoverPortConflict?: () => Promise<{ success: boolean; message: string; new_port?: number }>;
 }
 
 // The production transport lives in `app/src/services/bootCheckService.ts`
@@ -201,22 +203,62 @@ export async function runBootCheck(
   if (mode.kind === 'local') {
     log('[boot-check] local mode — starting core process');
 
+    let startFailed = false;
     try {
       await invokeCmd<void>('start_core_process', {});
       log('[boot-check] start_core_process invoked successfully');
     } catch (err) {
+      startFailed = true;
       logError('[boot-check] start_core_process failed: %o', err);
-      return {
-        kind: 'unreachable',
-        reason: `Failed to start local core: ${err instanceof Error ? err.message : String(err)}`,
-      };
+    }
+
+    // If start failed, attempt port-conflict auto-recovery before giving up.
+    if (startFailed && transport.recoverPortConflict) {
+      log('[boot-check] start_core_process failed — attempting port-conflict auto-recovery');
+      try {
+        const recovery = await transport.recoverPortConflict();
+        log(
+          '[boot-check] port-conflict recovery result: success=%s message=%s',
+          recovery.success,
+          recovery.message
+        );
+        if (!recovery.success) {
+          logError('[boot-check] port-conflict recovery failed: %s', recovery.message);
+          return {
+            kind: 'unreachable',
+            reason: `Failed to start local core — port conflict recovery failed: ${recovery.message}`,
+            portConflict: true,
+          };
+        }
+        // Recovery succeeded — clear the URL cache so we pick up the new port.
+        clearCoreRpcUrlCache();
+        log('[boot-check] port-conflict recovery succeeded, RPC URL cache cleared');
+      } catch (recoveryErr) {
+        logError('[boot-check] port-conflict recovery threw: %o', recoveryErr);
+        return {
+          kind: 'unreachable',
+          reason: `Failed to start local core — recovery error: ${recoveryErr instanceof Error ? recoveryErr.message : String(recoveryErr)}`,
+          portConflict: true,
+        };
+      }
+    } else if (startFailed) {
+      return { kind: 'unreachable', reason: `Failed to start local core` };
     }
 
     // Wait for the embedded core to be reachable.
-    const reachable = await waitForCore(callRpc);
+    let reachable = await waitForCore(callRpc);
     if (!reachable) {
-      logError('[boot-check] local core unreachable after retries');
-      return { kind: 'unreachable', reason: 'Local core did not respond in time' };
+      logError('[boot-check] local core unreachable after retries — trying cache clear + retry');
+      clearCoreRpcUrlCache();
+      reachable = await waitForCore(callRpc, 5_000);
+    }
+    if (!reachable) {
+      logError('[boot-check] local core unreachable after retries and cache clear');
+      return {
+        kind: 'unreachable',
+        reason: 'Local core did not respond in time',
+        portConflict: startFailed,
+      };
     }
 
     // Check for a legacy background daemon that should be removed.

@@ -3,6 +3,8 @@
 //! Exposes the domain over the shared registry at
 //! `openhuman.composio_*`:
 //!   - `composio.list_toolkits`       → `openhuman.composio_list_toolkits`
+//!   - `composio.list_capabilities`   → `openhuman.composio_list_capabilities`
+//!   - `composio.list_agent_ready_toolkits` → `openhuman.composio_list_agent_ready_toolkits`
 //!   - `composio.list_connections`    → `openhuman.composio_list_connections`
 //!   - `composio.authorize`           → `openhuman.composio_authorize`
 //!   - `composio.delete_connection`   → `openhuman.composio_delete_connection`
@@ -60,6 +62,8 @@ struct EnableTriggerParams {
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
         schemas("list_toolkits"),
+        schemas("list_capabilities"),
+        schemas("list_agent_ready_toolkits"),
         schemas("list_connections"),
         schemas("authorize"),
         schemas("delete_connection"),
@@ -88,6 +92,14 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("list_toolkits"),
             handler: handle_list_toolkits,
+        },
+        RegisteredController {
+            schema: schemas("list_capabilities"),
+            handler: handle_list_capabilities,
+        },
+        RegisteredController {
+            schema: schemas("list_agent_ready_toolkits"),
+            handler: handle_list_agent_ready_toolkits,
         },
         RegisteredController {
             schema: schemas("list_connections"),
@@ -186,6 +198,33 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "list_capabilities" => ControllerSchema {
+            namespace: "composio",
+            function: "list_capabilities",
+            description: "List OpenHuman's built-in Composio capability matrix without requiring a signed-in Composio session.",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "capabilities",
+                ty: TypeSchema::Json,
+                comment: "Array of capability rows describing native providers, curated catalogs, sync, trigger, and memory-ingest support.",
+                required: true,
+            }],
+        },
+        "list_agent_ready_toolkits" => ControllerSchema {
+            namespace: "composio",
+            function: "list_agent_ready_toolkits",
+            description:
+                "List every toolkit slug that ships an agent-ready curated catalog. Connected \
+                 toolkits not in this list should be surfaced in the UI as preview / agent \
+                 integration coming soon. See issue #2283.",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "toolkits",
+                ty: TypeSchema::Array(Box::new(TypeSchema::String)),
+                comment: "Sorted toolkit slugs with curated catalogs (e.g. gmail, notion, one_drive, excel, todoist).",
+                required: true,
+            }],
+        },
         "list_connections" => ControllerSchema {
             namespace: "composio",
             function: "list_connections",
@@ -215,7 +254,9 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     ty: TypeSchema::Json,
                     comment: "Optional JSON object of additional auth fields forwarded to Composio \
                               (e.g. {\"waba_id\": \"...\") for toolkits that require them). \
-                              Reserved keys (toolkit, toolkit_version, auth, client_id) are rejected.",
+                              The core may also add toolkit-specific OAuth scope hints such as \
+                              Gmail's oauth_scopes value. Reserved keys (toolkit, toolkit_version, \
+                              auth, client_id) are rejected.",
                     required: false,
                 },
             ],
@@ -237,31 +278,60 @@ pub fn schemas(function: &str) -> ControllerSchema {
         "delete_connection" => ControllerSchema {
             namespace: "composio",
             function: "delete_connection",
-            description: "Delete a Composio connection owned by the caller.",
-            inputs: vec![FieldSchema {
-                name: "connection_id",
-                ty: TypeSchema::String,
-                comment: "Identifier of the connection to delete.",
-                required: true,
-            }],
-            outputs: vec![FieldSchema {
-                name: "deleted",
-                ty: TypeSchema::Bool,
-                comment: "True when the backend confirmed the deletion.",
-                required: true,
-            }],
+            description: "Delete a Composio connection and optionally remove source-scoped memory.",
+            inputs: vec![
+                FieldSchema {
+                    name: "connection_id",
+                    ty: TypeSchema::String,
+                    comment: "Identifier of the connection to delete.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "clear_memory",
+                    ty: TypeSchema::Bool,
+                    comment: "When true, delete memory chunks ingested from this connection.",
+                    required: false,
+                },
+            ],
+            outputs: vec![
+                FieldSchema {
+                    name: "deleted",
+                    ty: TypeSchema::Bool,
+                    comment: "True when the backend confirmed the deletion.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "memory_chunks_deleted",
+                    ty: TypeSchema::U64,
+                    comment: "Number of memory chunks deleted for this connection.",
+                    required: true,
+                },
+            ],
         },
         "list_tools" => ControllerSchema {
             namespace: "composio",
             function: "list_tools",
             description:
                 "List OpenAI-function-calling tool schemas for one or more Composio toolkits.",
-            inputs: vec![FieldSchema {
-                name: "toolkits",
-                ty: TypeSchema::Option(Box::new(TypeSchema::Array(Box::new(TypeSchema::String)))),
-                comment: "Optional list of toolkit slugs to filter by. Omit to get all.",
-                required: false,
-            }],
+            inputs: vec![
+                FieldSchema {
+                    name: "toolkits",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Array(Box::new(
+                        TypeSchema::String,
+                    )))),
+                    comment: "Optional list of toolkit slugs to filter by. Omit to get all.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "tags",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Array(Box::new(
+                        TypeSchema::String,
+                    )))),
+                    comment: "Optional Composio action tags to filter by (OR semantics — \
+                              multiple tags broaden the result). Case-insensitive.",
+                    required: false,
+                },
+            ],
             outputs: vec![FieldSchema {
                 name: "tools",
                 ty: TypeSchema::Json,
@@ -284,6 +354,12 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     name: "arguments",
                     ty: TypeSchema::Option(Box::new(TypeSchema::Json)),
                     comment: "Tool-specific arguments conforming to the tool's JSON schema.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "connection_id",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Optional Composio connection id to target a specific account when multiple are connected for the same toolkit. Omit to use the default (oldest active).",
                     required: false,
                 },
             ],
@@ -679,6 +755,17 @@ fn handle_list_toolkits(_params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+fn handle_list_capabilities(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async {
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(super::ops::composio_list_capabilities(&config).await?)
+    })
+}
+
+fn handle_list_agent_ready_toolkits(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async { to_json(super::ops::composio_list_agent_ready_toolkits().await?) })
+}
+
 fn handle_list_connections(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async {
         let config = config_rpc::load_config_with_timeout().await?;
@@ -699,7 +786,10 @@ fn handle_delete_connection(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
         let connection_id = read_required_non_empty(&params, "connection_id")?;
-        to_json(super::ops::composio_delete_connection(&config, &connection_id).await?)
+        let clear_memory = read_optional::<bool>(&params, "clear_memory")?.unwrap_or(false);
+        to_json(
+            super::ops::composio_delete_connection(&config, &connection_id, clear_memory).await?,
+        )
     })
 }
 
@@ -707,7 +797,8 @@ fn handle_list_tools(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
         let toolkits = read_optional::<Vec<String>>(&params, "toolkits")?;
-        to_json(super::ops::composio_list_tools(&config, toolkits).await?)
+        let tags = read_optional::<Vec<String>>(&params, "tags")?;
+        to_json(super::ops::composio_list_tools(&config, toolkits, tags).await?)
     })
 }
 
@@ -716,7 +807,11 @@ fn handle_execute(params: Map<String, Value>) -> ControllerFuture {
         let config = config_rpc::load_config_with_timeout().await?;
         let tool = read_required_non_empty(&params, "tool")?;
         let arguments = read_optional::<Value>(&params, "arguments")?;
-        to_json(super::ops::composio_execute(&config, &tool, arguments).await?)
+        let connection_id = read_optional::<String>(&params, "connection_id")?;
+        to_json(
+            super::ops::composio_execute(&config, &tool, arguments, connection_id.as_deref())
+                .await?,
+        )
     })
 }
 

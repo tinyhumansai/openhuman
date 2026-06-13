@@ -17,7 +17,7 @@ Aggregator that the React shell polls every few seconds to render the OS-level c
 
 - `src/openhuman/config/` — `config_rpc::*` for `Config` reads and the workspace dir resolver.
 - `src/openhuman/autocomplete/` — `AutocompleteStatus` snapshot.
-- `src/openhuman/local_ai/` — `LocalAiStatus` snapshot.
+- `src/openhuman/inference/local/` — `LocalAiStatus` snapshot.
 - `src/openhuman/screen_intelligence/` — `AccessibilityStatus` snapshot.
 - `src/openhuman/service/` — `ServiceState` / `ServiceStatus` runtime info.
 - `src/openhuman/credentials/` — `session_support::build_session_state` for the auth slice.

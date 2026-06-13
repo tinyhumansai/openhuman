@@ -18,13 +18,7 @@ use std::net::{SocketAddr, TcpListener};
 /// but its port is bound by some other process" early, before the user hits
 /// confusing 401/transport errors.
 pub fn is_port_in_use(port: u16) -> bool {
-    let addr: SocketAddr = match format!("127.0.0.1:{port}").parse() {
-        Ok(a) => a,
-        Err(err) => {
-            log::warn!("[connectivity][ops] is_port_in_use parse failed port={port} err={err}");
-            return false;
-        }
-    };
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
     match TcpListener::bind(addr) {
         Ok(listener) => {
             // Bound cleanly — port was free. Drop returns it to the OS.

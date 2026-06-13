@@ -124,3 +124,18 @@ test("status.mjs renders a markdown table from a fixture (no gh needed)", () => 
   // a03 has no PR in the fixture — must still appear with placeholders.
   assert.match(r.stdout, /\| a03 \|.*\| — \| — \| no pr \|/i);
 });
+
+test("direct agent-batch subcommands print help with exit 0", () => {
+  for (const [script, usage] of [
+    [VALIDATE, /usage: validate\.mjs <spec\.json>/],
+    [OVERLAP, /usage: overlap\.mjs <spec\.json>/],
+    [STATUS, /usage: status\.mjs <spec\.json> \[--post\] \[--fixture <file>\]/],
+  ]) {
+    for (const flag of ["--help", "-h", "-?"]) {
+      const r = run(script, [flag]);
+      assert.strictEqual(r.status, 0, r.stderr);
+      assert.match(r.stdout, usage);
+      assert.strictEqual(r.stderr, "");
+    }
+  }
+});

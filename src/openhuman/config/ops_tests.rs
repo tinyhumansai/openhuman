@@ -149,30 +149,47 @@ fn get_runtime_flags_reads_env_overrides() {
 }
 
 #[test]
-fn set_browser_allow_all_toggles_env_var() {
+fn set_browser_allow_all_rejects_enable_without_operator_override() {
     let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let before = std::env::var("OPENHUMAN_BROWSER_ALLOW_ALL").ok();
+    let before = std::env::var(BROWSER_ALLOW_ALL_ENV).ok();
+    let before_override = std::env::var(BROWSER_ALLOW_ALL_RPC_ENABLE_ENV).ok();
 
-    let _ = set_browser_allow_all(true);
-    assert!(env_flag_enabled("OPENHUMAN_BROWSER_ALLOW_ALL"));
+    unsafe {
+        std::env::remove_var(BROWSER_ALLOW_ALL_ENV);
+        std::env::remove_var(BROWSER_ALLOW_ALL_RPC_ENABLE_ENV);
+    }
 
-    let _ = set_browser_allow_all(false);
-    assert!(!env_flag_enabled("OPENHUMAN_BROWSER_ALLOW_ALL"));
+    let err = set_browser_allow_all(true).expect_err("runtime enable should require override");
+    assert!(
+        err.contains("Refusing to enable OPENHUMAN_BROWSER_ALLOW_ALL via RPC"),
+        "unexpected error: {err}"
+    );
+    assert!(!env_flag_enabled(BROWSER_ALLOW_ALL_ENV));
 
     unsafe {
         match before {
-            Some(v) => std::env::set_var("OPENHUMAN_BROWSER_ALLOW_ALL", v),
-            None => std::env::remove_var("OPENHUMAN_BROWSER_ALLOW_ALL"),
+            Some(v) => std::env::set_var(BROWSER_ALLOW_ALL_ENV, v),
+            None => std::env::remove_var(BROWSER_ALLOW_ALL_ENV),
+        }
+        match before_override {
+            Some(v) => std::env::set_var(BROWSER_ALLOW_ALL_RPC_ENABLE_ENV, v),
+            None => std::env::remove_var(BROWSER_ALLOW_ALL_RPC_ENABLE_ENV),
         }
     }
 }
 
 #[test]
-fn set_browser_allow_all_emits_security_audit_log() {
+fn set_browser_allow_all_toggles_env_var_when_operator_override_is_set() {
     let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let before = std::env::var("OPENHUMAN_BROWSER_ALLOW_ALL").ok();
+    let before = std::env::var(BROWSER_ALLOW_ALL_ENV).ok();
+    let before_override = std::env::var(BROWSER_ALLOW_ALL_RPC_ENABLE_ENV).ok();
 
-    let enable_outcome = set_browser_allow_all(true);
+    unsafe {
+        std::env::remove_var(BROWSER_ALLOW_ALL_ENV);
+        std::env::set_var(BROWSER_ALLOW_ALL_RPC_ENABLE_ENV, "1");
+    }
+
+    let enable_outcome = set_browser_allow_all(true).expect("override should allow runtime enable");
     assert_eq!(enable_outcome.logs.len(), 1);
     let enable_log = &enable_outcome.logs[0];
     assert!(
@@ -184,8 +201,9 @@ fn set_browser_allow_all_emits_security_audit_log() {
         "enable log should mention enabled state: {enable_log}"
     );
     assert!(enable_outcome.value.browser_allow_all);
+    assert!(env_flag_enabled(BROWSER_ALLOW_ALL_ENV));
 
-    let disable_outcome = set_browser_allow_all(false);
+    let disable_outcome = set_browser_allow_all(false).expect("runtime disable should always work");
     assert_eq!(disable_outcome.logs.len(), 1);
     let disable_log = &disable_outcome.logs[0];
     assert!(
@@ -197,11 +215,49 @@ fn set_browser_allow_all_emits_security_audit_log() {
         "disable log should mention disabled state: {disable_log}"
     );
     assert!(!disable_outcome.value.browser_allow_all);
+    assert!(!env_flag_enabled(BROWSER_ALLOW_ALL_ENV));
 
     unsafe {
         match before {
-            Some(v) => std::env::set_var("OPENHUMAN_BROWSER_ALLOW_ALL", v),
-            None => std::env::remove_var("OPENHUMAN_BROWSER_ALLOW_ALL"),
+            Some(v) => std::env::set_var(BROWSER_ALLOW_ALL_ENV, v),
+            None => std::env::remove_var(BROWSER_ALLOW_ALL_ENV),
+        }
+        match before_override {
+            Some(v) => std::env::set_var(BROWSER_ALLOW_ALL_RPC_ENABLE_ENV, v),
+            None => std::env::remove_var(BROWSER_ALLOW_ALL_RPC_ENABLE_ENV),
+        }
+    }
+}
+
+#[test]
+fn set_browser_allow_all_disable_does_not_require_operator_override() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let before = std::env::var(BROWSER_ALLOW_ALL_ENV).ok();
+    let before_override = std::env::var(BROWSER_ALLOW_ALL_RPC_ENABLE_ENV).ok();
+
+    unsafe {
+        std::env::set_var(BROWSER_ALLOW_ALL_ENV, "1");
+        std::env::remove_var(BROWSER_ALLOW_ALL_RPC_ENABLE_ENV);
+    }
+
+    let disable_outcome =
+        set_browser_allow_all(false).expect("runtime disable should not require override");
+    assert!(
+        disable_outcome.logs[0].contains("[SECURITY]"),
+        "disable log should be audit-tagged: {:?}",
+        disable_outcome.logs
+    );
+    assert!(!disable_outcome.value.browser_allow_all);
+    assert!(!env_flag_enabled(BROWSER_ALLOW_ALL_ENV));
+
+    unsafe {
+        match before {
+            Some(v) => std::env::set_var(BROWSER_ALLOW_ALL_ENV, v),
+            None => std::env::remove_var(BROWSER_ALLOW_ALL_ENV),
+        }
+        match before_override {
+            Some(v) => std::env::set_var(BROWSER_ALLOW_ALL_RPC_ENABLE_ENV, v),
+            None => std::env::remove_var(BROWSER_ALLOW_ALL_RPC_ENABLE_ENV),
         }
     }
 }
@@ -276,6 +332,64 @@ fn tmp_config(tmp: &tempfile::TempDir) -> Config {
 }
 
 #[tokio::test]
+async fn apply_memory_sync_settings_stores_interval_and_view() {
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+
+    // Pick the 4h preset.
+    let patch = MemorySyncSettingsPatch {
+        sync_interval_secs: Some(14_400),
+    };
+    let outcome = apply_memory_sync_settings(&mut cfg, patch)
+        .await
+        .expect("apply");
+    assert_eq!(cfg.memory_sync_interval_secs, Some(14_400));
+    assert_eq!(outcome.value["sync_interval_secs"], 14_400);
+    assert_eq!(outcome.value["selected_secs"], 14_400);
+    assert_eq!(outcome.value["is_manual"], false);
+    assert_eq!(outcome.value["is_default"], false);
+}
+
+#[tokio::test]
+async fn apply_memory_sync_settings_manual_only() {
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+
+    let patch = MemorySyncSettingsPatch {
+        sync_interval_secs: Some(0),
+    };
+    let outcome = apply_memory_sync_settings(&mut cfg, patch)
+        .await
+        .expect("apply");
+    assert_eq!(cfg.memory_sync_interval_secs, Some(0));
+    assert_eq!(outcome.value["is_manual"], true);
+    assert_eq!(outcome.value["sync_interval_secs"], 0);
+}
+
+#[tokio::test]
+async fn apply_memory_sync_settings_reset_to_default() {
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    cfg.memory_sync_interval_secs = Some(43_200);
+
+    // Omitted field → None → reset to default.
+    let patch = MemorySyncSettingsPatch {
+        sync_interval_secs: None,
+    };
+    let outcome = apply_memory_sync_settings(&mut cfg, patch)
+        .await
+        .expect("apply");
+    assert_eq!(cfg.memory_sync_interval_secs, None);
+    assert_eq!(outcome.value["is_default"], true);
+    assert!(outcome.value["sync_interval_secs"].is_null());
+    // The UI still gets a concrete cadence to highlight (the 24h default).
+    assert_eq!(
+        outcome.value["selected_secs"],
+        crate::openhuman::config::DEFAULT_MEMORY_SYNC_INTERVAL_SECS
+    );
+}
+
+#[tokio::test]
 async fn apply_model_settings_updates_fields_and_persists_snapshot() {
     let tmp = tempdir().unwrap();
     let mut cfg = tmp_config(&tmp);
@@ -296,6 +410,84 @@ async fn apply_model_settings_updates_fields_and_persists_snapshot() {
         outcome.value["config"]["api_url"],
         "https://api.example.test"
     );
+}
+
+#[tokio::test]
+async fn apply_search_settings_sets_and_clears_allowed_domains() {
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+
+    // Explicit host list is trimmed, blanks dropped, sorted + de-duped.
+    let patch = SearchSettingsPatch {
+        allowed_domains: Some(vec![
+            " reuters.com ".into(),
+            "reuters.com".into(),
+            String::new(),
+            "github.com".into(),
+        ]),
+        ..Default::default()
+    };
+    apply_search_settings(&mut cfg, patch).await.expect("apply");
+    assert_eq!(
+        cfg.http_request.allowed_domains,
+        vec!["github.com".to_string(), "reuters.com".to_string()]
+    );
+
+    // allow_all = true collapses the list to the wildcard.
+    let patch = SearchSettingsPatch {
+        allow_all: Some(true),
+        ..Default::default()
+    };
+    apply_search_settings(&mut cfg, patch).await.expect("apply");
+    assert_eq!(cfg.http_request.allowed_domains, vec!["*".to_string()]);
+
+    // allow_all = false drops the wildcard (explicit hosts only / blocked).
+    let patch = SearchSettingsPatch {
+        allow_all: Some(false),
+        ..Default::default()
+    };
+    apply_search_settings(&mut cfg, patch).await.expect("apply");
+    assert!(cfg.http_request.allowed_domains.is_empty());
+}
+
+#[tokio::test]
+async fn apply_search_settings_accepts_disabled_engine() {
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+
+    apply_search_settings(
+        &mut cfg,
+        SearchSettingsPatch {
+            engine: Some("disabled".to_string()),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("apply disabled search engine");
+
+    assert_eq!(cfg.search.engine, "disabled");
+    assert_eq!(
+        cfg.search.effective_engine(),
+        crate::openhuman::config::SearchEngine::Disabled
+    );
+}
+
+#[tokio::test]
+async fn apply_search_settings_rejects_unknown_search_engine() {
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+
+    let err = apply_search_settings(
+        &mut cfg,
+        SearchSettingsPatch {
+            engine: Some("unknown".to_string()),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect_err("unknown engine should be rejected");
+
+    assert!(err.contains("disabled/managed/parallel/brave/querit"));
 }
 
 #[tokio::test]
@@ -397,6 +589,77 @@ async fn apply_model_settings_replaces_model_routes_when_some_and_keeps_when_non
 }
 
 #[tokio::test]
+async fn apply_model_settings_replaces_model_registry_when_some_and_keeps_when_none() {
+    // Per-model vision registry follows Some=replace / None=keep / empty=clear —
+    // this persists the "Supports vision" flag set in Settings → Advanced LLM.
+    use crate::openhuman::config::schema::ModelRegistryEntry;
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+
+    let set = ModelSettingsPatch {
+        model_registry: Some(vec![ModelRegistryEntry {
+            id: "my-llava".into(),
+            provider: "openai".into(),
+            cost_per_1m_output: 0.0,
+            vision: true,
+        }]),
+        ..Default::default()
+    };
+    let _ = apply_model_settings(&mut cfg, set).await.expect("set");
+    assert_eq!(cfg.model_registry.len(), 1);
+    assert!(cfg
+        .model_registry
+        .iter()
+        .any(|e| e.id == "my-llava" && e.vision));
+
+    // None — leave registry alone.
+    let _ = apply_model_settings(
+        &mut cfg,
+        ModelSettingsPatch {
+            api_url: Some("https://x.test/v1".into()),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("touch");
+    assert_eq!(cfg.model_registry.len(), 1);
+
+    // Empty vec — clear.
+    let _ = apply_model_settings(
+        &mut cfg,
+        ModelSettingsPatch {
+            model_registry: Some(vec![]),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("clear");
+    assert!(cfg.model_registry.is_empty());
+}
+
+#[tokio::test]
+async fn apply_model_settings_trims_model_registry_ids() {
+    // `model_vision_enabled` matches the resolved id exactly, so persisted ids
+    // must be trimmed or stray whitespace would silently disable vision.
+    use crate::openhuman::config::schema::ModelRegistryEntry;
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+
+    let set = ModelSettingsPatch {
+        model_registry: Some(vec![ModelRegistryEntry {
+            id: "  spaced-model  ".into(),
+            provider: "openai".into(),
+            cost_per_1m_output: 0.0,
+            vision: true,
+        }]),
+        ..Default::default()
+    };
+    let _ = apply_model_settings(&mut cfg, set).await.expect("set");
+    assert_eq!(cfg.model_registry.len(), 1);
+    assert_eq!(cfg.model_registry[0].id, "spaced-model");
+}
+
+#[tokio::test]
 async fn apply_model_settings_empty_strings_clear_optional_fields() {
     let tmp = tempdir().unwrap();
     let mut cfg = tmp_config(&tmp);
@@ -413,6 +676,131 @@ async fn apply_model_settings_empty_strings_clear_optional_fields() {
     let _ = apply_model_settings(&mut cfg, patch).await.expect("apply");
     assert!(cfg.api_url.is_none());
     assert!(cfg.default_model.is_none());
+}
+
+#[tokio::test]
+async fn apply_model_settings_preserves_existing_reserved_slug_cloud_providers() {
+    // Sentry TAURI-RUST-5 regression. The migration
+    // `unify_ai_provider_settings` seeds an "openhuman"-slug entry into
+    // `cloud_providers`. The frontend echoes the full cloud_providers
+    // list back on every settings save, but the schema handlers filter
+    // out reserved-slug entries before passing them through. Without
+    // this preservation step the filtered patch would silently delete
+    // the built-in entry — losing the `primary_cloud` referent and
+    // breaking inference routing.
+    use crate::openhuman::config::schema::cloud_providers::{AuthStyle, CloudProviderCreds};
+
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    // Simulate the post-migration state: a built-in "openhuman" entry plus
+    // a user-added custom provider.
+    cfg.cloud_providers = vec![
+        CloudProviderCreds {
+            id: "openhuman-builtin".into(),
+            slug: "openhuman".into(),
+            label: "OpenHuman".into(),
+            endpoint: "https://api.tinyhumans.ai".into(),
+            auth_style: AuthStyle::OpenhumanJwt,
+            default_model: Some("reasoning-v1".into()),
+            ..Default::default()
+        },
+        CloudProviderCreds {
+            id: "myopenai-1".into(),
+            slug: "myopenai".into(),
+            label: "My OpenAI".into(),
+            endpoint: "https://api.openai.com".into(),
+            auth_style: AuthStyle::Bearer,
+            default_model: Some("gpt-4o".into()),
+            ..Default::default()
+        },
+    ];
+
+    // The patch arrives from the schema handler with the "openhuman"
+    // entry already filtered out (the schema handler drops reserved
+    // slugs silently). Only the user's custom provider is present, with
+    // the user's edit applied.
+    let patch = ModelSettingsPatch {
+        cloud_providers: Some(vec![CloudProviderCreds {
+            id: "myopenai-1".into(),
+            slug: "myopenai".into(),
+            label: "My OpenAI (edited)".into(),
+            endpoint: "https://api.openai.com/v1".into(),
+            auth_style: AuthStyle::Bearer,
+            default_model: Some("gpt-4o-mini".into()),
+            ..Default::default()
+        }]),
+        ..Default::default()
+    };
+
+    let _ = apply_model_settings(&mut cfg, patch).await.expect("apply");
+
+    // The user's edit is applied.
+    let myopenai = cfg
+        .cloud_providers
+        .iter()
+        .find(|e| e.slug == "myopenai")
+        .expect("myopenai entry survives");
+    assert_eq!(myopenai.label, "My OpenAI (edited)");
+    assert_eq!(myopenai.default_model.as_deref(), Some("gpt-4o-mini"));
+
+    // And the built-in "openhuman" entry is still there.
+    let openhuman = cfg
+        .cloud_providers
+        .iter()
+        .find(|e| e.slug == "openhuman")
+        .expect("openhuman built-in must be preserved across saves");
+    assert_eq!(openhuman.id, "openhuman-builtin");
+    assert_eq!(openhuman.endpoint, "https://api.tinyhumans.ai");
+}
+
+#[tokio::test]
+async fn apply_model_settings_does_not_double_add_reserved_entries() {
+    // Defensive: if a caller bypasses the schema handler (CLI / tests) and
+    // includes a reserved-slug entry in the patch, the preservation logic
+    // must not double-add it.
+    use crate::openhuman::config::schema::cloud_providers::{AuthStyle, CloudProviderCreds};
+
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    cfg.cloud_providers = vec![CloudProviderCreds {
+        id: "openhuman-stored".into(),
+        slug: "openhuman".into(),
+        label: "OpenHuman (stored)".into(),
+        endpoint: "https://api.tinyhumans.ai".into(),
+        auth_style: AuthStyle::OpenhumanJwt,
+        default_model: Some("reasoning-v1".into()),
+        ..Default::default()
+    }];
+
+    let patch = ModelSettingsPatch {
+        cloud_providers: Some(vec![CloudProviderCreds {
+            id: "openhuman-from-patch".into(),
+            slug: "openhuman".into(),
+            label: "OpenHuman (from patch)".into(),
+            endpoint: "https://api.tinyhumans.ai".into(),
+            auth_style: AuthStyle::OpenhumanJwt,
+            default_model: Some("reasoning-v1".into()),
+            ..Default::default()
+        }]),
+        ..Default::default()
+    };
+
+    let _ = apply_model_settings(&mut cfg, patch).await.expect("apply");
+
+    // Exactly one "openhuman" entry survives; the patch's version wins
+    // (since it was already in `providers` before preservation ran).
+    let count = cfg
+        .cloud_providers
+        .iter()
+        .filter(|e| e.slug == "openhuman")
+        .count();
+    assert_eq!(count, 1, "no duplicate reserved-slug entries");
+    let entry = cfg
+        .cloud_providers
+        .iter()
+        .find(|e| e.slug == "openhuman")
+        .unwrap();
+    assert_eq!(entry.id, "openhuman-from-patch");
 }
 
 #[tokio::test]
@@ -437,6 +825,33 @@ async fn apply_memory_settings_updates_all_provided_fields() {
         cfg.agent.memory_window,
         Some(crate::openhuman::config::schema::MemoryContextWindow::Extended)
     );
+}
+
+#[tokio::test]
+async fn apply_autonomy_settings_updates_action_budget() {
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    cfg.autonomy.max_actions_per_hour = 20;
+
+    let outcome = apply_autonomy_settings(
+        &mut cfg,
+        AutonomySettingsPatch {
+            max_actions_per_hour: Some(64),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("apply autonomy settings");
+
+    assert_eq!(cfg.autonomy.max_actions_per_hour, 64);
+    assert_eq!(
+        outcome.value["config"]["autonomy"]["max_actions_per_hour"],
+        serde_json::json!(64)
+    );
+    assert!(outcome
+        .logs
+        .iter()
+        .any(|l| l.contains("autonomy settings saved to")));
 }
 
 #[tokio::test]
@@ -516,7 +931,7 @@ async fn apply_local_ai_settings_updates_lm_studio_provider_fields() {
         runtime_enabled: Some(true),
         opt_in_confirmed: Some(true),
         provider: Some("lm-studio".into()),
-        base_url: Some(" http://localhost:1234/v1/ ".into()),
+        base_url: Some(Some(" http://localhost:1234/v1/ ".into())),
         model_id: Some(" local-default ".into()),
         chat_model_id: Some(" local-chat ".into()),
         usage_embeddings: Some(true),
@@ -534,7 +949,7 @@ async fn apply_local_ai_settings_updates_lm_studio_provider_fields() {
     assert_eq!(cfg.local_ai.provider, "lm_studio");
     assert_eq!(
         cfg.local_ai.base_url.as_deref(),
-        Some("http://localhost:1234/v1/")
+        Some("http://localhost:1234/v1")
     );
     assert_eq!(cfg.local_ai.model_id, "local-default");
     assert_eq!(cfg.local_ai.chat_model_id, "local-chat");
@@ -546,7 +961,7 @@ async fn apply_local_ai_settings_updates_lm_studio_provider_fields() {
 
     let clear_and_fallback = LocalAiSettingsPatch {
         provider: Some("unknown-provider".into()),
-        base_url: Some("   ".into()),
+        base_url: Some(Some("   ".into())),
         model_id: Some("   ".into()),
         chat_model_id: Some("".into()),
         ..LocalAiSettingsPatch::default()
@@ -559,6 +974,40 @@ async fn apply_local_ai_settings_updates_lm_studio_provider_fields() {
     assert!(cfg.local_ai.base_url.is_none());
     assert_eq!(cfg.local_ai.model_id, "");
     assert_eq!(cfg.local_ai.chat_model_id, "");
+}
+
+#[tokio::test]
+async fn apply_local_ai_settings_normalizes_ollama_unspecified_host_and_allows_null_clear() {
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+
+    apply_local_ai_settings(
+        &mut cfg,
+        LocalAiSettingsPatch {
+            provider: Some("ollama".into()),
+            base_url: Some(Some("http://0.0.0.0:11434/api/tags".into())),
+            ..LocalAiSettingsPatch::default()
+        },
+    )
+    .await
+    .expect("apply ollama base url");
+
+    assert_eq!(
+        cfg.local_ai.base_url.as_deref(),
+        Some("http://localhost:11434")
+    );
+
+    apply_local_ai_settings(
+        &mut cfg,
+        LocalAiSettingsPatch {
+            base_url: Some(None),
+            ..LocalAiSettingsPatch::default()
+        },
+    )
+    .await
+    .expect("clear ollama base url");
+
+    assert!(cfg.local_ai.base_url.is_none());
 }
 
 #[tokio::test]
@@ -669,6 +1118,8 @@ async fn load_and_apply_voice_server_settings_rejects_invalid_activation_mode() 
         min_duration_secs: None,
         silence_threshold: None,
         custom_dictionary: None,
+        always_on_enabled: None,
+        wake_word: None,
     };
     let err = load_and_apply_voice_server_settings(patch)
         .await
@@ -721,6 +1172,8 @@ async fn load_and_apply_voice_server_settings_accepts_valid_modes_and_clamps() {
         min_duration_secs: Some(-5.0),
         silence_threshold: Some(-1.0),
         custom_dictionary: Some(vec!["term".into()]),
+        always_on_enabled: Some(true),
+        wake_word: Some("Hey Tiny".to_string()),
     };
     let outcome = load_and_apply_voice_server_settings(patch)
         .await
@@ -946,4 +1399,614 @@ async fn apply_screen_intelligence_settings_clamps_baseline_fps() {
     .await
     .expect("low clamp");
     assert!((cfg.screen_intelligence.baseline_fps - 0.2).abs() < f32::EPSILON);
+}
+
+// ── apply_autonomy_settings ────────────────────────────────────
+
+#[tokio::test]
+async fn apply_autonomy_settings_persists_max_actions_per_hour() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    let outcome = apply_autonomy_settings(
+        &mut cfg,
+        AutonomySettingsPatch {
+            max_actions_per_hour: Some(200),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("apply");
+    assert_eq!(cfg.autonomy.max_actions_per_hour, 200);
+    // Snapshot returned so the caller can echo the saved state.
+    assert!(outcome.value.get("config").is_some());
+    // Round-trip from disk: reload the saved TOML and confirm.
+    let on_disk = tokio::fs::read_to_string(&cfg.config_path).await.unwrap();
+    assert!(
+        on_disk.contains("max_actions_per_hour = 200"),
+        "expected TOML to contain max_actions_per_hour = 200, got:\n{on_disk}"
+    );
+}
+
+#[tokio::test]
+async fn apply_autonomy_settings_no_op_when_patch_empty() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    let prior = cfg.autonomy.max_actions_per_hour;
+    let _ = apply_autonomy_settings(
+        &mut cfg,
+        AutonomySettingsPatch {
+            max_actions_per_hour: None,
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("apply noop");
+    assert_eq!(cfg.autonomy.max_actions_per_hour, prior);
+}
+
+#[tokio::test]
+async fn apply_autonomy_settings_rejects_zero() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    let err = apply_autonomy_settings(
+        &mut cfg,
+        AutonomySettingsPatch {
+            max_actions_per_hour: Some(0),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        err.contains("at least 1"),
+        "expected validation error, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn apply_autonomy_settings_accepts_unlimited_sentinel() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    // u32::MAX is the new "unlimited" sentinel exposed by the UI as a
+    // preset. The upper cap was lifted in the same PR that defaulted
+    // fresh installs to u32::MAX; anything in [1, u32::MAX] should now
+    // round-trip cleanly.
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    apply_autonomy_settings(
+        &mut cfg,
+        AutonomySettingsPatch {
+            max_actions_per_hour: Some(u32::MAX),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("u32::MAX (unlimited) should round-trip");
+    assert_eq!(cfg.autonomy.max_actions_per_hour, u32::MAX);
+}
+
+#[tokio::test]
+async fn load_and_apply_autonomy_settings_roundtrip() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let tmp = tempdir().unwrap();
+    unsafe {
+        std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
+    }
+
+    let patch = AutonomySettingsPatch {
+        max_actions_per_hour: Some(500),
+        ..Default::default()
+    };
+    let outcome = load_and_apply_autonomy_settings(patch)
+        .await
+        .expect("apply");
+    assert!(outcome.value.get("config").is_some());
+
+    // Reload from scratch and confirm the saved value sticks.
+    let reloaded = load_config_with_timeout().await.expect("reload");
+    assert_eq!(reloaded.autonomy.max_actions_per_hour, 500);
+
+    unsafe {
+        std::env::remove_var("OPENHUMAN_WORKSPACE");
+    }
+}
+
+#[tokio::test]
+async fn apply_autonomy_settings_replaces_auto_approve() {
+    // ENV_LOCK serializes the `live_policy::reload_from` triggered by
+    // `apply_autonomy_settings` against other live-policy-touching tests.
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    apply_autonomy_settings(
+        &mut cfg,
+        AutonomySettingsPatch {
+            auto_approve: Some(vec!["shell".into(), "curl".into()]),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("apply auto_approve");
+    assert_eq!(cfg.autonomy.auto_approve, vec!["shell", "curl"]);
+    // Persisted to the TOML, not just held in memory.
+    let on_disk = tokio::fs::read_to_string(&cfg.config_path).await.unwrap();
+    assert!(
+        on_disk.contains("auto_approve") && on_disk.contains("shell") && on_disk.contains("curl"),
+        "auto_approve allowlist should round-trip to TOML, got:\n{on_disk}"
+    );
+}
+
+#[tokio::test]
+async fn add_auto_approve_tool_appends_then_dedupes() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let tmp = tempdir().unwrap();
+    unsafe {
+        std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
+    }
+
+    add_auto_approve_tool("git_operations")
+        .await
+        .expect("first add");
+    // Idempotent: a second add of the same tool must not create a duplicate.
+    add_auto_approve_tool("git_operations")
+        .await
+        .expect("second add (idempotent)");
+
+    let reloaded = load_config_with_timeout().await.expect("reload");
+    let hits = reloaded
+        .autonomy
+        .auto_approve
+        .iter()
+        .filter(|t| t.as_str() == "git_operations")
+        .count();
+    assert_eq!(
+        hits, 1,
+        "tool must appear exactly once after duplicate adds"
+    );
+
+    unsafe {
+        std::env::remove_var("OPENHUMAN_WORKSPACE");
+    }
+}
+
+// ── agent settings (action/tool timeout, issue #3100) ───────────────────────
+
+#[tokio::test]
+async fn apply_agent_settings_updates_timeout_and_persists_snapshot() {
+    // ENV_LOCK: `set_tool_timeout_secs` reads OPENHUMAN_TOOL_TIMEOUT_SECS and
+    // mutates the process-global timeout; serialize against other env-touching
+    // tests and ensure no operator override is masking the config value.
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    unsafe {
+        std::env::remove_var("OPENHUMAN_TOOL_TIMEOUT_SECS");
+    }
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+
+    let outcome = apply_agent_settings(
+        &mut cfg,
+        AgentSettingsPatch {
+            agent_timeout_secs: Some(300),
+        },
+    )
+    .await
+    .expect("apply agent settings");
+
+    assert_eq!(cfg.agent.agent_timeout_secs, 300);
+    assert_eq!(
+        outcome.value["config"]["agent"]["agent_timeout_secs"],
+        serde_json::json!(300)
+    );
+    assert!(outcome
+        .logs
+        .iter()
+        .any(|l| l.contains("agent settings saved to")));
+    // With no env override, the live runtime now reflects the saved value.
+    assert_eq!(
+        crate::openhuman::tool_timeout::tool_execution_timeout_secs(),
+        300
+    );
+}
+
+#[tokio::test]
+async fn apply_agent_settings_rejects_out_of_range_timeout() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    let original = cfg.agent.agent_timeout_secs;
+
+    // Zero would disable the timeout — rejected.
+    let err = apply_agent_settings(
+        &mut cfg,
+        AgentSettingsPatch {
+            agent_timeout_secs: Some(0),
+        },
+    )
+    .await
+    .expect_err("zero timeout should be rejected");
+    assert!(err.contains("between"), "unexpected error: {err}");
+
+    // Above the 3600s ceiling — rejected.
+    let err = apply_agent_settings(
+        &mut cfg,
+        AgentSettingsPatch {
+            agent_timeout_secs: Some(99_999),
+        },
+    )
+    .await
+    .expect_err("over-max timeout should be rejected");
+    assert!(err.contains("between"), "unexpected error: {err}");
+
+    // The config value is untouched after a rejected update.
+    assert_eq!(cfg.agent.agent_timeout_secs, original);
+}
+
+#[tokio::test]
+async fn apply_agent_settings_none_leaves_timeout_unchanged() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    cfg.agent.agent_timeout_secs = 250;
+
+    apply_agent_settings(&mut cfg, AgentSettingsPatch::default())
+        .await
+        .expect("apply no-op agent settings");
+
+    assert_eq!(cfg.agent.agent_timeout_secs, 250);
+}
+
+// ── apply_agent_paths_settings (action_dir editable, issue #3240) ──────────────
+
+#[tokio::test]
+async fn apply_agent_paths_valid_abs_path_persists_override_and_recomputes() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    // Ensure no env override is interfering.
+    unsafe {
+        std::env::remove_var("OPENHUMAN_ACTION_DIR");
+    }
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    let new_dir = tmp.path().join("agent-projects");
+    std::fs::create_dir_all(&new_dir).unwrap();
+
+    let outcome = apply_agent_paths_settings(
+        &mut cfg,
+        AgentPathsPatch {
+            action_dir: Some(new_dir.to_string_lossy().to_string()),
+        },
+    )
+    .await
+    .expect("apply agent paths");
+
+    assert_eq!(cfg.action_dir_override.as_deref(), Some(new_dir.as_path()));
+    assert_eq!(cfg.action_dir, new_dir);
+    assert_eq!(
+        outcome.value["action_dir"],
+        serde_json::json!(new_dir.display().to_string())
+    );
+    assert_eq!(
+        outcome.value["action_dir_source"],
+        serde_json::json!("override")
+    );
+}
+
+#[tokio::test]
+async fn apply_agent_paths_rejects_relative_path() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    unsafe {
+        std::env::remove_var("OPENHUMAN_ACTION_DIR");
+    }
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+
+    let err = apply_agent_paths_settings(
+        &mut cfg,
+        AgentPathsPatch {
+            action_dir: Some("relative/projects".into()),
+        },
+    )
+    .await
+    .expect_err("relative path must be rejected");
+
+    assert!(err.contains("absolute"), "unexpected error: {err}");
+    assert!(cfg.action_dir_override.is_none());
+}
+
+#[tokio::test]
+async fn apply_agent_paths_rejects_action_dir_equal_to_workspace() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    unsafe {
+        std::env::remove_var("OPENHUMAN_ACTION_DIR");
+    }
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    let workspace = cfg.workspace_dir.clone();
+
+    let err = apply_agent_paths_settings(
+        &mut cfg,
+        AgentPathsPatch {
+            action_dir: Some(workspace.to_string_lossy().to_string()),
+        },
+    )
+    .await
+    .expect_err("action_dir == workspace_dir must be rejected");
+
+    assert!(err.contains("workspace"), "unexpected error: {err}");
+    assert!(cfg.action_dir_override.is_none());
+}
+
+#[tokio::test]
+async fn apply_agent_paths_empty_input_clears_override() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    unsafe {
+        std::env::remove_var("OPENHUMAN_ACTION_DIR");
+    }
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    // Start with an override in place.
+    let prior = tmp.path().join("prior-projects");
+    std::fs::create_dir_all(&prior).unwrap();
+    cfg.action_dir_override = Some(prior);
+
+    let outcome = apply_agent_paths_settings(
+        &mut cfg,
+        AgentPathsPatch {
+            action_dir: Some("   ".into()),
+        },
+    )
+    .await
+    .expect("clear override");
+
+    assert!(cfg.action_dir_override.is_none());
+    // Reverts to the default projects dir.
+    assert_eq!(
+        cfg.action_dir,
+        crate::openhuman::config::default_projects_dir()
+    );
+    assert_eq!(
+        outcome.value["action_dir_source"],
+        serde_json::json!("default")
+    );
+}
+
+#[tokio::test]
+async fn apply_agent_paths_auto_creates_missing_directory() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    unsafe {
+        std::env::remove_var("OPENHUMAN_ACTION_DIR");
+    }
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    let missing = tmp.path().join("not-yet").join("created");
+    assert!(!missing.exists());
+
+    apply_agent_paths_settings(
+        &mut cfg,
+        AgentPathsPatch {
+            action_dir: Some(missing.to_string_lossy().to_string()),
+        },
+    )
+    .await
+    .expect("auto-create action dir");
+
+    assert!(missing.is_dir(), "missing action_dir must be auto-created");
+    assert_eq!(cfg.action_dir, missing);
+}
+
+#[tokio::test]
+async fn apply_agent_paths_rejects_existing_file() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    unsafe {
+        std::env::remove_var("OPENHUMAN_ACTION_DIR");
+    }
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    let file = tmp.path().join("a-file.txt");
+    std::fs::write(&file, b"not a dir").unwrap();
+
+    let err = apply_agent_paths_settings(
+        &mut cfg,
+        AgentPathsPatch {
+            action_dir: Some(file.to_string_lossy().to_string()),
+        },
+    )
+    .await
+    .expect_err("a file path must be rejected");
+
+    assert!(err.contains("directory"), "unexpected error: {err}");
+    assert!(cfg.action_dir_override.is_none());
+}
+
+#[tokio::test]
+async fn apply_agent_paths_env_set_reports_source_env() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let tmp = tempdir().unwrap();
+    let env_dir = tmp.path().join("env-pinned");
+    std::fs::create_dir_all(&env_dir).unwrap();
+    unsafe {
+        std::env::set_var("OPENHUMAN_ACTION_DIR", &env_dir);
+    }
+
+    let mut cfg = tmp_config(&tmp);
+    // Even when the user sets an override, the env var wins for the effective
+    // value and the reported source.
+    let user_dir = tmp.path().join("user-choice");
+    std::fs::create_dir_all(&user_dir).unwrap();
+
+    let outcome = apply_agent_paths_settings(
+        &mut cfg,
+        AgentPathsPatch {
+            action_dir: Some(user_dir.to_string_lossy().to_string()),
+        },
+    )
+    .await
+    .expect("apply with env override present");
+
+    // Override is persisted, but the effective action_dir reflects the env.
+    assert_eq!(cfg.action_dir_override.as_deref(), Some(user_dir.as_path()));
+    assert_eq!(cfg.action_dir, env_dir);
+    assert_eq!(outcome.value["action_dir_source"], serde_json::json!("env"));
+
+    unsafe {
+        std::env::remove_var("OPENHUMAN_ACTION_DIR");
+    }
+}
+
+// --- #3353 regression tests -------------------------------------------------
+
+#[test]
+fn expand_tilde_happy_path_uses_home() {
+    // `~/OpenHuman/projects` resolves to the home dir joined component-wise.
+    let expanded = expand_tilde("~/OpenHuman/projects");
+    let expected = dirs::home_dir()
+        .expect("home dir resolvable in test env")
+        .join("OpenHuman")
+        .join("projects");
+    assert_eq!(expanded, expected.to_string_lossy());
+}
+
+#[test]
+fn expand_tilde_without_prefix_is_unchanged() {
+    // Absolute paths and a bare `~` (no trailing slash) pass through verbatim.
+    assert_eq!(expand_tilde("/abs/path"), "/abs/path");
+    assert_eq!(expand_tilde("~"), "~");
+    assert_eq!(expand_tilde("relative/path"), "relative/path");
+}
+
+#[cfg(windows)]
+#[test]
+fn expand_tilde_has_no_mixed_separators_on_windows() {
+    // The whole point of the component-wise build: the result must be a pure
+    // backslash path with no embedded forward slash, so CreateProcessW accepts
+    // it as a CWD instead of failing with ERROR_DIRECTORY (os error 267).
+    let expanded = expand_tilde("~/OpenHuman/projects");
+    assert!(
+        !expanded.contains('/'),
+        "expected no forward slashes on Windows, got: {expanded}"
+    );
+}
+
+#[test]
+fn redact_home_replaces_home_prefix_and_passes_through_others() {
+    let home = dirs::home_dir().expect("home dir resolvable in test env");
+
+    // A path under home is redacted to `~/...` — the username/home prefix is
+    // stripped but the diagnostic suffix is preserved.
+    let under_home = home.join("OpenHuman").join("projects");
+    let redacted = redact_home(&under_home);
+    assert!(
+        redacted.starts_with('~'),
+        "expected a `~`-prefixed path, got: {redacted}"
+    );
+    assert!(
+        !redacted.contains(&*home.to_string_lossy()),
+        "redacted path must not contain the raw home dir: {redacted}"
+    );
+    assert!(
+        redacted.contains("OpenHuman"),
+        "diagnostic suffix should be preserved: {redacted}"
+    );
+
+    // A path outside the home dir is returned unchanged.
+    let outside = std::path::Path::new("/var/lib/openhuman/action");
+    assert_eq!(redact_home(outside), "/var/lib/openhuman/action");
+}
+
+#[tokio::test]
+async fn ensure_agent_dirs_creates_missing_action_dir_and_trusted_root() {
+    use crate::openhuman::security::TrustedAccess;
+
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let tmp = tempdir().unwrap();
+    // Point the default projects home at the tempdir so the helper doesn't touch
+    // the real `~/OpenHuman/projects`.
+    let projects_dir = tmp.path().join("projects-home");
+    let prev_projects_dir = std::env::var_os("OPENHUMAN_PROJECTS_DIR");
+    unsafe {
+        std::env::set_var("OPENHUMAN_PROJECTS_DIR", &projects_dir);
+    }
+
+    let mut cfg = tmp_config(&tmp);
+    let action_dir = tmp.path().join("fresh-action-dir");
+    cfg.action_dir = action_dir.clone();
+    assert!(!action_dir.exists(), "precondition: action_dir is missing");
+
+    crate::openhuman::config::ensure_agent_dirs(&mut cfg).await;
+
+    // Both the action_dir and the projects home now exist.
+    assert!(action_dir.is_dir(), "action_dir should be created");
+    assert!(projects_dir.is_dir(), "projects home should be created");
+
+    // The projects home is registered exactly once as a ReadWrite trusted root.
+    let projects_path = projects_dir.to_string_lossy().to_string();
+    let matching: Vec<_> = cfg
+        .autonomy
+        .trusted_roots
+        .iter()
+        .filter(|r| r.path == projects_path)
+        .collect();
+    assert_eq!(matching.len(), 1, "trusted root registered exactly once");
+    assert!(matches!(matching[0].access, TrustedAccess::ReadWrite));
+
+    // Idempotent: a second call neither errors nor duplicates the trusted root.
+    crate::openhuman::config::ensure_agent_dirs(&mut cfg).await;
+    let count = cfg
+        .autonomy
+        .trusted_roots
+        .iter()
+        .filter(|r| r.path == projects_path)
+        .count();
+    assert_eq!(count, 1, "second call must not duplicate the trusted root");
+
+    // Restore the prior env state so later tests observe the real environment.
+    unsafe {
+        match prev_projects_dir {
+            Some(v) => std::env::set_var("OPENHUMAN_PROJECTS_DIR", v),
+            None => std::env::remove_var("OPENHUMAN_PROJECTS_DIR"),
+        }
+    }
+}
+
+#[test]
+fn ensure_usable_cwd_creates_missing_dir() {
+    let tmp = tempdir().unwrap();
+    let dir = tmp.path().join("not-yet-here");
+    assert!(!dir.exists());
+    crate::openhuman::config::ensure_usable_cwd(&dir).expect("missing dir is created");
+    assert!(dir.is_dir());
+}
+
+#[test]
+fn ensure_usable_cwd_rejects_a_file_with_descriptive_error() {
+    let tmp = tempdir().unwrap();
+    let file = tmp.path().join("a-file");
+    std::fs::write(&file, b"x").unwrap();
+    let err = crate::openhuman::config::ensure_usable_cwd(&file)
+        .expect_err("an existing file is not a usable working directory");
+    let msg = err.to_string();
+    assert!(msg.contains("not a directory"), "unexpected error: {msg}");
+    // The error names the offending path so the message is actionable.
+    assert!(
+        msg.contains(&file.to_string_lossy().to_string()),
+        "error should name the path: {msg}"
+    );
+}
+
+#[test]
+fn ensure_usable_cwd_errors_when_uncreatable() {
+    // A directory whose parent is an existing *file* can't be created; the
+    // helper must surface the descriptive, path-naming error rather than panic.
+    let tmp = tempdir().unwrap();
+    let parent_file = tmp.path().join("parent-file");
+    std::fs::write(&parent_file, b"x").unwrap();
+    let target = parent_file.join("child");
+    let err = crate::openhuman::config::ensure_usable_cwd(&target)
+        .expect_err("cannot create a dir under a file");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("could not be created"),
+        "unexpected error: {msg}"
+    );
 }

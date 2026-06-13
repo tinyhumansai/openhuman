@@ -13,14 +13,20 @@ import { Provider } from 'react-redux';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { agentProfilesApi } from '../../services/api/agentProfilesApi';
 import { threadApi } from '../../services/api/threadApi';
 import { chatSend } from '../../services/chatService';
+import { CoreRpcError } from '../../services/coreRpcClient';
 import agentProfileReducer from '../../store/agentProfileSlice';
-import chatRuntimeReducer from '../../store/chatRuntimeSlice';
+import chatRuntimeReducer, {
+  setInferenceStatusForThread,
+  setTaskBoardForThread,
+  setToolTimelineForThread,
+} from '../../store/chatRuntimeSlice';
+import layoutReducer from '../../store/layoutSlice';
 import socketReducer from '../../store/socketSlice';
+import themeReducer from '../../store/themeSlice';
 import threadReducer, { setSelectedThread } from '../../store/threadSlice';
-import type { Thread } from '../../types/thread';
+import type { Thread, ThreadMessage } from '../../types/thread';
 
 // ── Hoisted mock state ─────────────────────────────────────────────────────
 
@@ -31,26 +37,22 @@ const { mockGetThreads, mockGetThreadMessages, mockUseUsageState } = vi.hoisted(
     teamUsage: null as null | {
       cycleBudgetUsd: number;
       remainingUsd: number;
-      fiveHourCapUsd: number;
-      cycleLimit5hr: number;
-      bypassCycleLimit: boolean;
-      fiveHourResetsAt: string | null;
+      cycleSpentUsd: number;
       cycleEndsAt: string | null;
     },
     currentPlan: null,
     currentTier: 'FREE' as 'FREE' | 'BASIC' | 'PRO',
     isFreeTier: true,
-    usagePct10h: 0,
-    usagePct7d: 0,
+    usagePct: 0,
     isNearLimit: false,
     isAtLimit: false,
-    isRateLimited: false,
     isBudgetExhausted: false,
     shouldShowBudgetCompletedMessage: false,
     isLoading: false,
     refresh: vi.fn(),
   })),
 }));
+const mockUseOpenRouterFreeModels = vi.hoisted(() => vi.fn());
 
 // ── Module mocks ───────────────────────────────────────────────────────────
 
@@ -79,6 +81,7 @@ vi.mock('../../services/api/threadApi', () => ({
     updateMessage: vi.fn().mockResolvedValue({}),
     purge: vi.fn().mockResolvedValue({}),
     updateLabels: vi.fn().mockResolvedValue({}),
+    updateTitle: vi.fn().mockResolvedValue({}),
     persistReaction: vi.fn().mockResolvedValue({}),
   },
 }));
@@ -116,6 +119,10 @@ vi.mock('../../services/api/agentProfilesApi', () => ({
     upsert: vi.fn().mockResolvedValue({ activeProfileId: 'default', profiles: [] }),
     delete: vi.fn().mockResolvedValue({ activeProfileId: 'default', profiles: [] }),
   },
+}));
+
+vi.mock('../../services/api/openrouterFreeModels', () => ({
+  applyOpenRouterFreeModels: () => mockUseOpenRouterFreeModels(),
 }));
 
 vi.mock('../../hooks/useUsageState', () => ({ useUsageState: mockUseUsageState }));
@@ -164,9 +171,11 @@ function buildStore(preload: Record<string, unknown> = {}) {
   return configureStore({
     reducer: combineReducers({
       thread: threadReducer,
+      layout: layoutReducer,
       socket: socketReducer,
       chatRuntime: chatRuntimeReducer,
       agentProfiles: agentProfileReducer,
+      theme: themeReducer,
     }),
     preloadedState: preload as never,
   });
@@ -181,7 +190,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     messageCount: 0,
     lastMessageAt: '2026-01-01T00:00:00.000Z',
     createdAt: '2026-01-01T00:00:00.000Z',
-    labels: [],
+    labels: ['general'],
     ...overrides,
   };
 }
@@ -201,11 +210,19 @@ async function renderConversations(preload: Record<string, unknown> = {}) {
   return store;
 }
 
+/** Click the sidebar toggle so the thread list becomes visible. */
+async function openSidebar() {
+  const toggleBtn = screen.getByTitle('Show sidebar');
+  await act(async () => {
+    fireEvent.click(toggleBtn);
+  });
+}
+
 // Default empty state
 const emptyThreadState = {
   threads: [],
   selectedThreadId: null,
-  activeThreadId: null,
+  activeThreadIds: {},
   welcomeThreadId: null,
   messagesByThreadId: {},
   messages: [],
@@ -241,11 +258,9 @@ async function renderSelectedConversation(
     currentPlan: null,
     currentTier: 'FREE' as const,
     isFreeTier: true,
-    usagePct10h: options.isAtLimit ? 1 : 0,
-    usagePct7d: options.isAtLimit ? 1 : 0,
+    usagePct: options.isAtLimit ? 1 : 0,
     isNearLimit: Boolean(options.isAtLimit),
     isAtLimit: Boolean(options.isAtLimit),
-    isRateLimited: Boolean(options.isAtLimit),
     isBudgetExhausted: false,
     shouldShowBudgetCompletedMessage: false,
     isLoading: false,
@@ -260,7 +275,7 @@ async function renderSelectedConversation(
     });
   });
 
-  const textarea = await screen.findByPlaceholderText('Type a message...');
+  const textarea = await screen.findByPlaceholderText('How can I help you today?');
   return { store: renderedStore, textarea, thread };
 }
 
@@ -282,6 +297,7 @@ async function submitComposerText(textarea: HTMLElement, text: string) {
 describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    window.localStorage.clear();
     // Reset the mock to defaults for each test
     mockGetThreads.mockResolvedValue({ threads: [], count: 0 });
     mockGetThreadMessages.mockResolvedValue({ messages: [], count: 0 });
@@ -290,11 +306,9 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       currentPlan: null,
       currentTier: 'FREE' as const,
       isFreeTier: true,
-      usagePct10h: 0,
-      usagePct7d: 0,
+      usagePct: 0.0,
       isNearLimit: false,
       isAtLimit: false,
-      isRateLimited: false,
       isBudgetExhausted: false,
       shouldShowBudgetCompletedMessage: false,
       isLoading: false,
@@ -302,24 +316,50 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     });
   });
 
-  // Covers line 906: const effectiveShowSidebar = showSidebar;
+  // Covers the page-mode sidebar (TwoPanelLayout, id `chat`) once opened.
   // Covers line 941: <div className="flex-1 overflow-y-auto"> (always rendered in page mode)
-  it('renders the Threads sidebar header in page mode', async () => {
+  it('renders the sidebar pill tabs in page mode', async () => {
     await act(async () => {
       await renderConversations({ thread: emptyThreadState });
     });
 
-    // The "Threads" header is always rendered in page mode (sidebar guard removed)
-    expect(screen.getByText('Threads')).toBeInTheDocument();
+    await openSidebar();
+
+    expect(screen.getByText('General')).toBeInTheDocument();
+  });
+
+  it('restores and updates the persisted thread sidebar visibility', async () => {
+    let renderedStore: ReturnType<typeof buildStore> | undefined;
+    await act(async () => {
+      renderedStore = await renderConversations({
+        thread: emptyThreadState,
+        // Sidebar visibility now lives in the reusable `layout` slice (id `chat`).
+        layout: { panels: { chat: { sidebarVisible: true, sidebarWidth: 256 } } },
+      });
+    });
+
+    expect(screen.getByText('General')).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByTitle('Hide sidebar'));
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText('General')).not.toBeInTheDocument();
+    });
+    expect(renderedStore?.getState().layout.panels.chat.sidebarVisible).toBe(false);
   });
 
   // Covers line 941 empty branch
-  it('shows "No threads yet" when thread list is empty', async () => {
+  it('shows the General empty message when the default bucket has no threads', async () => {
     await act(async () => {
       await renderConversations({ thread: emptyThreadState });
     });
 
-    expect(screen.getByText('No threads yet')).toBeInTheDocument();
+    // Sidebar is hidden by default — open it first.
+    await openSidebar();
+    expect(screen.getByRole('tab', { name: 'General' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByText('No "General" threads')).toBeInTheDocument();
   });
 
   // Covers lines 1002-1004, 1007, 1011-1012, 1014: thread list items rendered unconditionally
@@ -335,6 +375,9 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     await act(async () => {
       await renderConversations({ thread: emptyThreadState });
     });
+
+    // Sidebar is hidden by default — open it first.
+    await openSidebar();
 
     // Wait for loadThreads to complete and the thread list to render.
     // Use getAllByText because the title may appear in both the sidebar list
@@ -366,54 +409,158 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     });
   });
 
-  // Covers lines 1455-1483: quota pill loading state
-  it('renders "loading…" quota pill when isLoadingBudget=true', async () => {
-    mockUseUsageState.mockReturnValue({
-      teamUsage: null,
-      currentPlan: null,
-      currentTier: 'FREE' as const,
-      isFreeTier: true,
-      usagePct10h: 0,
-      usagePct7d: 0,
-      isNearLimit: false,
-      isAtLimit: false,
-      isRateLimited: false,
-      isBudgetExhausted: false,
-      shouldShowBudgetCompletedMessage: false,
-      isLoading: true,
-      refresh: vi.fn(),
+  it('renders assistant messages as unframed text when the appearance preference is enabled', async () => {
+    const thread = makeThread({ id: 'view-mode-thread', title: 'View Mode Thread' });
+    const messages: ThreadMessage[] = [
+      {
+        id: 'm-user',
+        sender: 'user',
+        type: 'text',
+        content: 'Can you summarize this?',
+        extraMetadata: {},
+        createdAt: '2026-01-01T00:00:00.000Z',
+      },
+      {
+        id: 'm-agent',
+        sender: 'agent',
+        type: 'text',
+        content: 'Long agent output\n\nwith enough structure to prefer a text view.',
+        extraMetadata: {},
+        createdAt: '2026-01-01T00:01:00.000Z',
+      },
+    ];
+    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
+    mockGetThreadMessages.mockResolvedValue({ messages, count: messages.length });
+
+    await act(async () => {
+      await renderConversations({
+        thread: {
+          ...selectedThreadState(thread),
+          messagesByThreadId: { [thread.id]: messages },
+          messages,
+        },
+        socket: socketState('connected'),
+        theme: {
+          mode: 'system',
+          tabBarLabels: 'hover',
+          fontSize: 'medium',
+          agentMessageViewMode: 'text',
+        },
+      });
+    });
+
+    expect(screen.getByTestId('agent-message-text')).toHaveTextContent(
+      'Long agent output with enough structure to prefer a text view.'
+    );
+    expect(screen.getByText('Can you summarize this?')).toBeInTheDocument();
+  });
+
+  it('keeps bubble mode interactions for assistant citations, copy, and reactions', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    const thread = makeThread({ id: 'bubble-mode-thread', title: 'Bubble Mode Thread' });
+    const agentContent =
+      'First assistant paragraph with enough text to render.\n\nSecond assistant paragraph stays in bubbles.';
+    const messages: ThreadMessage[] = [
+      {
+        id: 'm-agent-bubble',
+        sender: 'agent',
+        type: 'text',
+        content: agentContent,
+        extraMetadata: {
+          citations: [
+            {
+              id: 'cite-1',
+              key: 'memory-key',
+              namespace: 'personal',
+              snippet: 'Remembered preference',
+              timestamp: '2026-01-01T00:00:00.000Z',
+              score: 0.91,
+            },
+          ],
+          myReactions: ['👍'],
+        },
+        createdAt: '2026-01-01T00:01:00.000Z',
+      },
+    ];
+    vi.mocked(threadApi.updateMessage).mockImplementation(
+      async (_threadId, _messageId, extraMetadata) =>
+        ({ ...messages[0], extraMetadata }) as ThreadMessage
+    );
+    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
+    mockGetThreadMessages.mockResolvedValue({ messages, count: messages.length });
+
+    await act(async () => {
+      await renderConversations({
+        thread: {
+          ...selectedThreadState(thread),
+          messagesByThreadId: { [thread.id]: messages },
+          messages,
+        },
+        socket: socketState('connected'),
+        theme: {
+          mode: 'system',
+          tabBarLabels: 'hover',
+          fontSize: 'medium',
+          agentMessageViewMode: 'bubbles',
+        },
+      });
+    });
+
+    expect(screen.queryByTestId('agent-message-text')).not.toBeInTheDocument();
+    expect(
+      screen.getByText('First assistant paragraph with enough text to render.')
+    ).toBeInTheDocument();
+    expect(screen.getByText('personal 91%')).toBeInTheDocument();
+    expect(screen.getByTitle(/Remembered preference/)).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByTitle('Copy response'));
+    });
+    expect(writeText).toHaveBeenCalledWith(agentContent);
+
+    await act(async () => {
+      fireEvent.click(screen.getByTitle('Remove 👍'));
+    });
+    await waitFor(() => {
+      expect(threadApi.updateMessage).toHaveBeenCalledWith(
+        thread.id,
+        'm-agent-bubble',
+        expect.objectContaining({ myReactions: [] })
+      );
     });
 
     await act(async () => {
-      await renderConversations({ thread: emptyThreadState });
+      fireEvent.click(screen.getByTitle('Add reaction'));
     });
-
-    expect(screen.getByText('loading…')).toBeInTheDocument();
+    await act(async () => {
+      fireEvent.click(screen.getByTitle('🎯'));
+    });
+    await waitFor(() => {
+      expect(threadApi.updateMessage).toHaveBeenCalledWith(
+        thread.id,
+        'm-agent-bubble',
+        expect.objectContaining({ myReactions: expect.arrayContaining(['🎯']) })
+      );
+    });
   });
 
-  // Covers lines 1417-1439: budget banner + lines 1455-1516: LimitPill + tooltip
-  it('renders budget-limit banner and limit pills when teamUsage is present', async () => {
+  // CycleUsagePill moved into ChatComposer toolbar (#3611) — quota-pill
+  // loading test removed; the "Loading…" text no longer renders here.
+
+  // Covers budget banner: budget-exhausted banner + OpenRouter CTA
+  it('renders budget-limit banner when teamUsage is present', async () => {
     // cycleBudgetUsd: 0 → renders "Your included budget is complete" branch
-    const teamUsage = {
-      cycleBudgetUsd: 0,
-      remainingUsd: 0,
-      fiveHourCapUsd: 5,
-      cycleLimit5hr: 5,
-      bypassCycleLimit: false,
-      fiveHourResetsAt: null,
-      cycleEndsAt: null,
-    };
+    const teamUsage = { cycleBudgetUsd: 0, remainingUsd: 0, cycleSpentUsd: 0, cycleEndsAt: null };
 
     mockUseUsageState.mockReturnValue({
       teamUsage,
       currentPlan: null,
       currentTier: 'PRO' as const,
       isFreeTier: false,
-      usagePct10h: 1.0,
-      usagePct7d: 1.0,
+      usagePct: 1.0,
       isNearLimit: true,
       isAtLimit: true,
-      isRateLimited: false,
       isBudgetExhausted: true,
       shouldShowBudgetCompletedMessage: true,
       isLoading: false,
@@ -424,11 +571,8 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       await renderConversations({ thread: emptyThreadState });
     });
 
-    // Budget-exceeded banner (lines 1417-1439) — cycleBudgetUsd=0 gives "included budget" message
     expect(screen.getByText(/Your included budget is complete/i)).toBeInTheDocument();
-
-    // LimitPill components (lines 1459-1480) — their label text
-    expect(screen.getByText('7d')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Use OpenRouter free models/i })).toBeInTheDocument();
   });
 
   // Covers line 247: if (cancelled) return — the non-cancelled path through loadThreads callback
@@ -449,22 +593,8 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     });
   });
 
-  // Covers line 919: onClick={() => void handleCreateNewThread()} — sidebar "New thread" button
-  // Covers line 1061: onClick={() => void handleCreateNewThread()} — header "+ New" button
-  it('clicking "New thread" sidebar button calls handleCreateNewThread', async () => {
-    await act(async () => {
-      await renderConversations({ thread: emptyThreadState });
-    });
-
-    // The sidebar "New thread" button has title="New thread"
-    const newThreadBtn = screen.getByTitle('New thread');
-    await act(async () => {
-      fireEvent.click(newThreadBtn);
-    });
-
-    // createNewThread was called — verifies line 919 callback executed
-    expect(threadApi.createNewThread).toHaveBeenCalled();
-  });
+  // Sidebar "New thread" button was removed in the composer flattening refactor.
+  // The "+ New" header button (tested below) is the remaining create-thread entry point.
 
   it('clicking "+ New" header button calls handleCreateNewThread', async () => {
     // Need a selected thread so the header renders
@@ -498,6 +628,9 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       await renderConversations({ thread: emptyThreadState });
     });
 
+    // Sidebar is hidden by default — open it first.
+    await openSidebar();
+
     // Wait for the thread to appear in the sidebar
     await waitFor(() => {
       expect(screen.getAllByText('Deletable Thread').length).toBeGreaterThan(0);
@@ -523,11 +656,9 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       currentPlan: null,
       currentTier: 'FREE' as const,
       isFreeTier: true,
-      usagePct10h: 0.85,
-      usagePct7d: 0.85,
+      usagePct: 0.85,
       isNearLimit: true,
       isAtLimit: false,
-      isRateLimited: false,
       isBudgetExhausted: false,
       shouldShowBudgetCompletedMessage: false,
       isLoading: false,
@@ -557,11 +688,9 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       currentPlan: null,
       currentTier: 'FREE' as const,
       isFreeTier: true,
-      usagePct10h: 0.9,
-      usagePct7d: 0.9,
+      usagePct: 0.9,
       isNearLimit: true,
       isAtLimit: false,
-      isRateLimited: false,
       isBudgetExhausted: false,
       shouldShowBudgetCompletedMessage: false,
       isLoading: false,
@@ -589,26 +718,16 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
   it('clicking "Top Up" in the budget banner calls openUrl', async () => {
     const { openUrl } = await import('../../utils/openUrl');
 
-    const teamUsage = {
-      cycleBudgetUsd: 10,
-      remainingUsd: 0,
-      fiveHourCapUsd: 5,
-      cycleLimit5hr: 5,
-      bypassCycleLimit: false,
-      fiveHourResetsAt: null,
-      cycleEndsAt: null,
-    };
+    const teamUsage = { cycleBudgetUsd: 10, remainingUsd: 0, cycleSpentUsd: 10, cycleEndsAt: null };
 
     mockUseUsageState.mockReturnValue({
       teamUsage,
       currentPlan: null,
       currentTier: 'PRO' as const,
       isFreeTier: false,
-      usagePct10h: 1.0,
-      usagePct7d: 1.0,
+      usagePct: 1.0,
       isNearLimit: true,
       isAtLimit: true,
-      isRateLimited: false,
       isBudgetExhausted: true,
       shouldShowBudgetCompletedMessage: true,
       isLoading: false,
@@ -619,8 +738,8 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       await renderConversations({ thread: emptyThreadState });
     });
 
-    // Budget banner renders — cycleBudgetUsd: 10 > 0 → "You've hit your weekly limit"
-    expect(screen.getByText(/You've hit your weekly limit/i)).toBeInTheDocument();
+    // Budget banner renders — cycleBudgetUsd: 10 > 0 → cycle-budget exhausted copy
+    expect(screen.getByText(/used your included cycle budget/i)).toBeInTheDocument();
 
     // Click "Top Up" button — covers line 1442-1443 (onClick callback)
     const topUpBtn = screen.getByText('Top Up');
@@ -631,30 +750,20 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     expect(openUrl).toHaveBeenCalled();
   });
 
-  // Covers line 1437: rate-limit message branch (isRateLimited=true, shouldShowBudgetCompletedMessage=false)
-  it('renders rate-limit message in budget banner when isRateLimited=true', async () => {
-    const teamUsage = {
-      cycleBudgetUsd: 10,
-      remainingUsd: 5,
-      fiveHourCapUsd: 5,
-      cycleLimit5hr: 5,
-      bypassCycleLimit: false,
-      fiveHourResetsAt: null,
-      cycleEndsAt: null,
-    };
+  it('clicking OpenRouter free models in the budget banner routes chat workloads', async () => {
+    const teamUsage = { cycleBudgetUsd: 10, remainingUsd: 0, cycleSpentUsd: 10, cycleEndsAt: null };
+    mockUseOpenRouterFreeModels.mockResolvedValueOnce(undefined);
 
     mockUseUsageState.mockReturnValue({
       teamUsage,
       currentPlan: null,
       currentTier: 'PRO' as const,
       isFreeTier: false,
-      usagePct10h: 1.0,
-      usagePct7d: 0.5,
+      usagePct: 1.0,
       isNearLimit: true,
-      isAtLimit: false,
-      isRateLimited: true,
-      isBudgetExhausted: false,
-      shouldShowBudgetCompletedMessage: false,
+      isAtLimit: true,
+      isBudgetExhausted: true,
+      shouldShowBudgetCompletedMessage: true,
       isLoading: false,
       refresh: vi.fn(),
     });
@@ -663,8 +772,13 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       await renderConversations({ thread: emptyThreadState });
     });
 
-    // isRateLimited=true, shouldShowBudgetCompletedMessage=false → rate-limit branch (line 1437)
-    expect(screen.getByText(/10-hour rate limit reached/i)).toBeInTheDocument();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Use OpenRouter free models/i }));
+    });
+
+    await waitFor(() => {
+      expect(mockUseOpenRouterFreeModels).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('handles /new from the composer without a selected thread or sending chat text', async () => {
@@ -673,7 +787,7 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     await act(async () => {
       await renderConversations({ thread: emptyThreadState, socket: socketState('connected') });
     });
-    const textarea = await screen.findByPlaceholderText('Type a message...');
+    const textarea = await screen.findByPlaceholderText('How can I help you today?');
     vi.mocked(threadApi.createNewThread).mockClear();
     vi.mocked(chatSend).mockClear();
 
@@ -686,15 +800,14 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     expect(textarea).toHaveValue('');
   });
 
-  it('shows the usage-limit modal instead of sending when the account is at limit', async () => {
+  it('blocks the send when the account is over budget (no rate-limit modal anymore)', async () => {
     const { textarea } = await renderSelectedConversation({ isAtLimit: true });
 
     await submitComposerText(textarea, 'hello at limit');
 
-    await waitFor(() => {
-      expect(screen.getByText('Usage Limit Reached')).toBeInTheDocument();
-    });
-    expect(screen.getByText(/Usage limit reached/i)).toBeInTheDocument();
+    // Backend PR #790 removed the rate-limit modal; over-budget now surfaces
+    // only the inline send-error (which clears as soon as the user keeps
+    // typing). The contract we still care about: chatSend is suppressed.
     expect(chatSend).not.toHaveBeenCalled();
   });
 
@@ -712,79 +825,326 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     expect(chatSend).toHaveBeenCalledWith({
       threadId: thread.id,
       message: 'hello cloud',
-      model: 'reasoning-v1',
+      model: 'hint:chat',
       profileId: 'default',
+      locale: 'en',
     });
   });
 
-  it('creates a custom agent profile from the header draft form', async () => {
-    const thread = makeThread({ id: 'profile-thread', title: 'Profile Thread' });
-    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
-    mockGetThreadMessages.mockResolvedValue({ messages: [], count: 0 });
-    vi.mocked(agentProfilesApi.upsert).mockResolvedValueOnce({
-      activeProfileId: 'custom',
-      profiles: [
-        {
-          id: 'custom',
-          name: 'Custom',
-          description: 'Custom agent profile',
-          agentId: 'orchestrator',
-          builtIn: false,
-        },
-      ],
-    });
-    vi.mocked(agentProfilesApi.select).mockResolvedValueOnce({
-      activeProfileId: 'custom',
-      profiles: [
-        {
-          id: 'custom',
-          name: 'Custom',
-          description: 'Custom agent profile',
-          agentId: 'orchestrator',
-          builtIn: false,
-        },
-      ],
+  it('auto-sends a dictation transcript (autoSend) straight to chat without the composer', async () => {
+    const { thread } = await renderSelectedConversation();
+
+    // Hotkey dictation dispatches this event with autoSend:true (see
+    // useDictationHotkey). Conversations must route it directly to chatSend,
+    // bypassing the text composer.
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent('dictation://insert-text', {
+          detail: { text: '  play highway to hell  ', autoSend: true },
+        })
+      );
     });
 
-    await act(async () => {
-      await renderConversations({
-        thread: selectedThreadState(thread),
-        socket: socketState('connected'),
+    await waitFor(() => {
+      expect(chatSend).toHaveBeenCalledWith({
+        threadId: thread.id,
+        message: 'play highway to hell',
+        model: 'hint:chat',
+        profileId: 'default',
+        locale: 'en',
       });
     });
-
-    fireEvent.click(await screen.findByLabelText('Create agent profile'));
-    fireEvent.change(screen.getByPlaceholderText('Profile name'), { target: { value: 'Custom' } });
-    fireEvent.change(screen.getByPlaceholderText('Prompt style'), {
-      target: { value: 'Be concise' },
-    });
-    fireEvent.change(screen.getByPlaceholderText('Allowed tools'), {
-      target: { value: 'todowrite, spawn_parallel_agents' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-
-    await waitFor(() => expect(agentProfilesApi.upsert).toHaveBeenCalledTimes(1));
-    expect(agentProfilesApi.upsert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'Custom',
-        systemPromptSuffix: 'Be concise',
-        allowedTools: ['todowrite', 'spawn_parallel_agents'],
-      })
-    );
-    expect(agentProfilesApi.select).toHaveBeenCalled();
   });
 
-  it('shows validation when creating a duplicate profile name', async () => {
+  it('ignores a blank autoSend dictation event (no send)', async () => {
+    await renderSelectedConversation();
+    vi.mocked(chatSend).mockClear();
+
     await act(async () => {
-      await renderConversations({ thread: emptyThreadState, socket: socketState('connected') });
+      window.dispatchEvent(
+        new CustomEvent('dictation://insert-text', { detail: { text: '   ', autoSend: true } })
+      );
     });
 
-    fireEvent.click(await screen.findByLabelText('Create agent profile'));
-    fireEvent.change(screen.getByPlaceholderText('Profile name'), { target: { value: 'Default' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(chatSend).not.toHaveBeenCalled();
+  });
 
-    expect(await screen.findByText('Agent profile "Default" already exists.')).toBeInTheDocument();
-    expect(agentProfilesApi.upsert).not.toHaveBeenCalled();
+  it('blocks duplicate sends while the first send is still pending', async () => {
+    let resolveSend: (() => void) | undefined;
+    vi.mocked(chatSend).mockImplementationOnce(
+      () =>
+        new Promise<string | undefined>(resolve => {
+          resolveSend = () => resolve(undefined);
+        })
+    );
+    const { textarea, thread } = await renderSelectedConversation();
+
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'slow backend' } });
+    });
+    await waitFor(() => {
+      expect(textarea).toHaveValue('slow backend');
+      expect(screen.getByRole('button', { name: 'Send message' })).not.toBeDisabled();
+    });
+
+    const sendButton = screen.getByRole('button', { name: 'Send message' });
+    await act(async () => {
+      fireEvent.click(sendButton);
+      fireEvent.click(sendButton);
+      fireEvent.click(sendButton);
+    });
+
+    await waitFor(() => {
+      expect(chatSend).toHaveBeenCalledTimes(1);
+    });
+    expect(threadApi.appendMessage).toHaveBeenCalledTimes(1);
+    expect(chatSend).toHaveBeenCalledWith({
+      threadId: thread.id,
+      message: 'slow backend',
+      model: 'hint:chat',
+      profileId: 'default',
+      locale: 'en',
+    });
+    expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
+    resolveSend?.();
+  });
+
+  it('releases the pending-send lock when appendMessage rejects with a generic error', async () => {
+    vi.mocked(threadApi.appendMessage).mockRejectedValueOnce(new Error('disk full'));
+    const { textarea } = await renderSelectedConversation();
+
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'will fail locally' } });
+    });
+    const sendButton = screen.getByRole('button', { name: 'Send message' });
+    await act(async () => {
+      fireEvent.click(sendButton);
+    });
+
+    // chatSend never runs because the local append failed first.
+    await waitFor(() => {
+      expect(threadApi.appendMessage).toHaveBeenCalledTimes(1);
+    });
+    expect(chatSend).not.toHaveBeenCalled();
+
+    // Pending guard released: the user can re-enter text and the send button
+    // enables again.
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'retry' } });
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Send message' })).not.toBeDisabled();
+    });
+  });
+
+  it('releases the pending-send lock when appendMessage hits a stale-thread error', async () => {
+    vi.mocked(threadApi.appendMessage).mockRejectedValueOnce(
+      new CoreRpcError('thread missing', 'thread_not_found')
+    );
+    const { textarea } = await renderSelectedConversation();
+
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'stale thread send' } });
+    });
+    const sendButton = screen.getByRole('button', { name: 'Send message' });
+    await act(async () => {
+      fireEvent.click(sendButton);
+    });
+
+    await waitFor(() => {
+      expect(threadApi.appendMessage).toHaveBeenCalledTimes(1);
+    });
+    expect(chatSend).not.toHaveBeenCalled();
+
+    // Stale-thread branch silently clears the guard; typing must re-enable Send.
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'retry' } });
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Send message' })).not.toBeDisabled();
+    });
+  });
+
+  it('clears the pending guard when the 120s silence timer fires', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { textarea } = await renderSelectedConversation();
+
+      await act(async () => {
+        fireEvent.change(textarea, { target: { value: 'hang the backend' } });
+      });
+      const sendButton = screen.getByRole('button', { name: 'Send message' });
+      await act(async () => {
+        fireEvent.click(sendButton);
+      });
+      await waitFor(() => {
+        expect(chatSend).toHaveBeenCalledTimes(1);
+      });
+
+      // Fast-forward past the 120s silence window with no inference signals.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(120_000);
+      });
+
+      // After the safety timeout, typing should re-enable Send — proves the
+      // pending guard was reset inside the timeout callback.
+      await act(async () => {
+        fireEvent.change(textarea, { target: { value: 'retry after timeout' } });
+      });
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Send message' })).not.toBeDisabled();
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('rearms the silence timer on sub-agent tool-timeline updates', async () => {
+    // Regression: when a delegated sub-agent (`Research`, `Tools Agent`,
+    // …) is running, the parent thread's `inferenceStatusByThread` and
+    // `streamingAssistantByThread` references can stay put while
+    // `toolTimelineByThread` and `taskBoardByThread` tick. The rearm
+    // effect must watch all four — otherwise a long sub-agent loop
+    // trips the 120s safety timer even though the user can see tools
+    // firing in the timeline.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { textarea, store, thread } = await renderSelectedConversation();
+
+      await act(async () => {
+        fireEvent.change(textarea, { target: { value: 'kick off a sub-agent loop' } });
+      });
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+      });
+      await waitFor(() => {
+        expect(chatSend).toHaveBeenCalledTimes(1);
+      });
+
+      // Two-thirds of the way through the safety window, the parent
+      // status is already in `subagent` phase and a delegated tool
+      // posts a timeline update. After the fix this re-arms the timer.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(80_000);
+      });
+      await act(async () => {
+        store!.dispatch(
+          setInferenceStatusForThread({
+            threadId: thread.id,
+            status: { phase: 'subagent', iteration: 1, maxIterations: 8 },
+          })
+        );
+        store!.dispatch(
+          setToolTimelineForThread({
+            threadId: thread.id,
+            entries: [{ id: 'tl-1', name: 'web_fetch', round: 1, status: 'running' }],
+          })
+        );
+      });
+
+      // Advance another 80s (total elapsed 160s, well past the 120s
+      // window). The tool-timeline dispatch should have re-armed the
+      // timer at the 80s mark, so the silence timer is now at 80s of
+      // its fresh 120s budget and has NOT fired. The pending guard
+      // therefore still holds and Send stays disabled — proof the
+      // rearm effect ran on a toolTimelineByThread change.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(80_000);
+      });
+      await act(async () => {
+        fireEvent.change(textarea, { target: { value: 'still typing while sub-agent runs' } });
+      });
+      expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does NOT rearm the silence timer on an unrelated thread’s updates', async () => {
+    // Regression for the per-thread dependency scoping: the rearm effect must
+    // react only to the SENDING thread's slices. A different thread churning
+    // (background triage, another conversation) must not keep the foreground
+    // turn's 120s timer alive — otherwise a truly hung send never fails fast.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { textarea, store } = await renderSelectedConversation();
+
+      await act(async () => {
+        fireEvent.change(textarea, { target: { value: 'send on the foreground thread' } });
+      });
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+      });
+      await waitFor(() => {
+        expect(chatSend).toHaveBeenCalledTimes(1);
+      });
+
+      // Churn an UNRELATED thread the whole time the foreground send is open.
+      // None of these dispatches target the sending thread ('send-thread'),
+      // so they must not rearm its timer.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(80_000);
+      });
+      await act(async () => {
+        store!.dispatch(
+          setInferenceStatusForThread({
+            threadId: 'some-other-thread',
+            status: { phase: 'subagent', iteration: 3, maxIterations: 8 },
+          })
+        );
+        store!.dispatch(
+          setToolTimelineForThread({
+            threadId: 'some-other-thread',
+            entries: [{ id: 'other-1', name: 'web_fetch', round: 1, status: 'running' }],
+          })
+        );
+      });
+
+      // Cross the original 120s deadline (80s + 50s = 130s). Because the
+      // unrelated-thread churn did NOT rearm, the safety timer fires: the
+      // pending guard is released and Send re-enables once the user types.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(50_000);
+      });
+      await act(async () => {
+        fireEvent.change(textarea, { target: { value: 'retry after timeout' } });
+      });
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Send message' })).not.toBeDisabled();
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('releases the pending-send lock when chatSend rejects', async () => {
+    vi.mocked(chatSend).mockRejectedValueOnce(new Error('emit failed'));
+    const { textarea } = await renderSelectedConversation();
+
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'doomed send' } });
+    });
+    await waitFor(() => {
+      expect(textarea).toHaveValue('doomed send');
+    });
+
+    const sendButton = screen.getByRole('button', { name: 'Send message' });
+    await act(async () => {
+      fireEvent.click(sendButton);
+    });
+
+    await waitFor(() => {
+      expect(chatSend).toHaveBeenCalledTimes(1);
+    });
+
+    // After the failed send, typing again should leave the composer enabled so
+    // the user can retry — proves the pending guard was released.
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'retry send' } });
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Send message' })).not.toBeDisabled();
+    });
   });
 
   it('rolls back and shows feedback when task board move persistence fails', async () => {
@@ -818,11 +1178,75 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     fireEvent.click(screen.getByLabelText('Move right'));
 
     await waitFor(() => {
-      expect(screen.getByText('Could not move task; changes were not saved.')).toBeInTheDocument();
+      expect(
+        screen.getByText('Could not update task; changes were not saved.')
+      ).toBeInTheDocument();
     });
+    // With the 5-column model, todo → right → awaiting_approval (not in_progress)
     expect(threadApi.putTaskBoard).toHaveBeenCalledWith(
       'board-thread',
-      expect.arrayContaining([expect.objectContaining({ id: 'task-1', status: 'in_progress' })])
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'task-1', status: 'awaiting_approval' }),
+      ])
+    );
+  });
+
+  it('rolls back and shows feedback when task board edit persistence fails', async () => {
+    const thread = makeThread({ id: 'edit-board-thread', title: 'Edit Board Thread' });
+    const board = {
+      threadId: 'edit-board-thread',
+      updatedAt: '2026-05-04T10:00:00Z',
+      cards: [
+        {
+          id: 'task-1',
+          title: 'Plan rollout',
+          status: 'todo' as const,
+          objective: 'Draft the launch task brief',
+          assignedAgent: 'planner',
+          approvalMode: 'required' as const,
+          plan: ['Read docs'],
+          allowedTools: ['todo'],
+          acceptanceCriteria: ['Saved board round-trips'],
+          evidence: [],
+          order: 0,
+          updatedAt: '2026-05-04T10:00:00Z',
+        },
+      ],
+    };
+    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
+    mockGetThreadMessages.mockResolvedValue({ messages: [], count: 0 });
+    vi.mocked(threadApi.getTaskBoard).mockResolvedValueOnce(board);
+    vi.mocked(threadApi.putTaskBoard).mockRejectedValueOnce(new Error('write failed'));
+
+    await act(async () => {
+      await renderConversations({
+        thread: selectedThreadState(thread),
+        socket: socketState('connected'),
+      });
+    });
+
+    expect(await screen.findByText('Plan rollout')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('Task brief'));
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Updated rollout' } });
+    fireEvent.change(screen.getByLabelText('Assigned agent'), {
+      target: { value: 'code_executor' },
+    });
+    fireEvent.click(screen.getByText('Save changes'));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText('Could not update task; changes were not saved.')
+      ).toBeInTheDocument();
+    });
+    expect(threadApi.putTaskBoard).toHaveBeenCalledWith(
+      'edit-board-thread',
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'task-1',
+          title: 'Updated rollout',
+          assignedAgent: 'code_executor',
+        }),
+      ])
     );
   });
 
@@ -845,8 +1269,9 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       expect(chatSend).toHaveBeenCalledWith({
         threadId: thread.id,
         message: 'enter send',
-        model: 'reasoning-v1',
+        model: 'hint:chat',
         profileId: 'default',
+        locale: 'en',
       });
     });
   });
@@ -919,8 +1344,9 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       expect(chatSend).toHaveBeenCalledWith({
         threadId: thread.id,
         message: '안녕',
-        model: 'reasoning-v1',
+        model: 'hint:chat',
         profileId: 'default',
+        locale: 'en',
       });
     });
   });
@@ -929,33 +1355,38 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
   //
   // The tab set is fixed so categories do not disappear when the thread list
   // is empty, and the active-filter state remains unambiguous.
-  it('renders all four fixed category tabs with stable labels', async () => {
+  it('renders the fixed chat bucket tabs with stable labels', async () => {
     await act(async () => {
       await renderConversations({ thread: emptyThreadState });
     });
 
-    // All four tabs must be present regardless of thread count.
-    expect(screen.getByRole('tab', { name: 'All' })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: 'Work' })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: 'Briefing' })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: 'Notification' })).toBeInTheDocument();
+    // Sidebar is hidden by default — open it first.
+    await openSidebar();
+
+    // Bucket tabs must be present regardless of thread count.
+    expect(screen.getByRole('tab', { name: 'General' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Subconscious' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Tasks' })).toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'All' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'Briefing' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'Notification' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'Workers' })).not.toBeInTheDocument();
+    expect(screen.getByRole('tablist')).toHaveClass('flex-wrap');
   });
 
-  it('starts with the "All" tab selected', async () => {
+  it('starts with the "General" tab selected', async () => {
     await act(async () => {
       await renderConversations({ thread: emptyThreadState });
     });
 
-    expect(screen.getByRole('tab', { name: 'All' })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByRole('tab', { name: 'Work' })).toHaveAttribute('aria-selected', 'false');
-  });
+    // Sidebar is hidden by default — open it first.
+    await openSidebar();
 
-  it('shows "No threads yet" placeholder when All tab is active and list is empty', async () => {
-    await act(async () => {
-      await renderConversations({ thread: emptyThreadState });
-    });
-
-    expect(screen.getByText('No threads yet')).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'General' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'Subconscious' })).toHaveAttribute(
+      'aria-selected',
+      'false'
+    );
   });
 
   it('shows category-specific empty message when a label tab is selected and no threads match', async () => {
@@ -963,26 +1394,28 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       await renderConversations({ thread: emptyThreadState });
     });
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Work' }));
+    // Sidebar is hidden by default — open it first.
+    await openSidebar();
+
+    fireEvent.click(screen.getByRole('tab', { name: 'General' }));
 
     await waitFor(() => {
-      expect(screen.getByText(/"work" threads/i)).toBeInTheDocument();
+      expect(screen.getByText(/"General" threads/i)).toBeInTheDocument();
     });
   });
 
-  // #1624 — Workers tab is the dedicated entry-point for sub-agent threads.
-  // When the active workspace has no worker threads (parentThreadId set), the
-  // empty state must use the friendly "No worker threads yet" copy rather
-  // than `No "workers" threads`.
-  it('shows the worker-specific empty message when the Workers tab is selected', async () => {
+  it('shows a category-specific empty message when the Tasks tab is selected', async () => {
     await act(async () => {
       await renderConversations({ thread: emptyThreadState });
     });
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Workers' }));
+    // Sidebar is hidden by default — open it first.
+    await openSidebar();
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Tasks' }));
 
     await waitFor(() => {
-      expect(screen.getByText('No worker threads yet')).toBeInTheDocument();
+      expect(screen.getByText(/"Tasks" threads/i)).toBeInTheDocument();
     });
   });
 });
@@ -1015,10 +1448,9 @@ describe('Conversations — worker thread back-to-parent navigation (#1624)', ()
       });
     });
 
-    // The mount effect resumes onto a *visible* (non-worker) thread, so even
-    // though the preloaded state pointed at the child, the page auto-selects
-    // the parent. Re-select the worker thread now that mount has settled to
-    // mimic the user clicking through to a worker from the Workers tab.
+    // The mount effect resumes onto the first visible General thread. Re-select
+    // the worker thread now that mount has settled to mimic opening it from the
+    // Tasks bucket or parent reference card.
     await act(async () => {
       store!.dispatch(setSelectedThread('t-child'));
     });
@@ -1093,5 +1525,258 @@ describe('Conversations — worker thread back-to-parent navigation (#1624)', ()
     // The loadThreadMessages thunk goes through the threadApi.getThreadMessages
     // helper — verify it was kicked off for the parent thread.
     expect(mockGetThreadMessages).toHaveBeenCalledWith('t-parent');
+  });
+
+  // Covers line 1871: t('chat.budgetComplete') — cycleBudgetUsd=0 exhausted branch
+  it('renders budgetComplete copy when cycleBudgetUsd=0 and budget is exhausted', async () => {
+    const teamUsage = { cycleBudgetUsd: 0, remainingUsd: 0, cycleSpentUsd: 0, cycleEndsAt: null };
+
+    mockUseUsageState.mockReturnValue({
+      teamUsage,
+      currentPlan: null,
+      currentTier: 'PRO' as const,
+      isFreeTier: false,
+      usagePct: 1.0,
+      isNearLimit: true,
+      isAtLimit: true,
+      isBudgetExhausted: true,
+      shouldShowBudgetCompletedMessage: true,
+      isLoading: false,
+      refresh: vi.fn(),
+    });
+
+    await act(async () => {
+      await renderConversations({ thread: emptyThreadState });
+    });
+
+    // cycleBudgetUsd=0 → false branch of cycleBudgetUsd > 0 ternary → budgetComplete key
+    expect(screen.getByText(/Your included budget is complete/i)).toBeInTheDocument();
+  });
+
+  // CycleUsagePill (cycle-pill tooltip, loading pulse) moved into ChatComposer
+  // toolbar (#3611) — those tests removed; the pill no longer renders here.
+});
+
+describe('Conversations — thread title editing', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockUseUsageState.mockReturnValue({
+      teamUsage: null,
+      currentPlan: null,
+      currentTier: 'FREE' as const,
+      isFreeTier: true,
+      usagePct: 0,
+      isNearLimit: false,
+      isAtLimit: false,
+      isBudgetExhausted: false,
+      shouldShowBudgetCompletedMessage: false,
+      isLoading: false,
+      refresh: vi.fn(),
+    });
+    mockGetThreadMessages.mockResolvedValue({ messages: [], count: 0 });
+  });
+
+  it('shows pencil icon on hover and enters edit mode on click', async () => {
+    const thread = makeThread({ id: 'edit-title-thread', title: 'Original Title' });
+    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
+
+    await act(async () => {
+      await renderConversations({
+        thread: selectedThreadState(thread),
+        socket: socketState('connected'),
+      });
+    });
+
+    expect(screen.getByText('Original Title')).toBeInTheDocument();
+
+    const editBtn = screen.getByRole('button', { name: 'Edit thread title' });
+    expect(editBtn).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.mouseDown(editBtn);
+    });
+
+    const input = screen.getByRole('textbox', { name: 'Edit thread title' });
+    expect(input).toBeInTheDocument();
+    expect(input).toHaveValue('Original Title');
+  });
+
+  it('commits edited title on Enter and dispatches updateThreadTitle', async () => {
+    const thread = makeThread({ id: 'commit-title-thread', title: 'Old Title' });
+    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
+    (threadApi.updateTitle as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...thread,
+      title: 'New Title',
+    });
+
+    await act(async () => {
+      await renderConversations({
+        thread: selectedThreadState(thread),
+        socket: socketState('connected'),
+      });
+    });
+
+    const editBtn = screen.getByRole('button', { name: 'Edit thread title' });
+    await act(async () => {
+      fireEvent.mouseDown(editBtn);
+    });
+
+    const input = screen.getByRole('textbox', { name: 'Edit thread title' });
+    await act(async () => {
+      fireEvent.change(input, { target: { value: 'New Title' } });
+    });
+    await act(async () => {
+      fireEvent.keyDown(input, { key: 'Enter' });
+    });
+
+    await waitFor(() => {
+      expect(threadApi.updateTitle).toHaveBeenCalledWith('commit-title-thread', 'New Title');
+    });
+  });
+
+  it('cancels editing on Escape without dispatching', async () => {
+    const thread = makeThread({ id: 'cancel-title-thread', title: 'Keep Me' });
+    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
+
+    await act(async () => {
+      await renderConversations({
+        thread: selectedThreadState(thread),
+        socket: socketState('connected'),
+      });
+    });
+
+    const editBtn = screen.getByRole('button', { name: 'Edit thread title' });
+    await act(async () => {
+      fireEvent.click(editBtn);
+    });
+
+    const input = screen.getByLabelText('Edit thread title');
+    await act(async () => {
+      fireEvent.change(input, { target: { value: 'Changed' } });
+    });
+    await act(async () => {
+      fireEvent.keyDown(input, { key: 'Escape' });
+    });
+
+    expect(screen.getByText('Keep Me')).toBeInTheDocument();
+    expect(threadApi.updateTitle).not.toHaveBeenCalled();
+  });
+
+  it('does not dispatch when title is empty after trim', async () => {
+    const thread = makeThread({ id: 'empty-title-thread', title: 'Has Title' });
+    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
+
+    await act(async () => {
+      await renderConversations({
+        thread: selectedThreadState(thread),
+        socket: socketState('connected'),
+      });
+    });
+
+    const editBtn = screen.getByRole('button', { name: 'Edit thread title' });
+    await act(async () => {
+      fireEvent.click(editBtn);
+    });
+
+    const input = screen.getByLabelText('Edit thread title');
+    await act(async () => {
+      fireEvent.change(input, { target: { value: '   ' } });
+    });
+    await act(async () => {
+      fireEvent.keyDown(input, { key: 'Enter' });
+    });
+
+    expect(threadApi.updateTitle).not.toHaveBeenCalled();
+  });
+});
+
+describe('Conversations — open-session resume (View work)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetThreadMessages.mockResolvedValue({ messages: [], count: 0 });
+  });
+
+  it('honours location.state.openThreadId to open a task session on mount', async () => {
+    // A task-labelled session thread, reachable only via an explicit
+    // open-intent because it's hidden behind the default General tab.
+    const taskThread = makeThread({
+      id: 'task-open-1',
+      title: 'Autonomous run',
+      labels: ['tasks'],
+    });
+    mockGetThreads.mockResolvedValue({ threads: [taskThread], count: 1 });
+
+    const store = buildStore({ thread: emptyThreadState });
+    const { default: Conversations } = await import('../Conversations');
+
+    await act(async () => {
+      render(
+        <Provider store={store}>
+          <MemoryRouter
+            initialEntries={[
+              { pathname: '/conversations', state: { openThreadId: 'task-open-1' } },
+            ]}>
+            <Conversations />
+          </MemoryRouter>
+        </Provider>
+      );
+    });
+
+    // The open-intent selects the task session (bypassing the General-tab
+    // filter) and loads its messages.
+    await waitFor(() => expect(store.getState().thread.selectedThreadId).toBe('task-open-1'));
+    await waitFor(() => expect(mockGetThreadMessages).toHaveBeenCalled());
+  });
+
+  it("View work on a selected task board opens that card's session thread", async () => {
+    const thread = makeThread({ id: 'board-thread', title: 'Board thread' });
+    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
+
+    const store = buildStore({ thread: selectedThreadState(thread) });
+
+    const { default: Conversations } = await import('../Conversations');
+    await act(async () => {
+      render(
+        <Provider store={store}>
+          <MemoryRouter initialEntries={['/conversations']}>
+            <Conversations />
+          </MemoryRouter>
+        </Provider>
+      );
+    });
+    // Let the mount-resume effect settle, then seed the selected thread's task
+    // board with a card that has a live session (seeding before mount gets
+    // clobbered by turn-state hydration).
+    await screen.findByPlaceholderText('How can I help you today?');
+    const selectedId = store.getState().thread.selectedThreadId ?? 'board-thread';
+    await act(async () => {
+      store.dispatch(
+        setTaskBoardForThread({
+          threadId: selectedId,
+          board: {
+            threadId: selectedId,
+            updatedAt: '',
+            cards: [
+              {
+                id: 'tc1',
+                title: 'Worked card',
+                status: 'in_progress',
+                order: 0,
+                updatedAt: '',
+                sessionThreadId: 'sess-99',
+              },
+            ],
+          },
+        })
+      );
+    });
+
+    const viewBtn = await screen.findByTitle('View work');
+    await act(async () => {
+      fireEvent.click(viewBtn);
+    });
+
+    // onViewSession navigates the chat view to the card's session thread.
+    await waitFor(() => expect(store.getState().thread.selectedThreadId).toBe('sess-99'));
   });
 });

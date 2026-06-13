@@ -29,6 +29,23 @@ function currentRepoRoot() {
   return physical;
 }
 
+function usage() {
+  return [
+    'Usage: node scripts/codex-pr-preflight.mjs [--lightweight] [--strict-path]',
+    '',
+    'Checks the current checkout for Codex PR preflight requirements and prints',
+    'recommended validation commands for the changed files.',
+    '',
+    'Options:',
+    '  --lightweight   Skip the heavier "pnpm debug rust" recommendation for Rust changes.',
+    '  --strict-path   Assert the checkout lives at the expected repo path.',
+    '  -h, --help      Show this help and exit.',
+    '',
+    'Environment:',
+    '  CODEX_EXPECT_REPO_PATH   Expected repo path for --strict-path (default /workspace/openhuman).',
+  ].join('\n');
+}
+
 function parseArgs(argv) {
   return {
     lightweight: argv.includes('--lightweight'),
@@ -39,6 +56,22 @@ function parseArgs(argv) {
 
 function runCheck(label, ok, details = '') {
   return { label, ok, details };
+}
+
+function sameFilesystemPath(left, right) {
+  let resolvedLeft;
+  let resolvedRight;
+  try {
+    resolvedLeft = fs.realpathSync(left);
+  } catch {
+    resolvedLeft = path.resolve(left);
+  }
+  try {
+    resolvedRight = fs.realpathSync(right);
+  } catch {
+    resolvedRight = path.resolve(right);
+  }
+  return resolvedLeft === resolvedRight;
 }
 
 function summarize(checks) {
@@ -69,13 +102,18 @@ function recommendations(changedFiles, lightweight) {
 }
 
 function main() {
-  const options = parseArgs(process.argv.slice(2));
+  const argv = process.argv.slice(2);
+  if (argv.includes('--help') || argv.includes('-h')) {
+    console.log(usage());
+    process.exit(0);
+  }
+  const options = parseArgs(argv);
   const repoRoot = currentRepoRoot();
   const checks = [];
 
   checks.push(runCheck('working directory exists', fs.existsSync(repoRoot), repoRoot));
   if (options.strictPath) {
-    checks.push(runCheck('expected repo path', path.resolve(repoRoot) === path.resolve(options.expectedPath), `expected ${options.expectedPath}, got ${repoRoot}`));
+    checks.push(runCheck('expected repo path', sameFilesystemPath(repoRoot, options.expectedPath), `expected ${options.expectedPath}, got ${repoRoot}`));
   }
 
   for (const file of REQUIRED_FILES) {

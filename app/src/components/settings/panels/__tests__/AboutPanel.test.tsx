@@ -33,6 +33,13 @@ vi.mock('../../../../utils/tauriCommands', () => ({
 
 vi.mock('../../../../utils/openUrl', () => ({ openUrl: hoisted.mockOpenUrl }));
 
+vi.mock('@tauri-apps/api/core', () => ({
+  // AboutPanel calls invoke<string>('core_rpc_url') in a useEffect.
+  // Return a resolved Promise so .then() doesn't throw.
+  invoke: vi.fn(() => Promise.resolve(null)),
+  isTauri: vi.fn(() => true),
+}));
+
 vi.mock('@tauri-apps/api/event', () => ({
   listen: vi.fn((event: string, handler: (event: { payload: string }) => void) => {
     if (event === 'app-update:status') {

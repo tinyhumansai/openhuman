@@ -1,0 +1,11 @@
+[[permission]]
+identifier = "allow-artifact-download"
+description = "Allow copying agent-generated artifacts from the workspace artifacts/ tree to the user's Downloads folder (#2779)"
+
+[permission.commands]
+
+allow = [
+    "download_artifact_to_downloads",
+]
+
+deny = []

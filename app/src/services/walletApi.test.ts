@@ -50,4 +50,49 @@ describe('walletApi', () => {
       params: payload,
     });
   });
+
+  // fetchWalletBalances tests
+  it('fetchWalletBalances calls wallet.balances via openhuman.wallet_balances and returns the array', async () => {
+    const rows = [
+      {
+        chain: 'evm',
+        evmNetwork: 'ethereum_mainnet',
+        address: '0xABCD',
+        assetSymbol: 'ETH',
+        decimals: 18,
+        raw: '1000000000000000000',
+        formatted: '1.000000000000000000',
+        providerStatus: 'ready',
+      },
+    ];
+    mockCallCoreRpc.mockResolvedValueOnce({ result: rows });
+
+    const { fetchWalletBalances } = await import('./walletApi');
+    const result = await fetchWalletBalances();
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({ method: 'openhuman.wallet_balances' });
+    expect(result).toHaveLength(1);
+    expect(result[0].assetSymbol).toBe('ETH');
+    expect(result[0].providerStatus).toBe('ready');
+  });
+
+  it('fetchWalletBalances propagates RPC errors to the caller', async () => {
+    mockCallCoreRpc.mockRejectedValueOnce(
+      new Error('wallet is not configured; run wallet setup first')
+    );
+
+    const { fetchWalletBalances } = await import('./walletApi');
+    await expect(fetchWalletBalances()).rejects.toThrow(
+      'wallet is not configured; run wallet setup first'
+    );
+  });
+
+  it('fetchWalletBalances maps an empty result array to an empty array', async () => {
+    mockCallCoreRpc.mockResolvedValueOnce({ result: [] });
+
+    const { fetchWalletBalances } = await import('./walletApi');
+    const result = await fetchWalletBalances();
+
+    expect(result).toEqual([]);
+  });
 });

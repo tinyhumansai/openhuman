@@ -11,9 +11,11 @@
 //!    fallback formats).
 //! 6. `DateTimeSection` produces an ISO-8601-like timestamp with a timezone token.
 //! 7. `parse_tool_timeout_secs` default and boundary cases.
+//! 8. Spawn-depth gate (`SpawnDepthExceeded`) is covered in
+//!    `subagent_runner/ops_tests.rs` because it lives at the `run_subagent`
+//!    boundary.
 //!
 //! Items that have NO underlying code and therefore cannot be tested:
-//! - Spawn-depth gate (SpawnDepthExceeded) — no depth counter or variant exists.
 //! - Follow-up resolution ("yes"/"no" disambiguation) — not implemented.
 //! - Silence timer (SilenceTimeout, 600 s) — not implemented.
 //! - `<invoke tool=…>` XML attribute form — the parser does not parse attributes;
@@ -106,6 +108,10 @@ fn multimodal_cfg() -> crate::openhuman::config::MultimodalConfig {
     crate::openhuman::config::MultimodalConfig::default()
 }
 
+fn multimodal_file_cfg() -> crate::openhuman::config::MultimodalFileConfig {
+    crate::openhuman::config::MultimodalFileConfig::default()
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Item 1 — Full turn cycle: user → LLM emits tool call → tool executes →
 //           result injected → LLM produces final text.
@@ -121,11 +127,13 @@ async fn full_turn_cycle_user_llm_tool_result_final() {
                 text: Some("<tool_call>{\"name\":\"echo\",\"arguments\":{}}</tool_call>".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             }),
             Ok(ChatResponse {
                 text: Some("The tool said: echo-out".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             }),
         ]),
     };
@@ -140,15 +148,16 @@ async fn full_turn_cycle_user_llm_tool_result_final() {
         "model",
         0.0,
         true,
-        None,
         "channel",
         &multimodal_cfg(),
+        &multimodal_file_cfg(),
         2,
         None,
         None,
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect("full turn cycle should succeed");
@@ -186,6 +195,7 @@ async fn max_iterations_exceeded_downcasts_to_typed_agent_error() {
             text: Some("<tool_call>{\"name\":\"echo\",\"arguments\":{}}</tool_call>".into()),
             tool_calls: vec![],
             usage: None,
+            reasoning_content: None,
         })]),
     };
     let mut history = vec![ChatMessage::user("loop me")];
@@ -199,15 +209,16 @@ async fn max_iterations_exceeded_downcasts_to_typed_agent_error() {
         "model",
         0.0,
         true,
-        None,
         "channel",
         &multimodal_cfg(),
+        &multimodal_file_cfg(),
         1,
         None,
         None,
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect_err("loop must fail when iterations exhausted");
@@ -252,11 +263,13 @@ async fn visible_tool_names_rejects_tool_outside_whitelist() {
                 ),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             }),
             Ok(ChatResponse {
                 text: Some("corrected response".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             }),
         ]),
     };
@@ -274,15 +287,16 @@ async fn visible_tool_names_rejects_tool_outside_whitelist() {
         "model",
         0.0,
         true,
-        None,
         "channel",
         &multimodal_cfg(),
+        &multimodal_file_cfg(),
         2,
         None,
         Some(&whitelist),
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect("loop should recover after whitelisted-out tool call");
@@ -311,11 +325,13 @@ async fn visible_tool_names_allows_tool_inside_whitelist() {
                 text: Some("<tool_call>{\"name\":\"echo\",\"arguments\":{}}</tool_call>".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             }),
             Ok(ChatResponse {
                 text: Some("heard echo-out".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             }),
         ]),
     };
@@ -331,15 +347,16 @@ async fn visible_tool_names_allows_tool_inside_whitelist() {
         "model",
         0.0,
         true,
-        None,
         "channel",
         &multimodal_cfg(),
+        &multimodal_file_cfg(),
         2,
         None,
         Some(&whitelist),
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect("whitelisted tool should execute");
@@ -514,7 +531,7 @@ fn datetime_section_output_matches_iso8601_date_and_utc_offset_pattern() {
         model_name: "test-model",
         agent_id: "",
         tools: EMPTY_TOOLS,
-        skills: &[],
+        workflows: &[],
         dispatcher_instructions: "",
         learned: crate::openhuman::agent::prompts::LearnedContextData::default(),
         visible_tool_names: &EMPTY_FILTER,
@@ -525,6 +542,9 @@ fn datetime_section_output_matches_iso8601_date_and_utc_offset_pattern() {
         include_memory_md: false,
         curated_snapshot: None,
         user_identity: None,
+        personality_soul_md: None,
+        personality_memory_md: None,
+        personality_roster: vec![],
     };
 
     let rendered = DateTimeSection.build(&ctx).unwrap();

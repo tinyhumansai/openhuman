@@ -147,7 +147,9 @@ async function makeFixtureRepo(absRepoDir: string): Promise<void> {
   }
 }
 
-describe('System tools — Shell + Git (registry, denial envelope, fixture repo)', () => {
+describe('System tools — Shell + Git (registry, denial envelope, fixture repo)', function () {
+  this.timeout(120_000);
+
   before(async () => {
     await startMockServer();
     await waitForApp();
@@ -176,7 +178,9 @@ describe('System tools — Shell + Git (registry, denial envelope, fixture repo)
     const status = await callOpenhumanRpc<ServerStatus>('openhuman.agent_server_status', {});
     stepLog('agent_server_status response', status);
     expect(status.ok).toBe(true);
-    expect(status.result?.running).toBe(true);
+    // agent_server_status uses single_log → result is {result: {running, url}, logs: [...]}
+    const statusPayload = (status.result as any)?.result ?? status.result;
+    expect(statusPayload?.running).toBe(true);
 
     // tools_agent inherits the orchestrator's full built-in tool surface
     // (shell, file_read, file_write, git_operations, browser_open, browser).

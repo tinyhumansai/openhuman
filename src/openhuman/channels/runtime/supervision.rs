@@ -57,7 +57,13 @@ pub(crate) fn spawn_supervised_listener(
                     backoff = initial_backoff_secs.max(1);
                 }
                 Err(e) => {
-                    tracing::error!("Channel {} error: {e}; restarting", ch.name());
+                    let message = format!("Channel {} error: {e:#}; restarting", ch.name());
+                    crate::core::observability::report_error_or_expected(
+                        message.as_str(),
+                        "channels",
+                        "supervised_listener",
+                        &[("channel", ch.name())],
+                    );
                     publish_global(DomainEvent::ChannelDisconnected {
                         channel: ch.name().to_string(),
                         reason: e.to_string(),
@@ -117,5 +123,19 @@ mod tests {
     fn compute_max_in_flight_messages_clamps_to_max() {
         let result = compute_max_in_flight_messages(usize::MAX);
         assert!(result <= CHANNEL_MAX_IN_FLIGHT_MESSAGES);
+    }
+
+    #[test]
+    fn supervision_discord_gateway_reqwest_failure_classifies_as_expected() {
+        let raw = "error sending request for url (https://discord.com/api/v10/gateway/bot)";
+        let wrapped = format!("Channel discord error: {raw}; restarting");
+        let kind = crate::core::observability::expected_error_kind(&wrapped);
+        assert_eq!(
+            kind,
+            Some(crate::core::observability::ExpectedErrorKind::ChannelSupervisorRestart),
+            "supervision wrapper must classify as ChannelSupervisorRestart \
+             (precedence over NetworkUnreachable) so Sentry stays quiet for \
+             TAURI-RUST-15/-BB (got {kind:?} for message {wrapped:?})"
+        );
     }
 }

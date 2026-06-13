@@ -71,6 +71,47 @@ pub struct ComposioToolkitsResponse {
     pub toolkits: Vec<String>,
 }
 
+/// One row in OpenHuman's local Composio capability matrix.
+///
+/// Unlike `ComposioToolkitsResponse`, this is not tied to a signed-in
+/// backend/direct Composio session. It describes what this core build knows
+/// how to do for each toolkit: whether the toolkit has a native provider
+/// implementation, a curated tool catalog, profile/sync hooks, and memory
+/// ingestion support.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComposioCapability {
+    pub toolkit: String,
+    pub description: String,
+    pub native_provider: bool,
+    pub curated_tools: bool,
+    pub curated_tool_count: usize,
+    pub tool_execution: bool,
+    pub user_profile: bool,
+    pub initial_sync: bool,
+    pub periodic_sync: bool,
+    pub sync_interval_secs: Option<u64>,
+    pub trigger_webhooks: bool,
+    pub memory_ingest: bool,
+}
+
+/// Response body of `composio.list_capabilities`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ComposioCapabilitiesResponse {
+    #[serde(default)]
+    pub capabilities: Vec<ComposioCapability>,
+}
+
+/// Response body of `composio.list_agent_ready_toolkits`.
+///
+/// Sorted slugs that have a curated agent catalog — the frontend
+/// uses this to decide whether to label a connected toolkit as
+/// "preview / agent integration coming soon". See #2283.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ComposioAgentReadyToolkitsResponse {
+    #[serde(default)]
+    pub toolkits: Vec<String>,
+}
+
 // ── Connections ─────────────────────────────────────────────────────
 
 /// One connected Composio account (OAuth integration instance).
@@ -85,6 +126,26 @@ pub struct ComposioConnection {
     /// ISO timestamp (backend passes this through from Composio).
     #[serde(rename = "createdAt", default, skip_serializing_if = "Option::is_none")]
     pub created_at: Option<String>,
+    /// Account email — populated from the cached provider profile when
+    /// the toolkit reports an email address (e.g. Gmail, Google Calendar,
+    /// Google Sheets). Lets the UI picker show "Gmail · user@example.com"
+    /// instead of a generic "Account N" label.
+    #[serde(
+        rename = "accountEmail",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub account_email: Option<String>,
+    /// Workspace or team display name — populated for workspace-based
+    /// services (e.g. Slack: user display name / team name, Notion: workspace
+    /// name). Used by the picker when no email is available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<String>,
+    /// Screen name or handle — populated for username-based services
+    /// (e.g. GitHub login, Twitter handle). Used by the picker as a
+    /// last-resort identity hint after email and workspace.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
 }
 
 impl ComposioConnection {
@@ -129,6 +190,8 @@ pub struct ComposioAuthorizeResponse {
 pub struct ComposioDeleteResponse {
     #[serde(default)]
     pub deleted: bool,
+    #[serde(default)]
+    pub memory_chunks_deleted: usize,
 }
 
 // ── Tools ───────────────────────────────────────────────────────────
@@ -382,6 +445,9 @@ mod tests {
                 toolkit: "slack".into(),
                 status: status.into(),
                 created_at: None,
+                account_email: None,
+                workspace: None,
+                username: None,
             };
             assert!(conn.is_active(), "status {status:?} should be active");
         }
@@ -392,6 +458,9 @@ mod tests {
                 toolkit: "slack".into(),
                 status: status.into(),
                 created_at: None,
+                account_email: None,
+                workspace: None,
+                username: None,
             };
             assert!(!conn.is_active(), "status {status:?} should not be active");
         }
@@ -404,6 +473,9 @@ mod tests {
             toolkit: " Slack ".into(),
             status: "ACTIVE".into(),
             created_at: None,
+            account_email: None,
+            workspace: None,
+            username: None,
         };
         assert_eq!(conn.normalized_toolkit(), "slack");
     }
@@ -451,6 +523,9 @@ mod tests {
             toolkit: "notion".into(),
             status: "PENDING".into(),
             created_at: None,
+            account_email: None,
+            workspace: None,
+            username: None,
         };
         let s = serde_json::to_value(&conn).unwrap();
         assert!(

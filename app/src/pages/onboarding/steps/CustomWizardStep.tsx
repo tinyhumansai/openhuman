@@ -12,26 +12,38 @@ interface ChoiceCardProps {
   title: string;
   description: string;
   testId: string;
+  disabled?: boolean;
 }
 
-const ChoiceCard = ({ selected, onClick, accent, title, description, testId }: ChoiceCardProps) => {
+const ChoiceCard = ({
+  selected,
+  onClick,
+  accent,
+  title,
+  description,
+  testId,
+  disabled = false,
+}: ChoiceCardProps) => {
   const selectedClasses =
     accent === 'sage'
-      ? '!border-sage-500 bg-sage-50 shadow-sm'
-      : '!border-primary-500 bg-primary-50 shadow-sm';
+      ? '!border-sage-500 bg-sage-50 dark:bg-sage-500/10 shadow-sm'
+      : '!border-primary-500 bg-primary-50 dark:bg-primary-500/15 shadow-sm';
   return (
     <button
       type="button"
       onClick={onClick}
+      disabled={disabled}
       aria-pressed={selected}
       data-testid={testId}
-      className={`flex h-full w-full flex-col rounded-2xl border-2 p-5 text-left transition-colors focus:outline-none ${
+      className={`flex h-full w-full flex-col rounded-2xl border-2 p-5 text-left transition-colors focus:outline-none disabled:cursor-not-allowed disabled:opacity-60 ${
         selected
           ? selectedClasses
-          : '!border-stone-200 bg-white hover:!border-stone-300 hover:bg-stone-50'
+          : '!border-stone-200 dark:!border-neutral-700 bg-white dark:bg-neutral-900 hover:!border-stone-300 dark:hover:!border-neutral-600 hover:bg-stone-50 dark:hover:bg-neutral-800/60'
       }`}>
-      <h3 className="text-base font-semibold text-stone-900">{title}</h3>
-      <p className="mt-1 text-xs text-stone-600 leading-relaxed">{description}</p>
+      <h3 className="text-base font-semibold text-stone-900 dark:text-neutral-100">{title}</h3>
+      <p className="mt-1 text-xs text-stone-600 dark:text-neutral-300 leading-relaxed">
+        {description}
+      </p>
     </button>
   );
 };
@@ -57,6 +69,9 @@ interface CustomWizardStepProps {
   continueLoading?: boolean;
   continueLoadingLabel?: string;
   testId?: string;
+  defaultDisabled?: boolean;
+  defaultDisabledReason?: string;
+  hideChoiceCards?: boolean;
 }
 
 const CustomWizardStep = ({
@@ -76,6 +91,9 @@ const CustomWizardStep = ({
   continueLoading,
   continueLoadingLabel,
   testId,
+  defaultDisabled = false,
+  defaultDisabledReason,
+  hideChoiceCards = false,
 }: CustomWizardStepProps) => {
   const { t } = useT();
   const [isContinuing, setIsContinuing] = useState(false);
@@ -95,39 +113,57 @@ const CustomWizardStep = ({
     t('onboarding.custom.stepperVoice'),
     t('onboarding.custom.stepperOAuth'),
     t('onboarding.custom.stepperSearch'),
+    t('onboarding.custom.stepperEmbeddings'),
+    t('onboarding.custom.stepperActivity'),
+    t('onboarding.custom.stepperVault'),
     t('onboarding.custom.stepperMemory'),
   ].slice(0, stepCount);
 
   return (
     <div
       data-testid={testId ?? 'onboarding-custom-wizard-step'}
-      className="rounded-2xl bg-white p-10 shadow-soft animate-fade-up">
+      className="rounded-2xl bg-white dark:bg-neutral-900 p-10 shadow-soft animate-fade-up">
       <WizardStepper labels={stepperLabels} activeIndex={stepIndex} />
 
-      <h1 className="mt-8 text-2xl font-display text-stone-900 leading-tight">{title}</h1>
-      <p className="mt-2 text-sm text-stone-500 leading-relaxed">{subtitle}</p>
+      <h1 className="mt-8 text-2xl font-display text-stone-900 dark:text-neutral-100 leading-tight">
+        {title}
+      </h1>
+      <p className="mt-2 text-sm text-stone-500 dark:text-neutral-400 leading-relaxed">
+        {subtitle}
+      </p>
 
-      <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2 sm:items-stretch">
-        <ChoiceCard
-          testId={`${testId ?? 'onboarding-custom-wizard-step'}-default`}
-          accent="sage"
-          selected={choice === 'default'}
-          onClick={() => onChoiceChange('default')}
-          title={t('onboarding.custom.defaultTitle')}
-          description={defaultDescription || t('onboarding.custom.defaultSubtitle')}
-        />
-        <ChoiceCard
-          testId={`${testId ?? 'onboarding-custom-wizard-step'}-configure`}
-          accent="primary"
-          selected={choice === 'configure'}
-          onClick={() => onChoiceChange('configure')}
-          title={t('onboarding.custom.configureTitle')}
-          description={configureDescription || t('onboarding.custom.configureSubtitle')}
-        />
-      </div>
+      {!hideChoiceCards ? (
+        <>
+          <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2 sm:items-stretch">
+            <ChoiceCard
+              testId={`${testId ?? 'onboarding-custom-wizard-step'}-default`}
+              accent="sage"
+              selected={choice === 'default'}
+              onClick={() => onChoiceChange('default')}
+              disabled={defaultDisabled}
+              title={t('onboarding.custom.defaultTitle')}
+              description={defaultDescription || t('onboarding.custom.defaultSubtitle')}
+            />
+            <ChoiceCard
+              testId={`${testId ?? 'onboarding-custom-wizard-step'}-configure`}
+              accent="primary"
+              selected={choice === 'configure'}
+              onClick={() => onChoiceChange('configure')}
+              title={t('onboarding.custom.configureTitle')}
+              description={configureDescription || t('onboarding.custom.configureSubtitle')}
+            />
+          </div>
 
-      {choice === 'configure' && configureContent ? (
-        <div className="mt-6 rounded-2xl border border-stone-200 bg-stone-50 p-5">
+          {defaultDisabled && defaultDisabledReason ? (
+            <p className="mt-3 text-xs text-stone-500 dark:text-neutral-400 leading-relaxed">
+              {defaultDisabledReason}
+            </p>
+          ) : null}
+        </>
+      ) : null}
+
+      {(choice === 'configure' || hideChoiceCards) && configureContent ? (
+        <div className="mt-6 rounded-2xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-5">
           {configureContent}
         </div>
       ) : null}
@@ -136,7 +172,7 @@ const CustomWizardStep = ({
         <button
           type="button"
           onClick={onBack}
-          className="rounded-xl border border-stone-200 bg-white px-4 py-2.5 text-sm font-medium text-stone-700 hover:bg-stone-50 focus:outline-none">
+          className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-4 py-2.5 text-sm font-medium text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60 focus:outline-none">
           {t('onboarding.custom.back')}
         </button>
         <div className="flex-1">

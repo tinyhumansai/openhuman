@@ -7,6 +7,7 @@
 mod event_handlers;
 pub mod manager;
 mod schemas;
+pub(crate) mod token_provider;
 pub mod types;
 pub(crate) mod ws_loop;
 

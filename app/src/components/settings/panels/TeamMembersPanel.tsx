@@ -1,3 +1,4 @@
+import debug from 'debug';
 import { useEffect, useState } from 'react';
 import { useLocation, useParams } from 'react-router-dom';
 
@@ -5,8 +6,14 @@ import { useT } from '../../../lib/i18n/I18nContext';
 import { useCoreState } from '../../../providers/CoreStateProvider';
 import { teamApi } from '../../../services/api/teamApi';
 import type { TeamMember, TeamRole } from '../../../types/team';
+import { sanitizeError } from '../../../utils/sanitize';
+import { CenteredLoadingState, ErrorBanner, InlineLoadingStatus } from '../../ui';
+import Button from '../../ui/Button';
 import SettingsHeader from '../components/SettingsHeader';
+import { SettingsBadge, SettingsEmptyState, SettingsSection, SettingsSelect } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+
+const log = debug('core-rpc:error');
 
 const ROLES: TeamRole[] = ['ADMIN', 'BILLING_MANAGER', 'MEMBER'];
 
@@ -41,7 +48,15 @@ const TeamMembersPanel = () => {
   useEffect(() => {
     if (!currentTeamId) return;
     setIsLoadingMembers(true);
-    void refreshTeamMembers(currentTeamId).finally(() => setIsLoadingMembers(false));
+    // `.finally()` alone left this as `void promise(...)`, so any rejection
+    // (cold core boot, backend 504, local AbortController timeout) became an
+    // unhandled rejection → OPENHUMAN-REACT-10. Swallow into a logged
+    // breadcrumb; the user can retry by navigating away and back.
+    refreshTeamMembers(currentTeamId)
+      .catch(err => {
+        log('refreshTeamMembers failed in TeamMembersPanel: %O', sanitizeError(err));
+      })
+      .finally(() => setIsLoadingMembers(false));
   }, [currentTeamId, refreshTeamMembers]);
 
   const handleChangeRole = (member: TeamMember, newRole: TeamRole) => {
@@ -66,7 +81,7 @@ const TeamMembersPanel = () => {
       setError(
         err && typeof err === 'object' && 'error' in err
           ? String(err.error)
-          : 'Failed to change role'
+          : t('team.failedChangeRole')
       );
     } finally {
       setChangingRoleId(null);
@@ -92,7 +107,7 @@ const TeamMembersPanel = () => {
       setError(
         err && typeof err === 'object' && 'error' in err
           ? String(err.error)
-          : 'Failed to remove member'
+          : t('team.failedRemoveMember')
       );
     } finally {
       setRemovingId(null);
@@ -108,14 +123,14 @@ const TeamMembersPanel = () => {
 
   const isCurrentUser = (m: TeamMember) => m.user._id === user?._id;
 
-  const roleBadgeColor: Record<string, string> = {
-    ADMIN: 'bg-primary-500/20 text-primary-400 border-primary-500/30',
-    BILLING_MANAGER: 'bg-amber-500/20 text-amber-400 border-amber-500/30',
-    MEMBER: 'bg-stone-500/20 text-stone-400 border-stone-500/30',
+  const roleBadgeVariant: Record<string, 'primary' | 'warning' | 'neutral'> = {
+    ADMIN: 'primary',
+    BILLING_MANAGER: 'warning',
+    MEMBER: 'neutral',
   };
 
   return (
-    <div>
+    <div className="z-10 relative">
       <SettingsHeader
         title={t('team.members')}
         showBackButton={true}
@@ -123,250 +138,225 @@ const TeamMembersPanel = () => {
         breadcrumbs={breadcrumbs}
       />
 
-      <div>
-        <div className="p-4 space-y-4">
-          {error && (
-            <div className="rounded-xl bg-coral-500/10 border border-coral-500/20 p-3">
-              <p className="text-xs text-coral-400">{error}</p>
-            </div>
+      <div className="p-4 pt-2 space-y-5">
+        {error && <ErrorBanner message={error} />}
+
+        {/* Refreshing indicator - only when loading and has existing data */}
+        {isLoadingMembers && members.length > 0 && (
+          <InlineLoadingStatus label={t('team.refreshingMembers')} />
+        )}
+
+        {/* Member count */}
+        <p className="text-xs text-neutral-500 dark:text-neutral-400 px-1">
+          {t(members.length === 1 ? 'team.memberCount' : 'team.memberCountPlural').replace(
+            '{count}',
+            String(members.length)
           )}
+        </p>
 
-          {/* Refreshing indicator - only when loading and has existing data */}
-          {isLoadingMembers && members.length > 0 && (
-            <div className="flex items-center gap-2 px-1 py-2 text-xs text-amber-400">
-              <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
-                <circle
-                  className="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  strokeWidth="4"
-                />
-                <path
-                  className="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                />
-              </svg>
-              Refreshing members...
-            </div>
-          )}
-
-          {/* Member count */}
-          <p className="text-xs text-stone-500 px-1">
-            {members.length} member{members.length !== 1 ? 's' : ''}
-          </p>
-
-          {/* Full loading state - only when loading and no existing data */}
-          {isLoadingMembers && members.length === 0 ? (
-            <div className="flex items-center justify-center py-8">
-              <svg className="w-5 h-5 text-stone-500 animate-spin" fill="none" viewBox="0 0 24 24">
-                <circle
-                  className="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  strokeWidth="4"
-                />
-                <path
-                  className="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                />
-              </svg>
-              <span className="ml-3 text-sm text-stone-500">Loading members...</span>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {members.map(member => (
-                <div
-                  key={member._id}
-                  className="flex items-center justify-between p-3 rounded-xl border border-stone-200 bg-white">
-                  <div className="flex items-center gap-3 min-w-0">
-                    {/* Avatar */}
-                    <div className="w-8 h-8 rounded-full bg-stone-700/60 flex items-center justify-center flex-shrink-0">
-                      <span className="text-xs font-semibold text-white">
-                        {displayName(member).charAt(0).toUpperCase()}
-                      </span>
-                    </div>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium text-stone-900 truncate">
-                          {displayName(member)}
+        {/* Full loading state - only when loading and no existing data */}
+        {isLoadingMembers && members.length === 0 ? (
+          <CenteredLoadingState label={t('team.loadingMembers')} />
+        ) : (
+          <SettingsSection>
+            {members.length === 0 && !isLoadingMembers ? (
+              <SettingsEmptyState label={t('team.noMembers')} />
+            ) : (
+              <ul>
+                {members.map(member => (
+                  <li
+                    key={member._id}
+                    className="flex items-center justify-between px-4 py-3 border-b border-neutral-100 dark:border-neutral-800 last:border-b-0">
+                    <div className="flex items-center gap-3 min-w-0">
+                      {/* Avatar */}
+                      <div className="w-8 h-8 rounded-full bg-neutral-700/60 flex items-center justify-center flex-shrink-0">
+                        <span className="text-xs font-semibold text-white">
+                          {displayName(member).charAt(0).toUpperCase()}
                         </span>
-                        {isCurrentUser(member) && (
-                          <span className="text-[10px] text-stone-500">(You)</span>
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium text-neutral-800 dark:text-neutral-100 truncate">
+                            {displayName(member)}
+                          </span>
+                          {isCurrentUser(member) && (
+                            <span className="text-[10px] text-neutral-500 dark:text-neutral-400">
+                              {t('team.you')}
+                            </span>
+                          )}
+                        </div>
+                        {member.user.username && (
+                          <p className="text-xs text-neutral-500 dark:text-neutral-400 truncate">
+                            @{member.user.username}
+                          </p>
                         )}
                       </div>
-                      {member.user.username && (
-                        <p className="text-xs text-stone-500 truncate">@{member.user.username}</p>
+                    </div>
+
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      {/* Role badge / dropdown */}
+                      {isAdmin && !isCurrentUser(member) ? (
+                        <SettingsSelect
+                          value={member.role.toUpperCase()}
+                          onChange={e => handleChangeRole(member, e.target.value as TeamRole)}
+                          disabled={changingRoleId === member._id}
+                          aria-label={t('team.roleSelectorAria')}
+                          inputSize="sm"
+                          className="w-36">
+                          {ROLES.map(r => (
+                            <option key={r} value={r}>
+                              {r}
+                            </option>
+                          ))}
+                        </SettingsSelect>
+                      ) : (
+                        <SettingsBadge
+                          variant={roleBadgeVariant[member.role.toUpperCase()] ?? 'neutral'}>
+                          {member.role.toUpperCase()}
+                        </SettingsBadge>
+                      )}
+
+                      {/* Remove button (admin only, not self) */}
+                      {isAdmin && !isCurrentUser(member) && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="xs"
+                          onClick={() => handleRemoveMember(member)}
+                          disabled={removingId === member._id}
+                          aria-label={t('team.removeAria').replace('{name}', displayName(member))}
+                          className="text-neutral-500 dark:text-neutral-400 hover:text-coral-400 hover:bg-coral-500/10">
+                          <svg
+                            className="w-4 h-4"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24">
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M6 18L18 6M6 6l12 12"
+                            />
+                          </svg>
+                        </Button>
                       )}
                     </div>
-                  </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </SettingsSection>
+        )}
 
-                  <div className="flex items-center gap-2 flex-shrink-0">
-                    {/* Role badge / dropdown */}
-                    {isAdmin && !isCurrentUser(member) ? (
-                      <select
-                        value={member.role.toUpperCase()}
-                        onChange={e => handleChangeRole(member, e.target.value as TeamRole)}
-                        disabled={changingRoleId === member._id}
-                        className="px-2 py-1 text-[10px] font-medium rounded-full border bg-white text-stone-700 border-stone-300 focus:outline-none focus:border-primary-500/50 disabled:opacity-50">
-                        {ROLES.map(r => (
-                          <option key={r} value={r}>
-                            {r}
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      <span
-                        className={`px-1.5 py-0.5 text-[10px] font-medium rounded-full border ${roleBadgeColor[member.role.toUpperCase()] ?? roleBadgeColor.MEMBER}`}>
-                        {member.role.toUpperCase()}
-                      </span>
-                    )}
+        {/* Remove Member Confirmation Modal */}
+        {memberToRemove && (
+          <div className="fixed inset-0 bg-neutral-900/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white dark:bg-neutral-900 rounded-2xl p-6 w-full max-w-md border border-neutral-200 dark:border-neutral-800">
+              <h3 className="text-sm font-semibold text-neutral-800 dark:text-neutral-100 mb-4">
+                {t('team.removeTitle')}
+              </h3>
 
-                    {/* Remove button (admin only, not self) */}
-                    {isAdmin && !isCurrentUser(member) && (
-                      <button
-                        onClick={() => handleRemoveMember(member)}
-                        disabled={removingId === member._id}
-                        className="p-1 rounded-lg text-stone-500 hover:text-coral-400 hover:bg-coral-500/10 transition-colors disabled:opacity-50"
-                        aria-label={`Remove ${displayName(member)}`}>
-                        <svg
-                          className="w-4 h-4"
-                          fill="none"
-                          stroke="currentColor"
-                          viewBox="0 0 24 24">
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2}
-                            d="M6 18L18 6M6 6l12 12"
-                          />
-                        </svg>
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ))}
-
-              {members.length === 0 && !isLoadingMembers && (
-                <div className="text-center py-8">
-                  <p className="text-sm text-stone-500">No members found</p>
+              {error && (
+                <div className="rounded-xl bg-coral-500/10 border border-coral-500/20 p-3 mb-4">
+                  <p className="text-xs text-coral-400">{error}</p>
                 </div>
               )}
-            </div>
-          )}
 
-          {/* Remove Member Confirmation Modal */}
-          {memberToRemove && (
-            <div className="fixed inset-0 bg-stone-900/50 flex items-center justify-center z-50 p-4">
-              <div className="bg-white rounded-2xl p-6 w-full max-w-md border border-stone-200">
-                <h3 className="text-sm font-semibold text-stone-900 mb-4">Remove Team Member</h3>
+              <div className="space-y-4">
+                <div className="text-sm text-neutral-500 dark:text-neutral-400">
+                  <p>
+                    {t('team.removePromptPrefix')}{' '}
+                    <strong className="text-neutral-800 dark:text-neutral-100">
+                      {displayName(memberToRemove)}
+                    </strong>{' '}
+                    {t('team.removePromptSuffix')}
+                  </p>
+                  <p className="mt-2 text-coral-400">{t('team.removeWarning')}</p>
+                </div>
 
-                {error && (
-                  <div className="rounded-xl bg-coral-500/10 border border-coral-500/20 p-3 mb-4">
-                    <p className="text-xs text-coral-400">{error}</p>
-                  </div>
-                )}
-
-                <div className="space-y-4">
-                  <div className="text-sm text-stone-400">
-                    <p>
-                      Are you sure you want to remove{' '}
-                      <strong className="text-stone-900">{displayName(memberToRemove)}</strong> from
-                      the team?
-                    </p>
-                    <p className="mt-2 text-coral-400">
-                      They will lose access to the team and all team resources.
-                    </p>
-                  </div>
-
-                  <div className="flex gap-2 pt-2">
-                    <button
-                      onClick={() => setMemberToRemove(null)}
-                      disabled={removingId === memberToRemove._id}
-                      className="flex-1 px-4 py-2 text-sm font-medium rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 transition-colors disabled:opacity-50">
-                      Cancel
-                    </button>
-                    <button
-                      onClick={confirmRemoveMember}
-                      disabled={removingId === memberToRemove._id}
-                      className="flex-1 px-4 py-2 text-sm font-medium rounded-xl bg-coral-500 hover:bg-coral-600 text-white transition-colors disabled:opacity-50">
-                      {removingId === memberToRemove._id ? 'Removing...' : 'Remove Member'}
-                    </button>
-                  </div>
+                <div className="flex gap-2 pt-2">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="md"
+                    className="flex-1"
+                    onClick={() => setMemberToRemove(null)}
+                    disabled={removingId === memberToRemove._id}>
+                    {t('common.cancel')}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="danger"
+                    size="md"
+                    className="flex-1 bg-coral-500 hover:bg-coral-600 text-white border-0 dark:bg-coral-500 dark:hover:bg-coral-600"
+                    onClick={() => void confirmRemoveMember()}
+                    disabled={removingId === memberToRemove._id}>
+                    {removingId === memberToRemove._id
+                      ? t('team.removing')
+                      : t('team.removeAction')}
+                  </Button>
                 </div>
               </div>
             </div>
-          )}
+          </div>
+        )}
 
-          {/* Change Role Confirmation Modal */}
-          {roleChangeConfirmation && (
-            <div className="fixed inset-0 bg-stone-900/50 flex items-center justify-center z-50 p-4">
-              <div className="bg-white rounded-2xl p-6 w-full max-w-md border border-stone-200">
-                <h3 className="text-sm font-semibold text-stone-900 mb-4">Change Member Role</h3>
+        {/* Change Role Confirmation Modal */}
+        {roleChangeConfirmation && (
+          <div className="fixed inset-0 bg-neutral-900/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white dark:bg-neutral-900 rounded-2xl p-6 w-full max-w-md border border-neutral-200 dark:border-neutral-800">
+              <h3 className="text-sm font-semibold text-neutral-800 dark:text-neutral-100 mb-4">
+                {t('team.changeRoleTitle')}
+              </h3>
 
-                {error && (
-                  <div className="rounded-xl bg-coral-500/10 border border-coral-500/20 p-3 mb-4">
-                    <p className="text-xs text-coral-400">{error}</p>
-                  </div>
-                )}
+              {error && (
+                <div className="rounded-xl bg-coral-500/10 border border-coral-500/20 p-3 mb-4">
+                  <p className="text-xs text-coral-400">{error}</p>
+                </div>
+              )}
 
-                <div className="space-y-4">
-                  <div className="text-sm text-stone-400">
-                    <p>
-                      Change{' '}
-                      <strong className="text-stone-900 font-semibold">
-                        {displayName(roleChangeConfirmation.member)}
-                      </strong>
-                      's role from{' '}
-                      <span className="text-amber-400 font-medium">
-                        {roleChangeConfirmation.oldRole}
-                      </span>{' '}
-                      to{' '}
-                      <span className="text-primary-400 font-medium">
-                        {roleChangeConfirmation.newRole}
-                      </span>
-                      ?
-                    </p>
-                    {roleChangeConfirmation.newRole === 'ADMIN' && (
-                      <p className="mt-2 text-amber-400">
-                        This will grant them full admin permissions including the ability to manage
-                        team members.
-                      </p>
-                    )}
-                    {roleChangeConfirmation.oldRole === 'ADMIN' && (
-                      <p className="mt-2 text-coral-400">
-                        This will remove their admin permissions and they will no longer be able to
-                        manage the team.
-                      </p>
-                    )}
-                  </div>
+              <div className="space-y-4">
+                <div className="text-sm text-neutral-500 dark:text-neutral-400">
+                  <p>
+                    {t('team.changeRolePrompt')
+                      .replace('{name}', displayName(roleChangeConfirmation.member))
+                      .replace('{oldRole}', roleChangeConfirmation.oldRole)
+                      .replace('{newRole}', roleChangeConfirmation.newRole)}
+                  </p>
+                  {roleChangeConfirmation.newRole === 'ADMIN' && (
+                    <p className="mt-2 text-amber-400">{t('team.changeRoleAdminGrant')}</p>
+                  )}
+                  {roleChangeConfirmation.oldRole === 'ADMIN' && (
+                    <p className="mt-2 text-coral-400">{t('team.changeRoleAdminRemove')}</p>
+                  )}
+                </div>
 
-                  <div className="flex gap-2 pt-2">
-                    <button
-                      onClick={() => setRoleChangeConfirmation(null)}
-                      disabled={changingRoleId === roleChangeConfirmation.member._id}
-                      className="flex-1 px-4 py-2 text-sm font-medium rounded-xl bg-stone-700/50 hover:bg-stone-700 text-stone-300 transition-colors disabled:opacity-50">
-                      Cancel
-                    </button>
-                    <button
-                      onClick={confirmChangeRole}
-                      disabled={changingRoleId === roleChangeConfirmation.member._id}
-                      className="flex-1 px-4 py-2 text-sm font-medium rounded-xl bg-primary-500 hover:bg-primary-600 text-white transition-colors disabled:opacity-50">
-                      {changingRoleId === roleChangeConfirmation.member._id
-                        ? 'Changing...'
-                        : 'Change Role'}
-                    </button>
-                  </div>
+                <div className="flex gap-2 pt-2">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="md"
+                    className="flex-1"
+                    onClick={() => setRoleChangeConfirmation(null)}
+                    disabled={changingRoleId === roleChangeConfirmation.member._id}>
+                    {t('common.cancel')}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="primary"
+                    size="md"
+                    className="flex-1"
+                    onClick={() => void confirmChangeRole()}
+                    disabled={changingRoleId === roleChangeConfirmation.member._id}>
+                    {changingRoleId === roleChangeConfirmation.member._id
+                      ? t('team.changing')
+                      : t('team.changeRoleAction')}
+                  </Button>
                 </div>
               </div>
             </div>
-          )}
-        </div>
+          </div>
+        )}
       </div>
     </div>
   );

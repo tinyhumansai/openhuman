@@ -5,7 +5,10 @@
 //! Consumer modules (autocomplete, screen_intelligence, voice) call into this module
 //! instead of owning platform-specific code directly.
 
+pub mod app_fastpaths;
+pub mod automate;
 mod automation_state;
+pub mod ax_interact;
 mod capture;
 mod focus;
 mod globe;
@@ -17,6 +20,13 @@ mod permissions;
 mod terminal;
 mod text_util;
 mod types;
+// Vision fallback for `automate`: screenshot → vision-locate → guarded click,
+// for Electron/partial-AX apps. Consumed by `automate.rs`'s `RealBackend`.
+mod vision_click;
+// Windows accessibility backend for `ax_interact` (UI Automation). Sibling of
+// the macOS Swift-helper path; selected via cfg-dispatch in `ax_interact.rs`.
+#[cfg(target_os = "windows")]
+mod uia_interact;
 
 #[cfg(test)]
 pub(crate) use automation_state::test_lock as automation_state_test_lock;

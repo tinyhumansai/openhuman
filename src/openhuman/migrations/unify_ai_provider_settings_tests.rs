@@ -62,6 +62,11 @@ fn legacy_inference_url_becomes_custom_entry() {
         .expect("custom entry must be seeded");
     assert_eq!(custom.endpoint, "https://api.example.com/v1");
     assert_eq!(custom.default_model.as_deref(), Some("gpt-4o"));
+    assert_eq!(
+        c.primary_cloud.as_deref(),
+        Some(custom.id.as_str()),
+        "legacy custom inference must remain the default cloud target after migration"
+    );
 }
 
 #[test]

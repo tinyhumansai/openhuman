@@ -4,6 +4,7 @@
 //! via platform-native APIs (Core Graphics on macOS, SendInput on Windows,
 //! X11/libxdo on Linux).
 
+use super::main_thread::run_input_on_main;
 use crate::openhuman::security::SecurityPolicy;
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
 use async_trait::async_trait;
@@ -96,6 +97,135 @@ fn is_modifier(key: &Key) -> bool {
     matches!(key, Key::Control | Key::Shift | Key::Alt | Key::Meta)
 }
 
+// ── Shared execution helpers ────────────────────────────────────────────────
+// These hold the validation + main-thread enigo dispatch once, so both the
+// `keyboard` tool and the `automate` backend (`RealBackend::{key,type_text}`)
+// drive synthetic input through a single code path. They return the raw
+// `Result<String, String>`; the tool wraps it with `into_result`.
+
+/// Type a literal string via the OS. Runs on the app main thread (macOS TSM
+/// requirement, Change 1.15). Validates length like the `type` tool action.
+pub(crate) async fn run_type_text(text: &str) -> Result<String, String> {
+    if text.is_empty() {
+        return Err("'text' cannot be empty".to_string());
+    }
+    if text.len() > MAX_TYPE_LENGTH {
+        return Err(format!(
+            "Text too long ({} chars). Maximum is {MAX_TYPE_LENGTH}.",
+            text.len()
+        ));
+    }
+    let text = text.to_string();
+    let len = text.len();
+    run_input_on_main(move || {
+        let mut enigo = Enigo::new(&Settings::default())
+            .map_err(|e| format!("Failed to create enigo instance: {e}"))?;
+        enigo
+            .text(&text)
+            .map_err(|e| format!("text typing failed: {e}"))?;
+        Ok(format!("Typed {len} characters"))
+    })
+    .await
+}
+
+/// Tap a single key by name (e.g. "Enter", "/", "k"). Used for app shortcuts
+/// like YouTube's `/` (focus search) or `k` (play/pause).
+pub(crate) async fn run_key(key_name: &str) -> Result<String, String> {
+    let key = parse_key(key_name).ok_or_else(|| {
+        format!(
+            "Unknown key '{key_name}'. Use names like Enter, Tab, Escape, F1-F12, a-z, 0-9, Space, etc."
+        )
+    })?;
+    let key_name = key_name.to_string();
+    run_input_on_main(move || {
+        let mut enigo = Enigo::new(&Settings::default())
+            .map_err(|e| format!("Failed to create enigo instance: {e}"))?;
+        enigo
+            .key(key, Direction::Click)
+            .map_err(|e| format!("key press failed: {e}"))?;
+        Ok(format!("Pressed key '{key_name}'"))
+    })
+    .await
+}
+
+/// Execute a hotkey chord — modifiers first, then exactly one non-modifier
+/// final key (e.g. `["Cmd","L"]`). Validates the modifier-first shape, then
+/// presses in order and releases in reverse (even on error).
+pub(crate) async fn run_hotkey(key_names: &[String]) -> Result<String, String> {
+    if key_names.is_empty() {
+        return Err("'keys' array cannot be empty".to_string());
+    }
+    if key_names.len() > 6 {
+        return Err("Too many keys in hotkey combination (max 6)".to_string());
+    }
+    if key_names.len() < 2 {
+        return Err(
+            "Hotkey requires at least one modifier and one final key (e.g. ['Ctrl', 'C'])"
+                .to_string(),
+        );
+    }
+
+    let mut keys: Vec<Key> = Vec::with_capacity(key_names.len());
+    for name in key_names {
+        let key =
+            parse_key(name).ok_or_else(|| format!("Unknown key '{name}' in hotkey combination"))?;
+        keys.push(key);
+    }
+
+    // Validate modifier-first: all but the last must be modifiers; the last
+    // must be a non-modifier.
+    let (modifiers, final_key) = keys.split_at(keys.len() - 1);
+    for (i, key) in modifiers.iter().enumerate() {
+        if !is_modifier(key) {
+            return Err(format!(
+                "Key '{}' at position {i} must be a modifier (Ctrl/Shift/Alt/Cmd). Non-modifier keys must be last.",
+                key_names[i]
+            ));
+        }
+    }
+    if is_modifier(&final_key[0]) {
+        return Err(format!(
+            "Last key '{}' cannot be a modifier. Hotkey must end with a non-modifier key (e.g. 'C', 'Enter').",
+            key_names.last().unwrap()
+        ));
+    }
+
+    let combo_desc = key_names.join("+");
+    run_input_on_main(move || {
+        let mut enigo = Enigo::new(&Settings::default())
+            .map_err(|e| format!("Failed to create enigo instance: {e}"))?;
+
+        // Press keys in order, tracking which were pressed so we can release
+        // them on error.
+        let mut pressed_keys: Vec<Key> = Vec::with_capacity(keys.len());
+        let press_result: Result<(), String> = (|| {
+            for key in &keys {
+                enigo
+                    .key(*key, Direction::Press)
+                    .map_err(|e| format!("key press failed for {key:?}: {e}"))?;
+                pressed_keys.push(*key);
+                std::thread::sleep(HOTKEY_INTER_KEY_DELAY);
+            }
+            Ok(())
+        })();
+
+        // Always release pressed keys in reverse, even on error.
+        for key in pressed_keys.iter().rev() {
+            if let Err(e) = enigo.key(*key, Direction::Release) {
+                tracing::warn!(
+                    tool = "keyboard",
+                    key = ?key,
+                    error = %e,
+                    "[computer] best-effort key release failed during cleanup"
+                );
+            }
+        }
+        press_result?;
+        Ok(format!("Executed hotkey: {combo_desc}"))
+    })
+    .await
+}
+
 #[async_trait]
 impl Tool for KeyboardTool {
     fn name(&self) -> &str {
@@ -112,6 +242,16 @@ impl Tool for KeyboardTool {
 
     fn permission_level(&self) -> PermissionLevel {
         PermissionLevel::Dangerous
+    }
+
+    /// Route every call through the ApprovalGate. Arbitrary keystrokes can land
+    /// in a focused sudo/password field or Terminal, and there's no sensitive-app
+    /// denylist for raw input, so the gate is the only boundary — and it fires on
+    /// `external_effect_with_args`, NOT on `PermissionLevel::Dangerous`. Without
+    /// this, keystrokes could run unattended on an auto-approved turn once
+    /// `computer_control.enabled`.
+    fn external_effect(&self) -> bool {
+        true
     }
 
     fn parameters_schema(&self) -> Value {
@@ -147,7 +287,9 @@ impl Tool for KeyboardTool {
                 tool = "keyboard",
                 "[computer] blocked: autonomy is read-only"
             );
-            return Ok(ToolResult::error("Action blocked: autonomy is read-only"));
+            return Ok(ToolResult::error(
+                "[policy-blocked] Action blocked: autonomy is read-only",
+            ));
         }
         if !self.security.record_action() {
             debug!(tool = "keyboard", "[computer] blocked: rate limit exceeded");
@@ -170,63 +312,16 @@ impl Tool for KeyboardTool {
                 let text = args
                     .get("text")
                     .and_then(Value::as_str)
-                    .ok_or_else(|| anyhow::anyhow!("Missing 'text' for type action"))?
-                    .to_string();
-
-                if text.is_empty() {
-                    return Ok(ToolResult::error("'text' cannot be empty"));
-                }
-                if text.len() > MAX_TYPE_LENGTH {
-                    return Ok(ToolResult::error(format!(
-                        "Text too long ({} chars). Maximum is {MAX_TYPE_LENGTH}.",
-                        text.len()
-                    )));
-                }
-
-                let len = text.len();
-                tokio::task::spawn_blocking(move || {
-                    let mut enigo = Enigo::new(&Settings::default())
-                        .map_err(|e| anyhow::anyhow!("Failed to create enigo instance: {e}"))?;
-                    enigo
-                        .text(&text)
-                        .map_err(|e| anyhow::anyhow!("text typing failed: {e}"))?;
-                    info!(
-                        tool = "keyboard",
-                        action = "type",
-                        chars = len,
-                        "[computer] typed text"
-                    );
-                    Ok(ToolResult::success(format!("Typed {len} characters")))
-                })
-                .await?
+                    .ok_or_else(|| anyhow::anyhow!("Missing 'text' for type action"))?;
+                into_result("type", run_type_text(text).await)
             }
 
             "press" => {
                 let key_name = args
                     .get("key")
                     .and_then(Value::as_str)
-                    .ok_or_else(|| anyhow::anyhow!("Missing 'key' for press action"))?
-                    .to_string();
-
-                let key = parse_key(&key_name).ok_or_else(|| {
-                    anyhow::anyhow!("Unknown key '{key_name}'. Use names like Enter, Tab, Escape, F1-F12, a-z, 0-9, Space, etc.")
-                })?;
-
-                tokio::task::spawn_blocking(move || {
-                    let mut enigo = Enigo::new(&Settings::default())
-                        .map_err(|e| anyhow::anyhow!("Failed to create enigo instance: {e}"))?;
-                    enigo
-                        .key(key, Direction::Click)
-                        .map_err(|e| anyhow::anyhow!("key press failed: {e}"))?;
-                    info!(
-                        tool = "keyboard",
-                        action = "press",
-                        key = key_name.as_str(),
-                        "[computer] pressed key"
-                    );
-                    Ok(ToolResult::success(format!("Pressed key '{key_name}'")))
-                })
-                .await?
+                    .ok_or_else(|| anyhow::anyhow!("Missing 'key' for press action"))?;
+                into_result("press", run_key(key_name).await)
             }
 
             "hotkey" => {
@@ -244,98 +339,26 @@ impl Tool for KeyboardTool {
                     key_names.push(s.to_string());
                 }
 
-                if key_names.is_empty() {
-                    return Ok(ToolResult::error("'keys' array cannot be empty"));
-                }
-                if key_names.len() > 6 {
-                    return Ok(ToolResult::error(
-                        "Too many keys in hotkey combination (max 6)",
-                    ));
-                }
-                if key_names.len() < 2 {
-                    return Ok(ToolResult::error(
-                        "Hotkey requires at least one modifier and one final key (e.g. ['Ctrl', 'C'])",
-                    ));
-                }
-
-                // Parse all key names into Key values.
-                let mut keys: Vec<Key> = Vec::with_capacity(key_names.len());
-                for name in &key_names {
-                    let key = parse_key(name).ok_or_else(|| {
-                        anyhow::anyhow!("Unknown key '{name}' in hotkey combination")
-                    })?;
-                    keys.push(key);
-                }
-
-                // Validate modifier-first pattern: all keys except the last
-                // must be modifiers, and the last must be a non-modifier.
-                let (modifiers, final_key) = keys.split_at(keys.len() - 1);
-                for (i, key) in modifiers.iter().enumerate() {
-                    if !is_modifier(key) {
-                        return Ok(ToolResult::error(format!(
-                            "Key '{}' at position {i} must be a modifier (Ctrl/Shift/Alt/Cmd). Non-modifier keys must be last.",
-                            key_names[i]
-                        )));
-                    }
-                }
-                if is_modifier(&final_key[0]) {
-                    return Ok(ToolResult::error(format!(
-                        "Last key '{}' cannot be a modifier. Hotkey must end with a non-modifier key (e.g. 'C', 'Enter').",
-                        key_names.last().unwrap()
-                    )));
-                }
-
-                let combo_desc = key_names.join("+");
-                tokio::task::spawn_blocking(move || {
-                    let mut enigo = Enigo::new(&Settings::default())
-                        .map_err(|e| anyhow::anyhow!("Failed to create enigo instance: {e}"))?;
-
-                    // Press keys in order, tracking which were successfully
-                    // pressed so we can release them on error.
-                    let mut pressed_keys: Vec<Key> = Vec::with_capacity(keys.len());
-                    let press_result: Result<(), anyhow::Error> = (|| {
-                        for key in &keys {
-                            enigo.key(*key, Direction::Press).map_err(|e| {
-                                anyhow::anyhow!("key press failed for {key:?}: {e}")
-                            })?;
-                            pressed_keys.push(*key);
-                            std::thread::sleep(HOTKEY_INTER_KEY_DELAY);
-                        }
-                        Ok(())
-                    })();
-
-                    // Always release all successfully pressed keys in reverse
-                    // order, even if a press failed partway through.
-                    for key in pressed_keys.iter().rev() {
-                        if let Err(e) = enigo.key(*key, Direction::Release) {
-                            tracing::warn!(
-                                tool = "keyboard",
-                                key = ?key,
-                                error = %e,
-                                "[computer] best-effort key release failed during cleanup"
-                            );
-                        }
-                    }
-
-                    // Now propagate any press error.
-                    press_result?;
-
-                    info!(
-                        tool = "keyboard",
-                        action = "hotkey",
-                        combo = combo_desc.as_str(),
-                        "[computer] hotkey executed"
-                    );
-                    Ok(ToolResult::success(format!(
-                        "Executed hotkey: {combo_desc}"
-                    )))
-                })
-                .await?
+                into_result("hotkey", run_hotkey(&key_names).await)
             }
 
             other => Ok(ToolResult::error(format!(
                 "Unknown keyboard action '{other}'. Use: type, press, hotkey"
             ))),
+        }
+    }
+}
+
+/// Map a main-thread input op result to a `ToolResult`, logging the outcome.
+fn into_result(action: &str, r: Result<String, String>) -> anyhow::Result<ToolResult> {
+    match r {
+        Ok(msg) => {
+            info!(tool = "keyboard", action, "[computer] {msg}");
+            Ok(ToolResult::success(msg))
+        }
+        Err(e) => {
+            tracing::warn!(tool = "keyboard", action, "[computer] failed: {e}");
+            Ok(ToolResult::error(e))
         }
     }
 }

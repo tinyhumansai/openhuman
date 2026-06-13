@@ -2,17 +2,63 @@
 
 use crate::openhuman::config::Config;
 
-use super::profiles::{AuthProfileKind, TokenSet};
+use super::profiles::{AuthProfile, AuthProfileKind, TokenSet};
 use super::responses::{AuthProfileSummary, AuthStateResponse};
 use super::AuthService;
 
 use super::{APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME};
+
+pub const LOCAL_SESSION_USER_ID: &str = "local";
+
+pub fn local_session_user_id() -> String {
+    let host = hostname::get()
+        .ok()
+        .and_then(|value| value.into_string().ok())
+        .unwrap_or_default();
+    let slug = slugify_local_session_host(&host);
+    format!("local-{slug}")
+}
+
+fn slugify_local_session_host(host: &str) -> String {
+    let mut slug = String::with_capacity(host.len());
+    let mut last_was_sep = false;
+
+    for ch in host.trim().chars() {
+        let normalized = ch.to_ascii_lowercase();
+        if normalized.is_ascii_alphanumeric() {
+            slug.push(normalized);
+            last_was_sep = false;
+        } else if !slug.is_empty() && !last_was_sep {
+            slug.push('-');
+            last_was_sep = true;
+        }
+    }
+
+    while slug.ends_with('-') {
+        slug.pop();
+    }
+
+    if slug.is_empty() {
+        "device".to_string()
+    } else {
+        slug
+    }
+}
 
 pub fn profile_name_or_default(value: Option<&str>) -> &str {
     value
         .map(str::trim)
         .filter(|v| !v.is_empty())
         .unwrap_or(DEFAULT_AUTH_PROFILE_NAME)
+}
+
+pub fn is_local_session_token(token: &str) -> bool {
+    let trimmed = token.trim();
+    let mut parts = trimmed.split('.');
+    matches!(
+        (parts.next(), parts.next(), parts.next(), parts.next()),
+        (Some(_), Some(_), Some("local"), None)
+    )
 }
 
 pub fn parse_fields_value(
@@ -87,18 +133,131 @@ fn session_user_value(
 }
 
 pub fn build_session_state(config: &Config) -> Result<AuthStateResponse, String> {
-    let auth_service = AuthService::from_config(config);
-    let profile = auth_service
-        .get_profile(APP_SESSION_PROVIDER, None)
-        .map_err(|e| e.to_string())?;
+    let profile = load_app_session_profile(config)?;
+    Ok(session_state_from_profile(profile.as_ref()))
+}
 
+pub fn get_session_token(config: &Config) -> Result<Option<String>, String> {
+    let profile = load_app_session_profile(config)?;
+    Ok(session_token_from_profile(profile.as_ref()))
+}
+
+/// Metadata key under which the app-session profile records the decoded JWT
+/// `exp` (RFC3339). Written at `store_session` time (`ops::store_session`).
+/// Absent for local offline sessions and `exp`-less tokens.
+pub const SESSION_EXPIRES_AT_META: &str = "session_expires_at";
+
+/// Treat a token as expired this many seconds *before* its real `exp`, so an
+/// in-flight request can't race the boundary into a backend 401.
+const SESSION_EXPIRY_SKEW_SECS: i64 = 30;
+
+fn session_expires_at_from_profile(
+    profile: Option<&AuthProfile>,
+) -> Option<chrono::DateTime<chrono::Utc>> {
+    profile?
+        .metadata
+        .get(SESSION_EXPIRES_AT_META)
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.with_timezone(&chrono::Utc))
+}
+
+/// Liveness verdict for the stored app-session token. Pure + `now`-injected so
+/// the expiry decision is unit-testable without a credential store.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum SessionTokenCheck {
+    /// No token stored (signed out / never authed).
+    Absent,
+    /// Token present but its recorded `exp` is in the past (− skew).
+    Expired,
+    /// Token present and within its validity window (or no recorded expiry).
+    Live(String),
+}
+
+pub(crate) fn classify_session_token(
+    profile: Option<&AuthProfile>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> SessionTokenCheck {
+    let Some(token) = session_token_from_profile(profile) else {
+        return SessionTokenCheck::Absent;
+    };
+    if let Some(exp) = session_expires_at_from_profile(profile) {
+        if now + chrono::Duration::seconds(SESSION_EXPIRY_SKEW_SECS) >= exp {
+            return SessionTokenCheck::Expired;
+        }
+    }
+    SessionTokenCheck::Live(token)
+}
+
+/// Canonical guard for every backend `authed_json` caller (team, billing, and
+/// any future authed RPC op). Returns the live app-session token, or an error
+/// the JSON-RPC layer classifies as session-expiry — **without sending a doomed
+/// request**.
+///
+/// - absent / empty token → "no backend session token" (local, no network).
+/// - token whose recorded `exp` is past (− skew) → publishes `SessionExpired`
+///   **once** (so the credentials subscriber clears state and the UI re-auths,
+///   exactly as on a real network 401) and returns the `SESSION_EXPIRED`
+///   sentinel. The doomed 401 is never sent — this is the #3297 RCA that stops
+///   the TAURI-RUST-8WY (`/teams/me/usage`) / 8WZ (`/payments/stripe/currentPlan`)
+///   flood at its source instead of demoting it after the fact.
+/// - token with no recorded expiry (local offline session / `exp`-less JWT) →
+///   presence-only check; the `flatten_authed_error` 401 net still covers a
+///   server-side revocation that precedes the recorded `exp`.
+pub fn require_live_session_token(config: &Config) -> Result<String, String> {
+    let profile = load_app_session_profile(config)?;
+    match classify_session_token(profile.as_ref(), chrono::Utc::now()) {
+        SessionTokenCheck::Live(token) => Ok(token),
+        SessionTokenCheck::Absent => {
+            Err("no backend session token; run auth_store_session first".to_string())
+        }
+        SessionTokenCheck::Expired => {
+            // Dedupe the publish via the scheduler gate so N parallel authed
+            // callers in one tick don't emit N SessionExpired events.
+            if !crate::openhuman::scheduler_gate::is_signed_out() {
+                tracing::info!(
+                    domain = "credentials",
+                    operation = "require_live_session_token",
+                    "[credentials] app-session token expired locally — publishing SessionExpired before any backend call"
+                );
+                crate::core::event_bus::publish_global(
+                    crate::core::event_bus::DomainEvent::SessionExpired {
+                        source: "credentials.local_expiry_precheck".to_string(),
+                        reason:
+                            "backend session token expired locally — re-authentication required"
+                                .to_string(),
+                    },
+                );
+            }
+            Err(
+                "SESSION_EXPIRED: backend session token expired locally — re-authentication required"
+                    .to_string(),
+            )
+        }
+    }
+}
+
+/// Load the `app-session` profile once. Callers that need both the
+/// session-state view (`session_state_from_profile`) AND the raw token
+/// (`session_token_from_profile`) should call this once and pass the
+/// result to both helpers — every load takes the auth-profile store
+/// lock, and on Windows the `app_state_snapshot` hot path used to take
+/// it twice per call which materially increased lock contention
+/// (Sentry: "Timed out waiting for auth profile lock").
+pub fn load_app_session_profile(config: &Config) -> Result<Option<AuthProfile>, String> {
+    let auth_service = AuthService::from_config(config);
+    auth_service
+        .get_profile(APP_SESSION_PROVIDER, None)
+        .map_err(|e| e.to_string())
+}
+
+pub fn session_state_from_profile(profile: Option<&AuthProfile>) -> AuthStateResponse {
     let Some(profile) = profile else {
-        return Ok(AuthStateResponse {
+        return AuthStateResponse {
             is_authenticated: false,
             user_id: None,
             user: None,
             profile_id: None,
-        });
+        };
     };
 
     let is_authenticated = profile
@@ -107,20 +266,24 @@ pub fn build_session_state(config: &Config) -> Result<AuthStateResponse, String>
         .map(|token| !token.trim().is_empty())
         .unwrap_or(false);
 
-    Ok(AuthStateResponse {
+    AuthStateResponse {
         is_authenticated,
         user_id: profile.metadata.get("user_id").cloned(),
-        user: session_user_value(&profile),
-        profile_id: Some(profile.id),
-    })
+        user: session_user_value(profile),
+        profile_id: Some(profile.id.clone()),
+    }
 }
 
-pub fn get_session_token(config: &Config) -> Result<Option<String>, String> {
-    let auth_service = AuthService::from_config(config);
-    let profile = auth_service
-        .get_profile(APP_SESSION_PROVIDER, None)
-        .map_err(|e| e.to_string())?;
-    Ok(profile.and_then(|entry| entry.token))
+pub fn session_token_from_profile(profile: Option<&AuthProfile>) -> Option<String> {
+    // Mirror the `is_authenticated` check in `session_state_from_profile`
+    // (trim + non-empty) so the two views of the same profile never
+    // disagree — i.e. we never return `Some("   ")` while reporting
+    // `is_authenticated = false`.
+    profile
+        .and_then(|entry| entry.token.as_deref())
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .map(str::to_string)
 }
 
 #[cfg(test)]
@@ -135,6 +298,7 @@ mod tests {
     fn test_config(tmp: &TempDir) -> Config {
         Config {
             workspace_dir: tmp.path().join("workspace"),
+            action_dir: tmp.path().join("workspace"),
             config_path: tmp.path().join("config.toml"),
             ..Config::default()
         }
@@ -156,6 +320,26 @@ mod tests {
     fn profile_name_or_default_returns_value_when_present() {
         assert_eq!(profile_name_or_default(Some("work")), "work");
         assert_eq!(profile_name_or_default(Some("  work  ")), "work");
+    }
+
+    #[test]
+    fn is_local_session_token_requires_local_signature_marker() {
+        assert!(is_local_session_token("header.payload.local"));
+        assert!(is_local_session_token("  header.payload.local  "));
+        assert!(!is_local_session_token("header.payload.remote"));
+        assert!(!is_local_session_token("header.payload.local.extra"));
+        assert!(!is_local_session_token("not-a-jwt"));
+    }
+
+    #[test]
+    fn slugify_local_session_host_normalizes_machine_names() {
+        assert_eq!(
+            slugify_local_session_host("My MacBook Pro"),
+            "my-macbook-pro"
+        );
+        assert_eq!(slugify_local_session_host("DESKTOP_123"), "desktop-123");
+        assert_eq!(slugify_local_session_host("   "), "device");
+        assert_eq!(slugify_local_session_host("---"), "device");
     }
 
     // ── parse_fields_value ─────────────────────────────────────────
@@ -316,6 +500,29 @@ mod tests {
         assert!(get_session_token(&config).unwrap().is_none());
     }
 
+    /// Regression for CodeRabbit feedback on PR #2085: a profile whose
+    /// token is whitespace-only must come back as `None`, matching the
+    /// `is_authenticated` view (which trims + filters empty).
+    #[test]
+    fn session_token_from_profile_normalises_blank_tokens_to_none() {
+        let p_blank = profile_fixture(AuthProfileKind::Token, Some("   "));
+        assert!(session_token_from_profile(Some(&p_blank)).is_none());
+
+        let p_empty = profile_fixture(AuthProfileKind::Token, Some(""));
+        assert!(session_token_from_profile(Some(&p_empty)).is_none());
+
+        let p_none = profile_fixture(AuthProfileKind::Token, None);
+        assert!(session_token_from_profile(Some(&p_none)).is_none());
+
+        let p_real = profile_fixture(AuthProfileKind::Token, Some("  tok  "));
+        // Trim leaks into the returned value — this matches the
+        // `is_authenticated` semantic that "  tok  " is a real token.
+        assert_eq!(
+            session_token_from_profile(Some(&p_real)).as_deref(),
+            Some("tok")
+        );
+    }
+
     #[test]
     fn get_session_token_returns_stored_token_when_present() {
         let tmp = TempDir::new().unwrap();
@@ -337,5 +544,78 @@ mod tests {
         let state = build_session_state(&config).unwrap();
         assert!(state.is_authenticated);
         assert!(state.profile_id.is_some());
+    }
+
+    // ── classify_session_token (local expiry precheck, #3297) ──────────
+
+    fn token_profile_with_expiry(token: Option<&str>, expires_at: Option<&str>) -> AuthProfile {
+        let mut p = profile_fixture(AuthProfileKind::Token, token);
+        match expires_at {
+            Some(rfc3339) => {
+                p.metadata
+                    .insert(SESSION_EXPIRES_AT_META.to_string(), rfc3339.to_string());
+            }
+            None => {
+                p.metadata.remove(SESSION_EXPIRES_AT_META);
+            }
+        }
+        p
+    }
+
+    #[test]
+    fn classify_absent_when_no_profile_or_empty_token() {
+        let now = Utc::now();
+        assert_eq!(classify_session_token(None, now), SessionTokenCheck::Absent);
+        let p = token_profile_with_expiry(Some("   "), None);
+        assert_eq!(
+            classify_session_token(Some(&p), now),
+            SessionTokenCheck::Absent
+        );
+    }
+
+    #[test]
+    fn classify_live_when_no_recorded_expiry() {
+        // exp-less / local sessions fall through to presence-only (401 net covers revocation).
+        let now = Utc::now();
+        let p = token_profile_with_expiry(Some("jwt-token"), None);
+        assert_eq!(
+            classify_session_token(Some(&p), now),
+            SessionTokenCheck::Live("jwt-token".to_string())
+        );
+    }
+
+    #[test]
+    fn classify_live_when_expiry_in_future() {
+        let now = Utc::now();
+        let future = (now + chrono::Duration::hours(1)).to_rfc3339();
+        let p = token_profile_with_expiry(Some("jwt-token"), Some(&future));
+        assert_eq!(
+            classify_session_token(Some(&p), now),
+            SessionTokenCheck::Live("jwt-token".to_string())
+        );
+    }
+
+    #[test]
+    fn classify_expired_when_exp_in_past() {
+        let now = Utc::now();
+        let past = (now - chrono::Duration::hours(1)).to_rfc3339();
+        let p = token_profile_with_expiry(Some("jwt-token"), Some(&past));
+        assert_eq!(
+            classify_session_token(Some(&p), now),
+            SessionTokenCheck::Expired
+        );
+    }
+
+    #[test]
+    fn classify_expired_within_skew_window() {
+        // exp is technically in the future but inside the 30s skew → treat as expired
+        // so an in-flight request can't race the boundary into a 401.
+        let now = Utc::now();
+        let soon = (now + chrono::Duration::seconds(10)).to_rfc3339();
+        let p = token_profile_with_expiry(Some("jwt-token"), Some(&soon));
+        assert_eq!(
+            classify_session_token(Some(&p), now),
+            SessionTokenCheck::Expired
+        );
     }
 }

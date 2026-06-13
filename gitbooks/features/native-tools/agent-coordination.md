@@ -21,6 +21,8 @@ Beyond doing the work, the agent has tools for *organising* the work - planning 
 | `plan_exit`             | Exit a planning phase and start executing.                                                    |
 | `check_onboarding_status` / `complete_onboarding` | Gate behaviour on whether the user has finished onboarding.        |
 
+`spawn_subagent` and archetype delegation calls accept an optional `model` field for a one-off exact model pin. If it is omitted, the harness uses config-level per-agent pins when present and otherwise falls back to the normal model-routing hints.
+
 ## Why these are tools, not implicit behaviour
 
 Long tasks fall apart when the agent tries to keep everything in one head. Splitting work via TODOs and subagents means:

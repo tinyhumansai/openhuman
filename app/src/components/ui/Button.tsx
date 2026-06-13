@@ -16,10 +16,18 @@ const BASE =
   'focus-visible:ring-offset-2 disabled:opacity-40 disabled:pointer-events-none';
 
 const VARIANTS: Record<ButtonVariant, string> = {
-  primary: 'bg-primary-500 text-white hover:bg-primary-600 active:bg-primary-700',
-  secondary: 'bg-neutral-0 text-neutral-900 border border-neutral-300 hover:bg-neutral-50',
-  ghost: 'bg-transparent text-neutral-700 hover:bg-neutral-100',
-  danger: 'bg-transparent text-coral-600 border border-coral-300/50 hover:bg-coral-50',
+  primary:
+    'bg-primary-500 text-white hover:bg-primary-600 active:bg-primary-700 ' +
+    'dark:bg-primary-500 dark:hover:bg-primary-400 dark:active:bg-primary-600',
+  secondary:
+    'bg-neutral-0 text-neutral-900 border border-neutral-300 hover:bg-neutral-50 ' +
+    'dark:bg-neutral-900 dark:text-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800',
+  ghost:
+    'bg-transparent text-neutral-700 hover:bg-neutral-100 ' +
+    'dark:text-neutral-200 dark:hover:bg-neutral-800',
+  danger:
+    'bg-transparent text-coral-600 border border-coral-300/50 hover:bg-coral-50 ' +
+    'dark:text-coral-400 dark:border-coral-500/40 dark:hover:bg-coral-500/10',
 };
 
 const SIZES: Record<ButtonSize, string> = {

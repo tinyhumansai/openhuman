@@ -9,8 +9,9 @@
  *
  *   - Phase B — Advanced/Custom path (Default on every wizard step):
  *     reset onboarding flag → Welcome → Runtime choice (Custom) →
- *     Inference (Default) → Voice (Default) → OAuth (Default) → Finish.
- *     Asserts all three custom wizard step containers render with the
+ *     Inference (Default) → Voice (Default) → OAuth (Default) →
+ *     Search (Default) → Embeddings (Default) → Finish.
+ *     Asserts all five custom wizard step containers render with the
  *     expected `data-testid`s (i.e. *all settings are reachable*).
  *
  *   - Phase C — Advanced/Custom path with Configure on the Voice step:
@@ -57,6 +58,9 @@ async function clickTestId(testId: string, timeout = 10_000): Promise<boolean> {
       const el = document.querySelector<HTMLElement>(`[data-testid="${id}"]`);
       if (!el) return 'missing';
       if ((el as HTMLButtonElement).disabled) return 'disabled';
+      // Ensure the element is visible and has layout before clicking.
+      const rect = el.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) return 'no-layout';
       ['mousedown', 'mouseup', 'click'].forEach(type => {
         el.dispatchEvent(
           new MouseEvent(type, { bubbles: true, cancelable: true, view: window, button: 0 })
@@ -150,13 +154,20 @@ async function waitForHome(timeout = 20_000): Promise<boolean> {
 }
 
 describe('Onboarding modes — Simple (Cloud) vs Advanced (Custom)', () => {
-  before(async () => {
+  before(async function beforeSuite() {
+    // Reset + auth + onboarding bootstrap can exceed the default 30s hook budget.
+    this.timeout(90_000);
     await startMockServer();
     resetMockBehavior();
     setMockBehavior('composioConnections', '[]');
     // Reset state but skip the built-in onboarding walker — we walk it
     // ourselves to assert the per-step UI.
     await resetApp('e2e-onboarding-modes', { skipAuth: true });
+    // resetApp restores onboarding_completed=true for normal specs; this spec
+    // intentionally exercises the onboarding flow, so flip it back to false
+    // before triggering auth so App.tsx routes to /onboarding.
+    stepLog('Setting onboarding_completed=false for onboarding flow test');
+    await callOpenhumanRpc('openhuman.config_set_onboarding_completed', { value: false });
     await triggerAuthDeepLinkBypass('e2e-onboarding-modes');
     await waitForAuthBootstrap(15_000);
     await dismissBootCheckGateIfVisible(8_000);
@@ -215,17 +226,38 @@ describe('Onboarding modes — Simple (Cloud) vs Advanced (Custom)', () => {
   // Phase B — Advanced (Custom), Default on every step
   // ───────────────────────────────────────────────────────────────────────
 
-  it('advanced/custom path: walks all wizard steps with Default choice', async () => {
+  it('advanced/custom path: walks all wizard steps with Default choice', async function () {
+    // resetOnboardingFlagAndReload includes waitForWindowVisible(25_000), needs extra budget.
+    this.timeout(90_000);
     await resetOnboardingFlagAndReload();
 
     // Step 0 — Welcome.
     await clickOnboardingNext();
 
     // Step 1 — Runtime choice → Custom.
-    expect(await testIdExists('onboarding-runtime-choice-step', 10_000)).toBe(true);
-    expect(await clickTestId('onboarding-runtime-choice-custom')).toBe(true);
-    await pause(500);
-    await clickOnboardingNext();
+    // In local E2E mode (VITE_OPENHUMAN_E2E_DEFAULT_CORE_MODE=local), the
+    // RuntimeChoicePage auto-redirects to custom/inference once the session
+    // snapshot loads — skip this block when that redirect has already fired.
+    if (await testIdExists('onboarding-runtime-choice-step', 5_000)) {
+      await pause(800);
+      const runtimeHash = await browser.execute(() => window.location.hash);
+      if (String(runtimeHash).includes('/onboarding/runtime-choice')) {
+        expect(await clickTestId('onboarding-runtime-choice-custom')).toBe(true);
+        // Verify the Custom card registered the click; retry if swallowed.
+        const customB = await browser.execute(() => {
+          const el = document.querySelector('[data-testid="onboarding-runtime-choice-custom"]');
+          return el?.getAttribute('aria-pressed') === 'true';
+        });
+        if (!customB) {
+          stepLog('Phase B: Custom card click did not register — retrying');
+          await pause(500);
+          await clickTestId('onboarding-runtime-choice-custom');
+          await pause(300);
+        }
+        await clickOnboardingNext();
+      }
+    }
+    // else: local session mode — already redirected to custom/inference, continue there.
 
     // Step 2 — Custom Inference (Default).
     expect(await testIdExists('onboarding-custom-inference-step', 10_000)).toBe(true);
@@ -239,9 +271,21 @@ describe('Onboarding modes — Simple (Cloud) vs Advanced (Custom)', () => {
     await pause(400);
     await clickOnboardingNext();
 
-    // Step 4 — Custom OAuth (Default). This is the final step → Finish.
+    // Step 4 — Custom OAuth (Default).
     expect(await testIdExists('onboarding-custom-oauth-step', 10_000)).toBe(true);
     expect(await clickTestId('onboarding-custom-oauth-step-default')).toBe(true);
+    await pause(400);
+    await clickOnboardingNext();
+
+    // Step 5 — Custom Search (Default).
+    expect(await testIdExists('onboarding-custom-search-step', 10_000)).toBe(true);
+    expect(await clickTestId('onboarding-custom-search-step-default')).toBe(true);
+    await pause(400);
+    await clickOnboardingNext();
+
+    // Step 6 — Custom Embeddings (Default). This is the final step → Finish.
+    expect(await testIdExists('onboarding-custom-embeddings-step', 10_000)).toBe(true);
+    expect(await clickTestId('onboarding-custom-embeddings-step-default')).toBe(true);
     await pause(400);
     await clickOnboardingNext();
 
@@ -264,15 +308,36 @@ describe('Onboarding modes — Simple (Cloud) vs Advanced (Custom)', () => {
   // Phase C — Advanced (Custom), Configure on Voice mutates config.toml
   // ───────────────────────────────────────────────────────────────────────
 
-  it('advanced/custom path: Configure on Voice updates local_ai.stt_provider in config.toml', async () => {
+  it('advanced/custom path: Configure on Voice updates local_ai.stt_provider in config.toml', async function () {
+    // resetOnboardingFlagAndReload includes waitForWindowVisible(25_000), needs extra budget.
+    this.timeout(90_000);
     await resetOnboardingFlagAndReload();
 
     // Welcome → Runtime choice (Custom) → Inference (Default).
     await clickOnboardingNext();
-    expect(await testIdExists('onboarding-runtime-choice-step', 10_000)).toBe(true);
-    expect(await clickTestId('onboarding-runtime-choice-custom')).toBe(true);
-    await pause(500);
-    await clickOnboardingNext();
+    // In local E2E mode, RuntimeChoicePage auto-redirects to custom/inference.
+    if (await testIdExists('onboarding-runtime-choice-step', 5_000)) {
+      await pause(800);
+      const runtimeHash = await browser.execute(() => window.location.hash);
+      if (String(runtimeHash).includes('/onboarding/runtime-choice')) {
+        expect(await clickTestId('onboarding-runtime-choice-custom')).toBe(true);
+      }
+    }
+    // Verify the Custom card registered the click (aria-pressed="true") if still visible.
+    const customSelected = await browser.execute(() => {
+      const el = document.querySelector('[data-testid="onboarding-runtime-choice-custom"]');
+      return el ? el?.getAttribute('aria-pressed') === 'true' : true; // not visible = already at inference
+    });
+    if (!customSelected) {
+      stepLog('Custom card click did not register — retrying');
+      await pause(500);
+      await clickTestId('onboarding-runtime-choice-custom');
+      await pause(300);
+    }
+    // Only advance past RuntimeChoice if we were actually on that step.
+    if (await testIdExists('onboarding-runtime-choice-step', 500)) {
+      await clickOnboardingNext();
+    }
 
     expect(await testIdExists('onboarding-custom-inference-step', 10_000)).toBe(true);
     expect(await clickTestId('onboarding-custom-inference-step-default')).toBe(true);
@@ -335,6 +400,18 @@ describe('Onboarding modes — Simple (Cloud) vs Advanced (Custom)', () => {
     await clickOnboardingNext();
     expect(await testIdExists('onboarding-custom-oauth-step', 10_000)).toBe(true);
     expect(await clickTestId('onboarding-custom-oauth-step-default')).toBe(true);
+    await pause(400);
+    await clickOnboardingNext();
+
+    // Step 5 — Custom Search (Default).
+    expect(await testIdExists('onboarding-custom-search-step', 10_000)).toBe(true);
+    expect(await clickTestId('onboarding-custom-search-step-default')).toBe(true);
+    await pause(400);
+    await clickOnboardingNext();
+
+    // Step 6 — Custom Embeddings (Default). Final step → Finish.
+    expect(await testIdExists('onboarding-custom-embeddings-step', 10_000)).toBe(true);
+    expect(await clickTestId('onboarding-custom-embeddings-step-default')).toBe(true);
     await pause(400);
     await clickOnboardingNext();
 

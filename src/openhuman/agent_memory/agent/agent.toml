@@ -1,0 +1,28 @@
+id = "agent_memory"
+display_name = "Memory Agent"
+delegate_name = "retrieve_memory"
+when_to_use = "Memory retrieval and tree walking specialist — searches, navigates, and retrieves information from the user's memory tree using vector search, keyword matching, entity lookup, and hierarchical tree browsing. Use when the user asks to find, recall, search, or look up something from their memory, conversations, documents, or knowledge base."
+temperature = 0.2
+max_iterations = 15
+sandbox_mode = "read_only"
+agent_tier = "worker"
+omit_identity = true
+omit_memory_context = false
+omit_safety_preamble = true
+omit_skills_catalog = true
+omit_profile = false
+omit_memory_md = false
+
+[model]
+hint = "chat"
+
+[tools]
+named = [
+    "memory_recall",
+    "memory_tree",
+    "memory_tree_walk",
+    "memory_smart_walk",
+    "query_memory",
+    "memory_doctor",
+    "ask_user_clarification",
+]

@@ -3,8 +3,7 @@ name: Bug
 about: Used for bug reports
 title: ""
 type: Bug
-assignees: ''
-
+assignees: ""
 ---
 
 Use a concise sentence-case title that describes the broken behavior. Do not add `Bug` or bracket prefixes to the title.
@@ -25,7 +24,7 @@ Suspected cause, workaround, or proposed fix. Skip if unknown.
 
 - [ ] **Repro gone** — Bug no longer reproduces on the stated environment (or root cause documented if intentional).
 - [ ] **Regression safety** — Unit, integration, or E2E coverage added or updated if this should not come back.
-- [ ] **Diff coverage ≥ 80%** — the fix PR meets the changed-lines coverage gate (Vitest + cargo-llvm-cov, enforced by [`.github/workflows/coverage.yml`](../../.github/workflows/coverage.yml)).
+- [ ] **Diff coverage ≥ 80%** — the fix PR meets the changed-lines coverage gate (Vitest + cargo-llvm-cov, enforced by [`.github/workflows/pr-ci.yml`](../../.github/workflows/pr-ci.yml)).
 - [ ] **…** — Other verify-before-close items.
 
 ## Related

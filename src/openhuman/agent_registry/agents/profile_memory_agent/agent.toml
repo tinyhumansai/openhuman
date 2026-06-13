@@ -1,0 +1,52 @@
+id = "profile_memory_agent"
+display_name = "Profile Memory Agent"
+delegate_name = "manage_profile_memory"
+when_to_use = "Profile, persona, memory, preference, and people-graph specialist — reads or changes what OpenHuman remembers about the user, the assistant persona files, learning facets, aliases/contacts, and explicit memories. Use when the user asks to remember, forget, update profile/persona, change assistant identity, inspect memory health, or manage people aliases."
+temperature = 0.2
+max_iterations = 8
+sandbox_mode = "none"
+agent_tier = "worker"
+omit_identity = true
+omit_memory_context = false
+omit_safety_preamble = false
+omit_skills_catalog = true
+omit_profile = false
+omit_memory_md = false
+trigger_memory_agent = "always"
+
+[model]
+hint = "agentic"
+
+[tools]
+named = [
+    "memory_store",
+    "memory_forget",
+    "memory_doctor",
+    "memory_tools_list",
+    "memory_tools_put",
+    "remember_preference",
+    "save_preference",
+    "workspace_read_persona",
+    "workspace_update_persona",
+    "workspace_reset_persona",
+    "workspace_init",
+    "learning_list_facets",
+    "learning_get_facet",
+    "learning_cache_stats",
+    "learning_update_facet",
+    "learning_pin_facet",
+    "learning_unpin_facet",
+    "learning_forget_facet",
+    "learning_rebuild_cache",
+    "learning_reset_cache",
+    "learning_save_profile",
+    "learning_enrich_profile",
+    "people_list",
+    "people_resolve",
+    "people_score",
+    "people_get",
+    "people_add_alias",
+    "people_record_interaction",
+    "people_refresh_address_book",
+    "ask_user_clarification",
+]

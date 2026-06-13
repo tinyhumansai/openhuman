@@ -194,6 +194,60 @@ pub fn spawn_diagnostics_poller(meet_url: String) {
                 .get("frameBusPort")
                 .and_then(|x| x.as_u64())
                 .unwrap_or(0);
+            let source = parsed
+                .get("lastDrawSource")
+                .and_then(|x| x.as_str())
+                .unwrap_or("?");
+            let canvas_probe = parsed.get("canvasProbe").unwrap_or(&Value::Null);
+            let canvas_luma = canvas_probe.get("avgLuma").and_then(|x| x.as_i64());
+            let canvas_min = canvas_probe.get("minLuma").and_then(|x| x.as_i64());
+            let canvas_max = canvas_probe.get("maxLuma").and_then(|x| x.as_i64());
+            let remote_bitmap = parsed.get("lastRemoteBitmapInfo").unwrap_or(&Value::Null);
+            let remote_w = remote_bitmap.get("width").and_then(|x| x.as_u64());
+            let remote_h = remote_bitmap.get("height").and_then(|x| x.as_u64());
+            let remote_bytes = remote_bitmap.get("bytes").and_then(|x| x.as_u64());
+            let outbound = parsed.get("outboundVideoStats").unwrap_or(&Value::Null);
+            let frames_encoded = outbound.get("framesEncoded").and_then(|x| x.as_u64());
+            let bytes_sent = outbound.get("bytesSent").and_then(|x| x.as_u64());
+            let encoded_w = outbound.get("frameWidth").and_then(|x| x.as_u64());
+            let encoded_h = outbound.get("frameHeight").and_then(|x| x.as_u64());
+            let quality_reason = outbound
+                .get("qualityLimitationReason")
+                .and_then(|x| x.as_str())
+                .unwrap_or("?");
+            let video_elements = parsed
+                .get("videoElements")
+                .and_then(|x| x.as_array())
+                .cloned()
+                .unwrap_or_default();
+            let video_count = video_elements.len();
+            let mascot_video = video_elements.iter().find(|video| {
+                video
+                    .get("tracks")
+                    .and_then(|x| x.as_array())
+                    .map(|tracks| {
+                        tracks.iter().any(|track| {
+                            track
+                                .get("label")
+                                .and_then(|x| x.as_str())
+                                .map(|label| label.contains("OpenHuman Mascot"))
+                                .unwrap_or(false)
+                        })
+                    })
+                    .unwrap_or(false)
+            });
+            let mascot_video_summary = mascot_video
+                .map(|video| {
+                    let vw = video.get("videoWidth").and_then(|x| x.as_u64());
+                    let vh = video.get("videoHeight").and_then(|x| x.as_u64());
+                    let ready = video.get("readyState").and_then(|x| x.as_u64());
+                    let luma = video
+                        .get("luma")
+                        .and_then(|x| x.get("avgLuma"))
+                        .and_then(|x| x.as_i64());
+                    format!("w={vw:?} h={vh:?} ready={ready:?} luma={luma:?}")
+                })
+                .unwrap_or_else(|| "none".to_string());
             let delta_frames = frames.saturating_sub(last_frames);
             let delta_dropped = dropped.saturating_sub(last_dropped);
             let fps = (delta_frames as f32) / 2.0;
@@ -201,7 +255,12 @@ pub fn spawn_diagnostics_poller(meet_url: String) {
                 "[meet-camera-diag] tick={tick} ws={ws_state} port={port} \
                  frames_total={frames} fps_2s={fps:.1} \
                  dropped_total={dropped} new_dropped={delta_dropped} \
-                 fresh_ms={fresh_ms:?} bridge_frame={frame} mood={mood}"
+                 fresh_ms={fresh_ms:?} bridge_frame={frame} mood={mood} source={source} \
+                 remote={remote_w:?}x{remote_h:?}/{remote_bytes:?}B \
+                 canvas_luma={canvas_luma:?}/{canvas_min:?}-{canvas_max:?} \
+                 outbound_frames={frames_encoded:?} outbound_bytes={bytes_sent:?} \
+                 outbound_size={encoded_w:?}x{encoded_h:?} quality={quality_reason} \
+                 videos={video_count} mascot_video={mascot_video_summary}"
             );
             last_frames = frames;
             last_dropped = dropped;

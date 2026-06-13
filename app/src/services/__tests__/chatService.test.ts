@@ -206,6 +206,174 @@ describe('chatService.subscribeChatEvents', () => {
     expect(onTaskBoardUpdated).toHaveBeenCalledWith(payload);
   });
 
+  it('drops malformed artifact_ready payloads without crashing', () => {
+    const socket = createMockSocket();
+    vi.mocked(socketService.getSocket).mockReturnValue(socket as never);
+    const onArtifactReady = vi.fn();
+    const onArtifactFailed = vi.fn();
+
+    subscribeChatEvents({ onArtifactReady, onArtifactFailed });
+
+    // 1. Non-string title — previously passed truthiness check, would
+    //    have downstream consumers crash on `.slice()` / `.length`.
+    socket.emit('artifact_ready', {
+      thread_id: 't1',
+      args: {
+        artifact_id: 'a1',
+        kind: 'presentation',
+        title: 42, // ← non-string
+        workspace_dir: '/workspace',
+        path: '/some/path.pptx',
+        size_bytes: 1024,
+      },
+    });
+    expect(onArtifactReady).not.toHaveBeenCalled();
+
+    // 2. Non-number size_bytes
+    socket.emit('artifact_ready', {
+      thread_id: 't1',
+      args: {
+        artifact_id: 'a1',
+        kind: 'presentation',
+        title: 'Deck',
+        workspace_dir: '/workspace',
+        path: '/some/path.pptx',
+        size_bytes: 'lots', // ← non-number
+      },
+    });
+    expect(onArtifactReady).not.toHaveBeenCalled();
+
+    // 3. Non-string error on artifact_failed — used to crash at
+    //    `.slice(0, 80)` because the truthiness check let it pass.
+    socket.emit('artifact_failed', {
+      thread_id: 't1',
+      args: {
+        artifact_id: 'a1',
+        kind: 'presentation',
+        title: 'Deck',
+        workspace_dir: '/workspace',
+        error: { reason: 'object instead of string' }, // ← non-string
+      },
+    });
+    expect(onArtifactFailed).not.toHaveBeenCalled();
+
+    // 4. Missing thread_id on the envelope
+    socket.emit('artifact_ready', {
+      args: {
+        artifact_id: 'a1',
+        kind: 'presentation',
+        title: 'Deck',
+        workspace_dir: '/workspace',
+        path: '/some/path.pptx',
+        size_bytes: 1024,
+      },
+    });
+    expect(onArtifactReady).not.toHaveBeenCalled();
+
+    // 5. Missing workspace_dir — without it, a subscriber can't detect a
+    //    cross-workspace event after a workspace switch (V5 binding).
+    socket.emit('artifact_ready', {
+      thread_id: 't1',
+      args: {
+        artifact_id: 'a1',
+        kind: 'presentation',
+        title: 'Deck',
+        // workspace_dir omitted
+        path: '/some/path.pptx',
+        size_bytes: 1024,
+      },
+    });
+    expect(onArtifactReady).not.toHaveBeenCalled();
+
+    // 6. Sanity — a well-formed payload (incl. workspace_dir) flows through.
+    socket.emit('artifact_ready', {
+      thread_id: 't1',
+      args: {
+        artifact_id: 'a1',
+        kind: 'presentation',
+        title: 'Deck',
+        workspace_dir: '/workspace',
+        path: '/some/path.pptx',
+        size_bytes: 1024,
+      },
+    });
+    expect(onArtifactReady).toHaveBeenCalledWith({
+      thread_id: 't1',
+      client_id: undefined,
+      artifact_id: 'a1',
+      kind: 'presentation',
+      title: 'Deck',
+      workspace_dir: '/workspace',
+      path: '/some/path.pptx',
+      size_bytes: 1024,
+    });
+  });
+
+  // Forces the well-formed `artifact_failed` branch (chatService.ts:869,
+  // 882-890) to execute end-to-end — event-object construction +
+  // capped chatLog preview + listener dispatch. Without this, the
+  // `onArtifactFailed` listener is wired but never fired.
+  it('forwards a well-formed artifact_failed payload through onArtifactFailed', () => {
+    const socket = createMockSocket();
+    vi.mocked(socketService.getSocket).mockReturnValue(socket as never);
+    const onArtifactFailed = vi.fn();
+
+    subscribeChatEvents({ onArtifactFailed });
+
+    socket.emit('artifact_failed', {
+      thread_id: 't1',
+      client_id: 'socket-1',
+      args: {
+        artifact_id: 'a1',
+        kind: 'document',
+        title: 'Quarterly Report',
+        workspace_dir: '/workspace',
+        // Long error to exercise the .slice(0, 80) chatLog cap defence.
+        error: 'x'.repeat(200),
+      },
+    });
+
+    expect(onArtifactFailed).toHaveBeenCalledTimes(1);
+    expect(onArtifactFailed).toHaveBeenCalledWith({
+      thread_id: 't1',
+      client_id: 'socket-1',
+      artifact_id: 'a1',
+      kind: 'document',
+      title: 'Quarterly Report',
+      workspace_dir: '/workspace',
+      error: 'x'.repeat(200),
+    });
+  });
+
+  // Drives the bad-envelope skip in both artifact handlers
+  // (chatService.ts:851-852 for artifact_failed, plus the matching
+  // artifact_ready branch). Without this, the `if (!env)` arm never
+  // fires for the failed path.
+  it('drops artifact_ready / artifact_failed envelopes with non-string thread_id', () => {
+    const socket = createMockSocket();
+    vi.mocked(socketService.getSocket).mockReturnValue(socket as never);
+    const onArtifactReady = vi.fn();
+    const onArtifactFailed = vi.fn();
+
+    subscribeChatEvents({ onArtifactReady, onArtifactFailed });
+
+    // Envelope with a non-string thread_id → readEnvelope returns null.
+    socket.emit('artifact_failed', {
+      thread_id: 42,
+      args: {
+        artifact_id: 'a1',
+        kind: 'presentation',
+        title: 'Deck',
+        workspace_dir: '/workspace',
+        error: 'boom',
+      },
+    });
+    expect(onArtifactFailed).not.toHaveBeenCalled();
+
+    socket.emit('artifact_ready', null);
+    expect(onArtifactReady).not.toHaveBeenCalled();
+  });
+
   it('sends chat payload with consistent optional RPC params', async () => {
     const socket = createMockSocket();
     vi.mocked(socketService.getSocket).mockReturnValue(socket as never);
@@ -222,5 +390,41 @@ describe('chatService.subscribeChatEvents', () => {
         profile_id: undefined,
       },
     });
+  });
+
+  it('forwards speak_reply, source, session_id when provided', async () => {
+    const socket = createMockSocket();
+    vi.mocked(socketService.getSocket).mockReturnValue(socket as never);
+
+    await chatSend({
+      threadId: 'thread-1',
+      message: 'hello',
+      speakReply: true,
+      source: 'ptt',
+      sessionId: 42,
+    });
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: 'openhuman.channel_web_chat',
+        params: expect.objectContaining({
+          message: 'hello',
+          speak_reply: true,
+          source: 'ptt',
+          session_id: 42,
+        }),
+      })
+    );
+  });
+
+  it('does not include the new fields when omitted', async () => {
+    const socket = createMockSocket();
+    vi.mocked(socketService.getSocket).mockReturnValue(socket as never);
+
+    await chatSend({ threadId: 'thread-1', message: 'hi' });
+    const params = mockCallCoreRpc.mock.calls[0][0].params;
+    expect(params.speak_reply).toBeUndefined();
+    expect(params.source).toBeUndefined();
+    expect(params.session_id).toBeUndefined();
   });
 });

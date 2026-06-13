@@ -40,7 +40,19 @@ pub fn schemas(function: &str) -> ControllerSchema {
 }
 
 fn handle_policy_info(_params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async { to_json(crate::openhuman::security::rpc::security_policy_info()) })
+    Box::pin(async {
+        log::debug!("[security][rpc] policy_info enter");
+        match crate::openhuman::security::rpc::load_and_get_security_policy_info().await {
+            Ok(outcome) => {
+                log::debug!("[security][rpc] policy_info ok");
+                to_json(outcome)
+            }
+            Err(err) => {
+                log::warn!("[security][rpc] policy_info failed: {err}");
+                Err(err)
+            }
+        }
+    })
 }
 
 fn to_json<T: serde::Serialize>(outcome: RpcOutcome<T>) -> Result<Value, String> {

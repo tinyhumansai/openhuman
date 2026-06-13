@@ -4,8 +4,8 @@
 use serde_json::json;
 
 use super::{build_retrieval_context, filter_hits_by_document_ids, format_llm_context_message};
-use crate::openhuman::memory::store::GraphRelationRecord;
-use crate::openhuman::memory::{MemoryItemKind, NamespaceMemoryHit, RetrievalScoreBreakdown};
+use crate::openhuman::memory_store::GraphRelationRecord;
+use crate::openhuman::memory_store::{MemoryItemKind, NamespaceMemoryHit, RetrievalScoreBreakdown};
 
 fn sample_hit() -> NamespaceMemoryHit {
     NamespaceMemoryHit {
@@ -41,6 +41,7 @@ fn sample_hit() -> NamespaceMemoryHit {
             document_ids: vec!["doc-1".to_string()],
             chunk_ids: vec!["doc-1#chunk-1".to_string()],
         }],
+        taint: crate::openhuman::memory::MemoryTaint::Internal,
     }
 }
 
@@ -94,6 +95,7 @@ fn sample_hit_with_entity_types() -> NamespaceMemoryHit {
             document_ids: vec!["doc-2".to_string()],
             chunk_ids: vec!["doc-2#chunk-1".to_string()],
         }],
+        taint: crate::openhuman::memory::MemoryTaint::Internal,
     }
 }
 

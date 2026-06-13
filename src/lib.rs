@@ -11,7 +11,7 @@ pub mod openhuman;
 pub mod rpc;
 
 pub use openhuman::config::DaemonConfig;
-pub use openhuman::memory::{MemoryClient, MemoryState};
+pub use openhuman::memory_store::{MemoryClient, MemoryState};
 
 /// Runs the core logic based on the provided command-line arguments.
 ///
@@ -26,6 +26,8 @@ pub use openhuman::memory::{MemoryClient, MemoryState};
 ///
 /// Returns an error if command execution fails.
 pub fn run_core_from_args(args: &[String]) -> anyhow::Result<()> {
+    core::cli::load_dotenv_for_cli()?;
     openhuman::service::apply_startup_restart_delay_from_env();
+    openhuman::keyring::init_master_key();
     core::cli::run_from_cli_args(args)
 }

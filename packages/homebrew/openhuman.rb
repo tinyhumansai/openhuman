@@ -30,7 +30,8 @@ class Openhuman < Formula
   end
 
   def install
-    bin.install "openhuman-core" => "openhuman"
+    bin.install "openhuman-core"
+    mv bin/"openhuman-core", bin/"openhuman"
   end
 
   test do

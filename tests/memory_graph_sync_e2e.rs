@@ -74,6 +74,7 @@ async fn ingest_document_populates_namespace_graph() {
                 category: "core".to_string(),
                 session_id: None,
                 document_id: None,
+                taint: openhuman_core::openhuman::memory::MemoryTaint::Internal,
             },
             config: ci_safe_config(),
         })
@@ -198,6 +199,7 @@ async fn put_doc_background_extraction_then_graph_query() {
             category: "core".to_string(),
             session_id: None,
             document_id: None,
+            taint: openhuman_core::openhuman::memory::MemoryTaint::Internal,
         })
         .await
         .expect("put_doc");

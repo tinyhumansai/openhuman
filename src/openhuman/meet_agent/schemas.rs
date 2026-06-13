@@ -40,6 +40,11 @@ const DEFS: &[Def] = &[
         schema: schema_stop_session,
         handler: handle_stop_session,
     },
+    Def {
+        function: "list_calls",
+        schema: schema_list_calls,
+        handler: handle_list_calls,
+    },
 ];
 
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
@@ -80,6 +85,28 @@ fn schema_start_session() -> ControllerSchema {
                 name: "sample_rate_hz",
                 ty: TypeSchema::F64,
                 comment: "Sample rate of inbound/outbound PCM. Default 16000.",
+                required: false,
+            },
+            FieldSchema {
+                name: "owner_display_name",
+                ty: TypeSchema::String,
+                comment: "Display name of the call owner (the user who launched the bot). \
+                     Used by the wake-word gate as the only speaker authorised to trigger \
+                     tool calls. Empty fails closed.",
+                required: false,
+            },
+            FieldSchema {
+                name: "bot_display_name",
+                ty: TypeSchema::String,
+                comment: "Display name the bot uses as its Meet participant tile. Used to drop \
+                     the bot's own captions (self-echo filter).",
+                required: false,
+            },
+            FieldSchema {
+                name: "meet_url",
+                ty: TypeSchema::String,
+                comment: "Normalised Meet URL the call joined. Persisted into the recent-calls \
+                     log on stop_session.",
                 required: false,
             },
         ],
@@ -225,6 +252,12 @@ fn schema_poll_speech() -> ControllerSchema {
                 comment: "True when the current outbound utterance is complete.",
                 required: true,
             },
+            FieldSchema {
+                name: "flush_pending",
+                ty: TypeSchema::Bool,
+                comment: "True when the shell should flush in-flight audio (barge-in). The shell must call __openhumanFlushAudio() before feeding the next PCM chunk.",
+                required: true,
+            },
         ],
     }
 }
@@ -275,6 +308,42 @@ fn schema_stop_session() -> ControllerSchema {
     }
 }
 
+fn schema_list_calls() -> ControllerSchema {
+    ControllerSchema {
+        namespace: "meet_agent",
+        function: "list_calls",
+        description:
+            "Return the most recent completed Meet calls (newest first). Reads the JSONL log written \
+                      on each stop_session. Used by the Skills Meeting Bots card to show a recent-calls list.",
+        inputs: vec![FieldSchema {
+            name: "limit",
+            ty: TypeSchema::F64,
+            comment: "Max rows to return. Defaults to 50; hard-capped server-side.",
+            required: false,
+        }],
+        outputs: vec![
+            FieldSchema {
+                name: "ok",
+                ty: TypeSchema::Bool,
+                comment: "True when the read succeeded (even if no rows exist yet).",
+                required: true,
+            },
+            FieldSchema {
+                name: "calls",
+                ty: TypeSchema::String,
+                comment: "Array of MeetCallRecord objects, newest first.",
+                required: true,
+            },
+            FieldSchema {
+                name: "count",
+                ty: TypeSchema::F64,
+                comment: "Number of rows in `calls`.",
+                required: true,
+            },
+        ],
+    }
+}
+
 fn schema_unknown() -> ControllerSchema {
     ControllerSchema {
         namespace: "meet_agent",
@@ -310,6 +379,9 @@ fn handle_poll_speech(p: Map<String, Value>) -> ControllerFuture {
 fn handle_stop_session(p: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move { super::rpc::handle_stop_session(p).await })
 }
+fn handle_list_calls(p: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move { super::rpc::handle_list_calls(p).await })
+}
 
 #[cfg(test)]
 mod tests {
@@ -333,7 +405,8 @@ mod tests {
                 "push_listen_pcm",
                 "push_caption",
                 "poll_speech",
-                "stop_session"
+                "stop_session",
+                "list_calls",
             ]
         );
     }

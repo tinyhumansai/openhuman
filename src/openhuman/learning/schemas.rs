@@ -644,7 +644,7 @@ fn handle_rebuild_cache(_params: Map<String, Value>) -> ControllerFuture {
 fn handle_cache_stats(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         use crate::openhuman::learning::cache::FacetCache;
-        use crate::openhuman::memory::store::profile::FacetState;
+        use crate::openhuman::memory_store::profile::FacetState;
 
         tracing::debug!("[learning.cache_stats] cache stats requested via RPC");
 
@@ -723,7 +723,7 @@ fn full_key(class_str: &str, key_suffix: &str) -> String {
 }
 
 /// Serialize a [`ProfileFacet`] to a serde_json [`Value`] for RPC output.
-fn facet_to_json(f: &crate::openhuman::memory::store::profile::ProfileFacet) -> serde_json::Value {
+fn facet_to_json(f: &crate::openhuman::memory_store::profile::ProfileFacet) -> serde_json::Value {
     serde_json::json!({
         "key": f.key,
         "value": f.value,
@@ -742,7 +742,7 @@ fn facet_to_json(f: &crate::openhuman::memory::store::profile::ProfileFacet) -> 
 
 fn handle_list_facets(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        use crate::openhuman::memory::store::profile::FacetState;
+        use crate::openhuman::memory_store::profile::FacetState;
 
         tracing::debug!("[learning.list_facets] called");
 
@@ -822,7 +822,7 @@ fn handle_get_facet(params: Map<String, Value>) -> ControllerFuture {
 
 fn handle_update_facet(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        use crate::openhuman::memory::store::profile::UserState;
+        use crate::openhuman::memory_store::profile::UserState;
 
         let class_str = params
             .get("class")
@@ -875,7 +875,7 @@ fn handle_update_facet(params: Map<String, Value>) -> ControllerFuture {
 
 fn handle_pin_facet(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        use crate::openhuman::memory::store::profile::UserState;
+        use crate::openhuman::memory_store::profile::UserState;
 
         let class_str = params
             .get("class")
@@ -915,7 +915,7 @@ fn handle_pin_facet(params: Map<String, Value>) -> ControllerFuture {
 
 fn handle_unpin_facet(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        use crate::openhuman::memory::store::profile::UserState;
+        use crate::openhuman::memory_store::profile::UserState;
 
         let class_str = params
             .get("class")
@@ -955,7 +955,7 @@ fn handle_unpin_facet(params: Map<String, Value>) -> ControllerFuture {
 
 fn handle_forget_facet(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        use crate::openhuman::memory::store::profile::{FacetState, UserState};
+        use crate::openhuman::memory_store::profile::{FacetState, UserState};
 
         let class_str = params
             .get("class")
@@ -1003,7 +1003,7 @@ fn handle_forget_facet(params: Map<String, Value>) -> ControllerFuture {
 
 fn handle_reset_cache(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        use crate::openhuman::memory::store::profile::UserState;
+        use crate::openhuman::memory_store::profile::UserState;
 
         tracing::debug!("[learning.reset_cache] called");
 

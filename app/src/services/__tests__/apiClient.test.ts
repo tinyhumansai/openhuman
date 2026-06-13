@@ -2,12 +2,26 @@ import { getVersion } from '@tauri-apps/api/app';
 import { isTauri } from '@tauri-apps/api/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { callCoreRpc } from '../coreRpcClient';
+
 vi.mock('@tauri-apps/api/app', () => ({ getVersion: vi.fn() }));
+vi.mock('../coreRpcClient', () => ({ callCoreRpc: vi.fn() }));
 
 const configMock = vi.hoisted(() => ({ isDev: true }));
 
 vi.mock('../../utils/config', () => ({
   APP_VERSION: '0.0.0-test',
+  APP_BINARY_VERSION: '0.0.0-test',
+  APP_ENVIRONMENT: 'test',
+  BUILD_SHA: 'test',
+  CORE_CARGO_VERSION: '0.0.0-test',
+  GA_MEASUREMENT_ID: undefined,
+  OPENPANEL_API_URL: 'https://panel.tinyhumans.ai/api',
+  OPENPANEL_CLIENT_ID: undefined,
+  SENTRY_DSN: undefined,
+  SENTRY_RELEASE: 'openhuman@test',
+  SENTRY_SMOKE_TEST: false,
+  TAURI_CARGO_VERSION: '0.0.0-test',
   get IS_DEV() {
     return configMock.isDev;
   },
@@ -19,6 +33,7 @@ describe('apiClient version headers', () => {
     vi.clearAllMocks();
     configMock.isDev = true;
     vi.mocked(isTauri).mockReturnValue(false);
+    vi.mocked(callCoreRpc).mockResolvedValue({ result: { version: '0.0.0-core' } });
     vi.stubGlobal('fetch', vi.fn());
   });
 
@@ -39,9 +54,10 @@ describe('apiClient version headers', () => {
     expect(headers).not.toHaveProperty('x-tauri-version');
   });
 
-  it('adds sanitized x-tauri-version on Tauri backend requests', async () => {
+  it('adds sanitized x-tauri-version and x-core-version on Tauri backend requests', async () => {
     vi.mocked(isTauri).mockReturnValue(true);
     vi.mocked(getVersion).mockResolvedValue(' 1.2.3 (desktop)+build!? ');
+    vi.mocked(callCoreRpc).mockResolvedValue({ result: { version: ' 4.5.6 (core)+abc ' } });
 
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockResolvedValueOnce({
@@ -56,6 +72,7 @@ describe('apiClient version headers', () => {
     const requestInit = fetchMock.mock.calls[0][1] as RequestInit;
     const headers = requestInit.headers as Record<string, string>;
     expect(headers['x-tauri-version']).toBe('1.2.3desktop+build');
+    expect(headers['x-core-version']).toBe('4.5.6core+abc');
     expect(headers).not.toHaveProperty('x-web-version');
   });
 
@@ -112,11 +129,15 @@ describe('apiClient version headers', () => {
     vi.mocked(getVersion)
       .mockRejectedValueOnce(new Error('transient failure'))
       .mockResolvedValueOnce('2.3.4');
+    vi.mocked(callCoreRpc).mockResolvedValue({ result: { version: '4.5.6' } });
 
     const { getClientVersionHeaders } = await import('../clientVersionHeaders');
 
-    await expect(getClientVersionHeaders()).resolves.toEqual({});
-    await expect(getClientVersionHeaders()).resolves.toEqual({ 'x-tauri-version': '2.3.4' });
+    await expect(getClientVersionHeaders()).resolves.toEqual({ 'x-core-version': '4.5.6' });
+    await expect(getClientVersionHeaders()).resolves.toEqual({
+      'x-tauri-version': '2.3.4',
+      'x-core-version': '4.5.6',
+    });
     expect(getVersion).toHaveBeenCalledTimes(2);
   });
 });

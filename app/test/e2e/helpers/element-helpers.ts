@@ -356,6 +356,47 @@ export async function clickSelector(
   return el;
 }
 
+function testIdSelector(testId: string): string {
+  return `[data-testid="${testId}"]`;
+}
+
+/**
+ * Wait for an element by stable `data-testid`.
+ *
+ * This is currently supported on tauri-driver, where WDIO can query the DOM.
+ * Mac2 exposes the accessibility tree instead, so specs that must run there
+ * should keep using text/accessibility helpers unless the app mirrors the
+ * test id into an accessible label.
+ */
+export async function waitForTestId(
+  testId: string,
+  timeout: number = 15_000
+): Promise<ChainablePromiseElement> {
+  if (!isTauriDriver()) {
+    throw new Error(`waitForTestId is only supported on tauri-driver: ${testId}`);
+  }
+
+  const selector = testIdSelector(testId);
+  const el = await browser.$(selector);
+  await el.waitForExist({
+    timeout,
+    timeoutMsg: `data-testid="${testId}" not found within ${timeout}ms`,
+  });
+  return el;
+}
+
+/**
+ * Wait for an element by stable `data-testid`, then click it.
+ */
+export async function clickTestId(
+  testId: string,
+  timeout: number = 15_000
+): Promise<ChainablePromiseElement> {
+  const el = await waitForTestId(testId, timeout);
+  await clickAtElement(el);
+  return el;
+}
+
 /**
  * Click a label whose visible text contains `text`.
  *

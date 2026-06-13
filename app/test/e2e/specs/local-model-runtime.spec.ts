@@ -24,9 +24,11 @@ async function waitForRequest(method, urlFragment, timeout = 15_000) {
 }
 
 async function waitForHome(timeout = 20_000) {
+  // Home.tsx renders t('home.askAssistant') = 'Ask your assistant anything...' as stable CTA.
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
-    if (await textExists('Message OpenHuman')) return true;
+    if (await textExists('Ask your assistant anything')) return true;
+    if (await textExists('Your device is connected')) return true;
     await browser.pause(700);
   }
   return false;
@@ -47,7 +49,8 @@ async function waitForAnyText(candidates, timeout = 20_000) {
 // CI does not provision a live Ollama server, so keep this spec skipped until
 // a deterministic mockable local-runtime harness exists for WDIO.
 describe.skip('Local model runtime flow', () => {
-  before(async () => {
+  before(async function beforeSuite() {
+    this.timeout(90_000);
     await startMockServer();
     await waitForApp();
     clearRequestLog();
@@ -57,7 +60,8 @@ describe.skip('Local model runtime flow', () => {
     await stopMockServer();
   });
 
-  it('shows direct-runtime guidance instead of app-managed bootstrap controls', async () => {
+  it('shows direct-runtime guidance instead of app-managed bootstrap controls', async function () {
+    this.timeout(90_000);
     await triggerAuthDeepLink('e2e-local-model-token');
     await waitForWindowVisible(25_000);
     await waitForWebView(15_000);

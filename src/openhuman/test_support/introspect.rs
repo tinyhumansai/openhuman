@@ -29,11 +29,18 @@ const LIST_MAX_DEPTH: u32 = 6;
 /// Reject any relative path containing a `..` component or that resolves
 /// outside the workspace root. Returns the joined absolute path on success.
 fn resolve_workspace_relative(workspace: &Path, rel: &str) -> Result<PathBuf, String> {
-    let trimmed = rel.trim_start_matches('/');
-    let candidate = workspace.join(trimmed);
+    // Canonicalize the workspace root first so both sides of the prefix check
+    // share the same symlink-resolved base. On macOS `/var` is a symlink to
+    // `/private/var`; if we join `rel` onto the original (unresolved) workspace
+    // and the candidate file doesn't exist yet, `canonicalize()` falls back to
+    // the unresolved path — which then fails `starts_with(canonical_root)`
+    // because the root was resolved through the symlink. Joining onto
+    // `canonical_root` ensures the fallback path already shares the prefix.
     let canonical_root = workspace
         .canonicalize()
         .unwrap_or_else(|_| workspace.to_path_buf());
+    let trimmed = rel.trim_start_matches('/');
+    let candidate = canonical_root.join(trimmed);
     let canonical_candidate = candidate
         .canonicalize()
         .unwrap_or_else(|_| candidate.clone());

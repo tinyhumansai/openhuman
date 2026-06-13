@@ -1,36 +1,17 @@
 ---
 # PR/push E2E gate.
 #
-# Calls the reusable `e2e-reusable.yml` with Linux only (smoke + mega-flow).
-# macOS / Windows E2E only runs at release time — see release-staging.yml
-# and release-production.yml `pretest` jobs which call the same reusable
-# workflow with `run_macos`, `run_windows`, and `full` all true.
-#
-# `workflow_dispatch` lets an operator opt in to a full-suite all-OS run
-# without cutting a release tag.
+# Desktop full-flow lane (mega-flow) across Linux, macOS, and Windows.
+# The browser-hosted Playwright suite lives in its own standalone workflow so
+# it can be run on demand without gating every push / PR.
 name: E2E
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-  workflow_dispatch:
-    inputs:
-      run_macos:
-        description: Also run the macOS E2E job.
-        type: boolean
-        default: false
-      run_windows:
-        description: Also run the Windows E2E job.
-        type: boolean
-        default: false
-      full:
-        description: Run the entire spec suite (slow; ~30+ min per OS).
-        type: boolean
-        default: false
+  workflow_dispatch: {}
 
 permissions:
   contents: read
+  packages: read
   pull-requests: read
 
 concurrency:
@@ -38,10 +19,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  e2e:
+  e2e-desktop:
     uses: ./.github/workflows/e2e-reusable.yml
     with:
       run_linux: true
-      run_macos: ${{ github.event_name == 'workflow_dispatch' && inputs.run_macos }}
-      run_windows: ${{ github.event_name == 'workflow_dispatch' && inputs.run_windows }}
-      full: ${{ github.event_name == 'workflow_dispatch' && inputs.full }}
+      run_macos: true
+      run_windows: true
+      full: false

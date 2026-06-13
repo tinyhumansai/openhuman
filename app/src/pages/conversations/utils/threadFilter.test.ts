@@ -1,14 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import type { Thread } from '../../../types/thread';
-import { isThreadVisibleInTab, WORKERS_TAB_VALUE } from './threadFilter';
-
-// Issue #1624: this is the pure rule that backs the sidebar
-// `filteredThreads` memo + the `Workers` tab. The tests pin both halves
-// of the contract so a future tweak to one branch can never silently
-// regress the other:
-//   1. Default tabs hide worker threads (parentThreadId set).
-//   2. The `Workers` sentinel tab inverts that filter.
+import {
+  GENERAL_TAB_VALUE,
+  isThreadVisibleInTab,
+  SUBCONSCIOUS_TAB_VALUE,
+  TASKS_TAB_VALUE,
+} from './threadFilter';
 
 function thread(overrides: Partial<Thread>): Thread {
   return {
@@ -25,59 +23,96 @@ function thread(overrides: Partial<Thread>): Thread {
 }
 
 describe('isThreadVisibleInTab', () => {
-  describe('default `all` tab', () => {
-    it('keeps top-level conversations', () => {
-      expect(isThreadVisibleInTab(thread({ id: 'top' }), 'all')).toBe(true);
+  describe('General bucket', () => {
+    it('keeps general and legacy work-labeled threads', () => {
+      expect(isThreadVisibleInTab(thread({ labels: [GENERAL_TAB_VALUE] }), GENERAL_TAB_VALUE)).toBe(
+        true
+      );
+      expect(isThreadVisibleInTab(thread({ labels: ['work', 'urgent'] }), GENERAL_TAB_VALUE)).toBe(
+        true
+      );
     });
 
-    it('hides worker threads (parentThreadId set)', () => {
-      expect(isThreadVisibleInTab(thread({ id: 'w', parentThreadId: 'p' }), 'all')).toBe(false);
+    it('keeps unlabeled and unknown-label threads as the fallback bucket', () => {
+      expect(isThreadVisibleInTab(thread({ labels: [] }), GENERAL_TAB_VALUE)).toBe(true);
+      expect(isThreadVisibleInTab(thread({ labels: ['briefing'] }), GENERAL_TAB_VALUE)).toBe(true);
+      expect(isThreadVisibleInTab(thread({ labels: ['notification'] }), GENERAL_TAB_VALUE)).toBe(
+        true
+      );
+      expect(isThreadVisibleInTab(thread({ labels: ['custom'] }), GENERAL_TAB_VALUE)).toBe(true);
+    });
+
+    it('excludes threads that belong to explicit non-General buckets', () => {
+      expect(
+        isThreadVisibleInTab(thread({ labels: [SUBCONSCIOUS_TAB_VALUE] }), GENERAL_TAB_VALUE)
+      ).toBe(false);
+      expect(isThreadVisibleInTab(thread({ labels: [TASKS_TAB_VALUE] }), GENERAL_TAB_VALUE)).toBe(
+        false
+      );
+      expect(isThreadVisibleInTab(thread({ parentThreadId: 'parent' }), GENERAL_TAB_VALUE)).toBe(
+        false
+      );
+    });
+
+    it('excludes meeting threads from the General bucket (folded into Tasks)', () => {
+      expect(isThreadVisibleInTab(thread({ labels: ['meetings'] }), GENERAL_TAB_VALUE)).toBe(false);
+      expect(isThreadVisibleInTab(thread({ labels: ['Meetings'] }), GENERAL_TAB_VALUE)).toBe(false);
     });
   });
 
-  describe('label-scoped tabs (work, briefing, notification, …)', () => {
-    it('keeps a non-worker thread that carries the matching label', () => {
-      const t = thread({ id: 'a', labels: ['work', 'urgent'] });
-      expect(isThreadVisibleInTab(t, 'work')).toBe(true);
+  describe('Subconscious bucket', () => {
+    it('keeps canonical and legacy subconscious-generated threads', () => {
+      expect(
+        isThreadVisibleInTab(thread({ labels: [SUBCONSCIOUS_TAB_VALUE] }), SUBCONSCIOUS_TAB_VALUE)
+      ).toBe(true);
+      expect(
+        isThreadVisibleInTab(thread({ labels: ['from_reflection'] }), SUBCONSCIOUS_TAB_VALUE)
+      ).toBe(true);
+      expect(
+        isThreadVisibleInTab(thread({ labels: ['subconscious_tick'] }), SUBCONSCIOUS_TAB_VALUE)
+      ).toBe(true);
     });
 
-    it('drops a non-worker thread that does not carry the matching label', () => {
-      const t = thread({ id: 'a', labels: ['briefing'] });
-      expect(isThreadVisibleInTab(t, 'work')).toBe(false);
-    });
-
-    it('still hides worker threads even when the label would otherwise match', () => {
-      const t = thread({ id: 'w', parentThreadId: 'p', labels: ['work'] });
-      expect(isThreadVisibleInTab(t, 'work')).toBe(false);
-    });
-
-    it('treats threads with no labels array as not matching', () => {
-      const t = thread({ id: 'a' });
-      expect(isThreadVisibleInTab(t, 'briefing')).toBe(false);
+    it('excludes ordinary and task threads', () => {
+      expect(
+        isThreadVisibleInTab(thread({ labels: [GENERAL_TAB_VALUE] }), SUBCONSCIOUS_TAB_VALUE)
+      ).toBe(false);
+      expect(
+        isThreadVisibleInTab(thread({ labels: [TASKS_TAB_VALUE] }), SUBCONSCIOUS_TAB_VALUE)
+      ).toBe(false);
     });
   });
 
-  describe('Workers tab (intentional surface for sub-agent work)', () => {
-    it('uses the shared sentinel value', () => {
-      // Lock the constant — Conversations.tsx wires the same string into
-      // the sidebar tab definition, so a rename without updating both
-      // sides would silently break the surface.
-      expect(WORKERS_TAB_VALUE).toBe('workers');
+  describe('Tasks bucket', () => {
+    it('keeps task-board, legacy agent-task, and legacy worker-labeled threads', () => {
+      expect(isThreadVisibleInTab(thread({ labels: [TASKS_TAB_VALUE] }), TASKS_TAB_VALUE)).toBe(
+        true
+      );
+      expect(isThreadVisibleInTab(thread({ labels: ['agent-task'] }), TASKS_TAB_VALUE)).toBe(true);
+      expect(isThreadVisibleInTab(thread({ labels: ['worker'] }), TASKS_TAB_VALUE)).toBe(true);
     });
 
-    it('keeps a worker thread', () => {
-      const t = thread({ id: 'w', parentThreadId: 'p' });
-      expect(isThreadVisibleInTab(t, WORKERS_TAB_VALUE)).toBe(true);
+    it('keeps parented worker/sub-agent threads regardless of labels', () => {
+      expect(
+        isThreadVisibleInTab(
+          thread({ parentThreadId: 'parent', labels: [GENERAL_TAB_VALUE] }),
+          TASKS_TAB_VALUE
+        )
+      ).toBe(true);
     });
 
-    it('hides top-level conversations', () => {
-      const t = thread({ id: 'top' });
-      expect(isThreadVisibleInTab(t, WORKERS_TAB_VALUE)).toBe(false);
+    it('keeps meeting-labeled threads (meetings folded into tasks)', () => {
+      expect(isThreadVisibleInTab(thread({ labels: ['meetings'] }), TASKS_TAB_VALUE)).toBe(true);
+      expect(isThreadVisibleInTab(thread({ labels: ['Meetings'] }), TASKS_TAB_VALUE)).toBe(true);
     });
 
-    it("keeps a worker thread regardless of the worker thread's own labels", () => {
-      const t = thread({ id: 'w', parentThreadId: 'p', labels: ['work'] });
-      expect(isThreadVisibleInTab(t, WORKERS_TAB_VALUE)).toBe(true);
+    it('excludes ordinary and subconscious threads', () => {
+      expect(isThreadVisibleInTab(thread({ labels: [GENERAL_TAB_VALUE] }), TASKS_TAB_VALUE)).toBe(
+        false
+      );
+      expect(
+        isThreadVisibleInTab(thread({ labels: [SUBCONSCIOUS_TAB_VALUE] }), TASKS_TAB_VALUE)
+      ).toBe(false);
     });
   });
 });

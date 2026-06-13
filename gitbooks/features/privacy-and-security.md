@@ -14,7 +14,7 @@ OpenHuman is designed so that the **memory of your life lives on your machine**.
 
 **Integration tokens are held by the backend, not on your laptop.** OAuth tokens are never written to disk in plaintext on your device. The OpenHuman backend brokers each integration request, the core never speaks any third-party API directly.
 
-**OS-level credential storage.** Sensitive tokens are stored in your platform's secure keychain, macOS Keychain, Windows Credential Manager, Linux Secret Service.
+**OS-level credential storage.** Sensitive local secrets are rooted in your platform's secure keychain, macOS Keychain, Windows Credential Manager, Linux Secret Service. See [OS Keyring & Secret Storage](os-keyring-and-secret-storage.md).
 
 **No training on your data.** Your conversations, your Memory Tree, and your personal information are never used to train AI models or improve systems.
 
@@ -36,7 +36,7 @@ OpenHuman is designed so that the **memory of your life lives on your machine**.
 |                                    |                                                                                                                                                                            |
 | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **LLM calls**                      | Proxied through the backend under one subscription, then forwarded to the underlying provider (Anthropic / OpenAI / Google / etc.) per the [model router](model-routing/). |
-| **Web search proxy**               | The native [web search tool](native-tools/web-search.md) calls a backend proxy so you don't carry a search API key.                                                                   |
+| **Web search proxy**               | The native [web search tool](native-tools/web-search.md) uses the backend proxy by default so you don't carry a search API key. If you call the optional SearXNG tool, that query goes to your configured SearXNG instance instead. |
 | **Integration OAuth & tool proxy** | Token storage and rate-limited request brokering for [118+ integrations](integrations/README.md).                                                                                 |
 | **TTS streaming**                  | Hosted [text-to-speech](native-tools/voice.md) audio streams. Audio is generated and discarded - not retained.                                                                          |
 
@@ -69,6 +69,8 @@ Compression and locality together become the privacy architecture.
 ## Security
 
 **Encrypted in transit.** All communication between the application and the OpenHuman backend uses TLS. No data travels in plain text.
+
+**Key in keyring, ciphertext on disk.** For local secrets that must be persisted in app files, OpenHuman stores encrypted ciphertext on disk and keeps the master decryption key in the OS keyring. See [OS Keyring & Secret Storage](os-keyring-and-secret-storage.md).
 
 **Sandboxed skills.** Each skill runs in its own isolated execution environment with enforced memory and resource limits. Skills cannot access each other's data, the host system's file system, or your credentials.
 

@@ -85,4 +85,4 @@ Additional instructions from the user:
 ${extra_prompt}"
 fi
 
-"$agent" "$prompt"
+agent_exec "$agent" "$prompt"

@@ -20,4 +20,5 @@ mod schemas;
 pub use schemas::{
     all_controller_schemas as all_connectivity_controller_schemas,
     all_registered_controllers as all_connectivity_registered_controllers,
+    schemas as connectivity_controller_schema,
 };

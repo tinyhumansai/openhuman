@@ -14,6 +14,7 @@ pub mod rpc;
 pub mod schemas;
 pub mod scorer;
 pub mod store;
+pub mod tools;
 pub mod types;
 
 pub use schemas::{

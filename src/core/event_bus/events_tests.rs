@@ -57,6 +57,37 @@ fn all_variants_have_correct_domain() {
             },
             "agent",
         ),
+        // Run Queue
+        (
+            DomainEvent::RunQueueMessageQueued {
+                thread_id: "t".into(),
+                mode: "steer".into(),
+                queue_depth: 1,
+            },
+            "agent",
+        ),
+        (
+            DomainEvent::RunQueueMessageDelivered {
+                thread_id: "t".into(),
+                mode: "steer".into(),
+                iteration: 2,
+            },
+            "agent",
+        ),
+        (
+            DomainEvent::RunQueueFollowupDispatched {
+                thread_id: "t".into(),
+                followup_count: 1,
+            },
+            "agent",
+        ),
+        (
+            DomainEvent::RunQueueInterrupted {
+                thread_id: "t".into(),
+                cancelled_request_id: "req-1".into(),
+            },
+            "agent",
+        ),
         // Memory
         (
             DomainEvent::MemoryStored {
@@ -79,6 +110,9 @@ fn all_variants_have_correct_domain() {
                 event_name: "telegram:message".into(),
                 channel: "telegram".into(),
                 message: "hi".into(),
+                sender: None,
+                reply_target: None,
+                thread_ts: None,
                 raw_data: serde_json::Value::Null,
             },
             "channel",
@@ -91,6 +125,7 @@ fn all_variants_have_correct_domain() {
                 reply_target: "r".into(),
                 content: "hi".into(),
                 thread_ts: None,
+                workspace_dir: std::path::PathBuf::from("/test"),
             },
             "channel",
         ),
@@ -105,6 +140,7 @@ fn all_variants_have_correct_domain() {
                 response: "hello".into(),
                 elapsed_ms: 0,
                 success: true,
+                workspace_dir: std::path::PathBuf::from("/test"),
             },
             "channel",
         ),
@@ -173,29 +209,29 @@ fn all_variants_have_correct_domain() {
             },
             "cron",
         ),
-        // Skill
+        // Workflow
         (
-            DomainEvent::SkillLoaded {
+            DomainEvent::WorkflowLoaded {
                 skill_id: "s".into(),
                 runtime: "nodejs".into(),
             },
-            "skill",
+            "workflow",
         ),
         (
-            DomainEvent::SkillStopped {
+            DomainEvent::WorkflowStopped {
                 skill_id: "s".into(),
             },
-            "skill",
+            "workflow",
         ),
         (
-            DomainEvent::SkillStartFailed {
+            DomainEvent::WorkflowStartFailed {
                 skill_id: "s".into(),
                 error: "e".into(),
             },
-            "skill",
+            "workflow",
         ),
         (
-            DomainEvent::SkillExecuted {
+            DomainEvent::WorkflowExecuted {
                 skill_id: "s".into(),
                 tool_name: "t".into(),
                 arguments: serde_json::Value::Null,
@@ -203,7 +239,7 @@ fn all_variants_have_correct_domain() {
                 success: true,
                 elapsed_ms: 0,
             },
-            "skill",
+            "workflow",
         ),
         // Tool
         (
@@ -304,6 +340,12 @@ fn all_variants_have_correct_domain() {
                 error: None,
                 cost_usd: 0.0,
                 elapsed_ms: 123,
+            },
+            "composio",
+        ),
+        (
+            DomainEvent::ComposioIntegrationsChanged {
+                toolkits: vec!["gmail".into(), "notion".into()],
             },
             "composio",
         ),
@@ -463,4 +505,30 @@ fn all_variants_have_correct_domain() {
             std::mem::discriminant(&event)
         );
     }
+}
+
+/// Regression guard. An earlier revision of
+/// [`DomainEvent::ApprovalRequested`] published a `session_id`
+/// field that historically carried the verbatim JSON-RPC bearer.
+/// Any downstream subscriber that Debug-printed the event (audit
+/// pipeline, `tracing` instrumentation, panic backtrace) leaked
+/// the credential. The field has been removed from the variant;
+/// this test fails loudly if it ever comes back, by name, via
+/// Debug — the bus does not derive `Serialize` so the audit-side
+/// risk lives entirely in the Debug surface.
+#[test]
+fn approval_requested_does_not_surface_session_id() {
+    let event = DomainEvent::ApprovalRequested {
+        request_id: "req-1".to_string(),
+        tool_name: "composio".to_string(),
+        action_summary: "send slack message".to_string(),
+        args_redacted: serde_json::json!({ "tool_slug": "SLACK_SEND" }),
+        thread_id: Some("t-1".to_string()),
+        client_id: Some("c-1".to_string()),
+    };
+    let dbg = format!("{event:?}");
+    assert!(
+        !dbg.contains("session_id"),
+        "ApprovalRequested Debug must not surface session_id: {dbg}"
+    );
 }

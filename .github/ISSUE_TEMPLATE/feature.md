@@ -3,8 +3,7 @@ name: Feature
 about: Used for new features or suggestions
 title: ""
 type: Feature
-assignees: ''
-
+assignees: ""
 ---
 
 Use a concise sentence-case title that describes the requested outcome. Do not add `Feature` or bracket prefixes to the title.
@@ -26,7 +25,7 @@ How you plan to solve it — scope (core / app / both), approach, tradeoffs. Ski
 - [ ] **Feature 1** — TODO
 - [ ] **Feature 2** — TODO
 - [ ] **Feature 3** — TODO
-- [ ] **Diff coverage ≥ 80%** — the implementing PR meets the changed-lines coverage gate (Vitest + cargo-llvm-cov, enforced by [`.github/workflows/coverage.yml`](../../.github/workflows/coverage.yml)).
+- [ ] **Diff coverage ≥ 80%** — the implementing PR meets the changed-lines coverage gate (Vitest + cargo-llvm-cov, enforced by [`.github/workflows/pr-ci.yml`](../../.github/workflows/pr-ci.yml)).
 
 - …
 

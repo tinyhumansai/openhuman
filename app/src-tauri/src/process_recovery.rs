@@ -1,5 +1,13 @@
 //! Startup recovery for OpenHuman processes left behind by hard exits.
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub(crate) struct ProcessInfo {
+    pub pid: u32,
+    pub ppid: u32,
+    pub argv0: String,
+    pub command: String,
+}
+
 #[cfg(target_os = "macos")]
 mod imp {
     use std::collections::{HashMap, HashSet};
@@ -7,21 +15,13 @@ mod imp {
     use std::path::{Path, PathBuf};
     use std::time::Duration;
 
-    use serde::Serialize;
-
     use crate::cef_preflight;
     use crate::core_process;
     use crate::process_kill::{kill_pid_force, kill_pid_term};
 
-    const TERM_GRACE: Duration = Duration::from_millis(500);
+    pub(crate) use super::ProcessInfo;
 
-    #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-    pub(crate) struct ProcessInfo {
-        pub pid: u32,
-        pub ppid: u32,
-        pub argv0: String,
-        pub command: String,
-    }
+    const TERM_GRACE: Duration = Duration::from_millis(500);
 
     #[derive(Debug, Default, PartialEq, Eq)]
     struct ReapSummary {
@@ -416,24 +416,479 @@ mod imp {
     }
 }
 
+/// Linux implementation: use /proc/<pid>/cmdline to enumerate openhuman-core processes.
+#[cfg(target_os = "linux")]
+mod linux_imp {
+    use crate::core_process;
+    use crate::process_kill::{kill_pid_force, kill_pid_term};
+    use std::time::Duration;
+
+    pub(crate) use super::ProcessInfo;
+
+    const TERM_GRACE: Duration = Duration::from_millis(500);
+
+    pub(crate) fn reap_stale_openhuman_processes() {
+        if core_process::reuse_existing_listener_enabled() {
+            log::info!(
+                "[startup-recovery] OPENHUMAN_CORE_REUSE_EXISTING=1; skipping stale process reap"
+            );
+            return;
+        }
+
+        let self_pid = std::process::id();
+        log::debug!("[startup-recovery] linux: scanning /proc for stale OpenHuman processes (self_pid={self_pid})");
+
+        let stale = match enumerate_openhuman_processes() {
+            Ok(procs) => procs,
+            Err(err) => {
+                log::warn!("[startup-recovery] linux: failed to enumerate processes: {err}");
+                return;
+            }
+        };
+
+        if stale.is_empty() {
+            log::info!("[startup-recovery] linux: no stale OpenHuman processes found");
+            return;
+        }
+
+        log::info!(
+            "[startup-recovery] linux: found {} stale OpenHuman process(es), sending SIGTERM",
+            stale.len()
+        );
+        for proc in &stale {
+            match kill_pid_term(proc.pid) {
+                Ok(()) => log::warn!(
+                    "[startup-recovery] linux: SIGTERM stale OpenHuman pid={} cmd={}",
+                    proc.pid,
+                    proc.argv0
+                ),
+                Err(err) => log::warn!(
+                    "[startup-recovery] linux: failed to SIGTERM pid={}: {err}",
+                    proc.pid
+                ),
+            }
+        }
+
+        std::thread::sleep(TERM_GRACE);
+
+        let after_term = match enumerate_openhuman_processes() {
+            Ok(procs) => procs,
+            Err(err) => {
+                log::warn!("[startup-recovery] linux: failed to re-enumerate after SIGTERM: {err}");
+                return;
+            }
+        };
+
+        let stale_pids: std::collections::HashSet<u32> = stale.iter().map(|p| p.pid).collect();
+        let mut kill_count = 0usize;
+        for proc in &after_term {
+            if stale_pids.contains(&proc.pid) {
+                match kill_pid_force(proc.pid) {
+                    Ok(()) => {
+                        kill_count += 1;
+                        log::warn!(
+                            "[startup-recovery] linux: SIGKILL stale OpenHuman pid={} cmd={}",
+                            proc.pid,
+                            proc.argv0
+                        );
+                    }
+                    Err(err) => log::warn!(
+                        "[startup-recovery] linux: failed to SIGKILL pid={}: {err}",
+                        proc.pid
+                    ),
+                }
+            }
+        }
+
+        log::info!(
+            "[startup-recovery] linux: reap complete term={} kill={} total={}",
+            stale.len(),
+            kill_count,
+            stale.len()
+        );
+    }
+
+    pub(crate) fn enumerate_openhuman_processes() -> Result<Vec<ProcessInfo>, String> {
+        let self_pid = std::process::id();
+        let mut results = Vec::new();
+
+        let proc_dir = std::fs::read_dir("/proc").map_err(|e| format!("read_dir /proc: {e}"))?;
+
+        for entry in proc_dir.flatten() {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            let pid: u32 = match name_str.parse() {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+            if pid == self_pid {
+                continue;
+            }
+
+            let cmdline_path = format!("/proc/{pid}/cmdline");
+            let cmdline_bytes = match std::fs::read(&cmdline_path) {
+                Ok(b) => b,
+                Err(_) => continue,
+            };
+
+            // /proc/<pid>/cmdline uses NUL bytes as argument separators.
+            let cmdline = cmdline_bytes
+                .split(|&b| b == 0)
+                .filter(|seg| !seg.is_empty())
+                .map(|seg| String::from_utf8_lossy(seg).into_owned())
+                .collect::<Vec<_>>();
+
+            let argv0 = match cmdline.first() {
+                Some(a) => a.clone(),
+                None => continue,
+            };
+
+            if !is_openhuman_executable(&argv0) {
+                continue;
+            }
+
+            let ppid = read_ppid(pid).unwrap_or(0);
+            let command = cmdline.join(" ");
+
+            log::debug!(
+                "[startup-recovery] linux: found OpenHuman process pid={pid} argv0={argv0}"
+            );
+            results.push(ProcessInfo {
+                pid,
+                ppid,
+                argv0,
+                command,
+            });
+        }
+
+        Ok(results)
+    }
+
+    fn read_ppid(pid: u32) -> Option<u32> {
+        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+        // /proc/<pid>/stat: "pid (comm) state ppid ..."
+        // The comm field can contain spaces and parens, find the closing ')' first.
+        let after_comm = stat.rfind(')')?;
+        let rest = stat[after_comm + 1..].trim_start();
+        // rest: "state ppid ..."
+        let mut parts = rest.split_whitespace();
+        let _state = parts.next()?;
+        parts.next()?.parse().ok()
+    }
+
+    fn is_openhuman_executable(argv0: &str) -> bool {
+        let filename = std::path::Path::new(argv0)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(argv0);
+        let lower = filename.to_ascii_lowercase();
+        lower == "openhuman-core" || lower == "openhuman"
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn is_openhuman_executable_matches_core_binary() {
+            assert!(is_openhuman_executable("/usr/local/bin/openhuman-core"));
+            assert!(is_openhuman_executable("openhuman-core"));
+            assert!(is_openhuman_executable("/opt/OpenHuman/openhuman-core"));
+        }
+
+        #[test]
+        fn is_openhuman_executable_matches_app_binary() {
+            assert!(is_openhuman_executable("/opt/OpenHuman/OpenHuman"));
+            assert!(is_openhuman_executable("openhuman"));
+        }
+
+        #[test]
+        fn is_openhuman_executable_rejects_unrelated() {
+            assert!(!is_openhuman_executable("bash"));
+            assert!(!is_openhuman_executable("/usr/bin/python3"));
+            assert!(!is_openhuman_executable("node"));
+        }
+
+        #[test]
+        fn enumerate_openhuman_processes_returns_no_self() {
+            // Enumerate and confirm self is not in the result.
+            let self_pid = std::process::id();
+            let result = enumerate_openhuman_processes().expect("enumerate");
+            assert!(
+                result.iter().all(|p| p.pid != self_pid),
+                "self pid {self_pid} must not appear in enumerated list"
+            );
+        }
+    }
+}
+
+/// Windows implementation: use sysinfo to enumerate openhuman processes.
+#[cfg(target_os = "windows")]
+mod windows_imp {
+    use crate::core_process;
+    use crate::process_kill::{kill_pid_force, kill_pid_term};
+    use std::time::Duration;
+
+    pub(crate) use super::ProcessInfo;
+
+    const TERM_GRACE: Duration = Duration::from_millis(500);
+
+    pub(crate) fn reap_stale_openhuman_processes() {
+        if core_process::reuse_existing_listener_enabled() {
+            log::info!(
+                "[startup-recovery] OPENHUMAN_CORE_REUSE_EXISTING=1; skipping stale process reap"
+            );
+            return;
+        }
+
+        let self_pid = std::process::id();
+        log::debug!(
+            "[startup-recovery] windows: scanning processes for stale OpenHuman (self_pid={self_pid})"
+        );
+
+        let stale = match enumerate_openhuman_processes() {
+            Ok(procs) => procs,
+            Err(err) => {
+                log::warn!("[startup-recovery] windows: failed to enumerate processes: {err}");
+                return;
+            }
+        };
+
+        if stale.is_empty() {
+            log::info!("[startup-recovery] windows: no stale OpenHuman processes found");
+            return;
+        }
+
+        log::info!(
+            "[startup-recovery] windows: found {} stale OpenHuman process(es), sending terminate",
+            stale.len()
+        );
+        for proc in &stale {
+            match kill_pid_term(proc.pid) {
+                Ok(()) => log::warn!(
+                    "[startup-recovery] windows: TERM stale OpenHuman pid={} exe={}",
+                    proc.pid,
+                    proc.argv0
+                ),
+                Err(err) => log::warn!(
+                    "[startup-recovery] windows: failed to terminate pid={}: {err}",
+                    proc.pid
+                ),
+            }
+        }
+
+        std::thread::sleep(TERM_GRACE);
+
+        let after_term = match enumerate_openhuman_processes() {
+            Ok(procs) => procs,
+            Err(err) => {
+                log::warn!(
+                    "[startup-recovery] windows: failed to re-enumerate after terminate: {err}"
+                );
+                return;
+            }
+        };
+
+        let stale_pids: std::collections::HashSet<u32> = stale.iter().map(|p| p.pid).collect();
+        let mut kill_count = 0usize;
+        for proc in &after_term {
+            if stale_pids.contains(&proc.pid) {
+                match kill_pid_force(proc.pid) {
+                    Ok(()) => {
+                        kill_count += 1;
+                        log::warn!(
+                            "[startup-recovery] windows: force-killed stale OpenHuman pid={} exe={}",
+                            proc.pid,
+                            proc.argv0
+                        );
+                    }
+                    Err(err) => log::warn!(
+                        "[startup-recovery] windows: failed to force-kill pid={}: {err}",
+                        proc.pid
+                    ),
+                }
+            }
+        }
+
+        log::info!(
+            "[startup-recovery] windows: reap complete term={} kill={} total={}",
+            stale.len(),
+            kill_count,
+            stale.len()
+        );
+    }
+
+    pub(crate) fn enumerate_openhuman_processes() -> Result<Vec<ProcessInfo>, String> {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+        let self_pid = std::process::id();
+
+        // Use WMIC to enumerate processes with their parent PIDs and executable paths.
+        // Output format: Caption,ProcessId,ParentProcessId,ExecutablePath
+        let output = std::process::Command::new("wmic")
+            .args([
+                "process",
+                "get",
+                "Caption,ProcessId,ParentProcessId,ExecutablePath",
+                "/format:csv",
+            ])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .map_err(|e| format!("spawn wmic: {e}"))?;
+
+        if !output.status.success() {
+            return Err(format!("wmic exited with {}", output.status));
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Ok(parse_wmic_output(&stdout, self_pid))
+    }
+
+    fn parse_wmic_output(stdout: &str, self_pid: u32) -> Vec<ProcessInfo> {
+        let mut results = Vec::new();
+        let mut lines = stdout.lines();
+
+        // Skip header lines until we find the CSV header row.
+        let header = loop {
+            match lines.next() {
+                Some(line) if line.trim().starts_with("Node,") => break line,
+                Some(_) => continue,
+                None => return results,
+            }
+        };
+
+        // Find column indices from the header.
+        let cols: Vec<&str> = header.split(',').collect();
+        let idx_caption = cols.iter().position(|c| c.trim() == "Caption");
+        let idx_pid = cols.iter().position(|c| c.trim() == "ProcessId");
+        let idx_ppid = cols.iter().position(|c| c.trim() == "ParentProcessId");
+        let idx_exe = cols.iter().position(|c| c.trim() == "ExecutablePath");
+
+        let (Some(idx_caption), Some(idx_pid), Some(idx_ppid), Some(idx_exe)) =
+            (idx_caption, idx_pid, idx_ppid, idx_exe)
+        else {
+            log::warn!("[startup-recovery] windows: wmic CSV header missing expected columns");
+            return results;
+        };
+
+        for line in lines {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            let fields: Vec<&str> = line.splitn(cols.len(), ',').collect();
+            if fields.len() < cols.len() {
+                continue;
+            }
+
+            let caption = fields[idx_caption].trim();
+            let exe_path = fields[idx_exe].trim();
+            let pid: u32 = match fields[idx_pid].trim().parse() {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+            let ppid: u32 = fields[idx_ppid].trim().parse().unwrap_or(0);
+
+            if pid == self_pid {
+                continue;
+            }
+
+            let argv0 = if !exe_path.is_empty() {
+                exe_path.to_string()
+            } else {
+                caption.to_string()
+            };
+
+            if !is_openhuman_executable(caption, exe_path) {
+                continue;
+            }
+
+            log::debug!(
+                "[startup-recovery] windows: found OpenHuman process pid={pid} argv0={argv0}"
+            );
+            results.push(ProcessInfo {
+                pid,
+                ppid,
+                argv0: argv0.clone(),
+                command: argv0,
+            });
+        }
+
+        results
+    }
+
+    fn is_openhuman_executable(caption: &str, exe_path: &str) -> bool {
+        let caption_lower = caption.to_ascii_lowercase();
+        let exe_filename = std::path::Path::new(exe_path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(exe_path)
+            .to_ascii_lowercase();
+        caption_lower == "openhuman-core.exe"
+            || caption_lower == "openhuman.exe"
+            || exe_filename == "openhuman-core.exe"
+            || exe_filename == "openhuman.exe"
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn parse_wmic_output_finds_openhuman_processes() {
+            let csv = "\
+Node,Caption,ExecutablePath,ParentProcessId,ProcessId\r\n\
+\r\n\
+DESKTOP-ABC,openhuman-core.exe,C:\\Program Files\\OpenHuman\\openhuman-core.exe,1234,5678\r\n\
+DESKTOP-ABC,chrome.exe,C:\\Program Files\\Google\\Chrome\\chrome.exe,1,9000\r\n\
+";
+            let results = parse_wmic_output(csv, 9999);
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].pid, 5678);
+            assert_eq!(results[0].ppid, 1234);
+            assert!(results[0].argv0.contains("openhuman-core"));
+        }
+
+        #[test]
+        fn parse_wmic_output_excludes_self_pid() {
+            let csv = "\
+Node,Caption,ExecutablePath,ParentProcessId,ProcessId\r\n\
+\r\n\
+DESKTOP-ABC,openhuman-core.exe,C:\\Program Files\\OpenHuman\\openhuman-core.exe,1,1234\r\n\
+";
+            let results = parse_wmic_output(csv, 1234);
+            assert!(results.is_empty(), "self pid should be excluded");
+        }
+
+        #[test]
+        fn is_openhuman_executable_matches_core() {
+            assert!(is_openhuman_executable(
+                "openhuman-core.exe",
+                "C:\\path\\openhuman-core.exe"
+            ));
+            assert!(is_openhuman_executable(
+                "OpenHuman.exe",
+                "C:\\path\\OpenHuman.exe"
+            ));
+        }
+
+        #[test]
+        fn is_openhuman_executable_rejects_unrelated() {
+            assert!(!is_openhuman_executable(
+                "chrome.exe",
+                "C:\\Chrome\\chrome.exe"
+            ));
+            assert!(!is_openhuman_executable("python.exe", "C:\\python.exe"));
+        }
+    }
+}
+
 #[cfg(target_os = "macos")]
-pub(crate) use imp::{enumerate_openhuman_processes, reap_stale_openhuman_processes, ProcessInfo};
+pub(crate) use imp::{enumerate_openhuman_processes, reap_stale_openhuman_processes};
 
-#[cfg(not(target_os = "macos"))]
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub(crate) struct ProcessInfo {
-    pub pid: u32,
-    pub ppid: u32,
-    pub argv0: String,
-    pub command: String,
-}
+#[cfg(target_os = "linux")]
+pub(crate) use linux_imp::{enumerate_openhuman_processes, reap_stale_openhuman_processes};
 
-#[cfg(not(target_os = "macos"))]
-pub(crate) fn reap_stale_openhuman_processes() {
-    log::debug!("[startup-recovery] skipped on non-macos platform");
-}
-
-#[cfg(not(target_os = "macos"))]
-pub(crate) fn enumerate_openhuman_processes() -> Result<Vec<ProcessInfo>, String> {
-    Ok(Vec::new())
-}
+#[cfg(target_os = "windows")]
+pub(crate) use windows_imp::{enumerate_openhuman_processes, reap_stale_openhuman_processes};

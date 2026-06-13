@@ -2,7 +2,12 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { callCoreRpc } from '../coreRpcClient';
-import { closeMeetCall, joinMeetCall } from '../meetCallService';
+import {
+  closeMeetCall,
+  joinMeetCall,
+  joinMeetViaBackendBot,
+  listMeetCalls,
+} from '../meetCallService';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(), isTauri: vi.fn() }));
 
@@ -41,23 +46,29 @@ describe('joinMeetCall', () => {
     const result = await joinMeetCall({
       meetUrl: 'https://meet.google.com/abc-defg-hij',
       displayName: 'Agent Alice',
+      ownerDisplayName: 'Owner Bob',
     });
 
     expect(callCoreRpc).toHaveBeenCalledWith({
       method: 'openhuman.meet_join_call',
       params: { meet_url: 'https://meet.google.com/abc-defg-hij', display_name: 'Agent Alice' },
     });
+    // owner_display_name is forwarded to the shell (not to the core's
+    // meet_join_call, which is stateless validation only) — assert on
+    // the shell args, not the core RPC params.
     expect(invoke).toHaveBeenCalledWith('meet_call_open_window', {
       args: {
         request_id: 'req-1',
         meet_url: 'https://meet.google.com/abc-defg-hij',
         display_name: 'Agent Alice',
+        owner_display_name: 'Owner Bob',
       },
     });
     expect(result).toEqual({
       requestId: 'req-1',
       meetUrl: 'https://meet.google.com/abc-defg-hij',
       displayName: 'Agent Alice',
+      ownerDisplayName: 'Owner Bob',
       windowLabel: 'meet-call-req-1',
     });
   });
@@ -65,7 +76,11 @@ describe('joinMeetCall', () => {
   it('throws if core rejects the request', async () => {
     vi.mocked(callCoreRpc).mockResolvedValueOnce({ ok: false } as never);
     await expect(
-      joinMeetCall({ meetUrl: 'https://meet.google.com/abc-defg-hij', displayName: 'Agent Alice' })
+      joinMeetCall({
+        meetUrl: 'https://meet.google.com/abc-defg-hij',
+        displayName: 'Agent Alice',
+        ownerDisplayName: 'Owner Bob',
+      })
     ).rejects.toThrow(/Core rejected/);
     expect(invoke).not.toHaveBeenCalled();
   });
@@ -80,9 +95,143 @@ describe('joinMeetCall', () => {
     } as never);
 
     await expect(
-      joinMeetCall({ meetUrl: 'https://meet.google.com/abc-defg-hij', displayName: 'Agent Alice' })
+      joinMeetCall({
+        meetUrl: 'https://meet.google.com/abc-defg-hij',
+        displayName: 'Agent Alice',
+        ownerDisplayName: 'Owner Bob',
+      })
     ).rejects.toThrow(/desktop app/);
     expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it('rejects an empty owner_display_name as a privacy-lock guard', async () => {
+    // Privacy lock: empty owner would fail closed at the core wake
+    // gate (no captions ever wake the bot). Surface the requirement
+    // up front so the user doesn't sit through a join only to find
+    // the bot silent — see feat/mascot-meet-flowA Plan C.
+    await expect(
+      joinMeetCall({
+        meetUrl: 'https://meet.google.com/abc-defg-hij',
+        displayName: 'Agent Alice',
+        ownerDisplayName: '   ',
+      })
+    ).rejects.toThrow(/your own name/i);
+    expect(callCoreRpc).not.toHaveBeenCalled();
+    expect(invoke).not.toHaveBeenCalled();
+  });
+});
+
+describe('listMeetCalls', () => {
+  beforeEach(() => {
+    // Use mockReset (not just clearAllMocks) to drain any once-queues
+    // left over from the joinMeetCall describe block above, ensuring
+    // each test below starts with a fresh callCoreRpc mock.
+    vi.mocked(callCoreRpc).mockReset();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('returns the calls array from a successful core response', async () => {
+    const mockCalls = [
+      {
+        request_id: 'req-1',
+        meet_url: 'https://meet.google.com/abc-defg-hij',
+        bot_display_name: 'OpenHuman',
+        owner_display_name: 'Alice',
+        started_at_ms: 1700000000000,
+        ended_at_ms: 1700000060000,
+        listened_seconds: 30,
+        spoken_seconds: 30,
+        turn_count: 3,
+      },
+    ];
+    vi.mocked(callCoreRpc).mockResolvedValueOnce({ ok: true, calls: mockCalls, count: 1 } as never);
+
+    const result = await listMeetCalls(20);
+
+    expect(callCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.meet_agent_list_calls',
+      params: { limit: 20 },
+    });
+    expect(result).toEqual(mockCalls);
+  });
+
+  it('returns an empty array when the core response has no calls field', async () => {
+    vi.mocked(callCoreRpc).mockResolvedValueOnce({ ok: true, calls: undefined, count: 0 } as never);
+
+    const result = await listMeetCalls(10);
+
+    expect(result).toEqual([]);
+  });
+
+  it('throws when the core responds with ok: false', async () => {
+    vi.mocked(callCoreRpc).mockResolvedValueOnce({ ok: false } as never);
+
+    await expect(listMeetCalls(20)).rejects.toThrow(/meet_agent_list_calls/);
+  });
+
+  it('throws when the core responds with a falsy result', async () => {
+    vi.mocked(callCoreRpc).mockResolvedValueOnce(null as never);
+
+    await expect(listMeetCalls(20)).rejects.toThrow(/meet_agent_list_calls/);
+  });
+
+  it('uses the default limit of 20 when no argument is provided', async () => {
+    vi.mocked(callCoreRpc).mockResolvedValueOnce({ ok: true, calls: [], count: 0 } as never);
+
+    await listMeetCalls();
+
+    expect(callCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.meet_agent_list_calls',
+      params: { limit: 20 },
+    });
+  });
+});
+
+describe('joinMeetViaBackendBot', () => {
+  beforeEach(() => {
+    vi.mocked(callCoreRpc).mockReset();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('emits the backend Recall bot join RPC with camelCase colors', async () => {
+    vi.mocked(callCoreRpc).mockResolvedValueOnce({
+      ok: true,
+      meet_url: 'https://meet.google.com/abc-defg-hij',
+      platform: 'gmeet',
+    } as never);
+
+    const result = await joinMeetViaBackendBot({
+      meetUrl: ' https://meet.google.com/abc-defg-hij ',
+      displayName: 'OpenHuman',
+      platform: 'gmeet',
+      agentName: 'OpenHuman',
+      systemPrompt: 'Answer only when addressed.',
+      riveColors: { primaryColor: '#ffcc00', secondaryColor: '#112233' },
+    });
+
+    expect(callCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.agent_meetings_join',
+      params: {
+        meet_url: 'https://meet.google.com/abc-defg-hij',
+        display_name: 'OpenHuman',
+        platform: 'gmeet',
+        agent_name: 'OpenHuman',
+        system_prompt: 'Answer only when addressed.',
+        rive_colors: { primary_color: '#ffcc00', secondary_color: '#112233' },
+      },
+    });
+    expect(result).toEqual({ meetUrl: 'https://meet.google.com/abc-defg-hij', platform: 'gmeet' });
+  });
+
+  it('rejects an empty meeting link before contacting core', async () => {
+    await expect(joinMeetViaBackendBot({ meetUrl: '   ' })).rejects.toThrow(/meeting link/i);
+    expect(callCoreRpc).not.toHaveBeenCalled();
   });
 });
 

@@ -108,15 +108,6 @@ export interface LocalAiTtsResult {
   voice_id: string;
 }
 
-export interface LocalAiChatMessage {
-  role: 'user' | 'assistant' | 'system';
-  content: string;
-}
-
-export interface LocalAiChatResult {
-  result: string;
-}
-
 export interface ReactionDecision {
   should_react: boolean;
   emoji: string | null;
@@ -180,17 +171,50 @@ export type RepairAction =
   | { action: 'start_server'; binary_path: string | null }
   | { action: 'pull_model'; model: string };
 
+/**
+ * Verdict for a model's native context window against the memory-layer
+ * minimum. Mirrors the Rust `ContextEligibility` enum (serde tagged by
+ * `status`). `below_minimum` means the model is rejected for memory-layer
+ * use; `unknown` means the context window could not be determined (not a
+ * hard rejection).
+ */
+export type ModelContextEligibility =
+  | { status: 'ok'; context_length: number }
+  | { status: 'below_minimum'; context_length: number; required: number }
+  | { status: 'unknown'; required: number };
+
+export interface InstalledModelInfo {
+  name: string;
+  size?: number | null;
+  modified_at?: string | null;
+  /** Native context window in tokens, or null when `/api/show` didn't report it. */
+  context_length?: number | null;
+  eligibility?: ModelContextEligibility | null;
+  /**
+   * Whether the model can serve chat/completions (from Ollama `/api/show`
+   * `capabilities`). `false` = embedding-only model that must be hidden from
+   * the chat-model picker; `null` = unknown (older Ollama / `/api/show` miss),
+   * treated as visible (fail-open). See Sentry TAURI-RUST-4P6.
+   */
+  chat_capable?: boolean | null;
+}
+
 export interface LocalAiDiagnostics {
   ollama_running: boolean;
+  ollama_runner_ok?: boolean;
   ollama_base_url: string;
   ollama_binary_path: string | null;
   vision_mode?: string;
-  installed_models: Array<{ name: string; size?: number | null; modified_at?: string | null }>;
+  installed_models: InstalledModelInfo[];
+  /** Memory-layer minimum a model's context window must meet to be accepted. */
+  context_requirement?: { min_context_tokens: number };
   expected: {
     chat_model: string;
     chat_found: boolean;
+    chat_eligibility?: ModelContextEligibility | null;
     embedding_model: string;
     embedding_found: boolean;
+    embedding_eligibility?: ModelContextEligibility | null;
     vision_model: string;
     vision_found: boolean;
   };
@@ -274,7 +298,7 @@ export async function openhumanLocalAiTranscribe(
   audioPath: string
 ): Promise<CommandResponse<LocalAiSpeechResult>> {
   return await callCoreRpc<CommandResponse<LocalAiSpeechResult>>({
-    method: 'openhuman.local_ai_transcribe',
+    method: 'openhuman.inference_transcribe',
     params: { audio_path: audioPath },
   });
 }
@@ -284,7 +308,7 @@ export async function openhumanLocalAiTranscribeBytes(
   extension?: string
 ): Promise<CommandResponse<LocalAiSpeechResult>> {
   return await callCoreRpc<CommandResponse<LocalAiSpeechResult>>({
-    method: 'openhuman.local_ai_transcribe_bytes',
+    method: 'openhuman.inference_transcribe_bytes',
     params: { audio_bytes: audioBytes, extension },
   });
 }
@@ -294,21 +318,8 @@ export async function openhumanLocalAiTts(
   outputPath?: string
 ): Promise<CommandResponse<LocalAiTtsResult>> {
   return await callCoreRpc<CommandResponse<LocalAiTtsResult>>({
-    method: 'openhuman.local_ai_tts',
+    method: 'openhuman.inference_tts',
     params: { text, output_path: outputPath },
-  });
-}
-
-/**
- * Multi-turn chat completion via the configured inference provider.
- */
-export async function openhumanLocalAiChat(
-  messages: LocalAiChatMessage[],
-  maxTokens?: number
-): Promise<CommandResponse<string>> {
-  return await callCoreRpc<CommandResponse<string>>({
-    method: 'openhuman.inference_chat',
-    params: { messages, max_tokens: maxTokens },
   });
 }
 
@@ -343,7 +354,7 @@ export async function openhumanLocalAiAssetsStatus(): Promise<
   CommandResponse<LocalAiAssetsStatus>
 > {
   return await callCoreRpc<CommandResponse<LocalAiAssetsStatus>>({
-    method: 'openhuman.local_ai_assets_status',
+    method: 'openhuman.inference_assets_status',
   });
 }
 
@@ -351,7 +362,7 @@ export async function openhumanLocalAiDownloadsProgress(): Promise<
   CommandResponse<LocalAiDownloadsProgress>
 > {
   return await callCoreRpc<CommandResponse<LocalAiDownloadsProgress>>({
-    method: 'openhuman.local_ai_downloads_progress',
+    method: 'openhuman.inference_downloads_progress',
   });
 }
 
@@ -359,7 +370,7 @@ export async function openhumanLocalAiDownloadAsset(
   capability: 'chat' | 'vision' | 'embedding' | 'stt' | 'tts'
 ): Promise<CommandResponse<LocalAiAssetsStatus>> {
   return await callCoreRpc<CommandResponse<LocalAiAssetsStatus>>({
-    method: 'openhuman.local_ai_download_asset',
+    method: 'openhuman.inference_download_asset',
     params: { capability },
   });
 }
@@ -383,5 +394,20 @@ export async function openhumanLocalAiDiagnostics(): Promise<LocalAiDiagnostics>
   return await callCoreRpc<LocalAiDiagnostics>({
     method: 'openhuman.inference_diagnostics',
     params: {},
+  });
+}
+
+export interface OllamaConnectionTestResult {
+  reachable: boolean;
+  error?: string | null;
+  models_count?: number | null;
+}
+
+export async function openhumanLocalAiTestConnection(
+  url: string
+): Promise<OllamaConnectionTestResult> {
+  return await callCoreRpc<OllamaConnectionTestResult>({
+    method: 'openhuman.inference_test_connection',
+    params: { url },
   });
 }

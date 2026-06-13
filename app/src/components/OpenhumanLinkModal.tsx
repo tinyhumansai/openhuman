@@ -30,7 +30,7 @@ import {
   type AccountStatus,
   PROVIDERS,
 } from '../types/accounts';
-import { BILLING_DASHBOARD_URL } from '../utils/links';
+import { BILLING_DASHBOARD_URL, DISCORD_INVITE_URL } from '../utils/links';
 import { openUrl } from '../utils/openUrl';
 import { ProviderIcon } from './accounts/providerIcons';
 import ChannelSetupModal from './channels/ChannelSetupModal';
@@ -46,6 +46,7 @@ const ALLOWED_PATHS = [
   'settings/billing',
   'settings/messaging',
   'community/discord',
+  'community/discord-report',
   'accounts/setup',
 ] as const;
 
@@ -86,15 +87,17 @@ const OpenhumanLinkModal = () => {
       role="dialog"
       aria-modal="true">
       <div
-        className="w-full max-w-md rounded-2xl bg-white shadow-xl overflow-hidden"
+        className="w-full max-w-md rounded-2xl bg-white dark:bg-neutral-900 shadow-xl overflow-hidden"
         onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between border-b border-stone-100 px-5 py-3">
-          <h2 className="text-sm font-semibold text-stone-900">{titleForPath(activePath, t)}</h2>
+        <div className="flex items-center justify-between border-b border-stone-100 dark:border-neutral-800 px-5 py-3">
+          <h2 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+            {titleForPath(activePath, t)}
+          </h2>
           <button
             type="button"
             onClick={close}
-            aria-label="Close"
-            className="rounded p-1 text-stone-500 hover:bg-stone-100 hover:text-stone-800">
+            aria-label={t('common.close')}
+            className="rounded p-1 text-stone-500 dark:text-neutral-400 hover:bg-stone-100 dark:hover:bg-neutral-800/60 hover:text-stone-800 dark:hover:text-neutral-100">
             <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
               <path
                 strokeLinecap="round"
@@ -125,7 +128,7 @@ const MessagingSetupBridge = ({ onClose }: { onClose: () => void }) => {
   if (loading && !telegram) {
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-        <div className="rounded-2xl bg-white px-6 py-4 text-sm text-stone-600 shadow-xl">
+        <div className="rounded-2xl bg-white dark:bg-neutral-900 px-6 py-4 text-sm text-stone-600 dark:text-neutral-300 shadow-xl">
           {t('app.openhumanLink.loadingChannelSetup')}
         </div>
       </div>
@@ -138,14 +141,14 @@ const MessagingSetupBridge = ({ onClose }: { onClose: () => void }) => {
         className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
         onClick={onClose}>
         <div
-          className="rounded-2xl bg-white p-6 text-sm text-stone-700 shadow-xl max-w-sm"
+          className="rounded-2xl bg-white dark:bg-neutral-900 p-6 text-sm text-stone-700 dark:text-neutral-200 shadow-xl max-w-sm"
           onClick={e => e.stopPropagation()}>
           <p>{t('app.openhumanLink.telegramUnavailable')}</p>
           <div className="mt-3 flex justify-end">
             <button
               type="button"
               onClick={onClose}
-              className="rounded-lg border border-stone-200 px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50">
+              className="rounded-lg border border-stone-200 dark:border-neutral-800 px-3 py-1.5 text-xs font-medium text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60">
               {t('common.close')}
             </button>
           </div>
@@ -167,6 +170,8 @@ function titleForPath(path: AllowedPath, t: (k: string) => string): string {
       return t('app.openhumanLink.title.messaging');
     case 'community/discord':
       return t('app.openhumanLink.title.discord');
+    case 'community/discord-report':
+      return t('app.openhumanLink.title.discordReport');
     case 'accounts/setup':
       return t('app.openhumanLink.title.accounts');
   }
@@ -186,6 +191,8 @@ function renderBody(path: AllowedPath, close: () => void) {
       return null;
     case 'community/discord':
       return <DiscordBody close={close} />;
+    case 'community/discord-report':
+      return <DiscordReportBody close={close} />;
     case 'accounts/setup':
       return <AccountsSetupBody close={close} />;
   }
@@ -258,10 +265,10 @@ const NotificationsBody = ({ close }: { close: () => void }) => {
   };
 
   return (
-    <div className="space-y-4 text-sm text-stone-700">
+    <div className="space-y-4 text-sm text-stone-700 dark:text-neutral-200">
       <p>{t('app.openhumanLink.notifications.intro')}</p>
       {permissionState === 'denied' && (
-        <div className="rounded-xl border border-coral-200 bg-coral-50 p-3 text-xs text-coral-700">
+        <div className="rounded-xl border border-coral-200 bg-coral-50 dark:bg-coral-500/15 p-3 text-xs text-coral-700 dark:text-coral-300">
           {t('app.openhumanLink.notifications.blocked')}
           <br />
           {t('app.openhumanLink.notifications.blockedStep1')}
@@ -272,7 +279,7 @@ const NotificationsBody = ({ close }: { close: () => void }) => {
         </div>
       )}
       {(permissionState === 'prompt' || permissionState === 'unknown') && (
-        <div className="rounded-xl border border-stone-200 bg-stone-50 p-3 text-xs text-stone-700">
+        <div className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-3 text-xs text-stone-700 dark:text-neutral-200">
           {t('app.openhumanLink.notifications.promptHint')}
         </div>
       )}
@@ -305,13 +312,17 @@ const NotificationsBody = ({ close }: { close: () => void }) => {
 const BillingBody = ({ close }: { close: () => void }) => {
   const { t } = useT();
   return (
-    <div className="space-y-4 text-sm text-stone-700">
-      <div className="rounded-xl border border-stone-200 bg-stone-50 p-4">
-        <p className="text-xs uppercase tracking-wide text-stone-500">
+    <div className="space-y-4 text-sm text-stone-700 dark:text-neutral-200">
+      <div className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-4">
+        <p className="text-xs uppercase tracking-wide text-stone-500 dark:text-neutral-400">
           {t('app.openhumanLink.billing.trialCredit')}
         </p>
-        <p className="mt-1 text-2xl font-semibold text-stone-900">$1.00</p>
-        <p className="mt-1 text-xs text-stone-500">{t('app.openhumanLink.billing.trialDesc')}</p>
+        <p className="mt-1 text-2xl font-semibold text-stone-900 dark:text-neutral-100">
+          {t('onboarding.runtimeChoice.cloud.creditHighlight')}
+        </p>
+        <p className="mt-1 text-xs text-stone-500 dark:text-neutral-400">
+          {t('app.openhumanLink.billing.trialDesc')}
+        </p>
       </div>
       <button
         type="button"
@@ -328,14 +339,12 @@ const BillingBody = ({ close }: { close: () => void }) => {
 
 // ── Discord ──────────────────────────────────────────────────────────────
 
-const DISCORD_INVITE_URL = 'https://discord.tinyhumans.ai/';
-
 const DiscordBody = ({ close }: { close: () => void }) => {
   const { t } = useT();
   return (
-    <div className="space-y-4 text-sm text-stone-700">
+    <div className="space-y-4 text-sm text-stone-700 dark:text-neutral-200">
       <p>{t('app.openhumanLink.discord.intro')}</p>
-      <ul className="space-y-1.5 text-xs text-stone-600 pl-1">
+      <ul className="space-y-1.5 text-xs text-stone-600 dark:text-neutral-300 pl-1">
         <li className="flex items-center gap-2">
           <span className="h-1.5 w-1.5 rounded-full bg-primary-400 flex-shrink-0" />
           {t('app.openhumanLink.discord.perk1')}
@@ -355,13 +364,47 @@ const DiscordBody = ({ close }: { close: () => void }) => {
       </ul>
       <button
         type="button"
-        onClick={() => {
-          void openUrl(DISCORD_INVITE_URL).catch(() => {});
+        onClick={async () => {
+          try {
+            await openUrl(DISCORD_INVITE_URL);
+          } catch {
+            // Ignore launcher errors from OS URL handler failures.
+          }
         }}
         className="w-full rounded-xl bg-primary-500 text-white text-sm font-medium py-2.5 hover:bg-primary-600 transition-colors">
         {t('app.openhumanLink.discord.openInvite')}
       </button>
       <DoneFooter close={close} skipLabel={t('app.openhumanLink.maybeLater')} />
+    </div>
+  );
+};
+
+/**
+ * Error-report variant of the Discord modal. Shown when an agent error pill
+ * with path "community/discord-report" is clicked. Distinct from DiscordBody
+ * (join-community flow):
+ *  - Leads with an apology/acknowledgement copy.
+ *  - Offers an "Open Discord" primary button to jump straight to the server
+ *    (and closes the modal).
+ */
+const DiscordReportBody = ({ close }: { close: () => void }) => {
+  const { t } = useT();
+
+  return (
+    <div className="space-y-4 text-sm text-stone-700 dark:text-neutral-200">
+      <p>{t('app.openhumanLink.discordReport.intro')}</p>
+      <button
+        type="button"
+        onClick={async () => {
+          try {
+            await openUrl(DISCORD_INVITE_URL);
+          } finally {
+            close();
+          }
+        }}
+        className="w-full rounded-xl bg-primary-500 px-3 py-2.5 text-sm font-medium text-white hover:bg-primary-600 transition-colors">
+        {t('app.openhumanLink.discordReport.openDiscord')}
+      </button>
     </div>
   );
 };
@@ -484,7 +527,7 @@ const AccountsSetupBody = ({ close }: { close: () => void }) => {
     : t('app.openhumanLink.accounts.done');
 
   return (
-    <div className="space-y-4 text-sm text-stone-700">
+    <div className="space-y-4 text-sm text-stone-700 dark:text-neutral-200">
       <p>{t('app.openhumanLink.accounts.intro')}</p>
       <div className="space-y-2">
         {providerDescriptors.map(p => {
@@ -494,19 +537,25 @@ const AccountsSetupBody = ({ close }: { close: () => void }) => {
           return (
             <div
               key={p.id}
-              className="flex items-center gap-3 rounded-xl border border-stone-100 bg-white p-3">
+              className="flex items-center gap-3 rounded-xl border border-stone-100 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-3">
               <ProviderIcon provider={p.id} className="h-5 w-5 flex-none" />
               <div className="min-w-0 flex-1">
-                <div className="text-sm font-medium text-stone-900">{p.label}</div>
+                <div className="text-sm font-medium text-stone-900 dark:text-neutral-100">
+                  {p.label}
+                </div>
                 {on && status ? (
                   <div className="flex items-center gap-1.5">
                     <span
                       className={`inline-block h-1.5 w-1.5 rounded-full ${statusDisplay(status).dotClass}`}
                     />
-                    <span className="text-xs text-stone-500">{statusDisplay(status).label}</span>
+                    <span className="text-xs text-stone-500 dark:text-neutral-400">
+                      {statusDisplay(status).label}
+                    </span>
                   </div>
                 ) : (
-                  <p className="line-clamp-1 text-xs text-stone-500">{p.description}</p>
+                  <p className="line-clamp-1 text-xs text-stone-500 dark:text-neutral-400">
+                    {p.description}
+                  </p>
                 )}
               </div>
               <button
@@ -528,7 +577,9 @@ const AccountsSetupBody = ({ close }: { close: () => void }) => {
           );
         })}
       </div>
-      <p className="text-xs text-stone-400">{t('app.openhumanLink.accounts.webviewNote')}</p>
+      <p className="text-xs text-stone-400 dark:text-neutral-500">
+        {t('app.openhumanLink.accounts.webviewNote')}
+      </p>
       <DoneFooter close={close} onDone={handleDone} doneLabel={doneLabel} />
     </div>
   );
@@ -555,13 +606,13 @@ const DoneFooter = ({
       <button
         type="button"
         onClick={close}
-        className="text-xs font-medium text-stone-500 hover:text-stone-800">
+        className="text-xs font-medium text-stone-500 dark:text-neutral-400 hover:text-stone-800 dark:hover:text-neutral-100">
         {resolvedSkip}
       </button>
       <button
         type="button"
         onClick={onDone ?? close}
-        className="rounded-lg border border-stone-200 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50">
+        className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-1.5 text-xs font-medium text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60">
         {resolvedDone}
       </button>
     </div>

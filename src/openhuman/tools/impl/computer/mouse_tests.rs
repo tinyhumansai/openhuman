@@ -41,6 +41,20 @@ fn permission_is_dangerous() {
 }
 
 #[test]
+fn routes_through_approval_gate() {
+    // The gate keys off external_effect_with_args, NOT PermissionLevel::Dangerous.
+    let tool = make_tool();
+    assert!(
+        tool.external_effect(),
+        "mouse must declare an external effect"
+    );
+    assert!(
+        tool.external_effect_with_args(&json!({"action": "click", "x": 1, "y": 1})),
+        "every mouse action must route through the ApprovalGate"
+    );
+}
+
+#[test]
 fn name_is_mouse() {
     assert_eq!(make_tool().name(), "mouse");
 }

@@ -95,18 +95,6 @@ pub(crate) fn build_text_mode_tool_instructions(_specs: &[ToolSpec]) -> String {
 
 // ── Tool filtering ──────────────────────────────────────────────────────
 
-/// Tools that must never be visible to any agent except `welcome`.
-///
-/// `complete_onboarding` flips the onboarding-complete flag in
-/// workspace config and is the terminal step of the welcome flow;
-/// every other agent must route the user back to the welcome agent
-/// rather than call it directly. Central list here so both the main
-/// agent builder ([`crate::openhuman::agent::harness::session::builder`])
-/// and the subagent runner apply the same guard.
-pub(crate) fn is_welcome_only_tool(name: &str) -> bool {
-    matches!(name, "complete_onboarding")
-}
-
 /// Tools that spawn a new sub-agent turn. A sub-agent must never be
 /// able to invoke any of these — only the top-level orchestrator
 /// delegates. Nested spawns would create a recursion tree the harness

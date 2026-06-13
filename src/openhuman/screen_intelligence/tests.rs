@@ -9,14 +9,15 @@ use image::{ImageBuffer, Rgb, RgbImage};
 use tempfile::tempdir;
 
 use super::helpers::{
-    generate_suggestions, parse_vision_summary_output, truncate_tail, validate_input_action,
+    generate_suggestions, parse_vision_summary_output, persist_vision_summary, truncate_tail,
+    validate_input_action, vision_summary_memory_key,
 };
 use super::state::{AccessibilityEngine, EngineState};
-use super::types::{CaptureFrame, InputActionParams, StartSessionParams};
+use super::types::{CaptureFrame, InputActionParams, StartSessionParams, VisionSummary};
 use crate::openhuman::accessibility::{parse_foreground_output, AppContext};
 use crate::openhuman::config::{Config, ScreenIntelligenceConfig};
 use crate::openhuman::embeddings::NoopEmbedding;
-use crate::openhuman::memory::store::UnifiedMemory;
+use crate::openhuman::memory_store::UnifiedMemory;
 
 struct EnvVarGuard {
     key: &'static str,
@@ -775,12 +776,49 @@ async fn analyze_and_persist_frame_writes_unified_memory_document() {
     let documents = list["documents"]
         .as_array()
         .expect("documents array should exist");
-    let key = format!("screen_intelligence_{}", summary.id);
+    let key = vision_summary_memory_key(&summary);
     assert!(
         documents
             .iter()
             .any(|doc| doc["key"].as_str() == Some(&key)),
         "expected persisted vision summary key in background namespace: {key}"
+    );
+}
+
+#[tokio::test]
+async fn persist_vision_summary_uses_pii_safe_document_key() {
+    let _env_lock = screen_intelligence_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let _workspace = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", tmp.path());
+    write_screen_intelligence_test_config(tmp.path(), true, "ollama");
+
+    let summary = VisionSummary {
+        id: "vision-1700000000300-abcde1234f".to_string(),
+        captured_at_ms: 1700000000300,
+        app_name: Some("PipelineApp".to_string()),
+        window_title: Some("Main.rs".to_string()),
+        ui_state: "editor".to_string(),
+        key_text: "fn main() {}".to_string(),
+        actionable_notes: "Rust source is open".to_string(),
+        confidence: 0.93,
+    };
+    let raw_key = format!("screen_intelligence_{}", summary.id);
+    assert!(
+        crate::openhuman::memory_store::safety::pii::has_likely_pii(&raw_key),
+        "test fixture must resemble formatted PII before safe-key rewriting"
+    );
+
+    let persisted = persist_vision_summary(summary.clone())
+        .await
+        .expect("internal screen-intelligence keys must not trip PII guards");
+    assert_eq!(persisted.namespace, "background");
+    assert!(
+        !crate::openhuman::memory_store::safety::pii::has_likely_pii(&persisted.key),
+        "rewritten memory key must stay below the PII boundary guard"
+    );
+    assert_ne!(
+        persisted.key, raw_key,
+        "memory key should not embed the raw vision id when it can resemble formatted PII"
     );
 }
 

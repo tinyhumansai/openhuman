@@ -68,9 +68,14 @@ pub fn run_from_cli_args(args: &[String]) -> Result<()> {
         }
         "text-input" => crate::openhuman::text_input::cli::run_text_input_command(&args[1..]),
         "tree-summarizer" => {
-            crate::openhuman::tree_summarizer::cli::run_tree_summarizer_command(&args[1..])
+            crate::openhuman::memory_tree::tree_runtime::cli::run_tree_summarizer_command(
+                &args[1..],
+            )
         }
         "memory" => crate::core::memory_cli::run_memory_command(&args[1..]),
+        "subconscious" | "sub" => {
+            crate::core::subconscious_cli::run_subconscious_command(&args[1..])
+        }
         "agent" => {
             log::debug!(
                 "[cli] dispatching to agent subcommand, args={:?}",
@@ -189,7 +194,7 @@ fn run_sentry_test_command(args: &[String]) -> Result<()> {
 /// 1. Variables already set in the process environment are **not** overwritten.
 /// 2. If `OPENHUMAN_DOTENV_PATH` is set, that file is loaded.
 /// 3. Otherwise, it searches for `.env` in the current working directory.
-fn load_dotenv_for_cli() -> Result<()> {
+pub(crate) fn load_dotenv_for_cli() -> Result<()> {
     match std::env::var("OPENHUMAN_DOTENV_PATH") {
         Ok(path) if !path.trim().is_empty() => {
             dotenvy::from_path(&path).map_err(|e| {
@@ -276,8 +281,17 @@ fn run_server_command(args: &[String]) -> Result<()> {
     crate::core::logging::init_for_cli_run(verbose, log_scope);
 
     // Initialize the Tokio multi-threaded runtime.
+    //
+    // A single agent turn is a very large async state machine (system prompt +
+    // hundreds of tool specs + the nested provider/tool loop), and delegating
+    // to a sub-agent runs another full turn one level down. Even with the inner
+    // sub-agent future boxed (`subagent_runner::ops`), that nesting overflows
+    // tokio's default 2 MiB worker-thread stack and aborts the whole process
+    // (SIGABRT: "thread 'tokio-rt-worker' has overflowed its stack"), taking
+    // the JSON-RPC server down mid-request. Give workers a roomier stack.
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
+        .thread_stack_size(crate::core::runtime::AGENT_WORKER_STACK_BYTES)
         .build()?;
     rt.block_on(async {
         crate::core::jsonrpc::run_server(host.as_deref(), port, socketio_enabled).await
@@ -326,8 +340,11 @@ fn run_call_command(args: &[String]) -> Result<()> {
     let method = method.ok_or_else(|| anyhow::anyhow!("--method is required"))?;
     let params = parse_json_params(&params).map_err(anyhow::Error::msg)?;
 
+    // `call` invokes a JSON-RPC method that may run an orchestrator turn
+    // (e.g. `agent.chat`), so it needs the same roomy stack as the server.
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
+        .thread_stack_size(crate::core::runtime::AGENT_WORKER_STACK_BYTES)
         .build()?;
     let value = rt
         .block_on(async { invoke_method(default_state(), &method, params).await })
@@ -404,8 +421,11 @@ fn run_namespace_command(
     let method = all::rpc_method_from_parts(namespace, function)
         .ok_or_else(|| anyhow::anyhow!("unregistered controller '{namespace}.{function}'"))?;
 
+    // Same as the explicit `call` path above — any registered controller may
+    // ultimately drive an orchestrator turn.
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
+        .thread_stack_size(crate::core::runtime::AGENT_WORKER_STACK_BYTES)
         .build()?;
     let value = rt
         .block_on(async { invoke_method(default_state(), &method, Value::Object(params)).await })

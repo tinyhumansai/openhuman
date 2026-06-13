@@ -281,6 +281,18 @@ fn deserialize_disconnect_params() {
     }))
     .unwrap();
     assert_eq!(params.channel, "discord");
+    assert!(!params.clear_memory);
+}
+
+#[test]
+fn deserialize_disconnect_params_accepts_clear_memory() {
+    let params: DisconnectParams = serde_json::from_value(json!({
+        "channel": "discord",
+        "authMode": "bot_token",
+        "clearMemory": true
+    }))
+    .unwrap();
+    assert!(params.clear_memory);
 }
 
 #[test]

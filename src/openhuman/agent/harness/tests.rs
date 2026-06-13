@@ -95,6 +95,7 @@ impl Provider for VisionProvider {
             text: Some("vision-ok".to_string()),
             tool_calls: Vec::new(),
             usage: None,
+            reasoning_content: None,
         })
     }
 }
@@ -119,15 +120,16 @@ async fn run_tool_call_loop_returns_structured_error_for_non_vision_provider() {
         "mock-model",
         0.0,
         true,
-        None,
         "cli",
         &crate::openhuman::config::MultimodalConfig::default(),
+        &crate::openhuman::config::MultimodalFileConfig::default(),
         3,
         None,
         None,
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect_err("provider without vision support should fail");
@@ -164,15 +166,16 @@ async fn run_tool_call_loop_rejects_oversized_image_payload() {
         "mock-model",
         0.0,
         true,
-        None,
         "cli",
         &multimodal,
+        &crate::openhuman::config::MultimodalFileConfig::default(),
         3,
         None,
         None,
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect_err("oversized payload must fail");
@@ -203,15 +206,16 @@ async fn run_tool_call_loop_accepts_valid_multimodal_request_flow() {
         "mock-model",
         0.0,
         true,
-        None,
         "cli",
         &crate::openhuman::config::MultimodalConfig::default(),
+        &crate::openhuman::config::MultimodalFileConfig::default(),
         3,
         None,
         None,
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect("valid multimodal payload should pass");
@@ -531,6 +535,7 @@ fn build_tool_instructions_includes_all_tools() {
     let security = Arc::new(SecurityPolicy::from_config(
         &crate::openhuman::config::AutonomyConfig::default(),
         std::path::Path::new("/tmp"),
+        std::path::Path::new("/tmp"),
     ));
     let tools = tools::default_tools(security);
     let instructions = build_tool_instructions(&tools);
@@ -547,6 +552,7 @@ fn tools_to_openai_format_produces_valid_schema() {
     use crate::openhuman::security::SecurityPolicy;
     let security = Arc::new(SecurityPolicy::from_config(
         &crate::openhuman::config::AutonomyConfig::default(),
+        std::path::Path::new("/tmp"),
         std::path::Path::new("/tmp"),
     ));
     let tools = tools::default_tools(security);

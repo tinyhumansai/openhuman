@@ -1,0 +1,1 @@
+Initial iPhone companion release for pairing with OpenHuman desktop, sending text messages, and using push-to-talk voice input.

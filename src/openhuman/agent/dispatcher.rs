@@ -48,6 +48,12 @@ pub trait ToolDispatcher: Send + Sync {
     /// Provide instructions for the system prompt on how the model should call tools.
     fn prompt_instructions(&self, tools: &[Box<dyn Tool>]) -> String;
 
+    /// Provide instructions from already-filtered tool specs when a dispatcher
+    /// embeds the tool catalogue in its prompt protocol.
+    fn prompt_instructions_for_specs(&self, _specs: &[ToolSpec]) -> Option<String> {
+        None
+    }
+
     /// Convert internal conversation history into provider-specific messages.
     fn to_provider_messages(&self, history: &[ConversationMessage]) -> Vec<ChatMessage>;
 
@@ -116,26 +122,12 @@ impl ToolDispatcher for XmlToolDispatcher {
     }
 
     fn prompt_instructions(&self, tools: &[Box<dyn Tool>]) -> String {
-        let mut instructions = String::new();
-        instructions.push_str("## Tool Use Protocol\n\n");
-        instructions
-            .push_str("To use a tool, wrap a JSON object in <tool_call></tool_call> tags:\n\n");
-        instructions.push_str(
-            "```\n<tool_call>\n{\"name\": \"tool_name\", \"arguments\": {\"param\": \"value\"}}\n</tool_call>\n```\n\n",
-        );
-        instructions.push_str("### Available Tools\n\n");
+        let specs = Self::tool_specs(tools);
+        Self::prompt_instructions_from_specs(&specs)
+    }
 
-        for tool in tools {
-            let _ = writeln!(
-                instructions,
-                "- **{}**: {}\n  Parameters: `{}`",
-                tool.name(),
-                tool.description(),
-                tool.parameters_schema()
-            );
-        }
-
-        instructions
+    fn prompt_instructions_for_specs(&self, specs: &[ToolSpec]) -> Option<String> {
+        Some(Self::prompt_instructions_from_specs(specs))
     }
 
     fn to_provider_messages(&self, history: &[ConversationMessage]) -> Vec<ChatMessage> {
@@ -162,7 +154,32 @@ impl ToolDispatcher for XmlToolDispatcher {
     }
 
     fn should_send_tool_specs(&self) -> bool {
+        // XML dispatcher embeds tool schemas in prompt text instead of
+        // sending native tool specs through the provider API.
         false
+    }
+}
+
+impl XmlToolDispatcher {
+    pub fn prompt_instructions_from_specs(specs: &[ToolSpec]) -> String {
+        let mut instructions = String::new();
+        instructions.push_str("## Tool Use Protocol\n\n");
+        instructions
+            .push_str("To use a tool, wrap a JSON object in <tool_call></tool_call> tags:\n\n");
+        instructions.push_str(
+            "```\n<tool_call>\n{\"name\": \"tool_name\", \"arguments\": {\"param\": \"value\"}}\n</tool_call>\n```\n\n",
+        );
+        instructions.push_str("### Available Tools\n\n");
+
+        for spec in specs {
+            let _ = writeln!(
+                instructions,
+                "- **{}**: {}\n  Parameters: `{}`",
+                spec.name, spec.description, spec.parameters
+            );
+        }
+
+        instructions
     }
 }
 
@@ -460,15 +477,91 @@ impl ToolDispatcher for NativeToolDispatcher {
     }
 
     fn to_provider_messages(&self, history: &[ConversationMessage]) -> Vec<ChatMessage> {
-        history
-            .iter()
-            .flat_map(|msg| match msg {
+        // TAURI-RUST-7: providers (incl. the OpenHuman backend) reject any
+        // assistant `tool_calls` message that isn't immediately followed by
+        // `tool` messages responding to every `tool_call_id`, with
+        // `400 An assistant message with 'tool_calls' must be followed by
+        // tool messages responding to each 'tool_call_id'`. Cached transcript
+        // restores, mid-turn aborts, and history compaction can all produce a
+        // bisected tool cycle (assistant tool_calls preserved, ToolResults
+        // dropped or never persisted). Filter those out here, just before
+        // serialising to provider wire format, so a bisected pair never
+        // reaches the wire. Symmetric drop: a `ToolResults` whose preceding
+        // `AssistantToolCalls` was dropped is also stripped to keep the
+        // sequence well-formed.
+        // CodeRabbit follow-up: backend's 400 says "insufficient tool messages
+        // following tool_calls", which fires on either (a) zero following tool
+        // messages, or (b) a tool message set whose `tool_call_id`s don't
+        // cover every `tool_calls[].id` on the opener. Adjacency alone is
+        // not sufficient — require the full set of opener ids to equal the
+        // set of follower `tool_call_id`s.
+        let mut paired_indices: Vec<usize> = Vec::with_capacity(history.len());
+        for (i, msg) in history.iter().enumerate() {
+            match msg {
+                ConversationMessage::AssistantToolCalls { tool_calls, .. } => {
+                    let Some(ConversationMessage::ToolResults(results)) = history.get(i + 1) else {
+                        log::debug!(
+                            "[agent][dispatcher] dropping unpaired AssistantToolCalls at index \
+                             {i} of {} (no immediately following ToolResults — would trip \
+                             provider 400 'tool_calls must be followed by tool messages')",
+                            history.len()
+                        );
+                        continue;
+                    };
+                    let opener_ids: std::collections::BTreeSet<&str> =
+                        tool_calls.iter().map(|tc| tc.id.as_str()).collect();
+                    let result_ids: std::collections::BTreeSet<&str> =
+                        results.iter().map(|r| r.tool_call_id.as_str()).collect();
+                    if !opener_ids.is_empty() && opener_ids == result_ids {
+                        paired_indices.push(i);
+                    } else {
+                        log::debug!(
+                            "[agent][dispatcher] dropping AssistantToolCalls at index {i}: \
+                             tool_call_id set mismatch between opener ({:?}) and ToolResults \
+                             ({:?})",
+                            opener_ids,
+                            result_ids
+                        );
+                    }
+                }
+                ConversationMessage::ToolResults(_) => {
+                    let preceded_by_kept_tool_calls = i > 0
+                        && matches!(
+                            history.get(i - 1),
+                            Some(ConversationMessage::AssistantToolCalls { .. })
+                        )
+                        && paired_indices.last() == Some(&(i - 1));
+                    if preceded_by_kept_tool_calls {
+                        paired_indices.push(i);
+                    } else {
+                        log::debug!(
+                            "[agent][dispatcher] dropping orphan ToolResults at index {i} \
+                             (no preceding AssistantToolCalls in the emitted sequence)"
+                        );
+                    }
+                }
+                ConversationMessage::Chat(_) => {
+                    paired_indices.push(i);
+                }
+            }
+        }
+
+        paired_indices
+            .into_iter()
+            .flat_map(|i| match &history[i] {
                 ConversationMessage::Chat(chat) => vec![chat.clone()],
-                ConversationMessage::AssistantToolCalls { text, tool_calls } => {
-                    let payload = serde_json::json!({
+                ConversationMessage::AssistantToolCalls {
+                    text,
+                    tool_calls,
+                    reasoning_content,
+                } => {
+                    let mut payload = serde_json::json!({
                         "content": text,
                         "tool_calls": tool_calls,
                     });
+                    if let Some(rc) = reasoning_content {
+                        payload["reasoning_content"] = serde_json::Value::String(rc.clone());
+                    }
                     vec![ChatMessage::assistant(payload.to_string())]
                 }
                 ConversationMessage::ToolResults(results) => results

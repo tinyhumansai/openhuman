@@ -216,6 +216,7 @@ mod tests {
                     timestamp: "now".into(),
                     session_id: session_id.map(str::to_string),
                     score: None,
+                    taint: Default::default(),
                 },
             );
             Ok(())
@@ -366,6 +367,8 @@ mod tests {
             tool_calls: Vec::new(),
             turn_duration_ms: 10,
             session_id: None,
+            agent_id: None,
+            entrypoint: None,
             iteration_count: 1,
         };
 
@@ -406,6 +409,8 @@ mod tests {
             ],
             turn_duration_ms: 20,
             session_id: None,
+            agent_id: None,
+            entrypoint: None,
             iteration_count: 1,
         };
 

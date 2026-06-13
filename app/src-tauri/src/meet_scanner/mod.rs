@@ -35,7 +35,7 @@
 use std::time::Duration;
 
 use serde_json::{json, Value};
-use tauri::{AppHandle, Runtime};
+use tauri::{AppHandle, Manager, Runtime};
 
 use crate::cdp::{self, CdpConn};
 
@@ -70,7 +70,7 @@ const POLL_INTERVAL: Duration = Duration::from_millis(500);
 /// the scanner uses it as a target-URL prefix so two concurrent calls
 /// each attach to their own CEF target instead of cross-controlling.
 pub fn spawn<R: Runtime>(
-    _app: AppHandle<R>,
+    app: AppHandle<R>,
     request_id: String,
     meet_url: String,
     display_name: String,
@@ -79,7 +79,21 @@ pub fn spawn<R: Runtime>(
     // JoinHandle whose abort_handle() we can return to the caller.
     let handle = tokio::spawn(async move {
         match run(&request_id, &meet_url, &display_name).await {
-            Ok(()) => log::info!("[meet-scanner] join sequence completed request_id={request_id}"),
+            Ok(()) => {
+                log::info!("[meet-scanner] join sequence completed request_id={request_id}");
+                // Diagnostic build: keep the window VISIBLE post-join so
+                // we can verify whether the previous `window.hide()` was
+                // suspending the renderer enough to break the audio +
+                // caption bridges. Smoke shows audio_context_state stuck
+                // at "not-created" and no push_caption RPCs ever fire
+                // after hide() — both consistent with the renderer
+                // pausing its event loop when orderOut: lands. If the
+                // pipeline works with the window visible we'll restore
+                // hide() via a different mechanism (e.g. drag off-screen
+                // via Tauri set_position rather than orderOut:).
+                let _ = app;
+                let _ = request_id;
+            }
             Err(err) => {
                 log::warn!("[meet-scanner] join sequence aborted request_id={request_id} err={err}")
             }
@@ -98,6 +112,53 @@ async fn run(request_id: &str, meet_url: &str, display_name: &str) -> Result<(),
     // them. Both are best-effort — if they fail we still try to evaluate.
     let _ = cdp.call("Page.enable", json!({}), Some(&session)).await;
     let _ = cdp.call("Runtime.enable", json!({}), Some(&session)).await;
+
+    // Phase 0 — strip any leaked Google session cookies/cache before
+    // we touch the page. The vendored tauri-cef runtime does not yet
+    // honour our per-request_id `data_directory` as a fresh CEF
+    // RequestContext — webviews end up sharing the parent process's
+    // cookie + cache store. Without this clear, Meet recognises the
+    // signed-in Google account on the user's main openhuman session
+    // ("nikhil@tinyhumans.ai" / "Verify it's you" screen) and the bot
+    // never reaches the anonymous "Your name" pre-join input we drive
+    // in Phase 2.
+    //
+    // `Network.clearBrowserCookies` + `Network.clearBrowserCache` are
+    // CDP-wide for the attached browser instance, so they wipe the
+    // session for THIS Meet target without touching the user's main
+    // openhuman webviews (those run in separate browser instances).
+    // Best-effort: if Network domain isn't enabled or CDP returns an
+    // error, we log and continue — the bot may still land on the
+    // verify screen but won't get worse than the pre-clear state.
+    let _ = cdp.call("Network.enable", json!({}), Some(&session)).await;
+    if let Err(err) = cdp
+        .call("Network.clearBrowserCookies", json!({}), Some(&session))
+        .await
+    {
+        log::warn!("[meet-scanner] clearBrowserCookies failed: {err}");
+    } else {
+        log::info!("[meet-scanner] cleared browser cookies for fresh anonymous session");
+    }
+    if let Err(err) = cdp
+        .call("Network.clearBrowserCache", json!({}), Some(&session))
+        .await
+    {
+        log::info!("[meet-scanner] clearBrowserCache skipped: {err}");
+    }
+    // Reload the page once so Meet re-fetches from scratch without the
+    // user's Google session cookies. Without the reload, Meet's React
+    // state still holds the post-auth view; we'd be clicking buttons
+    // on a stale page.
+    if let Err(err) = cdp
+        .call("Page.reload", json!({"ignoreCache": true}), Some(&session))
+        .await
+    {
+        log::warn!("[meet-scanner] post-cookie-clear reload failed: {err}");
+    }
+    // Give the reloaded page a moment to settle before scanner phases
+    // start poking the DOM. 1.5s is comfortably above Meet's typical
+    // first-paint on CEF + leaves headroom for slow CI runners.
+    tokio::time::sleep(Duration::from_millis(1500)).await;
 
     // Phase 1 — dismiss the device-check screen.
     //
@@ -122,6 +183,108 @@ async fn run(request_id: &str, meet_url: &str, display_name: &str) -> Result<(),
     // Phase 2 — type the display name.
     type_into_named_input(&mut cdp, &session, "Your name", display_name).await?;
 
+    // Phase 2.5 — ensure camera + mic are ON before Ask-to-join.
+    //
+    // Meet pre-join shows the toggle button with aria-label that
+    // describes the *action it performs*: "Turn on camera" when the
+    // camera is currently OFF, "Turn off camera" when currently ON.
+    // We want both ON, so we MUST only match the "Turn on …" variants.
+    // Matching "Turn off …" would booby-trap us: it would click an
+    // already-on toggle, turning it OFF — which is the bug we just
+    // tripped on (mic ended up muted because "Turn off microphone"
+    // matched and the click flipped it off).
+    //
+    // If no "Turn on …" match is found, the device is already on (or
+    // the page hasn't rendered the toggle yet) — log + skip silently.
+    // On miss, dump the current aria-labels so we can verify state and
+    // extend the matcher with newly observed Meet variants.
+    if let Err(err) = click_by_aria_label(
+        &mut cdp,
+        &session,
+        &["turn on camera", "turn camera on", "camera is off"],
+        Duration::from_secs(8),
+    )
+    .await
+    {
+        log::info!(
+            "[meet-scanner] camera toggle ON not clicked (already on or label drift): {err}"
+        );
+        dump_aria_labels(&mut cdp, &session, "camera|video").await;
+    }
+    if let Err(err) = click_by_aria_label(
+        &mut cdp,
+        &session,
+        &[
+            "turn on microphone",
+            "turn microphone on",
+            "turn on mic",
+            "turn mic on",
+            "microphone is off",
+            "mic is off",
+        ],
+        Duration::from_secs(8),
+    )
+    .await
+    {
+        log::info!("[meet-scanner] mic toggle ON not clicked (already on or label drift): {err}");
+        dump_aria_labels(&mut cdp, &session, "mic|microphone|audio").await;
+    }
+
+    // Phase 2.6 — force a fresh getUserMedia call by cycling mic off-on
+    // BEFORE Ask-to-join.
+    //
+    // Why before, not after: if Ask-to-join times out (Meet UI variant
+    // drift or already-joined-elsewhere) the scanner returns Err and
+    // any later phases never run. Cycling here means the gUM intercept
+    // gets its chance regardless of what happens at the join button —
+    // and pre-join is also when Meet's React happily re-acquires media
+    // on toggle, so this is the more reliable site anyway.
+    //
+    // Meet caches the camera + mic MediaStreams from initial page load
+    // (before meet_audio::inject reloaded with our bridges). Our gUM
+    // intercept in audio_bridge.js only fires on NEW gUM calls, so the
+    // cached streams keep flowing — the bot's mic stays the real OS
+    // microphone, the bot's camera stays the static fake-camera Y4M
+    // frame, and our speak_pump pushes synthesized PCM into a
+    // MediaStreamDestination that's never attached to any outbound
+    // track. Host hears the user (echo loop) instead of the bot.
+    //
+    // Click "Turn off microphone" → ~700 ms pause for React to settle →
+    // click whatever aria-label appears in its place ("Turn on
+    // microphone" or a variant). The second click triggers Meet to
+    // re-request via getUserMedia, which our bridge then intercepts.
+    if let Err(err) = click_by_aria_label(
+        &mut cdp,
+        &session,
+        &["turn off microphone", "turn microphone off", "turn off mic"],
+        Duration::from_secs(4),
+    )
+    .await
+    {
+        log::info!("[meet-scanner] mic off-cycle skipped: {err}");
+    } else {
+        log::info!("[meet-scanner] mic cycled off; pausing 700ms before re-arm");
+        tokio::time::sleep(Duration::from_millis(700)).await;
+        if let Err(err) = click_by_aria_label(
+            &mut cdp,
+            &session,
+            &[
+                "turn on microphone",
+                "turn microphone on",
+                "turn on mic",
+                "turn mic on",
+            ],
+            Duration::from_secs(6),
+        )
+        .await
+        {
+            log::warn!("[meet-scanner] mic on-cycle missed (left muted!): {err}");
+            dump_aria_labels(&mut cdp, &session, "mic|microphone").await;
+        } else {
+            log::info!("[meet-scanner] mic re-armed (gUM intercept should now fire)");
+        }
+    }
+
     // Phase 3 — request to join.
     wait_and_click_text(
         &mut cdp,
@@ -131,7 +294,210 @@ async fn run(request_id: &str, meet_url: &str, display_name: &str) -> Result<(),
     )
     .await?;
 
+    // Phase 4 — once the bot is admitted, force-enable captions.
+    //
+    // captions_bridge.js already polls every 2 s for a button whose
+    // aria-label STARTS with "turn on captions" (`indexOf(...) === 0`).
+    // That's brittle: Meet ships "Turn on captions (c)" in some regions
+    // (the parenthesised shortcut breaks the `=== 0` prefix-match), and
+    // the polling cap (30 attempts * 2 s = 60 s) can expire before a
+    // slow host admits the bot. Belt-and-suspenders: from the scanner
+    // side, wait for admission (the "Leave call" affordance) then click
+    // the captions toggle ourselves via the looser substring matcher.
+    //
+    // Best-effort: if any step times out, log + continue. The brain
+    // will simply not see captions for this session, which is no worse
+    // than the pre-fix state.
+    if let Err(err) = wait_for_admission(&mut cdp, &session).await {
+        log::info!("[meet-scanner] admission wait skipped: {err}");
+    } else {
+        log::info!("[meet-scanner] bot admitted into meeting");
+        if let Err(err) = click_by_aria_label(
+            &mut cdp,
+            &session,
+            &[
+                "turn on captions",
+                "turn on live captions",
+                "turn on subtitles",
+                "turn on closed captions",
+                "captions on",
+                "captions (c)",
+                "show captions",
+                "enable captions",
+            ],
+            Duration::from_secs(8),
+        )
+        .await
+        {
+            log::info!("[meet-scanner] captions toggle ON not clicked: {err}");
+            dump_aria_labels(&mut cdp, &session, "caption|subtitle").await;
+        }
+    }
+
     Ok(())
+}
+
+/// Wait until the meeting page renders the in-call control bar — the
+/// signal that the host has admitted the bot from the waiting room.
+/// The "Leave call" / "End call" button is the simplest stable anchor;
+/// the captions and "more options" buttons exist in pre-join too.
+async fn wait_for_admission(cdp: &mut CdpConn, session: &str) -> Result<(), String> {
+    const ADMISSION_BUDGET: Duration = Duration::from_secs(120);
+    let expression = r#"
+        (() => {
+          const all = document.querySelectorAll('button[aria-label]');
+          for (const el of all) {
+            const a = (el.getAttribute('aria-label') || '').toLowerCase();
+            if (a.includes('leave call') || a.includes('end call')) {
+              const rect = el.getBoundingClientRect();
+              if (rect.width > 0 && rect.height > 0) return true;
+            }
+          }
+          return false;
+        })()
+    "#;
+    let deadline = tokio::time::Instant::now() + ADMISSION_BUDGET;
+    while tokio::time::Instant::now() < deadline {
+        let res = cdp
+            .call(
+                "Runtime.evaluate",
+                json!({ "expression": expression, "returnByValue": true }),
+                Some(session),
+            )
+            .await?;
+        let admitted = res
+            .get("result")
+            .and_then(|r| r.get("value"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if admitted {
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    Err(format!(
+        "timeout ({}s) waiting for Leave-call affordance",
+        ADMISSION_BUDGET.as_secs()
+    ))
+}
+
+/// Dump the page's aria-labels that match a JS regex pattern so we can
+/// inspect what Meet actually exposes after a failed
+/// [`click_by_aria_label`]. Best-effort, swallows all CDP errors.
+async fn dump_aria_labels(cdp: &mut CdpConn, session: &str, pattern: &str) {
+    let pattern_js = serde_json::to_string(pattern).unwrap_or_else(|_| "\"camera\"".to_string());
+    let expression = format!(
+        r#"
+        (() => {{
+          const re = new RegExp({pattern_js}, "i");
+          const nodes = document.querySelectorAll('[aria-label]');
+          const hits = [];
+          for (const el of nodes) {{
+            const aria = el.getAttribute('aria-label') || '';
+            if (!re.test(aria)) continue;
+            const tag = el.tagName.toLowerCase();
+            const role = el.getAttribute('role') || '';
+            const dataTip = el.getAttribute('data-tooltip') || '';
+            const rect = el.getBoundingClientRect();
+            const visible = rect.width > 0 && rect.height > 0;
+            hits.push({{ aria, tag, role, dataTip, visible }});
+            if (hits.length >= 24) break;
+          }}
+          return hits;
+        }})()
+        "#
+    );
+    let res = match cdp
+        .call(
+            "Runtime.evaluate",
+            json!({ "expression": expression, "returnByValue": true }),
+            Some(session),
+        )
+        .await
+    {
+        Ok(v) => v,
+        Err(err) => {
+            log::info!("[meet-scanner] aria-label dump failed: {err}");
+            return;
+        }
+    };
+    if let Some(arr) = res.get("result").and_then(|r| r.get("value")) {
+        log::warn!(
+            "[meet-scanner] aria-label dump pattern={} hits={}",
+            pattern,
+            arr
+        );
+    }
+}
+
+/// Click a button whose `aria-label` matches one of `labels`
+/// (case-insensitive substring). Meet's camera + mic toggles have no
+/// visible text — they're icon buttons with `aria-label="Turn on
+/// camera"` etc. The existing `wait_and_click_text` matches innerText
+/// only, so we need a sibling matcher anchored on aria-label.
+async fn click_by_aria_label(
+    cdp: &mut CdpConn,
+    session: &str,
+    labels: &[&str],
+    budget: Duration,
+) -> Result<(), String> {
+    let labels_js = serde_json::to_string(labels).map_err(|e| format!("labels json: {e}"))?;
+    let expression = format!(
+        r#"
+        (() => {{
+          const labels = {labels_js};
+          const want = labels.map(l => l.toLowerCase());
+          const candidates = document.querySelectorAll(
+            'button, [role="button"], [aria-label]'
+          );
+          for (const el of candidates) {{
+            if (el.disabled || el.getAttribute('aria-disabled') === 'true') continue;
+            const aria = (el.getAttribute('aria-label') || '').toLowerCase();
+            if (!aria) continue;
+            if (!want.some(w => aria.includes(w))) continue;
+            const rect = el.getBoundingClientRect();
+            if (rect.width === 0 || rect.height === 0) continue;
+            el.scrollIntoView({{ block: 'center', inline: 'center' }});
+            el.click();
+            return aria;
+          }}
+          return null;
+        }})()
+        "#
+    );
+
+    let deadline = tokio::time::Instant::now() + budget;
+    let mut last_value = Value::Null;
+    while tokio::time::Instant::now() < deadline {
+        let res = cdp
+            .call(
+                "Runtime.evaluate",
+                json!({
+                    "expression": expression,
+                    "returnByValue": true,
+                    "awaitPromise": false,
+                }),
+                Some(session),
+            )
+            .await?;
+        let value = res
+            .get("result")
+            .and_then(|r| r.get("value"))
+            .cloned()
+            .unwrap_or(Value::Null);
+        if value.is_string() {
+            log::info!(
+                "[meet-scanner] clicked aria-label matching {labels:?} aria={}",
+                value.as_str().unwrap_or("")
+            );
+            return Ok(());
+        }
+        last_value = value;
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
+    Err(format!(
+        "timeout waiting for aria-label matching {labels:?} (last={last_value})"
+    ))
 }
 
 /// Poll CEF's target list until a page whose URL starts with `meet_url`

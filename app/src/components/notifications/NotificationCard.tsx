@@ -1,5 +1,6 @@
 import { useT } from '../../lib/i18n/I18nContext';
 import type { IntegrationNotification } from '../../types/notifications';
+import NotificationBody from './NotificationBody';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -33,7 +34,7 @@ function providerBadgeClass(provider: string): string {
     case 'linkedin':
       return 'bg-sky-100 text-sky-700 border-sky-200';
     default:
-      return 'bg-stone-100 text-stone-700 border-stone-200';
+      return 'bg-stone-100 dark:bg-neutral-800 text-stone-700 dark:text-neutral-200 border-stone-200 dark:border-neutral-800';
   }
 }
 
@@ -69,8 +70,8 @@ const NotificationCard = ({ notification: n, onMarkRead, onNavigate, onDismiss }
 
   return (
     <div
-      className={`w-full p-3 border-b border-stone-100 hover:bg-stone-50 transition-colors duration-150 ${
-        isUnread ? 'bg-primary-50/30' : 'bg-white'
+      className={`w-full p-3 border-b border-stone-100 dark:border-neutral-800 hover:bg-stone-50 dark:hover:bg-neutral-800/60 transition-colors duration-150 ${
+        isUnread ? 'bg-primary-50/30' : 'bg-white dark:bg-neutral-900'
       }`}>
       <div className="flex items-start gap-3">
         {/* Unread dot — reserve space so text stays aligned whether read or unread */}
@@ -80,8 +81,24 @@ const NotificationCard = ({ notification: n, onMarkRead, onNavigate, onDismiss }
           )}
         </div>
 
-        <button
+        {/* `role="button"` + key handler instead of a real `<button>` because
+            this wrapper contains `NotificationLinkPill` (also a `<button>`),
+            and nested interactive elements break keyboard / screen-reader
+            behaviour (HTML spec disallows it). */}
+        <div
+          role="button"
+          tabIndex={0}
           onClick={handleBodyClick}
+          onKeyDown={e => {
+            // Ignore bubbled keydown from inner controls (e.g. the link pill).
+            // Without this, pressing Enter/Space on a focused pill would also
+            // activate the card body.
+            if (e.target !== e.currentTarget) return;
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              handleBodyClick();
+            }
+          }}
           className="flex-1 min-w-0 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-1 rounded-sm">
           {/* Header row: provider badge + timestamp */}
           <div className="flex items-center gap-2 mb-1">
@@ -107,21 +124,29 @@ const NotificationCard = ({ notification: n, onMarkRead, onNavigate, onDismiss }
               </span>
             )}
 
-            <span className="ml-auto text-[11px] text-stone-400 flex-shrink-0">
+            <span className="ml-auto text-[11px] text-stone-400 dark:text-neutral-500 flex-shrink-0">
               {relativeTime(n.received_at)}
             </span>
           </div>
 
           {/* Title */}
-          <p className="text-sm font-medium text-stone-900 truncate">{n.title}</p>
+          <p className="text-sm font-medium text-stone-900 dark:text-neutral-100 truncate">
+            {n.title}
+          </p>
 
-          {/* Body preview */}
-          {n.body && <p className="text-xs text-stone-500 mt-0.5 line-clamp-2">{n.body}</p>}
-        </button>
+          {/* Body preview — `<openhuman-link>` tags render as pills */}
+          {n.body && (
+            <p
+              data-testid="notification-card-body"
+              className="text-xs text-stone-500 dark:text-neutral-400 mt-0.5 line-clamp-2">
+              <NotificationBody body={n.body} />
+            </p>
+          )}
+        </div>
         {onDismiss && (
           <button
             onClick={() => onDismiss(n.id)}
-            className="mt-0.5 ml-1 flex-shrink-0 p-0.5 rounded hover:bg-stone-200 text-stone-400 hover:text-stone-600 transition-colors"
+            className="mt-0.5 ml-1 flex-shrink-0 p-0.5 rounded hover:bg-stone-200 dark:hover:bg-neutral-800/60 text-stone-400 dark:text-neutral-500 hover:text-stone-600 dark:hover:text-neutral-300 transition-colors"
             aria-label={t('notifications.card.dismiss')}>
             <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path

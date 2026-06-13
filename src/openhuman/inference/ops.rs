@@ -3,15 +3,36 @@
 use crate::openhuman::config::rpc as config_rpc;
 use crate::openhuman::config::Config;
 use crate::openhuman::inference::local as local_runtime;
-use crate::openhuman::inference::local::ops::{LocalAiChatMessage, ReactionDecision};
+use crate::openhuman::inference::local::ops::ReactionDecision;
 use crate::openhuman::inference::provider as providers;
 use crate::openhuman::inference::{device, presets, sentiment, SentimentResult};
 use crate::openhuman::inference::{LocalAiEmbeddingResult, LocalAiStatus};
 use crate::rpc::RpcOutcome;
 use serde_json::{json, Value};
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 
 const LOG_PREFIX: &str = "[inference::ops]";
+
+/// User picked a provider id (slug) that isn't registered in the cloud
+/// provider list — e.g. selecting `"ollama"` as a cloud provider when it's
+/// actually a local runtime. Matches the literal phrase emitted at
+/// `src/openhuman/inference/provider/ops.rs:54`
+/// (`"no cloud provider with id or slug '{}' found"`).
+///
+/// Used by [`inference_list_models`] to demote this user-config case to
+/// `warn!` so it stops escalating to Sentry (TAURI-RUST-X, ~5740 events).
+/// The matcher is anchored on the exact phrase so unrelated sibling
+/// failures (TAURI-RUST-12 JSON parse, TAURI-RUST-2W reqwest builder,
+/// TAURI-RUST-JP local ollama_admin transport) still surface as real
+/// errors.
+fn is_unknown_provider_user_config(err: &str) -> bool {
+    err.contains("no cloud provider with id or slug")
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct InferenceTestProviderModelResult {
+    pub reply: String,
+}
 
 pub async fn inference_status(config: &Config) -> Result<RpcOutcome<LocalAiStatus>, String> {
     debug!("{LOG_PREFIX} status:start");
@@ -105,20 +126,65 @@ pub async fn inference_embed(
     result
 }
 
-pub async fn inference_chat(
+pub async fn inference_test_provider_model(
     config: &Config,
-    messages: Vec<LocalAiChatMessage>,
-    max_tokens: Option<u32>,
-) -> Result<RpcOutcome<String>, String> {
+    workload: &str,
+    provider: &str,
+    prompt: &str,
+) -> Result<RpcOutcome<InferenceTestProviderModelResult>, String> {
     debug!(
-        message_count = messages.len(),
-        ?max_tokens,
-        "{LOG_PREFIX} chat:start"
+        workload,
+        provider,
+        prompt_len = prompt.len(),
+        "{LOG_PREFIX} test_provider_model:start"
     );
-    let result = local_runtime::rpc::local_ai_chat(config, messages, max_tokens).await;
+    let result =
+        if provider.trim().starts_with("lmstudio:") || provider.trim().starts_with("ollama:") {
+            log::debug!("{LOG_PREFIX} test_provider_model: routing to local provider={provider}");
+            let (chat_provider, model) =
+            crate::openhuman::inference::provider::factory::create_local_chat_provider_from_string(
+                provider, config,
+            )
+            .map_err(|e| e.to_string())?;
+            log::debug!("{LOG_PREFIX} test_provider_model: invoking local model={model}");
+            chat_provider
+                .simple_chat(prompt, &model, config.default_temperature)
+                .await
+                .map_err(|e| e.to_string())
+                .map(|reply| {
+                    RpcOutcome::single_log(
+                        InferenceTestProviderModelResult { reply },
+                        "provider model test completed",
+                    )
+                })
+        } else {
+            let (chat_provider, model) =
+                crate::openhuman::inference::provider::factory::create_chat_provider_from_string(
+                    workload, provider, config,
+                )
+                .map_err(|e| e.to_string())?;
+            chat_provider
+                .simple_chat(prompt, &model, config.default_temperature)
+                .await
+                .map_err(|e| e.to_string())
+                .map(|reply| {
+                    RpcOutcome::single_log(
+                        InferenceTestProviderModelResult { reply },
+                        "provider model test completed",
+                    )
+                })
+        };
     match &result {
-        Ok(outcome) => debug!(output_len = outcome.value.len(), "{LOG_PREFIX} chat:ok"),
-        Err(err) => error!(error = %err, "{LOG_PREFIX} chat:error"),
+        Ok(outcome) => debug!(
+            output_len = outcome.value.reply.len(),
+            "{LOG_PREFIX} test_provider_model:ok"
+        ),
+        Err(err) => error!(
+            workload,
+            provider,
+            error = %err,
+            "{LOG_PREFIX} test_provider_model:error"
+        ),
     }
     result
 }
@@ -200,7 +266,29 @@ pub async fn inference_list_models(provider_id: &str) -> Result<RpcOutcome<Value
     let result = providers::ops::list_configured_models(provider_id).await;
     match &result {
         Ok(_) => debug!("{LOG_PREFIX} list_models:ok"),
-        Err(err) => error!(error = %err, "{LOG_PREFIX} list_models:error"),
+        Err(err) => {
+            if is_unknown_provider_user_config(err) {
+                // User selected a provider id that isn't a registered
+                // cloud provider (e.g. picking "ollama", a local runtime).
+                // Demote to `warn!` so it stays in local logs but doesn't
+                // escalate to Sentry. Targets TAURI-RUST-X (~5740 events).
+                warn!(
+                    provider_id,
+                    error = %err,
+                    "{LOG_PREFIX} list_models:unknown-provider (user-config)"
+                );
+            } else {
+                // Real error — embed `{err}` in the format string so
+                // Sentry's event title carries the actionable cause
+                // instead of the opaque `list_models:error` shape that
+                // made TAURI-RUST-X untriageable.
+                error!(
+                    provider_id,
+                    error = %err,
+                    "{LOG_PREFIX} list_models:error: {err}"
+                );
+            }
+        }
     }
     result
 }
@@ -308,6 +396,103 @@ pub async fn inference_apply_preset(tier: &str) -> Result<RpcOutcome<Value>, Str
         }),
         "inference preset applied",
     ))
+}
+
+pub async fn inference_openai_oauth_start(config: &Config) -> Result<RpcOutcome<Value>, String> {
+    debug!("{LOG_PREFIX} openai_oauth_start:start");
+    let result =
+        crate::openhuman::inference::openai_oauth::start_openai_oauth(config).map(|start| {
+            RpcOutcome::single_log(
+                json!({
+                    "authUrl": start.auth_url,
+                    "state": start.state,
+                    "redirectUri": start.redirect_uri,
+                }),
+                "openai oauth authorize url ready",
+            )
+        });
+    match &result {
+        Ok(_) => debug!("{LOG_PREFIX} openai_oauth_start:ok"),
+        Err(err) => error!(error = %err, "{LOG_PREFIX} openai_oauth_start:error"),
+    }
+    result
+}
+
+pub async fn inference_openai_oauth_complete(
+    config: &Config,
+    callback_url: &str,
+) -> Result<RpcOutcome<Value>, String> {
+    debug!(
+        callback_len = callback_url.len(),
+        "{LOG_PREFIX} openai_oauth_complete:start"
+    );
+    let result =
+        crate::openhuman::inference::openai_oauth::complete_openai_oauth(config, callback_url)
+            .await
+            .map(|payload| RpcOutcome::single_log(payload, "openai oauth connected"));
+    match &result {
+        Ok(_) => debug!("{LOG_PREFIX} openai_oauth_complete:ok"),
+        Err(err) => error!(error = %err, "{LOG_PREFIX} openai_oauth_complete:error"),
+    }
+    result
+}
+
+pub async fn inference_openai_oauth_import_codex_cli(
+    config: &Config,
+) -> Result<RpcOutcome<Value>, String> {
+    debug!("{LOG_PREFIX} openai_oauth_import_codex_cli:start");
+    let result =
+        crate::openhuman::inference::openai_oauth::import_openai_oauth_from_codex_cli(config)
+            .map(|payload| RpcOutcome::single_log(payload, "openai oauth imported from codex cli"));
+    match &result {
+        Ok(_) => debug!("{LOG_PREFIX} openai_oauth_import_codex_cli:ok"),
+        // Most failures here are expected user-state (no `~/.codex/auth.json`,
+        // user never ran `codex login`, stale/empty file) — the UI already
+        // surfaces the actionable error, so route through the observability
+        // classifier to keep that flood out of Sentry (TAURI-RUST-83A) while a
+        // genuine keyring/persist defect still falls through to a real event.
+        Err(err) => crate::core::observability::report_error_or_expected(
+            err,
+            "inference",
+            "openai_oauth_import_codex_cli",
+            &[],
+        ),
+    }
+    result
+}
+
+pub async fn inference_openai_oauth_status(config: &Config) -> Result<RpcOutcome<Value>, String> {
+    debug!("{LOG_PREFIX} openai_oauth_status:start");
+    let result =
+        crate::openhuman::inference::openai_oauth::openai_oauth_status(config).map(|status| {
+            RpcOutcome::single_log(
+                json!({
+                    "connected": status.connected,
+                    "profileId": status.profile_id,
+                    "expiresAt": status.expires_at,
+                    "authMethod": status.auth_method,
+                }),
+                "openai oauth status",
+            )
+        });
+    match &result {
+        Ok(_) => debug!("{LOG_PREFIX} openai_oauth_status:ok"),
+        Err(err) => error!(error = %err, "{LOG_PREFIX} openai_oauth_status:error"),
+    }
+    result
+}
+
+pub async fn inference_openai_oauth_disconnect(
+    config: &Config,
+) -> Result<RpcOutcome<Value>, String> {
+    debug!("{LOG_PREFIX} openai_oauth_disconnect:start");
+    let result = crate::openhuman::inference::openai_oauth::disconnect_openai_oauth(config)
+        .map(|payload| RpcOutcome::single_log(payload, "openai oauth disconnected"));
+    match &result {
+        Ok(_) => debug!("{LOG_PREFIX} openai_oauth_disconnect:ok"),
+        Err(err) => error!(error = %err, "{LOG_PREFIX} openai_oauth_disconnect:error"),
+    }
+    result
 }
 
 pub async fn inference_diagnostics(config: &Config) -> Result<RpcOutcome<Value>, String> {

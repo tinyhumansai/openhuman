@@ -142,6 +142,42 @@ export function handleIntegrations(ctx) {
     return true;
   }
 
+  if (method === "POST" && /^\/openai\/v1\/embeddings\/?$/.test(url)) {
+    const inputs = Array.isArray(parsedBody?.input)
+      ? parsedBody.input
+      : [parsedBody?.input ?? ""];
+    const data = inputs.map((input, index) => {
+      const text = String(input ?? "");
+      // Keep the vector tiny but deterministic so callers that cache /
+      // compare embeddings can still observe stable output.
+      const basis = text.length || index + 1;
+      return {
+        object: "embedding",
+        index,
+        embedding: [basis, basis / 10, basis / 100, 1],
+      };
+    });
+    json(res, 200, {
+      object: "list",
+      data,
+      model:
+        typeof parsedBody?.model === "string" && parsedBody.model.length > 0
+          ? parsedBody.model
+          : "text-embedding-3-small",
+      usage: {
+        prompt_tokens: inputs.reduce(
+          (acc, input) => acc + String(input ?? "").length,
+          0,
+        ),
+        total_tokens: inputs.reduce(
+          (acc, input) => acc + String(input ?? "").length,
+          0,
+        ),
+      },
+    });
+    return true;
+  }
+
   // (chat/completions is handled by routes/llm.mjs ahead of this route)
 
   // ── Composio ───────────────────────────────────────────────
@@ -161,7 +197,36 @@ export function handleIntegrations(ctx) {
     const connections = parseBehaviorJson("composioConnections", [
       { id: "c1", toolkit: "gmail", status: "ACTIVE" },
     ]);
-    json(res, 200, { success: true, data: { connections } });
+    // Apply per-toolkit status overrides via composioConnectionStatus_<slug>
+    const overridden = connections.map((c) => {
+      const statusKey = `composioConnectionStatus_${c.toolkit}`;
+      const overrideStatus = mockBehavior[statusKey];
+      return overrideStatus ? { ...c, status: overrideStatus } : c;
+    });
+    json(res, 200, { success: true, data: { connections: overridden } });
+    return true;
+  }
+
+  if (
+    method === "POST" &&
+    /^\/agent-integrations\/composio\/authorize\/?$/.test(url)
+  ) {
+    const toolkit =
+      typeof parsedBody?.toolkit === "string" ? parsedBody.toolkit.trim() : "";
+    if (!toolkit) {
+      json(res, 400, {
+        success: false,
+        error: "Missing required field: toolkit",
+      });
+      return true;
+    }
+    json(res, 200, {
+      success: true,
+      data: {
+        connectUrl: `https://composio.example/${toolkit}/consent`,
+        connectionId: `conn-${toolkit}-pending`,
+      },
+    });
     return true;
   }
 
@@ -268,7 +333,54 @@ export function handleIntegrations(ctx) {
     method === "GET" &&
     /^\/agent-integrations\/composio\/tools\/?(\?.*)?$/.test(url)
   ) {
-    json(res, 200, { success: true, data: { tools: [] } });
+    // Parse toolkits and tags from the query string.
+    const qs = url.includes("?") ? new URLSearchParams(url.split("?")[1]) : new URLSearchParams();
+    const toolkitsParam = qs.get("toolkits") ?? "";
+    const tagsParam = qs.get("tags") ?? "";
+    const requestedToolkits = toolkitsParam ? toolkitsParam.split(",").map(t => t.trim().toLowerCase()).filter(Boolean) : [];
+    const requestedTags = tagsParam ? tagsParam.split(",").map(t => t.trim().toLowerCase()).filter(Boolean) : [];
+
+    // Allow tests to inject per-tag tool lists via
+    //   composioToolsByTag_<tag>  (e.g. "composioToolsByTag_stars")
+    // or a catch-all composioTools knob (array of tool objects).
+    // Falls back to [] when no knob is set.
+    let tools = [];
+
+    // Mirror the Rust gate: tags are only honoured when no toolkit filter is
+    // active or the toolkit list includes GitHub.
+    const hasGithubToolkit =
+      requestedToolkits.length === 0 || requestedToolkits.includes("github");
+    const effectiveTags = hasGithubToolkit ? requestedTags : [];
+
+    if (effectiveTags.length > 0) {
+      // OR semantics: union across all requested tags.
+      const seen = new Set();
+      for (const tag of effectiveTags) {
+        const knobKey = `composioToolsByTag_${tag}`;
+        const tagTools = parseBehaviorJson(knobKey, null);
+        if (Array.isArray(tagTools)) {
+          for (const t of tagTools) {
+            const name = t?.function?.name ?? t?.name ?? JSON.stringify(t);
+            if (!seen.has(name)) {
+              seen.add(name);
+              tools.push(t);
+            }
+          }
+        }
+      }
+    } else {
+      tools = parseBehaviorJson("composioTools", []);
+      // Filter by toolkits when requested and the knob returns a list with a
+      // "function.name" slug we can match (e.g. "GITHUB_*").
+      if (requestedToolkits.length > 0 && tools.length > 0) {
+        tools = tools.filter(t => {
+          const name = (t?.function?.name ?? t?.name ?? "").toUpperCase();
+          return requestedToolkits.some(tk => name.startsWith(tk.toUpperCase() + "_"));
+        });
+      }
+    }
+
+    json(res, 200, { success: true, data: { tools } });
     return true;
   }
 
@@ -282,6 +394,46 @@ export function handleIntegrations(ctx) {
         : typeof parsedBody?.tool === "string"
           ? parsedBody.tool
           : "";
+    // composioExecuteFails → inject error response
+    // Knob values: '400' or '1' → HTTP 400; '500' → HTTP 500
+    if (
+      mockBehavior.composioExecuteFails === "400" ||
+      mockBehavior.composioExecuteFails === "1"
+    ) {
+      json(res, 400, {
+        success: false,
+        error: "Mock execute failure",
+        data: { successful: false, data: null, error: "Mock execute failure" },
+      });
+      return true;
+    }
+    if (mockBehavior.composioExecuteFails === "500") {
+      json(res, 500, {
+        success: false,
+        error: "Mock execute server error",
+        data: {
+          successful: false,
+          data: null,
+          error: "Mock execute server error",
+        },
+      });
+      return true;
+    }
+    // Per-action override: composioExecuteResponse_<ACTION>
+    const actionKey = `composioExecuteResponse_${action}`;
+    if (mockBehavior[actionKey]) {
+      let overrideData;
+      try {
+        overrideData = JSON.parse(mockBehavior[actionKey]);
+      } catch {
+        overrideData = { ok: true };
+      }
+      json(res, 200, {
+        success: true,
+        data: { successful: true, data: overrideData, error: null },
+      });
+      return true;
+    }
     const data =
       action === "GMAIL_FETCH_EMAILS"
         ? {
@@ -298,6 +450,95 @@ export function handleIntegrations(ctx) {
       success: true,
       data: { successful: true, data, error: null },
     });
+    return true;
+  }
+
+  // ── Composio connection delete ─────────────────────────────
+  if (
+    method === "DELETE" &&
+    /^\/agent-integrations\/composio\/connections\/[^/]+\/?$/.test(url)
+  ) {
+    if (mockBehavior.composioDeleteFails === "400") {
+      json(res, 400, {
+        success: false,
+        error: "Mock connection delete failure",
+      });
+      return true;
+    }
+    if (
+      mockBehavior.composioDeleteFails === "500" ||
+      mockBehavior.composioDeleteFails === "1"
+    ) {
+      json(res, 500, {
+        success: false,
+        error: "Mock connection delete failure",
+      });
+      return true;
+    }
+    let connId = url.split("/").filter(Boolean).pop() ?? "";
+    connId = connId.split("?")[0];
+    try {
+      connId = decodeURIComponent(connId);
+    } catch {
+      json(res, 400, {
+        success: false,
+        error: "Invalid connection id encoding",
+      });
+      return true;
+    }
+    // Remove the connection from the seeded list if present
+    const conns = parseBehaviorJson("composioConnections", [
+      { id: "c1", toolkit: "gmail", status: "ACTIVE" },
+    ]);
+    const next = conns.filter((c) => c.id !== connId);
+    const deleted = next.length !== conns.length;
+    setMockBehavior("composioConnections", JSON.stringify(next));
+    json(res, 200, { success: true, data: { deleted } });
+    return true;
+  }
+
+  // ── Composio sync ──────────────────────────────────────────
+  if (
+    method === "POST" &&
+    /^\/agent-integrations\/composio\/sync\/?$/.test(url)
+  ) {
+    if (mockBehavior.composioSyncFails === "400") {
+      json(res, 400, { success: false, error: "Mock sync failure" });
+      return true;
+    }
+    if (
+      mockBehavior.composioSyncFails === "500" ||
+      mockBehavior.composioSyncFails === "1"
+    ) {
+      json(res, 500, { success: false, error: "Mock sync failure" });
+      return true;
+    }
+    json(res, 200, { success: true, data: { items_synced: 3 } });
+    return true;
+  }
+
+  // ── Composio user-scopes ───────────────────────────────────
+  if (
+    method === "GET" &&
+    /^\/agent-integrations\/composio\/user-scopes\/?(\?.*)?$/.test(url)
+  ) {
+    const scopes = parseBehaviorJson("composioUserScopes", {
+      read: true,
+      write: true,
+      admin: false,
+    });
+    json(res, 200, { success: true, data: scopes });
+    return true;
+  }
+
+  if (
+    method === "POST" &&
+    /^\/agent-integrations\/composio\/user-scopes\/?$/.test(url)
+  ) {
+    // Echo back the posted preferences and persist them as the new scopes
+    const pref = parsedBody ?? {};
+    setMockBehavior("composioUserScopes", JSON.stringify(pref));
+    json(res, 200, { success: true, data: pref });
     return true;
   }
 

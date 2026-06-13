@@ -3,7 +3,8 @@ import { useMemo } from 'react';
 import { resolvePreferredAuthModeForChannel } from '../../lib/channels/routing';
 import { useT } from '../../lib/i18n/I18nContext';
 import { useAppSelector } from '../../store/hooks';
-import type { ChannelDefinition, ChannelType } from '../../types/channels';
+import type { ChannelConnectionStatus, ChannelDefinition, ChannelType } from '../../types/channels';
+import { renderChannelIcon } from './channelIcon';
 import ChannelStatusBadge from './ChannelStatusBadge';
 
 interface ChannelSelectorProps {
@@ -12,7 +13,17 @@ interface ChannelSelectorProps {
   onSelectChannel: (channel: ChannelType) => void;
 }
 
-const CHANNEL_ICONS: Record<string, string> = { telegram: '✈️', discord: '🎮', web: '🌐' };
+/** Virtual (static) tabs that are not backed by a ChannelDefinition from the core. */
+const VIRTUAL_TABS: { id: ChannelType; display_name: string }[] = [
+  { id: 'mcp', display_name: 'MCP Servers' },
+];
+
+const CHANNEL_STATUS_PRIORITY: ChannelConnectionStatus[] = [
+  'connected',
+  'connecting',
+  'error',
+  'disconnected',
+];
 
 const ChannelSelector = ({
   definitions,
@@ -31,26 +42,31 @@ const ChannelSelector = ({
   }, [channelConnections, t]);
 
   return (
-    <section className="rounded-xl border border-stone-200 bg-white p-4 space-y-4">
+    <section className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-stone-900">{t('channels.title')}</h2>
-        <p className="text-xs text-stone-400">
-          {t('channels.activeRoute')}: <span className="text-primary-600">{activeRoute}</span>
+        <h2 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+          {t('channels.title')}
+        </h2>
+        <p className="text-xs text-stone-400 dark:text-neutral-500">
+          {t('channels.activeRoute')}:{' '}
+          <span className="text-primary-600 dark:text-primary-300">{activeRoute}</span>
         </p>
       </div>
 
-      <div className="flex gap-2">
+      <div className="flex gap-2 flex-wrap">
         {definitions.map(def => {
           const channelId = def.id as ChannelType;
           const isSelected = selectedChannel === channelId;
 
           // Determine best connection status for this channel.
           const channelModes = channelConnections.connections[channelId];
-          const bestStatus = channelModes
-            ? (Object.values(channelModes).find(c => c?.status === 'connected')?.status ??
-              Object.values(channelModes).find(c => c?.status === 'connecting')?.status ??
-              'disconnected')
-            : 'disconnected';
+          const modeStatuses = channelModes
+            ? Object.values(channelModes)
+                .map(connection => connection?.status)
+                .filter((status): status is ChannelConnectionStatus => Boolean(status))
+            : [];
+          const bestStatus =
+            CHANNEL_STATUS_PRIORITY.find(status => modeStatuses.includes(status)) ?? 'disconnected';
 
           return (
             <button
@@ -59,14 +75,33 @@ const ChannelSelector = ({
               onClick={() => onSelectChannel(channelId)}
               className={`flex-1 flex items-center justify-between gap-2 rounded-lg border px-4 py-3 text-sm transition-colors ${
                 isSelected
-                  ? 'border-primary-500/60 bg-primary-50 text-primary-600'
-                  : 'border-stone-200 bg-stone-50 text-stone-600 hover:border-stone-300'
+                  ? 'border-primary-500/60 bg-primary-50 dark:bg-primary-500/15 text-primary-600 dark:text-primary-300'
+                  : 'border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 text-stone-600 dark:text-neutral-300 hover:border-stone-300 dark:hover:border-neutral-700'
               }`}>
               <span className="flex items-center gap-2">
-                <span className="text-base">{CHANNEL_ICONS[def.icon] ?? ''}</span>
+                {renderChannelIcon(def.icon)}
                 <span className="font-medium">{def.display_name}</span>
               </span>
               <ChannelStatusBadge status={bestStatus} />
+            </button>
+          );
+        })}
+
+        {/* Virtual tabs — not backed by a ChannelDefinition from the core */}
+        {VIRTUAL_TABS.map(tab => {
+          const isSelected = selectedChannel === tab.id;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => onSelectChannel(tab.id)}
+              className={`flex-1 flex items-center gap-2 rounded-lg border px-4 py-3 text-sm transition-colors ${
+                isSelected
+                  ? 'border-primary-500/60 bg-primary-50 dark:bg-primary-500/15 text-primary-600 dark:text-primary-300'
+                  : 'border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 text-stone-600 dark:text-neutral-300 hover:border-stone-300 dark:hover:border-neutral-700'
+              }`}>
+              {renderChannelIcon(tab.id)}
+              <span className="font-medium">{tab.display_name}</span>
             </button>
           );
         })}

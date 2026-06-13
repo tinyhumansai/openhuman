@@ -17,6 +17,7 @@ import { callOpenhumanRpcNode } from './core-rpc-node';
 import type { RpcCallResult } from './core-rpc-webview';
 
 export type { RpcCallResult };
+export { expectRpcOk, formatRpcCallFailure } from './core-rpc-node';
 
 export async function callOpenhumanRpc<T = unknown>(
   method: string,

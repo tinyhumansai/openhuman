@@ -19,8 +19,8 @@
 
 use crate::openhuman::agent::host_runtime::RuntimeAdapter;
 use crate::openhuman::javascript::NodeBootstrap;
-use crate::openhuman::security::SecurityPolicy;
-use crate::openhuman::tools::traits::{Tool, ToolResult};
+use crate::openhuman::security::{CommandClass, GateDecision, SecurityPolicy};
+use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
@@ -35,7 +35,28 @@ const NPM_TIMEOUT_MAX_SECS: u64 = 1800;
 const MAX_OUTPUT_BYTES: usize = 1_048_576;
 /// Env allow-list — matches the shell / node_exec tools.
 const SAFE_ENV_VARS: &[&str] = &[
-    "HOME", "TERM", "LANG", "LC_ALL", "LC_CTYPE", "USER", "SHELL", "TMPDIR",
+    "HOME",
+    "TERM",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "USER",
+    "SHELL",
+    "TMPDIR",
+    // Windows process creation and child command lookup need these after env_clear().
+    // PATH is rebuilt separately with the managed Node bin dir prepended.
+    "SystemRoot",
+    "WINDIR",
+    "COMSPEC",
+    "PATHEXT",
+    "TEMP",
+    "TMP",
+    "USERPROFILE",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "ProgramFiles",
+    "ProgramFiles(x86)",
+    "ProgramW6432",
 ];
 
 /// Subcommands we outright refuse to run. These either break the managed
@@ -115,6 +136,18 @@ impl Tool for NpmExecTool {
         })
     }
 
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::Execute
+    }
+
+    /// npm subcommands run arbitrary scripts (`run`/`exec`/lifecycle hooks) →
+    /// the `Write` bucket, so ask-before-edit routes through the human approval
+    /// gate and read-only `execute` refuses below. Previously `npm_exec`
+    /// bypassed the gate (only the rate limiter applied).
+    fn external_effect_with_args(&self, _args: &serde_json::Value) -> bool {
+        self.security.gate_decision(CommandClass::Write) == GateDecision::Prompt
+    }
+
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         let subcommand = match args.get("subcommand").and_then(|v| v.as_str()) {
             Some(s) => s.trim().to_string(),
@@ -159,6 +192,13 @@ impl Tool for NpmExecTool {
             .unwrap_or(NPM_TIMEOUT_SECS)
             .min(NPM_TIMEOUT_MAX_SECS);
 
+        // Read-only mode performs no acts. npm runs arbitrary scripts, so it
+        // must refuse here — it previously skipped the autonomy check entirely.
+        if !self.security.can_act() {
+            return Ok(ToolResult::error(
+                "[policy-blocked] Action blocked: the agent is in read-only mode and cannot run npm.",
+            ));
+        }
         if self.security.is_rate_limited() {
             return Ok(ToolResult::error(
                 "Rate limit exceeded: too many actions in the last hour",
@@ -170,7 +210,7 @@ impl Tool for NpmExecTool {
             ));
         }
 
-        let cwd = match resolve_cwd(&self.security.workspace_dir, cwd_override.as_deref()) {
+        let cwd = match resolve_cwd(&self.security.action_dir, cwd_override.as_deref()) {
             Ok(p) => p,
             Err(msg) => return Ok(ToolResult::error(msg)),
         };
@@ -200,6 +240,21 @@ impl Tool for NpmExecTool {
             parts.push(shell_quote(a));
         }
         let command = parts.join(" ");
+
+        // When the agent's sandbox mode is `Sandboxed`, route execution
+        // through the sandbox backend (Docker / OS-level `cwd_jail` /
+        // documented noop) instead of the native runtime path. Mirrors
+        // the wiring in `ShellTool::run_with_security` (PR #3261) so
+        // npm_exec gets the same isolation guarantees as shell. The
+        // security/rate-limit checks above still apply.
+        if matches!(
+            crate::openhuman::agent::harness::current_sandbox_mode(),
+            Some(crate::openhuman::agent::harness::definition::SandboxMode::Sandboxed)
+        ) {
+            return Ok(self
+                .run_sandboxed(&command, &cwd, &resolved.bin_dir, timeout_secs)
+                .await);
+        }
 
         let mut cmd = match self.runtime.build_shell_command(&command, &cwd) {
             Ok(cmd) => cmd,
@@ -264,6 +319,108 @@ impl Tool for NpmExecTool {
             Err(_) => Ok(ToolResult::error(format!(
                 "npm_exec timed out after {timeout_secs}s and was killed"
             ))),
+        }
+    }
+}
+
+impl NpmExecTool {
+    /// Execute an npm command through the sandbox backend. Called from
+    /// `execute()` when the agent's `SandboxMode` is `Sandboxed`.
+    ///
+    /// Mirrors `ShellTool::run_sandboxed` and `NodeExecTool::run_sandboxed`.
+    /// The sandbox policy is resolved from the current `RuntimeConfig` and
+    /// rooted at `security.action_dir` — note that the actual child-process
+    /// `working_dir` may be a sub-path of `action_dir` (the resolved `cwd`
+    /// from `cwd_override`), kept consistent with the unsandboxed path.
+    async fn run_sandboxed(
+        &self,
+        command: &str,
+        cwd: &std::path::Path,
+        bin_dir: &std::path::Path,
+        timeout_secs: u64,
+    ) -> ToolResult {
+        use crate::openhuman::sandbox;
+
+        // Load the live `RuntimeConfig` so `resolve_sandbox_policy` derives
+        // the right backend (Docker / local / noop) from the operator's
+        // configuration instead of the unconfigured `RuntimeConfig::default()`.
+        // Falls back to defaults with a warning if the config load fails —
+        // a failed config read shouldn't block tool execution. (CodeRabbit
+        // finding on PR #3309.)
+        let runtime_cfg = match crate::openhuman::config::ops::load_config_with_timeout().await {
+            Ok(cfg) => cfg.runtime,
+            Err(err) => {
+                tracing::warn!(
+                    error = %err,
+                    "[npm_exec] failed to load live RuntimeConfig — falling back to defaults"
+                );
+                crate::openhuman::config::RuntimeConfig::default()
+            }
+        };
+        // `is_remote_session = false` matches `ShellTool::run_sandboxed`'s
+        // current behavior (PR #3261). Threading the real session origin
+        // through requires a new `tokio::task_local!` next to
+        // `CURRENT_AGENT_SANDBOX_MODE` and is the same gap across all three
+        // shell-family tools; tracked separately so it can be fixed uniformly.
+        let policy = sandbox::resolve_sandbox_policy(
+            crate::openhuman::agent::harness::definition::SandboxMode::Sandboxed,
+            &self.security.action_dir,
+            &runtime_cfg,
+            false,
+        );
+
+        tracing::debug!(
+            backend = ?policy.backend,
+            runtime_kind = ?runtime_cfg.kind,
+            "[npm_exec] routing to sandbox backend"
+        );
+
+        // Forward the managed Node.js bin dir on PATH so npm child invocations
+        // (e.g. `npm run` spawning user scripts) resolve `node`/`npx`
+        // consistently with the unsandboxed path.
+        let mut extra_env = std::collections::HashMap::new();
+        let host_path = std::env::var("PATH").unwrap_or_default();
+        let sep = if cfg!(windows) { ";" } else { ":" };
+        let prepended = if host_path.is_empty() {
+            bin_dir.to_string_lossy().into_owned()
+        } else {
+            format!("{}{}{}", bin_dir.display(), sep, host_path)
+        };
+        extra_env.insert("PATH".to_string(), prepended);
+
+        match sandbox::execute_in_sandbox(
+            &policy,
+            command,
+            cwd,
+            extra_env,
+            Duration::from_secs(timeout_secs),
+        )
+        .await
+        {
+            Ok(result) => {
+                if result.timed_out {
+                    ToolResult::error(format!(
+                        "npm_exec timed out after {timeout_secs}s and was killed"
+                    ))
+                } else if result.success() {
+                    if result.stderr.is_empty() {
+                        ToolResult::success(result.stdout)
+                    } else {
+                        ToolResult::success(format!(
+                            "{}\n[stderr]\n{}",
+                            result.stdout, result.stderr
+                        ))
+                    }
+                } else {
+                    let err_msg = if result.stderr.is_empty() {
+                        result.stdout
+                    } else {
+                        result.stderr
+                    };
+                    ToolResult::error(err_msg)
+                }
+            }
+            Err(e) => ToolResult::error(format!("Sandbox execution failed: {e}")),
         }
     }
 }
@@ -372,5 +529,15 @@ mod tests {
         let ws = std::path::Path::new("/tmp/ws");
         let got = resolve_cwd(ws, Some("app")).unwrap();
         assert_eq!(got, std::path::PathBuf::from("/tmp/ws/app"));
+    }
+
+    #[test]
+    fn safe_env_vars_include_windows_process_essentials() {
+        for var in ["SystemRoot", "COMSPEC", "PATHEXT", "TEMP", "USERPROFILE"] {
+            assert!(
+                SAFE_ENV_VARS.contains(&var),
+                "{var} must be forwarded for Windows child processes"
+            );
+        }
     }
 }

@@ -70,6 +70,20 @@ pub(crate) use helpers::{
     relation_metadata, timestamp_to_rfc3339, validate_memory_relative_path,
 };
 
+/// Serializes the tests that drive the process-global memory client
+/// (`memory::global`). Each re-points that singleton at its own workspace, so
+/// running them concurrently races on one client + SQLite connection
+/// (`SQLITE_IOERR` during schema init + cross-test data bleed). Async tests
+/// hold this for their whole body; serial execution is their proven-safe mode.
+#[cfg(test)]
+pub(crate) static GLOBAL_MEMORY_TEST_LOCK: tokio::sync::Mutex<()> =
+    tokio::sync::Mutex::const_new(());
+
+#[cfg(test)]
+mod test_support;
+#[cfg(test)]
+pub(crate) use test_support::ensure_shared_memory_client;
+
 #[cfg(test)]
 #[path = "../ops_tests.rs"]
 mod tests;

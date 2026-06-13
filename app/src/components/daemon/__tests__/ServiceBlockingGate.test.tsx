@@ -13,7 +13,20 @@ vi.mock('../../../utils/openUrl', () => ({
 }));
 
 vi.mock('../../../utils/config', () => ({
+  APP_BINARY_VERSION: '0.0.0-test',
+  APP_ENVIRONMENT: 'test',
+  APP_VERSION: '0.0.0-test',
+  BUILD_SHA: 'test',
+  CORE_CARGO_VERSION: '0.0.0-test',
+  GA_MEASUREMENT_ID: undefined,
+  IS_DEV: true,
   LATEST_APP_DOWNLOAD_URL: 'https://github.com/tinyhumansai/openhuman/releases/latest',
+  OPENPANEL_API_URL: 'https://panel.tinyhumans.ai/api',
+  OPENPANEL_CLIENT_ID: undefined,
+  SENTRY_DSN: undefined,
+  SENTRY_RELEASE: 'openhuman@test',
+  SENTRY_SMOKE_TEST: false,
+  TAURI_CARGO_VERSION: '0.0.0-test',
 }));
 
 vi.mock('../../../providers/CoreStateProvider', () => ({ useCoreState: () => mockUseCoreState() }));

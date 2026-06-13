@@ -2,7 +2,8 @@
  * Unit tests for the OpenClaw formatter.
  * Tests markdown generation, tool formatting, and categorization.
  */
-import { describe, expect, it } from 'vitest';
+import assert from 'node:assert/strict';
+import { describe, it } from 'node:test';
 
 import {
   ENVIRONMENTS,
@@ -12,6 +13,21 @@ import {
   groupToolsBySkill,
   TOOL_CATEGORIES,
 } from '../openClaw-formatter.js';
+
+const expect = (actual) => ({
+  toBe(expected) {
+    assert.equal(actual, expected);
+  },
+  toContain(expected) {
+    assert.ok(actual.includes(expected), `Expected value to include: ${expected}`);
+  },
+  toHaveLength(expected) {
+    assert.equal(actual.length, expected);
+  },
+  toHaveProperty(expected) {
+    assert.ok(Object.hasOwn(actual, expected), `Expected object to include property: ${expected}`);
+  },
+});
 
 describe('OpenClaw Formatter', () => {
   describe('formatParameters', () => {

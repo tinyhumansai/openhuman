@@ -41,10 +41,17 @@ const TOAST_ICONS = {
 };
 
 const TOAST_STYLES = {
-  success: 'bg-sage-500 text-white',
-  error: 'bg-coral-500 text-white',
-  warning: 'bg-amber-500 text-white',
-  info: 'bg-primary-500 text-white',
+  success: 'bg-neutral-0 border-sage-500 text-neutral-900',
+  error: 'bg-neutral-0 border-coral-500 text-neutral-900',
+  warning: 'bg-neutral-0 border-amber-500 text-neutral-900',
+  info: 'bg-neutral-0 border-primary-500 text-neutral-900',
+};
+
+const TOAST_ICON_STYLES = {
+  success: 'text-sage-600',
+  error: 'text-coral-500',
+  warning: 'text-amber-600',
+  info: 'text-primary-500',
 };
 
 export function Toast({ notification, onRemove }: ToastProps) {
@@ -76,6 +83,7 @@ export function Toast({ notification, onRemove }: ToastProps) {
 
   const icon = TOAST_ICONS[notification.type];
   const styles = TOAST_STYLES[notification.type];
+  const iconStyle = TOAST_ICON_STYLES[notification.type];
 
   return (
     <div
@@ -86,18 +94,18 @@ export function Toast({ notification, onRemove }: ToastProps) {
       `}>
       <div
         className={`
-          flex items-center gap-3 p-4 rounded-lg shadow-large border backdrop-blur-sm
+          flex items-center gap-3 p-4 rounded-lg shadow-large border-l-4 border backdrop-blur-sm
           max-w-sm w-full
           ${styles}
         `}>
         {/* Icon */}
-        <div className="flex-shrink-0">{icon}</div>
+        <div className={`flex-shrink-0 ${iconStyle}`}>{icon}</div>
 
         {/* Content */}
         <div className="flex-1 min-w-0">
           <h4 className="text-sm font-medium">{notification.title}</h4>
           {notification.message && (
-            <p className="text-xs opacity-90 mt-1">{notification.message}</p>
+            <p className="text-xs text-neutral-500 mt-1">{notification.message}</p>
           )}
         </div>
 
@@ -113,7 +121,7 @@ export function Toast({ notification, onRemove }: ToastProps) {
         {/* Close button */}
         <button
           onClick={handleRemove}
-          className="flex-shrink-0 text-white/70 hover:text-white transition-colors">
+          className="flex-shrink-0 text-neutral-400 hover:text-neutral-600 transition-colors">
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path
               strokeLinecap="round"

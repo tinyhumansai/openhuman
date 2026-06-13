@@ -5,12 +5,20 @@ use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 
 use super::execution::{
-    balances, chain_status, execute_prepared, network_defaults, prepare_contract_call,
-    prepare_swap, prepare_transfer, supported_assets, ExecutePreparedParams,
-    PrepareContractCallParams, PrepareSwapParams, PrepareTransferParams,
+    balances, chain_status, execute_prepared, lookup_tx, network_defaults, prepare_transfer,
+    supported_assets, tx_receipt, tx_status, ExecutePreparedParams, PrepareTransferParams,
 };
 use super::ops::{WalletAccount, WalletSetupParams, WalletSetupSource};
-use super::{encode_erc20_transfer, WalletChain};
+use super::{encode_erc20_transfer, EvmNetwork, WalletChain};
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TxQueryParams {
+    chain: WalletChain,
+    #[serde(default)]
+    evm_network: Option<EvmNetwork>,
+    hash: String,
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -52,9 +60,10 @@ pub fn all_wallet_controller_schemas() -> Vec<ControllerSchema> {
         wallet_schemas("encode_erc20_transfer"),
         wallet_schemas("chain_status"),
         wallet_schemas("prepare_transfer"),
-        wallet_schemas("prepare_swap"),
-        wallet_schemas("prepare_contract_call"),
         wallet_schemas("execute_prepared"),
+        wallet_schemas("tx_status"),
+        wallet_schemas("tx_receipt"),
+        wallet_schemas("lookup_tx"),
     ]
 }
 
@@ -93,16 +102,20 @@ pub fn all_wallet_registered_controllers() -> Vec<RegisteredController> {
             handler: handle_prepare_transfer,
         },
         RegisteredController {
-            schema: wallet_schemas("prepare_swap"),
-            handler: handle_prepare_swap,
-        },
-        RegisteredController {
-            schema: wallet_schemas("prepare_contract_call"),
-            handler: handle_prepare_contract_call,
-        },
-        RegisteredController {
             schema: wallet_schemas("execute_prepared"),
             handler: handle_execute_prepared,
+        },
+        RegisteredController {
+            schema: wallet_schemas("tx_status"),
+            handler: handle_tx_status,
+        },
+        RegisteredController {
+            schema: wallet_schemas("tx_receipt"),
+            handler: handle_tx_receipt,
+        },
+        RegisteredController {
+            schema: wallet_schemas("lookup_tx"),
+            handler: handle_lookup_tx,
         },
     ]
 }
@@ -156,12 +169,12 @@ pub fn wallet_schemas(function: &str) -> ControllerSchema {
             namespace: "wallet",
             function: "balances",
             description:
-                "List native-asset balances for every derived wallet account. EVM balances are read live from the configured/default RPC; other chains remain placeholder-zero until provider support lands.",
+                "List native-asset balances for every derived wallet account. The EVM account fans out into one row per displayed network (Ethereum, Base, BNB Chain), each read live from the configured/default RPC; BTC/Solana/Tron return one row each.",
             inputs: vec![],
             outputs: vec![FieldSchema {
                 name: "result",
                 ty: TypeSchema::Json,
-                comment: "Array of balance rows: {chain, address, assetSymbol, decimals, raw, formatted, providerStatus}.",
+                comment: "Array of balance rows: {chain, evmNetwork?, address, assetSymbol, decimals, raw, formatted, providerStatus}.",
                 required: true,
             }],
         },
@@ -225,15 +238,21 @@ pub fn wallet_schemas(function: &str) -> ControllerSchema {
             namespace: "wallet",
             function: "prepare_transfer",
             description:
-                "Build a native or token-transfer quote. For EVM, default ERC-20 symbols are supported and wallet.execute_prepared will sign+broadcast after explicit confirmation.",
+                "Build a native or token-transfer quote. All four chains (EVM, BTC, Solana, Tron) sign + broadcast on execute_prepared after explicit confirmation. BTC supports only native transfers (no token concept).",
             inputs: vec![
                 required_json("chain", "Target chain (evm | btc | solana | tron)."),
                 required_json("toAddress", "Recipient address on the target chain."),
-                required_json("amountRaw", "Amount in the asset's smallest unit (wei/sat/lamport) as a decimal string."),
+                required_json("amountRaw", "Amount in the asset's smallest unit (wei/sat/lamport/sun) as a decimal string."),
                 FieldSchema {
                     name: "assetSymbol",
                     ty: TypeSchema::Option(Box::new(TypeSchema::String)),
                     comment: "Optional. Omit / null for the chain's native asset; otherwise a token symbol from wallet.supported_assets.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "evmNetwork",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Optional. Required only for chain='evm' to pick a network: ethereum_mainnet | base_mainnet | arbitrum_one | optimism_mainnet | polygon_mainnet. Defaults to ethereum_mainnet.",
                     required: false,
                 },
             ],
@@ -244,46 +263,42 @@ pub fn wallet_schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
-        "prepare_swap" => ControllerSchema {
+        "tx_status" => ControllerSchema {
             namespace: "wallet",
-            function: "prepare_swap",
+            function: "tx_status",
             description:
-                "Build a swap quote against a router/aggregator. Caller selects the router; this layer enforces simulation and a minimum-out floor.",
-            inputs: vec![
-                required_json("chain", "Target chain (evm | btc | solana | tron)."),
-                required_json("fromSymbol", "Asset symbol being sold."),
-                required_json("toSymbol", "Asset symbol being bought (must differ from fromSymbol)."),
-                required_json("amountInRaw", "Input amount in the from-asset's smallest unit, as a decimal string."),
-                required_json("slippageBps", "Slippage tolerance in basis points (max 5000 = 50%)."),
-                required_json("routerAddress", "Router / aggregator contract address."),
-            ],
+                "Check the on-chain lifecycle state (pending / confirmed / failed / not_found) of a transaction by hash.",
+            inputs: tx_query_inputs(),
             outputs: vec![FieldSchema {
                 name: "result",
                 ty: TypeSchema::Json,
-                comment: "PreparedTransaction with quoteId, receiveSymbol, minReceiveRaw.",
+                comment: "{chain, evmNetwork?, hash, state, confirmations?, blockNumber?}.",
                 required: true,
             }],
         },
-        "prepare_contract_call" => ControllerSchema {
+        "tx_receipt" => ControllerSchema {
             namespace: "wallet",
-            function: "prepare_contract_call",
+            function: "tx_receipt",
             description:
-                "Build a contract-call quote for EVM. Caller supplies pre-encoded calldata.",
-            inputs: vec![
-                required_json("chain", "Target chain. Must be evm."),
-                required_json("contractAddress", "Target contract address."),
-                required_json("calldata", "0x-prefixed hex calldata."),
-                FieldSchema {
-                    name: "valueRaw",
-                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
-                    comment: "Native value attached, smallest unit. Defaults to '0'.",
-                    required: false,
-                },
-            ],
+                "Fetch the receipt of a broadcast transaction (success flag, fee, block, gas used) plus the raw provider payload.",
+            inputs: tx_query_inputs(),
             outputs: vec![FieldSchema {
                 name: "result",
                 ty: TypeSchema::Json,
-                comment: "PreparedTransaction with calldata, quoteId, and simulated fee.",
+                comment: "{chain, evmNetwork?, hash, found, success?, blockNumber?, gasUsed?, feeRaw?, raw}.",
+                required: true,
+            }],
+        },
+        "lookup_tx" => ControllerSchema {
+            namespace: "wallet",
+            function: "lookup_tx",
+            description:
+                "Look up the raw transaction payload by hash on the target chain.",
+            inputs: tx_query_inputs(),
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Json,
+                comment: "{chain, evmNetwork?, hash, found, raw}.",
                 required: true,
             }],
         },
@@ -381,30 +396,57 @@ fn handle_prepare_transfer(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-fn handle_prepare_swap(params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move {
-        let parsed: PrepareSwapParams = serde_json::from_value(Value::Object(params))
-            .map_err(|e| format!("invalid params: {e}"))?;
-        prepare_swap(parsed).await?.into_cli_compatible_json()
-    })
-}
-
-fn handle_prepare_contract_call(params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move {
-        let parsed: PrepareContractCallParams = serde_json::from_value(Value::Object(params))
-            .map_err(|e| format!("invalid params: {e}"))?;
-        prepare_contract_call(parsed)
-            .await?
-            .into_cli_compatible_json()
-    })
-}
-
 fn handle_execute_prepared(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let parsed: ExecutePreparedParams = serde_json::from_value(Value::Object(params))
             .map_err(|e| format!("invalid params: {e}"))?;
         execute_prepared(parsed).await?.into_cli_compatible_json()
     })
+}
+
+fn handle_tx_status(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let parsed: TxQueryParams = serde_json::from_value(Value::Object(params))
+            .map_err(|e| format!("invalid params: {e}"))?;
+        tx_status(parsed.chain, parsed.evm_network, &parsed.hash)
+            .await?
+            .into_cli_compatible_json()
+    })
+}
+
+fn handle_tx_receipt(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let parsed: TxQueryParams = serde_json::from_value(Value::Object(params))
+            .map_err(|e| format!("invalid params: {e}"))?;
+        tx_receipt(parsed.chain, parsed.evm_network, &parsed.hash)
+            .await?
+            .into_cli_compatible_json()
+    })
+}
+
+fn handle_lookup_tx(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let parsed: TxQueryParams = serde_json::from_value(Value::Object(params))
+            .map_err(|e| format!("invalid params: {e}"))?;
+        lookup_tx(parsed.chain, parsed.evm_network, &parsed.hash)
+            .await?
+            .into_cli_compatible_json()
+    })
+}
+
+/// Shared input schema for the tx_status / tx_receipt / lookup_tx readers.
+fn tx_query_inputs() -> Vec<FieldSchema> {
+    vec![
+        required_json("chain", "Target chain (evm | btc | solana | tron)."),
+        required_json("hash", "Transaction hash / signature / txid to query."),
+        FieldSchema {
+            name: "evmNetwork",
+            ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+            comment:
+                "Optional. EVM network selector when chain='evm'. Defaults to ethereum_mainnet.",
+            required: false,
+        },
+    ]
 }
 
 fn required_json(name: &'static str, comment: &'static str) -> FieldSchema {
@@ -422,12 +464,25 @@ mod tests {
 
     #[test]
     fn all_schemas_lists_every_controller() {
-        assert_eq!(all_wallet_controller_schemas().len(), 11);
+        assert_eq!(all_wallet_controller_schemas().len(), 12);
     }
 
     #[test]
     fn all_controllers_lists_every_handler() {
-        assert_eq!(all_wallet_registered_controllers().len(), 11);
+        assert_eq!(all_wallet_registered_controllers().len(), 12);
+    }
+
+    #[test]
+    fn tx_status_schema_takes_chain_and_hash() {
+        let schema = wallet_schemas("tx_status");
+        let names: Vec<&str> = schema.inputs.iter().map(|f| f.name).collect();
+        assert_eq!(names, vec!["chain", "hash", "evmNetwork"]);
+    }
+
+    #[test]
+    fn removed_swap_controller_maps_to_unknown() {
+        assert_eq!(wallet_schemas("prepare_swap").function, "unknown");
+        assert_eq!(wallet_schemas("prepare_contract_call").function, "unknown");
     }
 
     #[test]

@@ -21,7 +21,7 @@ Options:
   --exclude-workflow <pattern>  Case-insensitive substring/regex fragment to skip.
                                 May be passed multiple times. Default: ${DEFAULT_EXCLUDE_WORKFLOW_PATTERNS.join(', ')}
   --execute                     Actually cancel matching runs.
-  --help                        Show this message.
+  -h, --help                    Show this message.
 
 Examples:
   node scripts/cancel-stale-pr-ci.mjs
@@ -61,7 +61,7 @@ function parseArgs(argv) {
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
-    if (arg === '--help') {
+    if (arg === '--help' || arg === '-h') {
       printUsage();
       process.exit(0);
     }

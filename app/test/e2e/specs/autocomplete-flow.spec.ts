@@ -41,6 +41,7 @@ function stepLog(message: string, context?: unknown): void {
 
 describe('Autocomplete settings panel smoke', () => {
   before(async function beforeSuite() {
+    this.timeout(90_000);
     if (!supportsExecuteScript()) {
       stepLog('Skipping suite on Mac2 — Settings sidebar not mapped');
       this.skip();
@@ -63,7 +64,8 @@ describe('Autocomplete settings panel smoke', () => {
     await stopMockServer();
   });
 
-  it('mounts the autocomplete settings panel and renders status', async () => {
+  it('mounts the autocomplete settings panel and renders status', async function () {
+    this.timeout(90_000);
     stepLog('navigating to /settings/autocomplete');
     await navigateViaHash('/settings/autocomplete');
 

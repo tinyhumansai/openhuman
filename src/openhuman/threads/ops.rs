@@ -3,10 +3,6 @@
 use crate::openhuman::channels::providers::web as web_channel;
 use crate::openhuman::config::Config;
 use crate::openhuman::inference::provider::{self, ProviderRuntimeOptions};
-use crate::openhuman::memory::conversations::{
-    self, ConversationMessage, ConversationMessagePatch, ConversationThread,
-    CreateConversationThread,
-};
 use crate::openhuman::memory::{
     ApiEnvelope, ApiMeta, AppendConversationMessageRequest, ConversationMessageRecord,
     ConversationMessagesRequest, ConversationMessagesResponse, ConversationThreadSummary,
@@ -14,7 +10,11 @@ use crate::openhuman::memory::{
     DeleteConversationThreadRequest, DeleteConversationThreadResponse, EmptyRequest,
     GenerateConversationThreadTitleRequest, PaginationMeta, PurgeConversationThreadsResponse,
     UpdateConversationMessageRequest, UpdateConversationThreadLabelsRequest,
-    UpsertConversationThreadRequest,
+    UpdateConversationThreadTitleRequest, UpsertConversationThreadRequest,
+};
+use crate::openhuman::memory_conversations::{
+    self as conversations, ConversationMessage, ConversationMessagePatch, ConversationStore,
+    ConversationThread, CreateConversationThread,
 };
 use crate::openhuman::threads::title::{
     build_title_prompt, is_auto_generated_thread_title, sanitize_generated_title,
@@ -81,6 +81,7 @@ fn thread_to_summary(thread: ConversationThread) -> ConversationThreadSummary {
         created_at: thread.created_at,
         parent_thread_id: thread.parent_thread_id,
         labels: thread.labels,
+        personality_id: thread.personality_id,
     }
 }
 
@@ -168,6 +169,7 @@ pub async fn thread_upsert(
             created_at: request.created_at,
             parent_thread_id: request.parent_thread_id,
             labels: request.labels,
+            personality_id: request.personality_id,
         },
     )?;
     Ok(envelope(
@@ -197,6 +199,7 @@ pub async fn thread_create_new(
             // the same default on index rebuild, so this is the single source
             // of truth for default labels.
             labels: request.labels,
+            personality_id: request.personality_id,
         },
     )?;
     tracing::debug!(
@@ -450,6 +453,34 @@ pub async fn thread_update_labels(
     ))
 }
 
+/// Sets a user-specified title on a conversation thread, bypassing AI generation.
+pub async fn thread_update_title(
+    request: UpdateConversationThreadTitleRequest,
+) -> Result<RpcOutcome<ApiEnvelope<ConversationThreadSummary>>, String> {
+    let dir = workspace_dir().await?;
+    let title = request.title.trim().to_string();
+    if title.is_empty() {
+        return Err("title must not be empty".to_string());
+    }
+    let updated = conversations::update_thread_title(
+        dir,
+        &request.thread_id,
+        &title,
+        &chrono::Utc::now().to_rfc3339(),
+    )
+    .map_err(|err| format!("update title: {err}"))?;
+    tracing::debug!(
+        thread_id = %request.thread_id,
+        title_len = updated.title.chars().count(),
+        "[threads] user updated thread title"
+    );
+    Ok(envelope(
+        thread_to_summary(updated),
+        Some(counts([("num_threads", 1)])),
+        None,
+    ))
+}
+
 /// Updates metadata on an existing conversation message.
 pub async fn message_update(
     request: UpdateConversationMessageRequest,
@@ -475,7 +506,7 @@ pub async fn thread_delete(
     request: DeleteConversationThreadRequest,
 ) -> Result<RpcOutcome<ApiEnvelope<DeleteConversationThreadResponse>>, String> {
     let dir = workspace_dir().await?;
-    let deleted = conversations::ConversationStore::new(dir.clone())
+    let deleted = ConversationStore::new(dir.clone())
         .delete_thread(&request.thread_id, &request.deleted_at)?;
     // Invalidate the in-process web-channel session BEFORE the
     // turn-state cleanup. The snapshot deletion is fallible and

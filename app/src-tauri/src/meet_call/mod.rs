@@ -81,7 +81,18 @@ impl Default for MeetCallState {
 pub struct OpenWindowArgs {
     pub request_id: String,
     pub meet_url: String,
+    /// Bot's Meet participant tile name — what the bot types into
+    /// Meet's "Your name" input. Also passed to the core wake gate
+    /// so the bot's own captioned TTS is filtered out as self-echo.
     pub display_name: String,
+    /// Call owner's Meet participant name — the human who launched
+    /// the bot. The core wake-word gate (privacy lock: only the
+    /// owner can trigger tool calls) compares speaker captions
+    /// against this value. Defaulted to empty so callers staged
+    /// during the rollout window keep parsing; an empty owner
+    /// fails closed in core (no wakes fire).
+    #[serde(default)]
+    pub owner_display_name: String,
 }
 
 /// Open a dedicated top-level CEF webview window pointed at the Meet URL.
@@ -111,6 +122,25 @@ pub async fn meet_call_open_window<R: Runtime>(
         let _ = existing.show();
         let _ = existing.set_focus();
         return Ok(label);
+    }
+
+    // Only one meet-call window can be live at a time — concurrent bot
+    // sessions race the CEF audio handler registration (`listen_capture`)
+    // and confuse the user with multiple "Meet — OpenHuman" windows in
+    // their Dock. Close any stragglers from a prior Join before opening
+    // a fresh one. The CloseRequested handler will tear down their
+    // scanner + audio session via the per-window event listeners below.
+    let stale_labels: Vec<String> = app
+        .webview_windows()
+        .keys()
+        .filter(|l| l.starts_with("meet-call-"))
+        .cloned()
+        .collect();
+    for stale in stale_labels {
+        if let Some(window) = app.get_webview_window(&stale) {
+            log::info!("[meet-call] closing stale window label={stale} before new join");
+            let _ = window.close();
+        }
     }
 
     let data_dir = data_directory_for(&app, &request_id)?;
@@ -162,6 +192,29 @@ pub async fn meet_call_open_window<R: Runtime>(
         .build()
         .map_err(|e| format!("[meet-call] WebviewWindowBuilder.build failed: {e}"))?;
 
+    // Push the window off-screen post-build. macOS Cocoa clamps NSWindow
+    // frame origins to the union of all attached monitors' bounds, so
+    // (-30000, -30000) lands at (0, 0) on a single-display setup or on
+    // a secondary monitor's edge on multi-display setups. Not perfect,
+    // but the post-join hide() in `meet_scanner::run` is the primary
+    // hiding mechanism — this just keeps the brief pre-join window
+    // out of the user's main display where possible.
+    //
+    // We can't hide() here: a window built hidden never gives its
+    // renderer a backing surface, and `meet_scanner` drives the join
+    // via CDP `Input.dispatchMouseEvent` which requires laid-out DOM.
+    // Hide post-join instead.
+    if let Err(err) = window.set_position(tauri::PhysicalPosition::new(-30000i32, -30000i32)) {
+        log::warn!("[meet-call] post-build set_position failed: {err}");
+    }
+    if let Ok(pos) = window.outer_position() {
+        log::info!(
+            "[meet-call] post-build outer_position={{x:{},y:{}}} (target=-30000,-30000)",
+            pos.x,
+            pos.y
+        );
+    }
+
     state
         .inner
         .lock()
@@ -195,10 +248,17 @@ pub async fn meet_call_open_window<R: Runtime>(
         let app_for_audio = app.clone();
         let request_id_for_audio = request_id.clone();
         let url_for_audio = parsed.to_string();
+        let bot_for_audio = args.display_name.clone();
+        let owner_for_audio = args.owner_display_name.clone();
         tauri::async_runtime::spawn(async move {
-            if let Err(err) =
-                crate::meet_audio::start(app_for_audio, request_id_for_audio.clone(), url_for_audio)
-                    .await
+            if let Err(err) = crate::meet_audio::start(
+                app_for_audio,
+                request_id_for_audio.clone(),
+                url_for_audio,
+                owner_for_audio,
+                bot_for_audio,
+            )
+            .await
             {
                 log::warn!(
                     "[meet-call] meet_audio start failed request_id={request_id_for_audio} err={err}"
@@ -364,7 +424,7 @@ pub async fn meet_call_close_window<R: Runtime>(
     Ok(false)
 }
 
-fn window_label_for(request_id: &str) -> String {
+pub fn window_label_for(request_id: &str) -> String {
     format!("meet-call-{request_id}")
 }
 

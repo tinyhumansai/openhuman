@@ -8,9 +8,13 @@
 //!
 //! ## Authentication
 //!
-//! All routes require `Authorization: Bearer <OPENHUMAN_CORE_TOKEN>` — the
-//! same per-launch token used by the JSON-RPC endpoint. Missing or wrong
-//! tokens get a `401 Unauthorized` from the shared middleware.
+//! All routes accept `Authorization: Bearer <token>`, but the token may be
+//! either:
+//! - the per-launch `OPENHUMAN_CORE_TOKEN` used by the desktop shell, or
+//! - a stable user-managed external API key stored under
+//!   `EXTERNAL_OPENAI_COMPAT_PROVIDER` for local harnesses.
+//!
+//! Missing or wrong tokens get a `401 Unauthorized` from the shared middleware.
 //!
 //! ## Provider routing
 //!
@@ -26,6 +30,7 @@ use axum::routing::{get, post};
 use axum::{extract::State, Json, Router};
 use futures_util::stream::{self, StreamExt};
 use serde_json::json;
+use std::collections::HashSet;
 use tracing::{debug, error};
 
 use crate::core::types::AppState;
@@ -259,27 +264,89 @@ async fn models_handler(State(_state): State<AppState>) -> Response {
 
     let created = chrono::Utc::now().timestamp();
     let mut data: Vec<ModelObject> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+
+    let mut push_model = |id: String, owned_by: String| {
+        if seen.insert(id.clone()) {
+            data.push(ModelObject {
+                id,
+                object: "model",
+                created,
+                owned_by,
+            });
+        }
+    };
+
+    // Stable managed-router sentinel for callers that want OpenHuman to keep
+    // selecting the effective upstream model based on the current routing config.
+    push_model("openhuman".to_string(), "openhuman".to_string());
+
+    if let Some(default_model) = config
+        .default_model
+        .as_deref()
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+    {
+        push_model(
+            strip_temperature_suffix(default_model).to_string(),
+            "openhuman".to_string(),
+        );
+    }
 
     // Cloud provider default models
     for cp in &config.cloud_providers {
         if let Some(ref model) = cp.default_model {
-            data.push(ModelObject {
-                id: format!("{}:{}", cp.slug, model),
-                object: "model",
-                created,
-                owned_by: cp.slug.clone(),
-            });
+            push_model(
+                format!("{}:{}", cp.slug, strip_temperature_suffix(model)),
+                cp.slug.clone(),
+            );
         }
     }
 
     // Configured local chat model (Ollama)
     if !config.local_ai.chat_model_id.is_empty() {
-        data.push(ModelObject {
-            id: format!("ollama:{}", config.local_ai.chat_model_id),
-            object: "model",
-            created,
-            owned_by: "ollama".to_string(),
-        });
+        push_model(
+            format!("ollama:{}", config.local_ai.chat_model_id),
+            "ollama".to_string(),
+        );
+    }
+
+    for provider_string in [
+        config.chat_provider.as_deref(),
+        config.reasoning_provider.as_deref(),
+        config.agentic_provider.as_deref(),
+        config.coding_provider.as_deref(),
+        config.memory_provider.as_deref(),
+        config.embeddings_provider.as_deref(),
+        config.heartbeat_provider.as_deref(),
+        config.learning_provider.as_deref(),
+        config.subconscious_provider.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .map(str::trim)
+    .filter(|value| !value.is_empty() && *value != "cloud")
+    {
+        if provider_string == "openhuman" {
+            continue;
+        }
+
+        if let Some(model) = provider_string.strip_prefix("ollama:") {
+            push_model(
+                format!("ollama:{}", strip_temperature_suffix(model)),
+                "ollama".to_string(),
+            );
+            continue;
+        }
+
+        if let Some((slug, model)) = provider_string.split_once(':') {
+            if slug != "openhuman" {
+                push_model(
+                    format!("{}:{}", slug, strip_temperature_suffix(model)),
+                    slug.to_string(),
+                );
+            }
+        }
     }
 
     debug!(model_count = data.len(), "{LOG_PREFIX} models: ok");
@@ -291,6 +358,18 @@ async fn models_handler(State(_state): State<AppState>) -> Response {
         }),
     )
         .into_response()
+}
+
+pub(crate) fn strip_temperature_suffix(model: &str) -> &str {
+    let trimmed = model.trim();
+    let Some((head, tail)) = trimmed.rsplit_once('@') else {
+        return trimmed;
+    };
+    if tail.parse::<f64>().is_ok() {
+        head.trim()
+    } else {
+        trimmed
+    }
 }
 
 #[cfg(test)]

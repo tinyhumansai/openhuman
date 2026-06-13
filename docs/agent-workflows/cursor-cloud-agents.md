@@ -22,7 +22,7 @@ Running N agents in parallel breaks in three ways:
 - **File collisions** — two agents editing the same module, producing conflicting merges.
 - **Quality drift** — agents skipping format / typecheck / coverage and pushing red PRs.
 
-The batch spec is the single source of truth that prevents the first two. The third is enforced by upstream CI ([`.github/workflows/coverage.yml`](../../.github/workflows/coverage.yml), [`.github/workflows/pr-quality.yml`](../../.github/workflows/pr-quality.yml), [`.github/workflows/test.yml`](../../.github/workflows/test.yml)) — agents do not get to opt out.
+The batch spec is the single source of truth that prevents the first two. The third is enforced by upstream CI ([`.github/workflows/pr-ci.yml`](../../.github/workflows/pr-ci.yml), [`.github/workflows/pr-quality.yml`](../../.github/workflows/pr-quality.yml)) — agents do not get to opt out.
 
 ## Batch spec
 
@@ -91,7 +91,7 @@ Agents run the same gates as any other PR. The launch comment instructs them exp
 - **Format**: `pnpm --filter openhuman-app format:check`, `cargo fmt --manifest-path Cargo.toml --all --check`, and the Tauri shell equivalent if shell files changed.
 - **Lint / typecheck**: `pnpm lint`, `pnpm typecheck`.
 - **Tests (focused)**: targeted Vitest for changed files, focused Rust tests via `pnpm debug rust <filter>` for changed Rust.
-- **Coverage**: agents must run `pnpm test:coverage` and `pnpm test:rust` locally and add tests for changed lines. The merge gate is `≥ 80% diff coverage`, enforced server-side by [`coverage.yml`](../../.github/workflows/coverage.yml). PRs below the threshold do not merge — agents that cannot reach the threshold must say so in the PR body, not paper over it.
+- **Coverage**: agents must run `pnpm test:coverage` and `pnpm test:rust` locally and add tests for changed lines. The merge gate is `≥ 80% diff coverage`, enforced server-side by [`pr-ci.yml`](../../.github/workflows/pr-ci.yml). PRs below the threshold do not merge — agents that cannot reach the threshold must say so in the PR body, not paper over it.
 - **PR checklist + coverage matrix**: [`pr-quality.yml`](../../.github/workflows/pr-quality.yml) checks the PR body and `docs/TEST-COVERAGE-MATRIX.md`. The `docs` and `chore` labels exempt a PR from these soft gates — use them only for PRs that genuinely change no behavior.
 
 If the agent's environment cannot run a gate, the PR body must report the **exact command and error** under `### Validation Blocked`, not claim it passed. This is the same rule as the codex checklist.
@@ -121,7 +121,7 @@ Re-running `status` rewrites the same comment (looked up by a `<!-- batch:<id> -
 
 - `gh pr list --repo tinyhumansai/openhuman --label batch:<id> --json …` for PR + state.
 - `gh pr checks <pr>` for CI rollup.
-- The `diff-coverage.md` artifact from `coverage.yml`, if downloaded — otherwise coverage shows `—`.
+- The `diff-coverage.md` artifact from `pr-ci.yml`, if downloaded — otherwise coverage shows `—`.
 
 No external dashboard — GitHub issues + labels + the table are the single pane of glass.
 

@@ -1,16 +1,26 @@
 import debug from 'debug';
-import { io, Socket } from 'socket.io-client';
+import { type Socket } from 'socket.io-client';
 
 import { getCoreStateSnapshot } from '../lib/coreState/store';
 import { SocketIOMCPTransportImpl } from '../lib/mcp';
 import { store } from '../store';
+import {
+  setBackendMeetError,
+  setBackendMeetHarness,
+  setBackendMeetJoined,
+  setBackendMeetLeft,
+  setBackendMeetReply,
+  setBackendMeetTranscript,
+} from '../store/backendMeetSlice';
 import { upsertChannelConnection } from '../store/channelConnectionsSlice';
+import { type CompanionStateChangedEvent, setCompanionState } from '../store/companionSlice';
 import { setBackend } from '../store/connectivitySlice';
 import { resetForUser, setSocketIdForUser, setStatusForUser } from '../store/socketSlice';
 import type { ChannelAuthMode, ChannelConnectionStatus, ChannelType } from '../types/channels';
 import { IS_DEV } from '../utils/config';
 import { createSafeLogData, sanitizeError } from '../utils/sanitize';
-import { getCoreRpcUrl } from './coreRpcClient';
+import { getCoreRpcToken, getCoreRpcUrl } from './coreRpcClient';
+import { createCoreSocket } from './coreSocket';
 
 // Socket service logger using debug package
 // Enable logging by setting DEBUG=socket* in environment or localStorage
@@ -92,6 +102,35 @@ function normalizeChannelConnectionUpdatePayload(
   };
 }
 
+const COMPANION_STATES: ReadonlySet<string> = new Set([
+  'idle',
+  'listening',
+  'thinking',
+  'speaking',
+  'pointing',
+  'error',
+]);
+
+export function parseCompanionStateChangedEvent(value: unknown): CompanionStateChangedEvent | null {
+  if (!value || typeof value !== 'object') return null;
+  const obj = value as Record<string, unknown>;
+  if (typeof obj.session_id !== 'string') return null;
+  if (typeof obj.state !== 'string' || !COMPANION_STATES.has(obj.state)) return null;
+
+  const previous =
+    typeof obj.previous_state === 'string' && COMPANION_STATES.has(obj.previous_state)
+      ? (obj.previous_state as CompanionStateChangedEvent['previous_state'])
+      : 'idle';
+  const message = typeof obj.message === 'string' ? obj.message : undefined;
+
+  return {
+    session_id: obj.session_id,
+    state: obj.state as CompanionStateChangedEvent['state'],
+    previous_state: previous,
+    message,
+  };
+}
+
 function getSocketUserId(): string {
   return getCoreStateSnapshot().snapshot?.auth?.userId ?? '__pending__';
 }
@@ -130,6 +169,13 @@ class SocketService {
       } else if (!this.socket.disconnected) {
         // Socket is connecting, wait for it
         return;
+      } else {
+        // Stale disconnected socket instance for the same token.
+        // Drop it so this connect attempt can create a fresh socket;
+        // otherwise the async stale-invocation guard below (`|| this.socket`)
+        // returns early and leaves connectivity stuck at "connecting".
+        this.socket = null;
+        this.mcpTransport = null;
       }
     }
 
@@ -140,6 +186,12 @@ class SocketService {
     store.dispatch(setBackend({ value: 'connecting' }));
 
     const backendUrl = await resolveCoreSocketBaseUrl();
+    // If another `connect(token)` raced in while the URL was resolving,
+    // a stale invocation will see `this.token` flipped to the newer JWT
+    // (or a fresh socket already attached) and must bail before its
+    // io(...) call stomps the newer connection. Same guard repeats
+    // after the core-token resolve below.
+    if (this.token !== token || this.socket) return;
     socketLog('Connecting to core socket', { userId: uid, backendUrl });
 
     // Ensure we're not connecting to the wrong URL (Vite dev HMR port guard).
@@ -152,20 +204,29 @@ class SocketService {
       return;
     }
 
-    const socketOptions = {
-      auth: { token },
-      path: '/socket.io/',
-      transports: ['websocket', 'polling'] as ('websocket' | 'polling')[],
-      reconnection: true,
-      reconnectionDelay: 1000,
-      reconnectionAttempts: 5,
-      forceNew: true,
-      timeout: 2000,
-      upgrade: true,
-      query: {},
-    };
+    // The local core's Socket.IO handshake validates the per-process bearer
+    // exposed via `core_rpc_token` (Tauri IPC) / the cloud-mode picker. The
+    // session JWT rides alongside on the `auth` payload as `session` so a
+    // future handler can correlate the connection with the logged-in user.
+    const coreToken = await getCoreRpcToken();
+    if (this.token !== token || this.socket) return;
 
-    this.socket = io(backendUrl, socketOptions);
+    this.socket = createCoreSocket(backendUrl, {
+      coreToken,
+      authExtras: { session: token },
+      overrides: {
+        // A remote / tunnelled core (e.g. ~0.8s RTT) needs the socket.io
+        // handshake (~2.4s) to outlast the connect timeout — the prior 2s
+        // tripped first, flapping the socket and dropping streamed/approval
+        // events. 10s gives headroom while still surfacing a genuinely dead
+        // core reasonably fast; keep retrying rather than giving up after 5.
+        reconnectionDelay: 2000,
+        reconnectionAttempts: Infinity,
+        timeout: 10000,
+        upgrade: true,
+        query: {},
+      },
+    });
 
     // Flush any listeners that were registered before the socket existed.
     if (this.pendingListeners.length > 0) {
@@ -199,6 +260,23 @@ class SocketService {
       store.dispatch(setStatusForUser({ userId: uid, status: 'connected' }));
       store.dispatch(setSocketIdForUser({ userId: uid, socketId }));
       store.dispatch(setBackend({ value: 'connected' }));
+
+      // Re-join the active thread's room so an in-flight turn's stream survives
+      // this (re)connection. Chat events are delivered to both the client_id
+      // room and a per-thread room (see socketio.rs `emit_web_channel_event`);
+      // because a reconnect produces a NEW client_id, the new socket must
+      // re-subscribe to the thread room to keep receiving the stream.
+      // With parallel inference several threads may be streaming at once, so
+      // re-subscribe to every active thread room (plus the selected thread) —
+      // not just a single "active" thread — to keep all in-flight streams alive.
+      const threadState = store.getState().thread;
+      const roomThreadIds = new Set<string>(Object.keys(threadState?.activeThreadIds ?? {}));
+      if (threadState?.selectedThreadId) {
+        roomThreadIds.add(threadState.selectedThreadId);
+      }
+      for (const threadId of roomThreadIds) {
+        this.socket?.emit('thread:subscribe', { thread_id: threadId });
+      }
     });
 
     this.socket.on('ready', () => {
@@ -270,6 +348,57 @@ class SocketService {
     this.socket.on('auth:session_expired', handleSessionExpired);
     this.socket.on('auth_session_expired', handleSessionExpired);
 
+    // MCP setup agent: server-side `request_secret` blocks until the
+    // user submits a value. Dispatch a window event so a singleton React
+    // dialog can render a native input and POST back via
+    // openhuman.mcp_setup_submit_secret. Raw secret values never travel
+    // through the socket — only the opaque ref + safe display fields.
+    const handleSecretRequested = (data: unknown) => {
+      const obj = data as Record<string, unknown> | null;
+      if (!obj || typeof obj !== 'object') {
+        socketWarn('mcp_setup:secret_requested dropped — invalid payload');
+        return;
+      }
+      const refId = typeof obj.ref_id === 'string' ? obj.ref_id : null;
+      const keyName = typeof obj.key_name === 'string' ? obj.key_name : null;
+      const prompt = typeof obj.prompt === 'string' ? obj.prompt : '';
+      if (!refId || !keyName) {
+        socketWarn('mcp_setup:secret_requested missing ref_id or key_name');
+        return;
+      }
+      socketLog('mcp_setup:secret_requested', { refId, keyName });
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('openhuman:mcp-setup-secret-requested', {
+            detail: { refId, keyName, prompt },
+          })
+        );
+      }
+    };
+    this.socket.on('mcp_setup:secret_requested', handleSecretRequested);
+    this.socket.on('mcp_setup_secret_requested', handleSecretRequested);
+
+    this.socket.on('memory:sync_stage', (data: unknown) => {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('openhuman:memory-sync-stage', { detail: data }));
+      }
+    });
+    this.socket.on('memory:tree_progress', (data: unknown) => {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('openhuman:memory-tree-progress', { detail: data }));
+      }
+    });
+    this.socket.on('memory:tree_completed', (data: unknown) => {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('openhuman:memory-tree-completed', { detail: data }));
+      }
+    });
+    this.socket.on('memory:build_progress', (data: unknown) => {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('openhuman:memory-build-progress', { detail: data }));
+      }
+    });
+
     this.socket.on('channel:managed-dm-verified', data => {
       const obj = data as Record<string, unknown> | null;
       if (!obj || typeof obj !== 'object') return;
@@ -287,6 +416,89 @@ class SocketService {
           patch: { status: 'connected', lastError: undefined, capabilities: ['dm'] },
         })
       );
+    });
+
+    // Companion state change events — dispatch into the companion Redux slice
+    // so settings panel and other UI can react to session lifecycle.
+    this.socket.on('companion:state_changed', (data: unknown) => {
+      const event = parseCompanionStateChangedEvent(data);
+      if (!event) {
+        socketWarn('companion:state_changed dropped — invalid payload shape');
+        return;
+      }
+      socketLog('companion:state_changed → %s', event.state);
+      store.dispatch(setCompanionState(event));
+    });
+
+    // Backend Meet bot events — forwarded from core's DomainEvent bus
+    this.socket.on('agent_meetings:joined', (data: unknown) => {
+      const obj = data as Record<string, unknown> | null;
+      const meetUrl = typeof obj?.meet_url === 'string' ? obj.meet_url : '';
+      const correlationId =
+        typeof obj?.correlation_id === 'string' ? obj.correlation_id : undefined;
+      socketLog(
+        'agent_meetings:joined meet_url_len=%d correlation_id=%s',
+        meetUrl.length,
+        correlationId ?? 'none'
+      );
+      store.dispatch(setBackendMeetJoined({ meetUrl, meetingId: correlationId }));
+    });
+    this.socket.on('agent_meetings:left', (data: unknown) => {
+      const obj = data as Record<string, unknown> | null;
+      const reason = typeof obj?.reason === 'string' ? obj.reason : 'unknown';
+      const correlationId =
+        typeof obj?.correlation_id === 'string' ? obj.correlation_id : undefined;
+      socketLog('agent_meetings:left reason=%s correlation_id=%s', reason, correlationId ?? 'none');
+      store.dispatch(setBackendMeetLeft({ reason, correlationId }));
+    });
+    this.socket.on('agent_meetings:reply', (data: unknown) => {
+      const obj = data as Record<string, unknown> | null;
+      if (!obj) return;
+      const correlationId = typeof obj.correlation_id === 'string' ? obj.correlation_id : undefined;
+      socketLog('agent_meetings:reply correlation_id=%s', correlationId ?? 'none');
+      store.dispatch(
+        setBackendMeetReply({
+          transcript: typeof obj.transcript === 'string' ? obj.transcript : '',
+          reply: typeof obj.reply === 'string' ? obj.reply : '',
+          emotion: typeof obj.emotion === 'string' ? obj.emotion : 'neutral',
+          correlationId,
+        })
+      );
+    });
+    this.socket.on('agent_meetings:harness', (data: unknown) => {
+      const obj = data as Record<string, unknown> | null;
+      if (!obj) return;
+      const correlationId = typeof obj.correlation_id === 'string' ? obj.correlation_id : undefined;
+      socketLog('agent_meetings:harness correlation_id=%s', correlationId ?? 'none');
+      store.dispatch(
+        setBackendMeetHarness({
+          transcript: typeof obj.transcript === 'string' ? obj.transcript : '',
+          instruction: typeof obj.instruction === 'string' ? obj.instruction : '',
+          emotion: typeof obj.emotion === 'string' ? obj.emotion : 'neutral',
+          correlationId,
+        })
+      );
+    });
+    this.socket.on('agent_meetings:transcript', (data: unknown) => {
+      const obj = data as Record<string, unknown> | null;
+      if (!obj) return;
+      const correlationId = typeof obj.correlation_id === 'string' ? obj.correlation_id : undefined;
+      socketLog('agent_meetings:transcript correlation_id=%s', correlationId ?? 'none');
+      store.dispatch(
+        setBackendMeetTranscript({
+          turns: Array.isArray(obj.turns) ? obj.turns : [],
+          duration_ms: typeof obj.duration_ms === 'number' ? obj.duration_ms : 0,
+          correlationId,
+        })
+      );
+    });
+    this.socket.on('agent_meetings:error', (data: unknown) => {
+      const obj = data as Record<string, unknown> | null;
+      const error = typeof obj?.error === 'string' ? obj.error : 'Unknown error';
+      const correlationId =
+        typeof obj?.correlation_id === 'string' ? obj.correlation_id : undefined;
+      socketError('agent_meetings:error %s correlation_id=%s', error, correlationId ?? 'none');
+      store.dispatch(setBackendMeetError({ error, correlationId }));
     });
 
     this.socket.connect();

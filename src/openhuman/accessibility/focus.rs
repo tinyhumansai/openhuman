@@ -8,6 +8,53 @@ use super::terminal::{is_terminal_app, is_text_role};
 #[cfg(target_os = "macos")]
 use super::text_util::{normalize_ax_value, parse_ax_number};
 use super::types::{AppContext, ElementBounds, FocusedTextContext};
+#[cfg(any(target_os = "macos", test))]
+use std::{
+    process::{Command, Output, Stdio},
+    time::{Duration, Instant},
+};
+
+#[cfg(target_os = "macos")]
+const FOREGROUND_CONTEXT_COMMAND_TIMEOUT: Duration = Duration::from_millis(1_500);
+#[cfg(any(target_os = "macos", test))]
+const COMMAND_TIMEOUT_POLL_INTERVAL: Duration = Duration::from_millis(10);
+
+#[cfg(any(target_os = "macos", test))]
+fn command_output_with_timeout(
+    command_name: &str,
+    command: &mut Command,
+    timeout: Duration,
+) -> Result<Output, String> {
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = command
+        .spawn()
+        .map_err(|e| format!("failed to run {command_name}: {e}"))?;
+    let started_at = Instant::now();
+
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => {
+                return child
+                    .wait_with_output()
+                    .map_err(|e| format!("failed to collect {command_name} output: {e}"));
+            }
+            Ok(None) if started_at.elapsed() >= timeout => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!(
+                    "{command_name} timed out after {}ms",
+                    timeout.as_millis()
+                ));
+            }
+            Ok(None) => std::thread::sleep(COMMAND_TIMEOUT_POLL_INTERVAL),
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("failed to wait for {command_name}: {error}"));
+            }
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Focus query: unified helper → osascript fallback
@@ -264,11 +311,13 @@ fn focused_text_via_osascript() -> Result<FocusedTextContext, String> {
       end tell
     "##;
 
-    let output = std::process::Command::new("osascript")
-        .arg("-e")
-        .arg(script)
-        .output()
-        .map_err(|e| format!("failed to run osascript: {e}"))?;
+    let mut command = Command::new("osascript");
+    command.arg("-e").arg(script);
+    let output = command_output_with_timeout(
+        "osascript focused_text_via_osascript",
+        &mut command,
+        FOREGROUND_CONTEXT_COMMAND_TIMEOUT,
+    )?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         if stderr.is_empty() {
@@ -471,11 +520,19 @@ pub fn foreground_context() -> Option<AppContext> {
       end tell
     "#;
 
-    let output = std::process::Command::new("osascript")
-        .arg("-e")
-        .arg(script)
-        .output()
-        .ok()?;
+    let mut command = Command::new("osascript");
+    command.arg("-e").arg(script);
+    let output = match command_output_with_timeout(
+        "osascript foreground_context",
+        &mut command,
+        FOREGROUND_CONTEXT_COMMAND_TIMEOUT,
+    ) {
+        Ok(output) => output,
+        Err(error) => {
+            tracing::debug!("[accessibility] foreground_context failed: {error}");
+            return None;
+        }
+    };
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -632,14 +689,23 @@ if fallback > 0 {{ print(fallback) }}
         has_title_swift = if has_title { "true" } else { "false" },
     );
 
-    // Note: this subprocess has no explicit timeout. This is consistent with
-    // the rest of the codebase (`screencapture`, `osascript`) which also run
-    // without timeouts. Swift startup for a trivial snippet is typically <1s.
-    let output = std::process::Command::new("swift")
-        .arg("-e")
-        .arg(&swift_code)
-        .output()
-        .ok()?;
+    let mut command = Command::new("swift");
+    command.arg("-e").arg(&swift_code);
+    let output = match command_output_with_timeout(
+        "swift CGWindowList",
+        &mut command,
+        FOREGROUND_CONTEXT_COMMAND_TIMEOUT,
+    ) {
+        Ok(output) => output,
+        Err(error) => {
+            tracing::debug!(
+                "[accessibility] swift CGWindowList failed: {} app={:?}",
+                error,
+                app_name,
+            );
+            return None;
+        }
+    };
 
     if !output.status.success() {
         tracing::debug!(
@@ -673,4 +739,39 @@ pub fn validate_focused_target(
 #[cfg(not(target_os = "macos"))]
 pub fn foreground_context() -> Option<AppContext> {
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn command_output_with_timeout_returns_output_for_fast_command() {
+        let mut command = Command::new("sh");
+        command.arg("-c").arg("printf ready");
+
+        let output =
+            command_output_with_timeout("test fast command", &mut command, Duration::from_secs(1))
+                .expect("fast command should complete");
+
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "ready");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn command_output_with_timeout_kills_slow_command() {
+        let mut command = Command::new("sh");
+        command.arg("-c").arg("sleep 2; printf late");
+
+        let error = command_output_with_timeout(
+            "test slow command",
+            &mut command,
+            Duration::from_millis(50),
+        )
+        .expect_err("slow command should time out");
+
+        assert!(error.contains("timed out after"));
+    }
 }

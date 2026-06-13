@@ -26,6 +26,7 @@ fn all_schemas_use_composio_namespace_and_have_descriptions() {
 fn every_known_schema_key_resolves() {
     let keys = [
         "list_toolkits",
+        "list_capabilities",
         "list_connections",
         "authorize",
         "delete_connection",
@@ -42,6 +43,18 @@ fn every_known_schema_key_resolves() {
         assert_eq!(s.namespace, "composio");
         assert_ne!(s.function, "unknown", "key `{k}` fell through");
     }
+}
+
+#[test]
+fn list_capabilities_schema_has_matrix_output() {
+    let s = schemas("list_capabilities");
+    assert_eq!(s.namespace, "composio");
+    assert_eq!(s.function, "list_capabilities");
+    assert!(s.inputs.is_empty());
+    assert!(s
+        .outputs
+        .iter()
+        .any(|f| f.name == "capabilities" && f.required));
 }
 
 #[test]

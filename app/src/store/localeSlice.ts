@@ -9,13 +9,17 @@ const PREFIX_TO_LOCALE: Array<[string, Locale]> = [
   ['zh', 'zh-CN'],
   ['hi', 'hi'],
   ['es', 'es'],
+  ['ko', 'ko'],
   ['ar', 'ar'],
   ['fr', 'fr'],
   ['bn', 'bn'],
   ['pt', 'pt'],
+  ['de', 'de'],
   ['ru', 'ru'],
   ['id', 'id'],
   ['in', 'id'],
+  ['it', 'it'],
+  ['pl', 'pl'],
   ['en', 'en'],
 ];
 

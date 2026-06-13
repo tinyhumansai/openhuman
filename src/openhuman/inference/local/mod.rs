@@ -33,10 +33,15 @@ pub mod install;
 pub(crate) mod install_piper;
 pub(crate) mod install_whisper;
 pub(crate) mod lm_studio;
+pub(crate) mod model_requirements;
 mod ollama;
 mod process_util;
+pub mod profile;
 pub(crate) mod provider;
-pub(crate) use ollama::{ollama_base_url, OLLAMA_BASE_URL};
+pub(crate) use model_requirements::{evaluate_context, ContextEligibility, MIN_CONTEXT_TOKENS};
+pub(crate) use ollama::{
+    ollama_base_url, ollama_base_url_from_config, validate_ollama_url, OLLAMA_BASE_URL,
+};
 pub mod service;
 pub(crate) mod voice_install_common;
 
@@ -44,8 +49,8 @@ pub use core::*;
 pub use ops as rpc;
 pub use ops::*;
 pub use schemas::{
-    all_controller_schemas as all_local_ai_controller_schemas,
-    all_registered_controllers as all_local_ai_registered_controllers,
+    all_controller_schemas as all_local_inference_controller_schemas,
+    all_registered_controllers as all_local_inference_registered_controllers,
 };
 pub(crate) use service::whisper_engine;
 pub use service::LocalAiService;

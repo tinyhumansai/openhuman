@@ -20,13 +20,24 @@ if [[ "$resolved" != "$expected" ]]; then
   exit 1
 fi
 
-# Also test a missing platform produces exit code 3.
+resolved_arm64=$(resolve_asset_url "$FIXTURE" "linux" "aarch64")
+expected_arm64="https://example.invalid/openhuman_0.0.0-test_arm64.AppImage"
+if [[ "$resolved_arm64" != "$expected_arm64" ]]; then
+  echo "FAIL: expected $expected_arm64, got $resolved_arm64"
+  exit 1
+fi
+
 set +e
-resolve_asset_url "$FIXTURE" "linux" "aarch64" >/dev/null 2>&1
-missing_platform_rc=$?
+missing_channel_output=$(bash "$REPO_ROOT/scripts/install.sh" --channel 2>&1)
+missing_channel_rc=$?
 set -e
-if [[ "$missing_platform_rc" -ne 3 ]]; then
-  echo "FAIL: expected exit code 3 for missing platform linux-aarch64, got $missing_platform_rc"
+if [[ "$missing_channel_rc" -eq 0 ]]; then
+  echo "FAIL: install.sh --channel should fail when the value is missing"
+  exit 1
+fi
+if [[ "$missing_channel_output" != *"Missing value for --channel"* ]]; then
+  echo "FAIL: install.sh --channel should explain that the value is missing"
+  echo "$missing_channel_output"
   exit 1
 fi
 

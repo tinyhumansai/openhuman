@@ -24,7 +24,8 @@ use tokio::task::JoinHandle;
 // elapsed check honours `tokio::time::pause()` / `advance()` in unit tests.
 use tokio::time::{sleep, Instant};
 
-use super::{browser_ws_url, find_page_target_where, CdpConn};
+use super::target::conn_for_account;
+use super::{find_page_target_where, CdpConn};
 use crate::webview_accounts::{emit_load_finished, redact_url_for_log, RevealTrigger};
 
 /// Backoff between failed attach attempts / reconnects. Intentionally
@@ -413,12 +414,14 @@ async fn run_session_cycle<R: Runtime>(
     real_url: &str,
     progress_slot: &ProgressSlot,
 ) -> Result<(), String> {
-    let browser_ws = browser_ws_url().await?;
-    let mut cdp = CdpConn::open(&browser_ws).await?;
+    let mut cdp = conn_for_account(app, account_id)?;
 
-    // Account-unique match. The placeholder URL and the real provider URL
-    // both carry account-specific fragments, so we can use ends_with and
-    // avoid substring collisions like `…account-abc` vs `…account-abcdef`.
+    // Account-unique match. Each webview is itself scoped to one
+    // account, but a webview can host popups (OAuth, attachment
+    // previews, …) that also surface as `kind=page` targets. The
+    // placeholder URL and the real provider URL both carry
+    // account-specific fragments, so we filter explicitly to pick the
+    // primary frame and ignore popups.
     let fragment = target_url_fragment(account_id);
     let target =
         find_page_target_where(&mut cdp, |t| target_matches_account_url(&t.url, account_id))
@@ -524,17 +527,19 @@ async fn run_session_cycle<R: Runtime>(
         //   - audioCapture / videoCapture: getUserMedia for cam/mic so the
         //     pre-call greenroom auto-grants instead of falling back to
         //     Meet's "Use microphone and camera" consent dialog
-        //   - displayCapture: getDisplayMedia for screen-share present
         //   - clipboardReadWrite: copy meeting link / paste join code
         // Without these, Meet sits on the consent dialog forever and cam/mic
         // never enumerate (verified during #1022 smoke).
+        //
+        // displayCapture is intentionally NOT in this set. Pre-granting it
+        // via `Browser.grantPermissions` bypasses the transient-activation
+        // requirement Chromium enforces on `getDisplayMedia`, which would
+        // let the page initiate a desktop capture without any user gesture.
+        // Without the pre-grant the page's screen-share button triggers
+        // Chrome's native screen-picker on click — same UX, but the gesture
+        // gate stays in place.
         if origin_host_is(&origin, "meet.google.com") {
-            perms.extend_from_slice(&[
-                "audioCapture",
-                "videoCapture",
-                "displayCapture",
-                "clipboardReadWrite",
-            ]);
+            perms.extend_from_slice(&["audioCapture", "videoCapture", "clipboardReadWrite"]);
         }
 
         // Slack Huddles need the same media-capture set as Meet:
@@ -542,7 +547,6 @@ async fn run_session_cycle<R: Runtime>(
         //     optional camera tile. Without these, the huddle pre-flight
         //     enumerateDevices returns empty and the join button silently
         //     no-ops.
-        //   - displayCapture: getDisplayMedia for in-huddle screen share.
         //   - clipboardReadWrite: huddle invite-link copy + slash-command
         //     paste flows.
         // Mirrors the gmeet pattern from #1054. The huddle popup paint
@@ -550,13 +554,13 @@ async fn run_session_cycle<R: Runtime>(
         // tracking issue — granting these perms now means once the paint
         // bug clears, the huddle is functional immediately rather than
         // requiring a follow-up perms wire-up.
+        //
+        // displayCapture deliberately omitted for the same reason as Meet:
+        // pre-granting bypasses Chromium's gesture gate on
+        // `getDisplayMedia`; screen-share inside a huddle still works via
+        // the native screen-picker on user click.
         if origin_host_is(&origin, "app.slack.com") {
-            perms.extend_from_slice(&[
-                "audioCapture",
-                "videoCapture",
-                "displayCapture",
-                "clipboardReadWrite",
-            ]);
+            perms.extend_from_slice(&["audioCapture", "videoCapture", "clipboardReadWrite"]);
         }
 
         if let Err(e) = cdp

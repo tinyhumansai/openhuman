@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-cancel-speech"
+description = "Enables the cancel_speech command without any pre-configured scope."
+commands.allow = ["cancel_speech"]
+
+[[permission]]
+identifier = "deny-cancel-speech"
+description = "Denies the cancel_speech command without any pre-configured scope."
+commands.deny = ["cancel_speech"]

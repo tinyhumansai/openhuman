@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSCameraUsageDescription</key>
+	<string>OpenHuman uses the camera to scan the pairing QR code from your desktop.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>OpenHuman uses the microphone for push-to-talk voice messages.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>OpenHuman uses on-device speech recognition to transcribe your voice messages.</string>
+</dict>
+</plist>

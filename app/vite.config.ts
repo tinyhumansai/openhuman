@@ -41,6 +41,10 @@ function maybeSentryPlugin(): PluginOption | null {
   if (!authToken) return null;
   return sentryVitePlugin({
     authToken,
+    // Self-hosted Sentry — without `url`, the plugin defaults to sentry.io
+    // and silently no-ops the upload. Falls back to sentry.io if unset for
+    // local builds against the SaaS instance.
+    url: process.env.SENTRY_URL,
     org: process.env.SENTRY_ORG,
     project: process.env.SENTRY_PROJECT,
     release: {

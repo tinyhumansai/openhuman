@@ -9,31 +9,64 @@ use std::path::PathBuf;
 /// Standard model identifiers matching the backend model registry.
 pub const MODEL_AGENTIC_V1: &str = "agentic-v1";
 pub const MODEL_REASONING_V1: &str = "reasoning-v1";
-/// Low-latency chat tier. Backend maps this to Kimi K2.6 Turbo on
-/// Fireworks (128k context, `supportsThinking: false`) — tuned for
-/// time-to-first-token on conversational turns. See backend PR #760.
-/// The orchestrator (user-facing front-line agent) rides on this tier
-/// by default (via `hint:chat`) so chat responses feel snappy; reach
-/// for the slower `reasoning-v1` (DeepSeek V4 Pro) only when deep
-/// reasoning is needed.
+/// Low-latency conversational tier.
+pub const MODEL_CHAT_V1: &str = "chat-v1";
+/// Legacy low-latency chat tier slug retained for older persisted configs.
 pub const MODEL_REASONING_QUICK_V1: &str = "reasoning-quick-v1";
 pub const MODEL_CODING_V1: &str = "coding-v1";
+pub const MODEL_SUMMARIZATION_V1: &str = "summarization-v1";
 /// Default model used when no explicit model is configured.
 ///
-/// The main (user-facing) agent is a planner/router: its job is to read the
-/// user request, decide which sub-agent to delegate to via `spawn_subagent`,
-/// and synthesise the final answer from sub-agent outputs. Reasoning-tier
-/// models are tuned for that decision-heavy workload, so we pin the main
-/// agent to `reasoning-v1` by default. Sub-agents that actually execute tool
-/// calls (e.g. `integrations_agent`) explicitly ride on the `agentic` tier via
-/// their `ModelSpec::Hint("agentic")` — see `builtin_definitions.rs`.
-pub const DEFAULT_MODEL: &str = MODEL_REASONING_V1;
+/// Set to `chat-v1`, the backend's low-latency conversational tier. The
+/// orchestrator (user-facing front-line agent) rides on this tier by default
+/// via `hint:chat`; reach for the slower `reasoning-v1` only when deep
+/// reasoning is needed.
+pub const DEFAULT_MODEL: &str = MODEL_CHAT_V1;
+
+/// Effective default global memory-sync cadence (seconds) used when
+/// [`Config::memory_sync_interval_secs`] is `None` — i.e. the user has not
+/// explicitly picked a schedule. 24h, matching the "Sync every 24h" preset
+/// surfaced in the Memory Sources UI. See issue #3302.
+pub const DEFAULT_MEMORY_SYNC_INTERVAL_SECS: u64 = 86_400;
+
+/// Preset memory-sync cadences (seconds) offered in the UI: 4h / 12h / 24h.
+/// "Manual only" is represented separately by `Some(0)`. See issue #3302.
+pub const MEMORY_SYNC_INTERVAL_PRESETS_SECS: [u64; 3] = [14_400, 43_200, 86_400];
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ModelRegistryEntry {
+    pub id: String,
+    pub provider: String,
+    #[serde(default)]
+    pub cost_per_1m_output: f64,
+    #[serde(default)]
+    pub vision: bool,
+}
 
 /// Top-level configuration (config.toml root).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Config {
     #[serde(skip)]
     pub workspace_dir: PathBuf,
+    /// Agent action sandbox root — the default cwd for shell/file/git tools.
+    /// Kept separate from `workspace_dir` (which holds internal state like
+    /// memory DBs, sessions, tokens). Defaults to `~/OpenHuman/projects`
+    /// (`default_action_dir()`); overridable via `OPENHUMAN_ACTION_DIR`.
+    ///
+    /// This is the **resolved runtime value** and is `#[serde(skip)]` — it is
+    /// recomputed on every load from the precedence chain
+    /// (env `OPENHUMAN_ACTION_DIR` > [`Self::action_dir_override`] > default).
+    /// To persist a user choice, write [`Self::action_dir_override`] instead.
+    #[serde(skip)]
+    pub action_dir: PathBuf,
+    /// Persisted user override for [`Self::action_dir`], set via the Settings UI
+    /// (`config.update_agent_paths` RPC). Unlike `action_dir`, this field **is**
+    /// serialized so the choice survives restarts. Resolution precedence on load:
+    /// env `OPENHUMAN_ACTION_DIR` wins, then this override (when `Some`), then the
+    /// default projects dir. `None` means "use the default" — the env var still
+    /// overrides at runtime so existing env-driven deployments are unaffected.
+    #[serde(default)]
+    pub action_dir_override: Option<PathBuf>,
     #[serde(skip)]
     pub config_path: PathBuf,
     /// Workspace data-schema version. Bumped each time a one-shot data
@@ -56,6 +89,13 @@ pub struct Config {
     #[serde(default = "default_temperature_value")]
     pub default_temperature: f64,
 
+    /// Optional language for background LLM artifacts such as memory-tree
+    /// summaries, extraction reasons, and learning reflections. Accepts either
+    /// a known UI locale tag (for example `zh-CN`) or a human-readable language
+    /// name. `None` preserves the existing default-language behaviour.
+    #[serde(default)]
+    pub output_language: Option<String>,
+
     /// Models (by exact ID match OR shell-style glob like `gpt-5*`, `o1-*`) that
     /// MUST NOT receive a `temperature` parameter. Used for reasoning models
     /// that error out when temperature is set (OpenAI o-series, GPT-5).
@@ -63,10 +103,16 @@ pub struct Config {
     pub temperature_unsupported_models: Vec<String>,
 
     #[serde(default)]
+    pub dashboard: DashboardConfig,
+
+    #[serde(default)]
     pub observability: ObservabilityConfig,
 
     #[serde(default)]
     pub autonomy: AutonomyConfig,
+
+    #[serde(default)]
+    pub sandbox: SandboxConfig,
 
     #[serde(default)]
     pub runtime: RuntimeConfig,
@@ -90,6 +136,29 @@ pub struct Config {
     #[serde(default)]
     pub scheduler_gate: SchedulerGateConfig,
 
+    /// User-facing activity-level knob (0–4) controlling how proactive
+    /// background AI work is. Maps into scheduler_gate mode, periodic sync
+    /// cadence, heartbeat/subconscious toggles. See issue #3117.
+    #[serde(default)]
+    pub agent_activity_level: AgentActivityLevel,
+
+    /// Global memory-sync cadence applied to **all** opted-in memory
+    /// sources, presented to the user like a backup schedule ("Sync
+    /// every 4h / 12h / 24h", plus "Manual only"). See issue #3302.
+    ///
+    /// Semantics consumed by `memory_sync::composio::periodic`:
+    /// - `None` — no explicit user choice; the effective cadence falls
+    ///   back to [`DEFAULT_MEMORY_SYNC_INTERVAL_SECS`] (24h).
+    /// - `Some(0)` — **Manual only**: the periodic scheduler skips
+    ///   auto-sync entirely; manual `memory_sources_sync` still works.
+    /// - `Some(n)` — sync every `n` seconds, applied per connection as
+    ///   `max(n, provider_default)` so it overrides the provider's own
+    ///   cadence while never syncing more often than the provider intends.
+    ///
+    /// Overridable via `OPENHUMAN_MEMORY_SYNC_INTERVAL_SECS` (`0` = manual).
+    #[serde(default)]
+    pub memory_sync_interval_secs: Option<u64>,
+
     #[serde(default)]
     pub agent: AgentConfig,
 
@@ -102,7 +171,7 @@ pub struct Config {
     /// Optional per-team model pins for delegated swarms.
     ///
     /// Example:
-    /// `[teams.research] lead_model = "minimax/m2" agent_model = "deepseek/v3.2"`.
+    /// `[teams.research] lead_model = "minimax/m3" agent_model = "deepseek/v3.2"`.
     #[serde(default)]
     pub teams: HashMap<String, TeamModelConfig>,
 
@@ -124,6 +193,12 @@ pub struct Config {
 
     #[serde(default)]
     pub cron: CronConfig,
+
+    /// Task-sources domain defaults — master switch + new-source
+    /// defaults. Per-source records live in the domain's SQLite store.
+    /// See [`crate::openhuman::task_sources`].
+    #[serde(default)]
+    pub task_sources: TaskSourcesConfig,
 
     #[serde(default)]
     pub channels_config: ChannelsConfig,
@@ -162,20 +237,47 @@ pub struct Config {
     #[serde(default)]
     pub mcp_client: McpClientConfig,
 
+    /// Trust metadata for external capability providers. Empty by default so
+    /// existing installations keep the same tool-discovery behavior.
+    #[serde(default)]
+    pub capability_providers: Vec<CapabilityProviderConfig>,
+
     #[serde(default)]
     pub multimodal: MultimodalConfig,
+
+    #[serde(default)]
+    pub multimodal_files: MultimodalFileConfig,
 
     #[serde(default)]
     pub seltz: SeltzConfig,
 
     #[serde(default)]
+    pub searxng: SearxngConfig,
+
+    #[serde(default)]
     pub web_search: WebSearchConfig,
+
+    /// Unified search-engine selector. Picks exactly one engine
+    /// (managed / parallel / brave) and layers the corresponding tools.
+    #[serde(default)]
+    pub search: SearchConfig,
 
     #[serde(default)]
     pub proxy: ProxyConfig,
 
     #[serde(default)]
     pub cost: CostConfig,
+
+    /// User-configured memory sources — each `[[memory_sources]]` entry
+    /// describes a data connector (Composio OAuth, local folder, GitHub
+    /// repo, RSS feed, Twitter query, web page) that feeds memory.
+    #[serde(default)]
+    pub memory_sources: Vec<crate::openhuman::memory_sources::types::MemorySourceEntry>,
+
+    /// User-facing agent registry — shipped default agents plus user-authored
+    /// custom agents and persisted enable/disable/tool-policy overrides.
+    #[serde(default)]
+    pub agent_registry: crate::openhuman::agent_registry::types::AgentRegistryConfig,
 
     #[serde(default)]
     pub computer_control: ComputerControlConfig,
@@ -185,6 +287,11 @@ pub struct Config {
 
     #[serde(default)]
     pub local_ai: LocalAiConfig,
+
+    /// Claude Agent SDK provider configuration — routes inference through the
+    /// `claude -p` CLI subprocess using the subscriber's Claude plan credit.
+    #[serde(default)]
+    pub claude_agent_sdk: ClaudeAgentSdkConfig,
 
     // ── Unified AI provider routing ──────────────────────────────────────────
     //
@@ -197,6 +304,7 @@ pub struct Config {
     //                            build OpenAiCompatibleProvider with Bearer auth
     //   "anthropic:<model>"    → type=anthropic; Bearer auth on the compat endpoint
     //   "openrouter:<model>"   → type=openrouter; Bearer auth
+    //   "orcarouter:<model>"   → type=orcarouter; Bearer auth (e.g. "orcarouter:orcarouter/auto")
     //   "custom:<model>"       → type=custom; Bearer auth
     //   "ollama:<model>"       → local Ollama at config.local_ai.base_url
     //
@@ -211,6 +319,10 @@ pub struct Config {
     /// When `None`, the factory falls back to the OpenHuman entry.
     #[serde(default)]
     pub primary_cloud: Option<String>,
+
+    /// Provider string for direct conversational chat (simple back-and-forth).
+    #[serde(default)]
+    pub chat_provider: Option<String>,
 
     /// Provider string for the main reasoning / chat workload.
     #[serde(default)]
@@ -256,6 +368,33 @@ pub struct Config {
     #[serde(default)]
     pub voice_server: VoiceServerConfig,
 
+    // ── Voice provider routing ──────────────────────────────────────────────
+    //
+    // Mirrors the LLM `cloud_providers` + per-workload routing pattern.
+    //
+    // Provider-string grammar (consumed by `voice::factory`):
+    //
+    //   "cloud" / "openhuman"  → OpenHuman backend proxy (STT or TTS)
+    //   "whisper"              → local Whisper (STT only)
+    //   "piper"                → local Piper (TTS only)
+    //   "<slug>:<model>"       → voice_providers entry matched by slug
+    //
+    // When `stt_provider` / `tts_provider` are `None`, the factory falls
+    // back to `local_ai.stt_provider` / `local_ai.tts_provider` (legacy),
+    // then to `"cloud"`.
+    /// Registered voice providers (STT/TTS). Analogous to `cloud_providers`
+    /// for LLM inference.
+    #[serde(default)]
+    pub voice_providers: Vec<crate::openhuman::config::schema::voice_providers::VoiceProviderCreds>,
+
+    /// STT routing string. Grammar: `"cloud"` | `"whisper"` | `"<slug>:<model>"`.
+    #[serde(default)]
+    pub stt_provider: Option<String>,
+
+    /// TTS routing string. Grammar: `"cloud"` | `"piper"` | `"<slug>:<voice>"`.
+    #[serde(default)]
+    pub tts_provider: Option<String>,
+
     #[serde(default)]
     pub integrations: IntegrationsConfig,
 
@@ -282,50 +421,30 @@ pub struct Config {
     /// full-screen onboarding overlay on top of the chat pane: when
     /// `false`, the overlay is shown and the user cannot interact with
     /// the chat until they complete or defer the wizard.
-    ///
-    /// Distinct from [`Config::chat_onboarding_completed`] — this flag
-    /// only tracks the UI wizard, NOT the welcome agent's chat-based
-    /// greeting flow. See that field for the agent routing semantics.
     #[serde(default)]
     pub onboarding_completed: bool,
 
-    /// Whether the **chat-based welcome agent** flow has run for this
-    /// user. Distinct from [`Config::onboarding_completed`] (the
-    /// React UI wizard flag) so the welcome agent can run on the very
-    /// first chat turn even after the React wizard has already
-    /// completed.
-    ///
-    /// Routing semantics:
-    /// * **`false`** — incoming channel messages and Tauri in-app
-    ///   chat turns route to the `welcome` agent definition (see
-    ///   `channels::providers::web::build_session_agent` and
-    ///   `channels::runtime::dispatch::resolve_target_agent`). The
-    ///   welcome agent inspects the user's setup, delivers a
-    ///   personalized greeting, and (when the essentials are in
-    ///   place) calls `complete_onboarding` which
-    ///   flips this flag to `true`.
-    /// * **`true`** — the welcome agent has already run; future chat
-    ///   turns route to the orchestrator.
-    ///
-    /// Why two separate flags:
-    ///
-    /// In the Tauri desktop app, `OnboardingOverlay` blocks the chat
-    /// pane until `onboarding_completed=true`. If the welcome agent
-    /// also gated on `onboarding_completed`, by the time the user
-    /// could type in chat the flag would already be `true` and the
-    /// welcome agent would never run on the desktop. Using a separate
-    /// flag lets the React wizard manage UI gating while the chat
-    /// welcome runs orthogonally — every user gets greeted by the
-    /// welcome agent on their first chat turn regardless of which
-    /// surface they came from (web, Telegram, Discord, etc.).
-    ///
-    /// Defaults to `false` for backward compatibility — existing
-    /// `config.toml` files without this field will get the welcome
-    /// agent on their next chat turn, which is the correct behaviour
-    /// (the welcome agent is idempotent and re-running it for an
-    /// already-onboarded user just produces a recognition message).
+    /// Deprecated — retained for backward-compatible deserialization of
+    /// existing `config.toml` files. The welcome agent and its chat-based
+    /// onboarding flow have been removed; all chat turns now route directly
+    /// to the orchestrator regardless of this flag's value.
     #[serde(default)]
     pub chat_onboarding_completed: bool,
+
+    #[serde(default)]
+    pub model_registry: Vec<ModelRegistryEntry>,
+
+    /// Migration version guard for `apply_composio_source_caps_migration`.
+    ///
+    /// The migration runs whenever this is `< CURRENT_CAPS_MIGRATION_VERSION`
+    /// (see `memory_sources::reconcile`), then is bumped to that version. Using a
+    /// monotonic version (rather than a bool) lets an improved migration re-run
+    /// once for installs that already ran an earlier revision. Defaults to `0`
+    /// (`#[serde(default)]`); the retired `composio_source_caps_migrated` bool is
+    /// silently ignored (Config does not `deny_unknown_fields`), so prior installs
+    /// re-run the current migration exactly once.
+    #[serde(default)]
+    pub composio_source_caps_migration_version: u32,
 }
 
 /// Shared default so `#[serde(default)]` and `Config::default()` stay in sync.
@@ -341,14 +460,84 @@ fn default_temperature_value() -> f64 {
 
 /// Returns the default list of model glob patterns that do not support the
 /// `temperature` parameter. These cover OpenAI o-series and GPT-5 reasoning
-/// models that return an error when `temperature` is included in the request.
+/// models that return an error when `temperature` is included in the request,
+/// as well as Moonshot's Kimi K2 family which only accepts `temperature: 1`
+/// (see #2076 — 146 Sentry events from users in China hitting *"invalid
+/// temperature: only 1 is allowed for this model"* on `kimi-k2.6`).
 fn default_temperature_unsupported_models() -> Vec<String> {
     vec![
         "o1*".to_string(),
         "o3*".to_string(),
         "o4*".to_string(),
         "gpt-5*".to_string(),
+        // Moonshot Kimi K2 family — temperature must be omitted (the
+        // upstream defaults to 1.0). Covers `kimi-k2.6`, `kimi-k2-instruct`,
+        // and any future K2 variants. See #2076.
+        "kimi-k2*".to_string(),
+        // OpenRouter / third-party gateways often namespace Kimi as
+        // `moonshot/...` or `moonshotai/...`. Match those routings too so
+        // users hitting Kimi through OpenRouter get the same suppression.
+        "moonshot*".to_string(),
+        "moonshotai/*".to_string(),
     ]
+}
+
+/// Normalize a configured output language into a display name suitable for
+/// prompt directives. Unknown non-empty values are treated as user-provided
+/// language names after stripping control characters.
+pub fn normalize_output_language(language: &str) -> Option<String> {
+    let trimmed = language.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let tag = trimmed.to_ascii_lowercase().replace('_', "-");
+    let mapped = match tag.as_str() {
+        "ar" | "arabic" => Some("Arabic"),
+        "bn" | "bengali" | "bangla" => Some("Bengali"),
+        "de" | "german" => Some("German"),
+        "en" | "en-us" | "en-gb" | "english" => Some("English"),
+        "es" | "spanish" => Some("Spanish"),
+        "fr" | "french" => Some("French"),
+        "hi" | "hindi" => Some("Hindi"),
+        "id" | "indonesian" | "bahasa indonesia" => Some("Indonesian"),
+        "it" | "italian" => Some("Italian"),
+        "ja" | "japanese" => Some("Japanese"),
+        "ko" | "korean" => Some("Korean"),
+        "pt" | "pt-br" | "pt-pt" | "portuguese" => Some("Portuguese"),
+        "ru" | "russian" => Some("Russian"),
+        "th" | "thai" => Some("Thai"),
+        "tr" | "turkish" => Some("Turkish"),
+        "vi" | "vietnamese" => Some("Vietnamese"),
+        "zh" | "zh-cn" | "zh-hans" | "chinese" | "simplified chinese" => Some("Simplified Chinese"),
+        "zh-tw" | "zh-hant" | "traditional chinese" => Some("Traditional Chinese"),
+        _ => None,
+    };
+    if let Some(language) = mapped {
+        return Some(language.to_string());
+    }
+
+    let cleaned: String = trimmed
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(80)
+        .collect();
+    let cleaned = cleaned.trim();
+    if cleaned.is_empty() {
+        None
+    } else {
+        Some(cleaned.to_string())
+    }
+}
+
+/// Build a shared instruction for non-chat background prompts. JSON keys and
+/// enum values stay stable; only user-visible prose changes language.
+pub fn output_language_directive(language: Option<&str>) -> Option<String> {
+    let language = normalize_output_language(language?)?;
+    Some(format!(
+        "Output language: write all natural-language output in {language}. \
+         Keep JSON keys, enum values, proper nouns, code, commands, and quoted source text unchanged."
+    ))
 }
 
 impl Config {
@@ -371,7 +560,7 @@ impl Config {
     /// when the workload is routed to Ollama.
     ///
     /// Recognised workload names:
-    /// `"reasoning"`, `"agentic"`, `"coding"`, `"memory"`, `"embeddings"`,
+    /// `"chat"`, `"reasoning"`, `"agentic"`, `"coding"`, `"memory"`, `"embeddings"`,
     /// `"heartbeat"`, `"learning"`, `"subconscious"`.
     ///
     /// Returns `None` when the provider isn't `"ollama:<model>"` (including
@@ -382,6 +571,7 @@ impl Config {
     /// for migration only.
     pub fn workload_local_model(&self, workload: &str) -> Option<String> {
         let raw = match workload {
+            "chat" => self.chat_provider.as_deref(),
             "reasoning" => self.reasoning_provider.as_deref(),
             "agentic" => self.agentic_provider.as_deref(),
             "coding" => self.coding_provider.as_deref(),
@@ -406,6 +596,11 @@ impl Config {
     /// locally?" branch.
     pub fn workload_uses_local(&self, workload: &str) -> bool {
         self.workload_local_model(workload).is_some()
+    }
+
+    /// Prompt directive for background LLM artifacts, if configured.
+    pub fn output_language_directive(&self) -> Option<String> {
+        output_language_directive(self.output_language.as_deref())
     }
 
     /// Resolve an exact model pin for an agent, if configured.
@@ -487,6 +682,8 @@ impl Default for Config {
 
         Self {
             workspace_dir: openhuman_dir.join("workspace"),
+            action_dir: crate::openhuman::config::default_action_dir(),
+            action_dir_override: None,
             config_path: openhuman_dir.join("config.toml"),
             schema_version: 0,
             api_url: None,
@@ -494,15 +691,20 @@ impl Default for Config {
             inference_url: None,
             default_model: Some(DEFAULT_MODEL.to_string()),
             default_temperature: DEFAULT_TEMPERATURE,
+            output_language: None,
             temperature_unsupported_models: default_temperature_unsupported_models(),
             observability: ObservabilityConfig::default(),
+            dashboard: DashboardConfig::default(),
             autonomy: AutonomyConfig::default(),
+            sandbox: SandboxConfig::default(),
             runtime: RuntimeConfig::default(),
             screen_intelligence: ScreenIntelligenceConfig::default(),
             autocomplete: AutocompleteConfig::default(),
             reliability: ReliabilityConfig::default(),
             scheduler: SchedulerConfig::default(),
             scheduler_gate: SchedulerGateConfig::default(),
+            agent_activity_level: AgentActivityLevel::default(),
+            memory_sync_interval_secs: None,
             agent: AgentConfig::default(),
             orchestrator: OrchestratorModelConfig::default(),
             teams: HashMap::new(),
@@ -511,6 +713,7 @@ impl Default for Config {
             embedding_routes: Vec::new(),
             heartbeat: HeartbeatConfig::default(),
             cron: CronConfig::default(),
+            task_sources: TaskSourcesConfig::default(),
             channels_config: ChannelsConfig::default(),
             memory: MemoryConfig::default(),
             memory_tree: MemoryTreeConfig::default(),
@@ -522,16 +725,24 @@ impl Default for Config {
             curl: CurlConfig::default(),
             gitbooks: GitbooksConfig::default(),
             mcp_client: McpClientConfig::default(),
+            capability_providers: Vec::new(),
             multimodal: MultimodalConfig::default(),
+            multimodal_files: MultimodalFileConfig::default(),
             seltz: SeltzConfig::default(),
+            searxng: SearxngConfig::default(),
             web_search: WebSearchConfig::default(),
+            search: SearchConfig::default(),
             proxy: ProxyConfig::default(),
             cost: CostConfig::default(),
+            memory_sources: Vec::new(),
+            agent_registry: crate::openhuman::agent_registry::types::AgentRegistryConfig::default(),
             computer_control: ComputerControlConfig::default(),
             agents: HashMap::new(),
             local_ai: LocalAiConfig::default(),
+            claude_agent_sdk: ClaudeAgentSdkConfig::default(),
             cloud_providers: Vec::new(),
             primary_cloud: None,
+            chat_provider: None,
             reasoning_provider: None,
             agentic_provider: None,
             coding_provider: None,
@@ -543,6 +754,9 @@ impl Default for Config {
             node: NodeConfig::default(),
             runtime_python: RuntimePythonConfig::default(),
             voice_server: VoiceServerConfig::default(),
+            voice_providers: Vec::new(),
+            stt_provider: None,
+            tts_provider: None,
             integrations: IntegrationsConfig::default(),
             learning: LearningConfig::default(),
             update: UpdateConfig::default(),
@@ -550,6 +764,8 @@ impl Default for Config {
             meet: MeetConfig::default(),
             onboarding_completed: false,
             chat_onboarding_completed: false,
+            model_registry: Vec::new(),
+            composio_source_caps_migration_version: 0,
         }
     }
 }
@@ -561,6 +777,34 @@ mod model_pin_tests {
     use super::*;
 
     #[test]
+    fn output_language_directive_maps_locales_and_preserves_json_keys() {
+        for (tag, expected) in [
+            ("zh-CN", "Simplified Chinese"),
+            ("zh-TW", "Traditional Chinese"),
+            ("zh_Hant", "Traditional Chinese"),
+            ("ko", "Korean"),
+            ("ja", "Japanese"),
+            ("de", "German"),
+            ("th", "Thai"),
+            ("vi", "Vietnamese"),
+            ("tr", "Turkish"),
+        ] {
+            let directive = output_language_directive(Some(tag)).expect("directive");
+            assert!(
+                directive.contains(expected),
+                "{tag} should map to {expected}: {directive}"
+            );
+            assert!(directive.contains("Keep JSON keys"));
+        }
+    }
+
+    #[test]
+    fn output_language_directive_accepts_language_names() {
+        let directive = output_language_directive(Some("Kannada")).expect("directive");
+        assert!(directive.contains("Kannada"));
+    }
+
+    #[test]
     fn config_parses_orchestrator_and_team_model_pins() {
         let config: Config = toml::from_str(
             r#"
@@ -568,7 +812,7 @@ mod model_pin_tests {
                 model = "deepseek/deepseek-r2"
 
                 [teams.research]
-                lead_model = "minimax/m2"
+                lead_model = "minimax/m3"
                 agent_model = "deepseek/v3.2"
 
                 [teams.code]
@@ -587,12 +831,36 @@ mod model_pin_tests {
         );
         assert_eq!(
             config.configured_agent_model("researcher", true),
-            Some("minimax/m2")
+            Some("minimax/m3")
         );
         assert_eq!(
             config.configured_agent_model("code_executor", false),
             Some("qwen/qwen3")
         );
+    }
+
+    #[test]
+    fn config_parses_capability_provider_entries() {
+        let config: Config = toml::from_str(
+            r#"
+                [[capability_providers]]
+                id = "Acme Tools"
+                display_name = "Acme Tools"
+                source_uri = "https://example.com/openhuman/acme-tools"
+                source_digest = "sha256:abc123"
+                trust_state = "trusted"
+                enabled = true
+            "#,
+        )
+        .expect("config should parse capability providers");
+
+        assert_eq!(config.capability_providers.len(), 1);
+        assert_eq!(config.capability_providers[0].id, "Acme Tools");
+        assert_eq!(
+            config.capability_providers[0].trust_state,
+            CapabilityProviderTrustState::Trusted
+        );
+        assert!(config.capability_providers[0].enabled);
     }
 
     #[test]

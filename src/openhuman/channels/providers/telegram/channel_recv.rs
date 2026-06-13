@@ -1,8 +1,9 @@
 //! Telegram channel — inbound message/reaction parsing, allowlist checks, mention filtering,
 //! unauthorized-message handling, and typing-action helpers.
 
-use super::channel_types::{TelegramChannel, TelegramReactionEvent};
+use super::channel_types::{TelegramChannel, TelegramReactionEvent, APPROVAL_PROMPT_DEBOUNCE_SECS};
 use crate::openhuman::channels::traits::{Channel, ChannelMessage, SendMessage};
+use std::time::Instant;
 
 impl TelegramChannel {
     pub(crate) fn typing_body_for_recipient(recipient: &str) -> serde_json::Value {
@@ -177,6 +178,53 @@ impl TelegramChannel {
         identities.into_iter().any(|id| self.is_user_allowed(id))
     }
 
+    /// Check whether an approval prompt should be suppressed due to the restart-race
+    /// condition signature: `pairing.is_none()` (channel was constructed with a non-empty
+    /// allowlist) AND the runtime `allowed_users` list is currently empty.
+    ///
+    /// This happens when the replacement process reads its config allowlist, stores it in
+    /// `allowed_users`, but the old process has not yet shut down — Telegram redelivers
+    /// the update to both.  The racing instance has `pairing = None` (correct — allowlist
+    /// was non-empty at construction) but the runtime list may briefly show as empty before
+    /// the config is loaded.
+    ///
+    /// Legitimate first-run pairing (`allowed_users=[]` at construction) always sets
+    /// `pairing = Some(...)` so it is never suppressed here.
+    pub(crate) fn is_race_condition_instance(&self) -> bool {
+        let runtime_empty = self
+            .allowed_users
+            .read()
+            .map(|users| users.is_empty())
+            .unwrap_or(false);
+        runtime_empty && self.pairing.is_none()
+    }
+
+    /// Build the de-bounce key for approval prompts: `"{chat_id}:{sender}"`.
+    pub(crate) fn approval_debounce_key(chat_id: &str, sender: &str) -> String {
+        format!("{chat_id}:{sender}")
+    }
+
+    /// Returns `true` if an approval prompt was already sent to this chat+sender within the
+    /// de-bounce window, and updates the last-sent timestamp when returning `false`.
+    pub(crate) fn check_and_update_approval_debounce(&self, chat_id: &str, sender: &str) -> bool {
+        let key = Self::approval_debounce_key(chat_id, sender);
+        let mut prompts = self.recent_approval_prompts.lock();
+        if let Some(last_sent) = prompts.get(&key) {
+            if last_sent.elapsed().as_secs() < APPROVAL_PROMPT_DEBOUNCE_SECS {
+                return true; // still within de-bounce window
+            }
+        }
+        // Evict entries older than the de-bounce window before inserting. Anything
+        // past the window can never suppress again, so retaining it would let the
+        // map grow without bound if the bot is exposed to a public group or spam
+        // (review note on #1948). This caps the map to senders seen within the
+        // last APPROVAL_PROMPT_DEBOUNCE_SECS.
+        prompts
+            .retain(|_, last_sent| last_sent.elapsed().as_secs() < APPROVAL_PROMPT_DEBOUNCE_SECS);
+        prompts.insert(key, Instant::now());
+        false
+    }
+
     pub(crate) async fn handle_unauthorized_message(&self, update: &serde_json::Value) {
         let Some(message) = update.get("message") else {
             return;
@@ -207,7 +255,7 @@ impl TelegramChannel {
             .map(|id| id.to_string());
 
         let Some(chat_id) = chat_id else {
-            tracing::warn!("Telegram: missing chat_id in message, skipping");
+            tracing::warn!("[telegram][approval] missing chat_id in message, skipping");
             return;
         };
 
@@ -217,6 +265,30 @@ impl TelegramChannel {
         }
 
         if self.is_any_user_allowed(identities.iter().copied()) {
+            tracing::debug!(
+                chat_id,
+                username,
+                sender_id = sender_id_str.as_deref().unwrap_or("unknown"),
+                "[telegram][approval] message sender is allowed — no action"
+            );
+            return;
+        }
+
+        // ── Race-condition guard ─────────────────────────────────────────────────
+        // Signature: pairing.is_none() (channel constructed with non-empty allowlist)
+        // AND runtime allowed_users is currently empty.  This means we are the racing
+        // instance spawned during a restart whose config hasn't propagated yet.
+        // Sending an approval prompt here would spam the allowlisted user with false
+        // "operator approval required" messages.  Log and suppress instead.
+        if self.is_race_condition_instance() {
+            tracing::warn!(
+                chat_id,
+                username,
+                sender_id = sender_id_str.as_deref().unwrap_or("unknown"),
+                "[telegram][approval] race-condition guard: allowlist is empty at runtime \
+                 but channel was constructed with a non-empty allowlist (pairing=None). \
+                 Suppressing approval prompt — this is a restart-overlap false positive."
+            );
             return;
         }
 
@@ -243,12 +315,16 @@ impl TelegramChannel {
                                         ))
                                         .await;
                                     tracing::info!(
-                                        "Telegram: paired and allowlisted identity={identity}"
+                                        chat_id,
+                                        identity,
+                                        "[telegram][approval] paired and allowlisted identity"
                                     );
                                 }
                                 Err(e) => {
                                     tracing::error!(
-                                        "Telegram: failed to persist allowlist after bind: {e}"
+                                        chat_id,
+                                        error = %e,
+                                        "[telegram][approval] failed to persist allowlist after bind"
                                     );
                                     let _ = self
                                         .send(&SendMessage::new(
@@ -295,10 +371,28 @@ impl TelegramChannel {
             return;
         }
 
+        // ── De-bounce: suppress duplicate approval prompts within the window ────────
+        // Key by chat_id + sender so multiple different senders are tracked independently.
+        let sender_key = normalized_sender_id
+            .as_deref()
+            .unwrap_or(normalized_username.as_str());
+        if self.check_and_update_approval_debounce(&chat_id, sender_key) {
+            tracing::debug!(
+                chat_id,
+                sender = sender_key,
+                "[telegram][approval] de-bounce: suppressing duplicate approval prompt \
+                 (sent within {}s window)",
+                APPROVAL_PROMPT_DEBOUNCE_SECS
+            );
+            return;
+        }
+
         tracing::warn!(
-            "Telegram: ignoring message from unauthorized user: username={username}, sender_id={}. \
-Allowlist Telegram username (without '@') or numeric user ID.",
-            sender_id_str.as_deref().unwrap_or("unknown")
+            chat_id,
+            username,
+            sender_id = sender_id_str.as_deref().unwrap_or("unknown"),
+            "[telegram][approval] unauthorized user; sending approval prompt. \
+             Allowlist Telegram username (without '@') or numeric user ID."
         );
 
         let _ = self
@@ -309,6 +403,11 @@ Allowlist Telegram username (without '@') or numeric user ID.",
             .await;
 
         if self.pairing_code_active() {
+            tracing::debug!(
+                chat_id,
+                sender = sender_key,
+                "[telegram][approval] pairing code active — sending /bind hint"
+            );
             let _ = self
                 .send(&SendMessage::new(
                     "ℹ️ If operator provides a one-time pairing code, you can also run `/bind <code>`.",

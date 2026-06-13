@@ -200,7 +200,8 @@ async function closeModalIfOpen() {
 // ===========================================================================
 
 describe('Gmail Integration Flows', () => {
-  before(async () => {
+  before(async function beforeSuite() {
+    this.timeout(90_000);
     await startMockServer();
     await waitForApp();
     clearRequestLog();
@@ -227,7 +228,8 @@ describe('Gmail Integration Flows', () => {
   // -------------------------------------------------------------------------
 
   describe('9.1 Google OAuth Flow & Setup', () => {
-    it('9.1.1 — Google OAuth Flow: OAuth/setup button appears in setup wizard', async () => {
+    it('9.1.1 — Google OAuth Flow: OAuth/setup button appears in setup wizard', async function () {
+      this.timeout(90_000);
       resetMockBehavior();
       await navigateToHome();
 
@@ -285,7 +287,8 @@ describe('Gmail Integration Flows', () => {
       console.log(`${LOG_PREFIX} 9.1.1 PASSED`);
     });
 
-    it('9.1.2 — Scope Selection (Read / Send / Initiate): backend called with scopes', async () => {
+    it('9.1.2 — Scope Selection (Read / Send / Initiate): backend called with scopes', async function () {
+      this.timeout(90_000);
       resetMockBehavior();
       setMockBehavior('gmailScope', 'read');
       await reAuthAndGoHome('e2e-gmail-scope-token');
@@ -360,7 +363,8 @@ describe('Gmail Integration Flows', () => {
   // -------------------------------------------------------------------------
 
   describe('9.2 Permission Enforcement', () => {
-    it('9.2.1 — Read-Only Mail Access: email skill listed with read permissions', async () => {
+    it('9.2.1 — Read-Only Mail Access: email skill listed with read permissions', async function () {
+      this.timeout(90_000);
       resetMockBehavior();
       setMockBehavior('gmailPermission', 'read');
       await reAuthAndGoHome('e2e-gmail-read-token');
@@ -399,7 +403,8 @@ describe('Gmail Integration Flows', () => {
       console.log(`${LOG_PREFIX} 9.2.1 PASSED`);
     });
 
-    it('9.2.2 — Send Email Permission Enforcement: write tools accessible when connected', async () => {
+    it('9.2.2 — Send Email Permission Enforcement: write tools accessible when connected', async function () {
+      this.timeout(90_000);
       resetMockBehavior();
       setMockBehavior('gmailPermission', 'write');
       setMockBehavior('gmailSetupComplete', 'true');
@@ -445,7 +450,8 @@ describe('Gmail Integration Flows', () => {
       console.log(`${LOG_PREFIX} 9.2.2 PASSED`);
     });
 
-    it('9.2.3 — Initiate Draft / Auto-Reply Enforcement: initiate actions available', async () => {
+    it('9.2.3 — Initiate Draft / Auto-Reply Enforcement: initiate actions available', async function () {
+      this.timeout(90_000);
       resetMockBehavior();
       setMockBehavior('gmailPermission', 'admin');
       setMockBehavior('gmailSetupComplete', 'true');
@@ -502,7 +508,8 @@ describe('Gmail Integration Flows', () => {
   // -------------------------------------------------------------------------
 
   describe('9.3 Email Processing', () => {
-    it('9.3.1 — Scoped Email Fetch: skill fetches emails within allowed scope', async () => {
+    it('9.3.1 — Scoped Email Fetch: skill fetches emails within allowed scope', async function () {
+      this.timeout(90_000);
       resetMockBehavior();
       setMockBehavior('gmailPermission', 'read');
       setMockBehavior('gmailSetupComplete', 'true');
@@ -547,7 +554,8 @@ describe('Gmail Integration Flows', () => {
       console.log(`${LOG_PREFIX} 9.3.1 PASSED`);
     });
 
-    it('9.3.2 — Time-Range Filtering: time-based email filtering works', async () => {
+    it('9.3.2 — Time-Range Filtering: time-based email filtering works', async function () {
+      this.timeout(90_000);
       resetMockBehavior();
       setMockBehavior('gmailPermission', 'read');
       setMockBehavior('gmailSetupComplete', 'true');
@@ -588,7 +596,8 @@ describe('Gmail Integration Flows', () => {
       console.log(`${LOG_PREFIX} 9.3.2 PASSED`);
     });
 
-    it('9.3.3 — Attachment Handling: attachment tools available', async () => {
+    it('9.3.3 — Attachment Handling: attachment tools available', async function () {
+      this.timeout(90_000);
       resetMockBehavior();
       setMockBehavior('gmailPermission', 'write');
       setMockBehavior('gmailSetupComplete', 'true');
@@ -638,7 +647,8 @@ describe('Gmail Integration Flows', () => {
   // -------------------------------------------------------------------------
 
   describe('9.4 Disconnect & Re-Run Setup', () => {
-    it('9.4.1 — Manual Disconnect: disconnect flow with confirmation', async () => {
+    it('9.4.1 — Manual Disconnect: disconnect flow with confirmation', async function () {
+      this.timeout(90_000);
       resetMockBehavior();
       await reAuthAndGoHome('e2e-gmail-disconnect-token');
 
@@ -738,7 +748,8 @@ describe('Gmail Integration Flows', () => {
       console.log(`${LOG_PREFIX} 9.4.1 PASSED`);
     });
 
-    it('9.4.2 — Token Revocation Handling: app handles revoked token gracefully', async () => {
+    it('9.4.2 — Token Revocation Handling: app handles revoked token gracefully', async function () {
+      this.timeout(90_000);
       resetMockBehavior();
       setMockBehavior('gmailTokenRevoked', 'true');
       setMockBehavior('gmailSkillStatus', 'error');
@@ -776,7 +787,8 @@ describe('Gmail Integration Flows', () => {
       console.log(`${LOG_PREFIX} 9.4.2 PASSED`);
     });
 
-    it('9.4.3 — Expired Token Refresh Flow: app handles expired tokens', async () => {
+    it('9.4.3 — Expired Token Refresh Flow: app handles expired tokens', async function () {
+      this.timeout(90_000);
       resetMockBehavior();
       setMockBehavior('gmailTokenExpired', 'true');
       setMockBehavior('gmailSkillStatus', 'error');
@@ -813,7 +825,8 @@ describe('Gmail Integration Flows', () => {
       console.log(`${LOG_PREFIX} 9.4.3 PASSED`);
     });
 
-    it('9.4.4 — Re-Authorization Flow: setup wizard accessible after disconnect', async () => {
+    it('9.4.4 — Re-Authorization Flow: setup wizard accessible after disconnect', async function () {
+      this.timeout(90_000);
       resetMockBehavior();
       await reAuthAndGoHome('e2e-gmail-reauth-flow-token');
 
@@ -893,7 +906,8 @@ describe('Gmail Integration Flows', () => {
       console.log(`${LOG_PREFIX} 9.4.4 PASSED`);
     });
 
-    it('9.4.5 — Post-Disconnect Access Blocking: skill not accessible after disconnect', async () => {
+    it('9.4.5 — Post-Disconnect Access Blocking: skill not accessible after disconnect', async function () {
+      this.timeout(90_000);
       resetMockBehavior();
       setMockBehavior('gmailSetupComplete', 'false');
       setMockBehavior('gmailSkillStatus', 'installed');

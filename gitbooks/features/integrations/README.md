@@ -7,9 +7,9 @@ icon: plug
 
 # Third-party Integrations (118+)
 
-OpenHuman ships with backend-proxied access to **118+ third-party services**. Connecting any of them is a one-click OAuth flow inside the app, there are no API keys to wire by hand, and no plugin marketplace to navigate.
+OpenHuman ships with backend-proxied access to **118+ third-party services**. Connecting any of them through the managed path is a one-click OAuth flow inside the app, there are no API keys to wire by hand, and no plugin marketplace to navigate.
 
-(Under the hood, the connector layer is powered by [Composio](https://composio.dev). You will not need to think about it.)
+Under the hood, the connector layer is powered by [Composio](https://composio.dev). In the default managed mode, OpenHuman's backend owns the Composio API key, OAuth token brokering, rate limits, and trigger webhook fan-out. If you switch to direct mode, the core talks to Composio with your own Composio API key; synchronous tool calls work, but real-time trigger webhooks must be configured on your own webhook infrastructure.
 
 Once a service is connected, it shows up in four places at once:
 
@@ -73,6 +73,8 @@ Two capabilities ship native rather than as integrations because they're load-be
 ## Privacy boundary
 
 OpenHuman's core never calls any third-party API directly. All requests go through the OpenHuman backend, which handles OAuth tokens and rate limiting. Your tokens never sit on disk in plaintext on your machine, and the agent only sees the _results_ of tool calls, not the credentials.
+
+If you opt into direct Composio mode, that boundary changes: your local core uses your own Composio API key and you are responsible for the Composio account, rate limits, billing relationship, and any webhook endpoint needed for trigger delivery.
 
 See [Privacy & Security](../privacy-and-security.md) for the full boundary.
 

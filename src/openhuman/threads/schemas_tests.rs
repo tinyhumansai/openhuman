@@ -10,6 +10,7 @@ const ALL_FUNCTIONS: &[&str] = &[
     "message_append",
     "generate_title",
     "update_labels",
+    "update_title",
     "message_update",
     "delete",
     "purge",

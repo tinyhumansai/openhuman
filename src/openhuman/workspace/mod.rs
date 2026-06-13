@@ -1,7 +1,10 @@
 //! Workspace layout and bootstrap files (CLI `init` and similar entrypoints).
 
 pub mod ops;
+pub mod rpc;
 mod schemas;
+pub mod state;
+pub mod tools;
 
 pub use ops::*;
 pub use schemas::{

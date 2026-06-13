@@ -1,0 +1,12 @@
+[[permission]]
+identifier = "allow-loopback-oauth"
+description = "Permission to start / stop the one-shot http://127.0.0.1:<port>/auth listener used as the RFC 8252 OAuth callback target (see #2511). Narrow on purpose so consumers of the broader `allow-core-process` group do not inherit OAuth listener control."
+
+[permission.commands]
+
+allow = [
+    "start_loopback_oauth_listener",
+    "stop_loopback_oauth_listener",
+]
+
+deny = []

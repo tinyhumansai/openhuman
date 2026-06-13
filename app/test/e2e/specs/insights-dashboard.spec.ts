@@ -1,6 +1,7 @@
 import { waitForApp, waitForAppReady } from '../helpers/app-helpers';
 import { triggerAuthDeepLinkBypass } from '../helpers/deep-link-helpers';
 import {
+  clickText,
   textExists,
   waitForText,
   waitForWebView,
@@ -33,6 +34,7 @@ function stepLog(message: string, context?: unknown): void {
 
 describe('Insights dashboard smoke', () => {
   before(async function beforeSuite() {
+    this.timeout(90_000);
     if (!supportsExecuteScript()) {
       stepLog('Skipping suite on Mac2 — Intelligence sidebar not mapped');
       this.skip();
@@ -57,47 +59,37 @@ describe('Insights dashboard smoke', () => {
 
   it('mounts the /intelligence route and renders the Memory tab', async () => {
     stepLog('navigating to /intelligence');
-    await navigateViaHash('/settings/intelligence');
+    await navigateViaHash('/intelligence');
 
-    // Tabs / page chrome — Memory is the canonical first view.
+    // Wait for tab bar to appear then click the Memory tab to activate it.
     await waitForText('Memory', 15_000);
     expect(await textExists('Memory')).toBe(true);
+    stepLog('clicking Memory tab');
+    await clickText('Memory', 10_000);
   });
 
-  it('renders the actionable-items search input (11.2.3) and accepts a query', async () => {
-    // The Memory tab mounts an `<input id="actionable-search">` — assert by id
-    // so the test cannot false-pass on an unrelated input elsewhere on the page.
-    // Real keystroke synthesis via the React onChange path is intentional:
-    // there is no shared helper for typing into arbitrary inputs (only
-    // clickButton / clickText / clickToggle), and `browser.keys()` is unreliable
-    // on tauri-driver, so we follow the established pattern from
-    // `command-palette.spec.ts` (event synthesis via `browser.execute`).
-    stepLog('typing into #actionable-search');
-    const typed = await browser.execute(() => {
-      const target = document.querySelector<HTMLInputElement>('#actionable-search');
-      if (!target) return false;
-      target.focus();
-      const setter = Object.getOwnPropertyDescriptor(
-        window.HTMLInputElement.prototype,
-        'value'
-      )?.set;
-      setter?.call(target, 'roundtrip canary');
-      target.dispatchEvent(new Event('input', { bubbles: true }));
-      return target.value === 'roundtrip canary';
-    });
-    expect(typed).toBe(true);
+  it('renders the memory workspace container (11.2.3)', async () => {
+    // The Memory tab now renders MemoryWorkspace (IntelligenceMemoryTab was
+    // removed). Assert the root workspace container is present.
+    stepLog('checking for memory-workspace testid');
+    const deadline = Date.now() + 10_000;
+    let present = false;
+    while (Date.now() < deadline) {
+      present = (await browser.execute(
+        () => document.querySelector('[data-testid="memory-workspace"]') !== null
+      )) as boolean;
+      if (present) break;
+      await browser.pause(500);
+    }
+    expect(present).toBe(true);
   });
 
-  it('renders the actionable-source select (11.2.2) with the All Sources option', async () => {
-    // 11.2.2 source filtering is a `<select id="actionable-source">` element
-    // (not provider chips). Asserting on the id + the canonical first option
-    // proves the filter UI mounted without false-positives on stray buttons.
-    const filterPresent = await browser.execute(() => {
-      const select = document.querySelector<HTMLSelectElement>('#actionable-source');
-      if (!select) return false;
-      const allOption = Array.from(select.options).find(o => o.value === 'all');
-      return Boolean(allOption && /all sources/i.test(allOption.textContent || ''));
-    });
-    expect(filterPresent).toBe(true);
+  it('renders the memory actions toolbar (11.2.2)', async () => {
+    // The memory actions bar (wipe / reset / build / obsidian buttons) should
+    // be mounted inside the workspace — confirms the tab content fully rendered.
+    const actionsPresent = await browser.execute(
+      () => document.querySelector('[data-testid="memory-actions"]') !== null
+    );
+    expect(actionsPresent).toBe(true);
   });
 });

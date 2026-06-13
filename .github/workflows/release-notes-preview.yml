@@ -1,0 +1,96 @@
+---
+name: Generate Release Notes Preview
+on:
+  workflow_dispatch:
+    inputs:
+      from_ref:
+        description: >
+          Start ref (excluded from range). Use a tag like v0.57.18, a commit
+          SHA, "main", or "latest-release" to resolve the most recent GitHub
+          Release tag.
+        required: false
+        default: latest-release
+        type: string
+      to_ref:
+        description: >
+          End ref (included in range). Use a tag like v0.57.19-staging, a
+          commit SHA, "main", or "latest-tag" to resolve the most recent git
+          tag.
+        required: false
+        default: main
+        type: string
+      use_ai:
+        description: Use OpenAI to polish the notes (requires OPENAI_API_KEY secret).
+        required: false
+        type: boolean
+        default: true
+      model:
+        description: OpenAI model to use (ignored when use_ai is false).
+        required: false
+        type: choice
+        default: gpt-5.2
+        options:
+          - gpt-5.2
+          - gpt-4.1
+          - o3
+permissions:
+  contents: read
+concurrency:
+  group: release-notes-preview
+  cancel-in-progress: true
+jobs:
+  generate:
+    name: Generate Release Notes
+    runs-on: ubuntu-latest
+    environment: Production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Generate notes
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          ARGS=(
+            --from "${{ inputs.from_ref }}"
+            --to "${{ inputs.to_ref }}"
+            --repo "$GITHUB_REPOSITORY"
+            --output release-notes-preview.md
+          )
+
+          if [ "${{ inputs.use_ai }}" = "true" ]; then
+            if [ -z "${OPENAI_API_KEY:-}" ]; then
+              echo "::error::OPENAI_API_KEY secret is required when use_ai is enabled."
+              exit 1
+            fi
+            ARGS+=(--model "${{ inputs.model }}")
+          else
+            ARGS+=(--no-ai)
+          fi
+
+          node scripts/release/generate-release-notes.mjs "${ARGS[@]}"
+      - name: Upload as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-notes-preview
+          path: release-notes-preview.md
+          retention-days: 30
+      - name: Print to job summary
+        run: |
+          {
+            echo "## Release Notes Preview"
+            echo ""
+            echo "**Range:** \`${{ inputs.from_ref }}\` → \`${{ inputs.to_ref }}\`"
+            echo "**AI:** ${{ inputs.use_ai }}"
+            echo ""
+            cat release-notes-preview.md
+          } >> "$GITHUB_STEP_SUMMARY"

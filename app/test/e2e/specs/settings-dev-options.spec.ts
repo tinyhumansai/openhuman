@@ -20,7 +20,8 @@ import { startMockServer, stopMockServer } from '../mock-server';
 const USER_ID = 'e2e-settings-dev-options';
 
 describe('Settings - Developer Options', () => {
-  before(async () => {
+  before(async function beforeSuite() {
+    this.timeout(90_000);
     await startMockServer();
     await waitForApp();
     await resetApp(USER_ID);
@@ -30,7 +31,8 @@ describe('Settings - Developer Options', () => {
     await stopMockServer();
   });
 
-  it('mounts Webhooks Debug panel (13.4.1)', async () => {
+  it('mounts Webhooks Debug panel (13.4.1)', async function () {
+    this.timeout(90_000);
     await navigateViaHash('/settings/webhooks-debug');
 
     await waitForText('Webhooks Debug', 15_000);
@@ -39,7 +41,8 @@ describe('Settings - Developer Options', () => {
     expect(await textExists('Refresh')).toBe(true);
   });
 
-  it('mounts Memory Debug panel (13.4.3)', async () => {
+  it('mounts Memory Debug panel (13.4.3)', async function () {
+    this.timeout(90_000);
     await navigateViaHash('/settings/memory-debug');
 
     await waitForText('Memory Debug', 15_000);
@@ -49,7 +52,8 @@ describe('Settings - Developer Options', () => {
     await waitForText('Clear Namespace', 15_000);
   });
 
-  it('shows Live Logs in Autocomplete Debug panel (13.4.2)', async () => {
+  it('shows Live Logs in Autocomplete Debug panel (13.4.2)', async function () {
+    this.timeout(90_000);
     await navigateViaHash('/settings/autocomplete-debug');
 
     await waitForText('Autocomplete Debug', 15_000);

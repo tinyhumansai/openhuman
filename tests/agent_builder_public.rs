@@ -33,6 +33,7 @@ impl Provider for StubProvider {
             text: Some("ok".into()),
             tool_calls: Vec::new(),
             usage: None,
+            reasoning_content: None,
         })
     }
 }
@@ -181,7 +182,7 @@ fn builder_applies_defaults_and_exposes_public_accessors() {
     );
     assert_eq!(agent.temperature(), 0.7);
     assert_eq!(agent.workspace_dir(), std::path::Path::new("."));
-    assert!(agent.skills().is_empty());
+    assert!(agent.workflows().is_empty());
     assert!(agent.history().is_empty());
     assert_eq!(agent.agent_config().max_tool_iterations, 10);
 }

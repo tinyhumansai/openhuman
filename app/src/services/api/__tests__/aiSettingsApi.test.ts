@@ -11,16 +11,25 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   type AISettings,
   clearCloudProviderKey,
+  completeOpenAiCodexOAuth,
+  flushCloudProviders,
+  importOpenAiCodexCliAuth,
   listProviderModels,
   loadAISettings,
   loadLocalProviderSnapshot,
   localProvider,
+  modelRegistryVision,
+  OPENAI_CODEX_OAUTH_MISSING_AUTH_URL,
+  OPENAI_CODEX_OAUTH_MISSING_CALLBACK_URL,
   parseProviderString,
   type ProviderRef,
   saveAISettings,
   serializeProviderRef,
   setCloudProviderKey,
   setLocalRuntimeEnabled,
+  startOpenAiCodexOAuth,
+  testProviderModel,
+  upsertModelRegistryVision,
 } from '../aiSettingsApi';
 
 // ─── Mock declarations (must be hoisted before imports) ───────────────────────
@@ -76,6 +85,7 @@ function makeClientConfigResult(overrides: Record<string, unknown> = {}) {
       api_key_set: false,
       model_routes: [],
       cloud_providers: [],
+      model_registry: [],
       primary_cloud: null,
       reasoning_provider: null,
       agentic_provider: null,
@@ -97,17 +107,17 @@ function makeAuthProfileResult(profiles: Array<{ id: string; provider: string }>
 // ─── parseProviderString ─────────────────────────────────────────────────────
 
 describe('parseProviderString', () => {
-  it('returns openhuman for empty string', () => {
-    expect(parseProviderString('')).toEqual({ kind: 'openhuman' });
+  it('returns default for empty string', () => {
+    expect(parseProviderString('')).toEqual({ kind: 'default' });
   });
 
-  it('returns openhuman for null/undefined', () => {
-    expect(parseProviderString(null)).toEqual({ kind: 'openhuman' });
-    expect(parseProviderString(undefined)).toEqual({ kind: 'openhuman' });
+  it('returns default for null/undefined', () => {
+    expect(parseProviderString(null)).toEqual({ kind: 'default' });
+    expect(parseProviderString(undefined)).toEqual({ kind: 'default' });
   });
 
-  it('returns openhuman for the "cloud" sentinel', () => {
-    expect(parseProviderString('cloud')).toEqual({ kind: 'openhuman' });
+  it('returns default for the "cloud" sentinel', () => {
+    expect(parseProviderString('cloud')).toEqual({ kind: 'default' });
   });
 
   it('returns openhuman for the "openhuman" literal', () => {
@@ -141,6 +151,45 @@ describe('parseProviderString', () => {
   it('falls back to openhuman for unrecognised bare strings', () => {
     expect(parseProviderString('unknown-provider')).toEqual({ kind: 'openhuman' });
   });
+
+  // The `@<temp>` suffix is the per-workload temperature override added with
+  // the LLM-routing UI redesign. It must round-trip through parse/serialize
+  // and degrade gracefully when the tail isn't a finite number.
+  describe('temperature suffix grammar', () => {
+    it('parses @temp suffix on cloud strings', () => {
+      expect(parseProviderString('openai:gpt-4o@0.7')).toEqual({
+        kind: 'cloud',
+        providerSlug: 'openai',
+        model: 'gpt-4o',
+        temperature: 0.7,
+      });
+    });
+
+    it('parses @temp suffix on ollama strings (including model ids with colons)', () => {
+      expect(parseProviderString('ollama:llama3.1:8b@0.2')).toEqual({
+        kind: 'local',
+        model: 'llama3.1:8b',
+        temperature: 0.2,
+      });
+    });
+
+    it('treats a non-numeric @tail as part of the model id', () => {
+      // Guards against silently dropping a chunk of the model id when the
+      // user happens to pick a tag like `:beta` after an `@`.
+      expect(parseProviderString('openai:gpt@beta')).toEqual({
+        kind: 'cloud',
+        providerSlug: 'openai',
+        model: 'gpt@beta',
+      });
+    });
+
+    it('drops the temperature key when not configured (toEqual contract)', () => {
+      // Existing call sites compare with toEqual — emitting an extra
+      // `temperature: null` would break unrelated snapshots.
+      const ref = parseProviderString('openai:gpt-4o');
+      expect(ref).toEqual({ kind: 'cloud', providerSlug: 'openai', model: 'gpt-4o' });
+    });
+  });
 });
 
 // ─── serializeProviderRef ─────────────────────────────────────────────────────
@@ -149,6 +198,11 @@ describe('serializeProviderRef', () => {
   it('serializes openhuman refs', () => {
     const ref: ProviderRef = { kind: 'openhuman' };
     expect(serializeProviderRef(ref)).toBe('openhuman');
+  });
+
+  it('serializes default refs', () => {
+    const ref: ProviderRef = { kind: 'default' };
+    expect(serializeProviderRef(ref)).toBe('cloud');
   });
 
   it('serializes cloud refs to slug:model', () => {
@@ -164,12 +218,59 @@ describe('serializeProviderRef', () => {
   it('round-trips through parseProviderString', () => {
     const cases: ProviderRef[] = [
       { kind: 'openhuman' },
+      { kind: 'default' },
       { kind: 'cloud', providerSlug: 'anthropic', model: 'claude-3-haiku-20240307' },
       { kind: 'local', model: 'llama3:latest' },
     ];
     for (const ref of cases) {
       expect(parseProviderString(serializeProviderRef(ref))).toEqual(ref);
     }
+  });
+
+  it('appends @temp suffix when temperature is set, omits when not', () => {
+    expect(serializeProviderRef({ kind: 'cloud', providerSlug: 'openai', model: 'gpt-4o' })).toBe(
+      'openai:gpt-4o'
+    );
+    expect(
+      serializeProviderRef({
+        kind: 'cloud',
+        providerSlug: 'openai',
+        model: 'gpt-4o',
+        temperature: 0.7,
+      })
+    ).toBe('openai:gpt-4o@0.7');
+    expect(serializeProviderRef({ kind: 'local', model: 'llama3', temperature: 1.25 })).toBe(
+      'ollama:llama3@1.25'
+    );
+  });
+
+  it('rounds temperature to 2 decimal places on the wire', () => {
+    // Stops floating-point drift (0.7 + 0.0000001) from leaking into the
+    // persisted provider string and confusing the Rust factory.
+    expect(
+      serializeProviderRef({
+        kind: 'cloud',
+        providerSlug: 'openai',
+        model: 'gpt-4o',
+        temperature: 0.7000001,
+      })
+    ).toBe('openai:gpt-4o@0.7');
+  });
+
+  it('treats non-finite temperatures as unset', () => {
+    expect(serializeProviderRef({ kind: 'local', model: 'llama3', temperature: Number.NaN })).toBe(
+      'ollama:llama3'
+    );
+  });
+
+  it('round-trips temperature through parse + serialize', () => {
+    const ref: ProviderRef = {
+      kind: 'cloud',
+      providerSlug: 'openai',
+      model: 'gpt-4o',
+      temperature: 0.2,
+    };
+    expect(parseProviderString(serializeProviderRef(ref))).toEqual(ref);
   });
 });
 
@@ -288,7 +389,7 @@ describe('loadAISettings', () => {
       model: 'claude-3-5-sonnet-20241022',
     });
     expect(settings.routing.coding).toEqual({ kind: 'local', model: 'codellama:13b' });
-    expect(settings.routing.memory).toEqual({ kind: 'openhuman' });
+    expect(settings.routing.memory).toEqual({ kind: 'default' });
   });
 
   it('degrades gracefully when authListProviderCredentials throws', async () => {
@@ -311,6 +412,29 @@ describe('loadAISettings', () => {
 
     // Should not throw; has_api_key should default to false.
     expect(settings.cloudProviders[0].has_api_key).toBe(false);
+  });
+
+  it('keeps local runtime endpoint providers so the AI panel can edit them', async () => {
+    mockOpenhumanGetClientConfig.mockResolvedValue(
+      makeClientConfigResult({
+        cloud_providers: [
+          {
+            id: 'p_ollama_1',
+            slug: 'ollama',
+            label: 'Ollama',
+            endpoint: 'http://127.0.0.1:11434/v1',
+            auth_style: 'none',
+          },
+        ],
+      })
+    );
+    mockAuthListProviderCredentials.mockResolvedValue(makeAuthProfileResult([]));
+
+    const settings = await loadAISettings();
+
+    expect(settings.cloudProviders).toHaveLength(1);
+    expect(settings.cloudProviders[0].slug).toBe('ollama');
+    expect(settings.cloudProviders[0].endpoint).toBe('http://127.0.0.1:11434/v1');
   });
 
   it('includes two cloud providers with correct labels and endpoints', async () => {
@@ -456,15 +580,17 @@ describe('saveAISettings', () => {
         },
       ],
       routing: {
+        chat: { kind: 'openhuman' },
         reasoning: { kind: 'cloud', providerSlug: 'openai', model: 'gpt-4o' },
         agentic: { kind: 'openhuman' },
         coding: { kind: 'openhuman' },
         memory: { kind: 'openhuman' },
-        embeddings: { kind: 'openhuman' },
+
         heartbeat: { kind: 'openhuman' },
         learning: { kind: 'openhuman' },
         subconscious: { kind: 'openhuman' },
       },
+      modelRegistry: [],
       ...overrides,
     };
   }
@@ -503,6 +629,32 @@ describe('saveAISettings', () => {
     expect(patch.cloud_providers![0]).not.toHaveProperty('has_api_key');
   });
 
+  it('preserves local runtime providers in the cloud_providers payload', async () => {
+    const prev = makeSettings({ cloudProviders: [] });
+    const next = makeSettings({
+      cloudProviders: [
+        {
+          id: 'p_ollama_1',
+          slug: 'ollama',
+          label: 'Ollama',
+          endpoint: 'http://127.0.0.1:11434/v1',
+          auth_style: 'none',
+          has_api_key: true,
+        },
+      ],
+    });
+
+    await saveAISettings(prev, next);
+
+    const patch = mockOpenhumanUpdateModelSettings.mock.calls[0][0];
+    expect(patch.cloud_providers).toHaveLength(1);
+    expect(patch.cloud_providers![0]).toMatchObject({
+      slug: 'ollama',
+      endpoint: 'http://127.0.0.1:11434/v1',
+      auth_style: 'none',
+    });
+  });
+
   it('preserves auth_style through save round-trip for anthropic', async () => {
     const anthropicProvider = {
       id: 'p_anthropic_1',
@@ -515,17 +667,23 @@ describe('saveAISettings', () => {
     const prev: AISettings = {
       cloudProviders: [],
       routing: {
+        chat: { kind: 'openhuman' },
         reasoning: { kind: 'openhuman' },
         agentic: { kind: 'openhuman' },
         coding: { kind: 'openhuman' },
         memory: { kind: 'openhuman' },
-        embeddings: { kind: 'openhuman' },
+
         heartbeat: { kind: 'openhuman' },
         learning: { kind: 'openhuman' },
         subconscious: { kind: 'openhuman' },
       },
+      modelRegistry: [],
     };
-    const next: AISettings = { cloudProviders: [anthropicProvider], routing: { ...prev.routing } };
+    const next: AISettings = {
+      cloudProviders: [anthropicProvider],
+      routing: { ...prev.routing },
+      modelRegistry: [],
+    };
 
     await saveAISettings(prev, next);
 
@@ -546,6 +704,34 @@ describe('saveAISettings', () => {
 
     const patch = mockOpenhumanUpdateModelSettings.mock.calls[0][0];
     expect(patch.cloud_providers).toBeDefined();
+    expect(patch.coding_provider).toBe('openai:gpt-4o-mini');
+  });
+
+  it('sends model_registry when the vision flag changes', async () => {
+    const prev = makeSettings({ modelRegistry: [] });
+    const next = makeSettings({
+      modelRegistry: [{ id: 'my-llava', provider: 'openai', cost_per_1m_output: 0, vision: true }],
+    });
+    await saveAISettings(prev, next);
+    const patch = mockOpenhumanUpdateModelSettings.mock.calls[0][0];
+    expect(patch.model_registry).toEqual([
+      { id: 'my-llava', provider: 'openai', cost_per_1m_output: 0, vision: true },
+    ]);
+  });
+
+  it('omits model_registry when unchanged', async () => {
+    const registry = [{ id: 'my-llava', provider: 'openai', cost_per_1m_output: 0, vision: true }];
+    const prev = makeSettings({ modelRegistry: registry });
+    const next = makeSettings({
+      modelRegistry: [...registry],
+      routing: {
+        ...makeSettings().routing,
+        coding: { kind: 'cloud', providerSlug: 'openai', model: 'gpt-4o-mini' },
+      },
+    });
+    await saveAISettings(prev, next);
+    const patch = mockOpenhumanUpdateModelSettings.mock.calls[0][0];
+    expect(patch.model_registry).toBeUndefined();
     expect(patch.coding_provider).toBe('openai:gpt-4o-mini');
   });
 });
@@ -604,6 +790,60 @@ describe('clearCloudProviderKey', () => {
   });
 });
 
+// ─── OpenAI Codex OAuth helpers ──────────────────────────────────────────────
+
+describe('OpenAI Codex OAuth helpers', () => {
+  beforeEach(() => {
+    mockCallCoreRpc.mockReset();
+  });
+
+  it('throws a stable code when OAuth start returns no authorization URL', async () => {
+    mockCallCoreRpc.mockResolvedValue({ result: {} });
+
+    await expect(startOpenAiCodexOAuth()).rejects.toThrow(OPENAI_CODEX_OAUTH_MISSING_AUTH_URL);
+  });
+
+  it('returns the OAuth start payload when an authorization URL is present', async () => {
+    mockCallCoreRpc.mockResolvedValue({
+      result: { authUrl: '  https://auth.openai.com/oauth/authorize?client_id=test  ' },
+    });
+
+    await expect(startOpenAiCodexOAuth()).resolves.toEqual({
+      authUrl: '  https://auth.openai.com/oauth/authorize?client_id=test  ',
+    });
+  });
+
+  it('throws a stable code when OAuth completion is missing the callback URL', async () => {
+    await expect(completeOpenAiCodexOAuth('  ')).rejects.toThrow(
+      OPENAI_CODEX_OAUTH_MISSING_CALLBACK_URL
+    );
+
+    expect(mockCallCoreRpc).not.toHaveBeenCalled();
+  });
+
+  it('completes OAuth with a trimmed callback URL', async () => {
+    mockCallCoreRpc.mockResolvedValue({ result: {} });
+
+    await completeOpenAiCodexOAuth('  openhuman://oauth/callback?code=abc  ');
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.inference_openai_oauth_complete',
+      params: { callback_url: 'openhuman://oauth/callback?code=abc' },
+    });
+  });
+
+  it('imports Codex CLI auth through core RPC', async () => {
+    mockCallCoreRpc.mockResolvedValue({ result: {} });
+
+    await importOpenAiCodexCliAuth();
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.inference_openai_oauth_import_codex_cli',
+      params: {},
+    });
+  });
+});
+
 // ─── listProviderModels ───────────────────────────────────────────────────────
 
 describe('listProviderModels', () => {
@@ -612,7 +852,7 @@ describe('listProviderModels', () => {
     mockIsTauri.mockReturnValue(true);
   });
 
-  it('dispatches openhuman.inference_list_models with provider_id and returns models', async () => {
+  it('dispatches openhuman.inference_list_models with provider slug and returns models', async () => {
     mockCallCoreRpc.mockResolvedValue({
       result: {
         models: [
@@ -622,11 +862,11 @@ describe('listProviderModels', () => {
       },
     });
 
-    const models = await listProviderModels('p_openai_1');
+    const models = await listProviderModels('openai');
 
     expect(mockCallCoreRpc).toHaveBeenCalledWith({
       method: 'openhuman.inference_list_models',
-      params: { provider_id: 'p_openai_1' },
+      params: { provider_id: 'openai' },
     });
     expect(models).toHaveLength(2);
     expect(models[0].id).toBe('gpt-4o');
@@ -636,25 +876,111 @@ describe('listProviderModels', () => {
   it('returns empty array when not running in Tauri', async () => {
     mockIsTauri.mockReturnValue(false);
 
-    const models = await listProviderModels('p_openai_1');
+    const models = await listProviderModels('openai');
 
     expect(models).toEqual([]);
     expect(mockCallCoreRpc).not.toHaveBeenCalled();
   });
 
-  it('returns empty array on RPC error (graceful degradation)', async () => {
+  it('throws on RPC error so callers can surface retry UI', async () => {
     mockCallCoreRpc.mockRejectedValue(new Error('network error'));
 
-    const models = await listProviderModels('p_openai_1');
-
-    expect(models).toEqual([]);
+    await expect(listProviderModels('openai')).rejects.toThrow('network error');
   });
 
   it('returns empty array when result has no models field', async () => {
     mockCallCoreRpc.mockResolvedValue({ result: {} });
 
-    const models = await listProviderModels('p_openai_1');
+    const models = await listProviderModels('openai');
 
     expect(models).toEqual([]);
+  });
+});
+
+describe('testProviderModel', () => {
+  beforeEach(() => {
+    mockCallCoreRpc.mockReset();
+    mockIsTauri.mockReturnValue(true);
+  });
+
+  it('dispatches openhuman.inference_test_provider_model and returns the reply', async () => {
+    mockCallCoreRpc.mockResolvedValue({ result: { reply: 'Hello from model' } });
+
+    const result = await testProviderModel('reasoning', 'openai:gpt-4o');
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.inference_test_provider_model',
+      params: { workload: 'reasoning', provider: 'openai:gpt-4o', prompt: 'Hello world' },
+      timeoutMs: 120000,
+    });
+    expect(result).toEqual({ reply: 'Hello from model' });
+  });
+
+  it('throws when not running in Tauri', async () => {
+    mockIsTauri.mockReturnValue(false);
+
+    await expect(testProviderModel('reasoning', 'openai:gpt-4o')).rejects.toThrow(
+      'Model testing is only available in the desktop app.'
+    );
+    expect(mockCallCoreRpc).not.toHaveBeenCalled();
+  });
+});
+
+// ─── flushCloudProviders ──────────────────────────────────────────────────────
+
+describe('flushCloudProviders', () => {
+  beforeEach(() => {
+    mockOpenhumanUpdateModelSettings.mockReset();
+    mockIsTauri.mockReturnValue(true);
+  });
+
+  it('calls update_model_settings with the cloud_providers array', async () => {
+    mockOpenhumanUpdateModelSettings.mockResolvedValue({});
+    const providers = [
+      {
+        id: 'p_openai_1',
+        slug: 'openai',
+        label: 'OpenAI',
+        endpoint: 'https://api.openai.com/v1',
+        auth_style: 'bearer' as const,
+      },
+    ];
+    await flushCloudProviders(providers);
+    expect(mockOpenhumanUpdateModelSettings).toHaveBeenCalledWith({ cloud_providers: providers });
+  });
+
+  it('no-ops when not running in Tauri', async () => {
+    mockIsTauri.mockReturnValue(false);
+    await flushCloudProviders([]);
+    expect(mockOpenhumanUpdateModelSettings).not.toHaveBeenCalled();
+  });
+});
+
+describe('model registry vision helpers', () => {
+  const reg = [
+    { id: 'gpt-4o', provider: 'openai', cost_per_1m_output: 0, vision: true },
+    { id: 'text-only', provider: 'openai', cost_per_1m_output: 0, vision: false },
+  ];
+
+  it('modelRegistryVision matches by (provider, id)', () => {
+    expect(modelRegistryVision(reg, 'openai', 'gpt-4o')).toBe(true);
+    expect(modelRegistryVision(reg, 'openai', 'text-only')).toBe(false);
+    expect(modelRegistryVision(reg, 'openai', 'unlisted')).toBe(false);
+    expect(modelRegistryVision(reg, 'azure', 'gpt-4o')).toBe(false);
+  });
+
+  it('upsertModelRegistryVision adds, flips, and removes entries', () => {
+    const added = upsertModelRegistryVision([], 'openai', 'my-llava', true);
+    expect(added).toEqual([
+      { id: 'my-llava', provider: 'openai', cost_per_1m_output: 0, vision: true },
+    ]);
+    // vision:false removes the entry (absence ⇒ no vision).
+    const removed = upsertModelRegistryVision(reg, 'openai', 'gpt-4o', false);
+    expect(removed.find(e => e.id === 'gpt-4o')).toBeUndefined();
+    expect(removed.find(e => e.id === 'text-only')).toBeDefined();
+    // Flipping an existing entry on stays idempotent on the key.
+    const flipped = upsertModelRegistryVision(reg, 'openai', 'text-only', true);
+    expect(flipped.filter(e => e.id === 'text-only')).toHaveLength(1);
+    expect(modelRegistryVision(flipped, 'openai', 'text-only')).toBe(true);
   });
 });

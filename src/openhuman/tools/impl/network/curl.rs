@@ -7,7 +7,7 @@
 //! about.
 
 use super::url_guard::{normalize_allowed_domains, validate_url_with_dns_check};
-use crate::openhuman::security::SecurityPolicy;
+use crate::openhuman::security::{CommandClass, GateDecision, SecurityPolicy};
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
 use async_trait::async_trait;
 use futures_util::StreamExt;
@@ -145,6 +145,13 @@ impl Tool for CurlTool {
         })
     }
 
+    /// Downloading from the network is the always-ask `Network` bucket — it
+    /// prompts the human in both ask-before-edit and Full; read-only is blocked
+    /// in `execute`.
+    fn external_effect_with_args(&self, _args: &serde_json::Value) -> bool {
+        self.security.gate_decision(CommandClass::Network) == GateDecision::Prompt
+    }
+
     fn permission_level(&self) -> PermissionLevel {
         PermissionLevel::Write
     }
@@ -163,7 +170,9 @@ impl Tool for CurlTool {
 
         if !self.security.can_act() {
             tracing::debug!(target: "[curl]", url = %url, "blocked: autonomy read-only");
-            return Ok(ToolResult::error("Action blocked: autonomy is read-only"));
+            return Ok(ToolResult::error(
+                "[policy-blocked] Action blocked: autonomy is read-only",
+            ));
         }
         if !self.security.record_action() {
             tracing::debug!(target: "[curl]", url = %url, "blocked: rate limit");
@@ -475,7 +484,7 @@ mod tests {
             .await
             .unwrap_err()
             .to_string();
-        assert!(err.contains("allowed_domains"));
+        assert!(err.contains("allowed websites"));
     }
 
     #[test]
@@ -560,6 +569,6 @@ mod tests {
             .await
             .unwrap();
         assert!(result.is_error);
-        assert!(result.output().contains("allowed_domains"));
+        assert!(result.output().contains("allowed websites"));
     }
 }

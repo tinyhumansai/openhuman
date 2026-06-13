@@ -11,11 +11,19 @@ import {
   parseArgs,
 } from "./lib.mjs";
 
+function usage() {
+  return "usage: overlap.mjs <spec.json>";
+}
+
 function main() {
-  const { positional } = parseArgs(process.argv.slice(2));
+  const { positional, flags } = parseArgs(process.argv.slice(2));
+  if (flags.help || flags.h || flags["?"]) {
+    process.stdout.write(`${usage()}\n`);
+    process.exit(0);
+  }
   const specPath = positional[0];
   if (!specPath) {
-    process.stderr.write("usage: overlap.mjs <spec.json>\n");
+    process.stderr.write(`${usage()}\n`);
     process.exit(2);
   }
   let spec;

@@ -19,7 +19,7 @@ mod types;
 pub mod queue;
 pub mod state;
 
-pub use queue::{IngestionJob, IngestionQueue};
+pub use queue::{IngestionJob, IngestionQueue, DEFAULT_QUEUE_CAPACITY};
 pub use state::{IngestionState, IngestionStatusSnapshot};
 pub use types::{
     ExtractedEntity, ExtractedRelation, ExtractionMode, MemoryIngestionConfig,
@@ -30,8 +30,8 @@ use parse::{enrich_document_metadata, parse_document};
 use serde_json::json;
 use types::ParsedIngestion;
 
-use crate::openhuman::memory::store::types::NamespaceDocumentInput;
-use crate::openhuman::memory::UnifiedMemory;
+use crate::openhuman::memory_store::types::NamespaceDocumentInput;
+use crate::openhuman::memory_store::UnifiedMemory;
 
 impl UnifiedMemory {
     /// Run the full ingestion pipeline for a document: parse + chunk + extract

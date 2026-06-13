@@ -115,7 +115,9 @@ mod tests {
                 id: id.into(),
                 name: name.into(),
                 arguments: "{}".into(),
+                extra_content: None,
             }],
+            reasoning_content: None,
         }
     }
 

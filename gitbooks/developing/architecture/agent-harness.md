@@ -61,6 +61,7 @@ A **session** is the live conversation an `Agent` instance is running. The `Agen
 * The tool registry visible to the model.
 * A memory loader that hydrates relevant memories before each user message.
 * Per-turn budgets - max tool iterations, max payload size, max USD cost.
+* Local action budget - a rolling hourly cap for side-effecting tool actions, read from `config.autonomy.max_actions_per_hour`.
 
 `Agent::turn(user_message)` is the hot path. In one turn it:
 
@@ -90,6 +91,8 @@ loop {
 ```
 
 Every iteration emits a real-time `AgentProgress` event so the UI can render token-by-token streaming, "calling tool X" status, and per-iteration cost updates.
+
+**One engine, three entry points.** This loop lives in one place — `engine::run_turn_engine` (`harness/engine/`) — and every caller drives it: `Agent::turn` (web/desktop chat), `run_tool_call_loop` (the `agent.run_turn` bus handler for other channels + triage), and `run_subagent` (spawned sub-agents). What varies per caller is supplied through small seams the engine calls into: a `ToolSource` (which tools are advertised + how a call executes), a `ProgressReporter` (top-level `Turn*` events with streaming vs. nested `Subagent*` events), a `TurnObserver` (context management, transcript persistence, history shape), a `CheckpointStrategy` (error vs. summarize when the iteration cap is hit), and a `ResponseParser` (the `ToolDispatcher` dialect). The per-call executor (`run_one_tool`), the repeated-failure circuit breaker, and the `ProviderDelta → AgentProgress` stream forwarder are shared across all three, so they can't drift.
 
 ### Tool dispatch and tool-call dialects
 
@@ -159,13 +162,49 @@ Custom archetypes ship as TOML files under `$OPENHUMAN_WORKSPACE/agents/*.toml` 
 When the orchestrator calls `spawn_subagent` (or one of the `delegate_*` convenience tools), the runner:
 
 1. Reads the parent's execution context from a task-local - the parent's provider, sandbox mode, cancellation fence, transcript root.
-2. Resolves the sub-agent's model - inherit from parent, follow a hint (`fast` / `reasoning` / `summarization`), or pin an exact model.
+2. Resolves the sub-agent's model - inline `model` override first, then config-level pins (`[orchestrator].model`, `[teams.*].lead_model`, `[teams.*].agent_model`), then the archetype hint or inherited parent model.
 3. Filters the parent's tool registry per the definition's `tools`, `disallowed_tools`, and `skill_filter`. In `fork` mode, the parent's full registry is inherited verbatim.
 4. Builds a narrow system prompt, omitting the sections the definition asks to strip.
 5. Runs an inner tool-call loop using the same machinery as the parent.
 6. Returns one compact text result. The intra-sub-agent history is never spliced back into the parent - the orchestrator sees a single tool result and moves on.
 
 For tasks that don't need to block the orchestrator's turn, `spawn_worker_thread` runs the sub-agent in the background and the orchestrator continues immediately.
+
+### Spawn hierarchy and tiers
+
+Not every agent is allowed to spawn every other agent. The harness models a three-tier hierarchy that mirrors the cost / latency / depth-of-thought split between models:
+
+```text
+Chat        (fast, UX-focused — e.g. orchestrator on `chat` hint)
+  │
+  ├─► Worker      ◄─── fast path: one delegation, leaf does the work
+  │
+  └─► Reasoning   (slow, deep-thinking — e.g. planner on `reasoning` hint)
+        │
+        └─► Worker  ◄─── deep path: reasoning decomposes, workers execute
+```
+
+Each `AgentDefinition` carries an `agent_tier` field (`chat` / `reasoning` / `worker`, default `worker`). The contract:
+
+| Tier         | May spawn         | Must NOT spawn               | Typical members                                          |
+| ------------ | ----------------- | ---------------------------- | -------------------------------------------------------- |
+| `chat`       | `reasoning`, `worker` | another `chat`               | `orchestrator`                                           |
+| `reasoning`  | `worker`          | another `reasoning`, any `chat` | `planner` (today the canonical one)                     |
+| `worker`     | nothing[^1]       | anything                     | researcher, code_executor, critic, archivist, tool_maker, integrations_agent, … |
+
+[^1]: Skill-wildcard entries (`{ skills = "*" }`) are exempt because they collapse to a single `delegate_to_integrations_agent` tool whose target is a worker — they're a fan-out delegation surface, not a recursive spawn.
+
+**Why the rules.**
+- *Chat → chat is meaningless.* The chat tier exists for snappy UX. A chat agent spawning another chat agent just doubles TTFT and burns tokens without buying any new capability.
+- *Reasoning → reasoning blows up depth.* The reasoning tier is expensive. Chains of reasoning agents tend to re-decompose the same problem and create runaway hierarchies.
+- *Worker → anything mixes execution and orchestration.* Workers are leaves so the parent always sees one compact result, not a transcript of nested delegations.
+
+**Enforcement.** Two layers:
+
+1. **Loader-time (static).** [`agents::loader::validate_tier_hierarchy`](../../../src/openhuman/agent/agents/loader.rs) runs over the merged registry (built-ins + workspace TOMLs) and refuses to boot a registry that lists a same-tier or worker-with-subagents entry. Built-in archetypes are checked at compile-test time; user-shipped TOMLs are checked at workspace load.
+2. **Runtime depth gate (dynamic).** Independent of tier, the sub-agent runner caps total spawn chain depth at `MAX_SPAWN_DEPTH = 3` via a task-local counter incremented across `run_subagent`, surfaced as a `SpawnDepthExceeded` agent error. This makes a user-shipped TOML that drops the tier annotation still unable to recurse past three hops.
+
+> **Status:** the loader-time tier check, `agent_tier` field, and runtime depth-counter task-local are live. Depth is bounded by both the static loader contract and the runtime `MAX_SPAWN_DEPTH = 3` guard.
 
 ### Toolkit-specific specialists
 
@@ -198,6 +237,7 @@ Stop hooks fire **between** iterations of the tool-call loop. They're the policy
 
 * **Budget stop hook** - caps cumulative turn cost in USD using the per-iteration cost accumulator.
 * **Max-iterations stop hook** - caps iteration count from outside the agent's persistent config.
+* **Action budget policy** - `SecurityPolicy` enforces `config.autonomy.max_actions_per_hour` for side-effecting tool operations. Users can tune it in Settings -> Advanced -> Agent autonomy, or operators can override it with `OPENHUMAN_MAX_ACTIONS_PER_HOUR`.
 
 A hook returning `Stop` aborts the loop with a clear reason the caller can surface to the user. Stop hooks are distinct from interrupts (next section): they're policy-driven, not user-driven.
 

@@ -12,24 +12,47 @@
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::{Mutex, MutexGuard};
 
-/// Guard to temporarily set/unset environment variables.
+/// Serializes every env-mutating test in this file. `std::env` is
+/// process-global; cargo runs these tests in parallel within one binary,
+/// and several mutate the SAME vars (e.g. `OPENHUMAN_CORE_BIN`), so without
+/// this an interleaving made one test read back another's value and the
+/// `assert_eq!` flaked. `EnvGuard` holds this lock for its whole lifetime,
+/// so at most one env-mutating test runs at a time. Poison-safe (a
+/// panicking test must not cascade-fail every later one).
+static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+/// Guard to temporarily set/unset environment variables. Acquires
+/// [`ENV_LOCK`] for its lifetime so concurrent tests can't observe each
+/// other's mutations.
 struct EnvGuard {
     key: &'static str,
     old: Option<String>,
+    _lock: MutexGuard<'static, ()>,
 }
 
 impl EnvGuard {
     fn set(key: &'static str, value: &str) -> Self {
+        let lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let old = std::env::var(key).ok();
         std::env::set_var(key, value);
-        Self { key, old }
+        Self {
+            key,
+            old,
+            _lock: lock,
+        }
     }
 
     fn unset(key: &'static str) -> Self {
+        let lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let old = std::env::var(key).ok();
         std::env::remove_var(key);
-        Self { key, old }
+        Self {
+            key,
+            old,
+            _lock: lock,
+        }
     }
 }
 
@@ -292,17 +315,34 @@ fn core_ping_request_structure() {
 /// Test Debian package dependencies configuration.
 #[test]
 fn debian_package_dependencies_configured() {
-    // Document the expected dependencies from tauri.conf.json
+    let config_path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("app/src-tauri/tauri.conf.json");
+    let config_text = fs::read_to_string(&config_path).expect("read tauri.conf.json");
+    let config: serde_json::Value =
+        serde_json::from_str(&config_text).expect("parse tauri.conf.json");
+    let configured_deps: Vec<&str> = config
+        .pointer("/bundle/linux/deb/depends")
+        .and_then(|value| value.as_array())
+        .expect("bundle.linux.deb.depends should be an array")
+        .iter()
+        .map(|value| value.as_str().expect("deb dependency should be a string"))
+        .collect();
+
     let expected_deps = [
         "libgtk-3-0",
         "libwebkit2gtk-4.1-0",
         "libx11-6",
+        "libxdo3",
         "libgdk-pixbuf-2.0-0",
         "libglib2.0-0",
     ];
 
-    // Verify the expected packages are valid Debian package names
     for dep in &expected_deps {
+        assert!(
+            configured_deps.contains(dep),
+            "tauri.conf.json linux deb depends missing {}",
+            dep
+        );
         assert!(
             dep.chars()
                 .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '.'),
@@ -316,8 +356,17 @@ fn debian_package_dependencies_configured() {
         );
     }
 
+    assert_eq!(
+        configured_deps
+            .iter()
+            .filter(|dep| **dep == "libxdo3")
+            .count(),
+        1,
+        "libxdo3 should be listed exactly once"
+    );
+
     println!("Debian package dependencies:");
-    for dep in &expected_deps {
+    for dep in &configured_deps {
         println!("  - {}", dep);
     }
 }

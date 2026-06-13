@@ -10,21 +10,26 @@ const BreadcrumbProbe = () => {
   return <div data-testid="breadcrumbs">{breadcrumbs.map(b => b.label).join(' > ')}</div>;
 };
 
-describe('useSettingsNavigation breadcrumbs', () => {
-  test('notification-routing returns Settings > Developer Options', () => {
-    renderWithProviders(<BreadcrumbProbe />, {
-      initialEntries: ['/settings/notification-routing'],
-    });
-    expect(screen.getByTestId('breadcrumbs')).toHaveTextContent('Settings > Developer Options');
-  });
+/**
+ * The two-pane settings restructure retired breadcrumb navigation — the sidebar
+ * replaced the trail, so `breadcrumbs` is now always empty regardless of route.
+ * The field is retained (always []) so the many panel call sites keep compiling.
+ * Route resolution itself is covered in useSettingsNavigation.coverage.test.tsx.
+ */
+describe('useSettingsNavigation breadcrumbs (retired — always empty)', () => {
+  const routes = [
+    '/settings',
+    '/settings/notifications',
+    '/settings/tasks',
+    '/settings/developer-options',
+    '/settings/personality',
+    '/settings/recovery-phrase',
+    '/settings/wallet-balances',
+    '/settings/notification-routing',
+  ];
 
-  test('notifications returns Settings (top-level)', () => {
-    renderWithProviders(<BreadcrumbProbe />, { initialEntries: ['/settings/notifications'] });
-    expect(screen.getByTestId('breadcrumbs')).toHaveTextContent('Settings');
-  });
-
-  test('developer-options returns Settings (section page)', () => {
-    renderWithProviders(<BreadcrumbProbe />, { initialEntries: ['/settings/developer-options'] });
-    expect(screen.getByTestId('breadcrumbs')).toHaveTextContent('Settings');
+  test.each(routes)('breadcrumbs are empty for %s', route => {
+    renderWithProviders(<BreadcrumbProbe />, { initialEntries: [route] });
+    expect(screen.getByTestId('breadcrumbs')).toHaveTextContent('');
   });
 });

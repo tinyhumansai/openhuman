@@ -23,18 +23,28 @@ vi.mock('../../lib/composio/hooks', () => ({
     connectionByToolkit: new Map([
       ['gmail', { id: 'conn_gmail_1', toolkit: 'gmail', status: 'ACTIVE' }],
     ]),
+    connectionsByToolkit: new Map([
+      ['gmail', [{ id: 'conn_gmail_1', toolkit: 'gmail', status: 'ACTIVE' }]],
+    ]),
     refresh: vi.fn(),
     loading: false,
+    error: null,
+  }),
+  // Issue #2283: Skills.tsx also consumes useAgentReadyComposioToolkits.
+  useAgentReadyComposioToolkits: () => ({
+    agentReady: new Set<string>(),
+    loading: true,
     error: null,
   }),
 }));
 
 describe('Skills page — Gmail composio integration', () => {
   it('renders Gmail as a connected composio integration and opens its management modal', async () => {
-    renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
+    renderWithProviders(<Skills />, { initialEntries: ['/connections'] });
+    fireEvent.click(screen.getByTestId('two-pane-nav-composio'));
 
     const integrationsSection = screen
-      .getByRole('heading', { name: 'Integrations' })
+      .getByRole('heading', { name: 'Composio Integrations' })
       .closest('.rounded-2xl');
     expect(integrationsSection).not.toBeNull();
     expect(within(integrationsSection as HTMLElement).getByText('Gmail')).toBeInTheDocument();

@@ -1,13 +1,6 @@
 ---
 name: Build CI Docker Image
 on:
-  push:
-    branches: [main]
-    paths:
-      - .github/Dockerfile
-      - .github/workflows/docker-ci-image.yml
-      - e2e/docker-entrypoint.sh
-      - .gitmodules
   workflow_dispatch:
 permissions:
   contents: read
@@ -16,6 +9,7 @@ jobs:
   build-image:
     name: Build and push CI image
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     environment: Production
     steps:
       - name: Checkout code

@@ -1,0 +1,50 @@
+{
+  "id": "lint/cargo-fmt",
+  "family": "lint-results",
+  "description": "Compact cargo fmt --check output while preserving diff hunks showing unformatted code.",
+  "match": {
+    "toolNames": ["exec"],
+    "argv0": ["cargo"],
+    "argvIncludes": [["fmt"]]
+  },
+  "onEmpty": "cargo fmt: all files formatted",
+  "transforms": {
+    "stripAnsi": true,
+    "dedupeAdjacent": true,
+    "trimEmptyEdges": true
+  },
+  "filters": {
+    "skipPatterns": [
+      "^\\s*Checking .+",
+      "^\\s*Finished .+"
+    ],
+    "keepPatterns": [
+      "^Diff in .+",
+      "^[+-].+",
+      "^@@.+@@",
+      "^error.+",
+      "^warning.+"
+    ]
+  },
+  "summarize": {
+    "head": 12,
+    "tail": 10
+  },
+  "failure": {
+    "preserveOnFailure": true,
+    "head": 14,
+    "tail": 14
+  },
+  "counters": [
+    {
+      "name": "unformatted file",
+      "pattern": "^Diff in .+"
+    }
+  ],
+  "matchOutput": [
+    {
+      "pattern": "^\\s*$",
+      "message": "cargo fmt: all files formatted"
+    }
+  ]
+}

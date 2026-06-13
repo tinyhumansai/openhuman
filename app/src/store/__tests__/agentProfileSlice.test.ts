@@ -6,6 +6,7 @@ import reducer, {
   type AgentProfileState,
   deleteAgentProfile,
   loadAgentProfiles,
+  selectActiveAgentProfile,
   selectActiveAgentProfileId,
   selectAgentProfile,
   selectAgentProfiles,
@@ -236,5 +237,17 @@ describe('agentProfileSlice — selectors', () => {
       } as AgentProfileState,
     };
     expect(selectActiveAgentProfileId(storeState)).toBe('research');
+  });
+
+  it('selectActiveAgentProfile returns the active profile object', () => {
+    const storeState = {
+      agentProfiles: {
+        profiles: twoProfiles.profiles,
+        activeProfileId: 'planner',
+        status: 'idle',
+        error: null,
+      } as AgentProfileState,
+    };
+    expect(selectActiveAgentProfile(storeState)?.name).toBe('Planner');
   });
 });

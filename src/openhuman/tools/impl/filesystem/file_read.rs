@@ -1,3 +1,4 @@
+use crate::openhuman::file_state;
 use crate::openhuman::security::SecurityPolicy;
 use crate::openhuman::tools::traits::{Tool, ToolResult};
 use async_trait::async_trait;
@@ -24,7 +25,10 @@ impl Tool for FileReadTool {
     }
 
     fn description(&self) -> &str {
-        "Read the contents of a file in the workspace"
+        "Read the contents of a file in your working directory (the action sandbox). \
+         Relative paths resolve against that directory; paths outside it are blocked. \
+         To read a file written by `shell`, confirm its location with `pwd` and use the \
+         same relative path."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -57,14 +61,7 @@ impl Tool for FileReadTool {
             ));
         }
 
-        // Security check: validate path is within workspace
-        if !self.security.is_path_allowed(path) {
-            return Ok(ToolResult::error(format!(
-                "Path not allowed by security policy: {path}"
-            )));
-        }
-
-        // Record action BEFORE canonicalization so that every non-trivially-rejected
+        // Record action BEFORE validation so that every non-trivially-rejected
         // request consumes rate limit budget. This prevents attackers from probing
         // path existence (via canonicalize errors) without rate limit cost.
         if !self.security.record_action() {
@@ -73,24 +70,11 @@ impl Tool for FileReadTool {
             ));
         }
 
-        let full_path = self.security.workspace_dir.join(path);
-
-        // Resolve path before reading to block symlink escapes.
-        let resolved_path = match tokio::fs::canonicalize(&full_path).await {
+        // Security check: validate path string, resolve symlinks, confirm workspace containment.
+        let resolved_path = match self.security.validate_path(path).await {
             Ok(p) => p,
-            Err(e) => {
-                return Ok(ToolResult::error(format!(
-                    "Failed to resolve file path: {e}"
-                )));
-            }
+            Err(msg) => return Ok(ToolResult::error(msg)),
         };
-
-        if !self.security.is_resolved_path_allowed(&resolved_path) {
-            return Ok(ToolResult::error(format!(
-                "Resolved path escapes workspace: {}",
-                resolved_path.display()
-            )));
-        }
 
         // Check file size AFTER canonicalization to prevent TOCTOU symlink bypass
         match tokio::fs::metadata(&resolved_path).await {
@@ -110,7 +94,17 @@ impl Tool for FileReadTool {
         }
 
         match tokio::fs::read_to_string(&resolved_path).await {
-            Ok(contents) => Ok(ToolResult::success(contents)),
+            Ok(contents) => {
+                if let Some(agent_id) = file_state::current_file_state_agent_id() {
+                    let mtime = tokio::fs::metadata(&resolved_path)
+                        .await
+                        .ok()
+                        .and_then(|m| m.modified().ok())
+                        .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+                    file_state::record_read(&agent_id, resolved_path, mtime, false);
+                }
+                Ok(ToolResult::success(contents))
+            }
             Err(e) => Ok(ToolResult::error(format!("Failed to read file: {e}"))),
         }
     }
@@ -124,6 +118,7 @@ mod tests {
     fn test_security(workspace: std::path::PathBuf) -> Arc<SecurityPolicy> {
         Arc::new(SecurityPolicy {
             autonomy: AutonomyLevel::Supervised,
+            action_dir: workspace.clone(),
             workspace_dir: workspace,
             ..SecurityPolicy::default()
         })
@@ -136,6 +131,7 @@ mod tests {
     ) -> Arc<SecurityPolicy> {
         Arc::new(SecurityPolicy {
             autonomy,
+            action_dir: workspace.clone(),
             workspace_dir: workspace,
             max_actions_per_hour,
             ..SecurityPolicy::default()
@@ -323,7 +319,16 @@ mod tests {
         let result = tool.execute(json!({"path": "escape.txt"})).await.unwrap();
 
         assert!(result.is_error);
-        assert!(result.output().contains("escapes workspace"));
+        // After the symlink-safe canonical check landed in
+        // SecurityPolicy::is_path_allowed (#1927), the policy layer blocks
+        // the escape before file_read's own resolved-path check runs — the
+        // error becomes "Path not allowed by security policy". Either
+        // message signals defense-in-depth worked.
+        let out = result.output();
+        assert!(
+            out.contains("escapes workspace") || out.contains("not allowed"),
+            "expected escape/not-allowed error, got: {out}"
+        );
 
         let _ = tokio::fs::remove_dir_all(&root).await;
     }

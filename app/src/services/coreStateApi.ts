@@ -15,9 +15,22 @@ export interface OnboardingTasks {
   updatedAtMs?: number;
 }
 
+export interface KeyringConsentPreference {
+  storageMode: string;
+  consentedAtMs?: number;
+}
+
+export interface KeyringStatus {
+  available: boolean;
+  failureReason?: string | null;
+  activeMode: string;
+  backendName: string;
+}
+
 export interface UpdateCoreLocalStateParams {
   encryptionKey?: string | null;
   onboardingTasks?: OnboardingTasks | null;
+  keyringConsent?: KeyringConsentPreference | null;
 }
 
 interface AppStateSnapshotResult {
@@ -39,7 +52,12 @@ interface AppStateSnapshotResult {
    * never observe `undefined` here.
    */
   meetAutoOrchestratorHandoff?: boolean;
-  localState: { encryptionKey?: string | null; onboardingTasks?: OnboardingTasks | null };
+  localState: {
+    encryptionKey?: string | null;
+    onboardingTasks?: OnboardingTasks | null;
+    keyringConsent?: KeyringConsentPreference | null;
+  };
+  keyringStatus?: KeyringStatus;
   runtime: {
     screenIntelligence: AccessibilityStatus;
     localAi: LocalAiStatus;
@@ -48,9 +66,21 @@ interface AppStateSnapshotResult {
   };
 }
 
+/**
+ * First-launch `app_state_snapshot` can take 30–40s on M-series Macs while
+ * memory tree init, Composio registry warmup, and other boot work compete
+ * for the snapshot critical path (#2156). The global `CORE_RPC_TIMEOUT_MS`
+ * default of 30s caused users with merely slow-but-alive cores to be parked
+ * on the post-login fallback. Use a longer-but-still-bounded budget here so
+ * legitimate slow-success completes inline, while real failures still abort
+ * within `SNAPSHOT_TIMEOUT_MS` rather than hanging forever.
+ */
+export const SNAPSHOT_TIMEOUT_MS = 90_000;
+
 export const fetchCoreAppSnapshot = async (): Promise<AppStateSnapshotResult> => {
   const response = await callCoreRpc<{ result: AppStateSnapshotResult }>({
     method: 'openhuman.app_state_snapshot',
+    timeoutMs: SNAPSHOT_TIMEOUT_MS,
   });
   // Normalise the optional #1299 field at the API boundary so older core
   // builds without `meetAutoOrchestratorHandoff` still surface the

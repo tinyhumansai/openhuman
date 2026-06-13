@@ -2,13 +2,15 @@ import { useEffect, useMemo, useState } from 'react';
 
 import AddAccountModal from '../components/accounts/AddAccountModal';
 import { AgentIcon, ProviderIcon } from '../components/accounts/providerIcons';
-// import RespondQueuePanel from '../components/accounts/RespondQueuePanel';
 import WebviewHost from '../components/accounts/WebviewHost';
+import {
+  CustomGifMascot,
+  getMascotPalette,
+  hexToArgbInt,
+  RiveMascot,
+} from '../features/human/Mascot';
+import { useHumanMascot } from '../features/human/useHumanMascot';
 import { usePrewarmMostRecentAccount } from '../hooks/usePrewarmMostRecentAccount';
-// [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
-// import { isWelcomeLocked } from '../lib/coreState/store';
-// [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
-// import { useCoreState } from '../providers/CoreStateProvider';
 import { useT } from '../lib/i18n/I18nContext';
 import { trackEvent } from '../services/analytics';
 import {
@@ -24,10 +26,18 @@ import {
   setLastActiveAccount,
 } from '../store/accountsSlice';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
-import { fetchRespondQueue } from '../store/providerSurfaceSlice';
+import {
+  selectCustomMascotGifUrl,
+  selectCustomPrimaryColor,
+  selectCustomSecondaryColor,
+  selectMascotColor,
+} from '../store/mascotSlice';
 import type { Account, AccountProvider, ProviderDescriptor } from '../types/accounts';
 import { AGENT_ACCOUNT_ID as AGENT_ID } from '../utils/accountsFullscreen';
-import { AgentChatPanel } from './Conversations';
+import Conversations, { AgentChatPanel } from './Conversations';
+
+// Persistence key for face-toggle state across sessions.
+const FACE_MODE_KEY = 'chat.faceMode';
 
 function makeAccountId(): string {
   const c = globalThis.crypto;
@@ -46,6 +56,7 @@ interface RailButtonProps {
   onClick: () => void;
   onContextMenu?: (e: React.MouseEvent) => void;
   tooltip: string;
+  analyticsId: string;
   badge?: number;
   children: React.ReactNode;
 }
@@ -55,12 +66,15 @@ const RailButton = ({
   onClick,
   onContextMenu,
   tooltip,
+  analyticsId,
   badge,
   children,
 }: RailButtonProps) => (
   <button
+    type="button"
     onClick={onClick}
     onContextMenu={onContextMenu}
+    data-analytics-id={analyticsId}
     // Issue #1284 — `hover:z-50` lifts the entire button (and its tooltip
     // child) above sibling rail buttons during hover. Without it, the
     // `hover:scale-105` transform on a non-active button establishes its
@@ -70,7 +84,9 @@ const RailButton = ({
     // too, where ring-2 + bg-primary-50 don't transform but the lifted
     // z still helps tooltips render cleanly above neighbours.
     className={`group relative flex h-11 w-11 items-center justify-center rounded-xl transition-all hover:z-50 ${
-      active ? 'bg-primary-50 ring-2 ring-primary-500' : 'hover:bg-stone-100 hover:scale-105'
+      active
+        ? 'bg-primary-50 ring-2 ring-primary-500'
+        : 'hover:bg-stone-100 dark:hover:bg-neutral-800/60 hover:scale-105'
     }`}
     aria-label={tooltip}>
     {children}
@@ -99,6 +115,83 @@ interface ContextMenuState {
   y: number;
 }
 
+/**
+ * Mascot + TTS panel rendered in face mode (right column of the Assistant
+ * surface).  Extracted as a separate component so its hooks only run when
+ * face mode is on — keeps the main Accounts component lean when the toggle
+ * is off.
+ *
+ * Phase 6 — reuses the exact same mascot subcomponents and useHumanMascot
+ * hook from features/human/ rather than duplicating any logic.
+ */
+const FaceModePanel = () => {
+  const { t } = useT();
+  const [speakReplies, setSpeakReplies] = useState<boolean>(() => {
+    try {
+      const raw = window.localStorage.getItem('human.speakReplies');
+      return raw === null ? true : raw === '1';
+    } catch {
+      return true;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('human.speakReplies', speakReplies ? '1' : '0');
+    } catch {
+      // localStorage may be unavailable in sandboxed contexts.
+    }
+  }, [speakReplies]);
+
+  const { face, visemeCode } = useHumanMascot({ speakReplies });
+  const mascotColor = useAppSelector(selectMascotColor);
+  const customPrimary = useAppSelector(selectCustomPrimaryColor);
+  const customSecondary = useAppSelector(selectCustomSecondaryColor);
+  const customMascotGifUrl = useAppSelector(selectCustomMascotGifUrl);
+
+  const palette = getMascotPalette(mascotColor);
+  const primaryColor = useMemo(
+    () => hexToArgbInt(mascotColor === 'custom' ? customPrimary : palette.bodyFill),
+    [mascotColor, customPrimary, palette]
+  );
+  const secondaryColor = useMemo(
+    () => hexToArgbInt(mascotColor === 'custom' ? customSecondary : palette.neckShadowColor),
+    [mascotColor, customSecondary, palette]
+  );
+
+  return (
+    <aside
+      className="flex min-w-0 flex-1 flex-col items-center justify-center gap-4 bg-stone-50 dark:bg-neutral-900/60 rounded-2xl border border-stone-200/70 dark:border-neutral-800/70 my-3 mr-0 py-4 px-3 overflow-hidden"
+      data-testid="face-mode-panel">
+      {/* Mascot stage — the dominant element of the "Talk to Tiny" surface */}
+      <div className="relative w-full max-w-[460px] aspect-square">
+        {customMascotGifUrl ? (
+          <CustomGifMascot src={customMascotGifUrl} face={face} />
+        ) : (
+          <RiveMascot
+            face={face}
+            primaryColor={primaryColor}
+            secondaryColor={secondaryColor}
+            visemeCode={visemeCode}
+          />
+        )}
+      </div>
+
+      {/* TTS / speak-replies toggle */}
+      <label className="inline-flex cursor-pointer select-none items-center gap-2 rounded-full border border-stone-300 dark:border-neutral-700 bg-white/80 dark:bg-neutral-900/80 px-3 py-1.5 text-xs text-stone-700 dark:text-neutral-200 shadow-soft backdrop-blur-sm">
+        <input
+          type="checkbox"
+          checked={speakReplies}
+          onChange={e => setSpeakReplies(e.target.checked)}
+          className="cursor-pointer"
+          data-testid="speak-replies-toggle"
+        />
+        {t('voice.pushToTalk')}
+      </label>
+    </aside>
+  );
+};
+
 const Accounts = () => {
   const { t } = useT();
   const dispatch = useAppDispatch();
@@ -106,17 +199,20 @@ const Accounts = () => {
   const order = useAppSelector(state => state.accounts.order);
   const activeAccountId = useAppSelector(state => state.accounts.activeAccountId);
   const unreadByAccount = useAppSelector(state => state.accounts.unread);
-  // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
-  // const { snapshot } = useCoreState();
-  // const welcomeLocked = isWelcomeLocked(snapshot);
-  // Respond-queue selectors disabled while RespondQueuePanel is hidden.
-  // const respondQueue = useAppSelector(state => state.providerSurfaces.queue);
-  // const respondQueueCount = useAppSelector(state => state.providerSurfaces.count);
-  // const respondQueueStatus = useAppSelector(state => state.providerSurfaces.status);
-  // const respondQueueError = useAppSelector(state => state.providerSurfaces.error);
-
   const [addOpen, setAddOpen] = useState(false);
   const [ctxMenu, setCtxMenu] = useState<ContextMenuState | null>(null);
+
+  const [faceMode] = useState<boolean>(() => {
+    try {
+      const stored = window.localStorage.getItem(FACE_MODE_KEY);
+      if (stored === '1') {
+        window.localStorage.removeItem(FACE_MODE_KEY);
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  });
 
   useEffect(() => {
     startWebviewAccountService();
@@ -132,36 +228,11 @@ const Accounts = () => {
   );
   usePrewarmMostRecentAccount({ accounts, accountsById, activeAccountId });
 
-  // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
-  // Welcome lockdown (#883) — force the Agent pane while the welcome
-  // conversation is in progress so the user cannot jump to a connected
-  // account webview. The rail is hidden below, so this is belt-and-
-  // suspenders in case an external caller toggles `activeAccountId`.
-  // useEffect(() => {
-  //   if (welcomeLocked && activeAccountId !== AGENT_ID) {
-  //     dispatch(setActiveAccount(AGENT_ID));
-  //   }
-  // }, [welcomeLocked, activeAccountId, dispatch]);
-
-  useEffect(() => {
-    void dispatch(fetchRespondQueue());
-    const id = window.setInterval(() => {
-      void dispatch(fetchRespondQueue({ silent: true }));
-    }, 10_000);
-    return () => window.clearInterval(id);
-  }, [dispatch]);
-
   const connectedProviders = useMemo(
     () => new Set<AccountProvider>(accounts.map(a => a.provider)),
     [accounts]
   );
 
-  // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
-  // While welcome-locked, derive the effective selection directly from
-  // `welcomeLocked` so the first paint after a lock flip never renders the
-  // stale `activeAccountId`. The post-paint `useEffect` above still
-  // syncs Redux so other consumers observe the forced selection.
-  // const selectedId = welcomeLocked ? AGENT_ID : (activeAccountId ?? AGENT_ID);
   const selectedId = activeAccountId ?? AGENT_ID;
   const active = selectedId === AGENT_ID ? null : (accountsById[selectedId] ?? null);
   const isAgentSelected = selectedId === AGENT_ID;
@@ -201,8 +272,24 @@ const Accounts = () => {
     dispatch(setLastActiveAccount(id));
   };
 
-  const selectAgent = () => dispatch(setActiveAccount(AGENT_ID));
+  const selectAgent = () => {
+    trackEvent('tauri_browser_click', {
+      surface: 'chat_right_sidebar',
+      action: 'select_agent',
+      provider: 'agent',
+    });
+    dispatch(setActiveAccount(AGENT_ID));
+  };
   const selectAccount = (id: string) => {
+    const account = accountsById[id];
+    if (account) {
+      trackEvent('tauri_browser_click', {
+        surface: 'chat_right_sidebar',
+        action: 'select_account',
+        provider: account.provider,
+        account_status: account.status ?? 'unknown',
+      });
+    }
     dispatch(setActiveAccount(id));
     dispatch(setLastActiveAccount(id));
   };
@@ -214,6 +301,15 @@ const Accounts = () => {
 
   const handleLogout = async (accountId: string) => {
     setCtxMenu(null);
+    const account = accountsById[accountId];
+    if (account) {
+      trackEvent('tauri_browser_click', {
+        surface: 'chat_right_sidebar',
+        action: 'disconnect_account',
+        provider: account.provider,
+        account_status: account.status ?? 'unknown',
+      });
+    }
     try {
       await purgeWebviewAccount(accountId);
     } catch {
@@ -239,12 +335,19 @@ const Accounts = () => {
   }, [ctxMenu]);
 
   return (
-    <div className="relative flex h-full gap-3 overflow-hidden">
+    <div
+      // `h-full` makes this page fill the shell's content box, which bypasses
+      className="relative flex h-full gap-3 overflow-hidden"
+      data-testid="accounts-page"
+      data-analytics-id="chat-right-sidebar">
       {/* Narrow icon rail — always rendered. */}
-      {/* [#1123] welcomeLocked guard removed — welcome-agent onboarding replaced by Joyride walkthrough */}
-      <aside className="z-30 flex w-16 flex-none flex-col items-center gap-2 bg-white/60 py-3 backdrop-blur-md my-3 ml-3 rounded-2xl border border-stone-200/70 shadow-soft">
-        <RailButton active={isAgentSelected} onClick={selectAgent} tooltip={t('accounts.agent')}>
-          <AgentIcon className="h-9 w-9 rounded-lg" />
+      <aside className="z-30 flex w-16 flex-none flex-col items-center gap-2 bg-white/60 dark:bg-neutral-900/60 py-3 backdrop-blur-md my-3 ml-3 rounded-2xl border border-stone-200/70 dark:border-neutral-800/70 shadow-soft">
+        <RailButton
+          active={isAgentSelected}
+          onClick={selectAgent}
+          tooltip={t('accounts.agent')}
+          analyticsId="chat-right-sidebar-agent">
+          <AgentIcon className="h-9 w-9 rounded-lg bg-white dark:bg-neutral-200" />
         </RailButton>
 
         {accounts.map(acct => (
@@ -254,14 +357,25 @@ const Accounts = () => {
             onClick={() => selectAccount(acct.id)}
             onContextMenu={e => openContextMenu(acct.id, e)}
             tooltip={acct.label}
+            analyticsId={`chat-right-sidebar-account-${acct.provider}`}
             badge={unreadByAccount[acct.id]}>
             <ProviderIcon provider={acct.provider} className="h-8 w-8 rounded-md" />
           </RailButton>
         ))}
 
         <button
-          onClick={() => setAddOpen(true)}
-          className="group relative mt-2 flex h-11 w-11 items-center justify-center rounded-xl border border-dashed border-stone-300 text-stone-400 hover:z-50 hover:bg-stone-50 hover:text-stone-600"
+          type="button"
+          onClick={() => {
+            trackEvent('tauri_browser_click', {
+              surface: 'chat_right_sidebar',
+              action: 'open_add_account',
+              provider: 'none',
+            });
+            setAddOpen(true);
+          }}
+          data-analytics-id="chat-right-sidebar-add-account"
+          data-testid="accounts-add-button"
+          className="group relative mt-2 flex h-11 w-11 items-center justify-center rounded-xl border border-dashed border-stone-300 dark:border-neutral-700 text-stone-400 dark:text-neutral-500 hover:z-50 hover:bg-stone-50 dark:hover:bg-neutral-800/60 hover:text-stone-600 dark:hover:text-neutral-300"
           aria-label={t('accounts.addAccount')}>
           <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -274,31 +388,46 @@ const Accounts = () => {
         </button>
       </aside>
 
-      {/* Main pane */}
-      <main className="flex min-w-0 flex-1 flex-col">
+      {/* "Talk to Tiny" face-mode toggle — hidden (kept for potential re-enable). */}
+
+      {/* Main pane
+          In face mode (agent selected), the layout is a horizontal split:
+          the chat panel on the left and the mascot panel on the right.
+          Face mode is ignored when an external webview account is active. */}
+      <main
+        className={`flex min-w-0 flex-1 gap-3 ${isAgentSelected && faceMode ? 'flex-row' : 'flex-col'}`}>
         {isAgentSelected ? (
-          <div className="flex h-full min-w-0">
-            <div className="min-w-0 flex-1">
-              <AgentChatPanel />
+          <>
+            {/* Agent chat — face mode uses sidebar variant to avoid a second
+                thread list; normal mode uses the full-page variant (AgentChatPanel). */}
+            <div
+              className={`flex min-h-0 min-w-0 flex-col ${faceMode ? 'w-[360px] flex-none' : 'flex-1'}`}>
+              {faceMode ? (
+                // Face mode: mascot sidebar chat. The toggle floats on the page
+                // root (see below) so it never steals height from the composer.
+                // `min-h-0` lets the inner message list scroll instead of growing
+                // and pushing the composer off-screen.
+                <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-stone-200/70 dark:border-neutral-800/70 my-3 mr-0">
+                  <Conversations variant="sidebar" />
+                </div>
+              ) : (
+                // `min-h-0` is required so the chat's internal message list owns
+                // the overflow (scrolls) rather than expanding and shoving the
+                // composer below the viewport on long threads.
+                <div className="min-h-0 flex-1 overflow-hidden">
+                  <AgentChatPanel />
+                </div>
+              )}
             </div>
-            {/* Respond queue side panel hidden for now — bring back when
-                the cross-provider surface is ready to ship. */}
-            {/* <RespondQueuePanel
-              items={respondQueue}
-              count={respondQueueCount}
-              status={respondQueueStatus}
-              error={respondQueueError}
-              onRefresh={() => {
-                void dispatch(fetchRespondQueue());
-              }}
-            /> */}
-          </div>
+            {/* Mascot + TTS panel — only visible in face mode */}
+            {faceMode && <FaceModePanel />}
+          </>
         ) : active ? (
           <div className="flex-1 py-3 pr-3">
             <WebviewHost accountId={active.id} provider={active.provider} />
           </div>
         ) : (
-          <div className="flex flex-1 items-center justify-center text-sm text-stone-400">
+          <div className="flex flex-1 items-center justify-center text-sm text-stone-400 dark:text-neutral-500">
             {t('accounts.noAccounts')}
           </div>
         )}
@@ -313,12 +442,14 @@ const Accounts = () => {
 
       {ctxMenu && (
         <div
-          className="fixed z-50 min-w-[140px] rounded-lg border border-stone-200 bg-white py-1 shadow-strong"
+          className="fixed z-50 min-w-[140px] rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 py-1 shadow-strong"
           style={{ left: ctxMenu.x, top: ctxMenu.y }}
           onMouseDown={e => e.stopPropagation()}>
           <button
+            type="button"
+            data-analytics-id="chat-right-sidebar-disconnect-account"
             onClick={() => void handleLogout(ctxMenu.accountId)}
-            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-coral-600 hover:bg-stone-100">
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-coral-600 hover:bg-stone-100 dark:hover:bg-neutral-800/60">
             <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
                 strokeLinecap="round"

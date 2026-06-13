@@ -4,7 +4,7 @@
  * Verifies:
  * - Renders skill name + on-disk path + destructive confirm copy.
  * - Cancel button fires onClose, does NOT hit the RPC.
- * - Confirm fires `skillsApi.uninstallSkill(name)` and forwards the result
+ * - Confirm fires `workflowsApi.uninstallWorkflow(name)` and forwards the result
  *   to `onUninstalled`, then closes.
  * - RPC error is surfaced inline and the dialog stays open (no onClose).
  * - While in-flight, both buttons disable and Esc no-ops (handled by
@@ -14,21 +14,24 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import UninstallSkillConfirmDialog from '../UninstallSkillConfirmDialog';
-import type { SkillSummary } from '../../../services/api/skillsApi';
+import type { WorkflowSummary } from '../../../services/api/workflowsApi';
 
-vi.mock('../../../services/api/skillsApi', () => ({
-  skillsApi: {
-    uninstallSkill: vi.fn(),
+vi.mock('../../../services/api/workflowsApi', () => ({
+  workflowsApi: {
+    uninstallWorkflow: vi.fn(),
   },
 }));
 
-const fixture: SkillSummary = {
+const fixture: WorkflowSummary = {
   id: 'weather-helper',
   name: 'weather-helper',
   description: 'Weather forecasts',
   version: '',
   author: null,
   tags: [],
+  platforms: [],
+  relatedSkills: [],
+  sourceFormat: 'openhuman',
   tools: [],
   prompts: [],
   location: '/Users/me/.openhuman/skills/weather-helper/SKILL.md',
@@ -40,8 +43,8 @@ const fixture: SkillSummary = {
 
 describe('UninstallSkillConfirmDialog', () => {
   beforeEach(async () => {
-    const { skillsApi } = await import('../../../services/api/skillsApi');
-    vi.mocked(skillsApi.uninstallSkill).mockReset();
+    const { workflowsApi } = await import('../../../services/api/workflowsApi');
+    vi.mocked(workflowsApi.uninstallWorkflow).mockReset();
   });
 
   it('renders skill name, path (stripped of /SKILL.md), and confirm copy', () => {
@@ -52,11 +55,11 @@ describe('UninstallSkillConfirmDialog', () => {
         onUninstalled={vi.fn()}
       />
     );
-    expect(screen.getByText(/Uninstall weather-helper\?/)).toBeInTheDocument();
+    expect(screen.getByText(/Delete weather-helper\?/)).toBeInTheDocument();
     expect(screen.getByText(/permanently deletes/i)).toBeInTheDocument();
     expect(screen.getByText('/Users/me/.openhuman/skills/weather-helper')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Cancel/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^Uninstall$/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Delete$/ })).toBeInTheDocument();
   });
 
   it('Confirm uses skill.id (slug), not skill.name (display), when they diverge', async () => {
@@ -65,14 +68,14 @@ describe('UninstallSkillConfirmDialog', () => {
     // by slug — the UI must pass `skill.id` (the slug).
     const onClose = vi.fn();
     const onUninstalled = vi.fn();
-    const { skillsApi } = await import('../../../services/api/skillsApi');
-    vi.mocked(skillsApi.uninstallSkill).mockResolvedValueOnce({
+    const { workflowsApi } = await import('../../../services/api/workflowsApi');
+    vi.mocked(workflowsApi.uninstallWorkflow).mockResolvedValueOnce({
       name: 'weather-helper',
       removedPath: '/Users/me/.openhuman/skills/weather-helper',
       scope: 'user',
     });
 
-    const divergent: SkillSummary = {
+    const divergent: WorkflowSummary = {
       ...fixture,
       id: 'weather-helper',
       name: 'Weather Helper (Pro)',
@@ -87,14 +90,14 @@ describe('UninstallSkillConfirmDialog', () => {
     fireEvent.click(screen.getByTestId('uninstall-skill-confirm'));
 
     await waitFor(() => {
-      expect(vi.mocked(skillsApi.uninstallSkill)).toHaveBeenCalledWith('weather-helper');
+      expect(vi.mocked(workflowsApi.uninstallWorkflow)).toHaveBeenCalledWith('weather-helper');
     });
-    expect(vi.mocked(skillsApi.uninstallSkill)).not.toHaveBeenCalledWith('Weather Helper (Pro)');
+    expect(vi.mocked(workflowsApi.uninstallWorkflow)).not.toHaveBeenCalledWith('Weather Helper (Pro)');
   });
 
   it('Cancel fires onClose without calling the RPC', async () => {
     const onClose = vi.fn();
-    const { skillsApi } = await import('../../../services/api/skillsApi');
+    const { workflowsApi } = await import('../../../services/api/workflowsApi');
     render(
       <UninstallSkillConfirmDialog
         skill={fixture}
@@ -104,14 +107,14 @@ describe('UninstallSkillConfirmDialog', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: /Cancel/ }));
     expect(onClose).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(skillsApi.uninstallSkill)).not.toHaveBeenCalled();
+    expect(vi.mocked(workflowsApi.uninstallWorkflow)).not.toHaveBeenCalled();
   });
 
-  it('Confirm calls skillsApi.uninstallSkill and forwards result to onUninstalled', async () => {
+  it('Confirm calls workflowsApi.uninstallWorkflow and forwards result to onUninstalled', async () => {
     const onClose = vi.fn();
     const onUninstalled = vi.fn();
-    const { skillsApi } = await import('../../../services/api/skillsApi');
-    vi.mocked(skillsApi.uninstallSkill).mockResolvedValueOnce({
+    const { workflowsApi } = await import('../../../services/api/workflowsApi');
+    vi.mocked(workflowsApi.uninstallWorkflow).mockResolvedValueOnce({
       name: 'weather-helper',
       removedPath: '/Users/me/.openhuman/skills/weather-helper',
       scope: 'user',
@@ -127,12 +130,12 @@ describe('UninstallSkillConfirmDialog', () => {
     fireEvent.click(screen.getByTestId('uninstall-skill-confirm'));
 
     await waitFor(() => {
-      expect(vi.mocked(skillsApi.uninstallSkill)).toHaveBeenCalledWith('weather-helper');
+      expect(vi.mocked(workflowsApi.uninstallWorkflow)).toHaveBeenCalledWith('weather-helper');
     });
     // Assert the caller passed the slug (`id`) — not the frontmatter
     // display name. Regression guard for the #781 fix that swapped
     // `skill.name` → `skill.id` in the confirm handler.
-    expect(vi.mocked(skillsApi.uninstallSkill)).toHaveBeenCalledWith(fixture.id);
+    expect(vi.mocked(workflowsApi.uninstallWorkflow)).toHaveBeenCalledWith(fixture.id);
     await waitFor(() => {
       expect(onUninstalled).toHaveBeenCalledWith({
         name: 'weather-helper',
@@ -148,8 +151,8 @@ describe('UninstallSkillConfirmDialog', () => {
   it('surfaces RPC errors inline and keeps the dialog open', async () => {
     const onClose = vi.fn();
     const onUninstalled = vi.fn();
-    const { skillsApi } = await import('../../../services/api/skillsApi');
-    vi.mocked(skillsApi.uninstallSkill).mockRejectedValueOnce(
+    const { workflowsApi } = await import('../../../services/api/workflowsApi');
+    vi.mocked(workflowsApi.uninstallWorkflow).mockRejectedValueOnce(
       new Error("skill 'weather-helper' is not installed")
     );
 
@@ -163,7 +166,7 @@ describe('UninstallSkillConfirmDialog', () => {
     fireEvent.click(screen.getByTestId('uninstall-skill-confirm'));
 
     await waitFor(() => {
-      expect(screen.getByText(/Could not uninstall/)).toBeInTheDocument();
+      expect(screen.getByText(/Failed to delete workflow/)).toBeInTheDocument();
     });
     expect(screen.getByText(/is not installed/)).toBeInTheDocument();
     expect(onClose).not.toHaveBeenCalled();
@@ -174,18 +177,18 @@ describe('UninstallSkillConfirmDialog', () => {
   });
 
   it('disables buttons while the RPC is in flight', async () => {
-    const { skillsApi } = await import('../../../services/api/skillsApi');
+    const { workflowsApi } = await import('../../../services/api/workflowsApi');
     type UninstallResolve = (v: {
       name: string;
       removedPath: string;
-      scope: SkillSummary['scope'];
+      scope: WorkflowSummary['scope'];
     }) => void;
     const deferred: { resolve?: UninstallResolve } = {};
-    vi.mocked(skillsApi.uninstallSkill).mockReturnValueOnce(
+    vi.mocked(workflowsApi.uninstallWorkflow).mockReturnValueOnce(
       new Promise<{
         name: string;
         removedPath: string;
-        scope: SkillSummary['scope'];
+        scope: WorkflowSummary['scope'];
       }>(resolve => {
         deferred.resolve = resolve;
       })
@@ -205,7 +208,7 @@ describe('UninstallSkillConfirmDialog', () => {
       const confirm = screen.getByTestId('uninstall-skill-confirm') as HTMLButtonElement;
       expect(cancel.disabled).toBe(true);
       expect(confirm.disabled).toBe(true);
-      expect(confirm.textContent).toMatch(/Uninstalling/);
+      expect(confirm.textContent).toMatch(/Deleting/);
     });
 
     deferred.resolve?.({

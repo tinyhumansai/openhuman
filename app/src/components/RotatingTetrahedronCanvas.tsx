@@ -4,6 +4,8 @@ import * as THREE from 'three';
 import { useEffect, useRef, useState } from 'react';
 import { ConvexGeometry } from 'three/addons/geometries/ConvexGeometry.js';
 
+import { useT } from '../lib/i18n/I18nContext';
+
 interface RotatingTetrahedronCanvasProps {
   inverted?: boolean;
 }
@@ -32,6 +34,7 @@ function bluntedTetrahedronPoints(scale: number, bluntness = 0.12): THREE.Vector
 export default function RotatingTetrahedronCanvas({
   inverted = false,
 }: RotatingTetrahedronCanvasProps) {
+  const { t } = useT();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const fillMaterialRef = useRef<THREE.MeshLambertMaterial | null>(null);
   const edgeMaterialRef = useRef<THREE.LineBasicMaterial | null>(null);
@@ -184,7 +187,7 @@ export default function RotatingTetrahedronCanvas({
     <canvas
       ref={canvasRef}
       style={{ width: '100%', height: '100%', display: 'block' }}
-      aria-label="Rotating inverted tetrahedron spacecraft"
+      aria-label={t('art.rotatingTetrahedronAria')}
     />
   );
 }

@@ -8,7 +8,7 @@
     "noEmit": true,
     "esModuleInterop": true,
     "resolveJsonModule": true,
-    "types": ["@wdio/globals/types", "@wdio/mocha-framework", "node"]
+    "types": ["@wdio/globals/types", "@wdio/mocha-framework", "@playwright/test", "node"]
   },
-  "include": ["e2e/**/*.ts", "wdio.conf.ts"]
+  "include": ["e2e/**/*.ts", "playwright/**/*.ts", "wdio.conf.ts"]
 }

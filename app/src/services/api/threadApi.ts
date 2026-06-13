@@ -9,12 +9,17 @@ import type {
   ThreadsListData,
 } from '../../types/thread';
 import type {
+  AgentRun,
+  AgentRunGetResponse,
+  AgentRunListResponse,
   ClearTurnStateResponse,
   GetTaskBoardResponse,
   GetTurnStateResponse,
   ListTurnStatesResponse,
   PersistedTurnState,
   PutTaskBoardResponse,
+  RunEvent,
+  RunEventListResponse,
   TaskBoard,
   TaskBoardCard,
 } from '../../types/turnState';
@@ -143,6 +148,43 @@ export const threadApi = {
     return Boolean(data?.cleared);
   },
 
+  listRuns: async (filters?: {
+    status?: string;
+    kind?: string;
+    parentRunId?: string;
+    parentThreadId?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<AgentRun[]> => {
+    const response = await callCoreRpc<{ data?: AgentRunListResponse }>({
+      method: 'openhuman.run_ledger_list',
+      params: filters ?? {},
+    });
+    const data = unwrapEnvelope(response);
+    return data?.runs ?? [];
+  },
+
+  getRun: async (id: string): Promise<AgentRun | null> => {
+    const response = await callCoreRpc<{ data?: AgentRunGetResponse }>({
+      method: 'openhuman.run_ledger_get',
+      params: { id },
+    });
+    const data = unwrapEnvelope(response);
+    return data?.run ?? null;
+  },
+
+  listRunEvents: async (
+    runId: string,
+    options?: { afterSequence?: number; limit?: number }
+  ): Promise<RunEvent[]> => {
+    const response = await callCoreRpc<{ data?: RunEventListResponse }>({
+      method: 'openhuman.run_ledger_events',
+      params: { runId, ...options },
+    });
+    const data = unwrapEnvelope(response);
+    return data?.events ?? [];
+  },
+
   getTaskBoard: async (threadId: string): Promise<TaskBoard | null> => {
     const response = await callCoreRpc<{ data?: GetTaskBoardResponse }>({
       method: 'openhuman.threads_task_board_get',
@@ -161,10 +203,44 @@ export const threadApi = {
     return data?.taskBoard ?? null;
   },
 
+  /**
+   * Approve or reject a task-board card that is awaiting plan approval
+   * (`openhuman.todos_decide_plan`). Approve → the card becomes runnable
+   * (`ready`); reject → `rejected`. Returns the updated board (rebuilt from
+   * the returned todos snapshot) or null.
+   */
+  decidePlan: async (
+    threadId: string,
+    cardId: string,
+    approve: boolean
+  ): Promise<TaskBoard | null> => {
+    const response = await callCoreRpc<{
+      data?: { threadId?: string | null; cards?: TaskBoardCard[] };
+    }>({
+      method: 'openhuman.todos_decide_plan',
+      params: { thread_id: threadId, id: cardId, approve },
+    });
+    const data = unwrapEnvelope(response);
+    if (!data?.cards) return null;
+    return {
+      threadId: data.threadId ?? threadId,
+      cards: data.cards,
+      updatedAt: new Date().toISOString(),
+    };
+  },
+
   updateLabels: async (threadId: string, labels: string[]): Promise<Thread> => {
     const response = await callCoreRpc<Envelope<Thread>>({
       method: 'openhuman.threads_update_labels',
       params: { thread_id: threadId, labels },
+    });
+    return unwrapEnvelope(response);
+  },
+
+  updateTitle: async (threadId: string, title: string): Promise<Thread> => {
+    const response = await callCoreRpc<Envelope<Thread>>({
+      method: 'openhuman.threads_update_title',
+      params: { thread_id: threadId, title },
     });
     return unwrapEnvelope(response);
   },

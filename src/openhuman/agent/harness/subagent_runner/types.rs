@@ -3,8 +3,11 @@
 //! external callers importing these shapes don't drag in the full
 //! orchestration machinery.
 
+use std::path::PathBuf;
 use std::time::Duration;
 use thiserror::Error;
+
+use crate::openhuman::inference::provider::ChatMessage;
 
 /// Per-spawn options that override or augment what the
 /// [`AgentDefinition`] specifies. Built by `SpawnSubagentTool::execute`
@@ -41,6 +44,50 @@ pub struct SubagentRunOptions {
     /// every assistant message and tool result in the inner loop is
     /// appended to this thread in the global ConversationStore.
     pub worker_thread_id: Option<String>,
+
+    /// Pre-populated conversation history for resuming a paused
+    /// sub-agent (checkpoint + replay). When `Some`, the runner skips
+    /// system-prompt + user-message construction and uses this history
+    /// directly — it already contains the system prompt and all prior
+    /// turns including the clarification tool call/result.
+    pub initial_history: Option<Vec<ChatMessage>>,
+
+    /// Directory for writing/reading checkpoint files when the
+    /// sub-agent pauses for user input. Defaults to
+    /// `{workspace_dir}/.openhuman/subagent_checkpoints/`.
+    pub checkpoint_dir: Option<PathBuf>,
+
+    /// Per-worker `action_dir` override for git-worktree isolation.
+    ///
+    /// When `Some`, the runner installs this path as the
+    /// `current_action_dir_override` task-local around the inner tool-call
+    /// loop, so acting tools (shell, git) operate inside the worker's
+    /// isolated worktree checkout instead of the shared `Config.action_dir`.
+    /// When `None` (the default), behaviour is unchanged — tools fall through
+    /// to `security.action_dir`.
+    pub worktree_action_dir: Option<PathBuf>,
+
+    /// Steering channel for a running (typically async) sub-agent. When set,
+    /// the inner `run_turn_engine` drains steer/collect messages from this
+    /// queue at iteration boundaries — exactly like the main agent loop — so
+    /// the parent can `steer_subagent` mid-flight. `None` keeps today's
+    /// non-steerable behaviour.
+    pub run_queue: Option<std::sync::Arc<crate::openhuman::agent::harness::run_queue::RunQueue>>,
+}
+
+/// Terminal status of a sub-agent run.
+#[derive(Debug, Clone)]
+pub enum SubagentRunStatus {
+    /// The sub-agent completed normally with a final response.
+    Completed,
+    /// The sub-agent called `ask_user_clarification` and is waiting
+    /// for the orchestrator to relay the user's answer via
+    /// `continue_subagent`. The checkpoint file contains the full
+    /// conversation history for resumption.
+    AwaitingUser {
+        question: String,
+        options: Option<Vec<String>>,
+    },
 }
 
 /// Outcome of a single sub-agent run, returned to the parent.
@@ -58,6 +105,8 @@ pub struct SubagentRunOutcome {
     pub elapsed: Duration,
     /// Which execution mode was used (Typed vs. Fork).
     pub mode: SubagentMode,
+    /// Whether the run completed or paused for user input.
+    pub status: SubagentRunStatus,
 }
 
 /// Which prompt-construction path the runner took for a sub-agent.
@@ -80,6 +129,25 @@ impl SubagentMode {
     }
 }
 
+/// Serialisable checkpoint written when a sub-agent pauses for user input.
+/// Contains everything needed to resume the run from where it left off.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SubagentCheckpointData {
+    pub task_id: String,
+    pub agent_id: String,
+    pub worker_thread_id: Option<String>,
+    pub history: Vec<ChatMessage>,
+    pub question: String,
+    pub options: Option<Vec<String>>,
+    /// Composio toolkit override, if the paused run was scoped to one.
+    pub toolkit_override: Option<String>,
+    /// Workflow filter override, if the paused run was scoped to one.
+    pub skill_filter_override: Option<String>,
+    /// Model override, if one was set for this run.
+    pub model_override: Option<String>,
+    pub created_at: String,
+}
+
 /// Errors the runner can surface to the parent. The parent receives a
 /// stringified version inside a tool result block.
 #[derive(Debug, Error)]
@@ -99,6 +167,12 @@ pub enum SubagentRunError {
 
     #[error("provider call failed: {0}")]
     Provider(#[from] anyhow::Error),
+
+    #[error("sub-agent spawn depth exceeded: attempted depth {attempted_depth}, max {max_depth}")]
+    SpawnDepthExceeded {
+        attempted_depth: usize,
+        max_depth: usize,
+    },
 
     #[error("sub-agent exceeded maximum iterations ({0})")]
     MaxIterationsExceeded(usize),

@@ -58,6 +58,7 @@ SUPPORTED = [
     "darwin-aarch64",
     "darwin-x86_64",
     "linux-x86_64",
+    "linux-aarch64",
     "windows-x86_64",
 ]
 
@@ -67,7 +68,8 @@ SUPPORTED = [
 ASSET_PATTERNS = {
     "darwin-aarch64": r"aarch64.*\.app\.tar\.gz$|aarch64\.dmg$",
     "darwin-x86_64":  r"(x86_64-apple-darwin|x64).*\.app\.tar\.gz$|x64\.dmg$",
-    "linux-x86_64":   r"\.AppImage$",
+    "linux-x86_64":   r"amd64\.AppImage$",
+    "linux-aarch64":  r"(arm64|aarch64)\.AppImage$",
     "windows-x86_64": r"x64.*\.msi$|x64.*setup\.exe$",
 }
 

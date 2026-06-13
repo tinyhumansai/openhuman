@@ -69,9 +69,16 @@ pub const PRICING_TABLE: &[ModelPricing] = &[
         cached_input_per_mtok_usd: 1.50,
         output_per_mtok_usd: 75.00,
     },
-    // Quick reasoning tier — Kimi K2.6 Turbo on Fireworks (backend PR
-    // #760). Low TTFT, 128k context, `supportsThinking: false`. Rates
-    // track Fireworks' published Kimi turbo pricing at time of writing.
+    // Chat tier — Kimi K2.6 Turbo on Fireworks (backend PR #760).
+    // Low TTFT, 128k context, `supportsThinking: false`. Rates track
+    // Fireworks' published Kimi turbo pricing at time of writing.
+    ModelPricing {
+        model: "chat-v1",
+        input_per_mtok_usd: 0.60,
+        cached_input_per_mtok_usd: 0.06,
+        output_per_mtok_usd: 2.50,
+    },
+    // Legacy chat tier slug retained for older transcripts/configs.
     ModelPricing {
         model: "reasoning-quick-v1",
         input_per_mtok_usd: 0.60,

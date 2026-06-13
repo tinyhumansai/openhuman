@@ -1,8 +1,10 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+use crate::openhuman::agent::tool_policy::GeneratedToolRuntimeContext;
+
 // Re-export the unified ToolResult from the lightweight skills types module so all tools use one type.
-pub use crate::openhuman::skills::types::{ToolContent, ToolResult};
+pub use crate::openhuman::workflows::types::{ToolContent, ToolResult};
 
 /// Controls where a tool is available.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,11 +26,11 @@ pub enum ToolScope {
 /// - **System tools** are built-in Rust implementations (shell, file_read,
 ///   file_write, cron_*, memory_*, …) that run inside the core process
 ///   with direct host access.
-/// - **Skill tools** are integration-facing tools that talk to external
+/// - **Workflow tools** are integration-facing tools that talk to external
 ///   services (for example Composio-backed SaaS actions).
 ///
 /// The orchestrator uses this category to spawn dedicated tool-execution
-/// sub-agents: one scoped to `Skill` for service integrations (running
+/// sub-agents: one scoped to `Workflow` for service integrations (running
 /// with the backend's `agentic` model hint), and others scoped to
 /// `System` for code/file/host work.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -37,15 +39,23 @@ pub enum ToolCategory {
     /// Built-in Rust tools with direct host access.
     #[default]
     System,
-    /// Integration-facing tools that reach external services.
-    Skill,
+    /// Integration-facing tools that reach external services (Composio-backed
+    /// SaaS actions, "runners"). The Rust ident was swept to `Workflow` during
+    /// the skills→workflows unification, but this category is NOT a WORKFLOW.md
+    /// bundle — it's the integration-tool class the integrations subagent
+    /// filters on via `category_filter = "skill"`. The wire format is pinned to
+    /// `"skill"` so existing agent definitions keep parsing; the ident is
+    /// provisional and gets revisited when the integrations_agent is reworked
+    /// (Phase 4 / "runners → Intelligence").
+    #[serde(rename = "skill")]
+    Workflow,
 }
 
 impl std::fmt::Display for ToolCategory {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::System => write!(f, "system"),
-            Self::Skill => write!(f, "skill"),
+            Self::Workflow => write!(f, "skill"),
         }
     }
 }
@@ -152,10 +162,32 @@ pub trait Tool: Send + Sync {
     }
 
     /// Permission level required to execute this tool.
-    /// Channels with a lower maximum permission level will reject this tool.
+    ///
+    /// For tools that expose multiple actions with different permission
+    /// requirements, this should return the **minimum** level needed by
+    /// any action — so the tool is not statically blocked on channels that
+    /// could legitimately run the read-only actions. The per-call level is
+    /// enforced by [`Self::permission_level_with_args`].
+    ///
+    /// Channels with a lower maximum permission level will reject this tool
+    /// before any per-call check runs.
     /// Default: `ReadOnly`. Override for write/execute/dangerous tools.
     fn permission_level(&self) -> PermissionLevel {
         PermissionLevel::ReadOnly
+    }
+
+    /// Args-aware version of [`Self::permission_level`].
+    ///
+    /// Tools that expose multiple actions with differing permission
+    /// requirements (e.g. `schedule list` vs `schedule create`) override
+    /// this to return the exact level for the specific call. The agent
+    /// harness calls this at call time to enforce the per-action level
+    /// against the channel's `allowed_permission`.
+    ///
+    /// Default: delegates to the arg-less [`Self::permission_level`] so
+    /// existing tools keep working without changes.
+    fn permission_level_with_args(&self, _args: &serde_json::Value) -> PermissionLevel {
+        self.permission_level()
     }
 
     /// Where this tool may be executed. Default: `All`.
@@ -165,7 +197,7 @@ pub trait Tool: Send + Sync {
     }
 
     /// Category of this tool — `System` for built-in Rust tools (default)
-    /// or `Skill` for integration-facing tools.
+    /// or `Workflow` for integration-facing tools.
     fn category(&self) -> ToolCategory {
         ToolCategory::System
     }
@@ -193,6 +225,48 @@ pub trait Tool: Send + Sync {
     /// dispatch follow-up issue.
     fn is_concurrency_safe(&self, _args: &serde_json::Value) -> bool {
         false
+    }
+
+    /// Whether this tool produces an externally-observable side effect
+    /// (outbound Slack/Telegram/email/calendar/webhook write, etc.).
+    ///
+    /// When `true`, the agent harness routes the call through the
+    /// `ApprovalGate` before `execute()` runs. Local file writes,
+    /// memory writes, and TTS `reply_speech` stay `false` — they are
+    /// either reversible inside the user's machine or considered
+    /// internal per issue #1339.
+    ///
+    /// Default: `false`. Override on tools that talk to external
+    /// services on the user's behalf.
+    fn external_effect(&self) -> bool {
+        false
+    }
+
+    /// Args-aware version of [`Self::external_effect`]. Tools whose
+    /// classification depends on the call arguments (e.g. the
+    /// `composio` tool gates `action="execute"` but lets
+    /// `action="list"` / `action="connect"` flow through unprompted)
+    /// override this method to peek at `args`.
+    ///
+    /// The harness calls this method (not the arg-less variant) at
+    /// the gate-decision point, so most tools that need per-call
+    /// gating should override here rather than [`Self::external_effect`].
+    /// Default: defer to the arg-less classification so existing
+    /// overrides keep working without changes.
+    fn external_effect_with_args(&self, _args: &serde_json::Value) -> bool {
+        self.external_effect()
+    }
+
+    /// Optional generated-tool runtime metadata for policy enforcement.
+    ///
+    /// Generated or externally supplied tools can override this to let
+    /// the agent policy layer apply provider/capability/risk rules before
+    /// execution. Built-in tools leave it unset.
+    fn generated_runtime_context(
+        &self,
+        _args: &serde_json::Value,
+    ) -> Option<GeneratedToolRuntimeContext> {
+        None
     }
 
     /// Per-tool cap on the character length of the result body sent
@@ -323,6 +397,12 @@ mod tests {
         assert!(tool.max_result_size_chars().is_none());
     }
 
+    #[test]
+    fn default_external_effect_is_false() {
+        let tool = DummyTool;
+        assert!(!tool.external_effect());
+    }
+
     // ── PermissionLevel ordering ───────────────────────────────────
 
     #[test]
@@ -375,7 +455,7 @@ mod tests {
     #[test]
     fn tool_category_display_is_lowercase() {
         assert_eq!(ToolCategory::System.to_string(), "system");
-        assert_eq!(ToolCategory::Skill.to_string(), "skill");
+        assert_eq!(ToolCategory::Workflow.to_string(), "skill");
     }
 
     #[test]
@@ -385,10 +465,10 @@ mod tests {
         // definition files.
         let s = serde_json::to_string(&ToolCategory::System).unwrap();
         assert_eq!(s, "\"system\"");
-        let s = serde_json::to_string(&ToolCategory::Skill).unwrap();
+        let s = serde_json::to_string(&ToolCategory::Workflow).unwrap();
         assert_eq!(s, "\"skill\"");
         let back: ToolCategory = serde_json::from_str("\"skill\"").unwrap();
-        assert_eq!(back, ToolCategory::Skill);
+        assert_eq!(back, ToolCategory::Workflow);
     }
 
     // ── ToolScope ──────────────────────────────────────────────────

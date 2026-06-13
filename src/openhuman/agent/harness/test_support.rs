@@ -263,6 +263,7 @@ impl Provider for KeywordScriptedProvider {
                             id: format!("call_{id}"),
                             name: c.name.clone(),
                             arguments: c.arguments.to_string(),
+                            extra_content: None,
                         }
                     })
                     .collect()
@@ -302,6 +303,7 @@ impl Provider for KeywordScriptedProvider {
             text: text.clone(),
             tool_calls: tool_calls.clone(),
             usage: None,
+            reasoning_content: None,
         };
 
         state.turns.push(ProviderTurn {

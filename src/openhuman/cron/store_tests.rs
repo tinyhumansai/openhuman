@@ -7,6 +7,7 @@ use tempfile::TempDir;
 fn test_config(tmp: &TempDir) -> Config {
     let config = Config {
         workspace_dir: tmp.path().join("workspace"),
+        action_dir: tmp.path().join("workspace"),
         config_path: tmp.path().join("config.toml"),
         ..Config::default()
     };
@@ -79,12 +80,15 @@ fn due_jobs_filters_by_timestamp_and_enabled() {
 
     let job = add_job(&config, "* * * * *", "echo due").unwrap();
 
-    let due_now = due_jobs(&config, Utc::now()).unwrap();
-    assert!(due_now.is_empty(), "new job should not be due immediately");
+    let before_next_run = job.next_run - ChronoDuration::seconds(1);
+    let due_before_next_run = due_jobs(&config, before_next_run).unwrap();
+    assert!(
+        due_before_next_run.is_empty(),
+        "job should not be due before its next_run timestamp"
+    );
 
-    let far_future = Utc::now() + ChronoDuration::days(365);
-    let due_future = due_jobs(&config, far_future).unwrap();
-    assert_eq!(due_future.len(), 1, "job should be due in far future");
+    let due_at_next_run = due_jobs(&config, job.next_run).unwrap();
+    assert_eq!(due_at_next_run.len(), 1, "job should be due at next_run");
 
     let _ = update_job(
         &config,
@@ -95,7 +99,7 @@ fn due_jobs_filters_by_timestamp_and_enabled() {
         },
     )
     .unwrap();
-    let due_after_disable = due_jobs(&config, far_future).unwrap();
+    let due_after_disable = due_jobs(&config, job.next_run).unwrap();
     assert!(due_after_disable.is_empty());
 }
 
@@ -235,4 +239,155 @@ fn reschedule_after_run_truncates_last_output() {
     let last_output = stored.last_output.as_deref().unwrap_or_default();
     assert!(last_output.ends_with(TRUNCATED_OUTPUT_MARKER));
     assert!(last_output.len() <= MAX_CRON_OUTPUT_BYTES);
+}
+
+// ── dedup_named_jobs ─────────────────────────────────────────────
+
+#[test]
+fn dedup_named_jobs_no_op_on_empty_db() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    let removed = dedup_named_jobs(&config).unwrap();
+    assert_eq!(removed, 0);
+}
+
+#[test]
+fn dedup_named_jobs_no_op_when_no_duplicates() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    add_shell_job(
+        &config,
+        Some("job_a".into()),
+        Schedule::Cron {
+            expr: "*/5 * * * *".into(),
+            tz: None,
+            active_hours: None,
+        },
+        "echo a",
+    )
+    .unwrap();
+    add_shell_job(
+        &config,
+        Some("job_b".into()),
+        Schedule::Cron {
+            expr: "*/10 * * * *".into(),
+            tz: None,
+            active_hours: None,
+        },
+        "echo b",
+    )
+    .unwrap();
+    let removed = dedup_named_jobs(&config).unwrap();
+    assert_eq!(removed, 0);
+    assert_eq!(list_jobs(&config).unwrap().len(), 2);
+}
+
+#[test]
+fn dedup_named_jobs_removes_duplicates_keeping_history() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+
+    // Insert two jobs with the same name directly — simulating the old double-seed bug.
+    let job_a = add_shell_job(
+        &config,
+        Some("morning_briefing".into()),
+        Schedule::Cron {
+            expr: "0 7 * * *".into(),
+            tz: None,
+            active_hours: None,
+        },
+        "echo briefing",
+    )
+    .unwrap();
+    let job_b = add_shell_job(
+        &config,
+        Some("morning_briefing".into()),
+        Schedule::Cron {
+            expr: "0 7 * * *".into(),
+            tz: None,
+            active_hours: None,
+        },
+        "echo briefing",
+    )
+    .unwrap();
+
+    // Add run history to job_a — it should survive.
+    let now = Utc::now();
+    record_run(
+        &config,
+        &job_a.id,
+        now,
+        now + ChronoDuration::seconds(1),
+        "ok",
+        Some("output"),
+        1000,
+    )
+    .unwrap();
+
+    let removed = dedup_named_jobs(&config).unwrap();
+    assert_eq!(removed, 1);
+
+    let remaining = list_jobs(&config).unwrap();
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(
+        remaining[0].id, job_a.id,
+        "job with run history should be kept"
+    );
+    assert!(
+        get_job(&config, &job_b.id).is_err(),
+        "duplicate without history should be removed"
+    );
+}
+
+#[test]
+fn dedup_named_jobs_keeps_earliest_when_history_tied() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+
+    // Both jobs have no run history — tie broken by earliest created_at.
+    let job_a = add_shell_job(
+        &config,
+        Some("routine".into()),
+        Schedule::Cron {
+            expr: "0 8 * * *".into(),
+            tz: None,
+            active_hours: None,
+        },
+        "echo first",
+    )
+    .unwrap();
+    let job_b = add_shell_job(
+        &config,
+        Some("routine".into()),
+        Schedule::Cron {
+            expr: "0 8 * * *".into(),
+            tz: None,
+            active_hours: None,
+        },
+        "echo second",
+    )
+    .unwrap();
+
+    let removed = dedup_named_jobs(&config).unwrap();
+    assert_eq!(removed, 1);
+
+    let remaining = list_jobs(&config).unwrap();
+    assert_eq!(remaining.len(), 1);
+    // job_a was created first — it should win the tie.
+    assert_eq!(remaining[0].id, job_a.id, "earliest job should be kept");
+    assert!(get_job(&config, &job_b.id).is_err());
+}
+
+#[test]
+fn dedup_named_jobs_ignores_unnamed_jobs() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+
+    // Unnamed jobs (name = NULL) — dedup should not touch them.
+    add_job(&config, "*/5 * * * *", "echo unnamed-1").unwrap();
+    add_job(&config, "*/5 * * * *", "echo unnamed-2").unwrap();
+
+    let removed = dedup_named_jobs(&config).unwrap();
+    assert_eq!(removed, 0);
+    assert_eq!(list_jobs(&config).unwrap().len(), 2);
 }

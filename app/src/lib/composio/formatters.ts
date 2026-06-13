@@ -36,7 +36,7 @@ export function formatComposioToolError(raw: string | null | undefined): string 
 
 export function formatTriggerLabel(
   slug: string | null | undefined,
-  opts?: { overrides?: Record<string, string> }
+  opts?: { overrides?: Record<string, string>; toolkit?: string | null }
 ): string {
   if (!slug) return '';
   if (opts?.overrides && Object.prototype.hasOwnProperty.call(opts.overrides, slug)) {
@@ -61,6 +61,38 @@ export function formatTriggerLabel(
       if (first === second + third) {
         tokens.shift();
       }
+    }
+  }
+
+  // Strip remaining leading toolkit tokens when the caller supplies the
+  // toolkit slug/name — keeps the label focused on the *event* part.
+  // e.g. with toolkit='googlecalendar' or 'Google Calendar':
+  //   GOOGLE CALENDAR EVENT CREATED -> EVENT CREATED
+  if (opts?.toolkit && tokens.length > 1) {
+    const toolkitTokens = opts.toolkit
+      .toUpperCase()
+      .split(/[\s_]+/)
+      .filter(t => t.length > 0);
+    // Build a virtual concatenation of the toolkit ("GOOGLECALENDAR") so we
+    // can also drop a single-glued token like 'GOOGLECALENDAR' that maps to
+    // multiple display words.
+    const toolkitGlued = toolkitTokens.join('');
+
+    // Drop a single-token gluing first.
+    if (tokens[0].toUpperCase() === toolkitGlued && tokens.length > 1) {
+      tokens.shift();
+    }
+
+    // Then drop consecutive matching tokens, stopping when something else
+    // appears (so we don't accidentally swallow a real event word).
+    let i = 0;
+    while (
+      i < toolkitTokens.length &&
+      tokens.length > 1 &&
+      tokens[0].toUpperCase() === toolkitTokens[i]
+    ) {
+      tokens.shift();
+      i += 1;
     }
   }
 

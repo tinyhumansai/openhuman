@@ -1,20 +1,21 @@
 ---
 name: Type Check
 on:
-  push:
-    branches: [main]
-  pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
+  packages: read
   pull-requests: read
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.head_ref
+  group:
+    ${{ github.workflow }}-${{ github.event.pull_request.number || github.head_ref
     || github.ref }}
   cancel-in-progress: true
 jobs:
   typecheck:
     name: Type Check TypeScript
     runs-on: ubuntu-22.04
+    timeout-minutes: 15
     container:
       image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
     steps:
@@ -46,6 +47,7 @@ jobs:
   rust-quality:
     name: Rust Quality (fmt + clippy)
     runs-on: ubuntu-22.04
+    timeout-minutes: 20
     container:
       image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
     steps:

@@ -263,7 +263,14 @@ impl Provider for IterativeToolProvider {
                 "Completed after {completed_iterations} tool iterations."
             ))
         } else {
-            Ok(tool_call_payload())
+            // Prefix a per-iteration progress note so each turn's assistant
+            // output is distinct. A healthy multi-step agent varies its
+            // narration as it advances; only byte-identical repeats (the
+            // degeneration signature) should trip the harness repeat guard.
+            Ok(format!(
+                "Progress update {completed_iterations}.\n{}",
+                tool_call_payload()
+            ))
         }
     }
 }

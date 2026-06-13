@@ -1,7 +1,7 @@
 import debug from 'debug';
 
 import { callCoreRpc } from '../../../services/coreRpcClient';
-import { MASCOT_VOICE_ID } from '../../../utils/config';
+import { MASCOT_VOICE_ID, MASCOT_VOICE_MODEL_ID } from '../../../utils/config';
 
 const ttsLog = debug('human:tts');
 
@@ -47,6 +47,10 @@ export interface TtsOptions {
  */
 export async function synthesizeSpeech(text: string, opts: TtsOptions = {}): Promise<TtsResponse> {
   const voiceId = opts.voiceId ?? MASCOT_VOICE_ID;
+  // Default model is `eleven_multilingual_v2` so non-English locales
+  // render their native script instead of being phoneticised by an
+  // English-only model. Callers can still override via `modelId`.
+  const modelId = opts.modelId ?? MASCOT_VOICE_MODEL_ID;
   // `prepareForSpeech` collapses to '' on replies that are pure code/markdown
   // formatting. The core RPC rejects empty text, which would propagate as a
   // visible error for what was effectively a no-op reply. Fall back to the
@@ -55,7 +59,7 @@ export async function synthesizeSpeech(text: string, opts: TtsOptions = {}): Pro
   const spoken = prepareForSpeech(text) || text.trim() || '...';
   const params: Record<string, unknown> = { text: spoken };
   if (voiceId) params.voice_id = voiceId;
-  if (opts.modelId) params.model_id = opts.modelId;
+  if (modelId) params.model_id = modelId;
   if (opts.outputFormat) params.output_format = opts.outputFormat;
   ttsLog('synthesize chars=%d (raw=%d) voice=%s', spoken.length, text.length, voiceId ?? 'default');
 

@@ -114,8 +114,8 @@ fn total_builtin_count() {
     // Update this number when new rules are added.
     assert_eq!(
         BUILTIN_RULE_JSONS.len(),
-        96,
-        "expected 96 builtin rules; update this assertion if the vendor set changes"
+        100,
+        "expected 100 builtin rules; update this assertion if the vendor set changes"
     );
 }
 

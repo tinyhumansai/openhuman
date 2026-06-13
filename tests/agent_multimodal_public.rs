@@ -3,7 +3,7 @@ use openhuman_core::openhuman::agent::multimodal::{
     contains_image_markers, count_image_markers, extract_ollama_image_payload, parse_image_markers,
     prepare_messages_for_provider,
 };
-use openhuman_core::openhuman::config::MultimodalConfig;
+use openhuman_core::openhuman::config::{MultimodalConfig, MultimodalFileConfig};
 use openhuman_core::openhuman::inference::provider::ChatMessage;
 
 #[test]
@@ -47,7 +47,12 @@ async fn prepare_messages_passthrough_when_no_user_images_exist() -> Result<()> 
         ChatMessage::user("plain text"),
     ];
 
-    let prepared = prepare_messages_for_provider(&messages, &MultimodalConfig::default()).await?;
+    let prepared = prepare_messages_for_provider(
+        &messages,
+        &MultimodalConfig::default(),
+        &MultimodalFileConfig::default(),
+    )
+    .await?;
     assert!(!prepared.contains_images);
     assert_eq!(prepared.messages.len(), 3);
     assert_eq!(prepared.messages[2].content, "plain text");
@@ -61,7 +66,12 @@ async fn prepare_messages_accepts_data_uris_and_preserves_other_messages() -> Re
         ChatMessage::user("inspect [IMAGE:data:image/PNG;base64,iVBORw0KGgo=]"),
     ];
 
-    let prepared = prepare_messages_for_provider(&messages, &MultimodalConfig::default()).await?;
+    let prepared = prepare_messages_for_provider(
+        &messages,
+        &MultimodalConfig::default(),
+        &MultimodalFileConfig::default(),
+    )
+    .await?;
     assert!(prepared.contains_images);
     assert_eq!(prepared.messages[0].content, "already there");
 
@@ -75,23 +85,35 @@ async fn prepare_messages_accepts_data_uris_and_preserves_other_messages() -> Re
 #[tokio::test]
 async fn prepare_messages_rejects_invalid_data_uri_forms() {
     let invalid_non_base64 = vec![ChatMessage::user("bad [IMAGE:data:image/png,abcd]")];
-    let err = prepare_messages_for_provider(&invalid_non_base64, &MultimodalConfig::default())
-        .await
-        .expect_err("non-base64 data uri should fail");
+    let err = prepare_messages_for_provider(
+        &invalid_non_base64,
+        &MultimodalConfig::default(),
+        &MultimodalFileConfig::default(),
+    )
+    .await
+    .expect_err("non-base64 data uri should fail");
     assert!(err
         .to_string()
         .contains("only base64 data URIs are supported"));
 
     let invalid_mime = vec![ChatMessage::user("bad [IMAGE:data:text/plain;base64,YQ==]")];
-    let err = prepare_messages_for_provider(&invalid_mime, &MultimodalConfig::default())
-        .await
-        .expect_err("unsupported mime should fail");
+    let err = prepare_messages_for_provider(
+        &invalid_mime,
+        &MultimodalConfig::default(),
+        &MultimodalFileConfig::default(),
+    )
+    .await
+    .expect_err("unsupported mime should fail");
     assert!(err.to_string().contains("MIME type is not allowed"));
 
     let invalid_base64 = vec![ChatMessage::user("bad [IMAGE:data:image/png;base64,%%%]")];
-    let err = prepare_messages_for_provider(&invalid_base64, &MultimodalConfig::default())
-        .await
-        .expect_err("invalid base64 should fail");
+    let err = prepare_messages_for_provider(
+        &invalid_base64,
+        &MultimodalConfig::default(),
+        &MultimodalFileConfig::default(),
+    )
+    .await
+    .expect_err("invalid base64 should fail");
     assert!(err.to_string().contains("invalid base64 payload"));
 }
 
@@ -105,8 +127,12 @@ async fn prepare_messages_rejects_unknown_local_mime() {
         "bad [IMAGE:{}]",
         file_path.display()
     ))];
-    let err = prepare_messages_for_provider(&messages, &MultimodalConfig::default())
-        .await
-        .expect_err("unknown mime should fail");
+    let err = prepare_messages_for_provider(
+        &messages,
+        &MultimodalConfig::default(),
+        &MultimodalFileConfig::default(),
+    )
+    .await
+    .expect_err("unknown mime should fail");
     assert!(err.to_string().contains("unknown"));
 }

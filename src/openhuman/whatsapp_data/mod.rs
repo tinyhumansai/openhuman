@@ -19,7 +19,9 @@ pub mod global;
 pub mod ops;
 pub mod rpc;
 mod schemas;
+mod sqlite_retry;
 pub mod store;
+pub mod tools;
 pub mod types;
 
 pub use schemas::{

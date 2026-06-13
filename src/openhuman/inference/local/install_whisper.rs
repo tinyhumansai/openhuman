@@ -80,6 +80,13 @@ fn ggml_filename(size: &str) -> String {
 /// stays stable across whisper.cpp version bumps.
 pub fn model_download_url(size: &str) -> String {
     let filename = ggml_filename(size);
+    if let Some(base) = std::env::var("OPENHUMAN_WHISPER_MODELS_BASE_URL")
+        .ok()
+        .map(|v| v.trim().trim_end_matches('/').to_string())
+        .filter(|v| !v.is_empty())
+    {
+        return format!("{base}/{filename}");
+    }
     format!("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{filename}")
 }
 

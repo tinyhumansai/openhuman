@@ -1,0 +1,29 @@
+id = "skill_setup"
+display_name = "Skill Setup Agent"
+delegate_name = "setup_skills"
+when_to_use = "Skill discovery and installation specialist — browses community skill registries (OpenHuman, HermesHub, ClawHub), searches for skills by keyword or category, installs skills from remote sources, and manages installed skills. Use when the user wants to find, install, update, or remove agent skills."
+temperature = 0.3
+max_iterations = 10
+sandbox_mode = "none"
+agent_tier = "worker"
+omit_identity = true
+omit_memory_context = true
+omit_safety_preamble = false
+omit_skills_catalog = true
+
+[model]
+hint = "chat"
+
+[tools]
+named = [
+    "list_workflows",
+    "describe_workflow",
+    "skill_registry_browse",
+    "skill_registry_search",
+    "skill_registry_sources",
+    "skill_registry_install",
+    "skill_registry_uninstall",
+    "install_workflow_from_url",
+    "uninstall_workflow",
+    "ask_user_clarification",
+]

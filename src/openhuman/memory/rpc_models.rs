@@ -73,6 +73,8 @@ pub struct EmptyRequest {}
 pub struct CreateConversationThreadRequest {
     #[serde(default)]
     pub labels: Option<Vec<String>>,
+    #[serde(default)]
+    pub personality_id: Option<String>,
 }
 
 /// Request payload for `openhuman.memory_init`.
@@ -114,6 +116,8 @@ pub struct ConversationThreadSummary {
     pub parent_thread_id: Option<String>,
     #[serde(default)]
     pub labels: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub personality_id: Option<String>,
 }
 
 /// A single persisted conversation message.
@@ -141,6 +145,8 @@ pub struct UpsertConversationThreadRequest {
     pub parent_thread_id: Option<String>,
     #[serde(default)]
     pub labels: Option<Vec<String>>,
+    #[serde(default)]
+    pub personality_id: Option<String>,
 }
 
 /// Request to update labels for a conversation thread.
@@ -149,6 +155,14 @@ pub struct UpsertConversationThreadRequest {
 pub struct UpdateConversationThreadLabelsRequest {
     pub thread_id: String,
     pub labels: Vec<String>,
+}
+
+/// Request to set a user-specified title on a conversation thread.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateConversationThreadTitleRequest {
+    pub thread_id: String,
+    pub title: String,
 }
 
 /// Response payload for thread list operations.
