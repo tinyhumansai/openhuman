@@ -1503,6 +1503,13 @@ async fn run_server_inner(
     // a no-op if already called (e.g. from run_core_from_args for CLI).
     crate::openhuman::keyring::init_master_key();
 
+    // AgentBox GMI MaaS provider bridge — no-op when env vars absent.
+    // Must run BEFORE `build_core_http_router` mounts the AgentBox routes so
+    // that by the time `/run` accepts traffic the inference catalog already
+    // knows about `"gmi-maas"`. Never panics; missing/blank env vars log a
+    // warning and leave the core booting in degraded mode.
+    crate::openhuman::agentbox::register_gmi_provider_if_present();
+
     // Initialize the per-process RPC bearer token.
     //
     // Preferred path (in-process core spawned by the Tauri shell): the caller
