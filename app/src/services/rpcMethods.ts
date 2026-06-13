@@ -113,6 +113,10 @@ export const LEGACY_METHOD_ALIASES: Record<string, CoreRpcMethod> = {
   'openhuman.local_ai_whisper_install_status': CORE_RPC_METHODS.inferenceWhisperInstallStatus,
   'openhuman.providers_list_models': CORE_RPC_METHODS.inferenceListModels,
   'openhuman.inference_embed': CORE_RPC_METHODS.embeddingsEmbed,
+  health: CORE_RPC_METHODS.healthSnapshot,
+  'health.get': CORE_RPC_METHODS.healthSnapshot,
+  'health.snapshot': CORE_RPC_METHODS.healthSnapshot,
+  'health.status': CORE_RPC_METHODS.healthSnapshot,
   health_snapshot: CORE_RPC_METHODS.healthSnapshot,
   // `openhuman.system_info` was used by older clients / SDK callers before the
   // method was namespaced as `openhuman.health_system_info`.

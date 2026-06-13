@@ -151,8 +151,12 @@ const LEGACY_ALIASES: &[(&str, &str)] = &[
         "openhuman.local_ai_piper_install_status",
         "openhuman.inference_piper_install_status",
     ),
-    // bare `health_snapshot` (no namespace prefix) was used by older clients
-    // before the canonical `openhuman.health_snapshot` form was established.
+    // Older health probes used short or dotted method names before the
+    // canonical `openhuman.health_snapshot` form was established.
+    ("health", "openhuman.health_snapshot"),
+    ("health.get", "openhuman.health_snapshot"),
+    ("health.snapshot", "openhuman.health_snapshot"),
+    ("health.status", "openhuman.health_snapshot"),
     ("health_snapshot", "openhuman.health_snapshot"),
     // `openhuman.system_info` was used by older clients / SDK callers before
     // the method was namespaced under `health` as `openhuman.health_system_info`.
@@ -468,15 +472,19 @@ mod tests {
     }
 
     #[test]
-    fn resolve_legacy_rewrites_bare_health_snapshot() {
-        // Sentry CORE-RUST-FG: older clients (and some SDK callers) issued
-        // `health_snapshot` without the `openhuman.` namespace prefix.  The
-        // alias table must rewrite it to the canonical form so the call
-        // resolves against the registered controller.
-        assert_eq!(
-            resolve_legacy("health_snapshot"),
-            "openhuman.health_snapshot",
-        );
+    fn resolve_legacy_rewrites_health_probe_variants() {
+        // Sentry CORE-RUST-FG / issue #3566: older clients, SDK callers, and
+        // health probes issued un-namespaced or dotted health method variants.
+        // The alias table must rewrite each form to the canonical controller.
+        for method in [
+            "health",
+            "health.get",
+            "health.snapshot",
+            "health.status",
+            "health_snapshot",
+        ] {
+            assert_eq!(resolve_legacy(method), "openhuman.health_snapshot");
+        }
     }
 
     #[test]
