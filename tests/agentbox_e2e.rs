@@ -173,9 +173,7 @@ async fn start_openai_compat_mock() -> MockServer {
 
     Mock::given(method("POST"))
         .and(path("/v1/chat/completions"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(openai_chat_response("stub-reply")),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(openai_chat_response("stub-reply")))
         .mount(&server)
         .await;
 
@@ -223,12 +221,20 @@ async fn agentbox_run_then_poll_completes() {
     //    collides between reservation and re-bind).
     let port = {
         let p = reserve_port();
-        if p < 17788 { 17788 } else { p }
+        if p < 17788 {
+            17788
+        } else {
+            p
+        }
     };
 
     // 3. Spawn the binary under a Drop guard so the child is reaped on
     //    every code path (panic, assertion failure, early return).
-    let guard = ChildGuard::new(spawn_core_with_agentbox(port, workspace.path(), &gmi_base_url));
+    let guard = ChildGuard::new(spawn_core_with_agentbox(
+        port,
+        workspace.path(),
+        &gmi_base_url,
+    ));
 
     // 4. Wait for /health to become ready (~10s bounded).
     wait_health(port, Duration::from_secs(10))
@@ -261,12 +267,12 @@ async fn agentbox_run_then_poll_completes() {
     let deadline = Instant::now() + Duration::from_secs(25);
     let mut last_view: Option<Value> = None;
     while Instant::now() < deadline {
-        let r = client
-            .get(&jobs_url)
-            .send()
-            .await
-            .expect("GET /jobs/{id}");
-        assert_eq!(r.status().as_u16(), 200, "GET /jobs/{{id}} should return 200");
+        let r = client.get(&jobs_url).send().await.expect("GET /jobs/{id}");
+        assert_eq!(
+            r.status().as_u16(),
+            200,
+            "GET /jobs/{{id}} should return 200"
+        );
         let view: Value = r.json().await.expect("parse /jobs JSON");
         let status = view
             .get("status")

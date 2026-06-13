@@ -109,7 +109,10 @@ async fn get_unknown_job_returns_404() {
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     let body = body_json(resp).await;
-    assert_eq!(body.get("error").and_then(|v| v.as_str()), Some("job not found"));
+    assert_eq!(
+        body.get("error").and_then(|v| v.as_str()),
+        Some("job not found")
+    );
 }
 
 #[tokio::test]
@@ -127,7 +130,10 @@ async fn run_then_poll_until_completed_returns_assistant_message() {
         .unwrap();
     let resp = app.clone().oneshot(submit).await.unwrap();
     assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let id = body_json(resp).await["job_id"].as_str().unwrap().to_string();
+    let id = body_json(resp).await["job_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     // Poll until completed (EchoInvoker is fast — bounded retries)
     let mut last = None;
