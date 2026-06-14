@@ -336,7 +336,9 @@ fn is_jsonrpc_probe_unknown_method(method: &str, msg: &str) -> bool {
     matches!(
         method,
         "rpc.discover" | "list_methods" | "status" | "auth.status" | "config/get"
-    ) && msg == format!("unknown method: {method}")
+    ) && msg
+        .strip_prefix("unknown method: ")
+        .is_some_and(|missing_method| missing_method == method)
 }
 
 /// Internal method invocation logic.

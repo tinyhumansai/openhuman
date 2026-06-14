@@ -6,9 +6,9 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 use super::{
-    build_http_schema_dump, default_state, escape_html, invoke_method, is_param_validation_error,
-    is_session_expired_error, is_unconfirmed_unauthorized_error, params_to_object,
-    parse_json_params, rpc_handler, type_name,
+    build_http_schema_dump, default_state, escape_html, invoke_method,
+    is_jsonrpc_probe_unknown_method, is_param_validation_error, is_session_expired_error,
+    is_unconfirmed_unauthorized_error, params_to_object, parse_json_params, rpc_handler, type_name,
 };
 
 struct EnvVarGuard {
