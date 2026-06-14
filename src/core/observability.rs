@@ -506,17 +506,45 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
 /// `openhuman.memory_doc_ingest`). `SQLITE_FULL` has only two causes:
 /// genuine ENOSPC/ERROR_DISK_FULL (always the case in practice — the same
 /// burst always produces an os-error-28/112 sibling event) or a
-/// `max_page_count` PRAGMA cap (we set none). Anchor on the exact
-/// `"database or disk is full"` phrase so unrelated "full" prose doesn't get
-/// silenced. This is defense-in-depth for the genuinely
+/// `max_page_count` PRAGMA cap (we set none).
+///
+/// The rusqlite `Display` for `SQLITE_FULL` is exactly the five words
+/// `"database or disk is full"` — no preamble, no trailing context. Our local
+/// memory-store write call-sites wrap it with `format!("<verb>: {e}")`
+/// (e.g. `"commit tx: ..."` / `"clear_namespace commit tx: ..."` in
+/// `memory_store::unified::documents`), so the phrase always lands as the
+/// **suffix** of the local emit. Anchor on suffix, not `contains`, so the
+/// silencer does not match a non-2xx backend response body whose payload
+/// happens to mention the same phrase (e.g. an `api.tinyhumans.ai` 5xx whose
+/// server-side SQLite is full). Non-2xx backend bodies are framed by
+/// `integrations::client::post` / `composio::client` as `"Backend returned
+/// <status> <reason> for <METHOD> <url>: <detail>"` — an operator-actionable
+/// server/storage failure that must still surface to Sentry. As
+/// defense-in-depth for the edge case where the backend body itself ends with
+/// the phrase, reject any message that also carries the `"backend returned "`
+/// envelope prefix (codex CR on #3672, mirrors the precedent set by
+/// [`is_backend_user_error_message`]).
+///
+/// This is defense-in-depth for the genuinely
 /// unpreventable **write** paths (a write can't succeed on a full disk); the
 /// read path no longer emits this error at all (it degrades to a lock-free
 /// read — see `AuthProfilesStore::load`).
 fn is_disk_full_message(lower: &str) -> bool {
-    lower.contains("no space left on device")
+    if lower.contains("no space left on device")
         || lower.contains("not enough space on the disk")
         || lower.contains("storagefull")
-        || lower.contains("database or disk is full")
+    {
+        return true;
+    }
+    // SQLITE_FULL — see the fifth-shape section above for the scoping
+    // rationale. Suffix anchor (after trimming trailing whitespace and
+    // punctuation that closures / JSON wrappers commonly append) pins to the
+    // local-emit shape; the negative `"backend returned "` guard rejects the
+    // remote envelope as a second line of defense.
+    let trimmed = lower.trim_end_matches(|c: char| {
+        c.is_ascii_whitespace() || matches!(c, '.' | ',' | ';' | ':' | '"' | '\'')
+    });
+    trimmed.ends_with("database or disk is full") && !lower.contains("backend returned ")
 }
 
 /// Detect the literal `"Config loading timed out"` string produced by
@@ -2835,6 +2863,43 @@ mod tests {
         assert_eq!(
             expected_error_kind("user quota: database is full for this tier"),
             None
+        );
+        // A non-2xx backend body whose payload contains the SQLITE_FULL phrase
+        // (e.g. `api.tinyhumans.ai` server-side SQLite is full) is an
+        // operator-actionable storage failure, not the user's local disk —
+        // must still surface to Sentry. `integrations::client::post` frames
+        // these as `"Backend returned <status> <reason> for POST <url>:
+        // <detail>"` (codex CR on #3672). The suffix anchor excludes the
+        // embedded-in-JSON case; the negative `"backend returned "` guard
+        // covers the rare case where the body itself ends with the phrase.
+        assert_eq!(
+            expected_error_kind(
+                "Backend returned 500 Internal Server Error for POST \
+                 https://api.tinyhumans.ai/agent-integrations/composio/list: \
+                 {\"error\":\"database or disk is full\"}"
+            ),
+            None,
+            "remote-backend body must surface"
+        );
+        assert_eq!(
+            expected_error_kind(
+                "Backend returned 500 Internal Server Error for POST \
+                 https://api.tinyhumans.ai/agent-integrations/composio/list: \
+                 database or disk is full"
+            ),
+            None,
+            "remote-backend body must surface even when the body itself ends with the phrase"
+        );
+        // Non-suffix occurrences in other body framings (no `"Backend
+        // returned"` prefix) are also excluded by the suffix anchor — locks
+        // in the primary defense layer.
+        assert_eq!(
+            expected_error_kind(
+                "Embedding API error (500 Internal Server Error): \
+                 {\"error\":\"database or disk is full\",\"retry\":true}"
+            ),
+            None,
+            "embedded-in-JSON body must surface"
         );
     }
 
