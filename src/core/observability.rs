@@ -4724,6 +4724,47 @@ mod tests {
     }
 
     #[test]
+    fn composio_list_connections_503_504_wrappers_stay_filtered() {
+        for (status, reason) in [("503", "Service Unavailable"), ("504", "Gateway Timeout")] {
+            let message = format!(
+                "[composio] list_connections failed: Backend returned {status} {reason} \
+                 for GET /agent-integrations/composio/connections"
+            );
+            let event = event_with_tags_and_message(
+                &[
+                    ("domain", "composio"),
+                    ("failure", "non_2xx"),
+                    ("status", status),
+                ],
+                &message,
+            );
+            assert!(
+                is_transient_integrations_failure(&event),
+                "wrapped composio list_connections {status} failures must be filtered"
+            );
+        }
+
+        for (status, reason) in [("503", "Service Unavailable"), ("504", "Gateway Timeout")] {
+            let message = format!(
+                "Backend returned {status} {reason} \
+                 for GET /agent-integrations/composio/connections"
+            );
+            let event = event_with_tags_and_message(
+                &[
+                    ("domain", "integrations"),
+                    ("failure", "non_2xx"),
+                    ("status", status),
+                ],
+                &message,
+            );
+            assert!(
+                is_transient_integrations_failure(&event),
+                "raw integrations list_connections {status} failures must be filtered"
+            );
+        }
+    }
+
+    #[test]
     fn updater_transient_403_is_dropped() {
         let event = event_with_tags_and_message(
             &[
