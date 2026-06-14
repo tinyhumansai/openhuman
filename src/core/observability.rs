@@ -4741,6 +4741,19 @@ mod tests {
     }
 
     #[test]
+    fn updater_github_403_message_only_shapes_are_dropped() {
+        for event in [
+            event_with_message("GitHub API error: 403 Forbidden"),
+            event_with_exception_value("GitHub API error: 403 Forbidden"),
+        ] {
+            assert!(
+                is_updater_transient_event(&event),
+                "message-only GitHub 403 updater failures must be filtered"
+            );
+        }
+    }
+
+    #[test]
     fn updater_transient_502_is_dropped() {
         let event = event_with_tags_and_message(
             &[
