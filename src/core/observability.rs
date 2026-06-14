@@ -496,7 +496,19 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
 /// That string carries no "no space left on device" text, so anchor
 /// additionally on the cross-platform `StorageFull` ErrorKind token (std maps
 /// ENOSPC / `ERROR_DISK_FULL` / `ERROR_HANDLE_DISK_FULL` all to
-/// `ErrorKind::StorageFull`). This is defense-in-depth for the genuinely
+/// `ErrorKind::StorageFull`).
+///
+/// A fifth shape comes from SQLite itself. When the engine detects the
+/// disk-full condition during its own page bookkeeping (journal/WAL extension)
+/// before the next syscall surfaces an errno, rusqlite renders the `SQLITE_FULL`
+/// result code as `"database or disk is full"` (Sentry TAURI-RUST-B6N, hit at
+/// `memory_store::unified::documents::tx.commit()` during
+/// `openhuman.memory_doc_ingest`). `SQLITE_FULL` has only two causes:
+/// genuine ENOSPC/ERROR_DISK_FULL (always the case in practice — the same
+/// burst always produces an os-error-28/112 sibling event) or a
+/// `max_page_count` PRAGMA cap (we set none). Anchor on the exact
+/// `"database or disk is full"` phrase so unrelated "full" prose doesn't get
+/// silenced. This is defense-in-depth for the genuinely
 /// unpreventable **write** paths (a write can't succeed on a full disk); the
 /// read path no longer emits this error at all (it degrades to a lock-free
 /// read — see `AuthProfilesStore::load`).
@@ -504,6 +516,7 @@ fn is_disk_full_message(lower: &str) -> bool {
     lower.contains("no space left on device")
         || lower.contains("not enough space on the disk")
         || lower.contains("storagefull")
+        || lower.contains("database or disk is full")
 }
 
 /// Detect the literal `"Config loading timed out"` string produced by
@@ -2782,6 +2795,13 @@ mod tests {
             // only the `ErrorKind` debug + os_code survive — no "no space left
             // on device" text. Must still classify via the StorageFull anchor.
             "Failed to create auth profile lock (kind=Some(StorageFull), os_code=Some(28))",
+            // SQLITE_FULL rendering from rusqlite — engine-level disk-full
+            // detection during page-bookkeeping (journal/WAL extension) that
+            // beats the next syscall to the errno. Production hit at
+            // `memory_store::unified::documents::tx.commit()` during
+            // `openhuman.memory_doc_ingest`, in the same burst that emits
+            // os-error-112 siblings (Sentry TAURI-RUST-B6N).
+            "commit tx: database or disk is full",
         ] {
             assert_eq!(
                 expected_error_kind(raw),
@@ -2802,6 +2822,18 @@ mod tests {
         );
         assert_eq!(
             expected_error_kind("not enough memory to allocate buffer"),
+            None
+        );
+        // The SQLite anchor pins to the exact `"database or disk is full"`
+        // phrase. Generic prose that mentions a full database for unrelated
+        // reasons (e.g. duplicate-row complaints, application-level capacity
+        // talk) must not be silenced.
+        assert_eq!(
+            expected_error_kind("upsert failed: database is full of duplicates"),
+            None
+        );
+        assert_eq!(
+            expected_error_kind("user quota: database is full for this tier"),
             None
         );
     }
