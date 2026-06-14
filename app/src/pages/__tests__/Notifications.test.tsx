@@ -140,9 +140,7 @@ describe('Notifications page row wrapper', () => {
   });
 });
 
-const { callCoreRpc } = vi.hoisted(() => ({
-  callCoreRpc: vi.fn().mockResolvedValue(undefined),
-}));
+const { callCoreRpc } = vi.hoisted(() => ({ callCoreRpc: vi.fn().mockResolvedValue(undefined) }));
 
 vi.mock('../../services/coreRpcClient', () => ({ callCoreRpc }));
 
@@ -167,9 +165,7 @@ describe('Notifications action buttons', () => {
 
   it('calls RPC on action button click and marks as read', async () => {
     const { store } = renderPage([
-      makeItem('n-act2', 'Standup', {
-        actions: [{ actionId: 'join', label: 'Join Now' }],
-      }),
+      makeItem('n-act2', 'Standup', { actions: [{ actionId: 'join', label: 'Join Now' }] }),
     ]);
 
     fireEvent.click(screen.getByRole('button', { name: 'Join Now' }));
@@ -185,13 +181,14 @@ describe('Notifications action buttons', () => {
 
   it('does not duplicate calls while action is pending', async () => {
     let resolve: () => void;
-    callCoreRpc.mockImplementation(() => new Promise<void>(r => { resolve = r; }));
+    callCoreRpc.mockImplementation(
+      () =>
+        new Promise<void>(r => {
+          resolve = r;
+        })
+    );
 
-    renderPage([
-      makeItem('n-dup', 'Test', {
-        actions: [{ actionId: 'a1', label: 'Go' }],
-      }),
-    ]);
+    renderPage([makeItem('n-dup', 'Test', { actions: [{ actionId: 'a1', label: 'Go' }] })]);
 
     const btn = screen.getByRole('button', { name: 'Go' });
     fireEvent.click(btn);
@@ -205,11 +202,7 @@ describe('Notifications action buttons', () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
     callCoreRpc.mockRejectedValueOnce(new Error('network'));
 
-    renderPage([
-      makeItem('n-err', 'Fail', {
-        actions: [{ actionId: 'x', label: 'Try' }],
-      }),
-    ]);
+    renderPage([makeItem('n-err', 'Fail', { actions: [{ actionId: 'x', label: 'Try' }] })]);
 
     fireEvent.click(screen.getByRole('button', { name: 'Try' }));
 
