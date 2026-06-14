@@ -2974,6 +2974,20 @@ mod tests {
     }
 
     #[test]
+    fn custom_openai_ollama_timeout_fallback_chain_is_network_unreachable() {
+        let chain =
+            "custom_openai chat completions transport error: error sending request for url \
+                     (http://localhost:11434/v1/chat/completions): operation timed out \
+                     (responses fallback failed: custom_openai API error (404 Not Found): \
+                     {\"error\":\"not found\"})";
+        assert_eq!(
+            expected_error_kind(chain),
+            Some(ExpectedErrorKind::NetworkUnreachable),
+            "local Ollama timeout plus responses fallback failure must not page Sentry"
+        );
+    }
+
+    #[test]
     fn does_not_classify_unrelated_provider_errors_as_network() {
         // Status-bearing provider failures (404, 500, …) are surfaced via
         // their HTTP status path and must NOT be silenced by the
