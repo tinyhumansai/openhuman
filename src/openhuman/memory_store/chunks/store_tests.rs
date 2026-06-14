@@ -2059,13 +2059,86 @@ async fn delete_source_rpc_purges_document_source_fully() {
         .unwrap()
         .value;
     assert!(listed.chunks.iter().any(|c| c.source_id == target));
+    // The dedup gate was cleared by delete, so re-ingest can claim it again.
+    // Commit the claim (a rolled-back tx would prove nothing) and verify it
+    // actually persisted.
     with_connection(&cfg, |conn| {
+        let tx = conn.unchecked_transaction()?;
+        assert!(
+            claim_source_ingest_tx(&tx, SourceKind::Document, target, 1_700_000_500_000)?,
+            "ingest gate must be re-claimable after delete_source cleared it"
+        );
+        tx.commit()?;
+        Ok(())
+    })
+    .unwrap();
+    assert!(
+        is_source_ingested(&cfg, SourceKind::Document, target).unwrap(),
+        "re-claimed ingest gate must persist"
+    );
+}
+
+/// Versioned document sources store the ingest gate as `{source_id}@{version_ms}`
+/// in addition to (or instead of) the bare id. `delete_source` must clear both.
+#[tokio::test]
+async fn delete_source_rpc_clears_versioned_ingest_gates() {
+    use crate::openhuman::memory::read_rpc::delete_source_rpc;
+
+    let (_tmp, cfg) = test_config();
+    let sid = "notion:conn-1:page-xyz";
+    let versioned = format!("{sid}@1700000000000");
+
+    let mut c = sample_chunk(sid, 0, 1_700_000_000_000);
+    c.metadata.source_kind = SourceKind::Document;
+    upsert_chunks(&cfg, &[c.clone()]).unwrap();
+
+    // Seed both a bare gate and a versioned gate for the source.
+    with_connection(&cfg, |conn| {
+        let tx = conn.unchecked_transaction()?;
         assert!(claim_source_ingest_tx(
-            &conn.unchecked_transaction()?,
+            &tx,
             SourceKind::Document,
-            target,
-            1_700_000_500_000
+            sid,
+            1_700_000_000_000
         )?);
+        tx.execute(
+            "INSERT INTO mem_tree_ingested_sources (source_kind, source_id, ingested_at_ms)
+             VALUES ('document', ?1, 1700000000000)",
+            params![versioned],
+        )?;
+        tx.commit()?;
+        Ok(())
+    })
+    .unwrap();
+
+    let gate_count = |conn: &rusqlite::Connection| -> rusqlite::Result<i64> {
+        conn.query_row(
+            "SELECT COUNT(*) FROM mem_tree_ingested_sources
+              WHERE source_kind = 'document' AND (source_id = ?1 OR source_id LIKE ?2)",
+            params![sid, format!("{sid}@%")],
+            |r| r.get(0),
+        )
+    };
+    with_connection(&cfg, |conn| {
+        assert_eq!(gate_count(conn)?, 2, "both gates seeded");
+        Ok(())
+    })
+    .unwrap();
+
+    let out = delete_source_rpc(&cfg, sid.to_string())
+        .await
+        .unwrap()
+        .value;
+    assert!(out.deleted);
+    assert_eq!(out.chunks_removed, 1);
+
+    assert!(!is_source_ingested(&cfg, SourceKind::Document, sid).unwrap());
+    with_connection(&cfg, |conn| {
+        assert_eq!(
+            gate_count(conn)?,
+            0,
+            "bare AND versioned ingest gates must be cleared"
+        );
         Ok(())
     })
     .unwrap();

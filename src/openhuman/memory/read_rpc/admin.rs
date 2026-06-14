@@ -375,8 +375,14 @@ pub async fn flush_now_rpc(config: &Config) -> Result<RpcOutcome<FlushNowRespons
 /// per-chunk path keeps a now-stale summary tree (which `delete_chunks_by_source`
 /// won't touch, since it only cascades trees for chunks it deletes in the same
 /// call). After the chunk delete we therefore also run
-/// [`delete_orphaned_source_tree`], which cascades the tree iff zero chunks
-/// remain — so calling delete_source over such a source finishes the job.
+/// [`delete_orphaned_source_tree`], which cascades the source-scoped tree and
+/// clears the bare + versioned (`{source_id}@{version_ms}`) ingest gates iff zero
+/// chunks remain — so calling delete_source over such a source finishes the job.
+///
+/// Scope: this deletes the exact document source and its **source-scoped** orphan
+/// tree. It intentionally does NOT tear down shared collection / `path_scope`
+/// trees (e.g. Notion `notion:{connection}`), which may summarise many documents;
+/// per-document pruning inside a shared collection summary is out of scope here.
 pub async fn delete_source_rpc(
     config: &Config,
     source_id: String,
@@ -410,8 +416,12 @@ pub async fn delete_source_rpc(
         chunks_removed: chunks_removed as u64,
     };
     let log = format!(
-        "memory_tree::read: delete_source source_id={source_id} deleted={} chunks_removed={} tree_cleaned={}",
-        resp.deleted, resp.chunks_removed, tree_cleaned
+        // Redact the source id: it can embed user-linked identifiers.
+        "memory_tree::read: delete_source source_id_hash={} deleted={} chunks_removed={} tree_cleaned={}",
+        crate::openhuman::memory::util::redact::redact(&source_id),
+        resp.deleted,
+        resp.chunks_removed,
+        tree_cleaned
     );
     Ok(RpcOutcome::single_log(resp, log))
 }

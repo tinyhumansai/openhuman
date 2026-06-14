@@ -371,12 +371,15 @@ pub fn schemas(function: &str) -> ControllerSchema {
             function: "delete_source",
             description: "Fully delete one document source by its EXACT source_id: every chunk \
                  plus its score / entity-index / embedding / reembed-skip side rows and chunk \
-                 content files, the ingest dedup gate, and (when the source becomes fully \
-                 orphaned) its source summary tree — summaries, summary embeddings + reembed-skip, \
+                 content files, the ingest dedup gates (bare source_id AND versioned \
+                 source_id@version), and (when the source becomes fully orphaned) its \
+                 source-scoped summary tree — summaries, summary embeddings + reembed-skip, \
                  tree entity-index, buffers, the tree row, and summary content files. Unlike \
                  delete_chunk this cascades, so stale summaries of the deleted source cannot \
-                 resurface in recall. Exact match only (never a prefix). Idempotent — an unknown \
-                 source_id returns deleted=false.",
+                 resurface in recall, and it also finishes legacy partial deletes (chunks already \
+                 gone, tree/gate left behind). Exact match only (never a prefix); shared \
+                 collection/path_scope trees that summarise multiple documents are left intact. \
+                 Idempotent — an unknown source_id returns deleted=false.",
             inputs: vec![FieldSchema {
                 name: "source_id",
                 ty: TypeSchema::String,
@@ -387,7 +390,8 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 FieldSchema {
                     name: "deleted",
                     ty: TypeSchema::Bool,
-                    comment: "True when at least one chunk was found and removed for the source.",
+                    comment: "True when the call did real work: chunks were removed OR a stale \
+                              orphaned source tree was cleaned (legacy case, chunks_removed=0).",
                     required: true,
                 },
                 FieldSchema {
