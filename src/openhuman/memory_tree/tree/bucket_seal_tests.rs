@@ -1113,3 +1113,110 @@ async fn hydrate_summary_inputs_batch_preserves_order_and_skips_missing_ids() {
     assert_eq!(out[0].entities, vec!["entity:bob".to_string()]);
     assert_eq!(out[1].entities, vec!["entity:alice".to_string()]);
 }
+
+/// Regression for Sentry #13021 — when the LLM summary collapses to an
+/// empty/whitespace string (e.g. the model returns just newlines, which
+/// `summarise()` trims to ""), the seal MUST NOT call the embedder.
+///
+/// Pre-fix, `truncate_for_embed("", 1000)` produced an empty string that
+/// got forwarded to the embedding provider. Real providers (cloud /
+/// OpenAI-compatible) 400 on that — `"input must be a non-empty string or
+/// array of non-empty strings"` — and the failure was captured as a
+/// recurring Sentry server fault even though the defect was on the client
+/// side.
+///
+/// Post-fix, the empty-content branch short-circuits to "no embedding"
+/// just like the no-provider branch. The summary still seals, the tree
+/// still advances; only the embedding column stays `None`.
+///
+/// With `embeddings_provider = "none"` the test wires `InertEmbedder`,
+/// which would happily return a zero vector for `""`. So a `None`
+/// embedding on the summary is *only* explainable by the new short-circuit
+/// — that's the assertion that locks in the fix.
+#[tokio::test]
+async fn whitespace_llm_summary_seals_without_embedding() {
+    use crate::openhuman::memory_store::chunks::store::upsert_chunks;
+    use crate::openhuman::memory_store::chunks::types::{
+        chunk_id, Chunk, Metadata, SourceKind, SourceRef,
+    };
+    use chrono::TimeZone;
+
+    let (_tmp, cfg) = test_config();
+    let tree = get_or_create_source_tree(&cfg, "slack:#eng").unwrap();
+    // The chat provider returns ONLY whitespace; `summarise()` trims to ""
+    // and `clamp_to_budget` keeps it empty → `output.content = ""`.
+    let provider: Arc<dyn ChatProvider> = Arc::new(StaticChatProvider::new("   \n\t  \n"));
+
+    let ts = Utc.timestamp_millis_opt(1_700_000_000_000).unwrap();
+    let mk_chunk = |seq: u32, tokens: u32| Chunk {
+        id: chunk_id(SourceKind::Chat, "slack:#eng", seq, "test-content"),
+        content: format!("non-empty leaf content {seq}"),
+        metadata: Metadata {
+            source_kind: SourceKind::Chat,
+            source_id: "slack:#eng".into(),
+            owner: "alice".into(),
+            timestamp: ts,
+            time_range: (ts, ts),
+            tags: vec![],
+            source_ref: Some(SourceRef::new("slack://x")),
+            path_scope: None,
+        },
+        token_count: tokens,
+        seq_in_source: seq,
+        created_at: ts,
+        partial_message: false,
+    };
+    let per_leaf = INPUT_TOKEN_BUDGET * 6 / 10;
+    let c1 = mk_chunk(0, per_leaf);
+    let c2 = mk_chunk(1, per_leaf);
+    upsert_chunks(&cfg, &[c1.clone(), c2.clone()]).unwrap();
+    stage_test_chunks(&cfg, &[c1.clone(), c2.clone()]);
+
+    let leaf1 = LeafRef {
+        chunk_id: c1.id.clone(),
+        token_count: per_leaf,
+        timestamp: ts,
+        content: c1.content.clone(),
+        entities: vec![],
+        topics: vec![],
+        score: 0.5,
+    };
+    let leaf2 = LeafRef {
+        chunk_id: c2.id.clone(),
+        token_count: per_leaf,
+        timestamp: ts,
+        content: c2.content.clone(),
+        entities: vec![],
+        topics: vec![],
+        score: 0.5,
+    };
+
+    let _ = test_override::with_provider(Arc::clone(&provider), async {
+        append_leaf(&cfg, &tree, &leaf1, &LabelStrategy::Empty)
+            .await
+            .unwrap()
+    })
+    .await;
+    let sealed = test_override::with_provider(Arc::clone(&provider), async {
+        append_leaf(&cfg, &tree, &leaf2, &LabelStrategy::Empty)
+            .await
+            .unwrap()
+    })
+    .await;
+
+    assert_eq!(sealed.len(), 1, "second append crosses budget — one seal");
+    let summary = store::get_summary(&cfg, &sealed[0]).unwrap().unwrap();
+    // Content stays whatever `summarise()` produced (clamped/trimmed empty).
+    assert!(
+        summary.content.trim().is_empty(),
+        "expected empty content from whitespace LLM, got: {:?}",
+        summary.content
+    );
+    // The fix: skip the embedder entirely on empty content. InertEmbedder
+    // would otherwise have written a zero vector here.
+    assert!(
+        summary.embedding.is_none(),
+        "expected no embedding for empty summary (#13021), got Some({:?} dims)",
+        summary.embedding.as_ref().map(Vec::len)
+    );
+}

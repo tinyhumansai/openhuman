@@ -323,7 +323,18 @@ impl ArchivistHook {
         // Embed the recap only when the segment is being finalized (closed).
         // Never embed per-turn or on an open segment — this is the single
         // write point for segment_embeddings rows.
-        if let Some(ref embedder) = self.embedder {
+        //
+        // Skip when the recap is empty/whitespace — `summarize_entries` can
+        // return "" (LLM error fallback + the user-turn filter above yielding
+        // zero entries) and an empty embed input is guaranteed to 400 from
+        // the upstream embedding API (#13021). The segment is sealed without
+        // an embedding row; subsequent recap edits can re-embed.
+        if summary.trim().is_empty() {
+            tracing::warn!(
+                "[archivist] skipping embedding: recap is empty/whitespace segment={}",
+                segment.segment_id
+            );
+        } else if let Some(ref embedder) = self.embedder {
             let model_signature = embedder.name().to_string();
             tracing::debug!(
                 "[archivist] embedding recap segment={} model={}",

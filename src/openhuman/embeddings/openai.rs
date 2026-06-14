@@ -121,6 +121,28 @@ impl EmbeddingProvider for OpenAiEmbedding {
             return Ok(Vec::new());
         }
 
+        // Pre-flight: empty / whitespace-only entries are guaranteed 400s from
+        // the upstream (OpenAI: `"input must be a non-empty string"`; OpenHuman
+        // cloud backend: `"input must be a non-empty string or array of
+        // non-empty strings"`). Bailing here keeps the round-trip and quota
+        // out of the picture and — crucially — bypasses the `report_error_or_
+        // expected` Sentry route below, so a caller passing an empty summary
+        // stops manifesting as a server fault (#13021).
+        if let Some(idx) = texts.iter().position(|t| t.trim().is_empty()) {
+            tracing::warn!(
+                target: "openai::embed",
+                "[openai] refusing embed: input[{idx}] is empty/whitespace \
+                 (count={}, model={}). Caller must filter empty strings.",
+                texts.len(),
+                self.model,
+            );
+            anyhow::bail!(
+                "openai embed: refusing empty/whitespace input at index {idx} of {} (model={})",
+                texts.len(),
+                self.model,
+            );
+        }
+
         let url = self.embeddings_url();
 
         tracing::debug!(

@@ -124,6 +124,55 @@ async fn empty_input_returns_empty() {
     assert!(result.is_empty());
 }
 
+// ── empty/whitespace entries — pre-flight reject (#13021) ────────
+//
+// `embed(&[""])` and friends used to fall through to the HTTP layer
+// and trip a backend 400 ("input must be a non-empty string …"),
+// which was then captured as a Sentry server fault even though the
+// real defect was a caller passing empty text. The guard bails
+// without touching the network — the "http://unused" base URL would
+// otherwise refuse to connect.
+
+#[tokio::test]
+async fn embed_refuses_single_empty_string() {
+    let p = OpenAiEmbedding::new("http://unused", "k", "m", 1);
+    let err = p.embed(&[""]).await.unwrap_err().to_string();
+    assert!(
+        err.contains("refusing empty/whitespace input at index 0"),
+        "unexpected error: {err}"
+    );
+}
+
+#[tokio::test]
+async fn embed_refuses_whitespace_only_string() {
+    let p = OpenAiEmbedding::new("http://unused", "k", "m", 1);
+    let err = p.embed(&["   \n\t"]).await.unwrap_err().to_string();
+    assert!(err.contains("refusing empty/whitespace input at index 0"));
+}
+
+#[tokio::test]
+async fn embed_refuses_mixed_batch_with_empty() {
+    let p = OpenAiEmbedding::new("http://unused", "k", "m", 1);
+    let err = p.embed(&["ok", "", "fine"]).await.unwrap_err().to_string();
+    assert!(err.contains("refusing empty/whitespace input at index 1"));
+}
+
+#[tokio::test]
+async fn embed_refuses_does_not_use_embedding_api_error_prefix() {
+    // The classifier in `core::observability` treats `"Embedding API error"`
+    // / `"(<status>"` shapes as upstream HTTP failures. The client-side
+    // pre-flight refusal MUST NOT collide with that shape, otherwise this
+    // very fix would re-enter the same Sentry-as-server-fault path that
+    // #13021 was about. Lock the bail wording so a future rename can't
+    // silently reintroduce the regression.
+    let p = OpenAiEmbedding::new("http://unused", "k", "m", 1);
+    let err = p.embed(&[""]).await.unwrap_err().to_string();
+    assert!(
+        !err.contains("Embedding API error"),
+        "bail wording must not collide with TransientUpstreamHttp classifier: {err}"
+    );
+}
+
 // ── embed — success ─────────────────────────────────────
 
 #[tokio::test]
