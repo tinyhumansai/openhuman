@@ -366,6 +366,38 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 },
             ],
         },
+        "delete_source" => ControllerSchema {
+            namespace: NAMESPACE,
+            function: "delete_source",
+            description: "Fully delete one document source by its EXACT source_id: every chunk \
+                 plus its score / entity-index / embedding / reembed-skip side rows and chunk \
+                 content files, the ingest dedup gate, and (when the source becomes fully \
+                 orphaned) its source summary tree — summaries, summary embeddings + reembed-skip, \
+                 tree entity-index, buffers, the tree row, and summary content files. Unlike \
+                 delete_chunk this cascades, so stale summaries of the deleted source cannot \
+                 resurface in recall. Exact match only (never a prefix). Idempotent — an unknown \
+                 source_id returns deleted=false.",
+            inputs: vec![FieldSchema {
+                name: "source_id",
+                ty: TypeSchema::String,
+                comment: "Exact source id to remove (e.g. a Telegram note/event/meeting id).",
+                required: true,
+            }],
+            outputs: vec![
+                FieldSchema {
+                    name: "deleted",
+                    ty: TypeSchema::Bool,
+                    comment: "True when at least one chunk was found and removed for the source.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "chunks_removed",
+                    ty: TypeSchema::U64,
+                    comment: "Number of chunk rows removed for the source.",
+                    required: true,
+                },
+            ],
+        },
         "wipe_all" => ControllerSchema {
             namespace: NAMESPACE,
             function: "wipe_all",

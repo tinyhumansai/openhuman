@@ -1042,6 +1042,64 @@ fn delete_chunks_by_source_filter(
     Ok(deleted)
 }
 
+/// Cascade-delete an orphaned **Source** tree (scope == `source_id`) — summaries,
+/// summary embeddings + reembed-skip, tree entity-index, buffers, the tree row,
+/// and summary content files — but ONLY when no chunks remain for that source.
+///
+/// `delete_chunks_by_source` only cascades the tree for sources whose chunks it
+/// deletes in the same call; a source whose chunks were already removed earlier
+/// (e.g. by the per-chunk `delete_chunk` path) keeps a now-stale summary tree
+/// that can still resurface in recall. This cleans up exactly that **legacy
+/// partial-delete** state. Also clears any lingering ingest dedup gate.
+///
+/// Returns `true` when a tree was removed. No-op (returns `false`) when chunks
+/// still exist for the source or no source tree is present, so it is safe to call
+/// unconditionally after `delete_chunks_by_source`.
+pub fn delete_orphaned_source_tree(
+    config: &Config,
+    source_kind: SourceKind,
+    source_id: &str,
+) -> Result<bool> {
+    use crate::openhuman::memory_store::trees::store as tree_store;
+    use crate::openhuman::memory_store::trees::types::TreeKind;
+
+    let mut content_paths: Vec<String> = Vec::new();
+    let removed = with_connection(config, |conn| {
+        let tx = conn.unchecked_transaction()?;
+        let remaining: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM mem_tree_chunks WHERE source_kind = ?1 AND source_id = ?2",
+            params![source_kind.as_str(), source_id],
+            |r| r.get(0),
+        )?;
+        if remaining > 0 {
+            return Ok(false); // not orphaned — leave the live tree intact
+        }
+        let Some(tree) = tree_store::get_tree_by_scope_conn(&tx, TreeKind::Source, source_id)?
+        else {
+            return Ok(false); // nothing stale to clean
+        };
+        let cascade = tree_store::delete_tree_cascade_tx(&tx, &tree.id)?;
+        content_paths.extend(cascade.content_paths);
+        // Belt-and-suspenders: clear any lingering ingest gate (idempotent).
+        tx.execute(
+            "DELETE FROM mem_tree_ingested_sources WHERE source_kind = ?1 AND source_id = ?2",
+            params![source_kind.as_str(), source_id],
+        )?;
+        log::debug!(
+            "[memory::chunk_store] delete_orphaned_source_tree: source_id_hash={} → removed stale tree_id={} summaries={}",
+            redact_value(source_id),
+            tree.id,
+            cascade.removed_summaries,
+        );
+        tx.commit()?;
+        Ok(true)
+    })?;
+    if removed {
+        remove_chunk_content_files(config, &content_paths);
+    }
+    Ok(removed)
+}
+
 fn remove_chunk_content_files(config: &Config, content_paths: &[String]) {
     use std::path::{Component, Path};
 
