@@ -825,6 +825,8 @@ const en: TranslationMap = {
     'The memory extraction model is timing out, so the wiki has little structure. Switch the Memory extraction model to a faster one in Settings → AI.',
   'memory.health.remediation.summarizer_unavailable':
     'No summarization provider is available for Build Summary Trees. Enable local AI (Ollama), or enable cloud summarization in Settings → AI → Memory.',
+  'memory.health.remediation.empty_input_refused':
+    'A memory item was skipped because its text was empty. No action needed — newer items continue to embed normally.',
   'memory.health.remediation.transient':
     'A temporary error interrupted memory processing. It will retry automatically.',
   'memory.health.remediation.unknown':

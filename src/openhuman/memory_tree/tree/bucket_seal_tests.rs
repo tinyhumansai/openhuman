@@ -1116,7 +1116,7 @@ async fn hydrate_summary_inputs_batch_preserves_order_and_skips_missing_ids() {
 
 /// Regression for Sentry #13021 — when the LLM summary collapses to an
 /// empty/whitespace string (e.g. the model returns just newlines, which
-/// `summarise()` trims to ""), the seal MUST NOT call the embedder.
+/// `summarise()` trims to ""), the seal MUST NOT persist a blank parent.
 ///
 /// Pre-fix, `truncate_for_embed("", 1000)` produced an empty string that
 /// got forwarded to the embedding provider. Real providers (cloud /
@@ -1125,16 +1125,14 @@ async fn hydrate_summary_inputs_batch_preserves_order_and_skips_missing_ids() {
 /// recurring Sentry server fault even though the defect was on the client
 /// side.
 ///
-/// Post-fix, the empty-content branch short-circuits to "no embedding"
-/// just like the no-provider branch. The summary still seals, the tree
-/// still advances; only the embedding column stays `None`.
-///
-/// With `embeddings_provider = "none"` the test wires `InertEmbedder`,
-/// which would happily return a zero vector for `""`. So a `None`
-/// embedding on the summary is *only* explainable by the new short-circuit
-/// — that's the assertion that locks in the fix.
+/// Initial fix (provider guard) short-circuited the embed call but still
+/// persisted `content = ""`, losing the child text from the next rollup /
+/// retrieval layer. Final fix (this test): when `summarise()` returns
+/// blank, fall back to `fallback_summary` — the deterministic concatenation
+/// of the inputs — so the parent has recoverable text and the embedding
+/// runs on real content.
 #[tokio::test]
-async fn whitespace_llm_summary_seals_without_embedding() {
+async fn whitespace_llm_summary_falls_back_to_deterministic_content() {
     use crate::openhuman::memory_store::chunks::store::upsert_chunks;
     use crate::openhuman::memory_store::chunks::types::{
         chunk_id, Chunk, Metadata, SourceKind, SourceRef,
@@ -1206,17 +1204,39 @@ async fn whitespace_llm_summary_seals_without_embedding() {
 
     assert_eq!(sealed.len(), 1, "second append crosses budget — one seal");
     let summary = store::get_summary(&cfg, &sealed[0]).unwrap().unwrap();
-    // Content stays whatever `summarise()` produced (clamped/trimmed empty).
+
+    // Content must be the deterministic fallback derived from the inputs,
+    // not the empty LLM output. `fallback_summary` joins each non-whitespace
+    // input with a `"— "` provenance prefix.
     assert!(
-        summary.content.trim().is_empty(),
-        "expected empty content from whitespace LLM, got: {:?}",
+        !summary.content.trim().is_empty(),
+        "expected fallback content when LLM returned blank (#13021), got empty"
+    );
+    assert!(
+        summary.content.contains("non-empty leaf content 0"),
+        "fallback must include leaf 0 content; got: {:?}",
         summary.content
     );
-    // The fix: skip the embedder entirely on empty content. InertEmbedder
-    // would otherwise have written a zero vector here.
     assert!(
-        summary.embedding.is_none(),
-        "expected no embedding for empty summary (#13021), got Some({:?} dims)",
-        summary.embedding.as_ref().map(Vec::len)
+        summary.content.contains("non-empty leaf content 1"),
+        "fallback must include leaf 1 content; got: {:?}",
+        summary.content
+    );
+
+    // Because the persisted content is now non-empty, the embed step runs.
+    // With `embeddings_provider = "none"` the test wires `InertEmbedder`,
+    // which returns a zero vector — its presence (not its value) is the
+    // signal that the new fallback path drove a real embed call.
+    //
+    // Read from the per-model sidecar (`mem_tree_summary_embeddings`); the
+    // legacy `mem_tree_summaries.embedding` column on `SummaryNode` is
+    // always written as `None` post-#1574 cutover, so checking
+    // `summary.embedding` alone would silently always pass.
+    let sidecar_embedding =
+        crate::openhuman::memory_store::trees::store::get_summary_embedding(&cfg, &sealed[0])
+            .unwrap();
+    assert!(
+        sidecar_embedding.is_some(),
+        "expected sidecar embedding for the fallback-filled summary (#13021)"
     );
 }

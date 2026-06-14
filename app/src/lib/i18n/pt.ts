@@ -5382,6 +5382,8 @@ const messages: TranslationMap = {
     'O modelo de extração de memória está expirando o tempo limite, então o wiki tem pouca estrutura. Mude o modelo de extração de memória para um mais rápido em Configurações → IA.',
   'memory.health.remediation.summarizer_unavailable':
     'Nenhum provedor de resumo está disponível para Criar árvores de resumo. Ative a IA local (Ollama) ou ative o resumo na nuvem em Configurações → IA → Memória.',
+  'memory.health.remediation.empty_input_refused':
+    'Um item de memória foi ignorado porque o texto estava vazio. Nenhuma ação necessária — itens novos continuam a ser incorporados normalmente.',
   'memory.health.remediation.transient':
     'Um erro temporário interrompeu o processamento da memória. Será repetido automaticamente.',
   'memory.health.remediation.unknown':

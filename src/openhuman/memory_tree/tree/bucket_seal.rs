@@ -412,8 +412,21 @@ pub(crate) async fn seal_one_level(
         target_level,
         token_budget: OUTPUT_TOKEN_BUDGET,
     };
+    // #13021: treat a blank summary (LLM returned only whitespace, so
+    // `summarise()` succeeded with `content = ""`) the same as a hard error —
+    // fall back to the deterministic `fallback_summary` so we never persist a
+    // parent node with `content = ""` / `token_count = 0`. Without this, the
+    // child text is lost: the level buffer is cleared and the parent has no
+    // recoverable content for the next rollup or for retrieval.
     let output = match summarise(config, &inputs, &ctx).await {
-        Ok(o) => o,
+        Ok(o) if !o.content.trim().is_empty() => o,
+        Ok(_) => {
+            log::warn!(
+                "[memory_tree::seal] summarise returned blank for tree_id={} level={} — using fallback (#13021)",
+                ctx.tree_id, ctx.target_level,
+            );
+            fallback_summary(&inputs, ctx.token_budget)
+        }
         Err(e) => {
             log::warn!(
                 "[memory_tree::seal] summarise failed for tree_id={} level={}: {e:#} — using fallback",
@@ -1233,8 +1246,18 @@ async fn seal_explicit_children(
             charged_amount_usd: None,
         }
     } else {
+        // #13021: blank summary (whitespace-only LLM output) → fallback. See
+        // the matching branch in `seal_one_level` for why we treat blank
+        // content as a hard fail rather than persisting `content = ""`.
         match summarise(config, &inputs, &ctx).await {
-            Ok(o) => o,
+            Ok(o) if !o.content.trim().is_empty() => o,
+            Ok(_) => {
+                log::warn!(
+                    "[tree::bucket_seal] doc-subtree summarise returned blank tree_id={} doc_id_hash={} level={} — fallback (#13021)",
+                    tree.id, doc_id.map(redact).unwrap_or_default(), level,
+                );
+                fallback_summary(&inputs, ctx.token_budget)
+            }
             Err(e) => {
                 log::warn!(
                     "[tree::bucket_seal] doc-subtree summarise failed tree_id={} doc_id_hash={} level={}: {e:#} — fallback",

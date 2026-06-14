@@ -74,6 +74,13 @@ pub enum FailureCode {
     /// local path was selected; this covers the cloud-only setup whose provider
     /// failed to resolve, so the remediation names both paths.
     SummarizerUnavailable,
+    /// The embedding provider refused an empty/whitespace input at the
+    /// pre-flight guard (#13021). Unrecoverable per-row: the offending row
+    /// will never become embeddable, so the worker must tombstone it instead
+    /// of retrying. Bail wording for both `OpenAiEmbedding::embed` and
+    /// `OpenHumanCloudEmbedding::embed` starts with
+    /// `"<name> embed: refusing empty/whitespace input ..."`.
+    EmptyInputRefused,
     /// Catch-all transient failure (network 5xx, timeout, truncated JSON).
     Transient,
 }
@@ -90,6 +97,7 @@ impl FailureCode {
             Self::LocalModelUnavailable => "local_model_unavailable",
             Self::ExtractionTimeout => "extraction_timeout",
             Self::SummarizerUnavailable => "summarizer_unavailable",
+            Self::EmptyInputRefused => "empty_input_refused",
             Self::Transient => "transient",
         }
     }
@@ -104,6 +112,7 @@ impl FailureCode {
             "local_model_unavailable" => Self::LocalModelUnavailable,
             "extraction_timeout" => Self::ExtractionTimeout,
             "summarizer_unavailable" => Self::SummarizerUnavailable,
+            "empty_input_refused" => Self::EmptyInputRefused,
             "transient" => Self::Transient,
             _ => return None,
         })
@@ -129,6 +138,7 @@ impl FailureCode {
             Self::LocalModelUnavailable => "memory.health.remediation.local_model_unavailable",
             Self::ExtractionTimeout => "memory.health.remediation.extraction_timeout",
             Self::SummarizerUnavailable => "memory.health.remediation.summarizer_unavailable",
+            Self::EmptyInputRefused => "memory.health.remediation.empty_input_refused",
             Self::Transient => "memory.health.remediation.transient",
         }
     }
@@ -205,6 +215,20 @@ pub fn classify_embed_error(err: &anyhow::Error) -> PipelineFailure {
 /// exercise the mapping without constructing reqwest errors.
 pub fn classify_embed_error_str(msg: &str) -> PipelineFailure {
     let lower = msg.to_ascii_lowercase();
+
+    // #13021: client-side refusal from the provider pre-flight guard fires
+    // *before* any HTTP round-trip, so it carries no `Embedding API error
+    // (<status>)` shape. Without an explicit match it would fall through to
+    // `Transient` and the `reembed_backfill` worker would retry the same
+    // un-embeddable row forever (and eventually fail the whole job).
+    // Classify as unrecoverable per-row so the worker tombstones the chunk /
+    // summary instead. Both `OpenAiEmbedding::embed` and
+    // `OpenHumanCloudEmbedding::embed` use the literal phrase
+    // "refusing empty/whitespace".
+    if lower.contains("refusing empty/whitespace") {
+        return PipelineFailure::new(FailureCode::EmptyInputRefused)
+            .with_detail(truncate_detail(msg));
+    }
 
     // Dimension mismatch — the trait validator / CloudEmbedder rejects a
     // vector whose length isn't EMBEDDING_DIM. Check before status parsing:
@@ -354,6 +378,7 @@ fn code_to_u8(code: FailureCode) -> u8 {
         FailureCode::ExtractionTimeout => 7,
         FailureCode::SummarizerUnavailable => 8,
         FailureCode::Transient => 9,
+        FailureCode::EmptyInputRefused => 10,
     }
 }
 
@@ -368,6 +393,7 @@ fn u8_to_code(v: u8) -> Option<FailureCode> {
         7 => FailureCode::ExtractionTimeout,
         8 => FailureCode::SummarizerUnavailable,
         9 => FailureCode::Transient,
+        10 => FailureCode::EmptyInputRefused,
         _ => return None,
     })
 }
@@ -451,7 +477,7 @@ pub fn current_degraded_state() -> DegradedState {
 mod tests {
     use super::*;
 
-    const ALL_CODES: [FailureCode; 9] = [
+    const ALL_CODES: [FailureCode; 10] = [
         FailureCode::BudgetExhausted,
         FailureCode::AuthMissing,
         FailureCode::AuthInvalid,
@@ -460,6 +486,7 @@ mod tests {
         FailureCode::LocalModelUnavailable,
         FailureCode::ExtractionTimeout,
         FailureCode::SummarizerUnavailable,
+        FailureCode::EmptyInputRefused,
         FailureCode::Transient,
     ];
 
@@ -600,6 +627,46 @@ mod tests {
     fn classify_dim_mismatch() {
         let f = classify_embed_error_str("cloud embedder returned 3072 dims, expected 1024");
         assert_eq!(f.code, FailureCode::EmbeddingDimMismatch);
+        assert!(f.is_unrecoverable());
+    }
+
+    /// #13021: the provider pre-flight bail wording from both OpenAI and the
+    /// cloud wrapper must classify as `EmptyInputRefused` (unrecoverable) so
+    /// `reembed_backfill` tombstones the offending row instead of retrying
+    /// the same blank input forever and eventually failing the job.
+    #[test]
+    fn classify_empty_input_refusal_as_unrecoverable() {
+        for msg in [
+            "openai embed: refusing empty/whitespace input at index 0 of 1 (model=text-embedding-3-small)",
+            "cloud embed: refusing empty/whitespace input at index 2 of 5 (model=embedding-v1)",
+        ] {
+            let f = classify_embed_error_str(msg);
+            assert_eq!(
+                f.code,
+                FailureCode::EmptyInputRefused,
+                "expected EmptyInputRefused for {msg:?}"
+            );
+            assert!(
+                f.is_unrecoverable(),
+                "EmptyInputRefused must be unrecoverable for {msg:?}"
+            );
+        }
+    }
+
+    /// The refusal must out-rank the dim-mismatch and budget rules even when
+    /// the wrapped error happens to contain those tokens — the refusal phrase
+    /// is the most specific signal and the only one that means "this row is
+    /// permanently un-embeddable", not "the provider is misbehaving".
+    #[test]
+    fn classify_empty_input_refusal_through_anyhow_context_chain() {
+        let base = anyhow::anyhow!(
+            "openai embed: refusing empty/whitespace input at index 0 of 1 (model=embedding-v1)"
+        );
+        let wrapped = base
+            .context("embed summary during seal tree_id=t level=0")
+            .context("reembed_backfill chunk_id=c");
+        let f = classify_embed_error(&wrapped);
+        assert_eq!(f.code, FailureCode::EmptyInputRefused);
         assert!(f.is_unrecoverable());
     }
 
