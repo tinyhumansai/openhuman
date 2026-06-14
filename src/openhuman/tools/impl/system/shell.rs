@@ -140,6 +140,18 @@ impl ShellTool {
             );
         }
     }
+
+    /// Resolve the working directory for this shell invocation.
+    ///
+    /// Returns the per-worker git-worktree override when one is installed via
+    /// [`crate::openhuman::agent::harness::with_action_dir_override`] (an
+    /// edit-capable worker running with `isolation = "worktree"`), otherwise
+    /// the shared `self.security.action_dir`. Keeping `security.action_dir` as
+    /// the fallback preserves the non-isolated behaviour exactly. See #3376.
+    fn effective_action_dir(&self) -> std::path::PathBuf {
+        crate::openhuman::agent::harness::current_action_dir_override()
+            .unwrap_or_else(|| self.security.action_dir.clone())
+    }
 }
 
 #[async_trait]
@@ -151,7 +163,11 @@ impl Tool for ShellTool {
     fn description(&self) -> &str {
         "Execute a shell command. Use this to run code, manipulate files in the workspace, \
          or perform system actions on the user's machine — including launching applications \
-         (e.g. `open -a Music` on macOS, `xdg-open music://` on Linux)."
+         (e.g. `open -a Music` on macOS, `xdg-open music://` on Linux). Only the command's \
+         stdout/stderr is captured and returned to you — a program that prints nothing \
+         (e.g. a `python`/`node` script that computes silently or only writes a file) returns \
+         an empty result, so make scripts print the output you need (e.g. `print(...)`), or \
+         follow up by reading any file they wrote."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -275,7 +291,7 @@ impl ShellTool {
         // (CWE-200), then re-add only safe, functional variables.
         let mut cmd = match self
             .runtime
-            .build_shell_command(command, &self.security.action_dir)
+            .build_shell_command(command, &self.effective_action_dir())
         {
             Ok(cmd) => cmd,
             Err(e) => {
@@ -291,6 +307,26 @@ impl ShellTool {
             if let Ok(val) = std::env::var(var) {
                 cmd.env(var, val);
             }
+        }
+
+        // Point the child's temp dir at the agent's granted scratch dir
+        // (`/tmp/openhuman`, a ReadWrite trusted root — see SecurityPolicy
+        // `from_config`) so `python3 tempfile` / `mktemp` / `$TMPDIR` writes land
+        // in a sandboxed, readable location instead of the world-shared /tmp.
+        let scratch_dir = crate::openhuman::security::openhuman_scratch_dir();
+        if scratch_dir.is_dir() {
+            tracing::debug!(
+                scratch_dir = %scratch_dir.display(),
+                "[shell] overriding TMPDIR/TMP/TEMP to the openhuman scratch dir"
+            );
+            cmd.env("TMPDIR", scratch_dir.as_os_str());
+            cmd.env("TMP", scratch_dir.as_os_str());
+            cmd.env("TEMP", scratch_dir.as_os_str());
+        } else {
+            tracing::debug!(
+                scratch_dir = %scratch_dir.display(),
+                "[shell] scratch dir missing — leaving TMPDIR/TMP/TEMP as inherited"
+            );
         }
 
         match self.runtime_path_for_command(command).await {
@@ -359,7 +395,7 @@ impl ShellTool {
         let config = crate::openhuman::config::RuntimeConfig::default();
         let policy = sandbox::resolve_sandbox_policy(
             crate::openhuman::agent::harness::definition::SandboxMode::Sandboxed,
-            &self.security.action_dir,
+            &self.effective_action_dir(),
             &config,
             false,
         );
@@ -1063,6 +1099,48 @@ mod tests {
                 sep,
                 "/usr/local/bin:/usr/bin"
             )
+        );
+    }
+
+    /// Empirical answer to "does `shell` resolve/install managed Node on its
+    /// own?" — NO. The shell path consults the managed Node bootstrap only via
+    /// `try_cached()`, which never calls `resolve()` and therefore never
+    /// downloads/installs anything. So without a prior `node_exec` / `npm_exec`
+    /// (the tools that DO call `resolve()` and share this bootstrap instance),
+    /// `runtime_path_for_command` injects nothing for a node command. On a host
+    /// with no Node in the login PATH, the command then fails — the managed
+    /// runtime is never reached on the shell path. (Python, by contrast, IS
+    /// self-resolved in `runtime_path_for_command` — see the python branch.)
+    #[tokio::test]
+    async fn shell_does_not_resolve_or_install_node_on_its_own() {
+        let node = Arc::new(NodeBootstrap::new(
+            crate::openhuman::config::schema::NodeConfig {
+                enabled: true,
+                version: "v22.11.0".to_string(),
+                cache_dir: String::new(),
+                prefer_system: true,
+            },
+            std::env::temp_dir(),
+            reqwest::Client::new(),
+        ));
+        let tool = ShellTool::with_language_bootstraps(
+            test_security(AutonomyLevel::Full),
+            test_runtime(),
+            test_audit(),
+            Some(node),
+            None,
+        );
+
+        // Unprimed (no prior node_exec/npm_exec resolve): shell injects NO
+        // managed node bin onto PATH — it does not auto-resolve or install.
+        let injected = tool
+            .runtime_path_for_command("node --version")
+            .await
+            .expect("runtime path resolves");
+        assert!(
+            injected.is_none(),
+            "shell injected a managed node bin without any prior node_exec/npm_exec \
+             resolve — it must not auto-resolve/install on the shell path: {injected:?}"
         );
     }
 

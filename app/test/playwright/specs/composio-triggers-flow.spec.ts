@@ -74,24 +74,18 @@ async function bootSkillsPage(page: Page, userId: string) {
       localStorage.setItem('openhuman:walkthrough_completed', 'true');
       localStorage.removeItem('openhuman:walkthrough_pending');
     } catch {}
-    window.location.hash = '/skills';
+    // Phase 2: /skills → /connections
+    window.location.hash = '/connections';
   });
   await expect
     .poll(async () => page.evaluate(() => window.location.hash), { timeout: 10_000 })
-    .toContain('/skills');
+    .toContain('/connections');
   await waitForAppReady(page);
   await dismissWalkthroughIfPresent(page);
-  await page.getByRole('tab', { name: 'Composio' }).click();
-  const heading = page.getByRole('heading', { name: 'Composio Integrations' });
-  if (!(await heading.isVisible().catch(() => false))) {
-    const connectionsButton = page.getByRole('button', { name: 'Connections' });
-    if (await connectionsButton.isVisible().catch(() => false)) {
-      await connectionsButton.click({ force: true });
-      await waitForAppReady(page);
-      await dismissWalkthroughIfPresent(page);
-    }
-  }
-  await expect(heading).toBeVisible({ timeout: 20_000 });
+  // Navigate to the Composio tab
+  await page.getByTestId('two-pane-nav-composio').click();
+  // Tab is "Apps"; the grid renders in the composio-integrations-card container.
+  await expect(page.getByTestId('composio-integrations-card')).toBeVisible({ timeout: 20_000 });
 }
 
 async function openGmailManageModal(page: Page) {
@@ -190,10 +184,9 @@ test.describe('Composio triggers flow', () => {
     await page.reload();
     await waitForAppReady(page);
     await dismissWalkthroughIfPresent(page);
-    await page.getByRole('tab', { name: 'Composio' }).click();
-    await expect(page.getByRole('heading', { name: 'Composio Integrations' })).toBeVisible({
-      timeout: 20_000,
-    });
+    // Tab is "Apps"; the grid renders in the composio-integrations-card container.
+    await page.getByTestId('two-pane-nav-composio').click();
+    await expect(page.getByTestId('composio-integrations-card')).toBeVisible({ timeout: 20_000 });
 
     const dialog = await openGmailManageModal(page);
     await expect(dialog.getByTestId('trigger-toggles')).toBeVisible();

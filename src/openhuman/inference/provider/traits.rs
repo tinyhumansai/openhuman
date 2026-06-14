@@ -59,6 +59,14 @@ pub struct ToolCall {
     pub id: String,
     pub name: String,
     pub arguments: String,
+    /// Provider-specific passthrough metadata for this call, captured from the
+    /// response and echoed back verbatim on the next assistant turn. Carries
+    /// Google Gemini's required `extra_content.google.thought_signature` so
+    /// multi-turn tool calling round-trips without a 400 (TAURI-RUST-4PK).
+    /// `None`/omitted for every provider that doesn't emit it, so non-Gemini
+    /// history stays byte-identical.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extra_content: Option<serde_json::Value>,
 }
 
 /// Token usage information returned by the provider after an inference call.
@@ -481,6 +489,21 @@ pub trait Provider: Send + Sync {
     /// Whether provider supports multimodal vision input.
     fn supports_vision(&self) -> bool {
         self.capabilities().vision
+    }
+
+    /// Effective context window (in tokens) for `model`, used for
+    /// pre-dispatch history trimming.
+    ///
+    /// Defaults to the static model table
+    /// ([`crate::openhuman::inference::context_window_for_model`]), which
+    /// reflects a model's *trained maximum* context. Local providers
+    /// override this to report the model's **runtime-loaded** window — e.g.
+    /// LM Studio lets the user load a model with a smaller `n_ctx` than its
+    /// trained maximum, and budgeting against the max overflows the loaded
+    /// window so the request is rejected (issue #3550 / Sentry
+    /// TAURI-RUST-6V0). `None` means "unknown — skip pre-dispatch trimming".
+    async fn effective_context_window(&self, model: &str) -> Option<u64> {
+        crate::openhuman::inference::context_window_for_model(model)
     }
 
     /// Warm up the HTTP connection pool (TLS handshake, DNS, HTTP/2 setup).

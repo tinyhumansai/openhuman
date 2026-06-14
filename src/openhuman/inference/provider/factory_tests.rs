@@ -870,18 +870,20 @@ fn invalid_models_fail() {
 // ── oh_tier_supports_vision ──────────────────────────────────────────────────────
 
 #[test]
-fn no_managed_tier_is_vision_capable_yet() {
-    // Every managed tier (and its hint form) is non-vision until confirmed
+fn reasoning_is_the_vision_capable_managed_tier() {
+    // `reasoning-v1` (and its hint form) is the one vision-capable managed tier.
+    assert!(oh_tier_supports_vision("reasoning-v1"));
+    assert!(oh_tier_supports_vision("hint:reasoning"));
+
+    // Every other managed tier (and its hint form) is non-vision until confirmed
     // multimodal on the backend. Flip the corresponding arm in
     // `oh_tier_supports_vision` to enable one.
     for model in [
-        "reasoning-v1",
         "chat-v1",
         "agentic-v1",
         "coding-v1",
         "reasoning-quick-v1",
         "summarization-v1",
-        "hint:reasoning",
         "hint:chat",
         "hint:agentic",
         "hint:coding",

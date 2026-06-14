@@ -30,7 +30,7 @@ const renderPage = () =>
     <MemoryRouter initialEntries={['/workflows/new']}>
       <Routes>
         <Route path="/workflows/new" element={<WorkflowNew />} />
-        <Route path="/skills" element={<div data-testid="dashboard-landed">dashboard</div>} />
+        <Route path="/connections" element={<div data-testid="dashboard-landed">dashboard</div>} />
       </Routes>
     </MemoryRouter>
   );
@@ -49,10 +49,10 @@ describe('WorkflowNew', () => {
     expect(screen.getByLabelText(/skills.create.description/i)).toBeInTheDocument();
   });
 
-  it('cancel button navigates back to /skills', () => {
+  it('cancel button navigates back to /connections', async () => {
     renderPage();
     fireEvent.click(screen.getByTestId('skill-new-cancel'));
-    expect(screen.getByTestId('dashboard-landed')).toBeInTheDocument();
+    expect(await screen.findByTestId('dashboard-landed')).toBeInTheDocument();
   });
 
   it('submit is disabled until both required fields are filled', () => {
@@ -71,7 +71,7 @@ describe('WorkflowNew', () => {
     expect(submit).not.toBeDisabled();
   });
 
-  it('navigates to /skills after a successful submit', async () => {
+  it('navigates to /connections after a successful submit', async () => {
     hoisted.createWorkflow.mockResolvedValue({
       id: 'new-skill',
       name: 'New Skill',

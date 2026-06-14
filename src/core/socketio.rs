@@ -968,13 +968,20 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             };
             match event {
-                crate::core::event_bus::DomainEvent::BackendMeetJoined { meet_url } => {
-                    let payload = serde_json::json!({ "meet_url": meet_url });
+                crate::core::event_bus::DomainEvent::BackendMeetJoined {
+                    meet_url,
+                    correlation_id,
+                } => {
+                    let payload = serde_json::json!({ "meet_url": meet_url, "correlation_id": correlation_id });
                     log::debug!("[socketio] broadcast agent_meetings:joined");
                     let _ = io_agent_meetings.emit("agent_meetings:joined", &payload);
                 }
-                crate::core::event_bus::DomainEvent::BackendMeetLeft { reason } => {
-                    let payload = serde_json::json!({ "reason": reason });
+                crate::core::event_bus::DomainEvent::BackendMeetLeft {
+                    reason,
+                    correlation_id,
+                } => {
+                    let payload =
+                        serde_json::json!({ "reason": reason, "correlation_id": correlation_id });
                     log::debug!("[socketio] broadcast agent_meetings:left reason={}", reason);
                     let _ = io_agent_meetings.emit("agent_meetings:left", &payload);
                 }
@@ -982,11 +989,13 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
                     transcript,
                     reply,
                     emotion,
+                    correlation_id,
                 } => {
                     let payload = serde_json::json!({
                         "transcript": transcript,
                         "reply": reply,
                         "emotion": emotion,
+                        "correlation_id": correlation_id,
                     });
                     log::debug!(
                         "[socketio] broadcast agent_meetings:reply reply_len={}",
@@ -998,11 +1007,13 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
                     transcript,
                     instruction,
                     emotion,
+                    correlation_id,
                 } => {
                     let payload = serde_json::json!({
                         "transcript": transcript,
                         "instruction": instruction,
                         "emotion": emotion,
+                        "correlation_id": correlation_id,
                     });
                     log::debug!(
                         "[socketio] broadcast agent_meetings:harness instruction_len={}",
@@ -1013,10 +1024,12 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
                 crate::core::event_bus::DomainEvent::BackendMeetTranscript {
                     turns,
                     duration_ms,
+                    correlation_id,
                 } => {
                     let payload = serde_json::json!({
                         "turns": turns,
                         "duration_ms": duration_ms,
+                        "correlation_id": correlation_id,
                     });
                     log::debug!(
                         "[socketio] broadcast agent_meetings:transcript turns={} duration_ms={}",
@@ -1025,8 +1038,12 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
                     );
                     let _ = io_agent_meetings.emit("agent_meetings:transcript", &payload);
                 }
-                crate::core::event_bus::DomainEvent::BackendMeetError { error } => {
-                    let payload = serde_json::json!({ "error": error });
+                crate::core::event_bus::DomainEvent::BackendMeetError {
+                    error,
+                    correlation_id,
+                } => {
+                    let payload =
+                        serde_json::json!({ "error": error, "correlation_id": correlation_id });
                     log::debug!("[socketio] broadcast agent_meetings:error");
                     let _ = io_agent_meetings.emit("agent_meetings:error", &payload);
                 }

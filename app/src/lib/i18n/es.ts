@@ -6,6 +6,11 @@ const messages: TranslationMap = {
   'nav.home': 'Inicio',
   'nav.human': 'Humano',
   'nav.chat': 'Charla',
+  'nav.assistant': 'Asistente',
+  'assistant.faceMode.on': 'Hablando con Tiny',
+  'assistant.faceMode.off': 'Habla con Tiny',
+  'assistant.faceMode.turnOn': 'Mostrar mascota',
+  'assistant.faceMode.turnOff': 'Ocultar mascota',
   'nav.connections': 'Conexiones',
   'nav.memory': 'Inteligencia',
   'nav.alerts': 'Alertas',
@@ -15,6 +20,24 @@ const messages: TranslationMap = {
   'nav.switchAgentProfile': 'Cambiar perfil de agente',
   'nav.defaultAgentProfile': 'Agente predeterminado',
   'nav.noAgentProfiles': 'No se encontraron perfiles de agente',
+  'nav.activity': 'Actividad',
+  'nav.brain': 'Cerebro',
+  'nav.avatarMenu.account': 'Cuenta',
+  'nav.avatarMenu.billing': 'Facturación',
+  'nav.avatarMenu.rewards': 'Recompensas',
+  'nav.avatarMenu.invites': 'Invitar a un amigo',
+  'nav.avatarMenu.wallet': 'Cartera',
+
+  // Brain — full-page memory knowledge-graph surface
+  'brain.subtitle': 'Tu grafo de conocimiento, fuentes de memoria y controles.',
+  'brain.tabs.memory': 'Memoria',
+  'brain.tabs.subconscious': 'Subconsciente',
+  'brain.tabs.graph': 'Gráfico',
+  'brain.tabs.sources': 'Fuentes',
+  'brain.tabs.sync': 'Sincronización',
+  'brain.empty':
+    'Tu cerebro está vacío por ahora: conecta una fuente para empezar a construir tu memoria.',
+  'brain.error': 'No se pudo cargar tu cerebro. Inténtalo de nuevo.',
   'common.cancel': 'Cancelar',
   'common.save': 'Guardar',
   'common.confirm': 'Confirmar',
@@ -58,7 +81,57 @@ const messages: TranslationMap = {
   'common.continue': 'Continuar',
   'common.comingSoon': 'Próximamente',
   'common.breadcrumb': 'Miga de pan',
+  'common.beta': 'Beta',
+  'common.betaDisclaimer':
+    'Esta función está en beta. Puede cambiar o tener aspectos por pulir — tus comentarios nos ayudan a mejorarla.',
   'settings.general': 'generales',
+  // Settings layman groups (Phase 4 IA revamp)
+  'settings.groups.account': 'Cuenta',
+  'settings.groups.assistant': 'Asistente',
+  'settings.groups.privacySecurity': 'Privacidad y seguridad',
+  'settings.groups.notifications': 'Notificaciones',
+  'settings.groups.about': 'Acerca de',
+  'settings.assistant.personality': 'Personalidad',
+  'settings.personalityFace.title': 'Personalidad y cara',
+  'settings.personalityFace.menuDesc': 'Ajusta el carácter de tu asistente y elige su cara',
+  'settings.assistant.voice': 'Voz',
+  'settings.assistant.voiceDesc': 'Configuración de voz a texto y texto a voz',
+  'settings.assistant.faceMascot': 'Cara / Mascota',
+  'settings.assistant.backgroundActivity': 'Subconsciente',
+  'settings.assistant.backgroundActivityDesc':
+    'Controla qué tan activo trabaja tu asistente en segundo plano',
+  'settings.assistant.screenAwareness': 'Conciencia de pantalla',
+  'settings.assistant.screenAwarenessDesc': 'Permite al asistente ver tu ventana activa',
+  'settings.assistant.desktopCompanion': 'Compañero de escritorio',
+  'settings.assistant.desktopCompanionDesc':
+    'Modo compañero siempre activo con acceso directo en la bandeja del sistema',
+  'settings.assistant.permissions': 'Permisos',
+  'settings.assistant.permissionsDesc': 'Elige qué puede hacer el asistente y dónde puede trabajar',
+  'settings.privacySecurity.privacy': 'Privacidad',
+  'settings.privacySecurity.privacyDesc': 'Controla qué datos salen de tu ordenador',
+  'settings.privacySecurity.security': 'Seguridad',
+  'settings.privacySecurity.securityDesc': 'Sesiones y opciones de inicio de sesión',
+  'settings.privacySecurity.approvalsHistory': 'Aprobaciones e historial',
+  'settings.privacySecurity.approvalsHistoryDesc':
+    'Revisa las decisiones de aprobación de herramientas recientes',
+  'settings.notifications.menuTitle': 'Notificaciones',
+  'settings.notifications.menuDesc': 'Bandeja de alertas y preferencias de notificaciones',
+  'settings.devGroups.knowledgeMemory': 'Conocimiento y memoria',
+  'settings.devGroups.agentsAutonomy': 'Agentes y autonomía',
+  'settings.devGroups.modelsInference': 'Modelos e inferencia',
+  'settings.devGroups.automationIntegrations': 'Automatización e integraciones',
+  'settings.devGroups.toolsCapabilities': 'Herramientas y capacidades',
+  'settings.devGroups.council': 'Consejo',
+  'settings.analysisViews.title': 'Vistas de análisis',
+  'settings.analysisViews.menuDesc':
+    'Análisis del grafo de memoria: diagrama, centralidad, cohesión, asociaciones, frescura, línea de tiempo, rutas y espacios de nombres',
+  'settings.buildInfo.title': 'Información de compilación/versión',
+  'settings.buildInfo.menuDesc': 'Compilación de la app, versión y detalles de conexión del núcleo',
+  'settings.dataSync.title': 'Sincronización de datos',
+  'settings.dataSync.menuDesc': 'Lo que sincroniza tu asistente: fuentes, actualidad y estado',
+  'settings.dataSync.description':
+    'Gestiona qué se sincroniza en la memoria de tu asistente: cada fuente conectada con su última sincronización, cuánto se ha sincronizado y si se está sincronizando ahora.',
+  'settings.devGroups.diagnosticsLogs': 'Diagnósticos y registros',
   'settings.featuresAndAI': 'Funciones e IA',
   'settings.billingAndRewards': 'Facturación y recompensas',
   'settings.support': 'Soporte',
@@ -88,6 +161,13 @@ const messages: TranslationMap = {
   'settings.developerOptions': 'Avanzado',
   'settings.developerOptionsDesc':
     'Configuración de IA, canales de mensajería, herramientas, diagnósticos y paneles de depuración',
+  'settings.developerDiagnostics': 'Desarrollador y Diagnóstico',
+  'settings.developerDiagnosticsDesc':
+    'Herramientas avanzadas de desarrollador, diagnóstico, memoria, agentes y paneles de depuración',
+  'settings.developerMode.title': 'Modo desarrollador',
+  'settings.developerMode.description':
+    'Mostrar herramientas avanzadas de desarrollador y diagnóstico',
+  'settings.developerMode.enabledByBuild': 'Siempre activo en compilaciones de desarrollo',
   'settings.clearAppData': 'Borrar datos de la app',
   'settings.clearAppDataDesc':
     'Cerrar sesión y eliminar permanentemente todos los datos locales de la app',
@@ -96,10 +176,23 @@ const messages: TranslationMap = {
   'settings.exitLocalSession': 'Salir de la sesión local',
   'settings.exitLocalSessionDesc': 'Volver a la pantalla de inicio de sesión',
   'settings.language': 'Idioma',
+  'settings.navGroups.general': 'General',
+  'settings.navGroups.assistant': 'Asistente',
+  'settings.navGroups.data': 'Datos',
+  'settings.navGroups.connections': 'Conexiones',
+  'settings.navGroups.system': 'Sistema',
   'settings.betaBuild': 'Compilación beta: v{version}',
   'settings.languageDesc': 'Idioma de visualización de la interfaz de la app',
   'settings.alerts': 'Alertas',
   'settings.alertsDesc': 'Ver alertas recientes y actividad en tu bandeja',
+  'settings.account.profile': 'Perfil',
+  'settings.account.profileDesc': 'Nombre, correo electrónico y avatar',
+  'settings.account.devices': 'Dispositivos',
+  'settings.account.devicesDesc': 'Vincular y gestionar dispositivos móviles',
+  'settings.account.teamMembers': 'Equipo y miembros',
+  'settings.account.teamMembersDesc': 'Gestionar acceso al equipo y roles de miembros',
+  'settings.account.dataMigration': 'Datos y migración',
+  'settings.account.dataMigrationDesc': 'Importar memoria desde otro asistente',
   'settings.account.recoveryPhrase': 'Frase de recuperación',
   'settings.account.recoveryPhraseDesc': 'Ver y respaldar tu frase de recuperación de cuenta',
   'settings.account.team': 'Equipo',
@@ -250,6 +343,8 @@ const messages: TranslationMap = {
   'chat.newThread': 'Nuevo hilo',
   'chat.typeMessage': '¿En qué puedo ayudarte hoy?',
   'chat.send': 'Enviar mensaje',
+  'chat.parallelBranchHint': 'Escribe una rama paralela — ⌘/Ctrl+Enter para enviar',
+  'chat.parallelBranchLabel': 'Rama paralela',
   'chat.thinking': 'Pensando...',
   'chat.noMessages': 'Sin mensajes aún',
   'chat.startConversation': 'Inicia una conversación',
@@ -269,7 +364,7 @@ const messages: TranslationMap = {
   'skills.connected': 'Conectado',
   'skills.available': 'Disponible',
   'skills.addAccount': 'Agregar cuenta',
-  'skills.channels': 'Canales',
+  'skills.channels': 'Mensajería',
   'skills.explorer.emptyCta': 'Instalar desde URL',
   'skills.explorer.emptyDescription':
     'Instala un paquete SKILL.md o coloca carpetas estilo Hermes en ~/.openhuman/skills.',
@@ -297,7 +392,7 @@ const messages: TranslationMap = {
   'skills.explorer.installed': 'Instalada',
   'skills.explorer.install': 'Instalar',
   'skills.explorer.installing': 'Instalando…',
-  'skills.integrations': 'Integraciones',
+  'skills.integrations': 'Integraciones de Composio',
   'skills.integrationsSubtitle':
     'Conexiones OAuth en la nube: inicia sesión con tu cuenta y Composio gestiona los tokens para que los agentes puedan leer y actuar en tu nombre. Sin claves de API que administrar.',
   'skills.composio.noApiKeyTitle': 'No hay una API key de Composio configurada',
@@ -309,6 +404,16 @@ const messages: TranslationMap = {
   'skills.tabs.explorer': 'Skills',
   'skills.tabs.meetings': 'Reuniones de Google Meet',
   'skills.tabs.mcp': 'MCP Servidores',
+  'connections.tabs.composio': 'Composio',
+  'connections.tabs.channels': 'Canales',
+  'connections.tabs.mcp': 'Servidores MCP',
+  'connections.tabs.skills': 'Habilidades',
+  'connections.tabs.meetings': 'Reuniones',
+  'connections.groups.integrations': 'Integraciones',
+  'connections.tabs.oauth': 'OAuth',
+  'connections.tabs.composioKey': 'Composio',
+  'connections.groups.apiKeys': 'Claves de API',
+  'connections.groups.intelligence': 'Inteligencia',
   'memory.title': 'Memoria',
   'memory.search': 'Buscar recuerdos...',
   'memory.noResults': 'No se encontraron recuerdos',
@@ -319,6 +424,12 @@ const messages: TranslationMap = {
   'memory.tab.tasksDescription':
     'Crea y realiza un seguimiento de tareas: tus propios pendientes más los tableros que tus agentes crean a lo largo de las conversaciones.',
   'memory.tab.subconscious': 'Subconsciente',
+  'memory.tab.agentWork': 'Trabajo del agente',
+  'memory.tab.agentWorkDescription':
+    'Un centro de mando para cada ejecución de agente en segundo plano, agrupado según lo que necesita tu intervención, lo que está en curso y lo que ha terminado.',
+  'memory.tab.teams': 'Equipos',
+  'memory.tab.teamsDescription':
+    'Equipos de agentes coordinados: quién se encarga de cada tarea, qué está bloqueado y qué se dicen los compañeros entre sí.',
   'memory.tab.agents': 'Biblioteca',
   'memory.tab.agentsDescription':
     'Explora y ejecuta los agentes disponibles — cada uno con sus propias herramientas, capacidades y área de enfoque.',
@@ -714,6 +825,7 @@ const messages: TranslationMap = {
   'team.failedChangeRole': 'No se pudo cambiar el rol',
   'team.failedRemoveMember': 'No se pudo eliminar el miembro',
   'devOptions.title': 'Avanzado',
+  'devOptions.titleDiagnostics': 'Desarrollador y Diagnóstico',
   'devOptions.diagnostics': 'Diagnósticos',
   'devOptions.diagnosticsDesc': 'Estado del sistema, registros y métricas de rendimiento',
   'devOptions.toolPolicyDiagnosticsDesc':
@@ -822,14 +934,9 @@ const messages: TranslationMap = {
   'settings.about.connectionHelperCloud':
     'Conectado a un núcleo remoto. Cambia esto en BootCheck o en el selector de modo en la nube.',
   'settings.heartbeat.title': 'Latidos y bucles',
-  'settings.heartbeat.desc':
-    'Controla los ritmos de programación en segundo plano e inspecciona el mapa del bucle.',
-  'settings.ledgerUsage.title': 'Libro mayor de uso',
-  'settings.ledgerUsage.desc':
-    'Gasto de crédito reciente, matemáticas de presupuesto y presupuesto de lectura de fondo API.',
+  'settings.usage.title': 'Uso y límites',
+  'settings.usage.menuDesc': 'Costos, uso de tokens, presupuestos y actividad en segundo plano',
   'settings.costDashboard.title': 'Panel de costos',
-  'settings.costDashboard.desc':
-    'Gasto de 7 días y quema de tokens en todo el enjambre, con ritmo de presupuesto y desglose por modelo.',
   'settings.costDashboard.sevenDayCost': 'Costo diario de 7 días',
   'settings.costDashboard.sevenDayTokens': 'Uso de token de 7 días',
   'settings.costDashboard.totalSpend': 'Total de 7 días',
@@ -948,6 +1055,12 @@ const messages: TranslationMap = {
   'settings.search.accessBlockAll': 'Bloquear todo',
   'settings.search.accessBlockAllHint':
     'Todo el acceso web está bloqueado: el asistente no puede abrir ni leer ningún sitio web.',
+  // ─── Settings global search bar ────────────────────────────
+  'settings.settingsSearch.placeholder': 'Buscar ajustes…',
+  'settings.settingsSearch.ariaLabel': 'Buscar ajustes',
+  'settings.settingsSearch.clear': 'Borrar búsqueda',
+  'settings.settingsSearch.resultsLabel': 'Resultados de búsqueda',
+  'settings.settingsSearch.noResults': 'No se encontraron ajustes para «{query}»',
   'settings.embeddings.title': 'Incrustaciones',
   'settings.embeddings.description':
     'Elige qué proveedor de embeddings convierte la memoria en vectores para la búsqueda semántica. Cambiar el proveedor, modelo o dimensiones invalida los vectores almacenados y requiere un reinicio completo de la memoria.',
@@ -1267,6 +1380,31 @@ const messages: TranslationMap = {
   'mcp.detail.disable': 'Deshabilitar',
   'mcp.status.disabled': 'Deshabilitado',
   'mcp.detail.tools': 'Herramientas',
+  'mcp.connectAuth.title': 'Conectar {name}',
+  'mcp.connectAuth.hint':
+    'Agrega la autenticación que necesite este servidor y luego conéctate. Los tokens se almacenan cifrados. Déjalo en blanco para servidores que no requieran autenticación.',
+  'mcp.connectAuth.requiredLabel': 'Obligatorio',
+  'mcp.connectAuth.customHeadersLabel': 'Encabezados personalizados',
+  'mcp.connectAuth.customHeadersEmpty':
+    'No hay encabezados personalizados. Agrega uno si este servidor necesita un encabezado de autenticación que el registro no declaró.',
+  'mcp.connectAuth.addHeader': '+ Agregar encabezado',
+  'mcp.connectAuth.headerName': 'Nombre del encabezado',
+  'mcp.connectAuth.headerValue': 'Valor',
+  'mcp.connectAuth.removeHeader': 'Quitar encabezado',
+  'mcp.connectAuth.howToGetToken': 'Ayuda y configuración',
+  'mcp.connectAuth.hideHelp': 'Ocultar ayuda',
+  'mcp.connectAuth.schemeLabel': 'Cómo enviar el valor',
+  'mcp.connectAuth.schemeBearer': 'Bearer',
+  'mcp.connectAuth.schemeRaw': 'Ninguno',
+  'mcp.connectAuth.reconnectFailed': 'Se guardaron las credenciales, pero la conexión falló.',
+  'mcp.connectAuth.oauthHint':
+    'Este servidor usa OAuth. Inicia sesión en tu navegador para autorizar a OpenHuman.',
+  'mcp.connectAuth.signIn': 'Iniciar sesión con el navegador',
+  'mcp.connectAuth.oauthWaiting': 'Esperando el inicio de sesión…',
+  'mcp.connectAuth.oauthOrToken':
+    '¿Ya tienes un token de acceso? Pégalo abajo como encabezado Authorization en su lugar.',
+  'mcp.connectAuth.oauthTimeout':
+    'Se agotó el tiempo de espera del inicio de sesión en el navegador. Inténtalo de nuevo.',
   'onboarding.skipForNow': 'Saltar por ahora',
   'onboarding.localAI.continueWithCloud': 'Continuar con la nube',
   'onboarding.localAI.useLocalAnyway':
@@ -1858,6 +1996,7 @@ const messages: TranslationMap = {
     'Sin respuesta del agente después de 2 minutos. Intenta de nuevo o verifica tu conexión.',
   'chat.filter.general': 'General',
   'chat.filter.subconscious': 'Subconsciente',
+  'chat.filter.meetings': 'Reuniones',
   'chat.filter.tasks': 'Tareas',
   'chat.selectThread': 'Selecciona un hilo',
   'chat.threads': 'Hilos',
@@ -1869,6 +2008,9 @@ const messages: TranslationMap = {
   'chat.editThreadTitle': 'Editar título del hilo',
   'chat.hideSidebar': 'Ocultar barra lateral',
   'chat.showSidebar': 'Mostrar barra lateral',
+  'chat.searchThreads': 'Buscar conversaciones',
+  'layout.resizeSidebar': 'Redimensionar barra lateral',
+  'layout.showSidebar': 'Mostrar barra lateral',
   'chat.newThreadShortcut': 'Nuevo hilo (/new)',
   'chat.new': 'Nuevo',
   'chat.failedToLoadMessages': 'No se pudieron cargar los mensajes',
@@ -1906,7 +2048,7 @@ const messages: TranslationMap = {
   'chat.attachment.unsupportedType':
     'Tipo de archivo no compatible. Use una imagen (PNG, JPEG, WebP, GIF, BMP) o un archivo PDF, TXT o Markdown.',
   'chat.attachment.imageNotSupported':
-    'Este modelo no puede leer imágenes. Adjunta un archivo PDF, TXT o Markdown en su lugar.',
+    'Este modelo no puede leer imágenes. Puedes usar el nivel Razonamiento de OpenHuman para adjuntar tu imagen.',
   'chat.attachment.readFailed': 'No se pudo leer el archivo',
   'memory.searchAria': 'Buscar en memoria',
   'memory.searchPlaceholder': 'Buscar entradas de memoria...',
@@ -1960,6 +2102,15 @@ const messages: TranslationMap = {
   'token.planClickForDetails': 'plan - toca para ver detalles',
   'token.sessionTokens': 'Ent: {in} | Sal: {out} | Turnos: {turns}',
   'token.limit': 'Límite alcanzado',
+  'token.inLabel': 'ENT',
+  'token.outLabel': 'SAL',
+  'token.inputTokens': 'Tokens de entrada en esta sesión',
+  'token.outputTokens': 'Tokens de salida en esta sesión',
+  'token.turnsCount': 'Turnos de inferencia en esta sesión',
+  'token.turn': 'turno',
+  'token.turns': 'turnos',
+  'token.ctxLabel': 'CTX',
+  'token.contextWindow': 'Uso de ventana de contexto (último turno)',
   'catalog.noCapabilityBinding': 'Sin vinculación de capacidad',
   'catalog.downloadFailed': 'Descarga fallida',
   'catalog.active': 'Activo',
@@ -2753,6 +2904,13 @@ const messages: TranslationMap = {
   'conversations.subagent.statusCompleted': 'completado',
   'conversations.subagent.statusFailed': 'fallido',
   'conversations.subagent.statusAwaitingUser': 'esperando al usuario',
+  'conversations.agentTaskInsights.title': 'Información de tareas del agente',
+  'conversations.agentTaskInsights.processSourceTitle': 'Fuente del proceso del agente',
+  'conversations.agentTaskInsights.stepsHeading': 'Pasos',
+  'conversations.agentTaskInsights.sourcesHeading': 'Fuentes',
+  'conversations.agentTaskInsights.noSteps': 'No hay pasos registrados',
+  'conversations.agentTaskInsights.viewProcessSource':
+    'Ver la fuente completa del proceso del agente',
   'daemon.serviceBlockingGate.body': 'Cuerpo',
   'daemon.serviceBlockingGate.downloadHint': 'Sugerencia de descarga',
   'daemon.serviceBlockingGate.downloadLatest': 'Descargar la última versión',
@@ -2876,6 +3034,69 @@ const messages: TranslationMap = {
   'intelligence.workTask.urlLine': '- Dirección: {url}',
   'intelligence.workTask.closingInstruction':
     'Empieza reformulando brevemente el plan de implementación concreto y luego ejecútalo. Mantén el progreso visible en este hilo y actualiza el tablero de tareas cuando cambie el estado del trabajo.',
+  'intelligence.agentWork.subtitle':
+    'Cada ejecución de agente en segundo plano, agrupada por estado del ciclo de vida.',
+  'intelligence.agentWork.loading': 'Cargando trabajo del agente…',
+  'intelligence.agentWork.failedToLoad': 'No se pudo cargar el trabajo del agente',
+  'intelligence.agentWork.empty': 'Aún no hay ejecuciones de agente en segundo plano.',
+  'intelligence.agentWork.bucket.needsInput': 'Requiere intervención',
+  'intelligence.agentWork.bucket.working': 'En curso',
+  'intelligence.agentWork.bucket.completed': 'Completado',
+  'intelligence.agentWork.bucket.failed': 'Fallido',
+  'intelligence.agentWork.bucket.stopped': 'Detenido',
+  'intelligence.agentWork.column.agent': 'Agente',
+  'intelligence.agentWork.column.status': 'Estado',
+  'intelligence.agentWork.column.elapsed': 'Transcurrido',
+  'intelligence.agentWork.column.cost': 'Costo',
+  'intelligence.agentWork.column.tokens': 'Fichas',
+  'intelligence.agentWork.status.pending': 'Pendiente',
+  'intelligence.agentWork.status.running': 'En ejecución',
+  'intelligence.agentWork.status.awaitingUser': 'Requiere intervención',
+  'intelligence.agentWork.status.paused': 'Pausado',
+  'intelligence.agentWork.status.completed': 'Completado',
+  'intelligence.agentWork.status.failed': 'Fallido',
+  'intelligence.agentWork.status.cancelled': 'Cancelado',
+  'intelligence.agentWork.status.interrupted': 'Interrumpido',
+  'intelligence.agentWork.kind.subagent': 'Subagente',
+  'intelligence.agentWork.kind.workerThread': 'Hilo de worker',
+  'intelligence.agentWork.kind.backgroundAgent': 'Agente en segundo plano',
+  'intelligence.agentWork.kind.teamMember': 'Miembro del equipo',
+  'intelligence.agentWork.kind.workflowChild': 'Hijo de flujo de trabajo',
+  'intelligence.agentWork.openThread': 'Abrir hilo',
+  'intelligence.agentWork.openWorker': 'Abrir trabajador',
+  'intelligence.teams.subtitle': 'Equipos de agentes coordinados y las tareas que comparten.',
+  'intelligence.teams.loading': 'Cargando equipos…',
+  'intelligence.teams.failedToLoad': 'Error al cargar los equipos',
+  'intelligence.teams.empty': 'Aún no hay equipos de agentes',
+  'intelligence.teams.emptyHint':
+    'Los equipos aparecen aquí cuando un agente genera subagentes coordinados para compartir un objetivo.',
+  'intelligence.teams.refresh': 'Actualizar',
+  'intelligence.teams.backToList': 'Todos los equipos',
+  'intelligence.teams.status.active': 'Activo',
+  'intelligence.teams.status.closed': 'Cerrado',
+  'intelligence.teams.header.lead': 'líder',
+  'intelligence.teams.header.taskCount': '{count} tareas',
+  'intelligence.teams.header.memberCount': '{count} miembros',
+  'intelligence.teams.member.active': 'Activo',
+  'intelligence.teams.member.pending': 'Pendiente',
+  'intelligence.teams.member.idle': 'Inactivo',
+  'intelligence.teams.member.stopped': 'Detenido',
+  'intelligence.teams.column.todo': 'Pendiente',
+  'intelligence.teams.column.ready': 'Listo',
+  'intelligence.teams.column.inProgress': 'En progreso',
+  'intelligence.teams.column.blocked': 'Bloqueado',
+  'intelligence.teams.column.done': 'Completado',
+  'intelligence.teams.emptyColumn': 'Vacío',
+  'intelligence.teams.unclaimed': 'Sin asignar',
+  'intelligence.teams.pickedUpBy': 'Asumido por {name}',
+  'intelligence.teams.depLockTitle': '{count} dependencias sin cumplir',
+  'intelligence.teams.gate.pending': 'Control pendiente',
+  'intelligence.teams.gate.passed': 'Control superado',
+  'intelligence.teams.gate.failed': 'Control fallido',
+  'intelligence.teams.gate.label': 'Control: {status}',
+  'intelligence.teams.activity.title': 'Actividad del equipo',
+  'intelligence.teams.activity.empty': 'Aún no hay mensajes',
+  'intelligence.teams.activity.toTeam': 'equipo',
   'intelligence.refine.objectiveDefault':
     'Convierte la tarea de origen en una tarea de agente lista para implementar: {title}',
   'intelligence.refine.sourceLine': 'Origen: {url}',
@@ -2953,9 +3174,6 @@ const messages: TranslationMap = {
   'pages.settings.aiSection.description':
     'Proveedores de modelos de lenguaje, Ollama local y voz (STT / TTS).',
   'pages.settings.aiSection.title': 'IA',
-  'pages.settings.composioSection.title': 'Composio',
-  'pages.settings.composioSection.description':
-    'Enrutamiento, activadores e historial para integraciones impulsadas por Composio.',
   'settings.developerMenu.composio.title': 'Composio',
   'settings.developerMenu.composio.desc':
     'Modo de enrutamiento, activadores de integración y archivo de historial de activadores.',
@@ -3086,6 +3304,54 @@ const messages: TranslationMap = {
   'skills.mcpComingSoon.description':
     'La gestión de servidores MCP llegará pronto. Esta pestaña será el lugar para descubrir, conectar y monitorear tus integraciones de servidor MCP.',
   'settings.ai.routing': 'Enrutamiento',
+  'settings.ai.claudeCode.button': 'Claude Code',
+  'settings.ai.claudeCode.inlineNotConnected':
+    'Sin conexión — enruta el chat a través de tu Claude Code CLI local.',
+  'settings.ai.claudeCode.checkingSignIn': 'Comprobando inicio de sesión…',
+  'settings.ai.claudeCode.inlineConnected': 'Conectado.',
+  'settings.ai.claudeCode.signedInAs': 'Sesión iniciada como',
+  'settings.ai.claudeCode.subscriptionFallback': 'Suscripción de Claude',
+  'settings.ai.claudeCode.usingApiKeyEnv': 'Usando ANTHROPIC_API_KEY',
+  'settings.ai.claudeCode.cliNotInstalled': 'CLI no instalado',
+  'settings.ai.claudeCode.signInUnknown': 'Estado de inicio de sesión desconocido',
+  'settings.ai.claudeCode.connectedNotSignedIn': 'Conectado · sin iniciar sesión',
+  'settings.ai.claudeCode.modalTitle': 'Claude Code CLI',
+  'settings.ai.claudeCode.modalDescription':
+    'Enruta las cargas de chat, agénticas y de razonamiento a través de tu Claude Code CLI instalado localmente. Sin clave de API — usa el propio inicio de sesión del CLI.',
+  'settings.ai.claudeCode.close': 'Cerrar',
+  'settings.ai.claudeCode.connection': 'Conexión',
+  'settings.ai.claudeCode.enabled': 'Activado',
+  'settings.ai.claudeCode.notEnabled': 'No activado',
+  'settings.ai.claudeCode.disconnect': 'Desconectar',
+  'settings.ai.claudeCode.disconnecting': 'Desconectando…',
+  'settings.ai.claudeCode.enable': 'Activar Claude Code',
+  'settings.ai.claudeCode.enabling': 'Activando…',
+  'settings.ai.claudeCode.authentication': 'Autenticación',
+  'settings.ai.claudeCode.recheck': 'Volver a comprobar',
+  'settings.ai.claudeCode.checking': 'Comprobando…',
+  'settings.ai.claudeCode.openingTerminal': 'Abriendo terminal…',
+  'settings.ai.claudeCode.signIn': 'Iniciar sesión con Claude',
+  'settings.ai.claudeCode.reconnect': 'Reconectar',
+  'settings.ai.claudeCode.loginHint':
+    'Abre un terminal que ejecuta claude login. Cuando termine, haz clic en Volver a comprobar.',
+  'settings.ai.claudeCode.loginError':
+    'No se pudo abrir el terminal de inicio de sesión. Inténtalo de nuevo.',
+  'settings.ai.claudeCode.fullAccess': 'Acceso completo',
+  'settings.ai.claudeCode.fullAccessOn':
+    'Claude Code puede ejecutar comandos, usar la red y generar subagentes.',
+  'settings.ai.claudeCode.fullAccessOff':
+    'Aceptar solo ediciones — aplica los cambios de archivos automáticamente y restringe comandos y red.',
+  'settings.ai.claudeCode.sandboxNoteMac':
+    'En macOS, ~/.openhuman permanece protegido por el sandbox en ambos modos.',
+  'settings.ai.claudeCode.sandboxNoteOther':
+    'El acceso completo no tiene restricciones en esta plataforma — actívalo solo si confías en el espacio de trabajo.',
+  'settings.ai.claudeCode.enableToCheck': 'Activa Claude Code para comprobar el inicio de sesión.',
+  'settings.ai.claudeCode.usingApiKeyEnvDetail': 'Usando ANTHROPIC_API_KEY del entorno.',
+  'settings.ai.claudeCode.notFoundInstall':
+    'Claude Code CLI no encontrado — instálalo con: npm install -g @anthropic-ai/claude-code',
+  'settings.ai.claudeCode.unknownDetail':
+    'No se pudo determinar el estado de inicio de sesión. Tu claude CLI puede ser anterior al estado de autenticación — prueba Reconectar y luego Volver a comprobar.',
+  'settings.ai.claudeCode.notSignedIn': 'Sesión no iniciada.',
   'settings.ai.routingCustom': 'Enrutamiento personalizado',
   'settings.ai.routingDefault': 'Predeterminado',
   'settings.ai.routingDesc': 'Descripción de enrutamiento',
@@ -3818,6 +4084,9 @@ const messages: TranslationMap = {
   'settings.devWorkflow.schedule.every2hours': 'Cada 2 horas',
   'settings.devWorkflow.schedule.every6hours': 'Cada 6 horas',
   'settings.devWorkflow.schedule.onceDaily': 'Una vez al día (9 AM)',
+  'settings.developerMenu.tasks.title': 'Tareas',
+  'settings.developerMenu.tasks.desc':
+    'Explora y gestiona los tableros de tareas: tus pendientes y los tableros que los agentes crean en las conversaciones.',
   'settings.developerMenu.cronJobs.title': 'Tareas cron',
   'settings.developerMenu.cronJobs.desc':
     'Ver y configurar tareas programadas para habilidades en tiempo de ejecución',
@@ -3871,6 +4140,12 @@ const messages: TranslationMap = {
   'settings.developerMenu.autonomy.title': 'Autonomía del agente',
   'settings.developerMenu.autonomy.desc':
     'Límites de frecuencia de acciones de herramientas y umbrales de seguridad',
+  'settings.developerMenu.autocomplete.title': 'Autocompletar',
+  'settings.developerMenu.autocomplete.desc':
+    'Configuración de autocompletado en línea con IA y panel de depuración',
+  'settings.developerMenu.voiceDebug.title': 'Voz (depuración)',
+  'settings.developerMenu.voiceDebug.desc':
+    'Estado del tiempo de ejecución del dictado de voz y configuración de depuración',
   'settings.mcpServer.title': 'MCP Servidor',
   'settings.mcpServer.toolsSectionTitle': 'Herramientas disponibles',
   'settings.mcpServer.toolsSectionDesc':
@@ -3973,6 +4248,26 @@ const messages: TranslationMap = {
   'settings.agentAccess.approvalHistoryDesc':
     'Revisa las decisiones anteriores de Aprobar / Denegar solicitadas por el agente.',
   'settings.agentAccess.viewApprovalHistory': 'Ver historial de aprobaciones',
+
+  // ── Panel de Permisos ─────────────────────────────────────────────
+  'settings.permissions.title': 'Permisos',
+  'settings.permissions.menuDesc': 'Elige qué puede hacer tu asistente y dónde puede trabajar.',
+  'settings.permissions.accessMode': '¿Qué puede hacer el asistente?',
+  'settings.permissions.accessModeDesc':
+    'Elige cuánta libertad tiene el asistente al realizar acciones en tu ordenador.',
+  'settings.permissions.preset.readonly.title': 'Solo mirar',
+  'settings.permissions.preset.readonly.desc':
+    'El asistente puede leer archivos y explorar, pero nunca escribir, editar ni ejecutar nada que cambie el estado.',
+  'settings.permissions.preset.supervised.title': 'Preguntar primero',
+  'settings.permissions.preset.supervised.desc':
+    'Puede crear archivos nuevos libremente, pero siempre pedirá tu aprobación antes de editar, ejecutar comandos o acceder a la red.',
+  'settings.permissions.preset.full.title': 'Control total',
+  'settings.permissions.preset.full.desc':
+    'Opera con tu acceso de cuenta completo. Los comandos destructivos, el acceso a la red y las instalaciones siguen pidiendo aprobación.',
+  'settings.permissions.folders': '¿Dónde puede trabajar?',
+  'settings.permissions.foldersDesc':
+    'La carpeta predeterminada que el asistente lee y escribe. Puedes añadir más carpetas en los ajustes avanzados.',
+
   'settings.sandbox.title': 'Ejecución en sandbox',
   'settings.sandbox.menuDesc':
     'Configurar backends de sandbox para el aislamiento de herramientas del agente.',
@@ -4177,6 +4472,25 @@ const messages: TranslationMap = {
   'settings.modelHealth.modal.apply': 'Aplicar reemplazo',
   'settings.modelHealth.tag.cheaper': 'CHEAPER',
   'settings.modelHealth.tag.better': 'BETTER',
+  'settings.desktopAgent.title': 'Agente de escritorio',
+  'settings.desktopAgent.description':
+    'Comprueba y concede los permisos que necesita el agente de escritorio.',
+  'settings.desktopAgent.microphone': 'Micrófono',
+  'settings.desktopAgent.grant': 'Conceder',
+  'settings.desktopAgent.notRequiredOnOs': 'No es necesario en este sistema operativo',
+  'settings.desktopAgent.allGranted':
+    'Todo listo: el agente de escritorio tiene todos los permisos que necesita.',
+  'settings.desktopAgent.recheck': 'Volver a comprobar',
+  'settings.desktopAgent.restartAndRecheck': 'Reiniciar el núcleo y volver a comprobar',
+  'settings.desktopAgent.seamless.title': 'Acciones del agente',
+  'settings.desktopAgent.seamless.label': 'Deja que el agente actúe sin preguntar',
+  'settings.desktopAgent.seamless.description':
+    'Concede acceso completo y aprueba automáticamente las acciones de escritorio (abrir aplicaciones, controlar sus interfaces) para que el agente las ejecute sin pedir confirmación.',
+  'settings.desktopAgent.seamless.note':
+    'Solo las acciones de escritorio omiten la confirmación: ejecutar comandos de shell, editar archivos, peticiones de red e instalar software siguen preguntando. Al desactivarlo se deja de aprobar automáticamente las acciones de escritorio, pero el nivel de acceso no cambia.',
+  'settings.desktopAgent.beta':
+    'Beta: el agente de escritorio es experimental y puede no funcionar siempre como se espera.',
+  'settings.desktopAgent.wakeWordHint': 'Di “Hey Tiny” antes de tu orden para activar el agente.',
   'settings.screenIntel.permissions.accessibility': 'Accesibilidad',
   'settings.screenIntel.permissions.grantHint': 'Sugerencia de permiso',
   'settings.screenIntel.permissions.inputMonitoring': 'Monitoreo de entrada',
@@ -4346,13 +4660,14 @@ const messages: TranslationMap = {
   'skills.meetingBots.liveTitle': 'En reunión',
   'skills.meetingBots.liveStatusJoining': 'Uniéndose\u2026',
   'skills.meetingBots.liveStatusActive': 'En vivo en la reunión',
+  'skills.meetingBots.liveStatusListening': 'Escuchando (silenciado)',
   'skills.meetingBots.liveStatusEnded': 'Reunión finalizada',
   'skills.meetingBots.liveStatusError': 'Error al unirse',
   'skills.meetingBots.leaveButton': 'Salir',
   'skills.meetingBots.respondToParticipant': 'Tu nombre en esta reunión',
   'skills.meetingBots.respondToParticipantHint': 'p. ej. Ana (tu nombre visible en la llamada)',
   'skills.meetingBots.respondToParticipantDesc':
-    'El bot solo te responderá a ti. Deja en blanco para que cualquiera pueda activarlo.',
+    'Introduce tu nombre de visualización exacto de la reunión. El bot solo responde cuando dices su nombre (frase de activación).',
   'skills.meetingBots.wakePhrase': 'Frase de activación',
   'skills.meetingBots.wakePhraseHint': 'Hey OpenHuman',
   'skills.meetingBots.wakePhraseDesc':
@@ -4628,6 +4943,9 @@ const messages: TranslationMap = {
   'walletSend.done': 'Hecho',
   'walletSend.genericError': 'No se pudo completar la transferencia. Inténtalo de nuevo.',
   'settings.taskSources.title': 'Fuentes de tareas',
+  'settings.integrations.title': 'Integraciones',
+  'settings.integrations.menuDesc':
+    'Fuentes de tareas, enrutamiento de Composio y disparadores de webhooks',
   'settings.taskSources.subtitle':
     'Extrae tareas de tus herramientas al tablero de tareas del agente',
   'settings.taskSources.description':
@@ -4841,6 +5159,12 @@ const messages: TranslationMap = {
   'autocomplete.maxChars': 'Máximo de caracteres de contexto',
   'autocomplete.overlayTtlMs': 'Tiempo de espera de superposición (ms)',
   'memory.tab.council': 'Council',
+  'activity.tabs.automations': 'Automatizaciones',
+  'activity.tabs.automationsDescription':
+    'Procedimientos reutilizables y ejecutables — un objetivo y los pasos para alcanzarlo.',
+  'activity.tabs.backgroundActivity': 'Subconsciente',
+  'activity.tabs.alerts': 'Alertas',
+
   'intelligence.agents.title': 'Biblioteca de agentes',
   'intelligence.agents.subtitle':
     'Revisa especialistas ejecutables y envía una tarea a un agente concreto.',
@@ -5245,6 +5569,57 @@ const messages: TranslationMap = {
   'notch.speaking': 'Hablando…',
   'notch.transcribing': 'Transcribiendo…',
   'notch.executing': 'Ejecutando…',
+  // ── Agent Profiles ───────────────────────────────────────────────────────
+  'settings.profiles.title': 'Perfiles de agente',
+  'settings.profiles.subtitle':
+    'Agentes con personalidad: cada uno con su propia alma, memoria, conectores y habilidades.',
+  'settings.profiles.menuDesc': 'Crea y gestiona perfiles de agente',
+  'settings.profiles.new': 'Nuevo perfil',
+  'settings.profiles.empty': 'Aún no hay perfiles de agente',
+  'settings.profiles.loadError': 'No se pudieron cargar los perfiles',
+  'settings.profiles.active': 'Activo',
+  'settings.profiles.setActive': 'Establecer como activo',
+  'settings.profiles.sourceBuiltIn': 'Integrado',
+  'settings.profiles.sourceCustom': 'Personalizado',
+  'settings.profiles.deleteConfirm': '¿Eliminar este perfil? Esta acción no se puede deshacer.',
+  'settings.profiles.editor.createTitle': 'Nuevo perfil',
+  'settings.profiles.editor.editTitle': 'Editar perfil',
+  'settings.profiles.editor.name': 'Nombre',
+  'settings.profiles.editor.id': 'Identificador',
+  'settings.profiles.editor.idHint': 'Solo letras minúsculas, números y guiones.',
+  'settings.profiles.editor.description': 'Descripción',
+  'settings.profiles.editor.soul': 'Alma (SOUL.md)',
+  'settings.profiles.editor.soulHint':
+    'Identidad personalizada de este perfil. Si se deja vacío, se usa el SOUL.md del espacio de trabajo.',
+  'settings.profiles.editor.baseAgent': 'Agente base',
+  'settings.profiles.editor.baseAgentHint':
+    'Con qué definición de agente se ejecuta este perfil (por ejemplo, orchestrator).',
+  'settings.profiles.editor.model': 'Modelo',
+  'settings.profiles.editor.modelHint':
+    'Anulación de modelo opcional. Si se deja vacío, hereda el predeterminado.',
+  'settings.profiles.editor.temperature': 'Temperatura',
+  'settings.profiles.editor.systemPromptSuffix': 'Sufijo del mensaje del sistema',
+  'settings.profiles.editor.agentConversations': 'Recordar conversaciones del agente',
+  'settings.profiles.editor.agentConversationsHint':
+    'Incluir memoria de chats anteriores y entre chats en el contexto de este perfil.',
+  'settings.profiles.editor.memorySources': 'Fuentes de memoria',
+  'settings.profiles.editor.memorySourcesHint':
+    'Fuentes de memoria de las que recuerda este perfil.',
+  'settings.profiles.editor.connectors': 'Conectores',
+  'settings.profiles.editor.connectorsHint':
+    'Kits de herramientas de Composio que puede usar este perfil.',
+  'settings.profiles.editor.skills': 'Habilidades',
+  'settings.profiles.editor.skillsHint':
+    'Flujos de trabajo que este perfil puede listar y ejecutar.',
+  'settings.profiles.editor.mcpServers': 'Servidores MCP',
+  'settings.profiles.editor.mcpServersHint': 'Servidores MCP a los que puede acceder este perfil.',
+  'settings.profiles.editor.all': 'Todos',
+  'settings.profiles.editor.selected': 'Seleccionados',
+  'settings.profiles.editor.addPlaceholder': 'Escribe un identificador y pulsa Intro',
+  'settings.profiles.editor.removeAria': 'Quitar {item}',
+  'settings.profiles.editor.notFound': 'Perfil no encontrado',
+  'settings.profiles.editor.saving': 'Guardando…',
+  'settings.profiles.editor.idRequired': 'El identificador del perfil no puede estar vacío',
 };
 
 export default messages;

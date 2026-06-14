@@ -551,7 +551,7 @@ describe('createWalkthroughSteps', () => {
     const navigate = vi.fn();
     const steps = createWalkthroughSteps(navigate);
 
-    // Steps: 2=chat, 3=integrations, 4=channels, 5=intelligence, 6=settings, 7=home-return, 9=chat-welcome
+    // Steps: 2=chat, 3=integrations, 4=channels, 5=activity, 6=settings, 7=home-return, 9=chat-welcome
     const crossPageIndices = [2, 3, 4, 5, 6, 7, 9];
     for (const idx of crossPageIndices) {
       expect(typeof steps[idx].before, `step[${idx}] should have a before fn`).toBe('function');
@@ -571,9 +571,9 @@ describe('createWalkthroughSteps', () => {
 
   it.each([
     { idx: 2, route: '/chat', target: 'chat-agent-panel' },
-    { idx: 3, route: '/skills', target: 'skills-grid' },
+    { idx: 3, route: '/connections', target: 'skills-grid' },
     { idx: 4, route: null, target: 'skills-channels' },
-    { idx: 5, route: '/intelligence', target: 'intelligence-header' },
+    { idx: 5, route: '/activity', target: 'intelligence-header' },
     { idx: 6, route: '/settings', target: 'settings-menu' },
     { idx: 7, route: '/home', target: 'tab-chat' },
     { idx: 9, route: '/chat', target: 'chat-agent-panel' },

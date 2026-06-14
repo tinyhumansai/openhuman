@@ -53,6 +53,7 @@ impl Provider for MockCalendarProvider {
                         "timeMax": "2026-05-04T00:00:00Z"
                     })
                     .to_string(),
+                    extra_content: None,
                 }],
                 usage: None,
                 reasoning_content: None,

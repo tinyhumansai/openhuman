@@ -69,16 +69,16 @@ async function bootSkills(page: Page, userId: string): Promise<void> {
   await seedToolkits('ACTIVE');
   await bootRuntimeReadyGuestPage(page);
   await signInViaCallbackToken(page, userId);
-  await page.goto('/#/skills');
+  // Phase 2: /skills → /connections, "Composio" tab renamed to "Apps"
+  await page.goto('/#/connections');
   await waitForAppReady(page);
   await dismissWalkthroughIfPresent(page);
-  await page.getByRole('tab', { name: 'Composio' }).click();
-  await expect(page.getByRole('heading', { name: 'Composio Integrations' })).toBeVisible({
-    timeout: 20_000,
-  });
+  await page.getByTestId('two-pane-nav-composio').click();
+  await expect(page.getByTestId('composio-integrations-card')).toBeVisible({ timeout: 20_000 });
 }
 
 async function assertSessionAlive(page: Page): Promise<void> {
+  // Phase 2: /skills → /connections
   await expect
     .poll(async () =>
       page.evaluate(() => {
@@ -93,13 +93,16 @@ async function assertSessionAlive(page: Page): Promise<void> {
           }
         ).__OPENHUMAN_CORE_STATE__?.()?.snapshot;
         return {
-          hash: window.location.hash,
+          // The connections page now appends an active-tab query (e.g.
+          // `#/connections?tab=composio`); strip it so we assert we're still on
+          // the connections route (session not nuked), not the exact sub-tab.
+          hash: window.location.hash.replace(/\?.*$/, ''),
           hasUser: Boolean(snapshot?.currentUser?._id),
           hasToken: Boolean(snapshot?.sessionToken),
         };
       })
     )
-    .toEqual({ hash: '#/skills', hasUser: true, hasToken: true });
+    .toEqual({ hash: '#/connections', hasUser: true, hasToken: true });
 }
 
 test.describe('Connector session guard matrix', () => {
@@ -143,7 +146,8 @@ test.describe('Connector session guard matrix', () => {
     });
     await page.reload();
     await waitForAppReady(page);
-    await page.getByRole('tab', { name: 'Composio' }).click();
+    // Phase 2: "Composio" tab renamed to "Apps"
+    await page.getByTestId('two-pane-nav-composio').click();
     await page.getByTestId('skill-install-composio-jira').click();
     const dialog = page.getByRole('dialog', { name: /Jira/i });
     await expect(dialog).toBeVisible();
@@ -156,14 +160,16 @@ test.describe('Connector session guard matrix', () => {
     await seedToolkits('FAILED');
     await page.reload();
     await waitForAppReady(page);
-    await page.getByRole('tab', { name: 'Composio' }).click();
+    // Phase 2: "Composio" tab renamed to "Apps"
+    await page.getByTestId('two-pane-nav-composio').click();
     await expect(page.getByTestId('skill-install-composio-discord')).toContainText('Discord');
     await assertSessionAlive(page);
 
     await seedToolkits('EXPIRED');
     await page.reload();
     await waitForAppReady(page);
-    await page.getByRole('tab', { name: 'Composio' }).click();
+    // Phase 2: "Composio" tab renamed to "Apps"
+    await page.getByTestId('two-pane-nav-composio').click();
     await expect(page.getByTestId('skill-install-composio-github')).toContainText(
       /Reconnect|GitHub/
     );

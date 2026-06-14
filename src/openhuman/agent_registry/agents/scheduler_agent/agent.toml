@@ -16,4 +16,7 @@ omit_memory_md = true
 hint = "agentic"
 
 [tools]
-named = ["current_time", "cron_add", "cron_list", "cron_remove", "ask_user_clarification"]
+# `resolve_time` turns "in 10 minutes" / "tomorrow 9am" into an exact
+# timestamp for cron scheduling — `current_time` only reports now, leaving
+# the model to do unreliable epoch arithmetic.
+named = ["current_time", "resolve_time", "cron_add", "cron_list", "cron_remove", "ask_user_clarification"]

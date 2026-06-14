@@ -36,6 +36,11 @@ const DEFS: &[BackendMeetControllerDef] = &[
         schema: schema_notification_action,
         handler: handle_notification_action_wrap,
     },
+    BackendMeetControllerDef {
+        function: "speak",
+        schema: schema_speak,
+        handler: handle_speak_wrap,
+    },
 ];
 
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
@@ -114,6 +119,18 @@ fn schema_join() -> ControllerSchema {
                 comment: "Wake phrase the participant must say before the bot responds. \
                           When set, captions without this phrase are silently dropped. \
                           The phrase is stripped before the text reaches the LLM.",
+                required: false,
+            },
+            FieldSchema {
+                name: "correlation_id",
+                ty: TypeSchema::String,
+                comment: "Opaque correlation id echoed on all bot:* events for this session.",
+                required: false,
+            },
+            FieldSchema {
+                name: "listen_only",
+                ty: TypeSchema::Bool,
+                comment: "When true, the bot joins in listen-only mode (no microphone, no replies).",
                 required: false,
             },
         ],
@@ -231,6 +248,39 @@ fn handle_notification_action_wrap(params: Map<String, Value>) -> ControllerFutu
     Box::pin(async move { super::ops::handle_notification_action(params).await })
 }
 
+fn schema_speak() -> ControllerSchema {
+    ControllerSchema {
+        namespace: "agent_meetings",
+        function: "speak",
+        description: "Send text to the meeting bot for TTS playback. The backend converts \
+                      the text to speech and plays it into the meeting audio.",
+        inputs: vec![
+            FieldSchema {
+                name: "text",
+                ty: TypeSchema::String,
+                comment: "The text to speak in the meeting.",
+                required: true,
+            },
+            FieldSchema {
+                name: "correlation_id",
+                ty: TypeSchema::String,
+                comment: "Optional correlation id to associate with this speak request.",
+                required: false,
+            },
+        ],
+        outputs: vec![FieldSchema {
+            name: "ok",
+            ty: TypeSchema::Bool,
+            comment: "True when the speak request was emitted.",
+            required: true,
+        }],
+    }
+}
+
+fn handle_speak_wrap(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move { super::ops::handle_speak(params).await })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -248,7 +298,13 @@ mod tests {
         assert_eq!(schema_fns, handler_fns);
         assert_eq!(
             schema_fns,
-            vec!["join", "leave", "harness_response", "notification_action"]
+            vec![
+                "join",
+                "leave",
+                "harness_response",
+                "notification_action",
+                "speak"
+            ]
         );
     }
 

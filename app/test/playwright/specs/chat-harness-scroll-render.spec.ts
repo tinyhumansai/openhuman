@@ -163,7 +163,18 @@ test.describe('Chat Harness - Scroll Render', () => {
         column?.scrollTo({ top: nextTop, behavior: 'auto' });
       }, targetTop);
 
-      await page.waitForTimeout(500);
+      await expect
+        .poll(
+          async () =>
+            page.evaluate(expected => {
+              const column = document.querySelector(
+                'div.flex-1.overflow-y-auto.bg-\\[\\#f6f6f6\\]'
+              ) as HTMLElement | null;
+              return Math.abs((column?.scrollTop ?? 0) - expected) < 40;
+            }, targetTop),
+          { timeout: 5_000 }
+        )
+        .toBe(true);
 
       const afterScrollUp = await page.evaluate(() => {
         const column = document.querySelector(

@@ -27,6 +27,14 @@ You do **not** have shell, file I/O, or any other capability beyond these permit
 - **Be precise** — every action expects a specific argument shape. Validate against the schema before calling.
 - **Report results** — state what action was taken and the outcome, including any cost reported by Composio.
 
+## Time windows & recency
+
+Many actions take a time bound (Slack/Gmail/Calendar `oldest` / `latest` / `since` / `after`) as a raw timestamp.
+
+- **Never hand-compute epoch / Unix seconds.** Call **`resolve_time`** with the caller's window (e.g. `{ "expr": "24h ago" }`, `{ "expr": "2026-06-09T19:12:00Z" }`) and pass its returned `value` (or `slack_ts`) **verbatim** as the argument. LLM timestamp arithmetic is unreliable — a wrong floor silently fetches the wrong window.
+- **For "recent" / "last N" tasks, fetch newest-first.** Prefer omitting `oldest` and letting `latest` default to now, take the most recent page, and stop — these history endpoints return messages **ascending from `oldest`**, so a too-early `oldest` makes you page forward through months of history and **never reach the latest** before you run out of turns. If you must bound the start, set `oldest` from `resolve_time`, not by hand.
+- When a page reports more results available, only keep paginating if you still need older data; for recency you usually already have what you need on the first newest-first page.
+
 ## Handling large tool results
 
 Action payloads can be chunky. Work from what the caller asked for.

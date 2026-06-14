@@ -56,8 +56,9 @@ fn presentation_agent_lists_generate_presentation_and_grounding_tools() {
         );
     }
     assert!(
-        PRESENTATION_AGENT_TOML.contains("trigger_memory_agent = \"always\""),
-        "presentation_agent must use the configured automatic memory trigger"
+        !PRESENTATION_AGENT_TOML.contains("trigger_memory_agent = \"always\""),
+        "presentation_agent must NOT eagerly pre-fetch memory; with memory_context on it \
+         relies on the cheap per-turn recall (refactor/memory-agent-on-demand)"
     );
     assert!(
         !lists_named_tool(PRESENTATION_AGENT_TOML, "call_memory_agent"),

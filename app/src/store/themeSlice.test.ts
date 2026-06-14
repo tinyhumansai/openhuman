@@ -38,6 +38,7 @@ describe('themeSlice', () => {
       tabBarLabels: 'always',
       fontSize: 'xlarge',
       agentMessageViewMode: 'bubbles',
+      developerMode: false,
     });
   });
 

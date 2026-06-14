@@ -262,6 +262,7 @@ fn tool_response(id: &str, name: &str, arguments: serde_json::Value) -> ChatResp
             id: id.to_string(),
             name: name.to_string(),
             arguments: arguments.to_string(),
+            extra_content: None,
         }],
         usage: Some(UsageInfo {
             input_tokens: 7,

@@ -123,11 +123,9 @@ describe('ScreenIntelligencePanel', () => {
 
     renderPanel();
 
-    // Both the header h2 and section h3 say "Screen Awareness" — wait for either.
+    // The SettingsHeader renders "Screen Awareness" as the panel heading; wait for it.
     await waitFor(() => {
-      expect(screen.getAllByRole('heading', { name: 'Screen Awareness' }).length).toBeGreaterThan(
-        0
-      );
+      expect(screen.getAllByText('Screen Awareness').length).toBeGreaterThan(0);
     });
 
     const enabledLabel = screen.getByText('Enabled').closest('label');
@@ -190,5 +188,156 @@ describe('ScreenIntelligencePanel', () => {
     });
 
     expect(await screen.findByText(/Core restarted: PID 4000/i)).toBeInTheDocument();
+  });
+
+  // ─── Session controls ─────────────────────────────────────────────────────
+
+  it('Start Session button calls startSession with consent=true', async () => {
+    const startSession = vi.fn().mockResolvedValue(null);
+    renderPanel({
+      ...baseState,
+      status: {
+        ...baseState.status!,
+        // accessibility granted so Start is not disabled
+        permissions: { ...baseState.status!.permissions, accessibility: 'granted' },
+        session: { ...baseState.status!.session, active: false },
+      },
+      startSession,
+    });
+
+    await waitFor(() => expect(screen.getAllByText(/start session/i).length).toBeGreaterThan(0));
+
+    fireEvent.click(screen.getByRole('button', { name: /start session/i }));
+
+    await waitFor(() =>
+      expect(startSession).toHaveBeenCalledWith(expect.objectContaining({ consent: true }))
+    );
+  });
+
+  it('Stop Session button calls stopSession', async () => {
+    const stopSession = vi.fn().mockResolvedValue(null);
+    renderPanel({
+      ...baseState,
+      status: { ...baseState.status!, session: { ...baseState.status!.session, active: true } },
+      stopSession,
+    });
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /stop session/i })).not.toBeDisabled()
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /stop session/i }));
+
+    await waitFor(() => expect(stopSession).toHaveBeenCalledWith('manual_stop'));
+  });
+
+  it('Analyze Now button calls flushVision when session is active', async () => {
+    const flushVision = vi.fn().mockResolvedValue(undefined);
+    renderPanel({
+      ...baseState,
+      status: { ...baseState.status!, session: { ...baseState.status!.session, active: true } },
+      flushVision,
+    });
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /analyze now/i })).not.toBeDisabled()
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /analyze now/i }));
+
+    await waitFor(() => expect(flushVision).toHaveBeenCalled());
+  });
+
+  it('Analyze Now is disabled when session is not active', async () => {
+    renderPanel({
+      ...baseState,
+      status: { ...baseState.status!, session: { ...baseState.status!.session, active: false } },
+    });
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /analyze now/i })).toBeDisabled()
+    );
+  });
+
+  // ─── Policy mode select ───────────────────────────────────────────────────
+
+  it('changing policy mode select updates the local state', async () => {
+    renderPanel();
+
+    await waitFor(() => expect(screen.getAllByText(/screen awareness/i).length).toBeGreaterThan(0));
+
+    const policySelect = screen.getByRole('combobox', { name: /mode/i }) as HTMLSelectElement;
+
+    fireEvent.change(policySelect, { target: { value: 'whitelist_only' } });
+
+    expect(policySelect.value).toBe('whitelist_only');
+  });
+
+  it('saves with whitelist_only policy when mode is changed', async () => {
+    const deferred = createDeferred<{ result: ConfigSnapshot; logs: [] }>();
+    vi.mocked(openhumanUpdateScreenIntelligenceSettings).mockReturnValueOnce(deferred.promise);
+
+    renderPanel();
+
+    await waitFor(() => expect(screen.getAllByText(/screen awareness/i).length).toBeGreaterThan(0));
+
+    const policySelect = screen.getByRole('combobox', { name: /mode/i });
+    fireEvent.change(policySelect, { target: { value: 'whitelist_only' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save Settings' }));
+
+    expect(vi.mocked(openhumanUpdateScreenIntelligenceSettings)).toHaveBeenCalledWith(
+      expect.objectContaining({ policy_mode: 'whitelist_only' })
+    );
+
+    deferred.resolve({
+      result: { config: {}, workspace_dir: '/tmp/workspace', config_path: '/tmp/config.toml' },
+      logs: [],
+    });
+  });
+
+  // ─── Error display ────────────────────────────────────────────────────────
+
+  it('shows lastError when state has an error', async () => {
+    renderPanel({ ...baseState, lastError: 'Permission denied by OS' });
+
+    expect(await screen.findByText('Permission denied by OS')).toBeInTheDocument();
+  });
+
+  // ─── Screen monitoring toggle ─────────────────────────────────────────────
+
+  it('toggling screen monitoring checkbox updates the override', async () => {
+    renderPanel();
+
+    await waitFor(() => expect(screen.getAllByText(/screen awareness/i).length).toBeGreaterThan(0));
+
+    const monitoringLabel = screen.getByText('Screen Monitoring').closest('label');
+    const checkbox = monitoringLabel?.querySelector('input[type="checkbox"]') as HTMLInputElement;
+
+    // Initially reflects status value (true in baseState.features)
+    expect(checkbox.checked).toBe(true);
+
+    fireEvent.click(checkbox);
+    expect(checkbox.checked).toBe(false);
+  });
+
+  // ─── Session status display ───────────────────────────────────────────────
+
+  it('shows Active session status when session is active', async () => {
+    renderPanel({
+      ...baseState,
+      status: { ...baseState.status!, session: { ...baseState.status!.session, active: true } },
+    });
+
+    await waitFor(() => expect(screen.getByText(/active/i)).toBeInTheDocument());
+  });
+
+  it('shows Stopped session status when session is inactive', async () => {
+    renderPanel({
+      ...baseState,
+      status: { ...baseState.status!, session: { ...baseState.status!.session, active: false } },
+    });
+
+    await waitFor(() => expect(screen.getByText(/stopped/i)).toBeInTheDocument());
   });
 });

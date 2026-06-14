@@ -9,8 +9,8 @@ import { startMockServer, stopMockServer } from '../mock-server';
 /**
  * E2E for the global memory-sync schedule control (#3302).
  *
- * Drives the real React UI + in-process core: navigate to Intelligence →
- * Memory, confirm the schedule defaults to "Every 24h", pick the 4h preset,
+ * Drives the real React UI + in-process core: navigate to Settings → Account →
+ * Data Sync, confirm the schedule defaults to "Every 24h", pick the 4h preset,
  * confirm the summary updates, then re-navigate to prove the choice persisted
  * through `config_update_memory_sync_settings` / `config_get_memory_sync_settings`.
  *
@@ -27,11 +27,11 @@ function stepLog(message: string, context?: unknown): void {
 }
 
 async function gotoMemoryWorkspace(): Promise<void> {
-  // HashRouter + useSearchParams: the Memory tab lives at
-  // `#/intelligence?tab=memory`, whose default sub-tab renders the
-  // MemoryWorkspace (and the MemorySourcesRegistry schedule control).
+  // The memory-sync schedule control lives on the layman Data Sync page
+  // (Settings → Account → Data Sync), which renders MemorySourcesRegistry and
+  // its schedule control without needing developer mode.
   await browser.execute(() => {
-    window.location.hash = '/intelligence?tab=memory';
+    window.location.hash = '/settings/memory-sync';
   });
   await browser.pause(2_000);
 }
@@ -85,7 +85,7 @@ describe('Memory sync schedule', () => {
 
     // Navigate away and back to prove the value was persisted server-side.
     await browser.execute(() => {
-      window.location.hash = '/intelligence?tab=tasks';
+      window.location.hash = '/settings';
     });
     await browser.pause(1_000);
     await gotoMemoryWorkspace();

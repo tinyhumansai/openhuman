@@ -424,7 +424,7 @@ export async function memoryTreeSetLlm(
  * node (Tree mode); `"chunk"` is a raw memory chunk and `"contact"`
  * is a person entity (Contacts mode).
  */
-export type GraphNodeKind = 'source' | 'summary' | 'chunk' | 'contact';
+export type GraphNodeKind = 'root' | 'source' | 'summary' | 'chunk' | 'contact';
 
 /**
  * One node in the graph export. Optional fields are populated only

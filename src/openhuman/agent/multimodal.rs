@@ -6,8 +6,10 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use flate2::read::GzDecoder;
 use reqwest::Client;
 use sha2::{Digest, Sha256};
+use std::collections::{HashMap, VecDeque};
 use std::io::Read;
 use std::path::Path;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 const IMAGE_MARKER_PREFIX: &str = "[IMAGE:";
@@ -374,6 +376,272 @@ pub async fn prepare_messages_for_provider(
         contains_images: found_images > 0,
         contains_files: found_files > 0,
     })
+}
+
+/// Ingress-time file extraction (PDF-attach fix).
+///
+/// Replaces every `[FILE:data:…]` marker in a raw user message with its
+/// extracted-text block (`[FILE-EXTRACTED: name="…"]…text…[/FILE-EXTRACTED]`),
+/// or a content-less `[FILE-ATTACHED: …]` placeholder when extraction fails.
+/// `[IMAGE:…]` markers are deliberately left untouched here — they are handled
+/// at provider dispatch (vision needs the inline data URI).
+///
+/// Run this at channel ingress, BEFORE the message is persisted to history,
+/// auto-saved to the memory store, appended to the cross-thread JSONL, or
+/// scanned for prompt injection — so the multi-MB base64 data URI never
+/// survives past the front door. Idempotent: a message with no `[FILE:` marker
+/// (already-rewritten `[FILE-EXTRACTED]` text included) is returned unchanged.
+pub async fn inline_file_attachments(message: &str, file_config: &MultimodalFileConfig) -> String {
+    if !message.contains(FILE_MARKER_PREFIX) {
+        return message.to_string();
+    }
+    let (cleaned, file_refs) = parse_file_markers(message);
+    if file_refs.is_empty() {
+        return message.to_string();
+    }
+    let (max_files, max_file_size_mb, max_extracted_text_chars) = file_config.effective_limits();
+    let max_file_bytes = max_file_size_mb.saturating_mul(1024 * 1024);
+    // Enforce the per-turn file cap at ingress (rewriting the markers removes
+    // the count check that `prepare_messages_for_provider` would otherwise do).
+    // `max_files == 0` is the hard-disable sentinel: read nothing. Over-cap refs
+    // degrade to a content-less placeholder rather than being normalized/read.
+    let read_cap = if file_config.max_files == 0 {
+        0
+    } else {
+        max_files
+    };
+    let client = build_runtime_proxy_client_with_timeouts("provider.ollama", 30, 10);
+
+    let mut payloads = Vec::with_capacity(file_refs.len());
+    for (idx, reference) in file_refs.iter().enumerate() {
+        if idx >= read_cap {
+            payloads.push(FilePayload::Reference {
+                name: "attachment (over file limit)".to_string(),
+                mime: "application/octet-stream".to_string(),
+                size_bytes: 0,
+                sha256_prefix: "skipped".to_string(),
+            });
+            continue;
+        }
+        match normalize_file_reference(
+            reference,
+            file_config,
+            max_file_bytes,
+            max_extracted_text_chars,
+            &client,
+        )
+        .await
+        {
+            Ok(payload) => payloads.push(payload),
+            Err(err) => {
+                tracing::warn!(
+                    target: "multimodal",
+                    reason = %err,
+                    "[multimodal::files][ingress] file marker could not be normalized; emitting bare placeholder"
+                );
+                payloads.push(FilePayload::Reference {
+                    name: "attachment".to_string(),
+                    mime: "application/octet-stream".to_string(),
+                    size_bytes: 0,
+                    sha256_prefix: "unavailable".to_string(),
+                });
+            }
+        }
+    }
+
+    let rewritten = compose_multimodal_message(&cleaned, &[], &payloads);
+    tracing::info!(
+        target: "multimodal",
+        files = payloads.len(),
+        before_chars = message.chars().count(),
+        after_chars = rewritten.chars().count(),
+        "[multimodal::files][ingress] inlined file attachments — data URI replaced with extracted text/placeholder before persistence"
+    );
+    rewritten
+}
+
+// ── Image sidecar (PDF/image-attach fix, pass 2) ──────────────────────────
+//
+// Persisted messages must never carry a raw `[IMAGE:data:…]` data URI: like the
+// PDF blob it floods the injection scan, the memory auto-save (N-chunk embed →
+// Voyage 400), and the cross-thread JSONL index. So at ingress we replace each
+// image marker with a compact `[Image: image #att:<id>]` placeholder and stash
+// the decoded data URI out-of-band. At provider dispatch we rehydrate the URI
+// back into an inline `[IMAGE:…]` marker — but ONLY for vision-capable models;
+// non-vision models keep the text placeholder (no multi-MB payload, no error).
+
+/// Placeholder token left in the persisted message in place of a raw image data
+/// URI. Mixed-case so it never collides with the inline `[IMAGE:` parser.
+const IMAGE_PLACEHOLDER_PREFIX: &str = "[Image:";
+/// Separator before the stash content-hash id inside a placeholder.
+const IMAGE_STASH_REF: &str = "#att:";
+
+/// Upper bounds on the in-memory image stash so it can't grow without limit
+/// over the process lifetime (the data URI is out of history, but still on heap
+/// until evicted). Whichever bound trips first evicts oldest-first (FIFO).
+const IMAGE_STASH_MAX_ENTRIES: usize = 32;
+const IMAGE_STASH_MAX_BYTES: usize = 64 * 1024 * 1024;
+
+/// Bounded, content-addressed stash of inbound image data URIs. FIFO eviction
+/// keeps resident memory capped; entries are keyed by content hash so identical
+/// images dedupe. In-memory only — lost on restart (a follow-up turn then sees
+/// the text placeholder). Disk-backing under `<workspace>/attachments/` is the
+/// production hardening; the persistence-pollution fix holds either way.
+#[derive(Default)]
+struct ImageStash {
+    map: HashMap<String, String>,
+    order: VecDeque<String>,
+    bytes: usize,
+}
+
+impl ImageStash {
+    fn insert(&mut self, id: String, uri: String) {
+        if self.map.contains_key(&id) {
+            return; // content-addressed: already present, keep its FIFO position
+        }
+        self.bytes = self.bytes.saturating_add(uri.len());
+        self.order.push_back(id.clone());
+        self.map.insert(id, uri);
+        while self.map.len() > IMAGE_STASH_MAX_ENTRIES || self.bytes > IMAGE_STASH_MAX_BYTES {
+            let Some(old) = self.order.pop_front() else {
+                break;
+            };
+            if let Some(v) = self.map.remove(&old) {
+                self.bytes = self.bytes.saturating_sub(v.len());
+            }
+        }
+    }
+
+    fn get(&self, id: &str) -> Option<&String> {
+        self.map.get(id)
+    }
+}
+
+static IMAGE_STASH: OnceLock<Mutex<ImageStash>> = OnceLock::new();
+
+fn image_stash() -> &'static Mutex<ImageStash> {
+    IMAGE_STASH.get_or_init(|| Mutex::new(ImageStash::default()))
+}
+
+/// Ingress-time image stashing. Replaces every `[IMAGE:data:…]` marker with a
+/// `[Image: image #att:<id>]` placeholder and stashes the decoded canonical data
+/// URI, so the multi-MB base64 never persists. Idempotent (no `[IMAGE:` ⇒ no-op).
+pub async fn stash_image_attachments(message: &str, image_config: &MultimodalConfig) -> String {
+    if !message.contains(IMAGE_MARKER_PREFIX) {
+        return message.to_string();
+    }
+    let (cleaned, image_refs) = parse_image_markers(message);
+    if image_refs.is_empty() {
+        return message.to_string();
+    }
+    let (max_images, max_image_size_mb) = image_config.effective_limits();
+    let max_image_bytes = max_image_size_mb.saturating_mul(1024 * 1024);
+    let client = build_runtime_proxy_client_with_timeouts("provider.ollama", 30, 10);
+
+    let mut placeholders = Vec::with_capacity(image_refs.len());
+    for (idx, reference) in image_refs.iter().enumerate() {
+        // Enforce the per-turn image cap at ingress: over-cap markers degrade to
+        // a text placeholder and are never normalized/read or stashed (rewriting
+        // the markers removes the count check `prepare_messages_for_provider`
+        // would otherwise apply, and bounds stash growth per message).
+        if idx >= max_images {
+            placeholders.push("[Image: (over image limit)]".to_string());
+            continue;
+        }
+        match normalize_image_reference(reference, image_config, max_image_bytes, &client).await {
+            Ok(data_uri) => {
+                let id = sha256_prefix(data_uri.as_bytes());
+                image_stash()
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .insert(id.clone(), data_uri);
+                placeholders.push(format!("[Image: image {IMAGE_STASH_REF}{id}]"));
+            }
+            Err(err) => {
+                tracing::warn!(
+                    target: "multimodal",
+                    reason = %err,
+                    "[multimodal::images][ingress] image could not be normalized; emitting bare placeholder"
+                );
+                placeholders.push("[Image: (could not be processed)]".to_string());
+            }
+        }
+    }
+
+    let mut out = cleaned.trim().to_string();
+    for p in &placeholders {
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(p);
+    }
+    tracing::info!(
+        target: "multimodal",
+        images = placeholders.len(),
+        before_chars = message.chars().count(),
+        after_chars = out.chars().count(),
+        "[multimodal::images][ingress] stashed image attachments — data URI replaced with placeholder before persistence"
+    );
+    out
+}
+
+/// True if any message carries an `[Image: … #att:<id>]` sidecar placeholder.
+pub fn has_image_placeholders(messages: &[ChatMessage]) -> bool {
+    messages.iter().any(|m| {
+        m.content.contains(IMAGE_PLACEHOLDER_PREFIX) && m.content.contains(IMAGE_STASH_REF)
+    })
+}
+
+/// Rehydrate `[Image: … #att:<id>]` placeholders back into inline
+/// `[IMAGE:<data-uri>]` markers from the stash, returning a provider-only copy.
+/// Placeholders whose id is absent (e.g. after a restart) keep their text.
+/// Call ONLY for vision-capable models.
+pub fn rehydrate_image_placeholders(messages: &[ChatMessage]) -> Vec<ChatMessage> {
+    let stash = image_stash().lock().unwrap_or_else(|p| p.into_inner());
+    messages
+        .iter()
+        .map(|m| {
+            if !(m.content.contains(IMAGE_PLACEHOLDER_PREFIX)
+                && m.content.contains(IMAGE_STASH_REF))
+            {
+                return m.clone();
+            }
+            ChatMessage {
+                id: m.id.clone(),
+                role: m.role.clone(),
+                content: rehydrate_placeholders_in_text(&m.content, &stash),
+                extra_metadata: m.extra_metadata.clone(),
+            }
+        })
+        .collect()
+}
+
+/// Replace each `[Image: <name> #att:<id>]` placeholder in `text` with
+/// `[IMAGE:<data-uri>]` when the id is in `stash`; leave it verbatim otherwise.
+fn rehydrate_placeholders_in_text(text: &str, stash: &ImageStash) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut cursor = 0;
+    while let Some(rel) = text[cursor..].find(IMAGE_PLACEHOLDER_PREFIX) {
+        let start = cursor + rel;
+        out.push_str(&text[cursor..start]);
+        let Some(rel_end) = text[start..].find(']') else {
+            out.push_str(&text[start..]);
+            cursor = text.len();
+            break;
+        };
+        let end = start + rel_end + 1;
+        let inner = &text[start..end];
+        let replaced = inner.find(IMAGE_STASH_REF).and_then(|ai| {
+            let id = inner[ai + IMAGE_STASH_REF.len()..]
+                .trim_end_matches(']')
+                .trim();
+            stash.get(id).map(|uri| format!("[IMAGE:{uri}]"))
+        });
+        out.push_str(replaced.as_deref().unwrap_or(inner));
+        cursor = end;
+    }
+    out.push_str(&text[cursor..]);
+    out
 }
 
 fn compose_multimodal_message(

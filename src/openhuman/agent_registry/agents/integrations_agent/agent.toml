@@ -22,4 +22,11 @@ named = [
     "composio_list_tools",
     "file_read",
     "composio_execute",
+    # Deterministic time resolver. Composio actions take time-window args
+    # (Slack/Gmail/Calendar `oldest`/`latest`/`since`/`after`) as raw
+    # timestamps; the model must NEVER hand-compute epoch seconds (a real
+    # incident had it compute "24h ago" ~10 months off, then fetch ascending
+    # from that wrong floor and miss the latest data). Resolve every time
+    # bound through this tool and pass the returned value verbatim.
+    "resolve_time",
 ]

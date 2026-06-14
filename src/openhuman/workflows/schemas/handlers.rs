@@ -12,7 +12,7 @@ use serde_json::{Map, Value};
 use crate::core::all::ControllerFuture;
 use crate::openhuman::skill_runtime::spawn_workflow_run_background;
 use crate::openhuman::workflows::ops::{
-    create_workflow, discover_workflows, install_workflow_from_url, is_workspace_trusted,
+    create_workflow, discover_automations, install_workflow_from_url, is_workspace_trusted,
     read_workflow_resource, uninstall_workflow, CreateWorkflowParams, UninstallWorkflowParams,
 };
 use crate::openhuman::workflows::{registry, run_log};
@@ -31,18 +31,21 @@ use super::wire_types::{
 pub(super) fn handle_workflows_list(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let _ = deserialize_params::<WorkflowsListParams>(params)?;
-        tracing::debug!("[skills][rpc] list skills");
+        tracing::debug!("[workflows][rpc] list automations");
         let workspace = resolve_workspace_dir().await;
         let trusted = is_workspace_trusted(&workspace);
         let home = dirs::home_dir();
-        let skills = discover_workflows(home.as_deref(), Some(workspace.as_path()), trusted);
+        // Automations list shows only `workflows/`-root task templates — not the
+        // capability skills under `skills/` roots, which the agent harness still
+        // loads via `discover_workflows` / `load_workflow_metadata`.
+        let automations = discover_automations(home.as_deref(), Some(workspace.as_path()), trusted);
         tracing::debug!(
-            count = skills.len(),
+            count = automations.len(),
             workspace = %workspace.display(),
             trusted,
-            "[skills][rpc] list result"
+            "[workflows][rpc] list result"
         );
-        let summaries = skills.into_iter().map(WorkflowSummary::from).collect();
+        let summaries = automations.into_iter().map(WorkflowSummary::from).collect();
         to_json(RpcOutcome::new(
             WorkflowsListResult {
                 workflows: summaries,

@@ -263,6 +263,7 @@ impl Provider for KeywordScriptedProvider {
                             id: format!("call_{id}"),
                             name: c.name.clone(),
                             arguments: c.arguments.to_string(),
+                            extra_content: None,
                         }
                     })
                     .collect()

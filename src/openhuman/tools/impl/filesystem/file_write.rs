@@ -23,7 +23,9 @@ impl Tool for FileWriteTool {
     }
 
     fn description(&self) -> &str {
-        "Write contents to a file in the workspace"
+        "Write contents to a file in your working directory (the action sandbox). \
+         Relative paths resolve against that directory; writes outside it are blocked. \
+         Reference the file later by the same relative path so `file_read` resolves to it."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

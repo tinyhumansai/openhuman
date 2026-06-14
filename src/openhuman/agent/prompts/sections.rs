@@ -139,6 +139,9 @@ impl PromptSection for DynamicPromptSection {
 pub struct IdentitySection;
 pub struct ToolsSection;
 pub struct SafetySection;
+/// Renders the canonical grounding / anti-hallucination contract
+/// ([`GROUNDING_BODY`]). Always included; never gated.
+pub struct GroundingSection;
 // `WorkflowsSection` and `ConnectedIntegrationsSection` previously lived
 // here and branched on `ctx.agent_id` to pick between the skill-
 // executor and delegator voice. They've been removed — each agent's
@@ -395,16 +398,91 @@ impl PromptSection for SafetySection {
     }
 }
 
+/// Canonical grounding / anti-hallucination contract.
+///
+/// This is the **single source of truth** for the tool-use and
+/// anti-fabrication rules every agent inherits. Before this block existed,
+/// the same "never invent ids / a tool not in your list does not exist"
+/// paragraph was copy-pasted (and slowly drifting) across crypto, markets,
+/// integrations, account-admin, mcp-setup, morning-briefing, researcher, …
+/// agent prompts. Centralising it kills that drift and guarantees a uniform
+/// floor of grounding discipline.
+///
+/// Inspired by Hermes's named guidance blocks (`TOOL_USE_ENFORCEMENT_GUIDANCE`
+/// "use tools to act, never end a turn with a promise", `TASK_COMPLETION_GUIDANCE`
+/// "never substitute fabricated output for results you couldn't produce").
+///
+/// Deliberately **generic**: every clause must be true for *every* agent,
+/// including the integrations executor. Agent-specific routing (e.g. "delegate
+/// external services", "pull slugs from `composio_list_tools`") stays in that
+/// agent's own `prompt.md`, not here.
+///
+/// Byte-stable (no time / RNG / host) so it lives in the KV-cache-friendly
+/// prefix. Must contain no em-dashes per [`super::builder::GLOBAL_STYLE_SUFFIX`].
+pub const GROUNDING_BODY: &str = "## Grounding and tool use\n\n\
+    - Your tools are exactly the ones listed in this prompt. You can only act through them. If a capability is not one of your tools, say so plainly rather than pretending it exists.\n\
+    - Never invent tool names, arguments, ids, slugs, file paths, URLs, chain ids, addresses, quotes, metrics, or any other value. If you do not have it from a tool result or the user, ask for it or look it up with a tool.\n\
+    - Use your tools to act. Do not just describe what you would do and stop, and never end a turn with a promise of future action: do it now, or hand back a concrete result.\n\
+    - Never substitute plausible looking but fabricated output (made up data, invented file contents, synthesised tool or API responses) for results you could not actually produce. If a step failed, say it failed.\n\
+    - Ground every factual claim in evidence you actually observed: a tool result, the user's message, or cited memory. If the evidence is missing, partial, or truncated, say so or fetch more instead of guessing.\n\
+    - Skills run only via `run_workflow`, and only the skills listed as installed exist. Do not invent skill ids.";
+
+impl PromptSection for GroundingSection {
+    fn name(&self) -> &str {
+        "grounding"
+    }
+
+    fn build(&self, _ctx: &PromptContext<'_>) -> Result<String> {
+        Ok(GROUNDING_BODY.into())
+    }
+}
+
 impl PromptSection for WorkspaceSection {
     fn name(&self) -> &str {
         "workspace"
     }
 
-    fn build(&self, ctx: &PromptContext<'_>) -> Result<String> {
-        Ok(format!(
-            "## Workspace\n\nWorking directory: `{}`",
-            ctx.workspace_dir.display()
-        ))
+    fn build(&self, _ctx: &PromptContext<'_>) -> Result<String> {
+        // Intentionally does NOT print a hardcoded path: `shell` and the file
+        // tools resolve relative paths against the agent's *action directory*,
+        // which is not `workspace_dir`. Printing `workspace_dir` here used to
+        // point agents at a directory the file tools are sandboxed *out of*,
+        // causing write→read mismatches. Instead, tell the agent to discover
+        // its real working directory at runtime and keep writes/reads there.
+        let mut out = String::from(
+            "## Workspace\n\n\
+             Run `pwd` to confirm your working directory — that is where `shell` runs and \
+             where `file_read`/`file_write` resolve relative paths. Create files in that \
+             directory and read them back from the same place (use the relative path, or \
+             confirm the absolute path with `pwd`). Writes and reads outside your granted \
+             locations (your working directory plus the scratch directory below) are blocked \
+             by the security sandbox.\n\n\
+             Prefer printing results to stdout. Only when output is too large for stdout, \
+             write it to a file in your working directory and read that file back.\n\n",
+        );
+        // Only advertise a concrete scratch path when the dir is actually present
+        // and safe (real dir, not a symlink) — matching the policy grant in
+        // `SecurityPolicy::from_config`. Otherwise fall back to env-var/working-dir
+        // wording so we never point file I/O at a location the sandbox would block.
+        // Read-only check (no fs side effects in prompt rendering).
+        let scratch = crate::openhuman::security::openhuman_scratch_dir();
+        let scratch_granted = std::fs::symlink_metadata(&scratch)
+            .map(|m| !m.file_type().is_symlink() && m.is_dir())
+            .unwrap_or(false);
+        if scratch_granted {
+            let _ = write!(
+                out,
+                "For scratch or temporary files, use the directory `{}` (a granted scratch \
+                 space) or your `$TMPDIR` / `%TEMP%` — never a hardcoded `/tmp/<name>` path.",
+                scratch.display()
+            );
+        } else {
+            out.push_str(
+                "For scratch or temporary files, use `$TMPDIR` / `%TEMP%`, or create them in \
+                 your working directory — never a hardcoded `/tmp/<name>` path, which is blocked.",
+            );
+        }
+        Ok(out)
     }
 }
 
@@ -513,7 +591,7 @@ impl PromptSection for DateTimeSection {
         "datetime"
     }
 
-    fn build(&self, _ctx: &PromptContext<'_>) -> Result<String> {
+    fn build(&self, ctx: &PromptContext<'_>) -> Result<String> {
         // IANA zone first because it's the unambiguous machine-readable
         // form (`America/Los_Angeles`) — agents that need to reason about
         // timezone rules should grep this, not the locale-dependent
@@ -521,13 +599,32 @@ impl PromptSection for DateTimeSection {
         // resolve a zone (CI, stripped containers).
         let iana = iana_time_zone::get_timezone().unwrap_or_else(|_| "UTC".to_string());
         let now = chrono::Local::now();
-        Ok(format!(
+        let mut out = format!(
             "## Current Date & Time\n\n{} {} ({}, UTC{})",
             now.format("%Y-%m-%d %H:%M:%S"),
             iana,
             now.format("%Z"),
             now.format("%:z"),
-        ))
+        );
+        // Time-discipline rule, gated on the agent actually having the
+        // `resolve_time` tool. LLMs are unreliable at epoch arithmetic — a
+        // real incident had an agent compute "24h ago" ~10 months off, then
+        // fetch Slack history ascending from that wrong floor and never reach
+        // the latest messages. Telling agents to lean on the tool (rather
+        // than hand-computing) is the fix; rendered right under the volatile
+        // time block so the two are read together. Auto-scopes: agents
+        // without the tool never see the rule.
+        if ctx.tools.iter().any(|t| t.name == "resolve_time") {
+            out.push_str(
+                "\n\n> For any date/time you pass as a tool argument \
+                 (`oldest`/`latest`/`since`/`after`, cron times, etc.), call \
+                 `resolve_time` and use its exact value — never hand-compute \
+                 epoch/Unix seconds. For \"recent / last N\" lookups, prefer \
+                 newest-first (omit `oldest`) so a wrong floor can't bury the \
+                 latest data.",
+            );
+        }
+        Ok(out)
     }
 }
 

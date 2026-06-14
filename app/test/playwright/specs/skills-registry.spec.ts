@@ -16,11 +16,12 @@ async function openSkillsPage(page: Parameters<typeof test>[0]['page'], userId: 
       localStorage.setItem('openhuman:walkthrough_completed', 'true');
       localStorage.removeItem('openhuman:walkthrough_pending');
     } catch {}
-    window.location.hash = '/skills';
+    // /skills redirects to /connections (Phase 2 rename)
+    window.location.hash = '/connections';
   });
   await expect
     .poll(async () => page.evaluate(() => window.location.hash), { timeout: 10_000 })
-    .toContain('/skills');
+    .toContain('/connections');
   await waitForAppReady(page);
   await dismissWalkthroughIfPresent(page);
 }
@@ -31,12 +32,12 @@ test.describe('Skills registry flow', () => {
     await openSkillsPage(page, 'pw-skills-registry-' + testSlug);
   });
 
-  test('navigates to /skills and renders the current tabs', async ({ page }) => {
-    await expect(page.getByRole('tab', { name: 'Composio' })).toBeVisible();
-    await expect(page.getByRole('tab', { name: 'Channels' })).toBeVisible();
-    await expect(page.getByRole('tab', { name: 'MCP Servers' })).toBeVisible();
-    await page.getByRole('tab', { name: 'Composio' }).click();
-    await expect(page.getByRole('heading', { name: 'Composio Integrations' })).toBeVisible();
+  test('navigates to /connections and renders the current tabs', async ({ page }) => {
+    await expect(page.getByTestId('two-pane-nav-composio')).toBeVisible();
+    await expect(page.getByTestId('two-pane-nav-channels')).toBeVisible();
+    await expect(page.getByTestId('two-pane-nav-mcp')).toBeVisible();
+    await page.getByTestId('two-pane-nav-composio').click();
+    await expect(page.getByTestId('composio-integrations-card')).toBeVisible();
     await expect(
       page.getByText(/Gmail|Notion|Telegram|GitHub|Google Drive/, { exact: false }).first()
     ).toBeVisible();
@@ -49,13 +50,12 @@ test.describe('Skills registry flow', () => {
   });
 
   test('channels tab renders messaging connectors', async ({ page }) => {
-    await page.getByRole('tab', { name: 'Channels' }).click();
-    await expect(page.getByRole('heading', { name: 'Channels' })).toBeVisible();
+    await page.getByTestId('two-pane-nav-channels').click();
     await expect(page.getByText(/Telegram|Discord|Slack/).first()).toBeVisible();
   });
 
-  test('mcp tab renders the server table', async ({ page }) => {
-    await page.getByRole('tab', { name: 'MCP Servers' }).click();
+  test('MCP Servers tab renders the server table', async ({ page }) => {
+    await page.getByTestId('two-pane-nav-mcp').click();
     await expect(
       page
         .getByRole('searchbox')

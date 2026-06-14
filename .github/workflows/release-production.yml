@@ -72,7 +72,7 @@ jobs:
   review-approval:
     name: Manual approval gate
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 60
     environment: Release-Approval
     steps:
       - name: Record approval
@@ -86,7 +86,7 @@ jobs:
   prepare-build:
     name: Prepare build context
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 60
     environment: Production
     needs: [review-approval]
     outputs:
@@ -220,7 +220,7 @@ jobs:
   create-release:
     name: Prepare GitHub release
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 60
     environment: Production
     needs: [prepare-build]
     outputs:
@@ -241,7 +241,10 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Generate AI release notes
+        id: ai-notes
         if: ${{ inputs.create_release }}
+        continue-on-error: true
+        timeout-minutes: 5
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -249,13 +252,27 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${OPENAI_API_KEY:-}" ]; then
-            echo "::error::secrets.OPENAI_API_KEY is required to generate production release notes."
+            echo "::warning::OPENAI_API_KEY is empty — skipping AI notes."
             exit 1
           fi
           node scripts/release/generate-release-notes.mjs \
             --from latest-release \
             --to "$TAG" \
             --repo "$GITHUB_REPOSITORY" \
+            --output release-notes.md
+      - name: Fallback to non-AI release notes
+        if: ${{ inputs.create_release && steps.ai-notes.outcome != 'success' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare-build.outputs.tag }}
+        run: |
+          set -euo pipefail
+          echo "::warning::AI release notes failed or timed out — using deterministic notes."
+          node scripts/release/generate-release-notes.mjs \
+            --from latest-release \
+            --to "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --no-ai \
             --output release-notes.md
       - name: Create draft release with generated notes
         if: ${{ inputs.create_release }}
@@ -344,7 +361,7 @@ jobs:
     needs: [prepare-build, create-release]
     if: always() && needs.create-release.result == 'success'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     environment: Production
     env:
       REGISTRY: ghcr.io
@@ -415,7 +432,7 @@ jobs:
     name: "CLI: ${{ matrix.target }}"
     needs: [prepare-build, create-release]
     if: ${{ inputs.create_release && always() && needs.create-release.result == 'success' }}
-    timeout-minutes: 30
+    timeout-minutes: 60
     environment: Production
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -486,7 +503,7 @@ jobs:
     needs: [prepare-build, create-release, build-desktop]
     if: ${{ inputs.create_release && always() && needs.build-desktop.result == 'success' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 60
     environment: Production
     steps:
       - name: Checkout build ref
@@ -509,7 +526,7 @@ jobs:
   publish-release:
     name: Publish draft release
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 60
     environment: Production
     needs:
       - prepare-build
@@ -623,7 +640,7 @@ jobs:
   tag-docker-latest:
     name: "Docker: tag :latest"
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 60
     environment: Production
     needs: [prepare-build, publish-release]
     if: ${{ inputs.create_release && always() && needs.publish-release.result == 'success' }}
@@ -660,7 +677,7 @@ jobs:
   record-sentry-deploy:
     name: Record Sentry deploy marker
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 60
     environment: Production
     needs: [prepare-build, publish-release]
     if: ${{ inputs.create_release && always() && needs.publish-release.result == 'success' }}
@@ -699,7 +716,7 @@ jobs:
   cleanup-failed-release:
     name: Remove release and tag if build failed
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 60
     environment: Production
     needs:
       - prepare-build

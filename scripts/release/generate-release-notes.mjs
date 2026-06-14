@@ -446,8 +446,9 @@ async function summarizeWithOpenAi(request) {
     throw new Error('OPENAI_API_KEY is required unless --no-ai or --dry-run is used');
   }
 
+  const timeoutMs = 300_000;
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 45_000);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   let response;
   try {
     response = await fetch('https://api.openai.com/v1/responses', {
@@ -461,7 +462,7 @@ async function summarizeWithOpenAi(request) {
     });
   } catch (error) {
     if (error?.name === 'AbortError') {
-      throw new Error('OpenAI Responses API timed out after 45000ms');
+      throw new Error(`OpenAI Responses API timed out after ${timeoutMs}ms`);
     }
     throw error;
   } finally {

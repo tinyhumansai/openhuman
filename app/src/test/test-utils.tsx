@@ -15,6 +15,7 @@ import channelConnectionsReducer from '../store/channelConnectionsSlice';
 import companionReducer from '../store/companionSlice';
 import connectivityReducer from '../store/connectivitySlice';
 import coreModeReducer from '../store/coreModeSlice';
+import layoutReducer from '../store/layoutSlice';
 import localeReducer from '../store/localeSlice';
 import mascotReducer from '../store/mascotSlice';
 import personaReducer from '../store/personaSlice';
@@ -39,6 +40,7 @@ const testRootReducer = combineReducers({
   companion: companionReducer,
   connectivity: connectivityReducer,
   coreMode: coreModeReducer,
+  layout: layoutReducer,
   locale: localeReducer,
   mascot: mascotReducer,
   persona: personaReducer,

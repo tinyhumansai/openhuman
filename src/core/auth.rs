@@ -80,6 +80,10 @@ const PUBLIC_PATHS: &[&str] = &[
     "/health",
     "/auth",
     "/auth/telegram",
+    // External browser OAuth redirect for HTTP-remote MCP servers — the
+    // authorization server posts back here with `?code=…&state=…` and no
+    // bearer; the one-time `state` (minted in `oauth_begin`) is the guard.
+    "/oauth/mcp/callback",
     "/schema",
     "/events",
     "/ws/dictation",

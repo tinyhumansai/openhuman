@@ -13,7 +13,6 @@ const SECRET_WORD = 'XYZZY';
 const FIRST_PROMPT = `Remember: the secret word is ${SECRET_WORD}`;
 const SECOND_PROMPT = 'What was the secret word?';
 const TURN_TWO_CANARY = `canary-memory-m1n2o3-${SECRET_WORD}`;
-const MEMORY_TRIGGER_RESPONSE = 'No relevant memory context.';
 const FIRST_RESPONSE = `Got it! I will remember that the secret word is ${SECRET_WORD}.`;
 
 interface MockRequest {
@@ -128,10 +127,7 @@ test.describe('Chat Conversation History', () => {
     page,
   }) => {
     await resetMock();
-    await setMockBehavior(
-      'llmForcedResponses',
-      JSON.stringify([{ content: MEMORY_TRIGGER_RESPONSE }, { content: FIRST_RESPONSE }])
-    );
+    await setMockBehavior('llmForcedResponses', JSON.stringify([{ content: FIRST_RESPONSE }]));
     await setMockBehavior('llmStreamChunkDelayMs', '10');
 
     await openChat(page);
@@ -146,7 +142,6 @@ test.describe('Chat Conversation History', () => {
     await setMockBehavior(
       'llmForcedResponses',
       JSON.stringify([
-        { content: MEMORY_TRIGGER_RESPONSE },
         {
           content: `The secret word you told me was ${SECRET_WORD}. Here is the confirmation: ${TURN_TWO_CANARY}`,
         },
@@ -156,6 +151,9 @@ test.describe('Chat Conversation History', () => {
     await sendMessage(page, SECOND_PROMPT);
     await expect(page.getByText(TURN_TWO_CANARY)).toBeVisible({ timeout: 30_000 });
 
+    // One chat-completion POST for the second turn: the orchestrator no longer
+    // eagerly spawns the memory agent before the turn (memory is on-demand now),
+    // so there is a single LLM call rather than the prior memory+main pair.
     const llmLog = await expect
       .poll(async () => {
         const log = await requests();
@@ -163,7 +161,7 @@ test.describe('Chat Conversation History', () => {
           entry => entry.method === 'POST' && entry.url.includes('/openai/v1/chat/completions')
         );
       })
-      .toHaveLength(2);
+      .toHaveLength(1);
 
     void llmLog;
 

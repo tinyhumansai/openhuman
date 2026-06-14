@@ -287,32 +287,80 @@ export async function openhumanClaudeCodeStatus(): Promise<CommandResponse<Claud
 /**
  * Auth state for the Claude Code CLI provider — mirrors Rust
  * `claude_code::auth_status::AuthSource`. The `source` discriminator is
- * the snake_case Serde rename. `account_email` / `expires_at` are
- * best-effort: absent when the CLI's credentials schema drifts.
+ * the snake_case Serde rename. `account_email` / `subscription_type` /
+ * `expires_at` are best-effort: absent when the CLI's auth-status schema
+ * drifts. `unknown` means we couldn't determine the state (binary missing,
+ * spawn failed, or a CLI older than `auth status`) — it is NEVER signed-out.
  */
 export type ClaudeCodeAuthStatus =
   | {
       source: 'subscription';
       account_email: string | null;
+      subscription_type: string | null;
       expires_at: string | null;
       last_checked: number;
     }
   | { source: 'api_key_env'; last_checked: number }
-  | { source: 'none'; last_checked: number };
+  | { source: 'none'; last_checked: number }
+  | { source: 'unknown'; reason: string | null; last_checked: number };
 
 /**
- * Detect Claude Code CLI auth state (Pro/Max subscription via
- * `~/.claude/.credentials.json`, `ANTHROPIC_API_KEY` env, or none).
- * Pure FS — no CLI spawn, safe to call on a tight refresh loop.
+ * Detect Claude Code CLI auth state via `claude auth status --json`
+ * (cross-platform: abstracts the macOS Keychain vs. Linux/Windows file
+ * stores), or `ANTHROPIC_API_KEY` env. Spawns the CLI — call on-demand /
+ * Recheck, not on a tight loop.
  */
-export async function openhumanClaudeCodeAuthStatus(): Promise<
-  CommandResponse<ClaudeCodeAuthStatus>
-> {
+export async function openhumanClaudeCodeAuthStatus(): Promise<ClaudeCodeAuthStatus> {
   if (!isTauri()) {
     throw new Error('Not running in Tauri');
   }
-  return await callCoreRpc<CommandResponse<ClaudeCodeAuthStatus>>({
+  // The core handler returns the value via `RpcOutcome::new(_, vec![])` with no
+  // logs, which `into_cli_compatible_json` serializes as the BARE value (not a
+  // `{ result, logs }` envelope). `callCoreRpc` returns the JSON-RPC `result`,
+  // so this resolves directly to the AuthStatus — do NOT read `.result`.
+  return await callCoreRpc<ClaudeCodeAuthStatus>({
     method: 'openhuman.inference_claude_code_auth_status',
+  });
+}
+
+/**
+ * Persisted Claude Code provider settings — mirrors Rust
+ * `claude_code::settings::ClaudeCodeSettings`. `full_access=true` runs the
+ * CLI with `--permission-mode bypassPermissions` + its full native toolset
+ * (Bash/network/subagents); `false` (default) is the safer `acceptEdits`
+ * posture (auto-apply file edits, gate the rest). On macOS the Seatbelt jail
+ * still walls off `~/.openhuman` in either mode.
+ */
+export interface ClaudeCodeSettings {
+  full_access: boolean;
+}
+
+/**
+ * Read the persisted Claude Code full-access toggle. Bare value (no
+ * `{ result, logs }` envelope) — see {@link openhumanClaudeCodeAuthStatus}.
+ */
+export async function openhumanClaudeCodeSettings(): Promise<ClaudeCodeSettings> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<ClaudeCodeSettings>({
+    method: 'openhuman.inference_claude_code_settings',
+  });
+}
+
+/**
+ * Persist the Claude Code full-access toggle. Returns the saved settings.
+ * Takes effect on the next chat turn (the driver reads the file per-turn).
+ */
+export async function openhumanClaudeCodeSetFullAccess(
+  enabled: boolean
+): Promise<ClaudeCodeSettings> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<ClaudeCodeSettings>({
+    method: 'openhuman.inference_claude_code_set_full_access',
+    params: { enabled },
   });
 }
 

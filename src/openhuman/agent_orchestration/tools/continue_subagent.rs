@@ -228,6 +228,8 @@ impl Tool for ContinueSubagentTool {
             worker_thread_id: checkpoint.worker_thread_id.clone(),
             initial_history: Some(history),
             checkpoint_dir: Some(checkpoint_dir.clone()),
+            worktree_action_dir: None,
+            run_queue: None,
         };
 
         // Run the sub-agent from its checkpoint

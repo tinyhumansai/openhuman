@@ -827,3 +827,136 @@ async fn prepare_messages_under_untrusted_channel_config_passes_plain_text_throu
     assert!(!prepared.contains_images);
     assert_eq!(prepared.messages.len(), 1);
 }
+
+// ── Ingress attachment processing: file extraction + image sidecar ───────────
+
+#[tokio::test]
+async fn inline_file_attachments_replaces_marker_with_extracted_text() {
+    // base64("hello world") = aGVsbG8gd29ybGQ=
+    let msg = "summarize [FILE:data:text/plain;base64,aGVsbG8gd29ybGQ=]";
+    let out = inline_file_attachments(msg, &MultimodalFileConfig::default()).await;
+    assert!(
+        out.contains("[FILE-EXTRACTED"),
+        "extracted block present: {out}"
+    );
+    assert!(out.contains("hello world"), "extracted text inlined: {out}");
+    assert!(
+        !out.contains("[FILE:data:"),
+        "raw data-uri marker must be gone: {out}"
+    );
+    assert!(out.contains("summarize"), "user text preserved: {out}");
+}
+
+#[tokio::test]
+async fn inline_file_attachments_noop_without_marker() {
+    let msg = "just a normal message";
+    let out = inline_file_attachments(msg, &MultimodalFileConfig::default()).await;
+    assert_eq!(out, msg);
+}
+
+const TINY_PNG_DATA_URI: &str = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+
+#[tokio::test]
+async fn stash_image_attachments_replaces_marker_with_placeholder() {
+    let msg = format!("whats this [IMAGE:{TINY_PNG_DATA_URI}]");
+    let out = stash_image_attachments(&msg, &MultimodalConfig::default()).await;
+    assert!(out.contains("[Image:"), "placeholder present: {out}");
+    assert!(out.contains("#att:"), "stash ref present: {out}");
+    assert!(
+        !out.contains("[IMAGE:data:"),
+        "raw image marker must be gone: {out}"
+    );
+    assert!(
+        !out.contains("base64"),
+        "no base64 left in persisted form: {out}"
+    );
+    assert!(out.contains("whats this"), "user text preserved: {out}");
+}
+
+#[tokio::test]
+async fn image_placeholder_rehydrates_to_inline_marker_for_provider() {
+    // Ingress: stash the image and leave a placeholder.
+    let msg = format!("describe [IMAGE:{TINY_PNG_DATA_URI}]");
+    let placeholdered = stash_image_attachments(&msg, &MultimodalConfig::default()).await;
+    let messages = vec![ChatMessage::user(placeholdered)];
+    assert!(has_image_placeholders(&messages), "placeholder detected");
+
+    // Dispatch (vision model): rehydrate back to an inline [IMAGE:data:...] marker.
+    let rehydrated = rehydrate_image_placeholders(&messages);
+    assert_eq!(rehydrated.len(), 1);
+    assert!(
+        rehydrated[0].content.contains("[IMAGE:data:image/png"),
+        "rehydrated inline image: {}",
+        rehydrated[0].content
+    );
+    assert!(
+        !rehydrated[0].content.contains("#att:"),
+        "placeholder consumed: {}",
+        rehydrated[0].content
+    );
+}
+
+#[test]
+fn rehydrate_missing_stash_id_keeps_placeholder_text() {
+    // A placeholder whose id is absent from the stash (e.g. after a restart) is
+    // left verbatim rather than dropped — the model still sees a text mention.
+    let messages = vec![ChatMessage::user(
+        "see [Image: image #att:deadbeefdeadbeef]".to_string(),
+    )];
+    let out = rehydrate_image_placeholders(&messages);
+    assert!(out[0]
+        .content
+        .contains("[Image: image #att:deadbeefdeadbeef]"));
+    assert!(!out[0].content.contains("[IMAGE:data:"));
+}
+
+#[tokio::test]
+async fn inline_file_attachments_caps_at_max_files() {
+    // base64("a")=YQ==, base64("b")=Yg==
+    let msg = "[FILE:data:text/plain;base64,YQ==] [FILE:data:text/plain;base64,Yg==]";
+    let cfg = MultimodalFileConfig {
+        max_files: 1,
+        ..MultimodalFileConfig::default()
+    };
+    let out = inline_file_attachments(msg, &cfg).await;
+    // First file is extracted; the second is over the cap → placeholder, unread.
+    assert!(
+        out.contains("[FILE-EXTRACTED"),
+        "first file extracted: {out}"
+    );
+    assert!(out.contains("over file limit"), "second file capped: {out}");
+}
+
+#[tokio::test]
+async fn stash_image_attachments_caps_at_max_images() {
+    let msg = format!("[IMAGE:{TINY_PNG_DATA_URI}]\n[IMAGE:{TINY_PNG_DATA_URI}]");
+    let cfg = MultimodalConfig {
+        max_images: 1,
+        ..MultimodalConfig::default()
+    };
+    let out = stash_image_attachments(&msg, &cfg).await;
+    assert!(out.contains("#att:"), "first image stashed: {out}");
+    assert!(
+        out.contains("over image limit"),
+        "second image capped: {out}"
+    );
+}
+
+#[test]
+fn image_stash_evicts_oldest_over_capacity() {
+    let mut stash = ImageStash::default();
+    for i in 0..(IMAGE_STASH_MAX_ENTRIES + 5) {
+        stash.insert(format!("id{i}"), format!("uri-{i}"));
+    }
+    assert!(
+        stash.map.len() <= IMAGE_STASH_MAX_ENTRIES,
+        "bounded entries"
+    );
+    assert!(stash.get("id0").is_none(), "oldest evicted");
+    assert!(
+        stash
+            .get(&format!("id{}", IMAGE_STASH_MAX_ENTRIES + 4))
+            .is_some(),
+        "newest retained"
+    );
+}

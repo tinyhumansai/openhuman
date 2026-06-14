@@ -40,13 +40,10 @@ vi.mock('../../lib/composio/hooks', () => ({
 
 describe('Skills page — Gmail composio integration', () => {
   it('renders Gmail as a connected composio integration and opens its management modal', async () => {
-    renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
-    fireEvent.click(screen.getByRole('tab', { name: 'Composio' }));
+    renderWithProviders(<Skills />, { initialEntries: ['/connections'] });
+    fireEvent.click(screen.getByTestId('two-pane-nav-composio'));
 
-    const integrationsSection = screen
-      .getByRole('heading', { name: 'Composio Integrations' })
-      .closest('.rounded-2xl');
-    expect(integrationsSection).not.toBeNull();
+    const integrationsSection = screen.getByTestId('composio-integrations-card');
     expect(within(integrationsSection as HTMLElement).getByText('Gmail')).toBeInTheDocument();
     expect(within(integrationsSection as HTMLElement).getByText('Connected')).toBeInTheDocument();
 

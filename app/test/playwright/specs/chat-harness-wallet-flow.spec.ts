@@ -12,9 +12,7 @@ const USER_ID = 'pw-chat-wallet-flow';
 const CANARY = 'wallet-quote-canary-8d13';
 const JOHN_ADDRESS = '0x00000000000000000000000000000000000000aa';
 const WALLET_PROMPT = `Send John $5 on EVM at ${JOHN_ADDRESS} and tell me ${CANARY}.`;
-const MEMORY_TRIGGER_RESPONSE = { content: 'No relevant memory context.' };
 const FORCED_RESPONSES = [
-  MEMORY_TRIGGER_RESPONSE,
   {
     content: '',
     toolCalls: [

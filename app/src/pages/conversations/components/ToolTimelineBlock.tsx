@@ -2,6 +2,7 @@ import { useT } from '../../../lib/i18n/I18nContext';
 import type { SubagentActivity, ToolTimelineEntry } from '../../../store/chatRuntimeSlice';
 import { formatTimelineEntry, formatToolName } from '../../../utils/toolTimelineFormatting';
 import { parseWorkerThreadRef } from '../utils/workerThreadRef';
+import { agentNameTone, AgentTimelineRail } from './AgentTimelineRail';
 import { WorkerThreadRefCard, type WorkerThreadStatus } from './WorkerThreadRefCard';
 
 /**
@@ -161,121 +162,133 @@ export function SubagentActivityBlock({
   );
 }
 
+function normalizeToolBody(value?: string): string | undefined {
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return undefined;
+  if (trimmed === '{}' || trimmed === '[]' || trimmed === 'null') return undefined;
+  return value;
+}
+
+/**
+ * Neutral surface tones for an expanded row's body (worker-thread card,
+ * detail bubble, code block). Per the Figma "Agentic task insights"
+ * design these read as plain light cards rather than status-coloured
+ * panels — the row's *status* is conveyed by the agent name (see
+ * {@link agentNameTone}), so the body stays visually quiet.
+ */
+const BODY_SURFACE = 'bg-stone-50 dark:bg-neutral-800/60';
+
+/**
+ * The agent-run timeline rendered above an assistant answer — the
+ * "Agentic task insights" surface from the Figma Chat design.
+ *
+ * Each {@link ToolTimelineEntry} is a row on a shared vertical timeline
+ * rail ({@link AgentTimelineRail}); the agent name carries the run state
+ * (pulsing while in flight, solid when done) and expands in place to show
+ * its detail/code/sub-agent activity. The whole group sits under a
+ * collapsible "⚙️ Working… / Agentic task insights" header so the user can
+ * fold the live activity away.
+ */
 export function ToolTimelineBlock({
   entries,
   onViewSubagent,
+  expandAllRows = false,
 }: {
   entries: ToolTimelineEntry[];
   /** Opens the full-transcript drawer for a subagent row. When omitted,
    * subagent cards render without the "view full processing" affordance
    * (e.g. interrupted-snapshot rendering with no live driver). */
   onViewSubagent?: (subagent: SubagentActivity) => void;
+  /** Expand every row's details by default (used by the "Agent Process
+   * Source" panel, where the whole run should be visible at a glance).
+   * In the inline chat only the latest running row auto-expands. */
+  expandAllRows?: boolean;
 }) {
+  const { t } = useT();
   const latestRunningEntryId = [...entries].reverse().find(entry => entry.status === 'running')?.id;
 
-  const normalizeToolBody = (value?: string): string | undefined => {
-    if (!value) return undefined;
-    const trimmed = value.trim();
-    if (trimmed.length === 0) return undefined;
-    if (trimmed === '{}' || trimmed === '[]' || trimmed === 'null') return undefined;
-    return value;
-  };
+  if (entries.length === 0) return null;
 
+  // The group header is a static section label — the live "working" state is
+  // conveyed by the pulsing agent-name rows (and the chat's own activity
+  // indicator), so the header does NOT repeat a "Working…" string.
   return (
-    <div className="mb-2 space-y-1 px-1 py-0">
-      {entries.map(entry => {
-        const formatted = formatTimelineEntry(entry);
-        const detailContent =
-          normalizeToolBody(formatted.detail) ?? normalizeToolBody(entry.argsBuffer);
-        const workerRef = parseWorkerThreadRef(formatted.detail ?? entry.detail);
-        const subagent = entry.subagent;
-        // A subagent row should always render the expandable details so
-        // its live activity is visible — even when there is no prompt
-        // detail to show. Mirrors the rule that a non-subagent row only
-        // expands when it has detail content.
-        const expandable = detailContent != null || subagent != null;
-        const shouldAutoExpand = latestRunningEntryId != null && latestRunningEntryId === entry.id;
-        const statusTone =
-          entry.status === 'running'
-            ? {
-                pill: 'bg-amber-100 dark:bg-amber-500/20 text-amber-600 dark:text-amber-300',
-                bubble: 'bg-amber-50 dark:bg-amber-500/10 text-amber-900 dark:text-amber-200',
-                code: 'text-amber-800 dark:text-amber-300',
-                chevron: 'text-amber-500 dark:text-amber-400',
-              }
-            : entry.status === 'success'
-              ? {
-                  pill: 'bg-sage-100 dark:bg-sage-500/20 text-sage-600 dark:text-sage-300',
-                  bubble: 'bg-sage-50 dark:bg-sage-500/10 text-sage-900 dark:text-sage-200',
-                  code: 'text-sage-800 dark:text-sage-300',
-                  chevron: 'text-sage-500 dark:text-sage-400',
-                }
-              : {
-                  pill: 'bg-coral-100 dark:bg-coral-500/20 text-coral-600 dark:text-coral-300',
-                  bubble: 'bg-coral-50 dark:bg-coral-500/10 text-coral-900 dark:text-coral-200',
-                  code: 'text-coral-800 dark:text-coral-300',
-                  chevron: 'text-coral-500 dark:text-coral-400',
-                };
+    <details open className="group/insights mb-2 px-1 py-0" data-testid="agent-task-insights">
+      <summary className="mb-1.5 flex cursor-pointer list-none items-center gap-1.5 select-none marker:hidden">
+        <span className="text-[11px] font-medium text-stone-500 dark:text-neutral-400">
+          {t('conversations.agentTaskInsights.title')}
+        </span>
+        <span className="text-[9px] text-stone-400 transition-transform group-open/insights:rotate-90 dark:text-neutral-500">
+          ▶
+        </span>
+      </summary>
+      <div className="text-xs text-stone-400 dark:text-neutral-500">
+        {entries.map((entry, index) => {
+          const formatted = formatTimelineEntry(entry);
+          const detailContent =
+            normalizeToolBody(formatted.detail) ?? normalizeToolBody(entry.argsBuffer);
+          const workerRef = parseWorkerThreadRef(formatted.detail ?? entry.detail);
+          const subagent = entry.subagent;
+          // A subagent row should always render the expandable details so
+          // its live activity is visible — even when there is no prompt
+          // detail to show. Mirrors the rule that a non-subagent row only
+          // expands when it has detail content.
+          const expandable = detailContent != null || subagent != null;
+          const shouldAutoExpand =
+            expandAllRows || (latestRunningEntryId != null && latestRunningEntryId === entry.id);
+          const nameTone = agentNameTone(entry.status);
 
-        return (
-          <div
-            key={entry.id}
-            className="flex flex-col gap-1 text-xs text-stone-400 dark:text-neutral-500">
-            {expandable ? (
-              <details open={shouldAutoExpand} className="ml-1 group">
-                <summary className="flex cursor-pointer list-none items-center gap-2 select-none marker:hidden">
-                  <span
-                    className={`text-[10px] transition-transform group-open:rotate-90 ${statusTone.chevron}`}>
-                    ▶
-                  </span>
-                  <span className="font-medium text-stone-600 dark:text-neutral-300">
-                    {formatted.title}
-                  </span>
-                  <span className={`rounded-full px-2 py-0.5 text-[10px] ${statusTone.pill}`}>
-                    {entry.status}
-                  </span>
-                </summary>
-                {workerRef ? (
-                  <div
-                    className={`mt-1 rounded-xl rounded-tl-md px-2.5 py-2 text-[11px] whitespace-pre-wrap break-words ${statusTone.bubble}`}>
-                    {workerRef.before}
-                    <WorkerThreadRefCard
-                      ref={workerRef.ref}
-                      status={workerStatusFromEntry(entry.status)}
+          return (
+            <AgentTimelineRail
+              key={entry.id}
+              isFirst={index === 0}
+              isLast={index === entries.length - 1}>
+              {expandable ? (
+                <details open={shouldAutoExpand} className="group/row">
+                  <summary className="flex cursor-pointer list-none items-center gap-1.5 select-none marker:hidden">
+                    <span className={`text-[11px] font-medium ${nameTone}`}>{formatted.title}</span>
+                    <span className="text-[9px] text-stone-300 transition-transform group-open/row:rotate-90 dark:text-neutral-600">
+                      ▶
+                    </span>
+                  </summary>
+                  {workerRef ? (
+                    <div
+                      className={`mt-1 rounded-xl rounded-tl-md px-2.5 py-2 text-[11px] whitespace-pre-wrap break-words text-stone-600 dark:text-neutral-300 ${BODY_SURFACE}`}>
+                      {workerRef.before}
+                      <WorkerThreadRefCard
+                        ref={workerRef.ref}
+                        status={workerStatusFromEntry(entry.status)}
+                      />
+                      {workerRef.after ? <div className="mt-1">{workerRef.after}</div> : null}
+                    </div>
+                  ) : formatted.detail ? (
+                    <div
+                      className={`mt-1 rounded-xl rounded-tl-md px-2.5 py-2 text-[11px] whitespace-pre-wrap break-words text-stone-600 dark:text-neutral-300 ${BODY_SURFACE}`}>
+                      {formatted.detail}
+                    </div>
+                  ) : detailContent ? (
+                    <pre
+                      className={`mt-1 max-h-24 overflow-y-auto rounded px-2 py-1 font-mono text-[10px] whitespace-pre-wrap break-all text-stone-600 dark:text-neutral-300 ${BODY_SURFACE}`}>
+                      {detailContent}
+                    </pre>
+                  ) : null}
+                  {subagent ? (
+                    <SubagentActivityBlock
+                      subagent={subagent}
+                      onView={onViewSubagent ? () => onViewSubagent(subagent) : undefined}
                     />
-                    {workerRef.after ? <div className="mt-1">{workerRef.after}</div> : null}
-                  </div>
-                ) : formatted.detail ? (
-                  <div
-                    className={`mt-1 rounded-xl rounded-tl-md px-2.5 py-2 text-[11px] whitespace-pre-wrap break-words ${statusTone.bubble}`}>
-                    {formatted.detail}
-                  </div>
-                ) : detailContent ? (
-                  <pre
-                    className={`mt-1 max-h-24 overflow-y-auto rounded px-2 py-1 font-mono text-[10px] whitespace-pre-wrap break-all ${statusTone.bubble} ${statusTone.code}`}>
-                    {detailContent}
-                  </pre>
-                ) : null}
-                {subagent ? (
-                  <SubagentActivityBlock
-                    subagent={subagent}
-                    onView={onViewSubagent ? () => onViewSubagent(subagent) : undefined}
-                  />
-                ) : null}
-              </details>
-            ) : (
-              <div className="ml-1 flex items-center gap-2">
-                <span className="font-medium text-stone-600 dark:text-neutral-300">
-                  {formatted.title}
-                </span>
-                <span className={`rounded-full px-2 py-0.5 text-[10px] ${statusTone.pill}`}>
-                  {entry.status}
-                </span>
-              </div>
-            )}
-          </div>
-        );
-      })}
-    </div>
+                  ) : null}
+                </details>
+              ) : (
+                <div className="flex items-center">
+                  <span className={`text-[11px] font-medium ${nameTone}`}>{formatted.title}</span>
+                </div>
+              )}
+            </AgentTimelineRail>
+          );
+        })}
+      </div>
+    </details>
   );
 }

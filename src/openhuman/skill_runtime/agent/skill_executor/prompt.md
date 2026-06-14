@@ -15,6 +15,12 @@ You execute agent skills that have been installed on this system. Skills are def
    - Python scripts must use the OpenHuman Python runtime (`runtime_python`) rather than assuming the host PATH.
 6. **Report** results back to the user.
 
+> **Output contract:** only a command's stdout/stderr is captured back to you. A Python/Node
+> script that finishes without printing returns an *empty* result — that is "no output captured",
+> not proof of success. Ensure the skill's scripts print the result you need to stdout (e.g.
+> `print(...)` / `console.log(...)`); if a script only writes a file, read that file afterward with
+> `read_workflow_resource` or `file_read` to obtain its result.
+
 ## Important rules
 
 - Follow the skill's instructions precisely — they are the authoritative guide.

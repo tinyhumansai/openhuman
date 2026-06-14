@@ -243,7 +243,8 @@ async function seedLocalStorage(page: Page) {
 }
 
 async function navigateToMcpTab(page: Page) {
-  await page.goto('/#/skills?tab=mcp');
+  // Phase 2: /skills → /connections, ?tab=mcp → ?tab=tools (back-compat alias also works)
+  await page.goto('/#/connections?tab=tools');
   await page.waitForSelector('#root', { state: 'visible', timeout: 20_000 });
   await page.locator('input[type="search"]').waitFor({ state: 'visible', timeout: 10_000 });
   await page.locator('table').waitFor({ state: 'visible', timeout: 10_000 });
@@ -317,17 +318,21 @@ test.describe('MCP Tab — Table View & Filtering', () => {
   test('search filters both installed and registry servers', async ({ page }) => {
     const search = page.locator('input[type="search"]');
     await search.fill('notion');
-    // Wait for the table to reflect the filtered results rather than using a fixed delay
+    // Wait for a Notion row to appear AND for non-matching rows (e.g. "Memory
+    // Server") to disappear — the table re-renders asynchronously and a naive
+    // count() immediately after the first visible check can race against the
+    // previous state still being in the DOM.
     await expect(
       page.locator('table tbody tr', { has: page.locator('td:has-text("Notion")') })
     ).toBeVisible({ timeout: 5_000 });
-    const rows = page.locator('table tbody tr');
-    const count = await rows.count();
-    expect(count).toBeGreaterThanOrEqual(1);
-    for (let i = 0; i < count; i++) {
-      const name = await rows.nth(i).locator('td:first-child').innerText();
-      expect(name.toLowerCase()).toContain('notion');
-    }
+    await expect(
+      page.locator('table tbody tr', { has: page.locator('td:has-text("Memory Server")') })
+    ).toHaveCount(0, { timeout: 5_000 });
+    // The positive (Notion row present) + negative (Memory Server gone) checks
+    // above already prove the filter works. Avoid iterating `td:first-child`
+    // per row — the #3480 registry redesign changed the column layout, and the
+    // table re-renders async (the old per-row loop raced + assumed name-first).
+    await expect(page.locator('table tbody tr')).not.toHaveCount(0);
   });
 
   test('no Smithery branding visible anywhere', async ({ page }) => {

@@ -55,6 +55,25 @@ pub(crate) fn is_sensitive_app(app_name: &str) -> bool {
     SENSITIVE_APPS.iter().any(|s| lower.contains(s))
 }
 
+/// Whether the agent may actuate app UI (`press` / `set_value` / `automate`).
+///
+/// Enabled when **either** the explicit opt-in
+/// (`computer_control.ax_interact_mutations`, captured as `explicit_opt_in` at
+/// tool-build time) is set, **or** the agent has been granted **Full** OS access
+/// (autonomy level `Full`) in Settings → Agent Access. The autonomy level is
+/// read from the **live** policy (`security::live_policy::current`), so granting
+/// Full access mid-session takes effect immediately — the previous behaviour
+/// gated only on the static config flag, so users who flipped Settings →
+/// Agent Access to "Full" still saw "App control isn't enabled yet" because the
+/// flag was untouched. `pub(crate)` so `automate` shares the identical gate.
+pub(crate) fn app_control_enabled(explicit_opt_in: bool) -> bool {
+    use crate::openhuman::security::{live_policy, AutonomyLevel};
+    explicit_opt_in
+        || live_policy::current()
+            .map(|p| matches!(p.autonomy, AutonomyLevel::Full))
+            .unwrap_or(false)
+}
+
 pub struct AxInteractTool {
     /// When false, the mutating actions (`press` / `set_value`) are refused
     /// with guidance to enable `computer_control.ax_interact_mutations`. The
@@ -229,14 +248,15 @@ impl Tool for AxInteractTool {
             )));
         }
 
-        // Mutating actions are opt-in. Read-only `list` is always allowed.
-        if mutating && !self.allow_mutations {
+        // Mutating actions are opt-in (or implied by Full OS access). Read-only
+        // `list` is always allowed.
+        if mutating && !app_control_enabled(self.allow_mutations) {
             log::warn!("[ax_interact] refused: mutations disabled (action={action})");
             return Ok(ToolResult::error(
                 "App control isn't enabled yet, so I can't press buttons or type into \
-                 this app. Turn on App UI Control / App Automation in Settings → Agent \
-                 Access, then ask again. (Reading the UI still works without it; sets \
-                 computer_control.ax_interact_mutations = true.)",
+                 this app. Grant Full access (or turn on App UI Control / App \
+                 Automation) in Settings → Agent Access, then ask again. (Reading the \
+                 UI still works without it.)",
             ));
         }
 
@@ -351,6 +371,43 @@ impl Tool for AxInteractTool {
 mod tests {
     use super::*;
 
+    /// Force the process-global live policy to a given autonomy level so the
+    /// `app_control_enabled` Full-access bypass is deterministic. Other tests in
+    /// this binary (e.g. `security::live_policy`) install a Full global; callers
+    /// must hold `TEST_ENV_LOCK` while relying on the value they set here.
+    fn install_live_autonomy(level: crate::openhuman::security::AutonomyLevel) {
+        use crate::openhuman::security::{live_policy, SecurityPolicy};
+        use std::sync::Arc;
+        let ws = std::env::temp_dir().join("openhuman_ax_interact_gate_test_ws");
+        live_policy::install(
+            Arc::new(SecurityPolicy {
+                autonomy: level,
+                workspace_dir: ws.clone(),
+                ..SecurityPolicy::default()
+            }),
+            ws.clone(),
+            ws,
+        );
+    }
+
+    #[test]
+    fn app_control_enabled_combines_optin_and_full_access() {
+        use crate::openhuman::security::AutonomyLevel;
+        let _env = crate::openhuman::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        // Explicit opt-in always enables, regardless of the live policy.
+        assert!(app_control_enabled(true));
+        // Supervised + no opt-in → gate closed.
+        install_live_autonomy(AutonomyLevel::Supervised);
+        assert!(!app_control_enabled(false));
+        // Full OS access opens the gate even without the explicit flag — this is
+        // the fix: granting "Full" in Settings → Agent Access now enables app
+        // control without separately flipping `ax_interact_mutations`.
+        install_live_autonomy(AutonomyLevel::Full);
+        assert!(app_control_enabled(false));
+    }
+
     #[test]
     fn name_and_permission() {
         let tool = AxInteractTool::new(true);
@@ -416,6 +473,12 @@ mod tests {
 
     #[tokio::test]
     async fn refuses_mutations_when_disabled() {
+        // Pin a non-Full live policy for the test so the Full-access bypass can't
+        // open the gate (other tests in this binary install a Full global).
+        let _env = crate::openhuman::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        install_live_autonomy(crate::openhuman::security::AutonomyLevel::Supervised);
         // mutations off → press/set_value blocked, but list still allowed past this guard.
         let tool = AxInteractTool::new(false);
         let press = tool
@@ -423,7 +486,8 @@ mod tests {
             .await
             .unwrap();
         assert!(press.is_error);
-        assert!(press.output().contains("ax_interact_mutations"));
+        // Gate closed → the refusal points the user at Settings → Agent Access.
+        assert!(press.output().contains("Agent Access"));
     }
 
     #[tokio::test]

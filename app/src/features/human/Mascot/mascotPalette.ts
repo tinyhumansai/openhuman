@@ -70,3 +70,22 @@ export function hexToArgbInt(hex: string): number {
   const b = parseInt(h.slice(4, 6), 16);
   return ((0xff << 24) | (r << 16) | (g << 8) | b) >>> 0;
 }
+
+/**
+ * Lighten (`amount > 0`) or darken (`amount < 0`) a `#rrggbb` colour by a
+ * fraction in `[-1, 1]`. Used to derive highlight/shadow stops for a flat,
+ * bright mascot body that mirrors the Rive mascot's look for any palette
+ * colour (including user custom colours). Falls back to the input on a
+ * malformed hex so a bad custom value never throws.
+ */
+export function shadeHex(hex: string, amount: number): string {
+  const h = hex.replace('#', '');
+  if (h.length !== 6 || /[^0-9a-fA-F]/.test(h)) return hex;
+  const clamp = (v: number) => Math.max(0, Math.min(255, Math.round(v)));
+  const mix = (channel: number) =>
+    amount >= 0 ? channel + (255 - channel) * amount : channel * (1 + amount);
+  const r = clamp(mix(parseInt(h.slice(0, 2), 16)));
+  const g = clamp(mix(parseInt(h.slice(2, 4), 16)));
+  const b = clamp(mix(parseInt(h.slice(4, 6), 16)));
+  return `#${[r, g, b].map(v => v.toString(16).padStart(2, '0')).join('')}`;
+}

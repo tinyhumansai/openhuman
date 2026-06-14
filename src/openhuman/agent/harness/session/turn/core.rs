@@ -3,7 +3,10 @@
 use super::super::transcript;
 use super::super::turn_engine_adapter::{AgentCheckpoint, AgentObserver, AgentToolSource};
 use super::super::types::Agent;
-use super::{integration_announcement_note, normalize_tool_call};
+use super::{
+    integration_announcement_note, mcp_announcement_note, newly_connected_slugs,
+    normalize_tool_call,
+};
 use crate::openhuman::agent::harness;
 use crate::openhuman::agent::harness::definition::TriggerMemoryAgent;
 use crate::openhuman::agent::harness::fork_context::ParentExecutionContext;
@@ -119,6 +122,16 @@ impl Agent {
                 .iter()
                 .map(|i| i.toolkit.clone())
                 .collect();
+            // MCP analogue: seed the announced MCP set with the servers already
+            // connected at startup. Those are already in the (turn-1) system
+            // prompt's `## Connected MCP Servers` block, so only servers that
+            // connect *mid-session* should later be announced on the user turn.
+            self.announced_mcp_servers =
+                crate::openhuman::mcp_registry::connections::connected_overview()
+                    .await
+                    .into_iter()
+                    .map(|s| s.qualified_name)
+                    .collect();
         } else {
             // Deliberately do NOT rebuild the system prompt on subsequent
             // turns. The rendered prompt is the KV-cache prefix the inference
@@ -163,6 +176,27 @@ impl Agent {
             // real change on the next turn after the UI's 5 s poll has
             // repopulated [`INTEGRATIONS_CACHE`].
 
+            // MCP mid-session connect surfacing — the analogue of the Composio
+            // path above. `use_mcp_server` is a single static delegate (no
+            // per-server schema to refresh), so the whole mechanism is: diff
+            // the live in-process connection map against what we've already
+            // announced and queue a one-shot note for any newly-connected
+            // server onto the next user message. The map is in-process (no
+            // network, unlike Composio's cache), so reading it every turn is
+            // cheap. Like the Composio block, the frozen `## Connected MCP
+            // Servers` system-prompt section stays as the turn-1 snapshot.
+            let connected_mcp: Vec<String> =
+                crate::openhuman::mcp_registry::connections::connected_overview()
+                    .await
+                    .into_iter()
+                    .map(|s| s.qualified_name)
+                    .collect();
+            for qn in newly_connected_slugs(&connected_mcp, &mut self.announced_mcp_servers) {
+                if !self.pending_mcp_announcement.contains(&qn) {
+                    self.pending_mcp_announcement.push(qn);
+                }
+            }
+
             log::trace!(
                 "[agent_loop] system prompt reused (history_len={}) — KV cache prefix preserved",
                 self.history.len()
@@ -170,16 +204,44 @@ impl Agent {
         }
 
         if self.auto_save {
-            let _ = self
-                .memory
-                .store(
-                    "",
-                    "user_msg",
-                    user_message,
-                    MemoryCategory::Conversation,
-                    None,
-                )
-                .await;
+            // Fire-and-forget: persisting the user message to the memory store
+            // does an embedding round-trip (Voyage) + memory-tree write that the
+            // in-flight turn never reads back. Awaiting it delayed the start of
+            // *every* turn before recall/LLM began, so spawn it and let the chat
+            // continue immediately.
+            //
+            // Use a UNIQUE per-message key: the old fixed `"user_msg"` key
+            // upserts a single document (`upsert_document` keys by namespace+key),
+            // so concurrent turns would race on — and overwrite — one shared slot.
+            // A unique key makes each user message its own conversation document,
+            // which both removes the race and stops the autosave from only ever
+            // retaining the latest message.
+            let memory = self.memory.clone();
+            let user_msg = user_message.to_string();
+            let autosave_key = format!("user_msg:{}", uuid::Uuid::new_v4());
+            let chars = user_msg.chars().count();
+            log::debug!(
+                "[agent_autosave] enqueue user-message store key={autosave_key} chars={chars}"
+            );
+            tokio::spawn(async move {
+                match memory
+                    .store(
+                        "",
+                        &autosave_key,
+                        &user_msg,
+                        MemoryCategory::Conversation,
+                        None,
+                    )
+                    .await
+                {
+                    Ok(()) => log::debug!(
+                        "[agent_autosave] stored user-message key={autosave_key} chars={chars}"
+                    ),
+                    Err(err) => log::warn!(
+                        "[agent_autosave] user-message memory autosave failed key={autosave_key} err={err}"
+                    ),
+                }
+            });
         }
 
         log::info!("[agent] loading memory context for user message");
@@ -313,6 +375,14 @@ impl Agent {
             None => enriched,
         };
 
+        // Same one-shot treatment for MCP servers connected mid-session
+        // (queued above). `.take()` clears it so it fires exactly once.
+        let pending_mcp = std::mem::take(&mut self.pending_mcp_announcement);
+        let enriched = match mcp_announcement_note(&pending_mcp) {
+            Some(note) => format!("{note}\n\n{enriched}"),
+            None => enriched,
+        };
+
         // Pin the main agent to its configured model for the lifetime of
         // the session. Per-turn classification used to run here, but it
         // would flip `effective_model` mid-conversation (e.g. reasoning →
@@ -414,10 +484,19 @@ impl Agent {
             };
             let turn_run_queue = self.run_queue.clone();
             let cached_prefix = self.cached_transcript_messages.take();
+            // Resolve the context window once per turn through the provider so
+            // local providers (LM Studio) trim to their runtime-loaded n_ctx
+            // rather than the trained-max table (#3550 / TAURI-RUST-6V0).
+            // Must run before `agent: self` takes the &mut borrow below.
+            let turn_context_window = self
+                .provider
+                .effective_context_window(&effective_model)
+                .await;
             let mut observer = AgentObserver {
                 agent: self,
                 artifact_store,
                 effective_model: effective_model.clone(),
+                context_window: turn_context_window,
                 cumulative_input: 0,
                 cumulative_output: 0,
                 cumulative_cached: 0,

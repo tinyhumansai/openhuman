@@ -637,6 +637,12 @@ pub struct ListChunksQuery {
     pub until_ms: Option<i64>,
     /// Max rows to return (default 100 when `None`).
     pub limit: Option<usize>,
+    /// Per-profile memory-source allowlist. When `Some`, memory-source chunks
+    /// (those tagged `memory_sources`) whose source identifier is not in the set
+    /// are dropped *before* the row limit is applied, so a disallowed-source
+    /// prefix can't starve permitted rows. Non-source chunks always pass. `None`
+    /// = unrestricted (the default for every non-agent caller).
+    pub source_scope: Option<std::collections::HashSet<String>>,
 }
 
 /// List chunks matching the provided filters, ordered by `timestamp` DESC.
@@ -670,19 +676,45 @@ pub fn list_chunks(config: &Config, query: &ListChunksQuery) -> Result<Vec<Chunk
             sql.push_str(" AND timestamp_ms <= ?");
             bound.push(Box::new(until_ms));
         }
-        let limit = normalized_limit(query.limit);
+        let requested_limit = normalized_limit(query.limit);
+        // When a profile source-scope is active, fetch a wider candidate set and
+        // apply the gate in Rust *before* truncating, so a disallowed-source
+        // prefix can't push permitted rows past the requested limit. Otherwise
+        // the SQL LIMIT alone is correct and cheap.
+        let sql_limit = if query.source_scope.is_some() {
+            MAX_LIST_LIMIT as i64
+        } else {
+            requested_limit
+        };
         sql.push_str(" ORDER BY timestamp_ms DESC, seq_in_source ASC LIMIT ?");
-        bound.push(Box::new(limit));
+        bound.push(Box::new(sql_limit));
 
         let mut stmt = conn.prepare(&sql)?;
         let param_refs: Vec<&dyn rusqlite::ToSql> = bound
             .iter()
             .map(|b| b.as_ref() as &dyn rusqlite::ToSql)
             .collect();
-        let rows = stmt
+        let mut rows = stmt
             .query_map(param_refs.as_slice(), row_to_chunk)?
             .collect::<rusqlite::Result<Vec<_>>>()
             .context("Failed to collect chunks")?;
+        if let Some(ref allowed) = query.source_scope {
+            let before = rows.len();
+            rows.retain(|c| {
+                crate::openhuman::memory::source_scope::chunk_source_allowed_in(
+                    allowed,
+                    &c.metadata.tags,
+                    &c.metadata.source_id,
+                )
+            });
+            if rows.len() != before {
+                log::debug!(
+                    "[profiles] list_chunks source-scope filter: {before} -> {} row(s)",
+                    rows.len()
+                );
+            }
+            rows.truncate(requested_limit as usize);
+        }
         Ok(rows)
     })
 }
@@ -831,6 +863,85 @@ pub(crate) fn claim_source_ingest_tx(
         params![source_kind.as_str(), source_id, now_ms],
     )?;
     Ok(inserted > 0)
+}
+
+/// `source_kind` value used in `mem_tree_ingested_sources` to record that a
+/// raw archive file (relative path under `<content_root>/`, e.g.
+/// `raw/github-com-org-repo/commits/<ts>_<sha>.md`) has been covered by a
+/// tree summary. Distinct from the chunk-store [`SourceKind`] values so the
+/// two gate namespaces can never collide.
+pub const RAW_FILE_GATE_KIND: &str = "raw_file";
+
+/// Record that the given raw archive files (relative paths under
+/// `<content_root>/`) are covered by a tree summary. Idempotent
+/// (`INSERT OR IGNORE`); returns the number of newly-recorded paths.
+pub fn mark_raw_paths_ingested(config: &Config, rel_paths: &[String]) -> Result<u64> {
+    if rel_paths.is_empty() {
+        return Ok(0);
+    }
+    let now_ms = Utc::now().timestamp_millis();
+    with_connection(config, |conn| {
+        let tx = conn.unchecked_transaction()?;
+        let mut inserted: u64 = 0;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT OR IGNORE INTO mem_tree_ingested_sources \
+                    (source_kind, source_id, ingested_at_ms) \
+                 VALUES (?1, ?2, ?3)",
+            )?;
+            for path in rel_paths {
+                inserted += stmt.execute(params![RAW_FILE_GATE_KIND, path, now_ms])? as u64;
+            }
+        }
+        tx.commit()?;
+        log::debug!(
+            "[memory::chunk_store] mark_raw_paths_ingested: {} given, {} newly recorded",
+            rel_paths.len(),
+            inserted
+        );
+        Ok(inserted)
+    })
+}
+
+/// Filter `rel_paths` down to the ones NOT yet recorded as ingested raw
+/// files. Order of the surviving paths is preserved.
+pub fn filter_raw_paths_not_ingested(config: &Config, rel_paths: &[String]) -> Result<Vec<String>> {
+    if rel_paths.is_empty() {
+        return Ok(Vec::new());
+    }
+    with_connection(config, |conn| {
+        let mut stmt = conn.prepare(
+            "SELECT COUNT(*) FROM mem_tree_ingested_sources \
+             WHERE source_kind = ?1 AND source_id = ?2",
+        )?;
+        let mut out: Vec<String> = Vec::new();
+        for path in rel_paths {
+            let n: i64 = stmt.query_row(params![RAW_FILE_GATE_KIND, path], |r| r.get(0))?;
+            if n == 0 {
+                out.push(path.clone());
+            }
+        }
+        Ok(out)
+    })
+}
+
+/// Count raw-file gate rows whose path starts with `rel_prefix` (e.g.
+/// `raw/github-com-org-repo/`). Diagnostic helper for reconcile reporting.
+pub fn count_raw_paths_ingested_with_prefix(config: &Config, rel_prefix: &str) -> Result<u64> {
+    with_connection(config, |conn| {
+        // Rust-side prefix filter (not SQL LIKE) so `_` / `%` in slugs are
+        // treated literally — same convention as delete_chunks_by_source_prefix.
+        let mut stmt =
+            conn.prepare("SELECT source_id FROM mem_tree_ingested_sources WHERE source_kind = ?1")?;
+        let rows = stmt.query_map(params![RAW_FILE_GATE_KIND], |r| r.get::<_, String>(0))?;
+        let mut n: u64 = 0;
+        for row in rows {
+            if row?.starts_with(rel_prefix) {
+                n += 1;
+            }
+        }
+        Ok(n)
+    })
 }
 
 /// Delete all chunk rows for one exact `(source_kind, source_id)` and clear
@@ -1186,8 +1297,8 @@ use migrations::{migrate_legacy_embeddings_to_sidecar, purge_global_topic_trees}
 mod raw_refs;
 pub use raw_refs::{
     get_chunk_content_path, get_chunk_content_pointers, get_chunk_raw_refs,
-    get_summary_content_pointers, list_summaries_with_content_path, set_chunk_raw_refs,
-    set_chunk_raw_refs_tx, RawRef,
+    get_summary_content_pointers, list_chunk_raw_ref_paths_with_prefix,
+    list_summaries_with_content_path, set_chunk_raw_refs, set_chunk_raw_refs_tx, RawRef,
 };
 
 fn normalized_limit(requested: Option<usize>) -> i64 {

@@ -156,6 +156,9 @@ pub(crate) fn parse_provider_tool_call_from_value(
                 arguments: normalize_function_arguments(Some(serde_json::Value::String(
                     call.arguments,
                 ))),
+                // Preserve Gemini's thought_signature through the stored-history
+                // recovery path so it is echoed on the next turn (TAURI-RUST-4PK).
+                extra_content: call.extra_content,
             });
         }
     }
@@ -176,6 +179,9 @@ pub(crate) fn parse_provider_tool_call_from_value(
         id,
         name: name.to_string(),
         arguments: normalize_function_arguments(function.get("arguments").cloned()),
+        // Carry Gemini's thought_signature if the stored value had one
+        // (TAURI-RUST-4PK).
+        extra_content: value.get("extra_content").cloned(),
     })
 }
 

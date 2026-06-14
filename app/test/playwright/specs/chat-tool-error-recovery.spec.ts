@@ -9,7 +9,6 @@ import {
 const MOCK_ADMIN_BASE = `http://127.0.0.1:${process.env.E2E_MOCK_PORT || '18473'}`;
 const USER_ID = 'pw-chat-error-recovery';
 const RECOVERY_CANARY = 'canary-recovery-7g8h9i';
-const MEMORY_TRIGGER_RESPONSE = { content: 'No relevant memory context.' };
 
 async function resetMock(): Promise<void> {
   await fetch(`${MOCK_ADMIN_BASE}/__admin/reset`, {
@@ -155,10 +154,7 @@ test.describe('Chat Tool Error Recovery', () => {
     await setMockBehavior('llmStreamScript', '');
     await setMockBehavior(
       'llmForcedResponses',
-      JSON.stringify([
-        MEMORY_TRIGGER_RESPONSE,
-        { content: `Recovery successful: ${RECOVERY_CANARY}` },
-      ])
+      JSON.stringify([{ content: `Recovery successful: ${RECOVERY_CANARY}` }])
     );
     await setMockBehavior('llmStreamChunkDelayMs', '10');
 

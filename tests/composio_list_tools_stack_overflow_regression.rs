@@ -218,6 +218,7 @@ impl Provider for StubProvider {
                     id: "call_1".into(),
                     name: "composio_list_tools".into(),
                     arguments: json!({ "toolkits": ["gmail"] }).to_string(),
+                    extra_content: None,
                 }],
                 usage: None,
                 reasoning_content: None,

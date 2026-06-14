@@ -59,6 +59,24 @@ fn main() {
             if openhuman_core::core::observability::is_transient_provider_http_failure(&event) {
                 return None;
             }
+            // Defense-in-depth: drop managed-backend `errorCode` events (#870)
+            // the backend owns (F2/F4) — primary suppression lives in
+            // `api_error` / the streaming gates and the `web_channel`
+            // re-report classifier. The malformed `BAD_REQUEST` carve-out
+            // (F8) is excluded by the underlying decision, so a client-built
+            // bad payload still pages.
+            if openhuman_core::core::observability::is_backend_error_code_event(&event) {
+                return None;
+            }
+            // Defense-in-depth: drop transient streaming transport blips
+            // (domain=llm_provider, failure=transport) — flaky-network
+            // timeouts/resets recovered by retry/fallback (F7). The primary
+            // gate lives at the `stream_chat` / `stream_chat_history` emit
+            // sites.
+            if openhuman_core::core::observability::is_transient_provider_transport_failure(&event)
+            {
+                return None;
+            }
             // Defense-in-depth for budget-exhausted 400s. Emit sites demote the
             // known backend responses before they hit Sentry; this catches any
             // future non_2xx/status=400 event that carries the same tight body

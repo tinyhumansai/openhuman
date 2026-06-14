@@ -10,9 +10,7 @@ const MOCK_ADMIN_BASE = `http://127.0.0.1:${process.env.E2E_MOCK_PORT || '18473'
 const USER_ID = 'pw-chat-tool-call';
 const PROMPT = 'Fetch the contents of https://example.com for me.';
 const CANARY_FINAL = 'canary-tool-call-fetched-a1b2c3';
-const MEMORY_TRIGGER_RESPONSE = { content: 'No relevant memory context.' };
 const FORCED_RESPONSES = [
-  MEMORY_TRIGGER_RESPONSE,
   {
     content: '',
     toolCalls: [

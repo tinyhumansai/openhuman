@@ -124,6 +124,8 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::webview_apis::all_webview_apis_registered_controllers());
     // Agent definition and prompt inspection
     controllers.extend(crate::openhuman::agent::all_agent_registered_controllers());
+    // Persistent agent profiles (flavours): name, soul, memory sources, skills, MCP, connectors.
+    controllers.extend(crate::openhuman::profiles::all_profiles_registered_controllers());
     // User-facing agent registry: defaults, enablement, custom agents, tool policy.
     controllers
         .extend(crate::openhuman::agent_registry::all_agent_registry_registered_controllers());
@@ -296,6 +298,12 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     // Background agent command center — read-only grouped view over the run ledger
     controllers
         .extend(crate::openhuman::agent_orchestration::all_command_center_registered_controllers());
+    // Durable dynamic workflow runs — definitions + read surface over the run ledger
+    controllers
+        .extend(crate::openhuman::agent_orchestration::all_workflow_run_registered_controllers());
+    // Durable agent-team coordination — teams, members, dependency-aware task claiming, messaging
+    controllers
+        .extend(crate::openhuman::agent_orchestration::all_agent_team_registered_controllers());
     controllers
 }
 
@@ -330,6 +338,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::mcp_registry::all_mcp_registry_controller_schemas());
     schemas.extend(crate::openhuman::webview_apis::all_webview_apis_controller_schemas());
     schemas.extend(crate::openhuman::agent::all_agent_controller_schemas());
+    schemas.extend(crate::openhuman::profiles::all_profiles_controller_schemas());
     schemas.extend(crate::openhuman::agent_registry::all_agent_registry_controller_schemas());
     schemas.extend(crate::openhuman::agent_experience::all_agent_experience_controller_schemas());
     schemas.extend(crate::openhuman::health::all_health_controller_schemas());
@@ -424,6 +433,10 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::session_db::all_session_db_controller_schemas());
     // Background agent command center
     schemas.extend(crate::openhuman::agent_orchestration::all_command_center_controller_schemas());
+    // Durable dynamic workflow runs
+    schemas.extend(crate::openhuman::agent_orchestration::all_workflow_run_controller_schemas());
+    // Durable agent-team coordination
+    schemas.extend(crate::openhuman::agent_orchestration::all_agent_team_controller_schemas());
     schemas
 }
 
@@ -509,6 +522,12 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         ),
         "agent_work" => Some(
             "Background agent command center — recent agent runs grouped by status (needs-input, working, completed, failed, stopped).",
+        ),
+        "workflow_run" => Some(
+            "Durable dynamic workflow runs — declarative multi-agent definitions and the read surface over persisted runs.",
+        ),
+        "agent_team" => Some(
+            "Durable agent-team coordination: teams, members, dependency-aware task claiming, and teammate messaging.",
         ),
         "billing" => Some("Subscription plan, payment links, and credit top-up via the backend."),
         "team" => Some("Team member management, invites, and role changes via the backend."),

@@ -38,24 +38,33 @@ vi.mock('../../lib/composio/hooks', () => ({
   }),
 }));
 
-describe('Skills page — Meetings tab', () => {
-  it('keeps the meeting bot CTA in its own Connections tab', () => {
-    renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
+describe('Skills page — Meetings tab (meeting bots)', () => {
+  it('shows the meeting bot CTA inside the Meetings tab (not MCP Servers)', () => {
+    renderWithProviders(<Skills />, { initialEntries: ['/connections'] });
 
     expect(screen.queryByTestId('meeting-bots-card')).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Google Meet' }));
+    // MCP Servers no longer hosts the meeting bot CTA.
+    fireEvent.click(screen.getByTestId('two-pane-nav-mcp'));
+    expect(screen.queryByTestId('meeting-bots-card')).not.toBeInTheDocument();
 
+    // Meetings does.
+    fireEvent.click(screen.getByTestId('two-pane-nav-meetings'));
     expect(screen.getByTestId('meeting-bots-card')).toBeInTheDocument();
   });
 
-  it('supports direct links to the Meetings tab', () => {
-    renderWithProviders(<Skills />, { initialEntries: ['/skills?tab=meetings'] });
+  it('supports direct links via legacy ?tab=meetings (normalised to talents)', () => {
+    // The old ?tab=meetings alias now maps to the new "Meetings" tab.
+    renderWithProviders(<Skills />, { initialEntries: ['/connections?tab=meetings'] });
 
-    expect(screen.getByRole('tab', { name: 'Google Meet' })).toHaveAttribute(
-      'aria-selected',
-      'true'
-    );
+    expect(screen.getByTestId('two-pane-nav-meetings')).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByTestId('meeting-bots-card')).toBeInTheDocument();
+  });
+
+  it('supports direct links via ?tab=talents', () => {
+    renderWithProviders(<Skills />, { initialEntries: ['/connections?tab=talents'] });
+
+    expect(screen.getByTestId('two-pane-nav-meetings')).toHaveAttribute('aria-current', 'page');
     expect(screen.getByTestId('meeting-bots-card')).toBeInTheDocument();
   });
 });

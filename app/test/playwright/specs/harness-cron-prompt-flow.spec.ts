@@ -8,7 +8,6 @@ import {
 
 const MOCK_ADMIN_BASE = `http://127.0.0.1:${process.env.E2E_MOCK_PORT || '18473'}`;
 const USER_ID = 'pw-harness-cron-prompt-flow';
-const MEMORY_TRIGGER_RESPONSE = { content: 'No relevant memory context.' };
 
 interface MockRequest {
   method: string;
@@ -122,7 +121,6 @@ test.describe('Harness - Cron prompt-flow', () => {
     await setMockBehavior(
       'llmForcedResponses',
       JSON.stringify([
-        MEMORY_TRIGGER_RESPONSE,
         {
           content: '',
           toolCalls: [
@@ -158,7 +156,6 @@ test.describe('Harness - Cron prompt-flow', () => {
     await setMockBehavior(
       'llmForcedResponses',
       JSON.stringify([
-        MEMORY_TRIGGER_RESPONSE,
         {
           content: `You have 2 scheduled tasks: daily_standup (weekdays 9am) and weekly_review (Fridays 10am). ${CANARY}`,
         },
@@ -176,7 +173,6 @@ test.describe('Harness - Cron prompt-flow', () => {
     await setMockBehavior(
       'llmForcedResponses',
       JSON.stringify([
-        MEMORY_TRIGGER_RESPONSE,
         {
           content: '',
           toolCalls: [
@@ -205,7 +201,6 @@ test.describe('Harness - Cron prompt-flow', () => {
     await setMockBehavior(
       'llmForcedResponses',
       JSON.stringify([
-        MEMORY_TRIGGER_RESPONSE,
         {
           content: '',
           toolCalls: [

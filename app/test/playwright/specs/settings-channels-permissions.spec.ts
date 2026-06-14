@@ -27,13 +27,14 @@ test.describe('Settings - Channels & Permissions', () => {
   });
 
   test('allows switching default messaging channel', async ({ page }) => {
-    await page.goto('/#/skills');
+    // Phase 2: default messaging channel UI moved to /connections (Messaging tab)
+    await page.goto('/#/connections?tab=messaging');
     await waitForAppReady(page);
     await dismissWalkthroughIfPresent(page);
 
-    const channelsTab = page.getByRole('tab', { name: 'Channels', exact: true });
-    if (await channelsTab.isVisible().catch(() => false)) {
-      await channelsTab.click();
+    const messagingTab = page.getByTestId('two-pane-nav-channels');
+    if (await messagingTab.isVisible().catch(() => false)) {
+      await messagingTab.click();
     }
 
     await expect(page.getByText('Default Messaging Channel').last()).toBeVisible();
@@ -49,7 +50,7 @@ test.describe('Settings - Channels & Permissions', () => {
     await waitForAppReady(page);
     await dismissWalkthroughIfPresent(page);
 
-    await expect(page.getByRole('heading', { name: 'Privacy & Security' })).toBeVisible();
+    await expect(page.getByTestId('settings-privacy-panel')).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Product Analytics' })).toBeVisible();
     await expect(page.getByText('Share Product Analytics and Diagnostics')).toBeVisible();
     await expect(page.getByText('What leaves your computer')).toBeVisible();

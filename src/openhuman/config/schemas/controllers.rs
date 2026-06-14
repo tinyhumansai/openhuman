@@ -764,7 +764,7 @@ fn handle_update_voice_server_settings(params: Map<String, Value>) -> Controller
         // silently wouldn't apply until the next launch.
         match config_rpc::load_config_with_timeout().await {
             Ok(config) => {
-                log::debug!("[config][rpc] voice settings saved; applying live always-on state");
+                log::info!("[config][rpc] voice settings saved; applying live always-on state");
                 crate::openhuman::voice::always_on::start_if_enabled(&config).await;
             }
             Err(error) => {

@@ -8,7 +8,6 @@ import {
 
 const MOCK_ADMIN_BASE = `http://127.0.0.1:${process.env.E2E_MOCK_PORT || '18473'}`;
 const USER_ID = 'pw-harness-search-tool-flow';
-const MEMORY_TRIGGER_RESPONSE = { content: 'No relevant memory context.' };
 
 interface MockRequest {
   method: string;
@@ -137,7 +136,6 @@ test.describe('Harness - Search tool-flow', () => {
   test('memory_recall prompt completes the two-turn sequence', async ({ page }) => {
     const CANARY = 'canary-memory-recall-a1b2';
     const forced = [
-      MEMORY_TRIGGER_RESPONSE,
       {
         content: '',
         toolCalls: [
@@ -170,7 +168,6 @@ test.describe('Harness - Search tool-flow', () => {
   test('web_search_tool prompt completes the two-turn sequence', async ({ page }) => {
     const CANARY = 'canary-web-search-c3d4';
     const forced = [
-      MEMORY_TRIGGER_RESPONSE,
       {
         content: '',
         toolCalls: [
@@ -206,7 +203,6 @@ test.describe('Harness - Search tool-flow', () => {
     const CANARY = 'canary-file-read-e5f6';
     const FILE_SNIPPET = 'OpenHuman is an AI assistant for communities';
     const forced = [
-      MEMORY_TRIGGER_RESPONSE,
       {
         content: '',
         toolCalls: [

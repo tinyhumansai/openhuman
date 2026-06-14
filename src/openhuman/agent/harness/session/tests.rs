@@ -461,6 +461,7 @@ async fn turn_with_native_dispatcher_handles_tool_results_variant() {
                     id: "tc1".into(),
                     name: "echo".into(),
                     arguments: "{}".into(),
+                    extra_content: None,
                 }],
                 usage: None,
                 reasoning_content: None,
@@ -604,6 +605,7 @@ async fn turn_dispatches_spawn_subagent_through_full_path() {
                         "prompt": "find out about X"
                     })
                     .to_string(),
+                    extra_content: None,
                 }],
                 usage: None,
                 reasoning_content: None,

@@ -1,244 +1,464 @@
 import { useCallback, useEffect, useState } from 'react';
+import { LuKeyRound, LuX } from 'react-icons/lu';
 
+import { useT } from '../../../../lib/i18n/I18nContext';
 import {
   type ClaudeCodeAuthStatus,
-  type ClaudeCodeStatus,
   openhumanClaudeCodeAuthStatus,
   openhumanClaudeCodeLoginLaunch,
-  openhumanClaudeCodeStatus,
+  openhumanClaudeCodeSetFullAccess,
+  openhumanClaudeCodeSettings,
 } from '../../../../utils/tauriCommands/config';
 
 /**
- * Status card for the Claude Code CLI provider.
+ * Claude Code CLI connect control — the peer of the Codex connect button.
  *
- * Surfaces two independent probes:
- *   1. Binary install + version (slow — spawns `claude --version`).
- *   2. Auth state — Pro/Max subscription via `~/.claude/.credentials.json`
- *      or `ANTHROPIC_API_KEY` env (fast — pure FS).
+ * Inline: a "Claude Code" button + a one-line status summary. Clicking the
+ * button opens a modal with the actual controls (enable/disable, sign-in /
+ * reconnect, install hint).
  *
- * Each refreshes independently so a user who just ran `claude login` can
- * re-probe auth without re-spawning the binary.
+ * Auth is probed via `claude auth status --json` (cross-platform: covers the
+ * macOS Keychain as well as the Linux/Windows file stores) or
+ * `ANTHROPIC_API_KEY`. We do NOT spawn the slow `claude --version` probe — a
+ * missing/old binary surfaces as `unknown` from the auth probe, rendered as a
+ * compact install hint rather than "signed out".
  */
-export function ClaudeCodeStatusCard() {
-  const [status, setStatus] = useState<ClaudeCodeStatus | null>(null);
+export function ClaudeCodeConnect({
+  connected,
+  busy = false,
+  onConnect,
+  onDisconnect,
+}: {
+  connected: boolean;
+  busy?: boolean;
+  onConnect: () => void | Promise<void>;
+  onDisconnect: () => void | Promise<void>;
+}) {
+  const { t } = useT();
+  const [open, setOpen] = useState(false);
   const [auth, setAuth] = useState<ClaudeCodeAuthStatus | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [authError, setAuthError] = useState<string | null>(null);
-  const [loading, setLoading] = useState<boolean>(false);
-  const [authLoading, setAuthLoading] = useState<boolean>(false);
-
-  const probe = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const resp = await openhumanClaudeCodeStatus();
-      setStatus(resp.result);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      setStatus(null);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const [authLoading, setAuthLoading] = useState(false);
+  const [acting, setActing] = useState(false);
 
   const probeAuth = useCallback(async () => {
     setAuthLoading(true);
-    setAuthError(null);
     try {
+      // Resolves to the BARE AuthStatus (no `{ result }` envelope) — see the
+      // wrapper in tauriCommands/config.ts.
       const resp = await openhumanClaudeCodeAuthStatus();
-      setAuth(resp.result);
-    } catch (err) {
-      setAuthError(err instanceof Error ? err.message : String(err));
+      setAuth(resp);
+    } catch {
       setAuth(null);
     } finally {
       setAuthLoading(false);
     }
   }, []);
 
+  // Probe once connected so the inline summary + modal reflect sign-in state.
+  // The disconnected render is DERIVED from `connected` (`shownAuth` below)
+  // rather than clearing `auth` from the effect — synchronous setState in an
+  // effect body is disallowed by `react-hooks/set-state-in-effect`.
   useEffect(() => {
-    void probe();
-    void probeAuth();
-  }, [probe, probeAuth]);
+    if (connected) void probeAuth();
+  }, [connected, probeAuth]);
+
+  const shownAuth = connected ? auth : null;
+
+  const runConnect = async () => {
+    setActing(true);
+    try {
+      await onConnect();
+    } finally {
+      setActing(false);
+    }
+  };
+  const runDisconnect = async () => {
+    setActing(true);
+    try {
+      await onDisconnect();
+    } finally {
+      setActing(false);
+    }
+  };
 
   return (
-    <section
-      data-testid="claude-code-status-card"
-      className="rounded-lg border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
-      <header className="mb-2 flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
-          Claude Code CLI
-        </h3>
-        <button
-          type="button"
-          onClick={() => {
-            void probe();
-          }}
-          disabled={loading}
-          className="text-xs text-neutral-500 hover:text-neutral-900 disabled:opacity-50 dark:text-neutral-400 dark:hover:text-neutral-100">
-          {loading ? 'Probing…' : 'Probe'}
-        </button>
-      </header>
-      <StatusBody status={status} error={error} />
+    <div className="flex flex-wrap items-center gap-2">
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="inline-flex items-center gap-2 rounded-lg border border-stone-200 bg-white px-3 py-2 text-xs font-medium text-stone-900 transition-colors hover:bg-stone-50 disabled:cursor-wait disabled:opacity-60 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:bg-neutral-800">
+        <LuKeyRound className="h-3.5 w-3.5" />
+        {t('settings.ai.claudeCode.button')}
+      </button>
+      <span className="text-xs text-stone-500 dark:text-neutral-400">
+        <InlineSummary connected={connected} auth={shownAuth} loading={authLoading} />
+      </span>
 
-      <div className="mt-4 border-t border-neutral-200 pt-3 dark:border-neutral-800">
-        <header className="mb-2 flex items-center justify-between">
-          <h4 className="text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
-            Authentication
-          </h4>
-          <button
-            type="button"
-            onClick={() => {
-              void probeAuth();
-            }}
-            disabled={authLoading}
-            className="text-xs text-neutral-500 hover:text-neutral-900 disabled:opacity-50 dark:text-neutral-400 dark:hover:text-neutral-100">
-            {authLoading ? 'Checking…' : 'Recheck'}
-          </button>
-        </header>
-        <AuthBody auth={auth} error={authError} />
-      </div>
-
-      <p className="mt-3 text-xs text-neutral-500 dark:text-neutral-400">
-        Use the <code>claude-code:&lt;model&gt;</code> provider string to route chat, agentic, or
-        reasoning workloads through your local Claude Code CLI install.
-      </p>
-    </section>
+      {open && (
+        <ClaudeCodeModal
+          connected={connected}
+          busy={busy || acting}
+          auth={shownAuth}
+          authLoading={authLoading}
+          onClose={() => setOpen(false)}
+          onConnect={runConnect}
+          onDisconnect={runDisconnect}
+          onRecheck={probeAuth}
+        />
+      )}
+    </div>
   );
 }
 
-function StatusBody({ status, error }: { status: ClaudeCodeStatus | null; error: string | null }) {
-  if (error) {
-    return <p className="text-xs text-rose-600 dark:text-rose-400">Failed to probe: {error}</p>;
-  }
-  if (!status) {
-    return <p className="text-xs text-neutral-500 dark:text-neutral-400">Probing…</p>;
-  }
-  switch (status.status) {
-    case 'ok':
-      return (
-        <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
-          <dt className="text-neutral-500">Status</dt>
-          <dd className="text-emerald-600 dark:text-emerald-400">Installed ({status.version})</dd>
-          <dt className="text-neutral-500">Path</dt>
-          <dd className="font-mono text-neutral-700 dark:text-neutral-300">{status.path}</dd>
-        </dl>
-      );
-    case 'not_installed':
-      return (
-        <p className="text-xs text-amber-600 dark:text-amber-400">
-          Claude Code CLI is not installed. Install via{' '}
-          <code>npm install -g @anthropic-ai/claude-code</code> or follow{' '}
-          <a
-            href="https://docs.anthropic.com/en/docs/claude-code"
-            target="_blank"
-            rel="noreferrer noopener"
-            className="underline hover:text-amber-700 dark:hover:text-amber-300">
-            Anthropic's docs
-          </a>
-          .
-        </p>
-      );
-    case 'outdated':
-      return (
-        <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
-          <dt className="text-neutral-500">Status</dt>
-          <dd className="text-rose-600 dark:text-rose-400">
-            Outdated — found {status.version}, need ≥ {status.min_required}
-          </dd>
-          <dt className="text-neutral-500">Path</dt>
-          <dd className="font-mono text-neutral-700 dark:text-neutral-300">{status.path}</dd>
-        </dl>
-      );
-    case 'unusable':
-      return (
-        <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
-          <dt className="text-neutral-500">Status</dt>
-          <dd className="text-rose-600 dark:text-rose-400">Unusable — {status.reason}</dd>
-          <dt className="text-neutral-500">Path</dt>
-          <dd className="font-mono text-neutral-700 dark:text-neutral-300">{status.path}</dd>
-        </dl>
-      );
-  }
+/** Title-case a raw subscription type (`"max"` → `"Max"`) for display. */
+function formatSubscriptionType(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return trimmed;
+  return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
 }
 
-function AuthBody({ auth, error }: { auth: ClaudeCodeAuthStatus | null; error: string | null }) {
-  if (error) {
-    return <p className="text-xs text-rose-600 dark:text-rose-400">Failed to check: {error}</p>;
+/** Heuristic: does an `unknown` reason indicate the binary is missing? */
+function looksNotInstalled(reason: string | null): boolean {
+  if (!reason) return false;
+  const r = reason.toLowerCase();
+  return r.includes('not found') || r.includes('not installed') || r.includes('path');
+}
+
+/** One-line status shown next to the inline "Claude Code" button. */
+function InlineSummary({
+  connected,
+  auth,
+  loading,
+}: {
+  connected: boolean;
+  auth: ClaudeCodeAuthStatus | null;
+  loading: boolean;
+}) {
+  const { t } = useT();
+  if (!connected) {
+    return <>{t('settings.ai.claudeCode.inlineNotConnected')}</>;
   }
   if (!auth) {
-    return <p className="text-xs text-neutral-500 dark:text-neutral-400">Checking…</p>;
+    return (
+      <>
+        {loading
+          ? t('settings.ai.claudeCode.checkingSignIn')
+          : t('settings.ai.claudeCode.inlineConnected')}
+      </>
+    );
   }
   if (auth.source === 'subscription') {
+    const who = auth.account_email ?? t('settings.ai.claudeCode.subscriptionFallback');
+    const plan = auth.subscription_type
+      ? ` (${formatSubscriptionType(auth.subscription_type)})`
+      : '';
     return (
-      <div className="space-y-1">
-        <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
-          <dt className="text-neutral-500">Signed in</dt>
-          <dd className="text-emerald-600 dark:text-emerald-400">
-            {auth.account_email ?? 'Claude subscription'}
-          </dd>
-          {auth.expires_at && (
-            <>
-              <dt className="text-neutral-500">Token expires</dt>
-              <dd className="font-mono text-neutral-700 dark:text-neutral-300">
-                {auth.expires_at}
-              </dd>
-            </>
-          )}
-        </dl>
-        <p className="text-xs text-neutral-500 dark:text-neutral-400">
-          To sign out, run <code>claude logout</code> in your terminal, then click Recheck.
-        </p>
-      </div>
+      <span className="text-emerald-600 dark:text-emerald-400">
+        {t('settings.ai.claudeCode.signedInAs')} {who}
+        {plan}
+      </span>
     );
   }
   if (auth.source === 'api_key_env') {
     return (
-      <p className="text-xs text-emerald-600 dark:text-emerald-400">
-        <code>ANTHROPIC_API_KEY</code> detected in environment.
-      </p>
+      <span className="text-emerald-600 dark:text-emerald-400">
+        {t('settings.ai.claudeCode.usingApiKeyEnv')}
+      </span>
     );
   }
-  return <SignedOut />;
+  if (auth.source === 'unknown') {
+    return (
+      <span className="text-amber-600 dark:text-amber-400">
+        {looksNotInstalled(auth.reason)
+          ? t('settings.ai.claudeCode.cliNotInstalled')
+          : t('settings.ai.claudeCode.signInUnknown')}
+      </span>
+    );
+  }
+  return (
+    <span className="text-amber-600 dark:text-amber-400">
+      {t('settings.ai.claudeCode.connectedNotSignedIn')}
+    </span>
+  );
 }
 
-function SignedOut() {
-  const [launchError, setLaunchError] = useState<string | null>(null);
+/**
+ * Modal with the actual Claude Code controls: enable/disable the provider,
+ * sign in / reconnect via the CLI, and install guidance.
+ */
+function ClaudeCodeModal({
+  connected,
+  busy,
+  auth,
+  authLoading,
+  onClose,
+  onConnect,
+  onDisconnect,
+  onRecheck,
+}: {
+  connected: boolean;
+  busy: boolean;
+  auth: ClaudeCodeAuthStatus | null;
+  authLoading: boolean;
+  onClose: () => void;
+  onConnect: () => void | Promise<void>;
+  onDisconnect: () => void | Promise<void>;
+  onRecheck: () => void | Promise<void>;
+}) {
+  const { t } = useT();
   const [launching, setLaunching] = useState(false);
+  const [launchError, setLaunchError] = useState<string | null>(null);
+
+  // Persisted full-access toggle (bypassPermissions vs the default acceptEdits).
+  // `null` until loaded so the switch can render a disabled placeholder.
+  const [fullAccess, setFullAccess] = useState<boolean | null>(null);
+  const [savingAccess, setSavingAccess] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const s = await openhumanClaudeCodeSettings();
+        if (!cancelled) setFullAccess(s.full_access);
+      } catch {
+        // Fail safe to OFF (acceptEdits) if the read fails.
+        if (!cancelled) setFullAccess(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const toggleFullAccess = async (next: boolean) => {
+    setSavingAccess(true);
+    setFullAccess(next); // optimistic
+    try {
+      const s = await openhumanClaudeCodeSetFullAccess(next);
+      setFullAccess(s.full_access);
+    } catch {
+      setFullAccess(!next); // revert on failure
+    } finally {
+      setSavingAccess(false);
+    }
+  };
 
   const launchLogin = async () => {
     setLaunching(true);
     setLaunchError(null);
     try {
       await openhumanClaudeCodeLoginLaunch();
-    } catch (err) {
-      setLaunchError(err instanceof Error ? err.message : String(err));
+    } catch {
+      // Surface the failure inline rather than leaving an unhandled rejection.
+      setLaunchError(t('settings.ai.claudeCode.loginError'));
     } finally {
       setLaunching(false);
     }
   };
 
   return (
-    <div className="space-y-2">
-      <p className="text-xs text-amber-600 dark:text-amber-400">Not signed in.</p>
-      <div className="flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          onClick={() => {
-            void launchLogin();
-          }}
-          disabled={launching}
-          className="rounded-md bg-neutral-900 px-2.5 py-1 text-xs font-medium text-white hover:bg-neutral-700 disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-300">
-          {launching ? 'Opening terminal…' : 'Sign in with Claude'}
-        </button>
-        <span className="text-xs text-neutral-500 dark:text-neutral-400">
-          Opens a terminal running <code>claude login</code>.
-        </span>
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={t('settings.ai.claudeCode.modalTitle')}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"
+      onClick={onClose}>
+      <div
+        className="w-full max-w-md rounded-2xl border border-stone-200 bg-white p-6 shadow-soft dark:border-neutral-800 dark:bg-neutral-900"
+        onClick={e => e.stopPropagation()}>
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div>
+            <h3 className="text-base font-semibold text-stone-900 dark:text-neutral-100">
+              {t('settings.ai.claudeCode.modalTitle')}
+            </h3>
+            <p className="mt-1 max-w-sm text-xs leading-5 text-stone-500 dark:text-neutral-400">
+              {t('settings.ai.claudeCode.modalDescription')}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label={t('settings.ai.claudeCode.close')}
+            className="rounded-md p-1 text-stone-400 hover:bg-stone-100 hover:text-stone-700 dark:text-neutral-500 dark:hover:bg-neutral-800 dark:hover:text-neutral-200">
+            <LuX className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* Connection */}
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-stone-200 px-3 py-2 dark:border-neutral-800">
+          <div className="text-xs">
+            <div className="font-medium text-stone-900 dark:text-neutral-100">
+              {t('settings.ai.claudeCode.connection')}
+            </div>
+            <div
+              className={
+                connected
+                  ? 'text-emerald-600 dark:text-emerald-400'
+                  : 'text-stone-500 dark:text-neutral-400'
+              }>
+              {connected
+                ? t('settings.ai.claudeCode.enabled')
+                : t('settings.ai.claudeCode.notEnabled')}
+            </div>
+          </div>
+          {connected ? (
+            <button
+              type="button"
+              onClick={() => void onDisconnect()}
+              disabled={busy}
+              className="rounded-md border border-rose-300 px-2.5 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-500/40 dark:text-rose-400 dark:hover:bg-rose-500/10">
+              {busy
+                ? t('settings.ai.claudeCode.disconnecting')
+                : t('settings.ai.claudeCode.disconnect')}
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => void onConnect()}
+              disabled={busy}
+              className="rounded-md bg-neutral-900 px-2.5 py-1 text-xs font-medium text-white hover:bg-neutral-700 disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-300">
+              {busy ? t('settings.ai.claudeCode.enabling') : t('settings.ai.claudeCode.enable')}
+            </button>
+          )}
+        </div>
+
+        {/* Authentication */}
+        <div className="mt-3 rounded-lg border border-stone-200 px-3 py-2 dark:border-neutral-800">
+          <div className="mb-1.5 flex items-center justify-between">
+            <span className="text-xs font-medium text-stone-900 dark:text-neutral-100">
+              {t('settings.ai.claudeCode.authentication')}
+            </span>
+            <button
+              type="button"
+              onClick={() => void onRecheck()}
+              disabled={authLoading}
+              className="text-xs text-neutral-500 hover:text-neutral-900 disabled:opacity-50 dark:text-neutral-400 dark:hover:text-neutral-100">
+              {authLoading
+                ? t('settings.ai.claudeCode.checking')
+                : t('settings.ai.claudeCode.recheck')}
+            </button>
+          </div>
+          <AuthDetail auth={auth} loading={authLoading} />
+          <div className="mt-2">
+            <button
+              type="button"
+              onClick={() => void launchLogin()}
+              disabled={launching}
+              className="rounded-md border border-neutral-300 px-2.5 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-100 disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-200 dark:hover:bg-neutral-800">
+              {launching
+                ? t('settings.ai.claudeCode.openingTerminal')
+                : auth?.source === 'none'
+                  ? t('settings.ai.claudeCode.signIn')
+                  : t('settings.ai.claudeCode.reconnect')}
+            </button>
+            <p className="mt-1.5 text-[11px] text-stone-500 dark:text-neutral-400">
+              {t('settings.ai.claudeCode.loginHint')}
+            </p>
+            {launchError && (
+              <p className="mt-1 text-[11px] text-rose-600 dark:text-rose-400" role="alert">
+                {launchError}
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* Permissions — full access vs. the default acceptEdits posture. */}
+        <div className="mt-3 rounded-lg border border-stone-200 px-3 py-2 dark:border-neutral-800">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-xs font-medium text-stone-900 dark:text-neutral-100">
+                {t('settings.ai.claudeCode.fullAccess')}
+              </div>
+              <p className="mt-0.5 text-[11px] leading-4 text-stone-500 dark:text-neutral-400">
+                {fullAccess
+                  ? t('settings.ai.claudeCode.fullAccessOn')
+                  : t('settings.ai.claudeCode.fullAccessOff')}
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={fullAccess === true}
+              aria-label={t('settings.ai.claudeCode.fullAccess')}
+              disabled={fullAccess === null || savingAccess}
+              onClick={() => void toggleFullAccess(!fullAccess)}
+              className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors disabled:cursor-wait disabled:opacity-50 ${
+                fullAccess
+                  ? 'bg-emerald-500 dark:bg-emerald-500'
+                  : 'bg-stone-300 dark:bg-neutral-700'
+              }`}>
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                  fullAccess ? 'translate-x-4' : 'translate-x-0.5'
+                }`}
+              />
+            </button>
+          </div>
+          <p className="mt-1.5 text-[11px] leading-4 text-stone-400 dark:text-neutral-500">
+            {isMac()
+              ? t('settings.ai.claudeCode.sandboxNoteMac')
+              : t('settings.ai.claudeCode.sandboxNoteOther')}
+          </p>
+        </div>
       </div>
-      {launchError && <p className="text-xs text-rose-600 dark:text-rose-400">{launchError}</p>}
-      <p className="text-xs text-neutral-500 dark:text-neutral-400">
-        After completing login, click <strong>Recheck</strong> above. Alternatively set{' '}
-        <code>ANTHROPIC_API_KEY</code> to use an API key.
-      </p>
     </div>
+  );
+}
+
+/** Best-effort macOS detection for the permissions copy (UA-based). */
+function isMac(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  return /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent || '');
+}
+
+/** Detailed auth line inside the modal. */
+function AuthDetail({ auth, loading }: { auth: ClaudeCodeAuthStatus | null; loading: boolean }) {
+  const { t } = useT();
+  if (!auth) {
+    return (
+      <p className="text-xs text-neutral-500 dark:text-neutral-400">
+        {loading
+          ? t('settings.ai.claudeCode.checkingSignIn')
+          : t('settings.ai.claudeCode.enableToCheck')}
+      </p>
+    );
+  }
+  if (auth.source === 'subscription') {
+    const who = auth.account_email ?? t('settings.ai.claudeCode.subscriptionFallback');
+    const plan = auth.subscription_type
+      ? ` (${formatSubscriptionType(auth.subscription_type)})`
+      : '';
+    return (
+      <p className="text-xs text-emerald-600 dark:text-emerald-400">
+        {t('settings.ai.claudeCode.signedInAs')} {who}
+        {plan}
+      </p>
+    );
+  }
+  if (auth.source === 'api_key_env') {
+    return (
+      <p className="text-xs text-emerald-600 dark:text-emerald-400">
+        {t('settings.ai.claudeCode.usingApiKeyEnvDetail')}
+      </p>
+    );
+  }
+  if (auth.source === 'unknown') {
+    if (looksNotInstalled(auth.reason)) {
+      return (
+        <p className="text-xs text-amber-600 dark:text-amber-400">
+          {t('settings.ai.claudeCode.notFoundInstall')}
+        </p>
+      );
+    }
+    return (
+      <p className="text-xs text-amber-600 dark:text-amber-400">
+        {t('settings.ai.claudeCode.unknownDetail')}
+      </p>
+    );
+  }
+  return (
+    <p className="text-xs text-amber-600 dark:text-amber-400">
+      {t('settings.ai.claudeCode.notSignedIn')}
+    </p>
   );
 }

@@ -116,10 +116,10 @@ pub struct BackendMeetJoinRequest {
     /// Wake phrase the participant must say before the bot responds.
     #[serde(default)]
     pub wake_phrase: Option<String>,
-    /// Correlation ID linking this join to a `MeetingSession`.
+    /// Opaque correlation id echoed on all `bot:*` events for this session.
     #[serde(default)]
     pub correlation_id: Option<String>,
-    /// Join in listen-only mode (mic muted, no bot replies).
+    /// When `true`, the bot joins in listen-only mode (no microphone, no replies).
     #[serde(default)]
     pub listen_only: Option<bool>,
 }
@@ -143,6 +143,14 @@ pub struct BackendMeetLeaveRequest {
 #[derive(Debug, Clone, Deserialize)]
 pub struct BackendMeetHarnessResponseRequest {
     pub result: String,
+}
+
+/// Inputs to `openhuman.agent_meetings_speak`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct BackendMeetSpeakRequest {
+    pub text: String,
+    #[serde(default)]
+    pub correlation_id: Option<String>,
 }
 
 #[cfg(test)]

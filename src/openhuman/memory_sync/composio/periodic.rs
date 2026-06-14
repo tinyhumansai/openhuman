@@ -127,7 +127,7 @@ pub fn record_sync_success(toolkit: &str, connection_id: &str) {
 /// - `global == None` → `Some(max(DEFAULT, provider_default))`: no explicit
 ///   user choice, so fall back to the 24h default cadence (also floored at the
 ///   provider default).
-fn effective_interval_secs(provider_default: u64, global: Option<u64>) -> Option<u64> {
+pub(crate) fn effective_interval_secs(provider_default: u64, global: Option<u64>) -> Option<u64> {
     match global {
         Some(0) => None,
         Some(n) => Some(n.max(provider_default)),
@@ -141,7 +141,7 @@ fn effective_interval_secs(provider_default: u64, global: Option<u64>) -> Option
 /// `since_last_sync == None` means we have no record of a sync this process
 /// lifetime, so we fire immediately (the restart-recovery path). Kept pure so
 /// the due-check can be simulated without driving the real `Instant` clock.
-fn connection_is_due(interval_secs: u64, since_last_sync: Option<Duration>) -> bool {
+pub(crate) fn connection_is_due(interval_secs: u64, since_last_sync: Option<Duration>) -> bool {
     match since_last_sync {
         Some(elapsed) => elapsed >= Duration::from_secs(interval_secs),
         None => true,
@@ -336,7 +336,7 @@ async fn run_loop() {
 ///   transitional / not-yet-resolved condition. Letting the tick proceed
 ///   here keeps periodic sync running through brief transitions instead of
 ///   pausing on stale unresolved state.
-fn periodic_pause_reason() -> Option<PauseReason> {
+pub(crate) fn periodic_pause_reason() -> Option<PauseReason> {
     // Delegate the `Policy::Paused { .. }` → `PauseReason` extraction to
     // the existing `Policy::pause_reason()` helper (avoids re-implementing
     // the same destructure twice). The allow-list below is the only thing

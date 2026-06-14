@@ -487,6 +487,7 @@ fn native_tool_response(id: &str, name: &str, args: serde_json::Value) -> ChatRe
             id: id.to_string(),
             name: name.to_string(),
             arguments: args.to_string(),
+            extra_content: None,
         }],
         usage: Some(UsageInfo {
             input_tokens: 21,

@@ -131,4 +131,100 @@ describe('AgentEditorPage', () => {
     expect(screen.queryByLabelText('Description')).toBeNull();
     expect(screen.queryByRole('button', { name: /^Save$/ })).toBeNull();
   });
+
+  it('shows source badge (custom/default) next to name in edit mode (line 259)', async () => {
+    mockGet.mockResolvedValue(agent({ source: 'custom' }));
+    renderAt('/settings/agents/edit/finance');
+
+    await waitFor(() => expect(mockGet).toHaveBeenCalled());
+    // Custom agents show their source badge
+    expect(await screen.findByText('Custom')).toBeInTheDocument();
+  });
+
+  it('auto-slugifies the ID field from the Name field on create (lines 280-282)', () => {
+    renderAt('/settings/agents/new');
+
+    // The Name input is present on create
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'My Cool Agent' } });
+
+    // ID is auto-derived from name via slugify — until user touches it
+    const idInput = screen.getByLabelText('ID') as HTMLInputElement;
+    expect(idInput.value).toBe('my-cool-agent');
+  });
+
+  it('allows manual ID override once the ID field is touched (lines 280-282)', () => {
+    renderAt('/settings/agents/new');
+
+    const idInput = screen.getByLabelText('ID');
+    fireEvent.change(idInput, { target: { value: 'custom-id' } });
+
+    // After touching, changing name should NOT overwrite the custom ID
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'New Name' } });
+    expect((screen.getByLabelText('ID') as HTMLInputElement).value).toBe('custom-id');
+  });
+
+  it('shows custom model text input when __custom__ model is selected (line 350)', () => {
+    renderAt('/settings/agents/new');
+
+    // Select the custom model option
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: '__custom__' } });
+
+    // A custom model text input appears with the custom placeholder as aria-label
+    // The en.ts label is: 'settings.agents.editor.modelCustomPlaceholder': 'e.g. anthropic/claude-sonnet-4'
+    const customInput = screen.getByLabelText(/e\.g\. anthropic/i);
+    expect(customInput).toBeInTheDocument();
+  });
+
+  it('updates system prompt textarea on change (line 373)', () => {
+    renderAt('/settings/agents/new');
+
+    // The label uses t('settings.agents.editor.systemPrompt') → 'System prompt (optional)'
+    const promptArea = screen.getByLabelText('System prompt (optional)') as HTMLTextAreaElement;
+    fireEvent.change(promptArea, { target: { value: 'Be helpful and precise.' } });
+
+    expect(promptArea.value).toBe('Be helpful and precise.');
+  });
+
+  it('shows All Tools chip when toolAllowlist contains "*" (line 390)', async () => {
+    renderAt('/settings/agents/new');
+
+    // Open tool picker via the Add tools button
+    fireEvent.click(screen.getByText('Add tools'));
+    await waitFor(() => expect(mockAvailableTools).toHaveBeenCalled());
+    await screen.findByText('Search the web for information.');
+
+    // Toggle all tools via the "Allow all tools (*)" button
+    fireEvent.click(screen.getByRole('button', { name: /Allow all tools/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+
+    // The "All tools" chip should appear (toolsAllSelected branch)
+    await waitFor(() => {
+      expect(screen.getByText('All tools')).toBeInTheDocument();
+    });
+  });
+
+  it('removes a selected tool chip via its X button (line 410)', async () => {
+    renderAt('/settings/agents/new');
+
+    // Open picker and select a tool
+    fireEvent.click(screen.getByText('Add tools'));
+    await waitFor(() => expect(mockAvailableTools).toHaveBeenCalled());
+    await screen.findByText('Search the web for information.');
+
+    fireEvent.click(screen.getByText('web_search'));
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+
+    // Chip for web_search appears
+    await waitFor(() => expect(screen.getAllByText('web_search').length).toBeGreaterThan(0));
+
+    // Click the X remove button on the chip — the aria-label is 'Remove web_search'
+    // since t('settings.agents.editor.removeToolAria') = 'Remove {tool}'
+    const removeBtn = screen.getByRole('button', { name: 'Remove web_search' });
+    fireEvent.click(removeBtn);
+
+    // The chip remove button should be gone
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'Remove web_search' })).not.toBeInTheDocument();
+    });
+  });
 });

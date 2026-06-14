@@ -1,14 +1,15 @@
-//! x402 client operations — parse 402 challenges, build Solana payment
-//! transactions, sign, and retry with proof.
+//! x402 client operations — parse 402 challenges, build payment transactions
+//! (Solana SPL or EVM ERC-20), sign, and retry with proof.
 //!
-//! Transaction layout for the `exact` Solana scheme:
+//! Solana `exact` scheme layout:
 //!  1. ComputeBudget::SetComputeUnitLimit
 //!  2. ComputeBudget::SetComputeUnitPrice
 //!  3. SPL Token `TransferChecked`
 //!  4. (optional) SPL Memo with `extra.memo` or random nonce
 //!
-//! The client signs as the transfer authority; the facilitator's fee-payer
-//! signature slot is left zeroed for co-signing at settlement time.
+//! EVM `exact` scheme:
+//!  EIP-3009 `transferWithAuthorization` signed by the wallet's EVM key.
+//!  The facilitator submits the signed authorization on-chain.
 
 use base64::engine::{general_purpose::STANDARD as B64, Engine as _};
 use ed25519_dalek::{Signer, SigningKey};
@@ -77,9 +78,9 @@ impl X402Client {
             challenge.accepts.len()
         );
 
-        let requirement = challenge
-            .solana_exact_requirement()
-            .ok_or_else(|| X402Error::NoSolanaOption)?;
+        let (requirement, chain) = challenge
+            .best_exact_requirement()
+            .ok_or_else(|| X402Error::NoPaymentOption)?;
 
         let amount: u64 = requirement.amount.parse().map_err(|e| {
             X402Error::Protocol(format!("invalid amount '{}': {e}", requirement.amount))
@@ -95,14 +96,20 @@ impl X402Client {
         }
 
         debug!(
-            "{LOG_PREFIX} paying {} atomic units of {} to {} (fee_payer={:?})",
+            "{LOG_PREFIX} paying {} atomic units of {} to {} chain={:?} (fee_payer={:?})",
             amount,
             requirement.asset,
             requirement.pay_to,
+            chain,
             requirement.fee_payer_pubkey(),
         );
 
-        let payment = build_solana_payment(signing_key, &challenge, requirement).await?;
+        let payment = match chain {
+            PaymentChain::Solana => {
+                build_solana_payment(signing_key, &challenge, requirement).await?
+            }
+            PaymentChain::Evm => build_evm_payment(&challenge, requirement).await?,
+        };
         let encoded = B64.encode(serde_json::to_string(&payment).unwrap());
 
         let mut retry_req = self.http.request(method, url);
@@ -141,16 +148,28 @@ impl X402Client {
 }
 
 /// Standalone entry point — parse a 402 response's headers and return the
-/// challenge with the index of the Solana payment option. Useful for
-/// approval-gated flows where the agent must surface the cost before paying.
-pub fn handle_402(headers: &HeaderMap) -> Result<(PaymentRequired, usize), X402Error> {
+/// challenge with the index of the best payment option and its chain family.
+pub fn handle_402(
+    headers: &HeaderMap,
+) -> Result<(PaymentRequired, usize, PaymentChain), X402Error> {
     let challenge = parse_402_headers(headers)?;
-    let idx = challenge
+    // Prefer Solana (lower fees, faster finality), fall back to EVM
+    let (idx, chain) = challenge
         .accepts
         .iter()
-        .position(|r| r.scheme == "exact" && r.network.starts_with("solana:"))
-        .ok_or(X402Error::NoSolanaOption)?;
-    Ok((challenge, idx))
+        .enumerate()
+        .find(|(_, r)| r.scheme == "exact" && r.network.starts_with("solana:"))
+        .map(|(i, _)| (i, PaymentChain::Solana))
+        .or_else(|| {
+            challenge
+                .accepts
+                .iter()
+                .enumerate()
+                .find(|(_, r)| r.scheme == "exact" && r.network.starts_with("eip155:"))
+                .map(|(i, _)| (i, PaymentChain::Evm))
+        })
+        .ok_or(X402Error::NoPaymentOption)?;
+    Ok((challenge, idx, chain))
 }
 
 /// Build a payment and return the encoded header value ready to attach.
@@ -161,7 +180,15 @@ pub async fn try_paid_request(
     challenge: &PaymentRequired,
     requirement: &PaymentRequirements,
 ) -> Result<String, X402Error> {
-    let payment = build_solana_payment(signing_key, challenge, requirement).await?;
+    let chain = if requirement.network.starts_with("eip155:") {
+        PaymentChain::Evm
+    } else {
+        PaymentChain::Solana
+    };
+    let payment = match chain {
+        PaymentChain::Solana => build_solana_payment(signing_key, challenge, requirement).await?,
+        PaymentChain::Evm => build_evm_payment(challenge, requirement).await?,
+    };
     let json = serde_json::to_string(&payment)
         .map_err(|e| X402Error::Protocol(format!("serialize payment: {e}")))?;
     Ok(B64.encode(json))
@@ -183,7 +210,7 @@ pub struct X402PaymentResult {
 ///
 /// 1. Parses the PAYMENT-REQUIRED challenge
 /// 2. Checks the spending budget
-/// 3. Derives the wallet's Solana signing key
+/// 3. Derives the wallet's signing key (Solana preferred, EVM fallback)
 /// 4. Builds a partially-signed payment transaction
 /// 5. Returns the encoded PAYMENT-SIGNATURE header value
 ///
@@ -193,7 +220,7 @@ pub async fn handle_402_and_pay(
     response_headers: &HeaderMap,
     request_url: &str,
 ) -> Result<X402PaymentResult, X402Error> {
-    let (challenge, idx) = handle_402(response_headers)?;
+    let (challenge, idx, chain) = handle_402(response_headers)?;
     let requirement = &challenge.accepts[idx];
 
     let amount: u64 = requirement.amount.parse().map_err(|e| {
@@ -224,14 +251,22 @@ pub async fn handle_402_and_pay(
         }
     }
 
-    let signing_key = derive_wallet_signing_key().await?;
-
     debug!(
-        "{LOG_PREFIX} paying {} atomic {} to {} for {}",
-        amount, requirement.asset, requirement.pay_to, request_url
+        "{LOG_PREFIX} paying {} atomic {} to {} for {} chain={:?}",
+        amount, requirement.asset, requirement.pay_to, request_url, chain
     );
 
-    let header_value = try_paid_request(&signing_key, &challenge, requirement).await?;
+    let payment = match chain {
+        PaymentChain::Solana => {
+            let signing_key = derive_wallet_signing_key().await?;
+            build_solana_payment(&signing_key, &challenge, requirement).await?
+        }
+        PaymentChain::Evm => build_evm_payment(&challenge, requirement).await?,
+    };
+
+    let header_value = serde_json::to_string(&payment)
+        .map(|json| B64.encode(json))
+        .map_err(|e| X402Error::Protocol(format!("serialize payment: {e}")))?;
 
     Ok(X402PaymentResult {
         header_value,
@@ -341,7 +376,7 @@ fn parse_derivation_path(path: &str) -> Result<Vec<u32>, X402Error> {
 pub enum X402Error {
     Transport(reqwest::Error),
     NoPaymentHeader,
-    NoSolanaOption,
+    NoPaymentOption,
     AmountExceedsCap {
         requested: u64,
         cap: u64,
@@ -360,7 +395,12 @@ impl std::fmt::Display for X402Error {
         match self {
             Self::Transport(e) => write!(f, "x402 transport: {e}"),
             Self::NoPaymentHeader => write!(f, "402 response missing PAYMENT-REQUIRED header"),
-            Self::NoSolanaOption => write!(f, "no Solana exact payment option in 402 challenge"),
+            Self::NoPaymentOption => {
+                write!(
+                    f,
+                    "no supported payment option (Solana exact or EVM exact) in 402 challenge"
+                )
+            }
             Self::AmountExceedsCap { requested, cap } => {
                 write!(f, "x402 amount {requested} exceeds per-request cap {cap}")
             }
@@ -524,11 +564,254 @@ async fn build_solana_payment(
         x402_version: X402_VERSION,
         resource: Some(challenge.resource.clone()),
         accepted: req.clone(),
-        payload: SolanaPaymentProof {
+        payload: PaymentProof::Solana(SolanaPaymentProof {
             transaction: tx_b64,
-        },
+        }),
         extensions: serde_json::Map::new(),
     })
+}
+
+// ---------------------------------------------------------------------------
+// EVM payment construction (EIP-3009 transferWithAuthorization)
+// ---------------------------------------------------------------------------
+
+/// Build an EVM payment using EIP-3009 `transferWithAuthorization`.
+/// Signs the typed data with the wallet's EVM key and returns the proof
+/// for the facilitator to submit on-chain.
+async fn build_evm_payment(
+    challenge: &PaymentRequired,
+    req: &PaymentRequirements,
+) -> Result<PaymentPayload, X402Error> {
+    let (signer, from_address) = derive_evm_signer().await?;
+    build_evm_payment_with_signer(&signer, from_address, challenge, req)
+}
+
+/// Core EVM payment construction — separated from wallet derivation for testability.
+pub(crate) fn build_evm_payment_with_signer(
+    signer: &ethers_signers::LocalWallet,
+    from_address: ethers_core::types::Address,
+    challenge: &PaymentRequired,
+    req: &PaymentRequirements,
+) -> Result<PaymentPayload, X402Error> {
+    use ethers_core::types::{Address, U256};
+    use ethers_signers::Signer;
+    use std::str::FromStr;
+
+    let chain_id = req
+        .evm_chain_id()
+        .ok_or_else(|| X402Error::Protocol(format!("not an EVM network: {}", req.network)))?;
+
+    let amount = U256::from_dec_str(&req.amount)
+        .map_err(|e| X402Error::Protocol(format!("invalid amount '{}': {e}", req.amount)))?;
+
+    let pay_to = Address::from_str(&req.pay_to).map_err(|e| {
+        X402Error::Protocol(format!("invalid EVM payTo address '{}': {e}", req.pay_to))
+    })?;
+
+    let token_address = Address::from_str(&req.asset).map_err(|e| {
+        X402Error::Protocol(format!("invalid EVM token address '{}': {e}", req.asset))
+    })?;
+
+    // EIP-3009 parameters
+    let valid_after = U256::zero();
+    let valid_before = U256::from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+            + req.max_timeout_seconds,
+    );
+
+    // Random nonce for EIP-3009
+    let nonce = {
+        let mut hasher = Sha256::new();
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        hasher.update(ts.to_le_bytes());
+        hasher.update(std::process::id().to_le_bytes());
+        let hash: [u8; 32] = hasher.finalize().into();
+        hash
+    };
+
+    // EIP-712 typed data for `transferWithAuthorization`
+    let domain_name = req
+        .extra
+        .as_ref()
+        .and_then(|e| e.name.as_deref())
+        .unwrap_or("USD Coin");
+    let domain_version = req
+        .extra
+        .as_ref()
+        .and_then(|e| e.version.as_deref())
+        .unwrap_or("2");
+    let domain_separator =
+        eip712_domain_separator_named(token_address, chain_id, domain_name, domain_version);
+    let struct_hash = eip3009_struct_hash(
+        from_address,
+        pay_to,
+        amount,
+        valid_after,
+        valid_before,
+        nonce,
+    );
+
+    let mut digest_input = Vec::with_capacity(66);
+    digest_input.extend(b"\x19\x01");
+    digest_input.extend(domain_separator);
+    digest_input.extend(struct_hash);
+    let digest: [u8; 32] = {
+        use ethers_core::types::H256;
+        let h = H256::from(ethers_core::utils::keccak256(&digest_input));
+        h.into()
+    };
+
+    let signature = signer
+        .sign_hash(ethers_core::types::H256::from(digest))
+        .map_err(|e| X402Error::Wallet(format!("EVM sign EIP-3009: {e}")))?;
+
+    let sig_hex = format!("0x{}", hex::encode(signature.to_vec()));
+    let nonce_hex = format!("0x{}", hex::encode(nonce));
+
+    debug!(
+        "{LOG_PREFIX} built EVM payment chain_id={chain_id} amount={} asset={} from={:#x} to={:#x}",
+        req.amount, req.asset, from_address, pay_to
+    );
+
+    Ok(PaymentPayload {
+        x402_version: X402_VERSION,
+        resource: Some(challenge.resource.clone()),
+        accepted: req.clone(),
+        payload: PaymentProof::Evm(EvmPaymentProof {
+            signature: sig_hex,
+            authorization: EvmAuthorization {
+                from: format!("{from_address:#x}"),
+                to: format!("{pay_to:#x}"),
+                value: req.amount.clone(),
+                valid_after: "0".to_string(),
+                valid_before: valid_before.to_string(),
+                nonce: nonce_hex,
+            },
+        }),
+        extensions: serde_json::Map::new(),
+    })
+}
+
+/// Derive the wallet's EVM signer from the encrypted mnemonic.
+async fn derive_evm_signer(
+) -> Result<(ethers_signers::LocalWallet, ethers_core::types::Address), X402Error> {
+    use crate::openhuman::wallet::WalletChain;
+    use ethers_signers::{coins_bip39::English, MnemonicBuilder, Signer};
+
+    let secret = crate::openhuman::wallet::secret_material(WalletChain::Evm)
+        .await
+        .map_err(|e| X402Error::Wallet(format!("wallet secret: {e}")))?;
+
+    let config = crate::openhuman::config::rpc::load_config_with_timeout()
+        .await
+        .map_err(|e| X402Error::Wallet(format!("load config: {e}")))?;
+
+    let mnemonic =
+        crate::openhuman::encryption::rpc::decrypt_secret(&config, &secret.encrypted_mnemonic)
+            .await
+            .map_err(|e| X402Error::Wallet(format!("decrypt mnemonic: {e}")))?
+            .value;
+
+    let wallet = MnemonicBuilder::<English>::default()
+        .phrase(mnemonic.as_str())
+        .derivation_path(&secret.derivation_path)
+        .map_err(|e| {
+            X402Error::Wallet(format!(
+                "invalid EVM derivation path '{}': {e}",
+                secret.derivation_path
+            ))
+        })?
+        .build()
+        .map_err(|e| X402Error::Wallet(format!("derive EVM signer: {e}")))?;
+
+    let address = wallet.address();
+    Ok((wallet, address))
+}
+
+/// EIP-712 domain separator with default USDC params ("USD Coin", "2").
+pub(crate) fn eip712_domain_separator(
+    verifying_contract: ethers_core::types::Address,
+    chain_id: u64,
+) -> [u8; 32] {
+    eip712_domain_separator_named(verifying_contract, chain_id, "USD Coin", "2")
+}
+
+/// EIP-712 domain separator with explicit name and version from the 402 extra.
+pub(crate) fn eip712_domain_separator_named(
+    verifying_contract: ethers_core::types::Address,
+    chain_id: u64,
+    name: &str,
+    version: &str,
+) -> [u8; 32] {
+    use ethers_core::utils::keccak256;
+
+    let type_hash = keccak256(
+        b"EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)",
+    );
+    let name_hash = keccak256(name.as_bytes());
+    let version_hash = keccak256(version.as_bytes());
+
+    let mut encoded = Vec::with_capacity(5 * 32);
+    encoded.extend(type_hash);
+    encoded.extend(name_hash);
+    encoded.extend(version_hash);
+    let mut chain_id_bytes = [0u8; 32];
+    chain_id_bytes[24..].copy_from_slice(&chain_id.to_be_bytes());
+    encoded.extend(chain_id_bytes);
+    let mut addr_bytes = [0u8; 32];
+    addr_bytes[12..].copy_from_slice(verifying_contract.as_bytes());
+    encoded.extend(addr_bytes);
+
+    keccak256(&encoded)
+}
+
+/// EIP-3009 `TransferWithAuthorization` struct hash.
+pub(crate) fn eip3009_struct_hash(
+    from: ethers_core::types::Address,
+    to: ethers_core::types::Address,
+    value: ethers_core::types::U256,
+    valid_after: ethers_core::types::U256,
+    valid_before: ethers_core::types::U256,
+    nonce: [u8; 32],
+) -> [u8; 32] {
+    use ethers_core::utils::keccak256;
+
+    let type_hash = keccak256(
+        b"TransferWithAuthorization(address from,address to,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce)",
+    );
+
+    let mut encoded = Vec::with_capacity(7 * 32);
+    encoded.extend(type_hash);
+
+    let mut from_bytes = [0u8; 32];
+    from_bytes[12..].copy_from_slice(from.as_bytes());
+    encoded.extend(from_bytes);
+
+    let mut to_bytes = [0u8; 32];
+    to_bytes[12..].copy_from_slice(to.as_bytes());
+    encoded.extend(to_bytes);
+
+    let mut value_bytes = [0u8; 32];
+    value.to_big_endian(&mut value_bytes);
+    encoded.extend(value_bytes);
+
+    let mut va_bytes = [0u8; 32];
+    valid_after.to_big_endian(&mut va_bytes);
+    encoded.extend(va_bytes);
+
+    let mut vb_bytes = [0u8; 32];
+    valid_before.to_big_endian(&mut vb_bytes);
+    encoded.extend(vb_bytes);
+
+    encoded.extend(nonce);
+
+    keccak256(&encoded)
 }
 
 // ---------------------------------------------------------------------------

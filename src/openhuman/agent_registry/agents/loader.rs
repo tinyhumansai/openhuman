@@ -189,6 +189,11 @@ pub const BUILTINS: &[BuiltinAgent] = &[
         prompt_fn: super::mcp_setup::prompt::build,
     },
     BuiltinAgent {
+        id: "mcp_agent",
+        toml: include_str!("mcp_agent/agent.toml"),
+        prompt_fn: super::mcp_agent::prompt::build,
+    },
+    BuiltinAgent {
         id: "skill_setup",
         toml: include_str!("../../skill_registry/agent/skill_setup/agent.toml"),
         prompt_fn: crate::openhuman::skill_registry::agent::skill_setup::prompt::build,
@@ -544,7 +549,48 @@ mod tests {
             ToolScope::Wildcard => panic!("orchestrator must have named tool allowlist"),
         }
         assert_eq!(def.max_iterations, 15);
-        assert_eq!(def.trigger_memory_agent, TriggerMemoryAgent::Always);
+        // Memory retrieval is on-demand (via the `agent_memory` subagent,
+        // surfaced as `delegate_retrieve_memory`), not an eager pre-turn
+        // pre-fetch. The allowlist entry is what makes that route reachable
+        // (see the `agent_memory::tools` allowlist gate).
+        assert_eq!(def.trigger_memory_agent, TriggerMemoryAgent::Never);
+        assert!(
+            def.subagents.iter().any(|entry| matches!(
+                entry,
+                SubagentEntry::AgentId(id) if id == "agent_memory"
+            )),
+            "orchestrator must allow `agent_memory` for on-demand retrieval"
+        );
+    }
+
+    /// Regression guard for the `resolve_time` wiring. Agents that emit
+    /// timestamp arguments to downstream tools must keep the deterministic
+    /// time resolver in their allowlist — otherwise the model falls back to
+    /// hand-computing epoch seconds, which once produced a ~10-month-wrong
+    /// `oldest` and silently fetched the wrong Slack window. If any of these
+    /// drops `resolve_time`, this test fails loudly.
+    #[test]
+    fn time_sensitive_agents_expose_resolve_time() {
+        for id in [
+            "orchestrator",
+            "integrations_agent",
+            "scheduler_agent",
+            "task_manager_agent",
+            "crypto_agent",
+            "markets_agent",
+        ] {
+            let def = find(id);
+            match def.tools {
+                ToolScope::Named(tools) => assert!(
+                    tools.iter().any(|t| t == "resolve_time"),
+                    "{id} must keep `resolve_time` in its named tool allowlist"
+                ),
+                ToolScope::Wildcard => {
+                    // Wildcard agents inherit the full built-in surface, which
+                    // already includes resolve_time — nothing to assert here.
+                }
+            }
+        }
     }
 
     #[test]
@@ -624,6 +670,45 @@ mod tests {
         }
     }
 
+    /// The planner grounds plans in connected-MCP context the same way it
+    /// grounds in Composio — but read-only. It must carry the MCP *discovery*
+    /// tools (`status` / `installed_list` / `list_tools`, all
+    /// `PermissionLevel::ReadOnly`) and must NOT carry `mcp_registry_tool_call`
+    /// (no read-only gate exists for an arbitrary MCP tool call) nor the
+    /// install/connect mutators. Execution stays with `mcp_agent`.
+    #[test]
+    fn planner_has_readonly_mcp_discovery_not_execute() {
+        let def = find("planner");
+        assert_eq!(def.sandbox_mode, SandboxMode::ReadOnly);
+        match &def.tools {
+            ToolScope::Named(names) => {
+                for required in [
+                    "mcp_registry_status",
+                    "mcp_registry_installed_list",
+                    "mcp_registry_list_tools",
+                ] {
+                    assert!(
+                        names.iter().any(|n| n == required),
+                        "planner needs read-only MCP discovery tool `{required}`"
+                    );
+                }
+                for forbidden in [
+                    "mcp_registry_tool_call",
+                    "mcp_registry_connect",
+                    "mcp_registry_install",
+                    "mcp_registry_uninstall",
+                ] {
+                    assert!(
+                        !names.iter().any(|n| n == forbidden),
+                        "planner must NOT have `{forbidden}` — it is read-only; MCP execution \
+                         belongs to mcp_agent"
+                    );
+                }
+            }
+            other => panic!("planner must use Named tool scope, got {other:?}"),
+        }
+    }
+
     #[test]
     fn integrations_agent_tool_scope_honours_toml() {
         let def = find("integrations_agent");
@@ -669,10 +754,9 @@ mod tests {
             }
             other => panic!("presentation_agent must use Named tool scope, got {other:?}"),
         }
-        assert_eq!(
-            presentation.trigger_memory_agent,
-            TriggerMemoryAgent::Always
-        );
+        // Memory pre-fetch is no longer eager; `omit_memory_context = false`
+        // still gives the deck builder the cheap per-turn recall.
+        assert_eq!(presentation.trigger_memory_agent, TriggerMemoryAgent::Never);
 
         let desktop = find("desktop_control_agent");
         match &desktop.tools {
@@ -736,7 +820,9 @@ mod tests {
         assert!(def.omit_identity);
         assert!(def.omit_safety_preamble);
         assert!(!def.omit_memory_context);
-        assert_eq!(def.trigger_memory_agent, TriggerMemoryAgent::Always);
+        // Help personalises from the cheap per-turn recall (memory_context on),
+        // so it no longer pre-fetches the full memory agent before every turn.
+        assert_eq!(def.trigger_memory_agent, TriggerMemoryAgent::Never);
     }
 
     #[test]
@@ -850,8 +936,9 @@ mod tests {
                     tools.iter().any(|t| t == "ask_user_clarification"),
                     "crypto_agent needs ask_user_clarification to gate write ops"
                 );
-                // Market grounding + time helpers. Memory grounding is
-                // configured via `trigger_memory_agent = "always"`.
+                // Market grounding + time helpers. Memory retrieval is the
+                // orchestrator's on-demand concern — this specialist gets a
+                // grounded request and does not pre-fetch memory itself.
                 for required in [
                     "stock_quote",
                     "stock_exchange_rate",
@@ -863,6 +950,12 @@ mod tests {
                         "crypto_agent needs supporting tool `{required}`"
                     );
                 }
+                // x402 paid HTTP requests — signs on-chain USDC payments
+                // for APIs behind HTTP 402 challenges.
+                assert!(
+                    tools.iter().any(|t| t == "x402_request"),
+                    "crypto_agent needs x402_request for paid API access"
+                );
                 assert!(!tools.iter().any(|t| t == "call_memory_agent"));
                 // Hard exclusions — no broad-surface or write-anywhere tools.
                 // Includes the orchestrator-level delegate_* tools so a future
@@ -900,7 +993,9 @@ mod tests {
         assert!(def.omit_identity);
         assert!(def.omit_memory_context);
         assert!(def.omit_skills_catalog);
-        assert_eq!(def.trigger_memory_agent, TriggerMemoryAgent::Always);
+        // Pure-function specialist (omit_memory_context = true) — no eager
+        // memory pre-fetch; the orchestrator hands it a grounded request.
+        assert_eq!(def.trigger_memory_agent, TriggerMemoryAgent::Never);
     }
 
     /// Routing: the orchestrator must list `crypto_agent` in its
@@ -949,8 +1044,9 @@ mod tests {
                     tools.iter().any(|t| t == "ask_user_clarification"),
                     "markets_agent needs ask_user_clarification to gate write ops"
                 );
-                // Time grounding stays as a tool; memory grounding is
-                // configured via `trigger_memory_agent = "always"`.
+                // Time grounding stays as a tool; memory retrieval is the
+                // orchestrator's on-demand concern — this specialist gets a
+                // grounded request and does not pre-fetch memory itself.
                 for required in ["current_time"] {
                     assert!(
                         tools.iter().any(|t| t == required),
@@ -998,7 +1094,9 @@ mod tests {
         assert!(def.omit_identity);
         assert!(def.omit_memory_context);
         assert!(def.omit_skills_catalog);
-        assert_eq!(def.trigger_memory_agent, TriggerMemoryAgent::Always);
+        // Pure-function specialist (omit_memory_context = true) — no eager
+        // memory pre-fetch; the orchestrator hands it a grounded request.
+        assert_eq!(def.trigger_memory_agent, TriggerMemoryAgent::Never);
         // Delegate name must be the stable, chat-friendly slug — the
         // orchestrator surfaces it as `delegate_do_prediction_markets`.
         assert_eq!(
@@ -1047,6 +1145,97 @@ mod tests {
             "tools_agent.disallowed_tools must contain `kalshi` so the \
              venue routes through markets_agent exclusively"
         );
+    }
+
+    /// Routing: the orchestrator must list `mcp_agent` in its `subagents`
+    /// so a `delegate_use_mcp_server` tool is synthesised at agent-build
+    /// time. Without this entry the orchestrator can only *set up* MCP
+    /// servers (via `mcp_setup`) and has no route to actually *use* an
+    /// already-connected server's tools from chat (issue #3495).
+    #[test]
+    fn orchestrator_subagents_include_mcp_agent() {
+        use crate::openhuman::agent::harness::definition::SubagentEntry;
+        let def = find("orchestrator");
+        let listed = def.subagents.iter().any(|e| match e {
+            SubagentEntry::AgentId(id) => id == "mcp_agent",
+            _ => false,
+        });
+        assert!(
+            listed,
+            "orchestrator.subagents must list `mcp_agent` so the routing \
+             layer can synthesise `delegate_use_mcp_server`"
+        );
+    }
+
+    /// The orchestrator gets lightweight MCP discovery (`mcp_registry_status`,
+    /// like `composio_list_connections`) but must NOT carry the per-server
+    /// enumerate/execute tools — those belong to `mcp_agent`, keeping the
+    /// chat agent's schema from ballooning with every connected server's
+    /// full toolset (#3495).
+    #[test]
+    fn orchestrator_has_mcp_discovery_but_not_execution() {
+        let def = find("orchestrator");
+        match &def.tools {
+            ToolScope::Named(tools) => {
+                assert!(
+                    tools.iter().any(|t| t == "mcp_registry_status"),
+                    "orchestrator must have mcp_registry_status for lightweight MCP discovery"
+                );
+                for forbidden in ["mcp_registry_list_tools", "mcp_registry_tool_call"] {
+                    assert!(
+                        !tools.iter().any(|t| t == forbidden),
+                        "orchestrator must NOT have `{forbidden}` — enumerating/calling \
+                         connected MCP tools is mcp_agent's job (keeps the chat schema small)"
+                    );
+                }
+            }
+            ToolScope::Wildcard => panic!("orchestrator must have a Named tool scope"),
+        }
+    }
+
+    /// `mcp_agent` is the connected-server execution specialist: it must hold
+    /// the discover + call surface and a stable `use_mcp_server` delegate name,
+    /// but must NOT hold the secret-handling install/uninstall tools (those are
+    /// `mcp_setup`'s) or any shell/file/network capability.
+    #[test]
+    fn mcp_agent_drives_connected_servers_without_install_or_shell() {
+        let def = find("mcp_agent");
+        assert_eq!(def.agent_tier, AgentTier::Worker);
+        assert_eq!(
+            def.delegate_name.as_deref(),
+            Some("use_mcp_server"),
+            "mcp_agent must keep its `use_mcp_server` delegate name stable"
+        );
+        match &def.tools {
+            ToolScope::Named(tools) => {
+                for required in [
+                    "mcp_registry_status",
+                    "mcp_registry_list_tools",
+                    "mcp_registry_connect",
+                    "mcp_registry_tool_call",
+                ] {
+                    assert!(
+                        tools.iter().any(|t| t == required),
+                        "mcp_agent missing `{required}`"
+                    );
+                }
+                for forbidden in [
+                    "mcp_registry_install",
+                    "mcp_registry_uninstall",
+                    "shell",
+                    "file_write",
+                    "curl",
+                    "http_request",
+                ] {
+                    assert!(
+                        !tools.iter().any(|t| t == forbidden),
+                        "mcp_agent must NOT have `{forbidden}` — it only relays through \
+                         already-connected servers; install/secrets belong to mcp_setup"
+                    );
+                }
+            }
+            ToolScope::Wildcard => panic!("mcp_agent must have a Named tool scope"),
+        }
     }
 
     #[test]

@@ -985,28 +985,61 @@ pub enum DomainEvent {
         meet_url: String,
     },
     /// Backend gmeet bot successfully joined the meeting.
-    BackendMeetJoined { meet_url: String },
+    BackendMeetJoined {
+        meet_url: String,
+        correlation_id: Option<String>,
+    },
     /// Backend gmeet bot left the meeting.
-    BackendMeetLeft { reason: String },
+    BackendMeetLeft {
+        reason: String,
+        correlation_id: Option<String>,
+    },
     /// Backend gmeet bot produced a spoken reply.
     BackendMeetReply {
         transcript: String,
         reply: String,
         emotion: String,
+        correlation_id: Option<String>,
     },
     /// Backend gmeet bot needs the harness to execute a tool instruction.
     BackendMeetHarness {
         transcript: String,
         instruction: String,
         emotion: String,
+        correlation_id: Option<String>,
     },
     /// Backend gmeet bot sent the full meeting transcript on close.
     BackendMeetTranscript {
         turns: Vec<BackendMeetTurn>,
         duration_ms: u64,
+        correlation_id: Option<String>,
     },
     /// Backend gmeet bot emitted an error.
-    BackendMeetError { error: String },
+    BackendMeetError {
+        error: String,
+        correlation_id: Option<String>,
+    },
+    /// Backend gmeet bot detected a wake-phrase command from a participant.
+    BackendMeetInCallRequest {
+        correlation_id: Option<String>,
+        speaker: String,
+        command_text: String,
+        recent_transcript: Vec<BackendMeetTurn>,
+        timestamp_ms: u64,
+    },
+    /// A Google Calendar event with a Meet link was detected and the
+    /// auto-join policy is "ask" — the UI should prompt the user.
+    MeetAutoJoinPrompt {
+        meet_url: String,
+        event_title: String,
+    },
+    /// Reserved for PR-4: a post-meeting summary was generated from the
+    /// transcript (action items, key decisions, etc.).
+    MeetingSummaryGenerated {
+        thread_id: String,
+        correlation_id: Option<String>,
+        summary: String,
+    },
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -1148,7 +1181,10 @@ impl DomainEvent {
             | Self::BackendMeetReply { .. }
             | Self::BackendMeetHarness { .. }
             | Self::BackendMeetTranscript { .. }
-            | Self::BackendMeetError { .. } => "agent_meetings",
+            | Self::BackendMeetError { .. }
+            | Self::BackendMeetInCallRequest { .. }
+            | Self::MeetAutoJoinPrompt { .. }
+            | Self::MeetingSummaryGenerated { .. } => "agent_meetings",
         }
     }
 
@@ -1265,6 +1301,9 @@ impl DomainEvent {
             Self::BackendMeetHarness { .. } => "BackendMeetHarness",
             Self::BackendMeetTranscript { .. } => "BackendMeetTranscript",
             Self::BackendMeetError { .. } => "BackendMeetError",
+            Self::BackendMeetInCallRequest { .. } => "BackendMeetInCallRequest",
+            Self::MeetAutoJoinPrompt { .. } => "MeetAutoJoinPrompt",
+            Self::MeetingSummaryGenerated { .. } => "MeetingSummaryGenerated",
             Self::Voice(_) => "Voice",
         }
     }

@@ -34,7 +34,9 @@ test.describe('Guided tour gates', () => {
     await waitForAppReady(page);
   });
 
-  test('tour starts from home and can navigate forward to the skills step', async ({ page }) => {
+  test('tour starts from home and can navigate forward to the connections step', async ({
+    page,
+  }) => {
     await armWalkthrough(page);
 
     const panel = await tooltip(page);
@@ -48,8 +50,11 @@ test.describe('Guided tour gates', () => {
     await expect.poll(async () => page.evaluate(() => window.location.hash)).toContain('/chat');
     await expect(page.locator('[data-walkthrough="chat-agent-panel"]')).toBeVisible();
 
+    // Phase 2: step 4 navigates to /connections (was /skills)
     await clickTourNext(page);
-    await expect.poll(async () => page.evaluate(() => window.location.hash)).toContain('/skills');
+    await expect
+      .poll(async () => page.evaluate(() => window.location.hash))
+      .toContain('/connections');
     await expect(page.locator('[data-walkthrough="skills-grid"]')).toBeVisible();
   });
 

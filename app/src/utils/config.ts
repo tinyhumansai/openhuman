@@ -91,11 +91,11 @@ export const CONSUMER_FIRST_SESSION_ENABLED =
   import.meta.env.VITE_CONSUMER_FIRST_SESSION === 'true';
 
 /**
- * Chat multimodal attachments (image + supported file markers). Enabled by
- * default now that core parses `[IMAGE:…]` / `[FILE:…]` payloads and the
- * renderer runs a lossless compression pass before sending.
+ * Chat multimodal attachments (image + supported file markers). Disabled by
+ * default — the attach affordance and file-picker path are off. Opt in for a
+ * build by setting `VITE_CHAT_ATTACHMENTS=true`.
  */
-export const CHAT_ATTACHMENTS_ENABLED = import.meta.env.VITE_CHAT_ATTACHMENTS !== 'false';
+export const CHAT_ATTACHMENTS_ENABLED = import.meta.env.VITE_CHAT_ATTACHMENTS === 'true';
 
 export const SKILLS_GITHUB_REPO =
   import.meta.env.VITE_SKILLS_GITHUB_REPO || 'tinyhumansai/openhuman-skills';

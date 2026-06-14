@@ -6,7 +6,8 @@ import Intelligence from './Intelligence';
 
 vi.mock('../lib/i18n/I18nContext', () => ({ useT: () => ({ t: (k: string) => k }) }));
 
-// IS_DEV gates the dev-only "council" tab; default to a non-dev build.
+// IS_DEV / useDeveloperMode gate the dev-only "council" tab; default to
+// a non-dev build so the gate is closed unless the test overrides it.
 const isDev = vi.hoisted(() => ({ value: false }));
 vi.mock('../utils/config', async () => {
   const actual = await vi.importActual<typeof import('../utils/config')>('../utils/config');
@@ -17,6 +18,9 @@ vi.mock('../utils/config', async () => {
     },
   };
 });
+// useDeveloperMode combines IS_DEV with the persisted Redux preference.
+// Mock it here so tests don't need a Redux Provider — just respect isDev.value.
+vi.mock('../hooks/useDeveloperMode', () => ({ useDeveloperMode: () => isDev.value }));
 
 // Heavy hooks → minimal stubs.
 vi.mock('../hooks/useIntelligenceSocket', () => ({

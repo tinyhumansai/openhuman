@@ -36,9 +36,32 @@ and retry policy behind that.
 | [`workspace/`](workspace/) | Vault, harness, dictation pipelines. |
 | [`mcp/`](mcp/) | MCP-server pipelines (one per connected server). |
 
+## Schedulers & self-healing
+
+Three background loops keep memory synced and compressed without manual
+"Sync now" clicks:
+
+| Loop | Module | Cadence | Covers |
+| --- | --- | --- | --- |
+| Composio periodic | [`composio/periodic.rs`](composio/periodic.rs) | 20-min tick, per-connection interval | Composio connections (gmail, slack, …) |
+| Workspace periodic | [`workspace/periodic.rs`](workspace/periodic.rs) | 20-min tick, `memory_sync_interval_secs` (24h default, `0` = manual only) | `github_repo`, `folder`, `rss_feed`, `web_page` sources |
+| Queue scheduler | `memory_queue::scheduler` | 3 h | flush stale L0 buffers + requeue transient-failed jobs |
+
+**Raw-archive coverage** ([`sources/rebuild.rs`](sources/rebuild.rs)): every
+summary batch records its raw files in `mem_tree_ingested_sources`
+(`source_kind = "raw_file"`). After each sync, `check_and_rebuild_tree`
+diffs disk vs gate and summarises only the uncovered remainder — so an
+interrupted sync self-heals on the next pass instead of stranding raw
+files forever. Inspect/trigger over RPC with
+`openhuman.memory_sources_reconcile`.
+
+⚠️ A source's **tree scope** and **raw-archive id** slugify to different
+directories for GitHub (`github:owner/repo` vs `github.com/owner/repo`) —
+always carry both (`memory_sources::sync::SourceScope`).
+
 ## Status
 
-**Scaffold only.** Today's sync code still lives in:
+**Pipelines: scaffold only.** Today's sync code still lives in:
 
 - `composio/providers/<provider>/ingest.rs` + `bin/{slack_backfill,gmail_backfill_3d}.rs`
 - `vault/sync.rs`, `agent_experience/`, `dictation_hotkeys/`

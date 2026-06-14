@@ -15,12 +15,16 @@ import { useAppSelector } from '../../../store/hooks';
 import { APP_VERSION, LATEST_APP_DOWNLOAD_URL } from '../../../utils/config';
 import { isTauriEnvironment } from '../../../utils/configPersistence';
 import { openUrl } from '../../../utils/openUrl';
-import SettingsHeader from '../components/SettingsHeader';
+import PanelPage from '../../layout/PanelPage';
+import Button from '../../ui/Button';
+import SettingsBackButton from '../components/SettingsBackButton';
+import { SettingsRow, SettingsSection } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+import SystemDiagnostics from './SystemDiagnostics';
 
 const AboutPanel = () => {
   const { t } = useT();
-  const { navigateBack, breadcrumbs } = useSettingsNavigation();
+  const { navigateBack } = useSettingsNavigation();
   // The auto-cadence is already running via the global <AppUpdatePrompt />;
   // disable it here so opening the panel doesn't double-trigger probes.
   const { phase, info, error, check } = useAppUpdate({ autoCheck: false });
@@ -65,107 +69,111 @@ const AboutPanel = () => {
   };
 
   return (
-    <div className="z-10 relative">
-      <SettingsHeader
-        title={t('settings.about')}
-        showBackButton={true}
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
-
+    <PanelPage
+      className="z-10"
+      contentClassName=""
+      description={t('settings.aboutDesc')}
+      leading={<SettingsBackButton onBack={navigateBack} />}>
       <div className="p-4 space-y-4">
-        <div className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4">
-          <div className="text-xs text-stone-500 dark:text-neutral-400">
-            {t('settings.about.version')}
+        {/* Version */}
+        <SettingsSection>
+          <div className="px-4 py-4">
+            <div className="text-xs text-neutral-500 dark:text-neutral-400">
+              {t('settings.about.version')}
+            </div>
+            <div className="mt-1 text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+              v{APP_VERSION}
+            </div>
+            {info?.available && info.available_version && (
+              <div className="mt-1 text-xs text-primary-500">
+                v{info.available_version} {t('settings.about.updateAvailable')}
+              </div>
+            )}
           </div>
-          <div className="mt-1 text-lg font-semibold text-stone-900 dark:text-neutral-100">
-            v{APP_VERSION}
-          </div>
-          {info?.available && info.available_version && (
-            <div className="mt-1 text-xs text-primary-500">
-              v{info.available_version} {t('settings.about.updateAvailable')}
+        </SettingsSection>
+
+        {/* Software updates */}
+        <SettingsSection>
+          <SettingsRow
+            label={t('settings.about.softwareUpdates')}
+            description={summary}
+            control={
+              <Button
+                type="button"
+                variant="primary"
+                size="xs"
+                onClick={handleCheck}
+                disabled={isChecking}>
+                {isChecking ? t('settings.about.checking') : t('settings.about.checkForUpdates')}
+              </Button>
+            }
+          />
+          {lastCheckedAt && (
+            <div className="px-4 pb-3 text-[11px] text-neutral-400 dark:text-neutral-500">
+              {t('settings.about.lastChecked')} {formatRelative(lastCheckedAt, t)}
             </div>
           )}
-        </div>
+        </SettingsSection>
 
-        <div className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4">
-          <div className="flex items-start justify-between gap-3">
-            <div className="flex-1 min-w-0">
-              <div className="text-sm font-medium text-stone-900 dark:text-neutral-100">
-                {t('settings.about.softwareUpdates')}
-              </div>
-              <div className="mt-1 text-xs text-stone-500 dark:text-neutral-400 leading-relaxed">
-                {summary}
-              </div>
-              {lastCheckedAt && (
-                <div className="mt-1 text-[11px] text-stone-400 dark:text-neutral-500">
-                  {t('settings.about.lastChecked')} {formatRelative(lastCheckedAt, t)}
-                </div>
-              )}
-            </div>
-            <button
-              type="button"
-              onClick={handleCheck}
-              disabled={isChecking}
-              className="shrink-0 px-3 py-1.5 rounded-lg bg-primary-500 hover:bg-primary-400 text-white text-xs font-medium transition-colors disabled:opacity-50">
-              {isChecking ? t('settings.about.checking') : t('settings.about.checkForUpdates')}
-            </button>
-          </div>
-        </div>
-
-        <div className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4">
-          <div className="text-sm font-medium text-stone-900 dark:text-neutral-100">
-            {t('settings.about.connection')}
-          </div>
-          <div className="mt-2 space-y-1.5">
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-xs text-stone-500 dark:text-neutral-400">
-                {t('settings.about.connectionMode')}
-              </span>
-              <span className="text-xs font-medium text-stone-900 dark:text-neutral-100">
+        {/* Connection */}
+        <SettingsSection title={t('settings.about.connection')}>
+          <SettingsRow
+            label={t('settings.about.connectionMode')}
+            control={
+              <span className="text-xs font-medium text-neutral-800 dark:text-neutral-100">
                 {coreMode.kind === 'local'
                   ? t('settings.about.connectionModeLocal')
                   : coreMode.kind === 'cloud'
                     ? t('settings.about.connectionModeCloud')
                     : t('settings.about.connectionModeUnset')}
               </span>
-            </div>
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-xs text-stone-500 dark:text-neutral-400 shrink-0">
-                {t('settings.about.serverUrl')}
-              </span>
+            }
+          />
+          <SettingsRow
+            label={t('settings.about.serverUrl')}
+            control={
               <span
-                className="text-xs font-mono text-stone-900 dark:text-neutral-100 truncate"
+                className="text-xs font-mono text-neutral-800 dark:text-neutral-100 truncate max-w-[200px]"
                 title={rpcUrl ?? undefined}>
                 {rpcUrl ?? t('settings.about.serverUrlUnavailable')}
               </span>
-            </div>
+            }
+          />
+          <div className="px-4 pb-3">
+            <p className="text-[11px] text-neutral-500 dark:text-neutral-400 leading-relaxed">
+              {coreMode.kind === 'cloud'
+                ? t('settings.about.connectionHelperCloud')
+                : t('settings.about.connectionHelperLocal')}
+            </p>
           </div>
-          <p className="mt-2 text-[11px] text-stone-500 dark:text-neutral-400 leading-relaxed">
-            {coreMode.kind === 'cloud'
-              ? t('settings.about.connectionHelperCloud')
-              : t('settings.about.connectionHelperLocal')}
-          </p>
-        </div>
+        </SettingsSection>
 
-        <div className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4">
-          <div className="text-sm font-medium text-stone-900 dark:text-neutral-100">
-            {t('settings.about.releases')}
+        {/* Releases */}
+        <SettingsSection>
+          <div className="px-4 py-4 space-y-2">
+            <div className="text-sm font-medium text-neutral-800 dark:text-neutral-100">
+              {t('settings.about.releases')}
+            </div>
+            <p className="text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed">
+              {t('settings.about.releasesDesc')}
+            </p>
+            <Button
+              type="button"
+              variant="secondary"
+              size="xs"
+              onClick={() => {
+                void openUrl(LATEST_APP_DOWNLOAD_URL);
+              }}>
+              {t('settings.about.openReleases')}
+            </Button>
           </div>
-          <p className="mt-1 text-xs text-stone-500 dark:text-neutral-400 leading-relaxed">
-            {t('settings.about.releasesDesc')}
-          </p>
-          <button
-            type="button"
-            onClick={() => {
-              void openUrl(LATEST_APP_DOWNLOAD_URL);
-            }}
-            className="mt-3 px-3 py-1.5 rounded-lg border border-stone-200 dark:border-neutral-800 text-stone-700 dark:text-neutral-200 hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 dark:hover:bg-neutral-800/60 text-xs transition-colors">
-            {t('settings.about.openReleases')}
-          </button>
-        </div>
+        </SettingsSection>
+
+        {/* Diagnostics (app logs, restart tour, staging Sentry test) —
+            relocated here from the retired Developer & Diagnostics page. */}
+        <SystemDiagnostics />
       </div>
-    </div>
+    </PanelPage>
   );
 };
 

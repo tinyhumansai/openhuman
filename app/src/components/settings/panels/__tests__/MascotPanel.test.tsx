@@ -9,19 +9,26 @@ import mascotReducer, {
   DEFAULT_MASCOT_COLOR,
   setCustomMascotGifUrl,
   setMascotColor,
+  setMascotVoiceId,
   setSelectedMascotId,
 } from '../../../../store/mascotSlice';
 import MascotPanel from '../MascotPanel';
 
-const { mockNavigateBack, fetchMascotListMock, getCachedMascotDetailMock } = vi.hoisted(() => ({
-  mockNavigateBack: vi.fn(),
-  fetchMascotListMock: vi.fn(),
-  getCachedMascotDetailMock: vi.fn(),
-}));
+const { mockNavigateBack, fetchMascotListMock, getCachedMascotDetailMock, mockSynthesizeSpeech } =
+  vi.hoisted(() => ({
+    mockNavigateBack: vi.fn(),
+    fetchMascotListMock: vi.fn(),
+    getCachedMascotDetailMock: vi.fn(),
+    mockSynthesizeSpeech: vi.fn(),
+  }));
 
 vi.mock('../../../../services/mascotService', () => ({
   fetchMascotList: (...args: unknown[]) => fetchMascotListMock(...args),
   getCachedMascotDetail: (...args: unknown[]) => getCachedMascotDetailMock(...args),
+}));
+
+vi.mock('../../../../features/human/voice/ttsClient', () => ({
+  synthesizeSpeech: (...args: unknown[]) => mockSynthesizeSpeech(...args),
 }));
 
 vi.mock('../../../../features/human/Mascot', async importOriginal => {
@@ -70,6 +77,7 @@ describe('MascotPanel', () => {
     vi.clearAllMocks();
     fetchMascotListMock.mockResolvedValue([]);
     getCachedMascotDetailMock.mockResolvedValue(null);
+    mockSynthesizeSpeech.mockResolvedValue(new Uint8Array(0));
   });
 
   it('renders a radio swatch for each supported color', () => {
@@ -270,5 +278,63 @@ describe('MascotPanel — mascotSlice rehydrate guard', () => {
       expect(store.getState().mascot.selectedMascotId).toBe('yellow');
       expect(store.getState().mascot.customMascotGifUrl).toBeNull();
     });
+  });
+});
+
+// ── Voice picker: save-paste button disabled state (line 525) ────────────────
+describe('MascotPanel — voice picker custom voice input (line 525)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    fetchMascotListMock.mockResolvedValue([]);
+    getCachedMascotDetailMock.mockResolvedValue(null);
+    mockSynthesizeSpeech.mockResolvedValue(new Uint8Array(0));
+  });
+
+  it('shows save-paste button when a non-curated (custom) voice id is stored', () => {
+    // A non-curated voice id triggers isCustomVoice=true automatically
+    // without needing to select __custom__ in the picker.
+    const store = buildStore();
+    store.dispatch(setMascotVoiceId('custom-voice-id-xyz'));
+    renderPanel(store);
+
+    // The custom voice input section is visible
+    const saveBtn = screen.getByTestId('mascot-voice-save-paste');
+    expect(saveBtn).toBeInTheDocument();
+  });
+
+  it('save-paste button is disabled when draft matches stored voice id (line 525)', () => {
+    const store = buildStore();
+    store.dispatch(setMascotVoiceId('custom-voice-id-xyz'));
+    renderPanel(store);
+
+    // Draft defaults to storedVoiceId — so draft === storedVoiceId → disabled
+    const saveBtn = screen.getByTestId('mascot-voice-save-paste');
+    expect(saveBtn).toBeDisabled();
+  });
+
+  it('save-paste button is enabled when draft differs from stored voice id (line 525)', () => {
+    const store = buildStore();
+    store.dispatch(setMascotVoiceId('custom-voice-id-xyz'));
+    renderPanel(store);
+
+    const input = screen.getByTestId('mascot-voice-input');
+    fireEvent.change(input, { target: { value: 'different-voice-id' } });
+
+    const saveBtn = screen.getByTestId('mascot-voice-save-paste');
+    expect(saveBtn).not.toBeDisabled();
+  });
+
+  it('clicking save-paste button dispatches new voice id to store', () => {
+    const store = buildStore();
+    store.dispatch(setMascotVoiceId('custom-voice-id-xyz'));
+    renderPanel(store);
+
+    const input = screen.getByTestId('mascot-voice-input');
+    fireEvent.change(input, { target: { value: 'new-voice-id' } });
+
+    const saveBtn = screen.getByTestId('mascot-voice-save-paste');
+    fireEvent.click(saveBtn);
+
+    expect(store.getState().mascot.voiceId).toBe('new-voice-id');
   });
 });

@@ -145,30 +145,46 @@ fn alice_phoenix_thread() -> EmailThread {
     }
 }
 
-/// The orchestrator definition must trigger `agent_memory` automatically so
-/// memory queries route through the dedicated memory subagent before the main
-/// provider prompt.
+/// The orchestrator reaches `agent_memory` ON-DEMAND, not via an eager
+/// pre-turn pre-fetch. `agent_memory` is listed in the `[subagents]` allowlist
+/// (synthesised into a `delegate_retrieve_memory` tool), so the orchestrator
+/// walks the memory tree only when a message needs it — instead of spawning a
+/// full memory subagent before every turn.
 ///
 /// History: #1141 consolidated 6 `memory_tree_*` tools into `memory_tree`;
 /// the agent_memory domain then unified `memory_tree` + `query_memory`
-/// behind `call_memory_agent`. The current contract removes that explicit tool
-/// and makes the memory agent a declarative TOML trigger.
+/// behind `call_memory_agent`; a later revision made it an eager
+/// `trigger_memory_agent = "always"` pre-fetch. This contract reverts the
+/// eager pre-fetch to an on-demand delegation (the memory agent is heavy and
+/// most turns don't need a deep tree walk).
 #[test]
-fn orchestrator_lists_memory_tree_tools() {
+fn orchestrator_reaches_memory_agent_on_demand() {
     let toml = include_str!("../src/openhuman/agent_registry/agents/orchestrator/agent.toml");
+    // Eager pre-fetch must be gone.
+    assert!(
+        !toml
+            .lines()
+            .map(str::trim)
+            .any(|line| line == "trigger_memory_agent = \"always\""),
+        "orchestrator must NOT eagerly pre-fetch the memory agent — retrieval is on-demand"
+    );
+    // The on-demand route: `agent_memory` in the subagents allowlist.
     assert!(
         toml.lines()
             .map(str::trim)
-            .any(|line| line == "trigger_memory_agent = \"always\""),
-        "orchestrator agent.toml must trigger the memory agent automatically"
+            .any(|line| line == "\"agent_memory\"" || line == "\"agent_memory\","),
+        "orchestrator must list `agent_memory` in its subagents allowlist for on-demand retrieval"
     );
+    // The orchestrator reaches the memory agent through delegation, not the
+    // direct `call_memory_agent` tool (that tool is forbidden on the
+    // orchestrator — see loader::tests::orchestrator_has_chat_hint_and_named_tools).
     let has_call_memory_agent = toml
         .lines()
         .map(str::trim)
         .any(|line| line == "\"call_memory_agent\"" || line == "\"call_memory_agent\",");
     assert!(
         !has_call_memory_agent,
-        "orchestrator agent.toml must not expose the removed 'call_memory_agent' tool"
+        "orchestrator agent.toml must not expose the 'call_memory_agent' tool"
     );
     // Verify all superseded tool names are gone.
     for old_name in [

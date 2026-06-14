@@ -456,6 +456,8 @@ impl Agent {
                     .unwrap_or_else(|| format!("parsed-{}-{}", iteration + 1, idx + 1)),
                 name: call.name.clone(),
                 arguments: call.arguments.to_string(),
+                // Prompt-based tool calls carry no provider extra_content.
+                extra_content: None,
             })
             .collect()
     }

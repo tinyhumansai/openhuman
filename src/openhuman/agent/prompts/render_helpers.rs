@@ -56,6 +56,14 @@ pub fn render_safety() -> String {
         .expect("SafetySection::build is infallible")
 }
 
+/// Render the canonical grounding / anti-hallucination contract
+/// ([`GROUNDING_BODY`]). Dynamic `agents/<id>/prompt.rs` builders call this
+/// so they inherit the exact same anti-fabrication floor as the static
+/// section chain — single source of truth, no drift.
+pub fn render_grounding() -> &'static str {
+    GROUNDING_BODY
+}
+
 // `render_skills` and `render_connected_integrations` helpers are
 // gone — `## Available Skills` lives in `integrations_agent/prompt.rs`, and
 // the connected-integrations / delegation-guide blocks each live in
@@ -377,6 +385,13 @@ pub fn render_subagent_system_prompt_with_format(
             "## Safety\n\n- Do not exfiltrate private data.\n- Do not run destructive commands without asking.\n- Do not bypass oversight or approval mechanisms.\n- Prefer `trash` over `rm`.\n- When in doubt, ask before acting externally.\n\n",
         );
     }
+
+    // 3b'. Grounding / anti-hallucination contract. Always emitted (like the
+    //      static chain): every spawned sub-agent gets the same floor.
+    //      Sourced from the shared `GROUNDING_BODY` const so this narrow
+    //      renderer can never drift from `GroundingSection`.
+    out.push_str(GROUNDING_BODY);
+    out.push_str("\n\n");
 
     // 3c/3d. `## Available Skills` and `## Connected Integrations`
     //        are no longer emitted here. Each agent that needs them

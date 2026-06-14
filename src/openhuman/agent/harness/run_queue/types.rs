@@ -17,6 +17,11 @@ pub enum QueueMode {
     /// Silently collect the message as additional context; the agent sees it
     /// at the next iteration boundary but does not treat it as a new instruction.
     Collect,
+    /// Run as an independent concurrent turn on the same thread. The new turn
+    /// forks the thread's history-at-start (snapshot) and runs alongside any
+    /// in-flight turn instead of interrupting or queueing — its result is
+    /// appended to the conversation on completion (snapshot + append).
+    Parallel,
 }
 
 impl Default for QueueMode {
@@ -32,6 +37,7 @@ impl fmt::Display for QueueMode {
             Self::Steer => write!(f, "steer"),
             Self::Followup => write!(f, "followup"),
             Self::Collect => write!(f, "collect"),
+            Self::Parallel => write!(f, "parallel"),
         }
     }
 }

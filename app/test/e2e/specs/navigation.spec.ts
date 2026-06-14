@@ -28,12 +28,15 @@ interface Route {
   minChars?: number;
 }
 
+// Phase 2/3/6 IA revamp:
+//   /human       → /chat        (Phase 6 — back-compat redirect)
+//   /skills      → /connections (Phase 2 — back-compat redirect)
+//   /intelligence → /activity   (Phase 3 — back-compat redirect)
 const ROUTES: Route[] = [
   { hash: '/home' },
-  { hash: '/human' },
   { hash: '/chat' },
-  { hash: '/skills' },
-  { hash: '/intelligence' },
+  { hash: '/connections' },
+  { hash: '/activity' },
   { hash: '/rewards' },
   { hash: '/settings' },
 ];

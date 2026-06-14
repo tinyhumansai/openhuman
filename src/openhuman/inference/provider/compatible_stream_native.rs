@@ -94,6 +94,29 @@ impl OpenAiCompatibleProvider {
                     self.name,
                     status,
                 );
+            } else if Self::err_indicates_frequency_penalty_unsupported(&body) {
+                // Endpoint rejects `frequency_penalty` (e.g. an unknown strict
+                // provider not yet covered by `effective_frequency_penalty`).
+                // The caller retries without the field and succeeds, so this is
+                // a self-healed recoverable condition — log, don't page
+                // (TAURI-RUST-4PJ). Defense-in-depth behind the prevent-at-source
+                // omission; the bail! below still drives the retry path.
+                log::info!(
+                    "[stream] {} rejected frequency_penalty (status={}) — caller will retry without it",
+                    self.name,
+                    status,
+                );
+            } else if super::super::is_backend_error_code_owned(self.name.as_str(), &body) {
+                // F4/F2: managed-backend errorCode (#870) — backend-owned, FE
+                // must not double-report. Malformed BAD_REQUEST is excluded and
+                // falls through to the status gate below.
+                super::super::log_backend_error_code_owned(
+                    "streaming_chat",
+                    self.name.as_str(),
+                    Some(native_request.model.as_str()),
+                    status,
+                    &body,
+                );
             } else if super::super::should_report_provider_http_failure(status) {
                 crate::core::observability::report_error(
                     message.as_str(),
@@ -148,6 +171,24 @@ impl OpenAiCompatibleProvider {
             while let Some(sep_idx) = buffer.find("\n\n") {
                 let event = buffer[..sep_idx].to_string();
                 buffer.drain(..sep_idx + 2);
+
+                // In-band SSE error frame. The response status flushed 200
+                // before the upstream call, so the managed backend delivers
+                // post-flush errors — including instant 4xx/429/413 whose typed
+                // `errorCode` (#870) is now stamped on the frame, see
+                // backend `routes/inference.ts` — as `event: error\ndata: {…}`.
+                // Surface it as a streaming-envelope error string so the
+                // `errorCode` classifier + Sentry golden rule run downstream,
+                // instead of skipping it as an unparseable chunk (which would
+                // aggregate to empty and surface as "empty response").
+                if let Some(message) = sse_error_frame_bail_message(
+                    self.name.as_str(),
+                    Some(native_request.model.as_str()),
+                    &event,
+                ) {
+                    anyhow::bail!(message);
+                }
+
                 for line in event.lines() {
                     let line = line.trim();
                     if line.is_empty() || line.starts_with(':') {
@@ -231,16 +272,36 @@ impl OpenAiCompatibleProvider {
                                 let idx = tc.index.unwrap_or(0);
                                 let entry = tool_accum.entry(idx).or_default();
 
-                                if let Some(id) = tc.id.as_ref() {
-                                    if entry.id.is_none() {
-                                        log::debug!(
-                                            "[stream] {} tool_call[{}] id resolved: {}",
-                                            self.name,
-                                            idx,
-                                            id,
-                                        );
+                                // Capture the first non-null extra_content seen for
+                                // this index (Gemini's thought_signature, TAURI-RUST-4PK).
+                                if entry.extra_content.is_none() {
+                                    if let Some(ec) = tc.extra_content.as_ref() {
+                                        if !ec.is_null() {
+                                            entry.extra_content = Some(ec.clone());
+                                        }
                                     }
-                                    entry.id = Some(id.clone());
+                                }
+
+                                // Only the FIRST delta for a tool-call index carries
+                                // the real id; argument-continuation deltas repeat the
+                                // index with an EMPTY id (`""`) on some providers
+                                // (DashScope/GMI) and omit it entirely on others
+                                // (DeepSeek). Guard against the empty string so a
+                                // continuation delta can't clobber the resolved id down
+                                // to `""` — which later trips the upstream tool-message
+                                // ordering check (empty `tool_call_id` → 400).
+                                if let Some(id) = tc.id.as_ref() {
+                                    if !id.is_empty() {
+                                        if entry.id.is_none() {
+                                            log::debug!(
+                                                "[stream] {} tool_call[{}] id resolved: {}",
+                                                self.name,
+                                                idx,
+                                                id,
+                                            );
+                                        }
+                                        entry.id = Some(id.clone());
+                                    }
                                 }
                                 if let Some(func) = tc.function.as_ref() {
                                     if let Some(name) = func.name.as_ref() {
@@ -357,6 +418,9 @@ impl OpenAiCompatibleProvider {
                         )
                     },
                 }),
+                // Carry Gemini's thought_signature through to parse_native_response
+                // so it lands on the harness ToolCall (TAURI-RUST-4PK).
+                extra_content: c.extra_content,
             })
             .collect();
 
@@ -424,5 +488,126 @@ impl OpenAiCompatibleProvider {
         }
 
         Self::parse_native_response(api_resp, &self.name)
+    }
+}
+
+/// Extract the `data:` payload of an SSE `event: error` frame, or `None` when
+/// the event block is not an error frame.
+///
+/// The managed backend delivers post-flush stream errors as a two-line SSE
+/// block — `event: error` followed by `data: {"error":{…,"errorCode":…}}`
+/// (backend `routes/inference.ts`). The normal chunk loop can't parse that
+/// `data:` line as a `StreamChunkResponse`, so without this detection the frame
+/// is silently skipped and the turn aggregates to an empty response. We key on
+/// the `event: error` field rather than sniffing the data so a normal chunk
+/// that merely mentions "error" is never misclassified.
+fn sse_error_frame_payload(event: &str) -> Option<String> {
+    let mut is_error_frame = false;
+    let mut data: Option<String> = None;
+    for line in event.lines() {
+        let line = line.trim();
+        if let Some(event_type) = line.strip_prefix("event:") {
+            if event_type.trim() == "error" {
+                is_error_frame = true;
+            }
+        } else if let Some(payload) = line.strip_prefix("data:") {
+            data = Some(payload.trim().to_string());
+        }
+    }
+    is_error_frame.then(|| data.unwrap_or_default())
+}
+
+/// Build the bail message for an in-band SSE `event: error` frame, or `None`
+/// when the event block is a normal chunk / metadata event (the caller then
+/// continues parsing it as a chunk).
+///
+/// Mirrors the non-2xx HTTP path: produces a `<provider> streaming API error:
+/// <sanitized body>` envelope so the downstream `errorCode` classifier and the
+/// Sentry golden rule run on it. When the frame carries a backend-owned
+/// `errorCode`, it is logged (not re-reported) here, matching the HTTP path's
+/// [`is_backend_error_code_owned`] branch; a malformed `BAD_REQUEST` is excluded
+/// by that helper and still pages downstream. There is no HTTP status for an
+/// in-band frame, so the log records the `200` that was actually sent.
+fn sse_error_frame_bail_message(
+    provider: &str,
+    model: Option<&str>,
+    event: &str,
+) -> Option<String> {
+    let payload = sse_error_frame_payload(event)?;
+    let sanitized = super::super::sanitize_api_error(&payload);
+    let message = format!("{provider} streaming API error: {sanitized}");
+    if super::super::is_backend_error_code_owned(provider, &payload) {
+        super::super::log_backend_error_code_owned(
+            "streaming_chat",
+            provider,
+            model,
+            reqwest::StatusCode::OK,
+            &payload,
+        );
+    }
+    Some(message)
+}
+
+#[cfg(test)]
+mod sse_error_frame_tests {
+    use super::{sse_error_frame_bail_message, sse_error_frame_payload};
+    use crate::openhuman::inference::provider::openhuman_backend::PROVIDER_LABEL;
+
+    #[test]
+    fn extracts_payload_from_error_frame() {
+        let event = "event: error\ndata: {\"error\":{\"message\":\"boom\",\"type\":\"stream_error\",\"errorCode\":\"BAD_REQUEST\"}}";
+        let payload = sse_error_frame_payload(event).expect("error frame detected");
+        assert!(payload.contains("\"errorCode\":\"BAD_REQUEST\""));
+        assert!(payload.contains("\"type\":\"stream_error\""));
+    }
+
+    #[test]
+    fn ignores_normal_data_chunk() {
+        let event =
+            "data: {\"choices\":[{\"delta\":{\"content\":\"an error occurred in the story\"}}]}";
+        assert!(sse_error_frame_payload(event).is_none());
+    }
+
+    #[test]
+    fn ignores_metadata_event() {
+        let event = "event: openhuman-metadata\ndata: {\"openhuman\":{}}";
+        assert!(sse_error_frame_payload(event).is_none());
+    }
+
+    #[test]
+    fn bail_message_wraps_error_frame_in_streaming_envelope() {
+        // A managed-backend error frame yields a streaming-envelope string the
+        // downstream classifier recognises, preserving the `errorCode`.
+        let event = "event: error\ndata: {\"error\":{\"message\":\"slow down\",\"type\":\"stream_error\",\"errorCode\":\"RATE_LIMITED\"}}";
+        let message = sse_error_frame_bail_message(PROVIDER_LABEL, Some("reasoning-v1"), event)
+            .expect("bail message built");
+        assert!(message.contains("streaming API error"));
+        assert!(message.contains("\"errorCode\":\"RATE_LIMITED\""));
+    }
+
+    #[test]
+    fn bail_message_handles_frame_without_error_code() {
+        // An untyped mid-stream drop (no `errorCode`) still produces an
+        // envelope; it is simply not backend-owned, so downstream Sentry gating
+        // applies as before.
+        let event =
+            "event: error\ndata: {\"error\":{\"message\":\"socket hang up\",\"type\":\"stream_error\"}}";
+        let message =
+            sse_error_frame_bail_message(PROVIDER_LABEL, None, event).expect("bail message built");
+        assert!(message.contains("socket hang up"));
+    }
+
+    #[test]
+    fn bail_message_is_none_for_normal_chunk() {
+        let event = "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}";
+        assert!(sse_error_frame_bail_message(PROVIDER_LABEL, None, event).is_none());
+    }
+
+    #[test]
+    fn error_frame_without_data_yields_empty_payload() {
+        // Defensive: an `event: error` with no `data:` line still resolves to a
+        // (empty) payload so the caller bails rather than skipping it.
+        let event = "event: error";
+        assert_eq!(sse_error_frame_payload(event).as_deref(), Some(""));
     }
 }

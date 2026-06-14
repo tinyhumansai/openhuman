@@ -160,6 +160,39 @@ export function promptFromArgsBuffer(argsBuffer?: string): string | undefined {
   return parseToolArgs(argsBuffer)?.prompt?.trim() || undefined;
 }
 
+/** A web source an agent fetched/browsed during a run. */
+export interface AgentSource {
+  /** Stable id (the originating timeline entry id). */
+  id: string;
+  /** Display title — the URL hostname. */
+  title: string;
+  /** Full URL. */
+  url: string;
+}
+
+/** Tools whose `url` arg represents a real web source the agent visited. */
+const URL_SOURCE_TOOLS = new Set(['web_fetch', 'http_request', 'curl', 'browser', 'browser_open']);
+
+/**
+ * Extract the distinct web sources an agent run touched, for the
+ * "Agent Process Source" panel. Derived from real `url` args on
+ * fetch/browse timeline entries — never fabricated. Deduplicated by URL,
+ * preserving first-seen order.
+ */
+export function extractAgentSources(entries: ToolTimelineEntry[]): AgentSource[] {
+  const seen = new Set<string>();
+  const sources: AgentSource[] = [];
+  for (const entry of entries) {
+    const baseName = entry.name.replace(/^subagent:/, '');
+    if (!URL_SOURCE_TOOLS.has(baseName)) continue;
+    const url = parseToolArgs(entry.argsBuffer)?.url?.trim();
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    sources.push({ id: entry.id, title: hostnameFromUrl(url) ?? url, url });
+  }
+  return sources;
+}
+
 const MAX_DETAIL_LEN = 120;
 
 function truncateDetail(value: string): string {

@@ -153,10 +153,10 @@ describe('PersonaPanel', () => {
     });
   });
 
-  it('navigates to mascot settings for avatar & voice', async () => {
+  it('navigates to the Face tab for avatar & voice', async () => {
     renderWithProviders(<PersonaPanel />);
     await waitFor(() => expect(screen.getByTestId('persona-soul-editor')).toBeInTheDocument());
     fireEvent.click(screen.getByTestId('persona-open-mascot'));
-    expect(mockNavigateToSettings).toHaveBeenCalledWith('mascot');
+    expect(mockNavigateToSettings).toHaveBeenCalledWith('personality#face');
   });
 });

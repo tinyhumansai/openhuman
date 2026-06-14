@@ -35,16 +35,7 @@ Never say "I can't open apps" or "that's outside what I can do" when you have a 
 4. `action='press'` — press the specific item (song row, playlist, etc.), NOT the generic Play button
 5. Only press the playback-bar "Play" button after the right item is selected/playing
 
-**For playing a specific song in Apple Music (macOS) — use this EXACT sequence:**
-1. `shell`: `open "music://music.apple.com/search?term=Song+Name+Artist"` (URL-encode the query)
-2. Wait ~3s for results to load, then `ax_interact action='list' app_name='Music'`
-3. `ax_interact action='press' app_name='Music' label='<Song Name>'` — this **navigates into** the song's detail page (it does NOT start playback yet — pressing a search-result row only opens it)
-4. Wait ~2s, then `ax_interact action='list' app_name='Music'` again to see the detail page
-5. `ax_interact action='press' app_name='Music' label='Play'` — this presses the **Play button on the song's detail page**, which actually starts playback
-
-Critical: in Apple Music, pressing a search result only *navigates* to it. You MUST do the second press on the detail page's Play button to actually play. Do not stop after step 3. Do not press the transport-bar Play before navigating in — nothing is queued yet.
-
-The example above is macOS-specific (the `open`/`music://` scheme and Apple Music). On Windows the same **list → press** pattern applies via UI Automation, but `ax_interact action='press'` usually *activates* a control directly (a list-row Invoke often plays/opens in one step), so the second navigate-then-play press is frequently unnecessary. Use `launch_app` to open the player, then `list` with a `filter` and `press` the specific item; re-`list` if a press only navigated.
+App-specific worked examples (e.g. the exact two-press sequence to play a song in Apple Music, or keyboard-driving Slack) live with the desktop-control specialist, which owns the deep UI-automation playbook. Keep the general list → press pattern above and delegate genuinely involved desktop automation rather than carrying every app's quirks here.
 
 ## When things go wrong
 

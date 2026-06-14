@@ -30,12 +30,14 @@ async function mockRequests(): Promise<MockRequest[]> {
 
 async function waitForMockRequest(method: string, pathFragment: string, timeoutMs = 15_000) {
   const deadline = Date.now() + timeoutMs;
+  let delay = 200;
   while (Date.now() < deadline) {
     const match = (await mockRequests()).find(
       request => request.method === method && request.url.includes(pathFragment)
     );
     if (match) return match;
-    await new Promise(resolve => setTimeout(resolve, 300));
+    await new Promise(resolve => setTimeout(resolve, delay));
+    delay = Math.min(delay * 1.5, 1_000);
   }
   return null;
 }

@@ -80,6 +80,73 @@ fn prompt_builder_assembles_sections() {
 }
 
 #[test]
+fn grounding_contract_appended_to_every_build_path() {
+    let tools: Vec<Box<dyn Tool>> = vec![Box::new(TestTool)];
+    let prompt_tools = PromptTool::from_tools(&tools);
+    let ctx = PromptContext {
+        workspace_dir: Path::new("/tmp"),
+        model_name: "test-model",
+        agent_id: "",
+        tools: &prompt_tools,
+        workflows: &[],
+        dispatcher_instructions: "instr",
+        learned: LearnedContextData::default(),
+        visible_tool_names: &NO_FILTER,
+        tool_call_format: ToolCallFormat::PFormat,
+        connected_integrations: &[],
+        connected_identities_md: String::new(),
+        include_profile: false,
+        include_memory_md: false,
+        curated_snapshot: None,
+        user_identity: None,
+        personality_soul_md: None,
+        personality_memory_md: None,
+        personality_roster: vec![],
+    };
+
+    // A distinctive clause from GROUNDING_BODY — present regardless of which
+    // builder produced the prompt (single source of truth, central append).
+    let marker = "Your tools are exactly the ones listed in this prompt";
+
+    // 1. Static default chain.
+    let defaults = SystemPromptBuilder::with_defaults().build(&ctx).unwrap();
+    assert!(defaults.contains("## Grounding and tool use"));
+    assert!(defaults.contains(marker));
+
+    // 2. Sub-agent static chain.
+    let sub = SystemPromptBuilder::for_subagent("role".into(), true, true, true)
+        .build(&ctx)
+        .unwrap();
+    assert!(sub.contains(marker));
+
+    // 3. Dynamic builder (the path every `agents/<id>/prompt.rs` uses). The
+    //    dynamic body itself does NOT contain grounding; the wrapping
+    //    `build()` appends it, so all 26 dynamic agents inherit it for free.
+    //    `PromptBuilder` is a bare `fn` pointer, so this must be a
+    //    non-capturing fn item, not a closure.
+    fn dynamic_body_builder(_ctx: &PromptContext<'_>) -> anyhow::Result<String> {
+        Ok("## Custom Agent\n\nI render my own body.".to_string())
+    }
+    let dynamic = SystemPromptBuilder::from_dynamic(dynamic_body_builder)
+        .build(&ctx)
+        .unwrap();
+    assert!(dynamic.contains("I render my own body."));
+    assert!(dynamic.contains(marker));
+
+    // 4. It is appended once, not duplicated.
+    assert_eq!(
+        defaults.matches("## Grounding and tool use").count(),
+        1,
+        "grounding contract must appear exactly once"
+    );
+
+    // Appears before the output-style suffix (tail placement).
+    let g = defaults.find("## Grounding and tool use").unwrap();
+    let s = defaults.find("## Output style").unwrap();
+    assert!(g < s, "grounding should precede the output-style suffix");
+}
+
+#[test]
 fn identity_section_creates_missing_workspace_files() {
     let workspace =
         std::env::temp_dir().join(format!("openhuman_prompt_create_{}", uuid::Uuid::new_v4()));
@@ -167,6 +234,54 @@ fn datetime_section_includes_timestamp_and_timezone() {
         "rendered payload missing IANA timezone: {payload}"
     );
     assert!(payload.contains("UTC"), "missing UTC offset: {payload}");
+}
+
+#[test]
+fn datetime_section_appends_resolve_time_rule_only_when_tool_present() {
+    // With `resolve_time` in the agent's tool set, the time-discipline rule
+    // is rendered under the date block (prevents the LLM hand-computing epoch
+    // timestamps — the bug this tool exists to fix).
+    let with_tools: Vec<Box<dyn Tool>> =
+        vec![Box::new(crate::openhuman::tools::ResolveTimeTool::new())];
+    let with_prompt_tools = PromptTool::from_tools(&with_tools);
+    let ctx_with = PromptContext {
+        workspace_dir: Path::new("/tmp"),
+        model_name: "test-model",
+        agent_id: "",
+        tools: &with_prompt_tools,
+        workflows: &[],
+        dispatcher_instructions: "instr",
+        learned: LearnedContextData::default(),
+        visible_tool_names: &NO_FILTER,
+        tool_call_format: ToolCallFormat::PFormat,
+        connected_integrations: &[],
+        connected_identities_md: String::new(),
+        include_profile: false,
+        include_memory_md: false,
+        curated_snapshot: None,
+        user_identity: None,
+        personality_soul_md: None,
+        personality_memory_md: None,
+        personality_roster: vec![],
+    };
+    let rendered_with = DateTimeSection.build(&ctx_with).unwrap();
+    assert!(
+        rendered_with.contains("resolve_time") && rendered_with.contains("never hand-compute"),
+        "expected the resolve_time discipline rule when the tool is present; got:\n{rendered_with}"
+    );
+
+    // Without the tool, the rule must NOT appear (auto-scoping gate).
+    let no_tools: Vec<Box<dyn Tool>> = vec![];
+    let no_prompt_tools = PromptTool::from_tools(&no_tools);
+    let ctx_without = PromptContext {
+        tools: &no_prompt_tools,
+        ..ctx_with
+    };
+    let rendered_without = DateTimeSection.build(&ctx_without).unwrap();
+    assert!(
+        !rendered_without.contains("never hand-compute"),
+        "rule must be gated off when resolve_time is absent; got:\n{rendered_without}"
+    );
 }
 
 fn ctx_with_identity(identity: Option<UserIdentity>) -> PromptContext<'static> {
@@ -536,6 +651,11 @@ fn render_subagent_system_prompt_renders_workspace_tail() {
 
     assert!(rendered.contains("## Workspace"));
     assert!(rendered.contains("## Runtime"));
+    // Grounding contract is appended even by the narrow (index-based)
+    // sub-agent renderer — same source const, so it can never drift from
+    // `GroundingSection` / the central `build()` append.
+    assert!(rendered.contains("## Grounding and tool use"));
+    assert!(rendered.contains("Your tools are exactly the ones listed in this prompt"));
 
     let _ = std::fs::remove_dir_all(workspace);
 }

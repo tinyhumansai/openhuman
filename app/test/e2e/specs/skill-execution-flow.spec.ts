@@ -40,12 +40,14 @@ describe('Skill discovery (UI + core RPC)', () => {
     expect(ping.ok).toBe(true);
   });
 
-  it('Skills UI surface shows installed tools', async () => {
+  it('Connections UI surface shows installed tools', async () => {
+    // Phase 2: navigateToSkills() now navigates to /connections
     await navigateToSkills();
     await browser.pause(2_000);
 
     const hash = await browser.execute(() => window.location.hash);
-    expect(String(hash)).toContain('/skills');
+    // Phase 2: /skills redirects to /connections
+    expect(String(hash)).toContain('/connections');
 
     const visible =
       (await textExists('Skills')) ||

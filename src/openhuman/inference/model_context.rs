@@ -169,7 +169,7 @@ pub fn model_vision_enabled(model: &str, config: &crate::openhuman::config::Conf
 /// - **Managed OpenHuman tiers** consult the hardcoded per-tier map
 ///   ([`crate::openhuman::inference::provider::factory::oh_tier_supports_vision`]) —
 ///   the remote backend does not advertise per-tier capability, so the core owns
-///   it. Currently every managed tier is `false`.
+///   it. Currently only `reasoning-v1` is vision-capable.
 /// - **Custom/BYOK models** consult the user-set `model_registry.vision` flag
 ///   ([`model_vision_enabled`]).
 pub fn model_supports_vision(model: &str, config: &crate::openhuman::config::Config) -> bool {
@@ -284,9 +284,10 @@ mod tests {
             cost_per_1m_output: 0.0,
             vision: true,
         }];
-        // Managed tiers are non-vision (the per-tier map is all `false` today).
+        // `reasoning-v1` is the one vision-capable managed tier; the rest are not.
+        assert!(model_supports_vision("reasoning-v1", &config));
+        assert!(model_supports_vision("hint:reasoning", &config));
         assert!(!model_supports_vision("chat-v1", &config));
-        assert!(!model_supports_vision("reasoning-v1", &config));
         assert!(!model_supports_vision("hint:chat", &config));
         // BYOK model flagged in the registry is vision-capable.
         assert!(model_supports_vision("my-llava", &config));

@@ -22,7 +22,11 @@ pub struct EmailMessage {
     #[serde(default)]
     pub cc: Vec<String>,
     pub subject: String,
-    #[serde(with = "chrono::serde::ts_milliseconds")]
+    /// When the message was sent (epoch-ms integer or RFC 3339 string).
+    #[serde(
+        serialize_with = "chrono::serde::ts_milliseconds::serialize",
+        deserialize_with = "super::deserialize_flexible_timestamp"
+    )]
     pub sent_at: DateTime<Utc>,
     /// Plain-text or markdown body.
     pub body: String,
@@ -254,5 +258,43 @@ mod tests {
         };
         let out = canonicalise("gmail:t1", "a", &[], t).unwrap().unwrap();
         assert!(out.metadata.source_ref.is_none());
+    }
+
+    // ── Serde regression tests (CORE-2K / #3568) ────────────────────────────
+
+    #[test]
+    fn sent_at_epoch_ms_integer_still_works() {
+        let json = r#"{
+            "from": "alice@example.com",
+            "subject": "Launch",
+            "sent_at": 1700000000000,
+            "body": "content"
+        }"#;
+        let msg: EmailMessage = serde_json::from_str(json).expect("epoch-ms integer should parse");
+        assert_eq!(msg.sent_at.timestamp_millis(), 1_700_000_000_000);
+    }
+
+    #[test]
+    fn sent_at_iso8601_string_accepted() {
+        let json = r#"{
+            "from": "alice@example.com",
+            "subject": "Launch",
+            "sent_at": "2026-05-17T19:30:00Z",
+            "body": "content"
+        }"#;
+        let msg: EmailMessage = serde_json::from_str(json).expect("ISO-8601 string should parse");
+        assert_eq!(msg.sent_at.timestamp(), 1_779_046_200);
+    }
+
+    #[test]
+    fn sent_at_numeric_string_accepted() {
+        let json = r#"{
+            "from": "alice@example.com",
+            "subject": "Launch",
+            "sent_at": "1700000000000",
+            "body": "content"
+        }"#;
+        let msg: EmailMessage = serde_json::from_str(json).expect("numeric string should parse");
+        assert_eq!(msg.sent_at.timestamp_millis(), 1_700_000_000_000);
     }
 }

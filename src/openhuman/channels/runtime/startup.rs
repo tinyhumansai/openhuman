@@ -89,6 +89,8 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
     );
     crate::openhuman::memory::sync::register_sync_stage_bridge(&config);
     crate::openhuman::composio::register_composio_trigger_subscriber();
+    crate::openhuman::agent_meetings::calendar::register_meet_calendar_subscriber();
+    crate::openhuman::agent_meetings::bus::register_meeting_event_subscriber();
     // Surface parked ApprovalGate requests as chat messages so the user can
     // answer yes/no in the thread (chat-native approval, issue #1339).
     crate::openhuman::channels::providers::web::register_approval_surface_subscriber();
@@ -316,6 +318,8 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
         &config.action_dir,
         &config.agents,
         &config,
+        None,
+        None,
     ));
 
     let skills = crate::openhuman::workflows::load_workflow_metadata(&workspace);

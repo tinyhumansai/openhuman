@@ -200,9 +200,10 @@ describe('TaskKanbanBoard approval surface', () => {
       expect(openhumanTaskSourcesUpdate).toHaveBeenCalledWith('src-1', { enabled: false })
     );
 
-    // "Manage sources" jumps to the settings page.
+    // "Manage sources" jumps to the merged Integrations settings page
+    // (task-sources was folded into /settings/integrations).
     fireEvent.click(screen.getByText('conversations.taskKanban.sources.manage'));
-    expect(navigateSpy).toHaveBeenCalledWith('/settings/task-sources');
+    expect(navigateSpy).toHaveBeenCalledWith('/settings/integrations');
   });
 
   it('shows a "View work" button on a card with a session thread and calls onViewSession', () => {

@@ -86,6 +86,7 @@ fn tool_call(id: &str, name: &str, args: serde_json::Value) -> ChatResponse {
             id: id.into(),
             name: name.into(),
             arguments: args.to_string(),
+            extra_content: None,
         }],
         usage: None,
         reasoning_content: None,

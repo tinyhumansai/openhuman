@@ -11,7 +11,7 @@ const log = debug('notifications:router');
 
 const ROUTES = {
   chat: '/chat',
-  skills: '/skills',
+  skills: '/connections',
   home: '/home',
   notifications: '/notifications',
 } as const;
@@ -83,7 +83,7 @@ export function resolveSystemRoute(item: NotificationItem): string {
       log('[notification-router] system id=%s category=agents → /chat', item.id);
       return ROUTES.chat;
     case 'skills':
-      log('[notification-router] system id=%s category=skills → /skills', item.id);
+      log('[notification-router] system id=%s category=skills → /connections', item.id);
       return ROUTES.skills;
     case 'system':
       log('[notification-router] system id=%s category=system → /home', item.id);

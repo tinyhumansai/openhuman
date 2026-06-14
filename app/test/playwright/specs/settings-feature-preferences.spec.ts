@@ -88,21 +88,25 @@ function readEnabledTools(snapshot: ToolsSnapshot): string[] {
 
 test.describe('Settings - Feature Preferences', () => {
   test('renders the features settings section route', async ({ page }) => {
+    // The old "Features" hub page is retired and redirects to
+    // /settings/screen-intelligence; its destinations are sidebar entries now.
     await openAuthenticatedRoute(page, 'pw-settings-features-route', '/settings/features');
 
-    await expect(page.getByText('Features', { exact: true })).toBeVisible();
+    await expect
+      .poll(async () => page.evaluate(() => window.location.hash))
+      .toContain('/settings/screen-intelligence');
     await expect(page.getByTestId('settings-nav-screen-intelligence')).toBeVisible();
-    await expect(page.getByTestId('settings-nav-messaging')).toBeVisible();
-    await expect(page.getByTestId('settings-nav-notifications')).toBeVisible();
     await expect(page.getByTestId('settings-nav-tools')).toBeVisible();
+    await expect(page.getByTestId('settings-nav-companion')).toBeVisible();
   });
 
   test('persists the default messaging channel through redux state', async ({ page }) => {
-    await openAuthenticatedRoute(page, 'pw-settings-default-channel', '/skills');
+    // Phase 2: default messaging channel moved to /connections (Messaging tab)
+    await openAuthenticatedRoute(page, 'pw-settings-default-channel', '/connections?tab=messaging');
 
-    const channelsTab = page.getByRole('tab', { name: 'Channels', exact: true });
-    if (await channelsTab.isVisible().catch(() => false)) {
-      await channelsTab.click();
+    const messagingTab = page.getByTestId('two-pane-nav-channels');
+    if (await messagingTab.isVisible().catch(() => false)) {
+      await messagingTab.click();
     }
 
     await expect(page.getByText('Default Messaging Channel').last()).toBeVisible();
@@ -134,10 +138,11 @@ test.describe('Settings - Feature Preferences', () => {
 
     await reloadAndWait(page);
 
-    await expect(page.getByText('Tools', { exact: true })).toBeVisible();
-    const shellToggle = page
-      .locator('button')
-      .filter({ has: page.getByText('Shell Commands', { exact: true }) });
+    // The two-pane sidebar also renders a "Tools" nav label, so scope to first.
+    await expect(page.getByText('Tools', { exact: true }).first()).toBeVisible();
+    // Tool rows are now SettingsRow + SettingsSwitch (role="switch", aria-label =
+    // the tool's display name), not a single text-bearing button.
+    const shellToggle = page.getByRole('switch', { name: 'Shell Commands', exact: true });
     await expect(shellToggle).toHaveAttribute('aria-checked', 'true');
     await shellToggle.click();
     await expect(shellToggle).toHaveAttribute('aria-checked', 'false');

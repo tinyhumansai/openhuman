@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderWithProviders } from '../../../../test/test-utils';
@@ -120,7 +120,7 @@ describe('AutocompletePanel (simplified)', () => {
   it('shows user-facing settings and can save style preset changes', async () => {
     renderWithProviders(<AutocompletePanel />, { initialEntries: ['/settings/autocomplete'] });
 
-    await screen.findByText('Autocomplete');
+    await screen.findByText('Style Preset');
 
     // Verify user-facing controls are present
     expect(screen.getByText('Enabled')).toBeInTheDocument();
@@ -132,9 +132,8 @@ describe('AutocompletePanel (simplified)', () => {
       expect(screen.getByText('Running: No')).toBeInTheDocument();
     });
 
-    // Change style preset and save
-    const presetRow = screen.getByText('Style Preset').closest('label');
-    const presetSelect = presetRow?.querySelector('select') as HTMLSelectElement;
+    // Change style preset and save using the labeled select
+    const presetSelect = screen.getByRole('combobox', { name: 'Style Preset' });
     fireEvent.change(presetSelect, { target: { value: 'concise' } });
 
     fireEvent.click(screen.getByRole('button', { name: 'Save Settings' }));
@@ -151,7 +150,7 @@ describe('AutocompletePanel (simplified)', () => {
   it('can start and stop the autocomplete runtime', async () => {
     renderWithProviders(<AutocompletePanel />, { initialEntries: ['/settings/autocomplete'] });
 
-    await screen.findByText('Autocomplete');
+    await screen.findByText('Style Preset');
 
     // Wait for status to load
     await waitFor(() => {
@@ -184,19 +183,16 @@ describe('AutocompletePanel (simplified)', () => {
 
     renderWithProviders(<AutocompletePanel />, { initialEntries: ['/settings/autocomplete'] });
 
-    await screen.findByText('Autocomplete');
+    await screen.findByText('Style Preset');
 
     // Wait for config to load
     await waitFor(() => {
       expect(screen.getByText('Running: No')).toBeInTheDocument();
     });
 
-    // Toggle enabled off and save
-    const enabledLabel = screen.getByText('Enabled').closest('label');
-    const enabledCheckbox = enabledLabel?.querySelector(
-      'input[type="checkbox"]'
-    ) as HTMLInputElement;
-    fireEvent.click(enabledCheckbox);
+    // Toggle enabled off via SettingsSwitch (role="switch")
+    const enabledSwitch = screen.getByRole('switch', { name: 'Enabled' });
+    fireEvent.click(enabledSwitch);
 
     fireEvent.click(screen.getByRole('button', { name: 'Save Settings' }));
 
@@ -215,7 +211,7 @@ describe('AutocompletePanel (simplified)', () => {
   it('shows the Advanced settings link', async () => {
     renderWithProviders(<AutocompletePanel />, { initialEntries: ['/settings/autocomplete'] });
 
-    await screen.findByText('Autocomplete');
+    await screen.findByText('Style Preset');
     expect(screen.getByText('Advanced settings')).toBeInTheDocument();
   });
 
@@ -226,11 +222,16 @@ describe('AutocompletePanel (simplified)', () => {
 
     renderWithProviders(<AutocompletePanel />, { initialEntries: ['/settings/autocomplete'] });
 
-    await screen.findByText('Autocomplete');
+    await screen.findByText('Style Preset');
 
-    const debounce = (await screen.findByTestId('autocomplete-debounce-ms')) as HTMLInputElement;
-    const maxChars = screen.getByTestId('autocomplete-max-chars') as HTMLInputElement;
-    const overlayTtl = screen.getByTestId('autocomplete-overlay-ttl-ms') as HTMLInputElement;
+    // SettingsNumberField wraps the input in a div; find the inner spinbutton
+    const debounceWrapper = await screen.findByTestId('autocomplete-debounce-ms');
+    const maxCharsWrapper = screen.getByTestId('autocomplete-max-chars');
+    const overlayTtlWrapper = screen.getByTestId('autocomplete-overlay-ttl-ms');
+
+    const debounce = within(debounceWrapper).getByRole('spinbutton') as HTMLInputElement;
+    const maxChars = within(maxCharsWrapper).getByRole('spinbutton') as HTMLInputElement;
+    const overlayTtl = within(overlayTtlWrapper).getByRole('spinbutton') as HTMLInputElement;
 
     // Seeded from loaded config.
     await waitFor(() => expect(debounce.value).toBe('500'));
@@ -253,10 +254,13 @@ describe('AutocompletePanel (simplified)', () => {
   it('allows clearing a tuning field mid-edit and clamps to safe minimums at save', async () => {
     renderWithProviders(<AutocompletePanel />, { initialEntries: ['/settings/autocomplete'] });
 
-    await screen.findByText('Autocomplete');
+    await screen.findByText('Style Preset');
 
-    const maxChars = (await screen.findByTestId('autocomplete-max-chars')) as HTMLInputElement;
-    const debounce = screen.getByTestId('autocomplete-debounce-ms') as HTMLInputElement;
+    const maxCharsWrapper = await screen.findByTestId('autocomplete-max-chars');
+    const debounceWrapper = screen.getByTestId('autocomplete-debounce-ms');
+
+    const maxChars = within(maxCharsWrapper).getByRole('spinbutton') as HTMLInputElement;
+    const debounce = within(debounceWrapper).getByRole('spinbutton') as HTMLInputElement;
 
     // Intermediate empty / zero states are preserved while typing (no snap).
     fireEvent.change(maxChars, { target: { value: '' } });
@@ -273,5 +277,109 @@ describe('AutocompletePanel (simplified)', () => {
         expect.objectContaining({ max_chars: 384, debounce_ms: 0 })
       );
     });
+  });
+
+  // ─── Disabled apps textarea ───────────────────────────────────────────────
+
+  it('seeds the disabled-apps textarea from config and saves changes', async () => {
+    runtime.config.disabled_apps = ['Slack', 'Zoom'];
+
+    renderWithProviders(<AutocompletePanel />, { initialEntries: ['/settings/autocomplete'] });
+    await screen.findByText('Style Preset');
+
+    const textarea = (await screen.findByRole('textbox', {
+      name: /disabled apps/i,
+    })) as HTMLTextAreaElement;
+
+    await waitFor(() => expect(textarea.value).toContain('Slack'));
+    expect(textarea.value).toContain('Zoom');
+
+    // Edit the textarea
+    fireEvent.change(textarea, { target: { value: 'Teams\nDiscord' } });
+    expect(textarea.value).toBe('Teams\nDiscord');
+
+    // Save includes updated disabled_apps
+    fireEvent.click(screen.getByRole('button', { name: 'Save Settings' }));
+    await waitFor(() => {
+      expect(openhumanAutocompleteSetStyle).toHaveBeenCalledWith(
+        expect.objectContaining({ disabled_apps: ['Teams', 'Discord'] })
+      );
+    });
+  });
+
+  // ─── onCommit callbacks on number fields ──────────────────────────────────
+
+  it('committing a debounce value via Enter triggers saveConfig', async () => {
+    renderWithProviders(<AutocompletePanel />, { initialEntries: ['/settings/autocomplete'] });
+    await screen.findByText('Style Preset');
+
+    const debounceWrapper = await screen.findByTestId('autocomplete-debounce-ms');
+    const debounce = within(debounceWrapper).getByRole('spinbutton') as HTMLInputElement;
+
+    fireEvent.change(debounce, { target: { value: '300' } });
+    // onCommit fires when SettingsNumberField calls its onCommit prop; simulate by
+    // pressing Enter which SettingsNumberField forwards to onCommit.
+    fireEvent.keyDown(debounce, { key: 'Enter' });
+
+    await waitFor(() => {
+      expect(openhumanAutocompleteSetStyle).toHaveBeenCalledWith(
+        expect.objectContaining({ debounce_ms: 300 })
+      );
+    });
+  });
+
+  it('committing a max-chars value triggers saveConfig', async () => {
+    renderWithProviders(<AutocompletePanel />, { initialEntries: ['/settings/autocomplete'] });
+    await screen.findByText('Style Preset');
+
+    const maxCharsWrapper = await screen.findByTestId('autocomplete-max-chars');
+    const maxChars = within(maxCharsWrapper).getByRole('spinbutton') as HTMLInputElement;
+
+    fireEvent.change(maxChars, { target: { value: '512' } });
+    fireEvent.keyDown(maxChars, { key: 'Enter' });
+
+    await waitFor(() => {
+      expect(openhumanAutocompleteSetStyle).toHaveBeenCalledWith(
+        expect.objectContaining({ max_chars: 512 })
+      );
+    });
+  });
+
+  it('committing an overlay-ttl value triggers saveConfig', async () => {
+    renderWithProviders(<AutocompletePanel />, { initialEntries: ['/settings/autocomplete'] });
+    await screen.findByText('Style Preset');
+
+    const overlayWrapper = await screen.findByTestId('autocomplete-overlay-ttl-ms');
+    const overlayTtl = within(overlayWrapper).getByRole('spinbutton') as HTMLInputElement;
+
+    fireEvent.change(overlayTtl, { target: { value: '2500' } });
+    fireEvent.keyDown(overlayTtl, { key: 'Enter' });
+
+    await waitFor(() => {
+      expect(openhumanAutocompleteSetStyle).toHaveBeenCalledWith(
+        expect.objectContaining({ overlay_ttl_ms: 2500 })
+      );
+    });
+  });
+
+  // ─── didNotStart branch ───────────────────────────────────────────────────
+
+  it('shows "did not start" message when autocomplete start returns started=false', async () => {
+    vi.mocked(openhumanAutocompleteStart).mockResolvedValueOnce({
+      result: { started: false },
+      logs: [],
+    });
+
+    renderWithProviders(<AutocompletePanel />, { initialEntries: ['/settings/autocomplete'] });
+    await screen.findByText('Style Preset');
+
+    await waitFor(() => expect(screen.getByText('Running: No')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start' }));
+    await waitFor(() => expect(openhumanAutocompleteStart).toHaveBeenCalled());
+
+    await waitFor(() =>
+      expect(screen.getByText(/did not start|autocomplete did not/i)).toBeInTheDocument()
+    );
   });
 });

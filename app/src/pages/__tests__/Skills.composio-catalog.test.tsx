@@ -78,15 +78,15 @@ describe('Skills page — Composio catalog fallback', () => {
     agentReadyState = { agentReady: new Set<string>(), loading: true, error: null };
   });
 
-  function openComposioTab() {
-    fireEvent.click(screen.getByRole('tab', { name: 'Composio' }));
+  function openAppsTab() {
+    fireEvent.click(screen.getByTestId('two-pane-nav-composio'));
   }
 
   it('shows known composio integrations in the integrations icon grid when the live toolkit list is empty', () => {
-    renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
-    openComposioTab();
+    renderWithProviders(<Skills />, { initialEntries: ['/connections'] });
+    openAppsTab();
 
-    expect(screen.getByRole('heading', { name: 'Composio Integrations' })).toBeInTheDocument();
+    expect(screen.getByTestId('composio-integrations-card')).toBeInTheDocument();
     expect(screen.getByText('Discord')).toBeInTheDocument();
     expect(screen.getByText('Google Calendar')).toBeInTheDocument();
     expect(screen.getByText('Google Drive')).toBeInTheDocument();
@@ -102,10 +102,7 @@ describe('Skills page — Composio catalog fallback', () => {
     // Scope to the Integrations section so the assertion still catches a
     // missing Composio Zoom tile even though the Meeting bots card also
     // renders a "Zoom" entry on the same page.
-    const integrationsSection = screen
-      .getByRole('heading', { name: 'Composio Integrations' })
-      .closest('.rounded-2xl');
-    expect(integrationsSection).not.toBeNull();
+    const integrationsSection = screen.getByTestId('composio-integrations-card');
     expect(within(integrationsSection as HTMLElement).getByText('Zoom')).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Other' })).not.toBeInTheDocument();
   });
@@ -113,16 +110,13 @@ describe('Skills page — Composio catalog fallback', () => {
   it('shows a stale/error state instead of disconnected toolkits when composio loading fails', () => {
     composioError = 'Backend unavailable';
 
-    renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
-    openComposioTab();
+    renderWithProviders(<Skills />, { initialEntries: ['/connections'] });
+    openAppsTab();
 
     expect(screen.getByText('Connections are showing stale status')).toBeInTheDocument();
     expect(screen.getByText('Backend unavailable')).toBeInTheDocument();
 
-    const integrationsSection = screen
-      .getByRole('heading', { name: 'Composio Integrations' })
-      .closest('.rounded-2xl');
-    expect(integrationsSection).not.toBeNull();
+    const integrationsSection = screen.getByTestId('composio-integrations-card');
     const gmailTile = within(integrationsSection as HTMLElement).getByRole('button', {
       name: /Gmail.*Status unavailable/i,
     });
@@ -139,13 +133,10 @@ describe('Skills page — Composio catalog fallback', () => {
       ['gmail', { id: 'ca_expired', toolkit: 'gmail', status: 'EXPIRED' }],
     ]);
 
-    renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
-    openComposioTab();
+    renderWithProviders(<Skills />, { initialEntries: ['/connections'] });
+    openAppsTab();
 
-    const integrationsSection = screen
-      .getByRole('heading', { name: 'Composio Integrations' })
-      .closest('.rounded-2xl');
-    expect(integrationsSection).not.toBeNull();
+    const integrationsSection = screen.getByTestId('composio-integrations-card');
     const gmailTile = within(integrationsSection as HTMLElement).getByRole('button', {
       name: /Gmail.*Auth expired.*Reconnect/i,
     });
@@ -174,13 +165,10 @@ describe('Skills page — Composio catalog fallback', () => {
     ]);
     agentReadyState = { agentReady: new Set(['gmail']), loading: false, error: null };
 
-    renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
-    openComposioTab();
+    renderWithProviders(<Skills />, { initialEntries: ['/connections'] });
+    openAppsTab();
 
-    const integrationsSection = screen
-      .getByRole('heading', { name: 'Composio Integrations' })
-      .closest('.rounded-2xl');
-    expect(integrationsSection).not.toBeNull();
+    const integrationsSection = screen.getByTestId('composio-integrations-card');
     expect(within(integrationsSection as HTMLElement).getByText('2')).toBeInTheDocument();
   });
 
@@ -194,13 +182,10 @@ describe('Skills page — Composio catalog fallback', () => {
     // misrepresenting the agent surface.
     agentReadyState = { agentReady: new Set<string>(), loading: false, error: 'rpc unavailable' };
 
-    renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
-    openComposioTab();
+    renderWithProviders(<Skills />, { initialEntries: ['/connections'] });
+    openAppsTab();
 
-    const integrationsSection = screen
-      .getByRole('heading', { name: 'Composio Integrations' })
-      .closest('.rounded-2xl');
-    expect(integrationsSection).not.toBeNull();
+    const integrationsSection = screen.getByTestId('composio-integrations-card');
     // No Preview badges anywhere in the integrations grid. The
     // badge carries a `data-testid` of the form
     // `composio-preview-badge-<slug>`; absence means we degraded
@@ -218,13 +203,10 @@ describe('Skills page — Composio catalog fallback', () => {
     ]);
     agentReadyState = { agentReady: new Set<string>(['gmail']), loading: false, error: null };
 
-    renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
-    openComposioTab();
+    renderWithProviders(<Skills />, { initialEntries: ['/connections'] });
+    openAppsTab();
 
-    const integrationsSection = screen
-      .getByRole('heading', { name: 'Composio Integrations' })
-      .closest('.rounded-2xl');
-    expect(integrationsSection).not.toBeNull();
+    const integrationsSection = screen.getByTestId('composio-integrations-card');
     const zohoTile = within(integrationsSection as HTMLElement).getByRole('button', {
       name: /Zoho Mail.*Preview/i,
     });
@@ -243,8 +225,8 @@ describe('Skills page — Composio catalog fallback', () => {
     sessionToken = 'header.payload.local';
     composioModeStatus = { result: { mode: 'direct', api_key_set: false }, logs: [] };
 
-    renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
-    openComposioTab();
+    renderWithProviders(<Skills />, { initialEntries: ['/connections'] });
+    openAppsTab();
 
     await waitFor(() => {
       expect(screen.getByText(/No Composio API Key Configured/i)).toBeInTheDocument();

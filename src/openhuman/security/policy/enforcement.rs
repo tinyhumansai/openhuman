@@ -109,6 +109,38 @@ impl SecurityPolicy {
             });
         }
 
+        // Dedicated, namespaced scratch dir (`/tmp/openhuman`) granted ReadWrite
+        // so the LLM's natural `/tmp/...` temp-file habit lands in a sandboxed,
+        // trusted location instead of the world-shared `/tmp`. Only this subdir
+        // is ever trusted — never `/tmp` itself. Created here with restrictive
+        // perms and refused if it exists as a symlink (TOCTOU hardening, since
+        // `/tmp` is world-writable and the name is predictable).
+        match ensure_openhuman_scratch_dir() {
+            Some(scratch) => {
+                let scratch_str = scratch.to_string_lossy().to_string();
+                if trusted_roots.iter().any(|r| r.path == scratch_str) {
+                    tracing::debug!(
+                        path = %scratch_str,
+                        "[policy][scratch] scratch dir already a trusted root — skipping grant"
+                    );
+                } else {
+                    tracing::debug!(
+                        path = %scratch_str,
+                        "[policy][scratch] granting scratch dir as ReadWrite trusted root"
+                    );
+                    trusted_roots.push(TrustedRoot {
+                        path: scratch_str,
+                        access: TrustedAccess::ReadWrite,
+                    });
+                }
+            }
+            None => {
+                tracing::debug!(
+                    "[policy][scratch] scratch dir unavailable (create/validation failed) — not granting"
+                );
+            }
+        }
+
         Self {
             autonomy: autonomy_config.level,
             workspace_dir: workspace_dir.to_path_buf(),
@@ -127,6 +159,62 @@ impl SecurityPolicy {
             canonical_workspace: Arc::new(OnceCell::new()),
         }
     }
+}
+
+/// The dedicated, namespaced scratch directory granted to the agent so its
+/// natural `/tmp/...` temp-file habit lands in a sandboxed, trusted location
+/// rather than the world-shared `/tmp`. Only this subdir is ever trusted —
+/// never `/tmp` itself. On Windows, falls back to the per-user temp dir.
+pub fn openhuman_scratch_dir() -> std::path::PathBuf {
+    #[cfg(windows)]
+    {
+        std::env::temp_dir().join("openhuman")
+    }
+    #[cfg(not(windows))]
+    {
+        std::path::PathBuf::from("/tmp/openhuman")
+    }
+}
+
+/// Create [`openhuman_scratch_dir`] with restrictive perms, best-effort.
+/// Returns `None` (and grants nothing) if the path already exists as a
+/// symlink — TOCTOU hardening, since the parent `/tmp` is world-writable and
+/// the name is predictable. Idempotent: safe to call on every policy build.
+pub fn ensure_openhuman_scratch_dir() -> Option<std::path::PathBuf> {
+    let dir = openhuman_scratch_dir();
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        tracing::warn!(path = %dir.display(), error = %e, "[security][scratch] failed to create scratch dir");
+        return None;
+    }
+    // Re-validate AFTER creation, and fail closed. `/tmp` is world-writable, so a
+    // local user could have raced or pre-created `/tmp/openhuman` (e.g. as a
+    // symlink) before we got here; a pre-create check alone can still hand back
+    // an unsafe path. `symlink_metadata` does not follow the final component, so
+    // a symlink is detected here even if its target is a real directory.
+    let meta = match std::fs::symlink_metadata(&dir) {
+        Ok(meta) => meta,
+        Err(e) => {
+            tracing::warn!(path = %dir.display(), error = %e, "[security][scratch] failed to stat scratch dir — refusing to grant");
+            return None;
+        }
+    };
+    if meta.file_type().is_symlink() || !meta.is_dir() {
+        tracing::warn!(
+            path = %dir.display(),
+            "[security][scratch] scratch path is a symlink or not a directory — refusing to grant it as a trusted root"
+        );
+        return None;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Err(e) = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)) {
+            tracing::warn!(path = %dir.display(), error = %e, "[security][scratch] failed to harden scratch dir perms — refusing to grant");
+            return None;
+        }
+    }
+    tracing::debug!(path = %dir.display(), "[security][scratch] scratch dir ensured (0700, real dir)");
+    Some(dir)
 }
 
 /// Validate that a file path resolves within a given root directory.
@@ -154,4 +242,28 @@ pub fn validate_path_within_root(
         ));
     }
     Ok(resolved)
+}
+
+#[cfg(test)]
+mod scratch_dir_tests {
+    use super::{ensure_openhuman_scratch_dir, openhuman_scratch_dir};
+
+    #[test]
+    fn scratch_dir_is_namespaced_on_every_platform() {
+        // Always the dedicated `openhuman` scratch namespace — never a bare
+        // temp root, so only this subdir is ever granted as a trusted root.
+        let dir = openhuman_scratch_dir();
+        assert_eq!(dir.file_name().and_then(|s| s.to_str()), Some("openhuman"));
+        #[cfg(not(windows))]
+        assert_eq!(dir, std::path::PathBuf::from("/tmp/openhuman"));
+    }
+
+    #[test]
+    fn ensure_scratch_dir_creates_and_returns_it() {
+        // Idempotent: creates the dir, returns its path, and it exists after.
+        let ensured = ensure_openhuman_scratch_dir();
+        let expected = openhuman_scratch_dir();
+        assert_eq!(ensured.as_deref(), Some(expected.as_path()));
+        assert!(expected.is_dir());
+    }
 }

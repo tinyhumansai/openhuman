@@ -9,7 +9,6 @@ import {
 const MOCK_ADMIN_BASE = `http://127.0.0.1:${process.env.E2E_MOCK_PORT || '18473'}`;
 const USER_ID = 'pw-harness-channel-bridge';
 const CANARY = 'canary-cb1-cron-standup';
-const MEMORY_TRIGGER_RESPONSE = { content: 'No relevant memory context.' };
 
 async function resetMock(): Promise<void> {
   await fetch(`${MOCK_ADMIN_BASE}/__admin/reset`, {
@@ -112,7 +111,6 @@ test.describe('Harness - Cross-channel bridge flow', () => {
     await setMockBehavior(
       'llmForcedResponses',
       JSON.stringify([
-        MEMORY_TRIGGER_RESPONSE,
         {
           content: '',
           toolCalls: [

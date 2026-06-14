@@ -31,8 +31,8 @@
 // callers are unaffected.
 pub use super::ops_create::{create_workflow, CreateWorkflowParams, WorkflowCreateInputDef};
 pub use super::ops_discover::{
-    discover_workflows, init_workflows_dir, is_workspace_trusted, load_workflow_metadata,
-    read_workflow_resource,
+    discover_automations, discover_workflows, init_workflows_dir, is_workspace_trusted,
+    load_workflow_metadata, read_workflow_resource,
 };
 pub use super::ops_install::{
     install_workflow_from_url, uninstall_workflow, validate_install_url, validate_resolved_host,

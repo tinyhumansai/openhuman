@@ -11,7 +11,9 @@ omit_safety_preamble = false
 omit_skills_catalog = true
 omit_profile = true
 omit_memory_md = true
-trigger_memory_agent = "always"
+# No eager memory pre-fetch. `omit_memory_context = false` keeps the cheap
+# per-turn recall for grounding decks in prior context; the deep memory-tree
+# walk is the orchestrator's on-demand concern (`delegate_retrieve_memory`).
 
 [model]
 hint = "agentic"

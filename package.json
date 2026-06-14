@@ -37,6 +37,7 @@
     "pr:checklist": "node scripts/check-pr-checklist.mjs",
     "pr:sync-main": "node scripts/merge-main-into-open-prs.mjs",
     "release:notes": "node scripts/release/generate-release-notes.mjs",
+    "release:notes:preview": "bash -c 'source scripts/load-dotenv.sh && node scripts/release/generate-release-notes.mjs --from latest-release --to main --output CHANGELOG.preview.md'",
     "rabbit": "bash scripts/rabbit/cli.sh",
     "reset": "bash scripts/shortcuts/ws-reset.sh",
     "deep-work": "bash scripts/deep-work/cli.sh",

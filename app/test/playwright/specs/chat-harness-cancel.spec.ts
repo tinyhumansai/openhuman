@@ -129,9 +129,9 @@ test.describe('Chat Harness - Cancel', () => {
 
     await page.getByRole('button', { name: 'Cancel' }).click();
 
-    await page.waitForTimeout(3_500);
+    await expect(page.getByRole('button', { name: 'Cancel' })).toHaveCount(0, { timeout: 10_000 });
     for (const piece of LATE_PIECES) {
-      await expect(page.getByText(piece, { exact: false })).toHaveCount(0);
+      await expect(page.getByText(piece, { exact: false })).toHaveCount(0, { timeout: 5_000 });
     }
 
     const composer = page.getByPlaceholder('How can I help you today?');

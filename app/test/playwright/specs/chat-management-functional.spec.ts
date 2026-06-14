@@ -7,7 +7,6 @@ import {
 } from '../helpers/core-rpc';
 
 const MOCK_BASE = `http://127.0.0.1:${process.env.E2E_MOCK_PORT || '18473'}`;
-const MEMORY_TRIGGER_RESPONSE = { content: 'No relevant memory context.' };
 
 async function setMockBehavior(behavior: Record<string, unknown>): Promise<void> {
   await fetch(`${MOCK_BASE}/__admin/behavior`, {
@@ -77,10 +76,7 @@ test.describe('Chat management functional coverage', () => {
   }) => {
     await resetMock();
     await setMockBehavior({
-      llmForcedResponses: JSON.stringify([
-        MEMORY_TRIGGER_RESPONSE,
-        { content: 'Attachment received by the assistant.' },
-      ]),
+      llmForcedResponses: JSON.stringify([{ content: 'Attachment received by the assistant.' }]),
       llmStreamChunkDelayMs: '5',
     });
     await openChat(page, 'pw-chat-attachments');
@@ -138,7 +134,13 @@ test.describe('Chat management functional coverage', () => {
           typeof request.body === 'string' &&
           request.body.includes('Summarize this file')
       )?.body ?? '';
-    expect(completionBody).toContain('reasoning');
+    // Attaching a document no longer auto-switches the chat profile to
+    // Reasoning — it is text-extracted and sent through the selected profile's
+    // model (the default profile resolves to the chat tier). Assert on the
+    // request's `model` field only, so the word "reasoning" appearing elsewhere
+    // in the payload (e.g. the system prompt) can't mask a regression.
+    const completionModel = String(JSON.parse(completionBody).model ?? '');
+    expect(completionModel).not.toContain('reasoning');
     expect(completionBody).toContain('[FILE-EXTRACTED:');
     expect(completionBody).toContain('renderer uploaded text document');
   });

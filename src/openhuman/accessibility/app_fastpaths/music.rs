@@ -7,13 +7,32 @@
 //! the injectable [`AutomateBackend`], so the whole flow is unit-testable with a
 //! scripted backend — no live Music, no model.
 
+use super::super::ax_interact::AXElement;
 use super::AutomateBackend;
 use super::AutomateOutcome;
 
 const APP: &str = "Music";
 
-/// Element roles that represent a tappable search result / song row.
-const ROW_ROLES: &[&str] = &["AXCell", "AXRow", "ListItem", "AXButton", "AXStaticText"];
+/// Roles that represent an actual song/track ROW — the preferred press target,
+/// because pressing one navigates into (and can play) the track.
+const SONG_ROLES: &[&str] = &["AXCell", "AXRow", "ListItem"];
+/// Secondary roles — artist names, album headers, static text. Pressing these
+/// usually only *navigates* (to an artist/album page), so they're a last resort
+/// and we flag them so the caller can report honestly.
+const OTHER_ROW_ROLES: &[&str] = &["AXButton", "AXStaticText"];
+
+fn role_in(role: &str, set: &[&str]) -> bool {
+    set.iter().any(|r| role.contains(r))
+}
+
+/// A chosen press target plus whether it's a real song row (vs an artist/album
+/// element that only navigates). The caller uses `is_song` to avoid claiming
+/// "Playing X" when it merely opened an artist page.
+#[derive(Debug, Clone, PartialEq)]
+struct PickedRow {
+    label: String,
+    is_song: bool,
+}
 
 /// Does this (app, goal) look like an Apple Music "play X" request?
 pub fn matches(app: &str, goal: &str) -> bool {
@@ -86,6 +105,38 @@ pub fn extract_play_query(goal: &str) -> Option<String> {
     } else {
         Some(q)
     }
+}
+
+/// Pull the requested artist out of a "play X by <artist>" goal — used to
+/// verify we played the *right* track. The Apple Music AX row label is
+/// title-only ("Numb - Single"), so a "Numb" search can resolve to the wrong
+/// artist; the artist lets us confirm via the now-playing track. `None` when no
+/// "by <artist>" clause is present.
+pub(crate) fn extract_artist(goal: &str) -> Option<String> {
+    let lower = goal.to_lowercase();
+    let p = lower.find(" by ")?;
+    let after = &goal[p + " by ".len()..];
+    // Cut at the first clause boundary.
+    let mut end = after.len();
+    for delim in [",", " and ", " then ", " in ", " on ", " from ", " for "] {
+        if let Some(q) = after.to_lowercase().find(delim) {
+            end = end.min(q);
+        }
+    }
+    let artist = after[..end].trim().trim_matches('"').trim().to_string();
+    if artist.is_empty() || is_pronoun(&artist) {
+        None
+    } else {
+        Some(artist)
+    }
+}
+
+/// Loose artist comparison: case-insensitive, matching if either string
+/// contains the other (so "Linkin Park" matches "Linkin Park feat. …").
+fn artist_matches(want: &str, got: &str) -> bool {
+    let w = want.trim().to_lowercase();
+    let g = got.trim().to_lowercase();
+    !w.is_empty() && !g.is_empty() && (g.contains(&w) || w.contains(&g))
 }
 
 /// Strip a trailing "(in|on) [apple] music" and rewrite " by " → " ".
@@ -216,26 +267,71 @@ fn first_token(query: &str) -> String {
         .to_string()
 }
 
-/// Choose the best matching row from a perceive snapshot: an exact label match
-/// first, else the first row-role element whose label shares a word with the
-/// query. Returns the element label to press.
-fn pick_row(elements: &[super::super::ax_interact::AXElement], query: &str) -> Option<String> {
+/// Choose the best press target. Preference order: an exact-label **song row**,
+/// then a token-matching **song row**, then any exact-label element, and only as
+/// a last resort an artist/album element (which merely navigates). Returns the
+/// label *and* whether it's a real song row, so the caller never falsely claims
+/// playback after pressing an artist/album header.
+///
+/// (We deliberately do NOT skip elements whose reported `enabled` is false —
+/// Apple Music marks pressable result rows as disabled; see AXElement::enabled.)
+fn pick_row(elements: &[AXElement], query: &str) -> Option<PickedRow> {
     let ql = query.to_lowercase();
-    // Exact label match wins. (We deliberately do NOT skip elements whose
-    // reported `enabled` is false — Apple Music marks pressable result rows as
-    // disabled; see AXElement::enabled docs.)
-    if let Some(e) = elements.iter().find(|e| e.label.to_lowercase() == ql) {
-        return Some(e.label.clone());
-    }
     let tokens: Vec<&str> = ql.split_whitespace().filter(|t| t.len() > 2).collect();
+    let token_hit = |e: &&AXElement| {
+        let l = e.label.to_lowercase();
+        tokens.iter().any(|t| l.contains(t))
+    };
+    let song = |e: &&AXElement| role_in(&e.role, SONG_ROLES);
+
+    // 1. Exact match on a song row.
+    if let Some(e) = elements
+        .iter()
+        .find(|e| song(e) && e.label.to_lowercase() == ql)
+    {
+        return Some(PickedRow {
+            label: e.label.clone(),
+            is_song: true,
+        });
+    }
+    // 2. Token match on a song row.
+    if let Some(e) = elements.iter().find(|e| song(e) && token_hit(e)) {
+        return Some(PickedRow {
+            label: e.label.clone(),
+            is_song: true,
+        });
+    }
+    // 3. Exact match on any element.
+    if let Some(e) = elements.iter().find(|e| e.label.to_lowercase() == ql) {
+        return Some(PickedRow {
+            label: e.label.clone(),
+            is_song: role_in(&e.role, SONG_ROLES),
+        });
+    }
+    // 4. Last resort: an artist/album element that token-matches (navigates).
     elements
         .iter()
-        .filter(|e| ROW_ROLES.iter().any(|r| e.role.contains(r)))
-        .find(|e| {
-            let l = e.label.to_lowercase();
-            tokens.iter().any(|t| l.contains(t))
+        .find(|e| role_in(&e.role, OTHER_ROW_ROLES) && token_hit(e))
+        .map(|e| PickedRow {
+            label: e.label.clone(),
+            is_song: false,
         })
-        .map(|e| e.label.clone())
+}
+
+/// Up to 5 distinct song-row labels currently visible — surfaced in failure
+/// responses so the agent (or user) can see what *was* found and choose.
+fn candidate_labels(elements: &[AXElement]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for e in elements.iter().filter(|e| role_in(&e.role, SONG_ROLES)) {
+        let l = e.label.trim().to_string();
+        if !l.is_empty() && !out.contains(&l) {
+            out.push(l);
+            if out.len() >= 5 {
+                break;
+            }
+        }
+    }
+    out
 }
 
 /// Run the play fast-path. Returns a failed [`AutomateOutcome`] (not a panic)
@@ -249,7 +345,10 @@ pub async fn run(goal: &str, backend: &dyn AutomateBackend) -> AutomateOutcome {
             return fail("not a play request", steps);
         }
     };
-    log::info!("[automate::music] ▶ play query={query:?}");
+    // The artist the user asked for (if any), used to confirm we played the
+    // right track — the AX row label alone can't disambiguate same-titled songs.
+    let want_artist = extract_artist(goal);
+    log::info!("[automate::music] ▶ play query={query:?} artist={want_artist:?}");
     use super::super::automate::progress;
     use crate::openhuman::overlay::OverlayAttentionTone;
     progress(
@@ -278,14 +377,17 @@ pub async fn run(goal: &str, backend: &dyn AutomateBackend) -> AutomateOutcome {
     //    filter the snapshot by one strong token (a substring filter can't
     //    match a whole multi-word title).
     let filter = first_token(&query);
-    let mut row = None;
+    let mut row: Option<PickedRow> = None;
+    let mut last_els: Vec<AXElement> = Vec::new();
     for attempt in 0..6 {
         backend.settle(APP).await;
         let els = backend.perceive(APP, &filter).await.unwrap_or_default();
         if let Some(r) = pick_row(&els, &query) {
+            last_els = els;
             row = Some(r);
             break;
         }
+        last_els = els;
         // Catalog search results arrive asynchronously (~3-4s); element-count
         // settle can report "stable" while the network fetch is still pending,
         // so wait real time between attempts rather than spinning instantly.
@@ -293,19 +395,26 @@ pub async fn run(goal: &str, backend: &dyn AutomateBackend) -> AutomateOutcome {
         backend.wait(800).await;
     }
     let row = match row {
+        // #1/#2: when nothing matched, list what WAS found and tell the agent
+        // not to repeat the same search — so it tries the library / asks the
+        // user instead of re-delegating the identical query.
+        None => return fail(&no_match_message(&query, &want_artist, &last_els), steps),
         Some(r) => r,
-        None => return fail("no matching song row found", steps),
     };
     // Baseline count of "Play" controls *before* navigating, so we can tell
     // when the song's detail-page Play has actually rendered (vs. only the
     // toolbar transport Play that's always present).
     let plays_before = count_play_buttons(backend).await;
 
-    match backend.act_press(APP, &row).await {
-        Ok(m) => steps.push(format!("open song: {m}")),
+    // #4: record what KIND of element we pressed — a song row that plays, or an
+    // artist/album element that only navigates.
+    let pressed_song = row.is_song;
+    let kind = if pressed_song { "song" } else { "artist/album" };
+    match backend.act_press(APP, &row.label).await {
+        Ok(m) => steps.push(format!("open {kind} '{}': {m}", row.label)),
         Err(e) => {
-            steps.push(format!("open song FAILED: {e}"));
-            return fail("could not open the song", steps);
+            steps.push(format!("open {kind} FAILED: {e}"));
+            return fail("could not open the result", steps);
         }
     }
 
@@ -349,25 +458,114 @@ pub async fn run(goal: &str, backend: &dyn AutomateBackend) -> AutomateOutcome {
         }
     }
 
-    match verified {
-        Some(false) => {
-            steps.push("verify: player state never reached 'playing'".to_string());
-            fail("opened the song but playback didn't start", steps)
-        }
-        Some(true) => {
-            steps.push("verify: playing ✓".to_string());
-            progress(format!("Playing {query}"), OverlayAttentionTone::Success);
+    if matches!(verified, Some(false)) {
+        steps.push("verify: player state never reached 'playing'".to_string());
+        return fail("opened the song but playback didn't start", steps);
+    }
+
+    // 6. Confirm we played the RIGHT track. The AX row label carries only the
+    //    title, so "Numb" can land on the wrong artist (this is the exact bug we
+    //    hit live). Ask Music for the now-playing name + artist and check it
+    //    against the requested artist — so we never falsely claim success on a
+    //    wrong-artist match, and the summary names what's actually playing.
+    let now = backend.now_playing().await;
+    let candidates = candidate_labels(&last_els);
+    match (&want_artist, &now) {
+        // #1/#3: played, but the wrong artist — name what's actually playing,
+        // list the alternatives, and tell the agent NOT to repeat the search
+        // (success=true so this guidance reaches the user instead of being
+        // discarded by a fall-through to the model loop).
+        (Some(want), Some((name, got))) if !artist_matches(want, got) => {
+            steps.push(format!(
+                "verify: now playing '{name}' by '{got}' — wanted '{want}' (mismatch)"
+            ));
+            progress(
+                format!("Playing {name} — not {want}"),
+                OverlayAttentionTone::Neutral,
+            );
             AutomateOutcome {
                 success: true,
-                summary: format!("Playing '{query}' in Music."),
+                summary: format!(
+                    "Now playing '{name}' by '{got}', not '{query}' by '{want}'. {}Re-running this search won't surface a different result — try the user's Library, or ask them to confirm the artist.",
+                    candidates_phrase(&candidates),
+                ),
                 steps,
             }
         }
-        None => AutomateOutcome {
-            success: true,
-            summary: format!("Started '{query}' in Music (playback unverified)."),
-            steps,
-        },
+        // #3: verified the actual track (right artist, or none requested).
+        (_, Some((name, got))) => {
+            steps.push(format!("verify: now playing '{name}' by '{got}' ✓"));
+            progress(format!("Playing {name}"), OverlayAttentionTone::Success);
+            AutomateOutcome {
+                success: true,
+                summary: format!("Playing '{name}' by '{got}' in Music."),
+                steps,
+            }
+        }
+        // #3/#4: can't read the track. Never claim "Playing X" — and if we only
+        // pressed an artist/album element (which just navigates), say so.
+        (_, None) if !pressed_song => {
+            steps.push("verify: pressed an artist/album element (navigation only)".to_string());
+            AutomateOutcome {
+                success: true,
+                summary: format!(
+                    "Opened an artist/album page for '{query}' but no specific track started — pressing that only navigates. {}Open a specific song to play it.",
+                    candidates_phrase(&candidates),
+                ),
+                steps,
+            }
+        }
+        // Song row pressed, but the backend can't confirm the track (non-macOS).
+        (_, None) => {
+            let unverified = matches!(verified, None);
+            steps.push(if unverified {
+                "verify: playback unverified".to_string()
+            } else {
+                "verify: playing ✓ (track name unknown)".to_string()
+            });
+            if !unverified {
+                progress(format!("Playing {query}"), OverlayAttentionTone::Success);
+            }
+            AutomateOutcome {
+                success: true,
+                summary: if unverified {
+                    format!("Started '{query}' in Music (playback unverified).")
+                } else {
+                    format!("Playing '{query}' in Music.")
+                },
+                steps,
+            }
+        }
+    }
+}
+
+/// "Results seen: a, b, c. " — or empty when nothing was captured. Lets failure
+/// responses show the agent/user the actual candidates to choose from.
+fn candidates_phrase(cands: &[String]) -> String {
+    if cands.is_empty() {
+        String::new()
+    } else {
+        format!("Results seen: {}. ", cands.join(", "))
+    }
+}
+
+/// Build the "no match" response: list what was found (if anything) and steer
+/// the agent away from blindly repeating the identical search.
+fn no_match_message(query: &str, want_artist: &Option<String>, els: &[AXElement]) -> String {
+    let cands = candidate_labels(els);
+    let by = want_artist
+        .as_deref()
+        .map(|a| format!(" by '{a}'"))
+        .unwrap_or_default();
+    if cands.is_empty() {
+        format!(
+            "No song results found for '{query}'{by} — the search may not have loaded, or the track isn't in the catalog/library. Don't repeat this exact search; try the user's Library or ask them to confirm the title/artist."
+        )
+    } else {
+        format!(
+            "Couldn't find '{query}'{by}. Results seen: {}. Re-running this search won't help — pick the closest match, try the Library, or ask the user.",
+            cands.join(", ")
+        )
     }
 }
 
@@ -423,17 +621,73 @@ mod unit {
     }
 
     #[test]
-    fn pick_row_prefers_exact_then_token() {
-        use super::super::super::ax_interact::AXElement;
+    fn extract_artist_pulls_by_clause() {
+        assert_eq!(
+            extract_artist("play Numb by Linkin Park").as_deref(),
+            Some("Linkin Park")
+        );
+        // Trailing clause is cut.
+        assert_eq!(
+            extract_artist("play Highway to Hell by AC/DC in Apple Music").as_deref(),
+            Some("AC/DC")
+        );
+        assert_eq!(
+            extract_artist("search for \"Numb\" by Linkin Park and play it").as_deref(),
+            Some("Linkin Park")
+        );
+        // No "by" clause → None.
+        assert_eq!(extract_artist("play Numb"), None);
+    }
+
+    #[test]
+    fn artist_matches_is_loose() {
+        assert!(artist_matches("Linkin Park", "Linkin Park"));
+        assert!(artist_matches("Linkin Park", "Linkin Park feat. Jay-Z"));
+        assert!(artist_matches("ac/dc", "AC/DC"));
+        assert!(!artist_matches("Linkin Park", "Tom Odell"));
+    }
+
+    #[test]
+    fn pick_row_prefers_song_row_over_artist() {
+        // Token match (query has extra "AC/DC" the row label lacks).
         let els = vec![
             AXElement::new("AXCell", "Highway to Hell"),
             AXElement::new("AXButton", "Play"),
         ];
-        // Token match (query has extra "AC/DC" the row label lacks).
-        assert_eq!(
-            pick_row(&els, "Highway to Hell AC/DC").as_deref(),
-            Some("Highway to Hell")
-        );
+        let p = pick_row(&els, "Highway to Hell AC/DC").unwrap();
+        assert_eq!(p.label, "Highway to Hell");
+        assert!(p.is_song);
+
+        // An artist AXButton and a song AXCell both token-match "Linkin Park
+        // Numb" — the SONG row must win (the live bug pressed the artist).
+        let els2 = vec![
+            AXElement::new("AXButton", "LINKIN PARK"),
+            AXElement::new("AXCell", "Numb"),
+        ];
+        let p2 = pick_row(&els2, "Linkin Park Numb").unwrap();
+        assert_eq!(p2.label, "Numb");
+        assert!(p2.is_song);
+
+        // Only an artist element is present → chosen, but flagged non-song.
+        let els3 = vec![AXElement::new("AXButton", "LINKIN PARK")];
+        let p3 = pick_row(&els3, "Linkin Park Numb").unwrap();
+        assert_eq!(p3.label, "LINKIN PARK");
+        assert!(!p3.is_song);
+    }
+
+    #[test]
+    fn no_match_message_lists_candidates_and_warns() {
+        let els = vec![
+            AXElement::new("AXCell", "Numb - Marshmello & Khalid"),
+            AXElement::new("AXCell", "Numb - Tom Odell"),
+            AXElement::new("AXButton", "Play"), // not a song row → excluded
+        ];
+        let m = no_match_message("Numb Linkin Park", &Some("Linkin Park".into()), &els);
+        assert!(m.contains("Marshmello") && m.contains("Tom Odell"), "{m}");
+        assert!(m.to_lowercase().contains("won't help"), "{m}");
+        // Empty results → still actionable, no fake candidate list.
+        let m2 = no_match_message("Numb", &None, &[]);
+        assert!(m2.to_lowercase().contains("don't repeat"), "{m2}");
     }
 }
 

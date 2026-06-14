@@ -53,6 +53,11 @@ describe('isThreadVisibleInTab', () => {
         false
       );
     });
+
+    it('excludes meeting threads from the General bucket (folded into Tasks)', () => {
+      expect(isThreadVisibleInTab(thread({ labels: ['meetings'] }), GENERAL_TAB_VALUE)).toBe(false);
+      expect(isThreadVisibleInTab(thread({ labels: ['Meetings'] }), GENERAL_TAB_VALUE)).toBe(false);
+    });
   });
 
   describe('Subconscious bucket', () => {
@@ -94,6 +99,11 @@ describe('isThreadVisibleInTab', () => {
           TASKS_TAB_VALUE
         )
       ).toBe(true);
+    });
+
+    it('keeps meeting-labeled threads (meetings folded into tasks)', () => {
+      expect(isThreadVisibleInTab(thread({ labels: ['meetings'] }), TASKS_TAB_VALUE)).toBe(true);
+      expect(isThreadVisibleInTab(thread({ labels: ['Meetings'] }), TASKS_TAB_VALUE)).toBe(true);
     });
 
     it('excludes ordinary and subconscious threads', () => {
