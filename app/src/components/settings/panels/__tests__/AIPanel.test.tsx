@@ -2,6 +2,7 @@ import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { listConnections as listComposioConnections } from '../../../../lib/composio/composioApi';
+import { I18nProvider } from '../../../../lib/i18n/I18nContext';
 import {
   clearCloudProviderKey,
   completeOpenAiCodexOAuth,
@@ -430,6 +431,123 @@ describe('AIPanel', () => {
     expect(
       within(dialog).queryByRole('button', { name: /Sign in with ChatGPT \/ Codex/i })
     ).not.toBeInTheDocument();
+  });
+
+  it('shows a localized Kimi platform link and opens the supported .ai platform', async () => {
+    vi.mocked(loadAISettings).mockResolvedValue({ ...baseSettings, cloudProviders: [] });
+
+    renderWithProviders(
+      <I18nProvider>
+        <AIPanel />
+      </I18nProvider>
+    );
+
+    fireEvent.click(await screen.findByRole('switch', { name: /Kimi \(Moonshot\)/i }));
+    const dialog = await screen.findByRole('dialog', { name: /Kimi \(Moonshot\)/i });
+    const link = within(dialog).getByRole('link', { name: /^Get API key$/i });
+
+    expect(link).toHaveAttribute('href', 'https://platform.kimi.ai?aff=openhuman');
+
+    fireEvent.click(link);
+
+    expect(openUrl).toHaveBeenCalledWith('https://platform.kimi.ai?aff=openhuman');
+  });
+
+  it('logs Kimi platform link open failures without changing the dialog', async () => {
+    vi.mocked(loadAISettings).mockResolvedValue({ ...baseSettings, cloudProviders: [] });
+    vi.mocked(openUrl).mockRejectedValueOnce('blocked');
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    try {
+      renderWithProviders(
+        <I18nProvider>
+          <AIPanel />
+        </I18nProvider>
+      );
+
+      fireEvent.click(await screen.findByRole('switch', { name: /Kimi \(Moonshot\)/i }));
+      const dialog = await screen.findByRole('dialog', { name: /Kimi \(Moonshot\)/i });
+      fireEvent.click(within(dialog).getByRole('link', { name: /^Get API key$/i }));
+
+      await waitFor(() => {
+        expect(warnSpy).toHaveBeenCalledWith('[ai-settings] provider platform link open failed', {
+          slug: 'moonshot',
+          error: 'blocked',
+        });
+      });
+      expect(dialog).toBeInTheDocument();
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('localizes the Kimi platform link text for Chinese', async () => {
+    vi.mocked(loadAISettings).mockResolvedValue({ ...baseSettings, cloudProviders: [] });
+
+    renderWithProviders(
+      <I18nProvider>
+        <AIPanel />
+      </I18nProvider>,
+      { preloadedState: { locale: { current: 'zh-CN' } } }
+    );
+
+    fireEvent.click(await screen.findByRole('switch', { name: /Kimi \(Moonshot\)/i }));
+    const dialog = await screen.findByRole('dialog', { name: /Kimi \(Moonshot\)/i });
+
+    expect(within(dialog).getByRole('link', { name: '获取 API Key' })).toBeInTheDocument();
+  });
+
+  it('reserves logical inline space for long translated Kimi link labels', async () => {
+    vi.mocked(loadAISettings).mockResolvedValue({ ...baseSettings, cloudProviders: [] });
+
+    renderWithProviders(
+      <I18nProvider>
+        <AIPanel />
+      </I18nProvider>,
+      { preloadedState: { locale: { current: 'fr' } } }
+    );
+
+    fireEvent.click(await screen.findByRole('switch', { name: /Kimi \(Moonshot\)/i }));
+    const dialog = await screen.findByRole('dialog', { name: /Kimi \(Moonshot\)/i });
+    const heading = within(dialog).getByRole('heading', {
+      name: /Connecter un fournisseur Kimi \(Moonshot\)/i,
+    });
+
+    expect(heading.parentElement).toHaveStyle({ paddingInlineEnd: '9rem' });
+  });
+
+  it('positions the Kimi link at the logical inline end for RTL locales', async () => {
+    vi.mocked(loadAISettings).mockResolvedValue({ ...baseSettings, cloudProviders: [] });
+
+    renderWithProviders(
+      <I18nProvider>
+        <AIPanel />
+      </I18nProvider>,
+      { preloadedState: { locale: { current: 'ar' } } }
+    );
+
+    fireEvent.click(await screen.findByRole('switch', { name: /Kimi \(Moonshot\)/i }));
+    const dialog = await screen.findByRole('dialog', { name: /Kimi \(Moonshot\)/i });
+    const link = within(dialog).getByRole('link', { name: 'احصل على مفتاح API' });
+
+    expect(document.documentElement).toHaveAttribute('dir', 'rtl');
+    expect(link).toHaveStyle({ insetInlineEnd: '1.5rem' });
+    expect(link).not.toHaveClass('right-6');
+  });
+
+  it('does not show the Kimi platform link for other providers', async () => {
+    vi.mocked(loadAISettings).mockResolvedValue({ ...baseSettings, cloudProviders: [] });
+
+    renderWithProviders(
+      <I18nProvider>
+        <AIPanel />
+      </I18nProvider>
+    );
+
+    fireEvent.click(await screen.findByRole('switch', { name: /Connect OpenAI/i }));
+    const dialog = await screen.findByRole('dialog', { name: /Connect OpenAI/i });
+
+    expect(within(dialog).queryByRole('link', { name: /^Get API key$/i })).not.toBeInTheDocument();
   });
 
   it('renders Phase 1 built-in provider chips including SumoPod', async () => {
