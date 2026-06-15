@@ -89,9 +89,13 @@ export const WorkflowRunDetail: React.FC<Props> = ({
   const { t } = useT();
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
-  // Phase order: prefer the definition's declared order; fall back to whatever
-  // keys the run reports (so a run still renders if its definition is missing).
-  const phaseNames = definition?.phases.map(p => p.name) ?? Object.keys(run.phaseStates);
+  // Phase order: lead with the definition's declared order, then append any
+  // runtime-only phases the run reports but the definition doesn't list (so a
+  // run still renders its full progress during definition/version drift).
+  const declaredPhaseNames = definition?.phases.map(p => p.name) ?? [];
+  const declaredSet = new Set(declaredPhaseNames);
+  const runtimeOnlyPhaseNames = Object.keys(run.phaseStates).filter(name => !declaredSet.has(name));
+  const phaseNames = [...declaredPhaseNames, ...runtimeOnlyPhaseNames];
 
   const isRunning = run.status === 'running' || run.status === 'pending';
   const canResume = run.status === 'interrupted';
