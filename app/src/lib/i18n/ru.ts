@@ -3001,7 +3001,8 @@ const messages: TranslationMap = {
   'intelligence.agentWork.action.followUp': 'Уточнить',
   'intelligence.agentWork.action.send': 'Отправить',
   'intelligence.agentWork.action.cancel': 'Отмена',
-  'intelligence.agentWork.action.continuePlaceholder': 'Ответьте, чтобы разблокировать этого агента…',
+  'intelligence.agentWork.action.continuePlaceholder':
+    'Ответьте, чтобы разблокировать этого агента…',
   'intelligence.agentWork.action.followUpPlaceholder': 'Отправьте уточняющую инструкцию…',
   'intelligence.agentWork.action.failed': 'Не удалось выполнить действие',
   'intelligence.teams.subtitle':
