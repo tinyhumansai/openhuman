@@ -242,8 +242,12 @@ describe('IntelligenceOrchestrationTab — stop / resume controls', () => {
 
   it('stops a running run and reflects the interrupted snapshot', async () => {
     api.listRuns.mockResolvedValue([startedRun()]);
-    // Keep the run non-terminal so the Stop button renders; freeze the poll.
-    api.getRun.mockResolvedValue(startedRun());
+    // First poll snapshot is still running (Stop renders); once stopped the
+    // backend reports interrupted, so subsequent polls agree and don't race the
+    // stop result back to running (matches the serialized poll loop).
+    api.getRun
+      .mockResolvedValueOnce(startedRun())
+      .mockResolvedValue({ ...startedRun(), status: 'interrupted' });
     api.stopRun.mockResolvedValue({ ...startedRun(), status: 'interrupted' });
     render(<IntelligenceOrchestrationTab />);
 
