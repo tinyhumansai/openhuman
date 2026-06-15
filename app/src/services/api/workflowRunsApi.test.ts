@@ -98,6 +98,34 @@ describe('workflowRunsApi', () => {
     expect(await workflowRunsApi.listDefinitions()).toEqual([]);
   });
 
+  it('listRuns forwards filters and returns the runs array', async () => {
+    mockRpc.mockResolvedValueOnce({ runs: [run()], count: 1 });
+    const runs = await workflowRunsApi.listRuns({ limit: 50, status: 'running' });
+    expect(mockRpc).toHaveBeenCalledWith({
+      method: 'openhuman.workflow_run_list',
+      params: { limit: 50, status: 'running' },
+    });
+    expect(runs).toHaveLength(1);
+    expect(runs[0].id).toBe('wfrun-1');
+  });
+
+  it('listRuns defaults params and tolerates a missing array', async () => {
+    mockRpc.mockResolvedValueOnce({});
+    const runs = await workflowRunsApi.listRuns();
+    expect(mockRpc).toHaveBeenCalledWith({ method: 'openhuman.workflow_run_list', params: {} });
+    expect(runs).toEqual([]);
+  });
+
+  it('getRun returns the run when present', async () => {
+    mockRpc.mockResolvedValueOnce({ workflowRun: run() });
+    const fetched = await workflowRunsApi.getRun('wfrun-1');
+    expect(mockRpc).toHaveBeenCalledWith({
+      method: 'openhuman.workflow_run_get',
+      params: { id: 'wfrun-1' },
+    });
+    expect(fetched?.id).toBe('wfrun-1');
+  });
+
   it('startRun forwards definitionId + input and returns the run', async () => {
     mockRpc.mockResolvedValueOnce({ workflowRun: run() });
     const started = await workflowRunsApi.startRun({
