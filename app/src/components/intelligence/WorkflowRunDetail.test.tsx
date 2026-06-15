@@ -156,4 +156,45 @@ describe('WorkflowRunDetail — progress rendering', () => {
     fireEvent.click(screen.getByTestId('workflow-run-resume'));
     expect(onResume).toHaveBeenCalledWith('wfrun-1');
   });
+
+  it('falls back to phaseStates keys + raw phase name when the definition is missing', () => {
+    render(
+      <WorkflowRunDetail
+        definition={undefined}
+        run={run({
+          phaseStates: { decompose: { status: 'running', outputs: [] } },
+          childRunIds: [],
+        })}
+        onStop={vi.fn()}
+        onResume={vi.fn()}
+      />
+    );
+    // With no definition, the phase order comes from run.phaseStates and the
+    // label falls back to the raw phase name (WorkflowRunDetail.tsx:173).
+    const phases = screen.getByTestId('workflow-phase-list').querySelectorAll('li');
+    expect(phases).toHaveLength(1);
+    expect(screen.getByTestId('workflow-phase-decompose')).toHaveTextContent('decompose');
+  });
+
+  it('renders the failure reason for a failed phase', () => {
+    render(
+      <WorkflowRunDetail
+        definition={def()}
+        run={run({
+          status: 'failed',
+          phaseStates: {
+            decompose: { status: 'failed', outputs: [], reason: 'planner agent errored out' },
+            research: { status: 'pending', outputs: [] },
+            synthesize: { status: 'pending', outputs: [] },
+          },
+        })}
+        onStop={vi.fn()}
+        onResume={vi.fn()}
+      />
+    );
+    // The failed-phase reason banner (WorkflowRunDetail.tsx:197).
+    expect(screen.getByTestId('workflow-phase-decompose')).toHaveTextContent(
+      'planner agent errored out'
+    );
+  });
 });
