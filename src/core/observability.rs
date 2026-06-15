@@ -593,6 +593,27 @@ pub(crate) fn is_embedding_endpoint_absent(lower: &str) -> bool {
     lower.contains("embedding api error") && (lower.contains("(404") || lower.contains("(405"))
 }
 
+/// Detect an LM Studio local embeddings endpoint that is **reachable but has no
+/// model loaded** into memory. Canonical wire shape from
+/// `src/openhuman/embeddings/openai.rs` (LM Studio's OpenAI-compatible server
+/// answers `/embeddings` with a `400` whose body is its signature message):
+///
+/// ```text
+/// Embedding API error (400 Bad Request): {"error":"No models loaded. Please load a model in the developer page or use the 'lms load' command."}
+/// ```
+///
+/// Deterministic, user-fixable-now config state (TAURI-RUST-4P4, ~12.4k events
+/// / 10 users): the server is up but the user hasn't loaded a model. Unlike a
+/// generic `400` (oversized input — capped at source by #3598) this is a stable
+/// readiness gap the user resolves in one step. Reused by
+/// `embeddings::rpc::update_settings` as a save-time hard-block so a doomed LM
+/// Studio embeddings config can never be persisted in the first place, and the
+/// two anchors never drift. Requires the `embedding api error` prefix so an
+/// unrelated "no models loaded" log line elsewhere isn't swallowed.
+pub(crate) fn is_embedding_no_model_loaded(lower: &str) -> bool {
+    lower.contains("embedding api error") && lower.contains("no models loaded")
+}
+
 /// Detect the memory-store chunk DB's circuit-breaker-open message that
 /// `memory_store::chunks::store::get_or_init_connection` emits via
 /// `anyhow::bail!` when the per-path breaker rejects new init attempts.
@@ -3843,6 +3864,24 @@ mod tests {
             expected_error_kind("Embedding API error (405 Method Not Allowed): {}"),
             Some(ExpectedErrorKind::ProviderConfigRejection)
         );
+    }
+
+    #[test]
+    fn detects_embedding_no_model_loaded_for_save_gate() {
+        // TAURI-RUST-4P4 — LM Studio reachable but no model loaded. The
+        // save-time gate in `embeddings::rpc::update_settings` keys on this so
+        // the doomed config is never persisted. Both anchors required.
+        let body = r#"embedding api error (400 bad request): {"error":"no models loaded. please load a model in the developer page or use the 'lms load' command."}"#;
+        assert!(is_embedding_no_model_loaded(body));
+        // Prefix required: a bare "no models loaded" log line from elsewhere
+        // must NOT trip the embeddings save-gate.
+        assert!(!is_embedding_no_model_loaded(
+            "scheduler: no models loaded yet"
+        ));
+        // A real embedding 500 must not be mistaken for the readiness gap.
+        assert!(!is_embedding_no_model_loaded(
+            "embedding api error (500 internal server error): boom"
+        ));
     }
 
     #[test]
