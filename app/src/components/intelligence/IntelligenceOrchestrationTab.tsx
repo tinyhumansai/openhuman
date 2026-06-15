@@ -113,20 +113,31 @@ export default function IntelligenceOrchestrationTab() {
     if (isTerminal(selectedRun)) return; // nothing left to poll
 
     let cancelled = false;
+    let inFlight = false;
+    let handle: number | undefined;
+
     const tick = async () => {
+      if (cancelled || inFlight) return;
+      inFlight = true;
       try {
         const run = await workflowRunsApi.getRun(selectedRunId);
         if (cancelled || !mountedRef.current || !run) return;
         setSelectedRun(run);
         upsertRun(run);
+        if (!isTerminal(run)) {
+          handle = window.setTimeout(() => void tick(), POLL_INTERVAL_MS);
+        }
       } catch (err) {
         log('poll error %s', err instanceof Error ? err.message : String(err));
+      } finally {
+        inFlight = false;
       }
     };
-    const handle = window.setInterval(() => void tick(), POLL_INTERVAL_MS);
+
+    void tick();
     return () => {
       cancelled = true;
-      window.clearInterval(handle);
+      if (handle !== undefined) window.clearTimeout(handle);
     };
   }, [selectedRunId, selectedRun, upsertRun]);
 
