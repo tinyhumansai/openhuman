@@ -3061,7 +3061,7 @@ const messages: TranslationMap = {
   'worktree.diffLoading': 'Ładowanie diffa…',
   'worktree.diffEmpty': 'Brak zmian względem HEAD.',
   'worktree.dirtyConfirm':
-    'To worktree ma niezatwierdzone zmiany. Jego usunięcie odrzuci tę pracę. Gałąź procesu zostaje zachowana.',
+    'To worktree ma niezatwierdzone zmiany. Jego usunięcie odrzuci tę pracę. Gałąź workera zostaje zachowana.',
   'worktree.action.open': 'Otwórz folder',
   'worktree.action.diff': 'Diff',
   'worktree.action.hideDiff': 'Ukryj diff',
