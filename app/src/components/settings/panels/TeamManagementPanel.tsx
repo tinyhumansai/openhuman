@@ -4,8 +4,9 @@ import { useParams } from 'react-router-dom';
 import { useT } from '../../../lib/i18n/I18nContext';
 import { useCoreState } from '../../../providers/CoreStateProvider';
 import { teamApi } from '../../../services/api/teamApi';
+import PanelPage from '../../layout/PanelPage';
 import Button from '../../ui/Button';
-import SettingsHeader from '../components/SettingsHeader';
+import SettingsBackButton from '../components/SettingsBackButton';
 import SettingsMenuItem from '../components/SettingsMenuItem';
 import { SettingsSection, SettingsTextField } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
@@ -13,7 +14,7 @@ import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 const TeamManagementPanel = () => {
   const { t } = useT();
   const { teamId } = useParams<{ teamId: string }>();
-  const { navigateBack, navigateToSettings, breadcrumbs } = useSettingsNavigation();
+  const { navigateBack, navigateToSettings } = useSettingsNavigation();
   const { teams, refreshTeams } = useCoreState();
   const initialFetchAttemptedRef = useRef(false);
 
@@ -93,47 +94,40 @@ const TeamManagementPanel = () => {
 
   if (!teamEntry) {
     return (
-      <div className="z-10 relative">
-        <SettingsHeader
-          title={t('team.management')}
-          showBackButton={true}
-          onBack={navigateBack}
-          breadcrumbs={breadcrumbs}
-        />
+      <PanelPage
+        className="z-10"
+        contentClassName=""
+        description={t('pages.settings.account.teamDesc')}
+        leading={<SettingsBackButton onBack={navigateBack} />}>
         <div className="flex-1 flex items-center justify-center">
           <p className="text-sm text-neutral-500 dark:text-neutral-400">{t('team.notFound')}</p>
         </div>
-      </div>
+      </PanelPage>
     );
   }
 
   if (!isAdmin) {
     return (
-      <div className="z-10 relative">
-        <SettingsHeader
-          title={t('team.management')}
-          showBackButton={true}
-          onBack={navigateBack}
-          breadcrumbs={breadcrumbs}
-        />
+      <PanelPage
+        className="z-10"
+        contentClassName=""
+        description={t('pages.settings.account.teamDesc')}
+        leading={<SettingsBackButton onBack={navigateBack} />}>
         <div className="flex-1 flex items-center justify-center">
           <p className="text-sm text-neutral-500 dark:text-neutral-400">{t('team.accessDenied')}</p>
         </div>
-      </div>
+      </PanelPage>
     );
   }
 
   const { team } = teamEntry;
 
   return (
-    <div className="z-10 relative">
-      <SettingsHeader
-        title={t('team.manageTitle').replace('{name}', team.name)}
-        showBackButton={true}
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
-
+    <PanelPage
+      className="z-10"
+      contentClassName=""
+      description={t('pages.settings.account.teamDesc')}
+      leading={<SettingsBackButton onBack={navigateBack} />}>
       <div className="p-4 pt-2 space-y-5">
         {/* Team Info */}
         <SettingsSection>
@@ -346,7 +340,7 @@ const TeamManagementPanel = () => {
           </div>
         )}
       </div>
-    </div>
+    </PanelPage>
   );
 };
 

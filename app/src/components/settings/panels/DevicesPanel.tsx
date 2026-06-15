@@ -5,8 +5,9 @@ import { useT } from '../../../lib/i18n/I18nContext';
 import { callCoreRpc } from '../../../services/coreRpcClient';
 import type { ToastNotification } from '../../../types/intelligence';
 import { ToastContainer } from '../../intelligence/Toast';
+import PanelPage from '../../layout/PanelPage';
 import Button from '../../ui/Button';
-import SettingsHeader from '../components/SettingsHeader';
+import SettingsBackButton from '../components/SettingsBackButton';
 import {
   SettingsBadge,
   SettingsEmptyState,
@@ -164,7 +165,7 @@ function ConfirmRevokeDialog({
 
 const DevicesPanel = () => {
   const { t } = useT();
-  const { navigateBack, breadcrumbs } = useSettingsNavigation();
+  const { navigateBack } = useSettingsNavigation();
 
   const [devices, setDevices] = useState<PairedDevice[]>([]);
   const [loading, setLoading] = useState(true);
@@ -281,19 +282,16 @@ const DevicesPanel = () => {
   };
 
   return (
-    <div className="z-10 relative">
-      <SettingsHeader
-        title={t('devices.title')}
-        showBackButton={breadcrumbs.length > 0}
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-        action={
-          <Button type="button" variant="primary" size="xs" onClick={handleOpenPairModal}>
-            {t('devices.pairIphone')}
-          </Button>
-        }
-      />
-
+    <PanelPage
+      className="z-10"
+      contentClassName=""
+      description={t('settings.account.devicesDesc')}
+      leading={<SettingsBackButton onBack={navigateBack} />}
+      action={
+        <Button type="button" variant="primary" size="xs" onClick={handleOpenPairModal}>
+          {t('devices.pairIphone')}
+        </Button>
+      }>
       <div className="px-5 pb-3 flex items-center gap-2">
         {/* Bespoke beta badge — intentional marketing chip */}
         <SettingsBadge variant="warning">{t('devices.betaBadge')}</SettingsBadge>
@@ -384,7 +382,7 @@ const DevicesPanel = () => {
       {showPairModal && <PairPhoneModal onClose={handleClosePairModal} onPaired={handlePaired} />}
 
       <ToastContainer notifications={toasts} onRemove={removeToast} />
-    </div>
+    </PanelPage>
   );
 };
 

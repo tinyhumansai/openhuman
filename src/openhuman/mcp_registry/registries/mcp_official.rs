@@ -577,7 +577,9 @@ impl OfficialServer {
             connections.push(SmitheryConnection {
                 r#type: "http".to_string(),
                 deployment_url: r.url.clone(),
-                config_schema: None,
+                // Declared `headers` (e.g. `Authorization`) become the install
+                // form's input fields so the user can supply the remote's token.
+                config_schema: r.to_config_schema(),
                 example_config: None,
                 published: true,
                 extra: std::collections::HashMap::new(),
@@ -609,6 +611,63 @@ impl OfficialServer {
 struct OfficialRemote {
     #[serde(default)]
     url: Option<String>,
+    /// Auth/config inputs the remote requires, sent as HTTP request headers
+    /// (e.g. `Authorization: Bearer <token>`). Surfaced to the install form
+    /// as a config schema so labelled remotes prompt for their secret.
+    #[serde(default)]
+    headers: Vec<OfficialHeader>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct OfficialHeader {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default, rename = "isRequired")]
+    is_required: Option<bool>,
+    #[serde(default, rename = "isSecret")]
+    is_secret: Option<bool>,
+}
+
+impl OfficialRemote {
+    /// Build a config schema (same shape as a package's env-var schema) from
+    /// the remote's declared headers, so the install form renders an input per
+    /// required header. Returns `None` when the remote declares no headers.
+    fn to_config_schema(&self) -> Option<Value> {
+        if self.headers.is_empty() {
+            return None;
+        }
+        let mut properties = serde_json::Map::new();
+        for h in &self.headers {
+            if h.name.is_empty() {
+                continue;
+            }
+            let mut prop = serde_json::Map::new();
+            if let Some(desc) = &h.description {
+                prop.insert("description".into(), Value::String(desc.clone()));
+            }
+            if h.is_secret == Some(true) {
+                prop.insert("x-secret".into(), Value::Bool(true));
+            }
+            properties.insert(h.name.clone(), Value::Object(prop));
+        }
+        if properties.is_empty() {
+            return None;
+        }
+        let required: Vec<Value> = self
+            .headers
+            .iter()
+            .filter(|h| h.is_required == Some(true) && !h.name.is_empty())
+            .map(|h| Value::String(h.name.clone()))
+            .collect();
+        let mut schema = serde_json::Map::new();
+        schema.insert("properties".into(), Value::Object(properties));
+        if !required.is_empty() {
+            schema.insert("required".into(), Value::Array(required));
+        }
+        Some(Value::Object(schema))
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1063,6 +1122,59 @@ mod tests {
         assert_eq!(detail.source, SOURCE_MCP_OFFICIAL);
         assert_eq!(detail.connections.len(), 1);
         assert_eq!(detail.connections[0].r#type, "http");
+    }
+
+    #[test]
+    fn into_detail_surfaces_remote_headers_as_config_schema() {
+        // A remote that declares an `Authorization` header (isRequired/isSecret)
+        // must produce an http connection whose config_schema lists it, so the
+        // install form renders a (secret) input and registry_get reports it as a
+        // required env key.
+        let s: OfficialServer = serde_json::from_value(json!({
+            "name": "ai.adadvisor/mcp-server",
+            "remotes": [{
+                "type": "streamable-http",
+                "url": "https://api.adadvisor.ai/mcp",
+                "headers": [{
+                    "name": "Authorization",
+                    "description": "Bearer token (adv_sk_...)",
+                    "isRequired": true,
+                    "isSecret": true
+                }]
+            }],
+        }))
+        .unwrap();
+        let detail = s.into_detail();
+        assert_eq!(detail.connections.len(), 1);
+        let conn = &detail.connections[0];
+        assert_eq!(conn.r#type, "http");
+        let schema = conn
+            .config_schema
+            .as_ref()
+            .expect("remote with headers should carry a config_schema");
+        let props = schema.get("properties").and_then(Value::as_object).unwrap();
+        assert!(
+            props.contains_key("Authorization"),
+            "header surfaced as property"
+        );
+        assert_eq!(
+            props["Authorization"].get("x-secret"),
+            Some(&Value::Bool(true)),
+            "secret header marked x-secret"
+        );
+        let required = schema.get("required").and_then(Value::as_array).unwrap();
+        assert!(required.contains(&Value::String("Authorization".into())));
+    }
+
+    #[test]
+    fn into_detail_no_config_schema_for_headerless_remote() {
+        let s: OfficialServer = serde_json::from_value(json!({
+            "name": "io.github.x/open",
+            "remotes": [{ "type": "streamable-http", "url": "https://open.example.com/mcp" }],
+        }))
+        .unwrap();
+        let detail = s.into_detail();
+        assert!(detail.connections[0].config_schema.is_none());
     }
 
     // ── realistic multi-server list response with mixed title presence ───────

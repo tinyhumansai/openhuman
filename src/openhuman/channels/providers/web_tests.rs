@@ -1453,6 +1453,7 @@ fn fp(
         provider_binding: provider_binding.to_string(),
         autonomy_signature: "sig-default".to_string(),
         model_registry_signature: "registry-default".to_string(),
+        profile_signature: "profile-default".to_string(),
     }
 }
 
@@ -1481,6 +1482,21 @@ fn fingerprint_model_registry_change_is_cache_miss() {
     assert_ne!(
         base, changed,
         "a model_registry change (vision toggle) must produce a cache miss → rebuild"
+    );
+}
+
+#[test]
+fn fingerprint_profile_change_is_cache_miss() {
+    // Switching the active agent profile on the same thread keeps the same
+    // model/agent/provider, so without the profile signature the previous
+    // profile's tool/skill/MCP/connector visibility would leak into the new
+    // profile's turns. A different profile signature must force a rebuild.
+    let base = fp(None, None, "orchestrator", "anthropic:claude-sonnet-4-6");
+    let mut changed = fp(None, None, "orchestrator", "anthropic:claude-sonnet-4-6");
+    changed.profile_signature = "profile-after-switch".to_string();
+    assert_ne!(
+        base, changed,
+        "a different profile signature must produce a cache miss → rebuild"
     );
 }
 

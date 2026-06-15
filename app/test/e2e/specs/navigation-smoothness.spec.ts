@@ -33,7 +33,8 @@ interface RouteCheck {
 }
 
 const ROUTES: RouteCheck[] = [
-  { hash: '/chat', markers: ['Threads', 'Chat', 'Message', 'New thread'] },
+  // Chat composer header: "New" thread button, agent-profile "Reasoning" pill.
+  { hash: '/chat', markers: ['New', 'Chat', 'Message', 'Reasoning'] },
   // Connections page (was /skills) — tabs: Apps, Messaging, Tools, Explorer
   { hash: '/connections', markers: ['Apps', 'Messaging', 'Tools', 'Connections'] },
   { hash: '/home', markers: ['Ask your assistant anything', 'Your device is connected', 'Home'] },
@@ -43,8 +44,10 @@ const ROUTES: RouteCheck[] = [
   },
   { hash: '/rewards', markers: ['Rewards', 'Referral', 'Credits', 'Earn', 'Invite'] },
   { hash: '/settings', markers: ['Settings', 'Account', 'Billing', 'Advanced'] },
-  // Activity page (was /intelligence) — tabs: Tasks, Automations, Subconscious
-  { hash: '/activity', markers: ['Tasks', 'Automations', 'Subconscious', 'Activity'] },
+  // Brain page (the old /activity & /intelligence pages were retired; the
+  // Subconscious surface and memory live here now). Tabs: Graph, Memory,
+  // Sources, Subconscious, Sync.
+  { hash: '/brain', markers: ['Graph', 'Memory', 'Subconscious', 'Sources'] },
   { hash: '/home', markers: ['Ask your assistant anything', 'Your device is connected', 'Home'] },
 ];
 

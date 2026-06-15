@@ -87,9 +87,9 @@ const AppRoutes = () => {
         }
       />
 
-      {/* Back-compat: /activity and /intelligence → settings notifications hub. */}
-      <Route path="/activity" element={<Navigate to="/settings/notifications-hub" replace />} />
-      <Route path="/intelligence" element={<Navigate to="/settings/notifications-hub" replace />} />
+      {/* Back-compat: /activity and /intelligence → settings notifications page. */}
+      <Route path="/activity" element={<Navigate to="/settings/notifications" replace />} />
+      <Route path="/intelligence" element={<Navigate to="/settings/notifications" replace />} />
 
       {/* Connections page lives at /connections (Phase 2 rename from /skills).
           The old /skills path is kept as a back-compat redirect so bookmarks
@@ -178,7 +178,7 @@ const AppRoutes = () => {
 
       <Route path="/workflows" element={<Navigate to="/settings/automations" replace />} />
 
-      <Route path="/webhooks" element={<Navigate to="/settings/webhooks-triggers" replace />} />
+      <Route path="/webhooks" element={<Navigate to="/settings/integrations#webhooks" replace />} />
 
       <Route
         path="/settings/*"

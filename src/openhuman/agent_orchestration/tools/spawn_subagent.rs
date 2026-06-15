@@ -459,6 +459,7 @@ impl Tool for SpawnSubagentTool {
             initial_history: None,
             checkpoint_dir: None,
             worktree_action_dir: None,
+            run_queue: None,
         };
 
         let progress_sink = current_parent().and_then(|p| p.on_progress.clone());

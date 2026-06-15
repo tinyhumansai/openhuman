@@ -34,6 +34,7 @@ const cloudRef = (slug: string, model = 'm'): ProviderRef => ({
   model,
 });
 const localRef = (model = 'llama3'): ProviderRef => ({ kind: 'local', model });
+const claudeCodeRef = (model = 'sonnet'): ProviderRef => ({ kind: 'claude-code', model });
 // The helper only reads `.slug`; the rest of CloudProvider is irrelevant here.
 const provider = (slug: string): CloudProvider =>
   ({
@@ -92,6 +93,27 @@ describe('routingWithProviderRemoved', () => {
       []
     );
     expect(next.chat).toEqual(localRef('llama3'));
+    expect(next.reasoning).toEqual({ kind: 'default' });
+  });
+
+  it('resets claude-code refs when the Claude Code provider is removed', () => {
+    // Claude Code refs carry no providerSlug — they must be matched by the
+    // well-known `claude-code` slug, else disconnecting leaves chats pinned to
+    // `claude-code:<model>` which the Rust factory still honors.
+    const routing = routingOf({ chat: claudeCodeRef('sonnet'), agentic: claudeCodeRef('opus') });
+    const next = routingWithProviderRemoved(
+      routing,
+      { slug: 'claude-code', isLocalRuntime: false },
+      []
+    );
+    expect(next.chat).toEqual({ kind: 'default' });
+    expect(next.agentic).toEqual({ kind: 'default' });
+  });
+
+  it('leaves claude-code refs untouched when a different provider is removed', () => {
+    const routing = routingOf({ chat: claudeCodeRef('sonnet'), reasoning: cloudRef('openai') });
+    const next = routingWithProviderRemoved(routing, { slug: 'openai', isLocalRuntime: false }, []);
+    expect(next.chat).toEqual(claudeCodeRef('sonnet'));
     expect(next.reasoning).toEqual({ kind: 'default' });
   });
 

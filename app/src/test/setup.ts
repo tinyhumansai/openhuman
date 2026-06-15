@@ -259,9 +259,14 @@ vi.mock('@sentry/react', () => ({
   setUser: vi.fn(),
 }));
 
-// Silence console during tests to keep output clean
+// Silence console during tests to keep output clean. `debug`/`info` are
+// included because error-path diagnostics across the app (e.g. VoicePanel
+// "voice settings load failed", threadSlice "title refresh failed") use
+// `console.debug`, which otherwise floods the test output with expected noise.
 if (!process.env.DEBUG_TESTS) {
   vi.spyOn(console, 'log').mockImplementation(() => {});
+  vi.spyOn(console, 'info').mockImplementation(() => {});
+  vi.spyOn(console, 'debug').mockImplementation(() => {});
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   vi.spyOn(console, 'error').mockImplementation(() => {});
 }

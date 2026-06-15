@@ -1775,6 +1775,46 @@ fn integration_announcement_fires_once_for_new_toolkit() {
 }
 
 #[test]
+fn mcp_announcement_fires_once_for_new_server() {
+    // Seed the announced set with the startup-connected MCP server, mirroring
+    // the turn-1 seed in `run_turn` (those are already in the system prompt's
+    // `## Connected MCP Servers` block, so only mid-session connects announce).
+    let mut announced: HashSet<String> = HashSet::new();
+    announced.insert("ac.tandem/docs-mcp".to_string());
+
+    // A mid-session connect adds a weather server: it should be announced once,
+    // and recorded so it never re-announces.
+    let connected = vec![
+        "ac.tandem/docs-mcp".to_string(),
+        "io.weather/mcp".to_string(),
+    ];
+    let newly = newly_connected_slugs(&connected, &mut announced);
+    assert_eq!(newly, vec!["io.weather/mcp".to_string()]);
+    let note = mcp_announcement_note(&newly)
+        .expect("a newly-connected MCP server must produce an announcement");
+    assert!(
+        note.contains("io.weather/mcp"),
+        "announcement must name the new server, got: {note}"
+    );
+    assert!(
+        note.contains("use_mcp_server"),
+        "announcement must point the model at the use_mcp_server delegate, got: {note}"
+    );
+    assert!(
+        !note.contains("ac.tandem/docs-mcp"),
+        "an already-announced server must not be re-announced, got: {note}"
+    );
+
+    // A second pass with the identical connected set parks nothing.
+    let second = newly_connected_slugs(&connected, &mut announced);
+    assert!(
+        second.is_empty(),
+        "an unchanged connected set must not re-surface a server, got: {second:?}"
+    );
+    assert!(mcp_announcement_note(&second).is_none());
+}
+
+#[test]
 fn integration_announcement_accumulates_two_connects_in_one_note() {
     // Two mid-session connects between consecutive user turns must BOTH be
     // announced — the second must not overwrite the first (#3044 regression:

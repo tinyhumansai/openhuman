@@ -1,54 +1,20 @@
-import createDebug from 'debug';
-import { useEffect, useState } from 'react';
-
 import { useT } from '../../../lib/i18n/I18nContext';
 import { BILLING_DASHBOARD_URL } from '../../../utils/links';
 import { openUrl } from '../../../utils/openUrl';
+import PanelPage from '../../layout/PanelPage';
 import Button from '../../ui/Button';
-import SettingsHeader from '../components/SettingsHeader';
+import SettingsBackButton from '../components/SettingsBackButton';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
-
-const log = createDebug('openhuman:billing-panel');
 
 const BillingPanel = () => {
   const { t } = useT();
-  const { navigateBack, breadcrumbs } = useSettingsNavigation();
-  const [status, setStatus] = useState<'opening' | 'idle' | 'error'>('opening');
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const openDashboard = async () => {
-      log('[redirect] opening billing dashboard url=%s', BILLING_DASHBOARD_URL);
-      try {
-        await openUrl(BILLING_DASHBOARD_URL);
-        if (!cancelled) {
-          setStatus('idle');
-        }
-      } catch (error) {
-        log('[redirect] failed to open billing dashboard: %O', error);
-        if (!cancelled) {
-          setStatus('error');
-        }
-      }
-    };
-
-    void openDashboard();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const { navigateBack } = useSettingsNavigation();
 
   return (
-    <div className="z-10 relative">
-      <SettingsHeader
-        title={t('nav.avatarMenu.billing')}
-        showBackButton
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
-
+    <PanelPage
+      className="z-10"
+      contentClassName=""
+      leading={<SettingsBackButton onBack={navigateBack} />}>
       <div className="p-4">
         <div className="max-w-xl space-y-4">
           <div>
@@ -77,25 +43,9 @@ const BillingPanel = () => {
               {t('settings.billing.backToSettings')}
             </Button>
           </div>
-
-          {status === 'opening' && (
-            <p className="text-xs text-neutral-500 dark:text-neutral-400">
-              {t('settings.billing.openingBrowser')}
-            </p>
-          )}
-          {status === 'idle' && (
-            <p className="text-xs text-neutral-500 dark:text-neutral-400">
-              {t('settings.billing.browserNotOpen')}
-            </p>
-          )}
-          {status === 'error' && (
-            <p className="text-xs text-coral-600 dark:text-coral-300">
-              {t('settings.billing.browserOpenFailed')}
-            </p>
-          )}
         </div>
       </div>
-    </div>
+    </PanelPage>
   );
 };
 

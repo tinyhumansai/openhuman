@@ -26,7 +26,14 @@ export default function WebCallbackPage() {
   useEffect(() => {
     const synthetic = buildSyntheticDeepLink(kind, status, location.search);
     if (!synthetic) return;
-    void handleDeepLinkUrls([synthetic]);
+
+    // This is the SAME-ORIGIN web callback route, reached only through the app's
+    // own routing / the backend OAuth redirect — not via the OS `openhuman://`
+    // scheme that any external app can trigger. The C3 state-nonce CSRF guard
+    // targets that custom-scheme transport, so it does not apply here; pass
+    // requireStateNonce:false. (Web-build login-CSRF hardening — binding this
+    // callback to a backend-echoed OAuth state — is tracked as a follow-up.)
+    void handleDeepLinkUrls([synthetic], { requireStateNonce: false });
   }, [kind, status, location.search]);
 
   return (

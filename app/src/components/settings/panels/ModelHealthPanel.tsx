@@ -3,8 +3,9 @@ import { useEffect, useRef, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
 import { callCoreRpc } from '../../../services/coreRpcClient';
+import PanelPage from '../../layout/PanelPage';
 import Button from '../../ui/Button';
-import SettingsHeader from '../components/SettingsHeader';
+import SettingsBackButton from '../components/SettingsBackButton';
 import { SettingsEmptyState, SettingsSelect } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
@@ -89,7 +90,7 @@ const BADGE_STYLES: Record<StatusBadge, { bg: string; text: string; label: strin
 
 const ModelHealthPanel = () => {
   const { t } = useT();
-  const { navigateBack, breadcrumbs } = useSettingsNavigation();
+  const { navigateBack } = useSettingsNavigation();
   const [models, setModels] = useState<ModelEntry[]>([]);
   const [config, setConfig] = useState<HealthConfig>({
     hallucination_threshold: 0.1,
@@ -167,13 +168,12 @@ const ModelHealthPanel = () => {
   const sortIcon = (col: SortCol) => (sortCol === col ? (sortAsc ? ' ↑' : ' ↓') : '');
 
   return (
-    <div className="z-10 relative" data-testid="model-health-panel">
-      <SettingsHeader
-        title={t('settings.modelHealth.title')}
-        showBackButton={true}
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
+    <PanelPage
+      testId="model-health-panel"
+      className="z-10"
+      contentClassName=""
+      description={t('settings.modelHealth.desc')}
+      leading={<SettingsBackButton onBack={navigateBack} />}>
       <div className="p-4 space-y-4">
         <div className="flex items-center gap-2 text-xs">
           <SettingsSelect
@@ -379,7 +379,7 @@ const ModelHealthPanel = () => {
           </div>
         </div>
       )}
-    </div>
+    </PanelPage>
   );
 };
 

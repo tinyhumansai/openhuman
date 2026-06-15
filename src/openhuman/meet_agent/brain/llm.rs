@@ -155,6 +155,7 @@ async fn get_or_build_agent_for_meet(request_id: &str) -> Result<Arc<TokioMutex<
         "orchestrator",
         None,
         Some(MEET_VOICE_DIRECTIVE.to_string()),
+        None,
     )
     .map_err(|e| format!("[meet-agent] orchestrator build failed: {e}"))?;
 

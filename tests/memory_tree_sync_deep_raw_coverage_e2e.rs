@@ -499,6 +499,8 @@ async fn memory_tree_rpc_status_set_enabled_backfill_and_ingest_errors() {
         .expect("build failed job"),
     )
     .expect("enqueue failed job");
+    // #3365: an untyped/transient failed job (no `failure_class`) self-heals via
+    // requeue, so it surfaces as `degraded` ("retrying"), not a hard `error`.
     with_connection(&cfg, |conn| {
         conn.execute(
             "UPDATE mem_tree_jobs
@@ -509,10 +511,30 @@ async fn memory_tree_rpc_status_set_enabled_backfill_and_ingest_errors() {
         )?;
         Ok(())
     })
-    .expect("mark failed");
+    .expect("mark failed (untyped)");
+    let degraded = pipeline_status_rpc(&cfg)
+        .await
+        .expect("degraded status")
+        .value;
+    assert_eq!(degraded.status, "degraded");
+    assert!(degraded.reason.unwrap().contains("retrying"));
+
+    // #3365: an UNRECOVERABLE failed job (budget / auth / dim-mismatch) stays
+    // parked and is user-actionable, so it escalates to `error`.
+    with_connection(&cfg, |conn| {
+        conn.execute(
+            "UPDATE mem_tree_jobs
+                SET failure_class = 'unrecoverable'
+              WHERE kind = 'extract_chunk'
+                AND payload_json LIKE '%round18-failed%'",
+            [],
+        )?;
+        Ok(())
+    })
+    .expect("mark unrecoverable");
     let errored = pipeline_status_rpc(&cfg).await.expect("error status").value;
     assert_eq!(errored.status, "error");
-    assert!(errored.reason.unwrap().contains("failed job"));
+    assert!(errored.reason.unwrap().contains("unrecoverable"));
 
     cfg.scheduler_gate.mode = SchedulerGateMode::Off;
     let paused = pipeline_status_rpc(&cfg)

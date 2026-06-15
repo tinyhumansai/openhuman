@@ -24,8 +24,9 @@ import {
   type AgentRegistryEntry,
   type AgentToolInfo,
 } from '../../../services/api/agentRegistryApi';
+import PanelPage from '../../layout/PanelPage';
 import Button from '../../ui/Button';
-import SettingsHeader from '../components/SettingsHeader';
+import SettingsBackButton from '../components/SettingsBackButton';
 import {
   SettingsRow,
   SettingsSection,
@@ -182,15 +183,6 @@ const AgentEditorPage = () => {
     }
   };
 
-  const title = isCreate
-    ? t('settings.agents.editor.createTitle')
-    : name || t('settings.agents.editor.editTitle');
-
-  const breadcrumbs = [
-    { label: 'Settings', onClick: () => navigate('/settings') },
-    { label: t('settings.agents.title'), onClick: () => navigate('/settings/agents') },
-  ];
-
   const selectValue = customModelMode ? CUSTOM_MODEL : model;
 
   const onModelSelect = (value: string) => {
@@ -204,9 +196,11 @@ const AgentEditorPage = () => {
   };
 
   return (
-    <div className="z-10 relative">
-      <SettingsHeader title={title} showBackButton onBack={backToList} breadcrumbs={breadcrumbs} />
-
+    <PanelPage
+      className="z-10"
+      contentClassName=""
+      description={t('settings.agents.subtitle')}
+      leading={<SettingsBackButton onBack={backToList} />}>
       <div className="p-4">
         {loading ? (
           <div className="flex items-center justify-center py-12 text-neutral-400 dark:text-neutral-500">
@@ -475,7 +469,7 @@ const AgentEditorPage = () => {
           onClose={() => setToolsOpen(false)}
         />
       )}
-    </div>
+    </PanelPage>
   );
 };
 

@@ -64,7 +64,9 @@ test.describe('Settings leaf workflows', () => {
   }) => {
     await openSettings(page, 'pw-settings-appearance', '/settings/appearance');
 
-    await expect(page.getByRole('heading', { name: 'Appearance' })).toBeVisible();
+    // Panel title dropped in the PanelPage migration; the theme radios confirm
+    // the Appearance panel mounted.
+    await expect(page.getByRole('radio', { name: /Dark/ })).toBeVisible();
     await page.getByRole('radio', { name: /Dark/ }).click();
     const labelSwitch = page.getByRole('switch', { name: /Always show labels/ });
     if ((await labelSwitch.getAttribute('aria-checked')) !== 'true') {
@@ -94,7 +96,9 @@ test.describe('Settings leaf workflows', () => {
   }) => {
     await openSettings(page, 'pw-settings-embeddings', '/settings/embeddings');
 
-    await expect(page.getByRole('heading', { name: 'Embeddings' })).toBeVisible();
+    // Panel title dropped in the PanelPage migration; the provider radios confirm
+    // the Embeddings panel mounted.
+    await expect(page.getByRole('radio', { name: /Custom/i })).toBeVisible();
     await page.getByRole('radio', { name: /Custom/i }).click();
 
     await expect(page.getByRole('heading', { name: /Set up/i })).toBeVisible();
@@ -132,7 +136,9 @@ test.describe('Settings leaf workflows', () => {
     const agentId = `pw-researcher-${Date.now()}`;
     await openSettings(page, 'pw-settings-agent-new', '/settings/agents/new');
 
-    await expect(page.getByRole('heading', { name: 'New agent' })).toBeVisible();
+    // Page title dropped in the PanelPage migration; the Name field confirms the
+    // agent editor mounted.
+    await expect(page.getByRole('textbox', { name: 'Name' })).toBeVisible();
     await page.getByRole('textbox', { name: 'Name' }).fill('Playwright Researcher');
     await page.getByRole('textbox', { name: 'ID', exact: true }).fill(agentId);
     await page.getByLabel('Description').fill('Validates settings agent authoring in E2E.');

@@ -27,6 +27,7 @@
  */
 import { waitForApp } from '../helpers/app-helpers';
 import {
+  chatMounted,
   clickByTitle,
   clickSend,
   getSelectedThreadId,
@@ -105,7 +106,7 @@ describe('Chat harness — mid-stream cancel', () => {
 
   it('sends → IN_FLIGHT populates → Cancel clears it before late chunks land', async () => {
     await navigateViaHash('/chat');
-    await browser.waitUntil(async () => await textExists('Threads'), {
+    await browser.waitUntil(async () => await chatMounted(), {
       timeout: 15_000,
       timeoutMsg: 'Conversations did not mount',
     });
