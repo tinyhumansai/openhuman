@@ -815,8 +815,9 @@ impl TelegramChannel {
             }
         }
 
-        let (audio_bytes, file_name, api_file_size) =
-            self.download_telegram_voice_file(&voice.file_id).await?;
+        let (audio_bytes, file_name, api_file_size) = self
+            .download_telegram_voice_file(&voice.file_id, voice.file_unique_id.as_deref())
+            .await?;
         tracing::debug!(
             file_unique_id = voice.file_unique_id.as_deref().unwrap_or("unknown"),
             downloaded_bytes = audio_bytes.len(),
@@ -888,8 +889,10 @@ impl TelegramChannel {
     pub(crate) async fn download_telegram_voice_file(
         &self,
         file_id: &str,
+        file_unique_id: Option<&str>,
     ) -> anyhow::Result<(Vec<u8>, String, Option<u64>)> {
         tracing::debug!(
+            file_unique_id = file_unique_id.unwrap_or("unknown"),
             file_id_present = !file_id.trim().is_empty(),
             "[telegram:voice:download] requesting Telegram getFile"
         );
@@ -904,12 +907,19 @@ impl TelegramChannel {
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
         tracing::debug!(
+            file_unique_id = file_unique_id.unwrap_or("unknown"),
             status = %status,
             response_bytes = body.len(),
             "[telegram:voice:download] Telegram getFile response received"
         );
 
         if !status.is_success() {
+            tracing::debug!(
+                file_unique_id = file_unique_id.unwrap_or("unknown"),
+                status = %status,
+                error = %self.redact_bot_token(&body),
+                "[telegram:voice:download] Telegram getFile failed"
+            );
             anyhow::bail!(
                 "Telegram getFile failed ({status}): {}",
                 self.redact_bot_token(body)
@@ -927,6 +937,11 @@ impl TelegramChannel {
                 .get("description")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("unknown Telegram getFile error");
+            tracing::debug!(
+                file_unique_id = file_unique_id.unwrap_or("unknown"),
+                description,
+                "[telegram:voice:download] Telegram getFile returned ok=false"
+            );
             anyhow::bail!("Telegram getFile returned ok=false: {description}");
         }
 
@@ -941,6 +956,12 @@ impl TelegramChannel {
         let file_size = result.get("file_size").and_then(serde_json::Value::as_u64);
         if let Some(file_size) = file_size {
             if file_size > TELEGRAM_MAX_VOICE_FILE_BYTES {
+                tracing::debug!(
+                    file_unique_id = file_unique_id.unwrap_or("unknown"),
+                    file_size,
+                    max_bytes = TELEGRAM_MAX_VOICE_FILE_BYTES,
+                    "[telegram:voice:download] Telegram getFile file_size exceeds cap"
+                );
                 anyhow::bail!(
                     "Telegram getFile reported voice file too large: {file_size} bytes (max {TELEGRAM_MAX_VOICE_FILE_BYTES})"
                 );
@@ -953,6 +974,7 @@ impl TelegramChannel {
             .unwrap_or("voice.ogg")
             .to_string();
         tracing::debug!(
+            file_unique_id = file_unique_id.unwrap_or("unknown"),
             file_name = %file_name,
             file_size = ?file_size,
             "[telegram:voice:download] Telegram getFile result parsed"
@@ -960,6 +982,7 @@ impl TelegramChannel {
 
         let download_url = format!("{}/file/bot{}/{}", self.api_base, self.bot_token, file_path);
         tracing::debug!(
+            file_unique_id = file_unique_id.unwrap_or("unknown"),
             file_name = %file_name,
             "[telegram:voice:download] starting Telegram voice file download"
         );
@@ -971,12 +994,19 @@ impl TelegramChannel {
             .map_err(|e| anyhow::anyhow!("{}", self.redact_bot_token(e.to_string())))?;
         if let Some(content_length) = file_resp.content_length() {
             if content_length > TELEGRAM_MAX_VOICE_FILE_BYTES {
+                tracing::debug!(
+                    file_unique_id = file_unique_id.unwrap_or("unknown"),
+                    content_length,
+                    max_bytes = TELEGRAM_MAX_VOICE_FILE_BYTES,
+                    "[telegram:voice:download] voice download Content-Length exceeds cap"
+                );
                 anyhow::bail!(
                     "Telegram voice download too large: {content_length} bytes (max {TELEGRAM_MAX_VOICE_FILE_BYTES})"
                 );
             }
         }
         tracing::debug!(
+            file_unique_id = file_unique_id.unwrap_or("unknown"),
             content_length = ?file_resp.content_length(),
             "[telegram:voice:download] voice download headers received"
         );
@@ -984,6 +1014,12 @@ impl TelegramChannel {
         let status = file_resp.status();
         if !status.is_success() {
             let body = file_resp.text().await.unwrap_or_default();
+            tracing::debug!(
+                file_unique_id = file_unique_id.unwrap_or("unknown"),
+                status = %status,
+                error = %self.redact_bot_token(&body),
+                "[telegram:voice:download] Telegram voice download failed"
+            );
             anyhow::bail!(
                 "Telegram voice download failed ({status}): {}",
                 self.redact_bot_token(body)
@@ -1002,6 +1038,7 @@ impl TelegramChannel {
                 TELEGRAM_MAX_VOICE_FILE_BYTES,
             )?;
             tracing::debug!(
+                file_unique_id = file_unique_id.unwrap_or("unknown"),
                 file_name = %file_name,
                 chunk_bytes = chunk.len(),
                 downloaded_bytes = bytes.len(),
@@ -1009,6 +1046,7 @@ impl TelegramChannel {
             );
         }
         tracing::debug!(
+            file_unique_id = file_unique_id.unwrap_or("unknown"),
             file_name = %file_name,
             downloaded_bytes = bytes.len(),
             "[telegram:voice:download] completed Telegram voice file download"

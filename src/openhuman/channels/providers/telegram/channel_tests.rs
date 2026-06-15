@@ -693,7 +693,7 @@ async fn download_telegram_voice_file_uses_get_file_path_and_downloads_bytes() {
         .await;
 
     let (bytes, file_name, file_size) = ch
-        .download_telegram_voice_file("voice-file-id")
+        .download_telegram_voice_file("voice-file-id", Some("voice-unique-id"))
         .await
         .expect("mocked Telegram voice download should succeed");
 
