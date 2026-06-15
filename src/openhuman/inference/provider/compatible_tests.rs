@@ -953,6 +953,72 @@ async fn streaming_chat_config_rejection_propagates_error_without_sentry_report(
     );
 }
 
+#[tokio::test]
+async fn streaming_chat_byo_auth_failure_propagates_error_without_sentry_report() {
+    // Guardrail for #3671 (TAURI-RUST-DHM): a missing/invalid BYO API key on a
+    // non-backend custom provider returns 401 with an auth-error body. The
+    // error must still propagate to the caller, but it must NOT page Sentry —
+    // memory-tree extraction + memory jobs retry through the broken credential
+    // and previously flooded Sentry with thousands of identical events.
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(401).set_body_string(
+            r#"{"error":{"message":"Invalid or missing API key","type":"authentication_error"}}"#,
+        ))
+        .mount(&mock_server)
+        .await;
+
+    let transport = TestTransport::new();
+    let sentry_options = sentry::ClientOptions {
+        dsn: Some("https://public@sentry.invalid/1".parse().unwrap()),
+        transport: Some(Arc::new(transport.clone())),
+        ..Default::default()
+    };
+    let sentry_hub = Arc::new(sentry::Hub::new(
+        Some(Arc::new(sentry_options.into())),
+        Arc::new(Default::default()),
+    ));
+    let _sentry_guard = sentry::HubSwitchGuard::new(sentry_hub);
+
+    // `kiro` is the exact (user-named) custom provider from the Sentry report.
+    let provider = OpenAiCompatibleProvider::new("kiro", &mock_server.uri(), None, AuthStyle::None);
+    let request = NativeChatRequest {
+        model: "claude-sonnet-4.5".to_string(),
+        messages: vec![NativeMessage {
+            role: "user".to_string(),
+            content: Some("hello".into()),
+            tool_call_id: None,
+            tool_calls: None,
+            reasoning_content: None,
+        }],
+        temperature: Some(0.7),
+        stream: Some(true),
+        tools: None,
+        tool_choice: None,
+        thread_id: None,
+        stream_options: Some(super::compatible_types::OpenAiStreamOptions {
+            include_usage: true,
+        }),
+        options: None,
+        frequency_penalty: None,
+    };
+    let (delta_tx, _delta_rx) = tokio::sync::mpsc::channel(8);
+
+    let err = provider
+        .stream_native_chat(None, &request, &delta_tx, 0)
+        .await
+        .expect_err("401 BYO auth failure must still propagate as Err");
+    assert!(
+        err.to_string().contains("streaming API error"),
+        "err: {err}"
+    );
+    assert!(
+        transport.fetch_and_clear_events().is_empty(),
+        "BYO provider auth failure must not be reported to Sentry"
+    );
+}
+
 // ----------------------------------------------------------
 // Custom endpoint path tests (Issue #114)
 // ----------------------------------------------------------

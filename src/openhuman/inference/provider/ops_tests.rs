@@ -1183,6 +1183,34 @@ fn byo_provider_auth_failure_is_body_and_status_scoped() {
     }
 }
 
+/// End-to-end through `api_error`: a non-backend 401 with an auth-error body
+/// returns the sanitized provider error (so the chat/UI surface is unchanged)
+/// while the BYO-auth branch demotes it from Sentry. Exercises the wired-in
+/// cascade, not just the predicate in isolation.
+#[tokio::test]
+async fn api_error_byo_auth_failure_returns_message_via_demoted_branch() {
+    let http_response = axum::http::Response::builder()
+        .status(StatusCode::UNAUTHORIZED)
+        .body(
+            r#"{"error":{"message":"Invalid or missing API key","type":"authentication_error"}}"#
+                .to_string(),
+        )
+        .expect("build 401 response");
+    let response = reqwest::Response::from(http_response);
+
+    let err = api_error("kiro", response).await;
+    let msg = err.to_string();
+    assert!(
+        msg.contains("kiro API error (401"),
+        "error must still carry the provider/status prefix for the UI: {msg}"
+    );
+    assert!(
+        msg.to_ascii_lowercase()
+            .contains("invalid or missing api key"),
+        "sanitized upstream body must propagate to the caller: {msg}"
+    );
+}
+
 /// `publish_backend_session_expired` must emit a `SessionExpired` event on
 /// the `auth` domain with the canonical source and a sanitized reason, so
 /// the credentials subscriber can drive reauth.
