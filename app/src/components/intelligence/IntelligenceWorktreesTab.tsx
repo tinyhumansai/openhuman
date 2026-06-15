@@ -16,16 +16,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import { worktreeApi, type WorktreeListView } from '../../services/api/worktreeApi';
+import { basename } from '../../utils/pathUtils';
 import WorktreeActions from '../worktree/WorktreeActions';
 
 const log = debug('intelligence:worktrees');
-
-/** Last path segment of a worktree path, for a compact label. */
-function basename(path: string): string {
-  const trimmed = path.replace(/[/\\]+$/, '');
-  const idx = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
-  return idx >= 0 ? trimmed.slice(idx + 1) : trimmed;
-}
 
 export default function IntelligenceWorktreesTab() {
   const { t } = useT();

@@ -1,6 +1,7 @@
 import WorktreeActions from '../../../components/worktree/WorktreeActions';
 import { useT } from '../../../lib/i18n/I18nContext';
 import type { SubagentActivity, ToolTimelineEntry } from '../../../store/chatRuntimeSlice';
+import { basename } from '../../../utils/pathUtils';
 import { formatTimelineEntry, formatToolName } from '../../../utils/toolTimelineFormatting';
 import { parseWorkerThreadRef } from '../utils/workerThreadRef';
 import { agentNameTone, AgentTimelineRail } from './AgentTimelineRail';
@@ -195,13 +196,6 @@ export function SubagentActivityBlock({
       ) : null}
     </div>
   );
-}
-
-/** Last path segment of a worktree path, for a compact inline label. */
-function basename(path: string): string {
-  const trimmed = path.replace(/[/\\]+$/, '');
-  const idx = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
-  return idx >= 0 ? trimmed.slice(idx + 1) : trimmed;
 }
 
 function normalizeToolBody(value?: string): string | undefined {
