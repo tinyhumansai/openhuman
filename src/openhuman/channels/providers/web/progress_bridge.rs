@@ -35,6 +35,29 @@ pub(super) fn ledger_upsert_telemetry(
     }
 }
 
+/// Build the worktree-isolation slice of a `subagent_completed`
+/// [`SubagentProgressDetail`] (#3376). An empty `changed_files` collapses to
+/// `None` so the renderer omits an empty "changed files" list rather than
+/// showing "0 files"; a non-empty list is forwarded verbatim. `worktree_path`
+/// / `dirty_status` pass through (`None` for non-isolated workers). Split out
+/// so the empty/non-empty branch is unit-testable without a live DB + channel.
+fn subagent_worktree_detail(
+    worktree_path: Option<String>,
+    changed_files: Vec<String>,
+    dirty_status: Option<bool>,
+) -> SubagentProgressDetail {
+    SubagentProgressDetail {
+        worktree_path,
+        changed_files: if changed_files.is_empty() {
+            None
+        } else {
+            Some(changed_files)
+        },
+        dirty_status,
+        ..Default::default()
+    }
+}
+
 /// Spawn a background task that reads [`AgentProgress`] events from the
 /// agent turn loop and translates them into [`WebChannelEvent`]s tagged
 /// with the correct client/thread/request IDs. The task runs until the
@@ -457,14 +480,7 @@ pub(crate) fn spawn_progress_bridge(
                             // Worktree isolation metadata (#3376) — drives the
                             // inline subagent worktree row's open/diff/remove
                             // actions. All `None`/absent for non-isolated workers.
-                            worktree_path: worktree_path.clone(),
-                            changed_files: if changed_files.is_empty() {
-                                None
-                            } else {
-                                Some(changed_files.clone())
-                            },
-                            dirty_status,
-                            ..Default::default()
+                            ..subagent_worktree_detail(worktree_path, changed_files, dirty_status)
                         }),
                         ..Default::default()
                     });
@@ -964,4 +980,39 @@ pub(crate) fn spawn_progress_bridge(
             events_seen,
         );
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn worktree_detail_collapses_empty_changed_files_to_none() {
+        // Non-isolated / clean worker: empty list → `None` so the renderer
+        // omits the "changed files" section instead of showing an empty one.
+        let d = subagent_worktree_detail(None, vec![], None);
+        assert_eq!(d.worktree_path, None);
+        assert_eq!(d.changed_files, None);
+        assert_eq!(d.dirty_status, None);
+    }
+
+    #[test]
+    fn worktree_detail_forwards_isolated_worker_fields() {
+        // Isolated worker with uncommitted changes: fields pass through and a
+        // non-empty list is wrapped in `Some`.
+        let d = subagent_worktree_detail(
+            Some("/repo/.claude/worktrees/run-1".to_string()),
+            vec!["src/lib.rs".to_string(), "README.md".to_string()],
+            Some(true),
+        );
+        assert_eq!(
+            d.worktree_path.as_deref(),
+            Some("/repo/.claude/worktrees/run-1")
+        );
+        assert_eq!(
+            d.changed_files,
+            Some(vec!["src/lib.rs".to_string(), "README.md".to_string()])
+        );
+        assert_eq!(d.dirty_status, Some(true));
+    }
 }
