@@ -440,6 +440,9 @@ const en: TranslationMap = {
   'memory.tab.agentWork': 'Agent Work',
   'memory.tab.agentWorkDescription':
     'A command center for every background agent run — grouped by what needs your input, what is working, and what has finished.',
+  'memory.tab.worktrees': 'Worktrees',
+  'memory.tab.worktreesDescription':
+    'Isolated git worktrees from parallel agent workers — inspect changes, open them, or clean them up.',
   'memory.tab.teams': 'Teams',
   'memory.tab.teamsDescription':
     'Coordinated agent teams — who owns each task, what is blocked, and what the teammates are saying to each other.',
@@ -3507,6 +3510,33 @@ const en: TranslationMap = {
   'intelligence.agentWork.kind.workflowChild': 'Workflow child',
   'intelligence.agentWork.openThread': 'Open thread',
   'intelligence.agentWork.openWorker': 'Open worker',
+  // Worktree manager (#3376) — isolated worker git worktrees
+  'worktree.label': 'Worktree',
+  'worktree.dirty': 'Uncommitted changes',
+  'worktree.clean': 'Clean',
+  'worktree.changedFile': 'changed file',
+  'worktree.changedFiles': 'changed files',
+  'worktree.removing': 'Removing…',
+  'worktree.removeFailed': 'Failed to remove worktree',
+  'worktree.diffFailed': 'Failed to load diff',
+  'worktree.diffLoading': 'Loading diff…',
+  'worktree.diffEmpty': 'No changes vs HEAD.',
+  'worktree.dirtyConfirm':
+    'This worktree has uncommitted changes. Removing it discards that work. The worker branch is kept.',
+  'worktree.action.open': 'Open folder',
+  'worktree.action.diff': 'Diff',
+  'worktree.action.hideDiff': 'Hide diff',
+  'worktree.action.remove': 'Remove',
+  'worktree.action.removeAnyway': 'Discard & remove',
+  'worktree.action.preserve': 'Preserve',
+  'worktree.panel.subtitle': 'Isolated git worktrees created by parallel agent workers.',
+  'worktree.panel.loading': 'Loading worktrees…',
+  'worktree.panel.failedToLoad': 'Failed to load worktrees',
+  'worktree.panel.empty':
+    'No isolated worktrees. Parallel workers with worktree isolation will appear here.',
+  'worktree.panel.overlapsTitle': 'Overlapping changes',
+  'worktree.panel.overlapHint':
+    'These files were changed by more than one worktree — reconcile before merging.',
   'intelligence.teams.subtitle': 'Coordinated agent teams and the tasks they share.',
   'intelligence.teams.loading': 'Loading teams…',
   'intelligence.teams.failedToLoad': 'Failed to load teams',

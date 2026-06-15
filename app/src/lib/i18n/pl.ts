@@ -405,6 +405,9 @@ const messages: TranslationMap = {
   'memory.tab.agentWork': 'Praca agenta',
   'memory.tab.agentWorkDescription':
     'Centrum dowodzenia dla każdego przebiegu agenta w tle — pogrupowane według tego, co wymaga Twojej reakcji, co działa i co zostało ukończone.',
+  'memory.tab.worktrees': 'Worktree',
+  'memory.tab.worktreesDescription':
+    'Izolowane drzewa robocze git od równoległych procesów agentów — przejrzyj zmiany, otwórz je lub wyczyść.',
   'memory.tab.teams': 'Zespoły',
   'memory.tab.teamsDescription':
     'Skoordynowane zespoły agentów — kto odpowiada za każde zadanie, co jest zablokowane i co członkowie zespołu mówią sobie nawzajem.',
@@ -3008,6 +3011,33 @@ const messages: TranslationMap = {
   'intelligence.agentWork.kind.workflowChild': 'Element podrzędny przepływu',
   'intelligence.agentWork.openThread': 'Otwórz wątek',
   'intelligence.agentWork.openWorker': 'Otwórz proces',
+  'worktree.label': 'Worktree',
+  'worktree.dirty': 'Niezatwierdzone zmiany',
+  'worktree.clean': 'Czyste',
+  'worktree.changedFile': 'zmieniony plik',
+  'worktree.changedFiles': 'zmienione pliki',
+  'worktree.removing': 'Usuwanie…',
+  'worktree.removeFailed': 'Nie udało się usunąć worktree',
+  'worktree.diffFailed': 'Nie udało się załadować diffa',
+  'worktree.diffLoading': 'Ładowanie diffa…',
+  'worktree.diffEmpty': 'Brak zmian względem HEAD.',
+  'worktree.dirtyConfirm':
+    'To worktree ma niezatwierdzone zmiany. Jego usunięcie odrzuci tę pracę. Gałąź procesu zostaje zachowana.',
+  'worktree.action.open': 'Otwórz folder',
+  'worktree.action.diff': 'Diff',
+  'worktree.action.hideDiff': 'Ukryj diff',
+  'worktree.action.remove': 'Usuń',
+  'worktree.action.removeAnyway': 'Odrzuć i usuń',
+  'worktree.action.preserve': 'Zachowaj',
+  'worktree.panel.subtitle':
+    'Izolowane drzewa robocze git utworzone przez równoległe procesy agentów.',
+  'worktree.panel.loading': 'Ładowanie worktree…',
+  'worktree.panel.failedToLoad': 'Nie udało się załadować worktree',
+  'worktree.panel.empty':
+    'Brak izolowanych worktree. Pojawią się tutaj równoległe procesy z izolacją worktree.',
+  'worktree.panel.overlapsTitle': 'Nakładające się zmiany',
+  'worktree.panel.overlapHint':
+    'Te pliki zostały zmienione przez więcej niż jedno worktree — uzgodnij je przed scaleniem.',
   'intelligence.teams.subtitle': 'Skoordynowane zespoły agentów i zadania, które dzielą.',
   'intelligence.teams.loading': 'Ładowanie zespołów…',
   'intelligence.teams.failedToLoad': 'Nie udało się załadować zespołów',

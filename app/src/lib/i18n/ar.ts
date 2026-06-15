@@ -394,6 +394,9 @@ const messages: TranslationMap = {
   'memory.tab.agentWork': 'عمل الوكيل',
   'memory.tab.agentWorkDescription':
     'مركز قيادة لكل تشغيل وكيل في الخلفية — مُجمّع حسب ما يحتاج إلى مُدخلاتك، وما يعمل الآن، وما اكتمل.',
+  'memory.tab.worktrees': 'أشجار العمل',
+  'memory.tab.worktreesDescription':
+    'أشجار عمل git معزولة من عُمّال الوكلاء المتوازين — افحص التغييرات، أو افتحها، أو نظّفها.',
   'memory.tab.teams': 'الفِرَق',
   'memory.tab.teamsDescription':
     'فِرَق وكلاء منسَّقة — مَن يملك كل مهمة، وما المحظور، وما الذي يقوله الزملاء لبعضهم البعض.',
@@ -2909,6 +2912,32 @@ const messages: TranslationMap = {
   'intelligence.agentWork.kind.workflowChild': 'عنصر فرعي لسير العمل',
   'intelligence.agentWork.openThread': 'فتح المحادثة',
   'intelligence.agentWork.openWorker': 'فتح العامل',
+  'worktree.label': 'شجرة العمل',
+  'worktree.dirty': 'تغييرات غير مُلتزمة',
+  'worktree.clean': 'نظيفة',
+  'worktree.changedFile': 'ملف مُعدّل',
+  'worktree.changedFiles': 'ملفات مُعدّلة',
+  'worktree.removing': 'جارٍ الإزالة…',
+  'worktree.removeFailed': 'فشل إزالة شجرة العمل',
+  'worktree.diffFailed': 'فشل تحميل الفرق',
+  'worktree.diffLoading': 'جارٍ تحميل الفرق…',
+  'worktree.diffEmpty': 'لا توجد تغييرات مقارنةً بـ HEAD.',
+  'worktree.dirtyConfirm':
+    'تحتوي شجرة العمل هذه على تغييرات غير مُلتزمة. إزالتها تتجاهل ذلك العمل. يتم الاحتفاظ بفرع العامل.',
+  'worktree.action.open': 'فتح المجلد',
+  'worktree.action.diff': 'الفرق',
+  'worktree.action.hideDiff': 'إخفاء الفرق',
+  'worktree.action.remove': 'إزالة',
+  'worktree.action.removeAnyway': 'تجاهل وإزالة',
+  'worktree.action.preserve': 'الإبقاء',
+  'worktree.panel.subtitle': 'أشجار عمل git معزولة أنشأها عُمّال الوكلاء المتوازون.',
+  'worktree.panel.loading': 'جارٍ تحميل أشجار العمل…',
+  'worktree.panel.failedToLoad': 'فشل تحميل أشجار العمل',
+  'worktree.panel.empty':
+    'لا توجد أشجار عمل معزولة. ستظهر هنا العُمّال المتوازون ذوو عزل شجرة العمل.',
+  'worktree.panel.overlapsTitle': 'تغييرات متداخلة',
+  'worktree.panel.overlapHint':
+    'تم تعديل هذه الملفات بواسطة أكثر من شجرة عمل — وفّق بينها قبل الدمج.',
   'intelligence.teams.subtitle': 'فِرَق وكلاء منسَّقة والمهام التي يتشاركونها.',
   'intelligence.teams.loading': 'جارٍ تحميل الفِرَق…',
   'intelligence.teams.failedToLoad': 'فشل تحميل الفِرَق',

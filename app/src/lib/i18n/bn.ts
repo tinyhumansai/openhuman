@@ -400,6 +400,9 @@ const messages: TranslationMap = {
   'memory.tab.agentWork': 'এজেন্ট কাজ',
   'memory.tab.agentWorkDescription':
     'প্রতিটি ব্যাকগ্রাউন্ড এজেন্ট রানের জন্য একটি কমান্ড সেন্টার — আপনার ইনপুট প্রয়োজন এমন, চলমান এবং সম্পন্ন অনুযায়ী গোষ্ঠীবদ্ধ।',
+  'memory.tab.worktrees': 'ওয়ার্কট্রি',
+  'memory.tab.worktreesDescription':
+    'সমান্তরাল এজেন্ট ওয়ার্কারদের থেকে বিচ্ছিন্ন git ওয়ার্কট্রি — পরিবর্তন পরিদর্শন করুন, খুলুন বা পরিষ্কার করুন।',
   'memory.tab.teams': 'টিম',
   'memory.tab.teamsDescription':
     'সমন্বিত এজেন্ট টিম — কে প্রতিটি কাজের মালিক, কী আটকে আছে, এবং সতীর্থরা একে অপরকে কী বলছে।',
@@ -2968,6 +2971,32 @@ const messages: TranslationMap = {
   'intelligence.agentWork.kind.workflowChild': 'ওয়ার্কফ্লো চাইল্ড',
   'intelligence.agentWork.openThread': 'থ্রেড খুলুন',
   'intelligence.agentWork.openWorker': 'ওয়ার্কার খুলুন',
+  'worktree.label': 'ওয়ার্কট্রি',
+  'worktree.dirty': 'কমিট না-করা পরিবর্তন',
+  'worktree.clean': 'পরিচ্ছন্ন',
+  'worktree.changedFile': 'পরিবর্তিত ফাইল',
+  'worktree.changedFiles': 'পরিবর্তিত ফাইল',
+  'worktree.removing': 'সরানো হচ্ছে…',
+  'worktree.removeFailed': 'ওয়ার্কট্রি সরাতে ব্যর্থ',
+  'worktree.diffFailed': 'ডিফ লোড করতে ব্যর্থ',
+  'worktree.diffLoading': 'ডিফ লোড হচ্ছে…',
+  'worktree.diffEmpty': 'HEAD-এর তুলনায় কোনো পরিবর্তন নেই।',
+  'worktree.dirtyConfirm':
+    'এই ওয়ার্কট্রিতে কমিট না-করা পরিবর্তন আছে। এটি সরালে সেই কাজ বাতিল হয়ে যাবে। ওয়ার্কার ব্রাঞ্চ রাখা হবে।',
+  'worktree.action.open': 'ফোল্ডার খুলুন',
+  'worktree.action.diff': 'ডিফ',
+  'worktree.action.hideDiff': 'ডিফ লুকান',
+  'worktree.action.remove': 'সরান',
+  'worktree.action.removeAnyway': 'বাতিল করে সরান',
+  'worktree.action.preserve': 'রেখে দিন',
+  'worktree.panel.subtitle': 'সমান্তরাল এজেন্ট ওয়ার্কারদের তৈরি করা বিচ্ছিন্ন git ওয়ার্কট্রি।',
+  'worktree.panel.loading': 'ওয়ার্কট্রি লোড হচ্ছে…',
+  'worktree.panel.failedToLoad': 'ওয়ার্কট্রি লোড করতে ব্যর্থ',
+  'worktree.panel.empty':
+    'কোনো বিচ্ছিন্ন ওয়ার্কট্রি নেই। ওয়ার্কট্রি বিচ্ছিন্নকরণসহ সমান্তরাল ওয়ার্কাররা এখানে প্রদর্শিত হবে।',
+  'worktree.panel.overlapsTitle': 'ওভারল্যাপিং পরিবর্তন',
+  'worktree.panel.overlapHint':
+    'এই ফাইলগুলো একাধিক ওয়ার্কট্রি দ্বারা পরিবর্তিত হয়েছে — মার্জ করার আগে সমন্বয় করুন।',
   'intelligence.teams.subtitle': 'সমন্বিত এজেন্ট টিম এবং তারা যে কাজগুলো ভাগ করে নেয়।',
   'intelligence.teams.loading': 'টিম লোড হচ্ছে…',
   'intelligence.teams.failedToLoad': 'টিম লোড করতে ব্যর্থ হয়েছে',

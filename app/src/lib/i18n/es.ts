@@ -412,6 +412,9 @@ const messages: TranslationMap = {
   'memory.tab.agentWork': 'Trabajo del agente',
   'memory.tab.agentWorkDescription':
     'Un centro de mando para cada ejecución de agente en segundo plano, agrupado según lo que necesita tu intervención, lo que está en curso y lo que ha terminado.',
+  'memory.tab.worktrees': 'Worktrees',
+  'memory.tab.worktreesDescription':
+    'Worktrees de git aislados de los workers de agentes en paralelo: inspecciona los cambios, ábrelos o límpialos.',
   'memory.tab.teams': 'Equipos',
   'memory.tab.teamsDescription':
     'Equipos de agentes coordinados: quién se encarga de cada tarea, qué está bloqueado y qué se dicen los compañeros entre sí.',
@@ -3026,6 +3029,33 @@ const messages: TranslationMap = {
   'intelligence.agentWork.kind.workflowChild': 'Hijo de flujo de trabajo',
   'intelligence.agentWork.openThread': 'Abrir hilo',
   'intelligence.agentWork.openWorker': 'Abrir trabajador',
+  'worktree.label': 'Worktree',
+  'worktree.dirty': 'Cambios sin confirmar',
+  'worktree.clean': 'Limpio',
+  'worktree.changedFile': 'archivo modificado',
+  'worktree.changedFiles': 'archivos modificados',
+  'worktree.removing': 'Eliminando…',
+  'worktree.removeFailed': 'No se pudo eliminar el worktree',
+  'worktree.diffFailed': 'No se pudo cargar el diff',
+  'worktree.diffLoading': 'Cargando diff…',
+  'worktree.diffEmpty': 'Sin cambios respecto a HEAD.',
+  'worktree.dirtyConfirm':
+    'Este worktree tiene cambios sin confirmar. Eliminarlo descarta ese trabajo. La rama del worker se conserva.',
+  'worktree.action.open': 'Abrir carpeta',
+  'worktree.action.diff': 'Diff',
+  'worktree.action.hideDiff': 'Ocultar diff',
+  'worktree.action.remove': 'Eliminar',
+  'worktree.action.removeAnyway': 'Descartar y eliminar',
+  'worktree.action.preserve': 'Conservar',
+  'worktree.panel.subtitle':
+    'Worktrees de git aislados creados por workers de agentes en paralelo.',
+  'worktree.panel.loading': 'Cargando worktrees…',
+  'worktree.panel.failedToLoad': 'No se pudieron cargar los worktrees',
+  'worktree.panel.empty':
+    'No hay worktrees aislados. Los workers en paralelo con aislamiento de worktree aparecerán aquí.',
+  'worktree.panel.overlapsTitle': 'Cambios superpuestos',
+  'worktree.panel.overlapHint':
+    'Estos archivos fueron modificados por más de un worktree: concilia antes de fusionar.',
   'intelligence.teams.subtitle': 'Equipos de agentes coordinados y las tareas que comparten.',
   'intelligence.teams.loading': 'Cargando equipos…',
   'intelligence.teams.failedToLoad': 'Error al cargar los equipos',

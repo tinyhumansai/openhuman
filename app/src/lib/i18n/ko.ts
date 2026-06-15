@@ -399,6 +399,9 @@ const messages: TranslationMap = {
   'memory.tab.agentWork': '에이전트 작업',
   'memory.tab.agentWorkDescription':
     '모든 백그라운드 에이전트 실행을 위한 명령 센터 — 입력이 필요한 것, 진행 중인 것, 완료된 것별로 그룹화됩니다.',
+  'memory.tab.worktrees': '워크트리',
+  'memory.tab.worktreesDescription':
+    '병렬 에이전트 워커가 만든 격리된 git 워크트리 — 변경 사항을 확인하거나 열거나 정리하세요.',
   'memory.tab.teams': '팀',
   'memory.tab.teamsDescription':
     '조율된 에이전트 팀 — 각 작업을 누가 담당하는지, 무엇이 차단되어 있는지, 그리고 팀원들이 서로 무슨 이야기를 나누는지.',
@@ -2946,6 +2949,32 @@ const messages: TranslationMap = {
   'intelligence.agentWork.kind.workflowChild': '워크플로 하위 항목',
   'intelligence.agentWork.openThread': '스레드 열기',
   'intelligence.agentWork.openWorker': '워커 열기',
+  'worktree.label': '워크트리',
+  'worktree.dirty': '커밋되지 않은 변경 사항',
+  'worktree.clean': '깨끗함',
+  'worktree.changedFile': '변경된 파일',
+  'worktree.changedFiles': '변경된 파일',
+  'worktree.removing': '제거 중…',
+  'worktree.removeFailed': '워크트리 제거 실패',
+  'worktree.diffFailed': 'diff 불러오기 실패',
+  'worktree.diffLoading': 'diff 불러오는 중…',
+  'worktree.diffEmpty': 'HEAD 대비 변경 사항이 없습니다.',
+  'worktree.dirtyConfirm':
+    '이 워크트리에는 커밋되지 않은 변경 사항이 있습니다. 제거하면 해당 작업이 삭제됩니다. 워커 브랜치는 유지됩니다.',
+  'worktree.action.open': '폴더 열기',
+  'worktree.action.diff': 'Diff',
+  'worktree.action.hideDiff': 'diff 숨기기',
+  'worktree.action.remove': '제거',
+  'worktree.action.removeAnyway': '버리고 제거',
+  'worktree.action.preserve': '보존',
+  'worktree.panel.subtitle': '병렬 에이전트 워커가 생성한 격리된 git 워크트리입니다.',
+  'worktree.panel.loading': '워크트리 불러오는 중…',
+  'worktree.panel.failedToLoad': '워크트리 불러오기 실패',
+  'worktree.panel.empty':
+    '격리된 워크트리가 없습니다. 워크트리 격리를 사용하는 병렬 워커가 여기에 표시됩니다.',
+  'worktree.panel.overlapsTitle': '겹치는 변경 사항',
+  'worktree.panel.overlapHint':
+    '이 파일들은 둘 이상의 워크트리에서 변경되었습니다 — 병합하기 전에 조정하세요.',
   'intelligence.teams.subtitle': '조율된 에이전트 팀과 그들이 공유하는 작업.',
   'intelligence.teams.loading': '팀 로딩 중…',
   'intelligence.teams.failedToLoad': '팀을 불러오지 못했습니다',

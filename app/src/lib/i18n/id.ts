@@ -402,6 +402,9 @@ const messages: TranslationMap = {
   'memory.tab.agentWork': 'Kerja agen',
   'memory.tab.agentWorkDescription':
     'Pusat kendali untuk setiap proses agen latar belakang — dikelompokkan berdasarkan apa yang butuh masukan Anda, apa yang sedang berjalan, dan apa yang sudah selesai.',
+  'memory.tab.worktrees': 'Worktree',
+  'memory.tab.worktreesDescription':
+    'Worktree git terisolasi dari worker agen paralel — periksa perubahan, buka, atau bersihkan.',
   'memory.tab.teams': 'Tim',
   'memory.tab.teamsDescription':
     'Tim agen yang terkoordinasi — siapa yang menangani setiap tugas, apa yang terhambat, dan apa yang dibicarakan rekan satu tim satu sama lain.',
@@ -2976,6 +2979,32 @@ const messages: TranslationMap = {
   'intelligence.agentWork.kind.workflowChild': 'Anak alur kerja',
   'intelligence.agentWork.openThread': 'Buka utas',
   'intelligence.agentWork.openWorker': 'Buka pekerja',
+  'worktree.label': 'Worktree',
+  'worktree.dirty': 'Perubahan belum di-commit',
+  'worktree.clean': 'Bersih',
+  'worktree.changedFile': 'berkas berubah',
+  'worktree.changedFiles': 'berkas berubah',
+  'worktree.removing': 'Menghapus…',
+  'worktree.removeFailed': 'Gagal menghapus worktree',
+  'worktree.diffFailed': 'Gagal memuat diff',
+  'worktree.diffLoading': 'Memuat diff…',
+  'worktree.diffEmpty': 'Tidak ada perubahan dibandingkan HEAD.',
+  'worktree.dirtyConfirm':
+    'Worktree ini memiliki perubahan yang belum di-commit. Menghapusnya akan membuang pekerjaan itu. Branch worker tetap dipertahankan.',
+  'worktree.action.open': 'Buka folder',
+  'worktree.action.diff': 'Diff',
+  'worktree.action.hideDiff': 'Sembunyikan diff',
+  'worktree.action.remove': 'Hapus',
+  'worktree.action.removeAnyway': 'Buang & hapus',
+  'worktree.action.preserve': 'Pertahankan',
+  'worktree.panel.subtitle': 'Worktree git terisolasi yang dibuat oleh worker agen paralel.',
+  'worktree.panel.loading': 'Memuat worktree…',
+  'worktree.panel.failedToLoad': 'Gagal memuat worktree',
+  'worktree.panel.empty':
+    'Tidak ada worktree terisolasi. Worker paralel dengan isolasi worktree akan muncul di sini.',
+  'worktree.panel.overlapsTitle': 'Perubahan yang tumpang tindih',
+  'worktree.panel.overlapHint':
+    'Berkas-berkas ini diubah oleh lebih dari satu worktree — selaraskan sebelum menggabungkan.',
   'intelligence.teams.subtitle': 'Tim agen yang terkoordinasi dan tugas yang mereka bagikan.',
   'intelligence.teams.loading': 'Memuat tim…',
   'intelligence.teams.failedToLoad': 'Gagal memuat tim',

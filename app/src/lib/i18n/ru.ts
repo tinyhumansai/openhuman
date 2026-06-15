@@ -404,6 +404,9 @@ const messages: TranslationMap = {
   'memory.tab.agentWork': 'Работа агента',
   'memory.tab.agentWorkDescription':
     'Центр управления для каждого фонового запуска агента — сгруппировано по тому, что требует вашего участия, что выполняется и что завершено.',
+  'memory.tab.worktrees': 'Worktree',
+  'memory.tab.worktreesDescription':
+    'Изолированные рабочие деревья git от параллельных воркеров-агентов — просматривайте изменения, открывайте их или удаляйте.',
   'memory.tab.teams': 'Команды',
   'memory.tab.teamsDescription':
     'Скоординированные команды агентов — кто отвечает за каждую задачу, что заблокировано и что участники говорят друг другу.',
@@ -2995,6 +2998,33 @@ const messages: TranslationMap = {
   'intelligence.agentWork.kind.workflowChild': 'Дочерний элемент рабочего процесса',
   'intelligence.agentWork.openThread': 'Открыть тред',
   'intelligence.agentWork.openWorker': 'Открыть воркер',
+  'worktree.label': 'Worktree',
+  'worktree.dirty': 'Незакоммиченные изменения',
+  'worktree.clean': 'Чисто',
+  'worktree.changedFile': 'изменённый файл',
+  'worktree.changedFiles': 'изменённых файлов',
+  'worktree.removing': 'Удаление…',
+  'worktree.removeFailed': 'Не удалось удалить worktree',
+  'worktree.diffFailed': 'Не удалось загрузить diff',
+  'worktree.diffLoading': 'Загрузка diff…',
+  'worktree.diffEmpty': 'Нет изменений относительно HEAD.',
+  'worktree.dirtyConfirm':
+    'В этом worktree есть незакоммиченные изменения. При удалении эта работа будет потеряна. Ветка воркера сохраняется.',
+  'worktree.action.open': 'Открыть папку',
+  'worktree.action.diff': 'Diff',
+  'worktree.action.hideDiff': 'Скрыть diff',
+  'worktree.action.remove': 'Удалить',
+  'worktree.action.removeAnyway': 'Отклонить и удалить',
+  'worktree.action.preserve': 'Сохранить',
+  'worktree.panel.subtitle':
+    'Изолированные рабочие деревья git, созданные параллельными воркерами-агентами.',
+  'worktree.panel.loading': 'Загрузка worktree…',
+  'worktree.panel.failedToLoad': 'Не удалось загрузить worktree',
+  'worktree.panel.empty':
+    'Нет изолированных worktree. Здесь появятся параллельные воркеры с изоляцией worktree.',
+  'worktree.panel.overlapsTitle': 'Пересекающиеся изменения',
+  'worktree.panel.overlapHint':
+    'Эти файлы были изменены более чем одним worktree — согласуйте их перед слиянием.',
   'intelligence.teams.subtitle':
     'Скоординированные команды агентов и задачи, которые они разделяют.',
   'intelligence.teams.loading': 'Загрузка команд…',

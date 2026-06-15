@@ -411,6 +411,9 @@ const messages: TranslationMap = {
   'memory.tab.agentWork': 'Agentenarbeit',
   'memory.tab.agentWorkDescription':
     'Eine Kommandozentrale für jeden Hintergrund-Agentenlauf — gruppiert danach, was deine Eingabe braucht, was läuft und was abgeschlossen ist.',
+  'memory.tab.worktrees': 'Worktrees',
+  'memory.tab.worktreesDescription':
+    'Isolierte Git-Worktrees von parallelen Agenten-Workern — Änderungen prüfen, öffnen oder aufräumen.',
   'memory.tab.teams': 'Teams',
   'memory.tab.teamsDescription':
     'Koordinierte Agententeams — wer für welche Aufgabe zuständig ist, was blockiert ist und was sich die Teammitglieder gegenseitig mitteilen.',
@@ -3041,6 +3044,33 @@ const messages: TranslationMap = {
   'intelligence.agentWork.kind.workflowChild': 'Workflow-Unterelement',
   'intelligence.agentWork.openThread': 'Thread öffnen',
   'intelligence.agentWork.openWorker': 'Worker öffnen',
+  'worktree.label': 'Worktree',
+  'worktree.dirty': 'Nicht committete Änderungen',
+  'worktree.clean': 'Sauber',
+  'worktree.changedFile': 'geänderte Datei',
+  'worktree.changedFiles': 'geänderte Dateien',
+  'worktree.removing': 'Wird entfernt…',
+  'worktree.removeFailed': 'Worktree konnte nicht entfernt werden',
+  'worktree.diffFailed': 'Diff konnte nicht geladen werden',
+  'worktree.diffLoading': 'Diff wird geladen…',
+  'worktree.diffEmpty': 'Keine Änderungen gegenüber HEAD.',
+  'worktree.dirtyConfirm':
+    'Dieser Worktree hat nicht committete Änderungen. Beim Entfernen geht diese Arbeit verloren. Der Worker-Branch bleibt erhalten.',
+  'worktree.action.open': 'Ordner öffnen',
+  'worktree.action.diff': 'Diff',
+  'worktree.action.hideDiff': 'Diff ausblenden',
+  'worktree.action.remove': 'Entfernen',
+  'worktree.action.removeAnyway': 'Verwerfen & entfernen',
+  'worktree.action.preserve': 'Beibehalten',
+  'worktree.panel.subtitle':
+    'Isolierte Git-Worktrees, die von parallelen Agenten-Workern erstellt wurden.',
+  'worktree.panel.loading': 'Worktrees werden geladen…',
+  'worktree.panel.failedToLoad': 'Worktrees konnten nicht geladen werden',
+  'worktree.panel.empty':
+    'Keine isolierten Worktrees. Parallele Worker mit Worktree-Isolation erscheinen hier.',
+  'worktree.panel.overlapsTitle': 'Überlappende Änderungen',
+  'worktree.panel.overlapHint':
+    'Diese Dateien wurden von mehr als einem Worktree geändert — vor dem Mergen abgleichen.',
   'intelligence.teams.subtitle': 'Koordinierte Agententeams und die Aufgaben, die sie teilen.',
   'intelligence.teams.loading': 'Teams werden geladen…',
   'intelligence.teams.failedToLoad': 'Teams konnten nicht geladen werden',

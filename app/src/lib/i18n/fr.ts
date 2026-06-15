@@ -412,6 +412,9 @@ const messages: TranslationMap = {
   'memory.tab.agentWork': "Travail de l'agent",
   'memory.tab.agentWorkDescription':
     "Un centre de commande pour chaque exécution d'agent en arrière-plan, regroupée selon ce qui nécessite votre intervention, ce qui est en cours et ce qui est terminé.",
+  'memory.tab.worktrees': 'Worktrees',
+  'memory.tab.worktreesDescription':
+    'Worktrees git isolés des workers d’agents parallèles — inspectez les modifications, ouvrez-les ou nettoyez-les.',
   'memory.tab.teams': 'Équipes',
   'memory.tab.teamsDescription':
     "Équipes d'agents coordonnées — qui s'occupe de chaque tâche, ce qui est bloqué et ce que les coéquipiers se disent entre eux.",
@@ -3041,6 +3044,32 @@ const messages: TranslationMap = {
   'intelligence.agentWork.kind.workflowChild': 'Élément enfant de workflow',
   'intelligence.agentWork.openThread': 'Ouvrir le fil',
   'intelligence.agentWork.openWorker': 'Ouvrir le worker',
+  'worktree.label': 'Worktree',
+  'worktree.dirty': 'Modifications non validées',
+  'worktree.clean': 'Propre',
+  'worktree.changedFile': 'fichier modifié',
+  'worktree.changedFiles': 'fichiers modifiés',
+  'worktree.removing': 'Suppression…',
+  'worktree.removeFailed': 'Échec de la suppression du worktree',
+  'worktree.diffFailed': 'Échec du chargement du diff',
+  'worktree.diffLoading': 'Chargement du diff…',
+  'worktree.diffEmpty': 'Aucune modification par rapport à HEAD.',
+  'worktree.dirtyConfirm':
+    'Ce worktree contient des modifications non validées. Le supprimer abandonne ce travail. La branche du worker est conservée.',
+  'worktree.action.open': 'Ouvrir le dossier',
+  'worktree.action.diff': 'Diff',
+  'worktree.action.hideDiff': 'Masquer le diff',
+  'worktree.action.remove': 'Supprimer',
+  'worktree.action.removeAnyway': 'Abandonner et supprimer',
+  'worktree.action.preserve': 'Conserver',
+  'worktree.panel.subtitle': 'Worktrees git isolés créés par des workers d’agents parallèles.',
+  'worktree.panel.loading': 'Chargement des worktrees…',
+  'worktree.panel.failedToLoad': 'Échec du chargement des worktrees',
+  'worktree.panel.empty':
+    'Aucun worktree isolé. Les workers parallèles avec isolation par worktree apparaîtront ici.',
+  'worktree.panel.overlapsTitle': 'Modifications qui se chevauchent',
+  'worktree.panel.overlapHint':
+    'Ces fichiers ont été modifiés par plusieurs worktrees — réconciliez-les avant de fusionner.',
   'intelligence.teams.subtitle': "Équipes d'agents coordonnées et les tâches qu'elles partagent.",
   'intelligence.teams.loading': 'Chargement des équipes…',
   'intelligence.teams.failedToLoad': 'Échec du chargement des équipes',

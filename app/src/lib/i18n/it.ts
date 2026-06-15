@@ -408,6 +408,9 @@ const messages: TranslationMap = {
   'memory.tab.agentWork': "Lavoro dell'agente",
   'memory.tab.agentWorkDescription':
     'Un centro di comando per ogni esecuzione di agente in background, raggruppata in base a ciò che richiede il tuo intervento, ciò che è in corso e ciò che è terminato.',
+  'memory.tab.worktrees': 'Worktree',
+  'memory.tab.worktreesDescription':
+    'Worktree git isolati dai worker degli agenti paralleli: ispeziona le modifiche, aprile o ripuliscile.',
   'memory.tab.teams': 'Team',
   'memory.tab.teamsDescription':
     'Team di agenti coordinati — chi è responsabile di ogni attività, cosa è bloccato e cosa si dicono i compagni di team tra loro.',
@@ -3019,6 +3022,32 @@ const messages: TranslationMap = {
   'intelligence.agentWork.kind.workflowChild': 'Figlio del flusso di lavoro',
   'intelligence.agentWork.openThread': 'Apri thread',
   'intelligence.agentWork.openWorker': 'Apri worker',
+  'worktree.label': 'Worktree',
+  'worktree.dirty': 'Modifiche non sottoposte a commit',
+  'worktree.clean': 'Pulito',
+  'worktree.changedFile': 'file modificato',
+  'worktree.changedFiles': 'file modificati',
+  'worktree.removing': 'Rimozione…',
+  'worktree.removeFailed': 'Impossibile rimuovere il worktree',
+  'worktree.diffFailed': 'Impossibile caricare il diff',
+  'worktree.diffLoading': 'Caricamento del diff…',
+  'worktree.diffEmpty': 'Nessuna modifica rispetto a HEAD.',
+  'worktree.dirtyConfirm':
+    'Questo worktree ha modifiche non sottoposte a commit. Rimuoverlo scarta quel lavoro. Il branch del worker viene mantenuto.',
+  'worktree.action.open': 'Apri cartella',
+  'worktree.action.diff': 'Diff',
+  'worktree.action.hideDiff': 'Nascondi diff',
+  'worktree.action.remove': 'Rimuovi',
+  'worktree.action.removeAnyway': 'Scarta e rimuovi',
+  'worktree.action.preserve': 'Conserva',
+  'worktree.panel.subtitle': 'Worktree git isolati creati da worker di agenti paralleli.',
+  'worktree.panel.loading': 'Caricamento dei worktree…',
+  'worktree.panel.failedToLoad': 'Impossibile caricare i worktree',
+  'worktree.panel.empty':
+    'Nessun worktree isolato. I worker paralleli con isolamento tramite worktree appariranno qui.',
+  'worktree.panel.overlapsTitle': 'Modifiche sovrapposte',
+  'worktree.panel.overlapHint':
+    'Questi file sono stati modificati da più di un worktree: riconcilia prima di unire.',
   'intelligence.teams.subtitle': 'Team di agenti coordinati e le attività che condividono.',
   'intelligence.teams.loading': 'Caricamento dei team…',
   'intelligence.teams.failedToLoad': 'Impossibile caricare i team',

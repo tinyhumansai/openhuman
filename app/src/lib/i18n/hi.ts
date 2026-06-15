@@ -398,6 +398,9 @@ const messages: TranslationMap = {
   'memory.tab.agentWork': 'एजेंट कार्य',
   'memory.tab.agentWorkDescription':
     'हर पृष्ठभूमि एजेंट रन के लिए एक कमांड सेंटर — इस आधार पर समूहित कि किसे आपकी जानकारी चाहिए, क्या चल रहा है और क्या पूरा हो चुका है।',
+  'memory.tab.worktrees': 'वर्कट्री',
+  'memory.tab.worktreesDescription':
+    'समानांतर एजेंट वर्कर्स से पृथक git वर्कट्री — बदलावों का निरीक्षण करें, उन्हें खोलें या साफ़ करें।',
   'memory.tab.teams': 'टीमें',
   'memory.tab.teamsDescription':
     'समन्वित एजेंट टीमें — हर कार्य का स्वामी कौन है, क्या अवरुद्ध है, और सहयोगी एक-दूसरे से क्या कह रहे हैं।',
@@ -2971,6 +2974,32 @@ const messages: TranslationMap = {
   'intelligence.agentWork.kind.workflowChild': 'वर्कफ़्लो चाइल्ड',
   'intelligence.agentWork.openThread': 'थ्रेड खोलें',
   'intelligence.agentWork.openWorker': 'वर्कर खोलें',
+  'worktree.label': 'वर्कट्री',
+  'worktree.dirty': 'बिना कमिट किए बदलाव',
+  'worktree.clean': 'साफ़',
+  'worktree.changedFile': 'बदली गई फ़ाइल',
+  'worktree.changedFiles': 'बदली गई फ़ाइलें',
+  'worktree.removing': 'हटाया जा रहा है…',
+  'worktree.removeFailed': 'वर्कट्री हटाने में विफल',
+  'worktree.diffFailed': 'डिफ़ लोड करने में विफल',
+  'worktree.diffLoading': 'डिफ़ लोड हो रहा है…',
+  'worktree.diffEmpty': 'HEAD की तुलना में कोई बदलाव नहीं।',
+  'worktree.dirtyConfirm':
+    'इस वर्कट्री में बिना कमिट किए बदलाव हैं। इसे हटाने पर वह काम छूट जाएगा। वर्कर ब्रांच बनी रहती है।',
+  'worktree.action.open': 'फ़ोल्डर खोलें',
+  'worktree.action.diff': 'डिफ़',
+  'worktree.action.hideDiff': 'डिफ़ छिपाएँ',
+  'worktree.action.remove': 'हटाएँ',
+  'worktree.action.removeAnyway': 'छोड़ें और हटाएँ',
+  'worktree.action.preserve': 'सुरक्षित रखें',
+  'worktree.panel.subtitle': 'समानांतर एजेंट वर्कर्स द्वारा बनाए गए पृथक git वर्कट्री।',
+  'worktree.panel.loading': 'वर्कट्री लोड हो रही हैं…',
+  'worktree.panel.failedToLoad': 'वर्कट्री लोड करने में विफल',
+  'worktree.panel.empty':
+    'कोई पृथक वर्कट्री नहीं। वर्कट्री पृथक्करण वाले समानांतर वर्कर्स यहाँ दिखाई देंगे।',
+  'worktree.panel.overlapsTitle': 'ओवरलैपिंग बदलाव',
+  'worktree.panel.overlapHint':
+    'ये फ़ाइलें एक से अधिक वर्कट्री द्वारा बदली गई थीं — मर्ज करने से पहले समाधान करें।',
   'intelligence.teams.subtitle': 'समन्वित एजेंट टीमें और वे कार्य जो वे साझा करती हैं।',
   'intelligence.teams.loading': 'टीमें लोड हो रही हैं…',
   'intelligence.teams.failedToLoad': 'टीमें लोड करने में विफल',
