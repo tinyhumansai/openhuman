@@ -5593,7 +5593,7 @@ const messages: TranslationMap = {
   'orchestration.approval.reason.children': 'Può generare un gran numero di agenti in totale.',
   'orchestration.approval.tier': 'Livello di sicurezza',
   'orchestration.approval.concurrency': 'Concorrenza',
-  'orchestration.approval.maxChildren': 'Agenti max',
+  'orchestration.approval.maxChildren': 'Numero massimo di agenti',
   'orchestration.approval.approve': 'Approva e avvia',
   'orchestration.approval.starting': 'Avvio in corso…',
   'orchestration.approval.cancel': 'Annulla',
