@@ -135,13 +135,36 @@ pub async fn update_settings(
                 .await;
                 if let Ok(Err(e)) = probe {
                     let detail = e.to_string();
+                    let lower_detail = detail.to_ascii_lowercase();
+                    // Prevention (TAURI-RUST-4P4): an LM Studio endpoint that is
+                    // reachable but has no model loaded 400s every re-embed
+                    // forever (~12.4k events / 10 users). Block the save so the
+                    // doomed config is never persisted — the user loads a model
+                    // (one step) and retries. Deterministic + user-fixable-now,
+                    // same class as the endpoint-absent gate below.
+                    if crate::core::observability::is_embedding_no_model_loaded(&lower_detail) {
+                        tracing::warn!(
+                            provider = effective_provider.as_str(),
+                            "{LOG_PREFIX} update_settings rejected — embeddings server has no model loaded"
+                        );
+                        let payload = serde_json::json!({
+                            "error": "EMBEDDINGS_NO_MODEL_LOADED",
+                            "message": "Your local embeddings server (e.g. LM Studio) is \
+                                        running but has no model loaded. Load an embedding \
+                                        model — in LM Studio use the developer page or the \
+                                        `lms load` command — then save again.",
+                            "detail": detail,
+                        });
+                        return Ok(RpcOutcome::new(
+                            payload,
+                            vec!["embeddings server has no model loaded — not saved".into()],
+                        ));
+                    }
                     // HARD-block only the deterministic endpoint-absent shape
                     // (404/405). Transient failures (timeout/5xx/network) fall
                     // through and save — never lock out a valid-but-down
                     // endpoint; the embed-time classifier handles any residual.
-                    if crate::core::observability::is_embedding_endpoint_absent(
-                        &detail.to_ascii_lowercase(),
-                    ) {
+                    if crate::core::observability::is_embedding_endpoint_absent(&lower_detail) {
                         tracing::warn!(
                             provider = effective_provider.as_str(),
                             "{LOG_PREFIX} update_settings rejected — endpoint has no embeddings API"
