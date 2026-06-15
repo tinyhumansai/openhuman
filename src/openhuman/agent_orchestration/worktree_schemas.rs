@@ -119,13 +119,26 @@ async fn repo_root(cid: &str) -> Result<PathBuf, String> {
     Ok(config.action_dir.clone())
 }
 
-fn require_path(params: &Map<String, Value>) -> Result<PathBuf, String> {
-    params
+/// Resolve and validate the `path` param for status/diff/remove.
+///
+/// These ops must only ever target an isolated worker checkout under
+/// `<repo>/.claude/worktrees`. Requiring an **absolute, managed** path before
+/// delegating keeps `worktree_remove` (and the read ops) from acting on the
+/// main checkout or any arbitrary directory the caller passes.
+fn require_managed_worktree_path(params: &Map<String, Value>) -> Result<PathBuf, String> {
+    let path = params
         .get("path")
         .and_then(|v| v.as_str())
         .filter(|s| !s.trim().is_empty())
         .map(PathBuf::from)
-        .ok_or_else(|| "missing required param: path".to_string())
+        .ok_or_else(|| "missing required param: path".to_string())?;
+    if !path.is_absolute() {
+        return Err("invalid param `path`: absolute path required".to_string());
+    }
+    if !is_managed_worktree(&path) {
+        return Err("invalid param `path`: not a managed worker worktree".to_string());
+    }
+    Ok(path)
 }
 
 fn handle_list(_params: Map<String, Value>) -> ControllerFuture {
@@ -142,7 +155,7 @@ fn handle_status(params: Map<String, Value>) -> ControllerFuture {
         let cid = new_correlation_id();
         log::debug!(target: "worktree_rpc", "[worktree_rpc][{cid}] status.entry");
         let root = repo_root(&cid).await?;
-        let path = require_path(&params)?;
+        let path = require_managed_worktree_path(&params)?;
         status_view(&root, &path, &cid)
     })
 }
@@ -152,7 +165,7 @@ fn handle_diff(params: Map<String, Value>) -> ControllerFuture {
         let cid = new_correlation_id();
         log::debug!(target: "worktree_rpc", "[worktree_rpc][{cid}] diff.entry");
         let root = repo_root(&cid).await?;
-        let path = require_path(&params)?;
+        let path = require_managed_worktree_path(&params)?;
         diff_view(&root, &path, &cid)
     })
 }
@@ -162,7 +175,7 @@ fn handle_remove(params: Map<String, Value>) -> ControllerFuture {
         let cid = new_correlation_id();
         log::debug!(target: "worktree_rpc", "[worktree_rpc][{cid}] remove.entry");
         let root = repo_root(&cid).await?;
-        let path = require_path(&params)?;
+        let path = require_managed_worktree_path(&params)?;
         let force = params
             .get("force")
             .and_then(|v| v.as_bool())
@@ -491,13 +504,32 @@ mod tests {
     }
 
     #[test]
-    fn require_path_rejects_blank() {
+    fn require_managed_worktree_path_enforces_absolute_and_managed() {
         let mut p = Map::new();
-        assert!(require_path(&p).is_err());
+        // Missing / blank path is rejected.
+        assert!(require_managed_worktree_path(&p).is_err());
         p.insert("path".into(), Value::String("  ".into()));
-        assert!(require_path(&p).is_err());
-        p.insert("path".into(), Value::String("/x/y".into()));
-        assert_eq!(require_path(&p).unwrap(), PathBuf::from("/x/y"));
+        assert!(require_managed_worktree_path(&p).is_err());
+
+        // A relative path is rejected even when it looks managed.
+        p.insert(
+            "path".into(),
+            Value::String(".claude/worktrees/worker-x".into()),
+        );
+        assert!(require_managed_worktree_path(&p).is_err());
+
+        // An absolute but unmanaged path (e.g. the main checkout) is rejected —
+        // worktree_remove must never target it.
+        p.insert("path".into(), Value::String("/home/u/proj".into()));
+        assert!(require_managed_worktree_path(&p).is_err());
+
+        // An absolute, managed worker checkout is accepted.
+        let ok = "/home/u/proj/.claude/worktrees/worker-x";
+        p.insert("path".into(), Value::String(ok.into()));
+        assert_eq!(
+            require_managed_worktree_path(&p).unwrap(),
+            PathBuf::from(ok)
+        );
     }
 
     #[test]
