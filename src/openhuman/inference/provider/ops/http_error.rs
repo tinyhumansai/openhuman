@@ -326,11 +326,83 @@ pub fn log_context_window_exceeded(
 /// Whether a provider non-2xx response is the OpenHuman **backend** rejecting
 /// the app session JWT (`401`/`403`). This is expected user-session state
 /// (token expired / revoked / rotated server-side), not a product bug — the
-/// auth domain owns recovery. `401`/`403` from **other** providers (OpenAI,
-/// Anthropic, …) mean a misconfigured BYO API key and stay Sentry-actionable,
-/// so the predicate is provider-scoped to [`openhuman_backend::PROVIDER_LABEL`].
+/// auth domain owns recovery, so the predicate is provider-scoped to
+/// [`openhuman_backend::PROVIDER_LABEL`]. A `401`/`403` from **other** providers
+/// with an auth-key envelope (missing/invalid BYO key) is demoted separately by
+/// [`is_byo_provider_auth_failure_http`]; anything else still reaches Sentry.
 pub fn is_backend_auth_failure(provider: &str, status: reqwest::StatusCode) -> bool {
     matches!(status.as_u16(), 401 | 403) && provider == openhuman_backend::PROVIDER_LABEL
+}
+
+/// Whether a non-backend provider's `401`/`403` carries an OpenAI-style
+/// authentication-error body — i.e. a missing or invalid BYO API key.
+///
+/// This is deterministic **user-config** state (the user pasted a bad or empty
+/// key into a custom OpenAI-compatible provider), not a product bug. Sentry has
+/// no remediation path, yet retry loops (memory-tree extraction, memory jobs,
+/// cron) hammer the known-bad credential and flood Sentry with thousands of
+/// identical events from a single user — TAURI-RUST-DHM (5,636 events from a
+/// `kiro` custom provider with no key), the same class as the Cohere
+/// "no api key supplied" flood (#3354) and the backend session-expiry flood
+/// (#2786 / [`is_backend_auth_failure`]).
+///
+/// Provider-scoped and body-shape-anchored, mirroring the sibling rules:
+/// - The OpenHuman **backend** keeps its [`is_backend_auth_failure`] →
+///   [`publish_backend_session_expired`] branch (a backend `401`/`403` is
+///   app-session expiry, not a BYO key), so this predicate excludes
+///   [`openhuman_backend::PROVIDER_LABEL`].
+/// - A `401`/`403` whose body does **not** look like an auth-key envelope
+///   (e.g. a gateway returning `401` on quota / geo-block) still reaches Sentry
+///   — the gate keys on the body, not the bare status.
+pub fn is_byo_provider_auth_failure_http(
+    provider: &str,
+    status: reqwest::StatusCode,
+    body: &str,
+) -> bool {
+    if !matches!(status.as_u16(), 401 | 403) {
+        return false;
+    }
+    if provider == openhuman_backend::PROVIDER_LABEL {
+        return false;
+    }
+    let lower = body.to_ascii_lowercase();
+    // OpenAI-style auth envelopes across the BYO providers seen in Sentry:
+    // `"type":"authentication_error"` (kiro / Anthropic-style), OpenAI's
+    // `"code":"invalid_api_key"` + "Incorrect API key provided", and the
+    // bare-message variants Cohere / litellm gateways emit (#3354).
+    const AUTH_ERROR_MARKERS: &[&str] = &[
+        "authentication_error",
+        "invalid_api_key",
+        "invalid api key",
+        "invalid or missing api key",
+        "missing api key",
+        "no api key supplied",
+        "incorrect api key",
+        "invalid authentication",
+    ];
+    AUTH_ERROR_MARKERS
+        .iter()
+        .any(|marker| lower.contains(marker))
+}
+
+pub fn log_byo_provider_auth_failure(
+    operation: &str,
+    provider: &str,
+    model: Option<&str>,
+    status: reqwest::StatusCode,
+) {
+    tracing::info!(
+        domain = "llm_provider",
+        operation = operation,
+        provider = provider,
+        model = model.unwrap_or(""),
+        status = status.as_u16(),
+        failure = "non_2xx",
+        kind = "provider_user_state",
+        reason = "byo_provider_auth_failure",
+        "[llm_provider] {operation} BYO provider auth failure ({status}) — \
+         user API key missing/invalid, not reporting to Sentry"
+    );
 }
 
 /// Handle a backend session-expiry auth failure: publish a
@@ -418,6 +490,9 @@ pub async fn api_error(provider: &str, response: reqwest::Response) -> anyhow::E
     // excluded by `is_backend_error_code_owned` and falls through to the
     // status gate below, which reports it (status 400 is non-transient) — F8.
     let is_backend_error_code_owned = is_backend_error_code_owned(provider, &body);
+    // Missing/invalid BYO API key on a non-backend provider — user-config
+    // state, not a product bug. Demote from Sentry (TAURI-RUST-DHM flood).
+    let is_byo_auth_failure = is_byo_provider_auth_failure_http(provider, status, &body);
 
     if is_auth_failure && is_backend {
         // Single source of truth for backend session-expiry handling (warn +
@@ -436,6 +511,8 @@ pub async fn api_error(provider: &str, response: reqwest::Response) -> anyhow::E
         log_context_window_exceeded("api_error", provider, None, status);
     } else if is_backend_error_code_owned {
         log_backend_error_code_owned("api_error", provider, None, status, &body);
+    } else if is_byo_auth_failure {
+        log_byo_provider_auth_failure("api_error", provider, None, status);
     } else if should_report_provider_http_failure(status) {
         crate::core::observability::report_error(
             message.as_str(),
