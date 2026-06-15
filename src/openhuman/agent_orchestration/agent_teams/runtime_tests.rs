@@ -436,6 +436,54 @@ async fn start_member_run_no_claimable_and_unknown_task() {
     );
 }
 
+#[tokio::test]
+async fn start_member_run_rejects_already_active_member_without_side_effects() {
+    let (_dir, config) = test_config();
+    seed_team(&config, "team-1");
+    // A member already mid-run (active), plus a fresh claimable task.
+    run_ledger::upsert_agent_team_member(
+        &config,
+        AgentTeamMemberUpsert {
+            id: "m1".into(),
+            team_id: "team-1".into(),
+            name: "m1".into(),
+            agent_id: Some("researcher".into()),
+            member_status: AgentTeamMemberStatus::Active,
+            current_task_id: Some("t-running".into()),
+            worker_thread_id: Some("run-running".into()),
+            run_id: Some("run-running".into()),
+            created_at: None,
+        },
+    )
+    .unwrap();
+    seed_task(
+        &config,
+        "team-1",
+        "t-free",
+        AgentTeamTaskStatus::Todo,
+        None,
+        vec![],
+    );
+
+    let outcome = start_member_run(&config, "team-1", "m1", None, None)
+        .await
+        .unwrap();
+    assert_eq!(outcome, StartMemberOutcome::AlreadyActive);
+
+    // No claim happened — the free task is untouched and the member still points
+    // at its original run (no clobbered pointer).
+    let task = run_ledger::get_agent_team_task(&config, "t-free")
+        .unwrap()
+        .expect("task exists");
+    assert_eq!(task.status, AgentTeamTaskStatus::Todo);
+    assert!(task.claimed_by_member_id.is_none());
+    let member = run_ledger::get_agent_team_member(&config, "m1")
+        .unwrap()
+        .expect("member exists");
+    assert_eq!(member.current_task_id.as_deref(), Some("t-running"));
+    assert_eq!(member.run_id.as_deref(), Some("run-running"));
+}
+
 // ── helpers ─────────────────────────────────────────────────────────────────
 
 #[test]
@@ -523,6 +571,50 @@ fn deliver_pending_messages_injects_then_watermarks() {
     // Second call: watermark advanced → nothing new.
     let second = deliver_pending_messages(&config, "team-1", "m1").unwrap();
     assert!(second.is_empty(), "watermark should suppress redelivery");
+}
+
+#[test]
+fn deliver_pending_messages_pages_past_first_event_page() {
+    // Regression: a single `list_recent_run_events` call returns at most one
+    // page (1000) from `sequence ASC`, but the pre-fix delivery read one
+    // unbounded page (capped at 100). A team with more events than the cap
+    // would drop every message AND watermark beyond it. Seed well past one page
+    // of filler events, then deliver a message landing at a sequence > the cap.
+    let (_dir, config) = test_config();
+    seed_team(&config, "team-1");
+    seed_member(&config, "team-1", "m1", None);
+
+    // Push the sequence far past the old 100-row cap with unrelated events.
+    for i in 0..150 {
+        run_ledger::append_run_event(
+            &config,
+            run_ledger::RunEventAppend {
+                run_id: "team-1".into(),
+                event_type: "noise".into(),
+                payload: json!({ "i": i }),
+            },
+        )
+        .unwrap();
+    }
+
+    // This message is appended at sequence > 150 — unreachable on the first page.
+    super::super::ops::message_member(&config, "team-1", None, Some("m1"), "late note", None)
+        .unwrap();
+
+    let delivered = deliver_pending_messages(&config, "team-1", "m1").unwrap();
+    assert_eq!(
+        delivered,
+        vec!["late note".to_string()],
+        "message beyond the first event page must still be delivered"
+    );
+
+    // Watermark (itself recorded beyond the cap) must also be read back so the
+    // redelivery guard holds for long-lived teams.
+    let again = deliver_pending_messages(&config, "team-1", "m1").unwrap();
+    assert!(
+        again.is_empty(),
+        "watermark past the first page must suppress redelivery"
+    );
 }
 
 #[test]

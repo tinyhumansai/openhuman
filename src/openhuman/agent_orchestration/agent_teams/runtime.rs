@@ -38,7 +38,8 @@ use crate::openhuman::agent_orchestration::{
 };
 use crate::openhuman::config::Config;
 use crate::openhuman::session_db::run_ledger::{
-    self, AgentTeamTask, AgentTeamTaskStatus, ClaimOutcome, RunEventAppend, RunEventListRequest,
+    self, AgentTeamMemberStatus, AgentTeamTask, AgentTeamTaskStatus, ClaimOutcome, RunEvent,
+    RunEventAppend, RunEventListRequest,
 };
 
 use super::types::{StartMemberOutcome, TeamError};
@@ -52,6 +53,11 @@ const TEAM_MESSAGE_EVENT: &str = "team_message";
 const MESSAGE_DELIVERED_EVENT: &str = "team_message_delivered";
 /// Event recorded when a worker run ends without completing its task.
 const MEMBER_FAILED_EVENT: &str = "team_member_failed";
+/// Page size when draining the full run-event log for a team. `list_recent_run_events`
+/// returns `sequence ASC` from the cursor and caps `limit` at 1000, so a team whose
+/// event count exceeds one page MUST be paged or later events (watermarks + messages)
+/// are silently dropped.
+const EVENT_PAGE_SIZE: u32 = 1000;
 /// Cap on how much worker output is captured as evidence (UTF-8 safe).
 const EVIDENCE_MAX_CHARS: usize = 280;
 
@@ -85,6 +91,20 @@ pub async fn start_member_run(
                 member_id: member_id.to_string(),
             })
         })?;
+
+    // Reject a start on an already-active member before any claim or state
+    // mutation. The UI hides the control for active members, but this entry
+    // point is reachable directly over RPC; without this guard two near-
+    // simultaneous calls would each claim a task and the second
+    // `mark_agent_team_member_running` would clobber the first's task/run
+    // pointer, leaving two workers for one member.
+    if member.member_status == AgentTeamMemberStatus::Active {
+        log::debug!(
+            target: LOG_TARGET,
+            "[agent_team_runtime] start.reject_active team={team_id} member={member_id}"
+        );
+        return Ok(StartMemberOutcome::AlreadyActive);
+    }
 
     // Resolve the target task: an explicit id, or the member's next claimable
     // ready task (unowned or owned-by-this-member, dependencies all done).
@@ -347,6 +367,32 @@ fn build_member_prompt(task: &AgentTeamTask, messages: &[String]) -> String {
     prompt
 }
 
+/// Drain the entire `sequence ASC` run-event log for a team by paging past the
+/// per-query cap. A single `list_recent_run_events` call returns at most 1000
+/// rows from the cursor, so message delivery MUST page or a team that exceeds
+/// one page would lose every watermark and message beyond it.
+fn drain_run_events(config: &Config, team_id: &str) -> Result<Vec<RunEvent>> {
+    let mut events: Vec<RunEvent> = Vec::new();
+    let mut after: Option<u64> = None;
+    loop {
+        let response = run_ledger::list_recent_run_events(
+            config,
+            &RunEventListRequest {
+                run_id: team_id.to_string(),
+                after_sequence: after,
+                limit: Some(EVENT_PAGE_SIZE),
+            },
+        )?;
+        let exhausted = (response.count as u32) < EVENT_PAGE_SIZE;
+        after = response.events.last().map(|e| e.sequence);
+        events.extend(response.events);
+        if exhausted || after.is_none() {
+            break;
+        }
+    }
+    Ok(events)
+}
+
 /// Read undelivered messages addressed to `member_id` (direct or broadcast),
 /// advance the per-member delivery watermark, and return their contents. Uses
 /// only the existing run-event log — no schema change.
@@ -355,15 +401,7 @@ fn deliver_pending_messages(
     team_id: &str,
     member_id: &str,
 ) -> Result<Vec<String>> {
-    let response = run_ledger::list_recent_run_events(
-        config,
-        &RunEventListRequest {
-            run_id: team_id.to_string(),
-            after_sequence: None,
-            limit: None,
-        },
-    )?;
-    let events = response.events;
+    let events = drain_run_events(config, team_id)?;
 
     let watermark = events
         .iter()

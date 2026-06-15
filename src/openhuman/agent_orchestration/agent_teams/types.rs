@@ -48,6 +48,10 @@ pub enum StartMemberOutcome {
     Blocked { unmet: Vec<String> },
     /// The target task is already claimed by another member.
     AlreadyClaimed,
+    /// The member is already `active` on a run — starting again would spawn a
+    /// second concurrent worker and clobber its task/run pointer. Rejected before
+    /// any claim or state mutation.
+    AlreadyActive,
     /// No explicit task was given and the member has no claimable ready task.
     NoClaimableTask,
     /// An explicit `task_id` was given but no such task exists in the team.
