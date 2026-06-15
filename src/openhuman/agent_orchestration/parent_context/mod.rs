@@ -61,9 +61,18 @@ pub(crate) async fn build_root_parent(
         if let Err(err) = crate::openhuman::agent::harness::AgentDefinitionRegistry::init_global(
             &config.workspace_dir,
         ) {
-            log::warn!(
+            // A concurrent init may have won the race and populated the registry,
+            // in which case the `AlreadyInitialized`-style error is benign. But if
+            // the registry is *still* `None`, init genuinely failed — fail fast
+            // here rather than letting every downstream `spawn_agent` fail later
+            // with `NoParentContext` after orchestration state has advanced.
+            if crate::openhuman::agent::harness::AgentDefinitionRegistry::global().is_none() {
+                return Err(err)
+                    .context("initialize AgentDefinitionRegistry for orchestration root parent");
+            }
+            log::debug!(
                 target: LOG_TARGET,
-                "[parent_context] registry_init_failed err={err}"
+                "[parent_context] registry_init_raced err={err}"
             );
         }
     }
