@@ -42,9 +42,17 @@ export function TeamActivityRail({ messages, members, onSend, sending }: TeamAct
   const submit = () => {
     const content = draft.trim();
     if (!content || sending || !onSend) return;
-    void Promise.resolve(onSend(recipient === '' ? null : recipient, content)).then(() => {
-      setDraft('');
-    });
+    // Clear the draft only on a resolved send; on rejection keep the unsent text
+    // so the user can retry. The empty .catch() handles the rejection (the parent
+    // surfaces the error via its own notice state) and prevents an unhandled
+    // promise rejection from the now-throwing onSend.
+    void Promise.resolve(onSend(recipient === '' ? null : recipient, content))
+      .then(() => {
+        setDraft('');
+      })
+      .catch(() => {
+        /* send failed — draft retained; error surfaced by the parent */
+      });
   };
 
   const nameFor = (id: string | null): string => {

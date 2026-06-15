@@ -116,6 +116,18 @@ export default function IntelligenceTeamsTab() {
     setView(null);
     viewRef.current = null;
     setMessages([]);
+    // Reset transient per-team feedback so a notice from the team we just left
+    // doesn't leak onto the next team opened.
+    setActionNotice(null);
+    setStartingMemberId(null);
+  }, []);
+
+  // Select a team, clearing any transient notice from a previously viewed team
+  // so stale feedback doesn't carry across navigation.
+  const selectTeam = useCallback((teamId: string) => {
+    setActionNotice(null);
+    setStartingMemberId(null);
+    setSelectedId(teamId);
   }, []);
 
   // Mount fetch of the team list (mirrors IntelligenceAgentWorkTab's 0ms
@@ -184,6 +196,10 @@ export default function IntelligenceTeamsTab() {
         if (mountedRef.current) {
           setActionNotice(err instanceof Error ? err.message : String(err));
         }
+        // Re-throw so the composer's onSend rejects and keeps the unsent draft.
+        // Swallowing here would resolve handleSend as success and TeamActivityRail
+        // would clear the draft text on a failed send.
+        throw err;
       } finally {
         if (mountedRef.current) setSending(false);
       }
@@ -322,7 +338,7 @@ export default function IntelligenceTeamsTab() {
           <li key={team.id}>
             <button
               type="button"
-              onClick={() => setSelectedId(team.id)}
+              onClick={() => selectTeam(team.id)}
               className="flex w-full items-center justify-between gap-3 p-3 text-left hover:bg-stone-50 dark:hover:bg-neutral-800/60">
               <div className="min-w-0">
                 <p className="truncate text-sm font-medium text-stone-800 dark:text-neutral-100">
