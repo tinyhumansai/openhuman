@@ -133,37 +133,7 @@ fn handle_list(_params: Map<String, Value>) -> ControllerFuture {
         let cid = new_correlation_id();
         log::debug!(target: "worktree_rpc", "[worktree_rpc][{cid}] list.entry");
         let root = repo_root(&cid).await?;
-
-        // A non-git action_dir is normal (the user may not have opened a repo).
-        // Degrade to an empty list rather than surfacing an error to the panel.
-        let all = match worktree::list(&root) {
-            Ok(list) => list,
-            Err(WorktreeError::NotAGitRepo(p)) => {
-                log::debug!(target: "worktree_rpc", "[worktree_rpc][{cid}] list.not_a_git_repo path={}", p.display());
-                return to_json(json!({ "worktrees": [], "overlaps": [] }));
-            }
-            Err(err) => {
-                let s = err.to_string();
-                log::warn!(target: "worktree_rpc", "[worktree_rpc][{cid}] list.error err={s}");
-                return Err(s);
-            }
-        };
-
-        // Only the isolated worker worktrees are management targets — never the
-        // main checkout. Filter to those nested under `.claude/worktrees`.
-        let worktrees: Vec<WorktreeStatus> = all
-            .into_iter()
-            .filter(|w| is_managed_worktree(&w.path))
-            .collect();
-
-        let overlaps = overlaps_json(&worktrees);
-        log::debug!(
-            target: "worktree_rpc",
-            "[worktree_rpc][{cid}] list.success count={} overlaps={}",
-            worktrees.len(),
-            overlaps.len()
-        );
-        to_json(json!({ "worktrees": worktrees, "overlaps": overlaps }))
+        list_view(&root, &cid)
     })
 }
 
@@ -173,13 +143,7 @@ fn handle_status(params: Map<String, Value>) -> ControllerFuture {
         log::debug!(target: "worktree_rpc", "[worktree_rpc][{cid}] status.entry");
         let root = repo_root(&cid).await?;
         let path = require_path(&params)?;
-        log::debug!(target: "worktree_rpc", "[worktree_rpc][{cid}] status.path={}", path.display());
-        let status = worktree::status(&root, &path).map_err(|e| {
-            let s = e.to_string();
-            log::warn!(target: "worktree_rpc", "[worktree_rpc][{cid}] status.error err={s}");
-            s
-        })?;
-        to_json(status)
+        status_view(&root, &path, &cid)
     })
 }
 
@@ -189,13 +153,7 @@ fn handle_diff(params: Map<String, Value>) -> ControllerFuture {
         log::debug!(target: "worktree_rpc", "[worktree_rpc][{cid}] diff.entry");
         let root = repo_root(&cid).await?;
         let path = require_path(&params)?;
-        log::debug!(target: "worktree_rpc", "[worktree_rpc][{cid}] diff.path={}", path.display());
-        let summary = worktree::diff_summary(&root, &path).map_err(|e| {
-            let s = e.to_string();
-            log::warn!(target: "worktree_rpc", "[worktree_rpc][{cid}] diff.error err={s}");
-            s
-        })?;
-        to_json(json!({ "summary": summary }))
+        diff_view(&root, &path, &cid)
     })
 }
 
@@ -209,15 +167,78 @@ fn handle_remove(params: Map<String, Value>) -> ControllerFuture {
             .get("force")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        log::debug!(target: "worktree_rpc", "[worktree_rpc][{cid}] remove.path={} force={force}", path.display());
-        worktree::remove(&root, &path, force).map_err(|e| {
-            let s = e.to_string();
-            log::warn!(target: "worktree_rpc", "[worktree_rpc][{cid}] remove.error err={s}");
-            s
-        })?;
-        log::debug!(target: "worktree_rpc", "[worktree_rpc][{cid}] remove.success path={}", path.display());
-        to_json(json!({ "removed": true }))
+        remove_view(&root, &path, force, &cid)
     })
+}
+
+/// Pure list logic anchored on an already-resolved `repo_root` — split out of
+/// [`handle_list`] so it's unit-testable against a real temp repo without the
+/// global config load.
+fn list_view(root: &Path, cid: &str) -> Result<Value, String> {
+    // A non-git action_dir is normal (the user may not have opened a repo).
+    // Degrade to an empty list rather than surfacing an error to the panel.
+    let all = match worktree::list(root) {
+        Ok(list) => list,
+        Err(WorktreeError::NotAGitRepo(p)) => {
+            log::debug!(target: "worktree_rpc", "[worktree_rpc][{cid}] list.not_a_git_repo path={}", p.display());
+            return to_json(json!({ "worktrees": [], "overlaps": [] }));
+        }
+        Err(err) => {
+            let s = err.to_string();
+            log::warn!(target: "worktree_rpc", "[worktree_rpc][{cid}] list.error err={s}");
+            return Err(s);
+        }
+    };
+
+    // Only the isolated worker worktrees are management targets — never the
+    // main checkout. Filter to those nested under `.claude/worktrees`.
+    let worktrees: Vec<WorktreeStatus> = all
+        .into_iter()
+        .filter(|w| is_managed_worktree(&w.path))
+        .collect();
+
+    let overlaps = overlaps_json(&worktrees);
+    log::debug!(
+        target: "worktree_rpc",
+        "[worktree_rpc][{cid}] list.success count={} overlaps={}",
+        worktrees.len(),
+        overlaps.len()
+    );
+    to_json(json!({ "worktrees": worktrees, "overlaps": overlaps }))
+}
+
+/// Pure status logic anchored on a resolved `repo_root` — see [`list_view`].
+fn status_view(root: &Path, path: &Path, cid: &str) -> Result<Value, String> {
+    log::debug!(target: "worktree_rpc", "[worktree_rpc][{cid}] status.path={}", path.display());
+    let status = worktree::status(root, path).map_err(|e| {
+        let s = e.to_string();
+        log::warn!(target: "worktree_rpc", "[worktree_rpc][{cid}] status.error err={s}");
+        s
+    })?;
+    to_json(status)
+}
+
+/// Pure diff logic anchored on a resolved `repo_root` — see [`list_view`].
+fn diff_view(root: &Path, path: &Path, cid: &str) -> Result<Value, String> {
+    log::debug!(target: "worktree_rpc", "[worktree_rpc][{cid}] diff.path={}", path.display());
+    let summary = worktree::diff_summary(root, path).map_err(|e| {
+        let s = e.to_string();
+        log::warn!(target: "worktree_rpc", "[worktree_rpc][{cid}] diff.error err={s}");
+        s
+    })?;
+    to_json(json!({ "summary": summary }))
+}
+
+/// Pure remove logic anchored on a resolved `repo_root` — see [`list_view`].
+fn remove_view(root: &Path, path: &Path, force: bool, cid: &str) -> Result<Value, String> {
+    log::debug!(target: "worktree_rpc", "[worktree_rpc][{cid}] remove.path={} force={force}", path.display());
+    worktree::remove(root, path, force).map_err(|e| {
+        let s = e.to_string();
+        log::warn!(target: "worktree_rpc", "[worktree_rpc][{cid}] remove.error err={s}");
+        s
+    })?;
+    log::debug!(target: "worktree_rpc", "[worktree_rpc][{cid}] remove.success path={}", path.display());
+    to_json(json!({ "removed": true }))
 }
 
 /// `true` when `path` is an isolated worker worktree (nested under the
@@ -291,6 +312,161 @@ fn json_output(name: &'static str, comment: &'static str) -> FieldSchema {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
+
+    /// `true` when `git` is invokable on this host. Tests that need real
+    /// `git worktree` plumbing skip (pass trivially) when it's absent, so a
+    /// git-less CI image doesn't hard-fail — same convention as
+    /// `worktree_tests.rs`.
+    fn git_available() -> bool {
+        Command::new("git")
+            .arg("--version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+
+    fn git(dir: &Path, args: &[&str]) {
+        let out = Command::new("git")
+            .current_dir(dir)
+            .args(args)
+            .output()
+            .expect("git invocation");
+        assert!(
+            out.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    /// Temp git repo with one commit. Returns the guard (kept alive by the
+    /// caller) and the repo root.
+    fn init_repo() -> (tempfile::TempDir, PathBuf) {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path().to_path_buf();
+        git(&root, &["init", "-b", "main"]);
+        git(&root, &["config", "user.email", "test@example.com"]);
+        git(&root, &["config", "user.name", "Test User"]);
+        std::fs::write(root.join("README.md"), "hello\n").unwrap();
+        git(&root, &["add", "README.md"]);
+        git(&root, &["commit", "-m", "initial"]);
+        (tmp, root)
+    }
+
+    #[test]
+    fn list_view_degrades_to_empty_for_non_git_root() {
+        if !git_available() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        // A plain (non-git) directory must yield an empty list, not an error —
+        // the panel shows "no worktrees" rather than surfacing a failure.
+        let v = list_view(tmp.path(), "cid").expect("non-git root degrades cleanly");
+        assert_eq!(v["worktrees"], json!([]));
+        assert_eq!(v["overlaps"], json!([]));
+    }
+
+    #[test]
+    fn list_view_surfaces_managed_worktree() {
+        if !git_available() {
+            return;
+        }
+        let (_tmp, root) = init_repo();
+        let st = worktree::create(&root, "run-1", worktree::BaseRef::Head).expect("create");
+        assert!(
+            is_managed_worktree(&st.path),
+            "created under .claude/worktrees"
+        );
+
+        let v = list_view(&root, "cid").expect("list ok");
+        let worktrees = v["worktrees"].as_array().expect("array");
+        assert_eq!(worktrees.len(), 1, "the one managed worktree is listed");
+        // A fresh worktree is clean → no overlaps.
+        assert_eq!(v["overlaps"], json!([]));
+    }
+
+    /// Drives the full `handle_list` async handler (the public RPC entry point)
+    /// through `repo_root` → config load, anchored on a non-git
+    /// `OPENHUMAN_ACTION_DIR`. Confirms the panel-facing path degrades to an
+    /// empty list rather than erroring. Holds `TEST_ENV_LOCK` because the env
+    /// override is process-global.
+    #[tokio::test]
+    async fn handle_list_degrades_for_non_git_action_dir() {
+        let _env = crate::openhuman::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let action_dir = tmp.path().join("actions");
+        std::fs::create_dir_all(&action_dir).unwrap();
+
+        // SAFETY: env writes are serialized by TEST_ENV_LOCK above.
+        unsafe {
+            std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
+            std::env::set_var("OPENHUMAN_ACTION_DIR", &action_dir);
+        }
+
+        let out = handle_list(Map::new())
+            .await
+            .expect("list handler degrades cleanly for a non-git action_dir");
+        // `into_cli_compatible_json` returns the bare value when there are no
+        // logs; the list payload is therefore at the top level.
+        let payload = out.get("result").unwrap_or(&out);
+        assert_eq!(payload["worktrees"], json!([]));
+        assert_eq!(payload["overlaps"], json!([]));
+
+        unsafe {
+            std::env::remove_var("OPENHUMAN_ACTION_DIR");
+            std::env::remove_var("OPENHUMAN_WORKSPACE");
+        }
+    }
+
+    #[test]
+    fn status_and_diff_views_round_trip_a_worktree() {
+        if !git_available() {
+            return;
+        }
+        let (_tmp, root) = init_repo();
+        let st = worktree::create(&root, "run-2", worktree::BaseRef::Head).expect("create");
+
+        // `WorktreeStatus` serializes `rename_all = "camelCase"` → `isDirty`.
+        let status = status_view(&root, &st.path, "cid").expect("status ok");
+        assert_eq!(status["isDirty"], json!(false), "fresh worktree is clean");
+
+        // A clean worktree diffs to an empty summary.
+        let diff = diff_view(&root, &st.path, "cid").expect("diff ok");
+        assert_eq!(diff["summary"], json!(""));
+    }
+
+    #[test]
+    fn remove_view_clears_a_clean_worktree() {
+        if !git_available() {
+            return;
+        }
+        let (_tmp, root) = init_repo();
+        let st = worktree::create(&root, "run-3", worktree::BaseRef::Head).expect("create");
+        assert!(st.path.exists());
+
+        let removed = remove_view(&root, &st.path, false, "cid").expect("remove ok");
+        assert_eq!(removed["removed"], json!(true));
+        assert!(!st.path.exists(), "worktree dir gone after remove");
+    }
+
+    #[test]
+    fn status_view_errors_on_unknown_path() {
+        if !git_available() {
+            return;
+        }
+        let (_tmp, root) = init_repo();
+        let bogus = root.join(".claude/worktrees/never-created");
+        assert!(status_view(&root, &bogus, "cid").is_err());
+    }
+
+    #[test]
+    fn correlation_id_is_eight_hex_chars() {
+        let id = new_correlation_id();
+        assert_eq!(id.len(), 8);
+        assert!(id.chars().all(|c| c.is_ascii_hexdigit()));
+    }
 
     #[test]
     fn registered_controllers_match_schemas() {
