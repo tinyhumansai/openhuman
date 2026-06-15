@@ -384,6 +384,9 @@ pub(crate) fn spawn_progress_bridge(
                     elapsed_ms,
                     iterations,
                     output_chars,
+                    worktree_path,
+                    changed_files,
+                    dirty_status,
                 } => {
                     let completed_at = chrono::Utc::now();
                     ledger_upsert_agent_run(
@@ -428,7 +431,10 @@ pub(crate) fn spawn_progress_bridge(
                                 "agentId": agent_id,
                                 "elapsedMs": elapsed_ms,
                                 "iterations": iterations,
-                                "outputChars": output_chars
+                                "outputChars": output_chars,
+                                "worktreePath": worktree_path,
+                                "changedFiles": changed_files,
+                                "dirtyStatus": dirty_status
                             }),
                         },
                     );
@@ -448,6 +454,16 @@ pub(crate) fn spawn_progress_bridge(
                             elapsed_ms: Some(elapsed_ms),
                             iterations: Some(iterations),
                             output_chars: Some(output_chars as u64),
+                            // Worktree isolation metadata (#3376) — drives the
+                            // inline subagent worktree row's open/diff/remove
+                            // actions. All `None`/absent for non-isolated workers.
+                            worktree_path: worktree_path.clone(),
+                            changed_files: if changed_files.is_empty() {
+                                None
+                            } else {
+                                Some(changed_files.clone())
+                            },
+                            dirty_status,
                             ..Default::default()
                         }),
                         ..Default::default()
