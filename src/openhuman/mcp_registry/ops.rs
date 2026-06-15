@@ -255,6 +255,44 @@ pub async fn mcp_clients_uninstall(
     ))
 }
 
+// ── auth detection + browser OAuth ──────────────────────────────────────────────
+
+/// Classify how a server authenticates (`none` / `token` / `oauth`) by probing
+/// it — the connect modal renders the matching control. Registry metadata is
+/// unreliable, so this is the source of truth.
+pub async fn mcp_clients_detect_auth(
+    config: &Config,
+    server_id: String,
+) -> Result<RpcOutcome<Value>, String> {
+    if server_id.trim().is_empty() {
+        return Err("server_id must not be empty".to_string());
+    }
+    let detection = super::oauth::detect(config, server_id.trim()).await?;
+    let kind = detection.kind.clone();
+    let value = serde_json::to_value(&detection).map_err(|e| e.to_string())?;
+    Ok(RpcOutcome::new(
+        value,
+        vec![format!("detect_auth {} -> {}", server_id.trim(), kind)],
+    ))
+}
+
+/// Begin browser OAuth: discover + dynamic client registration + PKCE, returning
+/// the live `/authorize` URL for the frontend to open. The `/oauth/mcp/callback`
+/// route completes the exchange + reconnect.
+pub async fn mcp_clients_oauth_begin(
+    config: &Config,
+    server_id: String,
+) -> Result<RpcOutcome<Value>, String> {
+    if server_id.trim().is_empty() {
+        return Err("server_id must not be empty".to_string());
+    }
+    let authorize_url = super::oauth::begin(config, server_id.trim()).await?;
+    Ok(RpcOutcome::new(
+        json!({ "authorize_url": authorize_url }),
+        vec![format!("oauth_begin {}", server_id.trim())],
+    ))
+}
+
 // ── connect ────────────────────────────────────────────────────────────────────
 
 pub async fn mcp_clients_connect(
@@ -401,8 +439,17 @@ pub async fn mcp_clients_update_env(
         env.keys().collect::<Vec<_>>()
     );
 
+    // Merge the supplied values over any already-stored env, THEN persist —
+    // `set_env_values` replaces the value table wholesale, so a partial update
+    // (e.g. the connect modal sending only the one field the user just typed,
+    // with no way to display the other stored secrets) would silently erase
+    // the rest. Merging preserves keys the caller didn't send; supplied values
+    // win on collision. Callers that send every key (the reconfigure form,
+    // which requires all fields) are unaffected — for them merged == supplied.
+    let mut merged = store::load_env_values(config, server_id).unwrap_or_default();
+    merged.extend(env);
     // Persist first so the new values survive even if the reconnect fails.
-    store::set_env_values(config, server_id, &env).map_err(|e| e.to_string())?;
+    store::set_env_values(config, server_id, &merged).map_err(|e| e.to_string())?;
 
     // Drop any live session so the reconnect picks up the new env.
     connections::disconnect(server_id).await;
@@ -413,10 +460,11 @@ pub async fn mcp_clients_update_env(
 
     let mut server = store::get_server(config, server_id).map_err(|e| e.to_string())?;
 
-    // Keep the install record's `env_keys` list in sync with the values we just
-    // wrote — `set_env_values` replaces the value table wholesale, so the
-    // key-name list shown in the UI (and returned below) must track it too.
-    let mut new_keys: Vec<String> = env.keys().cloned().collect();
+    // Keep the install record's `env_keys` list in sync with the full merged
+    // value set we just wrote (not just the keys supplied this call), so the
+    // key-name list shown in the UI (and returned below) reflects every stored
+    // key — including the ones a partial update preserved.
+    let mut new_keys: Vec<String> = merged.keys().cloned().collect();
     new_keys.sort();
     if server.env_keys != new_keys {
         server.env_keys = new_keys;
@@ -563,6 +611,38 @@ pub async fn mcp_clients_status(config: &Config) -> Result<RpcOutcome<Value>, St
     ))
 }
 
+// ── list_tools ──────────────────────────────────────────────────────────────
+
+/// List the tools (name + description + input schema) advertised by one
+/// already-connected server. This is the agent's discovery primitive: it
+/// reads the live snapshot without re-handshaking (unlike `connect`). When
+/// the server is not connected, returns an error hint to connect first.
+pub async fn mcp_clients_list_tools(server_id: String) -> Result<RpcOutcome<Value>, String> {
+    if server_id.trim().is_empty() {
+        return Err("server_id must not be empty".to_string());
+    }
+
+    tracing::debug!("[mcp-client] list_tools server_id={}", server_id);
+
+    match connections::tools_for(server_id.trim()).await {
+        Some(tools) => {
+            let count = tools.len();
+            Ok(RpcOutcome::new(
+                json!({ "server_id": server_id.trim(), "tools": tools }),
+                vec![format!(
+                    "list_tools server_id={} returned {} tools",
+                    server_id.trim(),
+                    count
+                )],
+            ))
+        }
+        None => Err(format!(
+            "server_id={} is not connected; connect it first via mcp_clients_connect",
+            server_id.trim()
+        )),
+    }
+}
+
 // ── tool_call ─────────────────────────────────────────────────────────────────
 
 pub async fn mcp_clients_tool_call(
@@ -700,9 +780,10 @@ fn build_config_assist_system_prompt(
 fn collect_required_env_keys(detail: &super::types::SmitheryServerDetail) -> Vec<String> {
     let mut keys = Vec::new();
     for conn in &detail.connections {
-        if conn.r#type != "stdio" {
-            continue;
-        }
+        // Collect required inputs from every connection type. stdio inputs are
+        // process env vars; http / http_remote inputs are request headers
+        // (e.g. `Authorization`) declared via the registry's `remotes[].headers`
+        // — both are user-supplied secrets the install form must render.
         if let Some(schema) = &conn.config_schema {
             if let Some(props) = schema.get("properties").and_then(Value::as_object) {
                 for key in props.keys() {
@@ -720,91 +801,78 @@ fn collect_required_env_keys(detail: &super::types::SmitheryServerDetail) -> Vec
 /// Uses the existing `inference` domain to run a structured-output chat turn.
 async fn invoke_config_assist_agent(
     config: &Config,
-    system_prompt: &str,
+    // The legacy JSON-asking system prompt is intentionally unused: the agent
+    // turn returns its text verbatim, so we want natural markdown, not a JSON
+    // envelope. Server context comes through `user_message`.
+    _system_prompt: &str,
     history: &[super::types::ChatTurn],
     user_message: &str,
 ) -> Result<Value, String> {
-    // Build a simple prompt that asks for JSON output.
-    // We delegate to the inference domain if available, otherwise return a fallback.
-    let mut full_prompt = String::new();
+    // Run a real agent turn (not a bare completion) so the model can use
+    // `web_search` / `web_fetch` / `curl` to look up the provider's actual docs
+    // and give accurate, current token-acquisition steps instead of guessing
+    // from training memory. The research directive + server context go in the
+    // message; the default agent already carries the web tools (always
+    // registered), gated by the usual SecurityPolicy.
+    let mut message = String::new();
+    message.push_str(
+        "You are an MCP setup helper. Use web_search and web_fetch/curl to look up the \
+         provider's OFFICIAL documentation, then tell the user exactly how to obtain the \
+         credential needed to connect this MCP server: where to sign up / log in, where to \
+         generate the API key or token, which scopes/permissions to enable, and the exact \
+         header name and value format to paste. Reply with concise numbered steps and cite \
+         the source URL. Do not invent URLs — verify them with the tools. Respond in plain \
+         markdown prose, NOT JSON and with no wrapping object.\n\n",
+    );
     for turn in history {
-        full_prompt.push_str(&format!("{}: {}\n\n", turn.role, turn.content));
+        message.push_str(&format!("{}: {}\n", turn.role, turn.content));
     }
-    full_prompt.push_str(&format!("user: {user_message}"));
+    message.push_str(&format!("user: {user_message}"));
 
     tracing::debug!(
-        "[mcp-client] config_assist invoke inference prompt_len={}",
-        full_prompt.len()
+        "[mcp-client] config_assist running agent turn (web tools) prompt_len={}",
+        message.len()
     );
 
-    // Attempt to use the inference infrastructure; fall back to a helpful stub
-    // if inference is not configured (common in test environments).
-    let api_url = config.api_url.as_deref().unwrap_or("");
-    let api_key = config.api_key.as_deref().unwrap_or("");
+    let mut agent = match crate::openhuman::agent::Agent::from_config(config) {
+        Ok(a) => a,
+        Err(e) => {
+            return Ok(json!({
+                "reply": format!(
+                    "Couldn't start the assistant: {e}. Make sure AI/inference is configured (Settings → AI)."
+                ),
+                "suggested_env": null
+            }));
+        }
+    };
+    // Scope this docs helper to web-research tools only. `from_config` builds
+    // the full default agent surface (filesystem, shell, MCP, browser, …), but
+    // a credential-help turn must not be able to pivot into unrelated local
+    // capabilities — it only needs to read the provider's public docs (#3648).
+    agent.set_visible_tool_names(
+        ["web_search_tool", "web_fetch", "curl"]
+            .into_iter()
+            .map(String::from)
+            .collect(),
+    );
 
-    if api_url.is_empty() || api_key.is_empty() {
-        tracing::debug!("[mcp-client] config_assist no inference config, using stub reply");
-        return Ok(json!({
-            "reply": "I need to help you configure this MCP server. Please share the required environment variables and I will guide you through the setup.",
+    // Trusted desktop-initiated turn — label as CLI so the approval gate doesn't
+    // fail closed on an unlabelled call site (mirrors `agent_chat`).
+    let reply_result = crate::openhuman::agent::turn_origin::with_origin(
+        crate::openhuman::agent::turn_origin::AgentTurnOrigin::Cli,
+        agent.run_single(&message),
+    )
+    .await;
+
+    match reply_result {
+        Ok(reply) => Ok(json!({ "reply": reply, "suggested_env": null })),
+        Err(e) => Ok(json!({
+            "reply": format!(
+                "I couldn't research that right now: {e}. Make sure AI/inference is configured (Settings → AI)."
+            ),
             "suggested_env": null
-        }));
+        })),
     }
-
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
-
-    let messages = vec![
-        json!({ "role": "system", "content": system_prompt }),
-        json!({ "role": "user", "content": full_prompt }),
-    ];
-
-    let body = json!({
-        "model": config.default_model.as_deref().unwrap_or("chat-v1"),
-        "messages": messages,
-        "temperature": 0.3
-    });
-
-    let resp = client
-        .post(format!("{api_url}/openai/v1/chat/completions"))
-        .bearer_auth(api_key)
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| format!("Inference request failed: {e}"))?;
-
-    let status = resp.status();
-    let text = resp.text().await.map_err(|e| e.to_string())?;
-    if !status.is_success() {
-        // Truncate at a Unicode-safe char boundary rather than a raw byte index.
-        let preview: String = text.chars().take(200).collect();
-        tracing::warn!(
-            "[mcp-client] config_assist inference HTTP {}: {}",
-            status,
-            preview
-        );
-        return Ok(json!({
-            "reply": "I'm currently unable to connect to the AI backend. Please try again shortly.",
-            "suggested_env": null
-        }));
-    }
-
-    let response: Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
-    let content = response
-        .get("choices")
-        .and_then(Value::as_array)
-        .and_then(|arr| arr.first())
-        .and_then(|c| c.get("message"))
-        .and_then(|m| m.get("content"))
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .trim()
-        .to_string();
-
-    // Try to parse the content as JSON; if not, wrap it
-    serde_json::from_str::<Value>(&content)
-        .or_else(|_| Ok(json!({ "reply": content, "suggested_env": null })))
 }
 
 #[cfg(test)]

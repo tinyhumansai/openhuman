@@ -45,11 +45,11 @@ describe('Skills page — Meetings tab (meeting bots)', () => {
     expect(screen.queryByTestId('meeting-bots-card')).not.toBeInTheDocument();
 
     // MCP Servers no longer hosts the meeting bot CTA.
-    fireEvent.click(screen.getByRole('tab', { name: 'MCP Servers' }));
+    fireEvent.click(screen.getByTestId('two-pane-nav-mcp'));
     expect(screen.queryByTestId('meeting-bots-card')).not.toBeInTheDocument();
 
     // Meetings does.
-    fireEvent.click(screen.getByRole('tab', { name: 'Meetings' }));
+    fireEvent.click(screen.getByTestId('two-pane-nav-meetings'));
     expect(screen.getByTestId('meeting-bots-card')).toBeInTheDocument();
   });
 
@@ -57,14 +57,14 @@ describe('Skills page — Meetings tab (meeting bots)', () => {
     // The old ?tab=meetings alias now maps to the new "Meetings" tab.
     renderWithProviders(<Skills />, { initialEntries: ['/connections?tab=meetings'] });
 
-    expect(screen.getByRole('tab', { name: 'Meetings' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByTestId('two-pane-nav-meetings')).toHaveAttribute('aria-current', 'page');
     expect(screen.getByTestId('meeting-bots-card')).toBeInTheDocument();
   });
 
   it('supports direct links via ?tab=talents', () => {
     renderWithProviders(<Skills />, { initialEntries: ['/connections?tab=talents'] });
 
-    expect(screen.getByRole('tab', { name: 'Meetings' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByTestId('two-pane-nav-meetings')).toHaveAttribute('aria-current', 'page');
     expect(screen.getByTestId('meeting-bots-card')).toBeInTheDocument();
   });
 });

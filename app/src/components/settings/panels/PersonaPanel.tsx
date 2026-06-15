@@ -24,7 +24,13 @@ import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 const log = debug('persona:panel');
 
-const PersonaPanel = () => {
+interface PersonaPanelProps {
+  /** When true the panel is hosted inside another settings page (the
+   *  Personality & Face tabs) — skip the standalone SettingsHeader chrome. */
+  embedded?: boolean;
+}
+
+const PersonaPanel = ({ embedded = false }: PersonaPanelProps) => {
   const { t } = useT();
   const { navigateBack, navigateToSettings, breadcrumbs } = useSettingsNavigation();
   const dispatch = useAppDispatch();
@@ -130,12 +136,14 @@ const PersonaPanel = () => {
 
   return (
     <div className="z-10 relative">
-      <SettingsHeader
-        title={t('settings.persona.title')}
-        showBackButton={true}
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
+      {!embedded && (
+        <SettingsHeader
+          title={t('settings.persona.title')}
+          showBackButton={true}
+          onBack={navigateBack}
+          breadcrumbs={breadcrumbs}
+        />
+      )}
 
       <div className="p-4 pt-2 space-y-5">
         {/* ── Identity ─────────────────────────────────────────────── */}
@@ -257,7 +265,7 @@ const PersonaPanel = () => {
             <button
               type="button"
               data-testid="persona-open-mascot"
-              onClick={() => navigateToSettings('mascot')}
+              onClick={() => navigateToSettings('personality#face')}
               className="flex w-full items-center justify-between text-left text-sm text-neutral-800 dark:text-neutral-200 hover:text-primary-700 dark:hover:text-primary-300">
               <span>{t('settings.persona.openMascotSettings')}</span>
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

@@ -69,6 +69,46 @@ fn upsert_persists_path_scope() {
 }
 
 #[test]
+fn list_chunks_source_scope_filters_before_limit() {
+    // Two disallowed-source chunks have NEWER timestamps (sorted first by DESC),
+    // and the single allowed-source chunk is older. With a naive post-limit
+    // filter and LIMIT 1 the allowed row would be starved; the before-limit gate
+    // inside list_chunks must still surface it.
+    let (_tmp, cfg) = test_config();
+    let tag = || vec!["memory_sources".to_string(), "chat".to_string()];
+    let mut bad1 = sample_chunk("slack:#secret", 0, 3_000);
+    bad1.metadata.tags = tag();
+    let mut bad2 = sample_chunk("slack:#secret", 1, 2_000);
+    bad2.metadata.tags = tag();
+    let mut good = sample_chunk("slack:#eng", 0, 1_000);
+    good.metadata.tags = tag();
+    upsert_chunks(&cfg, &[bad1, bad2, good]).unwrap();
+
+    let mut allowed = std::collections::HashSet::new();
+    allowed.insert("slack:#eng".to_string());
+    let q = ListChunksQuery {
+        limit: Some(1),
+        source_scope: Some(allowed),
+        ..Default::default()
+    };
+    let rows = list_chunks(&cfg, &q).unwrap();
+    assert_eq!(
+        rows.len(),
+        1,
+        "the allowed-source chunk must survive the gate"
+    );
+    assert_eq!(rows[0].metadata.source_id, "slack:#eng");
+
+    // No scope → unrestricted: the newest (disallowed) chunk wins under LIMIT 1.
+    let unscoped = ListChunksQuery {
+        limit: Some(1),
+        ..Default::default()
+    };
+    let rows = list_chunks(&cfg, &unscoped).unwrap();
+    assert_eq!(rows[0].metadata.source_id, "slack:#secret");
+}
+
+#[test]
 fn upsert_is_idempotent() {
     let (_tmp, cfg) = test_config();
     let c = sample_chunk("slack:#eng", 0, 1_700_000_000_000);

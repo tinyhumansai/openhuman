@@ -191,15 +191,11 @@ const BottomTabBar = () => {
 
   const isActive = (path: string) => {
     if (path === '/chat') return location.pathname.startsWith('/chat');
-    if (path === '/settings/cron-jobs') return location.pathname.startsWith('/settings/cron-jobs');
-    if (path === '/settings/messaging') return location.pathname.startsWith('/settings/messaging');
+    // Every /settings/* page lives in the two-pane settings layout — the
+    // Settings tab is active for all of them. (The old cron-jobs/messaging
+    // exclusions covered dedicated tabs that no longer exist.)
     if (path === '/settings')
-      return (
-        location.pathname === '/settings' ||
-        (location.pathname.startsWith('/settings/') &&
-          !location.pathname.startsWith('/settings/cron-jobs') &&
-          !location.pathname.startsWith('/settings/messaging'))
-      );
+      return location.pathname === '/settings' || location.pathname.startsWith('/settings/');
     if (path === '/home') return location.pathname === '/home';
     return location.pathname === path;
   };

@@ -33,7 +33,13 @@ use tokio_util::sync::CancellationToken;
 use crate::process_kill::{kill_pid_force, kill_pid_term};
 
 const CORE_READY_POLL_MS: u64 = 100;
-const CORE_READY_ATTEMPTS: usize = 200;
+// 60s ceiling. The embedded core boots in ~11s standalone, but inside the
+// desktop app it contends with CEF process startup (GPU/renderer/utility
+// re-execs) and can intermittently cross a 20s cap on a cold/loaded machine.
+// Polling returns the instant the core is ready, so a higher ceiling costs
+// nothing in the common fast case — it only avoids spurious startup-timeout
+// aborts under contention.
+const CORE_READY_ATTEMPTS: usize = 600;
 const CORE_READY_TIMEOUT_MS: u64 = CORE_READY_POLL_MS * CORE_READY_ATTEMPTS as u64;
 
 /// Generate a 256-bit cryptographically-random bearer token as a hex string.
@@ -305,13 +311,14 @@ impl CoreProcessHandle {
                 }
             }
 
-            // Readiness budget: 200 iterations x 100ms = 20s. The embedded
-            // core's JSON-RPC controller registry has grown over time and
-            // earlier 4s/10s budgets started flaking under CI worker load
-            // (issue: core_process tests intermittently failing with
+            // Readiness budget: 600 iterations x 100ms = 60s (CORE_READY_ATTEMPTS).
+            // The embedded core's JSON-RPC controller registry has grown over
+            // time and earlier 4s/10s/20s budgets started flaking under CI
+            // worker load (issue: core_process tests intermittently failing with
             // "core process did not become ready"), especially under
             // cargo-llvm-cov instrumentation where the binary runs ~2x
-            // slower. 20s is still well under any user-visible startup
+            // slower, and under desktop CEF startup contention. 60s is still
+            // well under any user-visible startup
             // expectation: in normal runs the ready signal arrives in well
             // under 1s and the loop exits immediately; the headroom only
             // matters on heavily loaded instrumented CI workers.

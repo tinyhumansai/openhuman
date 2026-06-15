@@ -16,8 +16,9 @@ import {
   type WebhookDebugLogEntry,
   type WebhookDebugRegistration,
 } from '../../../utils/tauriCommands';
+import PanelPage from '../../layout/PanelPage';
 import Button from '../../ui/Button';
-import SettingsHeader from '../components/SettingsHeader';
+import SettingsBackButton from '../components/SettingsBackButton';
 import {
   SettingsBadge,
   SettingsEmptyState,
@@ -52,7 +53,7 @@ function prettyJson(value: unknown): string {
 
 const WebhooksDebugPanel = () => {
   const { t } = useT();
-  const { navigateBack, breadcrumbs } = useSettingsNavigation();
+  const { navigateBack } = useSettingsNavigation();
   const backendUrl = useBackendUrl();
   const [registrations, setRegistrations] = useState<WebhookDebugRegistration[]>([]);
   const [logs, setLogs] = useState<WebhookDebugLogEntry[]>([]);
@@ -162,14 +163,12 @@ const WebhooksDebugPanel = () => {
   }, [loadData, t]);
 
   return (
-    <div className="z-10 relative" data-testid="webhooks-debug-panel">
-      <SettingsHeader
-        title={t('webhooks.debugTitle')}
-        showBackButton={true}
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
-
+    <PanelPage
+      className="z-10"
+      contentClassName=""
+      testId="webhooks-debug-panel"
+      description={t('settings.developerMenu.webhooks.desc')}
+      leading={<SettingsBackButton onBack={navigateBack} />}>
       <div className="p-4 space-y-4">
         {/* Status bar */}
         <div className="flex flex-wrap items-center gap-2">
@@ -342,7 +341,7 @@ const WebhooksDebugPanel = () => {
           </div>
         </SettingsSection>
       </div>
-    </div>
+    </PanelPage>
   );
 };
 

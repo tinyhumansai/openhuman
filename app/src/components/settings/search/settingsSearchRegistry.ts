@@ -48,7 +48,6 @@ const SECTION_KEY: Record<SettingsSection, string> = {
   ai: 'pages.settings.aiSection.title',
   agents: 'settings.agentsSection.title',
   features: 'pages.settings.featuresSection.title',
-  composio: 'pages.settings.composioSection.title',
   crypto: 'settings.cryptoSection.title',
   notifications: 'settings.groups.notifications',
   developer: 'settings.developerDiagnostics',
@@ -57,8 +56,7 @@ const SECTION_KEY: Record<SettingsSection, string> = {
 // Fine-grained badge overrides: top-level 'home' entries map to 'nav.settings'
 // by default, but some items logically belong to a sub-group badge.
 const SECTION_BADGE_OVERRIDES: Record<string, string> = {
-  persona: 'settings.groups.assistant',
-  mascot: 'settings.groups.assistant',
+  personality: 'settings.groups.assistant',
   appearance: 'settings.groups.account',
   devices: 'settings.groups.account',
   'memory-sync': 'settings.groups.account',
@@ -68,7 +66,7 @@ const SECTION_BADGE_OVERRIDES: Record<string, string> = {
   ai: 'nav.settings',
   'agents-settings': 'nav.settings',
   features: 'nav.settings',
-  composio: 'nav.settings',
+  integrations: 'nav.settings',
   'developer-options': 'settings.developerDiagnostics',
 };
 

@@ -61,7 +61,17 @@ const makeIsVisibleTab =
     (INTELLIGENCE_TABS as string[]).includes(tab ?? '') &&
     (developerModeEnabled || !(DEV_ONLY_TABS as string[]).includes(tab ?? ''));
 
-export default function Intelligence() {
+interface IntelligenceProps {
+  /**
+   * Query-param key backing the active tab. Defaults to `tab` for the standalone
+   * route. When embedded inside another `?tab=`-driven page (e.g. Brain at
+   * `/brain?tab=intelligence`), pass a distinct key so the child's internal tab
+   * switches don't clobber the host's `tab` param and unmount this panel.
+   */
+  tabParamKey?: string;
+}
+
+export default function Intelligence({ tabParamKey = 'tab' }: IntelligenceProps = {}) {
   const { t } = useT();
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
   const developerMode = useDeveloperMode();
@@ -72,24 +82,24 @@ export default function Intelligence() {
   // for an `embedded` prop since this page has no standalone usage.
   log('rendering with settings shell');
 
-  // Tab is URL-backed (`/intelligence?tab=…`) so navigating away — e.g. to
+  // Tab is URL-backed (`?<tabParamKey>=…`) so navigating away — e.g. to
   // Settings → Task Sources from the Agent Tasks tab — and coming back via
   // browser-back restores the same tab instead of resetting to Memory.
   // `replace` so switching tabs doesn't stack history entries.
   const [searchParams, setSearchParams] = useSearchParams();
-  const tabParam = searchParams.get('tab');
+  const tabParam = searchParams.get(tabParamKey);
   const activeTab: IntelligenceTab = isVisibleTab(tabParam) ? tabParam : 'tasks';
   const setActiveTab = useCallback(
     (tab: IntelligenceTab) => {
       setSearchParams(
         prev => {
-          prev.set('tab', tab);
+          prev.set(tabParamKey, tab);
           return prev;
         },
         { replace: true }
       );
     },
-    [setSearchParams]
+    [setSearchParams, tabParamKey]
   );
 
   // The legacy header pills (system-status + Ingesting/Queued chips) were

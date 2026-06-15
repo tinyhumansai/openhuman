@@ -22,6 +22,7 @@ import chatRuntimeReducer, {
   setTaskBoardForThread,
   setToolTimelineForThread,
 } from '../../store/chatRuntimeSlice';
+import layoutReducer from '../../store/layoutSlice';
 import socketReducer from '../../store/socketSlice';
 import themeReducer from '../../store/themeSlice';
 import threadReducer, { setSelectedThread } from '../../store/threadSlice';
@@ -170,6 +171,7 @@ function buildStore(preload: Record<string, unknown> = {}) {
   return configureStore({
     reducer: combineReducers({
       thread: threadReducer,
+      layout: layoutReducer,
       socket: socketReducer,
       chatRuntime: chatRuntimeReducer,
       agentProfiles: agentProfileReducer,
@@ -220,7 +222,6 @@ async function openSidebar() {
 const emptyThreadState = {
   threads: [],
   selectedThreadId: null,
-  threadSidebarVisible: false,
   activeThreadIds: {},
   welcomeThreadId: null,
   messagesByThreadId: {},
@@ -315,7 +316,7 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     });
   });
 
-  // Covers line 906: const effectiveShowSidebar = threadSidebarVisible;
+  // Covers the page-mode sidebar (TwoPanelLayout, id `chat`) once opened.
   // Covers line 941: <div className="flex-1 overflow-y-auto"> (always rendered in page mode)
   it('renders the sidebar pill tabs in page mode', async () => {
     await act(async () => {
@@ -331,7 +332,9 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     let renderedStore: ReturnType<typeof buildStore> | undefined;
     await act(async () => {
       renderedStore = await renderConversations({
-        thread: { ...emptyThreadState, threadSidebarVisible: true },
+        thread: emptyThreadState,
+        // Sidebar visibility now lives in the reusable `layout` slice (id `chat`).
+        layout: { panels: { chat: { sidebarVisible: true, sidebarWidth: 256 } } },
       });
     });
 
@@ -344,7 +347,7 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     await waitFor(() => {
       expect(screen.queryByText('General')).not.toBeInTheDocument();
     });
-    expect(renderedStore?.getState().thread.threadSidebarVisible).toBe(false);
+    expect(renderedStore?.getState().layout.panels.chat.sidebarVisible).toBe(false);
   });
 
   // Covers line 941 empty branch

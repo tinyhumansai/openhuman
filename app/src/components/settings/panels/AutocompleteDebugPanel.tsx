@@ -17,9 +17,10 @@ import {
   openhumanAutocompleteStop,
   openhumanGetConfig,
 } from '../../../utils/tauriCommands';
+import PanelPage from '../../layout/PanelPage';
 import Button from '../../ui/Button';
 import Input from '../../ui/Input';
-import SettingsHeader from '../components/SettingsHeader';
+import SettingsBackButton from '../components/SettingsBackButton';
 import { SettingsSection, SettingsStatusLine, SettingsTextArea } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
@@ -70,7 +71,7 @@ const parseAutocompleteConfig = (raw: unknown): AutocompleteConfig => {
 
 const AutocompleteDebugPanel = () => {
   const { t } = useT();
-  const { navigateBack, breadcrumbs } = useSettingsNavigation();
+  const { navigateBack } = useSettingsNavigation();
 
   // Status & loading
   const [status, setStatus] = useState<AutocompleteStatus | null>(null);
@@ -477,14 +478,11 @@ const AutocompleteDebugPanel = () => {
   // -------------------------------------------------------------------------
 
   return (
-    <div className="z-10 relative">
-      <SettingsHeader
-        title={t('autocomplete.debugTitle')}
-        showBackButton={true}
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
-
+    <PanelPage
+      className="z-10"
+      contentClassName=""
+      description={t('settings.developerMenu.autocomplete.desc')}
+      leading={<SettingsBackButton onBack={navigateBack} />}>
       <div className="max-w-2xl mx-auto w-full p-4 space-y-4">
         {/* ------------------------------------------------------------------ */}
         {/* Runtime section                                                     */}
@@ -772,7 +770,7 @@ const AutocompleteDebugPanel = () => {
         {/* ------------------------------------------------------------------ */}
         <SettingsStatusLine saving={false} savedNote={message} error={error} savingLabel="" />
       </div>
-    </div>
+    </PanelPage>
   );
 };
 

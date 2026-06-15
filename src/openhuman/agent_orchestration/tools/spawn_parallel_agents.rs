@@ -682,6 +682,7 @@ async fn run_one_parallel_task(
         initial_history: None,
         checkpoint_dir: None,
         worktree_action_dir: worktree_path.clone(),
+        run_queue: None,
     };
     let run_result = run_subagent(&definition, &prompt, options).await;
 

@@ -88,11 +88,26 @@ impl Tool for MemoryChunkContextTool {
         let source_id = target.metadata.source_id.clone();
         let source_kind = target.metadata.source_kind;
 
-        // Get all chunks from the same source, ordered by timestamp
+        // Per-profile memory-source gate: if the target chunk belongs to a
+        // source the active profile didn't allow, surface nothing (its window
+        // shares the same source). Non-source chunks always pass.
+        if !crate::openhuman::memory::source_scope::chunk_source_allowed(
+            &target.metadata.tags,
+            &source_id,
+        ) {
+            return Ok(ToolResult::success(
+                "Chunk is from a memory source not available to the active agent profile.",
+            ));
+        }
+
+        // Get all chunks from the same source, ordered by timestamp. The
+        // source-scope gate also applies here (the target was already checked
+        // above; this keeps the window consistent). None = unrestricted.
         let source_query = ListChunksQuery {
             source_kind: Some(source_kind),
             source_id: Some(source_id.clone()),
             limit: Some(500),
+            source_scope: crate::openhuman::memory::source_scope::current_source_scope(),
             ..Default::default()
         };
         let mut source_chunks = list_chunks(&config, &source_query)

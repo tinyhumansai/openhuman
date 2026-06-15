@@ -291,6 +291,49 @@ async fn extract_returns_empty_on_malformed_provider_response() {
     assert!(out.llm_importance.is_none());
 }
 
+#[tokio::test]
+async fn extract_clears_structure_latch_on_completed_empty_extraction() {
+    // #3365: the structure-degraded latch is a LIVENESS signal ("the extraction
+    // model is timing out"), set only after transport-failure retries are
+    // exhausted. A *completed* call — even one that yields no entities (a
+    // valid-but-empty result for entity-free text) — proves the model is
+    // responding, so it must clear the latch. Previously only a NON-empty result
+    // cleared it, so after the model recovered the latch stayed stuck whenever
+    // later texts were entity-light.
+    let _health_guard = crate::openhuman::memory_tree::health::test_guard();
+    use crate::openhuman::memory::chat::{ChatPrompt, ChatProvider};
+    use async_trait::async_trait;
+    use std::sync::Arc;
+
+    struct EmptyButOkProvider;
+    #[async_trait]
+    impl ChatProvider for EmptyButOkProvider {
+        fn name(&self) -> &str {
+            "test:empty-ok"
+        }
+        async fn chat_for_json(&self, _p: &ChatPrompt) -> anyhow::Result<String> {
+            Ok(r#"{"entities": [], "topics": []}"#.to_string())
+        }
+    }
+
+    crate::openhuman::memory_tree::health::mark_structure_degraded(
+        crate::openhuman::memory_tree::health::FailureCode::ExtractionTimeout,
+    );
+    assert!(
+        crate::openhuman::memory_tree::health::current_degraded_state().structure,
+        "precondition: structure-degraded latch is set"
+    );
+
+    let ex = LlmEntityExtractor::new(LlmExtractorConfig::default(), Arc::new(EmptyButOkProvider));
+    let out = ex.extract("entity-free text").await.unwrap();
+    assert!(out.entities.is_empty(), "no entities in the response");
+
+    assert!(
+        !crate::openhuman::memory_tree::health::current_degraded_state().structure,
+        "a completed extraction must clear the structure-degraded latch even when empty"
+    );
+}
+
 #[test]
 fn into_extracted_entities_drops_hallucinations() {
     let out = LlmExtractionOutput {

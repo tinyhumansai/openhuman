@@ -34,22 +34,29 @@ test.describe('Settings - Account Preferences', () => {
   test('renders the account settings section route', async ({ page }) => {
     await gotoSettingsRoute(page, '/settings/account');
 
-    await expect(page.getByRole('heading', { name: 'Account' })).toBeVisible();
-    await expect(page.getByTestId('settings-nav-team')).toBeVisible();
-    await expect(page.getByTestId('settings-nav-privacy')).toBeVisible();
-    await expect(page.getByTestId('settings-nav-migration')).toBeVisible();
-    // Recovery phrase + wallet balances moved out of Account into the Crypto hub.
-    await expect(page.getByTestId('settings-nav-recovery-phrase')).toHaveCount(0);
+    // Panel titles were dropped in the PanelPage migration; assert the panel's
+    // stable test id instead of the old heading.
+    await expect(page.getByTestId('account-panel')).toBeVisible();
+    // The Account family surfaces its leaves via the sub-nav pill row above the
+    // panel (the two-pane sidebar replaced the old section-hub list).
+    await expect(page.getByTestId('settings-subnav-team')).toBeVisible();
+    await expect(page.getByTestId('settings-subnav-privacy')).toBeVisible();
+    await expect(page.getByTestId('settings-subnav-migration')).toBeVisible();
+    // Recovery phrase + wallet balances live under the Wallet family, not Account.
+    await expect(page.getByTestId('settings-subnav-recovery-phrase')).toHaveCount(0);
   });
 
   test('renders the crypto settings section route with recovery phrase + balances', async ({
     page,
   }) => {
+    // /settings/crypto is retired and redirects to the Wallet Balances panel,
+    // whose sub-nav family surfaces recovery-phrase + wallet-balances.
     await gotoSettingsRoute(page, '/settings/crypto');
 
-    await expect(page.getByRole('heading', { name: 'Crypto' })).toBeVisible();
-    await expect(page.getByTestId('settings-nav-recovery-phrase')).toBeVisible();
-    await expect(page.getByTestId('settings-nav-wallet-balances')).toBeVisible();
+    // Panel titles were dropped in the PanelPage migration; the Wallet family is
+    // confirmed by its sub-nav leaves below.
+    await expect(page.getByTestId('settings-subnav-recovery-phrase')).toBeVisible();
+    await expect(page.getByTestId('settings-subnav-wallet-balances')).toBeVisible();
   });
 
   test('saves a generated recovery phrase and exposes configured wallet state', async ({
@@ -98,28 +105,42 @@ test.describe('Settings - Account Preferences', () => {
 
     await gotoSettingsRoute(page, '/settings/privacy');
 
-    await expect(page.getByRole('heading', { name: 'Privacy & Security' })).toBeVisible();
+    await expect(page.getByTestId('settings-privacy-panel')).toBeVisible();
     await expect(page.getByText('Share Product Analytics and Diagnostics')).toBeVisible();
 
+    // Toggle + confirm each setting sequentially. Clicking both back-to-back and
+    // polling for the combined result is racy: each toggle triggers an async
+    // save and panel re-render, so the second click can land before the first
+    // settles, dropping one update. Also wait for each switch to reflect the
+    // persisted initial state before clicking — the panel can render from a
+    // not-yet-synced snapshot, and clicking then computes the wrong new value.
+    await expect(page.getByTestId('privacy-analytics-toggle')).toBeChecked({
+      checked: initialAnalytics,
+    });
     await page.getByTestId('privacy-analytics-toggle').click();
-    await page.getByTestId('privacy-meet-handoff-toggle').click();
-
     await expect
       .poll(async () => {
         const analytics = await callCoreRpc<{ result?: { enabled?: boolean } }>(
           'openhuman.config_get_analytics_settings',
           {}
         );
+        return Boolean(analytics.result?.enabled);
+      })
+      .toBe(!initialAnalytics);
+
+    await expect(page.getByTestId('privacy-meet-handoff-toggle')).toBeChecked({
+      checked: initialMeet,
+    });
+    await page.getByTestId('privacy-meet-handoff-toggle').click();
+    await expect
+      .poll(async () => {
         const meet = await callCoreRpc<{ result?: { auto_orchestrator_handoff?: boolean } }>(
           'openhuman.config_get_meet_settings',
           {}
         );
-        return {
-          analyticsEnabled: Boolean(analytics.result?.enabled),
-          meetHandoff: Boolean(meet.result?.auto_orchestrator_handoff),
-        };
+        return Boolean(meet.result?.auto_orchestrator_handoff);
       })
-      .toEqual({ analyticsEnabled: !initialAnalytics, meetHandoff: !initialMeet });
+      .toBe(!initialMeet);
 
     const snapshot = await callCoreRpc<{
       result?: { analyticsEnabled?: boolean; meetAutoOrchestratorHandoff?: boolean };
@@ -132,10 +153,10 @@ test.describe('Settings - Account Preferences', () => {
     await gotoSettingsRoute(page, '/settings/billing');
 
     await expect(page.getByRole('heading', { name: 'Open billing dashboard' })).toBeVisible();
+    // Billing no longer auto-opens the browser; the panel explains billing
+    // moved to the web and offers an explicit open button.
     await expect(
-      page.getByText(
-        /If your browser did not open, use the button above\.|The browser could not be opened automatically\.|Opening your browser\.\.\./
-      )
+      page.getByText(/Subscription changes, payment methods, credits, and invoices are now managed/)
     ).toBeVisible();
 
     await page.getByRole('button', { name: 'Back to settings' }).click();

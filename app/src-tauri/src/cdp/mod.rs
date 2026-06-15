@@ -55,3 +55,15 @@ pub use target::{
 /// migrated to the shared in-process channel.
 pub const CDP_HOST: &str = "127.0.0.1";
 pub const CDP_PORT: u16 = 19222;
+
+/// Resolve the CEF remote-debugging (DevTools/CDP) port. Defaults to
+/// [`CDP_PORT`] but is overridable via `OPENHUMAN_CDP_PORT` so a second
+/// instance (e.g. a dev/test build running alongside another worktree's app)
+/// can avoid colliding on the loopback DevTools port.
+pub fn cdp_port() -> u16 {
+    std::env::var("OPENHUMAN_CDP_PORT")
+        .ok()
+        .and_then(|v| v.trim().parse::<u16>().ok())
+        .filter(|p| *p != 0)
+        .unwrap_or(CDP_PORT)
+}

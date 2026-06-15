@@ -1,7 +1,29 @@
 use super::super::Config;
 use anyhow::{Context, Result};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 
+/// Set whenever a legacy `enc:` (XOR) secret is force-migrated to `enc2:`
+/// during a `decrypt_config_secrets` pass. The flag is scoped to a single pass:
+/// `decrypt_config_secrets` clears it on entry and reads (and clears) it on exit
+/// so the caller can persist the upgraded config (audit C8). The worst case
+/// under a (rare) concurrent load is an extra, idempotent `config.save()` — the
+/// re-encryption is a no-op once values are already `enc2:`, so an occasional
+/// spurious save is harmless and never loses data.
+fn migration_flag() -> &'static AtomicBool {
+    static MIGRATED: AtomicBool = AtomicBool::new(false);
+    &MIGRATED
+}
+
+/// Decrypt one optional secret in place.
+///
+/// When the stored value uses the legacy, insecure `enc:` (XOR) format this
+/// performs a **forced one-time migration**: the field is decrypted via
+/// `decrypt_and_migrate` (which rewrites it to the `enc2:` / ChaCha20-Poly1305
+/// format) and the process-wide migration flag is raised so the caller can
+/// persist the upgraded config back to disk. This stops legacy XOR ciphertext
+/// from persisting indefinitely (see audit C8). Reading existing `enc:` values
+/// still succeeds throughout the migration.
 fn decrypt_optional_secret(
     store: &crate::openhuman::keyring::SecretStore,
     value: &mut Option<String>,
@@ -9,8 +31,19 @@ fn decrypt_optional_secret(
 ) -> Result<()> {
     if let Some(raw) = value.clone() {
         if crate::openhuman::keyring::SecretStore::is_encrypted(&raw) {
-            match store.decrypt(&raw) {
-                Ok(plaintext) => *value = Some(plaintext),
+            // Legacy `enc:` values are migrated to `enc2:` on read so they are
+            // rewritten on the next config save instead of lingering forever.
+            match store.decrypt_and_migrate(&raw) {
+                Ok((plaintext, migrated)) => {
+                    if migrated.is_some() {
+                        log::warn!(
+                            "[security][config] migrated legacy enc: secret '{field_name}' \
+                             to enc2: (ChaCha20-Poly1305); config will be re-saved to persist"
+                        );
+                        migration_flag().store(true, Ordering::Relaxed);
+                    }
+                    *value = Some(plaintext);
+                }
                 Err(e) => {
                     // Decryption key is inaccessible (e.g. rotated, keyring reset, or
                     // migrated across machines). Clear the field so config loads
@@ -54,10 +87,17 @@ fn encrypt_optional_secret(
 /// Called during config load when `secrets.encrypt` is true. Only decrypts
 /// values that have the `enc:` or `enc2:` prefix; plaintext values are
 /// returned as-is. This is a no-op when encryption is disabled.
-pub(super) fn decrypt_config_secrets(config: &mut Config, openhuman_dir: &Path) -> Result<()> {
+///
+/// Returns `true` if any field used the legacy, insecure `enc:` format and was
+/// force-migrated to `enc2:` during this pass. The caller should persist the
+/// config (e.g. `config.save()`) when this is `true` so the upgraded ciphertext
+/// is written to disk and the legacy XOR value stops persisting (audit C8).
+pub(super) fn decrypt_config_secrets(config: &mut Config, openhuman_dir: &Path) -> Result<bool> {
     if !config.secrets.encrypt {
-        return Ok(());
+        return Ok(false);
     }
+    // Reset the per-pass migration flag before decrypting any field.
+    migration_flag().store(false, Ordering::Relaxed);
     let store = crate::openhuman::keyring::SecretStore::new(openhuman_dir, true);
 
     decrypt_optional_secret(&store, &mut config.api_key, "api_key")?;
@@ -145,7 +185,7 @@ pub(super) fn decrypt_config_secrets(config: &mut Config, openhuman_dir: &Path) 
         qq.app_secret = tok.unwrap_or_default();
     }
 
-    Ok(())
+    Ok(migration_flag().swap(false, Ordering::Relaxed))
 }
 
 /// Encrypt all secret fields in the configuration before writing to disk.

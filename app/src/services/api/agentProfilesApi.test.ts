@@ -28,14 +28,14 @@ describe('agentProfilesApi', () => {
 
     const { agentProfilesApi } = await import('./agentProfilesApi');
     await expect(agentProfilesApi.list()).resolves.toEqual(response);
-    expect(mockCallCoreRpc).toHaveBeenCalledWith({ method: 'openhuman.agent_profiles_list' });
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({ method: 'openhuman.profiles_list' });
 
     mockCallCoreRpc.mockResolvedValueOnce({ data: { ...response, activeProfileId: 'research' } });
     await expect(agentProfilesApi.select('research')).resolves.toMatchObject({
       activeProfileId: 'research',
     });
     expect(mockCallCoreRpc).toHaveBeenLastCalledWith({
-      method: 'openhuman.agent_profile_select',
+      method: 'openhuman.profiles_select',
       params: { profile_id: 'research' },
     });
   });
@@ -55,7 +55,7 @@ describe('agentProfilesApi', () => {
     const { agentProfilesApi } = await import('./agentProfilesApi');
     await expect(agentProfilesApi.upsert(profile)).resolves.toEqual(response);
     expect(mockCallCoreRpc).toHaveBeenCalledWith({
-      method: 'openhuman.agent_profile_upsert',
+      method: 'openhuman.profiles_upsert',
       params: { profile },
     });
 
@@ -64,7 +64,7 @@ describe('agentProfilesApi', () => {
       activeProfileId: 'default',
     });
     expect(mockCallCoreRpc).toHaveBeenLastCalledWith({
-      method: 'openhuman.agent_profile_delete',
+      method: 'openhuman.profiles_delete',
       params: { profile_id: 'custom' },
     });
   });

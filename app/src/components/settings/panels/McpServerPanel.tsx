@@ -7,8 +7,10 @@ import { useT } from '../../../lib/i18n/I18nContext';
 // TAURI-REACT-6 — into a rejected Promise that the existing try/catch sees
 // as a regular IPC failure.
 import { safeInvoke as invoke, isTauri } from '../../../utils/tauriCommands/common';
+import ChipTabs from '../../layout/ChipTabs';
+import PanelPage from '../../layout/PanelPage';
 import Button from '../../ui/Button';
-import SettingsHeader from '../components/SettingsHeader';
+import SettingsBackButton from '../components/SettingsBackButton';
 import { SettingsSection } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
@@ -101,7 +103,7 @@ interface McpServerPanelProps {
 
 const McpServerPanel = ({ embedded = false }: McpServerPanelProps = {}) => {
   const { t } = useT();
-  const { navigateBack, breadcrumbs } = useSettingsNavigation();
+  const { navigateBack } = useSettingsNavigation();
 
   const [binaryInfo, setBinaryInfo] = useState<McpBinaryInfo | null>(null);
   const [binaryError, setBinaryError] = useState<string | null>(null);
@@ -168,16 +170,11 @@ const McpServerPanel = ({ embedded = false }: McpServerPanelProps = {}) => {
   ];
 
   return (
-    <div className="z-10 relative">
-      {!embedded && (
-        <SettingsHeader
-          title={t('settings.mcpServer.title')}
-          showBackButton={true}
-          onBack={navigateBack}
-          breadcrumbs={breadcrumbs}
-        />
-      )}
-
+    <PanelPage
+      className="z-10"
+      contentClassName=""
+      description={embedded ? undefined : t('settings.developerMenu.mcpServer.desc')}
+      leading={embedded ? undefined : <SettingsBackButton onBack={navigateBack} />}>
       {/* ----------------------------------------------------------------- */}
       {/* Section 1 — Available Tools                                        */}
       {/* ----------------------------------------------------------------- */}
@@ -208,32 +205,15 @@ const McpServerPanel = ({ embedded = false }: McpServerPanelProps = {}) => {
           title={t('settings.mcpServer.configSectionTitle')}
           description={t('settings.mcpServer.configSectionDesc')}>
           {/* Client selector tabs */}
-          <div className="px-4 pt-3">
-            <div
-              className="flex gap-1 flex-wrap"
-              role="tablist"
-              aria-label={t('settings.mcpServer.clientSelectorAriaLabel')}>
-              {clients.map(client => (
-                <button
-                  key={client.id}
-                  type="button"
-                  role="tab"
-                  aria-selected={activeClient === client.id}
-                  onClick={() => {
-                    setActiveClient(client.id);
-                    setOpenConfigError(null);
-                  }}
-                  className={[
-                    'px-3 py-1.5 rounded-lg text-xs font-medium transition-colors',
-                    activeClient === client.id
-                      ? 'bg-primary-600 text-white'
-                      : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-200 dark:hover:bg-neutral-700',
-                  ].join(' ')}>
-                  {client.label}
-                </button>
-              ))}
-            </div>
-          </div>
+          <ChipTabs
+            ariaLabel={t('settings.mcpServer.clientSelectorAriaLabel')}
+            items={clients}
+            value={activeClient}
+            onChange={id => {
+              setActiveClient(id);
+              setOpenConfigError(null);
+            }}
+          />
 
           {/* Binary path error banner */}
           {binaryError && (
@@ -287,7 +267,7 @@ const McpServerPanel = ({ embedded = false }: McpServerPanelProps = {}) => {
           )}
         </SettingsSection>
       </div>
-    </div>
+    </PanelPage>
   );
 };
 

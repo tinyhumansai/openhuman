@@ -20,22 +20,20 @@ import {
 } from '../../../services/api/voiceSettingsApi';
 import {
   openhumanGetVoiceServerSettings,
-  openhumanUpdateVoiceServerSettings,
   openhumanVoiceSetProviders,
   openhumanVoiceStatus,
-  syncNotchVisibility,
   type VoiceProvidersSnapshot,
   type VoiceServerSettings,
   type VoiceStatus,
 } from '../../../utils/tauriCommands';
+import PanelPage from '../../layout/PanelPage';
 import Button from '../../ui/Button';
-import SettingsHeader from '../components/SettingsHeader';
+import SettingsBackButton from '../components/SettingsBackButton';
 import {
   SettingsRow,
   SettingsSection,
   SettingsSelect,
   SettingsStatusLine,
-  SettingsSwitch,
   SettingsTextField,
 } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
@@ -98,7 +96,7 @@ interface VoicePanelProps {
 
 const VoicePanel = ({ embedded = false }: VoicePanelProps = {}) => {
   const { t } = useT();
-  const { navigateBack, navigateToSettings, breadcrumbs } = useSettingsNavigation();
+  const { navigateBack, navigateToSettings } = useSettingsNavigation();
   const [settings, setSettings] = useState<VoiceServerSettings | null>(null);
   const [savedSettings, setSavedSettings] = useState<VoiceServerSettings | null>(null);
   const [voiceStatus, setVoiceStatus] = useState<VoiceStatus | null>(null);
@@ -486,52 +484,13 @@ const VoicePanel = ({ embedded = false }: VoicePanelProps = {}) => {
   const piperReady = piperInstall?.state === 'installed';
 
   return (
-    <div className="z-10 relative">
-      {!embedded && (
-        <SettingsHeader
-          title={t('voice.title')}
-          showBackButton={true}
-          onBack={navigateBack}
-          breadcrumbs={breadcrumbs}
-        />
-      )}
-
+    <PanelPage
+      className="z-10"
+      contentClassName=""
+      description={embedded ? undefined : t('pages.settings.ai.voiceDesc')}
+      leading={embedded ? undefined : <SettingsBackButton onBack={navigateBack} />}>
       <div className={embedded ? 'space-y-4' : 'p-4 space-y-4'}>
-        {/* ─── Always-on listening (Phase 2) ──────────────────────────── */}
-        {settings && (
-          <SettingsSection>
-            <SettingsRow
-              htmlFor="switch-always-on-main"
-              label={t('voice.debug.alwaysOn')}
-              description={t('voice.debug.alwaysOnDesc')}
-              control={
-                <SettingsSwitch
-                  id="switch-always-on-main"
-                  checked={settings.always_on_enabled}
-                  onCheckedChange={async (next: boolean) => {
-                    setSettings(current =>
-                      current ? { ...current, always_on_enabled: next } : current
-                    );
-                    try {
-                      await openhumanUpdateVoiceServerSettings({ always_on_enabled: next });
-                      // The notch pill is the always-on listening HUD: show it
-                      // when listening is enabled, drop it when disabled.
-                      await syncNotchVisibility(next);
-                    } catch (err) {
-                      // Revert on failure so the UI reflects the persisted value.
-                      setSettings(current =>
-                        current ? { ...current, always_on_enabled: !next } : current
-                      );
-                      console.error('[VoicePanel] failed to toggle always-on', err);
-                    }
-                  }}
-                  aria-label={t('voice.debug.alwaysOn')}
-                  data-testid="voice-always-on-toggle"
-                />
-              }
-            />
-          </SettingsSection>
-        )}
+        {/* Always-on listening moved to Settings → Features → Desktop Agent. */}
 
         {/* ─── Section 1: Voice Provider Chips ─────────────────────────── */}
         {/* Provider chips are intentional bespoke UI — kept as-is. */}
@@ -1283,7 +1242,7 @@ const VoicePanel = ({ embedded = false }: VoicePanelProps = {}) => {
                     {t('voice.providers.mascotVoiceDescPrefix')}{' '}
                     <button
                       type="button"
-                      onClick={() => navigateToSettings('mascot')}
+                      onClick={() => navigateToSettings('personality#face')}
                       className="underline text-primary-600 dark:text-primary-300 hover:text-primary-700 dark:hover:text-primary-200">
                       {t('voice.providers.mascotSettings')}
                     </button>
@@ -1303,7 +1262,7 @@ const VoicePanel = ({ embedded = false }: VoicePanelProps = {}) => {
           savingLabel={t('common.loading')}
         />
       </div>
-    </div>
+    </PanelPage>
   );
 };
 

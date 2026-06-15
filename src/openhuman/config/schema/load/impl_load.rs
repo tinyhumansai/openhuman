@@ -238,7 +238,20 @@ impl Config {
                 "Config loaded"
             );
             crate::openhuman::migrations::run_pending(&mut config).await;
-            decrypt_config_secrets(&mut config, &openhuman_dir)?;
+            let migrated_legacy_secrets = decrypt_config_secrets(&mut config, &openhuman_dir)?;
+            if migrated_legacy_secrets {
+                // One-time forced migration: a legacy `enc:` (XOR) secret was
+                // upgraded to `enc2:` on read. Persist immediately so the
+                // insecure ciphertext stops living on disk (audit C8). A save
+                // failure is non-fatal — the config is still usable in memory
+                // and migration will be retried on the next startup.
+                if let Err(e) = config.save().await {
+                    log::warn!(
+                        "[security][config] failed to persist enc: -> enc2: secret migration; \
+                         will retry on next startup: {e}"
+                    );
+                }
+            }
             Ok(config)
         } else {
             let mut config = Config {
@@ -304,7 +317,9 @@ impl Config {
         config.workspace_dir = workspace_dir;
         config.action_dir = resolve_action_dir(&config.action_dir_override);
         config.apply_env_overrides();
-        decrypt_config_secrets(&mut config, &openhuman_dir)?;
+        // Debug-dump path is read-only; ignore the migration signal (the
+        // authoritative `load_or_init` path persists upgraded secrets).
+        let _ = decrypt_config_secrets(&mut config, &openhuman_dir)?;
         Ok(config)
     }
 

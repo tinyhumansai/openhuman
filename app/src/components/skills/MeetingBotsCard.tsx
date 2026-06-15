@@ -202,7 +202,15 @@ function MeetingBotsInline({ onToast, hasSubmittedRef }: MeetingBotsInlineProps)
   const { t } = useT();
   const dispatch = useAppDispatch();
   const [meetUrl, setMeetUrl] = useState('');
-  const [respondTo] = useState('');
+  // The participant the bot answers to (authorized speaker). Wired to the
+  // backend join payload as `respondToParticipant` → `respondTo`, which the
+  // meeting stream uses to gate in-call requests to this speaker only.
+  const [respondTo, setRespondTo] = useState('');
+  // Active (respond when addressed) vs listen-only (transcribe only). Defaults
+  // to active; the bot still only replies after being addressed by the wake
+  // phrase. Forwarded to the backend as `listenOnly` and mirrored into the
+  // meet slice so the active view shows the right status.
+  const [listenOnly, setListenOnly] = useState(false);
   const personaDisplayName = useAppSelector(selectPersonaDisplayName);
   const personaDescription = useAppSelector(selectPersonaDescription);
   const selectedMascotId = useAppSelector(selectSelectedMascotId);
@@ -234,7 +242,7 @@ function MeetingBotsInline({ onToast, hasSubmittedRef }: MeetingBotsInlineProps)
   }, [refreshRecentCalls]);
 
   const selectedLabel = t('skills.meetingBots.platforms.gmeet');
-  const agentName = personaDisplayName.trim() || 'OpenHuman';
+  const agentName = personaDisplayName.trim() || 'Tiny';
   const systemPrompt = personaDescription.trim() || undefined;
   const mascotId = selectedMascotId ?? (mascotColor === 'custom' ? undefined : mascotColor);
   const riveColors =
@@ -264,7 +272,7 @@ function MeetingBotsInline({ onToast, hasSubmittedRef }: MeetingBotsInlineProps)
     hasSubmittedRef.current = true;
     try {
       const meetingId = crypto.randomUUID();
-      dispatch(setBackendMeetJoining({ meetUrl: meetUrl.trim(), meetingId }));
+      dispatch(setBackendMeetJoining({ meetUrl: meetUrl.trim(), meetingId, listenOnly }));
       await joinMeetViaBackendBot({
         meetUrl,
         displayName: agentName,
@@ -275,6 +283,7 @@ function MeetingBotsInline({ onToast, hasSubmittedRef }: MeetingBotsInlineProps)
         riveColors,
         correlationId: meetingId,
         respondToParticipant: respondTo.trim() || undefined,
+        listenOnly,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : t('skills.meetingBots.failedToStart');
@@ -315,6 +324,44 @@ function MeetingBotsInline({ onToast, hasSubmittedRef }: MeetingBotsInlineProps)
           />
         </label>
 
+        <label className="block">
+          <span className="text-[10px] font-medium uppercase tracking-wide text-stone-500 dark:text-neutral-400">
+            {t('skills.meetingBots.respondToParticipant')}
+          </span>
+          <input
+            type="text"
+            autoComplete="off"
+            spellCheck={false}
+            value={respondTo}
+            onChange={e => setRespondTo(e.target.value)}
+            placeholder={t('skills.meetingBots.respondToParticipantHint')}
+            disabled={submitting}
+            required
+            className="mt-1 w-full rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-100 disabled:cursor-not-allowed disabled:bg-stone-50 dark:disabled:bg-neutral-800/60"
+          />
+          <p className="mt-1 text-[10px] text-stone-400 dark:text-neutral-500">
+            {t('skills.meetingBots.respondToParticipantDesc')}
+          </p>
+        </label>
+
+        <label className="flex items-start gap-3 rounded-xl border border-stone-200 dark:border-neutral-800 px-3 py-2.5">
+          <input
+            type="checkbox"
+            checked={!listenOnly}
+            onChange={e => setListenOnly(!e.target.checked)}
+            disabled={submitting}
+            className="mt-0.5 h-4 w-4 shrink-0 rounded border-stone-300 text-primary-500 focus:ring-2 focus:ring-primary-100 disabled:cursor-not-allowed"
+          />
+          <span className="min-w-0">
+            <span className="block text-sm font-medium text-stone-800 dark:text-neutral-100">
+              {t('skills.meetingBots.activeMode')}
+            </span>
+            <span className="mt-0.5 block text-[10px] leading-relaxed text-stone-400 dark:text-neutral-500">
+              {t('skills.meetingBots.activeModeDesc')}
+            </span>
+          </span>
+        </label>
+
         {error && (
           <div
             role="alert"
@@ -326,7 +373,7 @@ function MeetingBotsInline({ onToast, hasSubmittedRef }: MeetingBotsInlineProps)
         <div className="flex items-center justify-end gap-2 pt-1">
           <button
             type="submit"
-            disabled={submitting || !meetUrl.trim()}
+            disabled={submitting || !meetUrl.trim() || !respondTo.trim()}
             className="rounded-xl bg-primary-500 px-4 py-2 text-sm font-semibold text-white hover:bg-primary-600 disabled:cursor-not-allowed disabled:bg-stone-200 dark:disabled:bg-neutral-700 disabled:text-stone-400 dark:disabled:text-neutral-500">
             {submitting
               ? t('skills.meetingBots.starting')

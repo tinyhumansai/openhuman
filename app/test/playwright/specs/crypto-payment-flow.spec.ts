@@ -19,14 +19,12 @@ test.describe('Crypto Payment Flow', () => {
     await expect(page.getByRole('button', { name: 'Open billing dashboard' })).toBeVisible();
   });
 
-  test('opening-browser status copy is shown on mount', async ({ page }) => {
+  test('shows the moved-to-web explanation on mount', async ({ page }) => {
     await waitForAppReady(page);
+    // Billing no longer auto-opens the browser on mount; the panel explains that
+    // billing moved to the web instead of showing an "opening browser" status.
     await expect(
-      page
-        .getByText(
-          /Opening your browser|If your browser did not open, use the button above\.|The browser could not be opened automatically\./
-        )
-        .first()
+      page.getByText(/Subscription changes, payment methods, credits, and invoices are now managed/)
     ).toBeVisible();
   });
 });
