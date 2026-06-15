@@ -54,6 +54,27 @@ export interface AgentWorkResponse {
   total: number;
 }
 
+/**
+ * Control verb applied to a single run via `openhuman.agent_work_control`.
+ * Mirrors the Rust `ControlVerb`. `continue` / `followUp` require a message.
+ */
+export type AgentWorkAction = 'stop' | 'retry' | 'continue' | 'follow_up';
+
+/** Arguments for {@link agentWorkApi.control}. */
+export interface AgentWorkControlArgs {
+  runId: string;
+  action: AgentWorkAction;
+  /** Required for `continue` and `follow_up`; ignored otherwise. */
+  message?: string;
+  /** Optional note recorded when `stop`ping. */
+  reason?: string;
+}
+
+/** Response from `openhuman.agent_work_control`: the re-projected row. */
+export interface AgentWorkControlResponse {
+  row: AgentWorkRow;
+}
+
 export const agentWorkApi = {
   /**
    * List all tracked background agent runs, grouped by lifecycle bucket.
@@ -72,5 +93,32 @@ export const agentWorkApi = {
     });
     log('list received groups=%d total=%d', response.groups.length, response.total);
     return response;
+  },
+
+  /**
+   * Apply a control verb to one background agent run, returning the updated row.
+   *
+   * `continue` and `follow_up` carry the user's message; the client rejects an
+   * empty message for those verbs before hitting core (the Rust handler also
+   * enforces it). `stop` may carry an optional `reason`.
+   */
+  control: async (args: AgentWorkControlArgs): Promise<AgentWorkRow> => {
+    const runId = args.runId?.trim();
+    if (!runId) throw new Error('agentWorkApi.control: runId is required');
+    const message = args.message?.trim();
+    if ((args.action === 'continue' || args.action === 'follow_up') && !message) {
+      throw new Error(`agentWorkApi.control: ${args.action} requires a message`);
+    }
+    const params: Record<string, unknown> = { runId, action: args.action };
+    if (message) params.message = message;
+    const reason = args.reason?.trim();
+    if (reason) params.reason = reason;
+    log('control runId=%s action=%s', runId, args.action);
+    const response = await callCoreRpc<AgentWorkControlResponse>({
+      method: 'openhuman.agent_work_control',
+      params,
+    });
+    log('control received status=%s', response.row.status);
+    return response.row;
   },
 };
