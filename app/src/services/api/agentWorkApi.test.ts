@@ -86,3 +86,73 @@ describe('agentWorkApi', () => {
     expect(working?.rows[0].workerThreadId).toBe('thread-w');
   });
 });
+
+describe('agentWorkApi.control', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function controlled(status: string): {
+    row: AgentWorkResponse['groups'][number]['rows'][number];
+  } {
+    return {
+      row: {
+        runId: 'run-1',
+        kind: 'subagent',
+        bucket: status === 'cancelled' ? 'stopped' : 'working',
+        status,
+        startedAt: '2026-01-01T00:00:00Z',
+        updatedAt: '2026-01-01T00:02:00Z',
+        inputTokens: 0,
+        outputTokens: 0,
+        costUsd: 0,
+        toolCount: 0,
+      },
+    };
+  }
+
+  it('stop forwards runId + action and returns the updated row', async () => {
+    mockCall.mockResolvedValueOnce(controlled('cancelled'));
+    const row = await agentWorkApi.control({ runId: 'run-1', action: 'stop' });
+    expect(mockCall).toHaveBeenCalledWith({
+      method: 'openhuman.agent_work_control',
+      params: { runId: 'run-1', action: 'stop' },
+    });
+    expect(row.status).toBe('cancelled');
+  });
+
+  it('stop includes a trimmed reason when given', async () => {
+    mockCall.mockResolvedValueOnce(controlled('cancelled'));
+    await agentWorkApi.control({ runId: 'run-1', action: 'stop', reason: '  manual  ' });
+    expect(mockCall).toHaveBeenCalledWith({
+      method: 'openhuman.agent_work_control',
+      params: { runId: 'run-1', action: 'stop', reason: 'manual' },
+    });
+  });
+
+  it('continue forwards the trimmed message', async () => {
+    mockCall.mockResolvedValueOnce(controlled('running'));
+    await agentWorkApi.control({ runId: 'run-1', action: 'continue', message: '  go  ' });
+    expect(mockCall).toHaveBeenCalledWith({
+      method: 'openhuman.agent_work_control',
+      params: { runId: 'run-1', action: 'continue', message: 'go' },
+    });
+  });
+
+  it('rejects continue / follow_up without a message before calling core', async () => {
+    await expect(agentWorkApi.control({ runId: 'run-1', action: 'continue' })).rejects.toThrow(
+      'continue requires a message'
+    );
+    await expect(
+      agentWorkApi.control({ runId: 'run-1', action: 'follow_up', message: '   ' })
+    ).rejects.toThrow('follow_up requires a message');
+    expect(mockCall).not.toHaveBeenCalled();
+  });
+
+  it('rejects a missing runId before calling core', async () => {
+    await expect(agentWorkApi.control({ runId: '  ', action: 'retry' })).rejects.toThrow(
+      'runId is required'
+    );
+    expect(mockCall).not.toHaveBeenCalled();
+  });
+});

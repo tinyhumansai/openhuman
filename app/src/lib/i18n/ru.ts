@@ -3033,6 +3033,16 @@ const messages: TranslationMap = {
   'intelligence.agentWork.kind.workflowChild': 'Дочерний элемент рабочего процесса',
   'intelligence.agentWork.openThread': 'Открыть тред',
   'intelligence.agentWork.openWorker': 'Открыть воркер',
+  'intelligence.agentWork.action.stop': 'Остановить',
+  'intelligence.agentWork.action.retry': 'Повторить',
+  'intelligence.agentWork.action.continue': 'Продолжить',
+  'intelligence.agentWork.action.followUp': 'Уточнить',
+  'intelligence.agentWork.action.send': 'Отправить',
+  'intelligence.agentWork.action.cancel': 'Отмена',
+  'intelligence.agentWork.action.continuePlaceholder':
+    'Ответьте, чтобы разблокировать этого агента…',
+  'intelligence.agentWork.action.followUpPlaceholder': 'Отправьте уточняющую инструкцию…',
+  'intelligence.agentWork.action.failed': 'Не удалось выполнить действие',
   'intelligence.teams.subtitle':
     'Скоординированные команды агентов и задачи, которые они разделяют.',
   'intelligence.teams.loading': 'Загрузка команд…',

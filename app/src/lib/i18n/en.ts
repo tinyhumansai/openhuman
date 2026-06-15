@@ -3549,6 +3549,15 @@ const en: TranslationMap = {
   'intelligence.agentWork.kind.workflowChild': 'Workflow child',
   'intelligence.agentWork.openThread': 'Open thread',
   'intelligence.agentWork.openWorker': 'Open worker',
+  'intelligence.agentWork.action.stop': 'Stop',
+  'intelligence.agentWork.action.retry': 'Retry',
+  'intelligence.agentWork.action.continue': 'Continue',
+  'intelligence.agentWork.action.followUp': 'Follow up',
+  'intelligence.agentWork.action.send': 'Send',
+  'intelligence.agentWork.action.cancel': 'Cancel',
+  'intelligence.agentWork.action.continuePlaceholder': 'Reply to unblock this agent…',
+  'intelligence.agentWork.action.followUpPlaceholder': 'Send a follow-up instruction…',
+  'intelligence.agentWork.action.failed': 'Action failed',
   // Orchestration tab (#3375) — multi-agent workflow runs.
   'orchestration.subtitle':
     'Start a multi-agent workflow, watch its phases progress, and read the synthesized result.',
