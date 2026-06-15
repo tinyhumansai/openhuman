@@ -218,6 +218,14 @@ pub fn message_member(
         to_member_id
     );
 
+    // Reject unknown teams up front. A lead-origin broadcast (`from = None`,
+    // `to = None`) skips both member checks below, so without this guard an
+    // unknown `team_id` would still append an orphan `team_message` event to a
+    // non-existent team's run ledger.
+    if run_ledger::get_agent_team(config, team_id)?.is_none() {
+        return Err(anyhow!("unknown team: {team_id}"));
+    }
+
     let members = run_ledger::list_agent_team_members(config, team_id)?;
     if let Some(from) = from_member_id {
         if !members.iter().any(|m| m.id == from) {
