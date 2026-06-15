@@ -3381,6 +3381,7 @@ const messages: TranslationMap = {
   'settings.ai.endpointUrlRequired': 'Se requiere el punto final URL.',
   'settings.ai.endpointProtocolRequired': 'El punto final debe comenzar con http:// o https://.',
   'settings.ai.connectProviderDialog': 'Conectar {label}',
+  'settings.ai.getProviderApiKey': 'Obtener API Key',
   'settings.ai.or': 'O',
   'settings.ai.codexOauthMissingAuthUrl':
     'Codex OAuth no devolvió una URL de autorización. Intenta iniciar sesión de nuevo.',

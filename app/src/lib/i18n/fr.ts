@@ -3394,6 +3394,7 @@ const messages: TranslationMap = {
   'settings.ai.endpointProtocolRequired':
     'Le point de terminaison doit commencer par http:// ou https://.',
   'settings.ai.connectProviderDialog': 'Connectez-vous {label}',
+  'settings.ai.getProviderApiKey': 'Obtenir une API Key',
   'settings.ai.or': 'Ou',
   'settings.ai.codexOauthMissingAuthUrl':
     "Codex OAuth n'a pas renvoyé d'URL d'autorisation. Essayez de vous reconnecter.",

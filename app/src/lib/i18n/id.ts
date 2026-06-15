@@ -3328,6 +3328,7 @@ const messages: TranslationMap = {
   'settings.ai.endpointUrlRequired': 'Titik akhir URL diperlukan.',
   'settings.ai.endpointProtocolRequired': 'Titik akhir harus dimulai dengan http:// atau https://.',
   'settings.ai.connectProviderDialog': 'Hubungkan {label}',
+  'settings.ai.getProviderApiKey': 'Dapatkan API Key',
   'settings.ai.or': 'Atau',
   'settings.ai.codexOauthMissingAuthUrl':
     'Codex OAuth tidak mengembalikan URL otorisasi. Coba masuk lagi.',

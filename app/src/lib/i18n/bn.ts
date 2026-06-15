@@ -3321,6 +3321,7 @@ const messages: TranslationMap = {
   'settings.ai.endpointUrlRequired': 'এন্ডপয়েন্ট URL প্রয়োজন।',
   'settings.ai.endpointProtocolRequired': 'সমাপ্তির তারিখ / http://wxqxqxkx/x উচিত',
   'settings.ai.connectProviderDialog': 'সংযোগ করুন {label}',
+  'settings.ai.getProviderApiKey': 'API Key নিন',
   'settings.ai.or': 'অথবা',
   'settings.ai.codexOauthMissingAuthUrl':
     'Codex OAuth কোনো অনুমোদন URL ফেরত দেয়নি। আবার সাইন ইন করার চেষ্টা করুন।',

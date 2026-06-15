@@ -41,6 +41,7 @@ import {
   type TeamUsage,
 } from '../../../services/api/creditsApi';
 import { connectOpenRouterViaOAuth } from '../../../utils/openrouterOAuth';
+import { openUrl } from '../../../utils/openUrl';
 import {
   type AuthStyle,
   openhumanUpdateLocalAiSettings,
@@ -134,6 +135,7 @@ const BUILTIN_RESERVED_SLUGS = [
   'claude-code',
   ...BUILTIN_CLOUD_PROVIDER_SLUGS,
 ];
+const KIMI_PLATFORM_URL = 'https://platform.kimi.ai?aff=openhuman';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Static catalog
@@ -638,6 +640,7 @@ const ProviderKeyDialog = ({
   const helper = isLocalRuntime
     ? formatI18n(t('settings.ai.localRuntimeHelper'), { label })
     : t('settings.ai.apiKeyStoredEncrypted');
+  const platformLinkUrl = slug === 'moonshot' && !isLocalRuntime ? KIMI_PLATFORM_URL : null;
 
   const handleSave = async () => {
     const trimmed = value.trim();
@@ -700,8 +703,27 @@ const ProviderKeyDialog = ({
       aria-modal="true"
       aria-label={formatI18n(t('settings.ai.connectProviderDialog'), { label })}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
-      <div className="w-full max-w-md rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-6 shadow-soft">
-        <div className="mb-4">
+      <div className="relative w-full max-w-md rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-6 shadow-soft">
+        {platformLinkUrl ? (
+          <a
+            href={platformLinkUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ insetInlineEnd: '1.5rem' }}
+            onClick={event => {
+              event.preventDefault();
+              void openUrl(platformLinkUrl).catch(err => {
+                console.warn('[ai-settings] provider platform link open failed', {
+                  slug,
+                  error: err instanceof Error ? err.message : String(err),
+                });
+              });
+            }}
+            className="absolute top-6 text-xs font-medium leading-6 text-primary-600 hover:text-primary-700 dark:text-primary-300 dark:hover:text-primary-200">
+            {t('settings.ai.getProviderApiKey')}
+          </a>
+        ) : null}
+        <div className="mb-4" style={platformLinkUrl ? { paddingInlineEnd: '9rem' } : undefined}>
           <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-100">{`${t('settings.ai.connectProvider')} ${label}`}</h3>
           <p className="mt-0.5 text-xs text-neutral-500 dark:text-neutral-400">{helper}</p>
         </div>

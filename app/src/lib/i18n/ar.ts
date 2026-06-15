@@ -3250,6 +3250,7 @@ const messages: TranslationMap = {
   'settings.ai.endpointUrlRequired': 'نقطة النهاية URL مطلوبة.',
   'settings.ai.endpointProtocolRequired': 'يجب أن تبدأ نقطة النهاية بـ http:// أو https://.',
   'settings.ai.connectProviderDialog': 'الاتصال {label}',
+  'settings.ai.getProviderApiKey': 'احصل على مفتاح API',
   'settings.ai.or': 'أو',
   'settings.ai.codexOauthMissingAuthUrl':
     'لم يُرجع Codex OAuth عنوان URL للتفويض. حاول تسجيل الدخول مرة أخرى.',

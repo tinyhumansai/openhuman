@@ -3349,6 +3349,7 @@ const messages: TranslationMap = {
   'settings.ai.endpointProtocolRequired':
     'Конечная точка должна начинаться с http:// или https://..',
   'settings.ai.connectProviderDialog': 'Подключиться {label}',
+  'settings.ai.getProviderApiKey': 'Получить API Key',
   'settings.ai.or': 'Или',
   'settings.ai.codexOauthMissingAuthUrl':
     'Codex OAuth не вернул URL авторизации. Попробуйте войти снова.',

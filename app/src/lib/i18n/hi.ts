@@ -3324,6 +3324,7 @@ const messages: TranslationMap = {
   'settings.ai.endpointUrlRequired': 'समापन बिंदु URL आवश्यक है.',
   'settings.ai.endpointProtocolRequired': 'समापन बिंदु http:// या https://. से शुरू होना चाहिए',
   'settings.ai.connectProviderDialog': 'कनेक्ट करें {label}',
+  'settings.ai.getProviderApiKey': 'API Key प्राप्त करें',
   'settings.ai.or': 'या',
   'settings.ai.codexOauthMissingAuthUrl':
     'Codex OAuth ने कोई प्राधिकरण URL नहीं लौटाया। फिर से साइन इन करने का प्रयास करें।',

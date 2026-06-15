@@ -3160,6 +3160,7 @@ const messages: TranslationMap = {
   'settings.ai.endpointUrlRequired': '端点 URL 是必需的。',
   'settings.ai.endpointProtocolRequired': '端点必须以 http:// 或 https:// 开头。',
   'settings.ai.connectProviderDialog': '连接 {label}',
+  'settings.ai.getProviderApiKey': '获取 API Key',
   'settings.ai.or': '或者',
   'settings.ai.codexOauthMissingAuthUrl': 'Codex OAuth 未返回授权 URL。请重试登录。',
   'settings.ai.codexOauthMissingCallbackUrl': '登录后请粘贴浏览器中的重定向 URL。',

@@ -3295,6 +3295,7 @@ const messages: TranslationMap = {
   'settings.ai.endpointUrlRequired': '엔드포인트 URL이(가) 필요합니다.',
   'settings.ai.endpointProtocolRequired': '엔드포인트는 http:// 또는 https://로 시작해야 합니다.',
   'settings.ai.connectProviderDialog': '{label}에 연결',
+  'settings.ai.getProviderApiKey': 'API Key 받기',
   'settings.ai.or': '또는',
   'settings.ai.codexOauthMissingAuthUrl':
     'Codex OAuth가 인증 URL을 반환하지 않았습니다. 다시 로그인해 보세요.',

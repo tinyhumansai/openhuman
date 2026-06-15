@@ -3400,6 +3400,7 @@ const messages: TranslationMap = {
   'settings.ai.endpointUrlRequired': 'Endpunkt URL ist erforderlich.',
   'settings.ai.endpointProtocolRequired': 'Endpunkt muss mit http:// oder https://. beginnen.',
   'settings.ai.connectProviderDialog': 'Verbinden Sie {label}',
+  'settings.ai.getProviderApiKey': 'API-Key erhalten',
   'settings.ai.or': 'Oder',
   'settings.ai.codexOauthMissingAuthUrl':
     'Codex OAuth hat keine Autorisierungs-URL zurückgegeben. Versuchen Sie, sich erneut anzumelden.',
