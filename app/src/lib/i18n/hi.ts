@@ -3050,6 +3050,7 @@ const messages: TranslationMap = {
   'intelligence.teams.composer.toTeam': 'पूरी टीम',
   'intelligence.teams.action.blocked': 'निर्भरताओं की प्रतीक्षा',
   'intelligence.teams.action.alreadyClaimed': 'किसी अन्य साथी ने पहले ही ले लिया',
+  'intelligence.teams.action.alreadyActive': 'साथी पहले से चल रहा है',
   'intelligence.teams.action.noClaimableTask': 'इस साथी के लिए कोई कार्य तैयार नहीं',
   'intelligence.teams.action.unknownTask': 'कार्य नहीं मिला',
   'intelligence.refine.objectiveDefault':

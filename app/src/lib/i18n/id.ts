@@ -3054,6 +3054,7 @@ const messages: TranslationMap = {
   'intelligence.teams.composer.toTeam': 'Seluruh tim',
   'intelligence.teams.action.blocked': 'Menunggu dependensi',
   'intelligence.teams.action.alreadyClaimed': 'Sudah diambil rekan tim lain',
+  'intelligence.teams.action.alreadyActive': 'Rekan tim sudah berjalan',
   'intelligence.teams.action.noClaimableTask': 'Tidak ada tugas siap untuk rekan ini',
   'intelligence.teams.action.unknownTask': 'Tugas tidak ditemukan',
   'intelligence.refine.objectiveDefault':

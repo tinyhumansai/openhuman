@@ -3121,6 +3121,7 @@ const messages: TranslationMap = {
   'intelligence.teams.composer.toTeam': 'Gesamtes Team',
   'intelligence.teams.action.blocked': 'Wartet auf Abhängigkeiten',
   'intelligence.teams.action.alreadyClaimed': 'Bereits von einem anderen Teammitglied übernommen',
+  'intelligence.teams.action.alreadyActive': 'Teammitglied läuft bereits',
   'intelligence.teams.action.noClaimableTask': 'Keine Aufgabe für dieses Teammitglied bereit',
   'intelligence.teams.action.unknownTask': 'Aufgabe nicht gefunden',
   'intelligence.refine.objectiveDefault':

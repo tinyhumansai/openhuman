@@ -3586,6 +3586,7 @@ const en: TranslationMap = {
   'intelligence.teams.composer.toTeam': 'Whole team',
   'intelligence.teams.action.blocked': 'Waiting on dependencies',
   'intelligence.teams.action.alreadyClaimed': 'Already claimed by another teammate',
+  'intelligence.teams.action.alreadyActive': 'Teammate is already running',
   'intelligence.teams.action.noClaimableTask': 'No task ready for this teammate',
   'intelligence.teams.action.unknownTask': 'Task not found',
   'intelligence.refine.objectiveDefault':

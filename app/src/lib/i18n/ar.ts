@@ -2987,6 +2987,7 @@ const messages: TranslationMap = {
   'intelligence.teams.composer.toTeam': 'الفريق بأكمله',
   'intelligence.teams.action.blocked': 'في انتظار التبعيات',
   'intelligence.teams.action.alreadyClaimed': 'تم أخذها من قبل زميل آخر',
+  'intelligence.teams.action.alreadyActive': 'الزميل قيد التشغيل بالفعل',
   'intelligence.teams.action.noClaimableTask': 'لا توجد مهمة جاهزة لهذا الزميل',
   'intelligence.teams.action.unknownTask': 'المهمة غير موجودة',
   'intelligence.refine.objectiveDefault': 'حوّل المهمة المصدر إلى مهمة وكيل جاهزة للتنفيذ: {title}',

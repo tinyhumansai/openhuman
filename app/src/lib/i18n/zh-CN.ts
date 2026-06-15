@@ -2905,6 +2905,7 @@ const messages: TranslationMap = {
   'intelligence.teams.composer.toTeam': '整个团队',
   'intelligence.teams.action.blocked': '正在等待依赖',
   'intelligence.teams.action.alreadyClaimed': '已被其他队友认领',
+  'intelligence.teams.action.alreadyActive': '队友已在运行中',
   'intelligence.teams.action.noClaimableTask': '没有可供该队友处理的任务',
   'intelligence.teams.action.unknownTask': '未找到任务',
   'intelligence.refine.objectiveDefault': '将来源任务转化为可立即实施的智能体任务：{title}',

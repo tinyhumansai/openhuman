@@ -201,7 +201,12 @@ export default function IntelligenceTeamsTab() {
       setActionNotice(null);
       try {
         const outcome = await agentTeamApi.startMember({ teamId: selectedId, memberId });
-        if (outcome.kind !== 'started') {
+        if (outcome.kind === 'blocked') {
+          // Name the unmet dependency ids so the user knows what to finish
+          // first (t() does not interpolate — compose at the call site).
+          const base = t('intelligence.teams.action.blocked');
+          setActionNotice(outcome.unmet.length ? `${base}: ${outcome.unmet.join(', ')}` : base);
+        } else if (outcome.kind !== 'started') {
           setActionNotice(t(`intelligence.teams.action.${outcome.kind}`));
         }
         await fetchDetail(selectedId);

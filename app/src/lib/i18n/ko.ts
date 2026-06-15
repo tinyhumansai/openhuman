@@ -3025,6 +3025,7 @@ const messages: TranslationMap = {
   'intelligence.teams.composer.toTeam': '전체 팀',
   'intelligence.teams.action.blocked': '종속성 대기 중',
   'intelligence.teams.action.alreadyClaimed': '다른 팀원이 이미 맡음',
+  'intelligence.teams.action.alreadyActive': '팀원이 이미 실행 중입니다',
   'intelligence.teams.action.noClaimableTask': '이 팀원이 맡을 작업 없음',
   'intelligence.teams.action.unknownTask': '작업을 찾을 수 없음',
   'intelligence.refine.objectiveDefault':

@@ -3087,6 +3087,7 @@ const messages: TranslationMap = {
   'intelligence.teams.composer.toTeam': 'Cały zespół',
   'intelligence.teams.action.blocked': 'Oczekiwanie na zależności',
   'intelligence.teams.action.alreadyClaimed': 'Już przejęte przez innego członka zespołu',
+  'intelligence.teams.action.alreadyActive': 'Członek zespołu już działa',
   'intelligence.teams.action.noClaimableTask': 'Brak gotowego zadania dla tego członka zespołu',
   'intelligence.teams.action.unknownTask': 'Nie znaleziono zadania',
   'intelligence.refine.objectiveDefault':

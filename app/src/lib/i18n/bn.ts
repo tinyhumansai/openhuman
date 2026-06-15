@@ -3049,6 +3049,7 @@ const messages: TranslationMap = {
   'intelligence.teams.composer.toTeam': 'পুরো দল',
   'intelligence.teams.action.blocked': 'নির্ভরতার অপেক্ষায়',
   'intelligence.teams.action.alreadyClaimed': 'অন্য সতীর্থ ইতিমধ্যে নিয়েছে',
+  'intelligence.teams.action.alreadyActive': 'সহকর্মী ইতিমধ্যে চলছে',
   'intelligence.teams.action.noClaimableTask': 'এই সতীর্থের জন্য কোনো কাজ প্রস্তুত নেই',
   'intelligence.teams.action.unknownTask': 'কাজ পাওয়া যায়নি',
   'intelligence.refine.objectiveDefault':

@@ -3120,6 +3120,7 @@ const messages: TranslationMap = {
   'intelligence.teams.composer.toTeam': "Toute l'équipe",
   'intelligence.teams.action.blocked': 'En attente de dépendances',
   'intelligence.teams.action.alreadyClaimed': 'Déjà prise par un autre coéquipier',
+  'intelligence.teams.action.alreadyActive': 'Le coéquipier est déjà en cours d’exécution',
   'intelligence.teams.action.noClaimableTask': 'Aucune tâche prête pour ce coéquipier',
   'intelligence.teams.action.unknownTask': 'Tâche introuvable',
   'intelligence.refine.sourceIntake': 'Source : réception des sources de tâches',

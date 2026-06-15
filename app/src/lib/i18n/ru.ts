@@ -3074,6 +3074,7 @@ const messages: TranslationMap = {
   'intelligence.teams.composer.toTeam': 'Вся команда',
   'intelligence.teams.action.blocked': 'Ожидание зависимостей',
   'intelligence.teams.action.alreadyClaimed': 'Уже взято другим участником',
+  'intelligence.teams.action.alreadyActive': 'Участник уже выполняется',
   'intelligence.teams.action.noClaimableTask': 'Нет готовой задачи для этого участника',
   'intelligence.teams.action.unknownTask': 'Задача не найдена',
   'intelligence.refine.objectiveDefault':

@@ -117,6 +117,7 @@ export type StartMemberOutcome =
   | { kind: 'started'; runId: string; task: AgentTeamTask }
   | { kind: 'blocked'; unmet: string[] }
   | { kind: 'alreadyClaimed' }
+  | { kind: 'alreadyActive' }
   | { kind: 'noClaimableTask' }
   | { kind: 'unknownTask' };
 
