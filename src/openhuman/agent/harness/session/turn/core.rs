@@ -3,7 +3,10 @@
 use super::super::transcript;
 use super::super::turn_engine_adapter::{AgentCheckpoint, AgentObserver, AgentToolSource};
 use super::super::types::Agent;
-use super::{integration_announcement_note, normalize_tool_call};
+use super::{
+    integration_announcement_note, mcp_announcement_note, newly_connected_slugs,
+    normalize_tool_call,
+};
 use crate::openhuman::agent::harness;
 use crate::openhuman::agent::harness::definition::TriggerMemoryAgent;
 use crate::openhuman::agent::harness::fork_context::ParentExecutionContext;
@@ -119,6 +122,16 @@ impl Agent {
                 .iter()
                 .map(|i| i.toolkit.clone())
                 .collect();
+            // MCP analogue: seed the announced MCP set with the servers already
+            // connected at startup. Those are already in the (turn-1) system
+            // prompt's `## Connected MCP Servers` block, so only servers that
+            // connect *mid-session* should later be announced on the user turn.
+            self.announced_mcp_servers =
+                crate::openhuman::mcp_registry::connections::connected_overview()
+                    .await
+                    .into_iter()
+                    .map(|s| s.qualified_name)
+                    .collect();
         } else {
             // Deliberately do NOT rebuild the system prompt on subsequent
             // turns. The rendered prompt is the KV-cache prefix the inference
@@ -162,6 +175,27 @@ impl Agent {
             // We leave the current tool surface alone and pick up any
             // real change on the next turn after the UI's 5 s poll has
             // repopulated [`INTEGRATIONS_CACHE`].
+
+            // MCP mid-session connect surfacing — the analogue of the Composio
+            // path above. `use_mcp_server` is a single static delegate (no
+            // per-server schema to refresh), so the whole mechanism is: diff
+            // the live in-process connection map against what we've already
+            // announced and queue a one-shot note for any newly-connected
+            // server onto the next user message. The map is in-process (no
+            // network, unlike Composio's cache), so reading it every turn is
+            // cheap. Like the Composio block, the frozen `## Connected MCP
+            // Servers` system-prompt section stays as the turn-1 snapshot.
+            let connected_mcp: Vec<String> =
+                crate::openhuman::mcp_registry::connections::connected_overview()
+                    .await
+                    .into_iter()
+                    .map(|s| s.qualified_name)
+                    .collect();
+            for qn in newly_connected_slugs(&connected_mcp, &mut self.announced_mcp_servers) {
+                if !self.pending_mcp_announcement.contains(&qn) {
+                    self.pending_mcp_announcement.push(qn);
+                }
+            }
 
             log::trace!(
                 "[agent_loop] system prompt reused (history_len={}) — KV cache prefix preserved",
@@ -337,6 +371,14 @@ impl Agent {
         // `.take()` clears it so it fires exactly once.
         let pending_slugs = std::mem::take(&mut self.pending_integration_announcement);
         let enriched = match integration_announcement_note(&pending_slugs) {
+            Some(note) => format!("{note}\n\n{enriched}"),
+            None => enriched,
+        };
+
+        // Same one-shot treatment for MCP servers connected mid-session
+        // (queued above). `.take()` clears it so it fires exactly once.
+        let pending_mcp = std::mem::take(&mut self.pending_mcp_announcement);
+        let enriched = match mcp_announcement_note(&pending_mcp) {
             Some(note) => format!("{note}\n\n{enriched}"),
             None => enriched,
         };

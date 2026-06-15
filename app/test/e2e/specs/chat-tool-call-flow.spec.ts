@@ -12,6 +12,7 @@
  */
 import { waitForApp } from '../helpers/app-helpers';
 import {
+  chatMounted,
   clickByTitle,
   clickSend,
   getSelectedThreadId,
@@ -108,7 +109,7 @@ describe('Chat tool-call lifecycle', () => {
   it('T1.1 — tool timeline entry (ToolTimelineBlock) renders during execution', async () => {
     console.log(`${LOG_PREFIX} T1.1: navigating to /chat and opening new thread`);
     await navigateViaHash('/chat');
-    await browser.waitUntil(async () => await textExists('Threads'), {
+    await browser.waitUntil(async () => await chatMounted(), {
       timeout: 15_000,
       timeoutMsg: 'Conversations panel did not mount',
     });

@@ -124,6 +124,8 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::webview_apis::all_webview_apis_registered_controllers());
     // Agent definition and prompt inspection
     controllers.extend(crate::openhuman::agent::all_agent_registered_controllers());
+    // Persistent agent profiles (flavours): name, soul, memory sources, skills, MCP, connectors.
+    controllers.extend(crate::openhuman::profiles::all_profiles_registered_controllers());
     // User-facing agent registry: defaults, enablement, custom agents, tool policy.
     controllers
         .extend(crate::openhuman::agent_registry::all_agent_registry_registered_controllers());
@@ -339,6 +341,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::mcp_registry::all_mcp_registry_controller_schemas());
     schemas.extend(crate::openhuman::webview_apis::all_webview_apis_controller_schemas());
     schemas.extend(crate::openhuman::agent::all_agent_controller_schemas());
+    schemas.extend(crate::openhuman::profiles::all_profiles_controller_schemas());
     schemas.extend(crate::openhuman::agent_registry::all_agent_registry_controller_schemas());
     schemas.extend(crate::openhuman::agent_experience::all_agent_experience_controller_schemas());
     schemas.extend(crate::openhuman::health::all_health_controller_schemas());
@@ -650,7 +653,111 @@ pub fn validate_params(
         }
     }
 
+    // Type-check each present param against its declared `TypeSchema`, so every
+    // controller gets uniform validation before dispatch rather than relying on
+    // each handler's `serde_json::from_value`. Absent (optional) params are
+    // already handled by the required-presence check above.
+    for input in &schema.inputs {
+        if let Some(value) = params.get(input.name) {
+            check_type(value, &input.ty).map_err(|expected| {
+                format!(
+                    "invalid type for param '{}' in {}.{}: expected {}, got {}",
+                    input.name,
+                    schema.namespace,
+                    schema.function,
+                    expected,
+                    json_type_name(value),
+                )
+            })?;
+        }
+    }
+
     Ok(())
+}
+
+/// A short, human-readable name for the JSON kind of `value`, used in
+/// `validate_params` type-mismatch errors.
+fn json_type_name(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "bool",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
+}
+
+/// Validate a JSON `value` against a declared [`TypeSchema`].
+///
+/// Returns `Ok(())` on a match, or `Err(expected)` where `expected` is a short
+/// description of the type that was required. Unknown/opaque shapes
+/// (`Json`, `Bytes`, `Ref`) accept any value — they are validated by the
+/// handler's typed deserialization.
+fn check_type(value: &Value, ty: &crate::core::TypeSchema) -> Result<(), &'static str> {
+    use crate::core::TypeSchema;
+
+    // JSON-RPC semantics (preserved from the prior presence-only check):
+    // an explicit `null` satisfies validation for any declared type. Required
+    // fields are checked for *presence*, not value; stronger contracts are
+    // enforced by the handler's typed deserialization.
+    if value.is_null() {
+        return Ok(());
+    }
+
+    match ty {
+        // Opaque / handler-validated shapes accept any JSON value.
+        //
+        // Structured types (`Object`/`Map`/`Ref`) are deliberately lenient: a
+        // struct field may have a custom `Deserialize` impl that accepts more
+        // than one JSON shape (e.g. `agent_registry.update`'s `subagents`
+        // accepts both `{ "allowlist": [...] }` and a legacy bare array), and
+        // the declared schema can only describe one of them. Strictly checking
+        // the JSON kind here would reject inputs the handler's `serde_json`
+        // deserialization accepts. We therefore keep pre-dispatch validation to
+        // scalar leaf types (where a type confusion would otherwise reach an
+        // `as_str()/as_u64()`-style accessor) and defer object/map shape
+        // validation to the handler.
+        TypeSchema::Json
+        | TypeSchema::Bytes
+        | TypeSchema::Ref(_)
+        | TypeSchema::Object { .. }
+        | TypeSchema::Map(_) => Ok(()),
+
+        TypeSchema::Bool => value.is_boolean().then_some(()).ok_or("bool"),
+        TypeSchema::String => value.is_string().then_some(()).ok_or("string"),
+        TypeSchema::I64 => value.is_i64().then_some(()).ok_or("integer"),
+        TypeSchema::U64 => value.is_u64().then_some(()).ok_or("unsigned integer"),
+        TypeSchema::F64 => {
+            // Accept any JSON number (ints are valid floats).
+            value.is_number().then_some(()).ok_or("number")
+        }
+
+        // `Option<T>` accepts null or a value matching the inner type.
+        TypeSchema::Option(inner) => {
+            if value.is_null() {
+                Ok(())
+            } else {
+                check_type(value, inner)
+            }
+        }
+
+        TypeSchema::Array(inner) => match value.as_array() {
+            Some(items) => {
+                for item in items {
+                    check_type(item, inner)?;
+                }
+                Ok(())
+            }
+            None => Err("array"),
+        },
+
+        TypeSchema::Enum { variants } => match value.as_str() {
+            Some(s) if variants.contains(&s) => Ok(()),
+            Some(_) => Err("one of the allowed enum variants"),
+            None => Err("string"),
+        },
+    }
 }
 
 /// Attempts to invoke a registered RPC method by name.

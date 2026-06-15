@@ -119,6 +119,16 @@ allowlist = [
     # this entry the agent-native install path (issue #3039 gap B5) is unreachable
     # from chat.
     "mcp_setup",
+    # MCP execution specialist. Synthesised into a `delegate_use_mcp_server`
+    # tool at agent-build time. Route any request that should be fulfilled by
+    # calling a tool on an ALREADY-CONNECTED MCP server (e.g. "answer from the
+    # connected docs MCP", "query the connected X server") here — the agent
+    # discovers connected servers, lists the chosen server's tools, and invokes
+    # the right one. Installing/connecting a NEW server still goes to
+    # `mcp_setup`; this entry is the missing "use what's connected" route
+    # (the orchestrator only has lightweight `mcp_registry_status` discovery
+    # itself and must not carry every connected server's full toolset).
+    "mcp_agent",
     # Skill registry specialists. `skill_setup` discovers, installs, and
     # manages agent skills from community registries (OpenHuman, HermesHub,
     # ClawHub). `skill_executor` runs an installed skill by loading its
@@ -164,6 +174,16 @@ named = [
     "spawn_async_subagent",
     "spawn_parallel_agents",
     "composio_list_connections",
+    # Lightweight MCP discovery — the orchestrator's only `mcp_registry_*`
+    # tool, mirroring `composio_list_connections`. Lists the user's installed
+    # MCP servers and their live connection state + tool counts so the agent
+    # can tell whether a connected server can satisfy a request and route to
+    # `delegate_use_mcp_server` (mcp_agent). The orchestrator deliberately does
+    # NOT get `mcp_registry_list_tools` / `mcp_registry_tool_call` — enumerating
+    # and calling each connected server's tools is the delegated agent's job,
+    # so the chat agent's schema stays small instead of carrying every tool of
+    # every connected server.
+    "mcp_registry_status",
     # Deterministic time resolver. As the chat-facing agent, the orchestrator
     # is what reads a user's relative phrase ("last 24h", "since Monday")
     # first. It must resolve the window here via `resolve_time` and hand the

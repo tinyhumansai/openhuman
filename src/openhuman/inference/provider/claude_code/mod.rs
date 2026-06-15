@@ -14,6 +14,7 @@ pub mod driver;
 pub mod event_mapper;
 pub mod input_builder;
 pub mod session_store;
+pub mod settings;
 pub mod stream_parser;
 pub mod types;
 pub mod version_check;
@@ -29,6 +30,32 @@ use super::traits::{ChatMessage, ChatRequest, ChatResponse, Provider, ProviderCa
 /// Provider string prefix used in the factory grammar: `claude-code:<model>`.
 pub const PROVIDER_PREFIX: &str = "claude-code:";
 
+/// Serializes tests that mutate process-global env vars (`ANTHROPIC_API_KEY`,
+/// `OPENHUMAN_CLAUDE_CODE_*`). `cargo test` runs tests in parallel within a
+/// crate, so without this lock the auth-status and auth resolvers race on
+/// `ANTHROPIC_API_KEY` (one sets it while another reads/removes it),
+/// producing flaky failures. Every env-touching test in this module acquires
+/// it first. Poison-tolerant: a panicking test must not wedge the suite.
+#[cfg(test)]
+pub(crate) static ENV_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Resolve the workspace directory the Claude Code provider operates against
+/// (where session state and [`settings`] live). Derived from the config file's
+/// parent so the RPC layer and the chat factory agree on the exact path. Falls
+/// back to `~/.openhuman` (then `./.openhuman`) when the config path has no
+/// parent.
+pub fn workspace_dir_from_config(config: &crate::openhuman::config::Config) -> PathBuf {
+    config
+        .config_path
+        .parent()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            directories::UserDirs::new()
+                .map(|d| d.home_dir().join(".openhuman"))
+                .unwrap_or_else(|| PathBuf::from(".openhuman"))
+        })
+}
+
 /// Max concurrent `claude` child processes per provider instance.
 /// Picked to match the v1 design doc (PLAN §11).
 pub const MAX_CONCURRENT_TURNS: usize = 4;
@@ -39,6 +66,9 @@ pub struct ClaudeCodeProvider {
     pub model: String,
     bin_path: PathBuf,
     workspace_dir: PathBuf,
+    /// User's project root (`config.action_dir`) — Claude Code runs here so its
+    /// file tools act on the user's code, not the internal workspace.
+    project_dir: PathBuf,
     anthropic_api_key: Option<String>,
     semaphore: Arc<Semaphore>,
     session_store: Arc<session_store::SessionStore>,
@@ -50,6 +80,7 @@ impl ClaudeCodeProvider {
         model: impl Into<String>,
         bin_path: PathBuf,
         workspace_dir: PathBuf,
+        project_dir: PathBuf,
         anthropic_api_key: Option<String>,
     ) -> Self {
         let session_store = Arc::new(session_store::SessionStore::open(&workspace_dir));
@@ -57,19 +88,31 @@ impl ClaudeCodeProvider {
             model: model.into(),
             bin_path,
             workspace_dir,
+            project_dir,
             anthropic_api_key,
             semaphore: Arc::new(Semaphore::new(MAX_CONCURRENT_TURNS)),
             session_store,
         }
     }
 
-    /// Build the provider from environment + workspace. Errors when the
-    /// CLI is not installed or below `MIN_CLI_VERSION`.
-    pub fn from_env(model: impl Into<String>, workspace_dir: PathBuf) -> anyhow::Result<Self> {
+    /// Build the provider from environment + workspace. `project_dir` is the
+    /// user's code root (`config.action_dir`) that the coding agent operates
+    /// in. Errors when the CLI is not installed or below `MIN_CLI_VERSION`.
+    pub fn from_env(
+        model: impl Into<String>,
+        workspace_dir: PathBuf,
+        project_dir: PathBuf,
+    ) -> anyhow::Result<Self> {
         match version_check::probe() {
             types::CliStatus::Ok { path, .. } => {
                 let (_, key) = auth::resolve();
-                Ok(Self::new(model, PathBuf::from(path), workspace_dir, key))
+                Ok(Self::new(
+                    model,
+                    PathBuf::from(path),
+                    workspace_dir,
+                    project_dir,
+                    key,
+                ))
             }
             types::CliStatus::NotInstalled => {
                 anyhow::bail!(
@@ -124,10 +167,10 @@ impl ClaudeCodeProvider {
 
         let model = model_override.unwrap_or(&self.model).to_string();
 
-        let openhuman_core_bin = std::env::current_exe().ok();
         let turn = driver::TurnContext {
             bin_path: self.bin_path.clone(),
             workspace_dir: self.workspace_dir.clone(),
+            project_dir: self.project_dir.clone(),
             thread_id,
             model,
             append_system_prompt,
@@ -135,7 +178,6 @@ impl ClaudeCodeProvider {
             session_store: self.session_store.clone(),
             stream: request.stream,
             anthropic_api_key: self.anthropic_api_key.clone(),
-            openhuman_core_bin,
         };
         driver::run_turn(turn).await
     }

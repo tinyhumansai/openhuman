@@ -7,7 +7,8 @@ import {
   openhumanUpdateSandboxSettings,
   type SandboxBackendId,
 } from '../../../utils/tauriCommands';
-import SettingsHeader from '../components/SettingsHeader';
+import PanelPage from '../../layout/PanelPage';
+import SettingsBackButton from '../components/SettingsBackButton';
 import {
   SettingsBadge,
   SettingsEmptyState,
@@ -31,7 +32,7 @@ const BACKEND_OPTIONS: SandboxBackendId[] = [
 
 const SandboxSettingsPanel = () => {
   const { t } = useT();
-  const { navigateBack, breadcrumbs } = useSettingsNavigation();
+  const { navigateBack } = useSettingsNavigation();
 
   const [isLoading, setIsLoading] = useState(isTauri());
   const [isSaving, setIsSaving] = useState(false);
@@ -136,47 +137,42 @@ const SandboxSettingsPanel = () => {
 
   if (!isTauri()) {
     return (
-      <div className="z-10 relative">
-        <SettingsHeader
-          title={t('settings.sandbox.title')}
-          onBack={navigateBack}
-          breadcrumbs={breadcrumbs}
-        />
+      <PanelPage
+        className="z-10"
+        contentClassName=""
+        description={t('settings.sandbox.menuDesc')}
+        leading={<SettingsBackButton onBack={navigateBack} />}>
         <div className="p-4 pt-2">
           <p className="text-sm text-neutral-500 dark:text-neutral-400">
             {t('settings.sandbox.desktopOnly')}
           </p>
         </div>
-      </div>
+      </PanelPage>
     );
   }
 
   if (isLoading) {
     return (
-      <div className="z-10 relative">
-        <SettingsHeader
-          title={t('settings.sandbox.title')}
-          onBack={navigateBack}
-          breadcrumbs={breadcrumbs}
-        />
+      <PanelPage
+        className="z-10"
+        contentClassName=""
+        description={t('settings.sandbox.menuDesc')}
+        leading={<SettingsBackButton onBack={navigateBack} />}>
         <div className="p-4 pt-2">
           <p className="text-sm text-neutral-500 dark:text-neutral-400">
             {t('settings.sandbox.loading')}
           </p>
         </div>
-      </div>
+      </PanelPage>
     );
   }
 
   return (
-    <div className="z-10 relative">
-      <SettingsHeader
-        title={t('settings.sandbox.title')}
-        showBackButton
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
-
+    <PanelPage
+      className="z-10"
+      contentClassName=""
+      description={t('settings.sandbox.menuDesc')}
+      leading={<SettingsBackButton onBack={navigateBack} />}>
       <div className="p-4 pt-2 space-y-5">
         {/* Status section */}
         <SettingsSection title={t('settings.sandbox.status')}>
@@ -340,7 +336,7 @@ const SandboxSettingsPanel = () => {
           savingLabel={t('settings.sandbox.saving')}
         />
       </div>
-    </div>
+    </PanelPage>
   );
 };
 

@@ -38,7 +38,7 @@ describe('MeetingBotsCard', () => {
     expect(screen.getByLabelText(/meeting link/i)).toBeInTheDocument();
   });
 
-  it('submits to joinMeetViaBackendBot and fires a success toast', async () => {
+  it('submits to joinMeetViaBackendBot and transitions to active view', async () => {
     joinMock.mockResolvedValueOnce({
       meetUrl: 'https://meet.google.com/abc-defg-hij',
       platform: 'gmeet',
@@ -49,6 +49,9 @@ describe('MeetingBotsCard', () => {
     fireEvent.change(screen.getByLabelText(/meeting link/i), {
       target: { value: 'https://meet.google.com/abc-defg-hij' },
     });
+    fireEvent.change(screen.getByLabelText(/your name in this meeting/i), {
+      target: { value: 'Alice' },
+    });
     const form = document.querySelector('form')!;
     fireEvent.submit(form);
 
@@ -56,19 +59,25 @@ describe('MeetingBotsCard', () => {
       expect(joinMock).toHaveBeenCalledWith(
         expect.objectContaining({
           meetUrl: 'https://meet.google.com/abc-defg-hij',
-          displayName: 'OpenHuman',
+          displayName: 'Tiny',
           platform: 'gmeet',
-          agentName: 'OpenHuman',
+          agentName: 'Tiny',
+          // Participant-name field is wired to the backend authorized-speaker gate.
+          respondToParticipant: 'Alice',
+          // Active toggle defaults to checked → listen-only false.
+          listenOnly: false,
         })
       );
     });
+    // Dispatching setBackendMeetJoined transitions the parent MeetingBotsCard from
+    // MeetingBotsInline to ActiveMeetingView. The inline component is unmounted at
+    // that point, so its useEffect success-toast branch does not fire. Verify the
+    // active view is now shown instead.
     store.dispatch(
       setBackendMeetJoined({ meetUrl: 'https://meet.google.com/abc-defg-hij' })
     );
     await vi.waitFor(() => {
-      expect(onToast).toHaveBeenCalledWith(
-        expect.objectContaining({ type: 'success', title: expect.stringMatching(/joining/i) })
-      );
+      expect(screen.getAllByText(/live/i).length).toBeGreaterThan(0);
     });
   });
 
@@ -167,10 +176,32 @@ describe('MeetingBotsCard', () => {
     expect(screen.getByRole('button', { name: /send to google meet/i })).toBeInTheDocument();
   });
 
-  it('only asks for the meeting link in passive mode', () => {
+  it('asks for the meeting link and the participant the bot answers to', () => {
     renderWithProviders(<MeetingBotsCard />);
     expect(screen.getByLabelText(/meeting link/i)).toBeInTheDocument();
-    expect(screen.queryByLabelText(/your name in this meeting/i)).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/your name in this meeting/i)).toBeInTheDocument();
+  });
+
+  it('forwards listen-only when the active toggle is unchecked', async () => {
+    joinMock.mockResolvedValueOnce({
+      meetUrl: 'https://meet.google.com/abc-defg-hij',
+      platform: 'gmeet',
+    });
+    renderWithProviders(<MeetingBotsCard />);
+
+    fireEvent.change(screen.getByLabelText(/meeting link/i), {
+      target: { value: 'https://meet.google.com/abc-defg-hij' },
+    });
+    fireEvent.change(screen.getByLabelText(/your name in this meeting/i), {
+      target: { value: 'Alice' },
+    });
+    // Active toggle is checked by default; unchecking it selects listen-only.
+    fireEvent.click(screen.getByRole('checkbox'));
+    fireEvent.submit(document.querySelector('form')!);
+
+    await vi.waitFor(() => {
+      expect(joinMock).toHaveBeenCalledWith(expect.objectContaining({ listenOnly: true }));
+    });
   });
 });
 

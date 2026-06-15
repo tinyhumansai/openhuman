@@ -60,7 +60,13 @@ const COLOR_OPTIONS: ColorOption[] = [
   { id: 'custom', labelKey: 'settings.mascot.colorCustom' },
 ];
 
-const MascotPanel = () => {
+interface MascotPanelProps {
+  /** When true the panel is hosted inside another settings page (the
+   *  Personality & Face tabs) — skip the standalone SettingsHeader chrome. */
+  embedded?: boolean;
+}
+
+const MascotPanel = ({ embedded = false }: MascotPanelProps) => {
   const { t, locale } = useT();
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
   const dispatch = useAppDispatch();
@@ -311,12 +317,14 @@ const MascotPanel = () => {
 
   return (
     <div className="z-10 relative">
-      <SettingsHeader
-        title={t('settings.mascot.title')}
-        showBackButton={true}
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
+      {!embedded && (
+        <SettingsHeader
+          title={t('settings.mascot.title')}
+          showBackButton={true}
+          onBack={navigateBack}
+          breadcrumbs={breadcrumbs}
+        />
+      )}
 
       <div className="p-4 space-y-4">
         {/* ── Mascot preview (intentional bespoke visual) ───────────── */}

@@ -179,6 +179,7 @@ fn append_subagent_role_contract_is_idempotent() {
 // ── End-to-end runner tests with mock provider ────────────────────────
 
 use crate::openhuman::agent::harness::fork_context::with_parent_context;
+use crate::openhuman::agent::harness::run_queue::{QueueMode, QueuedMessage, RunQueue};
 use crate::openhuman::inference::provider::{
     ChatRequest as PChatRequest, ChatResponse, Provider, ProviderDelta, ToolCall,
 };
@@ -480,6 +481,7 @@ async fn typed_mode_returns_text_through_runner() {
                 initial_history: None,
                 checkpoint_dir: None,
                 worktree_action_dir: None,
+                run_queue: None,
             },
         )
         .await
@@ -491,6 +493,66 @@ async fn typed_mode_returns_text_through_runner() {
     assert_eq!(outcome.iterations, 1);
     assert_eq!(outcome.mode, SubagentMode::Typed);
     assert_eq!(outcome.task_id, "t1");
+}
+
+#[tokio::test]
+async fn run_queue_steer_lands_in_subagent_history() {
+    // End-to-end proof that flipping the subagent loop's run-queue arg from
+    // `None` to `Some(queue)` wires steering all the way through: a message
+    // pushed to the queue before the run is drained by the inner
+    // `run_turn_engine` and appears as a `[User steering message]:` user turn
+    // in the exact request sent to the provider. This is the mechanism behind
+    // the `steer_subagent` tool.
+    let provider = ScriptedProvider::new(vec![text_response("acknowledged")]);
+    let parent = make_parent(provider.clone(), vec![stub("file_read")]);
+    let def = make_def_named_tools(&[]);
+
+    let run_queue = RunQueue::new();
+    run_queue
+        .push(QueuedMessage {
+            text: "switch focus to memory safety".into(),
+            mode: QueueMode::Steer,
+            client_id: "steer_subagent".into(),
+            thread_id: "t-steer".into(),
+            queued_at_ms: 0,
+            model_override: None,
+            temperature: None,
+            profile_id: None,
+            locale: None,
+        })
+        .await;
+
+    let outcome = with_parent_context(parent, async {
+        run_subagent(
+            &def,
+            "investigate the bug",
+            SubagentRunOptions {
+                task_id: Some("t-steer".into()),
+                run_queue: Some(run_queue),
+                ..Default::default()
+            },
+        )
+        .await
+    })
+    .await
+    .expect("runner should succeed");
+
+    assert_eq!(outcome.output, "acknowledged");
+
+    let captured = provider.captured.lock();
+    let steered = captured[0]
+        .messages
+        .iter()
+        .any(|m| m.role == "user" && m.content.contains("switch focus to memory safety"));
+    assert!(
+        steered,
+        "steer message should be injected into the sub-agent's first request, got: {:?}",
+        captured[0]
+            .messages
+            .iter()
+            .map(|m| (&m.role, &m.content))
+            .collect::<Vec<_>>()
+    );
 }
 
 #[tokio::test]
@@ -592,6 +654,7 @@ async fn typed_mode_filters_tools_by_skill_filter() {
                 initial_history: None,
                 checkpoint_dir: None,
                 worktree_action_dir: None,
+                run_queue: None,
             },
         )
         .await

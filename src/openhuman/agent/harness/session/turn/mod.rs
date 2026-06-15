@@ -102,6 +102,22 @@ Use delegate_to_integrations_agent with the matching toolkit slug to act on them
     ))
 }
 
+/// Render the one-shot user-turn note for MCP server(s) that connected
+/// mid-session. The MCP analogue of [`integration_announcement_note`]: the
+/// system-prompt `## Connected MCP Servers` block is frozen at turn 1 (KV-cache
+/// prefix), so a server connected mid-conversation is surfaced here instead, on
+/// the user turn. Empty input yields `None`.
+pub(super) fn mcp_announcement_note(servers: &[String]) -> Option<String> {
+    if servers.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "[MCP update] These MCP server(s) connected during this conversation and are available right now: {}. \
+Use the use_mcp_server delegate to act on them immediately — do not tell the user to reconnect or restart.",
+        servers.join(", ")
+    ))
+}
+
 /// Wrapper around
 /// [`crate::openhuman::memory_tree::tree_runtime::store::collect_root_summaries_with_caps`]
 /// that takes user-resolved per-namespace and total caps. The actual

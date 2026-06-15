@@ -103,7 +103,13 @@ function formatSyncNotice(outcomes: Array<{ fetched: number; routed: number; pru
   );
 }
 
-const TaskSourcesPanel = () => {
+interface TaskSourcesPanelProps {
+  /** When true the panel is hosted inside another settings page (the
+   *  Integrations tabs) — skip the standalone SettingsHeader chrome. */
+  embedded?: boolean;
+}
+
+const TaskSourcesPanel = ({ embedded = false }: TaskSourcesPanelProps) => {
   const { t } = useT();
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
 
@@ -327,12 +333,14 @@ const TaskSourcesPanel = () => {
 
   return (
     <div className="z-10 relative" data-testid="task-sources-panel">
-      <SettingsHeader
-        title={t('settings.taskSources.title')}
-        showBackButton={true}
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
+      {!embedded && (
+        <SettingsHeader
+          title={t('settings.taskSources.title')}
+          showBackButton={true}
+          onBack={navigateBack}
+          breadcrumbs={breadcrumbs}
+        />
+      )}
 
       <div className="p-4 pt-2 space-y-5">
         <div className="space-y-1">

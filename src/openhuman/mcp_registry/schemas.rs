@@ -22,6 +22,8 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("install"),
         schemas("update_env"),
         schemas("uninstall"),
+        schemas("detect_auth"),
+        schemas("oauth_begin"),
         schemas("connect"),
         schemas("disconnect"),
         schemas("status"),
@@ -65,6 +67,14 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("uninstall"),
             handler: handle_uninstall,
+        },
+        RegisteredController {
+            schema: schemas("detect_auth"),
+            handler: handle_detect_auth,
+        },
+        RegisteredController {
+            schema: schemas("oauth_begin"),
+            handler: handle_oauth_begin,
         },
         RegisteredController {
             schema: schemas("connect"),
@@ -308,6 +318,58 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     required: true,
                 },
             ],
+        },
+
+        "detect_auth" => ControllerSchema {
+            namespace: "mcp_clients",
+            function: "detect_auth",
+            description: "Probe a server to classify how it authenticates (none / token / oauth).",
+            inputs: vec![FieldSchema {
+                name: "server_id",
+                ty: TypeSchema::String,
+                comment: "UUID of the installed server to probe.",
+                required: true,
+            }],
+            outputs: vec![
+                FieldSchema {
+                    name: "kind",
+                    ty: TypeSchema::Enum {
+                        variants: vec!["none", "token", "oauth"],
+                    },
+                    comment: "`none` (open), `token` (static bearer/API key), or `oauth` (browser sign-in).",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "authorization_endpoint",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "OAuth authorization endpoint, when kind is `oauth`.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "grant_types",
+                    ty: TypeSchema::Array(Box::new(TypeSchema::String)),
+                    comment: "Grant types the authorization server supports.",
+                    required: true,
+                },
+            ],
+        },
+
+        "oauth_begin" => ControllerSchema {
+            namespace: "mcp_clients",
+            function: "oauth_begin",
+            description: "Begin browser OAuth: discover + dynamically register a client + PKCE, returning the authorize URL to open.",
+            inputs: vec![FieldSchema {
+                name: "server_id",
+                ty: TypeSchema::String,
+                comment: "UUID of the installed server to authenticate.",
+                required: true,
+            }],
+            outputs: vec![FieldSchema {
+                name: "authorize_url",
+                ty: TypeSchema::String,
+                comment: "Live OAuth authorize URL to open in the browser; the /oauth/mcp/callback route completes sign-in.",
+                required: true,
+            }],
         },
 
         "connect" => ControllerSchema {
@@ -675,6 +737,28 @@ fn handle_uninstall(params: Map<String, Value>) -> ControllerFuture {
         let server_id = read_required::<String>(&params, "server_id")?;
         to_json(
             crate::openhuman::mcp_registry::ops::mcp_clients_uninstall(&config, server_id).await?,
+        )
+    })
+}
+
+fn handle_detect_auth(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let server_id = read_required::<String>(&params, "server_id")?;
+        to_json(
+            crate::openhuman::mcp_registry::ops::mcp_clients_detect_auth(&config, server_id)
+                .await?,
+        )
+    })
+}
+
+fn handle_oauth_begin(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let server_id = read_required::<String>(&params, "server_id")?;
+        to_json(
+            crate::openhuman::mcp_registry::ops::mcp_clients_oauth_begin(&config, server_id)
+                .await?,
         )
     })
 }

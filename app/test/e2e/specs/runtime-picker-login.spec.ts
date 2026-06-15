@@ -139,8 +139,11 @@ describe('Runtime picker → login → onboarding → home → logout', () => {
     await waitForApp();
     resetMockBehavior();
     setMockBehavior('composioConnections', '[]');
-    // skipAuth so we land on Welcome (logged out) — the spec drives login itself.
-    await resetApp('e2e-runtime-picker-login', { skipAuth: true });
+    // skipAuth so we land on Welcome (logged out) — the spec drives login
+    // itself. clearAuthSession wipes the on-disk session token too, so a prior
+    // login spec in this shard can't leave us authenticated (which would make
+    // PublicRoute redirect past Welcome to /home).
+    await resetApp('e2e-runtime-picker-login', { skipAuth: true, clearAuthSession: true });
     clearRequestLog();
   });
 
@@ -202,19 +205,35 @@ describe('Runtime picker → login → onboarding → home → logout', () => {
   });
 
   it('"Test Connection" against an unreachable host shows the unreachable pill', async function () {
-    // Polling up to 20s for the connection result + potential accessibility tree dump.
     this.timeout(60_000);
+    // The ModePicker can re-render back to the runtime *choice cards* between
+    // the sequential `it`s in this suite, dropping the cloud URL/token form the
+    // previous test revealed. Make this test self-contained: if the Auth Token
+    // field isn't showing, re-select Cloud and re-enter the (deliberately
+    // closed-port) URL before filling the token.
+    if (!(await textExists('Auth Token'))) {
+      await clickByTextDom('Run on the Cloud (Complex)');
+      await browser.pause(500);
+    }
+    await fillInput('input[type="url"]', 'http://127.0.0.1:1/rpc');
     // Token already required; supply something + a deliberately closed port.
-    const tokenOk = await fillInput('input[type="password"]', 'bad-token-e2e');
+    // The bearer-token field is a `type="text"` input (password-manager-ignored),
+    // not `type="password"`, so match it by its placeholder.
+    const tokenOk = await fillInput(
+      'input[placeholder="The bearer token from your remote runtime"]',
+      'bad-token-e2e'
+    );
     expect(tokenOk).toBe(true);
 
     const clicked = await clickByTextDom('Test Connection');
     expect(clicked).toBe(true);
 
     // Either "auth failed" (if something happens to respond) or unreachable.
-    // Both prove the test path actually fired. Poll up to 20s — chromium-driver
-    // can sit on the connect timeout for a while before failing.
-    const deadline = Date.now() + 20_000;
+    // Both prove the test path actually fired. Poll up to 45s — under CI load
+    // chromium-driver/the core's reqwest client can sit on the TCP connect
+    // timeout to the deliberately-closed port well past 20s before the
+    // unreachable pill renders (stays within this.timeout(60_000)).
+    const deadline = Date.now() + 45_000;
     let saw = false;
     while (Date.now() < deadline) {
       if (

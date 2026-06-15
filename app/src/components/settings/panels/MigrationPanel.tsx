@@ -7,8 +7,9 @@ import {
   openhumanMigrateHermes,
   openhumanMigrateOpenclaw,
 } from '../../../utils/tauriCommands/core';
+import PanelPage from '../../layout/PanelPage';
 import Button from '../../ui/Button';
-import SettingsHeader from '../components/SettingsHeader';
+import SettingsBackButton from '../components/SettingsBackButton';
 import { SettingsSection, SettingsSelect, SettingsTextField } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
@@ -25,7 +26,7 @@ interface MigrationPanelProps {
 
 const MigrationPanel = ({ embedded = false }: MigrationPanelProps = {}) => {
   const { t } = useT();
-  const { navigateBack, breadcrumbs } = useSettingsNavigation();
+  const { navigateBack } = useSettingsNavigation();
 
   const [vendor, setVendor] = useState<Vendor>('openclaw');
   const [sourcePath, setSourcePath] = useState<string>('');
@@ -134,16 +135,11 @@ const MigrationPanel = ({ embedded = false }: MigrationPanelProps = {}) => {
   const reportToRender = appliedReport ?? previewReport;
 
   return (
-    <div className="z-10 relative">
-      {!embedded && (
-        <SettingsHeader
-          title={t('migration.title')}
-          showBackButton={true}
-          onBack={navigateBack}
-          breadcrumbs={breadcrumbs}
-        />
-      )}
-
+    <PanelPage
+      className="z-10"
+      contentClassName=""
+      description={embedded ? undefined : t('pages.settings.account.migrationDesc')}
+      leading={embedded ? undefined : <SettingsBackButton onBack={navigateBack} />}>
       <div className="max-w-3xl space-y-6 p-6">
         <p className="text-sm text-neutral-600 dark:text-neutral-300">
           {t('migration.description')}
@@ -310,7 +306,7 @@ const MigrationPanel = ({ embedded = false }: MigrationPanelProps = {}) => {
           </section>
         )}
       </div>
-    </div>
+    </PanelPage>
   );
 };
 

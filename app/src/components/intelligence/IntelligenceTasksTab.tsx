@@ -799,7 +799,7 @@ function TaskSourceTaskList({
         </div>
         <button
           type="button"
-          onClick={() => navigate('/settings/task-sources')}
+          onClick={() => navigate('/settings/integrations')}
           className="text-xs font-medium text-ocean-600 hover:text-ocean-700 dark:text-ocean-300 dark:hover:text-ocean-200">
           {t('conversations.taskKanban.sources.manage')}
         </button>

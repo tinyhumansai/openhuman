@@ -14,6 +14,7 @@ vi.mock('../../../lib/i18n/I18nContext', () => ({
     t: (key: string) =>
       ({
         'settings.features.tools': 'Tools',
+        'pages.settings.features.toolsDesc': 'Tools desc',
         'settings.tools.chooseCapabilities': 'Choose capabilities',
         'settings.tools.saveChanges': 'Save Changes',
         'settings.tools.preferencesSaved': 'Preferences saved',
@@ -72,17 +73,16 @@ describe('<ToolsPanel />', () => {
     );
   });
 
-  it('renders SettingsHeader when embedded=false (line 110)', () => {
-    // Default embedded=false shows the header
+  it('renders the panel header description when embedded=false (line 110)', () => {
+    // Default embedded=false shows the header description
     render(<ToolsPanel embedded={false} />);
-    expect(screen.getByText('Tools')).toBeInTheDocument();
+    expect(screen.getByText('Tools desc')).toBeInTheDocument();
   });
 
-  it('does not render SettingsHeader when embedded=true (line 101-108 skipped)', () => {
-    // When embedded, the header section is not rendered
+  it('does not render the panel header when embedded=true (line 101-108 skipped)', () => {
+    // When embedded, the header description is not rendered
     render(<ToolsPanel embedded={true} />);
-    // The header mock outputs a <h1> with the title — embedded should NOT show it
-    expect(screen.queryByRole('heading', { name: 'Tools' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Tools desc')).not.toBeInTheDocument();
   });
 
   it('shows Save Changes button after toggling a tool (dirty state, line 145-155)', async () => {

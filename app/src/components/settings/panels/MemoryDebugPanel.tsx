@@ -12,8 +12,9 @@ import {
   memoryRecallNamespace,
 } from '../../../utils/tauriCommands';
 import { MemoryTextWithEntities } from '../../intelligence/MemoryTextWithEntities';
+import PanelPage from '../../layout/PanelPage';
 import Button from '../../ui/Button';
-import SettingsHeader from '../components/SettingsHeader';
+import SettingsBackButton from '../components/SettingsBackButton';
 import {
   SettingsEmptyState,
   SettingsSection,
@@ -27,7 +28,7 @@ import { normalizeMemoryDocuments } from './memoryDebugUtils';
 
 const MemoryDebugPanel = () => {
   const { t } = useT();
-  const { navigateBack, breadcrumbs } = useSettingsNavigation();
+  const { navigateBack } = useSettingsNavigation();
   const [documents, setDocuments] = useState<MemoryDebugDocument[]>([]);
   const [documentsRaw, setDocumentsRaw] = useState<unknown>(null);
   const [documentsNamespaceFilter, setDocumentsNamespaceFilter] = useState('');
@@ -196,14 +197,12 @@ const MemoryDebugPanel = () => {
   }, [clearNamespaceInput, refreshAll, t]);
 
   return (
-    <div className="z-10 relative" data-testid="memory-debug-panel">
-      <SettingsHeader
-        title={t('memory.debugTitle')}
-        showBackButton={true}
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
-
+    <PanelPage
+      className="z-10"
+      contentClassName=""
+      testId="memory-debug-panel"
+      description={t('devOptions.debugPanelsDesc')}
+      leading={<SettingsBackButton onBack={navigateBack} />}>
       <div className="p-4 space-y-4">
         {/* Documents */}
         <SettingsSection title={t('memory.documents')}>
@@ -438,7 +437,7 @@ const MemoryDebugPanel = () => {
           </div>
         </SettingsSection>
       </div>
-    </div>
+    </PanelPage>
   );
 };
 

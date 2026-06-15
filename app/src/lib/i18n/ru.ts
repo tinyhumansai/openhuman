@@ -32,6 +32,9 @@ const messages: TranslationMap = {
   'brain.subtitle': 'Ваш граф знаний, источники памяти и элементы управления.',
   'brain.tabs.memory': 'Память',
   'brain.tabs.subconscious': 'Подсознание',
+  'brain.tabs.graph': 'Граф',
+  'brain.tabs.sources': 'Источники',
+  'brain.tabs.sync': 'Синхронизация',
   'brain.empty': 'Ваш мозг пока пуст — подключите источник, чтобы начать формировать память.',
   'brain.error': 'Не удалось загрузить ваш мозг. Пожалуйста, попробуйте ещё раз.',
   'common.cancel': 'Отмена',
@@ -88,11 +91,11 @@ const messages: TranslationMap = {
   'settings.groups.notifications': 'Уведомления',
   'settings.groups.about': 'О приложении',
   'settings.assistant.personality': 'Личность',
-  'settings.assistant.personalityDesc': 'Имя, описание и персона SOUL.md',
+  'settings.personalityFace.title': 'Личность и лицо',
+  'settings.personalityFace.menuDesc': 'Настройте характер ассистента и выберите его лицо',
   'settings.assistant.voice': 'Голос',
   'settings.assistant.voiceDesc': 'Настройки распознавания и синтеза речи',
   'settings.assistant.faceMascot': 'Лицо / Маскот',
-  'settings.assistant.faceMascotDesc': 'Выберите цвет маскота в приложении',
   'settings.assistant.backgroundActivity': 'Подсознание',
   'settings.assistant.backgroundActivityDesc':
     'Управление тем, насколько активно ассистент работает в фоне',
@@ -172,6 +175,11 @@ const messages: TranslationMap = {
   'settings.exitLocalSession': 'Выход из локального сеанса',
   'settings.exitLocalSessionDesc': 'Возврат к экрану входа в систему',
   'settings.language': 'Язык',
+  'settings.navGroups.general': 'Общие',
+  'settings.navGroups.assistant': 'Ассистент',
+  'settings.navGroups.data': 'Данные',
+  'settings.navGroups.connections': 'Подключения',
+  'settings.navGroups.system': 'Система',
   'settings.betaBuild': 'Бета-сборка — v{version}',
   'settings.languageDesc': 'Язык отображения интерфейса',
   'settings.alerts': 'Оповещения',
@@ -327,6 +335,8 @@ const messages: TranslationMap = {
   'chat.newThread': 'Новый чат',
   'chat.typeMessage': 'Чем я могу помочь тебе сегодня?',
   'chat.send': 'Отправить сообщение',
+  'chat.parallelBranchHint': 'Введите параллельную ветку — ⌘/Ctrl+Enter для отправки',
+  'chat.parallelBranchLabel': 'Параллельная ветка',
   'chat.thinking': 'Думаю...',
   'chat.noMessages': 'Сообщений пока нет',
   'chat.startConversation': 'Начни разговор',
@@ -391,6 +401,11 @@ const messages: TranslationMap = {
   'connections.tabs.mcp': 'MCP-серверы',
   'connections.tabs.skills': 'Навыки',
   'connections.tabs.meetings': 'Встречи',
+  'connections.groups.integrations': 'Интеграции',
+  'connections.tabs.oauth': 'OAuth',
+  'connections.tabs.composioKey': 'Composio',
+  'connections.groups.apiKeys': 'API-ключи',
+  'connections.groups.intelligence': 'Интеллект',
   'memory.title': 'Память',
   'memory.search': 'Поиск воспоминаний...',
   'memory.noResults': 'Воспоминания не найдены',
@@ -908,13 +923,9 @@ const messages: TranslationMap = {
   'settings.about.connectionHelperCloud':
     'Подключен к удаленному ядру. Измените это в BootCheck или в средстве выбора облачного режима.',
   'settings.heartbeat.title': 'Heartbeat и циклы',
-  'settings.heartbeat.desc': 'Управляйте частотой фонового планирования и проверяйте карту циклов.',
-  'settings.ledgerUsage.title': 'Журнал использования',
-  'settings.ledgerUsage.desc':
-    'Недавние расходы по кредитам, математические расчеты бюджета и предыстория. API читает бюджет.',
+  'settings.usage.title': 'Использование и лимиты',
+  'settings.usage.menuDesc': 'Расходы, использование токенов, бюджеты и фоновая активность',
   'settings.costDashboard.title': 'Панель затрат',
-  'settings.costDashboard.desc':
-    '7-дневные расходы и сжигание токенов по всему множеству, с указанием темпа бюджета и разбивки по моделям.',
   'settings.costDashboard.sevenDayCost': '7-дневная ежедневная стоимость',
   'settings.costDashboard.sevenDayTokens': '7-дневное использование токена',
   'settings.costDashboard.totalSpend': 'всего 7 дней',
@@ -1355,6 +1366,30 @@ const messages: TranslationMap = {
   'mcp.detail.disable': 'Отключить',
   'mcp.status.disabled': 'Отключён',
   'mcp.detail.tools': 'Инструменты',
+  'mcp.connectAuth.title': 'Подключить {name}',
+  'mcp.connectAuth.hint':
+    'Добавьте аутентификацию, необходимую этому серверу, затем подключитесь. Токены хранятся в зашифрованном виде. Оставьте поле пустым для серверов, не требующих аутентификации.',
+  'mcp.connectAuth.requiredLabel': 'Обязательно',
+  'mcp.connectAuth.customHeadersLabel': 'Пользовательские заголовки',
+  'mcp.connectAuth.customHeadersEmpty':
+    'Нет пользовательских заголовков. Добавьте, если этому серверу нужен заголовок аутентификации, не объявленный в реестре.',
+  'mcp.connectAuth.addHeader': '+ Добавить заголовок',
+  'mcp.connectAuth.headerName': 'Имя заголовка',
+  'mcp.connectAuth.headerValue': 'Значение',
+  'mcp.connectAuth.removeHeader': 'Удалить заголовок',
+  'mcp.connectAuth.howToGetToken': 'Справка и настройка',
+  'mcp.connectAuth.hideHelp': 'Скрыть справку',
+  'mcp.connectAuth.schemeLabel': 'Как отправить значение',
+  'mcp.connectAuth.schemeBearer': 'Bearer',
+  'mcp.connectAuth.schemeRaw': 'Нет',
+  'mcp.connectAuth.reconnectFailed': 'Учётные данные сохранены, но подключиться не удалось.',
+  'mcp.connectAuth.oauthHint':
+    'Этот сервер использует OAuth. Войдите через браузер, чтобы авторизовать OpenHuman.',
+  'mcp.connectAuth.signIn': 'Войти через браузер',
+  'mcp.connectAuth.oauthWaiting': 'Ожидание входа…',
+  'mcp.connectAuth.oauthOrToken':
+    'Уже есть токен доступа? Вставьте его ниже как заголовок Authorization.',
+  'mcp.connectAuth.oauthTimeout': 'Истекло время ожидания входа через браузер. Попробуйте снова.',
   'onboarding.skipForNow': 'Пропустить сейчас',
   'onboarding.localAI.continueWithCloud': 'Продолжить с Облако',
   'onboarding.localAI.useLocalAnyway':
@@ -1951,6 +1986,9 @@ const messages: TranslationMap = {
   'chat.editThreadTitle': 'Изменить название ветки',
   'chat.hideSidebar': 'Скрыть боковую панель',
   'chat.showSidebar': 'Показать боковую панель',
+  'chat.searchThreads': 'Поиск бесед',
+  'layout.resizeSidebar': 'Изменить размер боковой панели',
+  'layout.showSidebar': 'Показать боковую панель',
   'chat.newThreadShortcut': 'Новый чат (/new)',
   'chat.new': 'Новый',
   'chat.failedToLoadMessages': 'Не удалось загрузить сообщения',
@@ -3133,9 +3171,6 @@ const messages: TranslationMap = {
   'pages.settings.ai.voiceDesc': 'Описание голоса',
   'pages.settings.aiSection.description': 'Языковые модели, локальный Ollama и голос (STT / TTS).',
   'pages.settings.aiSection.title': 'ИИ',
-  'pages.settings.composioSection.title': 'Composio',
-  'pages.settings.composioSection.description':
-    'Маршрутизация, триггеры и история интеграций на базе Composio.',
   'settings.developerMenu.composio.title': 'Composio',
   'settings.developerMenu.composio.desc':
     'Режим маршрутизации, триггеры интеграции и архив истории триггеров.',
@@ -3265,6 +3300,54 @@ const messages: TranslationMap = {
   'skills.mcpComingSoon.description':
     'Управление MCP-серверами скоро появится. Этот раздел станет центром для обнаружения, подключения и мониторинга интеграций с MCP-серверами.',
   'settings.ai.routing': 'Маршрутизация',
+  'settings.ai.claudeCode.button': 'Claude Code',
+  'settings.ai.claudeCode.inlineNotConnected':
+    'Не подключено — направляет чат через ваш локальный Claude Code CLI.',
+  'settings.ai.claudeCode.checkingSignIn': 'Проверка входа…',
+  'settings.ai.claudeCode.inlineConnected': 'Подключено.',
+  'settings.ai.claudeCode.signedInAs': 'Выполнен вход как',
+  'settings.ai.claudeCode.subscriptionFallback': 'Подписка Claude',
+  'settings.ai.claudeCode.usingApiKeyEnv': 'Используется ANTHROPIC_API_KEY',
+  'settings.ai.claudeCode.cliNotInstalled': 'CLI не установлен',
+  'settings.ai.claudeCode.signInUnknown': 'Состояние входа неизвестно',
+  'settings.ai.claudeCode.connectedNotSignedIn': 'Подключено · вход не выполнен',
+  'settings.ai.claudeCode.modalTitle': 'Claude Code CLI',
+  'settings.ai.claudeCode.modalDescription':
+    'Направляет задачи чата, агентные и рассуждающие нагрузки через локально установленный Claude Code CLI. Без ключа API — используется собственный вход CLI.',
+  'settings.ai.claudeCode.close': 'Закрыть',
+  'settings.ai.claudeCode.connection': 'Подключение',
+  'settings.ai.claudeCode.enabled': 'Включено',
+  'settings.ai.claudeCode.notEnabled': 'Не включено',
+  'settings.ai.claudeCode.disconnect': 'Отключить',
+  'settings.ai.claudeCode.disconnecting': 'Отключение…',
+  'settings.ai.claudeCode.enable': 'Включить Claude Code',
+  'settings.ai.claudeCode.enabling': 'Включение…',
+  'settings.ai.claudeCode.authentication': 'Аутентификация',
+  'settings.ai.claudeCode.recheck': 'Проверить снова',
+  'settings.ai.claudeCode.checking': 'Проверка…',
+  'settings.ai.claudeCode.openingTerminal': 'Открытие терминала…',
+  'settings.ai.claudeCode.signIn': 'Войти через Claude',
+  'settings.ai.claudeCode.reconnect': 'Переподключить',
+  'settings.ai.claudeCode.loginHint':
+    'Открывает терминал с командой claude login. После завершения нажмите «Проверить снова».',
+  'settings.ai.claudeCode.loginError':
+    'Не удалось открыть терминал входа. Пожалуйста, попробуйте снова.',
+  'settings.ai.claudeCode.fullAccess': 'Полный доступ',
+  'settings.ai.claudeCode.fullAccessOn':
+    'Claude Code может выполнять команды, использовать сеть и запускать субагентов.',
+  'settings.ai.claudeCode.fullAccessOff':
+    'Принимать только правки — автоматически применяет правки файлов, ограничивает команды и сеть.',
+  'settings.ai.claudeCode.sandboxNoteMac':
+    'В macOS каталог ~/.openhuman остаётся защищённым песочницей в обоих режимах.',
+  'settings.ai.claudeCode.sandboxNoteOther':
+    'Полный доступ не ограничен на этой платформе — включайте его только если доверяете рабочему пространству.',
+  'settings.ai.claudeCode.enableToCheck': 'Включите Claude Code, чтобы проверить вход.',
+  'settings.ai.claudeCode.usingApiKeyEnvDetail': 'Используется ANTHROPIC_API_KEY из окружения.',
+  'settings.ai.claudeCode.notFoundInstall':
+    'Claude Code CLI не найден — установите командой: npm install -g @anthropic-ai/claude-code',
+  'settings.ai.claudeCode.unknownDetail':
+    'Не удалось определить состояние входа. Ваш claude CLI может быть старше поддержки статуса аутентификации — попробуйте «Переподключить», затем «Проверить снова».',
+  'settings.ai.claudeCode.notSignedIn': 'Вход не выполнен.',
   'settings.ai.routingCustom': 'Пользовательская маршрутизация',
   'settings.ai.routingDefault': 'По умолчанию',
   'settings.ai.routingDesc': 'Описание маршрутизации',
@@ -4377,6 +4460,26 @@ const messages: TranslationMap = {
   'settings.modelHealth.modal.apply': 'Применить замену',
   'settings.modelHealth.tag.cheaper': 'CHEAPER',
   'settings.modelHealth.tag.better': 'BETTER',
+  'settings.desktopAgent.title': 'Агент рабочего стола',
+  'settings.desktopAgent.description':
+    'Проверьте и предоставьте разрешения, необходимые агенту рабочего стола.',
+  'settings.desktopAgent.microphone': 'Микрофон',
+  'settings.desktopAgent.grant': 'Предоставить',
+  'settings.desktopAgent.notRequiredOnOs': 'Не требуется в этой операционной системе',
+  'settings.desktopAgent.allGranted':
+    'Всё готово — у агента рабочего стола есть все необходимые разрешения.',
+  'settings.desktopAgent.recheck': 'Проверить снова',
+  'settings.desktopAgent.restartAndRecheck': 'Перезапустить ядро и проверить снова',
+  'settings.desktopAgent.seamless.title': 'Действия агента',
+  'settings.desktopAgent.seamless.label': 'Разрешить агенту действовать без запроса',
+  'settings.desktopAgent.seamless.description':
+    'Предоставьте полный доступ и автоматически одобряйте действия на рабочем столе (открытие приложений, управление их интерфейсами), чтобы агент выполнял их без запроса на подтверждение.',
+  'settings.desktopAgent.seamless.note':
+    'Запрос пропускают только действия на рабочем столе — выполнение команд оболочки, редактирование файлов, сетевые запросы и установка программ по-прежнему запрашивают подтверждение. Отключение этой опции прекращает автоматическое одобрение действий на рабочем столе, но уровень доступа остаётся прежним.',
+  'settings.desktopAgent.beta':
+    'Бета — агент рабочего стола является экспериментальным и может не всегда работать как ожидается.',
+  'settings.desktopAgent.wakeWordHint':
+    'Скажите «Hey Tiny» перед командой, чтобы разбудить агента.',
   'settings.screenIntel.permissions.accessibility': 'Доступность',
   'settings.screenIntel.permissions.grantHint': 'Подсказка по предоставлению',
   'settings.screenIntel.permissions.inputMonitoring': 'Мониторинг ввода',
@@ -4554,6 +4657,9 @@ const messages: TranslationMap = {
   'skills.meetingBots.wakePhrase': 'Фраза активации',
   'skills.meetingBots.wakePhraseHint': 'Hey OpenHuman',
   'skills.meetingBots.wakePhraseDesc': 'Участник должен произнести это, прежде чем бот ответит.',
+  'skills.meetingBots.activeMode': 'Отвечать, когда я обращаюсь',
+  'skills.meetingBots.activeModeDesc':
+    'Когда включено, бот отвечает вслух после того, как вы произнесёте фразу-обращение. Когда выключено, он только слушает и расшифровывает.',
   'skills.resource.preview.closeAriaLabel': 'Закрыть предпросмотр',
   'skills.resource.preview.failed': 'Не удалось показать превью',
   'skills.resource.preview.loading': 'Загрузка предпросмотра…',
@@ -4825,6 +4931,8 @@ const messages: TranslationMap = {
   'walletSend.done': 'Готово',
   'walletSend.genericError': 'Не удалось выполнить перевод. Повторите попытку.',
   'settings.taskSources.title': 'Источники задач',
+  'settings.integrations.title': 'Интеграции',
+  'settings.integrations.menuDesc': 'Источники задач, маршрутизация Composio и веб-хук триггеры',
   'settings.taskSources.subtitle': 'Переносите задачи из своих инструментов на доску задач агента.',
   'settings.taskSources.description':
     'Собирайте рабочие элементы из GitHub, Notion, Linear и ClickUp, обогащайте их и направляйте на доску задач агента.',
@@ -5436,6 +5544,58 @@ const messages: TranslationMap = {
   'notch.speaking': 'Говорю…',
   'notch.transcribing': 'Транскрибирую…',
   'notch.executing': 'Выполняю…',
+  // ── Agent Profiles ───────────────────────────────────────────────────────
+  'settings.profiles.title': 'Профили агента',
+  'settings.profiles.subtitle':
+    'Агенты с характером — у каждого своя душа, память, коннекторы и навыки.',
+  'settings.profiles.menuDesc': 'Создавайте профили агента и управляйте ими',
+  'settings.profiles.new': 'Новый профиль',
+  'settings.profiles.empty': 'Профилей агента пока нет',
+  'settings.profiles.loadError': 'Не удалось загрузить профили',
+  'settings.profiles.active': 'Активный',
+  'settings.profiles.setActive': 'Сделать активным',
+  'settings.profiles.sourceBuiltIn': 'Встроенный',
+  'settings.profiles.sourceCustom': 'Пользовательский',
+  'settings.profiles.deleteConfirm': 'Удалить этот профиль? Это действие нельзя отменить.',
+  'settings.profiles.editor.createTitle': 'Новый профиль',
+  'settings.profiles.editor.editTitle': 'Изменить профиль',
+  'settings.profiles.editor.name': 'Имя',
+  'settings.profiles.editor.id': 'Идентификатор',
+  'settings.profiles.editor.idHint': 'Только строчные буквы, цифры и дефисы.',
+  'settings.profiles.editor.description': 'Описание',
+  'settings.profiles.editor.soul': 'Душа (SOUL.md)',
+  'settings.profiles.editor.soulHint':
+    'Пользовательская идентичность этого профиля. Пусто — используется SOUL.md рабочей области.',
+  'settings.profiles.editor.baseAgent': 'Базовый агент',
+  'settings.profiles.editor.baseAgentHint':
+    'Под каким определением агента работает этот профиль (например, orchestrator).',
+  'settings.profiles.editor.model': 'Модель',
+  'settings.profiles.editor.modelHint':
+    'Необязательная замена модели. Пусто — наследует значение по умолчанию.',
+  'settings.profiles.editor.temperature': 'Температура',
+  'settings.profiles.editor.systemPromptSuffix': 'Суффикс системного запроса',
+  'settings.profiles.editor.agentConversations': 'Вспоминать разговоры агента',
+  'settings.profiles.editor.agentConversationsHint':
+    'Включать память прошлых и межчатовых разговоров в контекст этого профиля.',
+  'settings.profiles.editor.memorySources': 'Источники памяти',
+  'settings.profiles.editor.memorySourcesHint':
+    'Источники памяти, из которых вспоминает этот профиль.',
+  'settings.profiles.editor.connectors': 'Коннекторы',
+  'settings.profiles.editor.connectorsHint':
+    'Наборы инструментов Composio, которые может использовать этот профиль.',
+  'settings.profiles.editor.skills': 'Навыки',
+  'settings.profiles.editor.skillsHint':
+    'Рабочие процессы, которые этот профиль может перечислять и запускать.',
+  'settings.profiles.editor.mcpServers': 'Серверы MCP',
+  'settings.profiles.editor.mcpServersHint':
+    'Серверы MCP, к которым может обращаться этот профиль.',
+  'settings.profiles.editor.all': 'Все',
+  'settings.profiles.editor.selected': 'Выбранные',
+  'settings.profiles.editor.addPlaceholder': 'Введите идентификатор и нажмите Enter',
+  'settings.profiles.editor.removeAria': 'Удалить {item}',
+  'settings.profiles.editor.notFound': 'Профиль не найден',
+  'settings.profiles.editor.saving': 'Сохранение…',
+  'settings.profiles.editor.idRequired': 'Идентификатор профиля не может быть пустым',
 };
 
 export default messages;

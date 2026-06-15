@@ -704,7 +704,7 @@ function TaskSourceControls({ disabled, compact }: { disabled: boolean; compact:
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={() => navigate('/settings/task-sources')}
+            onClick={() => navigate('/settings/integrations')}
             className="text-[11px] font-medium text-ocean-600 hover:text-ocean-700 dark:text-ocean-300 dark:hover:text-ocean-200">
             {t('conversations.taskKanban.sources.manage')}
           </button>

@@ -1,0 +1,34 @@
+id = "mcp_agent"
+display_name = "MCP Agent"
+delegate_name = "use_mcp_server"
+when_to_use = "Fulfils a request by calling tools on an ALREADY-CONNECTED MCP server (e.g. answer from a connected docs MCP, query a connected data/API server, run a connected server's tool). Discovers which servers are connected, lists the chosen server's tools, then invokes the right one with the right arguments and reports the result. Use whenever the work can be done by a tool on a server the user has already connected. NOT for installing / adding / setting up a new server — route that to setup_mcp_server instead."
+temperature = 0.3
+max_iterations = 10
+iteration_policy = "extended"
+sandbox_mode = "none"
+omit_identity = true
+omit_memory_context = true
+omit_safety_preamble = false
+omit_skills_catalog = true
+
+[model]
+# Multi-step tool driver (discover → list tools → call → summarise), so it
+# wants the agentic tier rather than the fast chat tier.
+hint = "agentic"
+
+[tools]
+# Connected-server execution surface only. Discovery (`status` /
+# `list_tools`) + ensure-live (`connect`) + execute (`tool_call`). No
+# install/uninstall (that is `mcp_setup`'s secret-handling job), no shell,
+# file, or network — this agent only relays through already-connected MCP
+# servers. `resolve_time` so any time-window arguments are exact, and
+# `ask_user_clarification` for natural-language checkpoints.
+named = [
+    "mcp_registry_status",
+    "mcp_registry_installed_list",
+    "mcp_registry_list_tools",
+    "mcp_registry_connect",
+    "mcp_registry_tool_call",
+    "resolve_time",
+    "ask_user_clarification",
+]

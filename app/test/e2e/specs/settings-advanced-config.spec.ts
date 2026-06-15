@@ -39,12 +39,11 @@ describe('Settings - Advanced Config', () => {
     this.timeout(90_000);
     await navigateViaHash('/settings/developer-options');
 
-    await waitForText('Advanced', 15_000);
-    await waitForText('AI Configuration', 15_000);
-    // 'Notification Routing' was removed as a top-level dev option.
-    // 'Composio Routing (Direct Mode)' was renamed to just 'Composio'.
-    await waitForText('Composio', 15_000);
-    await waitForText('About', 15_000);
+    // The dev-mode gate was dropped (#3639) and the per-feature dev entries
+    // moved to the settings sidebar's "Diagnostics & Logs" group. The
+    // Developer Options panel is now slim — its stable, panel-specific marker
+    // is the "Restart Tour" action.
+    await waitForText('Restart Tour', 15_000);
   });
 
   it('persists notification routing settings through core RPC', async function () {
@@ -82,7 +81,9 @@ describe('Settings - Advanced Config', () => {
     expect(before.ok).toBe(true);
 
     await navigateViaHash('/settings/composio-triggers');
-    await waitForText('Integration Triggers', 15_000);
+    // ComposioTriagePanel renders the triage description + the
+    // t('composio.disableAllTriage') = 'Disable AI triage for all triggers' toggle.
+    await waitForText('Disable AI triage for all triggers', 15_000);
 
     const disabledToolkitsInput = await browser.$('#disabled-toolkits');
     await disabledToolkitsInput.waitForExist({ timeout: 10_000 });
@@ -114,7 +115,9 @@ describe('Settings - Advanced Config', () => {
     const target = current === 250 ? 251 : 250;
 
     await navigateViaHash('/settings/autonomy');
-    await waitForText('Agent autonomy', 15_000);
+    // /settings/autonomy redirects to /settings/agent-access, which embeds the
+    // autonomy rate-limit section titled t('autonomy.maxActionsLabel').
+    await waitForText('Max actions per hour', 15_000);
 
     const input = await browser.$('#autonomy-max-actions');
     await input.waitForExist({ timeout: 10_000 });

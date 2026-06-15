@@ -79,6 +79,7 @@ impl Tool for McpListServersTool {
                             "bearer_token",
                         crate::openhuman::config::McpAuthConfig::Basic { .. } => "basic",
                         crate::openhuman::config::McpAuthConfig::Header { .. } => "header",
+                        crate::openhuman::config::McpAuthConfig::Headers { .. } => "headers",
                         crate::openhuman::config::McpAuthConfig::QueryParam { .. } => "query_param",
                     }
                 ));

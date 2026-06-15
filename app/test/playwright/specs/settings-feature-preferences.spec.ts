@@ -88,13 +88,14 @@ function readEnabledTools(snapshot: ToolsSnapshot): string[] {
 
 test.describe('Settings - Feature Preferences', () => {
   test('renders the features settings section route', async ({ page }) => {
+    // The old "Features" hub page is retired and redirects to
+    // /settings/screen-intelligence; its destinations are sidebar entries now.
     await openAuthenticatedRoute(page, 'pw-settings-features-route', '/settings/features');
 
-    await expect(page.getByText('Features', { exact: true })).toBeVisible();
+    await expect
+      .poll(async () => page.evaluate(() => window.location.hash))
+      .toContain('/settings/screen-intelligence');
     await expect(page.getByTestId('settings-nav-screen-intelligence')).toBeVisible();
-    // Phase 2: default messaging channel moved to /connections (Messaging tab).
-    // Settings consistency pass: Notifications now has its own home-level hub
-    // (notifications-hub) and is no longer nested under the Features section.
     await expect(page.getByTestId('settings-nav-tools')).toBeVisible();
     await expect(page.getByTestId('settings-nav-companion')).toBeVisible();
   });
@@ -103,7 +104,7 @@ test.describe('Settings - Feature Preferences', () => {
     // Phase 2: default messaging channel moved to /connections (Messaging tab)
     await openAuthenticatedRoute(page, 'pw-settings-default-channel', '/connections?tab=messaging');
 
-    const messagingTab = page.getByRole('tab', { name: 'Channels', exact: true });
+    const messagingTab = page.getByTestId('two-pane-nav-channels');
     if (await messagingTab.isVisible().catch(() => false)) {
       await messagingTab.click();
     }
@@ -137,7 +138,8 @@ test.describe('Settings - Feature Preferences', () => {
 
     await reloadAndWait(page);
 
-    await expect(page.getByText('Tools', { exact: true })).toBeVisible();
+    // The two-pane sidebar also renders a "Tools" nav label, so scope to first.
+    await expect(page.getByText('Tools', { exact: true }).first()).toBeVisible();
     // Tool rows are now SettingsRow + SettingsSwitch (role="switch", aria-label =
     // the tool's display name), not a single text-bearing button.
     const shellToggle = page.getByRole('switch', { name: 'Shell Commands', exact: true });
