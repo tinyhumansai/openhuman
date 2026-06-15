@@ -16,8 +16,9 @@ import { APP_ENVIRONMENT } from '../../../utils/config';
 // TAURI-REACT-6 — into a rejected Promise so the existing `.catch(...)` /
 // try/catch handlers see it as a normal IPC failure.
 import { safeInvoke as invoke, isTauri } from '../../../utils/tauriCommands/common';
+import PanelPage from '../../layout/PanelPage';
 import { resetWalkthrough } from '../../walkthrough/AppWalkthrough';
-import SettingsHeader from '../components/SettingsHeader';
+import SettingsBackButton from '../components/SettingsBackButton';
 import SettingsMenuItem from '../components/SettingsMenuItem';
 import { SettingsSection } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
@@ -634,7 +635,7 @@ const LogsFolderRow = () => {
 const DeveloperOptionsPanel = () => {
   const { t } = useT();
   const navigate = useNavigate();
-  const { navigateToSettings, navigateBack, breadcrumbs } = useSettingsNavigation();
+  const { navigateToSettings, navigateBack } = useSettingsNavigation();
   const showSentryTest = APP_ENVIRONMENT === 'staging';
 
   // Trailing actions (restart tour) that don't fit cleanly in any group
@@ -659,14 +660,11 @@ const DeveloperOptionsPanel = () => {
   };
 
   return (
-    <div className="z-10 relative">
-      <SettingsHeader
-        title={t('devOptions.titleDiagnostics')}
-        showBackButton={true}
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
-
+    <PanelPage
+      className="z-10"
+      contentClassName=""
+      description={t('settings.developerDiagnosticsDesc')}
+      leading={<SettingsBackButton onBack={navigateBack} />}>
       {/* Debug-only sub-sections */}
       <div className="p-4 pt-2 space-y-3">
         {DEV_GROUPS.map(group => (
@@ -710,7 +708,7 @@ const DeveloperOptionsPanel = () => {
         <LogsFolderRow />
         {showSentryTest && <SentryTestRow />}
       </div>
-    </div>
+    </PanelPage>
   );
 };
 

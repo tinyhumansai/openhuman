@@ -10,8 +10,9 @@ import {
   openhumanUpdateAgentPaths,
   openhumanUpdateAutonomySettings,
 } from '../../../utils/tauriCommands';
+import PanelPage from '../../layout/PanelPage';
 import Button from '../../ui/Button';
-import SettingsHeader from '../components/SettingsHeader';
+import SettingsBackButton from '../components/SettingsBackButton';
 import { SettingsStatusLine, SettingsTextField } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
@@ -29,7 +30,7 @@ interface PresetOption {
 
 const PermissionsPanel = () => {
   const { t } = useT();
-  const { navigateBack, breadcrumbs } = useSettingsNavigation();
+  const { navigateBack } = useSettingsNavigation();
 
   // Tier presets — built inside the component so titles/descriptions resolve
   // through `t()` (i18n). Order matters: it's the display order.
@@ -189,14 +190,10 @@ const PermissionsPanel = () => {
   };
 
   return (
-    <div className="z-10 relative">
-      <SettingsHeader
-        title={t('settings.permissions.title')}
-        showBackButton
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
-
+    <PanelPage
+      className="z-10"
+      contentClassName=""
+      leading={<SettingsBackButton onBack={navigateBack} />}>
       <div className="p-4 space-y-6">
         {!isTauri() && (
           <p className="text-sm text-coral-600 dark:text-coral-300">
@@ -362,7 +359,7 @@ const PermissionsPanel = () => {
           </>
         )}
       </div>
-    </div>
+    </PanelPage>
   );
 };
 

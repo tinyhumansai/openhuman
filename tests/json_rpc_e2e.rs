@@ -7909,10 +7909,19 @@ async fn public_paths_accessible_without_token() {
         );
     }
 
-    // Paths that bypass auth but return non-2xx for unrelated reasons
-    // (missing required query params, no WebSocket upgrade headers, etc.).
-    // The invariant is that the auth middleware does NOT reject them with 401.
-    for path in ["/auth/telegram", "/events", "/ws/dictation"] {
+    // Paths that bypass the *middleware* header check but return non-2xx for
+    // unrelated reasons (missing required query params, no WebSocket upgrade
+    // headers, etc.). The invariant here is that the auth middleware does NOT
+    // reject them with 401.
+    //
+    // NOTE: `/events` and `/ws/dictation` enforce their own credential inside
+    // the handler (bind token / bearer / `?token=`), so an unauthenticated GET
+    // to those returns 401 from the HANDLER (not the middleware). `/events`
+    // requires a `client_id` query param, so an empty request is rejected by
+    // Axum's extractor (400) before the handler's own auth runs — it stays in
+    // this `!= 401` group. `/ws/dictation` is asserted separately below now
+    // that it is authenticated at the upgrade boundary (C4 / issue #1924).
+    for path in ["/auth/telegram", "/events"] {
         let resp = client
             .get(format!("{base}{path}"))
             .send()
@@ -7921,10 +7930,25 @@ async fn public_paths_accessible_without_token() {
         assert_ne!(
             resp.status(),
             StatusCode::UNAUTHORIZED,
-            "public path {path} must not be auth-gated (got {})",
+            "public path {path} must not be auth-gated by the middleware (got {})",
             resp.status()
         );
     }
+
+    // `/ws/dictation` is now authenticated at the upgrade boundary (C4 /
+    // issue #1924): an unauthenticated request (no bearer header, no
+    // `?token=`) must be rejected with 401 by the handler before any upgrade.
+    let resp = client
+        .get(format!("{base}/ws/dictation"))
+        .send()
+        .await
+        .unwrap_or_else(|e| panic!("GET /ws/dictation: {e}"));
+    assert_eq!(
+        resp.status(),
+        StatusCode::UNAUTHORIZED,
+        "/ws/dictation must reject unauthenticated upgrades with 401 (got {})",
+        resp.status()
+    );
 
     rpc_join.abort();
 }

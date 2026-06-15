@@ -785,6 +785,26 @@ fn generate_random_key_correct_length() {
 }
 
 #[test]
+fn master_key_is_zeroizing_and_cache_stable() {
+    // Regression for audit C9: the master key is returned wrapped in
+    // `zeroize::Zeroizing` (wiped on drop) and the cached copy is the same
+    // bytes on a subsequent load (cache hit). The static type assertion below
+    // fails to compile if the return type stops being `Zeroizing`.
+    let tmp = TempDir::new().unwrap();
+    let store = SecretStore::new(tmp.path(), true);
+
+    let key: zeroize::Zeroizing<Vec<u8>> = store.load_or_create_key().unwrap();
+    assert_eq!(key.len(), KEY_LEN);
+
+    // Second load must return identical key bytes from the process-wide cache.
+    let key2 = store.load_or_create_key().unwrap();
+    assert_eq!(
+        &*key, &*key2,
+        "cached master key must be stable across loads"
+    );
+}
+
+#[test]
 fn generate_random_key_not_all_zeros() {
     let key = generate_random_key();
     assert!(key.iter().any(|&b| b != 0), "Key should not be all zeros");

@@ -48,6 +48,7 @@
  */
 import { waitForApp } from '../helpers/app-helpers';
 import {
+  chatMounted,
   clickByTitle,
   clickSend,
   getSelectedThreadId,
@@ -165,7 +166,7 @@ async function tryWaitForTelegramReply(
 
 async function navigateChatAndSend(prompt: string): Promise<void> {
   await navigateViaHash('/chat');
-  await browser.waitUntil(async () => await textExists('Threads'), {
+  await browser.waitUntil(async () => await chatMounted(), {
     timeout: 15_000,
     timeoutMsg: 'Conversations panel did not mount',
   });
@@ -675,7 +676,7 @@ describe('Harness — Cross-channel bridge flow', () => {
 
     // Step 1: navigate to web chat and start sending (does NOT await reply yet).
     await navigateViaHash('/chat');
-    await browser.waitUntil(async () => await textExists('Threads'), {
+    await browser.waitUntil(async () => await chatMounted(), {
       timeout: 15_000,
       timeoutMsg: 'Conversations panel did not mount',
     });

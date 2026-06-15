@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
 import { openhumanAgentChat } from '../../../utils/tauriCommands';
+import PanelPage from '../../layout/PanelPage';
 import Button from '../../ui/Button';
-import SettingsHeader from '../components/SettingsHeader';
+import SettingsBackButton from '../components/SettingsBackButton';
 import {
   SettingsEmptyState,
   SettingsSection,
@@ -19,7 +20,7 @@ const STORAGE_KEY = 'openhuman.settings.agentChat.history';
 
 const AgentChatPanel = () => {
   const { t } = useT();
-  const { navigateBack, breadcrumbs } = useSettingsNavigation();
+  const { navigateBack } = useSettingsNavigation();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [modelOverride, setModelOverride] = useState('');
@@ -82,14 +83,11 @@ const AgentChatPanel = () => {
   };
 
   return (
-    <div className="z-10 relative">
-      <SettingsHeader
-        title={t('chat.agentChat')}
-        showBackButton={true}
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
-
+    <PanelPage
+      className="z-10"
+      contentClassName=""
+      description={t('settings.developerMenu.agentChat.desc')}
+      leading={<SettingsBackButton onBack={navigateBack} />}>
       <div className="p-4 space-y-4">
         <SettingsSection title={t('chat.overrides')} description={t('chat.agentChatDesc')}>
           <div className="px-4 py-3 grid gap-3 md:grid-cols-2">
@@ -168,7 +166,7 @@ const AgentChatPanel = () => {
           </div>
         </SettingsSection>
       </div>
-    </div>
+    </PanelPage>
   );
 };
 

@@ -7,9 +7,10 @@ import { teamApi } from '../../../services/api/teamApi';
 import { CoreRpcError } from '../../../services/coreRpcClient';
 import type { TeamWithRole } from '../../../types/team';
 import { sanitizeError } from '../../../utils/sanitize';
+import PanelPage from '../../layout/PanelPage';
 import { CenteredLoadingState, ErrorBanner } from '../../ui';
 import Button from '../../ui/Button';
-import SettingsHeader from '../components/SettingsHeader';
+import SettingsBackButton from '../components/SettingsBackButton';
 import { SettingsBadge, SettingsSection, SettingsTextField } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
@@ -17,7 +18,7 @@ const log = debug('core-rpc:error');
 
 const TeamPanel = () => {
   const { t } = useT();
-  const { navigateBack, navigateToTeamManagement, breadcrumbs } = useSettingsNavigation();
+  const { navigateBack, navigateToTeamManagement } = useSettingsNavigation();
   const { snapshot, teams, refresh, refreshTeams } = useCoreState();
   const user = snapshot.currentUser;
 
@@ -249,14 +250,11 @@ const TeamPanel = () => {
   };
 
   return (
-    <div className="z-10 relative">
-      <SettingsHeader
-        title={t('settings.account.team')}
-        showBackButton={true}
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
-
+    <PanelPage
+      className="z-10"
+      contentClassName=""
+      description={t('pages.settings.account.teamDesc')}
+      leading={<SettingsBackButton onBack={navigateBack} />}>
       <div className="p-4 pt-2 space-y-5">
         {error && <ErrorBanner message={error} />}
 
@@ -367,7 +365,7 @@ const TeamPanel = () => {
           </div>
         )}
       </div>
-    </div>
+    </PanelPage>
   );
 };
 

@@ -73,10 +73,8 @@ async function bootSkills(page: Page, userId: string): Promise<void> {
   await page.goto('/#/connections');
   await waitForAppReady(page);
   await dismissWalkthroughIfPresent(page);
-  await page.getByRole('tab', { name: 'Composio' }).click();
-  await expect(
-    page.getByRole('heading', { name: 'Composio Integrations', exact: true })
-  ).toBeVisible({ timeout: 20_000 });
+  await page.getByTestId('two-pane-nav-composio').click();
+  await expect(page.getByTestId('composio-integrations-card')).toBeVisible({ timeout: 20_000 });
 }
 
 async function assertSessionAlive(page: Page): Promise<void> {
@@ -149,7 +147,7 @@ test.describe('Connector session guard matrix', () => {
     await page.reload();
     await waitForAppReady(page);
     // Phase 2: "Composio" tab renamed to "Apps"
-    await page.getByRole('tab', { name: 'Composio' }).click();
+    await page.getByTestId('two-pane-nav-composio').click();
     await page.getByTestId('skill-install-composio-jira').click();
     const dialog = page.getByRole('dialog', { name: /Jira/i });
     await expect(dialog).toBeVisible();
@@ -163,7 +161,7 @@ test.describe('Connector session guard matrix', () => {
     await page.reload();
     await waitForAppReady(page);
     // Phase 2: "Composio" tab renamed to "Apps"
-    await page.getByRole('tab', { name: 'Composio' }).click();
+    await page.getByTestId('two-pane-nav-composio').click();
     await expect(page.getByTestId('skill-install-composio-discord')).toContainText('Discord');
     await assertSessionAlive(page);
 
@@ -171,7 +169,7 @@ test.describe('Connector session guard matrix', () => {
     await page.reload();
     await waitForAppReady(page);
     // Phase 2: "Composio" tab renamed to "Apps"
-    await page.getByRole('tab', { name: 'Composio' }).click();
+    await page.getByTestId('two-pane-nav-composio').click();
     await expect(page.getByTestId('skill-install-composio-github')).toContainText(
       /Reconnect|GitHub/
     );

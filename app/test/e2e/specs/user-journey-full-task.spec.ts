@@ -21,6 +21,7 @@
  */
 import { waitForApp } from '../helpers/app-helpers';
 import {
+  chatMounted,
   clickByTitle,
   clickSend,
   getSelectedThreadId,
@@ -77,7 +78,7 @@ describe('User journey — full research task', () => {
   it('J1.1 — message sent and displayed in DOM', async () => {
     console.log(`${LOG_PREFIX} J1.1: navigating to /chat`);
     await navigateViaHash('/chat');
-    await browser.waitUntil(async () => await textExists('Threads'), {
+    await browser.waitUntil(async () => await chatMounted(), {
       timeout: 15_000,
       timeoutMsg: 'Conversations panel did not mount',
     });
@@ -174,7 +175,7 @@ describe('User journey — full research task', () => {
 
     console.log(`${LOG_PREFIX} J1.4: navigating back to /chat`);
     await navigateViaHash('/chat');
-    await browser.waitUntil(async () => await textExists('Threads'), {
+    await browser.waitUntil(async () => await chatMounted(), {
       timeout: 15_000,
       timeoutMsg: 'Conversations panel did not remount',
     });

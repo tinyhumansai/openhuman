@@ -2,7 +2,7 @@
 
 use std::path::{Component, Path};
 
-use crate::openhuman::agent::profiles::AgentProfile;
+use super::types::AgentProfile;
 
 /// Reject path strings that could escape the workspace: absolute paths,
 /// root/prefix components, or any `..` segment.
@@ -219,10 +219,15 @@ pub trait HasToolkit {
     fn toolkit_name(&self) -> &str;
 }
 
+impl HasToolkit for crate::openhuman::agent::prompts::ConnectedIntegration {
+    fn toolkit_name(&self) -> &str {
+        &self.toolkit
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::openhuman::agent::profiles::AgentProfile;
     use tempfile::TempDir;
 
     fn test_profile(id: &str) -> AgentProfile {
@@ -241,6 +246,10 @@ mod tests {
             soul_md: None,
             soul_md_path: None,
             composio_integrations: None,
+            memory_sources: None,
+            include_agent_conversations: true,
+            allowed_skills: None,
+            allowed_mcp_servers: None,
             memory_dir_suffix: None,
             is_master: false,
             sort_order: None,
@@ -390,5 +399,35 @@ mod tests {
         let allowed: Vec<String> = vec![];
         let filtered = filter_integrations(&all, Some(&allowed));
         assert!(filtered.is_empty());
+    }
+
+    fn connected_integration(
+        toolkit: &str,
+    ) -> crate::openhuman::agent::prompts::ConnectedIntegration {
+        crate::openhuman::agent::prompts::ConnectedIntegration {
+            toolkit: toolkit.to_string(),
+            description: String::new(),
+            tools: Vec::new(),
+            gated_tools: Vec::new(),
+            connected: true,
+            connections: Vec::new(),
+            non_active_status: None,
+        }
+    }
+
+    #[test]
+    fn filter_connected_integrations_by_profile_allowlist() {
+        // The HasToolkit impl lets the per-profile connector gate reuse
+        // filter_integrations on the real ConnectedIntegration type.
+        let all = vec![
+            connected_integration("gmail"),
+            connected_integration("slack"),
+            connected_integration("notion"),
+        ];
+        assert_eq!(filter_integrations(&all, None).len(), 3);
+        let allow = vec!["gmail".to_string(), "notion".to_string()];
+        let filtered = filter_integrations(&all, Some(&allow));
+        let kept: Vec<&str> = filtered.iter().map(|c| c.toolkit_name()).collect();
+        assert_eq!(kept, vec!["gmail", "notion"]);
     }
 }

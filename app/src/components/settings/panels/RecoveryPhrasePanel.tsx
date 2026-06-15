@@ -8,8 +8,9 @@ import {
   MNEMONIC_GENERATE_WORD_COUNT,
   validateMnemonicPhrase,
 } from '../../../utils/cryptoKeys';
+import PanelPage from '../../layout/PanelPage';
 import Button from '../../ui/Button';
-import SettingsHeader from '../components/SettingsHeader';
+import SettingsBackButton from '../components/SettingsBackButton';
 import { SettingsCheckbox } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
@@ -19,7 +20,7 @@ const IMPORT_SLOTS_INITIAL = MNEMONIC_GENERATE_WORD_COUNT;
 
 const RecoveryPhrasePanel = () => {
   const { t } = useT();
-  const { navigateBack, breadcrumbs } = useSettingsNavigation();
+  const { navigateBack } = useSettingsNavigation();
   const { snapshot, setEncryptionKey } = useCoreState();
   const user = snapshot.currentUser;
 
@@ -203,14 +204,11 @@ const RecoveryPhrasePanel = () => {
   const canSave = mode === 'generate' ? confirmed : isImportComplete;
 
   return (
-    <div className="z-10 relative">
-      <SettingsHeader
-        title={t('mnemonic.title')}
-        showBackButton
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
-
+    <PanelPage
+      className="z-10"
+      contentClassName=""
+      description={t('pages.settings.account.recoveryPhraseDesc')}
+      leading={<SettingsBackButton onBack={navigateBack} />}>
       <div>
         <div className="p-4">
           {success ? (
@@ -493,7 +491,7 @@ const RecoveryPhrasePanel = () => {
           )}
         </div>
       </div>
-    </div>
+    </PanelPage>
   );
 };
 

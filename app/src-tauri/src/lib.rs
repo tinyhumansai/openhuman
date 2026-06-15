@@ -2595,7 +2595,11 @@ pub fn run() {
         // meet_video) still reach the embedded browser over the TCP
         // loopback DevTools port — once they migrate this flag can be
         // dropped and the unauthenticated listener closed for good.
-        args.push(("--remote-debugging-port", Some("19222")));
+        // Leak the small port string to satisfy the `'static` arg lifetime
+        // (one-time, a few bytes per launch — this is a startup flag).
+        let cdp_port_str: &'static str =
+            Box::leak(crate::cdp::cdp_port().to_string().into_boxed_str());
+        args.push(("--remote-debugging-port", Some(cdp_port_str)));
         let force_gpu_env = std::env::var("OPENHUMAN_FORCE_GPU").ok();
         append_platform_cef_gpu_workarounds(
             &mut args,

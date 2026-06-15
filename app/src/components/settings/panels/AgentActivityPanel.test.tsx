@@ -12,18 +12,15 @@ vi.mock('../hooks/useSettingsNavigation', () => ({
   }),
 }));
 
-// Mock SettingsHeader so the test does not depend on i18n resolution of the
-// header title (which varies with the active locale / brand rename). We assert
-// the panel wiring instead: that the shared header renders with a back button
-// and that the level options drive the RPC.
-vi.mock('../components/SettingsHeader', () => ({
-  default: ({ title, onBack }: { title: string; onBack?: () => void }) => (
-    <div data-testid="settings-header">
-      <span data-testid="settings-header-title">{title}</span>
-      <button type="button" data-testid="settings-header-back" onClick={onBack}>
-        back
-      </button>
-    </div>
+// Mock SettingsBackButton so the test does not depend on the route-aware
+// visibility rules of the shared back button. We assert the panel wiring
+// instead: that the back button renders and drives `navigateBack`, and that the
+// level options drive the RPC.
+vi.mock('../components/SettingsBackButton', () => ({
+  default: ({ onBack }: { onBack?: () => void }) => (
+    <button type="button" data-testid="settings-header-back" onClick={onBack}>
+      back
+    </button>
   ),
 }));
 
@@ -73,18 +70,17 @@ beforeEach(() => {
 });
 
 describe('<AgentActivityPanel />', () => {
-  it('renders the shared SettingsHeader and the five level options once loaded', async () => {
+  it('renders the back button and the five level options once loaded', async () => {
     render(<AgentActivityPanel />);
 
-    // Header only renders after the initial load resolves (loading state has no
-    // header), so this also asserts the panel left the loading state.
-    await screen.findByTestId('settings-header');
-    expect(levelButtons()).toHaveLength(5);
+    // The level options only render after the initial load resolves (the loading
+    // state has none), so this also asserts the panel left the loading state.
+    await waitFor(() => expect(levelButtons()).toHaveLength(5));
   });
 
-  it('invokes the back handler from the SettingsHeader', async () => {
+  it('invokes the back handler from the back button', async () => {
     render(<AgentActivityPanel />);
-    await screen.findByTestId('settings-header');
+    await screen.findByTestId('settings-header-back');
 
     fireEvent.click(screen.getByTestId('settings-header-back'));
     expect(navigateBack).toHaveBeenCalledTimes(1);
@@ -92,7 +88,7 @@ describe('<AgentActivityPanel />', () => {
 
   it('persists a new level selection via the update RPC', async () => {
     render(<AgentActivityPanel />);
-    await screen.findByTestId('settings-header');
+    await waitFor(() => expect(levelButtons()).toHaveLength(5));
 
     // The last option is "Always-on" (level 4 -> api key "always_on").
     const options = levelButtons();

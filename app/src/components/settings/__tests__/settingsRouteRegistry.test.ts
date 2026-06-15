@@ -28,9 +28,9 @@ describe('entryRoute', () => {
   });
 
   it('falls back to the id when no explicit route is set', () => {
-    const entry = findEntryById('persona');
+    const entry = findEntryById('personality');
     expect(entry).toBeDefined();
-    expect(entryRoute(entry!)).toBe('persona');
+    expect(entryRoute(entry!)).toBe('personality');
   });
 
   it('returns the overridden route for build-info (→ about)', () => {
@@ -55,8 +55,10 @@ describe('findEntryById', () => {
     expect(findEntryById('does-not-exist')).toBeUndefined();
   });
 
-  it('returns the correct section for agents-settings', () => {
-    const entry = findEntryById('agents-settings');
+  it('returns the correct section for a home hub entry', () => {
+    // The old 'agents-settings' / 'ai' hub pages were retired; 'integrations'
+    // is a representative surviving home-section hub.
+    const entry = findEntryById('integrations');
     expect(entry).toBeDefined();
     expect(entry!.section).toBe('home');
   });
@@ -75,9 +77,9 @@ describe('findEntryById', () => {
 
 describe('findEntryByRoute', () => {
   it('returns an entry for a known route', () => {
-    const entry = findEntryByRoute('persona');
+    const entry = findEntryByRoute('personality');
     expect(entry).toBeDefined();
-    expect(entry!.id).toBe('persona');
+    expect(entry!.id).toBe('personality');
   });
 
   it('returns undefined for an unknown route', () => {
@@ -92,12 +94,15 @@ describe('findEntryByRoute', () => {
     expect(entry).toBeDefined();
   });
 
-  it('does not match partial/substring routes — no collision between "ai" and "ai-debug"', () => {
-    const entry = findEntryByRoute('ai');
+  it('does not match partial/substring routes — no collision between "voice" and "voice-debug"', () => {
+    const entry = findEntryByRoute('voice');
     expect(entry).toBeDefined();
-    expect(entry!.id).toBe('ai');
-    // There should be no entry with id 'ai-debug' in the registry.
-    expect(findEntryByRoute('ai-debug')).toBeUndefined();
+    expect(entry!.id).toBe('voice');
+    // 'voice-debug' is a distinct developer entry; exact-match lookup must not
+    // collide with the 'voice' leaf despite the shared prefix.
+    const debugEntry = findEntryByRoute('voice-debug');
+    expect(debugEntry).toBeDefined();
+    expect(debugEntry!.id).toBe('voice-debug');
   });
 });
 
@@ -113,18 +118,23 @@ describe('entriesForSection', () => {
   });
 
   it('excludes hidden deep-links', () => {
-    // 'approval-history' is section: 'agents' + hiddenDeepLink: true.
-    const agentEntries = entriesForSection('agents');
-    const ids = agentEntries.map(e => e.id);
-    expect(ids).not.toContain('approval-history');
+    // 'autocomplete' and 'permissions' are section: 'developer' + hiddenDeepLink.
+    const devEntries = entriesForSection('developer');
+    const ids = devEntries.map(e => e.id);
+    expect(ids).not.toContain('autocomplete');
+    expect(ids).not.toContain('permissions');
   });
 
-  it('returns the composio section entries', () => {
-    const composioEntries = entriesForSection('composio');
-    const ids = composioEntries.map(e => e.id);
-    expect(ids).toContain('task-sources');
-    expect(ids).toContain('composio-routing');
-    expect(ids).toContain('webhooks-triggers');
+  it('surfaces the merged integrations entry on home (composio section retired)', () => {
+    const homeEntries = entriesForSection('home');
+    const ids = homeEntries.map(e => e.id);
+    expect(ids).toContain('integrations');
+    // The old composio leaf slugs redirect to /settings/integrations and are
+    // no longer registry entries.
+    const allIds = SETTINGS_ROUTE_REGISTRY.map(e => e.id);
+    expect(allIds).not.toContain('task-sources');
+    expect(allIds).not.toContain('composio-routing');
+    expect(allIds).not.toContain('webhooks-triggers');
   });
 
   it('returns multiple developer entries', () => {
@@ -139,17 +149,19 @@ describe('entriesForSection', () => {
   it('returns home section entries (section hubs)', () => {
     const homeEntries = entriesForSection('home');
     const ids = homeEntries.map(e => e.id);
-    // Non-hidden home entries include the main section hubs.
+    // Surviving home hub entries after the two-pane restructure.
     expect(ids).toContain('account');
-    expect(ids).toContain('ai');
-    expect(ids).toContain('agents-settings');
-    expect(ids).toContain('features');
-    expect(ids).toContain('composio');
-    expect(ids).toContain('notifications-hub');
-    expect(ids).toContain('crypto');
+    expect(ids).toContain('appearance');
+    expect(ids).toContain('personality');
+    expect(ids).toContain('automations');
+    expect(ids).toContain('integrations');
     expect(ids).toContain('about');
-    // billing is hiddenDeepLink so should be excluded.
-    expect(ids).not.toContain('billing');
+    // The old ai / agents-settings / features / notifications-hub hub pages
+    // were retired — their slugs now redirect to leaf panels.
+    expect(ids).not.toContain('ai');
+    expect(ids).not.toContain('agents-settings');
+    expect(ids).not.toContain('features');
+    expect(ids).not.toContain('notifications-hub');
   });
 
   it('returns empty array for a section that has no non-hidden entries', () => {
@@ -177,12 +189,13 @@ describe('SETTINGS_ROUTE_REGISTRY integrity', () => {
     });
   });
 
-  it('contains the 5 newly-surfaced section hubs on home', () => {
+  it('surfaces the restructured home hub entries', () => {
     const homeIds = entriesForSection('home').map(e => e.id);
-    expect(homeIds).toContain('ai');
-    expect(homeIds).toContain('agents-settings');
-    expect(homeIds).toContain('features');
-    expect(homeIds).toContain('composio');
-    expect(homeIds).toContain('crypto');
+    expect(homeIds).toContain('integrations');
+    expect(homeIds).toContain('personality');
+    expect(homeIds).toContain('automations');
+    expect(homeIds).toContain('memory-sync');
+    // billing is surfaced in the General group now (no longer a hidden deep-link).
+    expect(homeIds).toContain('billing');
   });
 });

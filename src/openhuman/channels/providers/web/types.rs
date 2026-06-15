@@ -25,6 +25,13 @@ pub(crate) struct SessionCacheFingerprint {
     /// change) — without this the stale session would be reused. Mirrors
     /// [`Self::autonomy_signature`].
     pub(super) model_registry_signature: String,
+    /// Serialized signature of the active agent profile. The cached `Agent`
+    /// bakes in the profile's tool/skill/MCP/connector visibility and SOUL/MEMORY
+    /// overrides at build time; switching profiles on the same thread keeps the
+    /// same model/agent/provider, so without this the previous profile's
+    /// capability surface would leak into the new profile's turns. Any change to
+    /// the resolved profile forces a rebuild.
+    pub(super) profile_signature: String,
 }
 
 pub(super) struct SessionEntry {

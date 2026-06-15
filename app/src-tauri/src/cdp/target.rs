@@ -13,7 +13,7 @@ use std::time::Duration;
 use serde_json::{json, Value};
 use tauri::{AppHandle, Manager, Runtime};
 
-use super::{in_process::CdpRegistry, CdpConn, CDP_HOST, CDP_PORT};
+use super::{cdp_port, in_process::CdpRegistry, CdpConn, CDP_HOST};
 
 #[derive(Debug, Clone)]
 pub struct CdpTarget {
@@ -29,9 +29,10 @@ pub struct CdpTarget {
 /// in-process channel installed by `webview_accounts::open`.
 ///
 /// Returns the browser-level WebSocket URL by hitting
-/// `http://{CDP_HOST}:{CDP_PORT}/json/version`. Requires Chromium to
-/// have been spawned with `--remote-debugging-port=<CDP_PORT>` — see
-/// `app/src-tauri/src/lib.rs`.
+/// `http://{CDP_HOST}:{cdp_port()}/json/version`. Requires Chromium to
+/// have been spawned with `--remote-debugging-port=<cdp_port()>` — see
+/// `app/src-tauri/src/lib.rs`. Both launch and discovery resolve the port
+/// through [`cdp_port`] so `OPENHUMAN_CDP_PORT` overrides stay consistent.
 pub async fn browser_ws_url() -> Result<String, String> {
     let client = reqwest::Client::builder()
         .user_agent("openhuman-cdp/1.0")
@@ -40,7 +41,7 @@ pub async fn browser_ws_url() -> Result<String, String> {
         .map_err(|e| format!("reqwest build: {e}"))?;
     let mut last_err: Option<String> = None;
     for host in [CDP_HOST, "localhost"] {
-        let url = format!("http://{host}:{CDP_PORT}/json/version");
+        let url = format!("http://{host}:{}/json/version", cdp_port());
         match client.get(&url).send().await {
             Ok(resp) => match resp.json::<Value>().await {
                 Ok(v) => {

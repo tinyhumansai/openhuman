@@ -5130,7 +5130,7 @@ dependencies = [
 
 [[package]]
 name = "openhuman"
-version = "0.57.39"
+version = "0.57.41"
 dependencies = [
  "aes-gcm",
  "aho-corasick",
@@ -5254,6 +5254,7 @@ dependencies = [
  "wiremock",
  "x25519-dalek",
  "xz2",
+ "zeroize",
  "zip 2.4.2",
 ]
 

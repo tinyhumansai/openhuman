@@ -80,6 +80,8 @@ fn build_runtime_tools(config: &Config) -> Result<Vec<Box<dyn Tool>>, String> {
         &config.action_dir,
         &config.agents,
         config,
+        None,
+        None,
     );
     debug!(
         tool_count = built.len(),

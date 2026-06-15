@@ -13,8 +13,9 @@ import { useNavigate } from 'react-router-dom';
 
 import { useT } from '../../../lib/i18n/I18nContext';
 import { agentRegistryApi, type AgentRegistryEntry } from '../../../services/api/agentRegistryApi';
+import PanelPage from '../../layout/PanelPage';
 import Button from '../../ui/Button';
-import SettingsHeader from '../components/SettingsHeader';
+import SettingsBackButton from '../components/SettingsBackButton';
 import { SettingsBadge, SettingsEmptyState, SettingsSwitch } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
@@ -23,7 +24,7 @@ const ORCHESTRATOR_ID = 'orchestrator';
 const AgentsPanel = () => {
   const { t } = useT();
   const navigate = useNavigate();
-  const { navigateBack, breadcrumbs } = useSettingsNavigation();
+  const { navigateBack } = useSettingsNavigation();
 
   const [agents, setAgents] = useState<AgentRegistryEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -92,14 +93,11 @@ const AgentsPanel = () => {
   );
 
   return (
-    <div className="z-10 relative">
-      <SettingsHeader
-        title={t('settings.agents.title')}
-        showBackButton
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
-
+    <PanelPage
+      className="z-10"
+      contentClassName=""
+      description={t('settings.agents.subtitle')}
+      leading={<SettingsBackButton onBack={navigateBack} />}>
       <div className="p-4">
         <div className="mb-4 flex items-start justify-between gap-3">
           <p className="text-sm text-neutral-500 dark:text-neutral-400">
@@ -147,7 +145,7 @@ const AgentsPanel = () => {
           </ul>
         )}
       </div>
-    </div>
+    </PanelPage>
   );
 };
 

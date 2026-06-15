@@ -9,6 +9,7 @@ pub mod agent_teams;
 pub mod command_center;
 mod ops;
 pub(crate) mod parent_context;
+pub mod running_subagents;
 pub mod tools;
 pub mod types;
 pub mod workflow_runs;

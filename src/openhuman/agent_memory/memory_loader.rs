@@ -75,6 +75,11 @@ pub struct DefaultMemoryLoader {
     /// Workspace dir for direct cross-thread JSONL search (issue #1505).
     /// `None` falls back to the Memory-trait recall path.
     workspace_dir: Option<PathBuf>,
+    /// When `false`, the agent profile opted out of recalling prior agent
+    /// conversations — both the `[Prior conversations]` and `[Cross-chat
+    /// context]` blocks are suppressed. Defaults to `true` (legacy behaviour).
+    /// Set per-profile via `AgentProfile::include_agent_conversations`.
+    include_agent_conversations: bool,
 }
 
 /// Lightweight citation object derived from recalled memory entries.
@@ -100,6 +105,7 @@ impl Default for DefaultMemoryLoader {
             min_relevance_score: 0.4,
             max_context_chars: 2000,
             workspace_dir: None,
+            include_agent_conversations: true,
         }
     }
 }
@@ -111,11 +117,20 @@ impl DefaultMemoryLoader {
             min_relevance_score,
             max_context_chars: 2000,
             workspace_dir: None,
+            include_agent_conversations: true,
         }
     }
 
     pub fn with_max_chars(mut self, max_chars: usize) -> Self {
         self.max_context_chars = max_chars;
+        self
+    }
+
+    /// Toggle recall of prior agent conversations (the `[Prior conversations]`
+    /// and `[Cross-chat context]` prompt blocks). Wired from the active
+    /// profile's `include_agent_conversations` flag.
+    pub fn with_agent_conversations(mut self, include: bool) -> Self {
+        self.include_agent_conversations = include;
         self
     }
 
@@ -249,73 +264,78 @@ impl MemoryLoader for DefaultMemoryLoader {
         // `high.*` are eligible, and only the first short snippet of
         // each is included so the block never crowds out the user's
         // actual message.
-        let prior_query = format!("{} {}", CONVERSATION_MEMORY_NAMESPACE, user_message);
-        let prior_entries = memory
-            .recall(
-                &prior_query,
-                PRIOR_CONVERSATION_LIMIT * 4,
-                crate::openhuman::memory::RecallOpts {
-                    namespace: Some(CONVERSATION_MEMORY_NAMESPACE),
-                    ..Default::default()
-                },
-            )
-            .await
-            .unwrap_or_default();
+        //
+        // Skipped entirely when the active profile opts out of recalling
+        // prior agent conversations (`include_agent_conversations = false`).
+        if self.include_agent_conversations {
+            let prior_query = format!("{} {}", CONVERSATION_MEMORY_NAMESPACE, user_message);
+            let prior_entries = memory
+                .recall(
+                    &prior_query,
+                    PRIOR_CONVERSATION_LIMIT * 4,
+                    crate::openhuman::memory::RecallOpts {
+                        namespace: Some(CONVERSATION_MEMORY_NAMESPACE),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap_or_default();
 
-        let mut appended_prior_header = false;
-        let mut prior_added = 0usize;
-        for entry in prior_entries
-            .into_iter()
-            .filter(|e| e.key.starts_with(PRIOR_CONVERSATION_KEY_PREFIX))
-            .filter(|e| match e.score {
-                Some(score) => score >= self.min_relevance_score,
-                None => true,
-            })
-        {
-            if prior_added >= PRIOR_CONVERSATION_LIMIT {
-                break;
-            }
-            // The stored content is two lines:
-            //   [high preference] I prefer Postgres ...
-            //   [provenance] {"thread_id":"thr_…", ...}
-            // For the prompt we keep only the first line so the block
-            // stays compact. Provenance survives in the underlying
-            // memory entry and is queryable through the memory tool.
-            let primary = entry
-                .content
-                .lines()
-                .find(|l| !l.trim_start().starts_with("[provenance]"))
-                .unwrap_or(&entry.content)
-                .trim();
-            if primary.is_empty() {
-                continue;
-            }
-            if !appended_prior_header {
-                let section = "[Prior conversations]\n";
-                if context.len() + section.len() > budget {
+            let mut appended_prior_header = false;
+            let mut prior_added = 0usize;
+            for entry in prior_entries
+                .into_iter()
+                .filter(|e| e.key.starts_with(PRIOR_CONVERSATION_KEY_PREFIX))
+                .filter(|e| match e.score {
+                    Some(score) => score >= self.min_relevance_score,
+                    None => true,
+                })
+            {
+                if prior_added >= PRIOR_CONVERSATION_LIMIT {
                     break;
                 }
-                context.push_str(section);
-                appended_prior_header = true;
-            }
-            // Date-stamp the fact so a months-old "high importance"
-            // statement isn't read as a present-tense commitment (#2944).
-            let line = match memory_entry_date_label(&entry.timestamp) {
-                Some(date) => format!("- (noted {date}) {primary}\n"),
-                None => format!("- {primary}\n"),
-            };
-            if context.len() + line.len() > budget {
-                tracing::debug!(
+                // The stored content is two lines:
+                //   [high preference] I prefer Postgres ...
+                //   [provenance] {"thread_id":"thr_…", ...}
+                // For the prompt we keep only the first line so the block
+                // stays compact. Provenance survives in the underlying
+                // memory entry and is queryable through the memory tool.
+                let primary = entry
+                    .content
+                    .lines()
+                    .find(|l| !l.trim_start().starts_with("[provenance]"))
+                    .unwrap_or(&entry.content)
+                    .trim();
+                if primary.is_empty() {
+                    continue;
+                }
+                if !appended_prior_header {
+                    let section = "[Prior conversations]\n";
+                    if context.len() + section.len() > budget {
+                        break;
+                    }
+                    context.push_str(section);
+                    appended_prior_header = true;
+                }
+                // Date-stamp the fact so a months-old "high importance"
+                // statement isn't read as a present-tense commitment (#2944).
+                let line = match memory_entry_date_label(&entry.timestamp) {
+                    Some(date) => format!("- (noted {date}) {primary}\n"),
+                    None => format!("- {primary}\n"),
+                };
+                if context.len() + line.len() > budget {
+                    tracing::debug!(
                     budget,
                     current_len = context.len(),
                     skipped_line_len = line.len(),
                     "[memory_loader] context budget reached while appending prior conversations"
                 );
-                break;
+                    break;
+                }
+                context.push_str(&line);
+                prior_added += 1;
             }
-            context.push_str(&line);
-            prior_added += 1;
-        }
+        } // end: include_agent_conversations (prior conversations)
 
         // ── Cross-chat context (#1505) ───────────────────────────────────
         //
@@ -336,114 +356,124 @@ impl MemoryLoader for DefaultMemoryLoader {
         // through `memory.recall` with `cross_session=true` instead.
         // That path reads `episodic_log` (populated only by the
         // archivist tool) so it's a best-effort secondary signal.
-        let current_thread_id =
-            crate::openhuman::inference::provider::thread_context::current_thread_id();
-        let cross_hits: Vec<(String, String)> = if let Some(workspace_dir) = &self.workspace_dir {
-            let store = ConversationStore::new(workspace_dir.clone());
-            match store.search_cross_thread_messages(
-                user_message,
-                CROSS_CHAT_LIMIT * 4,
-                current_thread_id.as_deref(),
-            ) {
-                Ok(hits) => {
-                    tracing::debug!(
-                        "[memory_loader] cross-chat JSONL scan returned {} hits (exclude={:?})",
-                        hits.len(),
-                        current_thread_id
-                    );
-                    hits.into_iter()
-                        .filter(|h| h.score >= self.min_relevance_score)
-                        .take(CROSS_CHAT_LIMIT)
-                        .map(|h| (h.thread_id, h.content))
-                        .collect()
+        //
+        // Suppressed when the profile opts out of agent-conversation recall.
+        if self.include_agent_conversations {
+            let current_thread_id =
+                crate::openhuman::inference::provider::thread_context::current_thread_id();
+            let cross_hits: Vec<(String, String)> = if let Some(workspace_dir) = &self.workspace_dir
+            {
+                let store = ConversationStore::new(workspace_dir.clone());
+                match store.search_cross_thread_messages(
+                    user_message,
+                    CROSS_CHAT_LIMIT * 4,
+                    current_thread_id.as_deref(),
+                ) {
+                    Ok(hits) => {
+                        tracing::debug!(
+                            "[memory_loader] cross-chat JSONL scan returned {} hits (exclude={:?})",
+                            hits.len(),
+                            current_thread_id
+                        );
+                        hits.into_iter()
+                            .filter(|h| h.score >= self.min_relevance_score)
+                            .take(CROSS_CHAT_LIMIT)
+                            .map(|h| (h.thread_id, h.content))
+                            .collect()
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "[memory_loader] cross-chat JSONL scan failed (non-fatal): {e}"
+                        );
+                        Vec::new()
+                    }
                 }
-                Err(e) => {
-                    tracing::warn!("[memory_loader] cross-chat JSONL scan failed (non-fatal): {e}");
-                    Vec::new()
-                }
-            }
-        } else {
-            // Fallback path (no workspace_dir wired)
-            let cross_session_opts = crate::openhuman::memory::RecallOpts {
-                session_id: current_thread_id.as_deref(),
-                cross_session: true,
-                min_score: Some(self.min_relevance_score),
-                ..Default::default()
-            };
-            let entries = memory
-                .recall(user_message, CROSS_CHAT_LIMIT * 3, cross_session_opts)
-                .await
-                .unwrap_or_default();
-            entries
-                .into_iter()
-                .filter(|e| e.id.starts_with("episodic-cross:"))
-                .filter(|e| {
-                    // Fallback entries may carry a JSON session blob
-                    // (`{"thread_id": "...", "client_id": "..."}`) rather
-                    // than a bare thread_id, so the SQL-side exclusion
-                    // can miss. Re-check on this side using the same
-                    // normalization shape.
-                    let Some(current_tid) = current_thread_id.as_deref() else {
-                        return true;
-                    };
-                    let Some(raw_sid) = e.session_id.as_deref() else {
-                        return true;
-                    };
-                    let sid_thread = serde_json::from_str::<serde_json::Value>(raw_sid)
-                        .ok()
-                        .and_then(|v| {
-                            v.get("thread_id")
-                                .and_then(|t| t.as_str().map(|s| s.to_string()))
-                        })
-                        .unwrap_or_else(|| raw_sid.to_string());
-                    sid_thread != current_tid
-                })
-                .filter(|e| match e.score {
-                    Some(score) => score >= self.min_relevance_score,
-                    None => true,
-                })
-                .take(CROSS_CHAT_LIMIT)
-                .map(|e| {
-                    let sid = e
-                        .session_id
-                        .clone()
-                        .unwrap_or_else(|| "unknown".to_string());
-                    (sid, e.content)
-                })
-                .collect()
-        };
-
-        let mut appended_cross_header = false;
-        for (sid, content) in cross_hits {
-            let snippet = if content.chars().count() > CROSS_CHAT_SNIPPET_CHARS {
-                crate::openhuman::util::truncate_with_ellipsis(&content, CROSS_CHAT_SNIPPET_CHARS)
             } else {
-                content
+                // Fallback path (no workspace_dir wired)
+                let cross_session_opts = crate::openhuman::memory::RecallOpts {
+                    session_id: current_thread_id.as_deref(),
+                    cross_session: true,
+                    min_score: Some(self.min_relevance_score),
+                    ..Default::default()
+                };
+                let entries = memory
+                    .recall(user_message, CROSS_CHAT_LIMIT * 3, cross_session_opts)
+                    .await
+                    .unwrap_or_default();
+                entries
+                    .into_iter()
+                    .filter(|e| e.id.starts_with("episodic-cross:"))
+                    .filter(|e| {
+                        // Fallback entries may carry a JSON session blob
+                        // (`{"thread_id": "...", "client_id": "..."}`) rather
+                        // than a bare thread_id, so the SQL-side exclusion
+                        // can miss. Re-check on this side using the same
+                        // normalization shape.
+                        let Some(current_tid) = current_thread_id.as_deref() else {
+                            return true;
+                        };
+                        let Some(raw_sid) = e.session_id.as_deref() else {
+                            return true;
+                        };
+                        let sid_thread = serde_json::from_str::<serde_json::Value>(raw_sid)
+                            .ok()
+                            .and_then(|v| {
+                                v.get("thread_id")
+                                    .and_then(|t| t.as_str().map(|s| s.to_string()))
+                            })
+                            .unwrap_or_else(|| raw_sid.to_string());
+                        sid_thread != current_tid
+                    })
+                    .filter(|e| match e.score {
+                        Some(score) => score >= self.min_relevance_score,
+                        None => true,
+                    })
+                    .take(CROSS_CHAT_LIMIT)
+                    .map(|e| {
+                        let sid = e
+                            .session_id
+                            .clone()
+                            .unwrap_or_else(|| "unknown".to_string());
+                        (sid, e.content)
+                    })
+                    .collect()
             };
-            let prov = provenance_tag(&sid);
-            if !appended_cross_header {
-                // The header explicitly labels these snippets as historical so
-                // the model down-weights them when answering capability
-                // questions — see CROSS_CHAT_HEADER doc for the rationale and
-                // the cross-module wording contract.
-                if context.len() + CROSS_CHAT_HEADER.len() > budget {
+
+            let mut appended_cross_header = false;
+            for (sid, content) in cross_hits {
+                let snippet = if content.chars().count() > CROSS_CHAT_SNIPPET_CHARS {
+                    crate::openhuman::util::truncate_with_ellipsis(
+                        &content,
+                        CROSS_CHAT_SNIPPET_CHARS,
+                    )
+                } else {
+                    content
+                };
+                let prov = provenance_tag(&sid);
+                if !appended_cross_header {
+                    // The header explicitly labels these snippets as historical so
+                    // the model down-weights them when answering capability
+                    // questions — see CROSS_CHAT_HEADER doc for the rationale and
+                    // the cross-module wording contract.
+                    if context.len() + CROSS_CHAT_HEADER.len() > budget {
+                        break;
+                    }
+                    context.push_str(CROSS_CHAT_HEADER);
+                    appended_cross_header = true;
+                }
+                let line = format!("- [{prov}] {snippet}\n");
+                if context.len() + line.len() > budget {
+                    tracing::debug!(
+                        budget,
+                        current_len = context.len(),
+                        skipped_line_len = line.len(),
+                        "[memory_loader] context budget reached while appending cross-chat context"
+                    );
                     break;
                 }
-                context.push_str(CROSS_CHAT_HEADER);
-                appended_cross_header = true;
+                context.push_str(&line);
             }
-            let line = format!("- [{prov}] {snippet}\n");
-            if context.len() + line.len() > budget {
-                tracing::debug!(
-                    budget,
-                    current_len = context.len(),
-                    skipped_line_len = line.len(),
-                    "[memory_loader] context budget reached while appending cross-chat context"
-                );
-                break;
-            }
-            context.push_str(&line);
-        }
+        } // end: include_agent_conversations (cross-chat context)
 
         if context.is_empty() {
             return Ok(String::new());
@@ -669,6 +699,72 @@ mod tests {
             !out.contains("[provenance]"),
             "provenance is not rendered into the prompt block, got:\n{out}"
         );
+    }
+
+    #[tokio::test]
+    async fn agent_conversations_toggle_suppresses_prior_and_cross_chat_blocks() {
+        // A profile with include_agent_conversations = false must drop both the
+        // [Prior conversations] and [Cross-chat context] blocks, while leaving
+        // [User working memory] intact.
+        let mut mem = MockMemory::new(vec![
+            MemoryEntry {
+                id: "id-work".into(),
+                key: "working.user.timezone".into(),
+                content: "Timezone is PT.".into(),
+                namespace: Some("test".into()),
+                category: MemoryCategory::Conversation,
+                timestamp: "2026-05-25T00:00:00Z".into(),
+                session_id: None,
+                score: None,
+                taint: Default::default(),
+            },
+            MemoryEntry {
+                id: "id-prior".into(),
+                key: "high.preference.aaaaaaaaaaaa".into(),
+                content: "[high preference] I prefer Postgres.".into(),
+                namespace: Some(super::CONVERSATION_MEMORY_NAMESPACE.to_string()),
+                category: MemoryCategory::Conversation,
+                timestamp: "2026-04-22T00:00:00Z".into(),
+                session_id: Some("thr_old".into()),
+                score: Some(0.9),
+                taint: Default::default(),
+            },
+        ]);
+        mem.cross_chat = vec![cross_chat_entry(
+            "1",
+            "thread-source",
+            "Cross chat about Redis",
+            Some(0.9),
+        )];
+
+        // Baseline: default loader surfaces all three blocks.
+        let baseline = DefaultMemoryLoader::default()
+            .load_context(&mem, "storage preferences")
+            .await
+            .expect("baseline loader");
+        assert!(baseline.contains("[User working memory]"));
+        assert!(baseline.contains("[Prior conversations]"));
+        assert!(baseline.contains(CROSS_CHAT_HEADER.trim_end()));
+
+        // Opted out: only working memory remains.
+        let gated = DefaultMemoryLoader::default()
+            .with_agent_conversations(false)
+            .load_context(&mem, "storage preferences")
+            .await
+            .expect("gated loader");
+        assert!(
+            gated.contains("[User working memory]"),
+            "working memory must survive the toggle, got:\n{gated}"
+        );
+        assert!(
+            !gated.contains("[Prior conversations]"),
+            "prior conversations must be suppressed, got:\n{gated}"
+        );
+        assert!(
+            !gated.contains(CROSS_CHAT_HEADER.trim_end()),
+            "cross-chat must be suppressed, got:\n{gated}"
+        );
+        assert!(!gated.contains("Postgres") && !gated.contains("Redis"));
     }
 
     #[tokio::test]

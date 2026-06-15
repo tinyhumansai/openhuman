@@ -46,6 +46,7 @@
  */
 import { waitForApp } from '../helpers/app-helpers';
 import {
+  chatMounted,
   clickByTitle,
   clickSend,
   getSelectedThreadId,
@@ -74,7 +75,7 @@ const USER_ID = 'e2e-harness-search-tool-flow';
 
 async function navigateChatAndSend(prompt: string): Promise<void> {
   await navigateViaHash('/chat');
-  await browser.waitUntil(async () => await textExists('Threads'), {
+  await browser.waitUntil(async () => await chatMounted(), {
     timeout: 15_000,
     timeoutMsg: 'Conversations panel did not mount',
   });

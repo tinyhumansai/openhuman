@@ -116,6 +116,9 @@ struct CircuitBreaker {
     consecutive_failures: AtomicU32,
     tripped: AtomicBool,
     last_trip: PMutex<Option<Instant>>,
+    /// Set once a `SystemStartup` mark has been published for this path so a
+    /// fresh boot reports a real status without re-emitting on every open.
+    startup_emitted: AtomicBool,
 }
 
 impl CircuitBreaker {
@@ -124,13 +127,27 @@ impl CircuitBreaker {
             consecutive_failures: AtomicU32::new(0),
             tripped: AtomicBool::new(false),
             last_trip: PMutex::new(None),
+            startup_emitted: AtomicBool::new(false),
         }
     }
 
-    fn record_success(&self) {
+    /// Records a successful init. Returns `true` if this call cleared a
+    /// previously-tripped breaker (i.e. a transition back to healthy that the
+    /// caller should announce on the bus). Returns `false` for the steady-state
+    /// case where the breaker was already untripped, so we don't spam a
+    /// `HealthChanged{healthy:true}` event on every successful call.
+    fn record_success(&self) -> bool {
         self.consecutive_failures.store(0, Ordering::Relaxed);
-        self.tripped.store(false, Ordering::Relaxed);
         *self.last_trip.lock() = None;
+        // `swap` reports the prior value: `true` means we just transitioned
+        // from tripped → untripped, which is the recovery edge to announce.
+        self.tripped.swap(false, Ordering::Relaxed)
+    }
+
+    /// Returns `true` exactly once per breaker — on the first successful open —
+    /// so the caller emits a single `SystemStartup` mark for this path.
+    fn mark_startup_emitted(&self) -> bool {
+        !self.startup_emitted.swap(true, Ordering::Relaxed)
     }
 
     /// Records one more failure. Returns `true` if this call just tripped the
@@ -447,9 +464,42 @@ pub(crate) fn get_or_init_connection(config: &Config) -> Result<Arc<PMutex<Conne
                 .connections
                 .lock()
                 .insert(db_path.clone(), Arc::clone(&arc_conn));
-            // Reset any prior failure counter now that init succeeded.
-            if let Some(breaker) = conn_cache().breakers.lock().get(&db_path) {
-                breaker.record_success();
+            // Reset any prior failure counter now that init succeeded. Use (or
+            // lazily create) the persistent breaker so a clean first boot still
+            // has somewhere to record the one-shot startup mark.
+            let breaker = {
+                let mut guard = conn_cache().breakers.lock();
+                guard
+                    .entry(db_path.clone())
+                    .or_insert_with(|| Arc::new(CircuitBreaker::new()))
+                    .clone()
+            };
+            // Emit a one-time `SystemStartup` so a fresh boot reports a real
+            // status for `memory_tree_db` instead of "unknown" until the first
+            // failure. Fires once per path for the process lifetime.
+            if breaker.mark_startup_emitted() {
+                let _ = crate::core::event_bus::publish_global(
+                    crate::core::event_bus::DomainEvent::SystemStartup {
+                        component: "memory_tree_db".to_string(),
+                    },
+                );
+            }
+            // Only announce recovery on the transition back to healthy — i.e.
+            // when the breaker had previously tripped (driving `/health` to a
+            // permanent 503). Steady-state successes stay silent so we don't
+            // spam a `HealthChanged{healthy:true}` event on every call.
+            if breaker.record_success() {
+                log::info!(
+                    "[memory_tree] circuit breaker recovered for {}: DB init succeeded after a prior trip",
+                    db_path.display()
+                );
+                let _ = crate::core::event_bus::publish_global(
+                    crate::core::event_bus::DomainEvent::HealthChanged {
+                        component: "memory_tree_db".to_string(),
+                        healthy: true,
+                        message: None,
+                    },
+                );
             }
             log::debug!("[memory_tree] DB connection cached and ready");
             Ok(arc_conn)
@@ -545,4 +595,43 @@ pub fn with_connection<T>(config: &Config, f: impl FnOnce(&Connection) -> Result
     let conn_arc = get_or_init_connection(config)?;
     let guard = conn_arc.lock();
     f(&guard)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `record_success` must only report a recovery transition (`true`) when
+    /// it actually clears a tripped breaker — the signal `get_or_init_connection`
+    /// uses to publish `HealthChanged{healthy:true}` exactly once instead of on
+    /// every successful call (C1).
+    #[test]
+    fn record_success_announces_only_on_trip_to_healthy_transition() {
+        let cb = CircuitBreaker::new();
+
+        // Untripped breaker: a success is steady-state, not a transition.
+        assert!(!cb.record_success());
+
+        // Trip the breaker by crossing the failure threshold.
+        let mut tripped = false;
+        for _ in 0..CB_THRESHOLD {
+            tripped = cb.record_failure();
+        }
+        assert!(tripped, "breaker should trip at CB_THRESHOLD failures");
+
+        // First success after a trip is the recovery edge → announce once.
+        assert!(cb.record_success());
+        // Subsequent successes are steady-state → stay silent.
+        assert!(!cb.record_success());
+    }
+
+    /// `mark_startup_emitted` must fire exactly once so a fresh boot emits a
+    /// single `SystemStartup` mark for `memory_tree_db` (C1).
+    #[test]
+    fn startup_mark_fires_exactly_once() {
+        let cb = CircuitBreaker::new();
+        assert!(cb.mark_startup_emitted());
+        assert!(!cb.mark_startup_emitted());
+        assert!(!cb.mark_startup_emitted());
+    }
 }

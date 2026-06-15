@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use crate::openhuman::agent::profiles::AgentProfileStore;
 use crate::openhuman::config::rpc as config_rpc;
+use crate::openhuman::profiles::AgentProfileStore;
 use crate::openhuman::threads::turn_state::TurnStateStore;
 
 use super::ops::{key_for, THREAD_SESSIONS};
@@ -99,6 +99,7 @@ pub(crate) async fn run_chat_task(
         temperature,
         target_agent_id.clone(),
         provider_role,
+        &profile,
     );
 
     // A forked (parallel) turn never reuses or evicts the shared cached agent —
@@ -211,9 +212,21 @@ pub(crate) async fn run_chat_task(
         config.clone(),
     );
 
+    // Scope source-memory recall to the active profile's allowlist for the
+    // duration of the turn (None = all). Nested inside the thread-id scope so
+    // every memory-tree query the agent makes this turn is gated. See
+    // memory::source_scope.
+    // `run_single`'s future is very large; box it so the two ambient-scope
+    // wrappers below hold a pointer rather than inlining the whole future into
+    // this already-large `run_chat_task` frame (which otherwise overflows the
+    // default test-thread stack — see the channels web-turn coverage tests).
+    let turn = Box::pin(agent.run_single(message));
     let result = match crate::openhuman::inference::provider::thread_context::with_thread_id(
         thread_id.to_string(),
-        agent.run_single(message),
+        crate::openhuman::memory::source_scope::with_source_scope(
+            profile.memory_sources.clone(),
+            turn,
+        ),
     )
     .await
     {
