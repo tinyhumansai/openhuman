@@ -256,12 +256,17 @@ describe('IntelligenceTeamsTab', () => {
     render(<IntelligenceTeamsTab />);
     await screen.findByText('Audit flow');
 
-    fireEvent.change(screen.getByPlaceholderText('intelligence.teams.composer.placeholder'), {
+    const input = screen.getByPlaceholderText(
+      'intelligence.teams.composer.placeholder'
+    ) as HTMLInputElement;
+    fireEvent.change(input, {
       target: { value: 'hello' },
     });
     fireEvent.click(screen.getByLabelText('intelligence.teams.composer.send'));
 
     expect(await screen.findByText('send boom')).toBeInTheDocument();
+    // A failed send must reject so the composer keeps the unsent draft for retry.
+    expect(input.value).toBe('hello');
   });
 
   it('starts a member run and clears any prior notice on success', async () => {
