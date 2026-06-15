@@ -250,6 +250,25 @@ pub fn is_provider_config_rejection_message(body: &str) -> bool {
         // actionable "assign a chat-capable model" message that still carries
         // this substring, so it stays demoted.
         "does not support chat",
+        // TAURI-RUST-4P4 (~12.4k events / 10 users) — user configured LM
+        // Studio (`lmstudio:<model>`, OpenAI-compatible server) as their local
+        // *embedding* provider but has no model loaded into LM Studio's memory.
+        // The server 400s every embed call from
+        // `embeddings::openai::OpenAiEmbedding::embed` with
+        // `{"error":"No models loaded. Please load a model in the developer
+        // page or use the 'lms load' command."}`, wrapped as `Embedding API
+        // error (400 Bad Request): <body>`. Genuinely-unpreventable user-state:
+        // the provider config is valid and the model may even be downloaded —
+        // it is simply not loaded into the user's separate LM Studio app right
+        // now, a dynamic runtime state OpenHuman has no lever over (unlike the
+        // 4P6 embedding-model-as-chat or 5JR no-embeddings-API cases, there is
+        // no config-time signal to gate on). The remediation lives in the body
+        // itself ("load a model in the developer page or use 'lms load'") and
+        // the `Err` is already surfaced to the memory-tree pipeline; Sentry has
+        // no remediation. Anchor on the stable `no models loaded` noun phrase
+        // (LM Studio's signature 400 — the OpenHuman backend never emits it),
+        // not the volatile `lms load` / developer-page hint.
+        "no models loaded",
     ];
 
     let lower = body.to_ascii_lowercase();
@@ -385,6 +404,13 @@ mod tests {
             (
                 "TAURI-RUST-4P6-enriched",
                 "ollama API error: model 'bge-m3:latest' does not support chat — it appears to be an embedding or non-chat model. Assign a chat-capable model to this provider (e.g. in Settings → AI), or pick a different model.",
+            ),
+            // TAURI-RUST-4P4 — user pointed their LM Studio local *embedding*
+            // provider at a server with no model loaded into memory. Verbatim
+            // wire body from Sentry issue 5336 (~12.4k events / 10 users).
+            (
+                "TAURI-RUST-4P4",
+                r#"Embedding API error (400 Bad Request): {"error":"No models loaded. Please load a model in the developer page or use the 'lms load' command."}"#,
             ),
         ] {
             assert!(
@@ -602,6 +628,23 @@ mod tests {
         assert!(is_provider_config_rejection_message(
             "model field is required"
         ));
+    }
+
+    #[test]
+    fn detects_lmstudio_no_models_loaded_4p4() {
+        // TAURI-RUST-4P4 — LM Studio local embedding server with no model
+        // loaded. The verbatim wrapped body and the bare anchor must both
+        // classify; a successful-load message that merely mentions a model
+        // being loaded must NOT (the anchor is the negated `no models loaded`
+        // noun phrase, not a bare `model loaded`).
+        assert!(is_provider_config_rejection_message(
+            r#"Embedding API error (400 Bad Request): {"error":"No models loaded. Please load a model in the developer page or use the 'lms load' command."}"#
+        ));
+        assert!(is_provider_config_rejection_message("no models loaded"));
+        assert!(
+            !is_provider_config_rejection_message("model loaded successfully"),
+            "a successful-load message must not be demoted as a config rejection"
+        );
     }
 
     #[test]
