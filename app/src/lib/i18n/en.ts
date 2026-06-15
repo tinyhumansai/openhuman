@@ -3892,6 +3892,7 @@ const en: TranslationMap = {
   'settings.ai.endpointUrlRequired': 'Endpoint URL is required.',
   'settings.ai.endpointProtocolRequired': 'Endpoint must start with http:// or https://.',
   'settings.ai.connectProviderDialog': 'Connect {label}',
+  'settings.ai.getProviderApiKey': 'Get API key',
   'settings.ai.or': 'Or',
   'settings.ai.codexOauthMissingAuthUrl':
     'Codex OAuth did not return an authorization URL. Try signing in again.',
