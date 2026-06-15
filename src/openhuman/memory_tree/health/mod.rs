@@ -239,6 +239,11 @@ pub fn classify_embed_error_str(msg: &str) -> PipelineFailure {
     // on the stable `no models loaded` noun phrase. `LocalModelUnavailable`
     // already carries the right remediation key (load the local model).
     if lower.contains("no models loaded") {
+        log::debug!(
+            "[memory::health] embed_error_classified matched_anchor=no_models_loaded \
+             code=local_model_unavailable class=unrecoverable detail_len={}",
+            msg.len()
+        );
         return PipelineFailure::new(FailureCode::LocalModelUnavailable)
             .with_detail(truncate_detail(msg));
     }
