@@ -243,6 +243,11 @@ impl TelegramChannel {
             return;
         };
 
+        if !Self::is_supported_unauthorized_message(message) {
+            tracing::debug!("[telegram][approval] ignoring unsupported unauthorized update");
+            return;
+        }
+
         let text = message.get("text").and_then(serde_json::Value::as_str);
 
         let username_opt = message
@@ -428,6 +433,14 @@ impl TelegramChannel {
         }
     }
 
+    pub(crate) fn is_supported_unauthorized_message(message: &serde_json::Value) -> bool {
+        message
+            .get("text")
+            .and_then(serde_json::Value::as_str)
+            .is_some()
+            || message.get("voice").is_some()
+    }
+
     pub(crate) fn parse_update_message(
         &self,
         update: &serde_json::Value,
@@ -451,11 +464,67 @@ impl TelegramChannel {
         &self,
         update: &serde_json::Value,
     ) -> Option<ChannelMessage> {
+        let update_id = update.get("update_id").and_then(serde_json::Value::as_i64);
+        let message = update
+            .get("message")
+            .or_else(|| update.get("edited_message"));
+        let chat_id = message
+            .and_then(|message| message.get("chat"))
+            .and_then(|chat| chat.get("id"))
+            .and_then(serde_json::Value::as_i64);
+        let message_id = message
+            .and_then(|message| message.get("message_id"))
+            .and_then(serde_json::Value::as_i64);
+        let has_text = message
+            .and_then(|message| message.get("text"))
+            .and_then(serde_json::Value::as_str)
+            .is_some();
+        let has_voice = message.and_then(|message| message.get("voice")).is_some();
+
+        tracing::debug!(
+            update_id = ?update_id,
+            chat_id = ?chat_id,
+            message_id = ?message_id,
+            has_text,
+            has_voice,
+            "[telegram:voice] parse update dispatch"
+        );
+
         if let Some(msg) = self.parse_update_message(update) {
+            tracing::debug!(
+                update_id = ?update_id,
+                chat_id = ?chat_id,
+                message_id = ?message_id,
+                "[telegram:voice] selected text parser"
+            );
             return Some(msg);
         }
 
-        self.parse_update_voice_message(update).await
+        if has_voice {
+            tracing::debug!(
+                update_id = ?update_id,
+                chat_id = ?chat_id,
+                message_id = ?message_id,
+                "[telegram:voice] selected voice parser"
+            );
+        } else {
+            tracing::debug!(
+                update_id = ?update_id,
+                chat_id = ?chat_id,
+                message_id = ?message_id,
+                "[telegram:voice] update has no supported text or voice payload"
+            );
+        }
+
+        let msg = self.parse_update_voice_message(update).await;
+        tracing::debug!(
+            update_id = ?update_id,
+            chat_id = ?chat_id,
+            message_id = ?message_id,
+            parsed = msg.is_some(),
+            "[telegram:voice] parse update result"
+        );
+        msg
     }
 
     pub(crate) fn parse_update_voice_attachment(
@@ -492,12 +561,38 @@ impl TelegramChannel {
         &self,
         update: &serde_json::Value,
     ) -> Option<ChannelMessage> {
+        let update_id = update.get("update_id").and_then(serde_json::Value::as_i64);
         let message = update
             .get("message")
             .or_else(|| update.get("edited_message"))?;
         let voice = Self::parse_update_voice_attachment(update)?;
         let caption = message.get("caption").and_then(serde_json::Value::as_str);
+        let chat_id = message
+            .get("chat")
+            .and_then(|chat| chat.get("id"))
+            .and_then(serde_json::Value::as_i64);
+        let message_id = message
+            .get("message_id")
+            .and_then(serde_json::Value::as_i64);
+
+        tracing::debug!(
+            update_id = ?update_id,
+            chat_id = ?chat_id,
+            message_id = ?message_id,
+            file_unique_id = voice.file_unique_id.as_deref().unwrap_or("unknown"),
+            has_caption = caption.is_some_and(|caption| !caption.trim().is_empty()),
+            "[telegram:voice] parse voice message entry"
+        );
+
         let ctx = self.parse_incoming_message_context(message, caption)?;
+        tracing::debug!(
+            update_id = ?update_id,
+            chat_id = %ctx.chat_id,
+            message_id = ctx.message_id,
+            file_unique_id = voice.file_unique_id.as_deref().unwrap_or("unknown"),
+            has_mention_text = ctx.mention_text.is_some(),
+            "[telegram:voice] voice message accepted for transcription"
+        );
 
         match self.transcribe_telegram_voice(&voice).await {
             Ok(transcript) => {
@@ -507,18 +602,24 @@ impl TelegramChannel {
                         chat_id = %ctx.chat_id,
                         message_id = ctx.message_id,
                         file_unique_id = voice.file_unique_id.as_deref().unwrap_or("unknown"),
-                        "[telegram] inbound voice transcription returned empty text"
+                        "[telegram:voice] inbound voice transcription returned empty text"
                     );
                     self.send_voice_transcription_failure(&ctx).await;
                     return None;
                 }
 
-                let content = match ctx.mention_text.as_deref() {
-                    Some(prefix) if !prefix.trim().is_empty() => {
-                        format!("{}\n\n{transcript}", prefix.trim())
-                    }
-                    _ => transcript.to_string(),
-                };
+                let mention_only_group = self.mention_only && Self::is_group_message(message);
+                let content =
+                    Self::voice_message_content(transcript, caption, &ctx, mention_only_group);
+
+                tracing::debug!(
+                    update_id = ?update_id,
+                    chat_id = %ctx.chat_id,
+                    message_id = ctx.message_id,
+                    file_unique_id = voice.file_unique_id.as_deref().unwrap_or("unknown"),
+                    content_chars = content.chars().count(),
+                    "[telegram:voice] voice transcript ready for channel dispatch"
+                );
 
                 Some(self.channel_message_from_context(ctx, content))
             }
@@ -529,11 +630,31 @@ impl TelegramChannel {
                     message_id = ctx.message_id,
                     file_unique_id = voice.file_unique_id.as_deref().unwrap_or("unknown"),
                     %error,
-                    "[telegram] inbound voice transcription failed"
+                    "[telegram:voice] inbound voice transcription failed"
                 );
                 self.send_voice_transcription_failure(&ctx).await;
                 None
             }
+        }
+    }
+
+    pub(crate) fn voice_message_content(
+        transcript: &str,
+        caption: Option<&str>,
+        ctx: &TelegramIncomingMessageContext,
+        mention_only_group: bool,
+    ) -> String {
+        let caption_prefix = if mention_only_group {
+            ctx.mention_text.as_deref()
+        } else {
+            caption
+        }
+        .map(str::trim)
+        .filter(|caption| !caption.is_empty());
+
+        match caption_prefix {
+            Some(prefix) => format!("{prefix}\n\n{transcript}"),
+            None => transcript.to_string(),
         }
     }
 
@@ -679,6 +800,13 @@ impl TelegramChannel {
         &self,
         voice: &TelegramVoiceAttachment,
     ) -> anyhow::Result<String> {
+        tracing::debug!(
+            file_unique_id = voice.file_unique_id.as_deref().unwrap_or("unknown"),
+            declared_file_size = ?voice.file_size,
+            mime_type = voice.mime_type.as_deref().unwrap_or("unknown"),
+            "[telegram:voice] transcribe entry"
+        );
+
         if let Some(file_size) = voice.file_size {
             if file_size > TELEGRAM_MAX_VOICE_FILE_BYTES {
                 anyhow::bail!(
@@ -689,6 +817,14 @@ impl TelegramChannel {
 
         let (audio_bytes, file_name, api_file_size) =
             self.download_telegram_voice_file(&voice.file_id).await?;
+        tracing::debug!(
+            file_unique_id = voice.file_unique_id.as_deref().unwrap_or("unknown"),
+            downloaded_bytes = audio_bytes.len(),
+            api_file_size = ?api_file_size,
+            file_name = %file_name,
+            "[telegram:voice] download completed before transcription"
+        );
+
         if let Some(file_size) = api_file_size {
             if file_size > TELEGRAM_MAX_VOICE_FILE_BYTES {
                 anyhow::bail!(
@@ -718,7 +854,7 @@ impl TelegramChannel {
             mime_type = %mime_type,
             file_name = %file_name,
             bytes = audio_bytes.len(),
-            "[telegram] transcribing inbound voice message"
+            "[telegram:voice] calling STT provider for inbound voice"
         );
 
         let outcome = provider
@@ -732,7 +868,14 @@ impl TelegramChannel {
             .await
             .map_err(anyhow::Error::msg)?;
 
-        Ok(outcome.value.text)
+        let text = outcome.value.text;
+        tracing::debug!(
+            file_unique_id = voice.file_unique_id.as_deref().unwrap_or("unknown"),
+            transcript_chars = text.chars().count(),
+            "[telegram:voice] transcription completed"
+        );
+
+        Ok(text)
     }
 
     pub(crate) fn redact_bot_token(&self, value: impl AsRef<str>) -> String {
@@ -746,6 +889,11 @@ impl TelegramChannel {
         &self,
         file_id: &str,
     ) -> anyhow::Result<(Vec<u8>, String, Option<u64>)> {
+        tracing::debug!(
+            file_id_present = !file_id.trim().is_empty(),
+            "[telegram:voice:download] requesting Telegram getFile"
+        );
+
         let resp = self
             .http_client()
             .post(self.api_url("getFile"))
@@ -755,6 +903,12 @@ impl TelegramChannel {
             .map_err(|e| anyhow::anyhow!("{}", self.redact_bot_token(e.to_string())))?;
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
+        tracing::debug!(
+            status = %status,
+            response_bytes = body.len(),
+            "[telegram:voice:download] Telegram getFile response received"
+        );
+
         if !status.is_success() {
             anyhow::bail!(
                 "Telegram getFile failed ({status}): {}",
@@ -792,9 +946,24 @@ impl TelegramChannel {
                 );
             }
         }
+        let file_name = file_path
+            .rsplit('/')
+            .next()
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or("voice.ogg")
+            .to_string();
+        tracing::debug!(
+            file_name = %file_name,
+            file_size = ?file_size,
+            "[telegram:voice:download] Telegram getFile result parsed"
+        );
 
         let download_url = format!("{}/file/bot{}/{}", self.api_base, self.bot_token, file_path);
-        let file_resp = self
+        tracing::debug!(
+            file_name = %file_name,
+            "[telegram:voice:download] starting Telegram voice file download"
+        );
+        let mut file_resp = self
             .http_client()
             .get(download_url)
             .send()
@@ -807,6 +976,11 @@ impl TelegramChannel {
                 );
             }
         }
+        tracing::debug!(
+            content_length = ?file_resp.content_length(),
+            "[telegram:voice:download] voice download headers received"
+        );
+
         let status = file_resp.status();
         if !status.is_success() {
             let body = file_resp.text().await.unwrap_or_default();
@@ -816,19 +990,48 @@ impl TelegramChannel {
             );
         }
 
-        let bytes = file_resp
-            .bytes()
+        let mut bytes = Vec::new();
+        while let Some(chunk) = file_resp
+            .chunk()
             .await
             .map_err(|e| anyhow::anyhow!("{}", self.redact_bot_token(e.to_string())))?
-            .to_vec();
-        let file_name = file_path
-            .rsplit('/')
-            .next()
-            .filter(|name| !name.trim().is_empty())
-            .unwrap_or("voice.ogg")
-            .to_string();
+        {
+            Self::append_telegram_voice_download_chunk(
+                &mut bytes,
+                &chunk,
+                TELEGRAM_MAX_VOICE_FILE_BYTES,
+            )?;
+            tracing::debug!(
+                file_name = %file_name,
+                chunk_bytes = chunk.len(),
+                downloaded_bytes = bytes.len(),
+                "[telegram:voice:download] received voice file chunk"
+            );
+        }
+        tracing::debug!(
+            file_name = %file_name,
+            downloaded_bytes = bytes.len(),
+            "[telegram:voice:download] completed Telegram voice file download"
+        );
 
         Ok((bytes, file_name, file_size))
+    }
+
+    pub(crate) fn append_telegram_voice_download_chunk(
+        bytes: &mut Vec<u8>,
+        chunk: &[u8],
+        max_bytes: u64,
+    ) -> anyhow::Result<()> {
+        let next_len = bytes
+            .len()
+            .checked_add(chunk.len())
+            .ok_or_else(|| anyhow::anyhow!("Telegram voice download size overflow"))?;
+        if u64::try_from(next_len).unwrap_or(u64::MAX) > max_bytes {
+            anyhow::bail!("Telegram voice download too large: {next_len} bytes (max {max_bytes})");
+        }
+
+        bytes.extend_from_slice(chunk);
+        Ok(())
     }
 
     pub(crate) fn parse_update_reaction(
