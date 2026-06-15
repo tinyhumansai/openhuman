@@ -3080,6 +3080,15 @@ const messages: TranslationMap = {
   'intelligence.agentWork.kind.workflowChild': 'Élément enfant de workflow',
   'intelligence.agentWork.openThread': 'Ouvrir le fil',
   'intelligence.agentWork.openWorker': 'Ouvrir le worker',
+  'intelligence.agentWork.action.stop': 'Arrêter',
+  'intelligence.agentWork.action.retry': 'Réessayer',
+  'intelligence.agentWork.action.continue': 'Continuer',
+  'intelligence.agentWork.action.followUp': 'Relancer',
+  'intelligence.agentWork.action.send': 'Envoyer',
+  'intelligence.agentWork.action.cancel': 'Annuler',
+  'intelligence.agentWork.action.continuePlaceholder': 'Répondez pour débloquer cet agent…',
+  'intelligence.agentWork.action.followUpPlaceholder': 'Envoyer une instruction de suivi…',
+  'intelligence.agentWork.action.failed': 'Échec de l’action',
   'intelligence.teams.subtitle': "Équipes d'agents coordonnées et les tâches qu'elles partagent.",
   'intelligence.teams.loading': 'Chargement des équipes…',
   'intelligence.teams.failedToLoad': 'Échec du chargement des équipes',
@@ -3385,6 +3394,7 @@ const messages: TranslationMap = {
   'settings.ai.endpointProtocolRequired':
     'Le point de terminaison doit commencer par http:// ou https://.',
   'settings.ai.connectProviderDialog': 'Connectez-vous {label}',
+  'settings.ai.getProviderApiKey': 'Obtenir une API Key',
   'settings.ai.or': 'Ou',
   'settings.ai.codexOauthMissingAuthUrl':
     "Codex OAuth n'a pas renvoyé d'URL d'autorisation. Essayez de vous reconnecter.",
@@ -4692,6 +4702,9 @@ const messages: TranslationMap = {
   'skills.meetingBots.wakePhrase': 'Phrase de réveil',
   'skills.meetingBots.wakePhraseHint': 'Hey OpenHuman',
   'skills.meetingBots.wakePhraseDesc': 'Le participant doit dire ceci avant que le bot réponde.',
+  'skills.meetingBots.activeMode': 'Répondre quand je m’adresse à lui',
+  'skills.meetingBots.activeModeDesc':
+    'Activé, le bot répond à voix haute après que vous prononcez sa phrase d’activation. Désactivé, il se contente d’écouter et de transcrire.',
   'skills.resource.preview.closeAriaLabel': "Fermer l'aperçu",
   'skills.resource.preview.failed': "Échec de l'aperçu",
   'skills.resource.preview.loading': "Chargement de l'aperçu…",

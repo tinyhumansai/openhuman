@@ -1022,6 +1022,22 @@ pub enum DomainEvent {
         recent_transcript: Vec<BackendMeetTurn>,
         timestamp_ms: u64,
     },
+    /// Core asked the backend bot to speak into the call (`bot:speak`).
+    /// Published for observability after the Socket.IO emit succeeds.
+    BackendMeetSpeak {
+        text: String,
+        correlation_id: Option<String>,
+    },
+    /// An approval was parked during a live-meeting orchestrator turn
+    /// (issue #3513). The meeting bus speaks the prompt into the call;
+    /// the decision arrives by voice ("Hey Tiny, approve") or the
+    /// standard thread approval card — first response wins.
+    InCallApprovalRequested {
+        request_id: String,
+        tool_name: String,
+        action_summary: String,
+        correlation_id: Option<String>,
+    },
     /// A Google Calendar event with a Meet link was detected and the
     /// auto-join policy is "ask" — the UI should prompt the user.
     MeetAutoJoinPrompt {
@@ -1177,6 +1193,8 @@ impl DomainEvent {
             | Self::BackendMeetTranscript { .. }
             | Self::BackendMeetError { .. }
             | Self::BackendMeetInCallRequest { .. }
+            | Self::BackendMeetSpeak { .. }
+            | Self::InCallApprovalRequested { .. }
             | Self::MeetAutoJoinPrompt { .. }
             | Self::MeetingSummaryGenerated { .. } => "agent_meetings",
         }
@@ -1295,6 +1313,8 @@ impl DomainEvent {
             Self::BackendMeetTranscript { .. } => "BackendMeetTranscript",
             Self::BackendMeetError { .. } => "BackendMeetError",
             Self::BackendMeetInCallRequest { .. } => "BackendMeetInCallRequest",
+            Self::BackendMeetSpeak { .. } => "BackendMeetSpeak",
+            Self::InCallApprovalRequested { .. } => "InCallApprovalRequested",
             Self::MeetAutoJoinPrompt { .. } => "MeetAutoJoinPrompt",
             Self::MeetingSummaryGenerated { .. } => "MeetingSummaryGenerated",
             Self::Voice(_) => "Voice",
