@@ -259,9 +259,7 @@ describe('IntelligenceTeamsTab', () => {
     const input = screen.getByPlaceholderText(
       'intelligence.teams.composer.placeholder'
     ) as HTMLInputElement;
-    fireEvent.change(input, {
-      target: { value: 'hello' },
-    });
+    fireEvent.change(input, { target: { value: 'hello' } });
     fireEvent.click(screen.getByLabelText('intelligence.teams.composer.send'));
 
     expect(await screen.findByText('send boom')).toBeInTheDocument();
