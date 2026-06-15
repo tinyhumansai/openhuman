@@ -2442,6 +2442,23 @@ mod tests {
     }
 
     #[test]
+    fn classifies_lmstudio_no_models_loaded_as_config_rejection() {
+        // TAURI-RUST-4P4 (~12.4k events / 10 users) — LM Studio local
+        // embedding server with no model loaded. The embed path
+        // (`embeddings::openai::OpenAiEmbedding::embed`) wraps the 400 body and
+        // reports it via `report_error_or_expected`, so the full demotion path
+        // must route this verbatim body to `ProviderConfigRejection` (no Sentry
+        // event) rather than capturing. Locks the end-to-end suppression, not
+        // just the phrase match in `config_rejection.rs`.
+        assert_eq!(
+            expected_error_kind(
+                r#"Embedding API error (400 Bad Request): {"error":"No models loaded. Please load a model in the developer page or use the 'lms load' command."}"#
+            ),
+            Some(ExpectedErrorKind::ProviderConfigRejection),
+        );
+    }
+
+    #[test]
     fn classifies_embedding_backend_auth_failure() {
         // TAURI-RUST-T (~4k events) — companion of TAURI-RUST-4K5: the
         // OpenHuman backend rejected the embeddings worker's bearer
