@@ -32,7 +32,8 @@ import {
   openhumanUpdateLocalAiSettings,
 } from '../../../utils/tauriCommands';
 import { openhumanGetConfig } from '../../../utils/tauriCommands/config';
-import SettingsHeader from '../components/SettingsHeader';
+import PanelPage from '../../layout/PanelPage';
+import SettingsBackButton from '../components/SettingsBackButton';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 import ModelDownloadSection from './local-model/ModelDownloadSection';
 import ModelStatusSection from './local-model/ModelStatusSection';
@@ -58,7 +59,7 @@ const statusTone = (state: string): string => {
 
 const LocalModelDebugPanel = () => {
   const { t } = useT();
-  const { navigateBack, breadcrumbs } = useSettingsNavigation();
+  const { navigateBack } = useSettingsNavigation();
 
   const [status, setStatus] = useState<LocalAiStatus | null>(null);
   const [assets, setAssets] = useState<LocalAiAssetsStatus | null>(null);
@@ -378,14 +379,11 @@ const LocalModelDebugPanel = () => {
   };
 
   return (
-    <div className="z-10 relative">
-      <SettingsHeader
-        title={t('localModel.debugTitle')}
-        showBackButton={true}
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
-
+    <PanelPage
+      className="z-10"
+      contentClassName=""
+      description={t('settings.developerMenu.localModelDebug.desc')}
+      leading={<SettingsBackButton onBack={navigateBack} />}>
       <div className="p-4 space-y-4">
         <ModelStatusSection
           status={status}
@@ -471,7 +469,7 @@ const LocalModelDebugPanel = () => {
           onRunTtsTest={() => void runTtsTest()}
         />
       </div>
-    </div>
+    </PanelPage>
   );
 };
 

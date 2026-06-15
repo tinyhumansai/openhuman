@@ -318,6 +318,8 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
         &config.action_dir,
         &config.agents,
         &config,
+        None,
+        None,
     ));
 
     let skills = crate::openhuman::workflows::load_workflow_metadata(&workspace);

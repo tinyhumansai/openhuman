@@ -221,6 +221,40 @@ fn non_retryable_detects_common_patterns() {
     )));
 }
 
+// C10: a 4xx-looking digit run that appears in *free text* (latency figures,
+// model ids, token counts) must NOT be inferred as a permanent HTTP client
+// error — that wrongly short-circuits retries/fallback for transient failures.
+#[test]
+fn non_retryable_ignores_free_text_digit_runs() {
+    // "450" here is a latency figure, not a 450 status.
+    assert!(
+        !is_non_retryable(&anyhow::anyhow!("upstream took 450ms to respond, retrying")),
+        "latency figures must not be read as an HTTP status"
+    );
+    // "0409" embedded in a model id used to scan to 409.
+    assert!(
+        !is_non_retryable(&anyhow::anyhow!("gpt-4-0409 returned an empty completion")),
+        "model-id digits must not be read as an HTTP status"
+    );
+    // A bare 4xx-shaped token mid-sentence (not in a structured position) is
+    // also ignored now.
+    assert!(
+        !is_non_retryable(&anyhow::anyhow!(
+            "received 412 partial bytes before connection reset"
+        )),
+        "mid-text digit runs must not be read as an HTTP status"
+    );
+    // Sanity: the structured envelope is still classified as non-retryable.
+    assert!(
+        is_non_retryable(&anyhow::anyhow!(
+            "custom_openai API error (403 Forbidden): nope"
+        )),
+        "the documented (<status>) envelope must still be detected"
+    );
+    // Sanity: a leading status (no envelope) is still detected.
+    assert!(is_non_retryable(&anyhow::anyhow!("404 Not Found")));
+}
+
 #[tokio::test]
 async fn context_window_error_aborts_retries_and_model_fallbacks() {
     let calls = Arc::new(AtomicUsize::new(0));
@@ -415,6 +449,161 @@ async fn session_expired_aborts_retries_streaming() {
     assert!(
         terminal.contains("All streaming providers/models failed"),
         "expected aggregate failure terminal, got: {terminal}"
+    );
+}
+
+/// Streaming mock whose stream fails with a *retryable* `StreamError` for the
+/// first `fail_until` creations and then yields a single successful chunk. Each
+/// stream is mpsc-like (exhausts after one item), exactly like the real
+/// provider impl — so a retry that re-polls the same dead stream would see
+/// `None` and give up. `stream_calls` records how many times a stream was
+/// created, the signal used to prove lazy creation (audit C2) and
+/// recreate-on-retry (audit C6).
+struct StreamingRetryMock {
+    stream_calls: Arc<AtomicUsize>,
+    fail_until: usize,
+}
+
+#[async_trait]
+impl Provider for StreamingRetryMock {
+    async fn chat_with_system(
+        &self,
+        _system_prompt: Option<&str>,
+        _message: &str,
+        _model: &str,
+        _temperature: f64,
+    ) -> anyhow::Result<String> {
+        anyhow::bail!("unused")
+    }
+
+    async fn chat_with_history(
+        &self,
+        _messages: &[ChatMessage],
+        _model: &str,
+        _temperature: f64,
+    ) -> anyhow::Result<String> {
+        anyhow::bail!("unused")
+    }
+
+    fn supports_streaming(&self) -> bool {
+        true
+    }
+
+    fn stream_chat_with_system(
+        &self,
+        _system_prompt: Option<&str>,
+        _message: &str,
+        _model: &str,
+        _temperature: f64,
+        _options: StreamOptions,
+    ) -> futures_util::stream::BoxStream<'static, StreamResult<StreamChunk>> {
+        use futures_util::{stream, StreamExt};
+        // The Nth stream creation (1-based) fails if N <= fail_until, else
+        // succeeds. Firing the HTTP request happens *here*, so counting
+        // creations is the proxy for "requests issued".
+        let n = self.stream_calls.fetch_add(1, Ordering::SeqCst) + 1;
+        let succeed = n > self.fail_until;
+        stream::once(async move {
+            if succeed {
+                Ok(StreamChunk::delta("hello"))
+            } else {
+                // A generic provider error — retryable per
+                // is_stream_error_non_retryable.
+                Err(StreamError::Provider("transient upstream blip".to_string()))
+            }
+        })
+        .boxed()
+    }
+}
+
+/// C2: streaming failover must NOT pre-fire every provider×model stream. With a
+/// 2-model fallback chain and a provider that succeeds on the first attempt,
+/// only ONE stream may be created (the winning candidate) — not the full
+/// cartesian product.
+#[tokio::test]
+async fn streaming_does_not_prefire_all_candidates() {
+    use futures_util::StreamExt;
+
+    let stream_calls = Arc::new(AtomicUsize::new(0));
+    let mut fallbacks = HashMap::new();
+    fallbacks.insert(
+        "model-a".to_string(),
+        vec!["model-b".to_string(), "model-c".to_string()],
+    );
+
+    let provider = ReliableProvider::new(
+        vec![(
+            "p".into(),
+            Box::new(StreamingRetryMock {
+                stream_calls: Arc::clone(&stream_calls),
+                fail_until: 0, // succeed immediately
+            }),
+        )],
+        3,
+        1,
+    )
+    .with_model_fallbacks(fallbacks);
+
+    let mut stream =
+        provider.stream_chat_with_system(None, "hi", "model-a", 0.0, StreamOptions::new(true));
+
+    let mut chunks = Vec::new();
+    while let Some(item) = stream.next().await {
+        if let Ok(chunk) = item {
+            chunks.push(chunk.delta);
+        }
+    }
+
+    assert_eq!(chunks, vec!["hello".to_string()]);
+    assert_eq!(
+        stream_calls.load(Ordering::SeqCst),
+        1,
+        "only the winning candidate may create a stream; the rest must stay lazy (C2)"
+    );
+}
+
+/// C6: a retryable streaming failure must RE-CREATE the candidate stream on the
+/// next attempt rather than re-poll the already-exhausted one. With
+/// `fail_until = 2` and `max_retries = 3`, the same provider/model is attempted
+/// up to 4 times; creations 1 and 2 fail, creation 3 succeeds. If the retry
+/// loop re-polled the dead stream instead of recreating it, we'd only ever see
+/// a single creation and the call would fail.
+#[tokio::test]
+async fn streaming_retry_recreates_stream() {
+    use futures_util::StreamExt;
+
+    let stream_calls = Arc::new(AtomicUsize::new(0));
+    let provider = ReliableProvider::new(
+        vec![(
+            "p".into(),
+            Box::new(StreamingRetryMock {
+                stream_calls: Arc::clone(&stream_calls),
+                fail_until: 2,
+            }),
+        )],
+        3,
+        1,
+    );
+
+    let mut stream =
+        provider.stream_chat_with_system(None, "hi", "reasoning-v1", 0.0, StreamOptions::new(true));
+
+    let mut chunks = Vec::new();
+    while let Some(item) = stream.next().await {
+        if let Ok(chunk) = item {
+            chunks.push(chunk.delta);
+        }
+    }
+
+    assert_eq!(
+        chunks,
+        vec!["hello".to_string()],
+        "retry must eventually recover once the recreated stream succeeds (C6)"
+    );
+    assert_eq!(
+        stream_calls.load(Ordering::SeqCst),
+        3,
+        "each retry attempt must recreate the candidate stream (C6), not re-poll the dead one"
     );
 }
 

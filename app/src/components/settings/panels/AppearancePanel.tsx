@@ -12,7 +12,9 @@ import {
   type TabBarLabels,
   type ThemeMode,
 } from '../../../store/themeSlice';
-import SettingsHeader from '../components/SettingsHeader';
+import LanguageSelect from '../../LanguageSelect';
+import PanelPage from '../../layout/PanelPage';
+import SettingsBackButton from '../components/SettingsBackButton';
 import { SettingsRow, SettingsSection, SettingsSwitch } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
@@ -66,7 +68,7 @@ const SystemIcon = (
 
 const AppearancePanel = () => {
   const { t } = useT();
-  const { navigateBack, breadcrumbs } = useSettingsNavigation();
+  const { navigateBack } = useSettingsNavigation();
   const dispatch = useAppDispatch();
   const mode = useAppSelector(state => state.theme.mode);
   const fontSize = useAppSelector(state => state.theme.fontSize);
@@ -137,14 +139,11 @@ const AppearancePanel = () => {
   ];
 
   return (
-    <div className="z-10 relative">
-      <SettingsHeader
-        title={t('settings.appearance.title')}
-        showBackButton
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
-
+    <PanelPage
+      className="z-10"
+      contentClassName=""
+      description={t('settings.appearance.menuDesc')}
+      leading={<SettingsBackButton onBack={navigateBack} />}>
       <div className="p-4 space-y-4">
         {/* ── Theme picker — intentional bespoke tile UI ─────────────── */}
         <div>
@@ -311,8 +310,17 @@ const AppearancePanel = () => {
             }
           />
         </SettingsSection>
+
+        {/* ── Display language (moved from the old settings home list) ── */}
+        <SettingsSection title={t('settings.language')}>
+          <SettingsRow
+            label={t('settings.language')}
+            description={t('settings.languageDesc')}
+            control={<LanguageSelect ariaLabel={t('settings.language')} />}
+          />
+        </SettingsSection>
       </div>
-    </div>
+    </PanelPage>
   );
 };
 

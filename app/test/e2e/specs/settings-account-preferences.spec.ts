@@ -73,7 +73,8 @@ describe('Settings - Account Preferences', () => {
 
     await navigateViaHash('/settings/privacy');
     await waitForText('Privacy', 15_000);
-    await waitForText('Share Anonymized Usage Data', 15_000);
+    // Renamed: t('privacy.shareAnonymizedData') = 'Share Product Analytics and Diagnostics'.
+    await waitForText('Share Product Analytics and Diagnostics', 15_000);
 
     await clickSelector('[data-testid="privacy-analytics-toggle"]');
     await clickSelector('[data-testid="privacy-meet-handoff-toggle"]');
@@ -98,23 +99,18 @@ describe('Settings - Account Preferences', () => {
     expect(Boolean(snapshot.result?.result?.meetAutoOrchestratorHandoff)).toBe(!initialMeet);
   });
 
-  it('opens the billing route and settles the redirect status copy', async function () {
+  it('opens the billing route and shows the moved-to-web redirect panel', async function () {
     this.timeout(60_000);
     await navigateViaHash('/settings/billing');
 
     await waitForHashContains('/settings/billing');
-    await waitForText('Open billing dashboard', 15_000);
-
-    await browser.waitUntil(
-      async () =>
-        // browserNotOpen: shown when open succeeds but browser may not have focused
-        (await textExists('If your browser did not open, use the button above.')) ||
-        // browserOpenFailed: shown when openUrl() throws (E2E headless environment)
-        (await textExists('The browser could not be opened automatically.')) ||
-        // Opening state (transient)
-        (await textExists('Opening your browser...')),
-      { timeout: 15_000, interval: 500, timeoutMsg: 'billing redirect status did not settle' }
-    );
+    // BillingPanel is now a static "moved to the web" redirect page: heading
+    // t('settings.billing.movedToWeb'), an "Open billing dashboard" button, and
+    // a "Back to settings" link. The previous auto-open status copy
+    // ("Opening your browser…" / "If your browser did not open…") was removed,
+    // so we assert the panel content instead of the transient open state.
+    await waitForText('Billing moved to the web', 15_000);
+    expect(await textExists('Open billing dashboard')).toBe(true);
 
     await clickText('Back to settings', 10_000);
     await waitForHashContains('/settings');

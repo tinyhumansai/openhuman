@@ -352,6 +352,38 @@ describe('EmbeddingsPanel', () => {
     );
   });
 
+  it('surfaces an actionable error and keeps the popup open when the custom endpoint has no embeddings API', async () => {
+    // TAURI-RUST-5JR: the backend probes the endpoint and rejects a chat-only
+    // URL (DeepSeek) with EMBEDDINGS_ENDPOINT_NO_API. The panel must show the
+    // message and NOT close the setup popup, so the user can fix the endpoint.
+    const settings = makeSettings({
+      providers: [
+        makeProvider('managed', { requires_api_key: false }),
+        makeProvider('custom', { requires_api_key: false, requires_endpoint: true }),
+      ],
+    });
+    vi.mocked(loadEmbeddingsSettings).mockResolvedValue(settings);
+    vi.mocked(updateEmbeddingsSettings).mockResolvedValue({
+      error: 'EMBEDDINGS_ENDPOINT_NO_API',
+      message: 'This endpoint has no embeddings API. Choose an embeddings-capable provider.',
+    });
+
+    renderWithProviders(<EmbeddingsPanel />);
+    await screen.findByText('Custom');
+
+    fireEvent.click(screen.getByRole('radio', { name: /custom/i }));
+    await screen.findByPlaceholderText(/https:\/\/your-endpoint/i);
+    fireEvent.change(screen.getByPlaceholderText(/https:\/\/your-endpoint/i), {
+      target: { value: 'https://api.deepseek.com/v1' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /save.*switch/i }));
+
+    // Actionable message shown.
+    await screen.findByText(/no embeddings API/i);
+    // Popup stays open — endpoint input is still present so the user can fix it.
+    expect(screen.getByPlaceholderText(/https:\/\/your-endpoint/i)).toBeInTheDocument();
+  });
+
   // ─── Confirm wipe dialog ──────────────────────────────────────────────────
 
   it('shows confirm-wipe dialog when updateEmbeddingsSettings returns DIMENSION_CHANGE error', async () => {

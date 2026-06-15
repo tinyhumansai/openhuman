@@ -645,13 +645,24 @@ async fn embeddings_embed_with_custom_openai_endpoint_round_trips_vectors_and_ap
     );
 
     let requests = mock_state.requests.lock().expect("mock requests lock");
-    assert_eq!(requests.len(), 1, "custom endpoint should be called once");
+    // Two hits: (0) the save-time connectivity probe update_settings now runs
+    // against custom endpoints (TAURI-RUST-5JR prevention), (1) the real embed.
     assert_eq!(
-        requests[0].get("model").and_then(Value::as_str),
-        Some("mock-embedding-model")
+        requests.len(),
+        2,
+        "expected one save-time probe + one embed call"
     );
     assert_eq!(
         requests[0].pointer("/input/0").and_then(Value::as_str),
+        Some("connection test"),
+        "first call must be the save-time validation probe"
+    );
+    assert_eq!(
+        requests[1].get("model").and_then(Value::as_str),
+        Some("mock-embedding-model")
+    );
+    assert_eq!(
+        requests[1].pointer("/input/0").and_then(Value::as_str),
         Some("first custom text")
     );
     drop(requests);
@@ -663,6 +674,88 @@ async fn embeddings_embed_with_custom_openai_endpoint_round_trips_vectors_and_ap
     assert_eq!(
         auth_headers.first().and_then(|value| value.as_deref()),
         Some("Bearer custom-embedding-key")
+    );
+
+    mock_join.abort();
+}
+
+/// A mock "OpenAI-compatible" host that has NO embeddings route — every POST to
+/// `/v1/embeddings` 404s, exactly like a chat-only provider (DeepSeek) does.
+async fn serve_mock_embeddings_no_api(
+) -> (String, tokio::task::JoinHandle<Result<(), std::io::Error>>) {
+    async fn not_found() -> (axum::http::StatusCode, &'static str) {
+        (axum::http::StatusCode::NOT_FOUND, "Not Found")
+    }
+    let router = Router::new().route("/v1/embeddings", post(not_found));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind no-api mock server");
+    let addr = listener.local_addr().expect("no-api mock local_addr");
+    let join = tokio::spawn(async move { axum::serve(listener, router).await });
+    (format!("http://{addr}"), join)
+}
+
+/// TAURI-RUST-5JR prevention: `update_settings` must probe a custom endpoint
+/// and REFUSE to persist one that has no embeddings API (404), returning
+/// `EMBEDDINGS_ENDPOINT_NO_API` and leaving the stored provider unchanged — so
+/// the 404-on-every-re-embed Sentry flood can never be configured.
+#[tokio::test(flavor = "multi_thread")]
+async fn embeddings_update_settings_rejects_endpoint_with_no_embeddings_api() {
+    let _lock = embeddings_e2e_env_lock();
+    let (rpc_base, _tmp, _guards, _join) = setup_embeddings_test().await;
+    let (mock_base, mock_join) = serve_mock_embeddings_no_api().await;
+
+    // Snapshot the provider before the rejected save.
+    let before = post_json_rpc(
+        &rpc_base,
+        80,
+        "openhuman.embeddings_get_settings",
+        json!({}),
+    )
+    .await;
+    let before_result = assert_no_rpc_error(&before, "get_settings before");
+    let before_inner = before_result.get("result").unwrap_or(before_result);
+    let before_provider = before_inner
+        .get("provider")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+
+    let update = post_json_rpc(
+        &rpc_base,
+        81,
+        "openhuman.embeddings_update_settings",
+        json!({
+            "provider": "custom",
+            "custom_endpoint": mock_base,
+            "model": "mock-embedding-model",
+            "dimensions": 3,
+            "confirm_wipe": true
+        }),
+    )
+    .await;
+    let update_result = assert_no_rpc_error(&update, "update_settings no-api endpoint");
+    let update_inner = update_result.get("result").unwrap_or(update_result);
+    assert_eq!(
+        update_inner.get("error").and_then(Value::as_str),
+        Some("EMBEDDINGS_ENDPOINT_NO_API"),
+        "a no-embeddings endpoint must be rejected, not saved: {update_inner}"
+    );
+
+    // The stored provider must be unchanged — nothing was persisted.
+    let after = post_json_rpc(
+        &rpc_base,
+        82,
+        "openhuman.embeddings_get_settings",
+        json!({}),
+    )
+    .await;
+    let after_result = assert_no_rpc_error(&after, "get_settings after");
+    let after_inner = after_result.get("result").unwrap_or(after_result);
+    assert_eq!(
+        after_inner.get("provider").and_then(Value::as_str),
+        Some(before_provider.as_str()),
+        "provider must be unchanged after a rejected save: {after_inner}"
     );
 
     mock_join.abort();

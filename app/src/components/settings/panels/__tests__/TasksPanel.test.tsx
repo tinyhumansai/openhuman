@@ -33,8 +33,7 @@ describe('TasksPanel', () => {
   it('renders the panel shell, title, description and the task board', () => {
     renderPanel();
     expect(screen.getByTestId('tasks-panel')).toBeInTheDocument();
-    // SettingsHeader title + the descriptive blurb both come from i18n keys.
-    expect(screen.getAllByText('memory.tab.tasks').length).toBeGreaterThan(0);
+    // The descriptive blurb comes from an i18n key.
     expect(screen.getByText('memory.tab.tasksDescription')).toBeInTheDocument();
     // The re-homed task board is mounted unchanged.
     expect(screen.getByTestId('intelligence-tasks-tab')).toBeInTheDocument();

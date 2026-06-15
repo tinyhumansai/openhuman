@@ -64,11 +64,21 @@ pub async fn query_source(
 
     let source_id_owned = source_id.map(|s| s.to_string());
     let config_owned = config.clone();
+    // Capture the per-profile memory-source allowlist HERE, in the async task
+    // that holds the `source_scope` task-local — `spawn_blocking` below runs on
+    // a separate thread that does NOT inherit task-locals, so we must thread it
+    // through explicitly. `None` = unrestricted.
+    let source_scope = crate::openhuman::memory::source_scope::current_source_scope();
     // We need the full SummaryNode (with embedding) when semantic rerank
     // is on, so return both shapes from the blocking path.
     let (hits, scored_nodes) = tokio::task::spawn_blocking(
         move || -> Result<(Vec<RetrievalHit>, Vec<(SummaryNode, String)>)> {
-            collect_hits_and_nodes(&config_owned, source_id_owned.as_deref(), source_kind)
+            collect_hits_and_nodes(
+                &config_owned,
+                source_id_owned.as_deref(),
+                source_kind,
+                source_scope.as_ref(),
+            )
         },
     )
     .await
@@ -109,8 +119,9 @@ fn collect_hits_and_nodes(
     config: &Config,
     source_id: Option<&str>,
     source_kind: Option<SourceKind>,
+    source_scope: Option<&std::collections::HashSet<String>>,
 ) -> Result<(Vec<RetrievalHit>, Vec<(SummaryNode, String)>)> {
-    let trees = select_trees(config, source_id, source_kind)?;
+    let trees = select_trees(config, source_id, source_kind, source_scope)?;
     log::debug!("[retrieval::source] selected trees n={}", trees.len());
 
     let mut hits: Vec<RetrievalHit> = Vec::new();
@@ -209,8 +220,21 @@ fn select_trees(
     config: &Config,
     source_id: Option<&str>,
     source_kind: Option<SourceKind>,
+    source_scope: Option<&std::collections::HashSet<String>>,
 ) -> Result<Vec<Tree>> {
+    // Per-profile memory-source gate: `source_scope` is the active profile's
+    // allowlist of recallable source scopes (None = unrestricted).
+    let allowed = |scope: &str| source_scope.is_none_or(|set| set.contains(scope));
+
     if let Some(id) = source_id {
+        // An explicit lookup for a source the active profile didn't allow
+        // surfaces nothing (fail-closed).
+        if !allowed(id) {
+            log::debug!(
+                "[retrieval::source] source_id={id} blocked by profile memory-source scope"
+            );
+            return Ok(Vec::new());
+        }
         return match store::get_tree_by_scope(config, TreeKind::Source, id)? {
             Some(t) => Ok(vec![t]),
             None => {
@@ -222,6 +246,15 @@ fn select_trees(
         };
     }
     let all = store::list_trees_by_kind(config, TreeKind::Source)?;
+    // Scope the candidate set to the active profile's allowlist (None = all).
+    let before = all.len();
+    let all: Vec<Tree> = all.into_iter().filter(|t| allowed(&t.scope)).collect();
+    if all.len() != before {
+        log::debug!(
+            "[retrieval::source] profile memory-source scope: {before} -> {} tree(s)",
+            all.len()
+        );
+    }
     if let Some(kind) = source_kind {
         let prefix = kind.as_str();
         let filtered: Vec<Tree> = all
@@ -446,6 +479,62 @@ mod tests {
         let ts = Utc::now();
         seed_source(&cfg, "slack:#eng", ts).await;
         seed_source(&cfg, "gmail:alice@example.com", ts).await;
+        let resp = query_source(&cfg, None, None, None, None, 10)
+            .await
+            .unwrap();
+        assert_eq!(resp.hits.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn profile_source_scope_restricts_all_query_to_allowlisted_trees() {
+        use crate::openhuman::memory::source_scope::with_source_scope;
+        let (_tmp, cfg) = test_config();
+        let ts = Utc::now();
+        seed_source(&cfg, "slack:#eng", ts).await;
+        seed_source(&cfg, "gmail:alice@example.com", ts).await;
+
+        // Allowlist only the Slack source: the all-trees query drops Gmail.
+        let resp = with_source_scope(Some(vec!["slack:#eng".into()]), async {
+            query_source(&cfg, None, None, None, None, 10).await
+        })
+        .await
+        .unwrap();
+        assert_eq!(resp.hits.len(), 1);
+        assert_eq!(resp.hits[0].tree_scope, "slack:#eng");
+    }
+
+    #[tokio::test]
+    async fn profile_source_scope_blocks_explicit_disallowed_source_id() {
+        use crate::openhuman::memory::source_scope::with_source_scope;
+        let (_tmp, cfg) = test_config();
+        let ts = Utc::now();
+        seed_source(&cfg, "slack:#eng", ts).await;
+        seed_source(&cfg, "gmail:alice@example.com", ts).await;
+
+        // Explicit lookup of a source outside the allowlist surfaces nothing.
+        let blocked = with_source_scope(Some(vec!["slack:#eng".into()]), async {
+            query_source(&cfg, Some("gmail:alice@example.com"), None, None, None, 10).await
+        })
+        .await
+        .unwrap();
+        assert!(blocked.hits.is_empty());
+
+        // The allowlisted source still resolves within the same scope.
+        let allowed = with_source_scope(Some(vec!["slack:#eng".into()]), async {
+            query_source(&cfg, Some("slack:#eng"), None, None, None, 10).await
+        })
+        .await
+        .unwrap();
+        assert_eq!(allowed.hits.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn no_source_scope_leaves_recall_unrestricted() {
+        let (_tmp, cfg) = test_config();
+        let ts = Utc::now();
+        seed_source(&cfg, "slack:#eng", ts).await;
+        seed_source(&cfg, "gmail:alice@example.com", ts).await;
+        // Outside any with_source_scope, all trees remain visible.
         let resp = query_source(&cfg, None, None, None, None, 10)
             .await
             .unwrap();

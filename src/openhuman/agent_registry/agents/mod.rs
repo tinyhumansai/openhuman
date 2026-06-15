@@ -13,6 +13,7 @@ pub mod desktop_control_agent;
 pub mod help;
 pub mod integrations_agent;
 pub mod markets_agent;
+pub mod mcp_agent;
 pub mod mcp_setup;
 pub mod morning_briefing;
 pub mod orchestrator;

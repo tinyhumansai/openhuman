@@ -10,8 +10,9 @@ import {
   normalizeEnabledToolList,
   TOOL_CATEGORIES,
 } from '../../../utils/toolDefinitions';
+import PanelPage from '../../layout/PanelPage';
 import Button from '../../ui/Button';
-import SettingsHeader from '../components/SettingsHeader';
+import SettingsBackButton from '../components/SettingsBackButton';
 import { SettingsRow, SettingsSection, SettingsStatusLine, SettingsSwitch } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
@@ -23,7 +24,7 @@ interface ToolsPanelProps {
 
 const ToolsPanel = ({ embedded = false }: ToolsPanelProps = {}) => {
   const { t } = useT();
-  const { navigateBack, breadcrumbs } = useSettingsNavigation();
+  const { navigateBack } = useSettingsNavigation();
   const { snapshot, setOnboardingTasks } = useCoreState();
   const toolsByCategory = getToolsByCategory();
 
@@ -97,16 +98,11 @@ const ToolsPanel = ({ embedded = false }: ToolsPanelProps = {}) => {
   };
 
   return (
-    <div className="z-10 relative">
-      {!embedded && (
-        <SettingsHeader
-          title={t('settings.features.tools')}
-          showBackButton
-          onBack={navigateBack}
-          breadcrumbs={breadcrumbs}
-        />
-      )}
-
+    <PanelPage
+      className="z-10"
+      contentClassName=""
+      description={embedded ? undefined : t('pages.settings.features.toolsDesc')}
+      leading={embedded ? undefined : <SettingsBackButton onBack={navigateBack} />}>
       <div className={embedded ? 'space-y-4' : 'p-4 pt-2 space-y-4'}>
         <p className="text-neutral-500 dark:text-neutral-400 text-sm">
           {t('settings.tools.chooseCapabilities')}
@@ -161,7 +157,7 @@ const ToolsPanel = ({ embedded = false }: ToolsPanelProps = {}) => {
           savingLabel=""
         />
       </div>
-    </div>
+    </PanelPage>
   );
 };
 

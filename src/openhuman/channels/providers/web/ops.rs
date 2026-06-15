@@ -1,8 +1,10 @@
 use std::collections::HashMap;
+use std::time::Duration;
 
 use once_cell::sync::Lazy;
 use serde_json::{json, Value};
 use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::core::event_bus::DomainEvent;
@@ -14,7 +16,7 @@ use crate::rpc::RpcOutcome;
 
 use super::event_bus::publish_web_channel_event;
 use super::run_task::run_chat_task;
-use super::types::{ChatRequestMetadata, InFlightEntry, SessionEntry};
+use super::types::{ChatRequestMetadata, InFlightEntry, ParallelEntry, SessionEntry};
 use super::web_errors::classify_inference_error;
 
 pub(crate) static THREAD_SESSIONS: Lazy<Mutex<HashMap<String, SessionEntry>>> =
@@ -23,9 +25,58 @@ pub(crate) static THREAD_SESSIONS: Lazy<Mutex<HashMap<String, SessionEntry>>> =
 pub(super) static IN_FLIGHT: Lazy<Mutex<HashMap<String, InFlightEntry>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
+/// Parallel (forked) turns, keyed by `request_id`. A separate lane from
+/// `IN_FLIGHT` (which holds one primary, interrupt-able turn per thread) so any
+/// number of concurrent `QueueMode::Parallel` turns can run on the same thread
+/// without touching interrupt/steer/queue semantics. See `QueueMode::Parallel`.
+pub(super) static PARALLEL_IN_FLIGHT: Lazy<Mutex<HashMap<String, ParallelEntry>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
 #[cfg(any(test, debug_assertions))]
 pub(super) static TEST_FORCED_RUN_CHAT_TASK_ERROR: Lazy<Mutex<Option<String>>> =
     Lazy::new(|| Mutex::new(None));
+
+/// Test hook handles: when set, `run_chat_task` parks on a long sleep instead
+/// of doing real work, keeping the turn in-flight so concurrency / cancellation
+/// can be observed. `started` is flipped once the turn has actually parked (so
+/// a test can cancel only after the turn future is live), and a `Drop` guard
+/// inside the parked future flips `dropped`, proving cooperative cancellation
+/// tears the turn future down (vs. a hard `abort()` that never runs the Drop).
+#[cfg(any(test, debug_assertions))]
+#[derive(Clone)]
+pub struct TestRunChatTaskBlock {
+    pub started: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    pub dropped: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+#[cfg(any(test, debug_assertions))]
+pub(super) static TEST_RUN_CHAT_TASK_BLOCK: Lazy<Mutex<Option<TestRunChatTaskBlock>>> =
+    Lazy::new(|| Mutex::new(None));
+
+/// Cooperatively cancel an in-flight turn, with a hard `abort()` backstop.
+///
+/// Cancelling the token makes the turn's `tokio::select!` arm fire, dropping
+/// the turn future at its next await point (cancelling the in-flight LLM
+/// request and releasing locks cleanly). The detached backstop hard-aborts the
+/// task only if it has not finished unwinding within a short grace period, so a
+/// wedged turn can never leak. Returns the cancelled turn's request id.
+fn cancel_in_flight_gracefully(entry: InFlightEntry) -> String {
+    let request_id = entry.request_id.clone();
+    entry.cancel_token.cancel();
+    let mut handle = entry.handle;
+    tokio::spawn(async move {
+        tokio::select! {
+            _ = &mut handle => {}
+            _ = tokio::time::sleep(Duration::from_secs(5)) => {
+                log::warn!(
+                    "[web-channel] cooperative cancel did not finish within grace period — hard-aborting backstop"
+                );
+                handle.abort();
+            }
+        }
+    });
+    request_id
+}
 
 pub(crate) fn key_for(thread_id: &str) -> String {
     thread_id.to_string()
@@ -55,6 +106,15 @@ fn prompt_guard_user_message(action: PromptEnforcementAction) -> &'static str {
 pub async fn set_test_forced_run_chat_task_error(message: Option<&str>) {
     let mut slot = TEST_FORCED_RUN_CHAT_TASK_ERROR.lock().await;
     *slot = message.map(str::to_string);
+}
+
+/// Test hook: when `block` is `Some`, the next `run_chat_task` invocations park
+/// on a long sleep (staying in-flight), flip `started` once parked, and flip
+/// `dropped` when their future is torn down. Pass `None` to clear.
+#[cfg(any(test, debug_assertions))]
+pub async fn set_test_run_chat_task_block(block: Option<TestRunChatTaskBlock>) {
+    let mut slot = TEST_RUN_CHAT_TASK_BLOCK.lock().await;
+    *slot = block;
 }
 
 pub async fn start_chat(
@@ -216,8 +276,36 @@ pub async fn start_chat(
         Some("steer") => crate::openhuman::agent::harness::run_queue::QueueMode::Steer,
         Some("followup") => crate::openhuman::agent::harness::run_queue::QueueMode::Followup,
         Some("collect") => crate::openhuman::agent::harness::run_queue::QueueMode::Collect,
+        Some("parallel") => crate::openhuman::agent::harness::run_queue::QueueMode::Parallel,
         _ => crate::openhuman::agent::harness::run_queue::QueueMode::Interrupt,
     };
+
+    // Parallel mode: spawn an independent forked turn that runs alongside any
+    // in-flight turn for this thread. It does not touch IN_FLIGHT (no
+    // interrupt/steer/queue) — it lives in its own request-keyed lane.
+    if matches!(
+        parsed_mode,
+        crate::openhuman::agent::harness::run_queue::QueueMode::Parallel
+    ) {
+        log::info!(
+            "[web-channel] starting PARALLEL forked turn thread_id={} request_id={}",
+            thread_id,
+            request_id
+        );
+        spawn_parallel_turn(
+            &client_id,
+            &thread_id,
+            request_id.clone(),
+            &message,
+            model_override,
+            temperature,
+            profile_id,
+            locale,
+            metadata,
+        )
+        .await;
+        return Ok(request_id);
+    }
 
     // Non-interrupt modes: push into the running turn's queue and return.
     if !matches!(
@@ -275,16 +363,15 @@ pub async fn start_chat(
         let mut in_flight = IN_FLIGHT.lock().await;
 
         if let Some(existing) = in_flight.remove(&map_key) {
-            let cancelled_id = existing.request_id.clone();
-            existing.handle.abort();
+            let cancelled_id = cancel_in_flight_gracefully(existing);
             log::info!(
                 "[web-channel] interrupted in-flight turn thread_id={} cancelled_request_id={}",
                 thread_id,
-                existing.request_id
+                cancelled_id
             );
             crate::core::event_bus::publish_global(DomainEvent::RunQueueInterrupted {
                 thread_id: thread_id.clone(),
-                cancelled_request_id: existing.request_id.clone(),
+                cancelled_request_id: cancelled_id.clone(),
             });
             publish_web_channel_event(WebChannelEvent {
                 event: "chat_error".to_string(),
@@ -306,6 +393,12 @@ pub async fn start_chat(
     let request_id_task = request_id.clone();
     let map_key_task = map_key.clone();
 
+    // Cooperative cancellation for this turn. The token lives in the
+    // `InFlightEntry`; interrupt / cancel paths cancel it to tear the turn
+    // future down gracefully at the next await point.
+    let cancel_token = CancellationToken::new();
+    let task_cancel_token = cancel_token.clone();
+
     let user_message = message.clone();
     let handle = tokio::spawn(async move {
         let approval_ctx = crate::openhuman::approval::ApprovalChatContext {
@@ -316,25 +409,54 @@ pub async fn start_chat(
             thread_id: thread_id_task.clone(),
             client_id: client_id_task.clone(),
         };
-        let result = crate::openhuman::agent::turn_origin::with_origin(
-            origin,
-            crate::openhuman::approval::APPROVAL_CHAT_CONTEXT.scope(
-                approval_ctx,
-                run_chat_task(
-                    &client_id_task,
-                    &thread_id_task,
-                    &request_id_task,
-                    &user_message,
-                    model_override,
-                    temperature,
-                    profile_id,
-                    locale,
-                    turn_run_queue_task,
-                    metadata,
+        // `None` => the turn was cancelled cooperatively before producing a
+        // result; the interrupting/cancelling side already emitted the
+        // user-facing `chat_error`, so we just unwind quietly here.
+        let result = tokio::select! {
+            biased;
+            _ = task_cancel_token.cancelled() => None,
+            res = crate::openhuman::agent::turn_origin::with_origin(
+                origin,
+                crate::openhuman::approval::APPROVAL_CHAT_CONTEXT.scope(
+                    approval_ctx,
+                    run_chat_task(
+                        &client_id_task,
+                        &thread_id_task,
+                        &request_id_task,
+                        &user_message,
+                        model_override,
+                        temperature,
+                        profile_id,
+                        locale,
+                        turn_run_queue_task,
+                        metadata,
+                        /* fork */ false,
+                    ),
                 ),
-            ),
-        )
-        .await;
+            ) => Some(res),
+        };
+
+        let result = match result {
+            Some(res) => res,
+            None => {
+                log::info!(
+                    "[web-channel] turn cancelled cooperatively client_id={} thread_id={} request_id={}",
+                    client_id_task,
+                    thread_id_task,
+                    request_id_task
+                );
+                // Release any in-flight slot we still own and stop. The
+                // `request_id` guard below prevents clobbering a newer turn that
+                // replaced us on the interrupt path.
+                let mut in_flight = IN_FLIGHT.lock().await;
+                if let Some(current) = in_flight.get(&map_key_task) {
+                    if current.request_id == request_id_task {
+                        in_flight.remove(&map_key_task);
+                    }
+                }
+                return;
+            }
+        };
 
         match result {
             Ok(chat_result) => {
@@ -444,6 +566,7 @@ pub async fn start_chat(
                 request_id: request_id.clone(),
                 handle,
                 run_queue: turn_run_queue,
+                cancel_token,
             },
         );
     }
@@ -477,6 +600,155 @@ fn dispatch_followups(followups: Vec<crate::openhuman::agent::harness::run_queue
     }
 }
 
+/// Spawn an independent, forked (`QueueMode::Parallel`) turn. It snapshots the
+/// thread's history-at-start (inside `run_chat_task` with `fork = true`), runs
+/// concurrently with any other turn on the thread, and on completion delivers
+/// its response (append-only) and removes itself from `PARALLEL_IN_FLIGHT`.
+/// Emits the same per-`request_id` stream events as a primary turn, so the UI
+/// can render it as an interleaved branch.
+#[allow(clippy::too_many_arguments)]
+async fn spawn_parallel_turn(
+    client_id: &str,
+    thread_id: &str,
+    request_id: String,
+    message: &str,
+    model_override: Option<String>,
+    temperature: Option<f64>,
+    profile_id: Option<String>,
+    locale: Option<String>,
+    metadata: ChatRequestMetadata,
+) {
+    let cancel_token = CancellationToken::new();
+    let task_cancel_token = cancel_token.clone();
+
+    let client_id_task = client_id.to_string();
+    let thread_id_task = thread_id.to_string();
+    let request_id_task = request_id.clone();
+    let user_message = message.to_string();
+    // Forked turns don't participate in the steer/followup/collect queue, but
+    // `run_chat_task` requires a queue handle — give each its own.
+    let run_queue = crate::openhuman::agent::harness::run_queue::RunQueue::new();
+
+    let handle = tokio::spawn(async move {
+        let approval_ctx = crate::openhuman::approval::ApprovalChatContext {
+            thread_id: thread_id_task.clone(),
+            client_id: client_id_task.clone(),
+        };
+        let origin = crate::openhuman::agent::turn_origin::AgentTurnOrigin::WebChat {
+            thread_id: thread_id_task.clone(),
+            client_id: client_id_task.clone(),
+        };
+        let result = tokio::select! {
+            biased;
+            _ = task_cancel_token.cancelled() => None,
+            res = crate::openhuman::agent::turn_origin::with_origin(
+                origin,
+                crate::openhuman::approval::APPROVAL_CHAT_CONTEXT.scope(
+                    approval_ctx,
+                    run_chat_task(
+                        &client_id_task,
+                        &thread_id_task,
+                        &request_id_task,
+                        &user_message,
+                        model_override,
+                        temperature,
+                        profile_id,
+                        locale,
+                        run_queue,
+                        metadata,
+                        /* fork */ true,
+                    ),
+                ),
+            ) => Some(res),
+        };
+
+        match result {
+            Some(Ok(chat_result)) => {
+                crate::openhuman::channels::providers::presentation::deliver_response(
+                    &client_id_task,
+                    &thread_id_task,
+                    &request_id_task,
+                    &chat_result.full_response,
+                    &user_message,
+                    &chat_result.citations,
+                )
+                .await;
+            }
+            Some(Err(err)) => {
+                log::warn!(
+                    "[web-channel] parallel run_chat_task failed client_id={} thread_id={} request_id={} error={}",
+                    client_id_task,
+                    thread_id_task,
+                    request_id_task,
+                    err
+                );
+                let classified = classify_inference_error(&err);
+                publish_web_channel_event(WebChannelEvent {
+                    event: "chat_error".to_string(),
+                    client_id: client_id_task.clone(),
+                    thread_id: thread_id_task.clone(),
+                    request_id: request_id_task.clone(),
+                    message: Some(classified.message),
+                    error_type: Some(classified.error_type.to_string()),
+                    error_source: Some(classified.source.to_string()),
+                    error_retryable: Some(classified.retryable),
+                    error_retry_after_ms: classified.retry_after_ms,
+                    error_provider: classified.provider,
+                    error_fallback_available: classified.fallback_available,
+                    ..Default::default()
+                });
+            }
+            None => {
+                log::info!(
+                    "[web-channel] parallel turn cancelled cooperatively thread_id={} request_id={}",
+                    thread_id_task,
+                    request_id_task
+                );
+            }
+        }
+
+        PARALLEL_IN_FLIGHT.lock().await.remove(&request_id_task);
+    });
+
+    PARALLEL_IN_FLIGHT.lock().await.insert(
+        request_id,
+        ParallelEntry {
+            thread_id: thread_id.to_string(),
+            handle,
+            cancel_token,
+        },
+    );
+}
+
+/// Cooperatively cancel every parallel turn on a thread. Returns the cancelled
+/// request ids. Used by the thread-level cancel paths so a cancel/stop also
+/// tears down any concurrent forked turns, not just the primary turn.
+async fn cancel_parallel_turns_for_thread(thread_id: &str) -> Vec<String> {
+    let mut cancelled = Vec::new();
+    let mut parallel = PARALLEL_IN_FLIGHT.lock().await;
+    let request_ids: Vec<String> = parallel
+        .iter()
+        .filter(|(_, entry)| entry.thread_id == thread_id)
+        .map(|(request_id, _)| request_id.clone())
+        .collect();
+    for request_id in request_ids {
+        if let Some(entry) = parallel.remove(&request_id) {
+            entry.cancel_token.cancel();
+            let mut handle = entry.handle;
+            tokio::spawn(async move {
+                tokio::select! {
+                    _ = &mut handle => {}
+                    _ = tokio::time::sleep(Duration::from_secs(5)) => {
+                        handle.abort();
+                    }
+                }
+            });
+            cancelled.push(request_id);
+        }
+    }
+    cancelled
+}
+
 pub async fn invalidate_thread_sessions(thread_id: &str) {
     let mut sessions = THREAD_SESSIONS.lock().await;
     let keys_to_remove: Vec<String> = sessions
@@ -504,6 +776,16 @@ pub async fn in_flight_entries_for_test() -> Vec<(String, String)> {
         .collect()
 }
 
+/// Test accessor: `(request_id, thread_id)` for every in-flight parallel turn.
+#[cfg(any(test, debug_assertions))]
+pub async fn parallel_in_flight_entries_for_test() -> Vec<(String, String)> {
+    let guard = PARALLEL_IN_FLIGHT.lock().await;
+    guard
+        .iter()
+        .map(|(request_id, entry)| (request_id.clone(), entry.thread_id.clone()))
+        .collect()
+}
+
 pub async fn cancel_chat(client_id: &str, thread_id: &str) -> Result<Option<String>, String> {
     let client_id = client_id.trim();
     let thread_id = thread_id.trim();
@@ -521,12 +803,17 @@ pub async fn cancel_chat(client_id: &str, thread_id: &str) -> Result<Option<Stri
     {
         let mut in_flight = IN_FLIGHT.lock().await;
         if let Some(existing) = in_flight.remove(&map_key) {
-            removed_request_id = Some(existing.request_id.clone());
-            existing.handle.abort();
+            removed_request_id = Some(cancel_in_flight_gracefully(existing));
         }
     }
 
-    if let Some(request_id) = removed_request_id.clone() {
+    // Also tear down any concurrent parallel (forked) turns on the thread so a
+    // cancel/stop covers every in-flight turn, not just the primary one.
+    let cancelled_parallel = cancel_parallel_turns_for_thread(thread_id).await;
+
+    // Emit a cancelled chat_error for each cancelled turn (primary + parallels)
+    // so every interleaved branch's UI is resolved.
+    for request_id in removed_request_id.iter().cloned().chain(cancelled_parallel) {
         publish_web_channel_event(WebChannelEvent {
             event: "chat_error".to_string(),
             client_id: client_id.to_string(),

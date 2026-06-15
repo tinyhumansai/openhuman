@@ -76,40 +76,9 @@ const VOICE_STATUS: VoiceStatus = {
   tts_provider: 'cloud',
 };
 
-describe('VoiceDebugPanel — always-on toggle', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.mocked(openhumanGetVoiceServerSettings).mockResolvedValue({
-      result: { ...SETTINGS },
-      logs: [],
-    });
-    vi.mocked(openhumanUpdateVoiceServerSettings).mockResolvedValue({
-      result: {} as unknown as ConfigSnapshot,
-      logs: [],
-    });
-    vi.mocked(openhumanVoiceServerStatus).mockResolvedValue(SERVER_STATUS);
-    vi.mocked(openhumanVoiceStatus).mockResolvedValue(VOICE_STATUS);
-  });
-
-  it('toggles always-on and persists it via the update RPC on save', async () => {
-    render(<VoiceDebugPanel />);
-
-    const toggle = await screen.findByTestId('voice-always-on-toggle');
-    expect(toggle).toHaveAttribute('aria-checked', 'false');
-
-    // Local optimistic flip (creates an unsaved change → enables Save).
-    fireEvent.click(toggle);
-    expect(toggle).toHaveAttribute('aria-checked', 'true');
-
-    fireEvent.click(screen.getByText('common.save'));
-
-    await waitFor(() =>
-      expect(vi.mocked(openhumanUpdateVoiceServerSettings)).toHaveBeenCalledWith(
-        expect.objectContaining({ always_on_enabled: true })
-      )
-    );
-  });
-});
+// Always-on listening was relocated to the Desktop Agent panel; the Voice debug
+// panel no longer hosts that toggle. Save-flow coverage below drives the
+// minimum-recording-seconds field instead.
 
 describe('VoiceDebugPanel — runtime status section (uncovered lines)', () => {
   beforeEach(() => {
@@ -216,8 +185,9 @@ describe('VoiceDebugPanel — runtime status section (uncovered lines)', () => {
   it('renders advanced settings section when settings are loaded (line 204)', async () => {
     render(<VoiceDebugPanel />);
 
-    await waitFor(() => expect(screen.getByText('voice.debug.alwaysOn')).toBeInTheDocument());
-    expect(screen.getByText('voice.debug.minimumRecordingSeconds')).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByText('voice.debug.minimumRecordingSeconds')).toBeInTheDocument()
+    );
     expect(screen.getByText('voice.debug.silenceThreshold')).toBeInTheDocument();
   });
 
@@ -231,11 +201,11 @@ describe('VoiceDebugPanel — runtime status section (uncovered lines)', () => {
     expect(saveBtn.disabled).toBe(true);
   });
 
-  it('enables Save after toggling always-on (line 228)', async () => {
+  it('enables Save after editing a setting (line 228)', async () => {
     render(<VoiceDebugPanel />);
 
-    const toggle = await screen.findByTestId('voice-always-on-toggle');
-    fireEvent.click(toggle);
+    const input = await screen.findByLabelText('voice.debug.minimumRecordingSeconds');
+    fireEvent.change(input, { target: { value: '5' } });
 
     const saveBtn = screen.getByText('common.save').closest('button') as HTMLButtonElement;
     expect(saveBtn.disabled).toBe(false);
@@ -246,8 +216,8 @@ describe('VoiceDebugPanel — runtime status section (uncovered lines)', () => {
   it('shows settingsSaved notice after successful save (line 242-243)', async () => {
     render(<VoiceDebugPanel />);
 
-    const toggle = await screen.findByTestId('voice-always-on-toggle');
-    fireEvent.click(toggle);
+    const input = await screen.findByLabelText('voice.debug.minimumRecordingSeconds');
+    fireEvent.change(input, { target: { value: '5' } });
 
     fireEvent.click(screen.getByText('common.save'));
 
@@ -260,8 +230,8 @@ describe('VoiceDebugPanel — runtime status section (uncovered lines)', () => {
     );
     render(<VoiceDebugPanel />);
 
-    const toggle = await screen.findByTestId('voice-always-on-toggle');
-    fireEvent.click(toggle);
+    const input = await screen.findByLabelText('voice.debug.minimumRecordingSeconds');
+    fireEvent.change(input, { target: { value: '5' } });
 
     fireEvent.click(screen.getByText('common.save'));
 

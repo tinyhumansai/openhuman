@@ -50,6 +50,11 @@ use super::types::{ApprovalDecision, ExecutionOutcome, GateOutcome, PendingAppro
 /// written into the persisted row.
 const DEFAULT_APPROVAL_TTL: Duration = Duration::from_secs(60 * 10);
 
+/// Shorter park window for approvals raised mid-call (issue #3513): a
+/// live meeting can't idle on a parked tool for the default ten
+/// minutes — if nobody approves within two, deny and move on.
+const IN_CALL_APPROVAL_TTL: Duration = Duration::from_secs(120);
+
 /// Per-turn chat context for routing a parked approval's yes/no reply back to
 /// the originating thread. The web channel scopes this task-local around the
 /// agent run (`channels::providers::web`); because the `run_turn` handler, the
@@ -65,6 +70,26 @@ pub struct ApprovalChatContext {
 
 tokio::task_local! {
     pub static APPROVAL_CHAT_CONTEXT: ApprovalChatContext;
+}
+
+/// In-call meeting context (issue #3513) — set by `agent_meetings::in_call`
+/// around the orchestrator turn for a live meeting. When present, a parked
+/// approval additionally:
+/// - publishes [`DomainEvent::InCallApprovalRequested`] so the meeting bus
+///   can speak the approval prompt into the call (`bot:speak`),
+/// - registers a meeting → request mapping so a spoken
+///   "Hey Tiny, approve" can be routed to [`ApprovalGate::decide`], and
+/// - clamps the park window to [`IN_CALL_APPROVAL_TTL`].
+#[derive(Clone, Debug)]
+pub struct InCallApprovalContext {
+    /// Stable per-meeting key (the correlation id, or `"default"`).
+    pub meeting_key: String,
+    /// Original correlation id, echoed on spoken prompts.
+    pub correlation_id: Option<String>,
+}
+
+tokio::task_local! {
+    pub static APPROVAL_IN_CALL_CONTEXT: InCallApprovalContext;
 }
 
 /// Parse a chat reply to a parked approval into a binary decision (v1). Only an
@@ -138,6 +163,11 @@ pub struct ApprovalGate {
     /// In-memory only (session-scoped — a parked approval doesn't survive a
     /// restart, and the oneshot waiter is in-memory anyway).
     thread_to_request: Mutex<HashMap<String, String>>,
+    /// meeting_key → request_id for the approval currently parked on a live
+    /// meeting, so a spoken "Hey Tiny, approve" can be routed to a decision
+    /// (issue #3513). Same in-memory/session-scoped semantics as
+    /// `thread_to_request`.
+    meeting_to_request: Mutex<HashMap<String, String>>,
 }
 
 impl ApprovalGate {
@@ -185,6 +215,7 @@ impl ApprovalGate {
             ttl,
             waiters: Mutex::new(HashMap::new()),
             thread_to_request: Mutex::new(HashMap::new()),
+            meeting_to_request: Mutex::new(HashMap::new()),
         }
     }
 
@@ -268,6 +299,11 @@ impl ApprovalGate {
         let chat_thread_id = chat_ctx.as_ref().map(|c| c.thread_id.clone());
         let chat_client_id = chat_ctx.as_ref().map(|c| c.client_id.clone());
 
+        // In-call meeting context — set by agent_meetings::in_call around a
+        // live-meeting orchestrator turn. Enables the spoken approval
+        // channel alongside the thread card (issue #3513).
+        let in_call_ctx = APPROVAL_IN_CALL_CONTEXT.try_with(|c| c.clone()).ok();
+
         // Branch by origin. Web chat parks for an in-app approval; external
         // channel persists an audit row and TTL-denies (no routable approval
         // surface yet); trusted automation (cron, internal-only subconscious)
@@ -291,14 +327,16 @@ impl ApprovalGate {
                     sender = %sender.as_deref().unwrap_or("<unknown>"),
                     reply_target = %reply_target,
                     message_id = %message_id,
-                    "[approval::gate] external channel turn — persisting audit row and parking \
-                     (will TTL-deny until a routable channel approval surface ships)"
+                    in_call = in_call_ctx.is_some(),
+                    "[approval::gate] external channel turn — persisting audit row and parking"
                 );
                 // Fall through to the parking flow: a `pending_approvals` row
-                // is persisted (audit trail) and the future TTL-denies. We do
-                // NOT short-circuit to Allow here — remote inputs are
-                // untrusted, and there is no UI surface to route a yes/no on
-                // a non-web channel right now.
+                // is persisted (audit trail) and the future parks. We do NOT
+                // short-circuit to Allow here — remote inputs are untrusted.
+                // Without a routable surface the park TTL-denies; with the
+                // in-call context set (live meeting, issue #3513) a decision
+                // can arrive via the spoken channel (`pending_for_meeting` →
+                // `decide`) or the thread card before the (clamped) TTL.
             }
             AgentTurnOrigin::TrustedAutomation {
                 source: TrustedAutomationSource::Cron,
@@ -398,6 +436,13 @@ impl ApprovalGate {
                 .lock()
                 .insert(thread_id.clone(), request_id.clone());
         }
+        // Record the meeting → request mapping so a spoken approval reply
+        // ("Hey Tiny, approve") can be routed to a decision.
+        if let Some(ic) = in_call_ctx.as_ref() {
+            self.meeting_to_request
+                .lock()
+                .insert(ic.meeting_key.clone(), request_id.clone());
+        }
 
         if let Err(err) = store::insert_pending(&self.config, &pending, &self.session_id) {
             self.evict_waiter(&request_id);
@@ -434,13 +479,31 @@ impl ApprovalGate {
             client_id: chat_client_id.clone(),
         });
 
+        // Voice channel (issue #3513): tell the meeting bus to speak the
+        // approval prompt into the call.
+        if let Some(ic) = in_call_ctx.as_ref() {
+            publish_global(DomainEvent::InCallApprovalRequested {
+                request_id: request_id.clone(),
+                tool_name: tool_name.to_string(),
+                action_summary: action_summary.to_string(),
+                correlation_id: ic.correlation_id.clone(),
+            });
+        }
+
         tracing::info!(
             request_id = %request_id,
             tool = tool_name,
             "[approval::gate] tool call parked, waiting for decision"
         );
 
-        let outcome = match tokio::time::timeout(self.ttl, rx).await {
+        // Live meetings get a clamped park window — see IN_CALL_APPROVAL_TTL.
+        let effective_ttl = if in_call_ctx.is_some() {
+            IN_CALL_APPROVAL_TTL.min(self.ttl)
+        } else {
+            self.ttl
+        };
+
+        let outcome = match tokio::time::timeout(effective_ttl, rx).await {
             Ok(Ok(decision)) => {
                 tracing::info!(
                     request_id = %request_id,
@@ -503,7 +566,7 @@ impl ApprovalGate {
                     tracing::info!(
                         request_id = %request_id,
                         tool = tool_name,
-                        ttl_secs = self.ttl.as_secs(),
+                        ttl_secs = effective_ttl.as_secs(),
                         "[approval::gate] timeout race: persisted decision was Approve, honoring approval"
                     );
                     // Fall through (no early return) so `clear_thread` below runs
@@ -515,7 +578,7 @@ impl ApprovalGate {
                     tracing::warn!(
                         request_id = %request_id,
                         tool = tool_name,
-                        ttl_secs = self.ttl.as_secs(),
+                        ttl_secs = effective_ttl.as_secs(),
                         "[approval::gate] approval timed out, denying"
                     );
                     (
@@ -524,7 +587,7 @@ impl ApprovalGate {
                                 "{POLICY_DENIED_MARKER} Approval for '{tool_name}' timed out after \
                                  {}s. Do not re-request the same call this turn; take a different \
                                  approach or stop.",
-                                self.ttl.as_secs()
+                                effective_ttl.as_secs()
                             ),
                         },
                         None,
@@ -532,9 +595,10 @@ impl ApprovalGate {
                 }
             }
         };
-        // The thread routing mapping is only needed while parked; clear it on
+        // The routing mappings are only needed while parked; clear them on
         // every exit (decision, channel drop, or timeout).
         self.clear_thread(&chat_thread_id);
+        self.clear_meeting(&in_call_ctx);
         outcome
     }
 
@@ -634,10 +698,24 @@ impl ApprovalGate {
         self.thread_to_request.lock().get(thread_id).cloned()
     }
 
+    /// The request_id of the approval currently parked on a live meeting, if
+    /// any. Used by `agent_meetings::in_call` to route a spoken
+    /// "Hey Tiny, approve" to a decision (issue #3513).
+    pub fn pending_for_meeting(&self, meeting_key: &str) -> Option<String> {
+        self.meeting_to_request.lock().get(meeting_key).cloned()
+    }
+
     /// Drop the thread → request mapping (best-effort; no-op when absent).
     fn clear_thread(&self, thread_id: &Option<String>) {
         if let Some(t) = thread_id {
             self.thread_to_request.lock().remove(t);
+        }
+    }
+
+    /// Drop the meeting → request mapping (best-effort; no-op when absent).
+    fn clear_meeting(&self, ctx: &Option<InCallApprovalContext>) {
+        if let Some(ic) = ctx {
+            self.meeting_to_request.lock().remove(&ic.meeting_key);
         }
     }
 }
@@ -685,6 +763,127 @@ mod tests {
             thread_id: "t-test".into(),
             client_id: "c-test".into(),
         }
+    }
+
+    /// An external-channel (live meeting) origin for the in-call fixtures.
+    fn meet_origin() -> AgentTurnOrigin {
+        AgentTurnOrigin::ExternalChannel {
+            channel: "meet".into(),
+            sender: None,
+            reply_target: "meet-1".into(),
+            message_id: "m-1".into(),
+        }
+    }
+
+    fn in_call_ctx() -> InCallApprovalContext {
+        InCallApprovalContext {
+            meeting_key: "meet-1".into(),
+            correlation_id: Some("meet-1".into()),
+        }
+    }
+
+    #[tokio::test]
+    async fn in_call_voice_approve_resolves_parked_external_channel_approval() {
+        let (gate, _dir) = test_gate();
+        let gate = Arc::new(gate);
+
+        let g = gate.clone();
+        let handle = tokio::spawn(async move {
+            turn_origin::with_origin(
+                meet_origin(),
+                APPROVAL_IN_CALL_CONTEXT.scope(
+                    in_call_ctx(),
+                    g.intercept("composio", "create calendar event", serde_json::json!({})),
+                ),
+            )
+            .await
+        });
+
+        // The meeting → request mapping is the voice channel's lookup key.
+        let mut tries = 0;
+        let request_id = loop {
+            if let Some(r) = gate.pending_for_meeting("meet-1") {
+                break r;
+            }
+            tries += 1;
+            assert!(tries < 50, "meeting mapping never appeared");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        };
+
+        gate.decide(&request_id, ApprovalDecision::ApproveOnce)
+            .unwrap();
+
+        let outcome = handle.await.unwrap();
+        assert!(matches!(outcome, GateOutcome::Allow));
+        assert!(
+            gate.pending_for_meeting("meet-1").is_none(),
+            "meeting mapping must be cleared once the park resolves"
+        );
+    }
+
+    #[tokio::test]
+    async fn in_call_voice_deny_resolves_parked_approval_with_deny() {
+        let (gate, _dir) = test_gate();
+        let gate = Arc::new(gate);
+
+        let g = gate.clone();
+        let handle = tokio::spawn(async move {
+            turn_origin::with_origin(
+                meet_origin(),
+                APPROVAL_IN_CALL_CONTEXT.scope(
+                    in_call_ctx(),
+                    g.intercept("composio", "send email", serde_json::json!({})),
+                ),
+            )
+            .await
+        });
+
+        let request_id = loop {
+            if let Some(r) = gate.pending_for_meeting("meet-1") {
+                break r;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        };
+
+        gate.decide(&request_id, ApprovalDecision::Deny).unwrap();
+
+        let outcome = handle.await.unwrap();
+        match outcome {
+            GateOutcome::Deny { reason } => assert!(reason.contains("composio")),
+            other => panic!("expected deny, got {other:?}"),
+        }
+        assert!(gate.pending_for_meeting("meet-1").is_none());
+    }
+
+    #[tokio::test]
+    async fn external_channel_without_in_call_ctx_has_no_meeting_mapping() {
+        // Plain external-channel turns (telegram, discord) must not gain a
+        // voice surface: no in-call context → no meeting mapping. Uses the
+        // 2s test TTL so the parked future deny-resolves quickly.
+        let (gate, _dir) = test_gate();
+        let gate = Arc::new(gate);
+
+        let g = gate.clone();
+        let handle = tokio::spawn(async move {
+            turn_origin::with_origin(
+                meet_origin(),
+                g.intercept("composio", "send email", serde_json::json!({})),
+            )
+            .await
+        });
+
+        // Wait for the row to park, then confirm no meeting mapping exists.
+        loop {
+            if !gate.list_pending().unwrap().is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(gate.pending_for_meeting("meet-1").is_none());
+
+        // TTL-deny is the expected terminal state.
+        let outcome = handle.await.unwrap();
+        assert!(matches!(outcome, GateOutcome::Deny { .. }));
     }
 
     #[tokio::test]

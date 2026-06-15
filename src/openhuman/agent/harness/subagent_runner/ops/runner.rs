@@ -696,6 +696,7 @@ async fn run_typed_mode(
         handoff_cache.as_deref(),
         parent,
         definition.iteration_policy == IterationPolicy::Extended,
+        options.run_queue.clone(),
     ))
     .await?;
 

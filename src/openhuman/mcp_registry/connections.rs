@@ -18,11 +18,105 @@ use std::sync::{Arc, OnceLock};
 use serde_json::Value;
 use tokio::sync::RwLock;
 
-use crate::openhuman::config::Config;
+use crate::openhuman::config::{Config, HttpHeader, McpAuthConfig};
 use crate::openhuman::mcp_client::{McpHttpClient, McpRemoteTool, McpStdioClient};
 
 use super::store;
 use super::types::{ConnStatus, InstalledServer, McpTool, ServerStatus, Transport};
+
+/// Build a static HTTP auth config from an installed HTTP-remote server's
+/// stored env values. Each non-empty entry is treated as a request header
+/// (key = header name, value = the user-supplied secret) per the registry's
+/// declared `remotes[].headers`. ALL such headers are applied — a server that
+/// authenticates with more than one header (e.g. a client key + client secret)
+/// gets every header on the dial, not just the first. `__`-prefixed keys are
+/// internal bookkeeping (e.g. the OAuth refresh bundle) and are never sent.
+/// Returns [`McpAuthConfig::None`] when nothing usable is stored — e.g.
+/// OAuth-only servers, which then surface their 401 challenge at `initialize`.
+fn build_http_auth(env: &[(String, String)]) -> McpAuthConfig {
+    let headers: Vec<HttpHeader> = env
+        .iter()
+        .filter(|(k, v)| !k.starts_with("__") && !v.trim().is_empty())
+        .map(|(name, value)| HttpHeader {
+            name: name.clone(),
+            value: value.clone(),
+        })
+        .collect();
+    match headers.len() {
+        0 => McpAuthConfig::None,
+        // A single header keeps the simple `Header` variant (back-compat).
+        1 => {
+            let h = headers.into_iter().next().expect("len checked == 1");
+            McpAuthConfig::Header {
+                name: h.name,
+                value: h.value,
+            }
+        }
+        // Multiple headers are ALL sent (multi-header remote auth).
+        _ => McpAuthConfig::Headers { headers },
+    }
+}
+
+/// Follow redirects on `url` (unauthenticated) and return the final resolved
+/// URL, so the authenticated MCP dial can target it directly.
+///
+/// HTTP clients strip the `Authorization` header across a **cross-origin**
+/// redirect (a security default), so a server published behind a redirecting
+/// vanity host (e.g. `sh.inference.ac` -> `api.inference.sh/mcp`) would never
+/// receive its token. Resolving the final URL here means the authenticated
+/// request has no redirect to strip. The final status (often 401/405 from the
+/// real endpoint to an unauthenticated GET) is irrelevant — we only read
+/// `resp.url()`. Returns `None` on any error; the caller falls back to the
+/// original URL, and non-redirecting servers resolve to themselves (no-op).
+async fn resolve_final_url(url: &str) -> Option<String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .build()
+        .ok()?;
+    match client.get(url).send().await {
+        Ok(resp) => Some(resp.url().to_string()),
+        Err(e) => {
+            tracing::debug!("[mcp-registry] redirect resolution failed for {url}: {e}");
+            None
+        }
+    }
+}
+
+/// Decide which URL to dial WITH the user's stored credentials, given the
+/// original install URL and the redirect-resolved final URL.
+///
+/// `resolve_final_url` follows redirects unauthenticated, so a vanity host can
+/// legitimately resolve cross-origin to its real API (e.g. `sh.inference.ac`
+/// -> `api.inference.sh`). But blindly replaying stored auth headers to *any*
+/// redirect target also lets a redirecting / compromised host retarget the
+/// token to a different origin. As a guard we only honor a **cross-origin**
+/// redirect for the authenticated dial when the final origin is **HTTPS** (TLS
+/// authenticates the host and prevents a cleartext/downgrade leak); otherwise
+/// we fall back to the original URL, where the HTTP client's own cross-origin
+/// `Authorization` stripping protects the token. Same-origin redirects are
+/// always honored. (Pinning the resolved origin at install time would harden
+/// this further against a same-scheme HTTPS retarget — tracked as follow-up.)
+fn credential_safe_dial_url(original: &str, resolved: String) -> String {
+    let (Ok(o), Ok(r)) = (
+        reqwest::Url::parse(original),
+        reqwest::Url::parse(&resolved),
+    ) else {
+        return original.to_string();
+    };
+    let same_origin = o.scheme() == r.scheme()
+        && o.host_str() == r.host_str()
+        && o.port_or_known_default() == r.port_or_known_default();
+    if same_origin || r.scheme() == "https" {
+        resolved
+    } else {
+        tracing::warn!(
+            "[mcp-registry] refusing to replay credentials to a non-HTTPS cross-origin redirect target \
+             ({original} -> {resolved}); dialing the original url instead"
+        );
+        original.to_string()
+    }
+}
 
 // ── Connection record ────────────────────────────────────────────────────────
 
@@ -69,12 +163,36 @@ impl ActiveClient {
 struct Connection {
     client: ActiveClient,
     tools: RwLock<Vec<McpTool>>,
+    /// Stable registry identity, stamped at connect time so a connected
+    /// overview can name + describe servers without re-reading the install
+    /// store (which needs `&Config`). Lets sync, config-free callers — e.g.
+    /// the orchestrator prompt builder — list connected servers by name and
+    /// description.
+    qualified_name: String,
+    display_name: String,
+    description: Option<String>,
 }
 
 impl Connection {
     async fn tools_snapshot(&self) -> Vec<McpTool> {
         self.tools.read().await.clone()
     }
+}
+
+/// One connected server's identity + advertised tools, for prompt-surface
+/// discovery (the orchestrator's "## Connected MCP Servers" block). Sourced
+/// entirely from the live connection map — no `Config`, no store read.
+#[derive(Debug, Clone)]
+pub struct ConnectedServerOverview {
+    pub server_id: String,
+    pub qualified_name: String,
+    pub display_name: String,
+    /// Short registry description — the primary capability hint surfaced in
+    /// the orchestrator prompt (mirrors Composio's per-toolkit description).
+    pub description: Option<String>,
+    /// Advertised tools — retained for a tool-count fallback when a server
+    /// has no description, and for any caller that wants the full list.
+    pub tools: Vec<McpTool>,
 }
 
 // ── Global registry ──────────────────────────────────────────────────────────
@@ -185,12 +303,41 @@ async fn connect_inner(config: &Config, server: &InstalledServer) -> anyhow::Res
                     server.server_id
                 );
             }
+            // Refresh an expired OAuth access token before dialing so the agent
+            // never connects with a stale token (silent refresh-token grant; a
+            // no-op for static-token / no-auth servers).
+            if let Err(e) = super::oauth::refresh_if_expired(config, &server.server_id).await {
+                tracing::warn!(
+                    "[mcp-registry] oauth refresh failed for server_id={} (using existing token): {e}",
+                    server.server_id
+                );
+            }
+            // Build static auth from the (possibly just-refreshed) stored env:
+            // each entry is a request header (key = header name, value = the
+            // secret, e.g. `Authorization` -> `Bearer <token>`), from the install
+            // form's declared `remotes[].headers` or a captured OAuth token.
+            let env_now: Vec<(String, String)> = store::load_env_values(config, &server.server_id)
+                .unwrap_or_default()
+                .into_iter()
+                .collect();
+            let auth = build_http_auth(&env_now);
+            // Resolve redirects up-front and dial the FINAL url directly. A
+            // server published behind a redirecting vanity host (e.g.
+            // `sh.inference.ac` -> `api.inference.sh/mcp`) would otherwise lose
+            // its `Authorization` header: HTTP clients strip auth across a
+            // cross-origin redirect, so the token never reaches the real
+            // endpoint. Resolving here means the authenticated request goes
+            // straight to the final URL with no redirect to strip it.
+            let resolved = resolve_final_url(url).await.unwrap_or_else(|| url.clone());
+            let dial_url = credential_safe_dial_url(url, resolved);
+            if dial_url != *url {
+                tracing::info!(
+                    "[mcp-registry] resolved redirecting url {url} -> {dial_url} for authenticated dial"
+                );
+            }
             // 30s timeout matches setup_ops::test_connection so install
-            // and runtime see the same connect-failure deadlines. Env
-            // values for HTTP-remote installs (typically OAuth tokens)
-            // ride through the McpHttpClient's own auth config — out of
-            // scope for this dispatch.
-            let http = Arc::new(McpHttpClient::new(url.clone(), 30));
+            // and runtime see the same connect-failure deadlines.
+            let http = Arc::new(McpHttpClient::with_options(dial_url, 30, auth, identity));
             http.initialize().await?;
             ActiveClient::Http(http)
         }
@@ -207,6 +354,9 @@ async fn connect_inner(config: &Config, server: &InstalledServer) -> anyhow::Res
     let conn = Arc::new(Connection {
         client,
         tools: RwLock::new(tools.clone()),
+        qualified_name: server.qualified_name.clone(),
+        display_name: server.display_name.clone(),
+        description: server.description.clone(),
     });
 
     {
@@ -382,6 +532,49 @@ pub async fn all_connected_tools() -> Vec<(String, String, McpTool)> {
     out
 }
 
+/// Per-server overview of every currently-connected server: identity +
+/// advertised tools. Used to surface connected MCP capabilities in the
+/// orchestrator system prompt so it can route to `use_mcp_server` without
+/// the user naming the server. Config-free (reads only the live map).
+pub async fn connected_overview() -> Vec<ConnectedServerOverview> {
+    let snapshot: Vec<(String, Arc<Connection>)> = {
+        let map = connections().read().await;
+        map.iter()
+            .map(|(id, c)| (id.clone(), Arc::clone(c)))
+            .collect()
+    };
+
+    let mut out = Vec::with_capacity(snapshot.len());
+    for (server_id, c) in snapshot {
+        out.push(ConnectedServerOverview {
+            server_id,
+            qualified_name: c.qualified_name.clone(),
+            display_name: c.display_name.clone(),
+            description: c.description.clone(),
+            tools: c.tools_snapshot().await,
+        });
+    }
+    // Stable order so the prompt (and its KV-cache prefix) doesn't churn
+    // across turns purely from HashMap iteration order.
+    out.sort_by(|a, b| a.qualified_name.cmp(&b.qualified_name));
+    out
+}
+
+/// Snapshot the tools exposed by a single currently-connected server.
+///
+/// Returns `None` when `server_id` is not in the live connection map (the
+/// caller should connect first); `Some(vec![])` when connected but the
+/// server advertised no tools. This is the cheap discovery primitive the
+/// agent uses to learn a connected server's tool names + input schemas
+/// without forcing a reconnect/handshake (which [`connect`] would do).
+pub async fn tools_for(server_id: &str) -> Option<Vec<McpTool>> {
+    let conn = {
+        let map = connections().read().await;
+        map.get(server_id).cloned()
+    }?;
+    Some(conn.tools_snapshot().await)
+}
+
 // ── Boundary conversion ──────────────────────────────────────────────────────
 
 fn into_registry_tool(remote: McpRemoteTool) -> McpTool {
@@ -400,9 +593,118 @@ fn into_registry_tool(remote: McpRemoteTool) -> McpTool {
 mod tests {
     // Live-connection tests require a real MCP subprocess and live in
     // tests/json_rpc_e2e.rs. Keep this slot for sync helper tests.
+    use super::{build_http_auth, credential_safe_dial_url};
+    use crate::openhuman::config::McpAuthConfig;
+
+    fn kv(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
 
     #[test]
-    fn placeholder_so_module_compiles_under_test_cfg() {
-        // Intentionally empty.
+    fn build_http_auth_none_when_empty_or_blank() {
+        assert!(matches!(build_http_auth(&[]), McpAuthConfig::None));
+        assert!(matches!(
+            build_http_auth(&kv(&[("Authorization", "   ")])),
+            McpAuthConfig::None
+        ));
+    }
+
+    #[test]
+    fn build_http_auth_applies_all_headers_when_multiple() {
+        // A server requiring more than one header (e.g. a client key + client
+        // secret) must get EVERY header on the dial — not just the first.
+        // Values are sent verbatim (e.g. an already-`Bearer ...` Authorization).
+        let auth = build_http_auth(&kv(&[
+            ("X-Client-Key", "abc"),
+            ("authorization", "Bearer adv_sk_123"),
+        ]));
+        match auth {
+            McpAuthConfig::Headers { headers } => {
+                assert_eq!(
+                    headers.len(),
+                    2,
+                    "both headers must be applied: {headers:?}"
+                );
+                let key = headers
+                    .iter()
+                    .find(|h| h.name == "X-Client-Key")
+                    .expect("X-Client-Key present");
+                assert_eq!(key.value, "abc");
+                let auth = headers
+                    .iter()
+                    .find(|h| h.name.eq_ignore_ascii_case("authorization"))
+                    .expect("authorization present");
+                assert_eq!(auth.value, "Bearer adv_sk_123");
+            }
+            other => panic!("expected multi-header Headers auth, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn credential_safe_dial_url_guards_cross_origin_credential_replay() {
+        // Same-origin redirect → honored (e.g. path rewrite).
+        assert_eq!(
+            credential_safe_dial_url("https://a.example/mcp", "https://a.example/v2/mcp".into()),
+            "https://a.example/v2/mcp"
+        );
+        // Cross-origin but HTTPS (vanity host → real API) → honored: this is the
+        // legitimate inference.sh-style flow.
+        assert_eq!(
+            credential_safe_dial_url(
+                "https://sh.inference.ac/mcp",
+                "https://api.inference.sh/mcp".into()
+            ),
+            "https://api.inference.sh/mcp"
+        );
+        // Cross-origin DOWNGRADE to http → refused: falls back to the original
+        // url so creds are not replayed cleartext to a redirect-chosen origin.
+        assert_eq!(
+            credential_safe_dial_url("https://good.example/mcp", "http://evil.example/mcp".into()),
+            "https://good.example/mcp"
+        );
+    }
+
+    #[test]
+    fn build_http_auth_single_header_uses_header_variant() {
+        // Exactly one usable header keeps the simple `Header` variant.
+        match build_http_auth(&kv(&[("authorization", "Bearer t")])) {
+            McpAuthConfig::Header { name, value } => {
+                assert!(name.eq_ignore_ascii_case("authorization"));
+                assert_eq!(value, "Bearer t");
+            }
+            other => panic!("expected single Header auth, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_http_auth_skips_internal_underscore_keys() {
+        // The OAuth refresh bundle (`__oauth__`) must never be sent as a header.
+        assert!(matches!(
+            build_http_auth(&kv(&[("__oauth__", "{\"refresh_token\":\"r\"}")])),
+            McpAuthConfig::None
+        ));
+        // Authorization still applies alongside an internal key.
+        match build_http_auth(&kv(&[("__oauth__", "{}"), ("Authorization", "Bearer t")])) {
+            McpAuthConfig::Header { name, value } => {
+                assert!(name.eq_ignore_ascii_case("authorization"));
+                assert_eq!(value, "Bearer t");
+            }
+            other => panic!("expected Header auth, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_http_auth_single_custom_header() {
+        let auth = build_http_auth(&kv(&[("X-API-Key", "secret")]));
+        match auth {
+            McpAuthConfig::Header { name, value } => {
+                assert_eq!(name, "X-API-Key");
+                assert_eq!(value, "secret");
+            }
+            other => panic!("expected Header auth, got {other:?}"),
+        }
     }
 }

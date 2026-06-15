@@ -6,9 +6,7 @@ import {
   openhumanUpdateAutonomySettings,
 } from '../../../utils/tauriCommands/config';
 import Button from '../../ui/Button';
-import SettingsHeader from '../components/SettingsHeader';
 import { SettingsNumberField, SettingsRow, SettingsSection, SettingsStatusLine } from '../controls';
-import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 // u32::MAX — the Rust default and our sentinel for "no limit". Inputs at or
 // above this value render as "Unlimited" and clamp to UNLIMITED on save.
@@ -34,15 +32,15 @@ type Status =
   | { kind: 'error'; message: string };
 
 /**
- * Settings panel under Developer Options for editing the agent's
- * max_actions_per_hour rate-limit. Loads the current value via
- * openhumanGetAutonomySettings on mount; saving writes through
+ * Headerless section for editing the agent's max_actions_per_hour rate-limit,
+ * rendered inside AgentAccessPanel (formerly the standalone /settings/autonomy
+ * page — that slug now redirects to /settings/agent-access). Loads the current
+ * value via openhumanGetAutonomySettings on mount; saving writes through
  * openhumanUpdateAutonomySettings and persists to the user's config.toml.
  * New value applies to the next agent session.
  */
-const AutonomyPanel = () => {
+const AutonomyRateLimitSection = () => {
   const { t } = useT();
-  const { navigateBack, breadcrumbs } = useSettingsNavigation();
   const [committed, setCommitted] = useState<number | null>(null);
   const [draft, setDraft] = useState<string>('');
   const [status, setStatus] = useState<Status>({ kind: 'loading' });
@@ -101,86 +99,76 @@ const AutonomyPanel = () => {
     status.kind === 'error' ? `${t('autonomy.statusFailed')}: ${status.message}` : null;
 
   return (
-    <div className="z-10 relative">
-      <SettingsHeader
-        title={t('autonomy.title')}
-        showBackButton
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
+    <SettingsSection
+      title={t('autonomy.maxActionsLabel')}
+      description={t('autonomy.maxActionsHelp')}>
+      <SettingsRow
+        stacked
+        control={
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <SettingsNumberField
+                id="autonomy-max-actions"
+                value={draft}
+                onChange={v => {
+                  setDraft(v);
+                  if (status.kind === 'saved' || status.kind === 'error') {
+                    setStatus({ kind: 'idle' });
+                  }
+                }}
+                onCommit={() => {}}
+                unit={t('autonomy.maxActionsLabel')}
+                min={MIN}
+                max={MAX}
+                disabled={status.kind === 'loading' || status.kind === 'saving'}
+                invalid={!isValid && trimmed !== ''}
+                aria-label={t('autonomy.maxActionsLabel')}
+              />
+              <Button
+                type="button"
+                variant="primary"
+                size="xs"
+                onClick={() => void onSave()}
+                disabled={!canSave}>
+                {status.kind === 'saving' ? t('autonomy.statusSaving') : t('common.save')}
+              </Button>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              {PRESETS.map(p => (
+                <Button
+                  key={p.value}
+                  type="button"
+                  variant="ghost"
+                  size="xs"
+                  onClick={() => applyPreset(p.value)}>
+                  {p.labelKey ? t(p.labelKey) : p.label}
+                </Button>
+              ))}
+            </div>
+
+            {!isValid && trimmed !== '' && (
+              <p className="text-xs text-coral-600 dark:text-coral-300">
+                {t('autonomy.invalidIntegerMsg')}
+              </p>
+            )}
+            {isValid && parsed === UNLIMITED && (
+              <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                {t('autonomy.unlimitedNote')}
+              </p>
+            )}
+
+            <SettingsStatusLine
+              saving={status.kind === 'saving'}
+              savedNote={savedNote}
+              error={errorMsg}
+              savingLabel={t('autonomy.statusSaving')}
+            />
+          </div>
+        }
       />
-      <div className="p-4 pt-2 space-y-5">
-        <SettingsSection
-          title={t('autonomy.maxActionsLabel')}
-          description={t('autonomy.maxActionsHelp')}>
-          <SettingsRow
-            stacked
-            control={
-              <div className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <SettingsNumberField
-                    id="autonomy-max-actions"
-                    value={draft}
-                    onChange={v => {
-                      setDraft(v);
-                      if (status.kind === 'saved' || status.kind === 'error') {
-                        setStatus({ kind: 'idle' });
-                      }
-                    }}
-                    onCommit={() => {}}
-                    unit={t('autonomy.maxActionsLabel')}
-                    min={MIN}
-                    max={MAX}
-                    disabled={status.kind === 'loading' || status.kind === 'saving'}
-                    invalid={!isValid && trimmed !== ''}
-                    aria-label={t('autonomy.maxActionsLabel')}
-                  />
-                  <Button
-                    type="button"
-                    variant="primary"
-                    size="xs"
-                    onClick={() => void onSave()}
-                    disabled={!canSave}>
-                    {status.kind === 'saving' ? t('autonomy.statusSaving') : t('common.save')}
-                  </Button>
-                </div>
-
-                <div className="flex flex-wrap gap-2">
-                  {PRESETS.map(p => (
-                    <Button
-                      key={p.value}
-                      type="button"
-                      variant="ghost"
-                      size="xs"
-                      onClick={() => applyPreset(p.value)}>
-                      {p.labelKey ? t(p.labelKey) : p.label}
-                    </Button>
-                  ))}
-                </div>
-
-                {!isValid && trimmed !== '' && (
-                  <p className="text-xs text-coral-600 dark:text-coral-300">
-                    {t('autonomy.invalidIntegerMsg')}
-                  </p>
-                )}
-                {isValid && parsed === UNLIMITED && (
-                  <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                    {t('autonomy.unlimitedNote')}
-                  </p>
-                )}
-
-                <SettingsStatusLine
-                  saving={status.kind === 'saving'}
-                  savedNote={savedNote}
-                  error={errorMsg}
-                  savingLabel={t('autonomy.statusSaving')}
-                />
-              </div>
-            }
-          />
-        </SettingsSection>
-      </div>
-    </div>
+    </SettingsSection>
   );
 };
 
-export default AutonomyPanel;
+export default AutonomyRateLimitSection;

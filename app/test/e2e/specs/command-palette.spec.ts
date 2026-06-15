@@ -132,11 +132,14 @@ describe('Command palette', () => {
       { timeout: 5000, interval: 200, timeoutMsg: 'cmdk items did not render' }
     );
 
+    // Labels mirror app/src/lib/commands/globalActions.ts. The IA rename
+    // retired "Go to Intelligence"/"Go to Skills" in favour of
+    // "Go to Knowledge & Memory"/"Go to Connections".
     const seedLabels = [
       'Go Home',
       'Go to Chat',
-      'Go to Intelligence',
-      'Go to Skills',
+      'Go to Connections',
+      'Go to Knowledge & Memory',
       'Open Settings',
     ];
     for (const label of seedLabels) {

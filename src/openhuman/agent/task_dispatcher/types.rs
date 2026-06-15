@@ -19,11 +19,17 @@ pub(super) struct ActiveRun {
 
 /// A resolved executor: which built-in agent definition to build, an optional
 /// system-prompt suffix carrying a personality identity or skill guidelines,
-/// and a label for logs/telemetry.
+/// the resolved agent profile (when the handle is a personality) so its
+/// per-profile allowlists are enforced, and a label for logs/telemetry.
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct ResolvedExecutor {
     pub(super) agent_id: String,
     pub(super) prompt_suffix: Option<String>,
+    /// The resolved profile for personality executors. `None` for skill /
+    /// built-in / default executors → unrestricted (legacy behaviour). When
+    /// present, the autonomous run applies the profile's tool/skill/MCP/
+    /// connector and memory-source gates, not just its SOUL/MEMORY text.
+    pub(super) profile: Option<crate::openhuman::profiles::AgentProfile>,
     pub(super) label: String,
 }
 
@@ -32,6 +38,7 @@ impl ResolvedExecutor {
         Self {
             agent_id: "orchestrator".to_string(),
             prompt_suffix: None,
+            profile: None,
             label: "default".to_string(),
         }
     }

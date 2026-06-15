@@ -862,12 +862,45 @@ fn build_responses_prompt_preserves_multi_turn_history() {
     assert_eq!(input[1].role, "assistant");
     assert_eq!(input[1].content[0].kind, "output_text");
     assert_eq!(input[1].content[0].text, "ack 1");
+    // A `tool` turn normalizes to the `assistant` role, so its content part
+    // MUST be `output_text` — the Responses API rejects `input_text` on an
+    // assistant item (Sentry TAURI-RUST-8FQ / GH #3624).
     assert_eq!(input[2].role, "assistant");
-    assert_eq!(input[2].content[0].kind, "input_text");
+    assert_eq!(input[2].content[0].kind, "output_text");
     assert_eq!(input[2].content[0].text, "{\"result\":\"ok\"}");
     assert_eq!(input[3].role, "user");
     assert_eq!(input[3].content[0].kind, "input_text");
     assert_eq!(input[3].content[0].text, "step 2");
+}
+
+/// Regression for Sentry TAURI-RUST-8FQ / GH #3624: the Responses API only
+/// accepts `output_text`/`refusal` for assistant items. `normalize_responses_role`
+/// folds `tool` into `assistant`, so the content kind must follow the normalized
+/// role — never the raw one. No assistant-role item may carry `input_text`.
+#[test]
+fn build_responses_prompt_tool_role_uses_output_text() {
+    let messages = vec![
+        ChatMessage::assistant("calling a tool"),
+        ChatMessage::tool("{\"result\":\"ok\"}"),
+        ChatMessage::user("thanks"),
+    ];
+
+    let (_instructions, input) = build_responses_prompt(&messages);
+
+    // The tool turn folds to assistant and must carry output_text.
+    assert_eq!(input[1].role, "assistant");
+    assert_eq!(input[1].content[0].kind, "output_text");
+
+    // Invariant: an assistant-role item never carries input_text.
+    for item in &input {
+        if item.role == "assistant" {
+            assert_eq!(
+                item.content[0].kind, "output_text",
+                "assistant-role item must use output_text, got {}",
+                item.content[0].kind
+            );
+        }
+    }
 }
 
 #[tokio::test]

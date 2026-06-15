@@ -176,7 +176,10 @@ describe('Webhook tunnel CRUD (UI + core RPC + mock backend)', () => {
   });
 
   it('Webhooks page loads (ComposeIO trigger history surface)', async () => {
-    await navigateViaHash('/settings/webhooks-triggers');
+    // The webhooks/trigger-history surface was merged into the Integrations
+    // settings page under the `#webhooks` tab; the legacy /settings/webhooks-triggers
+    // slug redirects to /settings/integrations#webhooks (see Settings.tsx).
+    await navigateViaHash('/settings/integrations#webhooks');
 
     await browser.waitUntil(
       async () => {
@@ -191,7 +194,7 @@ describe('Webhook tunnel CRUD (UI + core RPC + mock backend)', () => {
     );
 
     const hash = await browser.execute(() => window.location.hash);
-    expect(String(hash)).toContain('/settings/webhooks-triggers');
+    expect(String(hash)).toContain('/settings/integrations');
 
     const visible =
       (await textExists('ComposeIO Triggers')) ||
