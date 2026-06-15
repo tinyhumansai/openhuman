@@ -69,10 +69,14 @@ impl CdpConn {
     /// so we drop events belonging to other sessions.
     ///
     /// Returns when the channel closes (the transport has been
-    /// forgotten) or on an unrecoverable error. `Lagged` is treated as
-    /// a continuation signal — the caller's idle watchdog will
-    /// eventually time out the session and the outer reconnect loop
-    /// re-attaches.
+    /// forgotten) or on an unrecoverable error. `Lagged` is logged and
+    /// treated as a continuation signal: the pump keeps draining rather
+    /// than tearing down the session, so a burst that overflows
+    /// `EVENT_CHANNEL_CAP` drops the skipped frames without re-syncing.
+    /// Long-lived consumers (e.g. the Discord scanner) do not yet have an
+    /// idle watchdog to time out a stalled/destroyed page target and force
+    /// a re-attach — that self-healing path is tracked as a fast-follow in
+    /// #3693.
     pub async fn pump_events<F>(&mut self, session_id: &str, mut on_event: F) -> Result<(), String>
     where
         F: FnMut(&str, &Value),
