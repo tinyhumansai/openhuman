@@ -68,6 +68,21 @@ describe('WorktreeActions', () => {
     expect(onRemoved).toHaveBeenCalledWith(PATH);
   });
 
+  it('resets the removing state after success when no onRemoved parent drops the row', async () => {
+    // Inline timeline use (ToolTimelineBlock) renders without onRemoved, so the
+    // component is never unmounted by a parent — it must reset its own state or
+    // the button stays stuck on "worktree.removing" with disabled forever.
+    const user = userEvent.setup();
+    render(<WorktreeActions path={PATH} isDirty={false} />);
+    await user.click(screen.getByTestId('worktree-remove'));
+    await waitFor(() => expect(mockRemove).toHaveBeenCalledWith(PATH, false));
+    await waitFor(() => {
+      const btn = screen.getByTestId('worktree-remove');
+      expect(btn).toHaveTextContent('worktree.action.remove');
+      expect(btn).not.toBeDisabled();
+    });
+  });
+
   it('preserve cancels the dirty-removal confirm without removing', async () => {
     const user = userEvent.setup();
     render(<WorktreeActions path={PATH} isDirty />);

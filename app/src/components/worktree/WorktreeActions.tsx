@@ -91,7 +91,17 @@ export default function WorktreeActions({
       try {
         await worktreeApi.remove(path, force);
         log('removed path=%s force=%s', path, force);
-        onRemoved?.(path);
+        // The parent (e.g. the Worktrees panel) drops the row on success and
+        // this component unmounts. But inline in the chat timeline
+        // (`ToolTimelineBlock`) there is no `onRemoved`, so nothing unmounts
+        // us — reset local state here or the row stays stuck on "Removing…"
+        // with the button disabled forever even though the checkout is gone.
+        if (onRemoved) {
+          onRemoved(path);
+        } else {
+          setRemoving(false);
+          setConfirmRemove(false);
+        }
       } catch (err) {
         log('remove failed %O', err);
         setError(t('worktree.removeFailed'));
