@@ -487,6 +487,9 @@ impl Tool for SpawnParallelAgentsTool {
                     elapsed_ms,
                     iterations,
                     output,
+                    worktree_path,
+                    changed_files,
+                    dirty_status,
                     ..
                 } => {
                     tracing::debug!(
@@ -516,6 +519,9 @@ impl Tool for SpawnParallelAgentsTool {
                                     .as_ref()
                                     .map(|s| s.chars().count())
                                     .unwrap_or(0),
+                                worktree_path: worktree_path.clone(),
+                                changed_files: changed_files.clone(),
+                                dirty_status: *dirty_status,
                             })
                             .await
                         {
