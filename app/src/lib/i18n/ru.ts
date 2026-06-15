@@ -3063,6 +3063,16 @@ const messages: TranslationMap = {
   'worktree.panel.overlapsTitle': 'Пересекающиеся изменения',
   'worktree.panel.overlapHint':
     'Эти файлы были изменены более чем одним worktree — согласуйте их перед слиянием.',
+  'intelligence.agentWork.action.stop': 'Остановить',
+  'intelligence.agentWork.action.retry': 'Повторить',
+  'intelligence.agentWork.action.continue': 'Продолжить',
+  'intelligence.agentWork.action.followUp': 'Уточнить',
+  'intelligence.agentWork.action.send': 'Отправить',
+  'intelligence.agentWork.action.cancel': 'Отмена',
+  'intelligence.agentWork.action.continuePlaceholder':
+    'Ответьте, чтобы разблокировать этого агента…',
+  'intelligence.agentWork.action.followUpPlaceholder': 'Отправьте уточняющую инструкцию…',
+  'intelligence.agentWork.action.failed': 'Не удалось выполнить действие',
   'intelligence.teams.subtitle':
     'Скоординированные команды агентов и задачи, которые они разделяют.',
   'intelligence.teams.loading': 'Загрузка команд…',

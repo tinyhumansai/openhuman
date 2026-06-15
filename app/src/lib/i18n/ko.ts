@@ -3014,6 +3014,16 @@ const messages: TranslationMap = {
   'worktree.panel.overlapsTitle': '겹치는 변경 사항',
   'worktree.panel.overlapHint':
     '이 파일들은 둘 이상의 워크트리에서 변경되었습니다 — 병합하기 전에 조정하세요.',
+  'intelligence.agentWork.action.stop': '중지',
+  'intelligence.agentWork.action.retry': '다시 시도',
+  'intelligence.agentWork.action.continue': '계속',
+  'intelligence.agentWork.action.followUp': '후속 조치',
+  'intelligence.agentWork.action.send': '보내기',
+  'intelligence.agentWork.action.cancel': '취소',
+  'intelligence.agentWork.action.continuePlaceholder':
+    '이 에이전트의 차단을 해제하려면 답장하세요…',
+  'intelligence.agentWork.action.followUpPlaceholder': '후속 지시를 보내세요…',
+  'intelligence.agentWork.action.failed': '작업 실패',
   'intelligence.teams.subtitle': '조율된 에이전트 팀과 그들이 공유하는 작업.',
   'intelligence.teams.loading': '팀 로딩 중…',
   'intelligence.teams.failedToLoad': '팀을 불러오지 못했습니다',
