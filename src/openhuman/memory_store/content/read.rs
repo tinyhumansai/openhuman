@@ -1,10 +1,73 @@
 //! Read and verify chunk and summary `.md` files from the content store.
 
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 use super::atomic::sha256_hex;
 use super::compose::split_front_matter;
 use crate::openhuman::memory::util::redact::redact;
+
+/// Resolve a DB-stored relative forward-slash path against `content_root`,
+/// rejecting any traversal (`..`), absolute, or non-normal component.
+///
+/// The `raw_refs` / `content_path` values are treated as **untrusted** at the
+/// read boundary: although the write path slugifies/sanitizes them, a future
+/// ingest source or DB tamper could store `../../etc/passwd` and turn this
+/// reader into an arbitrary file-disclosure primitive that feeds the LLM
+/// context. We therefore (1) reject any `..`/absolute/prefix component before
+/// touching disk and (2) — when the target exists — canonicalize the resolved
+/// path and assert it stays under the canonicalized `content_root`.
+fn resolve_within_content_root(content_root: &Path, rel_path: &str) -> anyhow::Result<PathBuf> {
+    // Reject absolute inputs outright. A leading `/` (or a Windows drive/UNC
+    // prefix) would otherwise split into an empty leading component that gets
+    // silently skipped, treating `/etc/passwd` as a relative path under the
+    // content root rather than flagging the obvious traversal attempt.
+    if Path::new(rel_path).is_absolute() {
+        return Err(anyhow::anyhow!(
+            "[content_store::read] rejected absolute path in path_hash={}",
+            redact(rel_path),
+        ));
+    }
+
+    let mut abs = content_root.to_path_buf();
+    for component in rel_path.split('/') {
+        // Skip empty components from leading/double/trailing slashes.
+        if component.is_empty() || component == "." {
+            continue;
+        }
+        // Reject anything that is not a plain file/dir name: `..`, absolute
+        // roots, Windows prefixes, etc.
+        match Path::new(component).components().next() {
+            Some(Component::Normal(_)) => abs.push(component),
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "[content_store::read] rejected unsafe path component in path_hash={}",
+                    redact(rel_path),
+                ));
+            }
+        }
+    }
+
+    // Defense in depth: if the file exists, canonicalize and confirm
+    // containment. (canonicalize requires the path to exist, so this is a
+    // no-op for not-yet-created files — the component check above already
+    // blocks traversal in that case.)
+    if abs.exists() {
+        let canon_root = content_root
+            .canonicalize()
+            .unwrap_or_else(|_| content_root.to_path_buf());
+        let canon_abs = abs
+            .canonicalize()
+            .map_err(|e| anyhow::anyhow!("[content_store::read] canonicalize failed: {e}"))?;
+        if !canon_abs.starts_with(&canon_root) {
+            return Err(anyhow::anyhow!(
+                "[content_store::read] resolved path escapes content_root for path_hash={}",
+                redact(rel_path),
+            ));
+        }
+    }
+
+    Ok(abs)
+}
 
 /// The result of reading a chunk file from disk.
 pub struct ChunkFileContents {
@@ -175,14 +238,9 @@ pub fn read_chunk_body(
     }
 
     let content_root = config.memory_tree_content_root();
-    // Reconstruct the absolute path from the stored relative forward-slash path.
-    let abs_path = {
-        let mut p = content_root.clone();
-        for component in rel_path.split('/') {
-            p.push(component);
-        }
-        p
-    };
+    // Reconstruct the absolute path from the stored relative forward-slash
+    // path, rejecting any traversal and confirming containment.
+    let abs_path = resolve_within_content_root(&content_root, &rel_path)?;
 
     log::debug!(
         "[content_store::read] read_chunk_body chunk_id={} path_hash={}",
@@ -237,10 +295,20 @@ fn read_chunk_body_from_raw(
     let content_root = config.memory_tree_content_root();
     let mut parts: Vec<String> = Vec::with_capacity(refs.len());
     for r in refs {
-        let mut abs = content_root.clone();
-        for component in r.path.split('/') {
-            abs.push(component);
-        }
+        // Treat the DB-stored ref path as untrusted: reject traversal /
+        // absolute paths and confirm the resolved path stays under
+        // content_root before reading. Skip (don't fail the whole chunk) on a
+        // rejected ref, matching the best-effort policy for per-file errors.
+        let abs = match resolve_within_content_root(&content_root, &r.path) {
+            Ok(p) => p,
+            Err(e) => {
+                log::warn!(
+                    "[content_store::read] raw_ref rejected path_hash={} err={e}",
+                    redact(&r.path)
+                );
+                continue;
+            }
+        };
         let bytes = match std::fs::read(&abs) {
             Ok(b) => b,
             Err(e) => {
@@ -300,13 +368,7 @@ pub fn read_summary_body(
     let (rel_path, expected_sha256) = pointers;
 
     let content_root = config.memory_tree_content_root();
-    let abs_path = {
-        let mut p = content_root.clone();
-        for component in rel_path.split('/') {
-            p.push(component);
-        }
-        p
-    };
+    let abs_path = resolve_within_content_root(&content_root, &rel_path)?;
 
     log::debug!(
         "[content_store::read] read_summary_body summary_id={} path_hash={}",
@@ -603,6 +665,55 @@ mod tests {
 
         let body = read_chunk_body_from_raw(&cfg, &refs).unwrap();
         assert_eq!(body, "bcd");
+    }
+
+    #[test]
+    fn read_chunk_body_from_raw_rejects_path_traversal() {
+        use crate::openhuman::memory_store::chunks::store::RawRef;
+
+        let dir = TempDir::new().unwrap();
+        let mut cfg = crate::openhuman::config::Config::default();
+        cfg.workspace_dir = dir.path().to_path_buf();
+
+        let content_root = cfg.memory_tree_content_root();
+        std::fs::create_dir_all(&content_root).unwrap();
+        std::fs::write(content_root.join("safe.txt"), "safe").unwrap();
+
+        // A secret sitting next to content_root that a traversal ref tries to
+        // reach. The traversal ref must be skipped, leaving only the safe body.
+        let outside = content_root.parent().unwrap().join("secret.txt");
+        std::fs::write(&outside, "TOP SECRET").unwrap();
+
+        let refs = vec![
+            RawRef {
+                path: "../secret.txt".into(),
+                start: 0,
+                end: None,
+            },
+            RawRef {
+                path: "safe.txt".into(),
+                start: 0,
+                end: None,
+            },
+        ];
+
+        let body = read_chunk_body_from_raw(&cfg, &refs).unwrap();
+        assert_eq!(body, "safe");
+        assert!(!body.contains("SECRET"));
+    }
+
+    #[test]
+    fn resolve_within_content_root_rejects_traversal_and_absolute() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+
+        assert!(resolve_within_content_root(root, "../escape.md").is_err());
+        assert!(resolve_within_content_root(root, "a/../../escape.md").is_err());
+        assert!(resolve_within_content_root(root, "/etc/passwd").is_err());
+
+        // Safe relative paths resolve correctly.
+        let ok = resolve_within_content_root(root, "sub/dir/file.md").unwrap();
+        assert_eq!(ok, root.join("sub").join("dir").join("file.md"));
     }
 
     #[test]

@@ -207,7 +207,21 @@ impl EmbeddingProvider for OpenAiEmbedding {
                     target: "openai::embed",
                     "[openai] embed error: status={status}, body={text}"
                 );
-                let message = format!("Embedding API error ({status}): {text}");
+                let mut message = format!("Embedding API error ({status}): {text}");
+                // A 404/405 means the base URL responded but exposes no
+                // embeddings route — the user pointed the Custom
+                // (OpenAI-compatible) provider at a chat-only endpoint (e.g.
+                // DeepSeek). Append an actionable remediation while PRESERVING
+                // the `Embedding API error (404…)` prefix that
+                // `observability::is_embedding_endpoint_absent` keys on, so the
+                // event is still demoted from Sentry. Host-agnostic text (no
+                // URL/credential echo). TAURI-RUST-5JR.
+                if matches!(status.as_u16(), 404 | 405) {
+                    message.push_str(
+                        " — this endpoint has no embeddings API; pick an \
+                         embeddings-capable provider in Settings → Memory",
+                    );
+                }
                 // Use `report_error_or_expected` so transient upstream HTTP
                 // failures (e.g. 429 Too Many Requests after retry cap) log a
                 // warning breadcrumb instead of firing a Sentry error event.

@@ -39,6 +39,9 @@ mod tests {
 
     #[test]
     fn defaults_to_cli_credentials_without_env() {
+        let _env = super::super::ENV_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let prev = std::env::var("ANTHROPIC_API_KEY").ok();
         std::env::remove_var("ANTHROPIC_API_KEY");
 

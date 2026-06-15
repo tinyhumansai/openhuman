@@ -5,7 +5,8 @@ import type { ToastNotification } from '../../../types/intelligence';
 import { MemorySourcesRegistry } from '../../intelligence/MemorySourcesRegistry';
 import { SyncAuditPanel } from '../../intelligence/SyncAuditPanel';
 import { ToastContainer } from '../../intelligence/Toast';
-import SettingsHeader from '../components/SettingsHeader';
+import PanelPage from '../../layout/PanelPage';
+import SettingsBackButton from '../components/SettingsBackButton';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 /**
@@ -22,7 +23,7 @@ import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
  */
 const MemorySyncPanel = () => {
   const { t } = useT();
-  const { navigateBack, breadcrumbs } = useSettingsNavigation();
+  const { navigateBack } = useSettingsNavigation();
   const [toasts, setToasts] = useState<ToastNotification[]>([]);
 
   const addToast = useCallback((toast: Omit<ToastNotification, 'id'>) => {
@@ -35,13 +36,11 @@ const MemorySyncPanel = () => {
   };
 
   return (
-    <div className="z-10 relative">
-      <SettingsHeader
-        title={t('settings.dataSync.title')}
-        showBackButton={true}
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
+    <PanelPage
+      className="z-10"
+      contentClassName=""
+      description={t('settings.dataSync.menuDesc')}
+      leading={<SettingsBackButton onBack={navigateBack} />}>
       <div className="p-4 space-y-4">
         <p className="text-sm text-neutral-500 dark:text-neutral-400">
           {t('settings.dataSync.description')}
@@ -55,7 +54,7 @@ const MemorySyncPanel = () => {
         </div>
       </div>
       <ToastContainer notifications={toasts} onRemove={removeToast} />
-    </div>
+    </PanelPage>
   );
 };
 

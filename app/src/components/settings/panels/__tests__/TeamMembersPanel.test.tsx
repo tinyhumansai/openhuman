@@ -61,6 +61,7 @@ vi.mock('../../hooks/useSettingsNavigation', () => ({
 }));
 
 vi.mock('../../components/SettingsHeader', () => ({ default: () => null }));
+vi.mock('../../components/SettingsBackButton', () => ({ default: () => null }));
 
 vi.mock('react-router-dom', () => ({
   useParams: () => ({ teamId: 'team-1' }),

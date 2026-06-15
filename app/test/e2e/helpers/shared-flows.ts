@@ -118,19 +118,44 @@ export async function clickFirstMatch(candidates, timeout = 5_000) {
 // Navigation helpers (JS hash-based — icon-only sidebar buttons)
 // ---------------------------------------------------------------------------
 
-/** Appium Mac2 cannot run W3C Execute Script in WKWebView — use sidebar labels instead. */
+/**
+ * Appium Mac2 cannot run W3C Execute Script in WKWebView — use sidebar labels
+ * instead.
+ *
+ * Current IA (bottom-tab bar, see app/src/config/navConfig.ts): the six tabs
+ * are Home, Chat, Human, Brain, Connections, Settings. The earlier
+ * "Assistant"/"Activity"/"Alerts" labels are gone. Only real tabs belong here;
+ * routes that redirect (e.g. /activity, /intelligence, /skills, /channels) are
+ * resolved through HASH_REDIRECTS below — they have no sidebar button.
+ */
 const HASH_TO_SIDEBAR_LABEL = {
-  // Phase 2/3 IA revamp: /skills → /connections, /intelligence → /activity
-  '/connections': 'Connections',
-  '/activity': 'Activity',
   '/home': 'Home',
-  '/chat': 'Assistant',
-  '/notifications': 'Alerts',
+  '/chat': 'Chat',
+  '/human': 'Human',
+  '/brain': 'Brain',
+  '/connections': 'Connections',
   '/settings': 'Settings',
-  // Back-compat: old routes redirect — keep entries so existing callers still work
-  '/skills': 'Connections',
-  '/intelligence': 'Activity',
 };
+
+/**
+ * Routes that AppRoutes.tsx serves via <Navigate replace>. Navigating to the
+ * key lands the router on the value, so the hash-settle wait must expect the
+ * resolved target rather than the requested route. Keep in sync with
+ * app/src/AppRoutes.tsx.
+ */
+const HASH_REDIRECTS = {
+  '/skills': '/connections',
+  '/channels': '/connections',
+  '/activity': '/settings/notifications',
+  '/intelligence': '/settings/notifications',
+  '/routines': '/settings/automations',
+  '/workflows': '/settings/automations',
+};
+
+/** Resolve a requested hash to where the router actually settles. */
+function resolveRedirect(normalized) {
+  return HASH_REDIRECTS[normalized] || normalized;
+}
 
 function normalizeHash(value) {
   const raw = String(value || '');
@@ -139,57 +164,64 @@ function normalizeHash(value) {
 }
 
 function routeReadySelector(hash) {
-  const path = normalizeHash(hash).replace(/^#/, '');
+  const path = resolveRedirect(normalizeHash(hash).replace(/^#/, ''));
   const selectors = {
     '/notifications': '[data-testid="integration-notifications-section"]',
+    '/settings/notifications': '[data-testid="integration-notifications-section"]',
     '/settings/cron-jobs': '[data-testid="cron-jobs-panel"]',
     '/settings/privacy': '[data-testid="settings-privacy-panel"]',
     '/settings/migration': '[data-testid="migration-form"]',
     '/settings/voice': '[data-testid="voice-providers-section"]',
     '/settings/memory-data': '[data-testid="memory-workspace"]',
-    // Phase 3: /intelligence → /activity; memory-workspace is dev-gated (tab=memory).
-    // Use a non-dev-gated selector for the activity route instead.
-    '/intelligence': '[data-testid="intelligence-tasks"]',
-    '/activity': '[data-testid="intelligence-tasks"]',
   };
   return selectors[path] || null;
 }
 
-async function routeSignature() {
-  return browser.execute(() => {
-    const root = document.getElementById('root');
-    return (root?.innerText || root?.textContent || '').trim().slice(0, 500);
-  });
-}
-
 async function waitForHashRouteReady(hash, options = {}) {
-  const { timeout = 10_000, previousSignature = '', allowSameSignature = false } = options;
-  const expected = normalizeHash(hash);
+  const { timeout = 10_000 } = options;
+  // Routes that redirect (e.g. /activity → /settings/notifications) settle on
+  // the resolved target, so wait for that hash rather than the requested one.
+  const expected = normalizeHash(`#${resolveRedirect(normalizeHash(hash).replace(/^#/, ''))}`);
   const readySelector = routeReadySelector(hash);
+  // We deliberately do NOT use a root-innerText "signature changed" heuristic:
+  // the TwoPanelLayout shell keeps a persistent sidebar whose text dominates the
+  // first 500 chars of root.innerText, so that signature is identical across all
+  // settings sub-panels and the heuristic never fires. Instead we key off
+  // readyState + the resolved hash (and a route-ready selector when known),
+  // tolerating redirects to unmapped targets by accepting a stabilised hash.
+  let lastHash = null;
+  let stableCount = 0;
   await browser.waitUntil(
-    async () =>
-      Boolean(
-        await browser.execute(
-          ({ target, selector, before, allowSame }) => {
-            if (document.readyState !== 'complete') return false;
-            const current = window.location.hash.replace(/\/$/, '');
-            if (current !== target) return false;
-            const root = document.getElementById('root');
-            if (!root) return false;
-            if (selector && root.querySelector(selector)) return true;
-
-            const signature = (root.innerText || root.textContent || '').trim().slice(0, 500);
-            if (!signature) return false;
-            return allowSame || signature !== before;
-          },
-          {
-            target: expected,
-            selector: readySelector,
-            before: previousSignature,
-            allowSame: allowSameSignature,
-          }
-        )
-      ),
+    async () => {
+      const res = await browser.execute(
+        ({ selector }) => {
+          if (document.readyState !== 'complete') return { loading: true };
+          const root = document.getElementById('root');
+          if (!root) return { loading: true };
+          return {
+            loading: false,
+            hasSelector: selector ? root.querySelector(selector) !== null : false,
+            current: window.location.hash.replace(/\/$/, ''),
+          };
+        },
+        { selector: readySelector }
+      );
+      if (res.loading) return false;
+      // A known route-ready selector being present is a definitive signal the
+      // target panel rendered — accept it regardless of the hash, since routes
+      // can redirect to a different hash (e.g. /settings/memory-data → /brain).
+      if (res.hasSelector) return true;
+      // Otherwise accept the resolved target hash, or — for redirects to an
+      // unmapped target — once the hash has stabilised for ~500ms.
+      const cur = res.current;
+      if (cur === expected) return true;
+      if (cur && cur === lastHash) stableCount += 1;
+      else {
+        stableCount = 0;
+        lastHash = cur;
+      }
+      return stableCount >= 2;
+    },
     {
       timeout,
       interval: 250,
@@ -200,7 +232,10 @@ async function waitForHashRouteReady(hash, options = {}) {
 
 export async function navigateViaHash(hash) {
   const normalized = String(hash).replace(/\/$/, '') || hash;
-  const expectedHash = `#${normalized}`;
+  // A redirecting route settles on its target hash, so the settle-check must
+  // expect that target (e.g. requesting /activity lands on /settings/notifications).
+  const resolved = resolveRedirect(normalized);
+  const expectedHash = `#${resolved}`;
   const hashMatches = currentHash =>
     currentHash === expectedHash || String(currentHash).startsWith(`${expectedHash}/`);
   const waitForHash = async (timeout = 8_000) =>
@@ -245,16 +280,10 @@ export async function navigateViaHash(hash) {
 
     // Fallback: direct hash set + wait for route readiness.
     try {
-      const beforeSignature = await routeSignature();
-      const beforeHash = normalizeHash(await browser.execute(() => window.location.hash));
-      const targetHash = normalizeHash(hash);
       await browser.execute(h => {
         window.location.hash = h;
       }, hash);
-      await waitForHashRouteReady(hash, {
-        previousSignature: beforeSignature,
-        allowSameSignature: beforeHash === targetHash,
-      });
+      await waitForHashRouteReady(hash);
       const currentHash = await browser.execute(() => window.location.hash);
       console.log(`[E2E] Navigated to ${hash} (current: ${currentHash})`);
       return;

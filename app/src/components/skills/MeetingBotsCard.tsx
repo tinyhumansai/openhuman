@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { type MascotFace, RiveMascot } from '../../features/human/Mascot';
 import { useT } from '../../lib/i18n/I18nContext';
@@ -36,14 +36,39 @@ interface Props {
   onToast?: (toast: Toast) => void;
 }
 
+interface MeetingBotsInlineProps extends Props {
+  hasSubmittedRef: RefObject<boolean>;
+}
+
 export default function MeetingBotsCard({ onToast }: Props) {
+  const { t } = useT();
   const status = useAppSelector(selectBackendMeetStatus);
   const showActive = status === 'active';
+
+  // `hasSubmittedRef` lives in this always-mounted parent so the success toast
+  // fires reliably. When a join succeeds, `status` flips to 'active' and this
+  // component swaps `MeetingBotsInline` → `ActiveMeetingView`, unmounting the
+  // inline form before any effect inside it could observe 'active' (#3611
+  // flattened these into a mutually-exclusive ternary). The inline form sets
+  // this ref on submit; we fire the success toast here. The error path stays in
+  // the inline form, which remains mounted during the 'error' state.
+  const hasSubmittedRef = useRef(false);
+  useEffect(() => {
+    if (!hasSubmittedRef.current) return;
+    if (status === 'active') {
+      hasSubmittedRef.current = false;
+      onToast?.({
+        type: 'success',
+        title: t('skills.meetingBots.joiningTitle'),
+        message: t('skills.meetingBots.joiningMessage'),
+      });
+    }
+  }, [status, onToast, t]);
 
   return showActive ? (
     <ActiveMeetingView onToast={onToast} />
   ) : (
-    <MeetingBotsInline onToast={onToast} />
+    <MeetingBotsInline onToast={onToast} hasSubmittedRef={hasSubmittedRef} />
   );
 }
 
@@ -173,11 +198,19 @@ function ActiveMeetingView({ onToast }: Props) {
   );
 }
 
-function MeetingBotsInline({ onToast }: Props) {
+function MeetingBotsInline({ onToast, hasSubmittedRef }: MeetingBotsInlineProps) {
   const { t } = useT();
   const dispatch = useAppDispatch();
   const [meetUrl, setMeetUrl] = useState('');
-  const [respondTo] = useState('');
+  // The participant the bot answers to (authorized speaker). Wired to the
+  // backend join payload as `respondToParticipant` → `respondTo`, which the
+  // meeting stream uses to gate in-call requests to this speaker only.
+  const [respondTo, setRespondTo] = useState('');
+  // Active (respond when addressed) vs listen-only (transcribe only). Defaults
+  // to active; the bot still only replies after being addressed by the wake
+  // phrase. Forwarded to the backend as `listenOnly` and mirrored into the
+  // meet slice so the active view shows the right status.
+  const [listenOnly, setListenOnly] = useState(false);
   const personaDisplayName = useAppSelector(selectPersonaDisplayName);
   const personaDescription = useAppSelector(selectPersonaDescription);
   const selectedMascotId = useAppSelector(selectSelectedMascotId);
@@ -188,7 +221,6 @@ function MeetingBotsInline({ onToast }: Props) {
   const [error, setError] = useState<string | null>(null);
   const meetStatus = useAppSelector(selectBackendMeetStatus);
   const meetError = useAppSelector(selectBackendMeetError);
-  const hasSubmittedRef = useRef(false);
   const [recentCalls, setRecentCalls] = useState<MeetCallRecord[] | null>(null);
   const [recentError, setRecentError] = useState<string | null>(null);
 
@@ -210,7 +242,7 @@ function MeetingBotsInline({ onToast }: Props) {
   }, [refreshRecentCalls]);
 
   const selectedLabel = t('skills.meetingBots.platforms.gmeet');
-  const agentName = personaDisplayName.trim() || 'OpenHuman';
+  const agentName = personaDisplayName.trim() || 'Tiny';
   const systemPrompt = personaDescription.trim() || undefined;
   const mascotId = selectedMascotId ?? (mascotColor === 'custom' ? undefined : mascotColor);
   const riveColors =
@@ -218,18 +250,12 @@ function MeetingBotsInline({ onToast }: Props) {
       ? { primaryColor: customPrimaryColor, secondaryColor: customSecondaryColor }
       : undefined;
 
+  // Success ('active') is handled by the parent MeetingBotsCard, which stays
+  // mounted across the inline→active view swap. The error path lives here
+  // because the inline form remains mounted during the 'error' state and needs
+  // to surface the failure inline (setError/setSubmitting) alongside the toast.
   useEffect(() => {
     if (!hasSubmittedRef.current) return;
-    if (meetStatus === 'active') {
-      hasSubmittedRef.current = false;
-      onToast?.({
-        type: 'success',
-        title: t('skills.meetingBots.joiningTitle'),
-        message: t('skills.meetingBots.joiningMessage'),
-      });
-      setMeetUrl('');
-      return;
-    }
     if (meetStatus === 'error') {
       hasSubmittedRef.current = false;
       const message = meetError?.trim() || t('skills.meetingBots.failedToStart');
@@ -237,7 +263,7 @@ function MeetingBotsInline({ onToast }: Props) {
       setSubmitting(false);
       onToast?.({ type: 'error', title: t('skills.meetingBots.couldNotStartTitle'), message });
     }
-  }, [meetStatus, meetError, onToast, t]);
+  }, [meetStatus, meetError, onToast, t, hasSubmittedRef]);
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -246,7 +272,7 @@ function MeetingBotsInline({ onToast }: Props) {
     hasSubmittedRef.current = true;
     try {
       const meetingId = crypto.randomUUID();
-      dispatch(setBackendMeetJoining({ meetUrl: meetUrl.trim(), meetingId }));
+      dispatch(setBackendMeetJoining({ meetUrl: meetUrl.trim(), meetingId, listenOnly }));
       await joinMeetViaBackendBot({
         meetUrl,
         displayName: agentName,
@@ -257,6 +283,7 @@ function MeetingBotsInline({ onToast }: Props) {
         riveColors,
         correlationId: meetingId,
         respondToParticipant: respondTo.trim() || undefined,
+        listenOnly,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : t('skills.meetingBots.failedToStart');
@@ -297,6 +324,44 @@ function MeetingBotsInline({ onToast }: Props) {
           />
         </label>
 
+        <label className="block">
+          <span className="text-[10px] font-medium uppercase tracking-wide text-stone-500 dark:text-neutral-400">
+            {t('skills.meetingBots.respondToParticipant')}
+          </span>
+          <input
+            type="text"
+            autoComplete="off"
+            spellCheck={false}
+            value={respondTo}
+            onChange={e => setRespondTo(e.target.value)}
+            placeholder={t('skills.meetingBots.respondToParticipantHint')}
+            disabled={submitting}
+            required
+            className="mt-1 w-full rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-100 disabled:cursor-not-allowed disabled:bg-stone-50 dark:disabled:bg-neutral-800/60"
+          />
+          <p className="mt-1 text-[10px] text-stone-400 dark:text-neutral-500">
+            {t('skills.meetingBots.respondToParticipantDesc')}
+          </p>
+        </label>
+
+        <label className="flex items-start gap-3 rounded-xl border border-stone-200 dark:border-neutral-800 px-3 py-2.5">
+          <input
+            type="checkbox"
+            checked={!listenOnly}
+            onChange={e => setListenOnly(!e.target.checked)}
+            disabled={submitting}
+            className="mt-0.5 h-4 w-4 shrink-0 rounded border-stone-300 text-primary-500 focus:ring-2 focus:ring-primary-100 disabled:cursor-not-allowed"
+          />
+          <span className="min-w-0">
+            <span className="block text-sm font-medium text-stone-800 dark:text-neutral-100">
+              {t('skills.meetingBots.activeMode')}
+            </span>
+            <span className="mt-0.5 block text-[10px] leading-relaxed text-stone-400 dark:text-neutral-500">
+              {t('skills.meetingBots.activeModeDesc')}
+            </span>
+          </span>
+        </label>
+
         {error && (
           <div
             role="alert"
@@ -308,7 +373,7 @@ function MeetingBotsInline({ onToast }: Props) {
         <div className="flex items-center justify-end gap-2 pt-1">
           <button
             type="submit"
-            disabled={submitting || !meetUrl.trim()}
+            disabled={submitting || !meetUrl.trim() || !respondTo.trim()}
             className="rounded-xl bg-primary-500 px-4 py-2 text-sm font-semibold text-white hover:bg-primary-600 disabled:cursor-not-allowed disabled:bg-stone-200 dark:disabled:bg-neutral-700 disabled:text-stone-400 dark:disabled:text-neutral-500">
             {submitting
               ? t('skills.meetingBots.starting')

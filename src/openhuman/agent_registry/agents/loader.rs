@@ -189,6 +189,11 @@ pub const BUILTINS: &[BuiltinAgent] = &[
         prompt_fn: super::mcp_setup::prompt::build,
     },
     BuiltinAgent {
+        id: "mcp_agent",
+        toml: include_str!("mcp_agent/agent.toml"),
+        prompt_fn: super::mcp_agent::prompt::build,
+    },
+    BuiltinAgent {
         id: "skill_setup",
         toml: include_str!("../../skill_registry/agent/skill_setup/agent.toml"),
         prompt_fn: crate::openhuman::skill_registry::agent::skill_setup::prompt::build,
@@ -665,6 +670,45 @@ mod tests {
         }
     }
 
+    /// The planner grounds plans in connected-MCP context the same way it
+    /// grounds in Composio — but read-only. It must carry the MCP *discovery*
+    /// tools (`status` / `installed_list` / `list_tools`, all
+    /// `PermissionLevel::ReadOnly`) and must NOT carry `mcp_registry_tool_call`
+    /// (no read-only gate exists for an arbitrary MCP tool call) nor the
+    /// install/connect mutators. Execution stays with `mcp_agent`.
+    #[test]
+    fn planner_has_readonly_mcp_discovery_not_execute() {
+        let def = find("planner");
+        assert_eq!(def.sandbox_mode, SandboxMode::ReadOnly);
+        match &def.tools {
+            ToolScope::Named(names) => {
+                for required in [
+                    "mcp_registry_status",
+                    "mcp_registry_installed_list",
+                    "mcp_registry_list_tools",
+                ] {
+                    assert!(
+                        names.iter().any(|n| n == required),
+                        "planner needs read-only MCP discovery tool `{required}`"
+                    );
+                }
+                for forbidden in [
+                    "mcp_registry_tool_call",
+                    "mcp_registry_connect",
+                    "mcp_registry_install",
+                    "mcp_registry_uninstall",
+                ] {
+                    assert!(
+                        !names.iter().any(|n| n == forbidden),
+                        "planner must NOT have `{forbidden}` — it is read-only; MCP execution \
+                         belongs to mcp_agent"
+                    );
+                }
+            }
+            other => panic!("planner must use Named tool scope, got {other:?}"),
+        }
+    }
+
     #[test]
     fn integrations_agent_tool_scope_honours_toml() {
         let def = find("integrations_agent");
@@ -1101,6 +1145,97 @@ mod tests {
             "tools_agent.disallowed_tools must contain `kalshi` so the \
              venue routes through markets_agent exclusively"
         );
+    }
+
+    /// Routing: the orchestrator must list `mcp_agent` in its `subagents`
+    /// so a `delegate_use_mcp_server` tool is synthesised at agent-build
+    /// time. Without this entry the orchestrator can only *set up* MCP
+    /// servers (via `mcp_setup`) and has no route to actually *use* an
+    /// already-connected server's tools from chat (issue #3495).
+    #[test]
+    fn orchestrator_subagents_include_mcp_agent() {
+        use crate::openhuman::agent::harness::definition::SubagentEntry;
+        let def = find("orchestrator");
+        let listed = def.subagents.iter().any(|e| match e {
+            SubagentEntry::AgentId(id) => id == "mcp_agent",
+            _ => false,
+        });
+        assert!(
+            listed,
+            "orchestrator.subagents must list `mcp_agent` so the routing \
+             layer can synthesise `delegate_use_mcp_server`"
+        );
+    }
+
+    /// The orchestrator gets lightweight MCP discovery (`mcp_registry_status`,
+    /// like `composio_list_connections`) but must NOT carry the per-server
+    /// enumerate/execute tools — those belong to `mcp_agent`, keeping the
+    /// chat agent's schema from ballooning with every connected server's
+    /// full toolset (#3495).
+    #[test]
+    fn orchestrator_has_mcp_discovery_but_not_execution() {
+        let def = find("orchestrator");
+        match &def.tools {
+            ToolScope::Named(tools) => {
+                assert!(
+                    tools.iter().any(|t| t == "mcp_registry_status"),
+                    "orchestrator must have mcp_registry_status for lightweight MCP discovery"
+                );
+                for forbidden in ["mcp_registry_list_tools", "mcp_registry_tool_call"] {
+                    assert!(
+                        !tools.iter().any(|t| t == forbidden),
+                        "orchestrator must NOT have `{forbidden}` — enumerating/calling \
+                         connected MCP tools is mcp_agent's job (keeps the chat schema small)"
+                    );
+                }
+            }
+            ToolScope::Wildcard => panic!("orchestrator must have a Named tool scope"),
+        }
+    }
+
+    /// `mcp_agent` is the connected-server execution specialist: it must hold
+    /// the discover + call surface and a stable `use_mcp_server` delegate name,
+    /// but must NOT hold the secret-handling install/uninstall tools (those are
+    /// `mcp_setup`'s) or any shell/file/network capability.
+    #[test]
+    fn mcp_agent_drives_connected_servers_without_install_or_shell() {
+        let def = find("mcp_agent");
+        assert_eq!(def.agent_tier, AgentTier::Worker);
+        assert_eq!(
+            def.delegate_name.as_deref(),
+            Some("use_mcp_server"),
+            "mcp_agent must keep its `use_mcp_server` delegate name stable"
+        );
+        match &def.tools {
+            ToolScope::Named(tools) => {
+                for required in [
+                    "mcp_registry_status",
+                    "mcp_registry_list_tools",
+                    "mcp_registry_connect",
+                    "mcp_registry_tool_call",
+                ] {
+                    assert!(
+                        tools.iter().any(|t| t == required),
+                        "mcp_agent missing `{required}`"
+                    );
+                }
+                for forbidden in [
+                    "mcp_registry_install",
+                    "mcp_registry_uninstall",
+                    "shell",
+                    "file_write",
+                    "curl",
+                    "http_request",
+                ] {
+                    assert!(
+                        !tools.iter().any(|t| t == forbidden),
+                        "mcp_agent must NOT have `{forbidden}` — it only relays through \
+                         already-connected servers; install/secrets belong to mcp_setup"
+                    );
+                }
+            }
+            ToolScope::Wildcard => panic!("mcp_agent must have a Named tool scope"),
+        }
     }
 
     #[test]

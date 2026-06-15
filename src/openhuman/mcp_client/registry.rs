@@ -160,6 +160,33 @@ impl McpServerRegistry {
         self.order.is_empty()
     }
 
+    /// Return a copy of this registry keeping only servers whose name appears
+    /// in `allowed` (case-insensitive). Used to scope the MCP surface to an
+    /// agent profile's `allowed_mcp_servers` allowlist. `None` is the caller's
+    /// "all servers" sentinel and should bypass this method entirely; an empty
+    /// slice yields an empty registry (the profile selected no servers).
+    pub fn retaining_servers(&self, allowed: &[String]) -> Self {
+        let allow_lc: std::collections::HashSet<String> = allowed
+            .iter()
+            .map(|s| s.trim().to_ascii_lowercase())
+            .collect();
+        let mut filtered = Self::default();
+        for name in &self.order {
+            if allow_lc.contains(&name.to_ascii_lowercase()) {
+                if let Some(def) = self.by_name.get(name) {
+                    filtered.insert(def.clone());
+                }
+            }
+        }
+        tracing::debug!(
+            before = self.order.len(),
+            after = filtered.order.len(),
+            allowlist = allowed.len(),
+            "[profiles] mcp registry scoped to profile allowlist"
+        );
+        filtered
+    }
+
     pub fn list(&self) -> Vec<&McpServerDefinition> {
         self.order
             .iter()
@@ -381,6 +408,45 @@ mod tests {
         config.mcp_client.enabled = false;
         let registry = McpServerRegistry::from_config(&config);
         assert!(registry.is_empty());
+    }
+
+    fn config_with_servers(names: &[&str]) -> Config {
+        let mut config = Config::default();
+        config.gitbooks.enabled = false;
+        for name in names {
+            config.mcp_client.servers.push(McpServerConfig {
+                name: (*name).into(),
+                endpoint: "https://example.com/mcp".into(),
+                command: String::new(),
+                args: Vec::new(),
+                env: HashMap::new(),
+                cwd: None,
+                description: None,
+                enabled: true,
+                allowed_tools: Vec::new(),
+                disallowed_tools: Vec::new(),
+                timeout_secs: 30,
+                auth: crate::openhuman::config::McpAuthConfig::None,
+            });
+        }
+        config
+    }
+
+    #[test]
+    fn retaining_servers_scopes_registry_to_allowlist_case_insensitively() {
+        let registry =
+            McpServerRegistry::from_config(&config_with_servers(&["docs", "github", "jira"]));
+        assert_eq!(registry.list().len(), 3);
+
+        // Allowlist keeps only named servers, case-insensitively.
+        let scoped = registry.retaining_servers(&["Docs".into(), "jira".into()]);
+        let mut names: Vec<&str> = scoped.list().iter().map(|s| s.name.as_str()).collect();
+        names.sort_unstable();
+        assert_eq!(names, vec!["docs", "jira"]);
+        assert!(scoped.get("github").is_none());
+
+        // Empty allowlist yields an empty registry (profile selected nothing).
+        assert!(registry.retaining_servers(&[]).is_empty());
     }
 
     #[test]

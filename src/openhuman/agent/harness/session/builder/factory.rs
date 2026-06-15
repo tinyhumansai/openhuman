@@ -142,7 +142,15 @@ impl Agent {
                 .unwrap_or(config.default_temperature)
         );
 
-        Self::build_session_agent_inner(config, agent_id, target_def.as_ref(), None, None, false)
+        Self::build_session_agent_inner(
+            config,
+            agent_id,
+            target_def.as_ref(),
+            None,
+            None,
+            false,
+            None,
+        )
     }
 
     /// Same as [`Self::from_config_for_agent`] but also appends a
@@ -175,6 +183,7 @@ impl Agent {
             Some(reflection_chunks),
             None,
             false,
+            None,
         )
     }
 
@@ -186,6 +195,7 @@ impl Agent {
         agent_id: &str,
         reflection_chunks: Option<Vec<crate::openhuman::subconscious::SourceChunk>>,
         profile_prompt_suffix: Option<String>,
+        profile: Option<&crate::openhuman::profiles::AgentProfile>,
     ) -> Result<Self> {
         let target_def: Option<crate::openhuman::agent::harness::definition::AgentDefinition> =
             match AgentDefinitionRegistry::global() {
@@ -218,6 +228,7 @@ impl Agent {
             reflection_chunks,
             profile_prompt_suffix,
             false,
+            profile,
         )
     }
 
@@ -242,6 +253,7 @@ impl Agent {
             None,
             Some(prompt_suffix),
             true,
+            None,
         )?;
         let safe_name: String = juror_name
             .chars()
@@ -282,6 +294,7 @@ impl Agent {
     /// the subconscious LLM cited when it produced the spawning
     /// reflection (#623). Empty / `None` is the default for normal chat
     /// threads — the section is omitted entirely.
+    #[allow(clippy::too_many_arguments)]
     fn build_session_agent_inner(
         config: &Config,
         agent_id: &str,
@@ -289,7 +302,19 @@ impl Agent {
         reflection_chunks: Option<Vec<crate::openhuman::subconscious::SourceChunk>>,
         profile_prompt_suffix: Option<String>,
         read_only_tools_only: bool,
+        profile: Option<&crate::openhuman::profiles::AgentProfile>,
     ) -> Result<Self> {
+        if let Some(p) = profile {
+            tracing::debug!(
+                profile_id = %p.id,
+                include_agent_conversations = p.include_agent_conversations,
+                allowed_tools = p.allowed_tools.as_ref().map_or(0, |t| t.len()),
+                allowed_skills = p.allowed_skills.as_ref().map_or(0, |s| s.len()),
+                allowed_mcp_servers = p.allowed_mcp_servers.as_ref().map_or(0, |m| m.len()),
+                memory_sources = p.memory_sources.as_ref().map_or(0, |s| s.len()),
+                "[profiles] applying per-profile session gate"
+            );
+        }
         let runtime: Arc<dyn host_runtime::RuntimeAdapter> =
             Arc::from(host_runtime::create_runtime(&config.runtime)?);
         let security = Arc::new(SecurityPolicy::from_config(
@@ -317,6 +342,13 @@ impl Agent {
             &config.workspace_dir,
         )?);
 
+        // Per-profile skill (workflow) + MCP-server allowlists. `None` = all.
+        let profile_skill_allowlist: Option<std::collections::HashSet<String>> = profile
+            .and_then(|p| p.allowed_skills.clone())
+            .map(|v| v.into_iter().collect());
+        let profile_mcp_allowlist: Option<Vec<String>> =
+            profile.and_then(|p| p.allowed_mcp_servers.clone());
+
         let mut tools = tools::all_tools_with_runtime(
             Arc::new(config.clone()),
             &security,
@@ -328,6 +360,8 @@ impl Agent {
             &config.action_dir,
             &config.agents,
             config,
+            profile_skill_allowlist.as_ref(),
+            profile_mcp_allowlist.as_deref(),
         );
 
         // Filter tools by user preference stored in app state.
@@ -595,7 +629,7 @@ impl Agent {
                 suffix.chars().count()
             );
             prompt_builder = prompt_builder.add_section(Box::new(
-                crate::openhuman::agent::profiles::AgentProfilePromptSection::new(suffix),
+                crate::openhuman::profiles::AgentProfilePromptSection::new(suffix),
             ));
         }
 
@@ -716,6 +750,26 @@ impl Agent {
         // and then paying a repair pass on turn 1 just to recover the real
         // delegation surface.
         let prewarmed_integrations = crate::openhuman::composio::cached_active_integrations(config);
+        // Per-profile connector gate: scope the connected-integration view to the
+        // active profile's `composio_integrations` allowlist (None = all). This
+        // governs both the system-prompt "connected integrations" surface and the
+        // agent's `connected_integrations` field below, so a profile only ever
+        // sees the toolkits it was granted.
+        let prewarmed_integrations = match (
+            prewarmed_integrations,
+            profile.and_then(|p| p.composio_integrations.as_deref()),
+        ) {
+            (Some(list), Some(allow)) => {
+                let filtered = crate::openhuman::profiles::filter_integrations(&list, Some(allow));
+                tracing::debug!(
+                    before = list.len(),
+                    after = filtered.len(),
+                    "[profiles] composio connectors scoped to profile allowlist"
+                );
+                Some(filtered)
+            }
+            (other, _) => other,
+        };
         let prewarmed_integrations_slice = prewarmed_integrations.as_deref().unwrap_or(&[]);
 
         // Resolve the per-agent delegation tool set and visible-tool
@@ -1050,7 +1104,13 @@ impl Agent {
                             .resolved_memory_limits()
                             .max_memory_context_chars,
                     )
-                    .with_workspace_dir(config.workspace_dir.clone()),
+                    .with_workspace_dir(config.workspace_dir.clone())
+                    // Per-profile memory gate: when the active profile opts out
+                    // of agent-conversation recall, suppress the prior-chat and
+                    // cross-chat blocks. Defaults to on for None / unset.
+                    .with_agent_conversations(
+                        profile.map_or(true, |p| p.include_agent_conversations),
+                    ),
             ))
             .prompt_builder(prompt_builder)
             .config(config.agent.clone())

@@ -207,7 +207,11 @@ fn outcome_to_result(
 
 /// `run_workflow` — orchestrator-callable spawn + inline await of another
 /// workflow.
-pub struct RunWorkflowTool;
+pub struct RunWorkflowTool {
+    /// Per-profile allowlist of runnable workflow `dir_name` slugs. `None`
+    /// (the default) means every installed workflow may be run.
+    skill_allowlist: Option<std::collections::HashSet<String>>,
+}
 
 impl Default for RunWorkflowTool {
     fn default() -> Self {
@@ -217,7 +221,18 @@ impl Default for RunWorkflowTool {
 
 impl RunWorkflowTool {
     pub fn new() -> Self {
-        Self
+        Self {
+            skill_allowlist: None,
+        }
+    }
+
+    /// Restrict which workflows this tool may run to a per-profile allowlist.
+    pub fn with_skill_allowlist(
+        mut self,
+        allowlist: Option<std::collections::HashSet<String>>,
+    ) -> Self {
+        self.skill_allowlist = allowlist;
+        self
     }
 }
 
@@ -292,6 +307,14 @@ impl Tool for RunWorkflowTool {
                 ));
             }
         };
+        if let Some(allow) = &self.skill_allowlist {
+            if !allow.contains(&workflow_id) {
+                log::debug!("[profiles] run_workflow blocked by profile allowlist: {workflow_id}");
+                return Ok(ToolResult::error(format!(
+                    "run_workflow: workflow `{workflow_id}` is not available to the active agent profile"
+                )));
+            }
+        }
         let inputs = args.get("inputs").cloned();
         let wait_seconds = parse_wait_seconds(&args);
 

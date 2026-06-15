@@ -1,6 +1,7 @@
 import { useT } from '../../../lib/i18n/I18nContext';
 import IntelligenceTasksTab from '../../intelligence/IntelligenceTasksTab';
-import SettingsHeader from '../components/SettingsHeader';
+import PanelPage from '../../layout/PanelPage';
+import SettingsBackButton from '../components/SettingsBackButton';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 /**
@@ -14,24 +15,22 @@ import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
  */
 const TasksPanel = () => {
   const { t } = useT();
-  const { navigateBack, breadcrumbs } = useSettingsNavigation();
+  const { navigateBack } = useSettingsNavigation();
 
   return (
-    <div className="z-10 relative" data-testid="tasks-panel">
-      <SettingsHeader
-        title={t('memory.tab.tasks')}
-        showBackButton={true}
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
-
+    <PanelPage
+      className="z-10"
+      contentClassName=""
+      testId="tasks-panel"
+      description={t('settings.developerMenu.tasks.desc')}
+      leading={<SettingsBackButton onBack={navigateBack} />}>
       <div className="p-4">
         <p className="mb-4 text-xs text-neutral-500 dark:text-neutral-400">
           {t('memory.tab.tasksDescription')}
         </p>
         <IntelligenceTasksTab />
       </div>
-    </div>
+    </PanelPage>
   );
 };
 

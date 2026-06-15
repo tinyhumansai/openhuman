@@ -263,6 +263,36 @@ async fn embed_server_error() {
     assert!(msg.contains("rate limited"), "body: {msg}");
 }
 
+/// A 404 means the configured base URL has no embeddings route (the user
+/// pointed the Custom provider at a chat-only endpoint, e.g. DeepSeek —
+/// TAURI-RUST-5JR). The message must (a) carry an actionable remediation, and
+/// (b) PRESERVE the `Embedding API error (404…)` prefix the
+/// `observability::is_embedding_endpoint_absent` classifier keys on, so the
+/// flood is demoted from Sentry rather than firing on every re-embed.
+#[tokio::test]
+async fn embed_404_endpoint_absent_is_actionable_and_classifier_stable() {
+    let app = Router::new().route(
+        "/v1/embeddings",
+        post(|| async { (StatusCode::NOT_FOUND, "Not Found") }),
+    );
+    let url = start_mock(app).await;
+    let p = OpenAiEmbedding::new(&url, "k", "m", 1);
+
+    let err = p.embed(&["hi"]).await.unwrap_err();
+    let msg = err.to_string();
+    // Classifier contract: prefix preserved.
+    assert!(
+        msg.to_ascii_lowercase()
+            .contains("embedding api error (404"),
+        "must preserve the (404 classifier prefix: {msg}"
+    );
+    // Actionable remediation appended.
+    assert!(
+        msg.contains("no embeddings API") && msg.contains("Settings → Memory"),
+        "must carry actionable remediation: {msg}"
+    );
+}
+
 /// 429 rate-limit responses must format their message in the canonical
 /// `"... API error (<status>): <body>"` shape so the shared
 /// `is_transient_upstream_http_message` classifier in `core::observability`

@@ -18,7 +18,13 @@ import { formatCurrency, formatTokens, relativeTime } from './formatCurrency';
 import ModelCostTable from './ModelCostTable';
 import TokenUsageChart from './TokenUsageChart';
 
-const CostDashboardPanel = () => {
+interface CostDashboardPanelProps {
+  /** When true the panel is hosted inside another settings page (e.g. the
+   *  Usage & Limits tabs) — skip the standalone SettingsHeader chrome. */
+  embedded?: boolean;
+}
+
+const CostDashboardPanel = ({ embedded = false }: CostDashboardPanelProps) => {
   const { t } = useT();
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
   const { data, isLoading, isFetching, error, lastUpdated, refetch } = useCostDashboard();
@@ -46,12 +52,14 @@ const CostDashboardPanel = () => {
 
   return (
     <div className="z-10 relative" data-testid="cost-dashboard-panel">
-      <SettingsHeader
-        title={t('settings.costDashboard.title')}
-        showBackButton
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
+      {!embedded && (
+        <SettingsHeader
+          title={t('settings.costDashboard.title')}
+          showBackButton
+          onBack={navigateBack}
+          breadcrumbs={breadcrumbs}
+        />
+      )}
       <div className="p-4 space-y-4">
         <div className="flex items-start justify-between gap-3">
           <p className="text-xs text-neutral-500 dark:text-neutral-400 max-w-prose">

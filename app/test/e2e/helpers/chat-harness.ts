@@ -21,17 +21,35 @@
 
 /** Click a button identified by its `title` attribute. Returns `true`
  *  if a matching button was found and clicked. Polls because the
- *  composer renders asynchronously after a thread is created. */
+ *  composer renders asynchronously after a thread is created.
+ *
+ *  Matching is tolerant of trailing keyboard-shortcut hints that the UI
+ *  appends in parentheses: the composer-flattening refactor (#3611) renamed
+ *  the new-thread button's title from `t('chat.newThread')` ("New thread")
+ *  to `t('chat.newThreadShortcut')` ("New thread (/new)"). The button itself
+ *  carries a stable `data-testid="new-thread-button"`, so for that affordance
+ *  we prefer the test id and fall back to exact/prefix title matching for any
+ *  other titled button a spec may target. */
 export async function clickByTitle(title: string, timeoutMs = 6_000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const clicked = await browser.execute((t: string) => {
-      const el = document.querySelector(
-        `button[title=${JSON.stringify(t)}]`
-      ) as HTMLButtonElement | null;
-      if (!el) return false;
-      el.click();
-      return true;
+      const click = (el: HTMLButtonElement | null) => {
+        if (!el) return false;
+        el.click();
+        return true;
+      };
+      // The new-thread button is the canonical `clickByTitle` target and
+      // exposes a stable test id — prefer it over the i18n title string.
+      if (t === 'New thread' || t.startsWith('New thread')) {
+        if (click(document.querySelector('[data-testid="new-thread-button"]'))) return true;
+      }
+      // Exact title match, then prefix match (handles " (/new)" style suffixes).
+      if (click(document.querySelector(`button[title=${JSON.stringify(t)}]`))) return true;
+      const prefixMatch = Array.from(
+        document.querySelectorAll<HTMLButtonElement>('button[title]')
+      ).find(b => (b.getAttribute('title') ?? '').startsWith(t));
+      return click(prefixMatch ?? null);
     }, title);
     if (clicked) return true;
     await browser.pause(200);
@@ -40,6 +58,22 @@ export async function clickByTitle(title: string, timeoutMs = 6_000): Promise<bo
 }
 
 const COMPOSER_SELECTOR = 'textarea[placeholder="How can I help you today?"]';
+
+/** True once the Conversations page has mounted its composer/header.
+ *
+ *  The composer-flattening refactor (#3611) removed the "Threads" sidebar
+ *  heading that specs previously polled via `textExists('Threads')`, so that
+ *  check could never resolve and every chat spec failed with "Conversations
+ *  did not mount". The chat header's new-thread button and the composer
+ *  textarea are both stable, always-rendered mount signals — poll for either. */
+export async function chatMounted(): Promise<boolean> {
+  return browser.execute(
+    (composerSel: string) =>
+      document.querySelector('[data-testid="new-thread-button"]') !== null ||
+      document.querySelector(composerSel) !== null,
+    COMPOSER_SELECTOR
+  );
+}
 
 /** Type into the chat composer through WebDriver so React's controlled
  *  input state and the DOM stay in sync. */

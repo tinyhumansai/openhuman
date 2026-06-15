@@ -9,8 +9,9 @@ import GraphCohesionTab from '../../intelligence/GraphCohesionTab';
 import MemoryFreshnessTab from '../../intelligence/MemoryFreshnessTab';
 import MemoryTimelineTab from '../../intelligence/MemoryTimelineTab';
 import NamespaceOverviewTab from '../../intelligence/NamespaceOverviewTab';
+import PanelPage from '../../layout/PanelPage';
 import PillTabBar from '../../PillTabBar';
-import SettingsHeader from '../components/SettingsHeader';
+import SettingsBackButton from '../components/SettingsBackButton';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 /**
@@ -33,7 +34,7 @@ type AnalysisView =
 
 const AnalysisViewsPanel = () => {
   const { t } = useT();
-  const { navigateBack, breadcrumbs } = useSettingsNavigation();
+  const { navigateBack } = useSettingsNavigation();
   const [activeView, setActiveView] = useState<AnalysisView>('diagram');
 
   const views: { id: AnalysisView; label: string }[] = [
@@ -48,13 +49,11 @@ const AnalysisViewsPanel = () => {
   ];
 
   return (
-    <div className="z-10 relative">
-      <SettingsHeader
-        title={t('settings.analysisViews.title')}
-        showBackButton={true}
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
+    <PanelPage
+      className="z-10"
+      contentClassName=""
+      description={t('settings.analysisViews.menuDesc')}
+      leading={<SettingsBackButton onBack={navigateBack} />}>
       <div className="p-4 space-y-4">
         <PillTabBar
           items={views.map(view => ({ label: view.label, value: view.id }))}
@@ -72,7 +71,7 @@ const AnalysisViewsPanel = () => {
         {activeView === 'paths' && <ConnectionPathTab />}
         {activeView === 'namespaces' && <NamespaceOverviewTab />}
       </div>
-    </div>
+    </PanelPage>
   );
 };
 

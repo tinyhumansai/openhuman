@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import InstalledServerDetail from './InstalledServerDetail';
@@ -7,6 +7,8 @@ const mockConnect = vi.fn();
 const mockDisconnect = vi.fn();
 const mockUninstall = vi.fn();
 const mockUpdateEnv = vi.fn();
+const mockDetectAuth = vi.fn();
+const mockRegistryGet = vi.fn();
 
 vi.mock('../../../services/api/mcpClientsApi', () => ({
   mcpClientsApi: {
@@ -14,6 +16,8 @@ vi.mock('../../../services/api/mcpClientsApi', () => ({
     disconnect: (...args: unknown[]) => mockDisconnect(...args),
     uninstall: (...args: unknown[]) => mockUninstall(...args),
     updateEnv: (...args: unknown[]) => mockUpdateEnv(...args),
+    detectAuth: (...args: unknown[]) => mockDetectAuth(...args),
+    registryGet: (...args: unknown[]) => mockRegistryGet(...args),
     configAssist: vi.fn(),
   },
 }));
@@ -37,6 +41,19 @@ describe('InstalledServerDetail', () => {
     mockDisconnect.mockReset();
     mockUninstall.mockReset();
     mockUpdateEnv.mockReset();
+    mockDetectAuth.mockReset();
+    mockRegistryGet.mockReset();
+    // The ConnectAuthModal probes auth on open (detectAuth) and best-effort
+    // pulls declared keys (registryGet). Default both to benign resolutions so
+    // the modal renders its token/header fields rather than hanging in
+    // `detecting` or throwing. Individual tests can override.
+    mockDetectAuth.mockResolvedValue({ kind: 'none', grant_types: [] });
+    mockRegistryGet.mockResolvedValue({
+      qualified_name: 'acme/test-server',
+      display_name: 'Test Server',
+      connections: [],
+      required_env_keys: [],
+    });
   });
 
   it('renders server name and description', () => {
@@ -109,14 +126,25 @@ describe('InstalledServerDetail', () => {
     expect(screen.queryByRole('button', { name: 'Connect' })).not.toBeInTheDocument();
   });
 
-  it('calls connect on Connect click', async () => {
+  it('calls connect on Connect click (routed through the auth modal)', async () => {
+    // Connect no longer dials directly — it opens ConnectAuthModal, which
+    // performs the authenticated connect. Drive that flow and assert the
+    // modal's connect submit reaches mcpClientsApi.connect (no auth supplied,
+    // so it takes the plain `connect` path rather than update_env).
     mockConnect.mockResolvedValue({ server_id: 'srv-1', status: 'connected', tools: [] });
     render(
       <InstalledServerDetail server={BASE_SERVER} connStatus={undefined} onUninstalled={() => {}} />
     );
 
+    // Click the page's Connect button → opens the modal.
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
+    });
+    const dialog = await screen.findByRole('dialog');
+
+    // Submit the modal's own Connect button (the in-dialog action).
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Connect' }));
     });
 
     expect(mockConnect).toHaveBeenCalledWith('srv-1');
@@ -178,7 +206,10 @@ describe('InstalledServerDetail', () => {
     });
   });
 
-  it('shows connect error inline', async () => {
+  it('surfaces a failed connect as an error in the auth modal', async () => {
+    // A failed connect now surfaces inside ConnectAuthModal (the modal owns the
+    // connect call), not on the detail page. Drive the modal flow and assert the
+    // error message appears within the dialog.
     mockConnect.mockRejectedValue(new Error('Connection refused'));
     render(
       <InstalledServerDetail server={BASE_SERVER} connStatus={undefined} onUninstalled={() => {}} />
@@ -187,8 +218,15 @@ describe('InstalledServerDetail', () => {
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
     });
+    const dialog = await screen.findByRole('dialog');
 
-    await waitFor(() => screen.getByText('Connection refused'));
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Connect' }));
+    });
+
+    await waitFor(() => {
+      expect(within(dialog).getByText('Connection refused')).toBeInTheDocument();
+    });
   });
 
   it('renders without crashing when connStatus is undefined (no status badge data)', () => {
@@ -327,9 +365,19 @@ describe('InstalledServerDetail', () => {
         onUninstalled={() => {}}
       />
     );
-    // Click Connect — fills the local `tools` state via the mocked RPC.
+    // Connect now opens ConnectAuthModal; the modal performs the actual connect
+    // and calls back onConnected(tools), which fills the local `tools` state.
+    // Drive that two-step flow: open the modal, then submit its Connect button.
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
+    });
+    const dialog = await screen.findByRole('dialog');
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Connect' }));
+    });
+    // Modal closes itself on success (onConnected → setConnectModalOpen(false)).
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     });
     // Parent would now flip status to connected (driven by its poll
     // loop after install/connect succeeds); simulate that here.

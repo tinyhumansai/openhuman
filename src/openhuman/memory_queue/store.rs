@@ -537,6 +537,25 @@ pub fn count_by_status(config: &Config, status: JobStatus) -> Result<u64> {
     })
 }
 
+/// #3365: count terminally-`failed` jobs whose typed class is `unrecoverable`
+/// — the ones `requeue_transient_failed` deliberately leaves parked (budget /
+/// auth / dim-mismatch) because retrying can't help and the user must act. The
+/// status surface routes ONLY these to a hard `error`; transient failures (or
+/// untyped/NULL rows) are auto-requeued and self-heal, so they stay `degraded`.
+/// The `failure_class = 'unrecoverable'` predicate is the exact complement of
+/// the requeue gate's `IS NULL OR != 'unrecoverable'`, so the two never drift.
+pub fn count_failed_unrecoverable(config: &Config) -> Result<u64> {
+    with_connection(config, |conn| {
+        let n: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM mem_tree_jobs \
+              WHERE status = 'failed' AND failure_class = 'unrecoverable'",
+            [],
+            |r| r.get(0),
+        )?;
+        Ok(n.max(0) as u64)
+    })
+}
+
 /// Total count regardless of status — handy for assertions.
 pub fn count_total(config: &Config) -> Result<u64> {
     with_connection(config, |conn| {
@@ -738,6 +757,51 @@ mod tests {
         assert_eq!(row.failure_reason.as_deref(), Some("budget_exhausted"));
         assert_eq!(row.failure_class.as_deref(), Some("unrecoverable"));
         assert_eq!(row.last_error.as_deref(), Some("Insufficient budget"));
+    }
+
+    /// #3365: `count_failed_unrecoverable` counts ONLY terminally-failed jobs
+    /// whose class is `unrecoverable`. Transient-class failures (terminated by
+    /// exhausting `max_attempts`) and untyped/NULL-class failures self-heal via
+    /// `requeue_transient_failed`, so they're excluded — the complement of the
+    /// requeue gate. The status surface uses this to route only the former to
+    /// `error`.
+    #[test]
+    fn count_failed_unrecoverable_excludes_transient_and_untyped() {
+        use crate::openhuman::memory_tree::health::{FailureCode, PipelineFailure};
+        let (_tmp, cfg) = test_config();
+
+        // Helper: enqueue a job, claim it, then mark it failed with `failure`.
+        let fail_one = |chunk: &str, max_attempts: u32, failure: Option<&PipelineFailure>| {
+            let mut nj = NewJob::extract_chunk(&ExtractChunkPayload {
+                chunk_id: chunk.into(),
+            })
+            .unwrap();
+            nj.max_attempts = Some(max_attempts);
+            enqueue(&cfg, &nj).unwrap().expect("inserted");
+            let claimed = claim_next(&cfg, DEFAULT_LOCK_DURATION_MS).unwrap().unwrap();
+            mark_failed_typed(&cfg, &claimed, "boom", failure).unwrap();
+        };
+
+        // Unrecoverable ⇒ terminal on first attempt, class persisted ⇒ counted.
+        let unrec = PipelineFailure::new(FailureCode::BudgetExhausted);
+        fail_one("c-unrec", 5, Some(&unrec));
+        // Transient ⇒ terminal only because max_attempts=1 is exhausted; class
+        // persisted as 'transient' ⇒ NOT counted (it will be auto-requeued).
+        let trans = PipelineFailure::new(FailureCode::Transient);
+        fail_one("c-trans", 1, Some(&trans));
+        // Untyped terminal (NULL class) ⇒ NOT counted.
+        fail_one("c-null", 1, None);
+
+        assert_eq!(
+            count_by_status(&cfg, JobStatus::Failed).unwrap(),
+            3,
+            "all three jobs are terminally failed"
+        );
+        assert_eq!(
+            count_failed_unrecoverable(&cfg).unwrap(),
+            1,
+            "only the unrecoverable one is counted"
+        );
     }
 
     /// T012: a **transient** typed failure keeps the existing

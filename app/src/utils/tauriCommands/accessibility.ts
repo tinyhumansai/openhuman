@@ -5,12 +5,22 @@ import { callCoreRpc } from '../../services/coreRpcClient';
 import { CommandResponse, isTauri } from './common';
 
 export type AccessibilityPermissionState = 'granted' | 'denied' | 'unknown' | 'unsupported';
-export type AccessibilityPermissionKind = 'screen_recording' | 'accessibility' | 'input_monitoring';
+export type AccessibilityPermissionKind =
+  | 'screen_recording'
+  | 'accessibility'
+  | 'input_monitoring'
+  | 'microphone';
 
 export interface AccessibilityPermissionStatus {
   screen_recording: AccessibilityPermissionState;
   accessibility: AccessibilityPermissionState;
   input_monitoring: AccessibilityPermissionState;
+  /**
+   * Microphone permission. The Rust `PermissionStatus` always serializes this,
+   * but it's optional here so existing object literals (e.g. screen-intelligence
+   * status fixtures) that predate the desktop-agent panel still typecheck.
+   */
+  microphone?: AccessibilityPermissionState;
 }
 
 export interface AccessibilityFeatures {

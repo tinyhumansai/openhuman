@@ -348,6 +348,49 @@ async fn update_env_on_disabled_server_persists_but_does_not_reconnect() {
     assert_eq!(mine.status.as_str(), "disabled");
 }
 
+#[tokio::test]
+async fn update_env_merges_partial_update_preserving_other_secrets() {
+    // Regression for the #3648 review: `update_env` must MERGE a partial
+    // payload over the stored env, not replace-all. The connect modal can only
+    // send the field the user just typed (it cannot display existing secrets),
+    // so a replace-all would silently erase every other stored credential.
+    use openhuman_core::openhuman::mcp_registry::ops;
+    use std::collections::HashMap;
+
+    let (_tmp, cfg) = fresh_workspace_config();
+    let mut server = make_installed_server();
+    // Disabled so update_env persists without attempting a live reconnect —
+    // we only assert the persisted env here.
+    server.enabled = false;
+    store::insert_server(&cfg, &server).expect("insert");
+
+    // Seed two stored secrets.
+    let mut initial = HashMap::new();
+    initial.insert("API_KEY".to_string(), "key-1".to_string());
+    initial.insert("OTHER_SECRET".to_string(), "other-1".to_string());
+    store::set_env_values(&cfg, &server.server_id, &initial).expect("seed env");
+
+    // Partial update: only API_KEY, as the connect modal would send for a
+    // single edited field.
+    let mut partial = HashMap::new();
+    partial.insert("API_KEY".to_string(), "key-2".to_string());
+    ops::mcp_clients_update_env(&cfg, server.server_id.clone(), partial)
+        .await
+        .expect("update_env returns Ok");
+
+    let stored = store::load_env_values(&cfg, &server.server_id).expect("load env");
+    assert_eq!(
+        stored.get("API_KEY").map(String::as_str),
+        Some("key-2"),
+        "the supplied value must be updated"
+    );
+    assert_eq!(
+        stored.get("OTHER_SECRET").map(String::as_str),
+        Some("other-1"),
+        "an un-supplied secret must be PRESERVED, not erased by a partial update"
+    );
+}
+
 // ── Reconnect supervisor (#3312) ───────────────────────────────────────────────
 
 #[tokio::test]

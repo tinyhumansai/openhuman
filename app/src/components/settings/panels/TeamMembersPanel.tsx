@@ -7,9 +7,10 @@ import { useCoreState } from '../../../providers/CoreStateProvider';
 import { teamApi } from '../../../services/api/teamApi';
 import type { TeamMember, TeamRole } from '../../../types/team';
 import { sanitizeError } from '../../../utils/sanitize';
+import PanelPage from '../../layout/PanelPage';
 import { CenteredLoadingState, ErrorBanner, InlineLoadingStatus } from '../../ui';
 import Button from '../../ui/Button';
-import SettingsHeader from '../components/SettingsHeader';
+import SettingsBackButton from '../components/SettingsBackButton';
 import { SettingsBadge, SettingsEmptyState, SettingsSection, SettingsSelect } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
@@ -21,7 +22,7 @@ const TeamMembersPanel = () => {
   const { t } = useT();
   const { teamId } = useParams<{ teamId: string }>();
   const location = useLocation();
-  const { navigateBack, breadcrumbs } = useSettingsNavigation();
+  const { navigateBack } = useSettingsNavigation();
   const { snapshot, teams, teamMembersById, refreshTeamMembers } = useCoreState();
   const user = snapshot.currentUser;
 
@@ -130,14 +131,11 @@ const TeamMembersPanel = () => {
   };
 
   return (
-    <div className="z-10 relative">
-      <SettingsHeader
-        title={t('team.members')}
-        showBackButton={true}
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
-
+    <PanelPage
+      className="z-10"
+      contentClassName=""
+      description={t('pages.settings.account.teamDesc')}
+      leading={<SettingsBackButton onBack={navigateBack} />}>
       <div className="p-4 pt-2 space-y-5">
         {error && <ErrorBanner message={error} />}
 
@@ -358,7 +356,7 @@ const TeamMembersPanel = () => {
           </div>
         )}
       </div>
-    </div>
+    </PanelPage>
   );
 };
 

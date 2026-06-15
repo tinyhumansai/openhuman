@@ -637,6 +637,12 @@ pub struct ListChunksQuery {
     pub until_ms: Option<i64>,
     /// Max rows to return (default 100 when `None`).
     pub limit: Option<usize>,
+    /// Per-profile memory-source allowlist. When `Some`, memory-source chunks
+    /// (those tagged `memory_sources`) whose source identifier is not in the set
+    /// are dropped *before* the row limit is applied, so a disallowed-source
+    /// prefix can't starve permitted rows. Non-source chunks always pass. `None`
+    /// = unrestricted (the default for every non-agent caller).
+    pub source_scope: Option<std::collections::HashSet<String>>,
 }
 
 /// List chunks matching the provided filters, ordered by `timestamp` DESC.
@@ -670,19 +676,45 @@ pub fn list_chunks(config: &Config, query: &ListChunksQuery) -> Result<Vec<Chunk
             sql.push_str(" AND timestamp_ms <= ?");
             bound.push(Box::new(until_ms));
         }
-        let limit = normalized_limit(query.limit);
+        let requested_limit = normalized_limit(query.limit);
+        // When a profile source-scope is active, fetch a wider candidate set and
+        // apply the gate in Rust *before* truncating, so a disallowed-source
+        // prefix can't push permitted rows past the requested limit. Otherwise
+        // the SQL LIMIT alone is correct and cheap.
+        let sql_limit = if query.source_scope.is_some() {
+            MAX_LIST_LIMIT as i64
+        } else {
+            requested_limit
+        };
         sql.push_str(" ORDER BY timestamp_ms DESC, seq_in_source ASC LIMIT ?");
-        bound.push(Box::new(limit));
+        bound.push(Box::new(sql_limit));
 
         let mut stmt = conn.prepare(&sql)?;
         let param_refs: Vec<&dyn rusqlite::ToSql> = bound
             .iter()
             .map(|b| b.as_ref() as &dyn rusqlite::ToSql)
             .collect();
-        let rows = stmt
+        let mut rows = stmt
             .query_map(param_refs.as_slice(), row_to_chunk)?
             .collect::<rusqlite::Result<Vec<_>>>()
             .context("Failed to collect chunks")?;
+        if let Some(ref allowed) = query.source_scope {
+            let before = rows.len();
+            rows.retain(|c| {
+                crate::openhuman::memory::source_scope::chunk_source_allowed_in(
+                    allowed,
+                    &c.metadata.tags,
+                    &c.metadata.source_id,
+                )
+            });
+            if rows.len() != before {
+                log::debug!(
+                    "[profiles] list_chunks source-scope filter: {before} -> {} row(s)",
+                    rows.len()
+                );
+            }
+            rows.truncate(requested_limit as usize);
+        }
         Ok(rows)
     })
 }

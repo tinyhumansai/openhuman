@@ -2,12 +2,16 @@
  * Unit tests for MemorySourcesRegistry — All In button, gear/settings panel,
  * per-kind field visibility, Save, and existing toggle behaviour.
  */
-import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { Provider } from 'react-redux';
+import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import * as service from '../../../services/memorySourcesService';
+import { getCoreStateSnapshot } from '../../../lib/coreState/store';
+import { CoreStateContext, type CoreStateContextValue } from '../../../providers/coreStateContext';
 import type { MemorySourceEntry } from '../../../services/memorySourcesService';
-import { renderWithProviders } from '../../../test/test-utils';
+import { createTestStore, renderWithProviders } from '../../../test/test-utils';
 import {
   openhumanGetMemorySyncSettings,
   openhumanUpdateMemorySyncSettings,
@@ -429,5 +433,64 @@ describe('MemorySourcesRegistry', () => {
     await waitFor(() => {
       expect(onToast).toHaveBeenCalledWith(expect.objectContaining({ type: 'error' }));
     });
+  });
+
+  // -------------------------------------------------------------------------
+  // Refetch when the session becomes authenticated (#3449)
+  //
+  // After a page reload the registry can mount before CoreStateProvider has
+  // restored the session. The first fetch then runs against a not-yet-ready
+  // core; sources must reappear as soon as auth flips true, without waiting
+  // for the next background poll.
+  // -------------------------------------------------------------------------
+  it('refetches sources when the session transitions to authenticated', async () => {
+    mockedList.mockResolvedValue([makeSource({ label: 'Reloaded Repo' })]);
+    mockedStatus.mockResolvedValue([]);
+
+    const coreState = (isAuthenticated: boolean): CoreStateContextValue =>
+      ({
+        ...getCoreStateSnapshot(),
+        snapshot: {
+          ...getCoreStateSnapshot().snapshot,
+          auth: {
+            isAuthenticated,
+            userId: isAuthenticated ? 'u1' : null,
+            user: null,
+            profileId: null,
+          },
+        },
+        refresh: async () => {},
+        refreshTeams: async () => {},
+        refreshTeamMembers: async () => {},
+        refreshTeamInvites: async () => {},
+        setAnalyticsEnabled: async () => {},
+        setMeetAutoOrchestratorHandoff: async () => {},
+        setOnboardingCompletedFlag: async () => {},
+        setEncryptionKey: async () => {},
+        patchSnapshot: () => {},
+        setOnboardingTasks: async () => {},
+        storeSessionToken: async () => {},
+        clearSession: async () => {},
+      }) as CoreStateContextValue;
+
+    const store = createTestStore();
+    const tree = (isAuthenticated: boolean) => (
+      <Provider store={store}>
+        <CoreStateContext.Provider value={coreState(isAuthenticated)}>
+          <MemoryRouter>
+            {/* pollIntervalMs=0 disables the background poll, so the only way
+                the second fetch can fire is the auth transition. */}
+            <MemorySourcesRegistry pollIntervalMs={0} />
+          </MemoryRouter>
+        </CoreStateContext.Provider>
+      </Provider>
+    );
+
+    const { rerender } = render(tree(false));
+    await waitFor(() => expect(mockedList).toHaveBeenCalledTimes(1));
+
+    rerender(tree(true));
+    await waitFor(() => expect(mockedList).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText('Reloaded Repo')).toBeInTheDocument();
   });
 });

@@ -494,6 +494,14 @@ export async function getCoreHttpBaseUrl(): Promise<string> {
  *
  * The same helper is consumed by the WebhooksDebugPanel settings screen and
  * is the seam #1339 will reuse when the approvals SSE stream lands.
+ *
+ * SECURITY (audit U3): forwarding the long-lived bearer in the query string can
+ * leak into proxy/server logs. It is bounded today — `QUERY_TOKEN_PATHS`
+ * restricts query-token auth to `/events/webhooks`, the transport is
+ * HTTPS/loopback (plaintext HTTP is rejected off-localhost), and the FE never
+ * logs this URL. The proper fix is a short-lived single-use handshake token
+ * minted just before opening the stream; that requires a new core endpoint and
+ * is tracked as the follow-up to this seam. Do not log the returned URL.
  */
 export function buildWebhookEventsUrl(baseUrl: string, coreRpcToken: string | null): string | null {
   if (!coreRpcToken) return null;

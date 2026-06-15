@@ -36,6 +36,7 @@
  */
 import { waitForApp } from '../helpers/app-helpers';
 import {
+  chatMounted,
   clickByTitle,
   clickSend,
   getSelectedThreadId,
@@ -100,7 +101,7 @@ async function createCronJobOracle(params: {
 
 async function navigateChatAndSend(prompt: string): Promise<string | null> {
   await navigateViaHash('/chat');
-  await browser.waitUntil(async () => await textExists('Threads'), {
+  await browser.waitUntil(async () => await chatMounted(), {
     timeout: 15_000,
     timeoutMsg: 'Conversations panel did not mount',
   });
