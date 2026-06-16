@@ -139,3 +139,58 @@ describe('Notifications page row wrapper', () => {
     expect(store.getState().notifications.items[0].read).toBe(false);
   });
 });
+
+describe('Notifications page category filter', () => {
+  const mixed = () => [
+    makeItem('m-1', 'msg one', { category: 'messages' }),
+    makeItem('m-2', 'msg two', { category: 'messages' }),
+    makeItem('a-1', 'agent one', { category: 'agents' }),
+    makeItem('s-1', 'system one', { category: 'system' }),
+  ];
+
+  it('renders an All chip plus one chip per category present in the feed', () => {
+    renderPage(mixed());
+
+    expect(screen.getByTestId('notif-filter-chip-all')).toBeInTheDocument();
+    expect(screen.getByTestId('notif-filter-chip-messages')).toBeInTheDocument();
+    expect(screen.getByTestId('notif-filter-chip-agents')).toBeInTheDocument();
+    expect(screen.getByTestId('notif-filter-chip-system')).toBeInTheDocument();
+    // No dead chips for categories absent from the feed.
+    expect(screen.queryByTestId('notif-filter-chip-skills')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('notif-filter-chip-meetings')).not.toBeInTheDocument();
+  });
+
+  it('shows all items under the default All filter', () => {
+    renderPage(mixed());
+    expect(screen.getAllByTestId('notification-item')).toHaveLength(4);
+    expect(screen.getByTestId('notif-filter-chip-all')).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('filters the list to the selected category and marks the chip active', () => {
+    renderPage(mixed());
+
+    fireEvent.click(screen.getByTestId('notif-filter-chip-messages'));
+
+    expect(screen.getAllByTestId('notification-item')).toHaveLength(2);
+    expect(screen.getByTestId('notif-filter-chip-messages')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    );
+    expect(screen.getByTestId('notif-filter-chip-all')).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('restores the full list when All is reselected', () => {
+    renderPage(mixed());
+
+    fireEvent.click(screen.getByTestId('notif-filter-chip-agents'));
+    expect(screen.getAllByTestId('notification-item')).toHaveLength(1);
+
+    fireEvent.click(screen.getByTestId('notif-filter-chip-all'));
+    expect(screen.getAllByTestId('notification-item')).toHaveLength(4);
+  });
+
+  it('does not render the filter row when there are no notifications', () => {
+    renderPage([]);
+    expect(screen.queryByTestId('notification-category-filter')).not.toBeInTheDocument();
+  });
+});
