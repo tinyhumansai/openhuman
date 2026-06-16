@@ -9,11 +9,51 @@ use async_trait::async_trait;
 use std::sync::Arc;
 use tokio::sync::broadcast::error::RecvError;
 
+use crate::core::socketio::WebChannelEvent;
 use crate::openhuman::channels::providers::web::{
     start_chat, subscribe_web_channel_events, ChatRequestMetadata,
 };
 use crate::openhuman::memory::rpc_models::CreateConversationThreadRequest;
 use crate::openhuman::threads::ops::thread_create_new;
+
+/// Outcome of inspecting one broadcast event against the request we're
+/// awaiting. Extracted as a pure function so the request-id filtering and
+/// terminal-event detection can be unit-tested without driving the live bus.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum EventDisposition {
+    /// Not our request, or a non-terminal streaming delta — keep waiting.
+    KeepWaiting,
+    /// Terminal success; carries the assistant reply (may be empty).
+    Done(String),
+    /// Terminal failure; carries a human-readable error detail.
+    Failed(String),
+}
+
+/// Classify a single web-channel event relative to the request we submitted.
+///
+/// Pure: depends only on the event and our `request_id`, so it captures the
+/// exact branch logic the wait loop relies on (request-scoped filtering +
+/// terminal `chat_done` / `chat_error` detection).
+fn classify_event(event: &WebChannelEvent, request_id: &str) -> EventDisposition {
+    if event.request_id != request_id {
+        return EventDisposition::KeepWaiting;
+    }
+    match event.event.as_str() {
+        "chat_done" | "chat:done" => {
+            EventDisposition::Done(event.full_response.clone().unwrap_or_default())
+        }
+        "chat_error" | "chat:error" => {
+            let detail = event
+                .message
+                .clone()
+                .unwrap_or_else(|| "unknown chat error".to_string());
+            let kind = event.error_type.as_deref().unwrap_or("error");
+            EventDisposition::Failed(format!("agentbox: chat_error ({kind}): {detail}"))
+        }
+        // Streaming progress / tool deltas — keep waiting.
+        _ => EventDisposition::KeepWaiting,
+    }
+}
 
 /// Bridges AgentBox `/run` invocations to OpenHuman's agent runtime.
 ///
@@ -151,19 +191,17 @@ impl AgentInvoker for CoreAgentInvoker {
                 }
             };
 
-            if event.request_id != request_id {
-                log::trace!(
-                    "[agentbox] ignoring unrelated event event={} event_request_id={} our_request_id={}",
-                    event.event,
-                    event.request_id,
-                    request_id
-                );
-                continue;
-            }
-
-            match event.event.as_str() {
-                "chat_done" | "chat:done" => {
-                    let reply = event.full_response.unwrap_or_default();
+            match classify_event(&event, &request_id) {
+                EventDisposition::KeepWaiting => {
+                    log::trace!(
+                        "[agentbox] keep waiting event={} event_request_id={} our_request_id={}",
+                        event.event,
+                        event.request_id,
+                        request_id
+                    );
+                    continue;
+                }
+                EventDisposition::Done(reply) => {
                     if reply.is_empty() {
                         log::warn!(
                             "[agentbox] chat_done with empty full_response request_id={request_id}"
@@ -180,24 +218,14 @@ impl AgentInvoker for CoreAgentInvoker {
                         thread_id: resolved_thread_id,
                     });
                 }
-                "chat_error" | "chat:error" => {
-                    let detail = event
-                        .message
-                        .clone()
-                        .unwrap_or_else(|| "unknown chat error".to_string());
-                    let kind = event.error_type.as_deref().unwrap_or("error");
+                EventDisposition::Failed(detail) => {
                     log::warn!(
-                        "[agentbox] chat failed thread_id={} request_id={} kind={} message={}",
+                        "[agentbox] chat failed thread_id={} request_id={} detail={}",
                         resolved_thread_id,
                         request_id,
-                        kind,
                         detail
                     );
-                    return Err(format!("agentbox: chat_error ({kind}): {detail}"));
-                }
-                _ => {
-                    // Streaming progress / tool deltas — keep waiting.
-                    continue;
+                    return Err(detail);
                 }
             }
         }
@@ -206,3 +234,75 @@ impl AgentInvoker for CoreAgentInvoker {
 
 /// Convenience alias used by the rest of the module.
 pub type SharedInvoker = Arc<dyn AgentInvoker>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn event(name: &str, request_id: &str) -> WebChannelEvent {
+        WebChannelEvent {
+            event: name.to_string(),
+            request_id: request_id.to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn unrelated_request_id_keeps_waiting() {
+        let ev = event("chat_done", "other-req");
+        assert_eq!(
+            classify_event(&ev, "our-req"),
+            EventDisposition::KeepWaiting
+        );
+    }
+
+    #[test]
+    fn streaming_delta_for_our_request_keeps_waiting() {
+        let ev = event("chat_message", "our-req");
+        assert_eq!(
+            classify_event(&ev, "our-req"),
+            EventDisposition::KeepWaiting
+        );
+    }
+
+    #[test]
+    fn chat_done_returns_full_response() {
+        let mut ev = event("chat_done", "our-req");
+        ev.full_response = Some("the answer".to_string());
+        assert_eq!(
+            classify_event(&ev, "our-req"),
+            EventDisposition::Done("the answer".to_string())
+        );
+    }
+
+    #[test]
+    fn chat_done_alias_with_missing_response_is_empty_done() {
+        let ev = event("chat:done", "our-req");
+        assert_eq!(
+            classify_event(&ev, "our-req"),
+            EventDisposition::Done(String::new())
+        );
+    }
+
+    #[test]
+    fn chat_error_maps_kind_and_message() {
+        let mut ev = event("chat_error", "our-req");
+        ev.message = Some("model exploded".to_string());
+        ev.error_type = Some("provider".to_string());
+        assert_eq!(
+            classify_event(&ev, "our-req"),
+            EventDisposition::Failed("agentbox: chat_error (provider): model exploded".to_string())
+        );
+    }
+
+    #[test]
+    fn chat_error_defaults_kind_and_message_when_absent() {
+        let ev = event("chat:error", "our-req");
+        assert_eq!(
+            classify_event(&ev, "our-req"),
+            EventDisposition::Failed(
+                "agentbox: chat_error (error): unknown chat error".to_string()
+            )
+        );
+    }
+}
