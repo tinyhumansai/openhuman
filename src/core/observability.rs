@@ -1923,9 +1923,9 @@ pub fn is_session_expired_event(event: &sentry::protocol::Event<'_>) -> bool {
 /// RPC failures whose message body has been collapsed to just the bare
 /// HTTP method + path (`"GET /auth/me"`) with no underlying transport error.
 ///
-/// Pairs with the primary fix at `openhuman::credentials::ops::auth_get_me`
-/// (#458), which replaced `e.to_string()` with `format!("{e:#}")` so the
-/// full `anyhow` context chain reaches the rpc dispatcher. Before that
+/// Pairs with the primary fix at `openhuman::credentials::ops::auth_get_me`,
+/// which replaced `e.to_string()` with `format!("{e:#}")` so the full
+/// `anyhow` context chain reaches the rpc dispatcher. Before that
 /// fix, every transient network failure under this RPC — reqwest timeout,
 /// connection reset, TLS handshake EOF, DNS hiccup — fingerprinted to one
 /// opaque "GET /auth/me" Sentry group (TAURI-RUST-10, ~409 events / 17
