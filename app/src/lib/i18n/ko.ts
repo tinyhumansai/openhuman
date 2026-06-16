@@ -2544,6 +2544,21 @@ const messages: TranslationMap = {
     '죄송합니다 — 저희 측에서 오류가 발생했습니다. 이러한 오류를 자동으로 기록하려고 하지만, Discord에 세부 정보를 공유해 주시면 더 빠르게 해결할 수 있습니다.',
   'app.openhumanLink.discordReport.openDiscord': 'Discord 열기',
   'app.openhumanLink.done': '완료',
+  'app.openhumanLink.notifications.desktopOnly':
+    '기본 알림은 데스크톱 앱에서만 사용할 수 있습니다 (`pnpm dev:app` 실행).',
+  'app.openhumanLink.notifications.permissionOff':
+    '알림 권한이 꺼져 있습니다. 시스템 설정 → 알림에서 OpenHuman을 활성화한 후 다시 시도하세요.',
+  'app.openhumanLink.notifications.triggerFailed':
+    'OpenHuman이 시스템 알림을 발생시킬 수 없습니다. 운영체제 알림 설정을 확인한 후 다시 시도하세요.',
+  'app.openhumanLink.notifications.welcomeBody':
+    '주의가 필요한 일이 생기면 여기에서 알림을 받게 됩니다.',
+  'app.openhumanLink.notifications.welcomeTitle': 'OpenHuman 준비 완료',
+  'app.openhumanLink.status.closed': '닫힘',
+  'app.openhumanLink.status.connected': '연결됨',
+  'app.openhumanLink.status.error': '오류',
+  'app.openhumanLink.status.loading': '로드 중…',
+  'app.openhumanLink.status.needsSignIn': '로그인 필요',
+  'app.openhumanLink.status.timedOut': '시간 초과',
   'app.openhumanLink.loadingChannelSetup': '채널 설정 불러오는 중',
   'app.openhumanLink.maybeLater': '나중에',
   'app.openhumanLink.notifications.asking': 'OS에 요청 중…',

@@ -3100,6 +3100,21 @@ const en: TranslationMap = {
     'Sorry — something broke on our end. We try to log these automatically, but sharing the details on Discord helps us fix it faster.',
   'app.openhumanLink.discordReport.openDiscord': 'Open Discord',
   'app.openhumanLink.done': 'Done',
+  'app.openhumanLink.notifications.desktopOnly':
+    'Native notifications are only available in the desktop app (run `pnpm dev:app`).',
+  'app.openhumanLink.notifications.permissionOff':
+    'Notification permission is off. Enable OpenHuman in System Settings → Notifications, then retry.',
+  'app.openhumanLink.notifications.triggerFailed':
+    'OpenHuman could not trigger a system notification. Check OS notification settings and retry.',
+  'app.openhumanLink.notifications.welcomeBody':
+    'You will get pings here when something needs your attention.',
+  'app.openhumanLink.notifications.welcomeTitle': 'OpenHuman is good to go',
+  'app.openhumanLink.status.closed': 'Closed',
+  'app.openhumanLink.status.connected': 'Connected',
+  'app.openhumanLink.status.error': 'Error',
+  'app.openhumanLink.status.loading': 'Loading…',
+  'app.openhumanLink.status.needsSignIn': 'Needs sign-in',
+  'app.openhumanLink.status.timedOut': 'Timed out',
   'app.openhumanLink.loadingChannelSetup': 'Loading channel setup',
   'app.openhumanLink.maybeLater': 'Maybe later',
   'app.openhumanLink.notifications.asking': 'Asking your OS…',

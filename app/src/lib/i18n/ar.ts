@@ -2517,6 +2517,20 @@ const messages: TranslationMap = {
     'نعتذر — حدث خطأ من جانبنا. نحاول تسجيل هذه الأخطاء تلقائيًا، لكن مشاركة التفاصيل على Discord تساعدنا على إصلاحها بشكل أسرع.',
   'app.openhumanLink.discordReport.openDiscord': 'فتح Discord',
   'app.openhumanLink.done': 'تم',
+  'app.openhumanLink.notifications.desktopOnly':
+    'الإشعارات الأصلية متاحة فقط في تطبيق سطح المكتب (شغّل `pnpm dev:app`).',
+  'app.openhumanLink.notifications.permissionOff':
+    'إذن الإشعارات معطّل. فعّل OpenHuman في إعدادات النظام → الإشعارات، ثم أعد المحاولة.',
+  'app.openhumanLink.notifications.triggerFailed':
+    'تعذّر على OpenHuman إطلاق إشعار النظام. تحقّق من إعدادات إشعارات نظام التشغيل وأعد المحاولة.',
+  'app.openhumanLink.notifications.welcomeBody': 'ستصلك تنبيهات هنا عندما يتطلب أمر ما انتباهك.',
+  'app.openhumanLink.notifications.welcomeTitle': 'OpenHuman جاهز للعمل',
+  'app.openhumanLink.status.closed': 'مغلق',
+  'app.openhumanLink.status.connected': 'متصل',
+  'app.openhumanLink.status.error': 'خطأ',
+  'app.openhumanLink.status.loading': 'جارٍ التحميل…',
+  'app.openhumanLink.status.needsSignIn': 'يتطلب تسجيل الدخول',
+  'app.openhumanLink.status.timedOut': 'انتهت المهلة',
   'app.openhumanLink.loadingChannelSetup': 'جارٍ تحميل إعداد القناة',
   'app.openhumanLink.maybeLater': 'ربما لاحقًا',
   'app.openhumanLink.notifications.asking': 'جارٍ الاستفسار من نظام التشغيل…',

@@ -2444,6 +2444,20 @@ const messages: TranslationMap = {
     '抱歉 — 我们这边出错了。我们会尝试自动记录这些错误，但在 Discord 上分享详情能帮助我们更快地修复问题。',
   'app.openhumanLink.discordReport.openDiscord': '打开 Discord',
   'app.openhumanLink.done': '完成',
+  'app.openhumanLink.notifications.desktopOnly':
+    '原生通知仅在桌面应用中可用（运行 `pnpm dev:app`）。',
+  'app.openhumanLink.notifications.permissionOff':
+    '通知权限已关闭。请在“系统设置 → 通知”中启用 OpenHuman，然后重试。',
+  'app.openhumanLink.notifications.triggerFailed':
+    'OpenHuman 无法触发系统通知。请检查操作系统的通知设置，然后重试。',
+  'app.openhumanLink.notifications.welcomeBody': '当有事情需要您关注时，您将在此处收到提醒。',
+  'app.openhumanLink.notifications.welcomeTitle': 'OpenHuman 已准备就绪',
+  'app.openhumanLink.status.closed': '已关闭',
+  'app.openhumanLink.status.connected': '已连接',
+  'app.openhumanLink.status.error': '错误',
+  'app.openhumanLink.status.loading': '加载中…',
+  'app.openhumanLink.status.needsSignIn': '需要登录',
+  'app.openhumanLink.status.timedOut': '已超时',
   'app.openhumanLink.loadingChannelSetup': '正在加载渠道设置',
   'app.openhumanLink.maybeLater': '稍后再说',
   'app.openhumanLink.notifications.asking': '正在请求系统权限…',

@@ -2629,6 +2629,21 @@ const messages: TranslationMap = {
     'Entschuldigung — bei uns ist etwas schiefgelaufen. Wir versuchen, solche Fehler automatisch zu protokollieren, aber wenn du die Details auf Discord teilst, können wir sie schneller beheben.',
   'app.openhumanLink.discordReport.openDiscord': 'Discord öffnen',
   'app.openhumanLink.done': 'Fertig',
+  'app.openhumanLink.notifications.desktopOnly':
+    'Native Benachrichtigungen sind nur in der Desktop-App verfügbar (führe `pnpm dev:app` aus).',
+  'app.openhumanLink.notifications.permissionOff':
+    'Die Benachrichtigungsberechtigung ist deaktiviert. Aktiviere OpenHuman in den Systemeinstellungen → Benachrichtigungen und versuche es erneut.',
+  'app.openhumanLink.notifications.triggerFailed':
+    'OpenHuman konnte keine Systembenachrichtigung auslösen. Überprüfe die Benachrichtigungseinstellungen des Betriebssystems und versuche es erneut.',
+  'app.openhumanLink.notifications.welcomeBody':
+    'Du erhältst hier Hinweise, wenn etwas deine Aufmerksamkeit erfordert.',
+  'app.openhumanLink.notifications.welcomeTitle': 'OpenHuman ist startklar',
+  'app.openhumanLink.status.closed': 'Geschlossen',
+  'app.openhumanLink.status.connected': 'Verbunden',
+  'app.openhumanLink.status.error': 'Fehler',
+  'app.openhumanLink.status.loading': 'Wird geladen…',
+  'app.openhumanLink.status.needsSignIn': 'Anmeldung erforderlich',
+  'app.openhumanLink.status.timedOut': 'Zeitüberschreitung',
   'app.openhumanLink.loadingChannelSetup': 'Kanal-Setup wird geladen',
   'app.openhumanLink.maybeLater': 'Vielleicht später',
   'app.openhumanLink.notifications.asking': 'Frag dein Betriebssystem ...',

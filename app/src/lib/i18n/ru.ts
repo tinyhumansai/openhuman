@@ -2589,6 +2589,21 @@ const messages: TranslationMap = {
     'Приносим извинения — что-то пошло не так с нашей стороны. Мы стараемся фиксировать такие ошибки автоматически, но если вы поделитесь подробностями в Discord, мы исправим их быстрее.',
   'app.openhumanLink.discordReport.openDiscord': 'Открыть Discord',
   'app.openhumanLink.done': 'Готово',
+  'app.openhumanLink.notifications.desktopOnly':
+    'Нативные уведомления доступны только в настольном приложении (выполните `pnpm dev:app`).',
+  'app.openhumanLink.notifications.permissionOff':
+    'Разрешение на уведомления отключено. Включите OpenHuman в Системных настройках → Уведомления, затем повторите попытку.',
+  'app.openhumanLink.notifications.triggerFailed':
+    'OpenHuman не удалось вызвать системное уведомление. Проверьте настройки уведомлений операционной системы и повторите попытку.',
+  'app.openhumanLink.notifications.welcomeBody':
+    'Вы будете получать оповещения здесь, когда что-то потребует вашего внимания.',
+  'app.openhumanLink.notifications.welcomeTitle': 'OpenHuman готов к работе',
+  'app.openhumanLink.status.closed': 'Закрыто',
+  'app.openhumanLink.status.connected': 'Подключено',
+  'app.openhumanLink.status.error': 'Ошибка',
+  'app.openhumanLink.status.loading': 'Загрузка…',
+  'app.openhumanLink.status.needsSignIn': 'Требуется вход',
+  'app.openhumanLink.status.timedOut': 'Время истекло',
   'app.openhumanLink.loadingChannelSetup': 'Загрузка настроек канала',
   'app.openhumanLink.maybeLater': 'Может, потом',
   'app.openhumanLink.notifications.asking': 'Запрос у ОС…',

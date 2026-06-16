@@ -2568,6 +2568,21 @@ const messages: TranslationMap = {
     'माफ करें — हमारी तरफ से कुछ गड़बड़ हुई। हम इन्हें स्वचालित रूप से लॉग करने की कोशिश करते हैं, लेकिन Discord पर विवरण साझा करने से हमें इसे जल्दी ठीक करने में मदद मिलती है।',
   'app.openhumanLink.discordReport.openDiscord': 'Discord खोलें',
   'app.openhumanLink.done': 'हो गया',
+  'app.openhumanLink.notifications.desktopOnly':
+    'मूल सूचनाएँ केवल डेस्कटॉप ऐप में उपलब्ध हैं (`pnpm dev:app` चलाएँ)।',
+  'app.openhumanLink.notifications.permissionOff':
+    'सूचना अनुमति बंद है। सिस्टम सेटिंग्स → सूचनाएँ में OpenHuman को सक्षम करें, फिर पुनः प्रयास करें।',
+  'app.openhumanLink.notifications.triggerFailed':
+    'OpenHuman सिस्टम सूचना ट्रिगर नहीं कर सका। OS की सूचना सेटिंग्स जाँचें और पुनः प्रयास करें।',
+  'app.openhumanLink.notifications.welcomeBody':
+    'जब किसी चीज़ पर आपका ध्यान चाहिए होगा, तो आपको यहाँ अलर्ट मिलेंगे।',
+  'app.openhumanLink.notifications.welcomeTitle': 'OpenHuman उपयोग के लिए तैयार है',
+  'app.openhumanLink.status.closed': 'बंद',
+  'app.openhumanLink.status.connected': 'कनेक्टेड',
+  'app.openhumanLink.status.error': 'त्रुटि',
+  'app.openhumanLink.status.loading': 'लोड हो रहा है…',
+  'app.openhumanLink.status.needsSignIn': 'साइन-इन आवश्यक',
+  'app.openhumanLink.status.timedOut': 'समय समाप्त',
   'app.openhumanLink.loadingChannelSetup': 'चैनल सेटअप लोड हो रहा है',
   'app.openhumanLink.maybeLater': 'शायद बाद में',
   'app.openhumanLink.notifications.asking': 'OS से पूछ रहे हैं…',

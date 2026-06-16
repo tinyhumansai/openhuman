@@ -2628,6 +2628,21 @@ const messages: TranslationMap = {
     "Désolé — quelque chose s'est mal passé de notre côté. Nous essayons de journaliser ces erreurs automatiquement, mais partager les détails sur Discord nous aide à les corriger plus vite.",
   'app.openhumanLink.discordReport.openDiscord': 'Ouvrir Discord',
   'app.openhumanLink.done': 'Terminé',
+  'app.openhumanLink.notifications.desktopOnly':
+    "Les notifications natives ne sont disponibles que dans l'application de bureau (exécutez `pnpm dev:app`).",
+  'app.openhumanLink.notifications.permissionOff':
+    "L'autorisation des notifications est désactivée. Activez OpenHuman dans Réglages système → Notifications, puis réessayez.",
+  'app.openhumanLink.notifications.triggerFailed':
+    "OpenHuman n'a pas pu déclencher de notification système. Vérifiez les paramètres de notification du système d'exploitation et réessayez.",
+  'app.openhumanLink.notifications.welcomeBody':
+    "Vous recevrez des alertes ici lorsqu'une chose nécessitera votre attention.",
+  'app.openhumanLink.notifications.welcomeTitle': 'OpenHuman est prêt',
+  'app.openhumanLink.status.closed': 'Fermé',
+  'app.openhumanLink.status.connected': 'Connecté',
+  'app.openhumanLink.status.error': 'Erreur',
+  'app.openhumanLink.status.loading': 'Chargement…',
+  'app.openhumanLink.status.needsSignIn': 'Connexion requise',
+  'app.openhumanLink.status.timedOut': 'Délai dépassé',
   'app.openhumanLink.loadingChannelSetup': 'Chargement de la configuration du canal',
   'app.openhumanLink.maybeLater': 'Peut-être plus tard',
   'app.openhumanLink.notifications.asking': 'Demande à ton OS…',

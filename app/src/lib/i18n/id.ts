@@ -2573,6 +2573,21 @@ const messages: TranslationMap = {
     'Mohon maaf — terjadi kesalahan di pihak kami. Kami berusaha mencatat error ini secara otomatis, tetapi membagikan detailnya di Discord membantu kami memperbaikinya lebih cepat.',
   'app.openhumanLink.discordReport.openDiscord': 'Buka Discord',
   'app.openhumanLink.done': 'Selesai',
+  'app.openhumanLink.notifications.desktopOnly':
+    'Notifikasi native hanya tersedia di aplikasi desktop (jalankan `pnpm dev:app`).',
+  'app.openhumanLink.notifications.permissionOff':
+    'Izin notifikasi nonaktif. Aktifkan OpenHuman di Pengaturan Sistem → Notifikasi, lalu coba lagi.',
+  'app.openhumanLink.notifications.triggerFailed':
+    'OpenHuman tidak dapat memicu notifikasi sistem. Periksa pengaturan notifikasi OS dan coba lagi.',
+  'app.openhumanLink.notifications.welcomeBody':
+    'Anda akan menerima pemberitahuan di sini saat ada hal yang memerlukan perhatian Anda.',
+  'app.openhumanLink.notifications.welcomeTitle': 'OpenHuman siap digunakan',
+  'app.openhumanLink.status.closed': 'Tertutup',
+  'app.openhumanLink.status.connected': 'Terhubung',
+  'app.openhumanLink.status.error': 'Kesalahan',
+  'app.openhumanLink.status.loading': 'Memuat…',
+  'app.openhumanLink.status.needsSignIn': 'Perlu masuk',
+  'app.openhumanLink.status.timedOut': 'Waktu habis',
   'app.openhumanLink.loadingChannelSetup': 'Memuat pengaturan kanal',
   'app.openhumanLink.maybeLater': 'Mungkin nanti',
   'app.openhumanLink.notifications.asking': 'Menanyakan ke OS Anda...',
