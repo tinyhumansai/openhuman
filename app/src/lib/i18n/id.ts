@@ -5191,7 +5191,7 @@ const messages: TranslationMap = {
   'modelCouncil.hint.code': 'Kode',
   'modelCouncil.hint.default': 'Bawaan',
   'modelCouncil.hint.reasoning': 'Penalaran',
-  'modelCouncil.hint.summarize': 'Ringkas',
+  'modelCouncil.hint.summarize': 'Ringkasan',
   'modelCouncil.modelPickerHints': 'Hints',
   'modelCouncil.modelPickerProviderModel': 'Penyedia + model',
   'modelCouncil.modelProviderLabel': 'Penyedia model',

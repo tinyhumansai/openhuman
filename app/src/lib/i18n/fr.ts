@@ -5299,7 +5299,7 @@ const messages: TranslationMap = {
   'modelCouncil.hint.code': 'Code',
   'modelCouncil.hint.default': 'Par défaut',
   'modelCouncil.hint.reasoning': 'Raisonnement',
-  'modelCouncil.hint.summarize': 'Résumer',
+  'modelCouncil.hint.summarize': 'Résumé',
   'modelCouncil.modelPickerHints': 'Hints',
   'modelCouncil.modelPickerProviderModel': 'Fournisseur + modèle',
   'modelCouncil.modelProviderLabel': 'Fournisseur du modèle',

@@ -5264,7 +5264,7 @@ const messages: TranslationMap = {
   'modelCouncil.hint.code': 'Código',
   'modelCouncil.hint.default': 'Padrão',
   'modelCouncil.hint.reasoning': 'Raciocínio',
-  'modelCouncil.hint.summarize': 'Resumir',
+  'modelCouncil.hint.summarize': 'Resumo',
   'modelCouncil.modelPickerHints': 'Hints',
   'modelCouncil.modelPickerProviderModel': 'Provedor + modelo',
   'modelCouncil.modelProviderLabel': 'Provedor do modelo',
