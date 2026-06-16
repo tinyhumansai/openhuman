@@ -8,6 +8,7 @@ import AboutPanel from '../components/settings/panels/AboutPanel';
 import AccountPanel from '../components/settings/panels/AccountPanel';
 import AgentAccessPanel from '../components/settings/panels/AgentAccessPanel';
 import AgentActivityPanel from '../components/settings/panels/AgentActivityPanel';
+import AgentBoxPanel from '../components/settings/panels/AgentBoxPanel';
 import AgentChatPanel from '../components/settings/panels/AgentChatPanel';
 import AgentEditorPage from '../components/settings/panels/AgentEditorPage';
 import AgentsPanel from '../components/settings/panels/AgentsPanel';
@@ -154,6 +155,7 @@ const Settings = () => {
             path="tool-policy-diagnostics"
             element={wrapSettingsPage(<ToolPolicyDiagnosticsPanel />)}
           />
+          <Route path="agentbox" element={wrapSettingsPage(<AgentBoxPanel />)} />
           <Route path="mcp-server" element={wrapSettingsPage(<McpServerPanel />)} />
           {/* Search engine settings moved to the Connections page. */}
           <Route path="search" element={<Navigate to="/connections?tab=search" replace />} />
