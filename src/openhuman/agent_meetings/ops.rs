@@ -15,7 +15,7 @@ use crate::rpc::RpcOutcome;
 
 use super::types::{
     BackendMeetHarnessResponseRequest, BackendMeetJoinRequest, BackendMeetJoinResponse,
-    BackendMeetLeaveRequest, BackendMeetSpeakRequest,
+    BackendMeetLeaveRequest, BackendMeetSpeakRequest, MeetingSessionStatus,
 };
 
 const ALLOWED_HOSTS: &[(&str, &str)] = &[
@@ -48,7 +48,7 @@ fn transcript_turns_to_chat_batch(
             continue;
         }
         let author = if turn.role.eq_ignore_ascii_case("assistant") {
-            "OpenHuman"
+            "Tiny"
         } else {
             "Meeting participant"
         };
@@ -293,7 +293,7 @@ pub async fn handle_join(params: Map<String, Value>) -> Result<Value, String> {
 
     let display_name = match &req.display_name {
         Some(name) => validate_display_name(name).map_err(|e| format!("[agent_meetings] {e}"))?,
-        None => "OpenHuman".to_string(),
+        None => "Tiny".to_string(),
     };
 
     let inferred = infer_platform(&normalized_url);
@@ -326,6 +326,14 @@ pub async fn handle_join(params: Map<String, Value>) -> Result<Value, String> {
     mgr.emit("bot:join", join_payload)
         .await
         .map_err(|e| format!("[agent_meetings] emit failed: {e}"))?;
+
+    // Active mode (listen_only = false, the modal's "respond when addressed"
+    // toggle) enables in-call agency for just this meeting, so the toggle
+    // "just works" without flipping the global config. Passive joins leave
+    // the meeting unmarked (default: listen-only / transcribe-only).
+    if req.listen_only == Some(false) {
+        super::in_call::mark_meeting_active(req.correlation_id.as_deref()).await;
+    }
 
     let response = BackendMeetJoinResponse {
         ok: true,
@@ -429,6 +437,119 @@ pub async fn handle_speak(params: Map<String, Value>) -> Result<Value, String> {
     outcome.into_cli_compatible_json()
 }
 
+/// Handle `openhuman.agent_meetings_notification_action` — a click on one
+/// of the calendar auto-join notification buttons (issue #3507).
+///
+/// Actions:
+/// - `join_listen`  → join muted (transcript-only).
+/// - `join_active`  → join in reply mode with the "Hey Tiny" wake phrase.
+/// - `skip`         → mark the meeting session Ended; no join.
+/// - `always_join`  → persist `auto_join_policy = Always`, then join with
+///   the configured `listen_only_default`.
+///
+/// `payload` carries `{ meetingId, meetUrl, title }` from the notification
+/// plus an optional user-edited `displayName`.
+pub async fn handle_notification_action(params: Map<String, Value>) -> Result<Value, String> {
+    let action_id = params
+        .get("action_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    if action_id.is_empty() {
+        return Err("[agent_meetings] action_id is required".to_string());
+    }
+    let payload = params.get("payload").cloned().unwrap_or(Value::Null);
+    let meeting_id = payload
+        .get("meetingId")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+    let meet_url = payload
+        .get("meetUrl")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+    let display_name = payload
+        .get("displayName")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(String::from);
+
+    tracing::info!(
+        action_id = %action_id,
+        meeting_id = ?meeting_id,
+        has_meet_url = meet_url.is_some(),
+        "[agent_meetings] notification action received"
+    );
+
+    match action_id.as_str() {
+        "skip" => {
+            if let Some(id) = &meeting_id {
+                match crate::openhuman::config::ops::load_config_with_timeout().await {
+                    Ok(config) => {
+                        let now_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
+                        if let Err(e) = super::store::update_session_status(
+                            &config,
+                            id,
+                            MeetingSessionStatus::Ended,
+                            now_ms,
+                        ) {
+                            tracing::debug!("[agent_meetings] skip: session update failed: {e}");
+                        }
+                    }
+                    Err(e) => {
+                        tracing::debug!("[agent_meetings] skip: config load failed: {e}");
+                    }
+                }
+            }
+            let outcome = RpcOutcome::new(json!({ "ok": true }), vec![]);
+            outcome.into_cli_compatible_json()
+        }
+        "join_listen" | "join_active" | "always_join" => {
+            let meet_url = meet_url
+                .ok_or_else(|| "[agent_meetings] payload.meetUrl is required".to_string())?;
+            let config = crate::openhuman::config::ops::load_config_with_timeout().await?;
+
+            if action_id == "always_join" {
+                let mut cfg = config.clone();
+                cfg.meet.auto_join_policy =
+                    crate::openhuman::config::schema::AutoJoinPolicy::Always;
+                if let Err(e) = cfg.save().await {
+                    // Join anyway — the policy flip failing must not block
+                    // the join the user just asked for.
+                    tracing::warn!("[agent_meetings] persisting always-join policy failed: {e}");
+                }
+            }
+
+            let listen_only = match action_id.as_str() {
+                "join_listen" => true,
+                "join_active" => false,
+                _ => config.meet.listen_only_default,
+            };
+
+            let mut join = Map::new();
+            join.insert("meet_url".to_string(), json!(meet_url));
+            join.insert(
+                "correlation_id".to_string(),
+                json!(meeting_id
+                    .clone()
+                    .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())),
+            );
+            join.insert("listen_only".to_string(), json!(listen_only));
+            if let Some(name) = display_name {
+                join.insert("display_name".to_string(), json!(name));
+            }
+            if !listen_only {
+                // Reply mode: the participant addresses the bot as "Hey Tiny";
+                // the wake phrase is always required (no implicit address).
+                join.insert("wake_phrase".to_string(), json!("Hey Tiny"));
+            }
+
+            handle_join(join).await
+        }
+        other => Err(format!("[agent_meetings] unknown action_id: {other}")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -458,6 +579,39 @@ mod tests {
     #[test]
     fn rejects_unknown_host() {
         assert!(validate_meeting_url("https://example.com/meeting").is_err());
+    }
+
+    #[tokio::test]
+    async fn notification_action_requires_action_id() {
+        let err = handle_notification_action(Map::new()).await.unwrap_err();
+        assert!(err.contains("action_id"));
+    }
+
+    #[tokio::test]
+    async fn notification_action_rejects_unknown_action() {
+        let mut params = Map::new();
+        params.insert("action_id".to_string(), json!("explode"));
+        let err = handle_notification_action(params).await.unwrap_err();
+        assert!(err.contains("unknown action_id"));
+    }
+
+    #[tokio::test]
+    async fn notification_action_join_requires_meet_url() {
+        let mut params = Map::new();
+        params.insert("action_id".to_string(), json!("join_listen"));
+        params.insert("payload".to_string(), json!({ "meetingId": "m-1" }));
+        let err = handle_notification_action(params).await.unwrap_err();
+        assert!(err.contains("meetUrl"));
+    }
+
+    #[tokio::test]
+    async fn notification_action_skip_without_meeting_id_is_ok() {
+        // No meetingId → nothing to update; must succeed without touching
+        // config or the session store.
+        let mut params = Map::new();
+        params.insert("action_id".to_string(), json!("skip"));
+        let value = handle_notification_action(params).await.unwrap();
+        assert_eq!(value.get("ok"), Some(&json!(true)));
     }
 
     #[test]
@@ -498,7 +652,7 @@ mod tests {
         assert_eq!(batch.platform, "backend_meet");
         assert_eq!(batch.messages.len(), 2);
         assert_eq!(batch.messages[0].author, "Meeting participant");
-        assert_eq!(batch.messages[1].author, "OpenHuman");
+        assert_eq!(batch.messages[1].author, "Tiny");
         assert!(batch.messages[0].text.contains("summarize"));
     }
 

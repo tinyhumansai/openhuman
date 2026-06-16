@@ -80,7 +80,7 @@ impl Provider for OpenAiCompatibleProvider {
 
         if self.responses_api_primary {
             return self
-                .chat_via_responses(credential, &fallback_messages, model)
+                .chat_via_responses(credential, &fallback_messages, model, None)
                 .await;
         }
 
@@ -94,7 +94,7 @@ impl Provider for OpenAiCompatibleProvider {
                 if self.supports_responses_fallback {
                     let detail = super::super::format_error_chain(&chat_error);
                     return self
-                        .chat_via_responses(credential, &fallback_messages, model)
+                        .chat_via_responses(credential, &fallback_messages, model, None)
                         .await
                         .map_err(|responses_err| {
                             let fb = super::super::format_anyhow_chain(&responses_err);
@@ -124,7 +124,7 @@ impl Provider for OpenAiCompatibleProvider {
 
             if status == reqwest::StatusCode::NOT_FOUND && self.supports_responses_fallback {
                 return self
-                    .chat_via_responses(credential, &fallback_messages, model)
+                    .chat_via_responses(credential, &fallback_messages, model, None)
                     .await
                     .map_err(|responses_err| {
                         let fb = super::super::format_anyhow_chain(&responses_err);
@@ -252,7 +252,7 @@ impl Provider for OpenAiCompatibleProvider {
         let url = self.chat_completions_url();
         if self.responses_api_primary {
             return self
-                .chat_via_responses(credential, &effective_messages, model)
+                .chat_via_responses(credential, &effective_messages, model, None)
                 .await;
         }
 
@@ -266,7 +266,7 @@ impl Provider for OpenAiCompatibleProvider {
                 if self.supports_responses_fallback {
                     let detail = super::super::format_error_chain(&chat_error);
                     return self
-                        .chat_via_responses(credential, &effective_messages, model)
+                        .chat_via_responses(credential, &effective_messages, model, None)
                         .await
                         .map_err(|responses_err| {
                             let fb = super::super::format_anyhow_chain(&responses_err);
@@ -294,7 +294,7 @@ impl Provider for OpenAiCompatibleProvider {
 
                 if self.supports_responses_fallback {
                     return self
-                        .chat_via_responses(credential, &effective_messages, model)
+                        .chat_via_responses(credential, &effective_messages, model, None)
                         .await
                         .map_err(|responses_err| {
                             let fb = super::super::format_anyhow_chain(&responses_err);
@@ -489,7 +489,7 @@ impl Provider for OpenAiCompatibleProvider {
                 effective_messages.clone()
             };
             let text = self
-                .chat_via_responses(credential, &response_messages, model)
+                .chat_via_responses(credential, &response_messages, model, request.max_tokens)
                 .await?;
             if let Some(tx) = request.stream {
                 let _ = tx
@@ -525,6 +525,7 @@ impl Provider for OpenAiCompatibleProvider {
                 // field (Google Gemini shim — TAURI-RUST-4PJ); the reactive
                 // retry below stays as defense-in-depth for unknown providers.
                 frequency_penalty: self.effective_frequency_penalty(),
+                max_tokens: request.max_tokens,
             };
             let stream_dump_seq = reserve_dump_seq();
             dump_prompt_if_enabled(&self.name, model, stream_dump_seq, &native_request);
@@ -611,6 +612,7 @@ impl Provider for OpenAiCompatibleProvider {
             // The buffered non-streaming path omits `frequency_penalty` for maximum
             // compatibility. The streaming path carries it and retries without on rejection.
             frequency_penalty: None,
+            max_tokens: request.max_tokens,
         };
         let dump_seq = reserve_dump_seq();
         dump_prompt_if_enabled(&self.name, model, dump_seq, &native_request);
@@ -629,7 +631,12 @@ impl Provider for OpenAiCompatibleProvider {
                 if self.supports_responses_fallback {
                     let detail = super::super::format_error_chain(&chat_error);
                     return self
-                        .chat_via_responses(credential, &effective_messages, model)
+                        .chat_via_responses(
+                            credential,
+                            &effective_messages,
+                            model,
+                            request.max_tokens,
+                        )
                         .await
                         .map(|text| ProviderChatResponse {
                             text: Some(text),
@@ -679,7 +686,7 @@ impl Provider for OpenAiCompatibleProvider {
 
             if status == reqwest::StatusCode::NOT_FOUND && self.supports_responses_fallback {
                 return self
-                    .chat_via_responses(credential, &effective_messages, model)
+                    .chat_via_responses(credential, &effective_messages, model, request.max_tokens)
                     .await
                     .map(|text| ProviderChatResponse {
                         text: Some(text),
@@ -732,6 +739,17 @@ impl Provider for OpenAiCompatibleProvider {
                 &error,
             ) {
                 super::super::log_provider_config_rejection(
+                    "native_chat",
+                    self.name.as_str(),
+                    Some(model),
+                    status,
+                );
+            } else if super::super::is_provider_insufficient_credits_402(status, &error) {
+                // Residual 402 after the request already caps max_tokens: the
+                // user's own BYO provider balance is exhausted — no local lever,
+                // so demote to info instead of paging on every retry
+                // (TAURI-RUST-C62).
+                super::super::log_provider_insufficient_credits_402(
                     "native_chat",
                     self.name.as_str(),
                     Some(model),

@@ -156,6 +156,65 @@ pub fn log_provider_access_policy_denied_http_403(
 }
 
 /// Whether a provider non-2xx response is a deterministic
+/// **insufficient-credits** user-state error — the BYO provider account
+/// (e.g. OpenRouter) lacks the balance to satisfy the request.
+///
+/// This is the *residual* case once the request already caps `max_tokens`
+/// (so the provider's pre-flight is priced against a realistic output budget
+/// rather than the model's full window — see
+/// [`crate::openhuman::inference::provider::ChatRequest::max_tokens`]): a 402
+/// that still arrives means the user's own third-party account is genuinely
+/// out of credit, a billing state OpenHuman has no lever over. Demote from
+/// Sentry to an info log rather than page once per retry
+/// (TAURI-RUST-C62: 12k events from a single low-balance user).
+///
+/// Gated on the 402 status **and** a credit/payment phrase so an unrelated
+/// 402 is not swallowed. The phrase list is covered by a verbatim-body test
+/// so a provider wording drift fails CI instead of silently leaking events.
+pub fn is_provider_insufficient_credits_402(status: reqwest::StatusCode, body: &str) -> bool {
+    status == reqwest::StatusCode::PAYMENT_REQUIRED && body_indicates_insufficient_credits(body)
+}
+
+/// Phrase-level matcher for an insufficient-credits / out-of-balance provider
+/// error body. Single source of truth for the credit-phrase set, shared by the
+/// emit-site guard [`is_provider_insufficient_credits_402`] (which adds the 402
+/// status gate) and the `before_send` defense-in-depth filter
+/// [`crate::core::observability::is_insufficient_credits_event`] (which matches
+/// the formatted `<provider> API error (402 …): <body>` message so the demotion
+/// reaches every compatible-provider HTTP path — `chat_with_system`,
+/// `chat_with_history`, the streaming gates, and `api_error` — not just
+/// `Provider::chat()`'s `native_chat` cascade). TAURI-RUST-C62.
+pub fn body_indicates_insufficient_credits(body: &str) -> bool {
+    let lower = body.to_ascii_lowercase();
+    lower.contains("requires more credits")
+        || lower.contains("more credits")
+        || lower.contains("can only afford")
+        || lower.contains("insufficient credit")
+        || lower.contains("insufficient balance")
+        || lower.contains("insufficient funds")
+        || lower.contains("payment required")
+}
+
+pub fn log_provider_insufficient_credits_402(
+    operation: &str,
+    provider: &str,
+    model: Option<&str>,
+    status: reqwest::StatusCode,
+) {
+    tracing::info!(
+        domain = "llm_provider",
+        operation = operation,
+        provider = provider,
+        model = model.unwrap_or(""),
+        status = status.as_u16(),
+        failure = "non_2xx",
+        kind = "insufficient_credits",
+        "[llm_provider] {operation} provider insufficient-credits 402 — BYO account out of \
+         balance (no local lever), not reporting to Sentry"
+    );
+}
+
+/// Whether a provider non-2xx response is a deterministic
 /// **configuration-rejection** user-state error (unknown model id,
 /// abstract tier leaked to a custom provider, model-specific temperature
 /// constraint) that should be demoted from Sentry to an info log.
@@ -449,4 +508,65 @@ pub async fn api_error(provider: &str, response: reqwest::Response) -> anyhow::E
         );
     }
     anyhow::anyhow!(message)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use reqwest::StatusCode;
+
+    /// Verbatim TAURI-RUST-C62 provider body. The matcher keys on this prose,
+    /// so coupling the test to the exact string makes a provider wording drift
+    /// fail CI rather than silently leak events back to Sentry.
+    const C62_BODY: &str = "myopenrouter API error (402 Payment Required): \
+        {\"error\":{\"message\":\"This request requires more credits, or fewer max_tokens. \
+        You requested up to 65536 tokens, but can only afford 49732.\"}}";
+
+    #[test]
+    fn insufficient_credits_402_matches_verbatim_c62_body() {
+        assert!(is_provider_insufficient_credits_402(
+            StatusCode::PAYMENT_REQUIRED,
+            C62_BODY
+        ));
+    }
+
+    #[test]
+    fn insufficient_credits_402_matches_common_phrasings() {
+        for body in [
+            "insufficient balance",
+            "Insufficient credits to complete this request",
+            "insufficient funds on account",
+            "you can only afford 100 tokens",
+            "402 Payment Required",
+        ] {
+            assert!(
+                is_provider_insufficient_credits_402(StatusCode::PAYMENT_REQUIRED, body),
+                "should match: {body:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn insufficient_credits_402_ignores_non_402_status() {
+        // Same prose but a non-402 status is not this user-state — must stay
+        // reportable so a genuine bug elsewhere isn't swallowed.
+        assert!(!is_provider_insufficient_credits_402(
+            StatusCode::BAD_REQUEST,
+            C62_BODY
+        ));
+        assert!(!is_provider_insufficient_credits_402(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            C62_BODY
+        ));
+    }
+
+    #[test]
+    fn insufficient_credits_402_ignores_unrelated_402_body() {
+        // A 402 without any credit/payment phrase (reserved for other payment
+        // semantics) is not swallowed by this guard.
+        assert!(!is_provider_insufficient_credits_402(
+            StatusCode::PAYMENT_REQUIRED,
+            "{\"error\":{\"message\":\"some unrelated condition\"}}"
+        ));
+    }
 }

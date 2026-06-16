@@ -17,7 +17,9 @@ pub mod types;
 pub mod vault;
 
 // Re-export everything so consumers and the test file keep working with `use super::*;`
-pub use admin::{flush_now_rpc, flush_source_tree_rpc, reset_tree_rpc, wipe_all_rpc};
+pub use admin::{
+    delete_source_rpc, flush_now_rpc, flush_source_tree_rpc, reset_tree_rpc, wipe_all_rpc,
+};
 pub use chunks::{
     display_name_for_source, list_chunks_rpc, list_sources_rpc, read_chunk_row, recall_rpc,
     search_rpc,
@@ -30,7 +32,7 @@ pub use graph::{
     graph_export_rpc, sanitize_basename, GraphEdge, GraphExportResponse, GraphMode, GraphNode,
 };
 pub use types::{
-    ChunkFilter, ChunkRow, DeleteChunkResponse, EntityRef, FlushNowResponse,
+    ChunkFilter, ChunkRow, DeleteChunkResponse, DeleteSourceResponse, EntityRef, FlushNowResponse,
     FlushSourceTreeResponse, ListChunksResponse, ObsidianVaultStatusResponse, RecallResponse,
     ResetTreeResponse, ScoreBreakdown, ScoreSignal, Source, VaultHealthCheckResponse,
     WipeAllResponse,

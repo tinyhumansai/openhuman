@@ -1,7 +1,7 @@
 //! WhatsApp Web scanner driven over the Chrome DevTools Protocol (CDP).
 //!
-//! We talk to the embedded CEF instance through its remote-debugging port
-//! (set via `--remote-debugging-port=19222` in `lib.rs`). Per tracked
+//! Attaches to the embedded CEF webview via the in-process CDP transport
+//! installed by `webview_accounts::open` (no TCP listener). Per tracked
 //! WhatsApp-account webview, two interleaved loops run:
 //!
 //!   * **Fast tick** (`FAST_SCAN_INTERVAL`, 2s) — `dom_scan.js` scrapes
@@ -23,23 +23,19 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use futures_util::{SinkExt, StreamExt};
 use parking_lot::Mutex;
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Runtime};
 use tokio::task::AbortHandle;
 use tokio::time::sleep;
-use tokio_tungstenite::{connect_async, tungstenite::Message};
+
+use crate::cdp::CdpConn;
 
 mod dom_snapshot;
 #[cfg(test)]
 mod dom_snapshot_tests;
 mod idb;
 
-const CDP_HOST: &str = "127.0.0.1";
-// Must match `--remote-debugging-port=19222` in lib.rs and
-// `cdp::CDP_PORT`. Was 9222, moved to dodge ollama's listener.
-const CDP_PORT: u16 = 19222;
 /// Cadence for the expensive full scan — pages the whole IDB via CDP and
 /// captures a fresh DOM snapshot. Each pass serialises thousands of
 /// message records, so we pay this cost infrequently.
@@ -48,14 +44,6 @@ const FULL_SCAN_INTERVAL: Duration = Duration::from_secs(30);
 /// Franz-like 2s so the ingest stream feels live — each tick captures the
 /// DOM via `DOMSnapshot.captureSnapshot` (pure CDP, no page-world JS).
 const FAST_SCAN_INTERVAL: Duration = Duration::from_secs(2);
-
-/// One CDP target descriptor (from `Target.getTargets`).
-#[derive(Debug, Clone)]
-struct CdpTarget {
-    id: String,
-    kind: String,
-    url: String,
-}
 
 /// Product of one full scan — IDB walk (via `idb::walk`) joined with a
 /// DOM snapshot (via `dom_snapshot::capture_messages`). `messages` carries
@@ -123,7 +111,7 @@ pub fn spawn_scanner<R: Runtime>(
             // otherwise run the cheap DOM-only scan.
             let do_full = last_full.elapsed() >= FULL_SCAN_INTERVAL;
             if !do_full {
-                match scan_dom_once(&account_id, &url_prefix, &fragment).await {
+                match scan_dom_once(&app, &account_id, &url_prefix, &fragment).await {
                     Ok(dom) => {
                         let changed =
                             last_dom_hash != Some(dom.hash) && !dom.dom_messages.is_empty();
@@ -297,34 +285,19 @@ async fn scan_once<R: Runtime>(
     url_prefix: &str,
     url_fragment: &str,
 ) -> Result<ScanSnapshot, String> {
-    // One CDP connection per tick — we attach to the WhatsApp page session,
-    // run the IDB walk + DOM snapshot, then detach (which frees every
-    // RemoteObject the IDB walk materialised, so no per-object releases).
-    let browser_ws = browser_ws_url().await?;
-    let mut cdp = CdpConn::open(&browser_ws).await?;
-
-    let targets_v = cdp.call("Target.getTargets", json!({}), None).await?;
-    let targets = parse_targets(&targets_v);
-    log::debug!("[wa][{}] {} targets total", account_id, targets.len());
-
-    let page_target = targets
-        .iter()
-        .find(|t| {
-            t.kind == "page" && t.url.starts_with(url_prefix) && t.url.ends_with(url_fragment)
-        })
-        .ok_or_else(|| format!("no page target matching {url_prefix} fragment={url_fragment}"))?;
-    let attach = cdp
-        .call(
-            "Target.attachToTarget",
-            json!({ "targetId": page_target.id, "flatten": true }),
-            None,
-        )
-        .await?;
-    let page_session = attach
-        .get("sessionId")
-        .and_then(|x| x.as_str())
-        .ok_or_else(|| "page attach missing sessionId".to_string())?
-        .to_string();
+    // One CDP attach per tick — we attach to the WhatsApp page session via
+    // the account's in-process CDP transport, run the IDB walk + DOM
+    // snapshot, then detach (which frees every RemoteObject the IDB walk
+    // materialised, so no per-object releases).
+    let url_prefix_owned = url_prefix.to_string();
+    let url_fragment_owned = url_fragment.to_string();
+    let pred = move |t: &crate::cdp::target::CdpTarget| -> bool {
+        t.url.starts_with(&url_prefix_owned) && t.url.ends_with(&url_fragment_owned)
+    };
+    let (mut cdp, page_session) =
+        crate::cdp::target::connect_and_attach_matching_in_process::<R, _>(app, account_id, pred)
+            .await
+            .map_err(|e| format!("attach: {e} (prefix={url_prefix} fragment={url_fragment})"))?;
 
     // IDB + DOM are independent — run IDB first (the heavier of the two)
     // so a DOM failure doesn't mask IDB errors. Errors are captured on
@@ -389,33 +362,21 @@ pub struct DomScanResult {
 /// enumeration, no JavaScript runs in the page — the snapshot is produced
 /// at the browser's C++ layer. The flat-array response is parsed in Rust
 /// (see `dom_snapshot.rs`).
-async fn scan_dom_once(
+async fn scan_dom_once<R: Runtime>(
+    app: &AppHandle<R>,
     account_id: &str,
     url_prefix: &str,
     url_fragment: &str,
 ) -> Result<DomScanResult, String> {
-    let browser_ws = browser_ws_url().await?;
-    let mut cdp = CdpConn::open(&browser_ws).await?;
-    let targets_v = cdp.call("Target.getTargets", json!({}), None).await?;
-    let targets = parse_targets(&targets_v);
-    let page_target = targets
-        .iter()
-        .find(|t| {
-            t.kind == "page" && t.url.starts_with(url_prefix) && t.url.ends_with(url_fragment)
-        })
-        .ok_or_else(|| format!("no page target matching {url_prefix} fragment={url_fragment}"))?;
-    let attach = cdp
-        .call(
-            "Target.attachToTarget",
-            json!({ "targetId": page_target.id, "flatten": true }),
-            None,
-        )
-        .await?;
-    let page_session = attach
-        .get("sessionId")
-        .and_then(|x| x.as_str())
-        .ok_or_else(|| "page attach missing sessionId".to_string())?
-        .to_string();
+    let url_prefix_owned = url_prefix.to_string();
+    let url_fragment_owned = url_fragment.to_string();
+    let pred = move |t: &crate::cdp::target::CdpTarget| -> bool {
+        t.url.starts_with(&url_prefix_owned) && t.url.ends_with(&url_fragment_owned)
+    };
+    let (mut cdp, page_session) =
+        crate::cdp::target::connect_and_attach_matching_in_process::<R, _>(app, account_id, pred)
+            .await
+            .map_err(|e| format!("attach: {e} (prefix={url_prefix} fragment={url_fragment})"))?;
     let captured = dom_snapshot::capture_messages(&mut cdp, &page_session).await;
     // Detach no matter what — otherwise dangling sessions pile up on long
     // runs and eventually the CDP endpoint refuses new attachments.
@@ -446,123 +407,6 @@ async fn scan_dom_once(
         dom_messages,
         hash: report.hash,
     })
-}
-
-fn parse_targets(v: &Value) -> Vec<CdpTarget> {
-    v.get("targetInfos")
-        .and_then(|x| x.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|t| {
-                    Some(CdpTarget {
-                        id: t.get("targetId")?.as_str()?.to_string(),
-                        kind: t.get("type")?.as_str()?.to_string(),
-                        url: t
-                            .get("url")
-                            .and_then(|u| u.as_str())
-                            .unwrap_or("")
-                            .to_string(),
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-/// Discover the browser-level WebSocket endpoint via `/json/version`.
-async fn browser_ws_url() -> Result<String, String> {
-    let url = format!("http://{CDP_HOST}:{CDP_PORT}/json/version");
-    let resp = reqwest::Client::builder()
-        .user_agent("openhuman-cdp/1.0")
-        .timeout(Duration::from_secs(5))
-        .build()
-        .map_err(|e| format!("reqwest build: {e}"))?
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| format!("GET {url}: {e}"))?;
-    let v: Value = resp.json().await.map_err(|e| format!("parse: {e}"))?;
-    v.get("webSocketDebuggerUrl")
-        .and_then(|x| x.as_str())
-        .map(|s| s.to_string())
-        .ok_or_else(|| "no webSocketDebuggerUrl in /json/version".to_string())
-}
-
-/// Minimal CDP request/response client: keeps a WebSocket open, sends
-/// JSON-RPC requests with auto-incrementing ids, awaits the matching
-/// response. Inbound CDP events (no `id`) and unrelated responses are
-/// drained but ignored. Not concurrent — `call` is sequential.
-struct CdpConn {
-    sink: futures_util::stream::SplitSink<
-        tokio_tungstenite::WebSocketStream<
-            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-        >,
-        Message,
-    >,
-    stream: futures_util::stream::SplitStream<
-        tokio_tungstenite::WebSocketStream<
-            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-        >,
-    >,
-    next_id: i64,
-}
-
-impl CdpConn {
-    async fn open(ws_url: &str) -> Result<Self, String> {
-        let (ws, _resp) = connect_async(ws_url)
-            .await
-            .map_err(|e| format!("ws connect: {e}"))?;
-        let (sink, stream) = ws.split();
-        Ok(Self {
-            sink,
-            stream,
-            next_id: 1,
-        })
-    }
-
-    async fn call(
-        &mut self,
-        method: &str,
-        params: Value,
-        session_id: Option<&str>,
-    ) -> Result<Value, String> {
-        let id = self.next_id;
-        self.next_id += 1;
-        let mut req = json!({ "id": id, "method": method, "params": params });
-        if let Some(s) = session_id {
-            req["sessionId"] = json!(s);
-        }
-        let body = serde_json::to_string(&req).map_err(|e| format!("encode: {e}"))?;
-        self.sink
-            .send(Message::Text(body))
-            .await
-            .map_err(|e| format!("ws send: {e}"))?;
-
-        loop {
-            let msg = tokio::time::timeout(Duration::from_secs(35), self.stream.next())
-                .await
-                .map_err(|_| format!("ws read timeout (method={method})"))?
-                .ok_or_else(|| format!("ws closed (method={method})"))?
-                .map_err(|e| format!("ws recv: {e}"))?;
-            let text = match msg {
-                Message::Text(t) => t,
-                Message::Binary(_) | Message::Ping(_) | Message::Pong(_) | Message::Frame(_) => {
-                    continue
-                }
-                Message::Close(_) => return Err("ws closed".into()),
-            };
-            let v: Value = serde_json::from_str(&text).map_err(|e| format!("decode: {e}"))?;
-            // Skip CDP events (have `method` instead of `id`) + responses
-            // for other ids.
-            if v.get("id").and_then(|x| x.as_i64()) != Some(id) {
-                continue;
-            }
-            if let Some(err) = v.get("error") {
-                return Err(format!("cdp error: {err}"));
-            }
-            return Ok(v.get("result").cloned().unwrap_or(Value::Null));
-        }
-    }
 }
 
 /// Forward the snapshot to React via the same `webview:event` channel

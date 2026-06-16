@@ -5,6 +5,7 @@ import { useSearchParams } from 'react-router-dom';
 import { ConfirmationModal } from '../components/intelligence/ConfirmationModal';
 import IntelligenceAgentsTab from '../components/intelligence/IntelligenceAgentsTab';
 import IntelligenceAgentWorkTab from '../components/intelligence/IntelligenceAgentWorkTab';
+import IntelligenceOrchestrationTab from '../components/intelligence/IntelligenceOrchestrationTab';
 import IntelligenceSubconsciousTab from '../components/intelligence/IntelligenceSubconsciousTab';
 import IntelligenceTasksTab from '../components/intelligence/IntelligenceTasksTab';
 import IntelligenceTeamsTab from '../components/intelligence/IntelligenceTeamsTab';
@@ -37,6 +38,7 @@ type IntelligenceTab =
   | 'teams'
   | 'agents'
   | 'workflows'
+  | 'orchestration'
   | 'council';
 
 const INTELLIGENCE_TABS: IntelligenceTab[] = [
@@ -47,6 +49,7 @@ const INTELLIGENCE_TABS: IntelligenceTab[] = [
   'teams',
   'agents',
   'workflows',
+  'orchestration',
   'council',
 ];
 
@@ -178,6 +181,11 @@ export default function Intelligence({ tabParamKey = 'tab' }: IntelligenceProps 
       label: t('memory.tab.workflows'),
       description: t('memory.tab.workflowsDescription'),
     },
+    {
+      id: 'orchestration',
+      label: t('memory.tab.orchestration'),
+      description: t('memory.tab.orchestrationDescription'),
+    },
     { id: 'council', label: t('memory.tab.council'), devOnly: true },
     { id: 'agents', label: t('memory.tab.agents'), description: t('memory.tab.agentsDescription') },
   ];
@@ -272,6 +280,8 @@ export default function Intelligence({ tabParamKey = 'tab' }: IntelligenceProps 
             {activeTab === 'agents' && <IntelligenceAgentsTab />}
 
             {activeTab === 'workflows' && <WorkflowsTab />}
+
+            {activeTab === 'orchestration' && <IntelligenceOrchestrationTab />}
 
             {activeTab === 'council' && <ModelCouncilTab />}
           </div>

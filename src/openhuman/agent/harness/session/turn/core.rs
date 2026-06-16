@@ -539,6 +539,7 @@ impl Agent {
                     None, // the web bridge streams via on_progress deltas, not on_delta
                     &[],
                     turn_run_queue,
+                    None, // main agent compacts via its ContextManager in before_dispatch
                 )),
             )
             .await?;

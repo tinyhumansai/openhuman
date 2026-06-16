@@ -33,7 +33,13 @@ fn structured_http_4xx(msg: &str) -> Option<u16> {
 }
 
 /// Check if an error is non-retryable (client errors that won't resolve with retries).
-fn is_non_retryable(err: &anyhow::Error) -> bool {
+///
+/// `pub(crate)` so other layers that run their own retry loop over a provider
+/// call (e.g. `memory_tree::extract::llm`) classify failures against the same
+/// source of truth instead of treating every error as a retryable transport
+/// blip — retrying a permanent 4xx (402 out of credits, bad key, model gone)
+/// only multiplies wasted calls and Sentry events (TAURI-RUST-C62).
+pub(crate) fn is_non_retryable(err: &anyhow::Error) -> bool {
     if is_context_window_exceeded(err) {
         return true;
     }
@@ -760,6 +766,7 @@ impl Provider for ReliableProvider {
                         messages: request.messages,
                         tools: request.tools,
                         stream: stream_this_attempt,
+                        max_tokens: request.max_tokens,
                     };
                     match provider.chat(req, current_model, temperature).await {
                         Ok(resp) => {

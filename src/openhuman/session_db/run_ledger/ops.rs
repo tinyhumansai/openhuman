@@ -224,6 +224,56 @@ pub fn get_agent_run(config: &Config, id: &str) -> Result<Option<AgentRun>> {
     })
 }
 
+/// Apply a durable status transition to a single agent run.
+///
+/// Unlike [`upsert_agent_run`] — whose `ON CONFLICT` clause `COALESCE`s the
+/// `error` and `completed_at` columns and can therefore only ever *set* them —
+/// this is a direct `UPDATE` that can both set and *clear* both columns. That
+/// is required by control verbs such as "retry", which moves a failed run back
+/// to `pending` and must drop the stale failure reason and completion time.
+///
+/// `status` is always written. `error` and `completed_at` are written verbatim,
+/// so passing `None` clears the column. `updated_at` is bumped to now. Returns
+/// the freshly-read run, or `None` when no row matched `id` (e.g. it was
+/// deleted between a prior read and this write).
+pub fn transition_agent_run_status(
+    config: &Config,
+    id: &str,
+    status: AgentRunStatus,
+    error: Option<&str>,
+    completed_at: Option<DateTime<Utc>>,
+) -> Result<Option<AgentRun>> {
+    let now = Utc::now();
+    log::debug!(
+        "{LOG_PREFIX} transition_agent_run_status id={id} status={} has_error={} has_completed_at={}",
+        status.as_str(),
+        error.is_some(),
+        completed_at.is_some()
+    );
+    crate::openhuman::session_db::store::with_connection(config, |conn| {
+        init_run_ledger_schema(conn)?;
+        let rows_affected = conn
+            .execute(
+                "UPDATE agent_runs
+                 SET status = ?1, error = ?2, completed_at = ?3, updated_at = ?4
+                 WHERE id = ?5",
+                params![
+                    status.as_str(),
+                    error,
+                    completed_at.map(|dt| dt.to_rfc3339()),
+                    now.to_rfc3339(),
+                    id,
+                ],
+            )
+            .context("transition agent run status")?;
+        if rows_affected == 0 {
+            log::debug!("{LOG_PREFIX} transition_agent_run_status.miss id={id}");
+            return Ok(None);
+        }
+        get_agent_run_inner(conn, id)
+    })
+}
+
 pub fn list_agent_runs(
     config: &Config,
     request: &AgentRunListRequest,
@@ -1385,6 +1435,74 @@ mod tests {
         .unwrap();
         assert_eq!(list.count, 1);
         assert_eq!(list.runs[0].worker_thread_id.as_deref(), Some("worker-1"));
+    }
+
+    #[test]
+    fn transition_sets_status_and_clears_error_and_completed_at() {
+        let dir = TempDir::new().unwrap();
+        let config = test_config(&dir);
+
+        // Seed a failed run carrying an error + completion time.
+        let completed_at = Utc::now();
+        upsert_agent_run(
+            &config,
+            AgentRunUpsert {
+                id: "run-1".into(),
+                kind: super::super::types::AgentRunKind::Subagent,
+                parent_run_id: None,
+                parent_thread_id: Some("thread-1".into()),
+                agent_id: Some("researcher".into()),
+                status: AgentRunStatus::Failed,
+                prompt_ref: None,
+                worker_thread_id: None,
+                task_board_id: None,
+                task_card_id: None,
+                checkpoint_path: None,
+                checkpoint: None,
+                summary: None,
+                error: Some("boom".into()),
+                metadata: json!({}),
+                started_at: None,
+                completed_at: Some(completed_at),
+            },
+        )
+        .unwrap();
+
+        // Re-queue: passing None for both columns must CLEAR them (the upsert
+        // path's COALESCE cannot do this — that is the whole reason this op
+        // exists).
+        let updated =
+            transition_agent_run_status(&config, "run-1", AgentRunStatus::Pending, None, None)
+                .unwrap()
+                .expect("run present");
+        assert_eq!(updated.status, AgentRunStatus::Pending);
+        assert_eq!(updated.error, None);
+        assert_eq!(updated.completed_at, None);
+
+        // Stopping: status + error + completion are all set verbatim.
+        let stopped_at = Utc::now();
+        let updated = transition_agent_run_status(
+            &config,
+            "run-1",
+            AgentRunStatus::Cancelled,
+            Some("manual"),
+            Some(stopped_at),
+        )
+        .unwrap()
+        .expect("run present");
+        assert_eq!(updated.status, AgentRunStatus::Cancelled);
+        assert_eq!(updated.error.as_deref(), Some("manual"));
+        assert!(updated.completed_at.is_some());
+    }
+
+    #[test]
+    fn transition_unknown_run_returns_none() {
+        let dir = TempDir::new().unwrap();
+        let config = test_config(&dir);
+        let result =
+            transition_agent_run_status(&config, "ghost", AgentRunStatus::Pending, None, None)
+                .unwrap();
+        assert!(result.is_none());
     }
 
     fn seed_team(config: &Config, team_id: &str) {

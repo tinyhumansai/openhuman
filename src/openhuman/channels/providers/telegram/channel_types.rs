@@ -9,6 +9,11 @@ use std::time::Instant;
 
 pub(crate) const TELEGRAM_RECENT_UPDATE_CACHE_SIZE: usize = 4096;
 
+/// Telegram Bot API caps downloaded files at 20MB for `getFile`.
+/// Keep our inbound voice path inside the same bound before base64 encoding
+/// and dispatching to STT.
+pub(crate) const TELEGRAM_MAX_VOICE_FILE_BYTES: u64 = 20 * 1024 * 1024;
+
 /// De-bounce window for approval prompts: suppress duplicate prompts sent to the
 /// same chat+sender within this duration (prevents restart-race and rapid-fire spam).
 pub(crate) const APPROVAL_PROMPT_DEBOUNCE_SECS: u64 = 60;
@@ -31,6 +36,14 @@ pub(crate) struct TelegramReactionEvent {
     pub(crate) reply_target: String,
     pub(crate) target_message_id: String,
     pub(crate) emoji: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TelegramVoiceAttachment {
+    pub(crate) file_id: String,
+    pub(crate) file_unique_id: Option<String>,
+    pub(crate) file_size: Option<u64>,
+    pub(crate) mime_type: Option<String>,
 }
 
 /// Telegram channel — long-polls the Bot API for updates

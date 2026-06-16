@@ -55,30 +55,22 @@ pub async fn ensure_composio_sources() -> Option<HashSet<String>> {
         }
     };
 
-    let mut upserted = 0u32;
-    for target in &targets {
-        // Use a title-cased toolkit name plus the truncated connection id
-        // so distinct Gmail accounts don't all show as "Gmail connection".
-        let label = format!(
-            "{} · {}",
-            title_case(&target.toolkit),
-            short_id(&target.connection_id)
-        );
-        match registry::upsert_composio_source(&target.toolkit, &target.connection_id, &label).await
-        {
-            Ok(_) => {
-                upserted += 1;
-            }
-            Err(e) => {
-                tracing::warn!(
-                    toolkit = %target.toolkit,
-                    connection_id = %target.connection_id,
-                    error = %e,
-                    "[memory_sources:reconcile] upsert failed"
-                );
-            }
+    // Build the upsert targets up front, then apply them with a single config
+    // load + save via the batch path. The per-call upsert does its own
+    // load-modify-save, so the old loop cost 2N config round-trips for N
+    // connections; batching collapses that to 2.
+    let upsert_targets = build_upsert_targets(&targets);
+    let upserted = match registry::upsert_composio_sources_batch(&upsert_targets).await {
+        Ok(n) => n,
+        Err(e) => {
+            tracing::warn!(
+                targets = targets.len(),
+                error = %e,
+                "[memory_sources:reconcile] batch upsert failed"
+            );
+            0
         }
-    }
+    };
 
     if !targets.is_empty() {
         tracing::info!(
@@ -102,6 +94,26 @@ pub async fn ensure_composio_sources() -> Option<HashSet<String>> {
     // token expiry mints a fresh connection_id, stranding the old row) and
     // collapse identical same-id duplicates.
     Some(targets.iter().map(|t| t.connection_id.clone()).collect())
+}
+
+/// Build the `(toolkit, connection_id, label)` upsert targets for a batch
+/// reconcile from the scanned Composio sync targets.
+///
+/// The label is a title-cased toolkit name plus the truncated connection id so
+/// distinct accounts of the same toolkit (e.g. two Gmail logins) don't all show
+/// as "Gmail connection". Pure (no I/O) so it can be unit-tested directly.
+fn build_upsert_targets(targets: &[composio::SyncTarget]) -> Vec<registry::ComposioUpsertTarget> {
+    targets
+        .iter()
+        .map(|target| {
+            let label = format!(
+                "{} · {}",
+                title_case(&target.toolkit),
+                short_id(&target.connection_id)
+            );
+            (target.toolkit.clone(), target.connection_id.clone(), label)
+        })
+        .collect()
 }
 
 /// Apply conservative default caps in-place to every cap-less source.
@@ -315,6 +327,36 @@ mod tests {
                 "sync_depth_days mismatch for toolkit={toolkit}"
             );
         }
+    }
+
+    fn sync_target(toolkit: &str, connection_id: &str) -> composio::SyncTarget {
+        composio::SyncTarget {
+            toolkit: toolkit.to_string(),
+            connection_id: connection_id.to_string(),
+        }
+    }
+
+    #[test]
+    fn build_upsert_targets_formats_label_and_preserves_order() {
+        let targets = vec![
+            sync_target("gmail", "ca_WaktIDFlZwXO"),
+            sync_target("slack", "short"),
+        ];
+        let out = build_upsert_targets(&targets);
+        assert_eq!(out.len(), 2);
+        // (toolkit, connection_id, label) — toolkit/connection_id carried through verbatim.
+        assert_eq!(out[0].0, "gmail");
+        assert_eq!(out[0].1, "ca_WaktIDFlZwXO");
+        assert_eq!(out[0].2, "Gmail · IDFlZwXO");
+        assert_eq!(out[1].0, "slack");
+        assert_eq!(out[1].1, "short");
+        assert_eq!(out[1].2, "Slack · short");
+    }
+
+    #[test]
+    fn build_upsert_targets_empty_is_empty() {
+        let out = build_upsert_targets(&[]);
+        assert!(out.is_empty());
     }
 
     #[test]

@@ -44,6 +44,7 @@ impl super::super::super::engine::CheckpointStrategy for SubagentCheckpoint<'_> 
                     messages: &summary_input,
                     tools: None,
                     stream: None,
+                    max_tokens: None,
                 },
                 &self.model,
                 self.temperature,

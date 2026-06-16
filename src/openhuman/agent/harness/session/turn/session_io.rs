@@ -120,6 +120,7 @@ impl Agent {
                     messages: &messages,
                     tools: None,
                     stream: delta_tx_opt.as_ref(),
+                    max_tokens: None,
                 },
                 effective_model,
                 self.temperature,

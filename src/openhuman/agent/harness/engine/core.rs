@@ -25,6 +25,7 @@ use crate::openhuman::agent::cost::TurnCost;
 use crate::openhuman::agent::multimodal;
 use crate::openhuman::agent::stop_hooks::{current_stop_hooks, StopDecision, TurnState};
 use crate::openhuman::context::guard::{ContextCheckResult, ContextGuard};
+use crate::openhuman::context::{summarize_chat_history, EngineAutocompact};
 use crate::openhuman::inference::provider::{
     ChatMessage, ChatRequest, Provider, ProviderCapabilityError,
 };
@@ -90,6 +91,12 @@ pub(crate) async fn run_turn_engine(
     on_delta: Option<tokio::sync::mpsc::Sender<String>>,
     early_exit_tool_names: &[&str],
     run_queue: Option<Arc<RunQueue>>,
+    // When `Some`, the engine summarizes `history` in place once the context
+    // guard reports the window is filling (the soft compaction threshold).
+    // The main `Agent` path leaves this `None` — it compacts through its typed
+    // `ContextManager` in `observer.before_dispatch` instead — so only the
+    // sub-agent loop (which has no `ContextManager`) opts in.
+    autocompact: Option<&EngineAutocompact>,
 ) -> Result<TurnEngineOutcome> {
     // Resolve the model's context window once per turn. Local providers (e.g.
     // LM Studio) report their *runtime-loaded* window here, which can be far
@@ -171,6 +178,50 @@ pub(crate) async fn run_turn_engine(
                     "[agent_loop] context guard: compaction needed (>{:.0}% full)",
                     crate::openhuman::context::guard::COMPACTION_TRIGGER_THRESHOLD * 100.0
                 );
+                // Engine-level LLM autocompaction (sub-agent path opts in via
+                // `autocompact`; the main `Agent` path is `None` and compacts in
+                // `before_dispatch` instead). Runs BEFORE the hard token-budget
+                // trim below so the summary captures content the trim would
+                // otherwise drop. Feeds the guard's circuit breaker so three
+                // consecutive failures disable it and the next `check()` returns
+                // `ContextExhausted` rather than looping.
+                if let Some(ac) = autocompact {
+                    let summary_model = ac.summarizer_model.as_deref().unwrap_or(model);
+                    match summarize_chat_history(
+                        provider,
+                        history,
+                        summary_model,
+                        ac.keep_recent,
+                        ac.temperature,
+                    )
+                    .await
+                    {
+                        Ok(stats) if stats.messages_removed > 0 => {
+                            context_guard.record_compaction_success();
+                            tracing::info!(
+                                iteration,
+                                messages_removed = stats.messages_removed,
+                                approx_tokens_freed = stats.approx_tokens_freed,
+                                "[agent_loop] engine autocompaction freed context"
+                            );
+                        }
+                        Ok(_) => {
+                            tracing::debug!(
+                                iteration,
+                                "[agent_loop] engine autocompaction: nothing to summarize \
+                                 (history below keep_recent); relying on token-budget trim"
+                            );
+                        }
+                        Err(e) => {
+                            context_guard.record_compaction_failure();
+                            tracing::warn!(
+                                iteration,
+                                error = %e,
+                                "[agent_loop] engine autocompaction failed"
+                            );
+                        }
+                    }
+                }
             }
             ContextCheckResult::ContextExhausted {
                 utilization_pct,
@@ -373,6 +424,7 @@ pub(crate) async fn run_turn_engine(
                     messages: &prepared_messages_vec,
                     tools: request_tools,
                     stream: delta_tx_opt.as_ref(),
+                    max_tokens: None,
                 },
                 model,
                 temperature,
@@ -781,3 +833,7 @@ pub(crate) async fn run_turn_engine(
         early_exit_tool: None,
     })
 }
+
+#[cfg(test)]
+#[path = "core_tests.rs"]
+mod tests;

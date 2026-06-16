@@ -423,7 +423,7 @@ Ensure only one `openhuman` process is using this bot token."
                         continue;
                     }
 
-                    let Some(msg) = self.parse_update_message(update) else {
+                    let Some(msg) = self.parse_update_message_or_voice(update).await else {
                         self.handle_unauthorized_message(update).await;
                         continue;
                     };

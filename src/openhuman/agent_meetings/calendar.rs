@@ -26,6 +26,13 @@ use crate::core::event_bus::{
     publish_global, subscribe_global, DomainEvent, EventHandler, SubscriptionHandle,
 };
 use crate::openhuman::config::rpc as config_rpc;
+use crate::openhuman::notifications::bus::publish_core_notification;
+use crate::openhuman::notifications::types::{
+    CoreNotificationAction, CoreNotificationCategory, CoreNotificationEvent,
+};
+
+use super::store;
+use super::types::{AutoJoinSource, MeetingSession, MeetingSessionStatus};
 
 static MEET_CALENDAR_HANDLE: OnceLock<SubscriptionHandle> = OnceLock::new();
 
@@ -166,12 +173,73 @@ impl EventHandler for MeetCalendarSubscriber {
                 return;
             }
             crate::openhuman::config::schema::AutoJoinPolicy::AskEachTime => {
-                // Default: ask — publish a prompt for the UI.
+                // Default: ask — create a Pending session and surface an
+                // actionable notification (issue #3507). The buttons route
+                // through `agent_meetings_notification_action`.
                 tracing::info!(
                     meet_url = %meet_url,
                     title = %event_title,
                     "[meet:calendar] auto_join_policy=ask_each_time, prompting user"
                 );
+
+                // Dedupe: one prompt per meeting URL while a session is
+                // still open (Composio can re-fire the trigger on event
+                // updates).
+                if let Ok(Some(existing)) = store::get_session_by_meet_url(&config, &meet_url) {
+                    if existing.status != MeetingSessionStatus::Ended {
+                        tracing::debug!(
+                            meeting_id = %existing.id,
+                            "[meet:calendar] open session already exists — skipping re-prompt"
+                        );
+                        return;
+                    }
+                }
+
+                let meeting_id = uuid::Uuid::new_v4().to_string();
+                let now_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
+                let session = MeetingSession {
+                    id: meeting_id.clone(),
+                    meet_url: meet_url.clone(),
+                    title: Some(event_title.clone()),
+                    calendar_event_id: None,
+                    status: MeetingSessionStatus::Pending,
+                    source: AutoJoinSource::Calendar,
+                    thread_id: None,
+                    transcript_received: false,
+                    summary_generated: false,
+                    created_at_ms: now_ms,
+                    updated_at_ms: now_ms,
+                };
+                if let Err(e) = store::create_session(&config, &session) {
+                    tracing::warn!("[meet:calendar] session create failed (non-fatal): {e}");
+                }
+
+                let action_payload = serde_json::json!({
+                    "meetingId": meeting_id,
+                    "meetUrl": meet_url,
+                    "title": event_title,
+                });
+                let action = |action_id: &str, label: &str| CoreNotificationAction {
+                    action_id: action_id.to_string(),
+                    label: label.to_string(),
+                    payload: Some(action_payload.clone()),
+                };
+                publish_core_notification(CoreNotificationEvent {
+                    id: format!("meet-auto-join:{meeting_id}"),
+                    category: CoreNotificationCategory::Meetings,
+                    title: format!("Meeting starting: {event_title}"),
+                    body: "Add Tiny to this meeting?".to_string(),
+                    deep_link: None,
+                    timestamp_ms: now_ms,
+                    actions: Some(vec![
+                        action("join_listen", "Join (listen only)"),
+                        action("join_active", "Join & reply"),
+                        action("skip", "Not this one"),
+                        action("always_join", "Always join"),
+                    ]),
+                });
+
+                // Legacy prompt event kept for existing consumers.
                 publish_global(DomainEvent::MeetAutoJoinPrompt {
                     meet_url,
                     event_title,
@@ -350,7 +418,7 @@ async fn auto_join_meeting(
 
     let payload = json!({
         "meetUrl": meet_url,
-        "displayName": "OpenHuman",
+        "displayName": "Tiny",
         "correlationId": correlation_id,
         "listenOnly": listen_only,
     });
