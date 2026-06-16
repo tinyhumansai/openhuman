@@ -4379,13 +4379,15 @@ const messages: TranslationMap = {
   'settings.memoryWindow.title': 'लॉन्ग-टर्म मेमोरी विंडो',
   'settings.agentbox.title': 'AgentBox',
   'settings.agentbox.desc': 'GMI Cloud मार्केटप्लेस एडॉप्टर की स्थिति और प्रदाता कॉन्फ़िगरेशन',
-  'settings.agentbox.intro': 'AgentBox मार्केटप्लेस एडॉप्टर की केवल-पढ़ने योग्य स्थिति। कोर शुरू होने पर मोड और GMI MaaS प्रदाता पर्यावरण वेरिएबल द्वारा सेट किए जाते हैं।',
+  'settings.agentbox.intro':
+    'AgentBox मार्केटप्लेस एडॉप्टर की केवल-पढ़ने योग्य स्थिति। कोर शुरू होने पर मोड और GMI MaaS प्रदाता पर्यावरण वेरिएबल द्वारा सेट किए जाते हैं।',
   'settings.agentbox.modeLabel': 'मार्केटप्लेस मोड',
   'settings.agentbox.providerHeading': 'GMI MaaS प्रदाता',
   'settings.agentbox.slug': 'प्रदाता स्लग',
   'settings.agentbox.baseUrl': 'बेस URL',
   'settings.agentbox.model': 'मॉडल',
-  'settings.agentbox.notConfigured': 'कॉन्फ़िगर नहीं किया गया। GMI_MAAS_BASE_URL, GMI_MAAS_API_KEY, और GMI_MODELS पर्यावरण वेरिएबल सेट करें।',
+  'settings.agentbox.notConfigured':
+    'कॉन्फ़िगर नहीं किया गया। GMI_MAAS_BASE_URL, GMI_MAAS_API_KEY, और GMI_MODELS पर्यावरण वेरिएबल सेट करें।',
   'settings.agentbox.unavailable': 'AgentBox स्थिति अनुपलब्ध',
   'settings.modelHealth.title': 'स्वास्थ्य',
   'settings.modelHealth.desc':

@@ -4445,13 +4445,15 @@ const messages: TranslationMap = {
   'settings.memoryWindow.title': 'Okno pamięci długoterminowej',
   'settings.agentbox.title': 'AgentBox',
   'settings.agentbox.desc': 'Stan adaptera platformy handlowej GMI Cloud i konfiguracja dostawcy',
-  'settings.agentbox.intro': 'Stan tylko do odczytu adaptera platformy handlowej AgentBox. Tryb oraz dostawca GMI MaaS są ustawiane przez zmienne środowiskowe podczas uruchamiania rdzenia.',
+  'settings.agentbox.intro':
+    'Stan tylko do odczytu adaptera platformy handlowej AgentBox. Tryb oraz dostawca GMI MaaS są ustawiane przez zmienne środowiskowe podczas uruchamiania rdzenia.',
   'settings.agentbox.modeLabel': 'Tryb platformy handlowej',
   'settings.agentbox.providerHeading': 'Dostawca GMI MaaS',
   'settings.agentbox.slug': 'Identyfikator dostawcy',
   'settings.agentbox.baseUrl': 'Podstawowy adres URL',
   'settings.agentbox.model': 'Model',
-  'settings.agentbox.notConfigured': 'Nie skonfigurowano. Ustaw zmienne środowiskowe GMI_MAAS_BASE_URL, GMI_MAAS_API_KEY oraz GMI_MODELS.',
+  'settings.agentbox.notConfigured':
+    'Nie skonfigurowano. Ustaw zmienne środowiskowe GMI_MAAS_BASE_URL, GMI_MAAS_API_KEY oraz GMI_MODELS.',
   'settings.agentbox.unavailable': 'Stan AgentBox niedostępny',
   'settings.modelHealth.title': 'Kondycja modeli',
   'settings.modelHealth.desc':

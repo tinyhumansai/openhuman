@@ -4453,14 +4453,17 @@ const messages: TranslationMap = {
   'settings.memoryWindow.minimal.label': 'Mínimo',
   'settings.memoryWindow.title': 'Janela de memória de longo prazo',
   'settings.agentbox.title': 'AgentBox',
-  'settings.agentbox.desc': 'Estado do adaptador do marketplace GMI Cloud e configuração do provedor',
-  'settings.agentbox.intro': 'Estado somente leitura do adaptador do marketplace AgentBox. O modo e o provedor GMI MaaS são definidos por variáveis de ambiente quando o núcleo é iniciado.',
+  'settings.agentbox.desc':
+    'Estado do adaptador do marketplace GMI Cloud e configuração do provedor',
+  'settings.agentbox.intro':
+    'Estado somente leitura do adaptador do marketplace AgentBox. O modo e o provedor GMI MaaS são definidos por variáveis de ambiente quando o núcleo é iniciado.',
   'settings.agentbox.modeLabel': 'Modo do marketplace',
   'settings.agentbox.providerHeading': 'Provedor GMI MaaS',
   'settings.agentbox.slug': 'Identificador do provedor',
   'settings.agentbox.baseUrl': 'URL base',
   'settings.agentbox.model': 'Modelo',
-  'settings.agentbox.notConfigured': 'Não configurado. Defina as variáveis de ambiente GMI_MAAS_BASE_URL, GMI_MAAS_API_KEY e GMI_MODELS.',
+  'settings.agentbox.notConfigured':
+    'Não configurado. Defina as variáveis de ambiente GMI_MAAS_BASE_URL, GMI_MAAS_API_KEY e GMI_MODELS.',
   'settings.agentbox.unavailable': 'Estado do AgentBox indisponível',
   'settings.modelHealth.title': 'Saúde do Modelo',
   'settings.modelHealth.desc':

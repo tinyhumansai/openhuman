@@ -4488,13 +4488,15 @@ const messages: TranslationMap = {
   'settings.memoryWindow.title': 'Langzeitgedächtnisfenster',
   'settings.agentbox.title': 'AgentBox',
   'settings.agentbox.desc': 'Status des GMI-Cloud-Marktplatz-Adapters und Anbieterkonfiguration',
-  'settings.agentbox.intro': 'Schreibgeschützter Status des AgentBox-Marktplatz-Adapters. Modus und GMI-MaaS-Anbieter werden beim Start des Kerns über Umgebungsvariablen festgelegt.',
+  'settings.agentbox.intro':
+    'Schreibgeschützter Status des AgentBox-Marktplatz-Adapters. Modus und GMI-MaaS-Anbieter werden beim Start des Kerns über Umgebungsvariablen festgelegt.',
   'settings.agentbox.modeLabel': 'Marktplatz-Modus',
   'settings.agentbox.providerHeading': 'GMI MaaS Anbieter',
   'settings.agentbox.slug': 'Anbieterkennung',
   'settings.agentbox.baseUrl': 'Basis-URL',
   'settings.agentbox.model': 'Modell',
-  'settings.agentbox.notConfigured': 'Nicht konfiguriert. Legen Sie die Umgebungsvariablen GMI_MAAS_BASE_URL, GMI_MAAS_API_KEY und GMI_MODELS fest.',
+  'settings.agentbox.notConfigured':
+    'Nicht konfiguriert. Legen Sie die Umgebungsvariablen GMI_MAAS_BASE_URL, GMI_MAAS_API_KEY und GMI_MODELS fest.',
   'settings.agentbox.unavailable': 'AgentBox-Status nicht verfügbar',
   'settings.modelHealth.title': 'Modellgesundheit',
   'settings.modelHealth.desc':

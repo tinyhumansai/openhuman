@@ -4391,13 +4391,15 @@ const messages: TranslationMap = {
   'settings.memoryWindow.title': 'Jendela memori jangka panjang',
   'settings.agentbox.title': 'AgentBox',
   'settings.agentbox.desc': 'Status adaptor pasar GMI Cloud dan konfigurasi penyedia',
-  'settings.agentbox.intro': 'Status hanya-baca dari adaptor pasar AgentBox. Mode dan penyedia GMI MaaS diatur oleh variabel lingkungan saat inti dimulai.',
+  'settings.agentbox.intro':
+    'Status hanya-baca dari adaptor pasar AgentBox. Mode dan penyedia GMI MaaS diatur oleh variabel lingkungan saat inti dimulai.',
   'settings.agentbox.modeLabel': 'Mode pasar',
   'settings.agentbox.providerHeading': 'Penyedia GMI MaaS',
   'settings.agentbox.slug': 'Slug penyedia',
   'settings.agentbox.baseUrl': 'URL dasar',
   'settings.agentbox.model': 'Model',
-  'settings.agentbox.notConfigured': 'Belum dikonfigurasi. Atur variabel lingkungan GMI_MAAS_BASE_URL, GMI_MAAS_API_KEY, dan GMI_MODELS.',
+  'settings.agentbox.notConfigured':
+    'Belum dikonfigurasi. Atur variabel lingkungan GMI_MAAS_BASE_URL, GMI_MAAS_API_KEY, dan GMI_MODELS.',
   'settings.agentbox.unavailable': 'Status AgentBox tidak tersedia',
   'settings.modelHealth.title': 'Model Kesehatan',
   'settings.modelHealth.desc':

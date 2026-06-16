@@ -4288,13 +4288,15 @@ const messages: TranslationMap = {
   'settings.memoryWindow.title': 'نافذة الذاكرة طويلة الأمد',
   'settings.agentbox.title': 'AgentBox',
   'settings.agentbox.desc': 'حالة محول سوق GMI Cloud وإعداد المزود',
-  'settings.agentbox.intro': 'حالة للقراءة فقط لمحول سوق AgentBox. يتم تعيين الوضع ومزود GMI MaaS عبر متغيرات البيئة عند بدء تشغيل النواة.',
+  'settings.agentbox.intro':
+    'حالة للقراءة فقط لمحول سوق AgentBox. يتم تعيين الوضع ومزود GMI MaaS عبر متغيرات البيئة عند بدء تشغيل النواة.',
   'settings.agentbox.modeLabel': 'وضع السوق',
   'settings.agentbox.providerHeading': 'مزود GMI MaaS',
   'settings.agentbox.slug': 'معرّف المزود',
   'settings.agentbox.baseUrl': 'عنوان URL الأساسي',
   'settings.agentbox.model': 'النموذج',
-  'settings.agentbox.notConfigured': 'غير مُهيأ. عيّن متغيرات البيئة GMI_MAAS_BASE_URL وGMI_MAAS_API_KEY وGMI_MODELS.',
+  'settings.agentbox.notConfigured':
+    'غير مُهيأ. عيّن متغيرات البيئة GMI_MAAS_BASE_URL وGMI_MAAS_API_KEY وGMI_MODELS.',
   'settings.agentbox.unavailable': 'حالة AgentBox غير متوفرة',
   'settings.modelHealth.title': 'نموذج الصحة',
   'settings.modelHealth.desc':

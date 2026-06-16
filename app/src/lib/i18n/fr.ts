@@ -4478,15 +4478,18 @@ const messages: TranslationMap = {
   'settings.memoryWindow.minimal.label': 'minimal',
   'settings.memoryWindow.title': 'Fenêtre de mémoire à long terme',
   'settings.agentbox.title': 'AgentBox',
-  'settings.agentbox.desc': 'État de l\'adaptateur de la place de marché GMI Cloud et configuration du fournisseur',
-  'settings.agentbox.intro': 'État en lecture seule de l\'adaptateur de la place de marché AgentBox. Le mode et le fournisseur GMI MaaS sont définis par des variables d\'environnement au démarrage du noyau.',
+  'settings.agentbox.desc':
+    "État de l'adaptateur de la place de marché GMI Cloud et configuration du fournisseur",
+  'settings.agentbox.intro':
+    "État en lecture seule de l'adaptateur de la place de marché AgentBox. Le mode et le fournisseur GMI MaaS sont définis par des variables d'environnement au démarrage du noyau.",
   'settings.agentbox.modeLabel': 'Mode place de marché',
   'settings.agentbox.providerHeading': 'Fournisseur GMI MaaS',
   'settings.agentbox.slug': 'Identifiant du fournisseur',
   'settings.agentbox.baseUrl': 'URL de base',
   'settings.agentbox.model': 'Modèle',
-  'settings.agentbox.notConfigured': 'Non configuré. Définissez les variables d\'environnement GMI_MAAS_BASE_URL, GMI_MAAS_API_KEY et GMI_MODELS.',
-  'settings.agentbox.unavailable': 'État d\'AgentBox indisponible',
+  'settings.agentbox.notConfigured':
+    "Non configuré. Définissez les variables d'environnement GMI_MAAS_BASE_URL, GMI_MAAS_API_KEY et GMI_MODELS.",
+  'settings.agentbox.unavailable': "État d'AgentBox indisponible",
   'settings.modelHealth.title': 'Santé Modèle',
   'settings.modelHealth.desc':
     "Qualité par modèle, taux d'hallucination et comparaison des coûts entre les modèles actifs",

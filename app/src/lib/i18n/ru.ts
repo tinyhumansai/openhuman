@@ -4419,13 +4419,15 @@ const messages: TranslationMap = {
   'settings.memoryWindow.title': 'Окно долгосрочной памяти',
   'settings.agentbox.title': 'AgentBox',
   'settings.agentbox.desc': 'Состояние адаптера маркетплейса GMI Cloud и настройка поставщика',
-  'settings.agentbox.intro': 'Состояние адаптера маркетплейса AgentBox только для чтения. Режим и поставщик GMI MaaS задаются переменными окружения при запуске ядра.',
+  'settings.agentbox.intro':
+    'Состояние адаптера маркетплейса AgentBox только для чтения. Режим и поставщик GMI MaaS задаются переменными окружения при запуске ядра.',
   'settings.agentbox.modeLabel': 'Режим маркетплейса',
   'settings.agentbox.providerHeading': 'Поставщик GMI MaaS',
   'settings.agentbox.slug': 'Идентификатор поставщика',
   'settings.agentbox.baseUrl': 'Базовый URL',
   'settings.agentbox.model': 'Модель',
-  'settings.agentbox.notConfigured': 'Не настроено. Задайте переменные окружения GMI_MAAS_BASE_URL, GMI_MAAS_API_KEY и GMI_MODELS.',
+  'settings.agentbox.notConfigured':
+    'Не настроено. Задайте переменные окружения GMI_MAAS_BASE_URL, GMI_MAAS_API_KEY и GMI_MODELS.',
   'settings.agentbox.unavailable': 'Состояние AgentBox недоступно',
   'settings.modelHealth.title': 'Модель здоровья',
   'settings.modelHealth.desc':

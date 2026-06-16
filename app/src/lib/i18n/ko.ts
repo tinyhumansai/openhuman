@@ -4334,13 +4334,15 @@ const messages: TranslationMap = {
   'settings.memoryWindow.title': '장기 메모리 창',
   'settings.agentbox.title': 'AgentBox',
   'settings.agentbox.desc': 'GMI Cloud 마켓플레이스 어댑터 상태 및 공급자 구성',
-  'settings.agentbox.intro': 'AgentBox 마켓플레이스 어댑터의 읽기 전용 상태입니다. 모드와 GMI MaaS 공급자는 코어가 시작될 때 환경 변수로 설정됩니다.',
+  'settings.agentbox.intro':
+    'AgentBox 마켓플레이스 어댑터의 읽기 전용 상태입니다. 모드와 GMI MaaS 공급자는 코어가 시작될 때 환경 변수로 설정됩니다.',
   'settings.agentbox.modeLabel': '마켓플레이스 모드',
   'settings.agentbox.providerHeading': 'GMI MaaS 공급자',
   'settings.agentbox.slug': '공급자 슬러그',
   'settings.agentbox.baseUrl': '기본 URL',
   'settings.agentbox.model': '모델',
-  'settings.agentbox.notConfigured': '구성되지 않았습니다. GMI_MAAS_BASE_URL, GMI_MAAS_API_KEY 및 GMI_MODELS 환경 변수를 설정하세요.',
+  'settings.agentbox.notConfigured':
+    '구성되지 않았습니다. GMI_MAAS_BASE_URL, GMI_MAAS_API_KEY 및 GMI_MODELS 환경 변수를 설정하세요.',
   'settings.agentbox.unavailable': 'AgentBox 상태를 사용할 수 없습니다',
   'settings.modelHealth.title': '모델 상태',
   'settings.modelHealth.desc': '활성 모델 전반의 모델별 품질, 환각률, 비용 비교',

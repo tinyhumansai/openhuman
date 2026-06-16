@@ -89,7 +89,9 @@ const AgentBoxPanel = () => {
 
     return (
       <div className="px-4 pt-3 pb-6 flex flex-col gap-3">
-        <div className="text-xs text-sage-700 dark:text-sage-300">{t('settings.agentbox.intro')}</div>
+        <div className="text-xs text-sage-700 dark:text-sage-300">
+          {t('settings.agentbox.intro')}
+        </div>
 
         <div className={ROW}>
           <div className="flex items-center justify-between gap-3">
