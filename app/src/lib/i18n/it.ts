@@ -5264,6 +5264,11 @@ const messages: TranslationMap = {
   'modelCouncil.modelPickerHelp':
     'Seleziona un suggerimento di routing o fissa un modello fornitore esatto.',
   'modelCouncil.closeModelPicker': 'Close',
+  'modelCouncil.hint.chat': 'Chat',
+  'modelCouncil.hint.code': 'Codice',
+  'modelCouncil.hint.default': 'Predefinito',
+  'modelCouncil.hint.reasoning': 'Ragionamento',
+  'modelCouncil.hint.summarize': 'Riassumere',
   'modelCouncil.modelPickerHints': 'Hints',
   'modelCouncil.modelPickerProviderModel': 'Fornitore + modello',
   'modelCouncil.modelProviderLabel': 'Fornitore del modello',

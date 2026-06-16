@@ -5303,6 +5303,11 @@ const messages: TranslationMap = {
   'modelCouncil.modelPickerHelp':
     'Wählen Sie einen Routing-Hinweis oder pinnen Sie ein genaues Anbietermodell.',
   'modelCouncil.closeModelPicker': 'Close',
+  'modelCouncil.hint.chat': 'Chat',
+  'modelCouncil.hint.code': 'Code',
+  'modelCouncil.hint.default': 'Standard',
+  'modelCouncil.hint.reasoning': 'Schlussfolgern',
+  'modelCouncil.hint.summarize': 'Zusammenfassen',
   'modelCouncil.modelPickerHints': 'Hints',
   'modelCouncil.modelPickerProviderModel': 'Anbieter + Modell',
   'modelCouncil.modelProviderLabel': 'Modellanbieter',
