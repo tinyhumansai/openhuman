@@ -121,6 +121,28 @@ impl EmbeddingProvider for OpenAiEmbedding {
             return Ok(Vec::new());
         }
 
+        // Pre-flight: empty / whitespace-only entries are guaranteed 400s from
+        // the upstream (OpenAI: `"input must be a non-empty string"`; OpenHuman
+        // cloud backend: `"input must be a non-empty string or array of
+        // non-empty strings"`). Bailing here keeps the round-trip and quota
+        // out of the picture and — crucially — bypasses the `report_error_or_
+        // expected` Sentry route below, so a caller passing an empty summary
+        // stops manifesting as a server fault (#13021).
+        if let Some(idx) = texts.iter().position(|t| t.trim().is_empty()) {
+            tracing::warn!(
+                target: "openai::embed",
+                "[openai] refusing embed: input[{idx}] is empty/whitespace \
+                 (count={}, model={}). Caller must filter empty strings.",
+                texts.len(),
+                self.model,
+            );
+            anyhow::bail!(
+                "openai embed: refusing empty/whitespace input at index {idx} of {} (model={})",
+                texts.len(),
+                self.model,
+            );
+        }
+
         let url = self.embeddings_url();
 
         tracing::debug!(
@@ -207,7 +229,21 @@ impl EmbeddingProvider for OpenAiEmbedding {
                     target: "openai::embed",
                     "[openai] embed error: status={status}, body={text}"
                 );
-                let message = format!("Embedding API error ({status}): {text}");
+                let mut message = format!("Embedding API error ({status}): {text}");
+                // A 404/405 means the base URL responded but exposes no
+                // embeddings route — the user pointed the Custom
+                // (OpenAI-compatible) provider at a chat-only endpoint (e.g.
+                // DeepSeek). Append an actionable remediation while PRESERVING
+                // the `Embedding API error (404…)` prefix that
+                // `observability::is_embedding_endpoint_absent` keys on, so the
+                // event is still demoted from Sentry. Host-agnostic text (no
+                // URL/credential echo). TAURI-RUST-5JR.
+                if matches!(status.as_u16(), 404 | 405) {
+                    message.push_str(
+                        " — this endpoint has no embeddings API; pick an \
+                         embeddings-capable provider in Settings → Memory",
+                    );
+                }
                 // Use `report_error_or_expected` so transient upstream HTTP
                 // failures (e.g. 429 Too Many Requests after retry cap) log a
                 // warning breadcrumb instead of firing a Sentry error event.

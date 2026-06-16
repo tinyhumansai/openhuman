@@ -62,6 +62,17 @@ struct McpSseEvent {
 }
 
 pub async fn run_http(config: HttpServerConfig) -> Result<()> {
+    run_http_reporting(config, None).await
+}
+
+/// Like [`run_http`] but reports the actually-bound [`SocketAddr`] through
+/// `ready` once the listener is up. Needed when binding an ephemeral port
+/// (`127.0.0.1:0`) so the caller can learn the chosen port (e.g. to hand the
+/// URL to a local MCP client).
+pub async fn run_http_reporting(
+    config: HttpServerConfig,
+    ready: Option<tokio::sync::oneshot::Sender<SocketAddr>>,
+) -> Result<()> {
     let (event_tx, _) = broadcast::channel(128);
     let state = AppState {
         sessions: Arc::new(Mutex::new(HashMap::new())),
@@ -76,10 +87,11 @@ pub async fn run_http(config: HttpServerConfig) -> Result<()> {
     let listener = tokio::net::TcpListener::bind(config.bind_addr)
         .await
         .with_context(|| format!("binding MCP HTTP server on {}", config.bind_addr))?;
-    log::info!(
-        "[mcp_server] HTTP/SSE listening on http://{}",
-        listener.local_addr()?
-    );
+    let local_addr = listener.local_addr()?;
+    log::info!("[mcp_server] HTTP/SSE listening on http://{local_addr}");
+    if let Some(tx) = ready {
+        let _ = tx.send(local_addr);
+    }
 
     axum::serve(listener, app)
         .await
@@ -147,12 +159,27 @@ async fn handle_post(
         );
     }
 
-    if body.get("id").is_none() {
-        let _ = protocol::handle_json_value(body).await;
+    // Carry the delegation-chain depth (set by the Claude Code driver on the
+    // spawned `claude`'s MCP config) into tool dispatch so `run_subagent` can
+    // bound nested recursion per-chain rather than process-wide.
+    let depth = super::subagent_depth::parse_header(header_value(
+        &headers,
+        super::subagent_depth::HEADER_SUBAGENT_DEPTH,
+    ));
+
+    // `handle_json_value` can dispatch `run_subagent` (build an Agent + run a
+    // full turn), so its future is very large. Box it onto the heap before
+    // awaiting so this handler's stack frame stays small — an inline giant
+    // future here overflows the tokio worker stack (it was already borderline;
+    // wrapping it in the depth `scope` tipped it over).
+    let has_id = body.get("id").is_some();
+    let responses =
+        super::subagent_depth::scope(depth, Box::pin(protocol::handle_json_value(body))).await;
+    if !has_id {
         return StatusCode::NO_CONTENT.into_response();
     }
 
-    match protocol::handle_json_value(body).await {
+    match responses {
         responses if responses.is_empty() => StatusCode::NO_CONTENT.into_response(),
         responses if responses.len() == 1 => {
             Json(responses.into_iter().next().unwrap()).into_response()
@@ -162,7 +189,9 @@ async fn handle_post(
 }
 
 async fn handle_initialize(state: &AppState, body: Value) -> Response {
-    let responses = protocol::handle_json_value(body).await;
+    // Box the (large) dispatch future onto the heap to keep this handler's
+    // stack frame small — see the note in `handle_post`.
+    let responses = Box::pin(protocol::handle_json_value(body)).await;
     let Some(response) = responses.into_iter().next() else {
         return StatusCode::NO_CONTENT.into_response();
     };

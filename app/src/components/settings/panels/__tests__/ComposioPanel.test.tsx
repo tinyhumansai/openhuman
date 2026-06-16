@@ -60,7 +60,8 @@ describe('ComposioPanel', () => {
     await waitFor(() => {
       expect(screen.queryByText('Loading…')).toBeNull();
     });
-    expect(screen.getByText('Composio')).toBeInTheDocument();
+    // Titles were dropped in favour of the panel description.
+    expect(screen.getByText(/Bring your own Composio API key/)).toBeInTheDocument();
   });
 
   test('defaults to Backend mode when getMode returns backend', async () => {

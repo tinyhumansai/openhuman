@@ -29,6 +29,7 @@
  */
 import { waitForApp } from '../helpers/app-helpers';
 import {
+  chatMounted,
   clickByTitle,
   clickSend,
   getSelectedThreadId,
@@ -73,7 +74,7 @@ describe('Chat harness — send + stream', () => {
   it('mounts /chat and a new thread is selectable', async () => {
     await navigateViaHash('/chat');
 
-    await browser.waitUntil(async () => await textExists('Threads'), {
+    await browser.waitUntil(async () => await chatMounted(), {
       timeout: 15_000,
       timeoutMsg: 'Conversations did not mount',
     });

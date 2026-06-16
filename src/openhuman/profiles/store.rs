@@ -1,68 +1,17 @@
-//! Persistent user-selectable agent profiles.
+//! Persistence layer for agent profiles.
 //!
-//! Profiles let the UI choose a primary agent persona plus runtime defaults
-//! without editing built-in agent TOML. The state is stored under
-//! `<workspace>/agent_profiles.json` and merged with built-in profiles on load
-//! so new releases can add defaults without overwriting user-created profiles.
+//! State is stored under `<workspace>/agent_profiles.json` and merged with
+//! built-in profiles on load so new releases can add defaults without
+//! overwriting user-created profiles.
 
-use crate::openhuman::context::prompt::{PromptContext, PromptSection};
+use super::types::{AgentProfile, AgentProfilesState, DEFAULT_PROFILE_ID};
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 const PROFILE_FILE: &str = "agent_profiles.json";
-pub const DEFAULT_PROFILE_ID: &str = "default";
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentProfile {
-    pub id: String,
-    pub name: String,
-    pub description: String,
-    pub agent_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model_override: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub temperature: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub system_prompt_suffix: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub allowed_tools: Option<Vec<String>>,
-    #[serde(default)]
-    pub built_in: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub avatar_url: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub voice_id: Option<String>,
-    /// Inline SOUL.md content for this personality. Falls back to workspace root.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub soul_md: Option<String>,
-    /// Relative path to a personality-specific SOUL.md file (checked before inline).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub soul_md_path: Option<String>,
-    /// Composio toolkit slugs this personality can access. None = all integrations.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub composio_integrations: Option<Vec<String>>,
-    /// Auto-assigned memory directory suffix: "" for default, "-1", "-2", etc.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub memory_dir_suffix: Option<String>,
-    /// Whether this profile is the master orchestrator personality.
-    #[serde(default)]
-    pub is_master: bool,
-    /// Display order (lower = shown first).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sort_order: Option<u32>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentProfilesState {
-    pub active_profile_id: String,
-    pub profiles: Vec<AgentProfile>,
-}
 
 #[derive(Debug, Clone)]
 pub struct AgentProfileStore {
@@ -76,7 +25,7 @@ impl AgentProfileStore {
 
     pub fn load(&self) -> Result<AgentProfilesState, String> {
         let path = self.path();
-        tracing::debug!(path = %path.display(), "[agent:profiles] load entry");
+        tracing::debug!(path = %path.display(), "[profiles] load entry");
         let state = if path.exists() {
             let mut buf = String::new();
             fs::File::open(&path)
@@ -84,7 +33,7 @@ impl AgentProfileStore {
                     tracing::debug!(
                         path = %path.display(),
                         error = %e,
-                        "[agent:profiles] load open_error"
+                        "[profiles] load open_error"
                     );
                     format!("open agent profiles {}: {e}", path.display())
                 })?
@@ -93,7 +42,7 @@ impl AgentProfileStore {
                     tracing::debug!(
                         path = %path.display(),
                         error = %e,
-                        "[agent:profiles] load read_error"
+                        "[profiles] load read_error"
                     );
                     format!("read agent profiles {}: {e}", path.display())
                 })?;
@@ -101,12 +50,12 @@ impl AgentProfileStore {
                 tracing::debug!(
                     path = %path.display(),
                     error = %e,
-                    "[agent:profiles] load parse_error"
+                    "[profiles] load parse_error"
                 );
                 format!("parse agent profiles {}: {e}", path.display())
             })?
         } else {
-            tracing::debug!(path = %path.display(), "[agent:profiles] load default_state");
+            tracing::debug!(path = %path.display(), "[profiles] load default_state");
             AgentProfilesState::default()
         };
         let state = normalise_state(state);
@@ -114,7 +63,7 @@ impl AgentProfileStore {
             path = %path.display(),
             active_profile_id = %state.active_profile_id,
             profile_count = state.profiles.len(),
-            "[agent:profiles] load ok"
+            "[profiles] load ok"
         );
         Ok(state)
     }
@@ -123,14 +72,14 @@ impl AgentProfileStore {
         tracing::debug!(
             active_profile_id = %state.active_profile_id,
             profile_count = state.profiles.len(),
-            "[agent:profiles] save entry"
+            "[profiles] save entry"
         );
         let state = normalise_state(state);
         let path = self.path();
         let parent = path.parent().ok_or_else(|| {
             tracing::debug!(
                 path = %path.display(),
-                "[agent:profiles] save invalid_path"
+                "[profiles] save invalid_path"
             );
             format!("invalid agent profiles path {}", path.display())
         })?;
@@ -139,7 +88,7 @@ impl AgentProfileStore {
                 path = %path.display(),
                 parent = %parent.display(),
                 error = %e,
-                "[agent:profiles] save create_dir_error"
+                "[profiles] save create_dir_error"
             );
             format!("create agent profiles dir {}: {e}", parent.display())
         })?;
@@ -147,7 +96,7 @@ impl AgentProfileStore {
             tracing::debug!(
                 parent = %parent.display(),
                 error = %e,
-                "[agent:profiles] save tempfile_error"
+                "[profiles] save tempfile_error"
             );
             format!(
                 "create agent profiles tempfile in {}: {e}",
@@ -155,22 +104,22 @@ impl AgentProfileStore {
             )
         })?;
         let bytes = serde_json::to_vec_pretty(&state).map_err(|e| {
-            tracing::debug!(error = %e, "[agent:profiles] save serialize_error");
+            tracing::debug!(error = %e, "[profiles] save serialize_error");
             format!("serialize agent profiles: {e}")
         })?;
         tmp.write_all(&bytes).map_err(|e| {
-            tracing::debug!(error = %e, "[agent:profiles] save write_error");
+            tracing::debug!(error = %e, "[profiles] save write_error");
             format!("write agent profiles tempfile: {e}")
         })?;
         tmp.as_file().sync_all().map_err(|e| {
-            tracing::debug!(error = %e, "[agent:profiles] save fsync_error");
+            tracing::debug!(error = %e, "[profiles] save fsync_error");
             format!("fsync agent profiles tempfile: {e}")
         })?;
         tmp.persist(&path).map_err(|e| {
             tracing::debug!(
                 path = %path.display(),
                 error = %e,
-                "[agent:profiles] save persist_error"
+                "[profiles] save persist_error"
             );
             format!("persist agent profiles {}: {e}", path.display())
         })?;
@@ -178,7 +127,7 @@ impl AgentProfileStore {
             path = %path.display(),
             active_profile_id = %state.active_profile_id,
             profile_count = state.profiles.len(),
-            "[agent:profiles] save ok"
+            "[profiles] save ok"
         );
         Ok(state)
     }
@@ -186,13 +135,13 @@ impl AgentProfileStore {
     pub fn select(&self, profile_id: &str) -> Result<AgentProfilesState, String> {
         let mut state = self.load()?;
         let profile_id = profile_id.trim();
-        tracing::debug!(profile_id, "[agent:profiles] select entry");
+        tracing::debug!(profile_id, "[profiles] select entry");
         if !state.profiles.iter().any(|p| p.id == profile_id) {
-            tracing::debug!(profile_id, "[agent:profiles] select not_found");
+            tracing::debug!(profile_id, "[profiles] select not_found");
             return Err(format!("agent profile '{profile_id}' not found"));
         }
         state.active_profile_id = profile_id.to_string();
-        tracing::debug!(profile_id, "[agent:profiles] select active_profile_changed");
+        tracing::debug!(profile_id, "[profiles] select active_profile_changed");
         self.save(state)
     }
 
@@ -202,10 +151,10 @@ impl AgentProfileStore {
         tracing::debug!(
             profile_id = %profile.id,
             agent_id = %profile.agent_id,
-            "[agent:profiles] upsert entry"
+            "[profiles] upsert entry"
         );
         let profile = if profile.id == DEFAULT_PROFILE_ID {
-            tracing::debug!("[agent:profiles] upsert built_in_default_merge");
+            tracing::debug!("[profiles] upsert built_in_default_merge");
             let mut default = built_in_default_profile();
             default.name = profile.name;
             default.description = profile.description;
@@ -218,6 +167,10 @@ impl AgentProfileStore {
             default.soul_md = profile.soul_md;
             default.soul_md_path = profile.soul_md_path;
             default.composio_integrations = profile.composio_integrations;
+            default.memory_sources = profile.memory_sources;
+            default.include_agent_conversations = profile.include_agent_conversations;
+            default.allowed_skills = profile.allowed_skills;
+            default.allowed_mcp_servers = profile.allowed_mcp_servers;
             // memory_dir_suffix stays as built-in default (don't let user override the default's suffix)
             default.sort_order = profile.sort_order;
             default
@@ -274,10 +227,10 @@ impl AgentProfileStore {
         };
 
         if let Some(existing) = state.profiles.iter_mut().find(|p| p.id == profile.id) {
-            tracing::debug!(profile_id = %profile.id, "[agent:profiles] upsert replace_existing");
+            tracing::debug!(profile_id = %profile.id, "[profiles] upsert replace_existing");
             *existing = profile;
         } else {
-            tracing::debug!(profile_id = %profile.id, "[agent:profiles] upsert insert_new");
+            tracing::debug!(profile_id = %profile.id, "[profiles] upsert insert_new");
             state.profiles.push(profile);
         }
         self.save(state)
@@ -285,12 +238,12 @@ impl AgentProfileStore {
 
     pub fn delete(&self, profile_id: &str) -> Result<AgentProfilesState, String> {
         let profile_id = profile_id.trim();
-        tracing::debug!(profile_id, "[agent:profiles] delete entry");
+        tracing::debug!(profile_id, "[profiles] delete entry");
         if built_in_profiles()
             .iter()
             .any(|profile| profile.id == profile_id)
         {
-            tracing::debug!(profile_id, "[agent:profiles] delete built_in_rejected");
+            tracing::debug!(profile_id, "[profiles] delete built_in_rejected");
             return Err(format!(
                 "built-in agent profile '{profile_id}' cannot be deleted"
             ));
@@ -299,20 +252,17 @@ impl AgentProfileStore {
         let before = state.profiles.len();
         state.profiles.retain(|p| p.id != profile_id);
         if state.profiles.len() == before {
-            tracing::debug!(profile_id, "[agent:profiles] delete not_found");
+            tracing::debug!(profile_id, "[profiles] delete not_found");
             return Err(format!("agent profile '{profile_id}' not found"));
         }
         if state.active_profile_id == profile_id {
             state.active_profile_id = DEFAULT_PROFILE_ID.to_string();
-            tracing::debug!(
-                profile_id,
-                "[agent:profiles] delete active_profile_fallback"
-            );
+            tracing::debug!(profile_id, "[profiles] delete active_profile_fallback");
         }
         tracing::debug!(
             profile_id,
             profile_count = state.profiles.len(),
-            "[agent:profiles] delete removed"
+            "[profiles] delete removed"
         );
         self.save(state)
     }
@@ -326,10 +276,7 @@ impl AgentProfileStore {
             .map(str::trim)
             .filter(|id| !id.is_empty())
             .unwrap_or(state.active_profile_id.as_str());
-        tracing::debug!(
-            requested_profile_id = requested,
-            "[agent:profiles] resolve entry"
-        );
+        tracing::debug!(requested_profile_id = requested, "[profiles] resolve entry");
         let profile = state
             .profiles
             .iter()
@@ -346,7 +293,7 @@ impl AgentProfileStore {
             requested_profile_id = requested,
             resolved_profile_id = %profile.id,
             agent_id = %profile.agent_id,
-            "[agent:profiles] resolve ok"
+            "[profiles] resolve ok"
         );
         Ok((state, profile))
     }
@@ -378,6 +325,10 @@ pub fn built_in_profiles() -> Vec<AgentProfile> {
             soul_md: None,
             soul_md_path: None,
             composio_integrations: None,
+            memory_sources: None,
+            include_agent_conversations: true,
+            allowed_skills: None,
+            allowed_mcp_servers: None,
             memory_dir_suffix: None,
             is_master: false,
             sort_order: None,
@@ -400,6 +351,10 @@ pub fn built_in_profiles() -> Vec<AgentProfile> {
             soul_md: None,
             soul_md_path: None,
             composio_integrations: None,
+            memory_sources: None,
+            include_agent_conversations: true,
+            allowed_skills: None,
+            allowed_mcp_servers: None,
             memory_dir_suffix: None,
             is_master: false,
             sort_order: None,
@@ -422,6 +377,10 @@ pub fn built_in_profiles() -> Vec<AgentProfile> {
             soul_md: None,
             soul_md_path: None,
             composio_integrations: None,
+            memory_sources: None,
+            include_agent_conversations: true,
+            allowed_skills: None,
+            allowed_mcp_servers: None,
             memory_dir_suffix: None,
             is_master: false,
             sort_order: None,
@@ -444,6 +403,10 @@ pub fn built_in_profiles() -> Vec<AgentProfile> {
             soul_md: None,
             soul_md_path: None,
             composio_integrations: None,
+            memory_sources: None,
+            include_agent_conversations: true,
+            allowed_skills: None,
+            allowed_mcp_servers: None,
             memory_dir_suffix: None,
             is_master: false,
             sort_order: None,
@@ -451,34 +414,7 @@ pub fn built_in_profiles() -> Vec<AgentProfile> {
     ]
 }
 
-pub fn profile_signature(profile: &AgentProfile) -> String {
-    serde_json::to_string(profile).unwrap_or_else(|_| profile.id.clone())
-}
-
-pub struct AgentProfilePromptSection {
-    body: String,
-}
-
-impl AgentProfilePromptSection {
-    pub fn new(body: String) -> Self {
-        Self { body }
-    }
-}
-
-impl PromptSection for AgentProfilePromptSection {
-    fn name(&self) -> &str {
-        "agent_profile"
-    }
-
-    fn build(&self, _ctx: &PromptContext<'_>) -> Result<String> {
-        if self.body.trim().is_empty() {
-            return Ok(String::new());
-        }
-        Ok(format!("## Agent profile\n\n{}", self.body.trim()))
-    }
-}
-
-fn built_in_default_profile() -> AgentProfile {
+pub(crate) fn built_in_default_profile() -> AgentProfile {
     AgentProfile {
         id: DEFAULT_PROFILE_ID.to_string(),
         name: "Default".to_string(),
@@ -494,6 +430,10 @@ fn built_in_default_profile() -> AgentProfile {
         soul_md: None,
         soul_md_path: None,
         composio_integrations: None,
+        memory_sources: None,
+        include_agent_conversations: true,
+        allowed_skills: None,
+        allowed_mcp_servers: None,
         memory_dir_suffix: Some("".into()),
         is_master: true,
         sort_order: None,
@@ -504,7 +444,7 @@ fn normalise_state(state: AgentProfilesState) -> AgentProfilesState {
     tracing::trace!(
         active_profile_id = %state.active_profile_id,
         profile_count = state.profiles.len(),
-        "[agent:profiles] normalise_state entry"
+        "[profiles] normalise_state entry"
     );
     let mut by_id: BTreeMap<String, AgentProfile> = built_in_profiles()
         .into_iter()
@@ -550,6 +490,22 @@ fn normalise_state(state: AgentProfilesState) -> AgentProfilesState {
     }
 }
 
+/// Trim + drop empty entries from an optional string-list allowlist; an empty
+/// result normalises to `None` (the "all / unrestricted" sentinel).
+fn normalise_allowlist(list: Option<Vec<String>>) -> Option<Vec<String>> {
+    let cleaned = list.map(|items| {
+        items
+            .into_iter()
+            .map(|item| item.trim().to_string())
+            .filter(|item| !item.is_empty())
+            .collect::<Vec<_>>()
+    });
+    match cleaned {
+        Some(items) if items.is_empty() => None,
+        other => other,
+    }
+}
+
 fn normalise_profile(mut profile: AgentProfile) -> AgentProfile {
     profile.id = slugify_profile_id(&profile.id);
     if profile.id.is_empty() {
@@ -572,16 +528,7 @@ fn normalise_profile(mut profile: AgentProfile) -> AgentProfile {
         .system_prompt_suffix
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
-    profile.allowed_tools = profile.allowed_tools.map(|tools| {
-        tools
-            .into_iter()
-            .map(|tool| tool.trim().to_string())
-            .filter(|tool| !tool.is_empty())
-            .collect::<Vec<_>>()
-    });
-    if matches!(profile.allowed_tools.as_ref(), Some(tools) if tools.is_empty()) {
-        profile.allowed_tools = None;
-    }
+    profile.allowed_tools = normalise_allowlist(profile.allowed_tools);
     profile.avatar_url = profile
         .avatar_url
         .map(|s| s.trim().to_string())
@@ -598,16 +545,10 @@ fn normalise_profile(mut profile: AgentProfile) -> AgentProfile {
         .soul_md_path
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
-    profile.composio_integrations = profile.composio_integrations.map(|tools| {
-        tools
-            .into_iter()
-            .map(|t| t.trim().to_string())
-            .filter(|t| !t.is_empty())
-            .collect::<Vec<_>>()
-    });
-    if matches!(profile.composio_integrations.as_ref(), Some(v) if v.is_empty()) {
-        profile.composio_integrations = None;
-    }
+    profile.composio_integrations = normalise_allowlist(profile.composio_integrations);
+    profile.memory_sources = normalise_allowlist(profile.memory_sources);
+    profile.allowed_skills = normalise_allowlist(profile.allowed_skills);
+    profile.allowed_mcp_servers = normalise_allowlist(profile.allowed_mcp_servers);
     // Note: `Some("")` is the sentinel used exclusively by the default profile
     // to indicate the legacy `memory/` directory (no suffix). `normalise_state`
     // re-applies it after the filter below, so any `Some("")` on a non-default
@@ -662,35 +603,46 @@ impl Default for AgentProfilesState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::openhuman::context::prompt::{LearnedContextData, PromptContext, ToolCallFormat};
-    use std::collections::HashSet;
     use tempfile::tempdir;
+
+    /// Minimal custom profile literal for tests, with all allowlists unset.
+    fn custom(id: &str, name: &str, agent_id: &str) -> AgentProfile {
+        AgentProfile {
+            id: id.into(),
+            name: name.into(),
+            description: String::new(),
+            agent_id: agent_id.into(),
+            model_override: None,
+            temperature: None,
+            system_prompt_suffix: None,
+            allowed_tools: None,
+            built_in: false,
+            avatar_url: None,
+            voice_id: None,
+            soul_md: None,
+            soul_md_path: None,
+            composio_integrations: None,
+            memory_sources: None,
+            include_agent_conversations: true,
+            allowed_skills: None,
+            allowed_mcp_servers: None,
+            memory_dir_suffix: None,
+            is_master: false,
+            sort_order: None,
+        }
+    }
 
     #[test]
     fn profile_store_roundtrips_active_profile_and_custom_entries() {
         let dir = tempdir().expect("tempdir");
         let store = AgentProfileStore::new(dir.path().to_path_buf());
-        let state = store
-            .upsert(AgentProfile {
-                id: " Custom Profile ".into(),
-                name: " Custom Profile ".into(),
-                description: "  My custom profile ".into(),
-                agent_id: " planner ".into(),
-                model_override: Some(" agentic-v1 ".into()),
-                temperature: Some(0.25),
-                system_prompt_suffix: Some("  Be brief. ".into()),
-                allowed_tools: Some(vec![" todo ".into(), "".into()]),
-                built_in: false,
-                avatar_url: None,
-                voice_id: None,
-                soul_md: None,
-                soul_md_path: None,
-                composio_integrations: None,
-                memory_dir_suffix: None,
-                is_master: false,
-                sort_order: None,
-            })
-            .expect("upsert");
+        let mut profile = custom(" Custom Profile ", " Custom Profile ", " planner ");
+        profile.description = "  My custom profile ".into();
+        profile.model_override = Some(" agentic-v1 ".into());
+        profile.temperature = Some(0.25);
+        profile.system_prompt_suffix = Some("  Be brief. ".into());
+        profile.allowed_tools = Some(vec![" todo ".into(), "".into()]);
+        let state = store.upsert(profile).expect("upsert");
         assert!(state.profiles.iter().any(|p| p.id == "custom-profile"));
 
         let selected = store.select("custom-profile").expect("select");
@@ -735,27 +687,14 @@ mod tests {
 
     #[test]
     fn normalise_state_falls_back_to_default_active_profile() {
+        let mut bad = custom("  ", "   ", " ");
+        bad.description = " ignored ".into();
+        bad.model_override = Some(" ".into());
+        bad.system_prompt_suffix = Some(" ".into());
+        bad.allowed_tools = Some(vec![" ".into()]);
         let state = normalise_state(AgentProfilesState {
             active_profile_id: "missing".into(),
-            profiles: vec![AgentProfile {
-                id: "  ".into(),
-                name: "   ".into(),
-                description: " ignored ".into(),
-                agent_id: " ".into(),
-                model_override: Some(" ".into()),
-                temperature: None,
-                system_prompt_suffix: Some(" ".into()),
-                allowed_tools: Some(vec![" ".into()]),
-                built_in: false,
-                avatar_url: None,
-                voice_id: None,
-                soul_md: None,
-                soul_md_path: None,
-                composio_integrations: None,
-                memory_dir_suffix: None,
-                is_master: false,
-                sort_order: None,
-            }],
+            profiles: vec![bad],
         });
 
         assert_eq!(state.active_profile_id, DEFAULT_PROFILE_ID);
@@ -763,30 +702,34 @@ mod tests {
     }
 
     #[test]
+    fn normalise_profile_drops_empty_allowlists_to_none() {
+        let mut profile = custom("scoped", "Scoped", "orchestrator");
+        profile.memory_sources = Some(vec![" ".into(), "".into()]);
+        profile.allowed_skills = Some(vec![" deep-research ".into()]);
+        profile.allowed_mcp_servers = Some(vec![]);
+        profile.composio_integrations = Some(vec!["  ".into()]);
+        let normalised = normalise_profile(profile);
+        assert_eq!(normalised.memory_sources, None);
+        assert_eq!(
+            normalised.allowed_skills.as_deref(),
+            Some(vec!["deep-research".to_string()].as_slice())
+        );
+        assert_eq!(normalised.allowed_mcp_servers, None);
+        assert_eq!(normalised.composio_integrations, None);
+    }
+
+    #[test]
     fn upsert_default_profile_preserves_builtin_default_identity() {
         let dir = tempdir().expect("tempdir");
         let store = AgentProfileStore::new(dir.path().to_path_buf());
-        let state = store
-            .upsert(AgentProfile {
-                id: DEFAULT_PROFILE_ID.into(),
-                name: " Default Custom ".into(),
-                description: " custom description ".into(),
-                agent_id: " planner ".into(),
-                model_override: Some(" agentic-v1 ".into()),
-                temperature: Some(0.3),
-                system_prompt_suffix: Some(" suffix ".into()),
-                allowed_tools: Some(vec![" todo ".into()]),
-                built_in: false,
-                avatar_url: None,
-                voice_id: None,
-                soul_md: None,
-                soul_md_path: None,
-                composio_integrations: None,
-                memory_dir_suffix: None,
-                is_master: false,
-                sort_order: None,
-            })
-            .expect("upsert default");
+        let mut profile = custom(DEFAULT_PROFILE_ID, " Default Custom ", " planner ");
+        profile.description = " custom description ".into();
+        profile.model_override = Some(" agentic-v1 ".into());
+        profile.temperature = Some(0.3);
+        profile.system_prompt_suffix = Some(" suffix ".into());
+        profile.allowed_tools = Some(vec![" todo ".into()]);
+        profile.memory_sources = Some(vec!["slack-eng".into()]);
+        let state = store.upsert(profile).expect("upsert default");
         let default = state
             .profiles
             .iter()
@@ -796,6 +739,11 @@ mod tests {
         assert_eq!(default.agent_id, "orchestrator");
         assert_eq!(default.name, "Default Custom");
         assert_eq!(default.system_prompt_suffix.as_deref(), Some("suffix"));
+        // New allowlist fields round-trip through the default merge branch.
+        assert_eq!(
+            default.memory_sources.as_deref(),
+            Some(vec!["slack-eng".to_string()].as_slice())
+        );
     }
 
     #[test]
@@ -825,25 +773,7 @@ mod tests {
         let dir = tempdir().expect("tempdir");
         let store = AgentProfileStore::new(dir.path().to_path_buf());
         store
-            .upsert(AgentProfile {
-                id: "writer".into(),
-                name: "Writer".into(),
-                description: String::new(),
-                agent_id: "planner".into(),
-                model_override: None,
-                temperature: None,
-                system_prompt_suffix: None,
-                allowed_tools: None,
-                built_in: false,
-                avatar_url: None,
-                voice_id: None,
-                soul_md: None,
-                soul_md_path: None,
-                composio_integrations: None,
-                memory_dir_suffix: None,
-                is_master: false,
-                sort_order: None,
-            })
+            .upsert(custom("writer", "Writer", "planner"))
             .expect("upsert");
         store.select("writer").expect("select");
 
@@ -854,69 +784,11 @@ mod tests {
     }
 
     #[test]
-    fn profile_signature_and_prompt_section_render_expected_text() {
-        let profile = built_in_profiles()
-            .into_iter()
-            .find(|profile| profile.id == "planner")
-            .expect("planner profile");
-        let signature = profile_signature(&profile);
-        assert!(signature.contains("\"planner\""));
-
-        let section = AgentProfilePromptSection::new("  Be concise.  ".into());
-        assert_eq!(section.name(), "agent_profile");
-        let visible_tool_names = HashSet::new();
-        let ctx = PromptContext {
-            workspace_dir: std::path::Path::new("/tmp"),
-            model_name: "test-model",
-            agent_id: "orchestrator",
-            tools: &[],
-            workflows: &[],
-            dispatcher_instructions: "",
-            learned: LearnedContextData::default(),
-            visible_tool_names: &visible_tool_names,
-            tool_call_format: ToolCallFormat::PFormat,
-            connected_integrations: &[],
-            connected_identities_md: String::new(),
-            include_profile: false,
-            include_memory_md: false,
-            curated_snapshot: None,
-            user_identity: None,
-            personality_soul_md: None,
-            personality_memory_md: None,
-            personality_roster: vec![],
-        };
-        let rendered = section.build(&ctx).expect("render profile section");
-        assert!(rendered.starts_with("## Agent profile"));
-        assert!(rendered.contains("Be concise."));
-
-        let empty = AgentProfilePromptSection::new("   ".into());
-        assert_eq!(empty.build(&ctx).expect("empty profile section"), "");
-    }
-
-    #[test]
     fn deleting_active_custom_profile_falls_back_to_default() {
         let dir = tempdir().expect("tempdir");
         let store = AgentProfileStore::new(dir.path().to_path_buf());
         store
-            .upsert(AgentProfile {
-                id: "tmp".into(),
-                name: "Tmp".into(),
-                description: String::new(),
-                agent_id: "orchestrator".into(),
-                model_override: None,
-                temperature: None,
-                system_prompt_suffix: None,
-                allowed_tools: None,
-                built_in: false,
-                avatar_url: None,
-                voice_id: None,
-                soul_md: None,
-                soul_md_path: None,
-                composio_integrations: None,
-                memory_dir_suffix: None,
-                is_master: false,
-                sort_order: None,
-            })
+            .upsert(custom("tmp", "Tmp", "orchestrator"))
             .expect("upsert");
         store.select("tmp").expect("select");
         let state = store.delete("tmp").expect("delete");
@@ -930,50 +802,14 @@ mod tests {
         let store = AgentProfileStore::new(dir.path().to_path_buf());
         // First custom profile gets "-1"
         let state = store
-            .upsert(AgentProfile {
-                id: "alice".into(),
-                name: "Alice".into(),
-                description: "First personality".into(),
-                agent_id: "orchestrator".into(),
-                model_override: None,
-                temperature: None,
-                system_prompt_suffix: None,
-                allowed_tools: None,
-                built_in: false,
-                avatar_url: None,
-                voice_id: None,
-                soul_md: None,
-                soul_md_path: None,
-                composio_integrations: None,
-                memory_dir_suffix: None,
-                is_master: false,
-                sort_order: None,
-            })
+            .upsert(custom("alice", "Alice", "orchestrator"))
             .expect("upsert alice");
         let alice = state.profiles.iter().find(|p| p.id == "alice").unwrap();
         assert_eq!(alice.memory_dir_suffix.as_deref(), Some("-1"));
 
         // Second custom profile gets "-2"
         let state = store
-            .upsert(AgentProfile {
-                id: "bob".into(),
-                name: "Bob".into(),
-                description: "Second personality".into(),
-                agent_id: "orchestrator".into(),
-                model_override: None,
-                temperature: None,
-                system_prompt_suffix: None,
-                allowed_tools: None,
-                built_in: false,
-                avatar_url: None,
-                voice_id: None,
-                soul_md: None,
-                soul_md_path: None,
-                composio_integrations: None,
-                memory_dir_suffix: None,
-                is_master: false,
-                sort_order: None,
-            })
+            .upsert(custom("bob", "Bob", "orchestrator"))
             .expect("upsert bob");
         let bob = state.profiles.iter().find(|p| p.id == "bob").unwrap();
         assert_eq!(bob.memory_dir_suffix.as_deref(), Some("-2"));
@@ -981,48 +817,10 @@ mod tests {
         // Delete alice, create charlie — should reuse "-1"
         store.delete("alice").expect("delete alice");
         let state = store
-            .upsert(AgentProfile {
-                id: "charlie".into(),
-                name: "Charlie".into(),
-                description: "Third personality".into(),
-                agent_id: "orchestrator".into(),
-                model_override: None,
-                temperature: None,
-                system_prompt_suffix: None,
-                allowed_tools: None,
-                built_in: false,
-                avatar_url: None,
-                voice_id: None,
-                soul_md: None,
-                soul_md_path: None,
-                composio_integrations: None,
-                memory_dir_suffix: None,
-                is_master: false,
-                sort_order: None,
-            })
+            .upsert(custom("charlie", "Charlie", "orchestrator"))
             .expect("upsert charlie");
         let charlie = state.profiles.iter().find(|p| p.id == "charlie").unwrap();
         assert_eq!(charlie.memory_dir_suffix.as_deref(), Some("-1"));
-    }
-
-    #[test]
-    fn backwards_compat_deserialize_without_new_fields() {
-        let json = r#"{
-            "activeProfileId": "default",
-            "profiles": [{
-                "id": "default",
-                "name": "Default",
-                "description": "The standard OpenHuman orchestrator.",
-                "agentId": "orchestrator",
-                "builtIn": true
-            }]
-        }"#;
-        let state: AgentProfilesState = serde_json::from_str(json).expect("deserialize");
-        let profile = &state.profiles[0];
-        assert_eq!(profile.avatar_url, None);
-        assert_eq!(profile.voice_id, None);
-        assert_eq!(profile.memory_dir_suffix, None);
-        assert!(!profile.is_master);
     }
 
     #[test]
@@ -1030,5 +828,6 @@ mod tests {
         let default = built_in_default_profile();
         assert!(default.is_master);
         assert_eq!(default.memory_dir_suffix.as_deref(), Some(""));
+        assert!(default.include_agent_conversations);
     }
 }

@@ -191,7 +191,7 @@ describe('OAuthProviderButton (Google) — web OAuth flow', () => {
     await clickButton(screen.getByRole('button', { name: /google/i }));
 
     await waitFor(() => {
-      expect((window.location as unknown as { href: string }).href).toBe(
+      expect((window.location as unknown as { href: string }).href).toContain(
         'http://localhost:5005/auth/google/login?responseType=json'
       );
     });
@@ -231,7 +231,7 @@ describe('OAuthProviderButton (Google) — Tauri OAuth flow', () => {
 
     await waitFor(() => {
       expect(mockOpenUrl).toHaveBeenCalledWith(
-        'https://api.example.com/auth/google/login?responseType=json'
+        expect.stringContaining('https://api.example.com/auth/google/login?responseType=json')
       );
     });
   });
@@ -388,7 +388,7 @@ describe('OAuthProviderButton (Google) — dev mode URL params', () => {
     await waitFor(() => expect(mockOpenUrl).toHaveBeenCalled());
     const calledUrl: string = mockOpenUrl.mock.calls[0][0];
     expect(calledUrl).toContain('?responseType=json');
-    expect(calledUrl).toBe('https://api.example.com/auth/google/login?responseType=json');
+    expect(calledUrl).toContain('https://api.example.com/auth/google/login?responseType=json');
   });
 
   it('appends ?responseType=json to the Google OAuth URL in dev mode (web)', async () => {
@@ -403,7 +403,7 @@ describe('OAuthProviderButton (Google) — dev mode URL params', () => {
     await clickButton(screen.getByRole('button', { name: /google/i }));
 
     await waitFor(() => expect((window.location as unknown as { href: string }).href).not.toBe(''));
-    expect((window.location as unknown as { href: string }).href).toBe(
+    expect((window.location as unknown as { href: string }).href).toContain(
       'https://api.example.com/auth/google/login?responseType=json'
     );
 

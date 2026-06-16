@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use crate::openhuman::agent::profiles::AgentProfileStore;
 use crate::openhuman::config::rpc as config_rpc;
+use crate::openhuman::profiles::AgentProfileStore;
 use crate::openhuman::threads::turn_state::TurnStateStore;
 
 use super::ops::{key_for, THREAD_SESSIONS};
@@ -30,6 +30,11 @@ pub(crate) async fn run_chat_task(
     locale: Option<String>,
     run_queue: Arc<crate::openhuman::agent::harness::run_queue::RunQueue>,
     metadata: ChatRequestMetadata,
+    // When true, run as an isolated fork: build a fresh agent seeded from the
+    // thread's history-at-start and never touch the shared `THREAD_SESSIONS`
+    // cache, so a concurrent same-thread (parallel) turn cannot clobber — or be
+    // clobbered by — the primary turn's cached agent. See `QueueMode::Parallel`.
+    fork: bool,
 ) -> Result<WebChatTaskResult, String> {
     #[cfg(any(test, debug_assertions))]
     {
@@ -42,6 +47,40 @@ pub(crate) async fn run_chat_task(
                 request_id
             );
             return Err(forced);
+        }
+    }
+
+    // Test hook: park the turn in-flight so concurrency / cooperative
+    // cancellation can be observed. A `Drop` guard flips the supplied flag if
+    // this future is dropped (i.e. cancelled) before the sleep elapses, proving
+    // the turn was torn down cooperatively rather than left running.
+    #[cfg(any(test, debug_assertions))]
+    {
+        let block = {
+            let slot = super::ops::TEST_RUN_CHAT_TASK_BLOCK.lock().await;
+            slot.clone()
+        };
+        if let Some(block) = block {
+            struct DropGuard(std::sync::Arc<std::sync::atomic::AtomicBool>);
+            impl Drop for DropGuard {
+                fn drop(&mut self) {
+                    self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+                }
+            }
+            let _guard = DropGuard(block.dropped.clone());
+            log::debug!(
+                "[web-channel][test] parking run_chat_task thread_id={} request_id={}",
+                thread_id,
+                request_id
+            );
+            // Signal that the turn future is live and parked, so a test can
+            // cancel only after the guard exists (otherwise a `biased` cancel
+            // could short-circuit before this future is ever polled).
+            block
+                .started
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            return Err("test block elapsed".to_string());
         }
     }
 
@@ -60,9 +99,14 @@ pub(crate) async fn run_chat_task(
         temperature,
         target_agent_id.clone(),
         provider_role,
+        &profile,
     );
 
-    let prior = {
+    // A forked (parallel) turn never reuses or evicts the shared cached agent —
+    // it always builds fresh from the history snapshot below.
+    let prior = if fork {
+        None
+    } else {
         let mut sessions = THREAD_SESSIONS.lock().await;
         sessions.remove(&map_key)
     };
@@ -168,9 +212,21 @@ pub(crate) async fn run_chat_task(
         config.clone(),
     );
 
+    // Scope source-memory recall to the active profile's allowlist for the
+    // duration of the turn (None = all). Nested inside the thread-id scope so
+    // every memory-tree query the agent makes this turn is gated. See
+    // memory::source_scope.
+    // `run_single`'s future is very large; box it so the two ambient-scope
+    // wrappers below hold a pointer rather than inlining the whole future into
+    // this already-large `run_chat_task` frame (which otherwise overflows the
+    // default test-thread stack — see the channels web-turn coverage tests).
+    let turn = Box::pin(agent.run_single(message));
     let result = match crate::openhuman::inference::provider::thread_context::with_thread_id(
         thread_id.to_string(),
-        agent.run_single(message),
+        crate::openhuman::memory::source_scope::with_source_scope(
+            profile.memory_sources.clone(),
+            turn,
+        ),
     )
     .await
     {
@@ -242,7 +298,9 @@ pub(crate) async fn run_chat_task(
 
     agent.set_on_progress(None);
 
-    {
+    // Only the primary (non-fork) turn writes its agent back to the shared
+    // cache; a fork is fully isolated and lets its agent drop here.
+    if !fork {
         let mut sessions = THREAD_SESSIONS.lock().await;
         sessions.insert(
             map_key,

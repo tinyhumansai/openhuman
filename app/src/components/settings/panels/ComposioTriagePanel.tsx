@@ -5,8 +5,9 @@ import {
   openhumanGetComposioTriggerSettings,
   openhumanUpdateComposioTriggerSettings,
 } from '../../../utils/tauriCommands';
+import PanelPage from '../../layout/PanelPage';
 import Button from '../../ui/Button';
-import SettingsHeader from '../components/SettingsHeader';
+import SettingsBackButton from '../components/SettingsBackButton';
 import {
   SettingsRow,
   SettingsSection,
@@ -18,7 +19,7 @@ import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 const ComposioTriagePanel = () => {
   const { t } = useT();
-  const { navigateBack, breadcrumbs } = useSettingsNavigation();
+  const { navigateBack } = useSettingsNavigation();
 
   const [triageDisabled, setTriageDisabled] = useState(false);
   const [disabledToolkits, setDisabledToolkits] = useState('');
@@ -83,31 +84,26 @@ const ComposioTriagePanel = () => {
 
   if (loading) {
     return (
-      <div className="z-10 relative">
-        <SettingsHeader
-          title={t('composio.triageTitle')}
-          showBackButton
-          onBack={navigateBack}
-          breadcrumbs={breadcrumbs}
-        />
+      <PanelPage
+        className="z-10"
+        contentClassName=""
+        description={t('settings.developerMenu.composio.desc')}
+        leading={<SettingsBackButton onBack={navigateBack} />}>
         <div className="p-4">
           <p className="text-sm text-neutral-500 dark:text-neutral-400">
             {t('settings.composio.loading')}
           </p>
         </div>
-      </div>
+      </PanelPage>
     );
   }
 
   return (
-    <div className="z-10 relative">
-      <SettingsHeader
-        title={t('composio.triageTitle')}
-        showBackButton
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
-
+    <PanelPage
+      className="z-10"
+      contentClassName=""
+      description={t('settings.developerMenu.composio.desc')}
+      leading={<SettingsBackButton onBack={navigateBack} />}>
       <div className="p-4 pt-2 space-y-5">
         <p className="text-sm text-neutral-500 dark:text-neutral-400">
           {t('composio.triageDesc')}{' '}
@@ -167,7 +163,7 @@ const ComposioTriagePanel = () => {
           />
         </div>
       </div>
-    </div>
+    </PanelPage>
   );
 };
 

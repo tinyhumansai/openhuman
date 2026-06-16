@@ -551,10 +551,8 @@ async fn round20_memory_documents_files_and_envelopes_cover_success_and_failure_
     .expect("list data");
     assert_eq!(listed.files, vec!["round20.md"]);
 
-    let namespace = format!(
-        "round20-{}",
-        &uuid::Uuid::new_v4().as_simple().to_string()[..12]
-    );
+    // Use a deterministic namespace — random UUIDs can trigger PII detection.
+    let namespace = "round20-cov-test-ns".to_string();
     let put = doc_put(PutDocParams {
         namespace: namespace.clone(),
         key: "launch-note".to_string(),

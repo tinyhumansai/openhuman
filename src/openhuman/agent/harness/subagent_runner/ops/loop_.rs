@@ -60,6 +60,10 @@ pub(super) async fn run_inner_loop(
     handoff_cache: Option<&ResultHandoffCache>,
     parent: &ParentExecutionContext,
     extended_policy: bool,
+    // Optional steering channel. When `Some`, the child engine drains
+    // steer/collect messages at iteration boundaries so the parent can
+    // `steer_subagent` a running async sub-agent. `None` = non-steerable.
+    run_queue: Option<std::sync::Arc<crate::openhuman::agent::harness::run_queue::RunQueue>>,
 ) -> Result<(String, usize, AggregatedUsage, Option<String>), SubagentRunError> {
     // An autonomous skill run (set via `with_autonomous_iter_cap`) lifts the
     // per-agent cap so sub-agents run until done / the circuit breaker trips.
@@ -199,7 +203,7 @@ pub(super) async fn run_inner_loop(
             max_iterations,
             None, // sub-agents don't stream a draft
             &["ask_user_clarification"],
-            None, // sub-agents don't support run-queue steering
+            run_queue, // steering channel for `steer_subagent` (None = non-steerable)
         )),
     )
     .await?;

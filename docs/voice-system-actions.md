@@ -665,6 +665,86 @@ From live agent-in-the-loop testing on 2026-06-03 (grounded in `~/.openhuman/log
 
 ---
 
+## Permissions matrix — what the desktop agent needs to run
+
+> Grounded in `src/openhuman/accessibility/permissions.rs` (detection),
+> `src/openhuman/accessibility/types.rs` (`PermissionKind`),
+> `app/src-tauri/Info.plist` (usage strings), and
+> `app/src-tauri/entitlements.sidecar.plist` (Hardened-Runtime entitlements).
+> Use this as the pre-test checklist when building for macOS (Apple Silicon +
+> Intel) and Windows.
+
+### The four OS permissions the app tracks
+
+`detect_permissions()` returns a `PermissionStatus` over these four
+`PermissionKind`s:
+
+| Permission | Detected via (macOS) | Agent capability that needs it |
+|---|---|---|
+| **Microphone** | CPAL input-device probe (`detect_microphone_permission`) | All voice capture — dictation hotkey **and** always-on listening (`voice/always_on.rs` mic stream). **Required for "voice on" to capture anything.** |
+| **Accessibility** | `AXIsProcessTrusted()` | The whole app-control surface: `ax_interact` (AX tree read/press), `automate`, autocomplete focus query, **and synthetic keyboard/mouse injection** (enigo / CGEvent). |
+| **Screen Recording** | `CGPreflightScreenCaptureAccess()` | `screenshot` → `vision_click` (vision fallback for Electron/partial-AX apps) and screen-intelligence capture. |
+| **Input Monitoring** | `IOHIDCheckAccess(LISTEN_EVENT)` | Global hotkey **listening** (dictation hotkey / rdev / Globe-key listener — `accessibility/keys.rs`, `globe.rs`). Not needed for always-on (no hotkey). |
+
+### Supporting macOS entitlements + usage strings (Hardened Runtime)
+
+These are baked into the **signed build**, not runtime toggles. If missing, the
+OS blocks the call *before* any consent dialog renders — so they must be correct
+in the signed `.app`/DMG, and **cannot be validated with `tauri dev` alone**.
+
+- **`Info.plist` usage strings:** `NSMicrophoneUsageDescription`,
+  `NSCameraUsageDescription`, `NSAppleEventsUsageDescription` (+ Bluetooth /
+  Location / Contacts / Calendar / folder strings — those are mostly for the
+  **embedded provider webviews**, not the agent itself).
+- **`entitlements.sidecar.plist`:** `device.audio-input`, `device.camera`,
+  `automation.apple-events` (drives `osascript` / System Events — Music
+  transport, volume, foreground detection), `network.client` / `network.server`.
+
+### Capability → permission map (agent surfaces)
+
+| Capability | Microphone | Accessibility | Screen Recording | Apple Events / Automation | Input Monitoring |
+|---|:---:|:---:|:---:|:---:|:---:|
+| Always-on capture (mic → VAD → STT) | ✅ | — | — | — | — |
+| Dictation hotkey | ✅ | — | — | — | ✅ (listen) |
+| `launch_app` / `OpenApp` intent | — | — | — | — | — |
+| `Pause`/`Next`/volume intents (osascript) | — | — | — | ✅ | — |
+| `Play` (Music fast-path) | — | ✅ | — | ✅ (verify `player state`) | — |
+| `ax_interact` (list/press/set_value) | — | ✅ | — | — | — |
+| `automate` general loop | — | ✅ | ✅ (only for `vision_click`) | ✅ (where it uses osascript) | — |
+| `vision_click` (Electron fallback) | — | ✅ | ✅ | — | — |
+| `keyboard` / `mouse` (synthetic input) | — | ✅ | — | — | — |
+
+**Minimal "voice on" path:** Microphone to capture; then per intent —
+`OpenApp` needs nothing extra, transport/volume need Automation, `Play` needs
+Accessibility + Automation.
+
+### Per-OS differences (the three test machines)
+
+| | macOS (M-chip & Intel — identical) | Windows | Linux |
+|---|---|---|---|
+| **Microphone** | Real TCC prompt; **does** prompt | Real privacy gate — Settings → Privacy → Microphone | Ungated on standard desktops; Flatpak needs an XDG portal |
+| **Accessibility** | Manual grant in System Settings → Privacy & Security; **does not reliably auto-prompt**; usually needs an app **restart** after granting | No analog — UIA needs **no permission** for same-integrity apps; **cannot drive elevated apps** (UIPI) | App-interaction effectively **unsupported** (backend is macOS Swift helper / Windows UIA only; Linux returns a clean runtime error) |
+| **Screen Recording** | Manual grant; no reliable auto-prompt | `screenshot`/`vision_click` is **currently unimplemented on Windows** — the vision fallback can't run there yet | Unsupported |
+| **Input Monitoring** | Manual grant for hotkey listening | Not required | Not required |
+| **Entitlements** | Must be present in the signed build | n/a | n/a |
+
+### Gotchas to flag before testing
+
+1. **Detection ≠ entitlement.** On macOS the runtime checks report
+   `Denied`/`Unknown` if the *entitlement* is missing from the signed build,
+   independent of what the user clicked — so test on a **properly signed build**,
+   not `tauri dev`.
+2. **Microphone detection is a proxy.** `detect_microphone_permission` infers
+   from CPAL device enumeration, so "no device connected" and "permission denied"
+   both surface as `Unknown` on macOS/Windows (`permissions.rs`). The always-on
+   capture logging (`[voice::always_on] microphone permission: …` + device name +
+   first-chunk confirmation) disambiguates this live.
+3. **Restart after granting** Accessibility / Screen Recording / Input
+   Monitoring on macOS — TCC changes are not always picked up by a running
+   process.
+
+---
+
 ## Summary
 
 | Phase | Item | Status |

@@ -189,7 +189,14 @@ impl McpHttpClient {
         let builder = reqwest::Client::builder()
             .timeout(Duration::from_secs(timeout_secs))
             .connect_timeout(Duration::from_secs(10))
-            .redirect(reqwest::redirect::Policy::none());
+            // Follow a bounded number of redirects so servers published behind a
+            // vanity/short URL that 30x-redirects to their real MCP endpoint
+            // (e.g. `sh.inference.ac` -> `api.inference.sh/mcp`) connect instead
+            // of failing with a raw `MCP HTTP 301`. `Policy::limited` is safe
+            // here: reqwest strips sensitive headers (Authorization, Cookie) on
+            // cross-origin redirects, so a server bearer token is never leaked
+            // to the redirect target.
+            .redirect(reqwest::redirect::Policy::limited(5));
         let builder =
             crate::openhuman::config::apply_runtime_proxy_to_builder(builder, "tool.mcp_client");
         let http = builder.build().expect("reqwest client must build");
@@ -568,6 +575,21 @@ impl McpHttpClient {
                 (Ok(name), Ok(value)) => request.header(name, value),
                 _ => request,
             },
+            McpAuthConfig::Headers { headers } => {
+                // Apply every header — for remotes that authenticate with more
+                // than one (e.g. a client key + client secret). A header whose
+                // name/value can't be encoded is skipped, not fatal.
+                let mut req = request;
+                for h in headers {
+                    if let (Ok(name), Ok(value)) = (
+                        HeaderName::try_from(h.name.as_str()),
+                        HeaderValue::from_str(&h.value),
+                    ) {
+                        req = req.header(name, value);
+                    }
+                }
+                req
+            }
             McpAuthConfig::QueryParam { name, value } => {
                 request.query(&[(name.as_str(), value.as_str())])
             }

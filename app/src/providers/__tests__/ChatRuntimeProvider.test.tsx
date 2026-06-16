@@ -6,7 +6,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as chatService from '../../services/chatService';
 import { threadApi } from '../../services/api/threadApi';
 import { store } from '../../store';
-import { clearAllChatRuntime } from '../../store/chatRuntimeSlice';
+import {
+  clearAllChatRuntime,
+  registerParallelRequest,
+  resetSessionTokenUsage,
+} from '../../store/chatRuntimeSlice';
 import { setStatusForUser } from '../../store/socketSlice';
 import { clearAllThreads, loadThreads, setSelectedThread } from '../../store/threadSlice';
 import ChatRuntimeProvider, { findPendingDelegationContext } from '../ChatRuntimeProvider';
@@ -64,6 +68,10 @@ function resetRuntimeState() {
   // selection that clears ambient state.
   store.dispatch(clearAllThreads());
   store.dispatch(clearAllChatRuntime());
+  // `clearAllChatRuntime` intentionally preserves cumulative session token
+  // usage; reset it here so usage-recording tests stay isolated regardless of
+  // run order.
+  store.dispatch(resetSessionTokenUsage());
   store.dispatch(setStatusForUser({ userId: '__pending__', status: 'disconnected' }));
 }
 
@@ -298,6 +306,60 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
         e => e.subagent?.taskId === 'sub-1'
       );
       expect(row?.subagent?.transcript).toEqual([]);
+    });
+
+    it('routes a parallel (forked) turn into its own lane, leaving the primary stream untouched', () => {
+      const listeners = renderProvider();
+
+      // Primary turn streams on the thread.
+      act(() => {
+        listeners.onTextDelta?.({
+          thread_id: 't-par',
+          request_id: 'primary',
+          round: 0,
+          delta: 'P',
+        });
+      });
+      // A parallel turn is registered and streams concurrently on the SAME thread.
+      act(() => {
+        store.dispatch(registerParallelRequest({ threadId: 't-par', requestId: 'branch' }));
+        listeners.onTextDelta?.({
+          thread_id: 't-par',
+          request_id: 'branch',
+          round: 0,
+          delta: 'B1',
+        });
+        listeners.onTextDelta?.({
+          thread_id: 't-par',
+          request_id: 'branch',
+          round: 0,
+          delta: 'B2',
+        });
+      });
+
+      const mid = store.getState().chatRuntime;
+      // Primary stream is not clobbered by the parallel branch.
+      expect(mid.streamingAssistantByThread['t-par']?.content).toBe('P');
+      expect(mid.parallelStreamsByThread['t-par']?.['branch']?.content).toBe('B1B2');
+
+      // The parallel turn's chat_done resolves ONLY its lane; the primary
+      // stream and its (still-running) state survive.
+      act(() => {
+        listeners.onDone?.({
+          thread_id: 't-par',
+          request_id: 'branch',
+          full_response: 'branch done',
+          rounds_used: 1,
+          total_input_tokens: 0,
+          total_output_tokens: 0,
+          segment_total: 0,
+        });
+      });
+
+      const after = store.getState().chatRuntime;
+      expect(after.parallelStreamsByThread['t-par']).toBeUndefined();
+      expect(after.parallelRequestThreads['branch']).toBeUndefined();
+      expect(after.streamingAssistantByThread['t-par']?.content).toBe('P');
     });
 
     it('drops duplicate chat_done events with the same thread/request', async () => {
@@ -992,7 +1054,7 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
         );
       });
 
-      expect(store.getState().thread.activeThreadId).toBe(threadId);
+      expect(store.getState().thread.activeThreadIds[threadId]).toBe(true);
       expect(store.getState().chatRuntime.inferenceTurnLifecycleByThread[threadId]).toBe('started');
 
       await act(async () => {
@@ -1000,7 +1062,7 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
       });
 
       await waitFor(() => {
-        expect(store.getState().thread.activeThreadId).toBeNull();
+        expect(store.getState().thread.activeThreadIds[threadId]).toBeUndefined();
         expect(
           store.getState().chatRuntime.inferenceTurnLifecycleByThread[threadId]
         ).toBeUndefined();
@@ -1031,7 +1093,7 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
       });
 
       await waitFor(() => {
-        expect(store.getState().thread.activeThreadId).toBeNull();
+        expect(store.getState().thread.activeThreadIds[threadId]).toBeUndefined();
       });
       expect(store.getState().chatRuntime.streamingAssistantByThread[threadId]).toMatchObject({
         content: 'Hello there, partial',

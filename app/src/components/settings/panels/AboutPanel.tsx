@@ -7,40 +7,30 @@
  * here would race with that component's own state machine.
  */
 import { invoke } from '@tauri-apps/api/core';
-import debug from 'debug';
 import { useEffect, useState } from 'react';
 
 import { useAppUpdate } from '../../../hooks/useAppUpdate';
-import { useDeveloperMode } from '../../../hooks/useDeveloperMode';
 import { useT } from '../../../lib/i18n/I18nContext';
-import { useAppDispatch, useAppSelector } from '../../../store/hooks';
-import { selectDeveloperMode, setDeveloperMode } from '../../../store/themeSlice';
+import { useAppSelector } from '../../../store/hooks';
 import { APP_VERSION, LATEST_APP_DOWNLOAD_URL } from '../../../utils/config';
 import { isTauriEnvironment } from '../../../utils/configPersistence';
 import { openUrl } from '../../../utils/openUrl';
+import PanelPage from '../../layout/PanelPage';
 import Button from '../../ui/Button';
-import SettingsHeader from '../components/SettingsHeader';
-import { SettingsRow, SettingsSection, SettingsSwitch } from '../controls';
+import SettingsBackButton from '../components/SettingsBackButton';
+import { SettingsRow, SettingsSection } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
-
-const log = debug('settings:developer-mode');
+import SystemDiagnostics from './SystemDiagnostics';
 
 const AboutPanel = () => {
   const { t } = useT();
-  const dispatch = useAppDispatch();
-  const { navigateBack, breadcrumbs } = useSettingsNavigation();
+  const { navigateBack } = useSettingsNavigation();
   // The auto-cadence is already running via the global <AppUpdatePrompt />;
   // disable it here so opening the panel doesn't double-trigger probes.
   const { phase, info, error, check } = useAppUpdate({ autoCheck: false });
   const [lastCheckedAt, setLastCheckedAt] = useState<Date | null>(null);
   const coreMode = useAppSelector(state => state.coreMode.mode);
   const [rpcUrl, setRpcUrl] = useState<string | null>(null);
-  // Persisted developer mode preference (not the combined IS_DEV || developerMode).
-  // We read the raw preference here so the toggle reflects only the user's choice,
-  // not whether the build is a dev build.
-  const developerModePref = useAppSelector(selectDeveloperMode);
-  // Combined gate — true when IS_DEV or the pref is on. Used for the helper text.
-  const developerModeActive = useDeveloperMode();
 
   // Local mode picks a dynamic port at app launch, so the authoritative
   // value lives in the Tauri shell (`core_rpc_url` command) rather than the
@@ -79,14 +69,11 @@ const AboutPanel = () => {
   };
 
   return (
-    <div className="z-10 relative">
-      <SettingsHeader
-        title={t('settings.about')}
-        showBackButton={true}
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
-
+    <PanelPage
+      className="z-10"
+      contentClassName=""
+      description={t('settings.aboutDesc')}
+      leading={<SettingsBackButton onBack={navigateBack} />}>
       <div className="p-4 space-y-4">
         {/* Version */}
         <SettingsSection>
@@ -161,33 +148,6 @@ const AboutPanel = () => {
           </div>
         </SettingsSection>
 
-        {/* Developer Mode toggle — always visible so users can enable it
-            without needing it to be on first (chicken-and-egg avoidance). */}
-        <div data-testid="developer-mode-section">
-          <SettingsSection>
-            <SettingsRow
-              htmlFor="switch-developer-mode"
-              label={t('settings.developerMode.title')}
-              description={
-                developerModeActive && !developerModePref
-                  ? t('settings.developerMode.enabledByBuild')
-                  : t('settings.developerMode.description')
-              }
-              control={
-                <SettingsSwitch
-                  id="switch-developer-mode"
-                  checked={developerModePref}
-                  onCheckedChange={next => {
-                    log('toggled to %s', String(next));
-                    dispatch(setDeveloperMode(next));
-                  }}
-                  aria-label={t('settings.developerMode.title')}
-                />
-              }
-            />
-          </SettingsSection>
-        </div>
-
         {/* Releases */}
         <SettingsSection>
           <div className="px-4 py-4 space-y-2">
@@ -208,8 +168,12 @@ const AboutPanel = () => {
             </Button>
           </div>
         </SettingsSection>
+
+        {/* Diagnostics (app logs, restart tour, staging Sentry test) —
+            relocated here from the retired Developer & Diagnostics page. */}
+        <SystemDiagnostics />
       </div>
-    </div>
+    </PanelPage>
   );
 };
 

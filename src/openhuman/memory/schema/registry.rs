@@ -23,6 +23,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("top_entities"),
         schemas("chunk_score"),
         schemas("delete_chunk"),
+        schemas("delete_source"),
         schemas("graph_export"),
         schemas("obsidian_vault_status"),
         schemas("vault_health_check"),
@@ -89,6 +90,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("delete_chunk"),
             handler: handle_delete_chunk,
+        },
+        RegisteredController {
+            schema: schemas("delete_source"),
+            handler: handle_delete_source,
         },
         RegisteredController {
             schema: schemas("graph_export"),

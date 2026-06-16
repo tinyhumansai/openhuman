@@ -2,7 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
 import { callCoreRpc } from '../../../services/coreRpcClient';
-import SettingsHeader from '../components/SettingsHeader';
+import PanelPage from '../../layout/PanelPage';
+import SettingsBackButton from '../components/SettingsBackButton';
 import { SettingsStatusLine } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
@@ -50,7 +51,7 @@ function getCostMax(level: number): number {
 
 export default function AgentActivityPanel() {
   const { t } = useT();
-  const { navigateBack, breadcrumbs } = useSettingsNavigation();
+  const { navigateBack } = useSettingsNavigation();
   const [settings, setSettings] = useState<ActivityLevelSettings | null>(null);
   const [monthlyCost, setMonthlyCost] = useState<MonthlyCostSummary | null>(null);
   const [status, setStatus] = useState<Status>('loading');
@@ -108,17 +109,11 @@ export default function AgentActivityPanel() {
   }
 
   return (
-    <div className="z-10 relative">
-      {/* Header title intentionally reuses the menu-row label key
-          (settings.assistant.backgroundActivity) so the page heading always
-          matches the entry the user clicked — including the "Subconscious"
-          brand rename — instead of the internal "Agent activity level" copy. */}
-      <SettingsHeader
-        title={t('settings.assistant.backgroundActivity')}
-        showBackButton
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
+    <PanelPage
+      className="z-10"
+      contentClassName=""
+      description={t('activityLevel.description')}
+      leading={<SettingsBackButton onBack={navigateBack} />}>
       <div className="flex flex-col gap-4 p-4">
         <p className="text-xs text-neutral-500 dark:text-neutral-400">
           {t('activityLevel.description')}
@@ -188,6 +183,6 @@ export default function AgentActivityPanel() {
           savingLabel={t('autonomy.statusSaving')}
         />
       </div>
-    </div>
+    </PanelPage>
   );
 }

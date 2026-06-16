@@ -509,48 +509,7 @@ describe('VoicePanel', () => {
     await waitFor(() => expect(screen.getByText('core offline')).toBeInTheDocument());
   });
 
-  // ─── Always-on listening toggle ↔ notch indicator ───────────────────────
-
-  it('shows the notch when always-on listening is enabled and hides it when disabled', async () => {
-    renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
-
-    const toggle = await screen.findByTestId('voice-always-on-toggle');
-    await waitFor(() => expect(toggle).toHaveAttribute('aria-checked', 'false'));
-
-    // Turn always-on ON → persists the flag and shows the notch HUD.
-    fireEvent.click(toggle);
-    await waitFor(() =>
-      expect(vi.mocked(openhumanUpdateVoiceServerSettings)).toHaveBeenCalledWith({
-        always_on_enabled: true,
-      })
-    );
-    await waitFor(() => expect(vi.mocked(syncNotchVisibility)).toHaveBeenCalledWith(true));
-
-    // Turn always-on OFF → hides the notch HUD.
-    fireEvent.click(toggle);
-    await waitFor(() =>
-      expect(vi.mocked(openhumanUpdateVoiceServerSettings)).toHaveBeenCalledWith({
-        always_on_enabled: false,
-      })
-    );
-    await waitFor(() => expect(vi.mocked(syncNotchVisibility)).toHaveBeenCalledWith(false));
-  });
-
-  it('does not touch the notch and reverts the toggle when the update RPC fails', async () => {
-    vi.mocked(openhumanUpdateVoiceServerSettings).mockRejectedValueOnce(new Error('rpc down'));
-
-    renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
-
-    const toggle = await screen.findByTestId('voice-always-on-toggle');
-    await waitFor(() => expect(toggle).toHaveAttribute('aria-checked', 'false'));
-
-    fireEvent.click(toggle);
-
-    // The optimistic flip is reverted back to off after the RPC rejects, and
-    // the notch is never shown because the persist failed.
-    await waitFor(() => expect(toggle).toHaveAttribute('aria-checked', 'false'));
-    expect(vi.mocked(syncNotchVisibility)).not.toHaveBeenCalled();
-  });
+  // Always-on listening toggle moved to DesktopAgentPanel (see its test).
 
   // ─── STT / TTS Test buttons ────────────────────────────────────────────────
 

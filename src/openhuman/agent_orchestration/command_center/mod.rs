@@ -8,13 +8,15 @@
 //! tools + `channels::providers::web::progress_bridge`; this module only
 //! projects and groups it for display.
 //!
-//! Control verbs (stop / retry / continue) are intentionally out of scope here
-//! and tracked as follow-up work.
+//! Control verbs (stop / retry / continue / follow-up) live in [`control`]:
+//! durable run-ledger transitions exposed over `openhuman.agent_work_control`.
 
+mod control;
 mod ops;
 mod schemas;
 pub mod types;
 
+pub use control::{apply_control, ControlError, ControlVerb};
 pub use ops::{bucket_for, build_view, list_agent_work};
 pub use schemas::{
     all_controller_schemas as all_command_center_controller_schemas,

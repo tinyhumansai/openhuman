@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
 import { getCoreHttpBaseUrl, getCoreRpcToken } from '../../../services/coreRpcClient';
+import PanelPage from '../../layout/PanelPage';
 import Button from '../../ui/Button';
-import SettingsHeader from '../components/SettingsHeader';
+import SettingsBackButton from '../components/SettingsBackButton';
 import { SettingsSelect, SettingsTextField } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
@@ -48,7 +49,7 @@ const RECONNECT_DELAY_MS = 3000;
 
 const EventLogPanel = () => {
   const { t } = useT();
-  const { navigateBack, breadcrumbs } = useSettingsNavigation();
+  const { navigateBack } = useSettingsNavigation();
   const [entries, setEntries] = useState<EventEntry[]>([]);
   const [isLive, setIsLive] = useState(false);
   const [filterType, setFilterType] = useState<string>('');
@@ -211,14 +212,12 @@ const EventLogPanel = () => {
   const domains = [...new Set(entries.map(e => e.domain))].sort();
 
   return (
-    <div className="z-10 relative" data-testid="event-log-panel">
-      <SettingsHeader
-        title={t('settings.developerMenu.eventLog.title')}
-        showBackButton={true}
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
-
+    <PanelPage
+      className="z-10"
+      contentClassName=""
+      testId="event-log-panel"
+      description={t('settings.developerMenu.eventLog.desc')}
+      leading={<SettingsBackButton onBack={navigateBack} />}>
       <div className="p-4 space-y-4">
         {/* Status bar */}
         <div className="flex flex-wrap items-center gap-2">
@@ -327,7 +326,7 @@ const EventLogPanel = () => {
           </div>
         </section>
       </div>
-    </div>
+    </PanelPage>
   );
 };
 

@@ -10,9 +10,10 @@ import {
   type SearchSettings,
   type SearchSettingsUpdate,
 } from '../../../utils/tauriCommands/config';
+import PanelPage from '../../layout/PanelPage';
 import Button from '../../ui/Button';
 import Input from '../../ui/Input';
-import SettingsHeader from '../components/SettingsHeader';
+import SettingsBackButton from '../components/SettingsBackButton';
 import { SettingsStatusLine, SettingsTextArea } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
@@ -57,7 +58,7 @@ const normalizeAllowedHost = (raw: string): string =>
 
 const SearchPanel = ({ embedded = false }: { embedded?: boolean }) => {
   const { t } = useT();
-  const { navigateBack, breadcrumbs } = useSettingsNavigation();
+  const { navigateBack } = useSettingsNavigation();
   const { snapshot } = useCoreState();
   const isLocalSession = isLocalSessionToken(snapshot.sessionToken);
 
@@ -224,16 +225,12 @@ const SearchPanel = ({ embedded = false }: { embedded?: boolean }) => {
   };
 
   return (
-    <div className="z-10 relative" data-testid="search-settings-panel">
-      {!embedded && (
-        <SettingsHeader
-          title={t('settings.search.title')}
-          showBackButton
-          onBack={navigateBack}
-          breadcrumbs={breadcrumbs}
-        />
-      )}
-
+    <PanelPage
+      className="z-10"
+      testId="search-settings-panel"
+      contentClassName=""
+      description={embedded ? undefined : t('settings.search.menuDesc')}
+      leading={embedded ? undefined : <SettingsBackButton onBack={navigateBack} />}>
       <div className={embedded ? 'space-y-4' : 'p-4 space-y-4'}>
         <p className="text-xs text-stone-500 dark:text-neutral-400 leading-relaxed">
           {t('settings.search.description')}
@@ -462,7 +459,7 @@ const SearchPanel = ({ embedded = false }: { embedded?: boolean }) => {
           </>
         )}
       </div>
-    </div>
+    </PanelPage>
   );
 };
 

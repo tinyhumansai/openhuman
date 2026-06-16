@@ -3,8 +3,9 @@ import { useState } from 'react';
 import { useT } from '../../../lib/i18n/I18nContext';
 import { useCoreState } from '../../../providers/CoreStateProvider';
 import { decideKeyringConsent, retryKeyringProbe } from '../../../services/keyringApi';
+import PanelPage from '../../layout/PanelPage';
 import Button from '../../ui/Button';
-import SettingsHeader from '../components/SettingsHeader';
+import SettingsBackButton from '../components/SettingsBackButton';
 import { SettingsBadge, SettingsRow, SettingsSection, SettingsStatusLine } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
@@ -16,7 +17,7 @@ const MODE_BADGE_VARIANT: Record<string, 'success' | 'warning' | 'neutral' | 'da
 };
 
 const SecurityPanel = () => {
-  const { navigateBack, breadcrumbs } = useSettingsNavigation();
+  const { navigateBack } = useSettingsNavigation();
   const { snapshot } = useCoreState();
   const { t } = useT();
   const [isLoading, setIsLoading] = useState(false);
@@ -51,13 +52,11 @@ const SecurityPanel = () => {
   };
 
   return (
-    <div className="z-10 relative">
-      <SettingsHeader
-        title={t('keyring.settings.title')}
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
-
+    <PanelPage
+      className="z-10"
+      contentClassName=""
+      description={t('pages.settings.account.securityDesc')}
+      leading={<SettingsBackButton onBack={navigateBack} />}>
       <div className="p-4 pt-2 space-y-5">
         {/* Storage mode */}
         <SettingsSection title={t('keyring.settings.storageMode')}>
@@ -146,7 +145,7 @@ const SecurityPanel = () => {
           savingLabel={t('keyring.consent.retrying')}
         />
       </div>
-    </div>
+    </PanelPage>
   );
 };
 

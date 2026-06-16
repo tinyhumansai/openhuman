@@ -10,20 +10,15 @@ import {
   type VoiceServerStatus,
   type VoiceStatus,
 } from '../../../utils/tauriCommands';
+import PanelPage from '../../layout/PanelPage';
 import Button from '../../ui/Button';
-import SettingsHeader from '../components/SettingsHeader';
-import {
-  SettingsNumberField,
-  SettingsRow,
-  SettingsSection,
-  SettingsStatusLine,
-  SettingsSwitch,
-} from '../controls';
+import SettingsBackButton from '../components/SettingsBackButton';
+import { SettingsNumberField, SettingsRow, SettingsSection, SettingsStatusLine } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 const VoiceDebugPanel = () => {
   const { t } = useT();
-  const { navigateBack, breadcrumbs } = useSettingsNavigation();
+  const { navigateBack } = useSettingsNavigation();
   const [settings, setSettings] = useState<VoiceServerSettings | null>(null);
   const [savedSettings, setSavedSettings] = useState<VoiceServerSettings | null>(null);
   const [serverStatus, setServerStatus] = useState<VoiceServerStatus | null>(null);
@@ -110,7 +105,6 @@ const VoiceDebugPanel = () => {
         min_duration_secs: settings.min_duration_secs,
         silence_threshold: settings.silence_threshold,
         custom_dictionary: settings.custom_dictionary,
-        always_on_enabled: settings.always_on_enabled,
       });
       setNotice(t('voice.debug.settingsSaved'));
       await loadData(true);
@@ -123,14 +117,11 @@ const VoiceDebugPanel = () => {
   };
 
   return (
-    <div className="z-10 relative">
-      <SettingsHeader
-        title={t('voice.debugTitle')}
-        showBackButton={true}
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
-
+    <PanelPage
+      className="z-10"
+      contentClassName=""
+      description={t('settings.developerMenu.voiceDebug.desc')}
+      leading={<SettingsBackButton onBack={navigateBack} />}>
       <div className="p-4 pt-2 space-y-5">
         {/* Runtime status section */}
         <SettingsSection
@@ -203,20 +194,7 @@ const VoiceDebugPanel = () => {
           description={t('voice.debug.advancedSettingsDesc')}>
           {settings && (
             <>
-              <SettingsRow
-                htmlFor="switch-always-on"
-                label={t('voice.debug.alwaysOn')}
-                description={t('voice.debug.alwaysOnDesc')}
-                control={
-                  <SettingsSwitch
-                    id="switch-always-on"
-                    checked={settings.always_on_enabled}
-                    onCheckedChange={next => updateSetting('always_on_enabled', next)}
-                    aria-label={t('voice.debug.alwaysOn')}
-                    data-testid="voice-always-on-toggle"
-                  />
-                }
-              />
+              {/* Always-on listening moved to Settings → Features → Desktop Agent. */}
               <SettingsRow
                 stacked
                 label={t('voice.debug.minimumRecordingSeconds')}
@@ -268,7 +246,7 @@ const VoiceDebugPanel = () => {
           </div>
         </SettingsSection>
       </div>
-    </div>
+    </PanelPage>
   );
 };
 
