@@ -37,6 +37,7 @@ impl OpenAiCodexRouting {
 }
 
 pub(crate) fn openai_codex_client_version() -> String {
+    log::trace!("[providers][openai-codex] client_version resolve start");
     let (version, source) = resolve_openai_codex_client_version();
     log::debug!(
         "[providers][openai-codex] resolved client_version source={source} value={version}"
@@ -49,21 +50,31 @@ fn resolve_openai_codex_client_version() -> (String, &'static str) {
         .ok()
         .and_then(non_empty_trimmed)
     {
+        log::trace!("[providers][openai-codex] client_version source=env");
         return (version, "env");
     }
 
     if let Some(home) = codex_home_dir() {
+        log::trace!(
+            "[providers][openai-codex] client_version probing codex home={}",
+            home.display()
+        );
         if let Some(version) =
             read_json_string_field(&home.join("models_cache.json"), "client_version")
         {
+            log::trace!("[providers][openai-codex] client_version source=models_cache");
             return (version, "models_cache");
         }
         if let Some(version) = read_json_string_field(&home.join("version.json"), "latest_version")
         {
+            log::trace!("[providers][openai-codex] client_version source=version_json");
             return (version, "version_json");
         }
+    } else {
+        log::trace!("[providers][openai-codex] client_version codex home unresolved");
     }
 
+    log::trace!("[providers][openai-codex] client_version source=default");
     (OPENAI_CODEX_DEFAULT_CLIENT_VERSION.to_string(), "default")
 }
 
@@ -104,8 +115,26 @@ fn home_dir_from_env() -> Option<PathBuf> {
 }
 
 fn read_json_string_field(path: &Path, field: &str) -> Option<String> {
-    let bytes = std::fs::read(path).ok()?;
-    let json: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    let file = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("<unknown>");
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            log::trace!("[providers][openai-codex] client_version read miss file={file} err={err}");
+            return None;
+        }
+    };
+    let json: serde_json::Value = match serde_json::from_slice(&bytes) {
+        Ok(json) => json,
+        Err(err) => {
+            log::trace!(
+                "[providers][openai-codex] client_version parse miss file={file} err={err}"
+            );
+            return None;
+        }
+    };
     json.get(field)
         .and_then(|value| value.as_str())
         .map(str::to_string)
