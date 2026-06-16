@@ -38,7 +38,7 @@ function scopeLabel(scope: string): string {
 // `t` is threaded in because this is a module-level helper with no hook scope.
 // The `{n}` placeholder follows the codebase's interpolation convention
 // (t(...).replace('{n}', value)) — `t()` itself does not interpolate params.
-function timeAgo(iso: string, t: (key: string, fallback?: string) => string): string {
+export function timeAgo(iso: string, t: (key: string, fallback?: string) => string): string {
   const diff = Date.now() - new Date(iso).getTime();
   const mins = Math.floor(diff / 60_000);
   if (mins < 1) return t('sync.timeAgo.justNow', 'just now');
