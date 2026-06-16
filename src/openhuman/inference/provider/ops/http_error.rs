@@ -419,9 +419,27 @@ pub fn is_byo_provider_auth_failure_http(
     body: &str,
 ) -> bool {
     if !matches!(status.as_u16(), 401 | 403) {
+        tracing::debug!(
+            domain = "llm_provider",
+            operation = "http_error_classifier",
+            provider = provider,
+            status = status.as_u16(),
+            matched = false,
+            reason = "byo_provider_auth_failure_probe:non_auth_status",
+            "[llm_provider] BYO auth-failure classifier skipped — status is not 401/403"
+        );
         return false;
     }
     if provider == openhuman_backend::PROVIDER_LABEL {
+        tracing::debug!(
+            domain = "llm_provider",
+            operation = "http_error_classifier",
+            provider = provider,
+            status = status.as_u16(),
+            matched = false,
+            reason = "byo_provider_auth_failure_probe:backend_excluded",
+            "[llm_provider] BYO auth-failure classifier skipped — backend owns session-expiry recovery"
+        );
         return false;
     }
     let lower = body.to_ascii_lowercase();
@@ -439,9 +457,21 @@ pub fn is_byo_provider_auth_failure_http(
         "incorrect api key",
         "invalid authentication",
     ];
-    AUTH_ERROR_MARKERS
+    let matched = AUTH_ERROR_MARKERS
         .iter()
-        .any(|marker| lower.contains(marker))
+        .any(|marker| lower.contains(marker));
+    // Body content is intentionally omitted from the log — it can carry the
+    // raw (sanitized-or-not) provider payload; only the match outcome is logged.
+    tracing::debug!(
+        domain = "llm_provider",
+        operation = "http_error_classifier",
+        provider = provider,
+        status = status.as_u16(),
+        matched,
+        reason = "byo_provider_auth_failure_probe",
+        "[llm_provider] evaluated BYO auth-failure classifier"
+    );
+    matched
 }
 
 pub fn log_byo_provider_auth_failure(
