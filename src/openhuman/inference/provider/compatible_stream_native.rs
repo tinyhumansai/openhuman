@@ -151,9 +151,45 @@ impl OpenAiCompatibleProvider {
                 self.name,
             );
             let response_bytes = response.bytes().await?;
+            let body_bytes_received = response_bytes.len();
             dump_response_if_enabled(&self.name, &native_request.model, dump_seq, &response_bytes);
             let api_resp: ApiChatResponse = serde_json::from_slice(&response_bytes)
                 .map_err(|err| anyhow::anyhow!("{} response parse error: {err}", self.name))?;
+
+            // Mirror the SSE-branch empty-2xx-stream diagnostic (#3335 /
+            // #3386) on the buffered JSON path. The same upstream
+            // collapse to `AgentError::EmptyProviderResponse` is
+            // reachable here when a managed backend returns 200 with a
+            // content-less JSON payload (credit exhaustion served as
+            // JSON instead of SSE, or an upstream stall flushed as an
+            // empty completion). Without this sibling guard the warn
+            // would only fire on the SSE branch and the buffered case
+            // would silently miss the very signal we're trying to
+            // capture.
+            let buffered_is_empty = api_resp
+                .choices
+                .first()
+                .map(|c| {
+                    let m = &c.message;
+                    let content_empty = m.content.as_deref().is_none_or(str::is_empty);
+                    let reasoning_empty = m.reasoning_content.as_deref().is_none_or(str::is_empty);
+                    let tool_calls_empty = m.tool_calls.as_ref().is_none_or(|t| t.is_empty());
+                    let function_call_empty = m.function_call.is_none();
+                    content_empty && reasoning_empty && tool_calls_empty && function_call_empty
+                })
+                .unwrap_or(true);
+            if buffered_is_empty {
+                let elapsed_ms = stream_started_at.elapsed().as_millis() as u64;
+                log::warn!(
+                    "[stream] {} empty 2xx buffered JSON — model={} elapsed_ms={} body_bytes={} has_usage={} has_openhuman_meta={}",
+                    self.name,
+                    native_request.model,
+                    elapsed_ms,
+                    body_bytes_received,
+                    api_resp.usage.is_some(),
+                    api_resp.openhuman.is_some(),
+                );
+            }
             return Self::parse_native_response(api_resp, &self.name);
         }
 
@@ -171,12 +207,20 @@ impl OpenAiCompatibleProvider {
         // Forensic counters for the empty-2xx-stream diagnostic below
         // (issue #3335 / #3386). Both are append-only, never read by
         // request path logic — strictly observability.
+        //
+        // `body_bytes_received` is the count of body bytes yielded by
+        // `bytes_stream()`. This crate builds reqwest without the
+        // `gzip` / `brotli` / `zstd` / `deflate` features (see
+        // root Cargo.toml), so no Content-Encoding decompression happens
+        // and the count matches what's on the wire. The neutral name
+        // (rather than `raw_bytes` / `decoded_bytes`) sidesteps the
+        // ambiguity an operator would otherwise hit reading the log.
         let mut sse_chunks_parsed: usize = 0;
-        let mut raw_bytes_received: usize = 0;
+        let mut body_bytes_received: usize = 0;
 
         'stream: while let Some(item) = bytes_stream.next().await {
             let bytes = item?;
-            raw_bytes_received += bytes.len();
+            body_bytes_received += bytes.len();
             buffer.push_str(&String::from_utf8_lossy(&bytes));
 
             while let Some(sep_idx) = buffer.find("\n\n") {
@@ -441,12 +485,12 @@ impl OpenAiCompatibleProvider {
         if text_accum.is_empty() && thinking_accum.is_empty() && tool_call_count == 0 {
             let elapsed_ms = stream_started_at.elapsed().as_millis() as u64;
             log::warn!(
-                "[stream] {} empty 2xx stream — model={} elapsed_ms={} sse_chunks={} raw_bytes={} has_usage={} has_openhuman_meta={}",
+                "[stream] {} empty 2xx stream — model={} elapsed_ms={} sse_chunks={} body_bytes={} has_usage={} has_openhuman_meta={}",
                 self.name,
                 native_request.model,
                 elapsed_ms,
                 sse_chunks_parsed,
-                raw_bytes_received,
+                body_bytes_received,
                 last_usage.is_some(),
                 last_openhuman.is_some(),
             );
