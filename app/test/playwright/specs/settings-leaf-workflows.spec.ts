@@ -1,4 +1,5 @@
 import { expect, type Page, test } from '@playwright/test';
+import { createServer, type Server } from 'node:http';
 
 import {
   bootAuthenticatedPage,
@@ -6,6 +7,45 @@ import {
   dismissWalkthroughIfPresent,
   waitForAppReady,
 } from '../helpers/core-rpc';
+
+/**
+ * Stand up a tiny OpenAI-compatible embeddings server the core can probe at
+ * save time. Selecting a custom embeddings endpoint now runs a live test embed
+ * and only persists the config if it succeeds, so the endpoint must actually
+ * answer `/embeddings` with one `dims`-length vector per input.
+ */
+async function startMockEmbeddingsServer(port: number, dims: number): Promise<Server> {
+  const server = createServer((req, res) => {
+    if (req.method === 'POST' && req.url?.endsWith('/embeddings')) {
+      let raw = '';
+      req.on('data', chunk => {
+        raw += chunk;
+      });
+      req.on('end', () => {
+        let inputLen = 1;
+        try {
+          const body = JSON.parse(raw || '{}') as { input?: unknown };
+          inputLen = Array.isArray(body.input) ? Math.max(body.input.length, 1) : 1;
+        } catch {
+          inputLen = 1;
+        }
+        const embedding = Array.from({ length: dims }, (_, i) => (i % 10) / 10);
+        const data = Array.from({ length: inputLen }, (_, index) => ({
+          object: 'embedding',
+          index,
+          embedding,
+        }));
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ object: 'list', data, model: 'e2e-embedding-model' }));
+      });
+      return;
+    }
+    res.writeHead(404);
+    res.end('not found');
+  });
+  await new Promise<void>(resolve => server.listen(port, '127.0.0.1', () => resolve()));
+  return server;
+}
 
 async function openSettings(page: Page, userId: string, hash: string): Promise<void> {
   await bootAuthenticatedPage(page, userId, hash);
@@ -94,42 +134,50 @@ test.describe('Settings leaf workflows', () => {
   test('embeddings custom endpoint setup writes provider, model, and dimensions', async ({
     page,
   }) => {
-    await openSettings(page, 'pw-settings-embeddings', '/settings/embeddings');
+    // The save-time gate probes the endpoint with a live test embed before
+    // accepting it, so serve a real OpenAI-compatible endpoint on the port the
+    // config points at (64-dim to match the dimensions entered below).
+    const embeddingsServer = await startMockEmbeddingsServer(18473, 64);
+    try {
+      await openSettings(page, 'pw-settings-embeddings', '/settings/embeddings');
 
-    // Panel title dropped in the PanelPage migration; the provider radios confirm
-    // the Embeddings panel mounted.
-    await expect(page.getByRole('radio', { name: /Custom/i })).toBeVisible();
-    await page.getByRole('radio', { name: /Custom/i }).click();
+      // Panel title dropped in the PanelPage migration; the provider radios confirm
+      // the Embeddings panel mounted.
+      await expect(page.getByRole('radio', { name: /Custom/i })).toBeVisible();
+      await page.getByRole('radio', { name: /Custom/i }).click();
 
-    await expect(page.getByRole('heading', { name: /Set up/i })).toBeVisible();
-    await page
-      .getByPlaceholder('https://your-endpoint.com/v1')
-      .fill('http://127.0.0.1:18473/openai/v1');
-    await page.getByPlaceholder('text-embedding-3-small').fill('e2e-embedding-model');
-    await page.getByPlaceholder('1024').fill('64');
-    await page.getByRole('button', { name: 'Save & switch' }).click();
+      await expect(page.getByRole('heading', { name: /Set up/i })).toBeVisible();
+      await page
+        .getByPlaceholder('https://your-endpoint.com/v1')
+        .fill('http://127.0.0.1:18473/openai/v1');
+      await page.getByPlaceholder('text-embedding-3-small').fill('e2e-embedding-model');
+      await page.getByPlaceholder('1024').fill('64');
+      await page.getByRole('button', { name: 'Save & switch' }).click();
 
-    const wipe = page.getByRole('button', { name: 'Wipe & apply' });
-    await expect(wipe).toBeVisible({ timeout: 15_000 });
-    await wipe.click();
+      const wipe = page.getByRole('button', { name: 'Wipe & apply' });
+      await expect(wipe).toBeVisible({ timeout: 15_000 });
+      await wipe.click();
 
-    await expect(page.getByText('Saved.')).toBeVisible({ timeout: 15_000 });
-    await expect
-      .poll(async () => {
-        const raw = await callCoreRpc<any>('openhuman.embeddings_get_settings', {});
-        const settings =
-          unwrap<{ provider?: string; model?: string; dimensions?: number }>(raw) ?? {};
-        return {
-          provider: settings.provider,
-          model: settings.model,
-          dimensions: settings.dimensions,
-        };
-      })
-      .toEqual({
-        provider: 'custom:http://127.0.0.1:18473/openai/v1',
-        model: 'e2e-embedding-model',
-        dimensions: 64,
-      });
+      await expect(page.getByText('Saved.')).toBeVisible({ timeout: 15_000 });
+      await expect
+        .poll(async () => {
+          const raw = await callCoreRpc<any>('openhuman.embeddings_get_settings', {});
+          const settings =
+            unwrap<{ provider?: string; model?: string; dimensions?: number }>(raw) ?? {};
+          return {
+            provider: settings.provider,
+            model: settings.model,
+            dimensions: settings.dimensions,
+          };
+        })
+        .toEqual({
+          provider: 'custom:http://127.0.0.1:18473/openai/v1',
+          model: 'e2e-embedding-model',
+          dimensions: 64,
+        });
+    } finally {
+      await new Promise<void>(resolve => embeddingsServer.close(() => resolve()));
+    }
   });
 
   test('agents/new creates a custom agent that appears in the registry', async ({ page }) => {

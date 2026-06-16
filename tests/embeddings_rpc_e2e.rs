@@ -130,6 +130,16 @@ async fn mock_openai_embeddings(
     headers: axum::http::HeaderMap,
     Json(body): Json<Value>,
 ) -> Json<Value> {
+    // Return exactly one embedding per input, like a real OpenAI-compatible
+    // server — the client rejects a count mismatch (`openai embed count
+    // mismatch`), and the save-time verification probe sends a single
+    // `"connection test"` input while the real embed sends two. Captured before
+    // `body` is moved into the request log below.
+    let input_len = match body.get("input") {
+        Some(Value::Array(items)) => items.len().max(1),
+        _ => 1,
+    };
+
     state
         .requests
         .lock()
@@ -145,12 +155,23 @@ async fn mock_openai_embeddings(
                 .and_then(|value| value.to_str().ok())
                 .map(ToOwned::to_owned),
         );
+
+    // Index 0 → [0.1,0.2,0.3], every other index → [0.4,0.5,0.6], so the
+    // two-input embed assertion (`vectors[1][2] ≈ 0.6`) still holds.
+    let data: Vec<Value> = (0..input_len)
+        .map(|i| {
+            let embedding = if i == 0 {
+                [0.1, 0.2, 0.3]
+            } else {
+                [0.4, 0.5, 0.6]
+            };
+            json!({ "object": "embedding", "index": i, "embedding": embedding })
+        })
+        .collect();
+
     Json(json!({
         "object": "list",
-        "data": [
-            { "object": "embedding", "index": 0, "embedding": [0.1, 0.2, 0.3] },
-            { "object": "embedding", "index": 1, "embedding": [0.4, 0.5, 0.6] }
-        ],
+        "data": data,
         "model": "mock-embedding-model"
     }))
 }
