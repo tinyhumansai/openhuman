@@ -514,6 +514,16 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         privacy: DERIVED_TO_BACKEND,
     },
     Capability {
+        id: "intelligence.worktree_manager",
+        name: "Agent Worktrees",
+        domain: "intelligence",
+        category: CapabilityCategory::Intelligence,
+        description: "Inspect and clean up the isolated git worktrees that parallel sub-agents check out under <repo>/.claude/worktrees. Each row shows the worktree's branch, dirty state, and changed files, plus a cross-worktree overlap warning when two workers touched the same file. Open, diff, or remove a worktree (a dirty worktree requires an explicit discard confirmation; the worker branch is preserved).",
+        how_to: "Intelligence > Worktrees",
+        status: CapabilityStatus::Beta,
+        privacy: None,
+    },
+    Capability {
         id: "intelligence.slack_memory_ingest",
         name: "Slack Memory Ingestion",
         domain: "intelligence",
