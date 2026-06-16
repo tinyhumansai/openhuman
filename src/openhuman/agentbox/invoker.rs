@@ -129,12 +129,22 @@ impl AgentInvoker for CoreAgentInvoker {
         //    Match on `request_id` (request-scoped) so we don't accidentally
         //    pick up an unrelated turn that happens to share the same
         //    thread/client.
+        log::debug!("[agentbox] awaiting terminal event request_id={request_id}");
         loop {
             let event = match events.recv().await {
                 Ok(ev) => ev,
                 Err(RecvError::Lagged(n)) => {
-                    log::warn!("[agentbox] event bus lagged request_id={request_id} skipped={n}");
-                    continue;
+                    // Fail fast: a lagged broadcast receiver means we may have
+                    // dropped this request's terminal `chat_done`/`chat_error`.
+                    // Continuing would only let the caller's outer
+                    // `tokio::time::timeout` fire and misreport a timeout, so
+                    // surface the lag directly instead.
+                    log::warn!(
+                        "[agentbox] event bus lagged request_id={request_id} skipped={n}; failing fast"
+                    );
+                    return Err(format!(
+                        "agentbox: event bus lagged (skipped {n} events); terminal event for request_id={request_id} may have been dropped"
+                    ));
                 }
                 Err(RecvError::Closed) => {
                     return Err("agentbox: event stream closed".into());
