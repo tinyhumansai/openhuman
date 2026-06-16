@@ -250,28 +250,6 @@ pub fn classify_embed_error_str(msg: &str) -> PipelineFailure {
             .with_detail(truncate_detail(msg));
     }
 
-    // LM Studio local embedding server with no model loaded into memory
-    // returns a 400 with `{"error":"No models loaded. Please load a model in
-    // the developer page or use the 'lms load' command."}` (Sentry
-    // TAURI-RUST-4P4). Retrying the seal/ingest job within its backoff window
-    // cannot succeed — the user must load a model in their separate LM Studio
-    // app — so this MUST fail fast (`LocalModelUnavailable` ⇒ Unrecoverable)
-    // rather than fall through to the generic 4xx → Transient arm below and
-    // re-hammer the dead endpoint (each retry re-emits the embed error). The
-    // failure defers to the next sync, by which point the user may have loaded
-    // a model. Body-anchored (wins regardless of status, like the budget arm)
-    // on the stable `no models loaded` noun phrase. `LocalModelUnavailable`
-    // already carries the right remediation key (load the local model).
-    if lower.contains("no models loaded") {
-        log::debug!(
-            "[memory::health] embed_error_classified matched_anchor=no_models_loaded \
-             code=local_model_unavailable class=unrecoverable detail_len={}",
-            msg.len()
-        );
-        return PipelineFailure::new(FailureCode::LocalModelUnavailable)
-            .with_detail(truncate_detail(msg));
-    }
-
     // Parse the HTTP status out of the `Embedding API error (<status>): ...`
     // shape. reqwest renders e.g. `402 Payment Required`, so the first
     // 3-digit run after the opening paren is the code.
@@ -643,18 +621,6 @@ mod tests {
             assert_eq!(f.code, FailureCode::AuthInvalid, "status {status}");
             assert!(f.is_unrecoverable());
         }
-    }
-
-    #[test]
-    fn classify_lmstudio_no_models_loaded_is_unrecoverable() {
-        // TAURI-RUST-4P4 — LM Studio local embedding server, no model loaded.
-        // Must fail fast (not retry-hammer the dead endpoint): the generic
-        // 400 → Transient arm would otherwise re-emit on every retry.
-        let f = classify_embed_error_str(
-            r#"Embedding API error (400 Bad Request): {"error":"No models loaded. Please load a model in the developer page or use the 'lms load' command."}"#,
-        );
-        assert_eq!(f.code, FailureCode::LocalModelUnavailable);
-        assert!(f.is_unrecoverable());
     }
 
     #[test]
