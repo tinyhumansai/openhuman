@@ -436,7 +436,7 @@ function makeAccountId(): string {
  * `labelKey` (not a literal) so the caller can localize it via `useT()` —
  * this is a module-level helper with no hook scope of its own.
  */
-function statusDisplay(status: AccountStatus): { labelKey: string; dotClass: string } {
+export function statusDisplay(status: AccountStatus): { labelKey: string; dotClass: string } {
   switch (status) {
     case 'open':
       return { labelKey: 'app.openhumanLink.status.connected', dotClass: 'bg-emerald-500' };
