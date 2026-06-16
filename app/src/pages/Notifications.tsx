@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import NotificationBody from '../components/notifications/NotificationBody';
@@ -14,6 +14,19 @@ import {
   type NotificationItem,
   selectUnreadCount,
 } from '../store/notificationSlice';
+
+// Canonical category order — drives the order chips appear in the filter row.
+const CATEGORY_ORDER: NotificationCategory[] = [
+  'messages',
+  'agents',
+  'skills',
+  'system',
+  'meetings',
+  'reminders',
+  'important',
+];
+
+type CategoryFilter = NotificationCategory | 'all';
 
 function formatTime(ts: number, t: (key: string) => string): string {
   const delta = Date.now() - ts;
@@ -32,6 +45,25 @@ const Notifications = () => {
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
   const unread = useMemo(() => selectUnreadCount(items), [items]);
+  const [selectedCategory, setSelectedCategory] = useState<CategoryFilter>('all');
+
+  // Only offer chips for categories that actually appear in the feed — no dead chips.
+  const presentCategories = useMemo(
+    () => CATEGORY_ORDER.filter(c => items.some(item => item.category === c)),
+    [items]
+  );
+
+  // If the active filter's category drains out of the feed, fall back to All.
+  const activeCategory: CategoryFilter =
+    selectedCategory !== 'all' && !presentCategories.includes(selectedCategory)
+      ? 'all'
+      : selectedCategory;
+
+  const filteredItems = useMemo(
+    () =>
+      activeCategory === 'all' ? items : items.filter(item => item.category === activeCategory),
+    [items, activeCategory]
+  );
 
   const categoryLabel = (category: NotificationCategory): string => {
     switch (category) {
@@ -97,13 +129,47 @@ const Notifications = () => {
           </div>
         </div>
 
-        {items.length === 0 ? (
+        {presentCategories.length > 0 && (
+          <div
+            data-testid="notification-category-filter"
+            className="flex flex-wrap items-center gap-2 border-b border-stone-100 dark:border-neutral-800 px-4 py-2">
+            <button
+              type="button"
+              data-testid="notif-filter-chip-all"
+              aria-pressed={activeCategory === 'all'}
+              onClick={() => setSelectedCategory('all')}
+              className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                activeCategory === 'all'
+                  ? 'bg-primary-500 text-white'
+                  : 'bg-stone-100 text-stone-600 hover:bg-stone-200 dark:bg-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-700'
+              }`}>
+              {t('notifications.filterAll')}
+            </button>
+            {presentCategories.map(category => (
+              <button
+                key={category}
+                type="button"
+                data-testid={`notif-filter-chip-${category}`}
+                aria-pressed={activeCategory === category}
+                onClick={() => setSelectedCategory(category)}
+                className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                  activeCategory === category
+                    ? 'bg-primary-500 text-white'
+                    : 'bg-stone-100 text-stone-600 hover:bg-stone-200 dark:bg-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-700'
+                }`}>
+                {categoryLabel(category)}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {filteredItems.length === 0 ? (
           <div className="px-6 py-16 text-center text-sm text-stone-500 dark:text-neutral-400">
             {t('alerts.empty')}
           </div>
         ) : (
           <ul className="divide-y divide-stone-100 dark:divide-neutral-800">
-            {items.map(item => (
+            {filteredItems.map(item => (
               <li key={item.id} data-testid="notification-item">
                 {/* `role="button"` instead of a real `<button>` — the row body
                     contains `NotificationLinkPill` (also a `<button>`), and

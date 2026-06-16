@@ -2691,6 +2691,7 @@ const messages: TranslationMap = {
   'notifications.category.meetings': 'Spotkania',
   'notifications.category.reminders': 'Przypomnienia',
   'notifications.category.important': 'Ważne',
+  'notifications.filterAll': 'Wszystkie',
   'about.update.status.checking': 'Sprawdzanie...',
   'about.update.status.available': 'Dostępna wersja {version}',
   'about.update.status.availableNoVersion': 'Dostępna aktualizacja',

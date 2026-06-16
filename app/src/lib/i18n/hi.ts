@@ -2665,6 +2665,7 @@ const messages: TranslationMap = {
   'notifications.category.meetings': 'मीटिंग',
   'notifications.category.reminders': 'रिमाइंडर',
   'notifications.category.important': 'महत्वपूर्ण',
+  'notifications.filterAll': 'सभी',
   'about.update.status.checking': 'चेक हो रहा है...',
   'about.update.status.available': 'v{version} उपलब्ध है',
   'about.update.status.availableNoVersion': 'अपडेट उपलब्ध है',

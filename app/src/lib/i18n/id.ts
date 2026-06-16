@@ -2669,6 +2669,7 @@ const messages: TranslationMap = {
   'notifications.category.meetings': 'Rapat',
   'notifications.category.reminders': 'Pengingat',
   'notifications.category.important': 'Penting',
+  'notifications.filterAll': 'Semua',
   'about.update.status.checking': 'Memeriksa...',
   'about.update.status.available': 'v{version} tersedia',
   'about.update.status.availableNoVersion': 'Pembaruan tersedia',

@@ -2709,6 +2709,7 @@ const messages: TranslationMap = {
   'notifications.category.meetings': 'Riunioni',
   'notifications.category.reminders': 'Promemoria',
   'notifications.category.important': 'Importanti',
+  'notifications.filterAll': 'Tutte',
   'about.update.status.checking': 'Verifica in corso...',
   'about.update.status.available': 'v{version} disponibile',
   'about.update.status.availableNoVersion': 'Aggiornamento disponibile',

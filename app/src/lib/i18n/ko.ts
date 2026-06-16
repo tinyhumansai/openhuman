@@ -2641,6 +2641,7 @@ const messages: TranslationMap = {
   'notifications.category.meetings': '회의',
   'notifications.category.reminders': '리마인더',
   'notifications.category.important': '중요',
+  'notifications.filterAll': '전체',
   'about.update.status.checking': '확인 중...',
   'about.update.status.available': 'v{version} 사용 가능',
   'about.update.status.availableNoVersion': '업데이트 사용 가능',
