@@ -13,7 +13,7 @@ pub mod ops;
 pub mod store;
 pub mod types;
 
-pub use env::register_gmi_provider_if_present;
+pub use env::{agentbox_mode_enabled, register_gmi_provider_if_present};
 pub use http::router as agentbox_router;
 pub use store::JobStore;
 

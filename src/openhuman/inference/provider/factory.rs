@@ -762,6 +762,19 @@ fn make_openhuman_backend(config: &Config) -> anyhow::Result<(Box<dyn Provider>,
 /// `<slug>:<model>`) are only reachable when the workspace holds a valid
 /// `app-session` JWT.
 fn verify_session_active(config: &Config) -> anyhow::Result<()> {
+    // AgentBox marketplace containers run headless with no desktop
+    // `app-session` JWT — the deployment is operator-controlled and ships its
+    // own GMI MaaS credentials via `GMI_*` env vars. The session gate exists to
+    // stop an *unregistered desktop user* from routing every workload at a
+    // custom provider; that threat model doesn't apply here, so bypass it.
+    // Without this, every `/run` job would fail `SESSION_EXPIRED` before
+    // reaching GMI (the startup path stores only `provider:gmi-maas`).
+    if crate::openhuman::agentbox::agentbox_mode_enabled() {
+        log::debug!(
+            "[chat-factory] AgentBox mode — bypassing app-session gate for custom provider"
+        );
+        return Ok(());
+    }
     // Fast path: the scheduler gate already knows the session is dead.
     if crate::openhuman::scheduler_gate::is_signed_out() {
         anyhow::bail!(

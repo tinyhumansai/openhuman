@@ -1065,7 +1065,7 @@ pub fn build_core_http_router(socketio_enabled: bool) -> Router {
     // bypass for `/run` and `/jobs/{id}` is unconditional in
     // [`crate::core::auth`]; the router-side gate is what actually exposes
     // the handlers. The spawned sweep loop lives until process exit.
-    if std::env::var("OPENHUMAN_AGENTBOX_MODE").as_deref() == Ok("1") {
+    if crate::openhuman::agentbox::agentbox_mode_enabled() {
         let store = crate::openhuman::agentbox::JobStore::new(std::time::Duration::from_secs(3600));
         let invoker: std::sync::Arc<dyn crate::openhuman::agentbox::invoker::AgentInvoker> =
             std::sync::Arc::new(crate::openhuman::agentbox::invoker::CoreAgentInvoker);

@@ -15,6 +15,29 @@ use crate::openhuman::inference::provider::factory::auth_key_for_slug;
 /// and in auth-profiles (keyed by `provider:<slug>`).
 pub const GMI_MAAS_SLUG: &str = "gmi-maas";
 
+/// Hard upper bound on how long startup will wait for the GMI provider patch
+/// (config load + token store + config save). The happy path is a few
+/// filesystem ops (<100ms), but `AuthProfilesStore` lock acquisition can busy-
+/// wait up to ~35s under contention. We must not let that stall server
+/// readiness / liveness probes, so we cap the budget and fall through to
+/// degraded mode on timeout — `/run` then surfaces a clear provider error
+/// rather than the boot hanging.
+const GMI_REGISTRATION_BUDGET: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Operator-supplied flag that turns the marketplace adapter on. When set to
+/// `"1"` the core mounts `/run` + `/jobs/{id}` and routes inference through the
+/// GMI MaaS provider seeded from `GMI_*` env vars.
+pub const AGENTBOX_MODE_ENV_VAR: &str = "OPENHUMAN_AGENTBOX_MODE";
+
+/// Whether the core is running as a GMI Cloud AgentBox marketplace container.
+///
+/// Single source of truth for the `OPENHUMAN_AGENTBOX_MODE=1` check so the
+/// router mount, startup registration, and the inference session-gate bypass
+/// can't drift apart.
+pub fn agentbox_mode_enabled() -> bool {
+    std::env::var(AGENTBOX_MODE_ENV_VAR).as_deref() == Ok("1")
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GmiConfig {
     pub base_url: String,
@@ -74,8 +97,7 @@ pub fn register_gmi_provider_if_present() {
             // Only surface as a warning when AgentBox mode is actually enabled.
             // Otherwise (desktop / CLI default), this is the expected steady
             // state and operators would treat the warn as noise.
-            let agentbox_enabled = std::env::var("OPENHUMAN_AGENTBOX_MODE").as_deref() == Ok("1");
-            if agentbox_enabled {
+            if agentbox_mode_enabled() {
                 log::warn!(
                     "[agentbox::gmi] not registering GMI MaaS provider: {}",
                     reason
@@ -143,12 +165,17 @@ fn register_gmi_with_inference_catalog(cfg: &GmiConfig) {
     }
 
     let cfg_clone = cfg.clone();
+    // Bound the synchronous wait: we keep the ordering contract (the provider
+    // must be in the catalog before `/run` is mounted) but cap how long boot
+    // can block so auth-store lock contention can't stall readiness for ~35s.
     let result = tokio::task::block_in_place(|| {
-        handle.block_on(async move { apply_gmi_to_runtime(&cfg_clone).await })
+        handle.block_on(async move {
+            tokio::time::timeout(GMI_REGISTRATION_BUDGET, apply_gmi_to_runtime(&cfg_clone)).await
+        })
     });
 
     match result {
-        Ok(()) => {
+        Ok(Ok(())) => {
             log::info!(
                 "[agentbox::gmi] registered cloud provider slug={} model={} \
                  base_url={} — all agent workloads routed to gmi-maas",
@@ -157,11 +184,19 @@ fn register_gmi_with_inference_catalog(cfg: &GmiConfig) {
                 cfg.base_url,
             );
         }
-        Err(e) => {
+        Ok(Err(e)) => {
             log::warn!(
                 "[agentbox::gmi] GMI MaaS registration failed (startup continues \
                  in degraded mode): {}",
                 e
+            );
+        }
+        Err(_elapsed) => {
+            log::warn!(
+                "[agentbox::gmi] GMI MaaS registration exceeded {}s startup budget \
+                 (likely auth-store lock contention) — startup continues in \
+                 degraded mode; /run will report a provider error until retried",
+                GMI_REGISTRATION_BUDGET.as_secs(),
             );
         }
     }
