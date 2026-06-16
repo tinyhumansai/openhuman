@@ -10,12 +10,17 @@ pub mod env;
 pub mod http;
 pub mod invoker;
 pub mod ops;
+pub mod schemas;
+pub mod status;
 pub mod store;
 pub mod types;
 
 pub use env::{agentbox_mode_enabled, register_gmi_provider_if_present};
 pub use http::router as agentbox_router;
+pub use schemas::{all_agentbox_controller_schemas, all_agentbox_registered_controllers};
+pub use status::agentbox_status;
 pub use store::JobStore;
+pub use types::{AgentBoxProviderInfo, AgentBoxStatus};
 
 #[cfg(test)]
 mod disabled_mode_tests;
