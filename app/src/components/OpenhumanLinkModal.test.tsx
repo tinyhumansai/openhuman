@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { statusDisplay } from './OpenhumanLinkModal';
 import type { AccountStatus } from '../types/accounts';
+import { statusDisplay } from './OpenhumanLinkModal';
 
 describe('statusDisplay', () => {
   it('maps every account lifecycle status to a translation key and dot color', () => {
