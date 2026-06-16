@@ -1153,6 +1153,111 @@ fn delete_chunks_by_source_filter(
     Ok(deleted)
 }
 
+/// Finish off an orphaned **Source** (one with zero chunks remaining): clear its
+/// ingest dedup gates and cascade-delete its source-scoped summary tree.
+///
+/// `delete_chunks_by_source` only cascades the tree for sources whose chunks it
+/// deletes in the same call; a source whose chunks were already removed earlier
+/// (e.g. by the per-chunk `delete_chunk` path) keeps a now-stale summary tree
+/// that can still resurface in recall. This cleans up exactly that **legacy
+/// partial-delete** state.
+///
+/// Specifically, when no chunks remain it:
+/// - removes the ingest dedup gates for the source — both the bare `source_id`
+///   AND any versioned `{source_id}@{version_ms}` gates (matched Rust-side with
+///   exact/prefix comparison, never SQL `LIKE`/`GLOB`, to avoid metachar pitfalls);
+/// - cascades the **source-scoped** tree (scope == `source_id`) if present.
+///
+/// Scoped-collection conservatism: a document ingested under a shared collection
+/// `path_scope` (e.g. Notion `notion:{connection}`) lives in a tree scoped by that
+/// `path_scope`, NOT by this `source_id`, so `get_tree_by_scope(Source,
+/// source_id)` returns `None` and such shared trees are left intact — deleting one
+/// document must never tear down a tree that summarises many documents.
+///
+/// Returns `true` when a source-scoped tree was removed (drives the RPC's
+/// `deleted` flag). No-op-safe to call unconditionally after
+/// `delete_chunks_by_source`.
+pub fn delete_orphaned_source_tree(
+    config: &Config,
+    source_kind: SourceKind,
+    source_id: &str,
+) -> Result<bool> {
+    use crate::openhuman::memory_store::trees::store as tree_store;
+    use crate::openhuman::memory_store::trees::types::TreeKind;
+
+    let mut content_paths: Vec<String> = Vec::new();
+    let tree_cascaded = with_connection(config, |conn| {
+        let tx = conn.unchecked_transaction()?;
+        let remaining: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM mem_tree_chunks WHERE source_kind = ?1 AND source_id = ?2",
+            params![source_kind.as_str(), source_id],
+            |r| r.get(0),
+        )?;
+        if remaining > 0 {
+            // Source still has chunks — not orphaned; leave its live tree + gates.
+            log::debug!(
+                "[memory::chunk_store] delete_orphaned_source_tree: source_id_hash={} still has {remaining} chunk(s) — no-op",
+                redact_value(source_id),
+            );
+            return Ok(false);
+        }
+
+        // Clear ALL ingest dedup gates for this source: the bare source_id and any
+        // versioned `{source_id}@{version_ms}` gates. Filter in Rust (exact or
+        // `source_id@` prefix) so `_`/`%`/glob chars in ids are treated literally.
+        let versioned_prefix = format!("{source_id}@");
+        let gate_ids: Vec<String> = {
+            let mut stmt = tx.prepare(
+                "SELECT source_id FROM mem_tree_ingested_sources WHERE source_kind = ?1",
+            )?;
+            let rows = stmt.query_map(params![source_kind.as_str()], |r| r.get::<_, String>(0))?;
+            rows.filter_map(|row| match row {
+                Ok(s) if s == source_id || s.starts_with(&versioned_prefix) => Some(Ok(s)),
+                Ok(_) => None,
+                Err(e) => Some(Err(e)),
+            })
+            .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        for gid in &gate_ids {
+            tx.execute(
+                "DELETE FROM mem_tree_ingested_sources WHERE source_kind = ?1 AND source_id = ?2",
+                params![source_kind.as_str(), gid],
+            )?;
+        }
+
+        // Cascade the source-scoped orphan tree if one exists. Shared
+        // collection/path_scope trees are not keyed by this source_id (see fn
+        // docs), so they are intentionally left untouched.
+        let cascaded = if let Some(tree) =
+            tree_store::get_tree_by_scope_conn(&tx, TreeKind::Source, source_id)?
+        {
+            let cascade = tree_store::delete_tree_cascade_tx(&tx, &tree.id)?;
+            content_paths.extend(cascade.content_paths);
+            log::debug!(
+                    "[memory::chunk_store] delete_orphaned_source_tree: source_id_hash={} → removed stale tree_id={} summaries={} gates_cleared={}",
+                    redact_value(source_id),
+                    tree.id,
+                    cascade.removed_summaries,
+                    gate_ids.len(),
+                );
+            true
+        } else {
+            log::debug!(
+                    "[memory::chunk_store] delete_orphaned_source_tree: source_id_hash={} has no source-scoped tree (gates_cleared={}); shared/collection trees left intact",
+                    redact_value(source_id),
+                    gate_ids.len(),
+                );
+            false
+        };
+        tx.commit()?;
+        Ok(cascaded)
+    })?;
+    if tree_cascaded {
+        remove_chunk_content_files(config, &content_paths);
+    }
+    Ok(tree_cascaded)
+}
+
 fn remove_chunk_content_files(config: &Config, content_paths: &[String]) {
     use std::path::{Component, Path};
 

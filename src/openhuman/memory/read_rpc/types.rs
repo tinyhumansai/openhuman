@@ -113,6 +113,18 @@ pub struct DeleteChunkResponse {
     pub entity_index_rows_removed: u32,
 }
 
+/// Response shape for [`delete_source_rpc`].
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DeleteSourceResponse {
+    /// True when the call did real work: at least one chunk was removed, OR a
+    /// stale orphaned source tree was cleaned up (legacy partial-delete case,
+    /// where `chunks_removed == 0`).
+    pub deleted: bool,
+    /// Number of chunk rows removed for the source (may be 0 when only a stale
+    /// orphaned tree/gate was cleaned).
+    pub chunks_removed: u64,
+}
+
 /// Response shape for [`wipe_all_rpc`].
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WipeAllResponse {

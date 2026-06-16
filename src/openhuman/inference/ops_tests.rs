@@ -112,6 +112,26 @@ async fn inference_test_provider_model_routes_ollama_prefix_through_provider_lay
     assert_eq!(outcome.value.reply, "OLLAMA_PROVIDER_OK");
 }
 
+#[test]
+fn inference_test_provider_model_demotes_expected_config_errors() {
+    let kind = expected_test_provider_model_error_kind(
+        "OpenAI API error (401 Unauthorized): missing API key",
+    );
+
+    assert_eq!(
+        kind,
+        Some(crate::core::observability::ExpectedErrorKind::ApiKeyMissing)
+    );
+}
+
+#[test]
+fn inference_test_provider_model_keeps_unexpected_errors_reportable() {
+    assert_eq!(
+        expected_test_provider_model_error_kind("provider task panicked while parsing response"),
+        None
+    );
+}
+
 #[tokio::test]
 async fn inference_should_react_short_circuits_for_empty_message() {
     let (config, _tmp) = disabled_config();

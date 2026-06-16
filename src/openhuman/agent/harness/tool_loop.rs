@@ -373,6 +373,7 @@ pub(crate) async fn run_tool_call_loop(
         on_delta,
         &[],
         None,
+        None, // channel/CLI/triage loop: context guard + token-budget trim only
     )
     .await
     .map(|outcome| outcome.text)

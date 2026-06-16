@@ -5422,6 +5422,8 @@ const messages: TranslationMap = {
     'Model ekstrakcji pamięci przekracza limit czasu, więc wiki ma niewielką strukturę. Zmień model ekstrakcji pamięci na szybszy w Ustawienia → AI.',
   'memory.health.remediation.summarizer_unavailable':
     'Brak dostępnego dostawcy podsumowań dla funkcji Twórz drzewa podsumowań. Włącz lokalną AI (Ollama) lub włącz podsumowywanie w chmurze w Ustawienia → AI → Pamięć.',
+  'memory.health.remediation.empty_input_refused':
+    'Pominięto element pamięci, ponieważ jego tekst był pusty. Żadne działanie nie jest wymagane — nowe elementy są nadal osadzane normalnie.',
   'memory.health.remediation.transient':
     'Tymczasowy błąd przerwał przetwarzanie pamięci. Ponowna próba nastąpi automatycznie.',
   'memory.health.remediation.unknown':

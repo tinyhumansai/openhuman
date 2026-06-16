@@ -179,6 +179,36 @@ impl EventHandler for ArtifactSurfaceSubscriber {
     }
 }
 
+/// Create a **fresh** approval-surface subscription on the **current** tokio runtime.
+///
+/// Unlike [`register_approval_surface_subscriber`], which is guarded by a process-level
+/// [`OnceLock`] and intended for production use, this function subscribes unconditionally
+/// and returns the [`SubscriptionHandle`] to the caller.
+///
+/// The caller **must keep the returned handle alive** for the duration of the subscription.
+/// Dropping it aborts the background task and silently stops bridging events.
+///
+/// Primary use-case: integration tests that spin up a fresh tokio runtime per test.
+/// The OnceLock-guarded singleton is tied to the runtime it was first registered on; when
+/// that runtime drops, the task is cancelled and subsequent tests in the same process can no
+/// longer receive `approval_request` SSE events. Calling this function once per test and
+/// storing the handle on a local variable ensures the bridge runs on — and lives for exactly
+/// as long as — the current test's runtime.
+///
+/// Compiled only in debug builds (`#[cfg(debug_assertions)]`) so this OnceLock-bypassing
+/// helper can never be linked into a release binary, where a second live subscriber would
+/// surface every `ApprovalRequested` event twice. Production always uses the singleton
+/// [`register_approval_surface_subscriber`].
+#[cfg(debug_assertions)]
+#[doc(hidden)]
+pub fn fresh_approval_surface_subscription() -> Option<SubscriptionHandle> {
+    tracing::trace!(
+        "[web-channel] fresh_approval_surface_subscription — debug-only OnceLock bypass, \
+         registering a per-runtime approval-surface bridge for tests"
+    );
+    crate::core::event_bus::subscribe_global(Arc::new(ApprovalSurfaceSubscriber))
+}
+
 struct ApprovalSurfaceSubscriber;
 
 #[async_trait]
@@ -228,5 +258,41 @@ impl EventHandler for ApprovalSurfaceSubscriber {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `fresh_approval_surface_subscription` returns `Some` when the global event bus has
+    /// been initialised and `None` otherwise (bus not started).  It must never return `None`
+    /// after `init_global` has been called — the production path always initialises the bus
+    /// before the web channel starts handling requests.
+    #[tokio::test]
+    async fn fresh_approval_surface_subscription_returns_some_when_bus_is_ready() {
+        crate::core::event_bus::init_global(crate::core::event_bus::DEFAULT_CAPACITY);
+        let handle = fresh_approval_surface_subscription();
+        assert!(
+            handle.is_some(),
+            "fresh_approval_surface_subscription() must return Some when the global event bus \
+             is initialised"
+        );
+    }
+
+    /// Calling `fresh_approval_surface_subscription` multiple times returns independent
+    /// handles.  Each is backed by its own background task so multiple callers can bridge
+    /// independently (e.g. multiple integration tests running sequentially in the same
+    /// process, each on their own tokio runtime).
+    #[tokio::test]
+    async fn fresh_approval_surface_subscription_is_not_a_singleton() {
+        crate::core::event_bus::init_global(crate::core::event_bus::DEFAULT_CAPACITY);
+        let h1 = fresh_approval_surface_subscription();
+        let h2 = fresh_approval_surface_subscription();
+        assert!(h1.is_some(), "first subscription handle must be Some");
+        assert!(h2.is_some(), "second subscription handle must be Some");
+        // Both handles are alive — drop explicitly to show they're independent.
+        drop(h1);
+        drop(h2);
     }
 }

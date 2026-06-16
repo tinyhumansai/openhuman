@@ -2191,6 +2191,52 @@ pub fn is_budget_event(event: &sentry::protocol::Event<'_>) -> bool {
     event_contains_budget_exhausted_message(event)
 }
 
+/// Defense-in-depth `before_send` filter for **insufficient-credits 402**
+/// provider events (TAURI-RUST-C62): the user's own BYO provider account
+/// (e.g. OpenRouter) is out of balance — a billing state OpenHuman has no
+/// lever over once the request already caps `max_tokens`.
+///
+/// The primary emit-site demotion lives in the `Provider::chat()` native_chat
+/// cascade (`is_provider_insufficient_credits_402`), but the compatible
+/// provider reports the same failure from several other paths
+/// (`chat_with_system`, `chat_with_history`, the streaming gates, and the
+/// shared `api_error` helper) that don't run that cascade. This filter is the
+/// single outermost net that catches all of them, keyed on the formatted
+/// message rather than tags so it matches regardless of which path emitted it.
+///
+/// Match criteria (all required):
+/// - the event message or any exception value names a 402 / payment-required
+///   failure (`"402"` or `"payment required"`), AND
+/// - that same text carries an insufficient-credits phrase
+///   (`provider::body_indicates_insufficient_credits`).
+pub fn is_insufficient_credits_event(event: &sentry::protocol::Event<'_>) -> bool {
+    fn text_is_insufficient_credits_402(text: &str) -> bool {
+        let lower = text.to_ascii_lowercase();
+        // Anchor the 402 to a status shape — the emit sites format the message
+        // as "<provider> API error (402 Payment Required): <body>". Matching a
+        // bare "402" would false-positive on body digits (e.g. a 400 error
+        // whose body says "can only afford 402 tokens"), which is NOT this
+        // user-state and must keep reaching Sentry.
+        let is_402_status = lower.contains("(402") || lower.contains("402 payment required");
+        is_402_status
+            && crate::openhuman::inference::provider::body_indicates_insufficient_credits(text)
+    }
+
+    if event
+        .message
+        .as_deref()
+        .is_some_and(text_is_insufficient_credits_402)
+    {
+        return true;
+    }
+    event.exception.values.iter().any(|exception| {
+        exception
+            .value
+            .as_deref()
+            .is_some_and(text_is_insufficient_credits_402)
+    })
+}
+
 /// 404 on PATCH/DELETE to a channel-message path is an expected backend state
 /// (user deleted the message provider-side, backend GC'd the relay row). The
 /// primary suppression lives in `authed_json` via `parse_message_path` +
@@ -5126,6 +5172,49 @@ mod tests {
         }]
         .into();
         event
+    }
+
+    #[test]
+    fn insufficient_credits_filter_matches_message_path() {
+        // Verbatim TAURI-RUST-C62 message as formatted by the provider emit
+        // sites: "<provider> API error (402 Payment Required): <body>".
+        let event = event_with_message(
+            "myopenrouter API error (402 Payment Required): This request requires more credits, \
+             or fewer max_tokens. You requested up to 65536 tokens, but can only afford 49732.",
+        );
+        assert!(is_insufficient_credits_event(&event));
+    }
+
+    #[test]
+    fn insufficient_credits_filter_matches_exception_path() {
+        let event = event_with_exception_value(
+            "myopenrouter API error (402 Payment Required): insufficient balance",
+        );
+        assert!(is_insufficient_credits_event(&event));
+    }
+
+    #[test]
+    fn insufficient_credits_filter_requires_both_402_and_credit_phrase() {
+        // A 402 with no credit phrase must NOT be swallowed (could be another
+        // payment semantic) ...
+        assert!(!is_insufficient_credits_event(&event_with_message(
+            "provider API error (402): some unrelated condition"
+        )));
+        // ... and a credit phrase without a 402 must NOT be swallowed (e.g. a
+        // 400/500 that merely mentions balance) so a real defect still pages.
+        assert!(!is_insufficient_credits_event(&event_with_message(
+            "provider API error (500): internal error, insufficient memory"
+        )));
+    }
+
+    #[test]
+    fn insufficient_credits_filter_ignores_402_digits_in_a_non_402_body() {
+        // A non-402 error whose body merely contains the digits "402" and a
+        // credit phrase must NOT be suppressed — the 402 must be the status,
+        // not an arbitrary number in the body.
+        assert!(!is_insufficient_credits_event(&event_with_message(
+            "provider API error (400): can only afford 402 tokens"
+        )));
     }
 
     #[test]

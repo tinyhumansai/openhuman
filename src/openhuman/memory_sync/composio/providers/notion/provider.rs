@@ -63,6 +63,19 @@ const PAGE_EDITED_PATHS: &[&str] = &[
 /// cloud embedder has rate limits, so keep this small.
 const INGEST_CONCURRENCY: usize = 8;
 
+/// Max in-flight `GET_PAGE_MARKDOWN` body fetches per page. Kept small to
+/// respect Notion/Composio rate limits while still overlapping the per-request
+/// round-trips instead of paying them strictly serially.
+const BODY_FETCH_CONCURRENCY: usize = 5;
+
+/// How many pending pages we may fetch bodies for, given the remaining daily
+/// request budget. Pure so it can be unit-tested: it reproduces the old serial
+/// "check `budget_exhausted()` before each fetch, break when it hits zero"
+/// behaviour as a single up-front clamp (one body fetch == one request).
+fn body_fetch_count(pending_len: usize, budget_remaining: u32) -> usize {
+    pending_len.min(budget_remaining as usize)
+}
+
 pub struct NotionProvider;
 
 impl NotionProvider {
@@ -303,7 +316,7 @@ impl ComposioProvider for NotionProvider {
             // ctx.max_items: clamp the dedup'd batch to the remaining budget before ingest.
             cap.clamp_batch(&mut pending);
 
-            // ── Step 4a.5: fetch each pending page's BODY markdown ──
+            // ── Step 4a.5: fetch each pending page's BODY markdown (bounded concurrency) ──
             // FETCH_DATA only returned metadata + properties. Pull the
             // rendered page body (paragraphs, lists, body tables) per page so
             // free-form documents ingest as real content (multi-chunk) rather
@@ -312,66 +325,108 @@ impl ComposioProvider for NotionProvider {
             // fetch bodies for pages we'll actually ingest. On budget
             // exhaustion or error we leave `markdown_body` None and ingest
             // falls back to the metadata-only body.
-            for (idx, p) in pending.iter_mut().enumerate() {
-                if state.budget_exhausted() {
-                    tracing::info!(
-                        page = page_num,
-                        "[composio:notion] budget exhausted before body fetch — \
-                         remaining pages ingest metadata-only"
-                    );
-                    break;
-                }
-                match ctx
-                    .execute(
-                        ACTION_GET_PAGE_MARKDOWN,
-                        Some(json!({ "page_id": p.page_id })),
-                    )
-                    .await
-                {
-                    Ok(resp) => {
-                        state.record_requests(1);
-                        if resp.successful {
-                            p.markdown_body = sync::extract_page_markdown(&resp.data);
-                            // Empirical visibility (INFO so it shows at default
-                            // log level): on the first body fetch, log the
-                            // markdown length + the raw envelope keys so we can
-                            // confirm the response field / arg name on a live
-                            // run and refine if needed.
-                            if page_num == 0 && idx == 0 {
-                                tracing::info!(
-                                    page_id = %p.page_id,
-                                    markdown_chars =
-                                        p.markdown_body.as_ref().map(|s| s.len()).unwrap_or(0),
-                                    raw_keys = ?resp
-                                        .data
-                                        .as_object()
-                                        .map(|o| o.keys().cloned().collect::<Vec<_>>()),
-                                    "[composio:notion] GET_PAGE_MARKDOWN sample (empirical check)"
-                                );
+            //
+            // We pre-clamp the number of bodies to the remaining daily request
+            // budget (reproducing the old serial "check before each fetch,
+            // break at zero" semantics as a single up-front decision) and then
+            // fire the fetches `BODY_FETCH_CONCURRENCY`-at-a-time. `buffered`
+            // preserves input order, so result[i] maps back to pending[i].
+            let fetch_count = body_fetch_count(pending.len(), state.budget_remaining());
+            if fetch_count < pending.len() {
+                tracing::info!(
+                    page = page_num,
+                    fetch_count,
+                    pending = pending.len(),
+                    "[composio:notion] daily budget caps body fetch — \
+                     remaining pages ingest metadata-only"
+                );
+            }
+            if fetch_count > 0 {
+                // Snapshot the page ids so the fetch futures don't borrow
+                // `pending` (we write results back into it afterwards).
+                let page_ids: Vec<String> = pending[..fetch_count]
+                    .iter()
+                    .map(|p| p.page_id.clone())
+                    .collect();
+
+                // Materialize the futures into a Vec before `buffered` so the
+                // higher-ranked closure lifetime stays tied to this stack frame
+                // (avoids "implementation of FnOnce is not general enough").
+                let body_futs: Vec<_> = page_ids
+                    .into_iter()
+                    .enumerate()
+                    .map(|(idx, page_id)| {
+                        let ctx = &ctx;
+                        async move {
+                            match ctx
+                                .execute(
+                                    ACTION_GET_PAGE_MARKDOWN,
+                                    Some(json!({ "page_id": &page_id })),
+                                )
+                                .await
+                            {
+                                Ok(resp) if resp.successful => {
+                                    let markdown = sync::extract_page_markdown(&resp.data);
+                                    // Empirical visibility (INFO so it shows at
+                                    // default log level): on the first body
+                                    // fetch, log the markdown length + raw
+                                    // envelope keys to confirm the response
+                                    // field / arg name on a live run.
+                                    if page_num == 0 && idx == 0 {
+                                        tracing::info!(
+                                            page_id = %page_id,
+                                            markdown_chars =
+                                                markdown.as_ref().map(|s| s.len()).unwrap_or(0),
+                                            raw_keys = ?resp
+                                                .data
+                                                .as_object()
+                                                .map(|o| o.keys().cloned().collect::<Vec<_>>()),
+                                            "[composio:notion] GET_PAGE_MARKDOWN sample (empirical check)"
+                                        );
+                                    }
+                                    if markdown.is_none() {
+                                        tracing::warn!(
+                                            page_id = %page_id,
+                                            "[composio:notion] GET_PAGE_MARKDOWN returned no \
+                                             markdown field — metadata-only fallback"
+                                        );
+                                    }
+                                    markdown
+                                }
+                                Ok(resp) => {
+                                    tracing::warn!(
+                                        page_id = %page_id,
+                                        error = ?resp.error,
+                                        "[composio:notion] GET_PAGE_MARKDOWN failed — \
+                                         metadata-only fallback"
+                                    );
+                                    None
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        page_id = %page_id,
+                                        error = %e,
+                                        "[composio:notion] GET_PAGE_MARKDOWN execute error — \
+                                         metadata-only fallback"
+                                    );
+                                    None
+                                }
                             }
-                            if p.markdown_body.is_none() {
-                                tracing::warn!(
-                                    page_id = %p.page_id,
-                                    "[composio:notion] GET_PAGE_MARKDOWN returned no markdown \
-                                     field — metadata-only fallback"
-                                );
-                            }
-                        } else {
-                            tracing::warn!(
-                                page_id = %p.page_id,
-                                error = ?resp.error,
-                                "[composio:notion] GET_PAGE_MARKDOWN failed — metadata-only fallback"
-                            );
                         }
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            page_id = %p.page_id,
-                            error = %e,
-                            "[composio:notion] GET_PAGE_MARKDOWN execute error — \
-                             metadata-only fallback"
-                        );
-                    }
+                    })
+                    .collect();
+
+                let bodies: Vec<Option<String>> = futures::stream::iter(body_futs)
+                    .buffered(BODY_FETCH_CONCURRENCY)
+                    .collect()
+                    .await;
+
+                // Count every request we fired (success or failure), matching
+                // the old per-call `record_requests(1)`.
+                state.record_requests(fetch_count as u32);
+
+                for (p, body) in pending.iter_mut().zip(bodies.into_iter()) {
+                    p.markdown_body = body;
                 }
             }
 
@@ -932,6 +987,33 @@ async fn ingest_pending_buffered<I: PageIngestor + Sync>(
         }
     }
     outcome
+}
+
+#[cfg(test)]
+mod body_fetch_count_tests {
+    use super::body_fetch_count;
+
+    #[test]
+    fn clamps_to_remaining_budget_when_budget_is_the_limit() {
+        // 10 pending pages but only 3 requests left today → fetch 3.
+        assert_eq!(body_fetch_count(10, 3), 3);
+    }
+
+    #[test]
+    fn fetches_all_when_budget_exceeds_pending() {
+        assert_eq!(body_fetch_count(4, 100), 4);
+    }
+
+    #[test]
+    fn zero_budget_fetches_nothing() {
+        // Mirrors the old serial "budget_exhausted() before first fetch" break.
+        assert_eq!(body_fetch_count(7, 0), 0);
+    }
+
+    #[test]
+    fn zero_pending_fetches_nothing() {
+        assert_eq!(body_fetch_count(0, 50), 0);
+    }
 }
 
 #[cfg(test)]

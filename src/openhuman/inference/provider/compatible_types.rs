@@ -194,6 +194,13 @@ pub(crate) struct NativeChatRequest {
     /// don't accept it are unaffected.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) frequency_penalty: Option<f64>,
+    /// OpenAI-compatible `max_tokens` — upper bound on output tokens.
+    /// Set by callers whose output is bounded (memory extraction) so
+    /// credit-metered providers don't price the request against the full
+    /// model output window during their balance pre-flight (TAURI-RUST-C62).
+    /// Skipped when `None` so open-ended generations are unaffected.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) max_tokens: Option<u32>,
 }
 
 /// Ollama-specific request options passed in the `options` field.
@@ -240,6 +247,12 @@ pub(crate) struct ResponsesRequest {
     pub(crate) stream: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) store: Option<bool>,
+    /// Responses-API output-token cap (`max_output_tokens`). Carries the
+    /// caller's `ChatRequest::max_tokens` through the Responses path so a
+    /// capped request isn't silently uncapped when `responses_api_primary`
+    /// is enabled (TAURI-RUST-C62). Skipped when `None`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) max_output_tokens: Option<u32>,
 }
 
 #[derive(Debug, Serialize)]

@@ -219,6 +219,32 @@ impl ApprovalGate {
         }
     }
 
+    /// TTL for parking an approval. In debug builds `OPENHUMAN_APPROVAL_TTL_SECS`
+    /// overrides the boot-time default per intercept so E2E tests can exercise
+    /// the timeout path without waiting the full `DEFAULT_APPROVAL_TTL`.
+    ///
+    /// The override is compiled out of release builds (`#[cfg(debug_assertions)]`):
+    /// the shipped product never reads this env var, so a hostile process
+    /// environment cannot shorten the supervised-mode approval window. This
+    /// mirrors the host-aware discipline of the `OPENHUMAN_APPROVAL_GATE`
+    /// kill-switch — neither override can make the gate fail open; the timeout
+    /// path always denies.
+    fn effective_ttl(&self) -> Duration {
+        #[cfg(debug_assertions)]
+        if let Some(ttl) = std::env::var("OPENHUMAN_APPROVAL_TTL_SECS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .map(Duration::from_secs)
+        {
+            tracing::debug!(
+                ttl_secs = ttl.as_secs(),
+                "[approval::gate] TTL env override active (debug build)"
+            );
+            return ttl;
+        }
+        self.ttl
+    }
+
     /// Whether `tool_name` is on the user's "Always allow" list. Prefers the
     /// process-global live policy (so a grant made this session is seen
     /// immediately) and falls back to the gate's boot-time config snapshot.
@@ -409,7 +435,8 @@ impl ApprovalGate {
 
         let request_id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now();
-        let expires_at = Some(now + chrono::Duration::from_std(self.ttl).unwrap_or_default());
+        let expires_at =
+            Some(now + chrono::Duration::from_std(self.effective_ttl()).unwrap_or_default());
         let pending = PendingApproval {
             request_id: request_id.clone(),
             tool_name: tool_name.to_string(),
@@ -497,10 +524,13 @@ impl ApprovalGate {
         );
 
         // Live meetings get a clamped park window — see IN_CALL_APPROVAL_TTL.
+        // `effective_ttl()` applies the debug-only env override; the in-call
+        // clamp is applied on top so a longer override can't extend a live
+        // meeting's park window past IN_CALL_APPROVAL_TTL.
         let effective_ttl = if in_call_ctx.is_some() {
-            IN_CALL_APPROVAL_TTL.min(self.ttl)
+            IN_CALL_APPROVAL_TTL.min(self.effective_ttl())
         } else {
-            self.ttl
+            self.effective_ttl()
         };
 
         let outcome = match tokio::time::timeout(effective_ttl, rx).await {
@@ -1069,6 +1099,60 @@ mod tests {
 
         // Mapping is cleared once intercept returns.
         assert!(gate.pending_for_thread("thread-42").is_none());
+    }
+
+    /// Tests for `effective_ttl` env-override parsing.
+    ///
+    /// These run serially (they mutate the process env) via the shared
+    /// `TEST_ENV_LOCK`; the lock is the same one used by `auto_approve_tool_skips_prompt`
+    /// and the live_policy tests so they cannot clobber each other in parallel.
+    ///
+    /// Guarded on `debug_assertions`: the override is compiled out of release
+    /// builds, so this assertion only holds under `cargo test` (debug). The
+    /// fallback tests below hold in either build.
+    #[cfg(debug_assertions)]
+    #[test]
+    fn effective_ttl_uses_env_override_when_valid() {
+        let _env = crate::openhuman::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let (gate, _dir) = test_gate(); // boot-time TTL = 2s
+        unsafe { std::env::set_var("OPENHUMAN_APPROVAL_TTL_SECS", "42") };
+        assert_eq!(
+            gate.effective_ttl(),
+            Duration::from_secs(42),
+            "valid OPENHUMAN_APPROVAL_TTL_SECS must override boot-time TTL"
+        );
+        unsafe { std::env::remove_var("OPENHUMAN_APPROVAL_TTL_SECS") };
+    }
+
+    #[test]
+    fn effective_ttl_falls_back_to_boot_ttl_for_garbage_value() {
+        let _env = crate::openhuman::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let (gate, _dir) = test_gate(); // boot-time TTL = 2s
+        unsafe { std::env::set_var("OPENHUMAN_APPROVAL_TTL_SECS", "not-a-number") };
+        assert_eq!(
+            gate.effective_ttl(),
+            Duration::from_secs(2),
+            "garbage OPENHUMAN_APPROVAL_TTL_SECS must fall back to boot-time TTL"
+        );
+        unsafe { std::env::remove_var("OPENHUMAN_APPROVAL_TTL_SECS") };
+    }
+
+    #[test]
+    fn effective_ttl_falls_back_to_boot_ttl_when_unset() {
+        let _env = crate::openhuman::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let (gate, _dir) = test_gate(); // boot-time TTL = 2s
+        unsafe { std::env::remove_var("OPENHUMAN_APPROVAL_TTL_SECS") };
+        assert_eq!(
+            gate.effective_ttl(),
+            Duration::from_secs(2),
+            "unset OPENHUMAN_APPROVAL_TTL_SECS must fall back to boot-time TTL"
+        );
     }
 
     #[test]

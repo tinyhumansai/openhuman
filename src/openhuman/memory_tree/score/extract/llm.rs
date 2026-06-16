@@ -37,6 +37,19 @@ use super::types::{EntityKind, ExtractedEntities, ExtractedEntity, ExtractedTopi
 use super::EntityExtractor;
 use crate::openhuman::memory::chat::{ChatPrompt, ChatProvider};
 
+/// Output-token cap requested for an extraction call (`max_tokens` on the
+/// wire). An extraction response is one small structured-JSON object
+/// (an entities array + an importance float + a one-sentence reason), so a
+/// few thousand tokens is generous. The cap exists less to bound generation
+/// than to keep credit-metered providers (OpenRouter) from reserving the
+/// model's *entire* output window during their balance pre-flight: with no
+/// `max_tokens`, OpenRouter priced extraction against the full 64k+ window
+/// and returned `402 Payment Required` to any BYO user whose balance couldn't
+/// cover it, on every call (TAURI-RUST-C62). 8192 is well under any plausible
+/// extraction output yet small enough to clear the pre-flight for a
+/// low-balance account.
+const EXTRACTION_MAX_OUTPUT_TOKENS: u32 = 8192;
+
 // ── Configuration ────────────────────────────────────────────────────────
 
 /// Configuration for [`LlmEntityExtractor`].
@@ -123,6 +136,7 @@ impl LlmEntityExtractor {
             user: format!("Text:\n{text}\n\nReturn JSON only."),
             temperature: 0.0,
             kind: "memory_tree::extract",
+            max_tokens: Some(EXTRACTION_MAX_OUTPUT_TOKENS),
         }
     }
 }
@@ -149,15 +163,16 @@ impl EntityExtractor for LlmEntityExtractor {
 
         for attempt in 0..MAX_ATTEMPTS {
             match self.try_extract(text).await {
-                Some(extracted) => {
-                    // #3365: the structure-degraded latch means "the extraction
-                    // model is timing out / unreachable" — set ONLY after
-                    // MAX_ATTEMPTS transport failures (below). A *completed* call
-                    // disproves that: `try_extract` returns `Some` whenever the
-                    // provider responded, including the valid-but-empty and
-                    // malformed-JSON-as-empty cases. So a completed extraction
-                    // clears the latch regardless of whether this particular text
-                    // yielded entities — liveness, not content, is what it tracks.
+                AttemptOutcome::Done(extracted) => {
+                    // #3365 + #002 (T013): the structure-degraded latch means
+                    // "the extraction model is timing out / unreachable" — set
+                    // ONLY after MAX_ATTEMPTS transport failures (below). A
+                    // *completed* call disproves that: `try_extract` returns
+                    // `Done` whenever the provider responded, including the
+                    // valid-but-empty and malformed-JSON-as-empty cases. So a
+                    // completed extraction clears the latch regardless of whether
+                    // this particular text yielded entities — liveness, not
+                    // content, is what it tracks.
                     //
                     // (Clearing only on a non-empty result left the latch stuck
                     // after the model recovered whenever later texts were
@@ -166,9 +181,29 @@ impl EntityExtractor for LlmEntityExtractor {
                     crate::openhuman::memory_tree::health::clear_structure_degraded();
                     return Ok(extracted);
                 }
-                None => {
-                    // Transport failure. Retry with exponential backoff
-                    // unless we've exhausted attempts.
+                AttemptOutcome::Permanent(code) => {
+                    // Non-retryable client error — e.g. a 402 (the BYO
+                    // provider account is out of credits), a rejected API
+                    // key, or a model that no longer exists. Retrying
+                    // reproduces the identical error and, on a credit-metered
+                    // provider, fires one more Sentry event per attempt
+                    // (TAURI-RUST-C62: 12k events from a single user). Skip
+                    // the backoff loop entirely and fall back to the same
+                    // degraded-but-empty result the exhausted-retry path
+                    // returns — but tag the cause precisely so doctor/status
+                    // can steer the user ("top up credits" / "fix the key")
+                    // instead of "extraction is timing out".
+                    log::warn!(
+                        "[memory_tree::extract::llm] non-retryable provider failure ({}) — \
+                         returning empty extraction without retry (structure degraded)",
+                        code.as_str()
+                    );
+                    crate::openhuman::memory_tree::health::mark_structure_degraded(code);
+                    return Ok(ExtractedEntities::default());
+                }
+                AttemptOutcome::Retryable => {
+                    // Transport / transient failure. Retry with exponential
+                    // backoff unless we've exhausted attempts.
                     if attempt + 1 < MAX_ATTEMPTS {
                         let delay_ms = BASE_BACKOFF_MS * 2u64.pow(attempt);
                         log::warn!(
@@ -202,17 +237,29 @@ impl EntityExtractor for LlmEntityExtractor {
     }
 }
 
+/// Outcome of a single [`LlmEntityExtractor::try_extract`] attempt.
+///
+/// Splits the old `Option` ("`None` = retry") into three cases so the retry
+/// loop can tell a transient blip apart from a permanent client error and
+/// stop hammering the latter (TAURI-RUST-C62).
+enum AttemptOutcome {
+    /// The call completed (provider returned content). Includes the
+    /// "malformed wrong-shape JSON → empty" case, because re-sending the
+    /// same input won't change the response.
+    Done(ExtractedEntities),
+    /// Transport / transient failure (unreachable backend, 5xx, truncated
+    /// mid-JSON). Retrying may help.
+    Retryable,
+    /// Permanent, non-retryable provider failure (4xx client error: 402 out
+    /// of credits, rejected key, model gone). Retrying reproduces the same
+    /// error. Carries the typed [`FailureCode`] to record on the degraded
+    /// signal so doctor/status can steer the user.
+    Permanent(crate::openhuman::memory_tree::health::FailureCode),
+}
+
 impl LlmEntityExtractor {
     /// Internal: one attempt at calling the chat provider.
-    ///
-    /// Returns:
-    /// - `Some(extracted)` — call completed (provider returned content).
-    ///   Includes the "malformed JSON" case which returns `Some(empty)`
-    ///   because retrying the same input won't help.
-    /// - `None` — transport-level / provider-level failure where retrying
-    ///   might help (e.g. unreachable backend, transient HTTP 5xx). Caller
-    ///   may retry.
-    async fn try_extract(&self, text: &str) -> Option<ExtractedEntities> {
+    async fn try_extract(&self, text: &str) -> AttemptOutcome {
         let prompt = self.build_prompt(text);
         log::debug!(
             "[memory_tree::extract::llm] chat provider={} model={} text_chars={}",
@@ -224,11 +271,23 @@ impl LlmEntityExtractor {
         let raw = match self.provider.chat_for_json(&prompt).await {
             Ok(v) => v,
             Err(e) => {
+                // Classify against the provider stack's single source of
+                // truth. A non-retryable client error (402/401/403/404/…)
+                // must not be retried — that is the 12k-event amplifier in
+                // TAURI-RUST-C62. Only genuine transport/transient failures
+                // earn the backoff loop.
+                if crate::openhuman::inference::provider::reliable::is_non_retryable(&e) {
+                    log::warn!(
+                        "[memory_tree::extract::llm] chat provider={} permanently failed: {e:#}",
+                        self.provider.name()
+                    );
+                    return AttemptOutcome::Permanent(permanent_failure_code(&e));
+                }
                 log::warn!(
                     "[memory_tree::extract::llm] chat provider={} failed: {e:#}",
                     self.provider.name()
                 );
-                return None;
+                return AttemptOutcome::Retryable;
             }
         };
         log::debug!(
@@ -243,15 +302,15 @@ impl LlmEntityExtractor {
                 // Truncated mid-JSON: the response stream closed before the
                 // closing brace (token budget or a server-side timeout cut
                 // it short). Unlike a wrong-shape body, this is transient —
-                // signal a retryable failure (`None`) so `extract`'s backoff
-                // loop tries again rather than silently dropping the whole
-                // chunk (bug-report-2026-05-26 I1).
+                // signal a retryable failure so `extract`'s backoff loop
+                // tries again rather than silently dropping the whole chunk
+                // (bug-report-2026-05-26 I1).
                 log::warn!(
                     "[memory_tree::extract::llm] LLM response truncated mid-JSON ({e}); \
                      response_bytes={} — retrying",
                     raw.len()
                 );
-                return None;
+                return AttemptOutcome::Retryable;
             }
             Err(e) => {
                 log::warn!(
@@ -259,11 +318,46 @@ impl LlmEntityExtractor {
                      response: {e}; content was: {} — returning empty extraction",
                     truncate_for_log(&raw, 400)
                 );
-                return Some(ExtractedEntities::default());
+                return AttemptOutcome::Done(ExtractedEntities::default());
             }
         };
 
-        Some(parsed.into_extracted_entities(text, &self.cfg))
+        AttemptOutcome::Done(parsed.into_extracted_entities(text, &self.cfg))
+    }
+}
+
+/// Map a permanent (non-retryable) extraction provider error to the most
+/// honest *existing* [`FailureCode`], so the degraded-structure signal steers
+/// the user without minting a new variant (and its 14-locale remediation key).
+///
+/// - 402 / "payment required" / "requires more credits" / "insufficient" →
+///   [`FailureCode::BudgetExhausted`] (its remediation already reads "out of
+///   budget; bring your own key or top up — retrying won't help"), the
+///   dominant TAURI-RUST-C62 case.
+/// - 401 / 403 / auth-key rejection → [`FailureCode::AuthInvalid`].
+/// - any other permanent failure → [`FailureCode::ExtractionTimeout`], the
+///   existing "extraction model isn't producing" bucket.
+fn permanent_failure_code(
+    err: &anyhow::Error,
+) -> crate::openhuman::memory_tree::health::FailureCode {
+    use crate::openhuman::memory_tree::health::FailureCode;
+    let lower = format!("{err:#}").to_lowercase();
+    if lower.contains("402")
+        || lower.contains("payment required")
+        || lower.contains("requires more credits")
+        || lower.contains("insufficient")
+    {
+        FailureCode::BudgetExhausted
+    } else if lower.contains("401")
+        || lower.contains("403")
+        || lower.contains("unauthorized")
+        || lower.contains("forbidden")
+        || lower.contains("invalid api key")
+        || lower.contains("incorrect api key")
+    {
+        FailureCode::AuthInvalid
+    } else {
+        FailureCode::ExtractionTimeout
     }
 }
 

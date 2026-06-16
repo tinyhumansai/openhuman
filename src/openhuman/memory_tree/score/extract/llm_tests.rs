@@ -565,3 +565,132 @@ async fn extract_does_not_retry_on_wrong_shape_response() {
         "wrong-shape response should yield an empty extraction"
     );
 }
+
+#[test]
+fn build_prompt_sets_extraction_max_tokens_cap() {
+    // Extraction must cap output tokens so a credit-metered provider
+    // (OpenRouter) prices the request against a realistic budget instead of
+    // the model's full output window — an unset cap is what 402'd low-balance
+    // BYO users on every call (TAURI-RUST-C62). build_prompt is the single
+    // source of that cap.
+    use crate::openhuman::memory::chat::{ChatPrompt, ChatProvider};
+    use async_trait::async_trait;
+    use std::sync::Arc;
+
+    struct NoopProvider;
+    #[async_trait]
+    impl ChatProvider for NoopProvider {
+        fn name(&self) -> &str {
+            "test:noop"
+        }
+        async fn chat_for_json(&self, _p: &ChatPrompt) -> anyhow::Result<String> {
+            Ok("{}".into())
+        }
+    }
+
+    let ex = LlmEntityExtractor::new(LlmExtractorConfig::default(), Arc::new(NoopProvider));
+    let prompt = ex.build_prompt("hello");
+    assert_eq!(prompt.max_tokens, Some(EXTRACTION_MAX_OUTPUT_TOKENS));
+    // Lock the value: it must stay well under any plausible per-account
+    // OpenRouter balance so the pre-flight clears for a low-balance user.
+    assert_eq!(EXTRACTION_MAX_OUTPUT_TOKENS, 8192);
+}
+
+#[tokio::test]
+async fn extract_does_not_retry_on_permanent_402() {
+    // A 402 (the BYO provider account is out of credits) is a permanent client
+    // error: retrying reproduces it and fires one more Sentry event per attempt
+    // (TAURI-RUST-C62: 12k events from a single user). extract() must call the
+    // provider exactly once, return empty, and mark structure degraded with the
+    // credits-exhausted cause (not extraction-timeout).
+    let _health_guard = crate::openhuman::memory_tree::health::test_guard();
+    use crate::openhuman::memory::chat::{ChatPrompt, ChatProvider};
+    use async_trait::async_trait;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    struct InsufficientCreditsProvider {
+        calls: AtomicUsize,
+    }
+    #[async_trait]
+    impl ChatProvider for InsufficientCreditsProvider {
+        fn name(&self) -> &str {
+            "test:402"
+        }
+        async fn chat_for_json(&self, _p: &ChatPrompt) -> anyhow::Result<String> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            // Verbatim shape of the TAURI-RUST-C62 provider error.
+            Err(anyhow::anyhow!(
+                "myopenrouter API error (402 Payment Required): This request requires more \
+                 credits, or fewer max_tokens. You requested up to 65536 tokens, but can only \
+                 afford 49732."
+            ))
+        }
+    }
+
+    let mock = Arc::new(InsufficientCreditsProvider {
+        calls: AtomicUsize::new(0),
+    });
+    let ex = LlmEntityExtractor::new(LlmExtractorConfig::default(), mock.clone());
+    let out = ex.extract("some text").await.unwrap();
+
+    assert_eq!(
+        mock.calls.load(Ordering::SeqCst),
+        1,
+        "a permanent 402 must not be retried"
+    );
+    assert!(out.entities.is_empty());
+
+    let state = crate::openhuman::memory_tree::health::current_degraded_state();
+    assert!(
+        state.structure,
+        "a permanent extraction failure must still mark structure degraded"
+    );
+    assert_eq!(
+        state.cause.expect("degraded cause present").code,
+        crate::openhuman::memory_tree::health::FailureCode::BudgetExhausted,
+        "a 402 must map to the credits-exhausted cause, not extraction-timeout"
+    );
+}
+
+#[tokio::test]
+async fn extract_retries_transient_provider_error() {
+    // The de-amplification fix must only short-circuit *permanent* errors. A
+    // transport/transient failure (no 4xx, no auth marker) must still exhaust
+    // the retry budget before falling back, or a flaky-network blip would drop
+    // the chunk on the first try.
+    let _health_guard = crate::openhuman::memory_tree::health::test_guard();
+    use crate::openhuman::memory::chat::{ChatPrompt, ChatProvider};
+    use async_trait::async_trait;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    struct TransientProvider {
+        calls: AtomicUsize,
+    }
+    #[async_trait]
+    impl ChatProvider for TransientProvider {
+        fn name(&self) -> &str {
+            "test:transient"
+        }
+        async fn chat_for_json(&self, _p: &ChatPrompt) -> anyhow::Result<String> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Err(anyhow::anyhow!(
+                "error sending request for url (https://api): connection refused"
+            ))
+        }
+    }
+
+    let mock = Arc::new(TransientProvider {
+        calls: AtomicUsize::new(0),
+    });
+    let ex = LlmEntityExtractor::new(LlmExtractorConfig::default(), mock.clone());
+    let out = ex.extract("some text").await.unwrap();
+
+    assert_eq!(
+        mock.calls.load(Ordering::SeqCst),
+        3,
+        "a transient error must still exhaust the retry budget"
+    );
+    assert!(out.entities.is_empty());
+}
