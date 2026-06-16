@@ -116,6 +116,24 @@ impl EmbeddingProvider for OpenHumanCloudEmbedding {
         if texts.is_empty() {
             return Ok(Vec::new());
         }
+        // Mirror the OpenAI provider's empty/whitespace guard *here* so we
+        // never resolve the bearer or build the URL for an input the backend
+        // will reject as `"input must be a non-empty string …"` (#13021).
+        // Cheaper, and keeps unauthenticated test contexts off the auth path.
+        if let Some(idx) = texts.iter().position(|t| t.trim().is_empty()) {
+            tracing::warn!(
+                target: "cloud::embed",
+                "[cloud] refusing embed: input[{idx}] is empty/whitespace \
+                 (count={}, model={}). Caller must filter empty strings.",
+                texts.len(),
+                self.model,
+            );
+            anyhow::bail!(
+                "cloud embed: refusing empty/whitespace input at index {idx} of {} (model={})",
+                texts.len(),
+                self.model,
+            );
+        }
         let token = self.resolve_bearer()?;
         let inner = OpenAiEmbedding::new(&self.base_url(), &token, &self.model, self.dims);
         inner.embed(texts).await
@@ -166,5 +184,30 @@ mod tests {
             DEFAULT_CLOUD_EMBEDDING_DIMENSIONS,
         );
         assert!(p.embed(&[]).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn embed_refuses_empty_string_without_auth() {
+        // The whitespace pre-flight (#13021) MUST fire before `resolve_bearer`
+        // — `secrets_encrypt = false` and no session means the AuthService
+        // would otherwise bail with `"No backend session for cloud
+        // embeddings…"` and mask the real defect. Asserting the bail wording
+        // here pins the order of the two checks.
+        let p = OpenHumanCloudEmbedding::new(
+            None,
+            None,
+            false,
+            DEFAULT_CLOUD_EMBEDDING_MODEL,
+            DEFAULT_CLOUD_EMBEDDING_DIMENSIONS,
+        );
+        let err = p.embed(&[""]).await.unwrap_err().to_string();
+        assert!(
+            err.contains("refusing empty/whitespace input at index 0"),
+            "expected pre-flight refusal, got: {err}"
+        );
+        assert!(
+            !err.contains("No backend session"),
+            "guard must run before resolve_bearer, got: {err}"
+        );
     }
 }

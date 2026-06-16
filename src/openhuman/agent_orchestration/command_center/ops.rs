@@ -92,7 +92,10 @@ pub fn build_view(runs: Vec<AgentRun>) -> CommandCenterView {
 }
 
 /// Project one ledger run into a lean command-center row.
-fn project_row(run: AgentRun) -> AgentWorkRow {
+///
+/// `pub(super)` so the control verbs ([`super::control`]) can re-project a run
+/// after a durable status transition without duplicating the mapping.
+pub(super) fn project_row(run: AgentRun) -> AgentWorkRow {
     let display_name = run.agent_id.as_deref().and_then(resolve_display_name);
     let telemetry = run.telemetry;
     AgentWorkRow {

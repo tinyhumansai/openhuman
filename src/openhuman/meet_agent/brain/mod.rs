@@ -43,6 +43,11 @@ mod turns;
 pub use access::{run_grant_turn, run_soft_deny_turn};
 pub use turns::{run_caption_turn, run_turn};
 
+// Speech sanitizer shared with `agent_meetings::in_call` — both paths
+// feed orchestrator replies into TTS and need the same markdown /
+// reasoning-trace stripping.
+pub(crate) use text::strip_for_speech;
+
 use constants::agent_cache;
 
 /// Drop the cached orchestrator for a meet session. Called from
@@ -66,7 +71,7 @@ pub(crate) use access::{
 #[cfg(test)]
 pub(crate) use llm::extract_chat_completion_text;
 #[cfg(test)]
-pub(crate) use text::{recent_dialog_history, strip_for_speech};
+pub(crate) use text::recent_dialog_history;
 
 #[cfg(test)]
 #[path = "../brain_tests.rs"]

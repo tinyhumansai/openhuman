@@ -2474,16 +2474,11 @@ pub fn run() {
         // mock; `password-store=basic` is the equivalent for the password
         // manager. Both are no-ops on Windows/Linux, so safe to always set.
         //
-        // CDP attach is migrating to the in-process channel — see
-        // `app/src-tauri/src/cdp/in_process.rs` and the per-account
-        // session opener (`cdp/session.rs`). The legacy TCP DevTools
-        // port is still passed below (search for
-        // `--remote-debugging-port`) because the per-scanner `CdpConn`
-        // duplicates in `discord_scanner`, `whatsapp_scanner`,
-        // `slack_scanner`, `telegram_scanner`, `wechat_scanner`, and
-        // `meet_video` have not migrated yet. Once they do, the flag
-        // can be dropped and the unauthenticated same-UID loopback
-        // listener with it.
+        // CDP attach goes through the in-process channel only — see
+        // `app/src-tauri/src/cdp/in_process.rs`. The legacy
+        // `--remote-debugging-port` flag is no longer passed: every
+        // scanner attaches via `Webview::send_dev_tools_message` and
+        // there is no remaining loopback DevTools listener.
         //
         // NOTE: flags must be prefixed with `--`. The runtime's
         // `on_before_command_line_processing` dispatch (in
@@ -2588,18 +2583,10 @@ pub fn run() {
             args.push(("--use-fake-ui-for-media-stream", None));
             args.push(("--use-file-for-fake-video-capture", Some(path)));
         }
-        // CDP attach is migrating to in-process. The per-account
-        // session opener (`cdp/session.rs`) uses the in-process channel
-        // installed by `webview_accounts::open`. The per-scanner
-        // duplicates (whatsapp, slack, telegram, wechat, discord,
-        // meet_video) still reach the embedded browser over the TCP
-        // loopback DevTools port — once they migrate this flag can be
-        // dropped and the unauthenticated listener closed for good.
-        // Leak the small port string to satisfy the `'static` arg lifetime
-        // (one-time, a few bytes per launch — this is a startup flag).
-        let cdp_port_str: &'static str =
-            Box::leak(crate::cdp::cdp_port().to_string().into_boxed_str());
-        args.push(("--remote-debugging-port", Some(cdp_port_str)));
+        // CDP attach runs entirely through the in-process channel; the
+        // `--remote-debugging-port` flag is intentionally NOT passed so
+        // no loopback DevTools listener is bound for the lifetime of
+        // the embedded browser.
         let force_gpu_env = std::env::var("OPENHUMAN_FORCE_GPU").ok();
         append_platform_cef_gpu_workarounds(
             &mut args,

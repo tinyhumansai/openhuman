@@ -506,14 +506,55 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
 /// That string carries no "no space left on device" text, so anchor
 /// additionally on the cross-platform `StorageFull` ErrorKind token (std maps
 /// ENOSPC / `ERROR_DISK_FULL` / `ERROR_HANDLE_DISK_FULL` all to
-/// `ErrorKind::StorageFull`). This is defense-in-depth for the genuinely
+/// `ErrorKind::StorageFull`).
+///
+/// A fifth shape comes from SQLite itself. When the engine detects the
+/// disk-full condition during its own page bookkeeping (journal/WAL extension)
+/// before the next syscall surfaces an errno, rusqlite renders the `SQLITE_FULL`
+/// result code as `"database or disk is full"` (Sentry TAURI-RUST-B6N, hit at
+/// `memory_store::unified::documents::tx.commit()` during
+/// `openhuman.memory_doc_ingest`). `SQLITE_FULL` has only two causes:
+/// genuine ENOSPC/ERROR_DISK_FULL (always the case in practice — the same
+/// burst always produces an os-error-28/112 sibling event) or a
+/// `max_page_count` PRAGMA cap (we set none).
+///
+/// The rusqlite `Display` for `SQLITE_FULL` is exactly the five words
+/// `"database or disk is full"` — no preamble, no trailing context. Our local
+/// memory-store write call-sites wrap it with `format!("<verb>: {e}")`
+/// (e.g. `"commit tx: ..."` / `"clear_namespace commit tx: ..."` in
+/// `memory_store::unified::documents`), so the phrase always lands as the
+/// **suffix** of the local emit. Anchor on suffix, not `contains`, so the
+/// silencer does not match a non-2xx backend response body whose payload
+/// happens to mention the same phrase (e.g. an `api.tinyhumans.ai` 5xx whose
+/// server-side SQLite is full). Non-2xx backend bodies are framed by
+/// `integrations::client::post` / `composio::client` as `"Backend returned
+/// <status> <reason> for <METHOD> <url>: <detail>"` — an operator-actionable
+/// server/storage failure that must still surface to Sentry. As
+/// defense-in-depth for the edge case where the backend body itself ends with
+/// the phrase, reject any message that also carries the `"backend returned "`
+/// envelope prefix (codex CR on #3672, mirrors the precedent set by
+/// [`is_backend_user_error_message`]).
+///
+/// This is defense-in-depth for the genuinely
 /// unpreventable **write** paths (a write can't succeed on a full disk); the
 /// read path no longer emits this error at all (it degrades to a lock-free
 /// read — see `AuthProfilesStore::load`).
 fn is_disk_full_message(lower: &str) -> bool {
-    lower.contains("no space left on device")
+    if lower.contains("no space left on device")
         || lower.contains("not enough space on the disk")
         || lower.contains("storagefull")
+    {
+        return true;
+    }
+    // SQLITE_FULL — see the fifth-shape section above for the scoping
+    // rationale. Suffix anchor (after trimming trailing whitespace and
+    // punctuation that closures / JSON wrappers commonly append) pins to the
+    // local-emit shape; the negative `"backend returned "` guard rejects the
+    // remote envelope as a second line of defense.
+    let trimmed = lower.trim_end_matches(|c: char| {
+        c.is_ascii_whitespace() || matches!(c, '.' | ',' | ';' | ':' | '"' | '\'')
+    });
+    trimmed.ends_with("database or disk is full") && !lower.contains("backend returned ")
 }
 
 /// Detect the literal `"Config loading timed out"` string produced by
@@ -2150,6 +2191,52 @@ pub fn is_budget_event(event: &sentry::protocol::Event<'_>) -> bool {
     event_contains_budget_exhausted_message(event)
 }
 
+/// Defense-in-depth `before_send` filter for **insufficient-credits 402**
+/// provider events (TAURI-RUST-C62): the user's own BYO provider account
+/// (e.g. OpenRouter) is out of balance — a billing state OpenHuman has no
+/// lever over once the request already caps `max_tokens`.
+///
+/// The primary emit-site demotion lives in the `Provider::chat()` native_chat
+/// cascade (`is_provider_insufficient_credits_402`), but the compatible
+/// provider reports the same failure from several other paths
+/// (`chat_with_system`, `chat_with_history`, the streaming gates, and the
+/// shared `api_error` helper) that don't run that cascade. This filter is the
+/// single outermost net that catches all of them, keyed on the formatted
+/// message rather than tags so it matches regardless of which path emitted it.
+///
+/// Match criteria (all required):
+/// - the event message or any exception value names a 402 / payment-required
+///   failure (`"402"` or `"payment required"`), AND
+/// - that same text carries an insufficient-credits phrase
+///   (`provider::body_indicates_insufficient_credits`).
+pub fn is_insufficient_credits_event(event: &sentry::protocol::Event<'_>) -> bool {
+    fn text_is_insufficient_credits_402(text: &str) -> bool {
+        let lower = text.to_ascii_lowercase();
+        // Anchor the 402 to a status shape — the emit sites format the message
+        // as "<provider> API error (402 Payment Required): <body>". Matching a
+        // bare "402" would false-positive on body digits (e.g. a 400 error
+        // whose body says "can only afford 402 tokens"), which is NOT this
+        // user-state and must keep reaching Sentry.
+        let is_402_status = lower.contains("(402") || lower.contains("402 payment required");
+        is_402_status
+            && crate::openhuman::inference::provider::body_indicates_insufficient_credits(text)
+    }
+
+    if event
+        .message
+        .as_deref()
+        .is_some_and(text_is_insufficient_credits_402)
+    {
+        return true;
+    }
+    event.exception.values.iter().any(|exception| {
+        exception
+            .value
+            .as_deref()
+            .is_some_and(text_is_insufficient_credits_402)
+    })
+}
+
 /// 404 on PATCH/DELETE to a channel-message path is an expected backend state
 /// (user deleted the message provider-side, backend GC'd the relay row). The
 /// primary suppression lives in `authed_json` via `parse_message_path` +
@@ -2818,6 +2905,13 @@ mod tests {
             // only the `ErrorKind` debug + os_code survive — no "no space left
             // on device" text. Must still classify via the StorageFull anchor.
             "Failed to create auth profile lock (kind=Some(StorageFull), os_code=Some(28))",
+            // SQLITE_FULL rendering from rusqlite — engine-level disk-full
+            // detection during page-bookkeeping (journal/WAL extension) that
+            // beats the next syscall to the errno. Production hit at
+            // `memory_store::unified::documents::tx.commit()` during
+            // `openhuman.memory_doc_ingest`, in the same burst that emits
+            // os-error-112 siblings (Sentry TAURI-RUST-B6N).
+            "commit tx: database or disk is full",
         ] {
             assert_eq!(
                 expected_error_kind(raw),
@@ -2839,6 +2933,55 @@ mod tests {
         assert_eq!(
             expected_error_kind("not enough memory to allocate buffer"),
             None
+        );
+        // The SQLite anchor pins to the exact `"database or disk is full"`
+        // phrase. Generic prose that mentions a full database for unrelated
+        // reasons (e.g. duplicate-row complaints, application-level capacity
+        // talk) must not be silenced.
+        assert_eq!(
+            expected_error_kind("upsert failed: database is full of duplicates"),
+            None
+        );
+        assert_eq!(
+            expected_error_kind("user quota: database is full for this tier"),
+            None
+        );
+        // A non-2xx backend body whose payload contains the SQLITE_FULL phrase
+        // (e.g. `api.tinyhumans.ai` server-side SQLite is full) is an
+        // operator-actionable storage failure, not the user's local disk —
+        // must still surface to Sentry. `integrations::client::post` frames
+        // these as `"Backend returned <status> <reason> for POST <url>:
+        // <detail>"` (codex CR on #3672). The suffix anchor excludes the
+        // embedded-in-JSON case; the negative `"backend returned "` guard
+        // covers the rare case where the body itself ends with the phrase.
+        assert_eq!(
+            expected_error_kind(
+                "Backend returned 500 Internal Server Error for POST \
+                 https://api.tinyhumans.ai/agent-integrations/composio/list: \
+                 {\"error\":\"database or disk is full\"}"
+            ),
+            None,
+            "remote-backend body must surface"
+        );
+        assert_eq!(
+            expected_error_kind(
+                "Backend returned 500 Internal Server Error for POST \
+                 https://api.tinyhumans.ai/agent-integrations/composio/list: \
+                 database or disk is full"
+            ),
+            None,
+            "remote-backend body must surface even when the body itself ends with the phrase"
+        );
+        // Non-suffix occurrences in other body framings (no `"Backend
+        // returned"` prefix) are also excluded by the suffix anchor — locks
+        // in the primary defense layer.
+        assert_eq!(
+            expected_error_kind(
+                "Embedding API error (500 Internal Server Error): \
+                 {\"error\":\"database or disk is full\",\"retry\":true}"
+            ),
+            None,
+            "embedded-in-JSON body must surface"
         );
     }
 
@@ -5029,6 +5172,49 @@ mod tests {
         }]
         .into();
         event
+    }
+
+    #[test]
+    fn insufficient_credits_filter_matches_message_path() {
+        // Verbatim TAURI-RUST-C62 message as formatted by the provider emit
+        // sites: "<provider> API error (402 Payment Required): <body>".
+        let event = event_with_message(
+            "myopenrouter API error (402 Payment Required): This request requires more credits, \
+             or fewer max_tokens. You requested up to 65536 tokens, but can only afford 49732.",
+        );
+        assert!(is_insufficient_credits_event(&event));
+    }
+
+    #[test]
+    fn insufficient_credits_filter_matches_exception_path() {
+        let event = event_with_exception_value(
+            "myopenrouter API error (402 Payment Required): insufficient balance",
+        );
+        assert!(is_insufficient_credits_event(&event));
+    }
+
+    #[test]
+    fn insufficient_credits_filter_requires_both_402_and_credit_phrase() {
+        // A 402 with no credit phrase must NOT be swallowed (could be another
+        // payment semantic) ...
+        assert!(!is_insufficient_credits_event(&event_with_message(
+            "provider API error (402): some unrelated condition"
+        )));
+        // ... and a credit phrase without a 402 must NOT be swallowed (e.g. a
+        // 400/500 that merely mentions balance) so a real defect still pages.
+        assert!(!is_insufficient_credits_event(&event_with_message(
+            "provider API error (500): internal error, insufficient memory"
+        )));
+    }
+
+    #[test]
+    fn insufficient_credits_filter_ignores_402_digits_in_a_non_402_body() {
+        // A non-402 error whose body merely contains the digits "402" and a
+        // credit phrase must NOT be suppressed — the 402 must be the status,
+        // not an arbitrary number in the body.
+        assert!(!is_insufficient_credits_event(&event_with_message(
+            "provider API error (400): can only afford 402 tokens"
+        )));
     }
 
     #[test]

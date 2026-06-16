@@ -3033,6 +3033,16 @@ const messages: TranslationMap = {
   'intelligence.agentWork.kind.workflowChild': 'Дочерний элемент рабочего процесса',
   'intelligence.agentWork.openThread': 'Открыть тред',
   'intelligence.agentWork.openWorker': 'Открыть воркер',
+  'intelligence.agentWork.action.stop': 'Остановить',
+  'intelligence.agentWork.action.retry': 'Повторить',
+  'intelligence.agentWork.action.continue': 'Продолжить',
+  'intelligence.agentWork.action.followUp': 'Уточнить',
+  'intelligence.agentWork.action.send': 'Отправить',
+  'intelligence.agentWork.action.cancel': 'Отмена',
+  'intelligence.agentWork.action.continuePlaceholder':
+    'Ответьте, чтобы разблокировать этого агента…',
+  'intelligence.agentWork.action.followUpPlaceholder': 'Отправьте уточняющую инструкцию…',
+  'intelligence.agentWork.action.failed': 'Не удалось выполнить действие',
   'intelligence.teams.subtitle':
     'Скоординированные команды агентов и задачи, которые они разделяют.',
   'intelligence.teams.loading': 'Загрузка команд…',
@@ -3339,6 +3349,7 @@ const messages: TranslationMap = {
   'settings.ai.endpointProtocolRequired':
     'Конечная точка должна начинаться с http:// или https://..',
   'settings.ai.connectProviderDialog': 'Подключиться {label}',
+  'settings.ai.getProviderApiKey': 'Получить API Key',
   'settings.ai.or': 'Или',
   'settings.ai.codexOauthMissingAuthUrl':
     'Codex OAuth не вернул URL авторизации. Попробуйте войти снова.',
@@ -4627,6 +4638,9 @@ const messages: TranslationMap = {
   'skills.meetingBots.wakePhrase': 'Фраза активации',
   'skills.meetingBots.wakePhraseHint': 'Hey OpenHuman',
   'skills.meetingBots.wakePhraseDesc': 'Участник должен произнести это, прежде чем бот ответит.',
+  'skills.meetingBots.activeMode': 'Отвечать, когда я обращаюсь',
+  'skills.meetingBots.activeModeDesc':
+    'Когда включено, бот отвечает вслух после того, как вы произнесёте фразу-обращение. Когда выключено, он только слушает и расшифровывает.',
   'skills.resource.preview.closeAriaLabel': 'Закрыть предпросмотр',
   'skills.resource.preview.failed': 'Не удалось показать превью',
   'skills.resource.preview.loading': 'Загрузка предпросмотра…',
@@ -5347,6 +5361,8 @@ const messages: TranslationMap = {
     'Модель извлечения памяти превышает время ожидания, поэтому в вики мало структуры. Выберите более быструю модель извлечения памяти в разделе Настройки → ИИ.',
   'memory.health.remediation.summarizer_unavailable':
     'Нет доступного поставщика суммаризации для «Построить деревья сводок». Включите локальный ИИ (Ollama) или включите облачную суммаризацию в разделе Настройки → ИИ → Память.',
+  'memory.health.remediation.empty_input_refused':
+    'Элемент памяти пропущен, так как его текст был пуст. Действия не требуются — новые элементы продолжают встраиваться как обычно.',
   'memory.health.remediation.transient':
     'Временная ошибка прервала обработку памяти. Повтор произойдёт автоматически.',
   'memory.health.remediation.unknown':
@@ -5511,6 +5527,57 @@ const messages: TranslationMap = {
   'notch.speaking': 'Говорю…',
   'notch.transcribing': 'Транскрибирую…',
   'notch.executing': 'Выполняю…',
+  'memory.tab.orchestration': 'Оркестрация',
+  'memory.tab.orchestrationDescription':
+    'Запускайте мультиагентные рабочие процессы — распределяйте вопрос между параллельными агентами, перепроверяйте их выводы и наблюдайте, как каждая фаза сходится в единый синтезированный ответ.',
+  'orchestration.subtitle':
+    'Запустите мультиагентный рабочий процесс, следите за ходом его фаз и читайте синтезированный результат.',
+  'orchestration.loading': 'Загрузка рабочих процессов…',
+  'orchestration.failedToLoad': 'Не удалось загрузить рабочие процессы',
+  'orchestration.definitions': 'Доступные рабочие процессы',
+  'orchestration.noDefinitions': 'Нет доступных определений рабочих процессов.',
+  'orchestration.approvalRequired': 'Требуется подтверждение',
+  'orchestration.start': 'Запустить',
+  'orchestration.confirmStart': 'Запустить выполнение',
+  'orchestration.starting': 'Запуск…',
+  'orchestration.questionLabel': 'Исследовательский вопрос (необязательно)',
+  'orchestration.questionPlaceholder': 'Что должны исследовать агенты?',
+  'orchestration.runProgress': 'Ход выполнения',
+  'orchestration.recentRuns': 'Недавние выполнения',
+  'orchestration.noRuns': 'Пока нет выполнений рабочих процессов.',
+  'orchestration.close': 'Закрыть',
+  'orchestration.tier.readOnly': 'Только чтение',
+  'orchestration.tier.standard': 'Стандартный',
+  'orchestration.tier.editCapable': 'С правом изменения',
+  'orchestration.approval.title': 'Подтвердить это выполнение рабочего процесса',
+  'orchestration.approval.body':
+    'Это дорогостоящее или высокопараллельное выполнение, требующее вашего явного подтверждения перед запуском:',
+  'orchestration.approval.reason.tier':
+    'Его агенты могут выполнять действия за пределами исследования только для чтения.',
+  'orchestration.approval.reason.concurrency': 'Он одновременно запускает множество агентов.',
+  'orchestration.approval.reason.children':
+    'Он может в совокупности порождать очень большое число агентов.',
+  'orchestration.approval.tier': 'Уровень безопасности',
+  'orchestration.approval.concurrency': 'Параллелизм',
+  'orchestration.approval.maxChildren': 'Макс. агентов',
+  'orchestration.approval.approve': 'Подтвердить и запустить',
+  'orchestration.approval.starting': 'Запуск…',
+  'orchestration.approval.cancel': 'Отмена',
+  'orchestration.runStatus.pending': 'В ожидании',
+  'orchestration.runStatus.running': 'Выполняется',
+  'orchestration.runStatus.completed': 'Завершено',
+  'orchestration.runStatus.failed': 'Не удалось',
+  'orchestration.runStatus.cancelled': 'Отменено',
+  'orchestration.runStatus.interrupted': 'Прервано',
+  'orchestration.phaseStatus.pending': 'В ожидании',
+  'orchestration.phaseStatus.running': 'Выполняется',
+  'orchestration.phaseStatus.completed': 'Завершена',
+  'orchestration.phaseStatus.failed': 'Не удалась',
+  'orchestration.detail.stop': 'Остановить',
+  'orchestration.detail.resume': 'Возобновить',
+  'orchestration.detail.agents': 'агенты',
+  'orchestration.detail.childRefs': 'Дочерние агенты',
+  'orchestration.detail.synthesis': 'Итоговый синтез',
   // ── Agent Profiles ───────────────────────────────────────────────────────
   'settings.profiles.title': 'Профили агента',
   'settings.profiles.subtitle':

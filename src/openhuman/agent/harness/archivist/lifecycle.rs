@@ -320,55 +320,8 @@ impl ArchivistHook {
         }
 
         // ── Finalize-time embedding ───────────────────────────────────────
-        // Embed the recap only when the segment is being finalized (closed).
-        // Never embed per-turn or on an open segment — this is the single
-        // write point for segment_embeddings rows.
-        if let Some(ref embedder) = self.embedder {
-            let model_signature = embedder.name().to_string();
-            tracing::debug!(
-                "[archivist] embedding recap segment={} model={}",
-                segment.segment_id,
-                model_signature
-            );
-            match embedder.embed(&summary).await {
-                Ok(vec) => {
-                    match segments::segment_embedding_upsert(
-                        conn,
-                        &segment.segment_id,
-                        &model_signature,
-                        &vec,
-                        now,
-                    ) {
-                        Ok(()) => {
-                            tracing::debug!(
-                                "[archivist] embedding stored segment={} model={} dim={}",
-                                segment.segment_id,
-                                model_signature,
-                                vec.len()
-                            );
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                "[archivist] failed to persist segment embedding (non-fatal) segment={}: {e}",
-                                segment.segment_id
-                            );
-                        }
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "[archivist] embed call failed (non-fatal) segment={} model={}: {e}",
-                        segment.segment_id,
-                        model_signature
-                    );
-                }
-            }
-        } else {
-            tracing::debug!(
-                "[archivist] no embedder — skipping segment embedding segment={}",
-                segment.segment_id
-            );
-        }
+        self.embed_segment_recap(conn, &segment.segment_id, &summary, now)
+            .await;
 
         // ── Heuristic event extraction ────────────────────────────────────
         if !segment_text.is_empty() {
@@ -455,6 +408,68 @@ impl ArchivistHook {
                 );
                 self.pipe_segment_to_tree(cfg, segment, session_id, &segment_entries)
                     .await;
+            }
+        }
+    }
+
+    /// Embed `summary` for `segment_id` and write the per-model embedding row.
+    ///
+    /// Embed the recap only when the segment is being finalized (closed).
+    /// Never embed per-turn or on an open segment — this is the single
+    /// write point for `segment_embeddings` rows.
+    ///
+    /// Skip when the recap is empty/whitespace — `summarize_entries` can
+    /// return "" (LLM error fallback + the user-turn filter above yielding
+    /// zero entries) and an empty embed input is guaranteed to 400 from
+    /// the upstream embedding API (#13021). The segment is sealed without
+    /// an embedding row; subsequent recap edits can re-embed.
+    pub(super) async fn embed_segment_recap(
+        &self,
+        conn: &Arc<Mutex<Connection>>,
+        segment_id: &str,
+        summary: &str,
+        now: f64,
+    ) {
+        if summary.trim().is_empty() {
+            tracing::warn!(
+                "[archivist] skipping embedding: recap is empty/whitespace segment={segment_id}"
+            );
+            return;
+        }
+        let Some(ref embedder) = self.embedder else {
+            tracing::debug!(
+                "[archivist] no embedder — skipping segment embedding segment={segment_id}"
+            );
+            return;
+        };
+        let model_signature = embedder.name().to_string();
+        tracing::debug!("[archivist] embedding recap segment={segment_id} model={model_signature}");
+        match embedder.embed(summary).await {
+            Ok(vec) => {
+                match segments::segment_embedding_upsert(
+                    conn,
+                    segment_id,
+                    &model_signature,
+                    &vec,
+                    now,
+                ) {
+                    Ok(()) => {
+                        tracing::debug!(
+                            "[archivist] embedding stored segment={segment_id} model={model_signature} dim={}",
+                            vec.len()
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "[archivist] failed to persist segment embedding (non-fatal) segment={segment_id}: {e}"
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "[archivist] embed call failed (non-fatal) segment={segment_id} model={model_signature}: {e}"
+                );
             }
         }
     }

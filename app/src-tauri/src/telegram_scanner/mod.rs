@@ -1,7 +1,8 @@
 //! Telegram Web K scanner driven purely over the Chrome DevTools Protocol.
 //!
-//! Pairs with the embedded CEF webview's remote-debugging port (set in
-//! `lib.rs`). One polling loop per tracked Telegram account:
+//! Attaches to the embedded CEF webview via the in-process CDP transport
+//! installed by `webview_accounts::open` (no TCP listener). One polling
+//! loop per tracked Telegram account:
 //!
 //!   * **IDB tick** (`IDB_SCAN_INTERVAL`, 30s) — walks every Telegram-owned
 //!     IndexedDB database via CDP (`IndexedDB.requestDatabaseNames`,
@@ -23,31 +24,19 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use futures_util::{SinkExt, StreamExt};
 use parking_lot::Mutex;
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Runtime};
 use tokio::task::AbortHandle;
 use tokio::time::sleep;
-use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 mod dom_snapshot;
 mod extract;
 mod idb;
 
-use crate::cdp::{CDP_HOST, CDP_PORT};
-
 /// How often we walk IDB. Tune down for faster iteration during dev; the
 /// walk itself is bounded by per-store record caps in `idb.rs`.
 const IDB_SCAN_INTERVAL: Duration = Duration::from_secs(30);
-
-/// One CDP target descriptor (from `Target.getTargets`).
-#[derive(Debug, Clone)]
-struct CdpTarget {
-    id: String,
-    kind: String,
-    url: String,
-}
 
 /// Spawn a per-account CDP poller. Caller is expected to guard against
 /// double-spawning via `ScannerRegistry`.
@@ -79,7 +68,7 @@ pub fn spawn_scanner<R: Runtime>(
         sleep(Duration::from_secs(10)).await;
 
         loop {
-            match scan_once(&account_id, &url_prefix, &fragment).await {
+            match scan_once(&app, &account_id, &url_prefix, &fragment).await {
                 Ok(dump) => {
                     let harvest = extract::harvest(&dump);
                     log::info!(
@@ -105,41 +94,23 @@ pub fn spawn_scanner<R: Runtime>(
     handles
 }
 
-/// Single scan cycle: open CDP, attach to the Telegram page, walk IDB, detach.
-async fn scan_once(
+/// Single scan cycle: attach to the Telegram page via the account's
+/// in-process CDP transport, walk IDB, detach.
+async fn scan_once<R: Runtime>(
+    app: &AppHandle<R>,
     account_id: &str,
     url_prefix: &str,
     url_fragment: &str,
 ) -> Result<idb::IdbDump, String> {
-    let browser_ws = browser_ws_url().await?;
-    let mut cdp = CdpConn::open(&browser_ws).await?;
-
-    let targets_v = cdp.call("Target.getTargets", json!({}), None).await?;
-    let targets = parse_targets(&targets_v);
-    let page_target = targets
-        .iter()
-        .find(|t| {
-            t.kind == "page" && t.url.starts_with(url_prefix) && t.url.ends_with(url_fragment)
-        })
-        .ok_or_else(|| {
-            format!(
-                "no page target matching {} fragment={}",
-                url_prefix, url_fragment
-            )
-        })?;
-
-    let attach = cdp
-        .call(
-            "Target.attachToTarget",
-            json!({ "targetId": page_target.id, "flatten": true }),
-            None,
-        )
-        .await?;
-    let session = attach
-        .get("sessionId")
-        .and_then(|x| x.as_str())
-        .ok_or_else(|| "page attach missing sessionId".to_string())?
-        .to_string();
+    let url_prefix_owned = url_prefix.to_string();
+    let url_fragment_owned = url_fragment.to_string();
+    let pred = move |t: &crate::cdp::target::CdpTarget| -> bool {
+        t.url.starts_with(&url_prefix_owned) && t.url.ends_with(&url_fragment_owned)
+    };
+    let (mut cdp, session) =
+        crate::cdp::target::connect_and_attach_matching_in_process::<R, _>(app, account_id, pred)
+            .await
+            .map_err(|e| format!("attach: {e} (prefix={url_prefix} fragment={url_fragment})"))?;
 
     let result = idb::walk(&mut cdp, &session).await;
 
@@ -455,130 +426,6 @@ fn peer_key_looks_clean(name: &str) -> bool {
         .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
 }
 
-fn parse_targets(v: &Value) -> Vec<CdpTarget> {
-    v.get("targetInfos")
-        .and_then(|x| x.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|t| {
-                    Some(CdpTarget {
-                        id: t.get("targetId")?.as_str()?.to_string(),
-                        kind: t.get("type")?.as_str()?.to_string(),
-                        url: t
-                            .get("url")
-                            .and_then(|u| u.as_str())
-                            .unwrap_or("")
-                            .to_string(),
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-async fn browser_ws_url() -> Result<String, String> {
-    let url = format!("http://{CDP_HOST}:{CDP_PORT}/json/version");
-    let resp = reqwest::Client::builder()
-        .user_agent("openhuman-cdp/1.0")
-        .timeout(Duration::from_secs(5))
-        .build()
-        .map_err(|e| format!("reqwest build: {e}"))?
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| format!("GET {url}: {e}"))?;
-    let v: Value = resp.json().await.map_err(|e| format!("parse: {e}"))?;
-    v.get("webSocketDebuggerUrl")
-        .and_then(|x| x.as_str())
-        .map(|s| s.to_string())
-        .ok_or_else(|| "no webSocketDebuggerUrl in /json/version".to_string())
-}
-
-/// Minimal CDP client — keeps a WebSocket open and sends JSON-RPC requests
-/// with auto-incrementing ids. Same pattern as `slack_scanner::CdpConn`;
-/// kept per-module rather than factored out to avoid coupling scanners
-/// until we actually need to share state.
-pub(crate) struct CdpConn {
-    sink: futures_util::stream::SplitSink<
-        tokio_tungstenite::WebSocketStream<
-            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-        >,
-        Message,
-    >,
-    stream: futures_util::stream::SplitStream<
-        tokio_tungstenite::WebSocketStream<
-            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-        >,
-    >,
-    next_id: i64,
-}
-
-impl CdpConn {
-    async fn open(ws_url: &str) -> Result<Self, String> {
-        let (ws, _resp) = connect_async(ws_url)
-            .await
-            .map_err(|e| format!("ws connect: {e}"))?;
-        let (sink, stream) = ws.split();
-        Ok(Self {
-            sink,
-            stream,
-            next_id: 1,
-        })
-    }
-
-    pub(crate) async fn call(
-        &mut self,
-        method: &str,
-        params: Value,
-        session_id: Option<&str>,
-    ) -> Result<Value, String> {
-        self.call_with_timeout(method, params, session_id, Duration::from_secs(30))
-            .await
-    }
-
-    pub(crate) async fn call_with_timeout(
-        &mut self,
-        method: &str,
-        params: Value,
-        session_id: Option<&str>,
-        timeout: Duration,
-    ) -> Result<Value, String> {
-        let id = self.next_id;
-        self.next_id += 1;
-        let mut req = json!({ "id": id, "method": method, "params": params });
-        if let Some(s) = session_id {
-            req["sessionId"] = json!(s);
-        }
-        let body = serde_json::to_string(&req).map_err(|e| format!("encode: {e}"))?;
-        self.sink
-            .send(Message::Text(body))
-            .await
-            .map_err(|e| format!("ws send: {e}"))?;
-        loop {
-            let msg = tokio::time::timeout(timeout, self.stream.next())
-                .await
-                .map_err(|_| format!("ws read timeout (method={method})"))?
-                .ok_or_else(|| format!("ws closed (method={method})"))?
-                .map_err(|e| format!("ws recv: {e}"))?;
-            let text = match msg {
-                Message::Text(t) => t,
-                Message::Binary(_) | Message::Ping(_) | Message::Pong(_) | Message::Frame(_) => {
-                    continue
-                }
-                Message::Close(_) => return Err("ws closed".into()),
-            };
-            let v: Value = serde_json::from_str(&text).map_err(|e| format!("decode: {e}"))?;
-            if v.get("id").and_then(|x| x.as_i64()) != Some(id) {
-                continue;
-            }
-            if let Some(err) = v.get("error") {
-                return Err(format!("cdp error: {err}"));
-            }
-            return Ok(v.get("result").cloned().unwrap_or(Value::Null));
-        }
-    }
-}
-
 const DOM_POLL_INTERVAL: Duration = Duration::from_secs(2);
 
 /// Fast DOM-only poll — runs every 2s, emits an `ingest` webview:event
@@ -596,7 +443,7 @@ fn spawn_dom_poll<R: Runtime>(
         sleep(Duration::from_secs(8)).await;
         let mut last_hash: Option<u64> = None;
         loop {
-            match dom_scan_once(&url_prefix, &fragment).await {
+            match dom_scan_once(&app, &account_id, &url_prefix, &fragment).await {
                 Ok(scan) => {
                     if Some(scan.hash) != last_hash {
                         log::info!(
@@ -629,16 +476,20 @@ fn spawn_dom_poll<R: Runtime>(
     task.abort_handle()
 }
 
-async fn dom_scan_once(
+async fn dom_scan_once<R: Runtime>(
+    app: &AppHandle<R>,
+    account_id: &str,
     url_prefix: &str,
     url_fragment: &str,
 ) -> Result<dom_snapshot::DomScan, String> {
     let prefix = url_prefix.to_string();
     let fragment = url_fragment.to_string();
-    let (mut cdp, session) = crate::cdp::connect_and_attach_matching(move |t| {
+    let pred = move |t: &crate::cdp::target::CdpTarget| -> bool {
         t.url.starts_with(&prefix) && t.url.ends_with(&fragment)
-    })
-    .await?;
+    };
+    let (mut cdp, session) =
+        crate::cdp::target::connect_and_attach_matching_in_process::<R, _>(app, account_id, pred)
+            .await?;
     let scan = dom_snapshot::scan(&mut cdp, &session).await;
     crate::cdp::detach_session(&mut cdp, &session).await;
     scan

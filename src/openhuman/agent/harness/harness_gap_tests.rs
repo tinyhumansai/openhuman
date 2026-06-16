@@ -475,6 +475,114 @@ fn parse_tool_calls_invoke_tag_with_json_body() {
     );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Item 3b — parse_tool_calls: Claude-native <invoke name="…"> attribute form
+//           with nested <parameter name="…"> children (issue #3493).
+//           Claude-family models ignore the injected <tool_call>{json} template
+//           and emit their trained syntax; the parser must recover it instead of
+//           leaking the raw markup as assistant text.
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn parse_tool_calls_invoke_attribute_form_single_param() {
+    use crate::openhuman::agent::harness::parse::parse_tool_calls;
+
+    let input =
+        "Sure.\n<invoke name=\"echo\">\n<parameter name=\"value\">hi</parameter>\n</invoke>\ndone";
+    let (text, calls) = parse_tool_calls(input);
+
+    assert_eq!(
+        calls.len(),
+        1,
+        "attribute-form <invoke> should parse one call"
+    );
+    assert_eq!(calls[0].name, "echo");
+    assert_eq!(calls[0].arguments, serde_json::json!({"value": "hi"}));
+    // Surrounding prose preserved; raw <invoke> markup must not leak.
+    assert!(text.contains("Sure."), "text before tag preserved");
+    assert!(text.contains("done"), "text after tag preserved");
+    assert!(
+        !text.contains("<invoke"),
+        "raw <invoke> markup must not surface in assistant text"
+    );
+    assert!(
+        !text.contains("<parameter"),
+        "raw <parameter> markup must not surface in assistant text"
+    );
+}
+
+#[test]
+fn parse_tool_calls_invoke_attribute_form_multiple_params_scalar_policy() {
+    use crate::openhuman::agent::harness::parse::parse_tool_calls;
+
+    // Multiple <parameter> children. Scalar policy: a value that parses as JSON
+    // (number, bool) becomes that JSON type; anything else stays a string. A
+    // parameter with an empty name is skipped (it cannot key an argument).
+    let input = concat!(
+        "<invoke name=\"search\">\n",
+        "<parameter name=\"query\">rust parsers</parameter>\n",
+        "<parameter name=\"limit\">5</parameter>\n",
+        "<parameter name=\"fuzzy\">true</parameter>\n",
+        "<parameter name=\"\">ignored</parameter>\n",
+        "</invoke>"
+    );
+    let (_text, calls) = parse_tool_calls(input);
+
+    assert_eq!(calls.len(), 1, "should parse one call");
+    assert_eq!(calls[0].name, "search");
+    assert_eq!(
+        calls[0].arguments,
+        serde_json::json!({"query": "rust parsers", "limit": 5, "fuzzy": true})
+    );
+}
+
+#[test]
+fn parse_tool_calls_invoke_attribute_form_missing_close_tag_is_text() {
+    use crate::openhuman::agent::harness::parse::parse_tool_calls;
+
+    // No closing </invoke>: nothing to dispatch. The block is left as text
+    // rather than silently dropped.
+    let input = "before\n<invoke name=\"echo\">\n<parameter name=\"v\">hi</parameter>";
+    let (text, calls) = parse_tool_calls(input);
+
+    assert_eq!(calls.len(), 0, "unterminated <invoke> yields no calls");
+    assert!(text.contains("before"), "preceding text preserved");
+    assert!(
+        text.contains("<invoke"),
+        "unterminated block left as text, not dropped"
+    );
+}
+
+#[test]
+fn parse_tool_calls_invoke_attribute_form_missing_name_is_text() {
+    use crate::openhuman::agent::harness::parse::parse_tool_calls;
+
+    // Attribute form without a `name` attribute cannot name a tool → no call.
+    let input = "<invoke foo=\"bar\">\n<parameter name=\"v\">hi</parameter>\n</invoke>";
+    let (_text, calls) = parse_tool_calls(input);
+
+    assert_eq!(calls.len(), 0, "missing name attribute yields no calls");
+}
+
+#[test]
+fn parse_tool_calls_mixed_tool_call_json_and_invoke_attribute() {
+    use crate::openhuman::agent::harness::parse::parse_tool_calls;
+
+    // A canonical <tool_call>{json} block and a Claude-native attribute-form
+    // <invoke> block in the same response are both recovered, earliest first.
+    let input = concat!(
+        "<tool_call>{\"name\":\"first\",\"arguments\":{\"a\":1}}</tool_call>\n",
+        "<invoke name=\"second\">\n<parameter name=\"b\">two</parameter>\n</invoke>"
+    );
+    let (_text, calls) = parse_tool_calls(input);
+
+    assert_eq!(calls.len(), 2, "both tag forms parsed");
+    assert_eq!(calls[0].name, "first");
+    assert_eq!(calls[0].arguments, serde_json::json!({"a": 1}));
+    assert_eq!(calls[1].name, "second");
+    assert_eq!(calls[1].arguments, serde_json::json!({"b": "two"}));
+}
+
 #[test]
 fn parse_tool_calls_markdown_fence_yaml_like_json_body() {
     use crate::openhuman::agent::harness::parse::parse_tool_calls;

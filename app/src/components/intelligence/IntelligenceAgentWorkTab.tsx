@@ -20,6 +20,7 @@ import { useNavigate } from 'react-router-dom';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import {
+  type AgentWorkAction,
   agentWorkApi,
   type AgentWorkBucket,
   type AgentWorkResponse,
@@ -221,7 +222,12 @@ export default function IntelligenceAgentWorkTab() {
 
             <ul className="divide-y divide-stone-100 overflow-hidden rounded-xl border border-stone-200 bg-white dark:divide-neutral-800 dark:border-neutral-800 dark:bg-neutral-900">
               {rows.map(row => (
-                <AgentWorkRowItem key={row.runId} row={row} onOpenThread={openThread} />
+                <AgentWorkRowItem
+                  key={row.runId}
+                  row={row}
+                  onOpenThread={openThread}
+                  onControlled={fetchWork}
+                />
               ))}
             </ul>
           </section>
@@ -231,12 +237,23 @@ export default function IntelligenceAgentWorkTab() {
   );
 }
 
+/** Statuses where a run is still live and can be stopped. */
+const NON_TERMINAL_STATUSES = new Set(['pending', 'running', 'awaiting_user', 'paused']);
+/** Statuses a run can be retried (re-queued) from. */
+const RETRYABLE_STATUSES = new Set(['failed', 'cancelled', 'interrupted']);
+
+/** Shared button styling for the row's secondary actions. */
+const ACTION_BTN =
+  'rounded-md border border-stone-200 px-2 py-1 text-[11px] font-medium hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-800 dark:hover:bg-neutral-800';
+
 interface AgentWorkRowItemProps {
   row: AgentWorkRow;
   onOpenThread: (threadId: string) => void;
+  /** Called after a control verb succeeds so the parent can refetch. */
+  onControlled: () => void;
 }
 
-function AgentWorkRowItem({ row, onOpenThread }: AgentWorkRowItemProps) {
+function AgentWorkRowItem({ row, onOpenThread, onControlled }: AgentWorkRowItemProps) {
   const { t } = useT();
   const name = row.displayName || row.agentId || row.runId;
   const totalTokens = row.inputTokens + row.outputTokens;
@@ -244,6 +261,43 @@ function AgentWorkRowItem({ row, onOpenThread }: AgentWorkRowItemProps) {
   // status/kind the UI doesn't yet have a key for.
   const statusLabel = STATUS_LABEL_KEY[row.status] ? t(STATUS_LABEL_KEY[row.status]) : row.status;
   const kindLabel = KIND_LABEL_KEY[row.kind] ? t(KIND_LABEL_KEY[row.kind]) : row.kind;
+
+  // Which message-bearing composer is open (continue | follow_up), if any.
+  const [composer, setComposer] = useState<'continue' | 'follow_up' | null>(null);
+  const [message, setMessage] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const canStop = NON_TERMINAL_STATUSES.has(row.status);
+  const canRetry = RETRYABLE_STATUSES.has(row.status);
+  const canContinue = row.status === 'awaiting_user';
+
+  const runControl = useCallback(
+    async (action: AgentWorkAction, msg?: string) => {
+      log('runControl runId=%s action=%s', row.runId, action);
+      setBusy(true);
+      setActionError(null);
+      try {
+        await agentWorkApi.control({ runId: row.runId, action, message: msg });
+        setComposer(null);
+        setMessage('');
+        onControlled();
+      } catch (err) {
+        const text = err instanceof Error ? err.message : String(err);
+        log('runControl error %s', text);
+        setActionError(text);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [row.runId, onControlled]
+  );
+
+  const openComposer = useCallback((mode: 'continue' | 'follow_up') => {
+    setComposer(mode);
+    setMessage('');
+    setActionError(null);
+  }, []);
 
   return (
     <li className="p-3">
@@ -285,25 +339,104 @@ function AgentWorkRowItem({ row, onOpenThread }: AgentWorkRowItemProps) {
         </div>
       </div>
 
-      {(row.parentThreadId || row.workerThreadId) && (
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          {row.parentThreadId && (
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        {/* Open / peek — jump to the parent or worker transcript. */}
+        {row.parentThreadId && (
+          <button
+            type="button"
+            onClick={() => onOpenThread(row.parentThreadId as string)}
+            className={`${ACTION_BTN} text-ocean-600 dark:text-ocean-300`}>
+            {t('intelligence.agentWork.openThread')}
+          </button>
+        )}
+        {row.workerThreadId && (
+          <button
+            type="button"
+            onClick={() => onOpenThread(row.workerThreadId as string)}
+            className={`${ACTION_BTN} text-ocean-600 dark:text-ocean-300`}>
+            {t('intelligence.agentWork.openWorker')}
+          </button>
+        )}
+
+        {/* Control verbs — availability is driven by the run's status. */}
+        {canContinue && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => openComposer('continue')}
+            className={`${ACTION_BTN} text-sage-700 dark:text-sage-300`}>
+            {t('intelligence.agentWork.action.continue')}
+          </button>
+        )}
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => openComposer('follow_up')}
+          className={`${ACTION_BTN} text-stone-600 dark:text-neutral-300`}>
+          {t('intelligence.agentWork.action.followUp')}
+        </button>
+        {canStop && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void runControl('stop')}
+            className={`${ACTION_BTN} text-coral-600 dark:text-coral-300`}>
+            {t('intelligence.agentWork.action.stop')}
+          </button>
+        )}
+        {canRetry && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void runControl('retry')}
+            className={`${ACTION_BTN} text-ocean-600 dark:text-ocean-300`}>
+            {t('intelligence.agentWork.action.retry')}
+          </button>
+        )}
+      </div>
+
+      {composer && (
+        <div className="mt-2 space-y-2">
+          <textarea
+            aria-label={t(
+              composer === 'continue'
+                ? 'intelligence.agentWork.action.continuePlaceholder'
+                : 'intelligence.agentWork.action.followUpPlaceholder'
+            )}
+            value={message}
+            onChange={e => setMessage(e.target.value)}
+            disabled={busy}
+            rows={2}
+            placeholder={t(
+              composer === 'continue'
+                ? 'intelligence.agentWork.action.continuePlaceholder'
+                : 'intelligence.agentWork.action.followUpPlaceholder'
+            )}
+            className="w-full resize-y rounded-md border border-stone-200 bg-white px-2 py-1.5 text-xs text-stone-800 focus:border-ocean-400 focus:outline-none dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100"
+          />
+          <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => onOpenThread(row.parentThreadId as string)}
-              className="rounded-md border border-stone-200 px-2 py-1 text-[11px] font-medium text-ocean-600 hover:bg-stone-50 dark:border-neutral-800 dark:text-ocean-300 dark:hover:bg-neutral-800">
-              {t('intelligence.agentWork.openThread')}
+              disabled={busy || message.trim().length === 0}
+              onClick={() => void runControl(composer, message)}
+              className="rounded-md bg-ocean-500 px-2.5 py-1 text-[11px] font-medium text-white hover:bg-ocean-600 disabled:cursor-not-allowed disabled:opacity-50">
+              {t('intelligence.agentWork.action.send')}
             </button>
-          )}
-          {row.workerThreadId && (
             <button
               type="button"
-              onClick={() => onOpenThread(row.workerThreadId as string)}
-              className="rounded-md border border-stone-200 px-2 py-1 text-[11px] font-medium text-ocean-600 hover:bg-stone-50 dark:border-neutral-800 dark:text-ocean-300 dark:hover:bg-neutral-800">
-              {t('intelligence.agentWork.openWorker')}
+              disabled={busy}
+              onClick={() => setComposer(null)}
+              className={`${ACTION_BTN} text-stone-500 dark:text-neutral-400`}>
+              {t('intelligence.agentWork.action.cancel')}
             </button>
-          )}
+          </div>
         </div>
+      )}
+
+      {actionError && (
+        <p className="mt-2 text-[11px] text-coral-600 dark:text-coral-300">
+          {t('intelligence.agentWork.action.failed')}: {actionError}
+        </p>
       )}
     </li>
   );

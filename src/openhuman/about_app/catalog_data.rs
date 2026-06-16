@@ -504,6 +504,16 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         privacy: DERIVED_TO_BACKEND,
     },
     Capability {
+        id: "intelligence.workflow_orchestration",
+        name: "Workflow Orchestration",
+        domain: "workflow_runs",
+        category: CapabilityCategory::Intelligence,
+        description: "Run declarative multi-agent workflows such as parallel research with cross-checking: a question is decomposed into angles, researched in parallel, adversarially cross-checked, and synthesized into one cited report. Watch each phase progress with its child agent results, stop or resume a run, and read the final synthesis. High-cost / high-concurrency runs require explicit approval before starting.",
+        how_to: "Intelligence > Orchestration > pick a workflow and Start",
+        status: CapabilityStatus::Beta,
+        privacy: DERIVED_TO_BACKEND,
+    },
+    Capability {
         id: "intelligence.agent_library",
         name: "Agents Library",
         domain: "intelligence",

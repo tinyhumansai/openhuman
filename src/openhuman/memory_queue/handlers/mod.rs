@@ -246,7 +246,7 @@ struct PreparedExtract {
 async fn prepare_extract(config: &Config, job: &Job) -> Result<Option<PreparedExtract>> {
     let payload: ExtractChunkPayload =
         serde_json::from_str(&job.payload_json).context("parse ExtractChunk payload")?;
-    let Some(chunk) = chunk_store::get_chunk(config, &payload.chunk_id)? else {
+    let Some(mut chunk) = chunk_store::get_chunk(config, &payload.chunk_id)? else {
         log::warn!(
             "[memory::jobs] extract chunk missing chunk_id={}",
             payload.chunk_id
@@ -257,13 +257,17 @@ async fn prepare_extract(config: &Config, job: &Job) -> Result<Option<PreparedEx
     // Read the full body from disk (the `content` column in SQLite holds a
     // ≤500-char preview after the MD-on-disk migration). The scorer needs
     // the complete text so extraction operates over the full chunk body.
+    //
+    // Swap the full body INTO the owned chunk for scoring instead of cloning
+    // the whole struct: `score_chunk` only borrows `chunk`, so we temporarily
+    // replace `content` with the body, score, then restore the preview. This
+    // avoids a full `Chunk` clone (metadata + preview) per extract job, and —
+    // crucially — keeps `PreparedExtract` holding only the small preview rather
+    // than the full body, so a batch of N prepared items doesn't retain N full
+    // bodies in memory before finalize.
     let body = content_read::read_chunk_body(config, &chunk.id)
         .with_context(|| format!("read full body for extract chunk_id={}", chunk.id))?;
-    let chunk_with_body = {
-        let mut c = chunk.clone();
-        c.content = body;
-        c
-    };
+    let preview = std::mem::replace(&mut chunk.content, body);
 
     emit_build_progress(
         "extract",
@@ -275,7 +279,10 @@ async fn prepare_extract(config: &Config, job: &Job) -> Result<Option<PreparedEx
     );
 
     let scoring_cfg = score::ScoringConfig::from_config(config);
-    let result = score::score_chunk(&chunk_with_body, &scoring_cfg).await?;
+    let result = score::score_chunk(&chunk, &scoring_cfg).await?;
+
+    // Restore the preview, dropping the full body now that scoring is done.
+    chunk.content = preview;
     Ok(Some(PreparedExtract {
         job: job.clone(),
         chunk,
