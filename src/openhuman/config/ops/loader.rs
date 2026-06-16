@@ -281,6 +281,7 @@ pub fn client_config_json(config: &Config) -> serde_json::Value {
         "reasoning_provider": config.reasoning_provider,
         "agentic_provider": config.agentic_provider,
         "coding_provider": config.coding_provider,
+        "vision_provider": config.vision_provider,
         "memory_provider": config.memory_provider,
         "embeddings_provider": config.embeddings_provider,
         "heartbeat_provider": config.heartbeat_provider,

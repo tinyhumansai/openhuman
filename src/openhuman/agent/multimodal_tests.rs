@@ -874,25 +874,53 @@ async fn stash_image_attachments_replaces_marker_with_placeholder() {
 }
 
 #[tokio::test]
-async fn image_placeholder_rehydrates_to_inline_marker_for_provider() {
-    // Ingress: stash the image and leave a placeholder.
+async fn image_placeholder_rehydrates_to_disk_path_for_provider() {
+    // Ingress: stash the image to disk and leave a placeholder.
     let msg = format!("describe [IMAGE:{TINY_PNG_DATA_URI}]");
     let placeholdered = stash_image_attachments(&msg, &MultimodalConfig::default()).await;
     let messages = vec![ChatMessage::user(placeholdered)];
     assert!(has_image_placeholders(&messages), "placeholder detected");
 
-    // Dispatch (vision model): rehydrate back to an inline [IMAGE:data:...] marker.
+    // Dispatch (vision model): rehydrate to an inline [IMAGE:<path>] marker that
+    // points at the on-disk attachment. The index is rebuilt from disk on every
+    // call (no in-memory state), so this resolves even after a process restart.
     let rehydrated = rehydrate_image_placeholders(&messages);
     assert_eq!(rehydrated.len(), 1);
+    let content = rehydrated[0].content.clone();
     assert!(
-        rehydrated[0].content.contains("[IMAGE:data:image/png"),
-        "rehydrated inline image: {}",
-        rehydrated[0].content
+        content.contains("[IMAGE:"),
+        "rehydrated inline marker: {content}"
     );
     assert!(
-        !rehydrated[0].content.contains("#att:"),
-        "placeholder consumed: {}",
-        rehydrated[0].content
+        !content.contains("#att:"),
+        "placeholder consumed: {content}"
+    );
+
+    // The marker points at a real file on disk.
+    let start = content.find("[IMAGE:").unwrap() + "[IMAGE:".len();
+    let end = content[start..].find(']').unwrap() + start;
+    let path = &content[start..end];
+    assert!(path.ends_with(".png"), "disk path carries ext: {path}");
+    assert!(
+        std::path::Path::new(path).is_file(),
+        "attachment persisted to disk: {path}"
+    );
+
+    // Round-trip: the provider prep step re-reads the file back into a data URI,
+    // so the model still receives inline image bytes.
+    let prepared = prepare_messages_for_provider(
+        &rehydrated,
+        &MultimodalConfig::default(),
+        &MultimodalFileConfig::default(),
+    )
+    .await
+    .unwrap();
+    assert!(
+        prepared.messages[0]
+            .content
+            .contains("[IMAGE:data:image/png"),
+        "provider sees re-encoded data URI: {}",
+        prepared.messages[0].content
     );
 }
 
@@ -943,20 +971,50 @@ async fn stash_image_attachments_caps_at_max_images() {
 }
 
 #[test]
-fn image_stash_evicts_oldest_over_capacity() {
-    let mut stash = ImageStash::default();
-    for i in 0..(IMAGE_STASH_MAX_ENTRIES + 5) {
-        stash.insert(format!("id{i}"), format!("uri-{i}"));
-    }
-    assert!(
-        stash.map.len() <= IMAGE_STASH_MAX_ENTRIES,
-        "bounded entries"
+fn extract_image_placeholders_pulls_att_tokens_in_order() {
+    // Forwards a user's stashed image(s) into a delegated vision sub-agent.
+    let text = "look at these [Image: image #att:aaa111] and [Image: image #att:bbb222] please";
+    let got = extract_image_placeholders_in_text(text);
+    assert_eq!(
+        got,
+        vec![
+            "[Image: image #att:aaa111]".to_string(),
+            "[Image: image #att:bbb222]".to_string()
+        ]
     );
-    assert!(stash.get("id0").is_none(), "oldest evicted");
+    // A bare placeholder with no stash ref is ignored; plain text yields none.
+    assert!(extract_image_placeholders_in_text("[Image: (could not be processed)]").is_empty());
+    assert!(extract_image_placeholders_in_text("no images here").is_empty());
+}
+
+#[test]
+fn ext_from_mime_maps_known_image_types() {
+    assert_eq!(ext_from_mime("image/png"), Some("png"));
+    assert_eq!(ext_from_mime("image/jpeg"), Some("jpg"));
+    assert_eq!(ext_from_mime("image/webp"), Some("webp"));
+    assert_eq!(ext_from_mime("image/gif"), Some("gif"));
+    assert_eq!(ext_from_mime("image/bmp"), Some("bmp"));
+    assert_eq!(ext_from_mime("application/pdf"), None);
+}
+
+#[tokio::test]
+async fn sweep_keeps_fresh_attachments() {
+    // A freshly-written attachment (age < TTL) survives the startup sweep, and
+    // the disk index resolves it — the core of restart-survival.
+    let msg = format!("[IMAGE:{TINY_PNG_DATA_URI}]");
+    let placeholdered = stash_image_attachments(&msg, &MultimodalConfig::default()).await;
+    let id = placeholdered
+        .split("#att:")
+        .nth(1)
+        .and_then(|s| s.split(']').next())
+        .map(|s| s.trim().to_string())
+        .expect("placeholder carries an id");
+
+    sweep_stale_attachments().await;
+
+    let index = build_attachment_index();
     assert!(
-        stash
-            .get(&format!("id{}", IMAGE_STASH_MAX_ENTRIES + 4))
-            .is_some(),
-        "newest retained"
+        index.contains_key(&id),
+        "fresh attachment {id} retained after sweep"
     );
 }

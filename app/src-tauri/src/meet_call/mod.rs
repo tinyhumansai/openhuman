@@ -192,6 +192,18 @@ pub async fn meet_call_open_window<R: Runtime>(
         .build()
         .map_err(|e| format!("[meet-call] WebviewWindowBuilder.build failed: {e}"))?;
 
+    // Install the in-process CDP transport for this Meet webview so the
+    // audio bridge, video bridge, and join scanner can attach via the
+    // shared channel rather than the legacy TCP DevTools port. The call
+    // is idempotent; on a transient install failure (e.g. CEF observer
+    // not yet ready) the downstream `conn_for_label` will retry.
+    if let Err(err) = crate::cdp::install_for_label(&label) {
+        log::warn!(
+            "[meet-call] cdp install_for_label({label}) failed: {err} \
+             — meet_audio/video/scanner will retry on first attach"
+        );
+    }
+
     // Push the window off-screen post-build. macOS Cocoa clamps NSWindow
     // frame origins to the union of all attached monitors' bounds, so
     // (-30000, -30000) lands at (0, 0) on a single-display setup or on

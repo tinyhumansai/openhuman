@@ -102,6 +102,7 @@ export interface ModelSettingsUpdate {
   reasoning_provider?: string | null;
   agentic_provider?: string | null;
   coding_provider?: string | null;
+  vision_provider?: string | null;
   memory_provider?: string | null;
   embeddings_provider?: string | null;
   heartbeat_provider?: string | null;
@@ -242,6 +243,7 @@ export interface ClientConfig {
   reasoning_provider: string | null;
   agentic_provider: string | null;
   coding_provider: string | null;
+  vision_provider: string | null;
   memory_provider: string | null;
   embeddings_provider: string | null;
   heartbeat_provider: string | null;

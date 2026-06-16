@@ -389,6 +389,7 @@ impl Provider for ChatProviderAdapter {
             user: message.to_string(),
             temperature,
             kind: "memory_tree_walk",
+            max_tokens: None,
         };
         self.inner.chat_for_text(&prompt).await
     }

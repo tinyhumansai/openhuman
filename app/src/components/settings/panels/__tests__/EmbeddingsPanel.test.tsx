@@ -352,6 +352,103 @@ describe('EmbeddingsPanel', () => {
     );
   });
 
+  it('surfaces an actionable error and keeps the popup open when the custom endpoint has no embeddings API', async () => {
+    // TAURI-RUST-5JR: the backend probes the endpoint and rejects a chat-only
+    // URL (DeepSeek) with EMBEDDINGS_ENDPOINT_NO_API. The panel must show the
+    // message and NOT close the setup popup, so the user can fix the endpoint.
+    const settings = makeSettings({
+      providers: [
+        makeProvider('managed', { requires_api_key: false }),
+        makeProvider('custom', { requires_api_key: false, requires_endpoint: true }),
+      ],
+    });
+    vi.mocked(loadEmbeddingsSettings).mockResolvedValue(settings);
+    vi.mocked(updateEmbeddingsSettings).mockResolvedValue({
+      error: 'EMBEDDINGS_ENDPOINT_NO_API',
+      message: 'This endpoint has no embeddings API. Choose an embeddings-capable provider.',
+    });
+
+    renderWithProviders(<EmbeddingsPanel />);
+    await screen.findByText('Custom');
+
+    fireEvent.click(screen.getByRole('radio', { name: /custom/i }));
+    await screen.findByPlaceholderText(/https:\/\/your-endpoint/i);
+    fireEvent.change(screen.getByPlaceholderText(/https:\/\/your-endpoint/i), {
+      target: { value: 'https://api.deepseek.com/v1' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /save.*switch/i }));
+
+    // Actionable message shown.
+    await screen.findByText(/no embeddings API/i);
+    // Popup stays open — endpoint input is still present so the user can fix it.
+    expect(screen.getByPlaceholderText(/https:\/\/your-endpoint/i)).toBeInTheDocument();
+  });
+
+  it('surfaces the no-model-loaded message and keeps the popup open when LM Studio has no model loaded', async () => {
+    // TAURI-RUST-4P4: the backend runs a setup-time test embed and rejects an
+    // LM Studio endpoint with no model loaded (EMBEDDINGS_NO_MODEL_LOADED). The
+    // panel must show the one-step remediation and NOT close the popup, so the
+    // user can load a model and retry — verifying at setup is the fix.
+    const settings = makeSettings({
+      providers: [
+        makeProvider('managed', { requires_api_key: false }),
+        makeProvider('custom', { requires_api_key: false, requires_endpoint: true }),
+      ],
+    });
+    vi.mocked(loadEmbeddingsSettings).mockResolvedValue(settings);
+    vi.mocked(updateEmbeddingsSettings).mockResolvedValue({
+      error: 'EMBEDDINGS_NO_MODEL_LOADED',
+      message:
+        'Your local embeddings server (e.g. LM Studio) is running but has no model loaded. Load an embedding model, then save again.',
+    });
+
+    renderWithProviders(<EmbeddingsPanel />);
+    await screen.findByText('Custom');
+
+    fireEvent.click(screen.getByRole('radio', { name: /custom/i }));
+    await screen.findByPlaceholderText(/https:\/\/your-endpoint/i);
+    fireEvent.change(screen.getByPlaceholderText(/https:\/\/your-endpoint/i), {
+      target: { value: 'http://localhost:1234/v1' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /save.*switch/i }));
+
+    // Actionable remediation shown.
+    await screen.findByText(/no model loaded/i);
+    // Popup stays open so the user can fix it and retry.
+    expect(screen.getByPlaceholderText(/https:\/\/your-endpoint/i)).toBeInTheDocument();
+  });
+
+  it('surfaces a verification-failed message and keeps the popup open when the test embed fails', async () => {
+    // The setup-time test embed failed (timeout / 5xx / unreachable). The
+    // config is NOT saved; the panel surfaces the generic verification message
+    // and keeps the popup open so the user can fix the endpoint and retry.
+    const settings = makeSettings({
+      providers: [
+        makeProvider('managed', { requires_api_key: false }),
+        makeProvider('custom', { requires_api_key: false, requires_endpoint: true }),
+      ],
+    });
+    vi.mocked(loadEmbeddingsSettings).mockResolvedValue(settings);
+    vi.mocked(updateEmbeddingsSettings).mockResolvedValue({
+      error: 'EMBEDDINGS_VERIFICATION_FAILED',
+      message:
+        "Couldn't verify the embeddings endpoint — the test embed failed. Make sure the endpoint is reachable, then save again.",
+    });
+
+    renderWithProviders(<EmbeddingsPanel />);
+    await screen.findByText('Custom');
+
+    fireEvent.click(screen.getByRole('radio', { name: /custom/i }));
+    await screen.findByPlaceholderText(/https:\/\/your-endpoint/i);
+    fireEvent.change(screen.getByPlaceholderText(/https:\/\/your-endpoint/i), {
+      target: { value: 'http://localhost:9/v1' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /save.*switch/i }));
+
+    await screen.findByText(/verify the embeddings endpoint/i);
+    expect(screen.getByPlaceholderText(/https:\/\/your-endpoint/i)).toBeInTheDocument();
+  });
+
   // ─── Confirm wipe dialog ──────────────────────────────────────────────────
 
   it('shows confirm-wipe dialog when updateEmbeddingsSettings returns DIMENSION_CHANGE error', async () => {

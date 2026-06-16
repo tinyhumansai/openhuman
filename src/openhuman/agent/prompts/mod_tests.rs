@@ -147,6 +147,26 @@ fn grounding_contract_appended_to_every_build_path() {
 }
 
 #[test]
+fn grounding_contract_requires_exact_numeric_evidence() {
+    let ctx = ctx_with_identity(None);
+    let rendered = SystemPromptBuilder::from_final_body("## Custom Agent\n\nBody.".into())
+        .build(&ctx)
+        .unwrap();
+
+    assert!(rendered.contains("Preserve numeric evidence exactly"));
+    assert!(rendered.contains(
+        "numbers, counts, sizes, dates, timestamps, durations, currencies, percentages, quotas, and ids"
+    ));
+    assert!(rendered.contains(
+        "copy the exact value from the observed tool result, user message, or cited memory"
+    ));
+    assert!(rendered.contains("Do not round, convert units, rewrite relative times"));
+    assert!(rendered.contains(
+        "If sources disagree, name the discrepancy instead of choosing a plausible value"
+    ));
+}
+
+#[test]
 fn identity_section_creates_missing_workspace_files() {
     let workspace =
         std::env::temp_dir().join(format!("openhuman_prompt_create_{}", uuid::Uuid::new_v4()));
@@ -656,6 +676,7 @@ fn render_subagent_system_prompt_renders_workspace_tail() {
     // `GroundingSection` / the central `build()` append.
     assert!(rendered.contains("## Grounding and tool use"));
     assert!(rendered.contains("Your tools are exactly the ones listed in this prompt"));
+    assert!(rendered.contains("Preserve numeric evidence exactly"));
 
     let _ = std::fs::remove_dir_all(workspace);
 }

@@ -5,9 +5,11 @@ import { useSearchParams } from 'react-router-dom';
 import { ConfirmationModal } from '../components/intelligence/ConfirmationModal';
 import IntelligenceAgentsTab from '../components/intelligence/IntelligenceAgentsTab';
 import IntelligenceAgentWorkTab from '../components/intelligence/IntelligenceAgentWorkTab';
+import IntelligenceOrchestrationTab from '../components/intelligence/IntelligenceOrchestrationTab';
 import IntelligenceSubconsciousTab from '../components/intelligence/IntelligenceSubconsciousTab';
 import IntelligenceTasksTab from '../components/intelligence/IntelligenceTasksTab';
 import IntelligenceTeamsTab from '../components/intelligence/IntelligenceTeamsTab';
+import IntelligenceWorktreesTab from '../components/intelligence/IntelligenceWorktreesTab';
 import MemorySection from '../components/intelligence/MemorySection';
 import ModelCouncilTab from '../components/intelligence/ModelCouncilTab';
 import { ToastContainer } from '../components/intelligence/Toast';
@@ -34,9 +36,11 @@ type IntelligenceTab =
   | 'subconscious'
   | 'tasks'
   | 'agent-work'
+  | 'worktrees'
   | 'teams'
   | 'agents'
   | 'workflows'
+  | 'orchestration'
   | 'council';
 
 const INTELLIGENCE_TABS: IntelligenceTab[] = [
@@ -44,9 +48,11 @@ const INTELLIGENCE_TABS: IntelligenceTab[] = [
   'subconscious',
   'tasks',
   'agent-work',
+  'worktrees',
   'teams',
   'agents',
   'workflows',
+  'orchestration',
   'council',
 ];
 
@@ -170,6 +176,11 @@ export default function Intelligence({ tabParamKey = 'tab' }: IntelligenceProps 
       label: t('memory.tab.agentWork'),
       description: t('memory.tab.agentWorkDescription'),
     },
+    {
+      id: 'worktrees',
+      label: t('memory.tab.worktrees'),
+      description: t('memory.tab.worktreesDescription'),
+    },
     { id: 'teams', label: t('memory.tab.teams'), description: t('memory.tab.teamsDescription') },
     { id: 'memory', label: t('memory.tab.memory') },
     { id: 'subconscious', label: t('memory.tab.subconscious') },
@@ -177,6 +188,11 @@ export default function Intelligence({ tabParamKey = 'tab' }: IntelligenceProps 
       id: 'workflows',
       label: t('memory.tab.workflows'),
       description: t('memory.tab.workflowsDescription'),
+    },
+    {
+      id: 'orchestration',
+      label: t('memory.tab.orchestration'),
+      description: t('memory.tab.orchestrationDescription'),
     },
     { id: 'council', label: t('memory.tab.council'), devOnly: true },
     { id: 'agents', label: t('memory.tab.agents'), description: t('memory.tab.agentsDescription') },
@@ -267,11 +283,15 @@ export default function Intelligence({ tabParamKey = 'tab' }: IntelligenceProps 
 
             {activeTab === 'agent-work' && <IntelligenceAgentWorkTab />}
 
+            {activeTab === 'worktrees' && <IntelligenceWorktreesTab />}
+
             {activeTab === 'teams' && <IntelligenceTeamsTab />}
 
             {activeTab === 'agents' && <IntelligenceAgentsTab />}
 
             {activeTab === 'workflows' && <WorkflowsTab />}
+
+            {activeTab === 'orchestration' && <IntelligenceOrchestrationTab />}
 
             {activeTab === 'council' && <ModelCouncilTab />}
           </div>

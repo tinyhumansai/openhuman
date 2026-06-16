@@ -1113,3 +1113,130 @@ async fn hydrate_summary_inputs_batch_preserves_order_and_skips_missing_ids() {
     assert_eq!(out[0].entities, vec!["entity:bob".to_string()]);
     assert_eq!(out[1].entities, vec!["entity:alice".to_string()]);
 }
+
+/// Regression for Sentry #13021 — when the LLM summary collapses to an
+/// empty/whitespace string (e.g. the model returns just newlines, which
+/// `summarise()` trims to ""), the seal MUST NOT persist a blank parent.
+///
+/// Pre-fix, `truncate_for_embed("", 1000)` produced an empty string that
+/// got forwarded to the embedding provider. Real providers (cloud /
+/// OpenAI-compatible) 400 on that — `"input must be a non-empty string or
+/// array of non-empty strings"` — and the failure was captured as a
+/// recurring Sentry server fault even though the defect was on the client
+/// side.
+///
+/// Initial fix (provider guard) short-circuited the embed call but still
+/// persisted `content = ""`, losing the child text from the next rollup /
+/// retrieval layer. Final fix (this test): when `summarise()` returns
+/// blank, fall back to `fallback_summary` — the deterministic concatenation
+/// of the inputs — so the parent has recoverable text and the embedding
+/// runs on real content.
+#[tokio::test]
+async fn whitespace_llm_summary_falls_back_to_deterministic_content() {
+    use crate::openhuman::memory_store::chunks::store::upsert_chunks;
+    use crate::openhuman::memory_store::chunks::types::{
+        chunk_id, Chunk, Metadata, SourceKind, SourceRef,
+    };
+    use chrono::TimeZone;
+
+    let (_tmp, cfg) = test_config();
+    let tree = get_or_create_source_tree(&cfg, "slack:#eng").unwrap();
+    // The chat provider returns ONLY whitespace; `summarise()` trims to ""
+    // and `clamp_to_budget` keeps it empty → `output.content = ""`.
+    let provider: Arc<dyn ChatProvider> = Arc::new(StaticChatProvider::new("   \n\t  \n"));
+
+    let ts = Utc.timestamp_millis_opt(1_700_000_000_000).unwrap();
+    let mk_chunk = |seq: u32, tokens: u32| Chunk {
+        id: chunk_id(SourceKind::Chat, "slack:#eng", seq, "test-content"),
+        content: format!("non-empty leaf content {seq}"),
+        metadata: Metadata {
+            source_kind: SourceKind::Chat,
+            source_id: "slack:#eng".into(),
+            owner: "alice".into(),
+            timestamp: ts,
+            time_range: (ts, ts),
+            tags: vec![],
+            source_ref: Some(SourceRef::new("slack://x")),
+            path_scope: None,
+        },
+        token_count: tokens,
+        seq_in_source: seq,
+        created_at: ts,
+        partial_message: false,
+    };
+    let per_leaf = INPUT_TOKEN_BUDGET * 6 / 10;
+    let c1 = mk_chunk(0, per_leaf);
+    let c2 = mk_chunk(1, per_leaf);
+    upsert_chunks(&cfg, &[c1.clone(), c2.clone()]).unwrap();
+    stage_test_chunks(&cfg, &[c1.clone(), c2.clone()]);
+
+    let leaf1 = LeafRef {
+        chunk_id: c1.id.clone(),
+        token_count: per_leaf,
+        timestamp: ts,
+        content: c1.content.clone(),
+        entities: vec![],
+        topics: vec![],
+        score: 0.5,
+    };
+    let leaf2 = LeafRef {
+        chunk_id: c2.id.clone(),
+        token_count: per_leaf,
+        timestamp: ts,
+        content: c2.content.clone(),
+        entities: vec![],
+        topics: vec![],
+        score: 0.5,
+    };
+
+    let _ = test_override::with_provider(Arc::clone(&provider), async {
+        append_leaf(&cfg, &tree, &leaf1, &LabelStrategy::Empty)
+            .await
+            .unwrap()
+    })
+    .await;
+    let sealed = test_override::with_provider(Arc::clone(&provider), async {
+        append_leaf(&cfg, &tree, &leaf2, &LabelStrategy::Empty)
+            .await
+            .unwrap()
+    })
+    .await;
+
+    assert_eq!(sealed.len(), 1, "second append crosses budget — one seal");
+    let summary = store::get_summary(&cfg, &sealed[0]).unwrap().unwrap();
+
+    // Content must be the deterministic fallback derived from the inputs,
+    // not the empty LLM output. `fallback_summary` joins each non-whitespace
+    // input with a `"— "` provenance prefix.
+    assert!(
+        !summary.content.trim().is_empty(),
+        "expected fallback content when LLM returned blank (#13021), got empty"
+    );
+    assert!(
+        summary.content.contains("non-empty leaf content 0"),
+        "fallback must include leaf 0 content; got: {:?}",
+        summary.content
+    );
+    assert!(
+        summary.content.contains("non-empty leaf content 1"),
+        "fallback must include leaf 1 content; got: {:?}",
+        summary.content
+    );
+
+    // Because the persisted content is now non-empty, the embed step runs.
+    // With `embeddings_provider = "none"` the test wires `InertEmbedder`,
+    // which returns a zero vector — its presence (not its value) is the
+    // signal that the new fallback path drove a real embed call.
+    //
+    // Read from the per-model sidecar (`mem_tree_summary_embeddings`); the
+    // legacy `mem_tree_summaries.embedding` column on `SummaryNode` is
+    // always written as `None` post-#1574 cutover, so checking
+    // `summary.embedding` alone would silently always pass.
+    let sidecar_embedding =
+        crate::openhuman::memory_store::trees::store::get_summary_embedding(&cfg, &sealed[0])
+            .unwrap();
+    assert!(
+        sidecar_embedding.is_some(),
+        "expected sidecar embedding for the fallback-filled summary (#13021)"
+    );
+}

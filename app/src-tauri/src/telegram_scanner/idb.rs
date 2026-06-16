@@ -19,7 +19,7 @@
 
 use serde_json::{json, Value};
 
-use super::CdpConn;
+use crate::cdp::CdpConn;
 
 /// CDP-known origin for the Telegram Web K app (`https://web.telegram.org/k/`).
 const ORIGIN: &str = "https://web.telegram.org";

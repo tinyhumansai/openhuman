@@ -540,6 +540,12 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
                     iterations: event.subagent?.iterations ?? entry.subagent.iterations,
                     elapsedMs: event.subagent?.elapsed_ms ?? entry.subagent.elapsedMs,
                     outputChars: event.subagent?.output_chars ?? entry.subagent.outputChars,
+                    // Worktree isolation metadata (#3376) — present only for
+                    // workers that ran with `isolation = "worktree"`. Drives the
+                    // inline worktree row's open/diff/remove affordances.
+                    worktreePath: event.subagent?.worktree_path ?? entry.subagent.worktreePath,
+                    changedFiles: event.subagent?.changed_files ?? entry.subagent.changedFiles,
+                    isDirty: event.subagent?.dirty_status ?? entry.subagent.isDirty,
                   }
                 : entry.subagent,
             });

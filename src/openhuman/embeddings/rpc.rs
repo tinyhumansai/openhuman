@@ -109,6 +109,67 @@ pub async fn update_settings(
     let dims_changed = new_dims != old_dims;
     let sig_changed = new_sig != old_sig;
 
+    // Setup-time verification gate (TAURI-RUST-5JR / 4P4): a Custom
+    // (OpenAI-compatible) embeddings endpoint — e.g. LM Studio — must prove it
+    // can actually embed *before* we accept it. We run one live test embed and
+    // only persist the config if it succeeds; any failure (no `/embeddings`
+    // route, no model loaded, timeout, 5xx, empty/zero-dim vector) rejects the
+    // save so a config that can't embed is never stored (and we never wipe
+    // memory for one). Verifying at setup is the fix — we deliberately do NOT
+    // try to classify-and-suppress the resulting embed flood in code; any
+    // residual flood (e.g. the user unloads the model *after* a good save) is
+    // handled on the Sentry side.
+    //
+    // Only custom endpoints are probed: named catalog providers are
+    // embedding-capable by construction, and probing `managed`/`cloud`
+    // pre-login would false-fail. Resolve the provider string exactly as it
+    // will be stored so the probe targets the real endpoint.
+    let effective_provider = match &custom_endpoint {
+        Some(ep) if new_provider == "custom" || new_provider.starts_with("custom:") => {
+            format!("custom:{ep}")
+        }
+        _ => new_provider.clone(),
+    };
+    if effective_provider.starts_with("custom:") {
+        match build_embedder(&config, &effective_provider, &new_model, new_dims) {
+            Ok(embedder) => {
+                // Time-box the probe so a black-hole host can't hang the RPC.
+                tracing::debug!(
+                    provider = effective_provider.as_str(),
+                    "{LOG_PREFIX} update_settings verifying embeddings endpoint with a test embed"
+                );
+                let probe = tokio::time::timeout(
+                    std::time::Duration::from_secs(10),
+                    embedder.embed(&["connection test"]),
+                )
+                .await;
+                // Normalize the timeout/result into one shape, then apply the
+                // pure verification policy (`classify_embed_probe`, unit-tested).
+                let outcome = match probe {
+                    Ok(Ok(vectors)) => EmbedProbe::Returned(vectors),
+                    Ok(Err(e)) => EmbedProbe::Failed(e.to_string()),
+                    Err(_elapsed) => EmbedProbe::TimedOut,
+                };
+                if let Some(reject) = classify_embed_probe(outcome) {
+                    tracing::warn!(
+                        provider = effective_provider.as_str(),
+                        "{LOG_PREFIX} update_settings rejected — embeddings endpoint failed verification"
+                    );
+                    return Ok(reject);
+                }
+                tracing::debug!(
+                    provider = effective_provider.as_str(),
+                    "{LOG_PREFIX} update_settings test embed passed — accepting config"
+                );
+            }
+            Err(e) => {
+                // Construction failure (unknown slug / bad config) — surface it
+                // rather than persisting a config that can never embed.
+                return Err(format!("invalid embedding provider configuration: {e}"));
+            }
+        }
+    }
+
     // Only require a wipe when dimensions actually change — switching
     // provider/model at the same dimensionality keeps vectors comparable.
     if dims_changed && !confirm_wipe {
@@ -382,15 +443,31 @@ pub async fn test_connection(
 /// [`embed`] uses, exposed so other domains (e.g. `codegraph`) can obtain a
 /// provider for `signature()` + direct embedding without a JSON-RPC round-trip.
 pub fn provider_from_config(config: &Config) -> anyhow::Result<Box<dyn super::EmbeddingProvider>> {
-    let provider_name = &config.memory.embedding_provider;
-    let model = &config.memory.embedding_model;
-    let dims = config.memory.embedding_dimensions;
+    build_embedder(
+        config,
+        &config.memory.embedding_provider,
+        &config.memory.embedding_model,
+        config.memory.embedding_dimensions,
+    )
+}
+
+/// Construct an embedding provider for an explicit `(provider_name, model,
+/// dims)` triple, resolving the stored API key + inline `custom:<url>` endpoint
+/// the same way [`embed`] / [`test_connection`] do. Single construction seam so
+/// the save-time probe in [`update_settings`] and the live embed path can't
+/// drift on slug-normalization / credential-lookup rules.
+fn build_embedder(
+    config: &Config,
+    provider_name: &str,
+    model: &str,
+    dims: usize,
+) -> anyhow::Result<Box<dyn super::EmbeddingProvider>> {
     let api_key = resolve_api_key(config, provider_name);
     let custom_endpoint = provider_name.strip_prefix("custom:").map(|s| s.to_string());
     let provider_slug = if provider_name.starts_with("custom:") {
         "custom"
     } else {
-        provider_name.as_str()
+        provider_name
     };
     create_embedding_provider_with_credentials(
         provider_slug,
@@ -399,6 +476,97 @@ pub fn provider_from_config(config: &Config) -> anyhow::Result<Box<dyn super::Em
         &api_key,
         custom_endpoint.as_deref(),
     )
+}
+
+/// Normalized result of the setup-time test embed in [`update_settings`].
+/// Collapses the `Result<Result<_, _>, Elapsed>` timeout shape into one enum so
+/// the verification policy can be expressed (and unit-tested) as a pure
+/// function over it.
+enum EmbedProbe {
+    /// The endpoint returned vectors (may still be empty/zero-dim — checked).
+    Returned(Vec<Vec<f32>>),
+    /// The embed call returned an error; the string is the provider detail.
+    Failed(String),
+    /// The probe didn't complete within the time box.
+    TimedOut,
+}
+
+/// Setup-time embeddings verification policy. Returns `None` when the endpoint
+/// is verified (accept + persist the config) or `Some(reject)` — the
+/// "not saved" RPC payload — otherwise.
+///
+/// The endpoint must prove it can embed before we accept it: only a non-empty
+/// vector passes; every failure mode (no model loaded, no `/embeddings` route,
+/// 5xx/auth/network, timeout, empty vector) rejects the save. We do NOT try to
+/// classify-and-suppress the resulting embed flood in code — residual floods
+/// (e.g. the user unloads the model after a good save) are handled Sentry-side.
+/// The known shapes only get a friendlier remediation message.
+fn classify_embed_probe(outcome: EmbedProbe) -> Option<RpcOutcome<serde_json::Value>> {
+    let reject = |error: &str, message: &str, summary: &str, detail: Option<&str>| {
+        let mut body = serde_json::json!({ "error": error, "message": message });
+        if let Some(d) = detail {
+            body["detail"] = serde_json::Value::String(d.to_string());
+        }
+        Some(RpcOutcome::new(body, vec![summary.to_string()]))
+    };
+
+    match outcome {
+        // Pass only when the endpoint returns a usable vector.
+        EmbedProbe::Returned(vectors)
+            if vectors.first().map(|v| !v.is_empty()).unwrap_or(false) =>
+        {
+            None
+        }
+        // Reachable but produced no usable vector — not a valid embedder.
+        EmbedProbe::Returned(_) => reject(
+            "EMBEDDINGS_VERIFICATION_FAILED",
+            "The embeddings endpoint responded but returned no vector. Choose an \
+             embeddings-capable provider or endpoint, then save again.",
+            "test embed returned no vectors — not saved",
+            None,
+        ),
+        EmbedProbe::Failed(detail) => {
+            let lower = detail.to_ascii_lowercase();
+            // Reachable but no model loaded (e.g. LM Studio idle).
+            if lower.contains("no models loaded") {
+                reject(
+                    "EMBEDDINGS_NO_MODEL_LOADED",
+                    "Your local embeddings server (e.g. LM Studio) is running but has no \
+                     model loaded. Load an embedding model — in LM Studio use the developer \
+                     page or the `lms load` command — then save again.",
+                    "embeddings server has no model loaded — not saved",
+                    Some(&detail),
+                )
+            } else if crate::core::observability::is_embedding_endpoint_absent(&lower) {
+                // Endpoint exposes no embeddings API (404/405).
+                reject(
+                    "EMBEDDINGS_ENDPOINT_NO_API",
+                    "This endpoint has no embeddings API. Choose an embeddings-capable \
+                     provider (Managed, Voyage, OpenAI, Cohere, Ollama) or a different \
+                     custom endpoint.",
+                    "embeddings endpoint has no embeddings API — not saved",
+                    Some(&detail),
+                )
+            } else {
+                // Any other failure (5xx, auth, network) — didn't pass verification.
+                reject(
+                    "EMBEDDINGS_VERIFICATION_FAILED",
+                    "Couldn't verify the embeddings endpoint — the test embed failed. Make \
+                     sure the endpoint is reachable and serving an embedding model, then \
+                     save again.",
+                    "embeddings endpoint failed verification — not saved",
+                    Some(&detail),
+                )
+            }
+        }
+        EmbedProbe::TimedOut => reject(
+            "EMBEDDINGS_VERIFICATION_FAILED",
+            "Couldn't verify the embeddings endpoint — the test embed timed out. Make sure \
+             the endpoint is running and reachable, then save again.",
+            "embeddings endpoint timed out during verification — not saved",
+            None,
+        ),
+    }
 }
 
 pub(crate) fn resolve_api_key(config: &Config, provider_name: &str) -> String {
@@ -475,6 +643,89 @@ mod tests {
         assert_eq!(
             resolve_api_key(&config, "custom:http://localhost:1234"),
             "sk-custom-test"
+        );
+    }
+
+    /// Helper: pull the `error` code out of a reject payload.
+    fn reject_code(outcome: EmbedProbe) -> Option<String> {
+        classify_embed_probe(outcome).map(|rpc| {
+            rpc.value
+                .get("error")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string()
+        })
+    }
+
+    /// A usable vector is the ONLY thing that passes the setup-time gate — the
+    /// config is then accepted and persisted.
+    #[test]
+    fn classify_embed_probe_accepts_only_usable_vector() {
+        assert!(
+            classify_embed_probe(EmbedProbe::Returned(vec![vec![0.1, 0.2, 0.3]])).is_none(),
+            "a non-empty vector must verify the endpoint"
+        );
+    }
+
+    /// Reachable but empty/zero-dim response is a failed verification, not a
+    /// valid embedder — never persist it.
+    #[test]
+    fn classify_embed_probe_rejects_empty_vectors() {
+        assert_eq!(
+            reject_code(EmbedProbe::Returned(vec![])).as_deref(),
+            Some("EMBEDDINGS_VERIFICATION_FAILED")
+        );
+        assert_eq!(
+            reject_code(EmbedProbe::Returned(vec![vec![]])).as_deref(),
+            Some("EMBEDDINGS_VERIFICATION_FAILED")
+        );
+    }
+
+    /// LM Studio idle ("No models loaded") must reject the save with the
+    /// one-step remediation code so the doomed config is never persisted — the
+    /// fix is verifying at setup, not suppressing the later flood.
+    #[test]
+    fn classify_embed_probe_rejects_no_model_loaded() {
+        let body = r#"Embedding API error (400 Bad Request): {"error":"No models loaded. Please load a model in the developer page or use the 'lms load' command."}"#;
+        let rpc = classify_embed_probe(EmbedProbe::Failed(body.to_string())).unwrap();
+        assert_eq!(
+            rpc.value.get("error").and_then(|v| v.as_str()),
+            Some("EMBEDDINGS_NO_MODEL_LOADED")
+        );
+        // The raw provider detail is preserved for the UI.
+        assert_eq!(rpc.value.get("detail").and_then(|v| v.as_str()), Some(body));
+    }
+
+    /// A 404/405 (no `/embeddings` route) keeps its dedicated code.
+    #[test]
+    fn classify_embed_probe_rejects_endpoint_absent() {
+        assert_eq!(
+            reject_code(EmbedProbe::Failed(
+                "Embedding API error (404 Not Found): no route".into()
+            ))
+            .as_deref(),
+            Some("EMBEDDINGS_ENDPOINT_NO_API")
+        );
+    }
+
+    /// Any other failure (5xx/auth/network) and timeouts both reject — the
+    /// endpoint didn't prove it can embed, so we don't accept it.
+    #[test]
+    fn classify_embed_probe_rejects_other_failures_and_timeout() {
+        assert_eq!(
+            reject_code(EmbedProbe::Failed(
+                "Embedding API error (500 Internal Server Error): boom".into()
+            ))
+            .as_deref(),
+            Some("EMBEDDINGS_VERIFICATION_FAILED")
+        );
+        assert_eq!(
+            reject_code(EmbedProbe::Failed("connection refused".into())).as_deref(),
+            Some("EMBEDDINGS_VERIFICATION_FAILED")
+        );
+        assert_eq!(
+            reject_code(EmbedProbe::TimedOut).as_deref(),
+            Some("EMBEDDINGS_VERIFICATION_FAILED")
         );
     }
 }

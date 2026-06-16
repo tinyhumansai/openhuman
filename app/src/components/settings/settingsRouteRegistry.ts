@@ -604,6 +604,15 @@ export const SETTINGS_ROUTE_REGISTRY: SettingsRegistryEntry[] = [
     navGroup: 'modelsInference',
   },
   {
+    id: 'agentbox',
+    titleKey: 'settings.agentbox.title',
+    descriptionKey: 'settings.agentbox.desc',
+    section: 'developer',
+    devOnly: true,
+    navGroup: 'modelsInference',
+    searchKeywords: ['agentbox', 'gmi', 'maas', 'marketplace'],
+  },
+  {
     id: 'webhooks-debug',
     titleKey: 'settings.developerMenu.webhooks.title',
     descriptionKey: 'settings.developerMenu.webhooks.desc',

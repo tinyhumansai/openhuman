@@ -3,17 +3,15 @@
 //! Each CEF webview is its own browser instance with its own DevTools
 //! channel (see [`super::in_process`]), so the multi-target multiplexer
 //! that used to live in this module has been simplified — there is no
-//! more `browser_ws_url()` HTTP discovery and no remote attach. The
-//! remaining helpers (`Target.getTargets` walk, `Target.attachToTarget`
+//! HTTP `/json/version` discovery and no remote attach. The remaining
+//! helpers (`Target.getTargets` walk, `Target.attachToTarget`
 //! flatten-attach, detach) still apply because the page itself may
 //! contain iframes / workers that the scanners care about.
-
-use std::time::Duration;
 
 use serde_json::{json, Value};
 use tauri::{AppHandle, Manager, Runtime};
 
-use super::{cdp_port, in_process::CdpRegistry, CdpConn, CDP_HOST};
+use super::{in_process::CdpRegistry, CdpConn};
 
 #[derive(Debug, Clone)]
 pub struct CdpTarget {
@@ -21,45 +19,6 @@ pub struct CdpTarget {
     pub kind: String,
     pub url: String,
     pub title: String,
-}
-
-/// Legacy TCP WebSocket discovery — kept for the per-scanner `CdpConn`
-/// duplicates that have not yet migrated to the in-process transport.
-/// New code paths use [`conn_for_account`] which goes through the
-/// in-process channel installed by `webview_accounts::open`.
-///
-/// Returns the browser-level WebSocket URL by hitting
-/// `http://{CDP_HOST}:{cdp_port()}/json/version`. Requires Chromium to
-/// have been spawned with `--remote-debugging-port=<cdp_port()>` — see
-/// `app/src-tauri/src/lib.rs`. Both launch and discovery resolve the port
-/// through [`cdp_port`] so `OPENHUMAN_CDP_PORT` overrides stay consistent.
-pub async fn browser_ws_url() -> Result<String, String> {
-    let client = reqwest::Client::builder()
-        .user_agent("openhuman-cdp/1.0")
-        .timeout(Duration::from_secs(5))
-        .build()
-        .map_err(|e| format!("reqwest build: {e}"))?;
-    let mut last_err: Option<String> = None;
-    for host in [CDP_HOST, "localhost"] {
-        let url = format!("http://{host}:{}/json/version", cdp_port());
-        match client.get(&url).send().await {
-            Ok(resp) => match resp.json::<Value>().await {
-                Ok(v) => {
-                    if let Some(ws) = v.get("webSocketDebuggerUrl").and_then(|x| x.as_str()) {
-                        return Ok(ws.to_string());
-                    }
-                    last_err = Some(format!("no webSocketDebuggerUrl in {url}"));
-                }
-                Err(e) => {
-                    last_err = Some(format!("parse {url}: {e}"));
-                }
-            },
-            Err(e) => {
-                last_err = Some(format!("GET {url}: {e}"));
-            }
-        }
-    }
-    Err(last_err.unwrap_or_else(|| "failed to resolve CDP websocket URL".to_string()))
 }
 
 /// Parse the response of a `Target.getTargets` CDP call into a list of
@@ -121,6 +80,25 @@ pub fn conn_for_account<R: Runtime>(
     Ok(CdpConn::new(transport))
 }
 
+/// Get a [`CdpConn`] for a webview keyed by its concrete label
+/// (e.g. `"meet-call-<request_id>"`). Generic counterpart of
+/// [`conn_for_account`] for webviews that aren't account scanners.
+///
+/// Falls back to [`super::in_process::install_for_label`] on a cache
+/// miss so a transient install race at window creation doesn't
+/// permanently lock the surface out of CDP.
+pub fn conn_for_label<R: Runtime>(app: &AppHandle<R>, label: &str) -> Result<CdpConn, String> {
+    let registry = app
+        .try_state::<CdpRegistry>()
+        .ok_or_else(|| "CdpRegistry not managed by app".to_string())?;
+    if let Some(transport) = registry.by_label(label) {
+        return Ok(CdpConn::new(transport));
+    }
+    let transport = super::in_process::install_for_label(label)
+        .map_err(|e| format!("no cdp transport for label {label} (install retry: {e})"))?;
+    Ok(CdpConn::new(transport))
+}
+
 /// Full short-lived attach sequence on the account's webview via the
 /// in-process channel: look up the [`CdpRegistry`] transport for the
 /// given account, find the matching page target via
@@ -137,33 +115,31 @@ where
     R: Runtime,
     F: Fn(&CdpTarget) -> bool,
 {
-    let mut cdp = conn_for_account(app, account_id)?;
-    let target = find_page_target_where(&mut cdp, pred).await?;
-    let attach = cdp
-        .call(
-            "Target.attachToTarget",
-            json!({ "targetId": target.id, "flatten": true }),
-            None,
-        )
-        .await?;
-    let session = attach
-        .get("sessionId")
-        .and_then(|x| x.as_str())
-        .ok_or_else(|| "attach missing sessionId".to_string())?
-        .to_string();
-    Ok((cdp, session))
+    let cdp = conn_for_account(app, account_id)?;
+    attach_matching_on_conn(cdp, pred).await
 }
 
-/// Legacy TCP-WS attach helper, kept for the per-scanner `CdpConn`
-/// duplicates that still discover targets via the global
-/// `Target.getTargets` walk. New code paths use
-/// [`connect_and_attach_matching_in_process`].
-pub async fn connect_and_attach_matching<F>(pred: F) -> Result<(CdpConn, String), String>
+/// Same as [`connect_and_attach_matching_in_process`] but keyed by the
+/// webview's concrete label rather than an account id. Used by Meet
+/// (window label `meet-call-{request_id}`) and any other CEF surface
+/// that isn't an account scanner.
+pub async fn connect_and_attach_matching_in_process_by_label<R, F>(
+    app: &AppHandle<R>,
+    label: &str,
+    pred: F,
+) -> Result<(CdpConn, String), String>
+where
+    R: Runtime,
+    F: Fn(&CdpTarget) -> bool,
+{
+    let cdp = conn_for_label(app, label)?;
+    attach_matching_on_conn(cdp, pred).await
+}
+
+async fn attach_matching_on_conn<F>(mut cdp: CdpConn, pred: F) -> Result<(CdpConn, String), String>
 where
     F: Fn(&CdpTarget) -> bool,
 {
-    let ws = browser_ws_url().await?;
-    let mut cdp = CdpConn::open_ws(&ws).await?;
     let target = find_page_target_where(&mut cdp, pred).await?;
     let attach = cdp
         .call(

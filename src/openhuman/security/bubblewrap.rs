@@ -49,8 +49,12 @@ impl Sandbox for BubblewrapSandbox {
             "/dev",
             "--proc",
             "/proc",
-            "--bind",
-            "/tmp",
+            // Private, empty /tmp inside the sandbox instead of sharing the
+            // host's read-write /tmp. Mirrors firejail.rs's `--private=home`
+            // least-privilege posture: the agent gets a scratch tmp that is
+            // discarded on exit and cannot read/overwrite other processes'
+            // host temp files, lockfiles, sockets, or staged secrets.
+            "--tmpfs",
             "/tmp",
             "--unshare-all",
             "--die-with-parent",
@@ -178,6 +182,39 @@ mod tests {
         assert!(
             args.contains(&"--proc".to_string()),
             "must include /proc mount"
+        );
+    }
+
+    #[test]
+    fn bubblewrap_wrap_command_uses_private_tmpfs_not_host_tmp() {
+        let sandbox = BubblewrapSandbox;
+        let mut cmd = Command::new("echo");
+        sandbox.wrap_command(&mut cmd).unwrap();
+
+        let args: Vec<String> = cmd
+            .get_args()
+            .map(|s| s.to_string_lossy().to_string())
+            .collect();
+
+        // The sandbox must mount a private tmpfs over /tmp ...
+        let tmpfs_pos = args.iter().position(|a| a == "--tmpfs");
+        assert!(
+            tmpfs_pos.is_some(),
+            "must include --tmpfs for a private /tmp"
+        );
+        assert_eq!(
+            args.get(tmpfs_pos.unwrap() + 1).map(String::as_str),
+            Some("/tmp"),
+            "--tmpfs must target /tmp"
+        );
+
+        // ... and must NOT read-write bind the host /tmp into the sandbox.
+        let has_tmp_rw_bind = args
+            .windows(3)
+            .any(|w| w[0] == "--bind" && w[1] == "/tmp" && w[2] == "/tmp");
+        assert!(
+            !has_tmp_rw_bind,
+            "must NOT bind host /tmp read-write into the sandbox"
         );
     }
 }

@@ -67,6 +67,7 @@ fn native_request_emits_thread_id_when_present() {
         stream_options: None,
         options: None,
         frequency_penalty: None,
+        max_tokens: None,
     };
     let json = serde_json::to_value(&req).unwrap();
     assert_eq!(
@@ -86,6 +87,7 @@ fn native_request_emits_thread_id_when_present() {
         stream_options: None,
         options: None,
         frequency_penalty: None,
+        max_tokens: None,
     };
     let json_no_thread = serde_json::to_value(&req_no_thread).unwrap();
     assert!(
@@ -107,6 +109,7 @@ fn native_request_serializes_frequency_penalty_only_when_set() {
         stream_options: None,
         options: None,
         frequency_penalty: Some(0.3),
+        max_tokens: None,
     };
     let json = serde_json::to_value(&base).unwrap();
     assert_eq!(
@@ -124,6 +127,74 @@ fn native_request_serializes_frequency_penalty_only_when_set() {
     assert!(
         json_none.get("frequency_penalty").is_none(),
         "absent frequency_penalty must be omitted so providers that reject it are unaffected"
+    );
+}
+
+#[test]
+fn native_request_serializes_max_tokens_only_when_set() {
+    // A set cap must reach the wire as OpenAI `max_tokens` so a credit-metered
+    // provider prices the request against a realistic output budget rather than
+    // the model's full window (TAURI-RUST-C62).
+    let with_cap = super::NativeChatRequest {
+        model: "anthropic/claude-fable-5".to_string(),
+        messages: Vec::new(),
+        temperature: Some(0.0),
+        stream: Some(false),
+        tools: None,
+        tool_choice: None,
+        thread_id: None,
+        stream_options: None,
+        options: None,
+        frequency_penalty: None,
+        max_tokens: Some(8192),
+    };
+    let json = serde_json::to_value(&with_cap).unwrap();
+    assert_eq!(
+        json.get("max_tokens").and_then(serde_json::Value::as_u64),
+        Some(8192),
+        "a set max_tokens must be forwarded so the provider's balance pre-flight is bounded"
+    );
+
+    let no_cap = super::NativeChatRequest {
+        max_tokens: None,
+        ..with_cap
+    };
+    let json_none = serde_json::to_value(&no_cap).unwrap();
+    assert!(
+        json_none.get("max_tokens").is_none(),
+        "absent max_tokens must be omitted so open-ended generations are unaffected"
+    );
+}
+
+#[test]
+fn responses_request_serializes_max_output_tokens_only_when_set() {
+    // The Responses-API branch must carry the cap as `max_output_tokens` so a
+    // capped request isn't silently uncapped when responses_api_primary is on
+    // (TAURI-RUST-C62).
+    let with_cap = super::compatible_types::ResponsesRequest {
+        model: "gpt-x".to_string(),
+        input: vec![],
+        instructions: None,
+        stream: Some(false),
+        store: Some(false),
+        max_output_tokens: Some(8192),
+    };
+    let json = serde_json::to_value(&with_cap).unwrap();
+    assert_eq!(
+        json.get("max_output_tokens")
+            .and_then(serde_json::Value::as_u64),
+        Some(8192),
+        "a set cap must reach the Responses API as max_output_tokens"
+    );
+
+    let no_cap = super::compatible_types::ResponsesRequest {
+        max_output_tokens: None,
+        ..with_cap
+    };
+    let json_none = serde_json::to_value(&no_cap).unwrap();
+    assert!(
+        json_none.get("max_output_tokens").is_none(),
+        "absent cap must be omitted"
     );
 }
 
@@ -248,6 +319,7 @@ async fn streaming_chat_frequency_penalty_rejection_not_reported_to_sentry() {
         }),
         options: None,
         frequency_penalty: Some(super::compatible_repeat::CHAT_FREQUENCY_PENALTY),
+        max_tokens: None,
     };
     let (delta_tx, _delta_rx) = tokio::sync::mpsc::channel(8);
 
@@ -287,6 +359,7 @@ fn streaming_request_sets_stream_options_include_usage() {
         }),
         options: None,
         frequency_penalty: None,
+        max_tokens: None,
     };
     let json = serde_json::to_value(&req).unwrap();
     assert_eq!(
@@ -310,6 +383,7 @@ fn non_streaming_request_omits_stream_options() {
         stream_options: None,
         options: None,
         frequency_penalty: None,
+        max_tokens: None,
     };
     let json = serde_json::to_value(&req).unwrap();
     assert!(
@@ -333,6 +407,7 @@ fn ollama_options_num_ctx_serializes_correctly() {
             num_ctx: Some(32768),
         }),
         frequency_penalty: None,
+        max_tokens: None,
     };
     let json = serde_json::to_value(&req).unwrap();
     assert_eq!(
@@ -355,6 +430,7 @@ fn ollama_options_none_is_omitted() {
         stream_options: None,
         options: None,
         frequency_penalty: None,
+        max_tokens: None,
     };
     let json = serde_json::to_value(&req).unwrap();
     assert!(
@@ -862,12 +938,45 @@ fn build_responses_prompt_preserves_multi_turn_history() {
     assert_eq!(input[1].role, "assistant");
     assert_eq!(input[1].content[0].kind, "output_text");
     assert_eq!(input[1].content[0].text, "ack 1");
+    // A `tool` turn normalizes to the `assistant` role, so its content part
+    // MUST be `output_text` — the Responses API rejects `input_text` on an
+    // assistant item (Sentry TAURI-RUST-8FQ / GH #3624).
     assert_eq!(input[2].role, "assistant");
-    assert_eq!(input[2].content[0].kind, "input_text");
+    assert_eq!(input[2].content[0].kind, "output_text");
     assert_eq!(input[2].content[0].text, "{\"result\":\"ok\"}");
     assert_eq!(input[3].role, "user");
     assert_eq!(input[3].content[0].kind, "input_text");
     assert_eq!(input[3].content[0].text, "step 2");
+}
+
+/// Regression for Sentry TAURI-RUST-8FQ / GH #3624: the Responses API only
+/// accepts `output_text`/`refusal` for assistant items. `normalize_responses_role`
+/// folds `tool` into `assistant`, so the content kind must follow the normalized
+/// role — never the raw one. No assistant-role item may carry `input_text`.
+#[test]
+fn build_responses_prompt_tool_role_uses_output_text() {
+    let messages = vec![
+        ChatMessage::assistant("calling a tool"),
+        ChatMessage::tool("{\"result\":\"ok\"}"),
+        ChatMessage::user("thanks"),
+    ];
+
+    let (_instructions, input) = build_responses_prompt(&messages);
+
+    // The tool turn folds to assistant and must carry output_text.
+    assert_eq!(input[1].role, "assistant");
+    assert_eq!(input[1].content[0].kind, "output_text");
+
+    // Invariant: an assistant-role item never carries input_text.
+    for item in &input {
+        if item.role == "assistant" {
+            assert_eq!(
+                item.content[0].kind, "output_text",
+                "assistant-role item must use output_text, got {}",
+                item.content[0].kind
+            );
+        }
+    }
 }
 
 #[tokio::test]
@@ -878,6 +987,7 @@ async fn chat_via_responses_requires_non_system_message() {
             Some("test-key"),
             &[ChatMessage::system("policy")],
             "gpt-test",
+            None,
         )
         .await
         .expect_err("system-only fallback payload should fail");
@@ -936,6 +1046,7 @@ async fn streaming_chat_config_rejection_propagates_error_without_sentry_report(
         }),
         options: None,
         frequency_penalty: None,
+        max_tokens: None,
     };
     let (delta_tx, _delta_rx) = tokio::sync::mpsc::channel(8);
 
@@ -950,6 +1061,73 @@ async fn streaming_chat_config_rejection_propagates_error_without_sentry_report(
     assert!(
         transport.fetch_and_clear_events().is_empty(),
         "provider config-rejection must not be reported to Sentry"
+    );
+}
+
+#[tokio::test]
+async fn streaming_chat_byo_auth_failure_propagates_error_without_sentry_report() {
+    // Guardrail for #3671 (TAURI-RUST-DHM): a missing/invalid BYO API key on a
+    // non-backend custom provider returns 401 with an auth-error body. The
+    // error must still propagate to the caller, but it must NOT page Sentry —
+    // memory-tree extraction + memory jobs retry through the broken credential
+    // and previously flooded Sentry with thousands of identical events.
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(401).set_body_string(
+            r#"{"error":{"message":"Invalid or missing API key","type":"authentication_error"}}"#,
+        ))
+        .mount(&mock_server)
+        .await;
+
+    let transport = TestTransport::new();
+    let sentry_options = sentry::ClientOptions {
+        dsn: Some("https://public@sentry.invalid/1".parse().unwrap()),
+        transport: Some(Arc::new(transport.clone())),
+        ..Default::default()
+    };
+    let sentry_hub = Arc::new(sentry::Hub::new(
+        Some(Arc::new(sentry_options.into())),
+        Arc::new(Default::default()),
+    ));
+    let _sentry_guard = sentry::HubSwitchGuard::new(sentry_hub);
+
+    // `kiro` is the exact (user-named) custom provider from the Sentry report.
+    let provider = OpenAiCompatibleProvider::new("kiro", &mock_server.uri(), None, AuthStyle::None);
+    let request = NativeChatRequest {
+        model: "claude-sonnet-4.5".to_string(),
+        messages: vec![NativeMessage {
+            role: "user".to_string(),
+            content: Some("hello".into()),
+            tool_call_id: None,
+            tool_calls: None,
+            reasoning_content: None,
+        }],
+        temperature: Some(0.7),
+        stream: Some(true),
+        tools: None,
+        tool_choice: None,
+        thread_id: None,
+        stream_options: Some(super::compatible_types::OpenAiStreamOptions {
+            include_usage: true,
+        }),
+        options: None,
+        frequency_penalty: None,
+        max_tokens: None,
+    };
+    let (delta_tx, _delta_rx) = tokio::sync::mpsc::channel(8);
+
+    let err = provider
+        .stream_native_chat(None, &request, &delta_tx, 0)
+        .await
+        .expect_err("401 BYO auth failure must still propagate as Err");
+    assert!(
+        err.to_string().contains("streaming API error"),
+        "err: {err}"
+    );
+    assert!(
+        transport.fetch_and_clear_events().is_empty(),
+        "BYO provider auth failure must not be reported to Sentry"
     );
 }
 
@@ -1401,6 +1579,7 @@ async fn streaming_tool_call_captures_extra_content() {
         }),
         options: None,
         frequency_penalty: None,
+        max_tokens: None,
     };
     let (delta_tx, _delta_rx) = tokio::sync::mpsc::channel(64);
     let resp = provider
@@ -1461,6 +1640,7 @@ async fn streaming_empty_continuation_id_does_not_clobber_tool_call_id() {
         }),
         options: None,
         frequency_penalty: None,
+        max_tokens: None,
     };
     let (delta_tx, _delta_rx) = tokio::sync::mpsc::channel(64);
     let resp = provider
@@ -1515,6 +1695,7 @@ async fn streaming_parallel_tool_calls_preserve_ids_against_empty_continuations(
         }),
         options: None,
         frequency_penalty: None,
+        max_tokens: None,
     };
     let (delta_tx, _delta_rx) = tokio::sync::mpsc::channel(64);
     let resp = provider
@@ -1573,6 +1754,7 @@ async fn streaming_omitted_continuation_id_preserves_tool_call_id() {
         }),
         options: None,
         frequency_penalty: None,
+        max_tokens: None,
     };
     let (delta_tx, _delta_rx) = tokio::sync::mpsc::channel(64);
     let resp = provider

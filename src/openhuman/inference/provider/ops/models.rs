@@ -62,9 +62,9 @@ pub async fn list_configured_models_from_config(
         });
 
     let mut models_url = format!("{}/models", routing.endpoint);
-    if routing.using_oauth {
-        models_url =
-            append_query_param(&models_url, "client_version", openai_codex_client_version());
+    let codex_client_version = routing.using_oauth.then(openai_codex_client_version);
+    if let Some(client_version) = codex_client_version.as_deref() {
+        models_url = append_query_param(&models_url, "client_version", client_version);
     }
 
     log::debug!(

@@ -242,6 +242,22 @@ const modelsDebugGroup: DevGroup = {
       ),
     },
     {
+      id: 'agentbox',
+      titleKey: 'settings.agentbox.title',
+      descriptionKey: 'settings.agentbox.desc',
+      route: 'agentbox',
+      icon: (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"
+          />
+        </svg>
+      ),
+    },
+    {
       id: 'screen-awareness-debug',
       titleKey: 'settings.developerMenu.screenAwareness.title',
       descriptionKey: 'settings.developerMenu.screenAwareness.desc',

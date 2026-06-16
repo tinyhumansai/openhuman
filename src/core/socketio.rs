@@ -47,7 +47,7 @@ struct HandshakeAuth {
 /// A missing `Origin` header is treated as a native (non-browser) client
 /// and accepted — only the cross-origin browser-page case is the targeted
 /// bad actor here.
-fn origin_is_allowed(origin: Option<&str>) -> bool {
+pub(crate) fn origin_is_allowed(origin: Option<&str>) -> bool {
     let Some(origin) = origin else {
         return true; // native clients (CLI, Tauri shell) — no Origin header
     };
@@ -261,6 +261,22 @@ pub struct SubagentProgressDetail {
     /// consistent agent labels across timeline, sub-mascots, and drawer.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
+    /// Absolute path to the worker's isolated `git worktree` checkout
+    /// (on `subagent_completed`, when the worker ran with
+    /// `isolation = "worktree"`). Drives the inline worktree row's
+    /// open/diff/remove actions. `None` for non-isolated workers (#3376).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worktree_path: Option<String>,
+    /// Files (relative to the worktree root) the worker changed, snapshot
+    /// after the run (on `subagent_completed`). Absent for non-isolated
+    /// workers and clean worktrees.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub changed_files: Option<Vec<String>>,
+    /// Whether the worker's worktree had uncommitted changes after the run
+    /// (on `subagent_completed`). A dirty worktree must not be auto-removed —
+    /// the UI requires an explicit user decision. `None` for non-isolated.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dirty_status: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]

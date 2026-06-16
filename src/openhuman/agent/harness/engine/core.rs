@@ -25,6 +25,7 @@ use crate::openhuman::agent::cost::TurnCost;
 use crate::openhuman::agent::multimodal;
 use crate::openhuman::agent::stop_hooks::{current_stop_hooks, StopDecision, TurnState};
 use crate::openhuman::context::guard::{ContextCheckResult, ContextGuard};
+use crate::openhuman::context::{summarize_chat_history, EngineAutocompact};
 use crate::openhuman::inference::provider::{
     ChatMessage, ChatRequest, Provider, ProviderCapabilityError,
 };
@@ -68,6 +69,19 @@ fn truncate_with_ellipsis(s: &str, max: usize) -> String {
     format!("{head}…")
 }
 
+/// Resolve whether the current turn's model accepts image input.
+///
+/// The per-model/tier flag (`model_vision`, set at session build from
+/// `oh_tier_supports_vision` + the user's `model_registry.vision`) is
+/// authoritative. The provider-level `supports_vision()` is too coarse on the
+/// managed backend — it advertises `vision: true` for the backend as a whole,
+/// which would wrongly rehydrate images for non-vision tiers (e.g. the `chat-v1`
+/// orchestrator) and 400 on `image_url`. So it is only a fallback when no
+/// per-model scope is active (CLI / direct invocation / tests).
+fn turn_accepts_images(model_vision: Option<bool>, provider_supports_vision: bool) -> bool {
+    model_vision.unwrap_or(provider_supports_vision)
+}
+
 /// Run the agent loop over `history` using `tools`. `max_iterations` must be
 /// pre-normalized (callers map `0` to a sane default). See the module docs for
 /// the per-iteration flow.
@@ -90,6 +104,12 @@ pub(crate) async fn run_turn_engine(
     on_delta: Option<tokio::sync::mpsc::Sender<String>>,
     early_exit_tool_names: &[&str],
     run_queue: Option<Arc<RunQueue>>,
+    // When `Some`, the engine summarizes `history` in place once the context
+    // guard reports the window is filling (the soft compaction threshold).
+    // The main `Agent` path leaves this `None` — it compacts through its typed
+    // `ContextManager` in `observer.before_dispatch` instead — so only the
+    // sub-agent loop (which has no `ContextManager`) opts in.
+    autocompact: Option<&EngineAutocompact>,
 ) -> Result<TurnEngineOutcome> {
     // Resolve the model's context window once per turn. Local providers (e.g.
     // LM Studio) report their *runtime-loaded* window here, which can be far
@@ -171,6 +191,50 @@ pub(crate) async fn run_turn_engine(
                     "[agent_loop] context guard: compaction needed (>{:.0}% full)",
                     crate::openhuman::context::guard::COMPACTION_TRIGGER_THRESHOLD * 100.0
                 );
+                // Engine-level LLM autocompaction (sub-agent path opts in via
+                // `autocompact`; the main `Agent` path is `None` and compacts in
+                // `before_dispatch` instead). Runs BEFORE the hard token-budget
+                // trim below so the summary captures content the trim would
+                // otherwise drop. Feeds the guard's circuit breaker so three
+                // consecutive failures disable it and the next `check()` returns
+                // `ContextExhausted` rather than looping.
+                if let Some(ac) = autocompact {
+                    let summary_model = ac.summarizer_model.as_deref().unwrap_or(model);
+                    match summarize_chat_history(
+                        provider,
+                        history,
+                        summary_model,
+                        ac.keep_recent,
+                        ac.temperature,
+                    )
+                    .await
+                    {
+                        Ok(stats) if stats.messages_removed > 0 => {
+                            context_guard.record_compaction_success();
+                            tracing::info!(
+                                iteration,
+                                messages_removed = stats.messages_removed,
+                                approx_tokens_freed = stats.approx_tokens_freed,
+                                "[agent_loop] engine autocompaction freed context"
+                            );
+                        }
+                        Ok(_) => {
+                            tracing::debug!(
+                                iteration,
+                                "[agent_loop] engine autocompaction: nothing to summarize \
+                                 (history below keep_recent); relying on token-budget trim"
+                            );
+                        }
+                        Err(e) => {
+                            context_guard.record_compaction_failure();
+                            tracing::warn!(
+                                iteration,
+                                error = %e,
+                                "[agent_loop] engine autocompaction failed"
+                            );
+                        }
+                    }
+                }
             }
             ContextCheckResult::ContextExhausted {
                 utilization_pct,
@@ -265,13 +329,21 @@ pub(crate) async fn run_turn_engine(
 
         tracing::debug!(iteration, "[agent_loop] sending LLM request");
         let image_marker_count = multimodal::count_image_markers(history);
-        // A model accepts images when its provider advertises vision (managed
-        // backend) OR the user marked it vision-capable in `model_registry`
-        // (custom/BYOK) — surfaced via the `current_model_vision` task-local set
-        // at session build. Unset (CLI/tests) falls back to the provider flag.
-        let has_vision = provider.supports_vision()
-            || crate::openhuman::agent::harness::model_vision_context::current_model_vision()
-                .unwrap_or(false);
+        // Whether *this turn's model* accepts image input. The per-model/tier
+        // flag (`current_model_vision`, set at session build from
+        // `oh_tier_supports_vision` + the user's `model_registry.vision`) is the
+        // source of truth and is consulted FIRST. The provider-level
+        // `supports_vision()` is too coarse on the managed backend — it
+        // advertises `vision: true` for the backend as a whole, which would
+        // wrongly rehydrate images for non-vision tiers like `chat-v1` (the
+        // orchestrator) and 400 on `image_url`. So the provider flag is only a
+        // fallback when no per-model scope is active (CLI / direct invocation /
+        // tests). This keeps the placeholder on non-vision models and lets only
+        // the vision sub-agent's model rehydrate the image.
+        let has_vision = turn_accepts_images(
+            crate::openhuman::agent::harness::model_vision_context::current_model_vision(),
+            provider.supports_vision(),
+        );
         if image_marker_count > 0 && !has_vision {
             let cap_err = ProviderCapabilityError {
                 provider: provider_name.to_string(),
@@ -373,6 +445,7 @@ pub(crate) async fn run_turn_engine(
                     messages: &prepared_messages_vec,
                     tools: request_tools,
                     stream: delta_tx_opt.as_ref(),
+                    max_tokens: None,
                 },
                 model,
                 temperature,
@@ -781,3 +854,30 @@ pub(crate) async fn run_turn_engine(
         early_exit_tool: None,
     })
 }
+
+#[cfg(test)]
+mod gate_tests {
+    use super::turn_accepts_images;
+
+    #[test]
+    fn per_model_flag_overrides_coarse_provider_flag() {
+        // Managed backend advertises provider-level vision=true, but a non-vision
+        // tier (e.g. chat-v1 orchestrator) must keep the placeholder: per-model
+        // flag false wins → no rehydrate → no `image_url` 400.
+        assert!(!turn_accepts_images(Some(false), true));
+        // Vision tier (vision-v1 / the vision sub-agent): per-model flag true →
+        // rehydrate even if the provider flag were false.
+        assert!(turn_accepts_images(Some(true), false));
+    }
+
+    #[test]
+    fn falls_back_to_provider_when_no_scope() {
+        // CLI / direct invocation / tests: no per-model scope → provider flag.
+        assert!(turn_accepts_images(None, true));
+        assert!(!turn_accepts_images(None, false));
+    }
+}
+
+#[cfg(test)]
+#[path = "core_tests.rs"]
+mod tests;

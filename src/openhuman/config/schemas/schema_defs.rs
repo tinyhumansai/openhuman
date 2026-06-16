@@ -92,6 +92,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 optional_string("reasoning_provider", "Provider string for the main reasoning workload (e.g. 'cloud', 'ollama:llama3.1:8b', 'openai:gpt-4o')."),
                 optional_string("agentic_provider", "Provider string for sub-agent / tool-loop workloads."),
                 optional_string("coding_provider", "Provider string for code-generation workloads."),
+                optional_string("vision_provider", "Provider string for the vision / multimodal workload (managed default: vision-v1)."),
                 optional_string("memory_provider", "Provider string for memory-tree extract + summarise."),
                 optional_string("embeddings_provider", "Provider string for embedding generation."),
                 optional_string("heartbeat_provider", "Provider string for the heartbeat background-reasoning loop."),

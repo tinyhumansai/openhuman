@@ -44,6 +44,7 @@ mod token_budget;
 pub(crate) mod tool_filter;
 mod tool_loop;
 pub(crate) mod tool_result_artifacts;
+pub mod turn_attachments_context;
 pub mod worktree_context;
 
 pub use definition::{

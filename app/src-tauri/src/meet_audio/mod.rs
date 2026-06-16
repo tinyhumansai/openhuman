@@ -163,28 +163,43 @@ pub async fn start<R: Runtime>(
     // listener — we open a second session for the listener so the
     // two run concurrently without serialising on a single CDP
     // mailbox.
-    let (speak, captions) = match inject::install_audio_bridge(&meet_url, frame_bus_port).await {
+    let (speak, captions) = match inject::install_audio_bridge(
+        &app,
+        &request_id,
+        &meet_url,
+        frame_bus_port,
+    )
+    .await
+    {
         Ok((cdp, session)) => {
             // Spawn the caption listener on its own CDP attach so a
             // long Runtime.evaluate from one side never starves the
             // other. The second attach reuses the same CDP target.
-            let captions = match crate::cdp::connect_and_attach_matching(|t| {
-                t.url.starts_with(&meet_url)
-            })
-            .await
-            {
-                Ok((cdp_for_captions, session_for_captions)) => caption_listener::start(
-                    request_id.clone(),
-                    cdp_for_captions,
-                    session_for_captions,
-                ),
-                Err(err) => {
-                    log::warn!(
+            let captions_label = crate::meet_call::window_label_for(&request_id);
+            let captions_meet_url = meet_url.clone();
+            let captions_pred = move |t: &crate::cdp::target::CdpTarget| -> bool {
+                t.url.starts_with(&captions_meet_url)
+            };
+            let captions =
+                match crate::cdp::target::connect_and_attach_matching_in_process_by_label::<R, _>(
+                    &app,
+                    &captions_label,
+                    captions_pred,
+                )
+                .await
+                {
+                    Ok((cdp_for_captions, session_for_captions)) => caption_listener::start(
+                        request_id.clone(),
+                        cdp_for_captions,
+                        session_for_captions,
+                    ),
+                    Err(err) => {
+                        log::warn!(
                         "[meet-audio] caption listener cdp attach failed request_id={request_id} err={err}"
                     );
-                    caption_listener_disabled(request_id.clone())
-                }
-            };
+                        caption_listener_disabled(request_id.clone())
+                    }
+                };
             let speak = speak_pump::start(app.clone(), request_id.clone(), cdp, session);
             (speak, captions)
         }

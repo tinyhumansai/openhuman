@@ -1,0 +1,33 @@
+id = "vision_agent"
+display_name = "Vision"
+delegate_name = "analyze_image"
+when_to_use = "Image / screenshot understanding specialist — describe, OCR, read charts/diagrams, compare images, or locate UI elements in attached images. Route here whenever the task hinges on the *content of an image* (attachments the user sent, a captured screenshot, or an on-disk image file). Rides the multimodal `vision-v1` tier, so it is always image-capable. Read-only — it inspects images and reports back; it does not edit files or run commands."
+temperature = 0.3
+max_iterations = 6
+max_result_chars = 16000
+sandbox_mode = "read_only"
+omit_identity = true
+omit_memory_context = true
+omit_safety_preamble = true
+omit_skills_catalog = true
+
+# Multimodal tier. `ModelSpec::Hint("vision")` resolves to `vision-v1`, which
+# `oh_tier_supports_vision` reports as vision-capable — so this sub-agent's
+# model is always treated as image-enabled (managed or BYOK), and the turn
+# engine never strips the attached image at the vision gate.
+[model]
+hint = "vision"
+
+[tools]
+# Attached images arrive inline in the sub-agent's context via the multimodal
+# pipeline (no tool call needed to "see" them). These tools cover the extra
+# actions a vision task may need: pulling another image file in, inspecting
+# image metadata, and grabbing/reviewing a screen capture. Unknown names are
+# dropped silently at spawn, so the screen tools are harmless when the screen
+# intelligence surface is disabled.
+named = [
+    "file_read",
+    "image_info",
+    "screen_intelligence_capture_image_ref",
+    "screen_intelligence_vision_recent",
+]

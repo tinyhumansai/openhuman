@@ -116,6 +116,12 @@ const RESOURCE_CATALOG: &[PromptResource] = &[
         content: include_str!("../agent_registry/agents/critic/prompt.md"),
     },
     PromptResource {
+        uri: "openhuman://prompts/agents/vision_agent",
+        name: "vision_agent",
+        description: "Multimodal worker that analyses attached images for the vision tier.",
+        content: include_str!("../agent_registry/agents/vision_agent/prompt.md"),
+    },
+    PromptResource {
         uri: "openhuman://prompts/agents/archivist",
         name: "archivist",
         description: "Background worker that distils conversations into persistent memory.",

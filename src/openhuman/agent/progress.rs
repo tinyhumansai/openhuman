@@ -91,6 +91,18 @@ pub enum AgentProgress {
         iterations: u32,
         /// Character length of the sub-agent's final assistant text.
         output_chars: usize,
+        /// Absolute path to the worker's isolated `git worktree` checkout,
+        /// when it ran with `isolation = "worktree"` (#3376). `None` for
+        /// non-isolated (read-only / shared-workspace) workers.
+        worktree_path: Option<String>,
+        /// Files (relative to the worktree root) the worker changed, snapshot
+        /// from `git status` after the run. Empty for non-isolated workers or
+        /// a clean worktree.
+        changed_files: Vec<String>,
+        /// Whether the worker's worktree had uncommitted changes after the
+        /// run. A dirty worktree must not be auto-removed — surfaced so the UI
+        /// can require an explicit user decision. `None` for non-isolated.
+        dirty_status: Option<bool>,
     },
 
     /// A sub-agent failed.

@@ -81,6 +81,10 @@ allowlist = [
     # capture/session/listener state, and "what can you see" requests here;
     # desktop app operation still goes to desktop_control_agent.
     "screen_awareness_agent",
+    # Image-understanding specialist. Route anything that hinges on the content
+    # of an attached image / screenshot / on-disk image file here — it rides the
+    # multimodal `vision-v1` tier, so it can actually see the image.
+    "vision_agent",
     "skill_creator",
     "critic",
     "archivist",

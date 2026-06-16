@@ -117,6 +117,17 @@ impl OpenAiCompatibleProvider {
                     status,
                     &body,
                 );
+            } else if super::super::is_byo_provider_auth_failure_http(
+                self.name.as_str(),
+                status,
+                &body,
+            ) {
+                super::super::log_byo_provider_auth_failure(
+                    "streaming_chat",
+                    self.name.as_str(),
+                    Some(native_request.model.as_str()),
+                    status,
+                );
             } else if super::super::should_report_provider_http_failure(status) {
                 crate::core::observability::report_error(
                     message.as_str(),

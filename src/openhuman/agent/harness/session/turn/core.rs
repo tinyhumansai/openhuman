@@ -519,9 +519,20 @@ impl Agent {
             // overflow happens during the parent's poll on the way in
             // — verified against the `chat-harness-subagent` Playwright
             // lane crash on PR #3151.
-            let outcome = super::super::super::model_vision_context::with_current_model_vision(
-                model_vision,
-                Box::pin(super::super::super::engine::run_turn_engine(
+            // Carry the current turn's image placeholders so a delegation to the
+            // vision sub-agent (analyze_image) can forward the attached image
+            // into its prompt — the orchestrator's own non-vision turn keeps the
+            // placeholder as text and never rehydrates it.
+            let turn_image_placeholders =
+                crate::openhuman::agent::multimodal::extract_image_placeholders_in_text(
+                    user_message,
+                );
+            let outcome =
+                super::super::super::turn_attachments_context::with_current_turn_image_placeholders(
+                    turn_image_placeholders,
+                    super::super::super::model_vision_context::with_current_model_vision(
+                        model_vision,
+                        Box::pin(super::super::super::engine::run_turn_engine(
                     provider.as_ref(),
                     &mut buf,
                     &mut tool_source,
@@ -539,9 +550,11 @@ impl Agent {
                     None, // the web bridge streams via on_progress deltas, not on_delta
                     &[],
                     turn_run_queue,
-                )),
-            )
-            .await?;
+                    None, // main agent compacts via its ContextManager in before_dispatch
+                        )),
+                    ),
+                )
+                .await?;
 
             // Pull the observer's accounting out, then drop it to release the
             // `&mut self` borrow so the epilogue can use `self`.

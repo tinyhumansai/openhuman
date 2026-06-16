@@ -66,6 +66,7 @@ pub(super) struct ModelSettingsUpdate {
     pub(super) reasoning_provider: Option<String>,
     pub(super) agentic_provider: Option<String>,
     pub(super) coding_provider: Option<String>,
+    pub(super) vision_provider: Option<String>,
     pub(super) memory_provider: Option<String>,
     pub(super) embeddings_provider: Option<String>,
     pub(super) heartbeat_provider: Option<String>,

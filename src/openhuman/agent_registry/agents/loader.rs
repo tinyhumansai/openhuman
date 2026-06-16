@@ -154,6 +154,11 @@ pub const BUILTINS: &[BuiltinAgent] = &[
         prompt_fn: super::critic::prompt::build,
     },
     BuiltinAgent {
+        id: "vision_agent",
+        toml: include_str!("vision_agent/agent.toml"),
+        prompt_fn: super::vision_agent::prompt::build,
+    },
+    BuiltinAgent {
         id: "archivist",
         toml: include_str!("archivist/agent.toml"),
         prompt_fn: super::archivist::prompt::build,
@@ -524,6 +529,24 @@ mod tests {
     }
 
     #[test]
+    fn vision_agent_loads_on_vision_hint() {
+        // The vision sub-agent rides the multimodal `vision-v1` tier (via the
+        // `vision` hint) so its model is image-capable, and it must be reachable
+        // from the orchestrator's subagent allowlist.
+        let def = find("vision_agent");
+        assert!(matches!(def.model, ModelSpec::Hint(ref h) if h == "vision"));
+
+        let orchestrator = find("orchestrator");
+        assert!(
+            orchestrator
+                .subagents
+                .iter()
+                .any(|s| matches!(s, SubagentEntry::AgentId(id) if id == "vision_agent")),
+            "orchestrator must list vision_agent in its subagents allowlist"
+        );
+    }
+
+    #[test]
     fn orchestrator_has_chat_hint_and_named_tools() {
         let def = find("orchestrator");
         assert!(matches!(def.model, ModelSpec::Hint(ref h) if h == "chat"));
@@ -788,7 +811,9 @@ mod tests {
         let def = find("morning_briefing");
         assert_eq!(def.sandbox_mode, SandboxMode::ReadOnly);
         assert!(matches!(def.tools, ToolScope::Wildcard));
-        assert!(!def.omit_memory_context);
+        // The brief pulls its own last-24h memory via the `memory_tree`
+        // `cover_window` tool, so the stale all-time memory blob is suppressed.
+        assert!(def.omit_memory_context);
         assert!(def.omit_identity);
         assert!(def.omit_safety_preamble);
         assert_eq!(def.max_iterations, 8);

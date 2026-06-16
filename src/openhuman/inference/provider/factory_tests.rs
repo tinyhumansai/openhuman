@@ -835,6 +835,7 @@ fn known_tiers_pass() {
         "coding-v1",
         "reasoning-quick-v1",
         "summarization-v1",
+        "vision-v1",
     ] {
         assert!(
             is_known_openhuman_tier(tier),
@@ -850,6 +851,7 @@ fn known_hints_pass() {
     assert!(is_known_openhuman_tier("hint:agentic"));
     assert!(is_known_openhuman_tier("hint:coding"));
     assert!(is_known_openhuman_tier("hint:summarization"));
+    assert!(is_known_openhuman_tier("hint:vision"));
 }
 
 #[test]
@@ -904,6 +906,15 @@ fn unknown_models_are_not_vision_capable() {
 }
 
 #[test]
+fn vision_tier_is_vision_capable() {
+    // The dedicated multimodal tier (and its hint form) reports vision support,
+    // so the turn engine's image gate accepts image turns for the vision
+    // sub-agent — managed or BYOK (which resolves via this same alias).
+    assert!(oh_tier_supports_vision("vision-v1"));
+    assert!(oh_tier_supports_vision("hint:vision"));
+}
+
+#[test]
 fn make_openhuman_backend_forwards_unknown_hint_verbatim() {
     // Unrecognised hint:* strings (e.g. hint:reaction for lightweight models)
     // must be forwarded to the backend unchanged. The backend is authoritative
@@ -914,7 +925,7 @@ fn make_openhuman_backend_forwards_unknown_hint_verbatim() {
     for hint in ["hint:reaction", "hint:garbage", "hint:lightweight"] {
         let mut config = Config::default();
         config.default_model = Some(hint.to_string());
-        let (_, model) = make_openhuman_backend(&config).expect("factory should succeed");
+        let (_, model) = make_openhuman_backend("chat", &config).expect("factory should succeed");
         assert_eq!(model, hint, "hint '{hint}' should pass through unchanged");
     }
 }
@@ -923,14 +934,14 @@ fn make_openhuman_backend_forwards_unknown_hint_verbatim() {
 fn make_openhuman_backend_translates_summarization_hint() {
     let mut config = Config::default();
     config.default_model = Some("hint:summarization".to_string());
-    let (_, model) = make_openhuman_backend(&config).expect("factory should succeed");
+    let (_, model) = make_openhuman_backend("chat", &config).expect("factory should succeed");
     assert_eq!(model, crate::openhuman::config::MODEL_SUMMARIZATION_V1);
 }
 
 #[test]
 fn make_openhuman_backend_reports_vision_capability() {
     let config = Config::default();
-    let (provider, _) = make_openhuman_backend(&config).expect("factory should succeed");
+    let (provider, _) = make_openhuman_backend("chat", &config).expect("factory should succeed");
     let caps = provider.capabilities();
     assert!(caps.native_tool_calling);
     assert!(
@@ -945,7 +956,7 @@ fn make_openhuman_backend_falls_back_for_invalid_model() {
     // The factory must silently fall back to reasoning-v1 (the platform default).
     let mut config = Config::default();
     config.default_model = Some("deepseek-v4-pro".to_string());
-    let (_, model) = make_openhuman_backend(&config).expect("factory should succeed");
+    let (_, model) = make_openhuman_backend("chat", &config).expect("factory should succeed");
     assert_eq!(
         model,
         crate::openhuman::config::MODEL_REASONING_V1,
@@ -957,7 +968,7 @@ fn make_openhuman_backend_falls_back_for_invalid_model() {
 fn make_openhuman_backend_keeps_valid_tier() {
     let mut config = Config::default();
     config.default_model = Some("chat-v1".to_string());
-    let (_, model) = make_openhuman_backend(&config).expect("factory should succeed");
+    let (_, model) = make_openhuman_backend("chat", &config).expect("factory should succeed");
     assert_eq!(model, "chat-v1");
 }
 
@@ -965,8 +976,25 @@ fn make_openhuman_backend_keeps_valid_tier() {
 fn make_openhuman_backend_keeps_reasoning_quick() {
     let mut config = Config::default();
     config.default_model = Some("reasoning-quick-v1".to_string());
-    let (_, model) = make_openhuman_backend(&config).expect("factory should succeed");
+    let (_, model) = make_openhuman_backend("chat", &config).expect("factory should succeed");
     assert_eq!(model, "reasoning-quick-v1");
+}
+
+#[test]
+fn make_openhuman_backend_pins_vision_role_to_vision_tier() {
+    // Regression (PR #3699): the managed default_model is chat-v1 (a NON-vision
+    // tier). When `vision_provider` is unset the vision workload resolves to the
+    // managed backend, so make_openhuman_backend must override the default model
+    // with `vision-v1` — otherwise `oh_tier_supports_vision` reports false and
+    // the turn engine strips every attached image, blinding the vision sub-agent.
+    let config = Config::default();
+    assert_eq!(config.default_model.as_deref(), Some("chat-v1"));
+    let (_, model) = make_openhuman_backend("vision", &config).expect("factory should succeed");
+    assert_eq!(model, crate::openhuman::config::MODEL_VISION_V1);
+    assert!(
+        oh_tier_supports_vision(&model),
+        "vision role must resolve to a vision-capable managed tier"
+    );
 }
 
 // ── BYOK fail-closed tests ────────────────────────────────────────────────────
@@ -1531,6 +1559,7 @@ async fn live_lmstudio_provider_streams_thinking_and_text() {
                 messages: &messages,
                 tools: None,
                 stream: Some(&tx),
+                max_tokens: None,
             },
             &resolved_model,
             0.0,
@@ -1589,6 +1618,7 @@ async fn live_ollama_provider_streams_text() {
                 messages: &messages,
                 tools: None,
                 stream: Some(&tx),
+                max_tokens: None,
             },
             &resolved_model,
             0.0,

@@ -82,6 +82,10 @@ uuid = { version = "1", features = ["v4"] }
 anyhow = "1.0"
 async-trait = "0.1"
 chacha20poly1305 = "0.10"
+# Wipe master keys / decrypted secret buffers from memory on drop (audit C9).
+# Already present transitively (resolved to 1.8.x via the *-dalek / cipher
+# crates); declared directly so the keyring module can `use zeroize::Zeroizing`.
+zeroize = "1"
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 hkdf = "0.12"
 hex = "0.4"

@@ -369,6 +369,7 @@ fn handle_update_model_settings(params: Map<String, Value>) -> ControllerFuture 
             reasoning_provider: update.reasoning_provider,
             agentic_provider: update.agentic_provider,
             coding_provider: update.coding_provider,
+            vision_provider: update.vision_provider,
             memory_provider: update.memory_provider,
             embeddings_provider: update.embeddings_provider,
             heartbeat_provider: update.heartbeat_provider,

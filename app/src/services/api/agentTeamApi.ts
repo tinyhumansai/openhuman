@@ -5,9 +5,11 @@
  * ledger (PR1, #3546): the read paths `agent_team_list`, `agent_team_get`, and
  * `agent_team_list_messages`, plus two lifecycle writes added with quality-gated
  * completion — `agent_team_complete_task` and `agent_team_shutdown_member`.
- * Creating teams, assigning and claiming tasks, and posting messages stay the
- * agents' job (driven over the same controllers from the run loop), so those
- * write methods are deliberately absent here.
+ * PR4 adds the two user-driven writes the Teams UI needs: `messageMember`
+ * (address a named teammate / broadcast) and `startMember` (spawn a live worker
+ * on a task). Creating teams, assigning, and claiming tasks stay the agents'
+ * job (driven over the same controllers from the run loop), so those write
+ * methods are deliberately absent here.
  *
  * The Rust controllers serialize their row types with
  * `#[serde(rename_all = "camelCase")]`, so the wire payload is already camelCase
@@ -105,6 +107,19 @@ export interface MemberShutdown {
   member: AgentTeamMember;
   releasedTaskIds: string[];
 }
+
+/**
+ * Outcome of starting a live run for a member. Mirrors Rust `StartMemberOutcome`
+ * (internally-tagged on `kind`): `started` carries the dispatched `runId` and the
+ * claimed task; the rest explain why no worker was spawned.
+ */
+export type StartMemberOutcome =
+  | { kind: 'started'; runId: string; task: AgentTeamTask }
+  | { kind: 'blocked'; unmet: string[] }
+  | { kind: 'alreadyClaimed' }
+  | { kind: 'alreadyActive' }
+  | { kind: 'noClaimableTask' }
+  | { kind: 'unknownTask' };
 
 /** Parsed payload of a `team_message` run event. Mirrors the Rust `json!` body. */
 export interface TeamMessagePayload {
@@ -256,6 +271,66 @@ export const agentTeamApi = {
       params: { teamId, memberId },
     });
     log('shutdownMember released=%d', response.result.releasedTaskIds.length);
+    return response.result;
+  },
+
+  /**
+   * Send a message to a named teammate (or broadcast when `toMemberId` is
+   * omitted). `fromMemberId` is omitted for a lead/user-originated message — the
+   * core stores it with `from = "lead"`. Returns the appended message event.
+   */
+  messageMember: async (params: {
+    teamId: string;
+    toMemberId?: string;
+    fromMemberId?: string;
+    content: string;
+    visibility?: string;
+  }): Promise<TeamMessage> => {
+    const { teamId, toMemberId, fromMemberId, content, visibility } = params;
+    if (!teamId) throw new Error('agentTeamApi.messageMember: teamId is required');
+    if (!content.trim()) throw new Error('agentTeamApi.messageMember: content is required');
+    log('messageMember teamId=%s to=%o from=%o', teamId, toMemberId, fromMemberId);
+    const response = await callCoreRpc<{ message: RawRunEvent }>({
+      method: 'openhuman.agent_team_message_member',
+      params: {
+        teamId,
+        content,
+        ...(fromMemberId ? { fromMemberId } : {}),
+        ...(toMemberId ? { toMemberId } : {}),
+        ...(visibility ? { visibility } : {}),
+      },
+    });
+    const event = response.message;
+    return {
+      runId: event.runId,
+      sequence: event.sequence,
+      eventType: event.eventType,
+      payload: readMessagePayload(event.payload),
+      timestamp: event.timestamp,
+    };
+  },
+
+  /**
+   * Start a live run for a member: the core claims a task (the explicit `taskId`,
+   * else the member's next claimable one) and spawns a worker that runs it to
+   * completion. Returns a {@link StartMemberOutcome} — `started` (worker
+   * dispatched) or a reason no work began.
+   */
+  startMember: async (params: {
+    teamId: string;
+    memberId: string;
+    taskId?: string;
+  }): Promise<StartMemberOutcome> => {
+    const { teamId, memberId, taskId } = params;
+    if (!teamId || !memberId) {
+      throw new Error('agentTeamApi.startMember: teamId and memberId are required');
+    }
+    log('startMember teamId=%s memberId=%s taskId=%o', teamId, memberId, taskId);
+    const response = await callCoreRpc<{ result: StartMemberOutcome }>({
+      method: 'openhuman.agent_team_start_member',
+      params: { teamId, memberId, ...(taskId ? { taskId } : {}) },
+    });
+    log('startMember kind=%s', response.result.kind);
     return response.result;
   },
 };

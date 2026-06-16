@@ -15,7 +15,7 @@ use crate::rpc::RpcOutcome;
 
 use super::types::{
     BackendMeetHarnessResponseRequest, BackendMeetJoinRequest, BackendMeetJoinResponse,
-    BackendMeetLeaveRequest, BackendMeetSpeakRequest,
+    BackendMeetLeaveRequest, BackendMeetSpeakRequest, MeetingSessionStatus,
 };
 
 const ALLOWED_HOSTS: &[(&str, &str)] = &[
@@ -48,7 +48,7 @@ fn transcript_turns_to_chat_batch(
             continue;
         }
         let author = if turn.role.eq_ignore_ascii_case("assistant") {
-            "OpenHuman"
+            "Tiny"
         } else {
             "Meeting participant"
         };
@@ -293,7 +293,7 @@ pub async fn handle_join(params: Map<String, Value>) -> Result<Value, String> {
 
     let display_name = match &req.display_name {
         Some(name) => validate_display_name(name).map_err(|e| format!("[agent_meetings] {e}"))?,
-        None => "OpenHuman".to_string(),
+        None => "Tiny".to_string(),
     };
 
     let inferred = infer_platform(&normalized_url);
@@ -326,6 +326,14 @@ pub async fn handle_join(params: Map<String, Value>) -> Result<Value, String> {
     mgr.emit("bot:join", join_payload)
         .await
         .map_err(|e| format!("[agent_meetings] emit failed: {e}"))?;
+
+    // Active mode (listen_only = false, the modal's "respond when addressed"
+    // toggle) enables in-call agency for just this meeting, so the toggle
+    // "just works" without flipping the global config. Passive joins leave
+    // the meeting unmarked (default: listen-only / transcribe-only).
+    if req.listen_only == Some(false) {
+        super::in_call::mark_meeting_active(req.correlation_id.as_deref()).await;
+    }
 
     let response = BackendMeetJoinResponse {
         ok: true,
@@ -418,16 +426,14 @@ pub async fn handle_notification_action(params: Map<String, Value>) -> Result<Va
         "[agent_meetings] handle_notification_action entry"
     );
 
-    let config = crate::openhuman::config::Config::load_or_init()
-        .await
-        .map_err(|e| format!("[agent_meetings] config load failed: {e}"))?;
-
-    let now_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
-
     match action_id.as_str() {
         "join_meeting" => {
             let meeting_id = meeting_id.ok_or("[agent_meetings] missing meeting_id for join")?;
             let meet_url = meet_url.ok_or("[agent_meetings] missing meet_url for join")?;
+            let config = crate::openhuman::config::Config::load_or_init()
+                .await
+                .map_err(|e| format!("[agent_meetings] config load failed: {e}"))?;
+            let now_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
 
             tracing::debug!(meeting_id = %meeting_id, "[agent_meetings] joining meeting");
 
@@ -452,6 +458,10 @@ pub async fn handle_notification_action(params: Map<String, Value>) -> Result<Va
         }
         "skip_meeting" => {
             let meeting_id = meeting_id.ok_or("[agent_meetings] missing meeting_id for skip")?;
+            let config = crate::openhuman::config::Config::load_or_init()
+                .await
+                .map_err(|e| format!("[agent_meetings] config load failed: {e}"))?;
+            let now_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
 
             tracing::debug!(meeting_id = %meeting_id, "[agent_meetings] skipping meeting");
 
@@ -470,6 +480,9 @@ pub async fn handle_notification_action(params: Map<String, Value>) -> Result<Va
             let meeting_id =
                 meeting_id.ok_or("[agent_meetings] missing meeting_id for always_join")?;
             let meet_url = meet_url.ok_or("[agent_meetings] missing meet_url for always_join")?;
+            let config = crate::openhuman::config::Config::load_or_init()
+                .await
+                .map_err(|e| format!("[agent_meetings] config load failed: {e}"))?;
 
             tracing::debug!(meeting_id = %meeting_id, "[agent_meetings] always_join: flipping policy");
 
@@ -489,6 +502,7 @@ pub async fn handle_notification_action(params: Map<String, Value>) -> Result<Va
 
             let response = handle_join(join_params).await?;
 
+            let now_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
             super::store::update_session_status(
                 &config,
                 &meeting_id,
@@ -539,7 +553,6 @@ pub async fn handle_speak(params: Map<String, Value>) -> Result<Value, String> {
     let outcome = RpcOutcome::new(json!({ "ok": true }), vec![]);
     outcome.into_cli_compatible_json()
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -569,6 +582,37 @@ mod tests {
     #[test]
     fn rejects_unknown_host() {
         assert!(validate_meeting_url("https://example.com/meeting").is_err());
+    }
+
+    #[tokio::test]
+    async fn notification_action_requires_action_id() {
+        let err = handle_notification_action(Map::new()).await.unwrap_err();
+        assert!(err.contains("action_id"));
+    }
+
+    #[tokio::test]
+    async fn notification_action_rejects_unknown_action() {
+        let mut params = Map::new();
+        params.insert("action_id".to_string(), json!("explode"));
+        let err = handle_notification_action(params).await.unwrap_err();
+        assert!(err.contains("unknown action_id"));
+    }
+
+    #[tokio::test]
+    async fn notification_action_join_requires_meet_url() {
+        let mut params = Map::new();
+        params.insert("action_id".to_string(), json!("join_meeting"));
+        params.insert("payload".to_string(), json!({ "meeting_id": "m-1" }));
+        let err = handle_notification_action(params).await.unwrap_err();
+        assert!(err.contains("meet_url"));
+    }
+
+    #[tokio::test]
+    async fn notification_action_skip_requires_meeting_id() {
+        let mut params = Map::new();
+        params.insert("action_id".to_string(), json!("skip_meeting"));
+        let err = handle_notification_action(params).await.unwrap_err();
+        assert!(err.contains("missing meeting_id"));
     }
 
     #[test]
@@ -609,7 +653,7 @@ mod tests {
         assert_eq!(batch.platform, "backend_meet");
         assert_eq!(batch.messages.len(), 2);
         assert_eq!(batch.messages[0].author, "Meeting participant");
-        assert_eq!(batch.messages[1].author, "OpenHuman");
+        assert_eq!(batch.messages[1].author, "Tiny");
         assert!(batch.messages[0].text.contains("summarize"));
     }
 
@@ -822,29 +866,6 @@ mod tests {
         )
         .expect("batch");
         assert_eq!(batch.messages.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn notification_action_rejects_unknown_action() {
-        let params: Map<String, Value> = serde_json::from_value(json!({
-            "action_id": "unknown_action",
-            "payload": {}
-        }))
-        .unwrap();
-        let result = handle_notification_action(params).await;
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("unknown action_id"));
-    }
-
-    #[tokio::test]
-    async fn notification_action_rejects_missing_action_id() {
-        let params: Map<String, Value> = serde_json::from_value(json!({
-            "payload": {"meeting_id": "x"}
-        }))
-        .unwrap();
-        let result = handle_notification_action(params).await;
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("missing action_id"));
     }
 
     #[test]

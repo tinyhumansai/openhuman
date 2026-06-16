@@ -316,6 +316,13 @@ const Conversations = ({
   // the composer's image-attachment affordance (docs flow regardless). Resolved
   // against the non-attachment hint so the affordance is stable as you attach.
   const [modelSupportsVision, setModelSupportsVision] = useState(false);
+  // Whether a vision-capable delegate (the `vision` sub-agent) is reachable.
+  // When it is, an image may be attached and routed to that sub-agent even if
+  // the active orchestrator model is non-vision — the orchestrator sees a text
+  // placeholder and delegates the image to the vision sub-agent. Resolved from
+  // the `vision` workload tier (vision-v1 on the managed backend, or the BYOK
+  // model routed to the Vision workload).
+  const [visionDelegateAvailable, setVisionDelegateAvailable] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -323,23 +330,30 @@ const Conversations = ({
       try {
         const profile = agentProfiles.find(p => p.id === selectedAgentProfileId);
         // Resolve the actually-selected profile's model so `modelSupportsVision`
-        // reflects the real tier. Attachments never override the model: images
-        // are rejected up-front on non-vision profiles (validateAndReadFile →
-        // image_not_supported), and documents are text-extracted so any model
-        // handles them.
+        // reflects the real tier, AND the vision workload so we know whether a
+        // vision sub-agent can take the image. Documents are text-extracted so
+        // any model handles them.
         const hint = profile?.modelOverride ?? CHAT_MODEL_HINT;
-        const res = await callCoreRpc<{ model: string; vision?: boolean }>({
-          method: 'openhuman.inference_resolve_model',
-          params: { hint },
-        });
+        const [res, visionRes] = await Promise.all([
+          callCoreRpc<{ model: string; vision?: boolean }>({
+            method: 'openhuman.inference_resolve_model',
+            params: { hint },
+          }),
+          callCoreRpc<{ model: string; vision?: boolean }>({
+            method: 'openhuman.inference_resolve_model',
+            params: { hint: 'hint:vision' },
+          }).catch(() => ({ model: '', vision: false })),
+        ]);
         if (!cancelled) {
           setResolvedModel(res.model);
           setModelSupportsVision(res.vision === true);
+          setVisionDelegateAvailable(visionRes.vision === true);
         }
       } catch {
         if (!cancelled) {
           setResolvedModel(null);
           setModelSupportsVision(false);
+          setVisionDelegateAvailable(false);
         }
       }
     })();
@@ -756,7 +770,9 @@ const Conversations = ({
         file,
         acceptedImageCount,
         acceptedFileCount,
-        modelSupportsVision
+        // Allow the image when the active model is vision-capable OR a vision
+        // sub-agent can take it (orchestrator delegates the image onward).
+        modelSupportsVision || visionDelegateAvailable
       );
       if ('error' in result) {
         const { error } = result;

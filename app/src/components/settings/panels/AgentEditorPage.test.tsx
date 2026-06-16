@@ -86,6 +86,24 @@ describe('AgentEditorPage', () => {
     expect(mockNavigate).toHaveBeenCalledWith('/settings/agents');
   });
 
+  it('offers the vision tier + hint as model options', async () => {
+    mockCreate.mockResolvedValue(agent({ id: 'looker', name: 'Looker' }));
+    renderAt('/settings/agents/new');
+
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Looker' } });
+    fireEvent.change(screen.getByLabelText('Description'), {
+      target: { value: 'Looks at images.' },
+    });
+    // Both the vision hint and the resolved tier alias are selectable.
+    expect(screen.getByRole('option', { name: 'hint:vision' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'vision-v1' })).toBeInTheDocument();
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'hint:vision' } });
+
+    fireEvent.click(screen.getByRole('button', { name: /Create agent/ }));
+    await waitFor(() => expect(mockCreate).toHaveBeenCalledTimes(1));
+    expect(mockCreate.mock.calls[0][0].model).toBe('hint:vision');
+  });
+
   it('picks tools from the searchable modal and shows chips', async () => {
     renderAt('/settings/agents/new');
 
