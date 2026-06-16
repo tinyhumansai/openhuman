@@ -156,6 +156,9 @@ pub(crate) fn parse_provider_tool_call_from_value(
                 arguments: normalize_function_arguments(Some(serde_json::Value::String(
                     call.arguments,
                 ))),
+                // Preserve Gemini's thought_signature through the stored-history
+                // recovery path so it is echoed on the next turn (TAURI-RUST-4PK).
+                extra_content: call.extra_content,
             });
         }
     }
@@ -176,6 +179,9 @@ pub(crate) fn parse_provider_tool_call_from_value(
         id,
         name: name.to_string(),
         arguments: normalize_function_arguments(function.get("arguments").cloned()),
+        // Carry Gemini's thought_signature if the stored value had one
+        // (TAURI-RUST-4PK).
+        extra_content: value.get("extra_content").cloned(),
     })
 }
 
@@ -239,10 +245,18 @@ pub(crate) fn build_responses_prompt(
             continue;
         }
 
+        // Key the content-part kind on the NORMALIZED role, not the raw one.
+        // `normalize_responses_role` folds `tool` (and any non-user role) into
+        // `assistant`; the Responses API only accepts `output_text`/`refusal`
+        // for assistant items, so the kind must track the same normalized value.
+        // Reading `message.role` here instead let a `tool` turn become an
+        // assistant item carrying `input_text`, which OpenAI rejects with
+        // "Invalid value: 'input_text'" (Sentry TAURI-RUST-8FQ / GH #3624).
+        let role = normalize_responses_role(&message.role);
         input.push(ResponsesInput {
-            role: normalize_responses_role(&message.role).to_string(),
+            role: role.to_string(),
             content: vec![ResponsesContentPart {
-                kind: if message.role == "assistant" {
+                kind: if role == "assistant" {
                     "output_text".to_string()
                 } else {
                     "input_text".to_string()

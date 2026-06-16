@@ -671,6 +671,7 @@ impl Provider for Round22Provider {
                 id: "round22-call".to_string(),
                 name: "round22_tool".to_string(),
                 arguments: "{}".to_string(),
+                extra_content: None,
             }],
             usage: None,
             reasoning_content: None,

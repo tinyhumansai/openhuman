@@ -17,6 +17,7 @@ use axum::{
 use openhuman_core::openhuman::channels::providers::telegram::TelegramChannel;
 use openhuman_core::openhuman::channels::providers::web::{
     cancel_chat, start_chat, subscribe_web_channel_events, test_support as web_test_support,
+    ChatRequestMetadata,
 };
 use openhuman_core::openhuman::channels::providers::yuanbao::{
     connection::YuanbaoConnection, YuanbaoChannel, YuanbaoConfig,
@@ -347,6 +348,7 @@ async fn web_round19_covers_classifier_variants_and_cancel_cleanup() {
         None,
         None,
         None,
+        ChatRequestMetadata::default(),
     )
     .await
     .expect("start forced web chat");

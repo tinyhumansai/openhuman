@@ -5,8 +5,9 @@ import type { ToastNotification } from '../../../types/intelligence';
 import { MemoryWorkspace } from '../../intelligence/MemoryWorkspace';
 import { ToastContainer } from '../../intelligence/Toast';
 import { VaultHealthChecklist } from '../../intelligence/VaultHealthChecklist';
+import PanelPage from '../../layout/PanelPage';
 import MemoryWindowControl from '../components/MemoryWindowControl';
-import SettingsHeader from '../components/SettingsHeader';
+import SettingsBackButton from '../components/SettingsBackButton';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 interface MemoryDataPanelProps {
@@ -17,7 +18,7 @@ interface MemoryDataPanelProps {
 
 const MemoryDataPanel = ({ embedded = false }: MemoryDataPanelProps = {}) => {
   const { t } = useT();
-  const { navigateBack, breadcrumbs } = useSettingsNavigation();
+  const { navigateBack } = useSettingsNavigation();
   const [toasts, setToasts] = useState<ToastNotification[]>([]);
 
   const addToast = useCallback((toast: Omit<ToastNotification, 'id'>) => {
@@ -48,42 +49,38 @@ const MemoryDataPanel = ({ embedded = false }: MemoryDataPanelProps = {}) => {
   );
 
   return (
-    <div className="z-10 relative">
-      {!embedded && (
-        <SettingsHeader
-          title={t('memory.title')}
-          showBackButton={true}
-          onBack={navigateBack}
-          breadcrumbs={breadcrumbs}
-        />
-      )}
+    <PanelPage
+      className="z-10"
+      contentClassName=""
+      description={embedded ? undefined : t('devOptions.memoryInspectionDesc')}
+      leading={embedded ? undefined : <SettingsBackButton onBack={navigateBack} />}>
       <div className={embedded ? 'space-y-4' : 'p-4 space-y-4'}>
-        <section className="rounded-xl border border-stone-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 p-4 space-y-3">
-          <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+        <section className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 space-y-3">
+          <h3 className="text-sm font-semibold text-neutral-800 dark:text-neutral-100">
             {t('memoryData.howItWorks')}
           </h3>
           <dl className="space-y-2.5">
             <div>
-              <dt className="text-xs font-semibold text-stone-900 dark:text-neutral-100">
+              <dt className="text-xs font-semibold text-neutral-800 dark:text-neutral-100">
                 {t('memoryData.workspaceVault')}
               </dt>
-              <dd className="text-xs leading-relaxed text-stone-600 dark:text-neutral-300">
+              <dd className="text-xs leading-relaxed text-neutral-500 dark:text-neutral-400">
                 {t('memoryData.workspaceVaultDesc')}
               </dd>
             </div>
             <div>
-              <dt className="text-xs font-semibold text-stone-900 dark:text-neutral-100">
+              <dt className="text-xs font-semibold text-neutral-800 dark:text-neutral-100">
                 {t('memoryData.connectedSources')}
               </dt>
-              <dd className="text-xs leading-relaxed text-stone-600 dark:text-neutral-300">
+              <dd className="text-xs leading-relaxed text-neutral-500 dark:text-neutral-400">
                 {t('memoryData.connectedSourcesDesc')}
               </dd>
             </div>
             <div>
-              <dt className="text-xs font-semibold text-stone-900 dark:text-neutral-100">
+              <dt className="text-xs font-semibold text-neutral-800 dark:text-neutral-100">
                 {t('memoryData.internalFiles')}
               </dt>
-              <dd className="text-xs leading-relaxed text-stone-600 dark:text-neutral-300">
+              <dd className="text-xs leading-relaxed text-neutral-500 dark:text-neutral-400">
                 {t('memoryData.internalFilesDesc')}
               </dd>
             </div>
@@ -94,7 +91,7 @@ const MemoryDataPanel = ({ embedded = false }: MemoryDataPanelProps = {}) => {
         <MemoryWorkspace onToast={addToast} />
       </div>
       <ToastContainer notifications={toasts} onRemove={removeToast} />
-    </div>
+    </PanelPage>
   );
 };
 

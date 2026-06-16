@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
 import {
@@ -9,6 +9,7 @@ import {
   openhumanTaskSourcesPreviewFilter,
   openhumanTaskSourcesRemove,
   openhumanTaskSourcesStatus,
+  openhumanTaskSourcesSync,
   openhumanTaskSourcesUpdate,
   type TaskContainer,
   type TaskSource,
@@ -16,7 +17,18 @@ import {
   type TaskSourceProvider,
   type TaskSourcesStatus,
 } from '../../../utils/tauriCommands';
+import Button from '../../ui/Button';
 import SettingsHeader from '../components/SettingsHeader';
+import {
+  SettingsBadge,
+  SettingsCheckbox,
+  SettingsEmptyState,
+  SettingsRow,
+  SettingsSection,
+  SettingsSelect,
+  SettingsStatusLine,
+  SettingsTextField,
+} from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 const PROVIDERS: TaskSourceProvider[] = ['github', 'notion', 'linear', 'clickup'];
@@ -76,7 +88,28 @@ function buildFilter(
   }
 }
 
-const TaskSourcesPanel = () => {
+function formatSyncNotice(outcomes: Array<{ fetched: number; routed: number; pruned?: number }>): {
+  fetched: number;
+  routed: number;
+  pruned: number;
+} {
+  return outcomes.reduce<{ fetched: number; routed: number; pruned: number }>(
+    (totals, outcome) => ({
+      fetched: totals.fetched + outcome.fetched,
+      routed: totals.routed + outcome.routed,
+      pruned: totals.pruned + (outcome.pruned ?? 0),
+    }),
+    { fetched: 0, routed: 0, pruned: 0 }
+  );
+}
+
+interface TaskSourcesPanelProps {
+  /** When true the panel is hosted inside another settings page (the
+   *  Integrations tabs) — skip the standalone SettingsHeader chrome. */
+  embedded?: boolean;
+}
+
+const TaskSourcesPanel = ({ embedded = false }: TaskSourcesPanelProps) => {
   const { t } = useT();
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
 
@@ -86,6 +119,16 @@ const TaskSourcesPanel = () => {
   const [status, setStatus] = useState<TaskSourcesStatus | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const loadingRef = useRef(loading);
+  const busyKeyRef = useRef(busyKey);
+
+  useEffect(() => {
+    loadingRef.current = loading;
+  }, [loading]);
+
+  useEffect(() => {
+    busyKeyRef.current = busyKey;
+  }, [busyKey]);
 
   // ── create-form state ────────────────────────────────────────────
   const [provider, setProvider] = useState<TaskSourceProvider>('github');
@@ -102,27 +145,31 @@ const TaskSourcesPanel = () => {
     setDatabases([]);
   }, [provider]);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const [list, stat] = await Promise.all([
-        openhumanTaskSourcesList(),
-        openhumanTaskSourcesStatus(),
-      ]);
-      setSources(list);
-      setStatus(stat);
-    } catch (err) {
-      setError(
-        `${t('settings.taskSources.loadError')}: ${err instanceof Error ? err.message : String(err)}`
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, [t]);
+  const load = useCallback(
+    async (options?: { force?: boolean }) => {
+      if (!options?.force && (loadingRef.current || busyKeyRef.current !== null)) return;
+      setLoading(true);
+      setError(null);
+      try {
+        const [list, stat] = await Promise.all([
+          openhumanTaskSourcesList(),
+          openhumanTaskSourcesStatus(),
+        ]);
+        setSources(list);
+        setStatus(stat);
+      } catch (err) {
+        setError(
+          `${t('settings.taskSources.loadError')}: ${err instanceof Error ? err.message : String(err)}`
+        );
+      } finally {
+        setLoading(false);
+      }
+    },
+    [t]
+  );
 
   useEffect(() => {
-    void load();
+    void load({ force: true });
   }, [load]);
 
   const primaryLabel = useMemo(() => {
@@ -141,6 +188,7 @@ const TaskSourcesPanel = () => {
   }, [provider, t]);
 
   const addSource = async () => {
+    if (busyKey) return;
     setBusyKey('add');
     setError(null);
     setNotice(null);
@@ -153,7 +201,7 @@ const TaskSourcesPanel = () => {
       setName('');
       setPrimary('');
       setLabels('');
-      await load();
+      await load({ force: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -162,6 +210,7 @@ const TaskSourcesPanel = () => {
   };
 
   const previewFilter = async () => {
+    if (busyKey) return;
     setBusyKey('preview');
     setError(null);
     setNotice(null);
@@ -181,6 +230,7 @@ const TaskSourcesPanel = () => {
   // Fetch the databases the connected account exposes (Notion) so the user can
   // pick one instead of pasting a raw id.
   const browseDatabases = async () => {
+    if (busyKey) return;
     setBusyKey('databases');
     setError(null);
     setNotice(null);
@@ -198,6 +248,7 @@ const TaskSourcesPanel = () => {
   };
 
   const toggleSource = async (source: TaskSource) => {
+    if (busyKey) return;
     setBusyKey(`toggle:${source.id}`);
     setError(null);
     try {
@@ -211,6 +262,7 @@ const TaskSourcesPanel = () => {
   };
 
   const fetchNow = async (source: TaskSource) => {
+    if (busyKey) return;
     setBusyKey(`fetch:${source.id}`);
     setError(null);
     setNotice(null);
@@ -219,7 +271,7 @@ const TaskSourcesPanel = () => {
       // Refresh the source list first (updates lastFetchAt/lastStatus);
       // `load()` resets the error/notice, so set the outcome message
       // *after* it so the message isn't immediately cleared.
-      await load();
+      await load({ force: true });
       if (outcome.error) {
         setError(outcome.error);
       } else {
@@ -227,6 +279,34 @@ const TaskSourcesPanel = () => {
           t('settings.taskSources.fetchResult')
             .replace('{routed}', String(outcome.routed))
             .replace('{fetched}', String(outcome.fetched))
+            .replace('{pruned}', String(outcome.pruned ?? 0))
+        );
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyKey(null);
+    }
+  };
+
+  const syncAll = async () => {
+    if (busyKey) return;
+    setBusyKey('sync');
+    setError(null);
+    setNotice(null);
+    try {
+      const outcomes = await openhumanTaskSourcesSync();
+      await load({ force: true });
+      const firstError = outcomes.find(outcome => outcome.error)?.error;
+      if (firstError) {
+        setError(firstError);
+      } else {
+        const totals = formatSyncNotice(outcomes);
+        setNotice(
+          t('settings.taskSources.fetchResult')
+            .replace('{routed}', String(totals.routed))
+            .replace('{fetched}', String(totals.fetched))
+            .replace('{pruned}', String(totals.pruned))
         );
       }
     } catch (err) {
@@ -237,6 +317,7 @@ const TaskSourcesPanel = () => {
   };
 
   const removeSource = async (source: TaskSource) => {
+    if (busyKey) return;
     if (!window.confirm(t('settings.taskSources.removeConfirm'))) return;
     setBusyKey(`remove:${source.id}`);
     setError(null);
@@ -251,232 +332,270 @@ const TaskSourcesPanel = () => {
   };
 
   return (
-    <div data-testid="task-sources-panel">
-      <SettingsHeader
-        title={t('settings.taskSources.title')}
-        showBackButton={true}
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
+    <div className="z-10 relative" data-testid="task-sources-panel">
+      {!embedded && (
+        <SettingsHeader
+          title={t('settings.taskSources.title')}
+          showBackButton={true}
+          onBack={navigateBack}
+          breadcrumbs={breadcrumbs}
+        />
+      )}
 
-      <div className="p-4 space-y-5">
-        <section className="space-y-1">
-          <p className="text-xs text-stone-500 dark:text-neutral-400">
+      <div className="p-4 pt-2 space-y-5">
+        <div className="space-y-1">
+          <p className="text-xs text-neutral-500 dark:text-neutral-400">
             {t('settings.taskSources.description')}
           </p>
-          <p className="text-xs text-stone-400 dark:text-neutral-500">
+          <p className="text-xs text-neutral-400 dark:text-neutral-500">
             {t('settings.taskSources.connectHint')}
           </p>
-        </section>
+        </div>
 
         {status && !status.enabled && (
           <div className="rounded-lg border border-amber-300 dark:border-amber-500/40 bg-amber-50 dark:bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-300">
             {t('settings.taskSources.disabledBanner')}
           </div>
         )}
-        {error && (
-          <div className="rounded-lg border border-red-300 dark:border-red-500/40 bg-red-50 dark:bg-red-500/10 px-4 py-3 text-sm text-red-700 dark:text-red-300">
-            {error}
-          </div>
-        )}
-        {notice && (
-          <div className="rounded-lg border border-sky-300 dark:border-sky-500/40 bg-sky-50 dark:bg-sky-500/10 px-4 py-3 text-sm text-sky-700 dark:text-sky-300">
-            {notice}
-          </div>
-        )}
+
+        <SettingsStatusLine saving={false} savedNote={notice} error={error} savingLabel="" />
 
         {/* ── Add a source ─────────────────────────────────────────── */}
-        <section className="rounded-xl border border-stone-200 dark:border-neutral-800 p-4 space-y-3">
-          <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
-            {t('settings.taskSources.addTitle')}
-          </h3>
+        <SettingsSection title={t('settings.taskSources.addTitle')}>
+          <SettingsRow
+            label={t('settings.taskSources.provider')}
+            htmlFor="task-source-provider"
+            stacked
+            control={
+              <SettingsSelect
+                id="task-source-provider"
+                value={provider}
+                onChange={e => setProvider(e.target.value as TaskSourceProvider)}
+                className="w-full">
+                {PROVIDERS.map(p => (
+                  <option key={p} value={p}>
+                    {providerLabel(p, t)}
+                  </option>
+                ))}
+              </SettingsSelect>
+            }
+          />
 
-          <label className="block text-xs text-stone-500 dark:text-neutral-400">
-            {t('settings.taskSources.provider')}
-            <select
-              className="mt-1 w-full rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100"
-              value={provider}
-              onChange={e => setProvider(e.target.value as TaskSourceProvider)}>
-              {PROVIDERS.map(p => (
-                <option key={p} value={p}>
-                  {providerLabel(p, t)}
-                </option>
-              ))}
-            </select>
-          </label>
+          <SettingsRow
+            label={t('settings.taskSources.name')}
+            htmlFor="task-source-name"
+            stacked
+            control={
+              <SettingsTextField
+                id="task-source-name"
+                type="text"
+                placeholder={t('settings.taskSources.namePlaceholder')}
+                value={name}
+                onChange={e => setName(e.target.value)}
+                aria-label={t('settings.taskSources.name')}
+              />
+            }
+          />
 
-          <label className="block text-xs text-stone-500 dark:text-neutral-400">
-            {t('settings.taskSources.name')}
-            <input
-              type="text"
-              className="mt-1 w-full rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100"
-              placeholder={t('settings.taskSources.namePlaceholder')}
-              value={name}
-              onChange={e => setName(e.target.value)}
-            />
-          </label>
-
-          <label className="block text-xs text-stone-500 dark:text-neutral-400">
-            {primaryLabel}
-            <input
-              type="text"
-              className="mt-1 w-full rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100"
-              value={primary}
-              onChange={e => setPrimary(e.target.value)}
-            />
-          </label>
+          <SettingsRow
+            label={primaryLabel}
+            htmlFor="task-source-primary"
+            stacked
+            control={
+              <SettingsTextField
+                id="task-source-primary"
+                type="text"
+                value={primary}
+                onChange={e => setPrimary(e.target.value)}
+                aria-label={primaryLabel}
+              />
+            }
+          />
 
           {provider === 'notion' && (
-            <div className="space-y-1">
-              <button
-                type="button"
-                className="btn btn-outline btn-sm"
-                disabled={busyKey === 'databases'}
-                onClick={() => void browseDatabases()}>
-                {busyKey === 'databases'
-                  ? t('settings.taskSources.notion.loadingDatabases')
-                  : t('settings.taskSources.notion.browseDatabases')}
-              </button>
-              {databases.length > 0 && (
-                <select
-                  className="mt-1 w-full rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100"
-                  value={primary}
-                  onChange={e => setPrimary(e.target.value)}>
-                  <option value="">{t('settings.taskSources.notion.selectDatabase')}</option>
-                  {databases.map(db => (
-                    <option key={db.id} value={db.id}>
-                      {db.title}
-                    </option>
-                  ))}
-                </select>
-              )}
-            </div>
+            <SettingsRow
+              stacked
+              control={
+                <div className="space-y-1">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="xs"
+                    disabled={busyKey !== null}
+                    onClick={() => void browseDatabases()}>
+                    {busyKey === 'databases'
+                      ? t('settings.taskSources.notion.loadingDatabases')
+                      : t('settings.taskSources.notion.browseDatabases')}
+                  </Button>
+                  {databases.length > 0 && (
+                    <SettingsSelect
+                      value={primary}
+                      onChange={e => setPrimary(e.target.value)}
+                      className="w-full mt-1">
+                      <option value="">{t('settings.taskSources.notion.selectDatabase')}</option>
+                      {databases.map(db => (
+                        <option key={db.id} value={db.id}>
+                          {db.title}
+                        </option>
+                      ))}
+                    </SettingsSelect>
+                  )}
+                </div>
+              }
+            />
           )}
 
           {provider === 'github' && (
-            <label className="block text-xs text-stone-500 dark:text-neutral-400">
-              {t('settings.taskSources.github.labels')}
-              <input
-                type="text"
-                className="mt-1 w-full rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100"
-                value={labels}
-                onChange={e => setLabels(e.target.value)}
-              />
-            </label>
+            <SettingsRow
+              label={t('settings.taskSources.github.labels')}
+              htmlFor="task-source-labels"
+              stacked
+              control={
+                <SettingsTextField
+                  id="task-source-labels"
+                  type="text"
+                  value={labels}
+                  onChange={e => setLabels(e.target.value)}
+                  aria-label={t('settings.taskSources.github.labels')}
+                />
+              }
+            />
           )}
 
-          <label className="flex items-center gap-2 text-xs text-stone-600 dark:text-neutral-300">
-            <input
-              type="checkbox"
-              checked={assignedToMe}
-              onChange={e => setAssignedToMe(e.target.checked)}
-            />
-            {t('settings.taskSources.assignedToMe')}
-          </label>
+          <SettingsRow
+            htmlFor="task-source-assigned"
+            label={t('settings.taskSources.assignedToMe')}
+            control={
+              <SettingsCheckbox
+                id="task-source-assigned"
+                checked={assignedToMe}
+                onCheckedChange={next => setAssignedToMe(next)}
+                aria-label={t('settings.taskSources.assignedToMe')}
+              />
+            }
+          />
 
-          <div className="flex gap-2 pt-1">
-            <button
+          <div className="flex gap-2 px-4 py-3 border-t border-neutral-100 dark:border-neutral-800">
+            <Button
               type="button"
-              className="btn btn-primary btn-sm"
-              disabled={busyKey === 'add'}
+              variant="primary"
+              size="xs"
+              disabled={busyKey !== null}
               onClick={() => void addSource()}>
               {busyKey === 'add' ? t('settings.taskSources.adding') : t('settings.taskSources.add')}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
-              className="btn btn-outline btn-sm"
-              disabled={busyKey === 'preview'}
+              variant="secondary"
+              size="xs"
+              disabled={busyKey !== null}
               onClick={() => void previewFilter()}>
               {t('settings.taskSources.preview')}
-            </button>
+            </Button>
           </div>
-        </section>
+        </SettingsSection>
 
         {/* ── Configured sources ───────────────────────────────────── */}
-        <section className="space-y-2">
-          <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
-            {t('settings.taskSources.configured')}
-          </h3>
+        <SettingsSection title={t('settings.taskSources.configured')}>
+          <div className="px-4 py-3 border-b border-neutral-100 dark:border-neutral-800">
+            <Button
+              type="button"
+              variant="secondary"
+              size="xs"
+              disabled={loading || busyKey !== null || sources.length === 0}
+              onClick={() => void syncAll()}>
+              {busyKey === 'sync'
+                ? t('settings.taskSources.syncing')
+                : t('settings.taskSources.syncAll')}
+            </Button>
+          </div>
 
           {loading ? (
-            <p className="text-sm text-stone-400 dark:text-neutral-500">{t('common.loading')}</p>
+            <div className="px-4 py-3">
+              <p className="text-sm text-neutral-400 dark:text-neutral-500">
+                {t('common.loading')}
+              </p>
+            </div>
           ) : sources.length === 0 ? (
-            <p className="text-sm text-stone-400 dark:text-neutral-500">
-              {t('settings.taskSources.empty')}
-            </p>
+            <SettingsEmptyState label={t('settings.taskSources.empty')} />
           ) : (
-            <ul className="space-y-2">
+            <ul className="divide-y divide-neutral-100 dark:divide-neutral-800">
               {sources.map(source => (
                 <li
                   key={source.id}
-                  className="rounded-lg border border-stone-200 dark:border-neutral-800 p-3 space-y-2"
+                  className="p-3 space-y-2"
                   data-testid={`task-source-${source.id}`}>
                   <div className="flex items-start justify-between gap-2">
                     <div>
-                      <p className="text-sm font-medium text-stone-900 dark:text-neutral-100">
+                      <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">
                         {source.name || providerLabel(source.provider, t)}
                       </p>
-                      <p className="text-xs text-stone-400 dark:text-neutral-500">
+                      <p className="text-xs text-neutral-400 dark:text-neutral-500">
                         {providerLabel(source.provider, t)}
                         {source.target === 'agent_todo_proactive'
                           ? ` · ${t('settings.taskSources.proactive')}`
                           : ''}
                       </p>
-                      <p className="text-xs text-stone-400 dark:text-neutral-500">
+                      <p className="text-xs text-neutral-400 dark:text-neutral-500">
                         {t('settings.taskSources.lastFetch')}:{' '}
                         {source.lastFetchAt
                           ? new Date(source.lastFetchAt).toLocaleString()
                           : t('settings.taskSources.never')}
                       </p>
                     </div>
-                    <span
-                      className={`text-xs rounded-full px-2 py-0.5 ${
-                        source.enabled
-                          ? 'bg-sage-100 text-sage-700 dark:bg-sage-500/15 dark:text-sage-300'
-                          : 'bg-stone-100 text-stone-500 dark:bg-neutral-800 dark:text-neutral-400'
-                      }`}>
+                    <SettingsBadge variant={source.enabled ? 'success' : 'neutral'}>
                       {source.enabled
                         ? t('settings.taskSources.statusEnabled')
                         : t('settings.taskSources.statusDisabled')}
-                    </span>
+                    </SettingsBadge>
                   </div>
 
                   <div className="flex flex-wrap gap-2">
-                    <button
+                    <Button
                       type="button"
-                      className="btn btn-outline btn-xs"
-                      disabled={busyKey === `toggle:${source.id}`}
+                      variant="secondary"
+                      size="xs"
+                      disabled={busyKey !== null}
                       onClick={() => void toggleSource(source)}>
                       {source.enabled
                         ? t('settings.taskSources.disable')
                         : t('settings.taskSources.enable')}
-                    </button>
-                    <button
+                    </Button>
+                    <Button
                       type="button"
-                      className="btn btn-outline btn-xs"
-                      disabled={busyKey === `fetch:${source.id}`}
+                      variant="secondary"
+                      size="xs"
+                      disabled={busyKey !== null}
                       onClick={() => void fetchNow(source)}>
                       {busyKey === `fetch:${source.id}`
                         ? t('settings.taskSources.fetching')
                         : t('settings.taskSources.fetchNow')}
-                    </button>
-                    <button
+                    </Button>
+                    <Button
                       type="button"
-                      className="btn btn-ghost btn-xs text-red-600 dark:text-red-400"
-                      disabled={busyKey === `remove:${source.id}`}
+                      variant="danger"
+                      size="xs"
+                      disabled={busyKey !== null}
                       onClick={() => void removeSource(source)}>
                       {t('settings.taskSources.remove')}
-                    </button>
+                    </Button>
                   </div>
                 </li>
               ))}
             </ul>
           )}
 
-          <button type="button" className="btn btn-ghost btn-sm" onClick={() => void load()}>
-            {t('settings.taskSources.refresh')}
-          </button>
-        </section>
+          <div className="px-4 py-3 border-t border-neutral-100 dark:border-neutral-800">
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              disabled={loading || busyKey !== null}
+              onClick={() => void load()}>
+              {t('settings.taskSources.refresh')}
+            </Button>
+          </div>
+        </SettingsSection>
       </div>
     </div>
   );

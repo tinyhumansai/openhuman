@@ -2,13 +2,18 @@ use super::{
     all_web_channel_controller_schemas, all_web_channel_registered_controllers, cancel_chat,
     classify_inference_error, compose_system_prompt_suffix, event_session_id_for,
     extract_provider_error_detail, generic_inference_error_user_message,
-    inference_budget_exceeded_user_message, is_inference_budget_exceeded_error, json_output,
-    key_for, locale_reply_directive, normalize_model_override, optional_f64, optional_string,
-    provider_role_for_model_override, required_string, schemas,
-    set_test_forced_run_chat_task_error, start_chat, subscribe_web_channel_events, ClassifiedError,
+    in_flight_entries_for_test, inference_budget_exceeded_user_message,
+    is_inference_budget_exceeded_error, json_output, key_for, locale_reply_directive,
+    normalize_model_override, optional_bool, optional_f64, optional_string, optional_u64,
+    parallel_in_flight_entries_for_test, provider_role_for_model_override, required_string,
+    schemas, set_test_forced_run_chat_task_error, set_test_run_chat_task_block, start_chat,
+    subscribe_web_channel_events, ChatRequestMetadata, ClassifiedError, TestRunChatTaskBlock,
+    WebChatParams,
 };
 use crate::core::TypeSchema;
 use once_cell::sync::Lazy;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tokio::sync::Mutex as TokioMutex;
 use tokio::time::{timeout, Duration};
 
@@ -24,19 +29,49 @@ static FORCED_ERROR_TEST_LOCK: Lazy<TokioMutex<()>> = Lazy::new(|| TokioMutex::n
 
 #[tokio::test]
 async fn start_chat_validates_required_fields() {
-    let err = start_chat("", "thread", "hello", None, None, None, None, None)
-        .await
-        .expect_err("client id should be required");
+    let err = start_chat(
+        "",
+        "thread",
+        "hello",
+        None,
+        None,
+        None,
+        None,
+        None,
+        ChatRequestMetadata::default(),
+    )
+    .await
+    .expect_err("client id should be required");
     assert!(err.contains("client_id is required"));
 
-    let err = start_chat("client", "", "hello", None, None, None, None, None)
-        .await
-        .expect_err("thread id should be required");
+    let err = start_chat(
+        "client",
+        "",
+        "hello",
+        None,
+        None,
+        None,
+        None,
+        None,
+        ChatRequestMetadata::default(),
+    )
+    .await
+    .expect_err("thread id should be required");
     assert!(err.contains("thread_id is required"));
 
-    let err = start_chat("client", "thread", "   ", None, None, None, None, None)
-        .await
-        .expect_err("message should be required");
+    let err = start_chat(
+        "client",
+        "thread",
+        "   ",
+        None,
+        None,
+        None,
+        None,
+        None,
+        ChatRequestMetadata::default(),
+    )
+    .await
+    .expect_err("message should be required");
     assert!(err.contains("message is required"));
 }
 
@@ -51,6 +86,7 @@ async fn start_chat_rejects_prompt_injection_payload() {
         None,
         None,
         None,
+        ChatRequestMetadata::default(),
     )
     .await
     .expect_err("prompt-injection payload should be rejected");
@@ -94,6 +130,7 @@ async fn start_chat_emits_sanitized_chat_error_on_inference_failure() {
         None,
         None,
         None,
+        ChatRequestMetadata::default(),
     )
     .await
     .expect("start_chat should accept valid request");
@@ -505,6 +542,7 @@ async fn start_chat_chat_error_event_serializes_structured_fields_to_json_wire()
         None,
         None,
         None,
+        ChatRequestMetadata::default(),
     )
     .await
     .expect("start_chat should accept valid request");
@@ -599,6 +637,7 @@ async fn start_chat_emits_structured_rate_limit_metadata_on_chat_error_event() {
         None,
         None,
         None,
+        ChatRequestMetadata::default(),
     )
     .await
     .expect("start_chat should accept valid request");
@@ -1017,6 +1056,246 @@ fn classify_inference_error_model_not_found_404_stays_model_unavailable() {
     );
 }
 
+// ── #870 managed-backend errorCode classification (F2/F3/F4/F6/F8) ──
+
+/// Build a flattened managed-backend error string the way it reaches
+/// `classify_inference_error` after the typed provider error is collapsed
+/// to a `String` (the `"OpenHuman API error (<status>): <body>"` envelope
+/// from `inference::provider::ops::api_error`).
+fn managed_error(status: &str, body: &str) -> String {
+    format!("OpenHuman API error ({status}): {body}")
+}
+
+#[test]
+fn classify_inference_error_rate_limited_code_branches_first() {
+    // F2: a managed RATE_LIMITED carries the structured `retryAfter`, which
+    // the classifier must prefer and surface as a countdown hint.
+    let raw = managed_error(
+        "429 Too Many Requests",
+        r#"{"error":{"message":"slow down","errorCode":"RATE_LIMITED","retryAfter":30}}"#,
+    );
+    let classified = classify_inference_error(&raw);
+    assert_eq!(classified.error_type, "rate_limited");
+    assert!(classified.retryable, "rate limit is retryable in-thread");
+    assert_eq!(
+        classified.retry_after_ms,
+        Some(30_000),
+        "structured retryAfter must drive retry_after_ms"
+    );
+    assert!(
+        classified.message.contains("retry in this thread"),
+        "must use the in-thread retry copy: {}",
+        classified.message
+    );
+    assert!(
+        classified.message.contains("30 seconds"),
+        "must surface the retry countdown: {}",
+        classified.message
+    );
+}
+
+#[test]
+fn classify_inference_error_user_insufficient_credits_is_the_only_top_up_case() {
+    let raw = managed_error(
+        "402 Payment Required",
+        r#"{"error":{"errorCode":"USER_INSUFFICIENT_CREDITS","message":"no credits"}}"#,
+    );
+    let classified = classify_inference_error(&raw);
+    assert_eq!(classified.error_type, "budget_exhausted");
+    assert!(!classified.retryable, "out of credits is non-retryable");
+    assert_eq!(classified.source, "openhuman_billing");
+    assert!(
+        classified.message.contains("out of credits")
+            && classified.message.contains("Use Your Own Models"),
+        "must offer top-up or BYO switch: {}",
+        classified.message
+    );
+}
+
+#[test]
+fn classify_inference_error_upstream_unavailable_drops_user_blaming_copy() {
+    // F4: operator fault → "temporarily unavailable — we've been notified",
+    // never "check your API key".
+    let raw = managed_error(
+        "503 Service Unavailable",
+        r#"{"error":{"errorCode":"UPSTREAM_UNAVAILABLE","message":"upstream 5xx"}}"#,
+    );
+    let classified = classify_inference_error(&raw);
+    assert_eq!(classified.error_type, "provider_error");
+    assert!(classified.retryable);
+    assert!(
+        classified.message.contains("temporarily unavailable")
+            && classified.message.contains("we've been notified"),
+        "must use the operator-fault copy: {}",
+        classified.message
+    );
+    assert!(
+        !classified.message.to_lowercase().contains("api key"),
+        "must NOT blame the user's API key: {}",
+        classified.message
+    );
+}
+
+#[test]
+fn classify_inference_error_model_unavailable_code_is_operator_fault_not_user_pick() {
+    // F6: a managed MODEL_UNAVAILABLE is an operator registry/routing
+    // misconfig — route to provider_error, NOT the user "pick a different
+    // model" copy.
+    let raw = managed_error(
+        "404 Not Found",
+        r#"{"error":{"errorCode":"MODEL_UNAVAILABLE","message":"no route for model"}}"#,
+    );
+    let classified = classify_inference_error(&raw);
+    assert_eq!(
+        classified.error_type, "provider_error",
+        "managed MODEL_UNAVAILABLE is provider_error, not model_unavailable"
+    );
+    assert!(classified.retryable);
+    assert!(
+        classified.message.contains("temporarily unavailable"),
+        "must use the operator-fault copy: {}",
+        classified.message
+    );
+    assert!(
+        !classified
+            .message
+            .to_lowercase()
+            .contains("check your model"),
+        "must NOT tell the user to pick a model: {}",
+        classified.message
+    );
+}
+
+#[test]
+fn classify_inference_error_payload_too_large_is_new_non_retryable_bucket() {
+    // F3.
+    let raw = managed_error(
+        "413 Payload Too Large",
+        r#"{"error":{"errorCode":"PAYLOAD_TOO_LARGE","message":"too big"}}"#,
+    );
+    let classified = classify_inference_error(&raw);
+    assert_eq!(classified.error_type, "payload_too_large");
+    assert!(!classified.retryable, "payload too large is non-retryable");
+    assert!(
+        classified.message.contains("too large") && classified.message.contains("attachment"),
+        "must use the shorten/remove-attachment copy: {}",
+        classified.message
+    );
+}
+
+#[test]
+fn classify_inference_error_context_length_exceeded_reuses_context_overflow() {
+    let raw = managed_error(
+        "400 Bad Request",
+        r#"{"error":{"errorCode":"CONTEXT_LENGTH_EXCEEDED","message":"too long"}}"#,
+    );
+    let classified = classify_inference_error(&raw);
+    assert_eq!(classified.error_type, "context_overflow");
+    assert!(!classified.retryable);
+    assert!(
+        classified.message.contains("start a new chat"),
+        "must use the start-a-new-chat copy: {}",
+        classified.message
+    );
+}
+
+#[test]
+fn classify_inference_error_user_param_bad_request_is_actionable() {
+    let raw = managed_error(
+        "400 Bad Request",
+        r#"{"error":{"errorCode":"BAD_REQUEST","message":"unsupported parameter"}}"#,
+    );
+    let classified = classify_inference_error(&raw);
+    assert_eq!(classified.error_type, "provider_request_rejected");
+    assert!(!classified.retryable);
+    assert!(
+        classified.message.contains("Settings → AI → LLM"),
+        "user-param rejection points at Settings: {}",
+        classified.message
+    );
+}
+
+#[test]
+fn classify_inference_error_malformed_bad_request_uses_rephrase_copy() {
+    // F8: malformed (backend-flagged) → "rephrase, or new thread if it
+    // persists" — NOT an outright "start a new thread".
+    let raw = managed_error(
+        "400 Bad Request",
+        r#"{"error":{"errorCode":"BAD_REQUEST","malformed":true,"message":"unparseable"}}"#,
+    );
+    let classified = classify_inference_error(&raw);
+    assert_eq!(classified.error_type, "provider_request_rejected");
+    assert!(!classified.retryable);
+    assert!(
+        classified.message.contains("Try rephrasing it"),
+        "malformed must use the rephrase copy: {}",
+        classified.message
+    );
+}
+
+#[test]
+fn classify_inference_error_internal_error_is_generic_retryable() {
+    let raw = managed_error(
+        "500 Internal Server Error",
+        r#"{"error":{"errorCode":"INTERNAL_ERROR","message":"boom"}}"#,
+    );
+    let classified = classify_inference_error(&raw);
+    assert_eq!(classified.error_type, "inference");
+    assert!(classified.retryable);
+    assert!(
+        classified.message.contains("we've been notified"),
+        "must reassure the user it was reported: {}",
+        classified.message
+    );
+}
+
+#[test]
+fn classify_inference_error_byo_no_code_keeps_user_actionable_copy() {
+    // Managed-vs-BYO: a BYO provider key bad (direct 401, no errorCode) must
+    // STILL get the user-actionable "check your API key" copy via the
+    // substring fallback — the errorCode branch must not steal it.
+    let auth = r#"openai API error (401 Unauthorized): {"error":{"message":"Incorrect API key provided"}}"#;
+    let classified = classify_inference_error(auth);
+    assert_eq!(classified.error_type, "auth_error");
+    assert!(
+        classified.message.contains("check your API key"),
+        "BYO no-code 401 keeps the actionable copy: {}",
+        classified.message
+    );
+
+    // BYO model misconfig (no errorCode) stays `model_unavailable` with the
+    // "check your model settings" copy — distinct from the managed
+    // MODEL_UNAVAILABLE provider_error route above (F6).
+    let model = r#"custom_openai API error (404 Not Found): {"error":{"message":"model unavailable on this endpoint"}}"#;
+    let classified = classify_inference_error(model);
+    assert_eq!(classified.error_type, "model_unavailable");
+    assert!(
+        classified.message.contains("model settings"),
+        "BYO no-code model error keeps the actionable copy: {}",
+        classified.message
+    );
+}
+
+#[test]
+fn classify_inference_error_byo_with_error_code_token_is_not_managed() {
+    // CodeRabbit: a BYO / direct-provider error whose body happens to carry an
+    // `errorCode`-shaped field must NOT be classified on the managed-code
+    // branch — the managed-envelope gate keeps it on the substring ladder so
+    // the user-actionable BYO copy is preserved (and FE Sentry is unaffected).
+    let raw = r#"custom_openai API error (429 Too Many Requests): {"error":{"errorCode":"RATE_LIMITED","message":"slow down"}}"#;
+    let classified = classify_inference_error(raw);
+    // Still classified as rate_limited via the substring ladder, but through
+    // the BYO path: the message uses the existing substring-arm copy ("This is
+    // a transient upstream limit"), NOT the managed errorCode copy ("You can
+    // retry in this thread.").
+    assert_eq!(classified.error_type, "rate_limited");
+    assert!(
+        classified.message.contains("transient upstream limit"),
+        "BYO 429 must use the substring-arm copy, not the managed errorCode copy: {}",
+        classified.message
+    );
+}
+
 // ── Schema catalog ────────────────────────────────────────────
 
 #[test]
@@ -1173,6 +1452,8 @@ fn fp(
         target_agent_id: target.to_string(),
         provider_binding: provider_binding.to_string(),
         autonomy_signature: "sig-default".to_string(),
+        model_registry_signature: "registry-default".to_string(),
+        profile_signature: "profile-default".to_string(),
     }
 }
 
@@ -1187,6 +1468,35 @@ fn fingerprint_autonomy_change_is_cache_miss() {
     assert_ne!(
         base, changed,
         "a different autonomy signature must produce a cache miss"
+    );
+}
+
+#[test]
+fn fingerprint_model_registry_change_is_cache_miss() {
+    // Toggling a model's "Supports vision" flag keeps the same model id, so it
+    // changes neither model_override nor provider_binding. Without the registry
+    // signature the stale Agent (old build-time model_vision) would be reused.
+    let base = fp(None, None, "orchestrator", "openai:my-llava");
+    let mut changed = fp(None, None, "orchestrator", "openai:my-llava");
+    changed.model_registry_signature = "registry-after-vision-toggle".to_string();
+    assert_ne!(
+        base, changed,
+        "a model_registry change (vision toggle) must produce a cache miss → rebuild"
+    );
+}
+
+#[test]
+fn fingerprint_profile_change_is_cache_miss() {
+    // Switching the active agent profile on the same thread keeps the same
+    // model/agent/provider, so without the profile signature the previous
+    // profile's tool/skill/MCP/connector visibility would leak into the new
+    // profile's turns. A different profile signature must force a rebuild.
+    let base = fp(None, None, "orchestrator", "anthropic:claude-sonnet-4-6");
+    let mut changed = fp(None, None, "orchestrator", "anthropic:claude-sonnet-4-6");
+    changed.profile_signature = "profile-after-switch".to_string();
+    assert_ne!(
+        base, changed,
+        "a different profile signature must produce a cache miss → rebuild"
     );
 }
 
@@ -1314,4 +1624,304 @@ fn compose_system_prompt_suffix_combines_locale_and_profile() {
     );
     // Both absent → None preserves the agent's vanilla prompt.
     assert!(compose_system_prompt_suffix(None, None).is_none());
+}
+
+// ── PTT field additions (Task 1 of global-ptt plan) ─────────────────────────
+
+#[test]
+fn web_chat_schema_accepts_optional_ptt_fields() {
+    // Locate the `chat` schema via the public accessor.
+    let schema = schemas("chat");
+    let names: std::collections::HashSet<&str> = schema.inputs.iter().map(|f| f.name).collect();
+    assert!(
+        names.contains("speak_reply"),
+        "channel.web_chat schema must include optional speak_reply field"
+    );
+    assert!(
+        names.contains("source"),
+        "channel.web_chat schema must include optional source field"
+    );
+    assert!(
+        names.contains("session_id"),
+        "channel.web_chat schema must include optional session_id field"
+    );
+    // All three are optional.
+    for field in &["speak_reply", "source", "session_id"] {
+        let f = schema
+            .inputs
+            .iter()
+            .find(|f| f.name == *field)
+            .expect("field present");
+        assert!(!f.required, "{field} must be optional");
+    }
+    // Type assertions: ensure each field has the correct wire type.
+    let speak_reply = schema
+        .inputs
+        .iter()
+        .find(|f| f.name == "speak_reply")
+        .unwrap();
+    assert_eq!(
+        speak_reply.ty,
+        TypeSchema::Option(Box::new(TypeSchema::Bool)),
+        "speak_reply must be Option<bool>"
+    );
+    let source = schema.inputs.iter().find(|f| f.name == "source").unwrap();
+    assert_eq!(
+        source.ty,
+        TypeSchema::Option(Box::new(TypeSchema::String)),
+        "source must be Option<String>"
+    );
+    let session_id = schema
+        .inputs
+        .iter()
+        .find(|f| f.name == "session_id")
+        .unwrap();
+    assert_eq!(
+        session_id.ty,
+        TypeSchema::Option(Box::new(TypeSchema::U64)),
+        "session_id must be Option<u64>"
+    );
+}
+
+#[test]
+fn web_chat_params_deserialize_with_all_ptt_fields_omitted() {
+    let json = serde_json::json!({
+        "client_id": "c1",
+        "thread_id": "t1",
+        "message": "hello",
+    });
+    let parsed: WebChatParams = serde_json::from_value(json).unwrap();
+    assert_eq!(parsed.speak_reply, None);
+    assert_eq!(parsed.source, None);
+    assert_eq!(parsed.session_id, None);
+}
+
+#[test]
+fn web_chat_params_deserialize_with_all_ptt_fields_present() {
+    let json = serde_json::json!({
+        "client_id": "c1",
+        "thread_id": "t1",
+        "message": "hello",
+        "speak_reply": true,
+        "source": "ptt",
+        "session_id": 42_u64,
+    });
+    let parsed: WebChatParams = serde_json::from_value(json).unwrap();
+    assert_eq!(parsed.speak_reply, Some(true));
+    assert_eq!(parsed.source.as_deref(), Some("ptt"));
+    assert_eq!(parsed.session_id, Some(42));
+}
+
+/// Helper: poll the global in-flight table until `pred` holds (or time out).
+async fn wait_for_in_flight<F: Fn(&[(String, String)]) -> bool>(pred: F) -> Vec<(String, String)> {
+    timeout(Duration::from_secs(5), async {
+        loop {
+            let entries = in_flight_entries_for_test().await;
+            if pred(&entries) {
+                return entries;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("in-flight condition not met before timeout")
+}
+
+/// Helper: poll an `AtomicBool` until it is `true` (or time out).
+async fn wait_for_flag(flag: &Arc<AtomicBool>, what: &str) {
+    timeout(Duration::from_secs(5), async {
+        while !flag.load(Ordering::SeqCst) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("flag '{what}' was not set before timeout"));
+}
+
+fn make_block() -> TestRunChatTaskBlock {
+    TestRunChatTaskBlock {
+        started: Arc::new(AtomicBool::new(false)),
+        dropped: Arc::new(AtomicBool::new(false)),
+    }
+}
+
+/// Two turns on DISTINCT threads must be in-flight at the same time — the core
+/// invariant behind cross-thread parallel inference.
+#[tokio::test]
+async fn start_chat_runs_distinct_threads_concurrently() {
+    let _serial = FORCED_ERROR_TEST_LOCK.lock().await;
+    let block = make_block();
+    set_test_run_chat_task_block(Some(block.clone())).await;
+
+    let thread_a = "concurrent-thread-a";
+    let thread_b = "concurrent-thread-b";
+
+    start_chat(
+        "client-a",
+        thread_a,
+        "hello a",
+        None,
+        None,
+        None,
+        None,
+        None,
+        ChatRequestMetadata::default(),
+    )
+    .await
+    .expect("thread A should start");
+    start_chat(
+        "client-b",
+        thread_b,
+        "hello b",
+        None,
+        None,
+        None,
+        None,
+        None,
+        ChatRequestMetadata::default(),
+    )
+    .await
+    .expect("thread B should start");
+
+    // Both threads' turns must be parked in-flight simultaneously.
+    let entries = wait_for_in_flight(|e| {
+        let keys: Vec<&str> = e.iter().map(|(k, _)| k.as_str()).collect();
+        keys.contains(&thread_a) && keys.contains(&thread_b)
+    })
+    .await;
+    assert!(
+        entries.iter().any(|(k, _)| k == thread_a) && entries.iter().any(|(k, _)| k == thread_b),
+        "expected both threads in-flight concurrently, got {entries:?}"
+    );
+
+    // Cleanup: cancel both and clear the test hook.
+    let _ = cancel_chat("client-a", thread_a).await;
+    let _ = cancel_chat("client-b", thread_b).await;
+    set_test_run_chat_task_block(None).await;
+}
+
+/// `cancel_chat` must cooperatively tear down the in-flight turn (drop its
+/// future at the next await point) rather than leave it sleeping — proven by
+/// the parked future's `Drop` guard firing well before its 30s sleep elapses.
+#[tokio::test]
+async fn cancel_chat_cooperatively_stops_in_flight_turn() {
+    let _serial = FORCED_ERROR_TEST_LOCK.lock().await;
+    let block = make_block();
+    set_test_run_chat_task_block(Some(block.clone())).await;
+
+    let thread_id = "cancel-coop-thread";
+    let request_id = start_chat(
+        "cancel-client",
+        thread_id,
+        "park me",
+        None,
+        None,
+        None,
+        None,
+        None,
+        ChatRequestMetadata::default(),
+    )
+    .await
+    .expect("turn should start");
+
+    // Wait until the turn future has actually parked (guard created) — only then
+    // is a cooperative cancel meaningful.
+    wait_for_flag(&block.started, "turn started").await;
+    assert!(
+        !block.dropped.load(Ordering::SeqCst),
+        "turn should still be parked, not yet dropped"
+    );
+
+    let cancelled = cancel_chat("cancel-client", thread_id)
+        .await
+        .expect("cancel_chat should succeed");
+    assert_eq!(
+        cancelled.as_deref(),
+        Some(request_id.as_str()),
+        "cancel_chat should report the cancelled request id"
+    );
+
+    // The in-flight entry is removed and the parked future is dropped promptly
+    // (cooperative cancel), long before the 30s test sleep would elapse.
+    wait_for_in_flight(|e| !e.iter().any(|(k, _)| k == thread_id)).await;
+    wait_for_flag(&block.dropped, "turn future dropped by cooperative cancel").await;
+
+    set_test_run_chat_task_block(None).await;
+}
+
+/// Helper: poll the parallel in-flight lane until `pred` holds (or time out).
+async fn wait_for_parallel<F: Fn(&[(String, String)]) -> bool>(pred: F) -> Vec<(String, String)> {
+    timeout(Duration::from_secs(5), async {
+        loop {
+            let entries = parallel_in_flight_entries_for_test().await;
+            if pred(&entries) {
+                return entries;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("parallel in-flight condition not met before timeout")
+}
+
+/// A `parallel`-mode turn runs CONCURRENTLY with the primary turn on the SAME
+/// thread (it does not interrupt it), and a thread-level cancel tears down both.
+#[tokio::test]
+async fn parallel_turn_runs_concurrently_with_primary_on_same_thread() {
+    let _serial = FORCED_ERROR_TEST_LOCK.lock().await;
+    let block = make_block();
+    set_test_run_chat_task_block(Some(block.clone())).await;
+
+    let thread_id = "parallel-same-thread";
+
+    // Primary turn (default interrupt mode) parks in IN_FLIGHT.
+    start_chat(
+        "pp-client",
+        thread_id,
+        "primary",
+        None,
+        None,
+        None,
+        None,
+        None,
+        ChatRequestMetadata::default(),
+    )
+    .await
+    .expect("primary turn should start");
+    wait_for_in_flight(|e| e.iter().any(|(k, _)| k == thread_id)).await;
+
+    // Parallel turn on the SAME thread must NOT interrupt the primary — it
+    // lives in the parallel lane while the primary stays in-flight.
+    start_chat(
+        "pp-client",
+        thread_id,
+        "branch",
+        None,
+        None,
+        None,
+        None,
+        Some("parallel".to_string()),
+        ChatRequestMetadata::default(),
+    )
+    .await
+    .expect("parallel turn should start");
+
+    wait_for_parallel(|e| e.iter().any(|(_, t)| t == thread_id)).await;
+    // Primary is still in-flight — the parallel send did not interrupt it.
+    assert!(
+        in_flight_entries_for_test()
+            .await
+            .iter()
+            .any(|(k, _)| k == thread_id),
+        "primary turn must remain in-flight alongside the parallel turn"
+    );
+
+    // A thread-level cancel tears down BOTH the primary and the parallel turn.
+    cancel_chat("pp-client", thread_id)
+        .await
+        .expect("cancel should succeed");
+    wait_for_in_flight(|e| !e.iter().any(|(k, _)| k == thread_id)).await;
+    wait_for_parallel(|e| !e.iter().any(|(_, t)| t == thread_id)).await;
+
+    set_test_run_chat_task_block(None).await;
 }

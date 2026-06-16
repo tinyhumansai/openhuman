@@ -29,7 +29,6 @@ import { useNavigate } from 'react-router-dom';
 import { useT } from '../../lib/i18n/I18nContext';
 import { TaskKanbanBoard } from '../../pages/conversations/components/TaskKanbanBoard';
 import { isTaskThread } from '../../pages/conversations/utils/threadFilter';
-import type { AgentDefinitionDisplay } from '../../services/api/agentLibraryApi';
 import { threadApi } from '../../services/api/threadApi';
 import {
   TASK_SOURCES_THREAD_ID,
@@ -48,7 +47,6 @@ import {
 } from '../../store/threadSlice';
 import type { ThreadMessage } from '../../types/thread';
 import type { TaskBoard, TaskBoardCard, TaskBoardCardStatus } from '../../types/turnState';
-import AgentsLibraryPanel from './AgentsLibraryPanel';
 import { UserTaskComposer } from './UserTaskComposer';
 
 const log = debug('intelligence:tasks');
@@ -117,16 +115,6 @@ function buildAgentTaskPrompt(
   return lines.join('\n');
 }
 
-function buildExplicitAgentPrompt(agent: AgentDefinitionDisplay, task: string): string {
-  return [
-    `@agent:${agent.id}`,
-    '',
-    'Run this task with the explicitly selected agent above. Treat the selected agent id as the user routing choice when resolving delegation ambiguity.',
-    '',
-    task.trim(),
-  ].join('\n');
-}
-
 export default function IntelligenceTasksTab() {
   const { t } = useT();
   const dispatch = useAppDispatch();
@@ -142,7 +130,7 @@ export default function IntelligenceTasksTab() {
   const [composerOpen, setComposerOpen] = useState(false);
   const [refiningCard, setRefiningCard] = useState<TaskBoardCard | null>(null);
   const [workingCardId, setWorkingCardId] = useState<string | null>(null);
-  const [runningAgentId, setRunningAgentId] = useState<string | null>(null);
+  const [mutatingCardId, setMutatingCardId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -264,8 +252,14 @@ export default function IntelligenceTasksTab() {
   // ── personal-board mutations (optimistic, with rollback) ─────────────
 
   const mutatePersonal = useCallback(
-    async (optimistic: TaskBoard, call: () => Promise<TaskBoard>, previous: TaskBoard) => {
+    async (
+      optimistic: TaskBoard,
+      call: () => Promise<TaskBoard>,
+      previous: TaskBoard,
+      cardId?: string
+    ) => {
       setActionError(null);
+      if (cardId && mountedRef.current) setMutatingCardId(cardId);
       setPersonalBoard(optimistic);
       try {
         const saved = await call();
@@ -277,6 +271,8 @@ export default function IntelligenceTasksTab() {
           setPersonalBoard(previous);
           setActionError(t('conversations.taskKanban.updateFailed'));
         }
+      } finally {
+        if (mountedRef.current) setMutatingCardId(null);
       }
     },
     [t]
@@ -296,7 +292,8 @@ export default function IntelligenceTasksTab() {
       void mutatePersonal(
         optimistic,
         () => todosApi.updateStatus(USER_TASKS_THREAD_ID, card.id, status),
-        personalBoard
+        personalBoard,
+        card.id
       );
     },
     [personalBoard, mutatePersonal]
@@ -331,7 +328,8 @@ export default function IntelligenceTasksTab() {
             acceptanceCriteria: nextCard.acceptanceCriteria ?? [],
             evidence: nextCard.evidence ?? [],
           }),
-        personalBoard
+        personalBoard,
+        card.id
       );
     },
     [personalBoard, mutatePersonal]
@@ -348,7 +346,8 @@ export default function IntelligenceTasksTab() {
       void mutatePersonal(
         optimistic,
         () => todosApi.remove(USER_TASKS_THREAD_ID, card.id),
-        personalBoard
+        personalBoard,
+        card.id
       );
     },
     [personalBoard, mutatePersonal]
@@ -410,53 +409,6 @@ export default function IntelligenceTasksTab() {
       }
     },
     [dispatch, navigate, personalBoard, selectedAgentProfileId, t, uiLocale, workingCardId]
-  );
-
-  const handleRunAgentTask = useCallback(
-    async (agent: AgentDefinitionDisplay, task: string) => {
-      if (runningAgentId) return;
-      setRunningAgentId(agent.id);
-      setActionError(null);
-      const now = new Date().toISOString();
-      const launchPrompt = buildExplicitAgentPrompt(agent, task);
-      const titleBase = task.trim().slice(0, 64) || agent.display_name;
-      try {
-        const thread = await threadApi.createNewThread([AGENT_TASK_THREAD_LABEL, 'agent-library']);
-        await threadApi.updateTitle(thread.id, agentTaskThreadTitle(titleBase));
-        const userMessage: ThreadMessage = {
-          id: `msg_${globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `${Date.now()}`}`,
-          content: launchPrompt,
-          type: 'text',
-          extraMetadata: { source: 'agent-library', explicitAgentId: agent.id },
-          sender: 'user',
-          createdAt: now,
-        };
-        await threadApi.appendMessage(thread.id, userMessage);
-
-        dispatch(setSelectedThread(thread.id));
-        dispatch(setToolTimelineForThread({ threadId: thread.id, entries: [] }));
-        dispatch(beginInferenceTurn({ threadId: thread.id }));
-        dispatch(setActiveThread(thread.id));
-        void dispatch(loadThreads());
-        void dispatch(loadThreadMessages(thread.id));
-        navigate('/chat');
-
-        await chatSend({
-          threadId: thread.id,
-          message: launchPrompt,
-          model: CHAT_MODEL_ID,
-          profileId: selectedAgentProfileId,
-          locale: uiLocale,
-        });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        log('run explicit agent task failed agent=%s: %s', agent.id, msg);
-        if (mountedRef.current) setActionError(t('intelligence.agents.runFailed'));
-      } finally {
-        if (mountedRef.current) setRunningAgentId(null);
-      }
-    },
-    [dispatch, navigate, runningAgentId, selectedAgentProfileId, t, uiLocale]
   );
 
   const handleApproveSourcePlan = useCallback(
@@ -570,7 +522,8 @@ export default function IntelligenceTasksTab() {
     const liveBoard = liveBoards[threadId];
     const persistedBoard = persistedBoards[threadId];
     const board = liveBoard ?? persistedBoard;
-    if (!board || board.cards.length === 0) continue;
+    // Show live agent boards even with 0 cards so users can see activity in progress.
+    if (!board || (board.cards.length === 0 && !liveBoard)) continue;
     const title =
       thread?.title && thread.title.trim().length > 0
         ? thread.title
@@ -584,7 +537,8 @@ export default function IntelligenceTasksTab() {
     return b.board.updatedAt.localeCompare(a.board.updatedAt);
   });
 
-  const personalCards = personalBoard?.cards ?? [];
+  // personalCards kept for reference — board always rendered now, empty state handled inside TaskKanbanBoard
+  // const personalCards = personalBoard?.cards ?? [];
 
   return (
     <div className="space-y-6">
@@ -607,8 +561,6 @@ export default function IntelligenceTasksTab() {
         </div>
       )}
 
-      <AgentsLibraryPanel onRunAgentTask={handleRunAgentTask} runningAgentId={runningAgentId} />
-
       {/* Personal board — always present so users can manage their own tasks. */}
       <section className="space-y-2">
         <div className="flex items-center gap-2">
@@ -616,46 +568,34 @@ export default function IntelligenceTasksTab() {
             {t('intelligence.tasks.personalBoardTitle')}
           </h3>
         </div>
-        {personalCards.length > 0 ? (
-          <TaskKanbanBoard
-            board={personalBoard as TaskBoard}
-            hideHeader
-            onMove={handleMovePersonal}
-            onUpdateCard={handleUpdatePersonal}
-            onDeleteCard={handleDeletePersonal}
-            onWorkTask={handleWorkPersonal}
-            onViewSession={card => {
-              if (!card.sessionThreadId) return;
-              const tid = card.sessionThreadId;
-              // Open the exact session — mirror the manual "Work" path's
-              // thread-open sequence so /chat lands on this thread, not just
-              // the Conversations page.
-              // Navigation only — do NOT mark the thread active. activeThreadId
-              // tracks a true in-flight turn; a completed session never emits the
-              // done/error lifecycle that would clear it, so forcing it active
-              // would wedge the composer until then.
-              dispatch(setSelectedThread(tid));
-              void dispatch(loadThreads());
-              void dispatch(loadThreadMessages(tid));
-              // Pass the thread as an explicit open-intent so Conversations'
-              // mount-resume honors it (its default resume only considers
-              // General-tab threads and would otherwise drop this task session).
-              navigate('/chat', { state: { openThreadId: tid } });
-            }}
-            workingCardId={workingCardId}
-          />
-        ) : (
-          <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-stone-200 dark:border-neutral-800 py-8 text-center text-stone-400 dark:text-neutral-500">
-            <p className="text-sm font-medium">{t('intelligence.tasks.personalEmpty')}</p>
-            <button
-              type="button"
-              onClick={() => setComposerOpen(true)}
-              className="inline-flex items-center gap-1.5 text-xs font-medium text-ocean-600 hover:text-ocean-700 dark:text-ocean-300 dark:hover:text-ocean-200">
-              <LuPlus className="h-3.5 w-3.5" />
-              {t('intelligence.tasks.newTask')}
-            </button>
-          </div>
-        )}
+        <TaskKanbanBoard
+          board={personalBoard ?? { threadId: USER_TASKS_THREAD_ID, cards: [], updatedAt: '' }}
+          hideHeader
+          onMove={handleMovePersonal}
+          onUpdateCard={handleUpdatePersonal}
+          onDeleteCard={handleDeletePersonal}
+          onWorkTask={handleWorkPersonal}
+          onViewSession={card => {
+            if (!card.sessionThreadId) return;
+            const tid = card.sessionThreadId;
+            // Open the exact session — mirror the manual "Work" path's
+            // thread-open sequence so /chat lands on this thread, not just
+            // the Conversations page.
+            // Navigation only — do NOT mark the thread active. activeThreadId
+            // tracks a true in-flight turn; a completed session never emits the
+            // done/error lifecycle that would clear it, so forcing it active
+            // would wedge the composer until then.
+            dispatch(setSelectedThread(tid));
+            void dispatch(loadThreads());
+            void dispatch(loadThreadMessages(tid));
+            // Pass the thread as an explicit open-intent so Conversations'
+            // mount-resume honors it (its default resume only considers
+            // General-tab threads and would otherwise drop this task session).
+            navigate('/chat', { state: { openThreadId: tid } });
+          }}
+          workingCardId={workingCardId}
+          mutatingCardId={mutatingCardId}
+        />
       </section>
 
       {taskSourcesBoard && (
@@ -859,7 +799,7 @@ function TaskSourceTaskList({
         </div>
         <button
           type="button"
-          onClick={() => navigate('/settings/task-sources')}
+          onClick={() => navigate('/settings/integrations')}
           className="text-xs font-medium text-ocean-600 hover:text-ocean-700 dark:text-ocean-300 dark:hover:text-ocean-200">
           {t('conversations.taskKanban.sources.manage')}
         </button>

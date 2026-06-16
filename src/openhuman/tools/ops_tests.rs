@@ -432,6 +432,7 @@ fn all_tools_default_registry_contains_expected_baseline_surface() {
             "todo",
             "plan_exit",
             "current_time",
+            "resolve_time",
             "cron_add",
             "cron_list",
             "cron_remove",

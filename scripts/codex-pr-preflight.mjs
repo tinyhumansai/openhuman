@@ -29,6 +29,23 @@ function currentRepoRoot() {
   return physical;
 }
 
+function usage() {
+  return [
+    'Usage: node scripts/codex-pr-preflight.mjs [--lightweight] [--strict-path]',
+    '',
+    'Checks the current checkout for Codex PR preflight requirements and prints',
+    'recommended validation commands for the changed files.',
+    '',
+    'Options:',
+    '  --lightweight   Skip the heavier "pnpm debug rust" recommendation for Rust changes.',
+    '  --strict-path   Assert the checkout lives at the expected repo path.',
+    '  -h, --help      Show this help and exit.',
+    '',
+    'Environment:',
+    '  CODEX_EXPECT_REPO_PATH   Expected repo path for --strict-path (default /workspace/openhuman).',
+  ].join('\n');
+}
+
 function parseArgs(argv) {
   return {
     lightweight: argv.includes('--lightweight'),
@@ -85,7 +102,12 @@ function recommendations(changedFiles, lightweight) {
 }
 
 function main() {
-  const options = parseArgs(process.argv.slice(2));
+  const argv = process.argv.slice(2);
+  if (argv.includes('--help') || argv.includes('-h')) {
+    console.log(usage());
+    process.exit(0);
+  }
+  const options = parseArgs(argv);
   const repoRoot = currentRepoRoot();
   const checks = [];
 

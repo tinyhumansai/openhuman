@@ -15,7 +15,7 @@
 //! in a `Tool` impl, the `external_effect()` method MUST stay `false`
 //! (the trait's default) so the approval gate never prompts on TTS.
 
-use log::debug;
+use log::{debug, warn};
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -27,6 +27,51 @@ use crate::openhuman::config::Config;
 use crate::rpc::RpcOutcome;
 
 const LOG_PREFIX: &str = "[voice_reply]";
+
+/// Env var that activates the [`test_seam`] short-circuit at runtime. When
+/// set to `1` / `true`, [`synthesize_reply`] records the requested text
+/// into [`test_seam::OBSERVED_CALLS`] and returns a stub
+/// [`ReplySpeechResult`] *without* contacting the hosted backend. Anything
+/// else (unset, `0`, `false`, …) leaves the production code path
+/// untouched.
+///
+/// The env-var gate (rather than a `#[cfg(test)]` gate) is deliberate:
+/// integration tests in `tests/` are compiled against the production
+/// `openhuman_core` crate, so a unit-only `cfg(test)` block would not be
+/// visible from there. The observer module itself is always compiled,
+/// but its only producer is this env-gated branch and its only consumer
+/// is the test harness, so production callers never touch it.
+pub const TEST_SEAM_ENV: &str = "OPENHUMAN_TEST_REPLY_SPEECH_SEAM";
+
+fn test_seam_enabled() -> bool {
+    matches!(
+        std::env::var(TEST_SEAM_ENV).ok().as_deref(),
+        Some("1") | Some("true") | Some("TRUE")
+    )
+}
+
+/// Test seam observation log. See [`TEST_SEAM_ENV`] for the activation
+/// gate. Always compiled (the visibility lets `tests/json_rpc_e2e.rs`
+/// inspect calls), but only written to when the env gate is on.
+pub mod test_seam {
+    use once_cell::sync::Lazy;
+    use std::sync::Mutex;
+
+    /// FIFO log of every `text` argument that flowed through the test-seam
+    /// short-circuit in [`super::synthesize_reply`]. Cleared between tests
+    /// with [`clear`].
+    pub static OBSERVED_CALLS: Lazy<Mutex<Vec<String>>> = Lazy::new(|| Mutex::new(Vec::new()));
+
+    /// Clear the observation log.
+    pub fn clear() {
+        OBSERVED_CALLS.lock().unwrap().clear();
+    }
+
+    /// Snapshot of the observation log.
+    pub fn observed() -> Vec<String> {
+        OBSERVED_CALLS.lock().unwrap().clone()
+    }
+}
 
 /// One frame on the viseme timeline. `viseme` is an Oculus / Microsoft
 /// 15-set code (`sil, PP, FF, TH, DD, kk, CH, SS, nn, RR, aa, E, I, O, U`).
@@ -85,6 +130,31 @@ pub async fn synthesize_reply(
     let trimmed = text.trim();
     if trimmed.is_empty() {
         return Err("text is required".to_string());
+    }
+
+    // Test seam: when OPENHUMAN_TEST_REPLY_SPEECH_SEAM is set (and only in
+    // debug builds — the seam is structurally dead in release), record the
+    // call and short-circuit before hitting the backend.
+    // See `test_seam` module docs and `TEST_SEAM_ENV` for the activation gate.
+    if cfg!(debug_assertions) && test_seam_enabled() {
+        warn!(
+            "[voice_reply] TEST SEAM ACTIVE — synthesize_reply short-circuited ({} is set); skipping backend call",
+            TEST_SEAM_ENV
+        );
+        let _ = (config, opts);
+        test_seam::OBSERVED_CALLS
+            .lock()
+            .unwrap()
+            .push(trimmed.to_string());
+        return Ok(RpcOutcome::single_log(
+            ReplySpeechResult {
+                audio_base64: String::new(),
+                audio_mime: "audio/mpeg".to_string(),
+                visemes: Vec::new(),
+                alignment: None,
+            },
+            "voice reply synthesized (test seam short-circuit)",
+        ));
     }
 
     let token = get_session_token(config)

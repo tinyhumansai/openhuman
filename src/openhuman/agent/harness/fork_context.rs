@@ -16,6 +16,7 @@ use crate::openhuman::inference::provider::Provider;
 use crate::openhuman::memory::Memory;
 use crate::openhuman::tools::{Tool, ToolSpec};
 use crate::openhuman::workflows::Workflow;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -31,6 +32,13 @@ use std::sync::Arc;
 /// is essentially free.
 #[derive(Clone)]
 pub struct ParentExecutionContext {
+    /// Canonical registry id of the parent agent definition.
+    pub agent_definition_id: String,
+
+    /// Subagent ids this parent is allowed to spawn directly through the
+    /// generic `spawn_subagent` tool. Empty means no generic subagent spawns.
+    pub allowed_subagent_ids: HashSet<String>,
+
     /// Parent's provider — sub-agents call into the same instance so
     /// connection pools, retry budgets, and credentials are shared.
     pub provider: Arc<dyn Provider>,
@@ -62,9 +70,9 @@ pub struct ParentExecutionContext {
     /// dispatcher choice, …).
     pub agent_config: AgentConfig,
 
-    /// Skills loaded into the parent. Sub-agents that don't strip the
-    /// skills catalog inherit this list.
-    pub skills: Arc<Vec<Workflow>>,
+    /// Workflows loaded into the parent. Sub-agents that don't strip the
+    /// workflows catalog inherit this list.
+    pub workflows: Arc<Vec<Workflow>>,
 
     /// Memory context loaded for the current turn. Auto-injected into
     /// subagent prompts so they have access to conversation history and

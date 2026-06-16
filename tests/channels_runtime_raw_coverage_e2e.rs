@@ -10,7 +10,7 @@ use axum::{
 };
 use openhuman_core::core::event_bus::{DomainEvent, EventHandler};
 use openhuman_core::openhuman::channels::providers::web::{
-    cancel_chat, start_chat, subscribe_web_channel_events,
+    cancel_chat, start_chat, subscribe_web_channel_events, ChatRequestMetadata,
 };
 use openhuman_core::openhuman::channels::providers::yuanbao::{YuanbaoChannel, YuanbaoConfig};
 use openhuman_core::openhuman::channels::{
@@ -372,24 +372,48 @@ async fn yuanbao_public_channel_and_config_paths_are_isolated_from_network() {
 
 #[tokio::test]
 async fn web_channel_validation_cancel_and_event_subscription_are_fast() {
-    assert!(
-        start_chat("", "thread", "hello", None, None, None, None, None)
-            .await
-            .expect_err("empty client rejected")
-            .contains("client_id")
-    );
-    assert!(
-        start_chat("client", "", "hello", None, None, None, None, None)
-            .await
-            .expect_err("empty thread rejected")
-            .contains("thread_id")
-    );
-    assert!(
-        start_chat("client", "thread", "   ", None, None, None, None, None)
-            .await
-            .expect_err("empty message rejected")
-            .contains("message")
-    );
+    assert!(start_chat(
+        "",
+        "thread",
+        "hello",
+        None,
+        None,
+        None,
+        None,
+        None,
+        ChatRequestMetadata::default()
+    )
+    .await
+    .expect_err("empty client rejected")
+    .contains("client_id"));
+    assert!(start_chat(
+        "client",
+        "",
+        "hello",
+        None,
+        None,
+        None,
+        None,
+        None,
+        ChatRequestMetadata::default()
+    )
+    .await
+    .expect_err("empty thread rejected")
+    .contains("thread_id"));
+    assert!(start_chat(
+        "client",
+        "thread",
+        "   ",
+        None,
+        None,
+        None,
+        None,
+        None,
+        ChatRequestMetadata::default()
+    )
+    .await
+    .expect_err("empty message rejected")
+    .contains("message"));
 
     let mut rx = subscribe_web_channel_events();
     assert_eq!(
@@ -409,6 +433,7 @@ async fn web_channel_validation_cancel_and_event_subscription_are_fast() {
         None,
         None,
         None,
+        ChatRequestMetadata::default(),
     )
     .await;
     assert!(

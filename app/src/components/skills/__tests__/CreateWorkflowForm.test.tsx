@@ -6,7 +6,7 @@
  * and the /skills/new page can rely on it.
  *
  * Covers:
- *  - submit calls skillsApi.createSkill with the trimmed/normalised
+ *  - submit calls workflowsApi.createWorkflow with the trimmed/normalised
  *    payload (CSVs split, optional fields omitted when empty).
  *  - onStateChange is called with validity + submitting flags so
  *    wrappers can sync their submit button's disabled state.
@@ -20,16 +20,16 @@ const stableT = (key: string) => key;
 vi.mock('../../../lib/i18n/I18nContext', () => ({ useT: () => ({ t: stableT }) }));
 
 const hoisted = vi.hoisted(() => ({
-  createSkill: vi.fn(),
-  updateSkill: vi.fn(),
-  describeSkill: vi.fn(),
+  createWorkflow: vi.fn(),
+  updateWorkflow: vi.fn(),
+  describeWorkflow: vi.fn(),
 }));
 
-vi.mock('../../../services/api/skillsApi', () => ({
-  skillsApi: {
-    createSkill: hoisted.createSkill,
-    updateSkill: hoisted.updateSkill,
-    describeSkill: hoisted.describeSkill,
+vi.mock('../../../services/api/workflowsApi', () => ({
+  workflowsApi: {
+    createWorkflow: hoisted.createWorkflow,
+    updateWorkflow: hoisted.updateWorkflow,
+    describeWorkflow: hoisted.describeWorkflow,
   },
 }));
 
@@ -57,7 +57,7 @@ describe('previewSlug', () => {
 
 describe('CreateWorkflowForm', () => {
   beforeEach(() => {
-    hoisted.createSkill.mockReset();
+    hoisted.createWorkflow.mockReset();
   });
 
   it('renders required fields and the slug preview updates as the name changes', () => {
@@ -98,7 +98,7 @@ describe('CreateWorkflowForm', () => {
     // fields were dropped. Anyone needing project-scoped or
     // tagged skills edits the workspace SKILL.md directly.
     const created = { id: 'my-skill', name: 'My Skill', scope: 'user', legacy: false };
-    hoisted.createSkill.mockResolvedValue(created);
+    hoisted.createWorkflow.mockResolvedValue(created);
     const onCreated = vi.fn();
 
     render(<CreateWorkflowForm formId={FORM_ID} onCreated={onCreated} />);
@@ -116,7 +116,7 @@ describe('CreateWorkflowForm', () => {
     fireEvent.submit(document.getElementById(FORM_ID)!);
 
     await waitFor(() => {
-      expect(hoisted.createSkill).toHaveBeenCalledWith({
+      expect(hoisted.createWorkflow).toHaveBeenCalledWith({
         name: 'My Skill',
         description: 'Does the thing.',
         scope: 'user',
@@ -126,7 +126,7 @@ describe('CreateWorkflowForm', () => {
   });
 
   it('includes whenToUse in the payload when the trigger field is filled', async () => {
-    hoisted.createSkill.mockResolvedValue({ id: 'wf', name: 'wf', scope: 'user', legacy: false });
+    hoisted.createWorkflow.mockResolvedValue({ id: 'wf', name: 'wf', scope: 'user', legacy: false });
     render(<CreateWorkflowForm formId={FORM_ID} onCreated={vi.fn()} />);
 
     fireEvent.change(screen.getByLabelText(/skills.create.name/i), {
@@ -141,7 +141,7 @@ describe('CreateWorkflowForm', () => {
     fireEvent.submit(document.getElementById(FORM_ID)!);
 
     await waitFor(() => {
-      expect(hoisted.createSkill).toHaveBeenCalledWith({
+      expect(hoisted.createWorkflow).toHaveBeenCalledWith({
         name: 'Triage',
         description: 'Summarise the inbox.',
         scope: 'user',
@@ -150,8 +150,8 @@ describe('CreateWorkflowForm', () => {
     });
   });
 
-  it('surfaces the Rust error message in an alert when createSkill rejects', async () => {
-    hoisted.createSkill.mockRejectedValue(new Error('slug already exists'));
+  it('surfaces the Rust error message in an alert when createWorkflow rejects', async () => {
+    hoisted.createWorkflow.mockRejectedValue(new Error('slug already exists'));
     render(<CreateWorkflowForm formId={FORM_ID} onCreated={vi.fn()} />);
 
     fireEvent.change(screen.getByLabelText(/skills.create.name/i), {
@@ -166,18 +166,18 @@ describe('CreateWorkflowForm', () => {
     expect(alert).toHaveTextContent('slug already exists');
   });
 
-  it('does not call createSkill if the form is invalid (no name)', async () => {
+  it('does not call createWorkflow if the form is invalid (no name)', async () => {
     render(<CreateWorkflowForm formId={FORM_ID} onCreated={vi.fn()} />);
     fireEvent.submit(document.getElementById(FORM_ID)!);
     // Give the microtask queue a tick — should still be 0.
     await Promise.resolve();
-    expect(hoisted.createSkill).not.toHaveBeenCalled();
+    expect(hoisted.createWorkflow).not.toHaveBeenCalled();
   });
 
   // ── Inputs editor ───────────────────────────────────────────────────
   // The form gained an optional [[inputs]] editor in 5d77839f. These
   // tests pin its contract end-to-end: the rows the user adds become the
-  // `inputs` field on the createSkill payload, name validation blocks
+  // `inputs` field on the createWorkflow payload, name validation blocks
   // submission, and removing a row drops it from the payload.
 
   /** Fill name + description so the rest of the form is submittable. */
@@ -199,23 +199,23 @@ describe('CreateWorkflowForm', () => {
   }
 
   it('zero inputs submits a payload without an `inputs` field', async () => {
-    hoisted.createSkill.mockResolvedValue({ id: 'x', name: 'x', scope: 'user', legacy: false });
+    hoisted.createWorkflow.mockResolvedValue({ id: 'x', name: 'x', scope: 'user', legacy: false });
     render(<CreateWorkflowForm formId={FORM_ID} onCreated={vi.fn()} />);
     fillRequiredFields();
     fireEvent.submit(document.getElementById(FORM_ID)!);
     await waitFor(() => {
-      expect(hoisted.createSkill).toHaveBeenCalledWith({
+      expect(hoisted.createWorkflow).toHaveBeenCalledWith({
         name: 'My Skill',
         description: 'Does the thing.',
         scope: 'user',
       });
     });
-    const payload = hoisted.createSkill.mock.calls[0]![0] as Record<string, unknown>;
+    const payload = hoisted.createWorkflow.mock.calls[0]![0] as Record<string, unknown>;
     expect(payload).not.toHaveProperty('inputs');
   });
 
   it('one filled input row ships in the payload — additional inputs default to required: false', async () => {
-    hoisted.createSkill.mockResolvedValue({ id: 'x', name: 'x', scope: 'user', legacy: false });
+    hoisted.createWorkflow.mockResolvedValue({ id: 'x', name: 'x', scope: 'user', legacy: false });
     render(<CreateWorkflowForm formId={FORM_ID} onCreated={vi.fn()} />);
     fillRequiredFields();
 
@@ -227,7 +227,7 @@ describe('CreateWorkflowForm', () => {
 
     fireEvent.submit(document.getElementById(FORM_ID)!);
     await waitFor(() => {
-      expect(hoisted.createSkill).toHaveBeenCalledWith({
+      expect(hoisted.createWorkflow).toHaveBeenCalledWith({
         name: 'My Skill',
         description: 'Does the thing.',
         scope: 'user',
@@ -238,7 +238,7 @@ describe('CreateWorkflowForm', () => {
   });
 
   it('blocks submission when an added input row has no description', async () => {
-    hoisted.createSkill.mockResolvedValue({ id: 'x', name: 'x', scope: 'user', legacy: false });
+    hoisted.createWorkflow.mockResolvedValue({ id: 'x', name: 'x', scope: 'user', legacy: false });
     render(<CreateWorkflowForm formId={FORM_ID} onCreated={vi.fn()} />);
     fillRequiredFields();
 
@@ -249,7 +249,7 @@ describe('CreateWorkflowForm', () => {
     fireEvent.change(nameInput, { target: { value: 'repo' } });
     fireEvent.submit(document.getElementById(FORM_ID)!);
     await Promise.resolve();
-    expect(hoisted.createSkill).not.toHaveBeenCalled();
+    expect(hoisted.createWorkflow).not.toHaveBeenCalled();
     expect(screen.getByText(/descriptionError/i)).toBeInTheDocument();
 
     // Fill the description → now it submits.
@@ -257,12 +257,12 @@ describe('CreateWorkflowForm', () => {
     fireEvent.change(descInput, { target: { value: 'owner/name' } });
     fireEvent.submit(document.getElementById(FORM_ID)!);
     await waitFor(() => {
-      expect(hoisted.createSkill).toHaveBeenCalledTimes(1);
+      expect(hoisted.createWorkflow).toHaveBeenCalledTimes(1);
     });
   });
 
   it('ticking Required flips the row to required: true', async () => {
-    hoisted.createSkill.mockResolvedValue({ id: 'x', name: 'x', scope: 'user', legacy: false });
+    hoisted.createWorkflow.mockResolvedValue({ id: 'x', name: 'x', scope: 'user', legacy: false });
     render(<CreateWorkflowForm formId={FORM_ID} onCreated={vi.fn()} />);
     fillRequiredFields();
 
@@ -277,7 +277,7 @@ describe('CreateWorkflowForm', () => {
 
     fireEvent.submit(document.getElementById(FORM_ID)!);
     await waitFor(() => {
-      expect(hoisted.createSkill).toHaveBeenCalledWith(
+      expect(hoisted.createWorkflow).toHaveBeenCalledWith(
         expect.objectContaining({
           inputs: [{ name: 'repo', required: true, description: 'owner/name' }],
         })
@@ -286,7 +286,7 @@ describe('CreateWorkflowForm', () => {
   });
 
   it('blocks submission while any row has an invalid name', async () => {
-    hoisted.createSkill.mockResolvedValue({ id: 'x', name: 'x', scope: 'user', legacy: false });
+    hoisted.createWorkflow.mockResolvedValue({ id: 'x', name: 'x', scope: 'user', legacy: false });
     render(<CreateWorkflowForm formId={FORM_ID} onCreated={vi.fn()} />);
     fillRequiredFields();
 
@@ -294,7 +294,7 @@ describe('CreateWorkflowForm', () => {
     // Add a row but leave the name empty — submission must be blocked.
     fireEvent.submit(document.getElementById(FORM_ID)!);
     await Promise.resolve();
-    expect(hoisted.createSkill).not.toHaveBeenCalled();
+    expect(hoisted.createWorkflow).not.toHaveBeenCalled();
 
     // Fill the name with an invalid character (leading digit).
     const row = lastRow();
@@ -302,14 +302,14 @@ describe('CreateWorkflowForm', () => {
     fireEvent.change(nameInput, { target: { value: '2repo' } });
     fireEvent.submit(document.getElementById(FORM_ID)!);
     await Promise.resolve();
-    expect(hoisted.createSkill).not.toHaveBeenCalled();
+    expect(hoisted.createWorkflow).not.toHaveBeenCalled();
 
     // Inline error visible.
     expect(screen.getByText(/nameError/i)).toBeInTheDocument();
   });
 
   it('remove row drops it from the payload — submission then succeeds', async () => {
-    hoisted.createSkill.mockResolvedValue({ id: 'x', name: 'x', scope: 'user', legacy: false });
+    hoisted.createWorkflow.mockResolvedValue({ id: 'x', name: 'x', scope: 'user', legacy: false });
     render(<CreateWorkflowForm formId={FORM_ID} onCreated={vi.fn()} />);
     fillRequiredFields();
 
@@ -324,14 +324,14 @@ describe('CreateWorkflowForm', () => {
     // `inputs` field at all (back to the no-inputs payload shape).
     fireEvent.submit(document.getElementById(FORM_ID)!);
     await waitFor(() => {
-      expect(hoisted.createSkill).toHaveBeenCalledTimes(1);
+      expect(hoisted.createWorkflow).toHaveBeenCalledTimes(1);
     });
-    const payload = hoisted.createSkill.mock.calls[0]![0] as Record<string, unknown>;
+    const payload = hoisted.createWorkflow.mock.calls[0]![0] as Record<string, unknown>;
     expect(payload).not.toHaveProperty('inputs');
   });
 
   it('integer + required=false (the default) carry through the type + required flags', async () => {
-    hoisted.createSkill.mockResolvedValue({ id: 'x', name: 'x', scope: 'user', legacy: false });
+    hoisted.createWorkflow.mockResolvedValue({ id: 'x', name: 'x', scope: 'user', legacy: false });
     render(<CreateWorkflowForm formId={FORM_ID} onCreated={vi.fn()} />);
     fillRequiredFields();
 
@@ -347,7 +347,7 @@ describe('CreateWorkflowForm', () => {
 
     fireEvent.submit(document.getElementById(FORM_ID)!);
     await waitFor(() => {
-      expect(hoisted.createSkill).toHaveBeenCalledWith(
+      expect(hoisted.createWorkflow).toHaveBeenCalledWith(
         expect.objectContaining({
           inputs: [
             { name: 'issue', required: false, type: 'integer', description: 'Issue number to work on' },
@@ -360,9 +360,9 @@ describe('CreateWorkflowForm', () => {
 
 describe('CreateWorkflowForm — edit mode', () => {
   beforeEach(() => {
-    hoisted.createSkill.mockReset();
-    hoisted.updateSkill.mockReset();
-    hoisted.describeSkill.mockReset();
+    hoisted.createWorkflow.mockReset();
+    hoisted.updateWorkflow.mockReset();
+    hoisted.describeWorkflow.mockReset();
   });
 
   const editingSummary = {
@@ -384,14 +384,14 @@ describe('CreateWorkflowForm — edit mode', () => {
     warnings: [],
   };
 
-  it('prefills from the summary + describe, then submits via updateSkill', async () => {
-    hoisted.describeSkill.mockResolvedValue({
+  it('prefills from the summary + describe, then submits via updateWorkflow', async () => {
+    hoisted.describeWorkflow.mockResolvedValue({
       id: 'wf-edit',
       name: 'wf-edit',
       when_to_use: 'edit trigger',
       inputs: [{ name: 'repo', type: 'string', required: true, description: 'r' }],
     });
-    hoisted.updateSkill.mockResolvedValue({
+    hoisted.updateWorkflow.mockResolvedValue({
       id: 'wf-edit',
       name: 'wf-edit',
       scope: 'user',
@@ -402,13 +402,13 @@ describe('CreateWorkflowForm — edit mode', () => {
     render(<CreateWorkflowForm formId={FORM_ID} editing={editingSummary} onCreated={onCreated} />);
 
     // Prefill: describe is fetched and name is populated from the summary.
-    await waitFor(() => expect(hoisted.describeSkill).toHaveBeenCalledWith('wf-edit'));
+    await waitFor(() => expect(hoisted.describeWorkflow).toHaveBeenCalledWith('wf-edit'));
     const nameInput = screen.getByLabelText(/skills.create.name/i) as HTMLInputElement;
     await waitFor(() => expect(nameInput.value).toBe('wf-edit'));
 
     fireEvent.submit(document.getElementById(FORM_ID)!);
     await waitFor(() =>
-      expect(hoisted.updateSkill).toHaveBeenCalledWith(
+      expect(hoisted.updateWorkflow).toHaveBeenCalledWith(
         expect.objectContaining({
           name: 'wf-edit',
           whenToUse: 'edit trigger',
@@ -418,7 +418,7 @@ describe('CreateWorkflowForm — edit mode', () => {
         })
       )
     );
-    expect(hoisted.createSkill).not.toHaveBeenCalled();
+    expect(hoisted.createWorkflow).not.toHaveBeenCalled();
     await waitFor(() => expect(onCreated).toHaveBeenCalled());
   });
 });

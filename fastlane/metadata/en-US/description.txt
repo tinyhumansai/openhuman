@@ -1,0 +1,29 @@
+OpenHuman for iPhone is the mobile companion for the OpenHuman desktop app.
+
+Pair your phone with OpenHuman on your computer, then keep the conversation going from your pocket. Ask questions, send quick voice notes, and stay connected to the same assistant that understands your desktop context, memory, and connected tools.
+
+What you can do:
+
+- Pair securely with your OpenHuman desktop app by scanning a QR code
+- Chat by text from your iPhone
+- Use push-to-talk voice input for quick messages
+- Hear spoken replies when voice mode is enabled
+- Keep your assistant anchored to the desktop core that owns your memory and integrations
+
+OpenHuman is built for people who want an AI assistant that can remember, reason, and work with the tools they already use. The iPhone app is intentionally lightweight: it is a remote control and conversation surface for your desktop OpenHuman runtime.
+
+Privacy and control:
+
+- The mobile app connects to your paired desktop session
+- Pairing uses a short-lived QR code
+- Your long-term workspace, memory, and integration state remain managed by your OpenHuman desktop setup
+- Camera access is used to scan the pairing QR code
+- Microphone access is used only for push-to-talk voice messages
+
+Requirements:
+
+- OpenHuman desktop app
+- A paired desktop session
+- Network or tunnel access between your phone and the desktop runtime
+
+OpenHuman is in active development. Feedback is welcome through the OpenHuman support and community channels.

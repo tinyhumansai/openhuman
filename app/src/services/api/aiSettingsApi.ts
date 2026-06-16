@@ -26,6 +26,7 @@ import { isTauri } from '../../utils/tauriCommands/common';
 import {
   type ClientConfig,
   type CloudProviderCreds,
+  type ModelRegistryEntry,
   type ModelSettingsUpdate,
   openhumanGetClientConfig,
   openhumanUpdateLocalAiSettings,
@@ -132,6 +133,47 @@ const PROVIDER_MODEL_TEST_TIMEOUT_MS = 120_000;
 export interface AISettings {
   cloudProviders: CloudProviderView[];
   routing: Record<WorkloadId, ProviderRef>;
+  /**
+   * Per-model registry carrying each model's user-set `vision` flag, keyed by
+   * `(provider slug, model id)`. Surfaced in the custom-model dialog; gates chat
+   * image attachments for custom/BYOK models.
+   */
+  modelRegistry: ModelRegistryEntry[];
+}
+
+/** Re-export so callers (e.g. the AI panel) can reference the entry type. */
+export type { ModelRegistryEntry };
+
+/** Find a model's vision flag in the registry, matching by (provider, id).
+ *  Tolerates an undefined registry (older snapshots / transient load state). */
+export function modelRegistryVision(
+  registry: ModelRegistryEntry[] | undefined,
+  provider: string,
+  id: string
+): boolean {
+  return (registry ?? []).some(e => e.provider === provider && e.id === id && e.vision);
+}
+
+/**
+ * Upsert a model's vision flag, returning a new array. Matches by
+ * `(provider, id)`; a `vision: false` entry is removed (absence ⇒ no vision).
+ */
+export function upsertModelRegistryVision(
+  registry: ModelRegistryEntry[] | undefined,
+  provider: string,
+  id: string,
+  vision: boolean
+): ModelRegistryEntry[] {
+  const base = registry ?? [];
+  const without = base.filter(e => !(e.provider === provider && e.id === id));
+  if (!vision) {
+    return without;
+  }
+  const existing = base.find(e => e.provider === provider && e.id === id);
+  return [
+    ...without,
+    { id, provider, cost_per_1m_output: existing?.cost_per_1m_output ?? 0, vision: true },
+  ];
 }
 
 // ─── Read path: load + parse ───────────────────────────────────────────────
@@ -264,7 +306,10 @@ export async function loadAISettings(): Promise<AISettings> {
     );
   }
 
-  return { cloudProviders, routing };
+  // Per-model registry (vision flags). Defensive default for older snapshots.
+  const modelRegistry: ModelRegistryEntry[] = config.model_registry ?? [];
+
+  return { cloudProviders, routing, modelRegistry };
 }
 // ─── Write path: diff + save ───────────────────────────────────────────────
 
@@ -310,10 +355,35 @@ export async function saveAISettings(prev: AISettings, next: AISettings): Promis
     }
   }
 
+  // Per-model registry (vision flags): any change → send the full list.
+  if (!modelRegistriesEqual(prev.modelRegistry, next.modelRegistry)) {
+    patch.model_registry = next.modelRegistry.map(
+      ({ id, provider, cost_per_1m_output, vision }) => ({
+        id,
+        provider,
+        cost_per_1m_output,
+        vision,
+      })
+    );
+  }
+
   if (Object.keys(patch).length === 0) {
     return;
   }
   await openhumanUpdateModelSettings(patch);
+}
+
+/** Order-insensitive structural equality for two model registries. */
+function modelRegistriesEqual(a: ModelRegistryEntry[], b: ModelRegistryEntry[]): boolean {
+  if (a.length !== b.length) {
+    return false;
+  }
+  const key = (e: ModelRegistryEntry) => `${e.provider} ${e.id}`;
+  const bByKey = new Map(b.map(e => [key(e), e]));
+  return a.every(e => {
+    const m = bByKey.get(key(e));
+    return !!m && m.vision === e.vision && m.cost_per_1m_output === e.cost_per_1m_output;
+  });
 }
 
 // ─── API key management (per cloud provider slug) ──────────────────────────

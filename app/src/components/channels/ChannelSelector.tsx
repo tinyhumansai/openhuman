@@ -72,6 +72,7 @@ const ChannelSelector = ({
             <button
               key={channelId}
               type="button"
+              data-testid={`channel-select-${channelId}`}
               onClick={() => onSelectChannel(channelId)}
               className={`flex-1 flex items-center justify-between gap-2 rounded-lg border px-4 py-3 text-sm transition-colors ${
                 isSelected

@@ -334,6 +334,67 @@ fn skips_sentry_report_for_transient_upstream_statuses() {
     }
 }
 
+#[test]
+fn backend_error_code_owned_gates_managed_errors_except_malformed_bad_request() {
+    use crate::openhuman::inference::provider::openhuman_backend::PROVIDER_LABEL;
+
+    // F2/F4: backend-owned / expected-user-state errorCodes must NOT page the
+    // provider HTTP layer.
+    for code in [
+        "RATE_LIMITED",
+        "USER_INSUFFICIENT_CREDITS",
+        "UPSTREAM_UNAVAILABLE",
+        "MODEL_UNAVAILABLE",
+        "INTERNAL_ERROR",
+    ] {
+        let body = format!("{{\"error\":{{\"errorCode\":\"{code}\",\"message\":\"x\"}}}}");
+        assert!(
+            is_backend_error_code_owned(PROVIDER_LABEL, &body),
+            "errorCode={code} must be backend-owned (no provider-layer Sentry)"
+        );
+    }
+
+    // A user-param BAD_REQUEST is still backend-owned (F8 only carves out the
+    // malformed variant).
+    assert!(is_backend_error_code_owned(
+        PROVIDER_LABEL,
+        "{\"error\":{\"errorCode\":\"BAD_REQUEST\",\"message\":\"bad param\"}}"
+    ));
+
+    // Client-guard-leak codes page: the client enforces these limits before
+    // sending (attachment size gates; context-window management), so a backend
+    // rejection means our guard leaked — the gate must NOT claim them.
+    for code in ["PAYLOAD_TOO_LARGE", "CONTEXT_LENGTH_EXCEEDED"] {
+        let body = format!("{{\"error\":{{\"errorCode\":\"{code}\",\"message\":\"x\"}}}}");
+        assert!(
+            !is_backend_error_code_owned(PROVIDER_LABEL, &body),
+            "errorCode={code} is a client guard leak and must page (not owned)"
+        );
+    }
+
+    // F8: a backend-flagged malformed BAD_REQUEST is also a case the FE still
+    // pages — the gate must NOT claim it.
+    assert!(!is_backend_error_code_owned(
+        PROVIDER_LABEL,
+        "{\"error\":{\"errorCode\":\"BAD_REQUEST\",\"malformed\":true}}"
+    ));
+
+    // BYO (no errorCode) is never claimed by this gate — it falls through to
+    // the status-based decision.
+    assert!(!is_backend_error_code_owned(
+        PROVIDER_LABEL,
+        "{\"error\":{\"message\":\"Incorrect API key provided\"}}"
+    ));
+
+    // CodeRabbit: a BYO / direct provider whose body merely contains an
+    // `errorCode`-shaped field must NOT be claimed as backend-owned — the
+    // provider gate keeps it reaching Sentry via the status decision.
+    assert!(!is_backend_error_code_owned(
+        "custom_openai",
+        "{\"error\":{\"errorCode\":\"RATE_LIMITED\"}}"
+    ));
+}
+
 // Confirm the budget-exhausted suppression predicate is scoped correctly.
 // These tests exercise the real production function, not a duplicate.
 mod budget_exhausted_suppression {
@@ -531,6 +592,44 @@ mod provider_config_rejection_suppression {
             "custom_openai",
             "Bad request: missing required field 'messages'",
         ));
+    }
+
+    /// TAURI-RUST-4XK — Ollama Cloud returns HTTP 403 with body
+    /// `{"error":"this model requires a subscription, upgrade for access: …"}`.
+    /// Before this fix, `is_provider_config_rejection_http` rejected 403
+    /// before reaching the phrase matcher, so the subscription-gate body
+    /// fell through to Sentry. Adding 403 to the allowed status set closes
+    /// that gap; the existing phrase in `config_rejection.rs` already
+    /// handles the body content.
+    #[test]
+    fn ollama_cloud_403_subscription_gate_is_suppressed() {
+        // Verbatim wire body from TAURI-RUST-4XK Sentry issue 5338.
+        let body = r#"ollama API error (403 Forbidden): {"error":"this model requires a subscription, upgrade for access: https://ollama.com/upgrade (ref: bc48f3c8-fba1-40b6-93a9-786a167d16f9)"}"#;
+        assert!(
+            is_provider_config_rejection_http(
+                reqwest::StatusCode::FORBIDDEN,
+                "ollama",
+                body,
+            ),
+            "TAURI-RUST-4XK: ollama 403 subscription-gate must be classified as provider config-rejection"
+        );
+    }
+
+    #[test]
+    fn openhuman_backend_403_subscription_phrase_is_not_suppressed() {
+        // Polarity guard: if our own backend somehow returned a 403 with
+        // the subscription phrase, that would be an unexpected regression
+        // and must still reach Sentry. The phrase does not appear in any
+        // expected backend body, so this is purely defensive.
+        let body = r#"{"error":"this model requires a subscription, upgrade for access: https://ollama.com/upgrade (ref: test)"}"#;
+        assert!(
+            !is_provider_config_rejection_http(
+                reqwest::StatusCode::FORBIDDEN,
+                openhuman_backend::PROVIDER_LABEL,
+                body,
+            ),
+            "backend 403 subscription phrase must NOT be suppressed (polarity guard)"
+        );
     }
 
     #[test]

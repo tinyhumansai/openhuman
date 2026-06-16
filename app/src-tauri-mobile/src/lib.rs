@@ -11,7 +11,7 @@ compile_error!(
     "openhuman-mobile only supports iOS and Android. Use app/src-tauri for desktop."
 );
 
-use tauri::{AppHandle, Manager, Runtime};
+use tauri::{AppHandle, Runtime};
 
 /// Tauri command: terminate the app cleanly. Used by the Settings page
 /// "Sign out / forget device" flow when the user wants to back out of a
@@ -34,12 +34,6 @@ pub fn run() {
         // See packages/tauri-plugin-ptt/src/lib.rs.
         .plugin(tauri_plugin_ptt::init())
         .invoke_handler(tauri::generate_handler![app_quit])
-        .setup(|app| {
-            if let Some(main) = app.get_webview_window("main") {
-                let _ = main.show();
-            }
-            Ok(())
-        })
         .run(tauri::generate_context!())
         .expect("error while running mobile tauri application");
 }

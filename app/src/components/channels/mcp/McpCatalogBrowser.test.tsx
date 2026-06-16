@@ -23,14 +23,14 @@ describe('McpCatalogBrowser', () => {
   it('renders search input', async () => {
     mockRegistrySearch.mockResolvedValue({ servers: [], page: 1, total_pages: 1 });
     render(<McpCatalogBrowser onSelectInstall={() => {}} />);
-    expect(screen.getByPlaceholderText('Search Smithery catalog...')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('Search MCP servers...')).toBeInTheDocument();
   });
 
   it('fires debounced search on input change', async () => {
     mockRegistrySearch.mockResolvedValue({ servers: [], page: 1, total_pages: 1 });
     render(<McpCatalogBrowser onSelectInstall={() => {}} />);
 
-    const input = screen.getByPlaceholderText('Search Smithery catalog...');
+    const input = screen.getByPlaceholderText('Search MCP servers...');
 
     // Advance past the initial debounce
     await act(async () => {
@@ -90,7 +90,7 @@ describe('McpCatalogBrowser', () => {
 
     await waitFor(() => screen.getByText('File Server'));
 
-    fireEvent.click(screen.getByRole('button', { name: 'Install' }));
+    fireEvent.click(screen.getByRole('button', { name: /File Server/ }));
     expect(onSelectInstall).toHaveBeenCalledWith('acme/file-server');
   });
 
@@ -122,7 +122,7 @@ describe('McpCatalogBrowser', () => {
 
     // Should show empty/no-results state, not crash
     await waitFor(() => {
-      expect(screen.getByPlaceholderText('Search Smithery catalog...')).toBeInTheDocument();
+      expect(screen.getByPlaceholderText('Search MCP servers...')).toBeInTheDocument();
     });
     // No "Install" button — nothing to install from an undefined list
     expect(screen.queryByRole('button', { name: 'Install' })).not.toBeInTheDocument();
@@ -138,7 +138,7 @@ describe('McpCatalogBrowser', () => {
     vi.useRealTimers();
 
     await waitFor(() => {
-      expect(screen.getByPlaceholderText('Search Smithery catalog...')).toBeInTheDocument();
+      expect(screen.getByPlaceholderText('Search MCP servers...')).toBeInTheDocument();
     });
     expect(screen.queryByRole('button', { name: 'Install' })).not.toBeInTheDocument();
   });

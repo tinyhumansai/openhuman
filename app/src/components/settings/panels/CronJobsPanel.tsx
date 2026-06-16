@@ -13,7 +13,10 @@ import {
   openhumanCronRuns,
   openhumanCronUpdate,
 } from '../../../utils/tauriCommands';
-import SettingsHeader from '../components/SettingsHeader';
+import PanelPage from '../../layout/PanelPage';
+import Button from '../../ui/Button';
+import SettingsBackButton from '../components/SettingsBackButton';
+import { SettingsSection, SettingsStatusLine } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 import CoreJobList from './cron/CoreJobList';
 import CronJobFormModal from './cron/CronJobFormModal';
@@ -22,7 +25,7 @@ const loadCronJobsLog = createDebug('app:settings:CronJobsPanel:loadCronSkills')
 
 const CronJobsPanel = () => {
   const { t } = useT();
-  const { navigateBack, breadcrumbs } = useSettingsNavigation();
+  const { navigateBack } = useSettingsNavigation();
   const formatCronError = useCallback(
     (key: string, message: string) => t(key).replace('{message}', message),
     [t]
@@ -185,62 +188,55 @@ const CronJobsPanel = () => {
   };
 
   return (
-    <div data-testid="cron-jobs-panel">
-      <SettingsHeader
-        title={t('cron.title')}
-        showBackButton={true}
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
+    <PanelPage
+      className="z-10"
+      contentClassName=""
+      testId="cron-jobs-panel"
+      description={t('settings.developerMenu.cronJobs.desc')}
+      leading={<SettingsBackButton onBack={navigateBack} />}>
+      <div className="p-4 pt-2 space-y-5">
+        <SettingsSection title={t('cron.scheduledJobs')} description={t('cron.manageCronJobs')}>
+          <div className="px-4 pb-4 space-y-4">
+            <div className="pt-2">
+              <Button
+                type="button"
+                variant="primary"
+                size="sm"
+                data-testid="cron-new-job"
+                onClick={() => {
+                  setEditingJob(null);
+                  setFormOpen(true);
+                }}>
+                {t('settings.cron.jobs.createJob')}
+              </Button>
+            </div>
 
-      <div className="p-4 space-y-4">
-        <section className="space-y-1">
-          <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
-            {t('cron.scheduledJobs')}
-          </h3>
-          <p className="text-xs text-stone-400 dark:text-neutral-500">{t('cron.manageCronJobs')}</p>
-        </section>
+            <SettingsStatusLine saving={false} error={coreError} savingLabel="" />
 
-        {/* "+ New Scheduled Job" button */}
-        <div>
-          <button
-            type="button"
-            data-testid="cron-new-job"
-            className="inline-flex items-center rounded-xl border border-primary-700/30 bg-primary-600 px-3.5 py-2 text-sm font-semibold text-white shadow-soft transition-colors hover:bg-primary-700 active:bg-primary-800 focus:outline-none focus:ring-2 focus:ring-primary-500/40"
-            onClick={() => {
-              setEditingJob(null);
-              setFormOpen(true);
-            }}>
-            {t('settings.cron.jobs.createJob')}
-          </button>
-        </div>
+            <CoreJobList
+              loading={loading}
+              coreJobs={coreJobs}
+              coreRunsByJob={coreRunsByJob}
+              coreBusyKey={coreBusyKey}
+              onToggleCoreJob={job => void toggleCoreJob(job)}
+              onRunCoreJob={jobId => void runCoreJob(jobId)}
+              onLoadCoreRuns={jobId => void loadCoreRuns(jobId)}
+              onRemoveCoreJob={jobId => void removeCoreJob(jobId)}
+              onEditCoreJob={job => setEditingJob(job)}
+            />
 
-        {coreError && (
-          <div className="rounded-lg border border-amber-300 dark:border-amber-500/40 bg-amber-50 dark:bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-300">
-            {coreError}
+            <div>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                data-testid="cron-refresh"
+                onClick={() => void loadCoreCronJobsOnly()}>
+                {t('cron.refreshCronJobs')}
+              </Button>
+            </div>
           </div>
-        )}
-
-        <CoreJobList
-          loading={loading}
-          coreJobs={coreJobs}
-          coreRunsByJob={coreRunsByJob}
-          coreBusyKey={coreBusyKey}
-          onToggleCoreJob={job => void toggleCoreJob(job)}
-          onRunCoreJob={jobId => void runCoreJob(jobId)}
-          onLoadCoreRuns={jobId => void loadCoreRuns(jobId)}
-          onRemoveCoreJob={jobId => void removeCoreJob(jobId)}
-          onEditCoreJob={job => setEditingJob(job)}
-        />
-        <div>
-          <button
-            type="button"
-            data-testid="cron-refresh"
-            className="inline-flex items-center rounded-xl border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 px-3.5 py-2 text-sm font-medium text-stone-700 dark:text-stone-200 transition-colors hover:bg-stone-100 dark:hover:bg-stone-800 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
-            onClick={() => void loadCoreCronJobsOnly()}>
-            {t('cron.refreshCronJobs')}
-          </button>
-        </div>
+        </SettingsSection>
       </div>
 
       {/* Create modal */}
@@ -267,7 +263,7 @@ const CronJobsPanel = () => {
           onUpdate={handleUpdate}
         />
       )}
-    </div>
+    </PanelPage>
   );
 };
 

@@ -24,6 +24,7 @@ import {
 // are intentionally omitted here.
 const KIND_FIELDS: Record<SourceKind, Array<keyof LimitFields>> = {
   composio: ['sync_depth_days', 'max_items'],
+  conversation: ['sync_depth_days'],
   github_repo: ['max_prs', 'max_issues', 'max_commits', 'sync_depth_days'],
   rss_feed: ['max_items', 'sync_depth_days'],
   twitter_query: ['since_days'],

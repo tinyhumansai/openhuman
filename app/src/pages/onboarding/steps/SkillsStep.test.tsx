@@ -40,9 +40,11 @@ function setComposioState(opts: { connected?: boolean; error?: string | null }):
   if (connected) {
     map.set('gmail', { toolkit: 'gmail', status: 'ACTIVE', composioState: 'connected' });
   }
+  const connectionsMap = new Map(Array.from(map.entries()).map(([k, v]) => [k, [v]]));
   useComposioIntegrationsMock.mockReturnValue({
     toolkits: ['gmail'],
     connectionByToolkit: map,
+    connectionsByToolkit: connectionsMap,
     loading: false,
     error,
     refresh: vi.fn(),

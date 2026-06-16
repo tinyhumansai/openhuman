@@ -137,6 +137,46 @@ pub fn context_window_for_model_with_local_fallback(
     None
 }
 
+/// Whether the model resolved for a chat hint/agent/profile accepts image input
+/// according to the **user-configured** vision flag in `config.model_registry`.
+///
+/// This is the per-model override that lets a user mark a **custom / BYOK** model
+/// as vision-capable (Settings → Advanced LLM → custom model → "Supports
+/// vision"). Managed-backend models already advertise vision via
+/// [`crate::openhuman::inference::provider::Provider::supports_vision`]; this flag
+/// covers OpenAI-compatible providers the backend can't introspect per-model.
+/// Returns `false` for models the user has not flagged.
+pub fn model_vision_enabled(model: &str, config: &crate::openhuman::config::Config) -> bool {
+    let normalized = model.trim();
+    if normalized.is_empty() {
+        return false;
+    }
+    let enabled = config
+        .model_registry
+        .iter()
+        .any(|entry| entry.id == normalized && entry.vision);
+    tracing::debug!(
+        model = normalized,
+        vision_enabled = enabled,
+        "[model_context] resolved user-configured vision flag"
+    );
+    enabled
+}
+
+/// Whether a resolved model accepts image input. The single predicate shared by
+/// the chat UI resolve and the server-side session/sub-agent gates.
+///
+/// - **Managed OpenHuman tiers** consult the hardcoded per-tier map
+///   ([`crate::openhuman::inference::provider::factory::oh_tier_supports_vision`]) —
+///   the remote backend does not advertise per-tier capability, so the core owns
+///   it. Currently only `reasoning-v1` is vision-capable.
+/// - **Custom/BYOK models** consult the user-set `model_registry.vision` flag
+///   ([`model_vision_enabled`]).
+pub fn model_supports_vision(model: &str, config: &crate::openhuman::config::Config) -> bool {
+    crate::openhuman::inference::provider::factory::oh_tier_supports_vision(model)
+        || model_vision_enabled(model, config)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -208,6 +248,51 @@ mod tests {
     #[test]
     fn empty_model_returns_none() {
         assert_eq!(context_window_for_model("   "), None);
+    }
+
+    #[test]
+    fn model_vision_enabled_reads_registry_only() {
+        use crate::openhuman::config::schema::ModelRegistryEntry;
+        let mut config = crate::openhuman::config::Config::default();
+        config.model_registry = vec![
+            ModelRegistryEntry {
+                id: "my-llava".into(),
+                provider: "openai".into(),
+                cost_per_1m_output: 0.0,
+                vision: true,
+            },
+            ModelRegistryEntry {
+                id: "text-only".into(),
+                provider: "openai".into(),
+                cost_per_1m_output: 0.0,
+                vision: false,
+            },
+        ];
+        assert!(model_vision_enabled("my-llava", &config));
+        assert!(!model_vision_enabled("text-only", &config));
+        assert!(!model_vision_enabled("unlisted", &config));
+        assert!(!model_vision_enabled("   ", &config));
+    }
+
+    #[test]
+    fn model_supports_vision_combines_tier_map_and_registry() {
+        use crate::openhuman::config::schema::ModelRegistryEntry;
+        let mut config = crate::openhuman::config::Config::default();
+        config.model_registry = vec![ModelRegistryEntry {
+            id: "my-llava".into(),
+            provider: "openai".into(),
+            cost_per_1m_output: 0.0,
+            vision: true,
+        }];
+        // `reasoning-v1` is the one vision-capable managed tier; the rest are not.
+        assert!(model_supports_vision("reasoning-v1", &config));
+        assert!(model_supports_vision("hint:reasoning", &config));
+        assert!(!model_supports_vision("chat-v1", &config));
+        assert!(!model_supports_vision("hint:chat", &config));
+        // BYOK model flagged in the registry is vision-capable.
+        assert!(model_supports_vision("my-llava", &config));
+        // Unlisted custom model is not.
+        assert!(!model_supports_vision("gpt-5", &config));
     }
 
     #[test]

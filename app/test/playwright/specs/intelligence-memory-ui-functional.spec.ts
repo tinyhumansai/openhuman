@@ -12,8 +12,30 @@ import {
 
 type MemorySource = { id: string; kind: string; label: string; enabled: boolean };
 
+/**
+ * Seeds developer mode via `persist:theme` localStorage so the Memory tab
+ * (dev-gated in the Activity page since Phase 3) is visible after boot.
+ * Must be called via `page.addInitScript` before navigation.
+ */
+async function seedDeveloperMode(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    try {
+      const raw = localStorage.getItem('persist:theme');
+      const parsed: Record<string, string> = raw ? (JSON.parse(raw) as Record<string, string>) : {};
+      parsed.developerMode = JSON.stringify(true);
+      localStorage.setItem('persist:theme', JSON.stringify(parsed));
+    } catch {}
+  });
+}
+
 async function openMemory(page: Page): Promise<void> {
-  await bootAuthenticatedPage(page, 'pw-intelligence-memory-ui', '/intelligence');
+  // Phase 3: Memory moved out of /activity entirely — it now lives at
+  // /settings/intelligence (the full Intelligence dev surface).  The Memory tab
+  // there is not dev-gated (only "council" is), so no developer mode seeding
+  // is required for the tab itself; seedDeveloperMode is still called so any
+  // code that checks developerMode elsewhere behaves consistently.
+  await seedDeveloperMode(page);
+  await bootAuthenticatedPage(page, 'pw-intelligence-memory-ui', '/settings/intelligence');
   await waitForAppReady(page);
   await dismissWalkthroughIfPresent(page);
   const memoryTab = page.getByRole('tab', { name: /^Memory$/ });

@@ -16,7 +16,7 @@
  *     optional timeout in seconds.
  *   - While the RPC is in flight we show a "Fetching…" indicator and
  *     disable close / backdrop-dismiss so the caller sees the outcome.
- *   - On success we surface the list of `newSkills` (ids that appeared
+ *   - On success we surface the list of `newWorkflows` (ids that appeared
  *     post-install) plus captured fetch log / parse-warning panes, then
  *     hand the result back to the caller via `onInstalled` so the
  *     parent can refetch the list and auto-select the row.
@@ -34,10 +34,10 @@ import debug from 'debug';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import {
-  skillsApi,
-  type InstallSkillFromUrlResult,
-  type SkillSummary,
-} from '../../services/api/skillsApi';
+  workflowsApi,
+  type InstallWorkflowFromUrlResult,
+  type WorkflowSummary,
+} from '../../services/api/workflowsApi';
 import { trackEvent } from '../../services/analytics';
 
 const log = debug('skills:install-dialog');
@@ -47,17 +47,17 @@ interface Props {
   /**
    * Fires when the backend reports the install succeeded. The parent is
    * responsible for refetching the skills list (the RPC already returns
-   * the freshly-added ids, but the caller may want full `SkillSummary`
-   * rows). `newSkills` lists ids that appeared post-install.
+   * the freshly-added ids, but the caller may want full `WorkflowSummary`
+   * rows). `newWorkflows` lists ids that appeared post-install.
    */
-  onInstalled: (result: InstallSkillFromUrlResult) => void;
+  onInstalled: (result: InstallWorkflowFromUrlResult) => void;
   /**
    * Optional: used only for symmetry with `CreateSkillModal`. When
    * supplied and the caller wants to auto-open the detail drawer for a
-   * specific skill, they can resolve the full `SkillSummary` and call
+   * specific skill, they can resolve the full `WorkflowSummary` and call
    * this directly. Not invoked by the dialog itself.
    */
-  onSelectSkill?: (skill: SkillSummary) => void;
+  onSelectSkill?: (skill: WorkflowSummary) => void;
 }
 
 /**
@@ -151,7 +151,7 @@ export default function InstallSkillDialog({ onClose, onInstalled }: Props) {
   const [timeoutSecs, setTimeoutSecs] = useState<string>('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<InstallSkillFromUrlResult | null>(null);
+  const [result, setResult] = useState<InstallWorkflowFromUrlResult | null>(null);
 
   const firstFieldRef = useRef<HTMLInputElement | null>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
@@ -201,14 +201,14 @@ export default function InstallSkillDialog({ onClose, onInstalled }: Props) {
       setSubmitting(true);
       setError(null);
       try {
-        const installed = await skillsApi.installSkillFromUrl(payload);
+        const installed = await workflowsApi.installWorkflowFromUrl(payload);
         log(
           'submit-ok new=%d stdout=%d stderr=%d',
-          installed.newSkills.length,
+          installed.newWorkflows.length,
           installed.stdout.length,
           installed.stderr.length
         );
-        for (const skillId of installed.newSkills) {
+        for (const skillId of installed.newWorkflows) {
           trackEvent('skill_install', { skill_id: skillId });
         }
         setResult(installed);
@@ -383,16 +383,16 @@ export default function InstallSkillDialog({ onClose, onInstalled }: Props) {
                 <div>
                   <p className="font-semibold">{t('skills.install.installComplete')}</p>
                   <p className="mt-1">
-                    {result.newSkills.length > 0
+                    {result.newWorkflows.length > 0
                       ? t('skills.install.successDiscovered').replace(
                           '{count}',
-                          String(result.newSkills.length)
+                          String(result.newWorkflows.length)
                         )
                       : t('skills.install.successNoNewIds')}
                   </p>
-                  {result.newSkills.length > 0 ? (
+                  {result.newWorkflows.length > 0 ? (
                     <ul className="mt-1 list-disc pl-5 font-mono">
-                      {result.newSkills.map(id => (
+                      {result.newWorkflows.map(id => (
                         <li key={id}>{id}</li>
                       ))}
                     </ul>

@@ -78,8 +78,8 @@ describe('resolveSystemRoute', () => {
     expect(resolveSystemRoute(makeSystem({ category: 'agents' }))).toBe('/chat');
   });
 
-  it('routes skills category to /skills', () => {
-    expect(resolveSystemRoute(makeSystem({ category: 'skills' }))).toBe('/skills');
+  it('routes skills category to /connections (Phase 2 rename)', () => {
+    expect(resolveSystemRoute(makeSystem({ category: 'skills' }))).toBe('/connections');
   });
 
   it('routes system category to /home', () => {

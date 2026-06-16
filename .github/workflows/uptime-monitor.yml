@@ -16,6 +16,7 @@ jobs:
   check-uptime:
     name: Check Backend Health
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Uptime Check Script
         uses: actions/github-script@v7

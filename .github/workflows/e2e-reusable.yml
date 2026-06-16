@@ -70,7 +70,7 @@ jobs:
     runs-on: ubuntu-22.04
     container:
       image: ghcr.io/tinyhumansai/openhuman_ci:latest
-    timeout-minutes: 90
+    timeout-minutes: 30
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -180,7 +180,7 @@ jobs:
     runs-on: ubuntu-22.04
     container:
       image: ghcr.io/tinyhumansai/openhuman_ci:latest
-    timeout-minutes: 45
+    timeout-minutes: 30
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -259,7 +259,7 @@ jobs:
     runs-on: ubuntu-22.04
     container:
       image: ghcr.io/tinyhumansai/openhuman_ci:latest
-    timeout-minutes: 60
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -372,7 +372,7 @@ jobs:
     runs-on: ubuntu-22.04
     container:
       image: ghcr.io/tinyhumansai/openhuman_ci:latest
-    timeout-minutes: 60
+    timeout-minutes: 30
     env:
       CARGO_INCREMENTAL: "0"
       RUST_BACKTRACE: "1"
@@ -419,7 +419,7 @@ jobs:
     if: inputs.run_macos && !inputs.full
     name: E2E (macOS / Appium Chromium)
     runs-on: macos-latest
-    timeout-minutes: 90
+    timeout-minutes: 30
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -517,7 +517,7 @@ jobs:
     if: inputs.run_windows && !inputs.full
     name: E2E (Windows / Appium Chromium)
     runs-on: windows-latest
-    timeout-minutes: 90
+    timeout-minutes: 30
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -601,7 +601,7 @@ jobs:
     if: inputs.run_macos && inputs.full
     name: E2E (macOS full / ${{ matrix.shard.name }})
     runs-on: macos-latest
-    timeout-minutes: 60
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -750,7 +750,7 @@ jobs:
     if: inputs.run_windows && inputs.full
     name: E2E (Windows full / ${{ matrix.shard.name }})
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:

@@ -1,0 +1,301 @@
+---
+name: iOS App Store
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to build. Leave empty for the selected branch.
+        required: false
+        type: string
+        default: ""
+      build_number:
+        description: CFBundleVersion. Leave empty to use the GitHub run number.
+        required: false
+        type: string
+        default: ""
+      upload_to_app_store_connect:
+        description: Upload the exported IPA to App Store Connect/TestFlight.
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-appstore-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-upload:
+    name: Build and upload iOS IPA
+    runs-on: macos-26
+    timeout-minutes: 30
+    environment: App Development Production
+    env:
+      APP_IDENTIFIER: com.tinyhumansai.openhuman
+      EXPORT_DIR: app/src-tauri-mobile/gen/apple/build/appstore-export
+      KEYCHAIN_PASSWORD: ${{ secrets.IOS_KEYCHAIN_PASSWORD }}
+      TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_DEVELOPMENT_TEAM: ${{ secrets.APPLE_TEAM_ID }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 1
+          submodules: false
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.93.0"
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            app/src-tauri-mobile -> target
+            packages/tauri-plugin-ptt -> target
+          cache-on-failure: true
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "pnpm"
+
+      - name: Set up Ruby for Fastlane
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+
+      - name: Verify Xcode SDK
+        run: |
+          xcodebuild -version
+          xcodebuild -showsdks
+
+      - name: Install Fastlane
+        run: gem install fastlane multi_json -N
+
+      - name: Install dependencies
+        run: bash scripts/ci-cancel-aware.sh pnpm install --frozen-lockfile
+
+      - name: Validate signing secrets
+        shell: bash
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_PASSWORD }}
+          PROFILE_BASE64: ${{ secrets.IOS_APPSTORE_PROVISIONING_PROFILE_BASE64 }}
+        run: |
+          set -euo pipefail
+          : "${TEAM_ID:?Missing secret APPLE_TEAM_ID}"
+          : "${KEYCHAIN_PASSWORD:?Missing secret IOS_KEYCHAIN_PASSWORD}"
+          : "${CERTIFICATE_BASE64:?Missing secret IOS_DISTRIBUTION_CERTIFICATE_BASE64}"
+          : "${CERTIFICATE_PASSWORD:?Missing secret IOS_DISTRIBUTION_CERTIFICATE_PASSWORD}"
+          : "${PROFILE_BASE64:?Missing secret IOS_APPSTORE_PROVISIONING_PROFILE_BASE64}"
+
+      - name: Import App Store signing certificate
+        shell: bash
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN_PATH="$RUNNER_TEMP/openhuman-ios-signing.keychain-db"
+          CERT_PATH="$RUNNER_TEMP/ios_distribution.p12"
+          echo "$CERTIFICATE_BASE64" | base64 --decode > "$CERT_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" \
+            -P "$CERTIFICATE_PASSWORD" \
+            -A \
+            -t cert \
+            -f pkcs12 \
+            -k "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          security default-keychain -s "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+
+      - name: Install App Store provisioning profile
+        id: profile
+        shell: bash
+        env:
+          PROFILE_BASE64: ${{ secrets.IOS_APPSTORE_PROVISIONING_PROFILE_BASE64 }}
+        run: |
+          set -euo pipefail
+          PROFILE_PATH="$RUNNER_TEMP/openhuman_appstore.mobileprovision"
+          PROFILE_PLIST="$RUNNER_TEMP/openhuman_appstore.plist"
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          echo "$PROFILE_BASE64" | base64 --decode > "$PROFILE_PATH"
+          security cms -D -i "$PROFILE_PATH" > "$PROFILE_PLIST"
+          PROFILE_UUID="$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$PROFILE_PLIST")"
+          PROFILE_NAME="$(/usr/libexec/PlistBuddy -c 'Print :Name' "$PROFILE_PLIST")"
+          PROFILE_APP_ID="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' "$PROFILE_PLIST")"
+          cp "$PROFILE_PATH" "$HOME/Library/MobileDevice/Provisioning Profiles/$PROFILE_UUID.mobileprovision"
+          echo "uuid=$PROFILE_UUID" >> "$GITHUB_OUTPUT"
+          echo "name=$PROFILE_NAME" >> "$GITHUB_OUTPUT"
+          echo "[ios-appstore] installed provisioning profile name=$PROFILE_NAME uuid=$PROFILE_UUID app_id=$PROFILE_APP_ID"
+
+      - name: Resolve build metadata
+        id: metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./app/src-tauri-mobile/tauri.conf.json').version")"
+          BUILD_NUMBER="${{ inputs.build_number }}"
+          if [[ -z "$BUILD_NUMBER" ]]; then
+            BUILD_NUMBER="${GITHUB_RUN_NUMBER}"
+          fi
+          [[ "$BUILD_NUMBER" =~ ^[0-9A-Za-z.-]+$ ]] || {
+            echo "Invalid build_number: $BUILD_NUMBER"
+            exit 1
+          }
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "build_number=$BUILD_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "[ios-appstore] version=$VERSION build_number=$BUILD_NUMBER"
+
+      - name: Build web assets and generate iOS project
+        shell: bash
+        env:
+          IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+        run: |
+          set -euo pipefail
+          bash scripts/ci-cancel-aware.sh pnpm --filter openhuman-app run build:app
+          TEAM_ID="$TEAM_ID" bash scripts/ios-init.sh
+          mkdir -p app/src-tauri-mobile/gen/apple/assets
+          rsync -a --delete app/dist/ app/src-tauri-mobile/gen/apple/assets/
+
+      - name: Archive iOS app
+        shell: bash
+        env:
+          IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+          BUILD_NUMBER: ${{ steps.metadata.outputs.build_number }}
+          MARKETING_VERSION: ${{ steps.metadata.outputs.version }}
+          PROFILE_NAME: ${{ steps.profile.outputs.name }}
+        run: |
+          set -euo pipefail
+          ARCHIVE_PATH="app/src-tauri-mobile/gen/apple/build/openhuman-mobile_iOS.xcarchive"
+          INFO_PLIST="app/src-tauri-mobile/gen/apple/openhuman-mobile_iOS/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $MARKETING_VERSION" "$INFO_PLIST" 2>/dev/null \
+            || /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $MARKETING_VERSION" "$INFO_PLIST"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$INFO_PLIST" 2>/dev/null \
+            || /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $BUILD_NUMBER" "$INFO_PLIST"
+          xcodebuild \
+            -workspace app/src-tauri-mobile/gen/apple/openhuman-mobile.xcodeproj/project.xcworkspace \
+            -scheme openhuman-mobile_iOS \
+            -configuration release \
+            -sdk iphoneos \
+            -destination "generic/platform=iOS" \
+            -archivePath "$ARCHIVE_PATH" \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="Apple Distribution" \
+            PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME" \
+            MARKETING_VERSION="$MARKETING_VERSION" \
+            CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+            archive
+
+      - name: Export IPA
+        id: export
+        shell: bash
+        env:
+          PROFILE_NAME: ${{ steps.profile.outputs.name }}
+        run: |
+          set -euo pipefail
+          ARCHIVE_PATH="app/src-tauri-mobile/gen/apple/build/openhuman-mobile_iOS.xcarchive"
+          EXPORT_OPTIONS="$RUNNER_TEMP/openhuman-export-options.plist"
+          mkdir -p "$EXPORT_DIR"
+          cat > "$EXPORT_OPTIONS" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>app-store-connect</string>
+            <key>signingStyle</key>
+            <string>manual</string>
+            <key>teamID</key>
+            <string>$TEAM_ID</string>
+            <key>provisioningProfiles</key>
+            <dict>
+              <key>$APP_IDENTIFIER</key>
+              <string>$PROFILE_NAME</string>
+            </dict>
+            <key>stripSwiftSymbols</key>
+            <true/>
+            <key>uploadSymbols</key>
+            <true/>
+          </dict>
+          </plist>
+          PLIST
+          xcodebuild \
+            -exportArchive \
+            -archivePath "$ARCHIVE_PATH" \
+            -exportPath "$EXPORT_DIR" \
+            -exportOptionsPlist "$EXPORT_OPTIONS" \
+            -allowProvisioningUpdates
+          IPA_PATH="$(find "$EXPORT_DIR" -maxdepth 1 -name '*.ipa' -print -quit)"
+          test -n "$IPA_PATH"
+          echo "ipa_path=$IPA_PATH" >> "$GITHUB_OUTPUT"
+          echo "[ios-appstore] exported IPA at $IPA_PATH"
+
+      - name: Upload IPA to App Store Connect
+        if: inputs.upload_to_app_store_connect
+        shell: bash
+        env:
+          ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          ASC_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64 }}
+          IPA_PATH: ${{ steps.export.outputs.ipa_path }}
+        run: |
+          set -euo pipefail
+          : "${ASC_KEY_ID:?Missing secret APP_STORE_CONNECT_API_KEY_ID}"
+          : "${ASC_ISSUER_ID:?Missing secret APP_STORE_CONNECT_ISSUER_ID}"
+          : "${ASC_KEY_BASE64:?Missing secret APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64}"
+          ASC_KEY_PATH="$RUNNER_TEMP/AuthKey_${ASC_KEY_ID}.p8"
+          ASC_API_KEY_JSON="$RUNNER_TEMP/appstoreconnect-api-key.json"
+          echo "$ASC_KEY_BASE64" | base64 --decode > "$ASC_KEY_PATH"
+          export ASC_KEY_PATH
+          ruby -rjson -e 'puts JSON.pretty_generate({
+            key_id: ENV.fetch("ASC_KEY_ID"),
+            issuer_id: ENV.fetch("ASC_ISSUER_ID"),
+            key: File.read(ENV.fetch("ASC_KEY_PATH")),
+            duration: 1200,
+            in_house: false
+          })' > "$ASC_API_KEY_JSON"
+          fastlane deliver \
+            --api_key_path "$ASC_API_KEY_JSON" \
+            --app_identifier "$APP_IDENTIFIER" \
+            --ipa "$IPA_PATH" \
+            --platform ios \
+            --skip_metadata true \
+            --skip_screenshots true \
+            --skip_app_version_update true \
+            --run_precheck_before_submit false \
+            --submit_for_review false \
+            --force true
+
+      - name: Upload IPA artifact
+        if: always() && steps.export.outputs.ipa_path != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: openhuman-ios-ipa
+          path: ${{ steps.export.outputs.ipa_path }}
+          if-no-files-found: error
+
+      - name: Upload archive dSYMs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: openhuman-ios-dsyms
+          path: app/src-tauri-mobile/gen/apple/build/openhuman-mobile_iOS.xcarchive/dSYMs
+          if-no-files-found: warn

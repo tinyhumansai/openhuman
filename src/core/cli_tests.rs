@@ -25,7 +25,6 @@ fn grouped_schemas_contains_migrated_namespaces() {
     assert!(grouped.contains_key("service"));
     assert!(grouped.contains_key("migrate"));
     assert!(grouped.contains_key("inference"));
-    assert!(grouped.contains_key("local_ai"));
 }
 
 #[test]

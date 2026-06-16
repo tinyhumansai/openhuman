@@ -260,6 +260,7 @@ fn set_connected_integrations_marks_session_initialized_and_updates_hash() {
             tools: vec![],
             gated_tools: vec![],
             connected: true,
+            connections: Vec::new(),
             non_active_status: None,
         },
     ]);
@@ -286,6 +287,7 @@ fn refresh_delegation_tools_updates_schema_even_when_tool_arc_is_shared() {
             tools: vec![],
             gated_tools: vec![],
             connected: true,
+            connections: Vec::new(),
             non_active_status: None,
         },
     ]);
@@ -305,6 +307,7 @@ fn refresh_delegation_tools_updates_schema_even_when_tool_arc_is_shared() {
             tools: vec![],
             gated_tools: vec![],
             connected: true,
+            connections: Vec::new(),
             non_active_status: None,
         },
         crate::openhuman::context::prompt::ConnectedIntegration {
@@ -313,6 +316,7 @@ fn refresh_delegation_tools_updates_schema_even_when_tool_arc_is_shared() {
             tools: vec![],
             gated_tools: vec![],
             connected: true,
+            connections: Vec::new(),
             non_active_status: None,
         },
     ]);
@@ -346,6 +350,7 @@ fn refresh_delegation_tools_no_duplicate_specs_across_shared_arc_connects() {
         tools: vec![],
         gated_tools: vec![],
         connected: true,
+        connections: Vec::new(),
         non_active_status: None,
     };
 
@@ -456,6 +461,7 @@ async fn turn_with_native_dispatcher_handles_tool_results_variant() {
                     id: "tc1".into(),
                     name: "echo".into(),
                     arguments: "{}".into(),
+                    extra_content: None,
                 }],
                 usage: None,
                 reasoning_content: None,
@@ -599,6 +605,7 @@ async fn turn_dispatches_spawn_subagent_through_full_path() {
                         "prompt": "find out about X"
                     })
                     .to_string(),
+                    extra_content: None,
                 }],
                 usage: None,
                 reasoning_content: None,

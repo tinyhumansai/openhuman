@@ -6,6 +6,16 @@
 
 use crate::openhuman::config::rpc as config_rpc;
 use crate::openhuman::memory_sources::types::{MemorySourceEntry, SourceKind};
+use std::sync::OnceLock;
+
+static MEMORY_SOURCES_WRITE_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+
+pub(crate) async fn memory_sources_write_guard() -> tokio::sync::MutexGuard<'static, ()> {
+    MEMORY_SOURCES_WRITE_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await
+}
 
 /// Conservative default sync caps for a Composio toolkit, keyed by toolkit slug.
 ///
@@ -50,6 +60,7 @@ pub async fn get_source(id: &str) -> Result<Option<MemorySourceEntry>, String> {
 
 pub async fn add_source(entry: MemorySourceEntry) -> Result<MemorySourceEntry, String> {
     entry.validate()?;
+    let _guard = memory_sources_write_guard().await;
     let mut config = config_rpc::load_config_with_timeout().await?;
 
     if config.memory_sources.iter().any(|s| s.id == entry.id) {
@@ -75,6 +86,7 @@ pub async fn update_source(
     id: &str,
     patch: MemorySourcePatch,
 ) -> Result<MemorySourceEntry, String> {
+    let _guard = memory_sources_write_guard().await;
     let mut config = config_rpc::load_config_with_timeout().await?;
 
     let entry = config
@@ -159,6 +171,7 @@ pub async fn update_source(
 }
 
 pub async fn remove_source(id: &str) -> Result<bool, String> {
+    let _guard = memory_sources_write_guard().await;
     let mut config = config_rpc::load_config_with_timeout().await?;
     let before = config.memory_sources.len();
     config.memory_sources.retain(|s| s.id != id);
@@ -182,6 +195,7 @@ pub async fn remove_source(id: &str) -> Result<bool, String> {
 /// connection-delete flow doesn't have, so this is the connection-keyed
 /// counterpart. Returns the number of entries removed (0 if none matched).
 pub async fn remove_composio_source_by_connection_id(connection_id: &str) -> Result<usize, String> {
+    let _guard = memory_sources_write_guard().await;
     let mut config = config_rpc::load_config_with_timeout().await?;
     let before = config.memory_sources.len();
     config.memory_sources.retain(|s| {
@@ -212,6 +226,7 @@ pub async fn upsert_composio_source(
     connection_id: &str,
     label: &str,
 ) -> Result<MemorySourceEntry, String> {
+    let _guard = memory_sources_write_guard().await;
     let mut config = config_rpc::load_config_with_timeout().await?;
 
     if let Some(existing) = config.memory_sources.iter_mut().find(|s| {
@@ -332,6 +347,7 @@ pub struct MemorySourcePatch {
 ///
 /// Saves config once after all mutations and returns the updated entries.
 pub async fn apply_all_in() -> Result<Vec<MemorySourceEntry>, String> {
+    let _guard = memory_sources_write_guard().await;
     let mut config = config_rpc::load_config_with_timeout().await?;
 
     tracing::info!(

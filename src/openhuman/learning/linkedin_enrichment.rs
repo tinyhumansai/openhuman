@@ -552,6 +552,7 @@ async fn search_gmail_for_linkedin(config: &Config) -> anyhow::Result<Option<Str
                 "GMAIL_FETCH_EMAILS",
                 Some(args),
                 &config.composio.entity_id,
+                None,
             )
             .await
             .map_err(|e| anyhow::anyhow!("GMAIL_FETCH_EMAILS (direct) failed: {e:#}"))?

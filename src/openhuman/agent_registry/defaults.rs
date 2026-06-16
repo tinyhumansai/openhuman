@@ -6,7 +6,7 @@ use crate::openhuman::agent::harness::definition::{
     AgentDefinition, ModelSpec, SubagentEntry, ToolScope,
 };
 
-use super::types::{AgentRegistryEntry, AgentRegistrySource};
+use super::types::{AgentRegistryEntry, AgentRegistrySource, AgentSubagentPolicy};
 
 pub fn default_agents() -> Vec<AgentRegistryEntry> {
     crate::openhuman::agent_registry::agents::load_builtins()
@@ -35,14 +35,15 @@ fn default_entry_from_definition(def: AgentDefinition) -> AgentRegistryEntry {
         system_prompt: None,
         tool_allowlist: tools_to_allowlist(&def.tools, &def.extra_tools),
         tool_denylist: def.disallowed_tools,
-        subagents: def
-            .subagents
-            .into_iter()
-            .filter_map(|entry| match entry {
-                SubagentEntry::AgentId(id) => Some(id),
-                SubagentEntry::Skills(_) => None,
-            })
-            .collect(),
+        subagents: AgentSubagentPolicy::from_allowlist(
+            def.subagents
+                .into_iter()
+                .filter_map(|entry| match entry {
+                    SubagentEntry::AgentId(id) => Some(id),
+                    SubagentEntry::Skills(_) => None,
+                })
+                .collect(),
+        ),
         tags: vec![def.agent_tier.as_str().to_string()],
         metadata: Value::Null,
     }

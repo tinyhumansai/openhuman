@@ -40,6 +40,7 @@ jobs:
     if: inputs.run_unit
     name: i18n Coverage
     runs-on: ubuntu-22.04
+    timeout-minutes: 10
     container:
       image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
     steps:
@@ -64,6 +65,7 @@ jobs:
     if: inputs.run_unit
     name: Frontend Unit Tests
     runs-on: ubuntu-22.04
+    timeout-minutes: 30
     container:
       image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
     steps:
@@ -127,7 +129,7 @@ jobs:
     if: inputs.run_rust_core
     name: Rust Core Tests (Windows — secrets ACL)
     runs-on: windows-latest
-    timeout-minutes: 35
+    timeout-minutes: 30
     env:
       CARGO_INCREMENTAL: '0'
       SCCACHE_GHA_ENABLED: 'true'
@@ -164,6 +166,7 @@ jobs:
     if: inputs.run_rust_tauri
     name: Rust Tauri Shell Tests
     runs-on: ubuntu-22.04
+    timeout-minutes: 20
     container:
       image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
     env:

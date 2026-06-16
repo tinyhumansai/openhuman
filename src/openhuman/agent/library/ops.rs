@@ -146,6 +146,7 @@ mod tests {
             timeout_secs: None,
             sandbox_mode: SandboxMode::ReadOnly,
             background: false,
+            trigger_memory_agent: Default::default(),
             subagents: vec![
                 SubagentEntry::AgentId("critic".to_string()),
                 SubagentEntry::Skills(SkillsWildcard {

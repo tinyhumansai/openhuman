@@ -270,6 +270,8 @@ async fn dispatch_target_agent(agent_id: &str, prompt: &str) -> anyhow::Result<S
     // Build the ParentExecutionContext from the Agent's public accessors
     // so `run_subagent` can inherit the provider, tools, memory, etc.
     let parent_ctx = ParentExecutionContext {
+        agent_definition_id: "triage".to_string(),
+        allowed_subagent_ids: [agent_id.to_string()].into_iter().collect(),
         provider: agent.provider_arc(),
         all_tools: agent.tools_arc(),
         all_tool_specs: agent.tool_specs_arc(),
@@ -278,7 +280,7 @@ async fn dispatch_target_agent(agent_id: &str, prompt: &str) -> anyhow::Result<S
         workspace_dir: agent.workspace_dir().to_path_buf(),
         memory: agent.memory_arc(),
         agent_config: agent.agent_config().clone(),
-        skills: Arc::new(agent.skills().to_vec()),
+        workflows: Arc::new(agent.workflows().to_vec()),
         memory_context: Arc::new(None), // Sub-agent queries memory via tools if needed
         session_id: format!("triage-{}", uuid::Uuid::new_v4()),
         channel: "triage".to_string(),

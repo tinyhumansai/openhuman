@@ -107,7 +107,8 @@ export class TransportManager {
    * If LAN wins but later fails, caller should call reset() to re-race.
    */
   private async raceLanAndTunnel(): Promise<CoreTransport> {
-    const { rpcUrl, channelId, corePubkey, sessionToken, pairingToken } = this.profile;
+    const { rpcUrl, channelId, corePubkey, sessionToken, pairingToken, devicePrivkey } =
+      this.profile;
 
     if (!channelId || !corePubkey) {
       throw new Error('[transport:manager] tunnel profile missing channelId or corePubkey');
@@ -122,7 +123,9 @@ export class TransportManager {
       this.backendSocketUrl,
       channelId,
       corePubkey,
-      tunnelToken
+      tunnelToken,
+      devicePrivkey,
+      sessionToken ? 'session' : 'pairing'
     );
 
     if (!rpcUrl) {

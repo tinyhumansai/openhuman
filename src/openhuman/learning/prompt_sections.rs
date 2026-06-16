@@ -296,7 +296,7 @@ mod tests {
             model_name: "test-model",
             agent_id: "",
             tools: &[],
-            skills: &[],
+            workflows: &[],
             dispatcher_instructions: "",
             learned,
             visible_tool_names,

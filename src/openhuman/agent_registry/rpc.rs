@@ -6,7 +6,9 @@ use serde_json::Value;
 use crate::rpc::RpcOutcome;
 
 use super::ops;
-use super::types::{AgentRegistryEntry, AgentRegistryPatch, AgentRegistrySource, AgentToolInfo};
+use super::types::{
+    AgentRegistryEntry, AgentRegistryPatch, AgentRegistrySource, AgentSubagentPolicy, AgentToolInfo,
+};
 
 #[derive(Debug, Deserialize)]
 pub struct ListRequest {
@@ -82,7 +84,7 @@ pub struct CreateCustomRequest {
     #[serde(default)]
     pub tool_denylist: Vec<String>,
     #[serde(default)]
-    pub subagents: Vec<String>,
+    pub subagents: AgentSubagentPolicy,
     #[serde(default)]
     pub tags: Vec<String>,
     #[serde(default)]

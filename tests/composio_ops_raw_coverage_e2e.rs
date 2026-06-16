@@ -165,6 +165,7 @@ async fn composio_ops_use_loopback_backend_for_happy_and_error_paths() {
         &config,
         "GMAIL_FETCH_EMAILS",
         Some(json!({ "query": "label:INBOX" })),
+        None,
     )
     .await
     .expect("execute")
@@ -179,6 +180,7 @@ async fn composio_ops_use_loopback_backend_for_happy_and_error_paths() {
         &config,
         "GMAIL_SEND_EMAIL",
         Some(json!({ "to": "person@example.test" })),
+        None,
     )
     .await
     .expect("provider error stays in response")
@@ -363,6 +365,7 @@ async fn composio_direct_key_ops_and_agent_tools_take_local_validation_paths() {
         &config,
         "GMAIL_SEND_EMAIL",
         Some(json!({ "subject": "missing recipient" })),
+        None,
     )
     .await
     .expect_err("direct execution validates before network");
@@ -412,7 +415,7 @@ async fn composio_controller_registry_validates_params_without_backend_network()
         ("authorize", 2),
         ("delete_connection", 2),
         ("list_tools", 2),
-        ("execute", 2),
+        ("execute", 3),
         ("list_github_repos", 1),
         ("create_trigger", 3),
         ("get_user_profile", 1),

@@ -22,15 +22,36 @@ export default function AttachmentPreview({
         <div
           key={attachment.id}
           className="relative flex items-center gap-2 rounded-lg border border-stone-200 dark:border-neutral-700 bg-stone-50 dark:bg-neutral-800 px-2 py-1.5 text-xs text-stone-700 dark:text-neutral-300 max-w-[180px]">
-          <img
-            src={attachment.dataUri}
-            alt={attachment.file.name}
-            className="w-8 h-8 rounded object-cover flex-shrink-0"
-          />
+          {attachment.kind === 'image' ? (
+            <img
+              src={attachment.previewUri ?? attachment.dataUri}
+              alt={attachment.file.name}
+              className="w-8 h-8 rounded object-cover flex-shrink-0"
+            />
+          ) : (
+            <div
+              aria-hidden
+              className="w-8 h-8 rounded border border-stone-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 flex items-center justify-center flex-shrink-0 text-stone-500 dark:text-neutral-400">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={1.8}
+                  d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"
+                />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={1.8}
+                  d="M14 2v6h6M8 13h8M8 17h5"
+                />
+              </svg>
+            </div>
+          )}
           <div className="flex flex-col min-w-0">
             <span className="truncate font-medium leading-tight">{attachment.file.name}</span>
             <span className="text-stone-400 dark:text-neutral-500 leading-tight">
-              {formatFileSize(attachment.file.size)}
+              {formatFileSize(attachment.payloadSizeBytes)}
             </span>
           </div>
           <button

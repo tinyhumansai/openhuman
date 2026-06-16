@@ -20,7 +20,7 @@
 //! `~/.openhuman/bin/whisper/` via a `.part` file + atomic rename, plus
 //! the `whisper-cli` binary on Windows where upstream ships a release
 //! archive. After install the `resolve_whisper_binary` helper in
-//! `local_ai/paths.rs` picks it up automatically — no env var to set.
+//! `inference/paths.rs` picks it up automatically — no env var to set.
 //!
 //! **Advanced path:** install whisper.cpp's `whisper-cli` from a package
 //! manager (`brew install whisper-cpp`, `pacman -S whisper.cpp`, …) or
@@ -100,8 +100,9 @@ pub struct WhisperTranscribeResult {
 ///    consumes a file path, not stdin.
 /// 3. Spawn `whisper-cli -m <model> -f <file> [-l <lang>]`, capture
 ///    stdout, and clean up the temp file regardless of outcome.
-/// 4. Return the trimmed transcript. Empty stdout is reported as an error
-///    (whisper produced no output → almost always a model/file mismatch).
+/// 4. Return the trimmed transcript. Empty stdout on a *successful* run is a
+///    normal "no speech captured" outcome (silence / mic gap) and returns an
+///    empty transcript, not an error — see [`interpret_whisper_output`].
 ///
 /// **No model assets are embedded.** The model file is downloaded by the
 /// installer into the workspace; this function only locates the binary.
@@ -236,19 +237,53 @@ pub async fn transcribe_whisper(
         output.stdout.len(),
         output.stderr.len()
     );
-    if !output.status.success() {
+    interpret_whisper_output(
+        output.status.success(),
+        exit_code,
+        &output.stdout,
+        &output.stderr,
+        model_id,
+    )
+}
+
+/// Interpret a finished whisper-cli invocation into an RPC outcome.
+///
+/// Split out from the spawn path so the exit-status / empty-transcript
+/// branching is unit-testable without a real subprocess.
+///
+/// Branch semantics:
+/// - **Non-zero exit** → hard error. whisper-cli failed (bad model/file,
+///   decode error) — a real failure worth reporting.
+/// - **Exit 0 with empty stdout** → an empty transcript is a *normal* "no
+///   speech captured" outcome: the user released push-to-talk without
+///   speaking, recorded silence, or hit a mic gap. whisper-cli ran
+///   successfully; there is nothing to act on. Returning an error here
+///   mischaracterised silence as a failure and flooded Sentry
+///   (TAURI-RUST-2S: 799 events / 23 users across every shipped release).
+///   Return `Ok` with an empty transcript instead — the frontend
+///   (`sttClient.ts`) and internal callers (`voice::always_on`,
+///   `desktop_companion::pipeline`) already treat empty text as a benign skip.
+/// - **Exit 0 with text** → the trimmed transcript.
+fn interpret_whisper_output(
+    success: bool,
+    exit_code: Option<i32>,
+    stdout: &[u8],
+    stderr: &[u8],
+    model_id: String,
+) -> Result<RpcOutcome<WhisperTranscribeResult>, String> {
+    if !success {
         return Err(format!(
-            "{LOG_PREFIX} whisper-cli failed (exit={:?}): {}",
-            exit_code,
-            String::from_utf8_lossy(&output.stderr).trim()
+            "{LOG_PREFIX} whisper-cli failed (exit={exit_code:?}): {}",
+            String::from_utf8_lossy(stderr).trim()
         ));
     }
 
-    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let text = String::from_utf8_lossy(stdout).trim().to_string();
     if text.is_empty() {
-        return Err(format!(
-            "{LOG_PREFIX} whisper-cli returned empty transcript (model={model_id})"
-        ));
+        debug!(
+            "{LOG_PREFIX} whisper-cli returned empty transcript (model={model_id}) — \
+             no speech captured, returning empty result"
+        );
     }
 
     Ok(RpcOutcome::single_log(
@@ -295,6 +330,47 @@ mod tests {
         assert_eq!(mime_to_extension(Some("audio/x-m4a")), "m4a");
         assert_eq!(mime_to_extension(Some("audio/ogg")), "ogg");
         assert_eq!(mime_to_extension(Some("audio/flac")), "flac");
+    }
+
+    #[test]
+    fn empty_stdout_on_success_is_ok_empty_not_error() {
+        // TAURI-RUST-2S: whisper-cli exits 0 but produces no text when the
+        // recording held no speech (silence / mic gap). That is a normal
+        // outcome, not a failure — must be Ok with an empty transcript so the
+        // RPC boundary does not report it to Sentry.
+        let out =
+            interpret_whisper_output(true, Some(0), b"", b"", "whisper-large-v3-turbo".into())
+                .expect("empty transcript on success must be Ok");
+        assert_eq!(out.value.text, "");
+        assert_eq!(out.value.model_id, "whisper-large-v3-turbo");
+    }
+
+    #[test]
+    fn whitespace_only_stdout_on_success_is_ok_empty() {
+        // Trimming reduces a whitespace-only run to empty — still a no-speech
+        // outcome, still Ok.
+        let out = interpret_whisper_output(true, Some(0), b"  \n\t ", b"", "medium".into())
+            .expect("whitespace-only transcript must be Ok");
+        assert_eq!(out.value.text, "");
+    }
+
+    #[test]
+    fn text_stdout_on_success_returns_trimmed_transcript() {
+        let out =
+            interpret_whisper_output(true, Some(0), b"  hello world \n", b"", "medium".into())
+                .expect("transcript must be Ok");
+        assert_eq!(out.value.text, "hello world");
+        assert_eq!(out.value.model_id, "medium");
+    }
+
+    #[test]
+    fn nonzero_exit_is_error() {
+        // Real failures (bad model/file, decode error) keep erroring so they
+        // stay visible — only the success+empty case was demoted.
+        let err = interpret_whisper_output(false, Some(1), b"", b"bad model file", "medium".into())
+            .expect_err("non-zero exit must be Err");
+        assert!(err.contains("whisper-cli failed"), "got: {err}");
+        assert!(err.contains("bad model file"), "got: {err}");
     }
 
     #[test]

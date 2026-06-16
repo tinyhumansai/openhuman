@@ -3,8 +3,8 @@ name: E2E (Linux) - agent-review
 #
 # Runs the agent-review spec on Linux via the unified Appium Chromium
 # driver attached to CEF's CDP port. Same driver path as `e2e.yml`; this
-# workflow exists because agent-review needs a longer timeout and its own
-# artifact retention.
+# workflow exists because agent-review needs its own artifact retention.
+# Timeout: 30m (recent runs complete in ~10-20m).
 #
 # Previously: tauri-driver + WebKitWebDriver, which can't drive a
 # CEF-backed WebView. That path is dead.
@@ -19,7 +19,7 @@ jobs:
   e2e-agent-review:
     name: E2E agent-review (Linux / Appium Chromium)
     runs-on: ubuntu-22.04
-    timeout-minutes: 60
+    timeout-minutes: 30
     steps:
       - name: Checkout code
         uses: actions/checkout@v5

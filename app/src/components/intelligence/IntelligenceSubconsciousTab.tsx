@@ -1,12 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useDispatch } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
 
 import { useT } from '../../lib/i18n/I18nContext';
-import { setSelectedThread } from '../../store/threadSlice';
 import type { SubconsciousMode } from '../../utils/tauriCommands/heartbeat';
 import type { SubconsciousStatus } from '../../utils/tauriCommands/subconscious';
-import SubconsciousReflectionCards from './SubconsciousReflectionCards';
 
 interface ModeOption {
   id: SubconsciousMode;
@@ -70,7 +67,6 @@ export default function IntelligenceSubconsciousTab({
 }: IntelligenceSubconsciousTabProps) {
   const { t } = useT();
   const navigate = useNavigate();
-  const dispatch = useDispatch();
   const providerUnavailable = status?.provider_available === false;
   const providerUnavailableReason = providerUnavailable
     ? (status?.provider_unavailable_reason ?? t('subconscious.providerUnavailableTitle'))
@@ -95,11 +91,6 @@ export default function IntelligenceSubconsciousTab({
       void setIntervalMinutes(minutes);
     }
   }, [localSlider, intervalMinutes, setIntervalMinutes]);
-
-  const handleNavigateToThread = (threadId: string) => {
-    dispatch(setSelectedThread(threadId));
-    navigate('/chat');
-  };
 
   const handleRunTick = async () => {
     try {
@@ -256,10 +247,11 @@ export default function IntelligenceSubconsciousTab({
       )}
 
       {isEnabled && (
-        <SubconsciousReflectionCards
-          onNavigateToThread={handleNavigateToThread}
-          pollIntervalMs={15_000}
-        />
+        <div className="rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/50 p-4">
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">
+            {t('subconscious.scratchpadInfo')}
+          </p>
+        </div>
       )}
     </div>
   );

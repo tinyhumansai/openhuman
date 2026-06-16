@@ -7,6 +7,7 @@ import {
   openhumanTaskSourcesFetch,
   openhumanTaskSourcesList,
   openhumanTaskSourcesStatus,
+  openhumanTaskSourcesSync,
   openhumanTaskSourcesUpdate,
 } from '../../../utils/tauriCommands';
 import { TaskKanbanBoard } from './TaskKanbanBoard';
@@ -18,6 +19,7 @@ vi.mock('../../../utils/tauriCommands', () => ({
   openhumanTaskSourcesFetch: vi.fn(),
   openhumanTaskSourcesList: vi.fn(),
   openhumanTaskSourcesStatus: vi.fn(),
+  openhumanTaskSourcesSync: vi.fn(),
   openhumanTaskSourcesUpdate: vi.fn(),
 }));
 
@@ -73,7 +75,11 @@ describe('TaskKanbanBoard approval surface', () => {
       fetched: 3,
       routed: 2,
       skippedDupe: 1,
+      pruned: 0,
     });
+    vi.mocked(openhumanTaskSourcesSync).mockResolvedValue([
+      { sourceId: 'src-1', provider: 'github', fetched: 3, routed: 2, skippedDupe: 1, pruned: 1 },
+    ]);
     vi.mocked(openhumanTaskSourcesUpdate).mockResolvedValue({
       id: 'src-1',
       provider: 'github',
@@ -103,7 +109,7 @@ describe('TaskKanbanBoard approval surface', () => {
     expect(onDecidePlan).toHaveBeenCalledWith(expect.objectContaining({ id: 'a' }), false);
   });
 
-  it('buckets ready→todo and rejected→blocked columns so the cards still render', () => {
+  it('buckets ready→in_progress column and rejected→done column so the cards still render', () => {
     render(
       <TaskKanbanBoard
         board={board([
@@ -186,14 +192,18 @@ describe('TaskKanbanBoard approval surface', () => {
     fireEvent.click(screen.getByText('settings.taskSources.fetchNow'));
     await waitFor(() => expect(openhumanTaskSourcesFetch).toHaveBeenCalledWith('src-1'));
 
+    fireEvent.click(screen.getByText('settings.taskSources.syncAll'));
+    await waitFor(() => expect(openhumanTaskSourcesSync).toHaveBeenCalled());
+
     fireEvent.click(screen.getByText('settings.taskSources.disable'));
     await waitFor(() =>
       expect(openhumanTaskSourcesUpdate).toHaveBeenCalledWith('src-1', { enabled: false })
     );
 
-    // "Manage sources" jumps to the settings page.
+    // "Manage sources" jumps to the merged Integrations settings page
+    // (task-sources was folded into /settings/integrations).
     fireEvent.click(screen.getByText('conversations.taskKanban.sources.manage'));
-    expect(navigateSpy).toHaveBeenCalledWith('/settings/task-sources');
+    expect(navigateSpy).toHaveBeenCalledWith('/settings/integrations');
   });
 
   it('shows a "View work" button on a card with a session thread and calls onViewSession', () => {

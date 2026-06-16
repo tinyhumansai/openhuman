@@ -51,6 +51,8 @@ mod notch_window;
 mod notification_settings;
 mod process_kill;
 mod process_recovery;
+mod ptt_hotkeys;
+mod ptt_overlay;
 #[cfg(target_os = "windows")]
 mod reset_reboot_schedule;
 mod screen_capture;
@@ -758,6 +760,18 @@ async fn register_dictation_hotkey(
         expanded_shortcuts.join(", ")
     );
 
+    // Reject overlap with the currently-registered PTT hotkey.
+    let ptt_current = {
+        let state = app.state::<ptt_hotkeys::PttHotkeyState>();
+        let guard = state.shortcut.lock().unwrap();
+        guard.clone()
+    };
+    if let Some(conflict) = ptt_hotkeys::first_conflict_with(&expanded_shortcuts, &ptt_current) {
+        return Err(format!(
+            "dictation shortcut '{conflict}' conflicts with the push-to-talk hotkey"
+        ));
+    }
+
     let register_shortcut = |shortcut_variant: &str| -> Result<(), String> {
         let app_clone = app.clone();
         app.global_shortcut()
@@ -849,6 +863,180 @@ async fn unregister_dictation_hotkey(app: AppHandle<AppRuntime>) -> Result<(), S
             log::info!("[dictation] shortcut unregistered: {old}");
         }
     }
+    Ok(())
+}
+
+/// Register (or re-register) the global push-to-talk hotkey. Emits
+/// `ptt://start { session_id }` on press and `ptt://stop { session_id }`
+/// on release.
+#[tauri::command]
+async fn register_ptt_hotkey(app: AppHandle<AppRuntime>, shortcut: String) -> Result<(), String> {
+    log::info!("[ptt] register_ptt_hotkey: shortcut={shortcut}");
+
+    let expanded = ptt_hotkeys::expand_ptt_shortcuts(&shortcut).map_err(|e| e.to_string())?;
+
+    // Reject overlap with the currently-registered dictation hotkey.
+    let dictation_current = {
+        let state = app.state::<dictation_hotkeys::DictationHotkeyState>();
+        let guard = state.0.lock().unwrap();
+        guard.clone()
+    };
+    if let Some(conflict) = ptt_hotkeys::first_conflict_with(&expanded, &dictation_current) {
+        return Err(ptt_hotkeys::PttError::ConflictsWithDictation(conflict).to_string());
+    }
+
+    let old_shortcuts = {
+        let state = app.state::<ptt_hotkeys::PttHotkeyState>();
+        let guard = state.shortcut.lock().unwrap();
+        guard.clone()
+    };
+
+    // Lazy-instantiate the overlay window so it's ready before the first press.
+    if let Err(e) = ptt_overlay::ensure_window(&app) {
+        log::warn!("[ptt] overlay window create failed (continuing): {e}");
+    }
+
+    let register_shortcut = |variant: &str| -> Result<(), String> {
+        let app_pressed = app.clone();
+        let app_released = app.clone();
+        let variant_owned = variant.to_string();
+        app.global_shortcut()
+            .on_shortcut(variant, move |app_inner, _sc, event| {
+                let state = app_inner.state::<ptt_hotkeys::PttHotkeyState>();
+                match event.state {
+                    ShortcutState::Pressed => {
+                        // Drop OS key-repeat events; only the first Pressed of a hold opens a session.
+                        if state
+                            .is_held
+                            .compare_exchange(
+                                false,
+                                true,
+                                std::sync::atomic::Ordering::AcqRel,
+                                std::sync::atomic::Ordering::Acquire,
+                            )
+                            .is_err()
+                        {
+                            log::trace!(
+                                "[ptt] press dropped (already held) shortcut={variant_owned}"
+                            );
+                            return;
+                        }
+                        let session_id = state
+                            .session_counter
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                            + 1;
+                        log::debug!(
+                            "[ptt] pressed shortcut={variant_owned} session_id={session_id}"
+                        );
+                        if let Err(e) = app_pressed.emit(
+                            "ptt://start",
+                            serde_json::json!({
+                                "session_id": session_id,
+                            }),
+                        ) {
+                            log::warn!("[ptt] emit start failed: {e}");
+                        }
+                    }
+                    ShortcutState::Released => {
+                        if !state
+                            .is_held
+                            .swap(false, std::sync::atomic::Ordering::AcqRel)
+                        {
+                            // No corresponding Pressed in our state — stale event, drop.
+                            log::trace!(
+                                "[ptt] release dropped (not held) shortcut={variant_owned}"
+                            );
+                            return;
+                        }
+                        let session_id = state
+                            .session_counter
+                            .load(std::sync::atomic::Ordering::Relaxed);
+                        log::debug!(
+                            "[ptt] released shortcut={variant_owned} session_id={session_id}"
+                        );
+                        if let Err(e) = app_released.emit(
+                            "ptt://stop",
+                            serde_json::json!({
+                                "session_id": session_id,
+                            }),
+                        ) {
+                            log::warn!("[ptt] emit stop failed: {e}");
+                        }
+                    }
+                }
+            })
+            .map_err(|e| format!("Failed to register ptt shortcut '{variant}': {e}"))
+    };
+
+    // Unregister previous PTT variants.
+    let mut unregistered: Vec<String> = Vec::new();
+    for old in &old_shortcuts {
+        if let Err(e) = app.global_shortcut().unregister(old.as_str()) {
+            // Rollback already-unregistered ones.
+            for r in &unregistered {
+                if let Err(re) = register_shortcut(r) {
+                    log::warn!("[ptt] rollback failed for '{r}': {re}");
+                }
+            }
+            return Err(format!(
+                "Failed to unregister previous ptt shortcut '{old}': {e}"
+            ));
+        }
+        unregistered.push(old.clone());
+    }
+
+    // Register the new variants. Rollback on first failure.
+    let mut newly_registered: Vec<String> = Vec::new();
+    for v in &expanded {
+        if let Err(e) = register_shortcut(v) {
+            for r in &newly_registered {
+                if let Err(re) = app.global_shortcut().unregister(r.as_str()) {
+                    log::warn!("[ptt] rollback failed for '{r}': {re}");
+                }
+            }
+            for old in &old_shortcuts {
+                if let Err(re) = register_shortcut(old) {
+                    log::warn!("[ptt] rollback failed for '{old}': {re}");
+                }
+            }
+            return Err(e);
+        }
+        newly_registered.push(v.clone());
+    }
+
+    {
+        let state = app.state::<ptt_hotkeys::PttHotkeyState>();
+        let mut guard = state.shortcut.lock().unwrap();
+        *guard = expanded.clone();
+    }
+
+    log::info!("[ptt] registered: {}", expanded.join(", "));
+    Ok(())
+}
+
+/// Unregister the global PTT hotkey (if any).
+#[tauri::command]
+async fn unregister_ptt_hotkey(app: AppHandle<AppRuntime>) -> Result<(), String> {
+    log::info!("[ptt] unregister_ptt_hotkey: called");
+    let state = app.state::<ptt_hotkeys::PttHotkeyState>();
+    let old = {
+        let guard = state.shortcut.lock().unwrap();
+        guard.clone()
+    };
+    let mut still_registered: Vec<String> = Vec::new();
+    for s in &old {
+        if let Err(e) = app.global_shortcut().unregister(s.as_str()) {
+            log::warn!("[ptt] unregister '{s}' failed: {e}");
+            still_registered.push(s.clone());
+        }
+    }
+    // Only retain variants that genuinely failed to unregister; the rest are gone.
+    {
+        let mut guard = state.shortcut.lock().unwrap();
+        *guard = still_registered;
+    }
+    // Destroy the overlay window so resources are released.
+    ptt_overlay::destroy_window(&app);
     Ok(())
 }
 
@@ -1993,6 +2181,31 @@ pub fn run() {
             {
                 return None;
             }
+            // Defense-in-depth: drop managed-backend `errorCode` events (#870)
+            // the backend owns (F2/F4). The shell links the core in-process,
+            // so a managed inference error captured here must be filtered
+            // identically to the core binary's main.rs chain. The malformed
+            // `BAD_REQUEST` carve-out (F8) is excluded by the underlying
+            // decision, so a client-built bad payload still pages.
+            if openhuman_core::core::observability::is_backend_error_code_event(&event) {
+                log::debug!(
+                    "[sentry-error-code-filter] dropping backend-owned errorCode event_id={:?}",
+                    event.event_id
+                );
+                return None;
+            }
+            // Defense-in-depth: drop transient streaming transport blips
+            // (domain=llm_provider, failure=transport) — flaky-network
+            // timeouts/resets recovered by retry/fallback (F7). Mirrors the
+            // core binary's main.rs filter.
+            if openhuman_core::core::observability::is_transient_provider_transport_failure(&event)
+            {
+                log::debug!(
+                    "[sentry-transport-filter] dropping transient provider transport event_id={:?}",
+                    event.event_id
+                );
+                return None;
+            }
             // Drop 401 "Session expired. Please log in again." bodies and
             // pre-flight "no session token stored" guards — mirrors the
             // core binary's before_send chain. Since #1061 the Tauri shell
@@ -2261,21 +2474,16 @@ pub fn run() {
         // mock; `password-store=basic` is the equivalent for the password
         // manager. Both are no-ops on Windows/Linux, so safe to always set.
         //
-        // In debug builds we additionally expose the Chrome DevTools
-        // Protocol on localhost:19222 so every CEF webview can be
-        // inspected from a regular browser (right-click "Inspect" does
-        // not propagate to CEF child webviews on macOS). Release builds
-        // intentionally do NOT open the CDP port — it would let any
-        // process on the machine drive the embedded WhatsApp/Slack/etc.
-        // webviews.
-        //
-        // The port was 9222 (Chromium's default) but ollama's
-        // OpenAI-compatible server squats on 127.0.0.1:9222 in some
-        // installs, which silently broke CDP attach (our client hit
-        // ollama, the WS handshake failed, child webviews stayed at
-        // about:blank → black screen). Picked 19222 to dodge that
-        // collision; if you change it here also update
-        // `cdp::CDP_PORT` and `whatsapp_scanner::CDP_PORT`.
+        // CDP attach is migrating to the in-process channel — see
+        // `app/src-tauri/src/cdp/in_process.rs` and the per-account
+        // session opener (`cdp/session.rs`). The legacy TCP DevTools
+        // port is still passed below (search for
+        // `--remote-debugging-port`) because the per-scanner `CdpConn`
+        // duplicates in `discord_scanner`, `whatsapp_scanner`,
+        // `slack_scanner`, `telegram_scanner`, `wechat_scanner`, and
+        // `meet_video` have not migrated yet. Once they do, the flag
+        // can be dropped and the unauthenticated same-UID loopback
+        // listener with it.
         //
         // NOTE: flags must be prefixed with `--`. The runtime's
         // `on_before_command_line_processing` dispatch (in
@@ -2380,15 +2588,18 @@ pub fn run() {
             args.push(("--use-fake-ui-for-media-stream", None));
             args.push(("--use-file-for-fake-video-capture", Some(path)));
         }
-        // Always expose the CDP port, not just in debug. The webview-accounts
-        // CDP session opener navigates each embedded provider webview from its
-        // `about:blank#openhuman-acct-...` placeholder to the real provider URL
-        // via `Page.navigate`. Without this port available in release builds,
-        // the CDP client can't attach (`browser_ws_url()` 404s on /json/version),
-        // the navigation never fires, and the embedded webview stays on
-        // `about:blank` (blank panel for Telegram / WhatsApp / Slack / Discord).
-        // Same port the `cdp::CDP_HOST`/`cdp::CDP_PORT` constants expect.
-        args.push(("--remote-debugging-port", Some("19222")));
+        // CDP attach is migrating to in-process. The per-account
+        // session opener (`cdp/session.rs`) uses the in-process channel
+        // installed by `webview_accounts::open`. The per-scanner
+        // duplicates (whatsapp, slack, telegram, wechat, discord,
+        // meet_video) still reach the embedded browser over the TCP
+        // loopback DevTools port — once they migrate this flag can be
+        // dropped and the unauthenticated listener closed for good.
+        // Leak the small port string to satisfy the `'static` arg lifetime
+        // (one-time, a few bytes per launch — this is a startup flag).
+        let cdp_port_str: &'static str =
+            Box::leak(crate::cdp::cdp_port().to_string().into_boxed_str());
+        args.push(("--remote-debugging-port", Some(cdp_port_str)));
         let force_gpu_env = std::env::var("OPENHUMAN_FORCE_GPU").ok();
         append_platform_cef_gpu_workarounds(
             &mut args,
@@ -2487,10 +2698,12 @@ pub fn run() {
         .manage(dictation_hotkeys::DictationHotkeyState(
             std::sync::Mutex::new(Vec::new()),
         ))
+        .manage(ptt_hotkeys::PttHotkeyState::new())
         .manage(companion_commands::CompanionHotkeyState(
             std::sync::Mutex::new(Vec::new()),
         ))
         .manage(webview_accounts::WebviewAccountsState::default())
+        .manage(cdp::CdpRegistry::default())
         .manage(notification_settings::NotificationSettingsState::new())
         .manage(PendingAppUpdateState::default());
     let builder = builder.manage(std::sync::Arc::new(imessage_scanner::ScannerRegistry::new()));
@@ -2508,6 +2721,12 @@ pub fn run() {
     let builder = builder.manage(meet_video::frame_bus::MeetVideoFrameBusState::new());
     builder
         .setup(move |app| {
+            // Stash the typed CEF `AppHandle` for the in-process CDP
+            // transport. Lets `cdp::install_for_account` reach the
+            // concrete `Webview<Cef>` (which `send_dev_tools_message`
+            // requires) from generic `<R: Runtime>` call sites.
+            cdp::set_cef_app_handle(app.handle().clone());
+
             #[cfg(windows)]
             {
                 // `register_all` writes HKCU\Software\Classes\openhuman so the
@@ -3240,6 +3459,9 @@ pub fn run() {
             schedule_cef_profile_purge,
             register_dictation_hotkey,
             unregister_dictation_hotkey,
+            register_ptt_hotkey,
+            unregister_ptt_hotkey,
+            ptt_overlay::show_ptt_overlay,
             webview_accounts::webview_account_open,
             webview_accounts::webview_account_prewarm,
             webview_accounts::webview_account_close,

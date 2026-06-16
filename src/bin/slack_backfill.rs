@@ -65,7 +65,7 @@ async fn execute_action(
     match client_kind {
         ComposioClientKind::Backend(client) => client.execute_tool(tool, arguments).await,
         ComposioClientKind::Direct(direct) => {
-            direct_execute(direct, tool, arguments, &config.composio.entity_id).await
+            direct_execute(direct, tool, arguments, &config.composio.entity_id, None).await
         }
     }
 }

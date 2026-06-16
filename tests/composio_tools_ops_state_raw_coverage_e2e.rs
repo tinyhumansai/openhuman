@@ -396,6 +396,7 @@ async fn round17_ops_trigger_history_app_state_and_profiles_cover_local_edges() 
         &harness.config,
         "GMAIL_FETCH_EMAILS",
         Some(json!({ "query": "from:round17" })),
+        None,
     )
     .await
     .expect("ops execute success")

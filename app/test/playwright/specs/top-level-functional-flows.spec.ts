@@ -95,9 +95,9 @@ test.describe('Top-level functional flows', () => {
     await bootAuthenticatedPage(page, 'pw-top-level-ui', '/home');
     const routes: Array<[string, RegExp]> = [
       ['/home', /Ask your assistant anything|Start/],
-      ['/skills', /Composio Integrations|Channels|MCP Servers/],
+      ['/connections', /Composio Integrations|Composio|Channels|MCP Servers/],
       ['/chat', /How can I help you today|No messages yet|Threads/],
-      ['/intelligence', /Agent Tasks|Memory|Subconscious/],
+      ['/settings/notifications-hub', /Notifications/],
       ['/notifications', /Notifications|System Events/],
       ['/rewards', /Rewards|Referrals|Redeem/],
     ];

@@ -9,12 +9,13 @@ interface RouteCheck {
 
 const routes: RouteCheck[] = [
   { hash: '/chat', markers: ['Threads', 'Chat', 'Message', 'New'] },
-  { hash: '/skills', markers: ['Skills', 'Skill', 'Install', 'Browse'] },
+  { hash: '/connections', markers: ['Composio', 'Channels', 'MCP Servers', 'Skills'] },
   { hash: '/home', markers: ['Ask your assistant anything', 'Your device is connected'] },
-  { hash: '/channels', markers: ['Channels', 'Connect', 'Telegram', 'Discord'] },
+  { hash: '/channels', markers: ['Channels', 'Connections', 'Telegram', 'Discord'] },
   { hash: '/notifications', markers: ['Notifications', 'Alerts', 'No alerts yet'] },
   { hash: '/rewards', markers: ['Rewards', 'Referral', 'Credits', 'Invite'] },
   { hash: '/settings', markers: ['Settings', 'Account', 'Billing', 'Advanced'] },
+  { hash: '/settings/notifications-hub', markers: ['Notifications'] },
   { hash: '/home', markers: ['Ask your assistant anything', 'Your device is connected'] },
 ];
 
@@ -30,7 +31,7 @@ async function verifyRouteLoaded(
   route: RouteCheck
 ): Promise<void> {
   await waitForAppReady(page);
-  await expect(await rootTextLength(page)).toBeGreaterThan(50);
+  await expect.poll(() => rootTextLength(page), { timeout: 10_000 }).toBeGreaterThan(50);
 }
 
 test.describe('Navigation Smoothness', () => {
@@ -42,14 +43,12 @@ test.describe('Navigation Smoothness', () => {
     for (const route of routes) {
       await page.goto(`/#${route.hash}`);
       await verifyRouteLoaded(page, route);
-      await page.waitForTimeout(400);
     }
   });
 
   test('rapid cycle completes without blank screens', async ({ page }) => {
     for (const route of routes) {
       await page.goto(`/#${route.hash}`);
-      await page.waitForTimeout(350);
       await verifyRouteLoaded(page, route);
     }
   });

@@ -76,6 +76,7 @@ async fn retries_once_on_post_oauth_auth_error_then_succeeds() {
         "GOOGLECALENDAR_EVENTS_LIST",
         Some(json!({})),
         Duration::from_millis(0),
+        None,
     )
     .await
     .expect("retry path must surface a response");
@@ -123,6 +124,7 @@ async fn does_not_retry_on_unrelated_error_payload() {
         "GMAIL_SEND_EMAIL",
         Some(json!({"to": "a@b.com"})),
         Duration::from_millis(0),
+        None,
     )
     .await
     .expect("non-retryable payload must still resolve cleanly");
@@ -171,6 +173,7 @@ async fn does_not_retry_on_first_attempt_success() {
         "GITHUB_GET_THE_AUTHENTICATED_USER",
         None,
         Duration::from_secs(60), // would hang the test if we ever slept
+        None,
     )
     .await
     .unwrap();
@@ -228,10 +231,15 @@ async fn retries_once_only_even_when_second_call_still_errors() {
     let base = start_mock_backend(app).await;
     let client = build_client_for(base);
 
-    let resp =
-        execute_with_auth_retry_inner(&client, "NOTION_PAGES_LIST", None, Duration::from_millis(0))
-            .await
-            .unwrap();
+    let resp = execute_with_auth_retry_inner(
+        &client,
+        "NOTION_PAGES_LIST",
+        None,
+        Duration::from_millis(0),
+        None,
+    )
+    .await
+    .unwrap();
 
     assert!(!resp.successful);
     assert_eq!(

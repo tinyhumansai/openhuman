@@ -38,6 +38,7 @@ jobs:
   reward:
     name: Invite eligible contributor
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'pull_request_target' &&

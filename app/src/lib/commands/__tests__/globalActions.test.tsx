@@ -17,11 +17,18 @@ afterEach(() => {
 });
 
 describe('registerGlobalActions', () => {
-  it('registers the 5 seed nav actions into the global frame', () => {
+  it('registers the 6 seed nav actions into the global frame', () => {
     const frame = hotkeyManager.pushFrame('global', 'root');
     const navigate = vi.fn() as unknown as NavigateFunction;
     registerGlobalActions(navigate, frame);
-    const ids = ['nav.home', 'nav.chat', 'nav.intelligence', 'nav.skills', 'nav.settings'];
+    const ids = [
+      'nav.home',
+      'nav.chat',
+      'nav.intelligence',
+      'nav.skills',
+      'nav.activity',
+      'nav.settings',
+    ];
     for (const id of ids) expect(registry.getAction(id)?.id).toBe(id);
     expect(registry.getAction('help.show')).toBeUndefined();
   });

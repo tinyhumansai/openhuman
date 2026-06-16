@@ -1,5 +1,6 @@
 use crate::openhuman::agent::host_runtime::RuntimeAdapter;
 use crate::openhuman::javascript::NodeBootstrap;
+use crate::openhuman::runtime_python::PythonBootstrap;
 use crate::openhuman::security::{AuditLogger, CommandExecutionLog, GateDecision, SecurityPolicy};
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
 use async_trait::async_trait;
@@ -50,6 +51,12 @@ pub struct ShellTool {
     /// toolchain. Non-blocking: never triggers a download for unrelated
     /// commands (we use `try_cached()`).
     node_bootstrap: Option<Arc<NodeBootstrap>>,
+    /// Optional managed Python bootstrap. Unlike Node PATH injection, Python
+    /// shell support is the primary execution surface for skills, so
+    /// Python-looking commands resolve this lazily before spawn. That keeps
+    /// `pip install foo` and `python3 -m foo` on one interpreter instead of
+    /// mixing arbitrary host `pip` and `python3` binaries.
+    python_bootstrap: Option<Arc<PythonBootstrap>>,
 }
 
 impl ShellTool {
@@ -63,6 +70,7 @@ impl ShellTool {
             runtime,
             audit,
             node_bootstrap: None,
+            python_bootstrap: None,
         }
     }
 
@@ -80,6 +88,27 @@ impl ShellTool {
             runtime,
             audit,
             node_bootstrap: Some(bootstrap),
+            python_bootstrap: None,
+        }
+    }
+
+    /// Attach managed language runtimes used by shell-invoked skills. Node is
+    /// injected only after a dedicated node/npm tool resolved it; Python is
+    /// resolved lazily for python/pip commands because shell is currently the
+    /// user-facing Python skill execution path.
+    pub fn with_language_bootstraps(
+        security: Arc<SecurityPolicy>,
+        runtime: Arc<dyn RuntimeAdapter>,
+        audit: Arc<AuditLogger>,
+        node_bootstrap: Option<Arc<NodeBootstrap>>,
+        python_bootstrap: Option<Arc<PythonBootstrap>>,
+    ) -> Self {
+        Self {
+            security,
+            runtime,
+            audit,
+            node_bootstrap,
+            python_bootstrap,
         }
     }
 
@@ -111,6 +140,18 @@ impl ShellTool {
             );
         }
     }
+
+    /// Resolve the working directory for this shell invocation.
+    ///
+    /// Returns the per-worker git-worktree override when one is installed via
+    /// [`crate::openhuman::agent::harness::with_action_dir_override`] (an
+    /// edit-capable worker running with `isolation = "worktree"`), otherwise
+    /// the shared `self.security.action_dir`. Keeping `security.action_dir` as
+    /// the fallback preserves the non-isolated behaviour exactly. See #3376.
+    fn effective_action_dir(&self) -> std::path::PathBuf {
+        crate::openhuman::agent::harness::current_action_dir_override()
+            .unwrap_or_else(|| self.security.action_dir.clone())
+    }
 }
 
 #[async_trait]
@@ -122,7 +163,11 @@ impl Tool for ShellTool {
     fn description(&self) -> &str {
         "Execute a shell command. Use this to run code, manipulate files in the workspace, \
          or perform system actions on the user's machine — including launching applications \
-         (e.g. `open -a Music` on macOS, `xdg-open music://` on Linux)."
+         (e.g. `open -a Music` on macOS, `xdg-open music://` on Linux). Only the command's \
+         stdout/stderr is captured and returned to you — a program that prints nothing \
+         (e.g. a `python`/`node` script that computes silently or only writes a file) returns \
+         an empty result, so make scripts print the output you need (e.g. `print(...)`), or \
+         follow up by reading any file they wrote."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -246,7 +291,7 @@ impl ShellTool {
         // (CWE-200), then re-add only safe, functional variables.
         let mut cmd = match self
             .runtime
-            .build_shell_command(command, &self.security.action_dir)
+            .build_shell_command(command, &self.effective_action_dir())
         {
             Ok(cmd) => cmd,
             Err(e) => {
@@ -264,25 +309,37 @@ impl ShellTool {
             }
         }
 
-        // If a managed Node.js install has already been resolved, transparently
-        // prepend its bin dir to PATH so this shell sees the managed toolchain.
-        // `try_cached()` never blocks and never triggers a download — unrelated
-        // commands (e.g. `ls`) stay fast and byte-identical to before.
-        if let Some(bootstrap) = self.node_bootstrap.as_ref() {
-            if let Some(resolved) = bootstrap.try_cached() {
-                let host_path = std::env::var("PATH").unwrap_or_default();
-                let sep = if cfg!(windows) { ";" } else { ":" };
-                let prepended = if host_path.is_empty() {
-                    resolved.bin_dir.to_string_lossy().into_owned()
-                } else {
-                    format!("{}{}{}", resolved.bin_dir.display(), sep, host_path)
-                };
-                tracing::debug!(
-                    bin_dir = %resolved.bin_dir.display(),
-                    version = %resolved.version,
-                    "[shell] prepending managed node bin to PATH"
+        // Point the child's temp dir at the agent's granted scratch dir
+        // (`/tmp/openhuman`, a ReadWrite trusted root — see SecurityPolicy
+        // `from_config`) so `python3 tempfile` / `mktemp` / `$TMPDIR` writes land
+        // in a sandboxed, readable location instead of the world-shared /tmp.
+        let scratch_dir = crate::openhuman::security::openhuman_scratch_dir();
+        if scratch_dir.is_dir() {
+            tracing::debug!(
+                scratch_dir = %scratch_dir.display(),
+                "[shell] overriding TMPDIR/TMP/TEMP to the openhuman scratch dir"
+            );
+            cmd.env("TMPDIR", scratch_dir.as_os_str());
+            cmd.env("TMP", scratch_dir.as_os_str());
+            cmd.env("TEMP", scratch_dir.as_os_str());
+        } else {
+            tracing::debug!(
+                scratch_dir = %scratch_dir.display(),
+                "[shell] scratch dir missing — leaving TMPDIR/TMP/TEMP as inherited"
+            );
+        }
+
+        match self.runtime_path_for_command(command).await {
+            Ok(Some(path)) => {
+                tracing::debug!(path = %path, "[shell] applying managed runtime PATH");
+                cmd.env("PATH", path);
+            }
+            Ok(None) => {}
+            Err(error) => {
+                return (
+                    true,
+                    ToolResult::error(format!("Failed to resolve command runtime: {error}")),
                 );
-                cmd.env("PATH", prepended);
             }
         }
 
@@ -338,7 +395,7 @@ impl ShellTool {
         let config = crate::openhuman::config::RuntimeConfig::default();
         let policy = sandbox::resolve_sandbox_policy(
             crate::openhuman::agent::harness::definition::SandboxMode::Sandboxed,
-            &self.security.action_dir,
+            &self.effective_action_dir(),
             &config,
             false,
         );
@@ -350,16 +407,16 @@ impl ShellTool {
         );
 
         let mut extra_env = std::collections::HashMap::new();
-        if let Some(bootstrap) = self.node_bootstrap.as_ref() {
-            if let Some(resolved) = bootstrap.try_cached() {
-                let host_path = std::env::var("PATH").unwrap_or_default();
-                let sep = if cfg!(windows) { ";" } else { ":" };
-                let prepended = if host_path.is_empty() {
-                    resolved.bin_dir.to_string_lossy().into_owned()
-                } else {
-                    format!("{}{}{}", resolved.bin_dir.display(), sep, host_path)
-                };
-                extra_env.insert("PATH".to_string(), prepended);
+        match self.runtime_path_for_command(command).await {
+            Ok(Some(path)) => {
+                extra_env.insert("PATH".to_string(), path);
+            }
+            Ok(None) => {}
+            Err(error) => {
+                return (
+                    true,
+                    ToolResult::error(format!("Failed to resolve command runtime: {error}")),
+                );
             }
         }
 
@@ -402,6 +459,109 @@ impl ShellTool {
             ),
         }
     }
+
+    async fn runtime_path_for_command(&self, command: &str) -> anyhow::Result<Option<String>> {
+        let mut prepend_dirs = Vec::new();
+
+        // Node injection preserves the existing contract: shell only sees the
+        // managed Node bin directory after a previous node/npm tool resolved it.
+        if let Some(bootstrap) = self.node_bootstrap.as_ref() {
+            if let Some(resolved) = bootstrap.try_cached() {
+                tracing::debug!(
+                    bin_dir = %resolved.bin_dir.display(),
+                    version = %resolved.version,
+                    "[shell] prepending managed node bin to PATH"
+                );
+                prepend_dirs.push(resolved.bin_dir);
+            }
+        }
+
+        if shell_command_needs_python_runtime(command) {
+            if let Some(bootstrap) = self.python_bootstrap.as_ref() {
+                let resolved = bootstrap.resolve().await?;
+                tracing::debug!(
+                    bin_dir = %resolved.bin_dir.display(),
+                    python_bin = %resolved.python_bin.display(),
+                    version = %resolved.version,
+                    source = ?resolved.source,
+                    "[shell] prepending python runtime bin to PATH"
+                );
+                prepend_dirs.push(resolved.bin_dir);
+            }
+        }
+
+        if prepend_dirs.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(prepend_path_dirs(
+                prepend_dirs.iter().map(|p| p.as_path()),
+                &std::env::var("PATH").unwrap_or_default(),
+            )))
+        }
+    }
+}
+
+fn prepend_path_dirs<'a>(
+    dirs: impl IntoIterator<Item = &'a std::path::Path>,
+    host_path: &str,
+) -> String {
+    let sep = if cfg!(windows) { ";" } else { ":" };
+    let mut parts: Vec<String> = dirs
+        .into_iter()
+        .map(|path| path.to_string_lossy().into_owned())
+        .collect();
+    if !host_path.is_empty() {
+        parts.push(host_path.to_string());
+    }
+    parts.join(sep)
+}
+
+fn shell_command_needs_python_runtime(command: &str) -> bool {
+    let lower = command.to_ascii_lowercase();
+    lower
+        .split(|ch| matches!(ch, ';' | '&' | '|' | '\n' | '\r'))
+        .any(segment_starts_with_python_command)
+}
+
+fn segment_starts_with_python_command(segment: &str) -> bool {
+    let mut tokens = segment.split_whitespace().peekable();
+    while let Some(token) = tokens.next() {
+        let token = token.trim_matches(|ch| matches!(ch, '(' | ')' | '<' | '>'));
+        if token.is_empty() {
+            continue;
+        }
+        if token.contains('=') && !token.starts_with('-') {
+            continue;
+        }
+        if matches!(token, "sudo" | "command" | "time" | "env") {
+            continue;
+        }
+        return is_python_executable_token(token);
+    }
+    false
+}
+
+fn is_python_executable_token(token: &str) -> bool {
+    let executable = token.rsplit('/').next().unwrap_or(token);
+    matches!(
+        executable,
+        "python"
+            | "python3"
+            | "py"
+            | "pip"
+            | "pip3"
+            | "python.exe"
+            | "python3.exe"
+            | "pip.exe"
+            | "pip3.exe"
+    ) || versioned_executable(executable, "python3.")
+        || versioned_executable(executable, "pip3.")
+}
+
+fn versioned_executable(executable: &str, prefix: &str) -> bool {
+    executable
+        .strip_prefix(prefix)
+        .is_some_and(|suffix| !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit()))
 }
 
 #[cfg(test)]
@@ -892,6 +1052,96 @@ mod tests {
                 "{var} must be forwarded for Windows child processes"
             );
         }
+    }
+
+    #[test]
+    fn shell_detects_python_runtime_commands() {
+        for command in [
+            "python3 -m pyfiglet hello",
+            "python -m pip install pyfiglet",
+            "pip install pyfiglet",
+            "pip3.13 show pyfiglet",
+            "/opt/openhuman/python/bin/python3 script.py",
+            "echo hi && python3 -V",
+        ] {
+            assert!(
+                shell_command_needs_python_runtime(command),
+                "expected python runtime detection for {command}"
+            );
+        }
+
+        for command in [
+            "echo python3",
+            "ls",
+            "cat ./pipelines.txt",
+            "node script.js",
+        ] {
+            assert!(
+                !shell_command_needs_python_runtime(command),
+                "did not expect python runtime detection for {command}"
+            );
+        }
+    }
+
+    #[test]
+    fn shell_runtime_path_prepends_managed_dirs_before_host_path() {
+        let python = std::path::Path::new("/opt/openhuman/python/bin");
+        let node = std::path::Path::new("/opt/openhuman/node/bin");
+        let joined = prepend_path_dirs([python, node], "/usr/local/bin:/usr/bin");
+        let sep = if cfg!(windows) { ";" } else { ":" };
+        assert_eq!(
+            joined,
+            format!(
+                "{}{}{}{}{}",
+                python.display(),
+                sep,
+                node.display(),
+                sep,
+                "/usr/local/bin:/usr/bin"
+            )
+        );
+    }
+
+    /// Empirical answer to "does `shell` resolve/install managed Node on its
+    /// own?" — NO. The shell path consults the managed Node bootstrap only via
+    /// `try_cached()`, which never calls `resolve()` and therefore never
+    /// downloads/installs anything. So without a prior `node_exec` / `npm_exec`
+    /// (the tools that DO call `resolve()` and share this bootstrap instance),
+    /// `runtime_path_for_command` injects nothing for a node command. On a host
+    /// with no Node in the login PATH, the command then fails — the managed
+    /// runtime is never reached on the shell path. (Python, by contrast, IS
+    /// self-resolved in `runtime_path_for_command` — see the python branch.)
+    #[tokio::test]
+    async fn shell_does_not_resolve_or_install_node_on_its_own() {
+        let node = Arc::new(NodeBootstrap::new(
+            crate::openhuman::config::schema::NodeConfig {
+                enabled: true,
+                version: "v22.11.0".to_string(),
+                cache_dir: String::new(),
+                prefer_system: true,
+            },
+            std::env::temp_dir(),
+            reqwest::Client::new(),
+        ));
+        let tool = ShellTool::with_language_bootstraps(
+            test_security(AutonomyLevel::Full),
+            test_runtime(),
+            test_audit(),
+            Some(node),
+            None,
+        );
+
+        // Unprimed (no prior node_exec/npm_exec resolve): shell injects NO
+        // managed node bin onto PATH — it does not auto-resolve or install.
+        let injected = tool
+            .runtime_path_for_command("node --version")
+            .await
+            .expect("runtime path resolves");
+        assert!(
+            injected.is_none(),
+            "shell injected a managed node bin without any prior node_exec/npm_exec \
+             resolve — it must not auto-resolve/install on the shell path: {injected:?}"
+        );
     }
 
     #[tokio::test]

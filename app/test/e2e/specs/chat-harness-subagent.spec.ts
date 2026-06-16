@@ -3,7 +3,7 @@
  *
  * The default chat agent after onboarding is the **orchestrator**
  * (`src/openhuman/channels/providers/web.rs::pick_target_agent_id`).
- * Its `subagents = [...]` list synthesises one delegated archetype tool
+ * Its `[subagents] allowlist = [...]` section synthesises one delegated archetype tool
  * per archetype at build time (see
  * `src/openhuman/tools/orchestrator_tools.rs`). When the LLM calls
  * `research` (or any other delegated archetype tool), the tool dispatches
@@ -37,6 +37,7 @@
  */
 import { waitForApp } from '../helpers/app-helpers';
 import {
+  chatMounted,
   clickByTitle,
   clickSend,
   getSelectedThreadId,
@@ -108,7 +109,11 @@ describe('Chat harness — orchestrator → subagent flow', () => {
     this.timeout(90_000);
     await startMockServer();
     await waitForApp();
-    await resetApp(USER_ID);
+    // clearAuthSession drops any session token a prior chat-harness spec in
+    // this shard left behind, so the orchestrator/sub-agent run starts from a
+    // clean signed-in state rather than a polluted one (the source of the
+    // intermittent "final canary never arrives" failures).
+    await resetApp(USER_ID, { clearAuthSession: true });
 
     setMockBehavior('llmForcedResponses', JSON.stringify(FORCED_RESPONSES));
     // Faster streaming for non-tool-call responses so this spec doesn't
@@ -125,7 +130,7 @@ describe('Chat harness — orchestrator → subagent flow', () => {
   it('orchestrator delegates to researcher and produces the final canary', async function () {
     this.timeout(90_000);
     await navigateViaHash('/chat');
-    await browser.waitUntil(async () => await textExists('Threads'), {
+    await browser.waitUntil(async () => await chatMounted(), {
       timeout: 15_000,
       timeoutMsg: 'Conversations did not mount',
     });

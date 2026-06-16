@@ -11,6 +11,7 @@ jobs:
   build-windows:
     name: "Desktop: Windows x64"
     runs-on: windows-latest
+    timeout-minutes: 30
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:

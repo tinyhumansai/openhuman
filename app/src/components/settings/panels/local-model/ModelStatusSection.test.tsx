@@ -1,8 +1,45 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
-import type { LocalAiDiagnostics } from '../../../../utils/tauriCommands';
+import type { LocalAiDiagnostics, LocalAiStatus } from '../../../../utils/tauriCommands';
 import ModelStatusSection from './ModelStatusSection';
+
+/**
+ * Minimal LocalAiStatus fixture for tests — casts to satisfy the interface.
+ * Only fields needed by specific test scenarios are provided; the rest are
+ * empty-string defaults that satisfy TypeScript's required-string constraints.
+ */
+const makeStatus = (overrides: Partial<LocalAiStatus> = {}): LocalAiStatus =>
+  ({
+    state: 'ready',
+    provider: 'ollama',
+    model_id: 'llama3',
+    chat_model_id: 'llama3',
+    vision_model_id: '',
+    embedding_model_id: '',
+    stt_model_id: '',
+    tts_voice_id: '',
+    quantization: '',
+    vision_state: 'disabled',
+    vision_mode: 'off',
+    embedding_state: 'ready',
+    stt_state: 'ready',
+    tts_state: 'ready',
+    active_backend: 'cpu',
+    last_latency_ms: null,
+    gen_toks_per_sec: null,
+    download_progress: null,
+    downloaded_bytes: null,
+    total_bytes: null,
+    download_speed_bps: null,
+    eta_seconds: null,
+    error_category: null,
+    error_detail: null,
+    warning: null,
+    backend_reason: null,
+    model_path: null,
+    ...overrides,
+  }) as LocalAiStatus;
 
 const defaultProps = {
   status: null,
@@ -541,5 +578,111 @@ describe('ModelStatusSection — Ollama server URL', () => {
       />
     );
     expect(screen.getByText(/http:\/\/ or https:\/\//i)).toBeTruthy();
+  });
+});
+
+describe('ModelStatusSection — statusError and diagnosticsLoading (lines 405, 446)', () => {
+  it('renders statusError message when statusError is non-empty (line 405)', () => {
+    render(
+      <ModelStatusSection {...defaultProps} statusError="summarization failed: out of memory" />
+    );
+    expect(screen.getByText('summarization failed: out of memory')).toBeTruthy();
+  });
+
+  it('shows checking label while diagnostics is loading (line 446)', () => {
+    render(<ModelStatusSection {...defaultProps} isDiagnosticsLoading={true} />);
+    // Translation: 'settings.localModel.status.checking' → 'Checking...' (three dots)
+    expect(screen.getByRole('button', { name: 'Checking...' })).toBeTruthy();
+    expect(
+      (screen.getByRole('button', { name: 'Checking...' }) as HTMLButtonElement).disabled
+    ).toBe(true);
+  });
+
+  it('shows run diagnostics label when not loading (line 446)', () => {
+    render(<ModelStatusSection {...defaultProps} isDiagnosticsLoading={false} />);
+    expect(screen.getByRole('button', { name: 'Run Diagnostics' })).toBeTruthy();
+  });
+
+  it('renders diagnosticsError message when diagnostics fails (line 462)', () => {
+    render(<ModelStatusSection {...defaultProps} diagnosticsError="failed to connect to ollama" />);
+    expect(screen.getByText('failed to connect to ollama')).toBeTruthy();
+  });
+
+  it('shows isDiagnosticsLoading spinner while loading (line 456-460)', () => {
+    render(<ModelStatusSection {...defaultProps} isDiagnosticsLoading={true} />);
+    // Spinner div should be present
+    const spinnerEl = document.querySelector('.animate-spin');
+    expect(spinnerEl).toBeTruthy();
+  });
+
+  it('renders status model_path when present (line 391-395)', () => {
+    render(
+      <ModelStatusSection
+        {...defaultProps}
+        status={makeStatus({
+          last_latency_ms: 55,
+          gen_toks_per_sec: 12.3,
+          model_path: '/home/user/.ollama/models/llama3',
+        })}
+      />
+    );
+    // model_path is a text node inside a div that also has t('artifact') prefix —
+    // use body.textContent to avoid split-text-node matching issues.
+    expect(document.body.textContent).toContain('/home/user/.ollama/models/llama3');
+  });
+
+  it('renders backend_reason when present (line 397-401)', () => {
+    render(
+      <ModelStatusSection
+        {...defaultProps}
+        status={makeStatus({ active_backend: 'gpu', backend_reason: 'GPU detected and enabled' })}
+      />
+    );
+    expect(screen.getByText('GPU detected and enabled')).toBeTruthy();
+  });
+
+  it('renders warning when present (line 402-404)', () => {
+    render(
+      <ModelStatusSection
+        {...defaultProps}
+        status={makeStatus({
+          state: 'degraded',
+          warning: 'model context window is smaller than recommended',
+        })}
+      />
+    );
+    expect(screen.getByText('model context window is smaller than recommended')).toBeTruthy();
+  });
+
+  it('shows error_detail toggle and hides detail by default (lines 407-433)', () => {
+    render(
+      <ModelStatusSection
+        {...defaultProps}
+        status={makeStatus({
+          state: 'degraded',
+          error_category: 'install',
+          error_detail: 'checksum mismatch on model file',
+        })}
+        showErrorDetail={false}
+      />
+    );
+    // Translation: 'settings.localModel.status.showErrorDetails' → 'Show error details' (lowercase d)
+    expect(screen.getByText('Show error details')).toBeTruthy();
+    expect(screen.queryByText('checksum mismatch on model file')).toBeNull();
+  });
+
+  it('shows error_detail when showErrorDetail is true (lines 416-420)', () => {
+    render(
+      <ModelStatusSection
+        {...defaultProps}
+        status={makeStatus({
+          state: 'degraded',
+          error_category: 'install',
+          error_detail: 'checksum mismatch on model file',
+        })}
+        showErrorDetail={true}
+      />
+    );
+    expect(screen.getByText('checksum mismatch on model file')).toBeTruthy();
   });
 });

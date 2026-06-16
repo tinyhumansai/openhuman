@@ -47,7 +47,7 @@ mod tests {
             model_name: "test",
             agent_id: "presentation_agent",
             tools: &[],
-            skills: &[],
+            workflows: &[],
             dispatcher_instructions: "",
             learned: LearnedContextData::default(),
             visible_tool_names: &visible,

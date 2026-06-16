@@ -734,7 +734,7 @@ impl AutocompleteEngine {
         // Interactive variant — bypasses the scheduler_gate's LLM permit
         // so per-keystroke autocomplete doesn't queue behind a memory-tree
         // backfill or a triage turn. See `inline_complete_interactive`
-        // docs in `local_ai/service/public_infer.rs`.
+        // docs in `inference/local/service/public_infer.rs`.
         let generated = match service
             .inline_complete_interactive(
                 &config,

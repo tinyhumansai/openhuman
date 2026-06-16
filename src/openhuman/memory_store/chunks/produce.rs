@@ -10,15 +10,22 @@
 //!
 //! - **Chat**: split at `## ` message boundaries. Each message becomes one
 //!   chunk. If a single message exceeds `max_tokens`, fall back to the
-//!   paragraph/line/char splitter for that unit only and emit each piece with
-//!   `partial_message = true`.
+//!   paragraph/sentence/whitespace/char splitter for that unit only and emit
+//!   each piece with `partial_message = true`.
 //! - **Email**: split at `---\nFrom:` separators. Each email in the thread
 //!   becomes one chunk. Same oversize fallback as Chat.
-//! - **Document**: original paragraph-based greedy packing (unchanged).
+//! - **Document**: split by [`split_by_token_budget`] — a conservative
+//!   token-estimate splitter (paragraph → sentence → whitespace → hard-char)
+//!   with ~12% overlap between adjacent chunks.
+//!
+//! Chunk sizes are bounded by [`conservative_token_estimate`], not the GPT
+//! `chars/4` heuristic, so dense markdown/hash/code/multilingual content cannot
+//! produce an over-budget chunk that overflows a downstream embedder.
 
 use crate::openhuman::memory::util::redact::redact;
 use crate::openhuman::memory_store::chunks::types::{
-    approx_token_count, chunk_id, Chunk, Metadata, SourceKind,
+    approx_token_count, chunk_id, conservative_token_estimate, truncate_to_conservative_tokens,
+    Chunk, Metadata, SourceKind,
 };
 
 /// Default upper bound on per-chunk tokens.
@@ -68,9 +75,11 @@ pub struct ChunkerInput {
 /// - **Chat / Email**: split at message/email boundaries, then greedy-pack
 ///   consecutive units into a single chunk until adding the next unit would
 ///   exceed `max_tokens`. Oversize units (a single message > `max_tokens`)
-///   fall back to the paragraph/line/char splitter and emit each piece with
+///   fall back to [`split_by_token_budget`] and emit each piece with
 ///   `partial_message = true`.
-/// - **Document**: original paragraph-based greedy packing (unchanged).
+/// - **Document**: split by [`split_by_token_budget`] — sized by the
+///   conservative token estimate (paragraph → sentence → whitespace →
+///   hard-char) with ~12% overlap between adjacent chunks.
 pub fn chunk_markdown(input: &ChunkerInput, opts: &ChunkerOptions) -> Vec<Chunk> {
     let now = chrono::Utc::now();
     let max_tokens = opts.max_tokens.max(1);
@@ -313,103 +322,243 @@ fn split_email_messages(md: &str) -> Vec<String> {
     pieces
 }
 
-/// Split `text` into pieces each ≤ `max_tokens` tokens.
+/// Overlap carried between adjacent chunks (≈12%, within the 10–15% band) so a
+/// fact straddling a split boundary survives in both neighbours.
+const OVERLAP_PERCENT: u32 = 12;
+/// Hard cap on overlap (% of budget) so a chunk can never be mostly a duplicate
+/// of its predecessor — avoids pathological near-identical chunks.
+const OVERLAP_MAX_PERCENT: u32 = 40;
+
+/// Split `text` into pieces each ≤ `max_tokens` **conservative** tokens
+/// (see [`conservative_token_estimate`]), with ~10–15% overlap between adjacent
+/// pieces. Sized by the conservative estimate (NOT `chars/4`), so dense
+/// markdown/hash/code/multilingual content — which tokenises far above the
+/// chars/4 heuristic — never produces an over-budget chunk that overflows the
+/// embedder.
 ///
-/// Preference order for split boundaries:
-/// 1. Paragraph (`\n\n`)
-/// 2. Line (`\n`)
-/// 3. Hard character cut (last resort; preserves UTF-8 code points)
+/// Boundary preference (a still-oversized piece falls to the next finer level):
+/// 1. paragraph (`\n\n`)
+/// 2. sentence (`. ` / `! ` / `? ` / line break)
+/// 3. whitespace (word)
+/// 4. hard character cut (last resort; preserves UTF-8 code points)
+///
+/// Ordering is preserved. Overlap repeats the previous piece's trailing whole
+/// segments verbatim (snapped to natural boundaries), never the entire chunk.
 pub(crate) fn split_by_token_budget(text: &str, max_tokens: u32) -> Vec<String> {
-    let max_tokens = max_tokens.max(1);
+    let budget = max_tokens.max(1);
     if text.is_empty() {
         return vec![String::new()];
     }
-    if approx_token_count(text) <= max_tokens {
+    if conservative_token_estimate(text) <= budget {
         return vec![text.to_string()];
     }
 
-    // Approximate max chars per chunk (4 chars ≈ 1 token).
-    let max_chars: usize = (max_tokens as usize).saturating_mul(4);
+    // Reserve headroom so `overlap (≤cap) + any segment (≤seg_budget) ≤ budget`,
+    // which prevents a flush from ever emitting an overlap-only (duplicate) chunk.
+    let overlap_budget = (budget * OVERLAP_PERCENT / 100).max(1);
+    let overlap_cap = (budget * OVERLAP_MAX_PERCENT / 100).max(overlap_budget);
+    let seg_budget = budget.saturating_sub(overlap_cap).max(1);
 
-    // First: try paragraph split. Walk paragraphs, greedy-accumulate into
-    // chunks ≤ max_chars.
-    let paragraphs: Vec<&str> = text.split("\n\n").collect();
-    if paragraphs.len() > 1 {
-        if let Some(out) = pack_segments(&paragraphs, "\n\n", max_chars) {
-            return out;
-        }
+    // 1. Reduce to in-order atomic segments, each ≤ seg_budget.
+    let mut segments: Vec<&str> = Vec::new();
+    push_atomic_segments(text, seg_budget, &mut segments);
+    if segments.len() <= 1 {
+        return vec![text.to_string()];
     }
 
-    // Fall back to line split.
-    let lines: Vec<&str> = text.split('\n').collect();
-    if lines.len() > 1 {
-        if let Some(out) = pack_segments(&lines, "\n", max_chars) {
-            return out;
+    // 2. Greedy-pack segments into chunks ≤ budget, carrying overlap forward.
+    let mut chunks: Vec<String> = Vec::new();
+    let mut cur: Vec<&str> = Vec::new();
+    let mut cur_tokens = 0u32;
+    for seg in &segments {
+        let seg_tokens = conservative_token_estimate(seg);
+        if !cur.is_empty() && cur_tokens.saturating_add(seg_tokens) > budget {
+            chunks.push(join_segments(&cur));
+            let overlap = tail_overlap(&cur, overlap_budget, overlap_cap);
+            cur_tokens = overlap.iter().map(|s| conservative_token_estimate(s)).sum();
+            cur = overlap;
         }
+        cur.push(seg);
+        cur_tokens = cur_tokens.saturating_add(seg_tokens);
     }
-
-    // Fall back to hard character-count cut preserving UTF-8 boundaries.
-    hard_split_by_chars(text, max_chars)
+    if !cur.is_empty() {
+        chunks.push(join_segments(&cur));
+    }
+    if chunks.is_empty() {
+        chunks.push(String::new());
+    }
+    chunks
 }
 
-/// Greedily pack pre-split segments into chunks ≤ max_chars. Returns `None`
-/// if any single segment is already too large — caller should try a finer
-/// split.
-fn pack_segments(segments: &[&str], sep: &str, max_chars: usize) -> Option<Vec<String>> {
+/// Append in-order atomic segments of `text`, each with
+/// `conservative_token_estimate ≤ budget`, using the boundary hierarchy.
+fn push_atomic_segments<'a>(text: &'a str, budget: u32, out: &mut Vec<&'a str>) {
+    if text.is_empty() {
+        return;
+    }
+    if conservative_token_estimate(text) <= budget {
+        out.push(text);
+        return;
+    }
+    if split_on_separator(text, "\n\n", budget, out)
+        || split_on_sentences(text, budget, out)
+        || split_on_whitespace(text, budget, out)
+    {
+        return;
+    }
+    hard_split(text, budget, out);
+}
+
+/// Split on a literal separator; recurse on each piece. The separator is kept
+/// at the END of its preceding piece so the pieces tile `text` exactly (lossless
+/// concatenation — see [`join_segments`]). Returns `false` (no progress) when the
+/// separator does not occur.
+fn split_on_separator<'a>(text: &'a str, sep: &str, budget: u32, out: &mut Vec<&'a str>) -> bool {
+    if sep.is_empty() || !text.contains(sep) {
+        return false;
+    }
     let sep_len = sep.len();
-    let mut out: Vec<String> = Vec::new();
-    let mut current = String::new();
-
-    for seg in segments {
-        let seg_len = seg.chars().count();
-        // A single segment larger than max_chars forces a finer split.
-        if seg_len > max_chars {
-            return None;
-        }
-        let projected = if current.is_empty() {
-            seg_len
-        } else {
-            current.chars().count() + sep_len + seg_len
-        };
-        if projected > max_chars {
-            out.push(std::mem::take(&mut current));
-            current.push_str(seg);
-        } else {
-            if !current.is_empty() {
-                current.push_str(sep);
-            }
-            current.push_str(seg);
-        }
+    let mut pieces: Vec<&str> = Vec::new();
+    let mut start = 0usize;
+    let mut search = 0usize;
+    while let Some(rel) = text[search..].find(sep) {
+        let end = search + rel + sep_len; // include the separator in this piece
+        pieces.push(&text[start..end]);
+        start = end;
+        search = end;
     }
-    if !current.is_empty() {
-        out.push(current);
+    if start < text.len() {
+        pieces.push(&text[start..]);
     }
-    if out.is_empty() {
-        out.push(String::new());
+    if pieces.len() <= 1 {
+        return false;
     }
-    Some(out)
+    for p in pieces {
+        push_atomic_segments(p, budget, out);
+    }
+    true
 }
 
-/// Hard character-count cut preserving UTF-8 code-point boundaries.
-fn hard_split_by_chars(text: &str, max_chars: usize) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut current = String::new();
-    let mut count = 0usize;
-    for ch in text.chars() {
-        if count + 1 > max_chars {
-            out.push(std::mem::take(&mut current));
-            count = 0;
+/// Split on sentence-ish boundaries: after `.`/`!`/`?` followed by a space, and
+/// at line breaks. All boundary bytes are ASCII (1 byte), so slicing is always
+/// on a char boundary. Returns `false` when no boundary is found.
+fn split_on_sentences<'a>(text: &'a str, budget: u32, out: &mut Vec<&'a str>) -> bool {
+    let bytes = text.as_bytes();
+    let mut pieces: Vec<&str> = Vec::new();
+    let mut start = 0usize;
+    for i in 0..bytes.len() {
+        let c = bytes[i];
+        let boundary_end = if c == b'\n' {
+            Some(i + 1)
+        } else if (c == b'.' || c == b'!' || c == b'?')
+            && i + 1 < bytes.len()
+            && bytes[i + 1] == b' '
+        {
+            Some(i + 1)
+        } else {
+            None
+        };
+        if let Some(end) = boundary_end {
+            pieces.push(&text[start..end]);
+            start = end;
         }
-        current.push(ch);
-        count += 1;
     }
-    if !current.is_empty() {
-        out.push(current);
+    if start < text.len() {
+        pieces.push(&text[start..]);
     }
-    if out.is_empty() {
-        out.push(String::new());
+    if pieces.len() <= 1 {
+        return false;
     }
-    out
+    for p in pieces {
+        push_atomic_segments(p, budget, out);
+    }
+    true
+}
+
+/// Split on ASCII spaces (word boundaries); recurse on each word. Returns
+/// `false` when there is no space to split on.
+fn split_on_whitespace<'a>(text: &'a str, budget: u32, out: &mut Vec<&'a str>) -> bool {
+    let bytes = text.as_bytes();
+    let mut pieces: Vec<&str> = Vec::new();
+    let mut start = 0usize;
+    for i in 0..bytes.len() {
+        if bytes[i] == b' ' {
+            // Keep the space at the end of the word so pieces tile `text` exactly.
+            pieces.push(&text[start..=i]);
+            start = i + 1;
+        }
+    }
+    if start < text.len() {
+        pieces.push(&text[start..]);
+    }
+    if pieces.len() <= 1 {
+        return false;
+    }
+    for p in pieces {
+        push_atomic_segments(p, budget, out);
+    }
+    true
+}
+
+/// Last resort: cut a boundary-free run into ≤ `budget`-token pieces on UTF-8
+/// char boundaries. Reuses [`truncate_to_conservative_tokens`] for sizing and
+/// always makes progress (≥1 char) so it cannot loop.
+fn hard_split<'a>(mut text: &'a str, budget: u32, out: &mut Vec<&'a str>) {
+    while !text.is_empty() {
+        let mut piece = truncate_to_conservative_tokens(text, budget);
+        if piece.is_empty() {
+            // Budget smaller than one char's weight — take a single char.
+            let end = text
+                .char_indices()
+                .nth(1)
+                .map(|(i, _)| i)
+                .unwrap_or(text.len());
+            piece = &text[..end];
+        }
+        let plen = piece.len();
+        out.push(&text[..plen]);
+        text = &text[plen..];
+    }
+}
+
+/// Join packed segments back into one chunk body. Segments are contiguous,
+/// separator-retaining slices of the source, so plain concatenation reproduces
+/// the original text exactly (modulo intentional overlap duplication) — no
+/// spurious separators are introduced, which keeps each chunk's real token
+/// count ≤ the packing budget.
+fn join_segments(segs: &[&str]) -> String {
+    segs.concat()
+}
+
+/// Trailing whole segments of `cur` summing to ~`overlap_budget` tokens (capped
+/// at `overlap_cap`), returned in original order. Never returns the entire
+/// chunk, so adjacent chunks cannot be duplicates.
+fn tail_overlap<'a>(cur: &[&'a str], overlap_budget: u32, overlap_cap: u32) -> Vec<&'a str> {
+    if cur.len() <= 1 {
+        return Vec::new();
+    }
+    let mut acc = 0u32;
+    let mut take = 0usize;
+    for seg in cur.iter().rev() {
+        let t = conservative_token_estimate(seg);
+        // Cap EVERY trailing segment (including the first): if the last segment
+        // alone exceeds `overlap_cap`, carry no overlap rather than letting a
+        // near-`seg_budget` segment become the overlap. This keeps
+        // `overlap <= overlap_cap`, so `overlap + next_segment <= budget` and a
+        // flush can never emit an overlap-only (duplicate) chunk.
+        if acc.saturating_add(t) > overlap_cap {
+            break;
+        }
+        acc = acc.saturating_add(t);
+        take += 1;
+        if acc >= overlap_budget {
+            break;
+        }
+    }
+    if take >= cur.len() {
+        take = cur.len() - 1; // never repeat the whole chunk
+    }
+    cur[cur.len() - take..].to_vec()
 }
 
 #[cfg(test)]
@@ -812,5 +961,141 @@ mod tests {
         assert!(chunks.iter().all(|chunk| !chunk.content.is_empty()));
         let rejoined: String = chunks.iter().map(|c| c.content.as_str()).collect();
         assert_eq!(rejoined, "abcdef");
+    }
+
+    // ── Embed-safety: conservative-token splitting + overlap (#oversized-chunk) ──
+
+    /// Every produced piece must be within the conservative token budget — this
+    /// is the property that keeps requests under bge-m3's batch/context limit.
+    fn assert_all_within_budget(pieces: &[String], budget: u32) {
+        for (i, p) in pieces.iter().enumerate() {
+            assert!(
+                conservative_token_estimate(p) <= budget,
+                "piece {i} is {} est-tokens, over budget {budget}",
+                conservative_token_estimate(p),
+            );
+        }
+    }
+
+    #[test]
+    fn dense_hash_content_splits_under_budget() {
+        // The exact failure mode: hash/path/punctuation-dense ASCII that chars/4
+        // badly under-counts. A single 12 KB block of this overflowed bge-m3.
+        let dense =
+            "claude-memory:openhuman:MEMORY.md:67d6fe2727d431b16d41630babfdcf1cdf61bda7b9ba99656\n"
+                .repeat(200);
+        let pieces = split_by_token_budget(&dense, 3000);
+        assert!(
+            pieces.len() > 1,
+            "dense content must split, got {}",
+            pieces.len()
+        );
+        assert_all_within_budget(&pieces, 3000);
+    }
+
+    #[test]
+    fn hebrew_content_splits_under_budget() {
+        // Hebrew tokenises ~1 token/char — chars/4 under-counts ~4×.
+        let he = "איריס דיברה עם העורך דין ועם עידו על הדירה החדשה ".repeat(300);
+        let pieces = split_by_token_budget(&he, 1000);
+        assert!(pieces.len() > 1, "hebrew content must split");
+        assert_all_within_budget(&pieces, 1000);
+    }
+
+    #[test]
+    fn mixed_markdown_code_splits_under_budget() {
+        let md = "## Section\nSome prose here. And more prose follows.\n\n\
+                  ```rust\nfn f(x: u32) -> u32 { x * 4 + 3 }\n```\n\n\
+                  - bullet a1b2c3d4\n- bullet e5f6a7b8\n"
+            .repeat(120);
+        let pieces = split_by_token_budget(&md, 2000);
+        assert!(pieces.len() > 1, "mixed content must split");
+        assert_all_within_budget(&pieces, 2000);
+    }
+
+    #[test]
+    fn oversize_content_splits_into_multiple_ordered_pieces() {
+        let text = (0..50)
+            .map(|i| format!("Paragraph number {i} with several words of filler content here."))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let pieces = split_by_token_budget(&text, 80);
+        assert!(
+            pieces.len() > 2,
+            "expected several pieces, got {}",
+            pieces.len()
+        );
+        assert_all_within_budget(&pieces, 80);
+        // Ordering preserved: "number 0" precedes "number 49" in the stream.
+        let joined = pieces.join("\n");
+        let p0 = joined.find("number 0").expect("first paragraph present");
+        let p49 = joined.find("number 49").expect("last paragraph present");
+        assert!(p0 < p49, "ordering not preserved");
+    }
+
+    #[test]
+    fn adjacent_chunks_overlap_without_duplicating() {
+        let text = (0..40)
+            .map(|i| format!("Sentence {i} carries a unique token marker{i} inside it."))
+            .collect::<Vec<_>>()
+            .join(" ");
+        // Budget chosen so each sentence segment is well under overlap_cap
+        // (40% of budget); overlap is only carried for segments that fit the
+        // cap, so a tighter budget would (correctly) yield no overlap.
+        let pieces = split_by_token_budget(&text, 200);
+        assert!(
+            pieces.len() >= 3,
+            "expected several pieces, got {}",
+            pieces.len()
+        );
+        assert_all_within_budget(&pieces, 200);
+        // Overlap: at least one marker appears in two adjacent chunks.
+        let overlap = pieces.windows(2).any(|w| {
+            (0..40).any(|i| {
+                let m = format!("marker{i} ");
+                w[0].contains(&m) && w[1].contains(&m)
+            })
+        });
+        assert!(overlap, "expected ~12% overlap between adjacent chunks");
+        // No near-duplicates: adjacent chunks are never identical.
+        for w in pieces.windows(2) {
+            assert_ne!(w[0], w[1], "adjacent chunks must not be identical");
+        }
+    }
+
+    #[test]
+    fn normal_small_content_is_single_chunk_unchanged() {
+        // Behaviour preserved for already-small content: returned verbatim.
+        let text = "# Title\nA short paragraph that easily fits.\n\nAnother short one.";
+        let pieces = split_by_token_budget(text, 3000);
+        assert_eq!(pieces.len(), 1);
+        assert_eq!(pieces[0], text);
+    }
+
+    #[test]
+    fn large_consecutive_segments_stay_within_budget() {
+        // A small paragraph packs with a large one, then a second large
+        // paragraph follows. Regression for the tail_overlap cap: previously the
+        // large tail segment (> overlap_cap) became the overlap, so
+        // `overlap + next_segment` exceeded the budget and emitted an
+        // over-budget chunk. Every chunk must stay within budget, and no two
+        // adjacent chunks may be identical.
+        let budget = 100;
+        let text = format!(
+            "{}\n\n{}\n\n{}",
+            "a".repeat(40),
+            "b".repeat(110),
+            "c".repeat(110),
+        );
+        let pieces = split_by_token_budget(&text, budget);
+        assert!(
+            pieces.len() >= 2,
+            "expected multiple chunks, got {}",
+            pieces.len()
+        );
+        assert_all_within_budget(&pieces, budget);
+        for w in pieces.windows(2) {
+            assert_ne!(w[0], w[1], "adjacent chunks must not be identical");
+        }
     }
 }

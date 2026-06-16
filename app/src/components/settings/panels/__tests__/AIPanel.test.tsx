@@ -2,6 +2,7 @@ import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { listConnections as listComposioConnections } from '../../../../lib/composio/composioApi';
+import { I18nProvider } from '../../../../lib/i18n/I18nContext';
 import {
   clearCloudProviderKey,
   completeOpenAiCodexOAuth,
@@ -15,6 +16,7 @@ import {
   setCloudProviderKey,
   startOpenAiCodexOAuth,
   testProviderModel,
+  upsertModelRegistryVision,
 } from '../../../../services/api/aiSettingsApi';
 import { creditsApi } from '../../../../services/api/creditsApi';
 import { renderWithProviders } from '../../../../test/test-utils';
@@ -45,6 +47,8 @@ vi.mock('../../../../services/api/aiSettingsApi', () => ({
   saveAISettings: vi.fn(),
   loadLocalProviderSnapshot: vi.fn(),
   testProviderModel: vi.fn(),
+  modelRegistryVision: vi.fn(() => false),
+  upsertModelRegistryVision: vi.fn((registry: unknown[]) => registry),
   setCloudProviderKey: vi.fn().mockResolvedValue(undefined),
   clearCloudProviderKey: vi.fn().mockResolvedValue(undefined),
   serializeProviderRef: vi.fn((r: { kind: string; providerSlug?: string; model?: string }) =>
@@ -123,6 +127,7 @@ const baseSettings = {
     learning: { kind: 'openhuman' as const },
     subconscious: { kind: 'openhuman' as const },
   },
+  modelRegistry: [],
 };
 
 const baseLocalSnapshot = { status: null, diagnostics: null, presets: null, installedModels: [] };
@@ -304,6 +309,52 @@ describe('AIPanel', () => {
     }
   });
 
+  // ─── per-model vision flag (BYOK) ───────────────────────────────────────────
+
+  it('flags a custom BYOK model as vision-capable via the Own-model selector', async () => {
+    vi.mocked(loadAISettings).mockResolvedValue({
+      ...baseSettings,
+      cloudProviders: [
+        ...baseSettings.cloudProviders,
+        {
+          id: 'p_custom_openai',
+          slug: 'openai',
+          label: 'OpenAI',
+          endpoint: 'https://api.openai.com/v1',
+          auth_style: 'bearer' as const,
+          has_api_key: true,
+        },
+      ],
+    });
+    renderWithProviders(<AIPanel />);
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /Use Your Own Models/i })).toBeInTheDocument()
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Use Your Own Models/i }));
+
+    // Enter a model id → the per-model "Supports vision" checkbox appears.
+    const modelInput = await screen.findByPlaceholderText('Enter model id');
+    fireEvent.change(modelInput, { target: { value: 'gpt-4o' } });
+
+    const visionCheckbox = await screen.findByRole('checkbox', { name: /Supports vision/i });
+    expect(visionCheckbox).not.toBeChecked();
+    fireEvent.click(visionCheckbox);
+    expect(visionCheckbox).toBeChecked();
+
+    fireEvent.click(screen.getByRole('button', { name: /^Save$/ }));
+
+    // The vision flag is threaded through to the registry upsert + persisted.
+    await waitFor(() =>
+      expect(vi.mocked(upsertModelRegistryVision)).toHaveBeenCalledWith(
+        expect.anything(),
+        'openai',
+        'gpt-4o',
+        true
+      )
+    );
+    expect(saveAISettings).toHaveBeenCalled();
+  });
+
   // ─── auth_style preservation ────────────────────────────────────────────────
 
   it('preserves auth_style: "anthropic" through save when Anthropic provider is configured', async () => {
@@ -333,6 +384,7 @@ describe('AIPanel', () => {
         learning: { kind: 'openhuman' as const },
         subconscious: { kind: 'openhuman' as const },
       },
+      modelRegistry: [],
     };
 
     vi.mocked(loadAISettings).mockResolvedValue(settingsWithAnthropic);
@@ -381,6 +433,123 @@ describe('AIPanel', () => {
     ).not.toBeInTheDocument();
   });
 
+  it('shows a localized Kimi platform link and opens the supported .ai platform', async () => {
+    vi.mocked(loadAISettings).mockResolvedValue({ ...baseSettings, cloudProviders: [] });
+
+    renderWithProviders(
+      <I18nProvider>
+        <AIPanel />
+      </I18nProvider>
+    );
+
+    fireEvent.click(await screen.findByRole('switch', { name: /Kimi \(Moonshot\)/i }));
+    const dialog = await screen.findByRole('dialog', { name: /Kimi \(Moonshot\)/i });
+    const link = within(dialog).getByRole('link', { name: /^Get API key$/i });
+
+    expect(link).toHaveAttribute('href', 'https://platform.kimi.ai?aff=openhuman');
+
+    fireEvent.click(link);
+
+    expect(openUrl).toHaveBeenCalledWith('https://platform.kimi.ai?aff=openhuman');
+  });
+
+  it('logs Kimi platform link open failures without changing the dialog', async () => {
+    vi.mocked(loadAISettings).mockResolvedValue({ ...baseSettings, cloudProviders: [] });
+    vi.mocked(openUrl).mockRejectedValueOnce('blocked');
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    try {
+      renderWithProviders(
+        <I18nProvider>
+          <AIPanel />
+        </I18nProvider>
+      );
+
+      fireEvent.click(await screen.findByRole('switch', { name: /Kimi \(Moonshot\)/i }));
+      const dialog = await screen.findByRole('dialog', { name: /Kimi \(Moonshot\)/i });
+      fireEvent.click(within(dialog).getByRole('link', { name: /^Get API key$/i }));
+
+      await waitFor(() => {
+        expect(warnSpy).toHaveBeenCalledWith('[ai-settings] provider platform link open failed', {
+          slug: 'moonshot',
+          error: 'blocked',
+        });
+      });
+      expect(dialog).toBeInTheDocument();
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('localizes the Kimi platform link text for Chinese', async () => {
+    vi.mocked(loadAISettings).mockResolvedValue({ ...baseSettings, cloudProviders: [] });
+
+    renderWithProviders(
+      <I18nProvider>
+        <AIPanel />
+      </I18nProvider>,
+      { preloadedState: { locale: { current: 'zh-CN' } } }
+    );
+
+    fireEvent.click(await screen.findByRole('switch', { name: /Kimi \(Moonshot\)/i }));
+    const dialog = await screen.findByRole('dialog', { name: /Kimi \(Moonshot\)/i });
+
+    expect(within(dialog).getByRole('link', { name: '获取 API Key' })).toBeInTheDocument();
+  });
+
+  it('reserves logical inline space for long translated Kimi link labels', async () => {
+    vi.mocked(loadAISettings).mockResolvedValue({ ...baseSettings, cloudProviders: [] });
+
+    renderWithProviders(
+      <I18nProvider>
+        <AIPanel />
+      </I18nProvider>,
+      { preloadedState: { locale: { current: 'fr' } } }
+    );
+
+    fireEvent.click(await screen.findByRole('switch', { name: /Kimi \(Moonshot\)/i }));
+    const dialog = await screen.findByRole('dialog', { name: /Kimi \(Moonshot\)/i });
+    const heading = within(dialog).getByRole('heading', {
+      name: /Connecter un fournisseur Kimi \(Moonshot\)/i,
+    });
+
+    expect(heading.parentElement).toHaveStyle({ paddingInlineEnd: '9rem' });
+  });
+
+  it('positions the Kimi link at the logical inline end for RTL locales', async () => {
+    vi.mocked(loadAISettings).mockResolvedValue({ ...baseSettings, cloudProviders: [] });
+
+    renderWithProviders(
+      <I18nProvider>
+        <AIPanel />
+      </I18nProvider>,
+      { preloadedState: { locale: { current: 'ar' } } }
+    );
+
+    fireEvent.click(await screen.findByRole('switch', { name: /Kimi \(Moonshot\)/i }));
+    const dialog = await screen.findByRole('dialog', { name: /Kimi \(Moonshot\)/i });
+    const link = within(dialog).getByRole('link', { name: 'احصل على مفتاح API' });
+
+    expect(document.documentElement).toHaveAttribute('dir', 'rtl');
+    expect(link).toHaveStyle({ insetInlineEnd: '1.5rem' });
+    expect(link).not.toHaveClass('right-6');
+  });
+
+  it('does not show the Kimi platform link for other providers', async () => {
+    vi.mocked(loadAISettings).mockResolvedValue({ ...baseSettings, cloudProviders: [] });
+
+    renderWithProviders(
+      <I18nProvider>
+        <AIPanel />
+      </I18nProvider>
+    );
+
+    fireEvent.click(await screen.findByRole('switch', { name: /Connect OpenAI/i }));
+    const dialog = await screen.findByRole('dialog', { name: /Connect OpenAI/i });
+
+    expect(within(dialog).queryByRole('link', { name: /^Get API key$/i })).not.toBeInTheDocument();
+  });
+
   it('renders Phase 1 built-in provider chips including SumoPod', async () => {
     vi.mocked(loadAISettings).mockResolvedValue({ ...baseSettings, cloudProviders: [] });
 
@@ -427,7 +596,7 @@ describe('AIPanel', () => {
     );
   });
 
-  it('connects MiniMax with anthropic auth style', async () => {
+  it('connects MiniMax via its OpenAI-compatible /v1 endpoint with bearer auth', async () => {
     vi.mocked(loadAISettings).mockResolvedValue({ ...baseSettings, cloudProviders: [] });
 
     renderWithProviders(<AIPanel />);
@@ -445,13 +614,16 @@ describe('AIPanel', () => {
     await waitFor(() => expect(vi.mocked(saveAISettings)).toHaveBeenCalled());
 
     const [, nextSettings] = vi.mocked(saveAISettings).mock.calls[0];
+    // MiniMax speaks OpenAI on `/v1` (chat/completions + models). The old
+    // `/anthropic` base + anthropic auth pointed at its Messages API, which
+    // OpenHuman doesn't speak — both paths 404'd (Sentry TAURI-RUST-8X3).
     expect(nextSettings.cloudProviders).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           slug: 'minimax',
           label: 'MiniMax',
-          endpoint: 'https://api.minimax.io/anthropic',
-          auth_style: 'anthropic',
+          endpoint: 'https://api.minimax.io/v1',
+          auth_style: 'bearer',
         }),
       ])
     );
@@ -554,6 +726,7 @@ describe('AIPanel', () => {
         learning: { kind: 'openhuman' as const },
         subconscious: { kind: 'openhuman' as const },
       },
+      modelRegistry: [],
     };
     vi.mocked(loadAISettings).mockResolvedValue(settingsWithOpenAI);
     vi.mocked(saveAISettings).mockResolvedValue(undefined);
@@ -609,6 +782,7 @@ describe('AIPanel', () => {
         learning: { kind: 'openhuman' as const },
         subconscious: { kind: 'openhuman' as const },
       },
+      modelRegistry: [],
     };
     vi.mocked(loadAISettings).mockResolvedValue(settingsWithOllama);
     vi.mocked(saveAISettings).mockResolvedValue(undefined);
@@ -983,6 +1157,7 @@ describe('AIPanel', () => {
           has_api_key: false,
         },
       ],
+      modelRegistry: [],
     };
     vi.mocked(loadAISettings).mockResolvedValue(settingsWithOllama);
     renderWithProviders(<AIPanel />);
@@ -1005,6 +1180,7 @@ describe('AIPanel', () => {
           has_api_key: false,
         },
       ],
+      modelRegistry: [],
     };
     vi.mocked(loadAISettings).mockResolvedValue(settingsWithOllama);
     renderWithProviders(<AIPanel />);
@@ -1044,6 +1220,7 @@ describe('AIPanel', () => {
         ...baseSettings.routing,
         reasoning: { kind: 'cloud' as const, providerSlug: 'openai', model: 'gpt-4o' },
       },
+      modelRegistry: [],
     };
     vi.mocked(loadAISettings).mockResolvedValue(settingsWithOpenAI);
     vi.mocked(saveAISettings).mockResolvedValue(undefined);
@@ -1100,6 +1277,7 @@ describe('AIPanel', () => {
         ...baseSettings.routing,
         reasoning: { kind: 'cloud' as const, providerSlug: 'openai', model: 'gpt-4o' },
       },
+      modelRegistry: [],
     };
     vi.mocked(loadAISettings).mockResolvedValue(settingsWithOpenAI);
     vi.mocked(listProviderModels).mockResolvedValue([{ id: 'gpt-4o' }, { id: 'gpt-4o-mini' }]);
@@ -1143,6 +1321,7 @@ describe('AIPanel', () => {
         ...baseSettings.routing,
         reasoning: { kind: 'cloud' as const, providerSlug: 'openai', model: 'gpt-4o' },
       },
+      modelRegistry: [],
     };
     vi.mocked(loadAISettings).mockResolvedValue(settingsWithOpenAI);
     vi.mocked(listProviderModels).mockResolvedValue([{ id: 'gpt-4o' }]);
@@ -1187,6 +1366,7 @@ describe('AIPanel', () => {
         ...baseSettings.routing,
         reasoning: { kind: 'cloud' as const, providerSlug: 'openai', model: 'gpt-4o' },
       },
+      modelRegistry: [],
     };
     vi.mocked(loadAISettings).mockResolvedValue(settingsWithOpenAI);
     vi.mocked(listProviderModels).mockResolvedValue([{ id: 'gpt-4o' }]);

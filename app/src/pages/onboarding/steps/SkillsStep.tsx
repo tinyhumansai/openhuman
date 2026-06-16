@@ -76,6 +76,7 @@ const SkillsStep = ({ onNext, onBack: _onBack }: SkillsStepProps) => {
 
   const {
     connectionByToolkit,
+    connectionsByToolkit,
     error: composioError,
     refresh: refreshComposio,
   } = useComposioIntegrations();
@@ -185,7 +186,7 @@ const SkillsStep = ({ onNext, onBack: _onBack }: SkillsStepProps) => {
       {activeToolkit && (
         <ComposioConnectModal
           toolkit={activeToolkit}
-          connection={connectionByToolkit.get(activeToolkit.slug)}
+          connections={connectionsByToolkit?.get(activeToolkit.slug)}
           onChanged={() => void refreshComposio()}
           onClose={() => setActiveToolkit(null)}
         />

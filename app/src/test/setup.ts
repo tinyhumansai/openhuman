@@ -180,7 +180,7 @@ vi.mock('../utils/config', () => ({
   E2E_DEFAULT_CORE_MODE: '',
   E2E_RESTART_APP_AS_RELOAD: false,
   DEV_FORCE_ONBOARDING: false,
-  CHAT_ATTACHMENTS_ENABLED: false,
+  CHAT_ATTACHMENTS_ENABLED: true,
   SKILLS_GITHUB_REPO: 'test/skills',
   GA_MEASUREMENT_ID: undefined,
   OPENPANEL_API_URL: 'https://panel.tinyhumans.ai/api',
@@ -259,9 +259,14 @@ vi.mock('@sentry/react', () => ({
   setUser: vi.fn(),
 }));
 
-// Silence console during tests to keep output clean
+// Silence console during tests to keep output clean. `debug`/`info` are
+// included because error-path diagnostics across the app (e.g. VoicePanel
+// "voice settings load failed", threadSlice "title refresh failed") use
+// `console.debug`, which otherwise floods the test output with expected noise.
 if (!process.env.DEBUG_TESTS) {
   vi.spyOn(console, 'log').mockImplementation(() => {});
+  vi.spyOn(console, 'info').mockImplementation(() => {});
+  vi.spyOn(console, 'debug').mockImplementation(() => {});
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   vi.spyOn(console, 'error').mockImplementation(() => {});
 }

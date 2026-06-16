@@ -19,6 +19,11 @@ const LOCAL_RUNTIME_SLUGS = ['ollama', 'lmstudio'] as const;
  * identity:
  * - **Cloud / custom** providers are matched precisely by `providerSlug`
  *   (`{ kind: 'cloud', providerSlug, model }`).
+ * - **Claude Code** refs carry no `providerSlug` (`{ kind: 'claude-code', model }`),
+ *   so they are matched by the well-known `claude-code` slug. Without this,
+ *   disconnecting Claude Code left workloads pinned to `claude-code:<model>`,
+ *   which the Rust factory still honors — so chats kept using the CLI after
+ *   the provider entry was removed.
  * - **Local runtimes** (Ollama / LM Studio) have NO slug on their routing refs
  *   (`{ kind: 'local', model }`), so an individual local ref can't be tied back
  *   to a specific runtime. A `local` ref is therefore only definitively
@@ -42,8 +47,12 @@ export function routingWithProviderRemoved(
 
   const scrubbed = Object.entries(routing).map(([workloadId, ref]) => {
     const pinnedToRemovedCloud = ref.kind === 'cloud' && ref.providerSlug === removed.slug;
+    const pinnedToRemovedClaudeCode = ref.kind === 'claude-code' && removed.slug === 'claude-code';
     const orphanedLocal = ref.kind === 'local' && removed.isLocalRuntime && !anyLocalRuntimeLeft;
-    const nextRef: ProviderRef = pinnedToRemovedCloud || orphanedLocal ? { kind: 'default' } : ref;
+    const nextRef: ProviderRef =
+      pinnedToRemovedCloud || pinnedToRemovedClaudeCode || orphanedLocal
+        ? { kind: 'default' }
+        : ref;
     return [workloadId, nextRef] as const;
   });
 

@@ -1,7 +1,7 @@
 //! Public data model for the user-facing agent registry.
 
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
 fn default_true() -> bool {
@@ -13,6 +13,42 @@ fn default_true() -> bool {
 pub enum AgentRegistrySource {
     Default,
     Custom,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, JsonSchema)]
+pub struct AgentSubagentPolicy {
+    /// Agent ids this agent may delegate to. Empty means no subagent calls.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowlist: Vec<String>,
+}
+
+impl AgentSubagentPolicy {
+    pub fn from_allowlist(allowlist: Vec<String>) -> Self {
+        Self { allowlist }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.allowlist.is_empty()
+    }
+}
+
+impl<'de> Deserialize<'de> for AgentSubagentPolicy {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Wire {
+            Section { allowlist: Vec<String> },
+            LegacyList(Vec<String>),
+        }
+
+        match Wire::deserialize(deserializer)? {
+            Wire::Section { allowlist } => Ok(Self { allowlist }),
+            Wire::LegacyList(allowlist) => Ok(Self { allowlist }),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -41,9 +77,9 @@ pub struct AgentRegistryEntry {
     /// Tool names that must be hidden even if they match the allowlist.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tool_denylist: Vec<String>,
-    /// Optional delegated agent ids this agent may spawn.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub subagents: Vec<String>,
+    /// Subagent delegation policy. Only ids in `allowlist` may be spawned.
+    #[serde(default, skip_serializing_if = "AgentSubagentPolicy::is_empty")]
+    pub subagents: AgentSubagentPolicy,
     /// Search/filter tags for UI grouping.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
@@ -69,6 +105,20 @@ impl AgentRegistryEntry {
         }
         if self.description.trim().is_empty() {
             return Err("description is required".to_string());
+        }
+        for child in &self.subagents.allowlist {
+            if child.trim().is_empty() {
+                return Err("subagents.allowlist entries must not be blank".to_string());
+            }
+            if child
+                .chars()
+                .any(|ch| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '-'))
+            {
+                return Err(
+                    "subagents.allowlist entries may only contain ASCII letters, numbers, '_' and '-'"
+                        .to_string(),
+                );
+            }
         }
         Ok(())
     }
@@ -108,9 +158,57 @@ pub struct AgentRegistryPatch {
     #[serde(default)]
     pub tool_denylist: Option<Vec<String>>,
     #[serde(default)]
-    pub subagents: Option<Vec<String>>,
+    pub subagents: Option<AgentSubagentPolicy>,
     #[serde(default)]
     pub tags: Option<Vec<String>>,
     #[serde(default)]
     pub metadata: Option<Value>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn subagent_policy_accepts_legacy_array() {
+        let entry: AgentRegistryEntry = serde_json::from_value(json!({
+            "id": "planner",
+            "name": "Planner",
+            "description": "Plans work.",
+            "source": "custom",
+            "enabled": true,
+            "subagents": ["researcher", "critic"]
+        }))
+        .expect("legacy subagents array should parse");
+
+        assert_eq!(
+            entry.subagents.allowlist,
+            vec!["researcher".to_string(), "critic".to_string()]
+        );
+    }
+
+    #[test]
+    fn subagent_policy_serializes_as_section() {
+        let entry = AgentRegistryEntry {
+            id: "planner".to_string(),
+            name: "Planner".to_string(),
+            description: "Plans work.".to_string(),
+            source: AgentRegistrySource::Custom,
+            enabled: true,
+            model: None,
+            system_prompt: None,
+            tool_allowlist: Vec::new(),
+            tool_denylist: Vec::new(),
+            subagents: AgentSubagentPolicy::from_allowlist(vec!["researcher".to_string()]),
+            tags: Vec::new(),
+            metadata: Value::Null,
+        };
+
+        let value = serde_json::to_value(entry).expect("serialize entry");
+        assert_eq!(
+            value.get("subagents"),
+            Some(&json!({ "allowlist": ["researcher"] }))
+        );
+    }
 }

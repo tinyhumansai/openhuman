@@ -151,6 +151,9 @@ test.describe('Chat Conversation History', () => {
     await sendMessage(page, SECOND_PROMPT);
     await expect(page.getByText(TURN_TWO_CANARY)).toBeVisible({ timeout: 30_000 });
 
+    // One chat-completion POST for the second turn: the orchestrator no longer
+    // eagerly spawns the memory agent before the turn (memory is on-demand now),
+    // so there is a single LLM call rather than the prior memory+main pair.
     const llmLog = await expect
       .poll(async () => {
         const log = await requests();

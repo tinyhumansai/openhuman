@@ -20,7 +20,7 @@ use openhuman_core::openhuman::config::schema::cloud_providers::{
 };
 use openhuman_core::openhuman::config::Config;
 use openhuman_core::openhuman::credentials::{AuthService, DEFAULT_AUTH_PROFILE_NAME};
-use openhuman_core::openhuman::inference::local::all_local_ai_registered_controllers;
+use openhuman_core::openhuman::inference::local::all_local_inference_registered_controllers;
 use openhuman_core::openhuman::inference::ops::inference_test_provider_model;
 use openhuman_core::openhuman::inference::provider::compatible::{
     AuthStyle as CompatibleAuthStyle, OpenAiCompatibleProvider,
@@ -226,7 +226,7 @@ async fn provider_admin_cold_paths_cover_model_errors_local_factory_and_connecti
     .expect_err("empty lmstudio model");
     assert!(empty_lmstudio.contains("empty model"));
 
-    let controllers = all_local_ai_registered_controllers();
+    let controllers = all_local_inference_registered_controllers();
     let test_connection = controller(&controllers, "test_connection");
     let reachable = call(test_connection, json!({"url": base}))
         .await

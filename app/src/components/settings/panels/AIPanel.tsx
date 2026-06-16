@@ -26,11 +26,14 @@ import {
   loadLocalProviderSnapshot,
   type LocalProviderSnapshot,
   type ModelInfo,
+  type ModelRegistryEntry,
+  modelRegistryVision,
   OPENAI_CODEX_OAUTH_MISSING_AUTH_URL,
   OPENAI_CODEX_OAUTH_MISSING_CALLBACK_URL,
   saveAISettings,
   setCloudProviderKey,
   testProviderModel,
+  upsertModelRegistryVision,
 } from '../../../services/api/aiSettingsApi';
 import {
   creditsApi,
@@ -38,6 +41,7 @@ import {
   type TeamUsage,
 } from '../../../services/api/creditsApi';
 import { connectOpenRouterViaOAuth } from '../../../utils/openrouterOAuth';
+import { openUrl } from '../../../utils/openUrl';
 import {
   type AuthStyle,
   openhumanUpdateLocalAiSettings,
@@ -51,9 +55,12 @@ import {
   openhumanHeartbeatTickNow,
 } from '../../../utils/tauriCommands/heartbeat';
 import { ConfirmationModal } from '../../intelligence/ConfirmationModal';
-import SettingsHeader from '../components/SettingsHeader';
+import PanelPage from '../../layout/PanelPage';
+import Button from '../../ui/Button';
+import SettingsBackButton from '../components/SettingsBackButton';
+import { SettingsSelect, SettingsStatusLine, SettingsSwitch, SettingsTextField } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
-import { ClaudeCodeStatusCard } from './ai/ClaudeCodeStatusCard';
+import { ClaudeCodeConnect } from './ai/ClaudeCodeStatusCard';
 import { routingWithProviderRemoved, toSelectableChatModels } from './aiRouting';
 import {
   authStyleForBuiltinCloudProvider,
@@ -122,8 +129,13 @@ const BUILTIN_RESERVED_SLUGS = [
   'custom',
   'ollama',
   'lmstudio',
+  // Claude Code is a CLI-backed peer provider surfaced via a dedicated
+  // connect button (not a chip), so reserve its slug so it never renders in
+  // the generic custom-provider chip list.
+  'claude-code',
   ...BUILTIN_CLOUD_PROVIDER_SLUGS,
 ];
+const KIMI_PLATFORM_URL = 'https://platform.kimi.ai?aff=openhuman';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Static catalog
@@ -144,12 +156,17 @@ const BUILTIN_PROVIDER_META: Record<string, { tone: string; label: string }> = {
 };
 
 const WORKLOADS: Workload[] = [
-  { id: 'chat', group: 'chat', label: 'Chat', description: 'Direct conversational back-and-forth' },
+  {
+    id: 'chat',
+    group: 'chat',
+    label: 'Chat',
+    description: 'Direct conversational back-and-forth — “Quick” mode in Conversations',
+  },
   {
     id: 'reasoning',
     group: 'chat',
     label: 'Reasoning',
-    description: 'Main chat agent, meeting summarizer',
+    description: 'Main chat agent, meeting summarizer — “Reasoning” mode in Conversations',
   },
   {
     id: 'agentic',
@@ -217,7 +234,11 @@ const WORKLOAD_MODEL_HINTS: Record<WorkloadId, string> = {
 // just derives the `maskedKey` display string from `has_api_key`.
 // ─────────────────────────────────────────────────────────────────────────────
 
-type AISettings = { cloudProviders: CloudProvider[]; routing: RoutingMap };
+type AISettings = {
+  cloudProviders: CloudProvider[];
+  routing: RoutingMap;
+  modelRegistry: ModelRegistryEntry[];
+};
 
 const EMPTY_ROUTING: RoutingMap = {
   chat: { kind: 'default' },
@@ -230,7 +251,11 @@ const EMPTY_ROUTING: RoutingMap = {
   subconscious: { kind: 'default' },
 };
 
-const EMPTY_SETTINGS: AISettings = { cloudProviders: [], routing: EMPTY_ROUTING };
+const EMPTY_SETTINGS: AISettings = {
+  cloudProviders: [],
+  routing: EMPTY_ROUTING,
+  modelRegistry: [],
+};
 
 function maskKeyLabel(hasKey: boolean): string {
   return hasKey ? '•••• configured' : 'Not configured';
@@ -252,6 +277,8 @@ function slugifyCustomProviderName(name: string): string {
 function authStyleForSlug(slug: string): AuthStyle {
   if (slug === 'openhuman') return 'openhuman_jwt';
   if (slug === 'lmstudio' || slug === 'ollama') return 'none';
+  // Claude Code authenticates via the local CLI, never an HTTP key.
+  if (slug === 'claude-code') return 'none';
   return authStyleForBuiltinCloudProvider(slug) ?? 'bearer';
 }
 
@@ -280,7 +307,7 @@ function toPanelRoutingFromApi(api: ApiAISettings): { panel: AISettings } {
     learning: liftRef(api.routing.learning),
     subconscious: liftRef(api.routing.subconscious),
   };
-  return { panel: { cloudProviders, routing } };
+  return { panel: { cloudProviders, routing, modelRegistry: api.modelRegistry } };
 }
 
 function toApiSettings(panel: AISettings): ApiAISettings {
@@ -303,6 +330,7 @@ function toApiSettings(panel: AISettings): ApiAISettings {
       learning: panel.routing.learning,
       subconscious: panel.routing.subconscious,
     },
+    modelRegistry: panel.modelRegistry,
   };
 }
 
@@ -527,7 +555,7 @@ function formatI18n(template: string, vars: Record<string, string | number>): st
 function slugTone(slug: string): string {
   return (
     BUILTIN_PROVIDER_META[slug]?.tone ??
-    'bg-stone-100 dark:bg-neutral-800 ring-stone-300 text-stone-900 dark:text-neutral-100'
+    'bg-neutral-100 dark:bg-neutral-800 ring-neutral-300 text-neutral-900 dark:text-neutral-100'
   );
 }
 
@@ -552,19 +580,13 @@ const ProviderToggleChip = ({
     <div
       className={`inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-medium ring-1 transition-colors dark:ring-neutral-700 ${tone}`}>
       <span>{label}</span>
-      <button
-        type="button"
-        role="switch"
-        aria-checked={enabled}
-        aria-label={providerToggleAriaLabel(t, enabled, label)}
+      <SettingsSwitch
+        id={`provider-toggle-${slug}`}
+        checked={enabled}
+        onCheckedChange={onToggle}
         disabled={busy || locked}
-        onClick={onToggle}
-        className={`relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${enabled ? 'bg-primary-500' : 'bg-stone-300 dark:bg-neutral-700'}`}>
-        <span
-          aria-hidden
-          className={`inline-block h-3 w-3 transform rounded-full bg-white dark:bg-neutral-900 shadow transition-transform ${enabled ? 'translate-x-3.5' : 'translate-x-0.5'}`}
-        />
-      </button>
+        aria-label={providerToggleAriaLabel(t, enabled, label)}
+      />
     </div>
   );
 };
@@ -618,6 +640,7 @@ const ProviderKeyDialog = ({
   const helper = isLocalRuntime
     ? formatI18n(t('settings.ai.localRuntimeHelper'), { label })
     : t('settings.ai.apiKeyStoredEncrypted');
+  const platformLinkUrl = slug === 'moonshot' && !isLocalRuntime ? KIMI_PLATFORM_URL : null;
 
   const handleSave = async () => {
     const trimmed = value.trim();
@@ -680,21 +703,41 @@ const ProviderKeyDialog = ({
       aria-modal="true"
       aria-label={formatI18n(t('settings.ai.connectProviderDialog'), { label })}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
-      <div className="w-full max-w-md rounded-2xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-6 shadow-soft">
-        <div className="mb-4">
-          <h3 className="text-base font-semibold text-stone-900 dark:text-neutral-100">{`${t('settings.ai.connectProvider')} ${label}`}</h3>
-          <p className="mt-0.5 text-xs text-stone-500 dark:text-neutral-400">{helper}</p>
+      <div className="relative w-full max-w-md rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-6 shadow-soft">
+        {platformLinkUrl ? (
+          <a
+            href={platformLinkUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ insetInlineEnd: '1.5rem' }}
+            onClick={event => {
+              event.preventDefault();
+              void openUrl(platformLinkUrl).catch(err => {
+                console.warn('[ai-settings] provider platform link open failed', {
+                  slug,
+                  error: err instanceof Error ? err.message : String(err),
+                });
+              });
+            }}
+            className="absolute top-6 text-xs font-medium leading-6 text-primary-600 hover:text-primary-700 dark:text-primary-300 dark:hover:text-primary-200">
+            {t('settings.ai.getProviderApiKey')}
+          </a>
+        ) : null}
+        <div className="mb-4" style={platformLinkUrl ? { paddingInlineEnd: '9rem' } : undefined}>
+          <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-100">{`${t('settings.ai.connectProvider')} ${label}`}</h3>
+          <p className="mt-0.5 text-xs text-neutral-500 dark:text-neutral-400">{helper}</p>
         </div>
 
         <div className="flex flex-col gap-1.5">
           <label
             htmlFor="provider-key-input"
-            className="text-xs font-medium text-stone-700 dark:text-neutral-200">
+            className="text-xs font-medium text-neutral-700 dark:text-neutral-200">
             {fieldLabel}
           </label>
-          <input
+          <SettingsTextField
             id="provider-key-input"
             type={isLocalRuntime ? 'url' : 'text'}
+            mono={isLocalRuntime}
             autoComplete="off"
             autoCorrect="off"
             autoCapitalize="off"
@@ -709,44 +752,42 @@ const ProviderKeyDialog = ({
               setValue(e.target.value);
               setError(null);
             }}
-            className={`rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 placeholder-stone-400 dark:placeholder-neutral-500 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 disabled:opacity-60 ${isLocalRuntime ? 'font-mono' : ''}`}
           />
           {error ? <ProviderSetupErrorNotice error={error} /> : null}
         </div>
 
         {oauthAction ? (
-          <div className="mt-4 rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/50 p-3">
-            <div className="text-[11px] font-semibold uppercase tracking-wide text-stone-500 dark:text-neutral-400">
+          <div className="mt-4 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/50 p-3">
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
               {t('settings.ai.or')}
             </div>
-            <p className="mt-1 text-xs text-stone-500 dark:text-neutral-400">
+            <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
               {oauthAction.description ?? t('settings.ai.openRouterOauthDescription')}
             </p>
-            <button
+            <Button
               type="button"
+              variant="secondary"
+              size="sm"
               onClick={() => void handleOAuth()}
               disabled={busy}
-              className="mt-3 inline-flex items-center justify-center rounded-lg border border-stone-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-4 py-2 text-sm font-medium text-stone-900 dark:text-neutral-100 hover:bg-stone-100 dark:hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-50">
+              className="mt-3">
               {phase === 'oauth' ? t('settings.ai.connecting') : oauthAction.label}
-            </button>
+            </Button>
           </div>
         ) : null}
 
         <div className="mt-6 flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onCancel}
-            disabled={busy}
-            className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-4 py-2 text-sm font-medium text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60 dark:bg-neutral-800/60 dark:hover:bg-neutral-800/60 disabled:opacity-50">
+          <Button type="button" variant="secondary" size="sm" onClick={onCancel} disabled={busy}>
             {t('common.cancel')}
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
+            variant="primary"
+            size="sm"
             onClick={() => void handleSave()}
-            disabled={busy}
-            className="rounded-lg bg-primary-500 px-4 py-2 text-sm font-medium text-white hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-50">
+            disabled={busy}>
             {phase === 'saving' ? t('settings.ai.saving') : t('common.save')}
-          </button>
+          </Button>
         </div>
       </div>
     </div>
@@ -878,24 +919,18 @@ const LoopToggle = ({
   busy: boolean;
   onToggle: () => void;
 }) => (
-  <div className="flex items-center justify-between gap-3 rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2">
+  <div className="flex items-center justify-between gap-3 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2">
     <div className="min-w-0">
-      <div className="text-sm font-medium text-stone-900 dark:text-neutral-100">{label}</div>
-      <div className="text-xs text-stone-500 dark:text-neutral-400">{description}</div>
+      <div className="text-sm font-medium text-neutral-900 dark:text-neutral-100">{label}</div>
+      <div className="text-xs text-neutral-500 dark:text-neutral-400">{description}</div>
     </div>
-    <button
-      type="button"
-      role="switch"
-      aria-label={label}
-      aria-checked={checked}
+    <SettingsSwitch
+      id={`loop-toggle-${label.toLowerCase().replace(/[^a-z0-9]/g, '-')}`}
+      checked={checked}
+      onCheckedChange={onToggle}
       disabled={busy}
-      onClick={onToggle}
-      className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors disabled:cursor-wait disabled:opacity-60 ${checked ? 'bg-primary-500' : 'bg-stone-300 dark:bg-neutral-700'}`}>
-      <span
-        aria-hidden
-        className={`inline-block h-4 w-4 transform rounded-full bg-white dark:bg-neutral-900 shadow transition-transform ${checked ? 'translate-x-4' : 'translate-x-0.5'}`}
-      />
-    </button>
+      aria-label={label}
+    />
   </div>
 );
 
@@ -908,15 +943,15 @@ const MetricTile = ({
   value: string;
   detail?: string;
 }) => (
-  <div className="min-w-0 overflow-hidden rounded-md bg-stone-50 dark:bg-neutral-800/60 px-3 py-2">
-    <div className="truncate text-[10px] font-semibold uppercase tracking-wide text-stone-400 dark:text-neutral-500">
+  <div className="min-w-0 overflow-hidden rounded-md bg-neutral-50 dark:bg-neutral-800/60 px-3 py-2">
+    <div className="truncate text-[10px] font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">
       {label}
     </div>
-    <div className="mt-1 truncate text-sm font-semibold text-stone-900 dark:text-neutral-100">
+    <div className="mt-1 truncate text-sm font-semibold text-neutral-900 dark:text-neutral-100">
       {value}
     </div>
     {detail ? (
-      <div className="mt-0.5 truncate text-[11px] text-stone-500 dark:text-neutral-400">
+      <div className="mt-0.5 truncate text-[11px] text-neutral-500 dark:text-neutral-400">
         {detail}
       </div>
     ) : null}
@@ -924,16 +959,16 @@ const MetricTile = ({
 );
 
 const FormulaRow = ({ label, value, detail }: { label: string; value: string; detail: string }) => (
-  <div className="min-w-0 overflow-hidden rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2">
+  <div className="min-w-0 overflow-hidden rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2">
     <div className="flex items-center justify-between gap-3">
-      <span className="min-w-0 truncate text-xs font-medium text-stone-800 dark:text-neutral-100">
+      <span className="min-w-0 truncate text-xs font-medium text-neutral-800 dark:text-neutral-100">
         {label}
       </span>
-      <span className="shrink-0 font-mono text-xs text-stone-600 dark:text-neutral-300">
+      <span className="shrink-0 font-mono text-xs text-neutral-600 dark:text-neutral-300">
         {value}
       </span>
     </div>
-    <div className="mt-1 truncate text-[11px] text-stone-500 dark:text-neutral-400">{detail}</div>
+    <div className="mt-1 truncate text-[11px] text-neutral-500 dark:text-neutral-400">{detail}</div>
   </div>
 );
 
@@ -941,7 +976,7 @@ export type BackgroundLoopControlsView = 'all' | 'heartbeat' | 'ledger';
 
 /** Minimal cloud-provider shape consumed by the loop map's `describeProvider`
  *  helper — only slug/label/id are read. Accepting this narrower shape lets
- *  external panels (HeartbeatPanel, LedgerUsagePanel) feed in the API view
+ *  external panels (UsagePanel) feed in the API view
  *  (`CloudProviderView`) without copying the AIPanel-internal extras
  *  (`authStyle`, `maskedKey`). */
 export type BackgroundLoopProviderView = { id: string; slug: string; label: string };
@@ -1174,42 +1209,39 @@ export const BackgroundLoopControls = ({
   return (
     <div className="space-y-4">
       {!hideHeader && (
-        <div className="border-b border-stone-200 dark:border-neutral-800 pb-2">
-          <h2 className="text-base font-semibold text-stone-900 dark:text-neutral-100">
+        <div className="border-b border-neutral-200 dark:border-neutral-800 pb-2">
+          <h2 className="text-base font-semibold text-neutral-900 dark:text-neutral-100">
             {t('settings.ai.backgroundLoops')}
           </h2>
-          <p className="mt-0.5 text-xs text-stone-500 dark:text-neutral-400">
+          <p className="mt-0.5 text-xs text-neutral-500 dark:text-neutral-400">
             {t('settings.ai.backgroundLoopsDesc')}
           </p>
         </div>
       )}
 
-      {error && (
-        <div className="rounded-md border border-coral-200 dark:border-coral-500/30 bg-coral-50 dark:bg-coral-500/10 px-3 py-2 text-xs text-coral-700 dark:text-coral-300">
-          {error}
-        </div>
-      )}
+      {error && <SettingsStatusLine saving={false} error={error} savedNote={null} savingLabel="" />}
 
       <section className={`grid gap-3 ${gridCols}`}>
         {showHeartbeat && (
           <div className="space-y-3">
-            <div className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-3">
+            <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/60 p-3">
               <div className="mb-3 flex items-center justify-between gap-3">
                 <div>
-                  <div className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+                  <div className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
                     {t('settings.ai.heartbeatControls')}
                   </div>
-                  <div className="text-xs text-stone-500 dark:text-neutral-400">
+                  <div className="text-xs text-neutral-500 dark:text-neutral-400">
                     {t('settings.ai.heartbeatControlsDesc')}
                   </div>
                 </div>
-                <button
+                <Button
                   type="button"
+                  variant="secondary"
+                  size="xs"
                   onClick={() => void refresh()}
-                  disabled={loading}
-                  className="rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-2 py-1 text-xs font-medium text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60 dark:bg-neutral-800/60 dark:hover:bg-neutral-800/60 disabled:opacity-50">
+                  disabled={loading}>
                   {t('common.refresh')}
-                </button>
+                </Button>
               </div>
 
               {settings ? (
@@ -1239,10 +1271,11 @@ export const BackgroundLoopControls = ({
                       void applyHeartbeatPatch({ notify_meetings: !settings.notify_meetings })
                     }
                   />
-                  <div className="grid gap-2 rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 sm:grid-cols-3">
-                    <label className="min-w-0 space-y-1 text-xs font-medium text-stone-700 dark:text-neutral-200">
+                  <div className="grid gap-2 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 sm:grid-cols-3">
+                    <label className="min-w-0 space-y-1 text-xs font-medium text-neutral-700 dark:text-neutral-200">
                       <span className="whitespace-nowrap">{t('settings.ai.calendarCap')}</span>
-                      <select
+                      <SettingsSelect
+                        aria-label={t('settings.ai.calendarCap')}
                         value={maxCalendarConnectionsPerTick}
                         disabled={saving === 'max_calendar_connections_per_tick'}
                         onChange={e =>
@@ -1250,17 +1283,19 @@ export const BackgroundLoopControls = ({
                             max_calendar_connections_per_tick: Number(e.target.value),
                           })
                         }
-                        className="w-full rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-2 py-1 text-xs text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500">
+                        className="w-full"
+                        inputSize="sm">
                         {[1, 2, 3, 5, 10].map(count => (
                           <option key={count} value={count}>
                             {formatI18n(t('settings.ai.connectionsPerTick'), { count })}
                           </option>
                         ))}
-                      </select>
+                      </SettingsSelect>
                     </label>
-                    <label className="min-w-0 space-y-1 text-xs font-medium text-stone-700 dark:text-neutral-200">
+                    <label className="min-w-0 space-y-1 text-xs font-medium text-neutral-700 dark:text-neutral-200">
                       <span className="whitespace-nowrap">{t('settings.ai.meetingLookahead')}</span>
-                      <select
+                      <SettingsSelect
+                        aria-label={t('settings.ai.meetingLookahead')}
                         value={settings.meeting_lookahead_minutes}
                         disabled={saving === 'meeting_lookahead_minutes'}
                         onChange={e =>
@@ -1268,19 +1303,21 @@ export const BackgroundLoopControls = ({
                             meeting_lookahead_minutes: Number(e.target.value),
                           })
                         }
-                        className="w-full rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-2 py-1 text-xs text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500">
+                        className="w-full"
+                        inputSize="sm">
                         {[15, 30, 60, 120, 240].map(minutes => (
                           <option key={minutes} value={minutes}>
                             {formatI18n(t('settings.ai.minutesShort'), { count: minutes })}
                           </option>
                         ))}
-                      </select>
+                      </SettingsSelect>
                     </label>
-                    <label className="min-w-0 space-y-1 text-xs font-medium text-stone-700 dark:text-neutral-200">
+                    <label className="min-w-0 space-y-1 text-xs font-medium text-neutral-700 dark:text-neutral-200">
                       <span className="whitespace-nowrap">
                         {t('settings.ai.reminderLookahead')}
                       </span>
-                      <select
+                      <SettingsSelect
+                        aria-label={t('settings.ai.reminderLookahead')}
                         value={settings.reminder_lookahead_minutes}
                         disabled={saving === 'reminder_lookahead_minutes'}
                         onChange={e =>
@@ -1288,13 +1325,14 @@ export const BackgroundLoopControls = ({
                             reminder_lookahead_minutes: Number(e.target.value),
                           })
                         }
-                        className="w-full rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-2 py-1 text-xs text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500">
+                        className="w-full"
+                        inputSize="sm">
                         {[5, 15, 30, 60, 120].map(minutes => (
                           <option key={minutes} value={minutes}>
                             {formatI18n(t('settings.ai.minutesShort'), { count: minutes })}
                           </option>
                         ))}
-                      </select>
+                      </SettingsSelect>
                     </label>
                   </div>
                   <LoopToggle
@@ -1329,33 +1367,36 @@ export const BackgroundLoopControls = ({
                     }
                   />
 
-                  <div className="flex flex-wrap items-center gap-2 rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2">
+                  <div className="flex flex-wrap items-center gap-2 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2">
                     <label
-                      className="text-xs font-medium text-stone-700 dark:text-neutral-200"
+                      className="text-xs font-medium text-neutral-700 dark:text-neutral-200"
                       htmlFor="heartbeat-interval">
                       {t('settings.ai.interval')}
                     </label>
-                    <select
+                    <SettingsSelect
                       id="heartbeat-interval"
+                      aria-label={t('settings.ai.interval')}
                       value={settings.interval_minutes}
                       disabled={saving === 'interval_minutes'}
                       onChange={e =>
                         void applyHeartbeatPatch({ interval_minutes: Number(e.target.value) })
                       }
-                      className="rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-2 py-1 text-xs text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500">
+                      inputSize="sm">
                       {[5, 10, 15, 30, 60].map(minutes => (
                         <option key={minutes} value={minutes}>
                           {formatI18n(t('settings.ai.minutesShort'), { count: minutes })}
                         </option>
                       ))}
-                    </select>
-                    <button
+                    </SettingsSelect>
+                    <Button
                       type="button"
+                      variant="secondary"
+                      size="xs"
                       onClick={() => void runPlannerNow()}
                       disabled={runningTick}
-                      className="ml-auto rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-2 py-1 text-xs font-medium text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60 dark:bg-neutral-800/60 dark:hover:bg-neutral-800/60 disabled:opacity-50">
+                      className="ml-auto">
                       {runningTick ? t('settings.ai.running') : t('settings.ai.plannerTickNow')}
-                    </button>
+                    </Button>
                   </div>
 
                   {plannerSummary && (
@@ -1368,7 +1409,7 @@ export const BackgroundLoopControls = ({
                   )}
                 </div>
               ) : (
-                <div className="text-xs text-stone-500 dark:text-neutral-400">
+                <div className="text-xs text-neutral-500 dark:text-neutral-400">
                   {loading
                     ? t('settings.ai.loadingHeartbeatControls')
                     : t('settings.ai.heartbeatControlsUnavailable')}
@@ -1376,28 +1417,28 @@ export const BackgroundLoopControls = ({
               )}
             </div>
 
-            <div className="overflow-hidden rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60">
-              <div className="border-b border-stone-200 dark:border-neutral-800 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-stone-400 dark:text-neutral-500">
+            <div className="overflow-hidden rounded-lg border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/60">
+              <div className="border-b border-neutral-200 dark:border-neutral-800 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">
                 {t('settings.ai.loopMap')}
               </div>
-              <div className="divide-y divide-stone-200 dark:divide-neutral-800">
+              <div className="divide-y divide-neutral-200 dark:divide-neutral-800">
                 {loops.map(loop => (
                   <div key={loop.name} className="grid gap-2 px-3 py-3 md:grid-cols-[150px_1fr]">
                     <div className="min-w-0">
-                      <div className="truncate text-sm font-medium text-stone-900 dark:text-neutral-100">
+                      <div className="truncate text-sm font-medium text-neutral-900 dark:text-neutral-100">
                         {loop.name}
                       </div>
-                      <div className="mt-0.5 flex flex-wrap gap-1 text-[11px] text-stone-500 dark:text-neutral-400">
+                      <div className="mt-0.5 flex flex-wrap gap-1 text-[11px] text-neutral-500 dark:text-neutral-400">
                         <span>{loop.enabled ? t('settings.ai.on') : t('settings.ai.off')}</span>
                         <span>{loop.cadence}</span>
                       </div>
                     </div>
-                    <div className="min-w-0 text-xs text-stone-600 dark:text-neutral-300">
+                    <div className="min-w-0 text-xs text-neutral-600 dark:text-neutral-300">
                       <div>{loop.work}</div>
-                      <div className="mt-1 font-mono text-[11px] text-stone-500 dark:text-neutral-400">
+                      <div className="mt-1 font-mono text-[11px] text-neutral-500 dark:text-neutral-400">
                         {t('settings.ai.routeLabel').replace('{route}', loop.route)}
                       </div>
-                      <div className="mt-1 text-stone-500 dark:text-neutral-400">{loop.risk}</div>
+                      <div className="mt-1 text-neutral-500 dark:text-neutral-400">{loop.risk}</div>
                     </div>
                   </div>
                 ))}
@@ -1407,23 +1448,24 @@ export const BackgroundLoopControls = ({
         )}
 
         {showLedger && (
-          <div className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-3">
+          <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-3">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <div className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+                <div className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
                   {t('settings.ai.recentUsageLedger')}
                 </div>
-                <div className="text-xs text-stone-500 dark:text-neutral-400">
+                <div className="text-xs text-neutral-500 dark:text-neutral-400">
                   {t('settings.ai.recentUsageLedgerDesc')}
                 </div>
               </div>
-              <button
+              <Button
                 type="button"
+                variant="secondary"
+                size="xs"
                 onClick={() => void refresh()}
-                disabled={loading}
-                className="rounded-md border border-stone-200 dark:border-neutral-800 px-2 py-1 text-xs font-medium text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60 dark:bg-neutral-800/60 dark:hover:bg-neutral-800/60 disabled:opacity-50">
+                disabled={loading}>
                 {t('common.reload')}
-              </button>
+              </Button>
             </div>
 
             <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-3">
@@ -1463,8 +1505,8 @@ export const BackgroundLoopControls = ({
               />
             </div>
 
-            <div className="mt-3 rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-3">
-              <div className="text-[10px] font-semibold uppercase tracking-wide text-stone-400 dark:text-neutral-500">
+            <div className="mt-3 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/60 p-3">
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">
                 {t('settings.ai.budgetMath')}
               </div>
               <div className="mt-2 grid gap-2">
@@ -1526,8 +1568,8 @@ export const BackgroundLoopControls = ({
               </div>
             </div>
 
-            <div className="mt-3 rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-3">
-              <div className="text-[10px] font-semibold uppercase tracking-wide text-stone-400 dark:text-neutral-500">
+            <div className="mt-3 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/60 p-3">
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">
                 {t('settings.ai.loopCallBudget')}
               </div>
               <div className="mt-2 grid gap-2">
@@ -1578,7 +1620,7 @@ export const BackgroundLoopControls = ({
             </div>
 
             {latestSpend && (
-              <div className="mt-3 rounded-md border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-3 py-2 text-xs text-stone-600 dark:text-neutral-300">
+              <div className="mt-3 rounded-md border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/60 px-3 py-2 text-xs text-neutral-600 dark:text-neutral-300">
                 {t('settings.ai.latestSpend')
                   .replace('{amount}', formatUsd(spendAmount(latestSpend)))
                   .replace('{time}', new Date(latestSpend.createdAt).toLocaleString())
@@ -1588,7 +1630,7 @@ export const BackgroundLoopControls = ({
 
             <div className="mt-3 space-y-3">
               <div>
-                <div className="text-[10px] font-semibold uppercase tracking-wide text-stone-400 dark:text-neutral-500">
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">
                   {t('settings.ai.topActions')}
                 </div>
                 <div className="mt-1 space-y-1">
@@ -1596,15 +1638,15 @@ export const BackgroundLoopControls = ({
                     actionSummary.map(([action, count, total]) => (
                       <div
                         key={action}
-                        className="flex items-center justify-between gap-2 text-xs text-stone-600 dark:text-neutral-300">
+                        className="flex items-center justify-between gap-2 text-xs text-neutral-600 dark:text-neutral-300">
                         <span className="truncate font-mono">{action}</span>
-                        <span className="shrink-0 text-stone-500 dark:text-neutral-400">
+                        <span className="shrink-0 text-neutral-500 dark:text-neutral-400">
                           {count} / {formatUsd(total)}
                         </span>
                       </div>
                     ))
                   ) : (
-                    <div className="text-xs text-stone-500 dark:text-neutral-400">
+                    <div className="text-xs text-neutral-500 dark:text-neutral-400">
                       {t('settings.ai.noSpendRows')}
                     </div>
                   )}
@@ -1612,7 +1654,7 @@ export const BackgroundLoopControls = ({
               </div>
 
               <div>
-                <div className="text-[10px] font-semibold uppercase tracking-wide text-stone-400 dark:text-neutral-500">
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">
                   {t('settings.ai.topHours')}
                 </div>
                 <div className="mt-1 space-y-1">
@@ -1620,15 +1662,15 @@ export const BackgroundLoopControls = ({
                     hourSummary.map(([hour, total]) => (
                       <div
                         key={hour}
-                        className="flex items-center justify-between gap-2 text-xs text-stone-600 dark:text-neutral-300">
+                        className="flex items-center justify-between gap-2 text-xs text-neutral-600 dark:text-neutral-300">
                         <span>{hour}</span>
-                        <span className="font-mono text-stone-500 dark:text-neutral-400">
+                        <span className="font-mono text-neutral-500 dark:text-neutral-400">
                           {formatUsd(total)}
                         </span>
                       </div>
                     ))
                   ) : (
-                    <div className="text-xs text-stone-500 dark:text-neutral-400">
+                    <div className="text-xs text-neutral-500 dark:text-neutral-400">
                       {t('settings.ai.noHourlySpend')}
                     </div>
                   )}
@@ -1678,38 +1720,36 @@ const WorkloadRow = ({
   return (
     <div className="flex items-center justify-between gap-3 py-3 transition-colors">
       <div className="min-w-0 flex-1 space-y-1">
-        <div className="text-sm font-medium text-stone-900 dark:text-neutral-100">
+        <div className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
           {workload.label}
         </div>
-        <div className="text-xs leading-5 text-stone-500 dark:text-neutral-400">
+        <div className="text-xs leading-5 text-neutral-500 dark:text-neutral-400">
           {workload.description}
         </div>
-        <div className="text-[11px] leading-5 text-stone-500 dark:text-neutral-400">
+        <div className="text-[11px] leading-5 text-neutral-500 dark:text-neutral-400">
           {WORKLOAD_MODEL_HINTS[workload.id]}
         </div>
         {resolved ? (
           <div
             className={`font-mono text-[11px] truncate ${
-              isCustom ? 'text-sky-700 dark:text-sky-200' : 'text-stone-500 dark:text-neutral-400'
+              isCustom ? 'text-sky-700 dark:text-sky-200' : 'text-neutral-500 dark:text-neutral-400'
             }`}>
             {resolved}
           </div>
         ) : (
-          <div className="text-[11px] text-stone-400 dark:text-neutral-500">
+          <div className="text-[11px] text-neutral-400 dark:text-neutral-500">
             {t('settings.ai.workload.noModel')}
           </div>
         )}
       </div>
-      <button
+      <Button
         type="button"
+        variant="secondary"
+        size="xs"
         onClick={onCustomClick}
-        className={`shrink-0 rounded-lg px-3 py-2 text-xs font-medium transition-colors ${
-          isCustom
-            ? 'bg-stone-100 text-stone-700 ring-1 ring-stone-300 dark:bg-neutral-800 dark:text-neutral-200 dark:ring-neutral-700'
-            : 'bg-stone-100 text-stone-700 hover:bg-stone-200 dark:bg-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-700'
-        }`}>
+        className={isCustom ? 'ring-1 ring-neutral-300 dark:ring-neutral-700' : ''}>
         {isCustom ? t('settings.ai.workload.changeModel') : t('settings.ai.workload.chooseModel')}
-      </button>
+      </Button>
     </div>
   );
 };
@@ -1725,8 +1765,11 @@ interface CustomRoutingDialogProps {
   cloudProviders: CloudProvider[];
   localModels: OllamaModel[];
   ollamaRunning: boolean;
+  /** Current per-model vision registry, used to prefill the vision checkbox. */
+  modelRegistry: ModelRegistryEntry[];
   onClose: () => void;
-  onSubmit: (next: ProviderRef) => void;
+  /** Emits the chosen provider ref plus the user's vision flag for that model. */
+  onSubmit: (next: ProviderRef, vision: boolean) => void;
 }
 
 type CustomDialogSource =
@@ -1734,10 +1777,13 @@ type CustomDialogSource =
   | { kind: 'local' }
   | { kind: 'claude-code' };
 
-/** Default model identifier presented when the user first picks the
- * Claude Code CLI source. The CLI accepts any model id the underlying
- * Claude account can run, so this is just a sensible starting point. */
-const CLAUDE_CODE_DEFAULT_MODEL = 'sonnet-4-5';
+/** Default model identifier presented when the user first picks the Claude
+ * Code CLI source. This string is passed verbatim to `claude --model`, so it
+ * MUST be a value the CLI accepts — an alias (`sonnet`, `opus`, `fable`) or a
+ * full name (`claude-sonnet-4-5`). NOT a marketing string like `sonnet-4-5`,
+ * which the CLI rejects with "model may not exist". `sonnet` tracks the latest
+ * Sonnet the signed-in account can run. */
+const CLAUDE_CODE_DEFAULT_MODEL = 'sonnet';
 
 function providerRefSignature(ref: ProviderRef): string {
   switch (ref.kind) {
@@ -1811,15 +1857,22 @@ const CustomRoutingDialog = ({
   cloudProviders,
   localModels,
   ollamaRunning,
+  modelRegistry,
   onClose,
   onSubmit,
 }: CustomRoutingDialogProps) => {
   const { t } = useT();
   // Non-openhuman cloud providers + local-ollama (if available) are the
   // "Custom" options. OpenHuman is its own Managed path; Default serializes
-  // to the backend's `cloud` sentinel.
-  const customCloud = cloudProviders.filter(p => p.slug !== 'openhuman');
+  // to the backend's `cloud` sentinel. Claude Code is excluded here — it has
+  // its own dedicated `claude-code:` select option, not a generic cloud one.
+  const customCloud = cloudProviders.filter(
+    p => p.slug !== 'openhuman' && p.slug !== 'claude-code'
+  );
   const localAvailable = ollamaRunning && localModels.length > 0;
+  // Claude Code CLI is offered as a routing source only when its peer chip is
+  // enabled (a cloud_providers entry exists).
+  const claudeCodeEnabled = cloudProviders.some(p => p.slug === 'claude-code');
 
   const initialSource: CustomDialogSource | null =
     initial.kind === 'cloud'
@@ -1832,7 +1885,9 @@ const CustomRoutingDialog = ({
             ? { kind: 'cloud', providerSlug: customCloud[0].slug }
             : localAvailable
               ? { kind: 'local' }
-              : null;
+              : claudeCodeEnabled
+                ? { kind: 'claude-code' }
+                : null;
 
   const [source, setSource] = useState<CustomDialogSource | null>(initialSource);
   const [model, setModel] = useState<string>(() => {
@@ -1861,6 +1916,35 @@ const CustomRoutingDialog = ({
       ? (initial.temperature ?? null)
       : null
   );
+
+  // Registry slug for the selected source — keys the per-model vision flag.
+  // Cloud uses the provider slug; local → `ollama`; claude-code → `claude-code`.
+  const registrySlug =
+    source?.kind === 'cloud'
+      ? source.providerSlug
+      : source?.kind === 'local'
+        ? 'ollama'
+        : source?.kind === 'claude-code'
+          ? 'claude-code'
+          : null;
+
+  // User-set vision flag for this (provider, model). Prefilled from the registry,
+  // re-prefilled whenever the selected provider/model changes.
+  const [vision, setVision] = useState<boolean>(() =>
+    registrySlug && model.trim()
+      ? modelRegistryVision(modelRegistry, registrySlug, model.trim())
+      : false
+  );
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setVision(
+      registrySlug && model.trim()
+        ? modelRegistryVision(modelRegistry, registrySlug, model.trim())
+        : false
+    );
+    // modelRegistry is stable for the dialog's lifetime (prop doesn't change mid-open).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [registrySlug, model]);
 
   const selectedCloud =
     source?.kind === 'cloud' ? customCloud.find(c => c.slug === source.providerSlug) : undefined;
@@ -1935,16 +2019,19 @@ const CustomRoutingDialog = ({
     if (!source || !canSave) return;
     const temp = temperature == null || !Number.isFinite(temperature) ? null : temperature;
     if (source.kind === 'cloud') {
-      onSubmit({
-        kind: 'cloud',
-        providerSlug: source.providerSlug,
-        model: model.trim(),
-        temperature: temp,
-      });
+      onSubmit(
+        {
+          kind: 'cloud',
+          providerSlug: source.providerSlug,
+          model: model.trim(),
+          temperature: temp,
+        },
+        vision
+      );
     } else if (source.kind === 'claude-code') {
-      onSubmit({ kind: 'claude-code', model: model.trim(), temperature: temp });
+      onSubmit({ kind: 'claude-code', model: model.trim(), temperature: temp }, vision);
     } else {
-      onSubmit({ kind: 'local', model: model.trim(), temperature: temp });
+      onSubmit({ kind: 'local', model: model.trim(), temperature: temp }, vision);
     }
   };
 
@@ -1970,9 +2057,9 @@ const CustomRoutingDialog = ({
     }
   };
 
-  // Claude Code CLI is always available as a source — never show the
-  // empty state when it's the only option.
-  const noProviders = false;
+  // Empty state only when there's genuinely nothing to route to: no custom
+  // cloud providers, no local Ollama, and the Claude Code peer chip is off.
+  const noProviders = customCloud.length === 0 && !localAvailable && !claudeCodeEnabled;
 
   return (
     <div
@@ -1980,22 +2067,25 @@ const CustomRoutingDialog = ({
       aria-modal="true"
       aria-label={formatI18n(t('settings.ai.customRoutingForWorkload'), { label: workload.label })}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
-      <div className="w-full max-w-md rounded-2xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-6 shadow-soft">
+      <div className="w-full max-w-md rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-6 shadow-soft">
         <div className="flex items-start justify-between gap-3 mb-4">
           <div>
-            <h3 className="text-base font-semibold text-stone-900 dark:text-neutral-100">
+            <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-100">
               {t('settings.ai.customRouting')}
             </h3>
-            <p className="mt-0.5 text-xs text-stone-500 dark:text-neutral-400">{workload.label}</p>
-            <p className="mt-2 max-w-md text-xs leading-5 text-stone-500 dark:text-neutral-400">
+            <p className="mt-0.5 text-xs text-neutral-500 dark:text-neutral-400">
+              {workload.label}
+            </p>
+            <p className="mt-2 max-w-md text-xs leading-5 text-neutral-500 dark:text-neutral-400">
               {WORKLOAD_MODEL_HINTS[workload.id]}
             </p>
           </div>
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="xs"
             onClick={onClose}
-            className="rounded-md p-1 text-stone-400 dark:text-neutral-500 hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 dark:hover:bg-neutral-800/60 hover:text-stone-700 dark:hover:text-neutral-200 dark:text-neutral-200 dark:hover:text-neutral-200">
-            <span className="sr-only">{t('common.close')}</span>
+            aria-label={t('common.close')}>
             <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
                 strokeLinecap="round"
@@ -2004,7 +2094,7 @@ const CustomRoutingDialog = ({
                 d="M6 18L18 6M6 6l12 12"
               />
             </svg>
-          </button>
+          </Button>
         </div>
 
         {noProviders ? (
@@ -2014,10 +2104,10 @@ const CustomRoutingDialog = ({
         ) : (
           <div className="flex flex-col gap-4">
             <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-medium text-stone-700 dark:text-neutral-200">
+              <label className="text-xs font-medium text-neutral-700 dark:text-neutral-200">
                 {t('settings.ai.providerLabel')}
               </label>
-              <select
+              <SettingsSelect
                 value={
                   source
                     ? `${source.kind}:${source.kind === 'cloud' ? source.providerSlug : ''}`
@@ -2039,55 +2129,60 @@ const CustomRoutingDialog = ({
                     setModel(CLAUDE_CODE_DEFAULT_MODEL);
                   }
                 }}
-                className="rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500">
+                className="w-full">
                 {customCloud.map(p => (
                   <option key={p.slug} value={`cloud:${p.slug}`}>
                     {p.label}
                   </option>
                 ))}
                 {localAvailable && <option value="local:">{t('settings.ai.localOllama')}</option>}
-                <option value="claude-code:">Claude Code CLI</option>
-              </select>
+                {/* Offered only when the peer chip is enabled — or when this
+                    workload is already pinned to it (keeps the select value
+                    valid). */}
+                {(claudeCodeEnabled || source?.kind === 'claude-code') && (
+                  <option value="claude-code:">{t('settings.ai.claudeCode.modalTitle')}</option>
+                )}
+              </SettingsSelect>
             </div>
 
             <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-medium text-stone-700 dark:text-neutral-200">
+              <label className="text-xs font-medium text-neutral-700 dark:text-neutral-200">
                 {t('settings.ai.modelLabel')}
               </label>
               {source?.kind === 'local' ? (
-                <select
+                <SettingsSelect
                   value={model}
                   onChange={e => {
                     resetTestState();
                     setModel(e.target.value);
                   }}
-                  className="rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500">
+                  className="w-full">
                   {localModels.map(m => (
                     <option key={m.id} value={m.id}>
                       {m.id}
                     </option>
                   ))}
-                </select>
+                </SettingsSelect>
               ) : source?.kind === 'claude-code' ? (
                 <div className="space-y-1.5">
-                  <input
+                  <SettingsTextField
                     type="text"
+                    mono
                     value={model}
                     onChange={e => setModel(e.target.value)}
-                    placeholder="sonnet-4-5"
-                    className="w-full rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm font-mono text-stone-900 dark:text-neutral-100 placeholder-stone-400 dark:placeholder-neutral-500 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                    placeholder="sonnet"
                   />
-                  <p className="text-[11px] text-stone-500 dark:text-neutral-400">
-                    Any model id your Claude account can run (e.g. <code>sonnet-4-5</code>,{' '}
-                    <code>opus-4-7</code>). Passed verbatim to <code>claude --model</code>.
+                  <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
+                    A model id the <code>claude</code> CLI accepts — an alias (<code>sonnet</code>,{' '}
+                    <code>opus</code>) or full name (<code>claude-sonnet-4-5</code>). Passed
+                    verbatim to <code>claude --model</code>; marketing strings like{' '}
+                    <code>sonnet-4-5</code> are rejected.
                   </p>
                 </div>
               ) : cloudModelsLoading ? (
-                <select
-                  disabled
-                  className="rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-400 dark:text-neutral-500 opacity-60 cursor-wait">
+                <SettingsSelect disabled className="w-full opacity-60 cursor-wait">
                   <option>{t('settings.ai.loadingModels')}</option>
-                </select>
+                </SettingsSelect>
               ) : cloudModelsError ? (
                 <div className="space-y-1.5">
                   <div className="rounded-lg border border-red-200 dark:border-red-500/30 bg-red-50 dark:bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-300 font-mono break-all">
@@ -2100,12 +2195,13 @@ const CustomRoutingDialog = ({
                       className="text-xs text-primary-600 dark:text-primary-400 hover:underline">
                       {t('common.retry')}
                     </button>
-                    <span className="text-xs text-stone-400 dark:text-neutral-500">
+                    <span className="text-xs text-neutral-400 dark:text-neutral-500">
                       {t('settings.ai.enterModelIdManually')}
                     </span>
                   </div>
-                  <input
+                  <SettingsTextField
                     type="text"
+                    mono
                     value={model}
                     onChange={e => {
                       resetTestState();
@@ -2118,17 +2214,16 @@ const CustomRoutingDialog = ({
                           })
                         : t('settings.ai.modelIdPlaceholder')
                     }
-                    className="w-full rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm font-mono text-stone-900 dark:text-neutral-100 placeholder-stone-400 dark:placeholder-neutral-500 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
                   />
                 </div>
               ) : cloudModels.length > 0 ? (
-                <select
+                <SettingsSelect
                   value={model}
                   onChange={e => {
                     resetTestState();
                     setModel(e.target.value);
                   }}
-                  className="rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500">
+                  className="w-full">
                   {!model && <option value="">{t('settings.ai.selectModel')}</option>}
                   {/* Keep existing value selectable even if the provider no longer lists it */}
                   {model && !cloudModels.some(m => m.id === model) && (
@@ -2139,10 +2234,11 @@ const CustomRoutingDialog = ({
                       {humanizeModelId(m.id)} — {m.id}
                     </option>
                   ))}
-                </select>
+                </SettingsSelect>
               ) : (
-                <input
+                <SettingsTextField
                   type="text"
+                  mono
                   value={model}
                   onChange={e => {
                     resetTestState();
@@ -2155,7 +2251,6 @@ const CustomRoutingDialog = ({
                         })
                       : t('settings.ai.modelIdPlaceholder')
                   }
-                  className="rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm font-mono text-stone-900 dark:text-neutral-100 placeholder-stone-400 dark:placeholder-neutral-500 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
                 />
               )}
             </div>
@@ -2163,7 +2258,7 @@ const CustomRoutingDialog = ({
             {/* Temperature override (optional). When unchecked, the workload
                 inherits the provider/global default temperature. */}
             <div className="flex flex-col gap-1.5">
-              <label className="flex items-center justify-between gap-2 text-xs font-medium text-stone-700 dark:text-neutral-200">
+              <label className="flex items-center justify-between gap-2 text-xs font-medium text-neutral-700 dark:text-neutral-200">
                 <span className="inline-flex items-center gap-2">
                   <input
                     type="checkbox"
@@ -2172,12 +2267,12 @@ const CustomRoutingDialog = ({
                       resetTestState();
                       setTemperature(e.target.checked ? 0.7 : null);
                     }}
-                    className="h-3.5 w-3.5 rounded border-stone-300 dark:border-neutral-700 text-primary-500 focus:ring-primary-500"
+                    className="h-3.5 w-3.5 rounded border-neutral-300 dark:border-neutral-700 text-primary-500 focus:ring-primary-500"
                   />
                   {t('settings.ai.temperatureOverride')}
                 </span>
                 {temperature != null && (
-                  <span className="font-mono text-[11px] text-stone-500 dark:text-neutral-400">
+                  <span className="font-mono text-[11px] text-neutral-500 dark:text-neutral-400">
                     {temperature.toFixed(2)}
                   </span>
                 )}
@@ -2211,14 +2306,34 @@ const CustomRoutingDialog = ({
                         setTemperature(Math.max(0, Math.min(2, v)));
                       }
                     }}
-                    className="w-16 rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1 text-xs font-mono text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                    className="w-16 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1 text-xs font-mono text-neutral-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
                   />
                 </div>
               )}
-              <p className="text-[11px] text-stone-400 dark:text-neutral-500">
+              <p className="text-[11px] text-neutral-400 dark:text-neutral-500">
                 {t('settings.ai.temperatureOverrideDesc')}
               </p>
             </div>
+
+            {/* Vision capability (optional). Marks a custom/BYOK model as
+                accepting image input so the chat composer offers image
+                attachments for it. Only shown once a concrete model is chosen. */}
+            {registrySlug && model.trim().length > 0 && (
+              <div className="flex flex-col gap-1.5">
+                <label className="inline-flex items-center gap-2 text-xs font-medium text-neutral-700 dark:text-neutral-200">
+                  <input
+                    type="checkbox"
+                    checked={vision}
+                    onChange={e => setVision(e.target.checked)}
+                    className="h-3.5 w-3.5 rounded border-neutral-300 dark:border-neutral-700 text-primary-500 focus:ring-primary-500"
+                  />
+                  {t('settings.ai.modelVision')}
+                </label>
+                <p className="text-[11px] text-neutral-400 dark:text-neutral-500">
+                  {t('settings.ai.modelVisionDesc')}
+                </p>
+              </div>
+            )}
 
             {(testBusy || testReply || testError || testStartedAt) && (
               <div
@@ -2265,7 +2380,7 @@ const CustomRoutingDialog = ({
                     <div className="text-[11px] font-semibold uppercase tracking-wide text-current/80">
                       {t('settings.ai.response')}
                     </div>
-                    <div className="rounded-md border border-current/15 bg-white/70 px-3 py-3 text-[13px] leading-relaxed text-stone-900 whitespace-pre-wrap break-words dark:bg-black/10 dark:text-neutral-100">
+                    <div className="rounded-md border border-current/15 bg-white/70 px-3 py-3 text-[13px] leading-relaxed text-neutral-900 whitespace-pre-wrap break-words dark:bg-black/10 dark:text-neutral-100">
                       {testReply}
                     </div>
                   </div>
@@ -2276,26 +2391,25 @@ const CustomRoutingDialog = ({
         )}
 
         <div className="mt-6 flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-4 py-2 text-sm font-medium text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60 dark:bg-neutral-800/60 dark:hover:bg-neutral-800/60">
+          <Button type="button" variant="secondary" size="sm" onClick={onClose}>
             {t('common.cancel')}
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
+            variant="secondary"
+            size="sm"
             onClick={() => void handleTest()}
-            disabled={!canTest || testBusy}
-            className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-4 py-2 text-sm font-medium text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60 disabled:cursor-not-allowed disabled:opacity-50">
+            disabled={!canTest || testBusy}>
             {testBusy ? t('settings.ai.testing') : t('settings.ai.test')}
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
+            variant="primary"
+            size="sm"
             onClick={handleSave}
-            disabled={!canSave}
-            className="rounded-lg bg-primary-500 px-4 py-2 text-sm font-medium text-white hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-50">
+            disabled={!canSave}>
             {t('common.save')}
-          </button>
+          </Button>
         </div>
       </div>
     </div>
@@ -2320,32 +2434,31 @@ const SaveBar = ({
   const { t } = useT();
   return (
     <div className="pointer-events-none sticky bottom-3 z-20 flex justify-center px-4">
-      <div className="pointer-events-auto flex w-full items-center gap-2 rounded-lg border border-stone-200 dark:border-neutral-800 bg-white/95 dark:bg-neutral-900/95 px-3 py-2 shadow-float backdrop-blur-md animate-fade-up">
+      <div className="pointer-events-auto flex w-full items-center gap-2 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white/95 dark:bg-neutral-900/95 px-3 py-2 shadow-float backdrop-blur-md animate-fade-up">
         <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-amber-50 dark:bg-amber-500/10 text-amber-600 dark:text-amber-300">
           <LuCircleAlert className="h-3.5 w-3.5" />
         </div>
         <div className="min-w-0 flex-1">
-          <div className="text-xs font-medium text-stone-900 dark:text-neutral-100">
+          <div className="text-xs font-medium text-neutral-900 dark:text-neutral-100">
             {changeCount === 1
               ? t('settings.ai.unsavedChange')
               : `${String(changeCount)} ${t('settings.ai.unsavedChanges')}`}
           </div>
-          <div className="truncate font-mono text-[10px] text-stone-500 dark:text-neutral-400">
+          <div className="truncate font-mono text-[10px] text-neutral-500 dark:text-neutral-400">
             {diffSummary.slice(0, 2).join(' · ')}
             {diffSummary.length > 2 ? ` · +${diffSummary.length - 2}` : ''}
           </div>
         </div>
-        <button
-          onClick={onDiscard}
-          className="rounded-md border border-stone-200 dark:border-neutral-800 px-2 py-1 text-xs font-medium text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60 dark:bg-neutral-800/60 dark:hover:bg-neutral-800/60">
+        <Button variant="secondary" size="xs" onClick={onDiscard}>
           {t('settings.ai.discard')}
-        </button>
-        <button
+        </Button>
+        <Button
+          variant="primary"
+          size="xs"
           onClick={onSave}
-          className="inline-flex items-center gap-1 rounded-md bg-primary-500 px-2.5 py-1 text-xs font-medium text-white hover:bg-primary-600">
-          <LuCheck className="h-3 w-3" />
+          leadingIcon={<LuCheck className="h-3 w-3" />}>
           {t('common.save')}
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -2357,6 +2470,7 @@ const GlobalOwnModelSelector = ({
   cloudProviders,
   localModels,
   ollamaRunning,
+  modelRegistry,
   onApply,
 }: {
   current: ProviderRef | null;
@@ -2364,27 +2478,64 @@ const GlobalOwnModelSelector = ({
   cloudProviders: CloudProvider[];
   localModels: OllamaModel[];
   ollamaRunning: boolean;
-  onApply: (next: ProviderRef) => Promise<void>;
+  modelRegistry: ModelRegistryEntry[];
+  onApply: (next: ProviderRef, vision: boolean) => Promise<void>;
 }) => {
   const { t } = useT();
-  const customCloud = cloudProviders.filter(p => p.slug !== 'openhuman');
+  // Claude Code is excluded from the generic cloud list — it has its own
+  // dedicated `claude-code:` option below (offered when connected).
+  const customCloud = cloudProviders.filter(
+    p => p.slug !== 'openhuman' && p.slug !== 'claude-code'
+  );
   const localAvailable = ollamaRunning && localModels.length > 0;
+  const claudeCodeEnabled = cloudProviders.some(p => p.slug === 'claude-code');
 
   const initialSource: CustomDialogSource | null =
     current?.kind === 'cloud'
       ? { kind: 'cloud', providerSlug: current.providerSlug }
       : current?.kind === 'local'
         ? { kind: 'local' }
-        : customCloud[0]
-          ? { kind: 'cloud', providerSlug: customCloud[0].slug }
-          : localAvailable
-            ? { kind: 'local' }
-            : null;
+        : current?.kind === 'claude-code'
+          ? { kind: 'claude-code' }
+          : customCloud[0]
+            ? { kind: 'cloud', providerSlug: customCloud[0].slug }
+            : localAvailable
+              ? { kind: 'local' }
+              : claudeCodeEnabled
+                ? { kind: 'claude-code' }
+                : null;
 
   const [source, setSource] = useState<CustomDialogSource | null>(initialSource);
-  const [model, setModel] = useState<string>(
-    current?.kind === 'cloud' || current?.kind === 'local' ? current.model : ''
+  const [model, setModel] = useState<string>(() => {
+    if (current?.kind === 'cloud' || current?.kind === 'local' || current?.kind === 'claude-code') {
+      return current.model;
+    }
+    if (initialSource?.kind === 'claude-code') return CLAUDE_CODE_DEFAULT_MODEL;
+    return '';
+  });
+  // Registry slug for the selected source — keys the per-model vision flag.
+  const registrySlug =
+    source?.kind === 'cloud'
+      ? source.providerSlug
+      : source?.kind === 'local'
+        ? 'ollama'
+        : source?.kind === 'claude-code'
+          ? 'claude-code'
+          : null;
+  const [vision, setVision] = useState<boolean>(() =>
+    registrySlug && model.trim()
+      ? modelRegistryVision(modelRegistry, registrySlug, model.trim())
+      : false
   );
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setVision(
+      registrySlug && model.trim()
+        ? modelRegistryVision(modelRegistry, registrySlug, model.trim())
+        : false
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [registrySlug, model]);
   const [cloudModels, setCloudModels] = useState<ModelInfo[]>([]);
   const [cloudModelsLoading, setCloudModelsLoading] = useState(false);
   const [cloudModelsError, setCloudModelsError] = useState<string | null>(null);
@@ -2453,15 +2604,14 @@ const GlobalOwnModelSelector = ({
     setSaving(true);
     try {
       if (nextSource.kind === 'local') {
-        await onApply({ kind: 'local', model: nextModel.trim() });
+        await onApply({ kind: 'local', model: nextModel.trim() }, vision);
       } else if (nextSource.kind === 'claude-code') {
-        await onApply({ kind: 'claude-code', model: nextModel.trim() });
+        await onApply({ kind: 'claude-code', model: nextModel.trim() }, vision);
       } else {
-        await onApply({
-          kind: 'cloud',
-          providerSlug: nextSource.providerSlug,
-          model: nextModel.trim(),
-        });
+        await onApply(
+          { kind: 'cloud', providerSlug: nextSource.providerSlug, model: nextModel.trim() },
+          vision
+        );
       }
     } finally {
       setSaving(false);
@@ -2469,9 +2619,9 @@ const GlobalOwnModelSelector = ({
   };
 
   return (
-    <div className="space-y-4 rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4">
+    <div className="space-y-4 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4">
       <div className="space-y-1">
-        <div className="text-sm font-medium text-stone-900 dark:text-neutral-100">
+        <div className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
           {t('settings.ai.globalModel.title')}
         </div>
         <p className="text-xs text-amber-700 dark:text-amber-200">
@@ -2479,7 +2629,7 @@ const GlobalOwnModelSelector = ({
         </p>
       </div>
 
-      {customCloud.length === 0 && !localAvailable ? (
+      {customCloud.length === 0 && !localAvailable && !claudeCodeEnabled ? (
         <div className="rounded-lg border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-200">
           {t('settings.ai.globalModel.noProviders')}
         </div>
@@ -2487,10 +2637,10 @@ const GlobalOwnModelSelector = ({
         <>
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-stone-700 dark:text-neutral-200">
+              <label className="text-xs font-medium text-neutral-700 dark:text-neutral-200">
                 {t('settings.ai.globalModel.provider')}
               </label>
-              <select
+              <SettingsSelect
                 value={
                   source
                     ? `${source.kind}:${source.kind === 'cloud' ? source.providerSlug : ''}`
@@ -2505,13 +2655,16 @@ const GlobalOwnModelSelector = ({
                     const nextModel = localModels[0]?.id ?? '';
                     setSource(nextSource);
                     setModel(nextModel);
+                  } else if (kind === 'claude-code') {
+                    setSource({ kind: 'claude-code' });
+                    setModel(CLAUDE_CODE_DEFAULT_MODEL);
                   } else {
                     const nextSource = { kind: 'cloud', providerSlug: slug } as const;
                     setSource(nextSource);
                     setModel('');
                   }
                 }}
-                className="w-full rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100">
+                className="w-full">
                 {customCloud.map(p => (
                   <option key={p.slug} value={`cloud:${p.slug}`}>
                     {p.label}
@@ -2520,37 +2673,40 @@ const GlobalOwnModelSelector = ({
                 {localAvailable ? (
                   <option value="local:">{t('settings.ai.provider.ollama')}</option>
                 ) : null}
-              </select>
+                {(claudeCodeEnabled || source?.kind === 'claude-code') && (
+                  <option value="claude-code:">{t('settings.ai.claudeCode.modalTitle')}</option>
+                )}
+              </SettingsSelect>
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-stone-700 dark:text-neutral-200">
+              <label className="text-xs font-medium text-neutral-700 dark:text-neutral-200">
                 {t('settings.ai.globalModel.model')}
               </label>
               {source?.kind === 'local' ? (
-                <select
+                <SettingsSelect
                   value={model}
                   onChange={e => setModel(e.target.value)}
-                  className="w-full rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100">
+                  className="w-full">
                   {localModels.map(m => (
                     <option key={m.id} value={m.id}>
                       {m.id}
                     </option>
                   ))}
-                </select>
+                </SettingsSelect>
               ) : cloudModels.length > 0 ? (
-                <select
+                <SettingsSelect
                   value={model}
                   onChange={e => setModel(e.target.value)}
-                  className="w-full rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100">
+                  className="w-full">
                   {cloudModels.map(m => (
                     <option key={m.id} value={m.id}>
                       {m.id}
                     </option>
                   ))}
-                </select>
+                </SettingsSelect>
               ) : (
-                <input
+                <SettingsTextField
                   value={model}
                   onChange={e => setModel(e.target.value)}
                   placeholder={
@@ -2558,7 +2714,6 @@ const GlobalOwnModelSelector = ({
                       ? t('settings.ai.globalModel.loadingModels')
                       : t('settings.ai.globalModel.enterModelId')
                   }
-                  className="w-full rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100"
                 />
               )}
               {cloudModelsError ? (
@@ -2566,22 +2721,40 @@ const GlobalOwnModelSelector = ({
               ) : null}
             </div>
           </div>
-          <div className="rounded-lg bg-stone-50 dark:bg-neutral-800/60 px-3 py-2 text-xs text-stone-500 dark:text-neutral-400">
+          {registrySlug && model.trim().length > 0 && (
+            <label className="flex items-start gap-2 text-xs font-medium text-neutral-700 dark:text-neutral-200">
+              <input
+                type="checkbox"
+                checked={vision}
+                onChange={e => setVision(e.target.checked)}
+                className="mt-0.5 h-3.5 w-3.5 rounded border-neutral-300 dark:border-neutral-700 text-primary-500 focus:ring-primary-500"
+              />
+              <span>
+                {t('settings.ai.modelVision')}
+                <span className="block font-normal text-[11px] text-neutral-400 dark:text-neutral-500">
+                  {t('settings.ai.modelVisionDesc')}
+                </span>
+              </span>
+            </label>
+          )}
+
+          <div className="rounded-lg bg-neutral-50 dark:bg-neutral-800/60 px-3 py-2 text-xs text-neutral-500 dark:text-neutral-400">
             {t('settings.ai.globalModel.appliesToAll')}
           </div>
 
           <div className="flex justify-end">
-            <button
+            <Button
               type="button"
+              variant="primary"
+              size="xs"
               disabled={!canApply || saving || isSaved}
-              onClick={() => void applySelection(source, model)}
-              className="rounded-lg bg-primary-500 px-3 py-2 text-xs font-medium text-white hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-50">
+              onClick={() => void applySelection(source, model)}>
               {saving
                 ? t('settings.ai.globalModel.saving')
                 : isSaved
                   ? t('settings.ai.globalModel.saved')
                   : t('common.save')}
-            </button>
+            </Button>
           </div>
         </>
       )}
@@ -2602,7 +2775,7 @@ interface AIPanelProps {
 
 const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
   const { t } = useT();
-  const { navigateBack, breadcrumbs } = useSettingsNavigation();
+  const { navigateBack } = useSettingsNavigation();
   const { saved, draft, isDirty, save, persist, discard, loading, error, reload } = useAISettings();
   // #1574 §4b: advisory re-embed modal, driven by the backend status RPC.
   // Logic lives in a unit-testable hook (see useReembedBackfillModal).
@@ -2633,10 +2806,14 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
       slug: string;
       localLabel?: string | null;
       value: string;
-      credentialMode: 'api_key' | 'oauth' | 'codex_oauth' | 'endpoint';
+      credentialMode: 'api_key' | 'oauth' | 'codex_oauth' | 'endpoint' | 'cli_login';
     }) => {
       const isLocalRuntime = credentialMode === 'endpoint';
       const isCodexOAuth = credentialMode === 'codex_oauth';
+      // CLI-backed login (Claude Code): no API key is written and no HTTP
+      // /models probe is made — auth + execution both go through the local
+      // `claude` CLI. Mirrors the Codex skip, but also skips model listing.
+      const isCliLogin = credentialMode === 'cli_login';
       setBusyAction(`toggle-${localLabel ? localLabel.toLowerCase().replace(/\s/g, '') : slug}`);
 
       try {
@@ -2660,7 +2837,9 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
           label: localLabel ?? BUILTIN_PROVIDER_META[slug]?.label ?? slug,
           endpoint,
           authStyle: authStyleForSlug(slug),
-          maskedKey: maskKeyLabel(true),
+          // CLI-login providers hold no API key — reflect that honestly so
+          // the entry matches its reloaded (has_api_key === false) shape.
+          maskedKey: maskKeyLabel(!isCliLogin),
         };
 
         const priorWireProviders = saved.cloudProviders.map(p => ({
@@ -2671,7 +2850,7 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
           auth_style: p.authStyle,
         }));
 
-        if (!isLocalRuntime && !isCodexOAuth && slug !== 'openhuman') {
+        if (!isLocalRuntime && !isCodexOAuth && !isCliLogin && slug !== 'openhuman') {
           await setCloudProviderKey(slug, trimmed);
         } else if (isLocalRuntime && slug === 'ollama') {
           const baseUrl = endpoint.replace(/\/v1\/?$/, '');
@@ -2702,7 +2881,7 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
             },
           ];
           await flushCloudProviders(nextWireProviders);
-          if (!isCodexOAuth) {
+          if (!isCodexOAuth && !isCliLogin) {
             try {
               await listProviderModels(slug);
             } catch (probeErr) {
@@ -2812,28 +2991,22 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
   const sharedModelRef = useMemo(() => inferSharedModelRef(draft.routing), [draft.routing]);
 
   return (
-    <div className="relative">
-      {!embedded && (
-        <SettingsHeader
-          title={t('pages.settings.ai.llm')}
-          showBackButton
-          onBack={navigateBack}
-          breadcrumbs={breadcrumbs}
-        />
-      )}
-
+    <PanelPage
+      className="z-10"
+      contentClassName=""
+      description={embedded ? undefined : t('pages.settings.ai.llmDesc')}
+      leading={embedded ? undefined : <SettingsBackButton onBack={navigateBack} />}>
       <div className={embedded ? 'space-y-6' : 'space-y-6 p-4'}>
-        <ClaudeCodeStatusCard />
         {/* ═══════════════════════════════════════════════════════════════
             AUTH — provider authentication (cloud providers + local Ollama
             setup). Everything the user needs to wire a model up.
             ═══════════════════════════════════════════════════════════════ */}
         <div className="space-y-4">
-          <div className="border-b border-stone-200 dark:border-neutral-800 pb-2">
-            <h2 className="text-base font-semibold text-stone-900 dark:text-neutral-100">
+          <div className="border-b border-neutral-200 dark:border-neutral-800 pb-2">
+            <h2 className="text-base font-semibold text-neutral-900 dark:text-neutral-100">
               {t('settings.ai.llmProviders')}
             </h2>
-            <p className="text-xs text-stone-500 dark:text-neutral-400 mt-0.5">
+            <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
               {t('settings.ai.llmProvidersDesc')}
             </p>
           </div>
@@ -2841,14 +3014,12 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
           {/* ─── Provider chip-toggle list ────────────────────────────────── */}
           <section className="space-y-3">
             {loading && (
-              <div className="text-xs text-stone-500 dark:text-neutral-400">
+              <div className="text-xs text-neutral-500 dark:text-neutral-400">
                 {t('common.loading')}
               </div>
             )}
             {error && (
-              <div className="rounded-md border border-coral-200 dark:border-coral-500/30 bg-coral-50 dark:bg-coral-500/10 px-3 py-2 text-xs text-coral-700 dark:text-coral-300">
-                {error}
-              </div>
+              <SettingsStatusLine saving={false} error={error} savedNote={null} savingLabel="" />
             )}
 
             <div className="flex flex-wrap gap-2">
@@ -2947,13 +3118,10 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
                         <LuPencil className="h-3 w-3" />
                       </button>
                     )}
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={enabled}
-                      aria-label={providerToggleAriaLabel(t, enabled, label)}
-                      disabled={busyAction === `toggle-${localKind}`}
-                      onClick={async () => {
+                    <SettingsSwitch
+                      id={`local-runtime-toggle-${localKind}`}
+                      checked={enabled}
+                      onCheckedChange={async () => {
                         if (enabled && existing) {
                           const remaining = draft.cloudProviders.filter(
                             cp => cp.id !== existing.id
@@ -2973,30 +3141,29 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
                           setPendingLocalLabel(label);
                         }
                       }}
-                      className={`relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors disabled:cursor-wait disabled:opacity-60 ${enabled ? 'bg-primary-500' : 'bg-stone-300 dark:bg-neutral-700'}`}>
-                      <span
-                        aria-hidden
-                        className={`inline-block h-3 w-3 transform rounded-full bg-white dark:bg-neutral-900 shadow transition-transform ${enabled ? 'translate-x-3.5' : 'translate-x-0.5'}`}
-                      />
-                    </button>
+                      disabled={busyAction === `toggle-${localKind}`}
+                      aria-label={providerToggleAriaLabel(t, enabled, label)}
+                    />
                   </div>
                 );
               })}
             </div>
 
             <div className="flex flex-col gap-2 pt-1">
+              {/* Codex — imports the existing Codex CLI login as an OpenAI credential. */}
               <div className="flex flex-wrap items-center gap-2">
-                <button
+                <Button
                   type="button"
+                  variant="secondary"
+                  size="xs"
+                  leadingIcon={<LuKeyRound className="h-3.5 w-3.5" />}
                   onClick={() => void connectOpenAiViaCodexAuth()}
-                  disabled={busyAction === 'codex-auth' || busyAction === 'toggle-openai'}
-                  className="inline-flex items-center gap-2 rounded-lg border border-stone-200 bg-white px-3 py-2 text-xs font-medium text-stone-900 transition-colors hover:bg-stone-50 disabled:cursor-wait disabled:opacity-60 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:bg-neutral-800">
-                  <LuKeyRound className="h-3.5 w-3.5" />
+                  disabled={busyAction === 'codex-auth' || busyAction === 'toggle-openai'}>
                   {busyAction === 'codex-auth' || busyAction === 'toggle-openai'
                     ? t('settings.ai.connecting')
                     : t('settings.ai.codexAuthButton', 'Codex 인증')}
-                </button>
-                <span className="text-xs text-stone-500 dark:text-neutral-400">
+                </Button>
+                <span className="text-xs text-neutral-500 dark:text-neutral-400">
                   {t(
                     'settings.ai.codexAuthHelper',
                     'Uses the existing Codex CLI login from ~/.codex/auth.json.'
@@ -3004,15 +3171,39 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
                 </span>
               </div>
               {codexAuthError ? <ProviderSetupErrorNotice error={codexAuthError} /> : null}
+
+              {/* Claude Code CLI — connect control (peer of Codex). A "Claude
+                  Code" button + status text; the button opens a modal with the
+                  enable/sign-in/disconnect controls. No API key: routes chat
+                  through the local `claude` CLI using the CLI's own login. */}
+              <ClaudeCodeConnect
+                connected={draft.cloudProviders.some(cp => cp.slug === 'claude-code')}
+                busy={busyAction === 'toggle-claude-code'}
+                onConnect={() =>
+                  connectProvider({
+                    slug: 'claude-code',
+                    value: 'cli_login',
+                    credentialMode: 'cli_login',
+                  })
+                }
+                onDisconnect={async () => {
+                  const existing = draft.cloudProviders.find(cp => cp.slug === 'claude-code');
+                  if (!existing) return;
+                  const remaining = draft.cloudProviders.filter(cp => cp.id !== existing.id);
+                  const nextRouting = routingWithProviderRemoved(
+                    draft.routing,
+                    { slug: existing.slug, isLocalRuntime: false },
+                    remaining
+                  );
+                  await persist({ ...draft, cloudProviders: remaining, routing: nextRouting });
+                }}
+              />
             </div>
 
             <div className="pt-1">
-              <button
-                type="button"
-                onClick={() => setEditing('new')}
-                className="inline-flex items-center gap-2 rounded-lg bg-primary-50 px-3 py-2 text-xs font-medium text-primary-900 ring-1 ring-primary-200 transition-colors hover:bg-primary-100 dark:bg-primary-500/10 dark:text-primary-100 dark:ring-primary-500/30 dark:hover:bg-primary-500/20">
+              <Button type="button" variant="primary" size="xs" onClick={() => setEditing('new')}>
                 {t('settings.ai.routing.addCustomProvider')}
-              </button>
+              </Button>
             </div>
           </section>
         </div>
@@ -3024,11 +3215,11 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
             per-workload routing.
             ═══════════════════════════════════════════════════════════════ */}
         <div className="space-y-4">
-          <div className="border-b border-stone-200 dark:border-neutral-800 pb-2">
-            <h2 className="text-base font-semibold text-stone-900 dark:text-neutral-100">
+          <div className="border-b border-neutral-200 dark:border-neutral-800 pb-2">
+            <h2 className="text-base font-semibold text-neutral-900 dark:text-neutral-100">
               {t('settings.ai.routing')}
             </h2>
-            <p className="text-xs text-stone-500 dark:text-neutral-400 mt-0.5">
+            <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
               {t('settings.ai.routingDesc')}
             </p>
           </div>
@@ -3047,12 +3238,12 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
                 className={`flex h-full min-h-[152px] flex-col rounded-2xl border p-4 text-left transition-colors ${
                   effectiveRoutingMode === 'managed'
                     ? 'border-emerald-300 bg-emerald-50 dark:border-emerald-500/40 dark:bg-emerald-500/10'
-                    : 'border-stone-200 bg-white hover:bg-stone-50 dark:border-neutral-800 dark:bg-neutral-900 dark:hover:bg-neutral-800'
+                    : 'border-neutral-200 bg-white hover:bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-900 dark:hover:bg-neutral-800'
                 }`}>
-                <div className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+                <div className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
                   {t('settings.ai.routing.managed')}
                 </div>
-                <p className="mt-2 text-xs leading-5 text-stone-600 dark:text-neutral-300">
+                <p className="mt-2 text-xs leading-5 text-neutral-600 dark:text-neutral-300">
                   {t('settings.ai.routing.managedDesc')}
                 </p>
               </button>
@@ -3063,12 +3254,12 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
                 className={`flex h-full min-h-[152px] flex-col rounded-2xl border p-4 text-left transition-colors ${
                   effectiveRoutingMode === 'own'
                     ? 'border-sky-300 bg-sky-50 dark:border-sky-500/40 dark:bg-sky-500/10'
-                    : 'border-stone-200 bg-white hover:bg-stone-50 dark:border-neutral-800 dark:bg-neutral-900 dark:hover:bg-neutral-800'
+                    : 'border-neutral-200 bg-white hover:bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-900 dark:hover:bg-neutral-800'
                 }`}>
-                <div className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+                <div className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
                   {t('settings.ai.routing.useYourOwn')}
                 </div>
-                <p className="mt-2 text-xs leading-5 text-stone-600 dark:text-neutral-300">
+                <p className="mt-2 text-xs leading-5 text-neutral-600 dark:text-neutral-300">
                   {t('settings.ai.routing.useYourOwnDesc')}
                 </p>
               </button>
@@ -3079,12 +3270,12 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
                 className={`flex h-full min-h-[152px] flex-col rounded-2xl border p-4 text-left transition-colors ${
                   effectiveRoutingMode === 'custom'
                     ? 'border-sky-300 bg-sky-50 dark:border-sky-500/40 dark:bg-sky-500/10'
-                    : 'border-stone-200 bg-white hover:bg-stone-50 dark:border-neutral-800 dark:bg-neutral-900 dark:hover:bg-neutral-800'
+                    : 'border-neutral-200 bg-white hover:bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-900 dark:hover:bg-neutral-800'
                 }`}>
-                <div className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+                <div className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
                   {t('settings.ai.routing.advanced')}
                 </div>
-                <p className="mt-2 text-xs leading-5 text-stone-600 dark:text-neutral-300">
+                <p className="mt-2 text-xs leading-5 text-neutral-600 dark:text-neutral-300">
                   {t('settings.ai.routing.advancedDesc')}
                 </p>
               </button>
@@ -3103,8 +3294,23 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
                 cloudProviders={draft.cloudProviders}
                 localModels={installed}
                 ollamaRunning={ollama.state === 'running'}
-                onApply={async next => {
-                  await persist({ ...draft, routing: routingWithAllWorkloads(next) });
+                modelRegistry={draft.modelRegistry}
+                onApply={async (next, vision) => {
+                  const reg =
+                    next.kind === 'cloud'
+                      ? { slug: next.providerSlug, model: next.model }
+                      : next.kind === 'local'
+                        ? { slug: 'ollama', model: next.model }
+                        : next.kind === 'claude-code'
+                          ? { slug: 'claude-code', model: next.model }
+                          : null;
+                  await persist({
+                    ...draft,
+                    routing: routingWithAllWorkloads(next),
+                    modelRegistry: reg
+                      ? upsertModelRegistryVision(draft.modelRegistry, reg.slug, reg.model, vision)
+                      : draft.modelRegistry,
+                  });
                 }}
               />
             ) : null}
@@ -3116,16 +3322,16 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
                 </div>
 
                 <div className="space-y-3">
-                  <div className="overflow-hidden rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-3">
-                    <div className="border-b border-stone-200 dark:border-neutral-800 py-3">
-                      <div className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+                  <div className="overflow-hidden rounded-lg border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/60 px-3">
+                    <div className="border-b border-neutral-200 dark:border-neutral-800 py-3">
+                      <div className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
                         {t('settings.ai.routing.chatAndConversations')}
                       </div>
-                      <div className="mt-1 text-xs text-stone-500 dark:text-neutral-400">
+                      <div className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
                         {t('settings.ai.routing.chatDesc')}
                       </div>
                     </div>
-                    <div className="divide-y divide-stone-200 dark:divide-neutral-800">
+                    <div className="divide-y divide-neutral-200 dark:divide-neutral-800">
                       {chatRows.map(w => (
                         <WorkloadRow
                           key={w.id}
@@ -3138,16 +3344,16 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
                     </div>
                   </div>
 
-                  <div className="overflow-hidden rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-3">
-                    <div className="border-b border-stone-200 dark:border-neutral-800 py-3">
-                      <div className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+                  <div className="overflow-hidden rounded-lg border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/60 px-3">
+                    <div className="border-b border-neutral-200 dark:border-neutral-800 py-3">
+                      <div className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
                         {t('settings.ai.routing.backgroundTasks')}
                       </div>
-                      <div className="mt-1 text-xs text-stone-500 dark:text-neutral-400">
+                      <div className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
                         {t('settings.ai.routing.bgTasksDesc')}
                       </div>
                     </div>
-                    <div className="divide-y divide-stone-200 dark:divide-neutral-800">
+                    <div className="divide-y divide-neutral-200 dark:divide-neutral-800">
                       {bgRows.map(w => (
                         <WorkloadRow
                           key={w.id}
@@ -3290,11 +3496,24 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
               cloudProviders={draft.cloudProviders}
               localModels={installed}
               ollamaRunning={ollama.state === 'running'}
+              modelRegistry={draft.modelRegistry}
               onClose={() => setCustomDialogFor(null)}
-              onSubmit={async next => {
+              onSubmit={async (next, vision) => {
+                // (provider slug, model id) the vision flag keys on.
+                const reg =
+                  next.kind === 'cloud'
+                    ? { slug: next.providerSlug, model: next.model }
+                    : next.kind === 'local'
+                      ? { slug: 'ollama', model: next.model }
+                      : next.kind === 'claude-code'
+                        ? { slug: 'claude-code', model: next.model }
+                        : null;
                 const nextDraft = {
                   ...draft,
                   routing: { ...draft.routing, [customDialogFor]: next },
+                  modelRegistry: reg
+                    ? upsertModelRegistryVision(draft.modelRegistry, reg.slug, reg.model, vision)
+                    : draft.modelRegistry,
                 };
                 await persist(nextDraft);
                 setCustomDialogFor(null);
@@ -3352,7 +3571,7 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
           }
         />
       )}
-    </div>
+    </PanelPage>
   );
 };
 
@@ -3391,15 +3610,15 @@ const CloudProviderEditor = ({
   const hasExistingKey = (initial?.maskedKey ?? '').startsWith('••••');
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/30 p-4">
-      <div className="w-full max-w-md rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 shadow-float">
-        <div className="border-b border-stone-200 dark:border-neutral-800 px-4 py-3">
-          <div className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-900/30 p-4">
+      <div className="w-full max-w-md rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 shadow-float">
+        <div className="border-b border-neutral-200 dark:border-neutral-800 px-4 py-3">
+          <div className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
             {initial
               ? formatI18n(t('settings.ai.editProvider'), { label: initial.label })
               : t('settings.ai.addCloudProvider')}
           </div>
-          <div className="mt-0.5 text-xs text-stone-500 dark:text-neutral-400">
+          <div className="mt-0.5 text-xs text-neutral-500 dark:text-neutral-400">
             {t('settings.ai.apiKeysEncrypted')}{' '}
             <span className="font-mono">auth-profiles.json</span>.
           </div>
@@ -3408,19 +3627,19 @@ const CloudProviderEditor = ({
           <div>
             <label
               htmlFor="cloud-provider-name"
-              className="text-[10px] font-semibold uppercase tracking-wide text-stone-500 dark:text-neutral-400">
+              className="text-[10px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
               {t('common.name')}
             </label>
-            <input
+            <SettingsTextField
               id="cloud-provider-name"
               value={label}
               onChange={e => setLabel(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 dark:text-neutral-500 dark:placeholder:text-neutral-500 focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-200"
+              className="mt-1"
               placeholder={t('settings.ai.providerNamePlaceholder')}
             />
-            <div className="mt-1 text-[11px] text-stone-500 dark:text-neutral-400">
+            <div className="mt-1 text-[11px] text-neutral-500 dark:text-neutral-400">
               {t('settings.ai.slugLabel')}{' '}
-              <span className="font-mono text-stone-700 dark:text-neutral-200">
+              <span className="font-mono text-neutral-700 dark:text-neutral-200">
                 {slug || t('settings.ai.noneDash')}
               </span>
             </div>
@@ -3431,31 +3650,33 @@ const CloudProviderEditor = ({
           <div>
             <label
               htmlFor="cloud-provider-openai-url"
-              className="text-[10px] font-semibold uppercase tracking-wide text-stone-500 dark:text-neutral-400">
+              className="text-[10px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
               {t('settings.ai.openAiUrlLabel')}
             </label>
-            <input
+            <SettingsTextField
               id="cloud-provider-openai-url"
+              mono
               value={endpoint}
               onChange={e => setEndpoint(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 font-mono text-xs text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 dark:text-neutral-500 dark:placeholder:text-neutral-500 disabled:opacity-60 focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-200"
+              className="mt-1"
               placeholder={t('settings.ai.openAiUrlPlaceholder')}
             />
           </div>
           <div>
-            <label className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-wide text-stone-500 dark:text-neutral-400">
+            <label className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
               <span>{t('settings.ai.apiKeyFieldLabel')}</span>
               {hasExistingKey && (
                 <button
                   onClick={() => void onClearKey(slug)}
-                  className="text-[10px] font-medium normal-case text-coral-600 dark:text-coral-300 hover:text-coral-700 dark:text-coral-300">
+                  className="text-[10px] font-medium normal-case text-coral-600 dark:text-coral-300 hover:text-coral-700">
                   {t('settings.ai.clearStoredKey')}
                 </button>
               )}
             </label>
-            <input
+            <SettingsTextField
               aria-label={t('settings.ai.apiKeyFieldLabel')}
               type="text"
+              mono
               autoComplete="off"
               autoCorrect="off"
               autoCapitalize="off"
@@ -3465,20 +3686,20 @@ const CloudProviderEditor = ({
               data-1p-ignore="true"
               value={apiKey}
               onChange={e => setApiKey(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 font-mono text-xs text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 dark:text-neutral-500 dark:placeholder:text-neutral-500 focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-200"
+              className="mt-1"
               placeholder={hasExistingKey ? t('settings.ai.keepExistingKeyPlaceholder') : 'sk-...'}
             />
           </div>
           {submitError ? <ProviderSetupErrorNotice error={submitError} /> : null}
         </div>
-        <div className="flex items-center justify-end gap-2 border-t border-stone-200 dark:border-neutral-800 px-4 py-3">
-          <button
-            onClick={onClose}
-            disabled={saving}
-            className="rounded-lg border border-stone-200 dark:border-neutral-800 px-3 py-1.5 text-xs font-medium text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60 dark:bg-neutral-800/60 dark:hover:bg-neutral-800/60 disabled:opacity-50">
+        <div className="flex items-center justify-end gap-2 border-t border-neutral-200 dark:border-neutral-800 px-4 py-3">
+          <Button variant="secondary" size="xs" onClick={onClose} disabled={saving}>
             {t('common.cancel')}
-          </button>
-          <button
+          </Button>
+          <Button
+            variant="primary"
+            size="xs"
+            disabled={saving || !endpoint.trim() || Boolean(slugError)}
             onClick={async () => {
               setSaving(true);
               setSubmitError(null);
@@ -3510,15 +3731,13 @@ const CloudProviderEditor = ({
               } finally {
                 setSaving(false);
               }
-            }}
-            disabled={saving || !endpoint.trim() || Boolean(slugError)}
-            className="rounded-lg bg-primary-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-600 disabled:opacity-50">
+            }}>
             {saving
               ? t('settings.ai.saving')
               : initial
                 ? t('settings.ai.saveChanges')
                 : t('settings.ai.addProvider')}
-          </button>
+          </Button>
         </div>
       </div>
     </div>
@@ -3532,6 +3751,9 @@ function defaultEndpointFor(slug: string): string {
   switch (slug) {
     case 'openhuman':
       return 'https://api.openhuman.ai/v1';
+    // Cosmetic only — the claude-code factory branch never makes HTTP calls.
+    case 'claude-code':
+      return 'cli://claude-code';
     case 'ollama':
       // Ollama exposes an OpenAI-compatible endpoint at /v1; the bare host is
       // also accepted by the Rust factory (it appends /v1 internally for chat).

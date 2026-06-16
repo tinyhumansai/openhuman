@@ -35,7 +35,13 @@ function readCargoPackageVersion(filePath) {
 const versions = {
   'app/package.json': readJsonVersion(path.join(root, 'app/package.json')),
   'app/src-tauri/tauri.conf.json': readJsonVersion(path.join(root, 'app/src-tauri/tauri.conf.json')),
+  'app/src-tauri-mobile/tauri.conf.json': readJsonVersion(
+    path.join(root, 'app/src-tauri-mobile/tauri.conf.json'),
+  ),
   'app/src-tauri/Cargo.toml': readCargoPackageVersion(path.join(root, 'app/src-tauri/Cargo.toml')),
+  'app/src-tauri-mobile/Cargo.toml': readCargoPackageVersion(
+    path.join(root, 'app/src-tauri-mobile/Cargo.toml'),
+  ),
   'Cargo.toml': readCargoPackageVersion(path.join(root, 'Cargo.toml')),
 };
 

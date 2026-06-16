@@ -19,7 +19,7 @@ pub struct SubconsciousStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TickResult {
     pub tick_at: f64,
-    pub thoughts_count: usize,
-    pub thread_id: Option<String>,
     pub duration_ms: u64,
+    #[serde(default)]
+    pub response_chars: usize,
 }

@@ -51,5 +51,8 @@ named = [
     "artifact_get",
     "artifact_delete",
     "current_time",
+    # Resolve due-date / reminder windows to exact timestamps instead of
+    # hand-computing epoch seconds.
+    "resolve_time",
     "ask_user_clarification",
 ]

@@ -80,6 +80,8 @@ struct InferenceUpdateModelSettingsParams {
     default_temperature: Option<f64>,
     model_routes: Option<Vec<InferenceModelRouteUpdate>>,
     cloud_providers: Option<Vec<InferenceCloudProviderUpdate>>,
+    #[serde(default)]
+    model_registry: Option<Vec<crate::openhuman::config::schema::ModelRegistryEntry>>,
     primary_cloud: Option<String>,
     chat_provider: Option<String>,
     reasoning_provider: Option<String>,
@@ -90,6 +92,13 @@ struct InferenceUpdateModelSettingsParams {
     heartbeat_provider: Option<String>,
     learning_provider: Option<String>,
     subconscious_provider: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct InferenceClaudeCodeSetFullAccessParams {
+    /// true → full access (`bypassPermissions` + full toolset); false → the
+    /// default `acceptEdits` posture (file edits only).
+    enabled: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -148,6 +157,8 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("analyze_sentiment"),
         schemas("claude_code_status"),
         schemas("claude_code_auth_status"),
+        schemas("claude_code_settings"),
+        schemas("claude_code_set_full_access"),
     ]
 }
 
@@ -245,6 +256,14 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
             schema: schemas("claude_code_auth_status"),
             handler: handle_inference_claude_code_auth_status,
         },
+        RegisteredController {
+            schema: schemas("claude_code_settings"),
+            handler: handle_inference_claude_code_settings,
+        },
+        RegisteredController {
+            schema: schemas("claude_code_set_full_access"),
+            handler: handle_inference_claude_code_set_full_access,
+        },
     ]
 }
 
@@ -255,7 +274,13 @@ pub fn schemas(function: &str) -> ControllerSchema {
             function: "resolve_model",
             description: "Resolve a model hint or tier name to the concrete model the provider router would use.",
             inputs: vec![required_string("hint", "Model hint (e.g. hint:reasoning) or tier name (e.g. reasoning-v1).")],
-            outputs: vec![json_output("model", "Resolved concrete model id.")],
+            outputs: vec![
+                json_output("model", "Resolved concrete model id."),
+                json_output(
+                    "vision",
+                    "Whether the resolved model accepts image input (vision-capable).",
+                ),
+            ],
         },
         "status" => ControllerSchema {
             namespace: "inference",
@@ -283,6 +308,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 optional_f64("default_temperature", "Optional default temperature override."),
                 optional_json("model_routes", "Optional full replacement for legacy model routes."),
                 optional_json("cloud_providers", "Optional full replacement for configured cloud providers."),
+                optional_json("model_registry", "Optional full replacement for the per-model registry (carries each model's `vision` flag)."),
                 optional_string("primary_cloud", "Optional primary cloud provider id."),
                 optional_string("chat_provider", "Optional chat workload provider string."),
                 optional_string("reasoning_provider", "Optional reasoning workload provider string."),
@@ -483,6 +509,29 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 "AuthStatus payload: source = subscription | api_key_env | none, plus optional account_email + expires_at + last_checked.",
             )],
         },
+        "claude_code_settings" => ControllerSchema {
+            namespace: "inference",
+            function: "claude_code_settings",
+            description: "Read the persisted Claude Code provider settings (currently just the full-access toggle). Self-contained per-install state stored under the workspace, not in the central config.",
+            inputs: vec![],
+            outputs: vec![json_output(
+                "settings",
+                "ClaudeCodeSettings payload: { full_access: bool }. full_access=true → bypassPermissions + full toolset; false (default) → acceptEdits.",
+            )],
+        },
+        "claude_code_set_full_access" => ControllerSchema {
+            namespace: "inference",
+            function: "claude_code_set_full_access",
+            description: "Persist the Claude Code full-access toggle. true → bypassPermissions + full native toolset (Bash/network/subagents); false (default) → acceptEdits (file edits only). The OPENHUMAN_CLAUDE_CODE_PERMISSION_MODE env var overrides this at runtime.",
+            inputs: vec![required_bool(
+                "enabled",
+                "true → full access (bypassPermissions); false → acceptEdits.",
+            )],
+            outputs: vec![json_output(
+                "settings",
+                "The persisted ClaudeCodeSettings after the update: { full_access: bool }.",
+            )],
+        },
         other => panic!("unknown inference schema: {other}"),
     }
 }
@@ -502,6 +551,15 @@ fn optional_bool(name: &'static str, comment: &'static str) -> FieldSchema {
         ty: TypeSchema::Option(Box::new(TypeSchema::Bool)),
         comment,
         required: false,
+    }
+}
+
+fn required_bool(name: &'static str, comment: &'static str) -> FieldSchema {
+    FieldSchema {
+        name,
+        ty: TypeSchema::Bool,
+        comment,
+        required: true,
     }
 }
 
@@ -557,8 +615,14 @@ fn handle_inference_resolve_model(params: Map<String, Value>) -> ControllerFutur
         let resolved = crate::openhuman::inference::provider::factory::resolve_model_for_hint(
             &p.hint, &config,
         );
+        // Whether the resolved model accepts image input — drives the chat UI's
+        // image-attachment affordance. Managed OpenHuman tiers consult the
+        // core-owned per-tier map (currently all `false`); custom/BYOK models are
+        // covered by the user's per-model `model_registry.vision` flag.
+        let vision =
+            crate::openhuman::inference::model_context::model_supports_vision(&resolved, &config);
         to_json(RpcOutcome::new(
-            serde_json::json!({ "model": resolved }),
+            serde_json::json!({ "model": resolved, "vision": vision }),
             vec![],
         ))
     })
@@ -676,6 +740,7 @@ fn handle_inference_update_model_settings(params: Map<String, Value>) -> Control
                         .collect::<Result<Vec<_>, String>>()
                 })
                 .transpose()?,
+            model_registry: update.model_registry,
             primary_cloud: update.primary_cloud,
             chat_provider: update.chat_provider,
             reasoning_provider: update.reasoning_provider,
@@ -898,6 +963,34 @@ fn handle_inference_claude_code_auth_status(_params: Map<String, Value>) -> Cont
         .await
         .map_err(|e| format!("claude_code_auth_status join error: {e}"))?;
         to_json(RpcOutcome::new(auth, vec![]))
+    })
+}
+
+fn handle_inference_claude_code_settings(_params: Map<String, Value>) -> ControllerFuture {
+    use crate::openhuman::inference::provider::claude_code::settings;
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let settings = settings::load_for_config(&config);
+        log::debug!(
+            "[rpc][inference.claude_code_settings] full_access={}",
+            settings.full_access
+        );
+        to_json(RpcOutcome::new(settings, vec![]))
+    })
+}
+
+fn handle_inference_claude_code_set_full_access(params: Map<String, Value>) -> ControllerFuture {
+    use crate::openhuman::inference::provider::claude_code::settings;
+    Box::pin(async move {
+        let p = deserialize_params::<InferenceClaudeCodeSetFullAccessParams>(params)?;
+        let config = config_rpc::load_config_with_timeout().await?;
+        let settings = settings::save_full_access_for_config(&config, p.enabled)
+            .map_err(|e| format!("failed to persist claude code settings: {e}"))?;
+        log::info!(
+            "[rpc][inference.claude_code_set_full_access] persisted full_access={}",
+            settings.full_access
+        );
+        to_json(RpcOutcome::new(settings, vec![]))
     })
 }
 

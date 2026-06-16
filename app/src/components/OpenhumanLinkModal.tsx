@@ -317,7 +317,9 @@ const BillingBody = ({ close }: { close: () => void }) => {
         <p className="text-xs uppercase tracking-wide text-stone-500 dark:text-neutral-400">
           {t('app.openhumanLink.billing.trialCredit')}
         </p>
-        <p className="mt-1 text-2xl font-semibold text-stone-900 dark:text-neutral-100">$1.00</p>
+        <p className="mt-1 text-2xl font-semibold text-stone-900 dark:text-neutral-100">
+          {t('onboarding.runtimeChoice.cloud.creditHighlight')}
+        </p>
         <p className="mt-1 text-xs text-stone-500 dark:text-neutral-400">
           {t('app.openhumanLink.billing.trialDesc')}
         </p>

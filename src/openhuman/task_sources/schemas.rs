@@ -53,6 +53,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("update"),
         schemas("remove"),
         schemas("fetch"),
+        schemas("sync"),
         schemas("list_tasks"),
         schemas("preview_filter"),
         schemas("list_databases"),
@@ -85,6 +86,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("fetch"),
             handler: handle_fetch,
+        },
+        RegisteredController {
+            schema: schemas("sync"),
+            handler: handle_sync,
         },
         RegisteredController {
             schema: schemas("list_tasks"),
@@ -230,6 +235,12 @@ pub fn schemas(function: &str) -> ControllerSchema {
                             comment: "True when the source was removed.",
                             required: true,
                         },
+                        FieldSchema {
+                            name: "pruned",
+                            ty: TypeSchema::U64,
+                            comment: "Count of ingested refs/cards pruned during removal.",
+                            required: true,
+                        },
                     ],
                 },
                 comment: "Removal result payload.",
@@ -239,7 +250,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
         "fetch" => ControllerSchema {
             namespace: "task_sources",
             function: "fetch",
-            description: "Fetch one source immediately and route any new tasks.",
+            description: "Fetch one source immediately, route new tasks, and prune tasks no longer returned by the source.",
             inputs: vec![source_id_input(
                 "Identifier of the task source to fetch now.",
             )],
@@ -247,6 +258,18 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 name: "outcome",
                 ty: TypeSchema::Ref("FetchOutcome"),
                 comment: "Fetch outcome counts.",
+                required: true,
+            }],
+        },
+        "sync" => ControllerSchema {
+            namespace: "task_sources",
+            function: "sync",
+            description: "Fetch every enabled source immediately, route new tasks, and prune tasks no longer returned by their source.",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "outcomes",
+                ty: TypeSchema::Array(Box::new(TypeSchema::Ref("FetchOutcome"))),
+                comment: "Fetch outcome counts for each enabled source.",
                 required: true,
             }],
         },
@@ -444,6 +467,13 @@ fn handle_fetch(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+fn handle_sync(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(ops::sync(&config).await?)
+    })
+}
+
 fn handle_list_tasks(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
@@ -550,6 +580,7 @@ mod tests {
                 "update",
                 "remove",
                 "fetch",
+                "sync",
                 "list_tasks",
                 "preview_filter",
                 "list_databases",
@@ -561,7 +592,7 @@ mod tests {
     #[test]
     fn all_registered_controllers_has_handler_per_schema() {
         let controllers = all_registered_controllers();
-        assert_eq!(controllers.len(), 10);
+        assert_eq!(controllers.len(), all_controller_schemas().len());
         assert!(controllers
             .iter()
             .all(|c| c.schema.namespace == "task_sources"));

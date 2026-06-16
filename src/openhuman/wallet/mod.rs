@@ -8,7 +8,7 @@ mod chains;
 mod defaults;
 mod execution;
 mod ops;
-mod rpc;
+pub(crate) mod rpc;
 mod schemas;
 pub mod tools;
 

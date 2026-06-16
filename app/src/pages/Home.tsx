@@ -16,29 +16,10 @@ import { selectBlockingState } from '../store/connectivitySelectors';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { resolveTheme, setThemeMode, type ThemeMode } from '../store/themeSlice';
 import { APP_VERSION } from '../utils/config';
+import { resolveUserName } from '../utils/userName';
 
-export function resolveHomeUserName(user: unknown): string {
-  if (!user || typeof user !== 'object') return 'User';
-
-  const record = user as Record<string, unknown>;
-  const firstName =
-    (typeof record.firstName === 'string' && record.firstName.trim()) ||
-    (typeof record.first_name === 'string' && record.first_name.trim()) ||
-    '';
-  const lastName =
-    (typeof record.lastName === 'string' && record.lastName.trim()) ||
-    (typeof record.last_name === 'string' && record.last_name.trim()) ||
-    '';
-  const username = typeof record.username === 'string' ? record.username.trim() : '';
-  const email = typeof record.email === 'string' ? record.email.trim() : '';
-
-  const fullName = [firstName, lastName].filter(Boolean).join(' ').trim();
-  if (fullName) return fullName;
-  if (firstName) return firstName;
-  if (username) return username.startsWith('@') ? username : `@${username}`;
-  if (email) return email.split('@')[0] || 'User';
-  return 'User';
-}
+/** @deprecated Use `resolveUserName` from `utils/userName`. Kept for back-compat. */
+export const resolveHomeUserName = resolveUserName;
 
 const Home = () => {
   const { t } = useT();
@@ -279,7 +260,7 @@ const Home = () => {
           <div className="text-[11px] uppercase tracking-wide text-stone-400 mb-2">Next steps</div>
           <div className="divide-y divide-stone-100">
             <button
-              onClick={() => navigate('/skills')}
+              onClick={() => navigate('/connections')}
               className="w-full flex items-center justify-between py-2.5 text-left hover:bg-stone-50 rounded-md px-2 -mx-2 transition-colors">
               <div>
                 <div className="text-sm font-medium text-stone-900">Connect your services</div>

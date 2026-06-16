@@ -96,10 +96,6 @@ fn open_and_initialize(db_path: &Path) -> Result<Connection> {
     conn.execute_batch(SCHEMA_DDL)
         .context("failed to run subconscious schema DDL")?;
 
-    super::reflection_store::migrate_drop_legacy_columns(&conn);
-    super::reflection_store::migrate_add_source_chunks_column(&conn);
-    super::reflection_store::migrate_add_thread_id_column(&conn);
-
     Ok(conn)
 }
 

@@ -92,7 +92,7 @@ impl Tool for NodeExecTool {
     }
 
     fn description(&self) -> &str {
-        "Execute JavaScript through Node.js. Pass either `inline_code` (runs via `node -e`) or `script_path` (runs a file in the workspace). Optional `args` forwards positional arguments to the script."
+        "Execute JavaScript through Node.js. Pass either `inline_code` (runs via `node -e`) or `script_path` (runs a file in your working directory, the action sandbox). Optional `args` forwards positional arguments to the script. Only the program's stdout/stderr is captured and returned to you — a value you do not `console.log` is invisible, and a script that exits 0 without printing returns an empty result. Always print the output you need (e.g. `console.log(JSON.stringify(result))`)."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

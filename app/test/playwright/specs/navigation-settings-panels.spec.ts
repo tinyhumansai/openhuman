@@ -10,7 +10,7 @@ interface PanelCheck {
 const panels: PanelCheck[] = [
   { hash: '/settings', markers: ['Settings', 'Appearance', 'Notifications'] },
   { hash: '/settings/memory-data', markers: ['Memory', 'Data', 'Storage'] },
-  { hash: '/intelligence', markers: ['Memory', 'Intelligence'] },
+  { hash: '/settings/notifications-hub', markers: ['Notifications'] },
   { hash: '/settings/developer-options', markers: ['Developer', 'Debug', 'Advanced'] },
   {
     hash: '/settings/billing',

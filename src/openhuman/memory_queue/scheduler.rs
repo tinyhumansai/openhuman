@@ -26,13 +26,33 @@ pub fn start(config: Config) {
         tokio::spawn(async move {
             // Fire once on startup so new installs & restarts don't wait
             // up to 3 h for the first seal window.
+            retry_transient_failures(&cfg);
             enqueue_flush_stale(&cfg);
             loop {
                 tokio::time::sleep(Duration::from_secs(3 * 60 * 60)).await;
+                retry_transient_failures(&cfg);
                 enqueue_flush_stale(&cfg);
             }
         });
     });
+}
+
+/// Self-heal the pipeline before each flush window: requeue jobs that
+/// failed for transient reasons (network blips, timeouts, SQLITE_BUSY)
+/// so chunks never sit unprocessed until the next manual sync.
+/// Unrecoverable failures stay parked — see
+/// [`store::requeue_transient_failed`].
+fn retry_transient_failures(config: &Config) {
+    match store::requeue_transient_failed(config) {
+        Ok(0) => {}
+        Ok(n) => {
+            log::info!("[memory::jobs] periodic retry requeued {n} transient-failed job(s)");
+            super::worker::wake_workers();
+        }
+        Err(err) => {
+            log::warn!("[memory::jobs] periodic transient-failure retry failed: {err:#}");
+        }
+    }
 }
 
 fn enqueue_flush_stale(config: &Config) {

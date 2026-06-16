@@ -77,6 +77,16 @@ export function generateKeypair(): TunnelKeypair {
   return { publicKey, secretKey };
 }
 
+/** Reconstruct an X25519 keypair from a 32-byte private key. */
+export function keypairFromSecretKey(secretKey: Uint8Array): TunnelKeypair {
+  if (secretKey.length !== 32) {
+    throw new Error(`[crypto] X25519 private key must be 32 bytes, got ${secretKey.length}`);
+  }
+  const publicKey = x25519.getPublicKey(secretKey);
+  cryptoLog('[crypto] keypair restored pubkey_len=%d', publicKey.length);
+  return { publicKey, secretKey };
+}
+
 /** Derive a 32-byte X25519 shared secret. */
 export function deriveSharedSecret(myPriv: Uint8Array, theirPub: Uint8Array): Uint8Array {
   const shared = x25519.getSharedSecret(myPriv, theirPub);

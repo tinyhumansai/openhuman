@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "OpenHuman",
-  "version": "0.54.10",
-  "identifier": "com.openhuman.app",
+  "version": "0.57.18",
+  "identifier": "com.tinyhumansai.openhuman",
   "build": {
     "beforeDevCommand": "pnpm --filter openhuman-app run dev",
     "devUrl": "http://localhost:1420",
@@ -26,12 +26,19 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app"],
-    "icon": ["icons/icon.png"],
+    "targets": [
+      "app"
+    ],
+    "icon": [
+      "icons/icon.png"
+    ],
     "resources": [],
     "iOS": {
       "minimumSystemVersion": "16.0",
-      "frameworks": ["AVFoundation.framework", "Speech.framework"],
+      "frameworks": [
+        "AVFoundation.framework",
+        "Speech.framework"
+      ],
       "developmentTeam": ""
     },
     "android": {

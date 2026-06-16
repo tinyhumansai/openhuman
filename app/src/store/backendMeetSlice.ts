@@ -13,22 +13,27 @@ export interface BackendMeetReplyEvent {
   transcript: string;
   reply: string;
   emotion: string;
+  correlationId?: string;
 }
 
 export interface BackendMeetHarnessEvent {
   transcript: string;
   instruction: string;
   emotion: string;
+  correlationId?: string;
 }
 
 export interface BackendMeetTranscriptEvent {
   turns: BackendMeetTurn[];
   duration_ms: number;
+  correlationId?: string;
 }
 
 export interface BackendMeetState {
   status: BackendMeetStatus;
   meetUrl: string | null;
+  meetingId: string | null;
+  listenOnly: boolean;
   lastReply: BackendMeetReplyEvent | null;
   lastHarness: BackendMeetHarnessEvent | null;
   transcript: BackendMeetTranscriptEvent | null;
@@ -38,6 +43,8 @@ export interface BackendMeetState {
 const initialState: BackendMeetState = {
   status: 'idle',
   meetUrl: null,
+  meetingId: null,
+  listenOnly: false,
   lastReply: null,
   lastHarness: null,
   transcript: null,
@@ -48,19 +55,29 @@ const backendMeetSlice = createSlice({
   name: 'backendMeet',
   initialState,
   reducers: {
-    setBackendMeetJoining(state, action: PayloadAction<{ meetUrl: string }>) {
+    setBackendMeetJoining(
+      state,
+      action: PayloadAction<{ meetUrl: string; meetingId?: string | null; listenOnly?: boolean }>
+    ) {
       state.status = 'joining';
       state.meetUrl = action.payload.meetUrl;
+      state.meetingId = action.payload.meetingId ?? null;
+      state.listenOnly = action.payload.listenOnly ?? false;
       state.error = null;
       state.lastReply = null;
       state.lastHarness = null;
       state.transcript = null;
     },
-    setBackendMeetJoined(state, action: PayloadAction<{ meetUrl: string }>) {
+    setBackendMeetJoined(state, action: PayloadAction<{ meetUrl: string; meetingId?: string }>) {
       state.status = 'active';
       state.meetUrl = action.payload.meetUrl;
+      // Backfill meetingId from the backend's correlation_id echo if the
+      // optimistic setBackendMeetJoining didn't set one.
+      if (action.payload.meetingId) {
+        state.meetingId = action.payload.meetingId;
+      }
     },
-    setBackendMeetLeft(state, _action: PayloadAction<{ reason: string }>) {
+    setBackendMeetLeft(state, _action: PayloadAction<{ reason: string; correlationId?: string }>) {
       state.status = 'ended';
     },
     setBackendMeetReply(state, action: PayloadAction<BackendMeetReplyEvent>) {
@@ -72,7 +89,7 @@ const backendMeetSlice = createSlice({
     setBackendMeetTranscript(state, action: PayloadAction<BackendMeetTranscriptEvent>) {
       state.transcript = action.payload;
     },
-    setBackendMeetError(state, action: PayloadAction<{ error: string }>) {
+    setBackendMeetError(state, action: PayloadAction<{ error: string; correlationId?: string }>) {
       state.status = 'error';
       state.error = action.payload.error;
     },
@@ -105,5 +122,12 @@ export const selectBackendMeetLastReply = (state: { backendMeet: BackendMeetStat
   state.backendMeet.lastReply;
 export const selectBackendMeetLastHarness = (state: { backendMeet: BackendMeetState }) =>
   state.backendMeet.lastHarness;
+export const selectBackendMeetMeetingId = (state: {
+  backendMeet: BackendMeetState;
+}): string | null => state.backendMeet.meetingId;
+export const selectBackendMeetListenOnly = (state: { backendMeet: BackendMeetState }): boolean =>
+  state.backendMeet.listenOnly;
+export const selectBackendMeetError = (state: { backendMeet: BackendMeetState }): string | null =>
+  state.backendMeet.error;
 
 export default backendMeetSlice.reducer;

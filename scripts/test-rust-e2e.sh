@@ -26,10 +26,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# The full set of `tests/*_e2e.rs` files. Each gets a `--test <name>` flag
-# in the single `cargo test` invocation so cargo compiles them in one
-# unit and only the test binaries that exist get run. Tests guarded by
-# `#[ignore]` stay skipped unless the caller passes `-- --ignored`.
+# The full set of `tests/*_e2e.rs` files. The default runner executes them
+# serially so CI does not link several large integration binaries at once.
+# Tests guarded by `#[ignore]` stay skipped unless the caller passes
+# `-- --ignored`.
 ALL_E2E_SUITES=(
   agent_retrieval_e2e
   autocomplete_memory_e2e
@@ -55,6 +55,7 @@ ALL_E2E_SUITES=(
   memory_tree_walk_e2e
   ollama_embeddings_fallback_e2e
   screen_intelligence_vision_e2e
+  skill_registry_e2e
   subconscious_e2e
   worker_b_domain_e2e
   worker_c_modules_e2e
@@ -128,19 +129,13 @@ export VITE_BACKEND_URL="$MOCK_API_URL"
 cd "$REPO_ROOT"
 source "$HOME/.cargo/env" 2>/dev/null || true
 
-# Assemble the `--test <name>` flags so a single `cargo test` invocation
-# compiles + runs every suite. Cargo will fail fast if any --test binary
-# doesn't exist, which is the signal you want when a suite gets renamed.
-CARGO_FLAGS=()
+echo "[rust-e2e] Running ${#SUITES[@]} suite(s) serially."
 for suite in "${SUITES[@]}"; do
-  CARGO_FLAGS+=(--test "$suite")
+  if [ "${#EXTRA_ARGS[@]}" -gt 0 ]; then
+    echo "[rust-e2e]   cargo test --manifest-path Cargo.toml --test $suite -- ${EXTRA_ARGS[*]}"
+    cargo test --manifest-path Cargo.toml --test "$suite" -- "${EXTRA_ARGS[@]}"
+  else
+    echo "[rust-e2e]   cargo test --manifest-path Cargo.toml --test $suite"
+    cargo test --manifest-path Cargo.toml --test "$suite"
+  fi
 done
-
-echo "[rust-e2e] Running:"
-if [ "${#EXTRA_ARGS[@]}" -gt 0 ]; then
-  echo "[rust-e2e]   cargo test --manifest-path Cargo.toml ${CARGO_FLAGS[*]} -- ${EXTRA_ARGS[*]}"
-  cargo test --manifest-path Cargo.toml "${CARGO_FLAGS[@]}" -- "${EXTRA_ARGS[@]}"
-else
-  echo "[rust-e2e]   cargo test --manifest-path Cargo.toml ${CARGO_FLAGS[*]}"
-  cargo test --manifest-path Cargo.toml "${CARGO_FLAGS[@]}"
-fi

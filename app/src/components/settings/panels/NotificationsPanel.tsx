@@ -5,6 +5,7 @@ import { getBypassPrefs, setGlobalDnd } from '../../../services/webviewAccountSe
 import { useAppDispatch, useAppSelector } from '../../../store/hooks';
 import { type NotificationCategory, setPreference } from '../../../store/notificationSlice';
 import SettingsHeader from '../components/SettingsHeader';
+import { SettingsRow, SettingsSection, SettingsSwitch } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 interface NotificationsPanelProps {
@@ -93,90 +94,58 @@ const NotificationsPanel = ({ embedded = false }: NotificationsPanelProps = {}) 
         />
       )}
 
-      <div>
-        <div className="p-4 space-y-4">
-          {/* Do Not Disturb */}
-          <div>
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-stone-400 dark:text-neutral-500 mb-2 px-1">
-              {t('settings.notifications.doNotDisturb')}
-            </h3>
-            <div className="bg-white dark:bg-neutral-900 rounded-xl border border-stone-200 dark:border-neutral-800 overflow-hidden">
-              <div className="flex items-center justify-between p-4">
-                <div className="flex-1 mr-4">
-                  <p className="text-sm font-medium text-stone-900 dark:text-neutral-100">
-                    {t('settings.notifications.suppressAll')}
-                  </p>
-                  <p className="text-xs text-stone-500 dark:text-neutral-400 mt-1 leading-relaxed">
-                    {t('settings.notifications.suppressAllDesc')}
-                  </p>
-                </div>
-                {dndLoading ? (
-                  <div className="w-11 h-6 rounded-full bg-stone-200 dark:bg-neutral-800 animate-pulse" />
-                ) : (
-                  <button
-                    onClick={() => {
-                      void handleDndToggle();
-                    }}
-                    disabled={dndSaving}
-                    className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-1 disabled:opacity-70 ${
-                      dnd ? 'bg-primary-500' : 'bg-stone-400 dark:bg-neutral-600'
-                    }`}
-                    role="switch"
-                    aria-checked={dnd}
-                    aria-label={t('settings.notifications.toggleDnd')}>
-                    <span
-                      className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white dark:bg-neutral-900 shadow ring-0 transition duration-200 ease-in-out ${
-                        dnd ? 'translate-x-5' : 'translate-x-0'
-                      }`}
-                    />
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
+      <div className="p-4 space-y-4">
+        {/* Do Not Disturb */}
+        <SettingsSection title={t('settings.notifications.doNotDisturb')}>
+          <SettingsRow
+            htmlFor="switch-dnd"
+            label={t('settings.notifications.suppressAll')}
+            description={t('settings.notifications.suppressAllDesc')}
+            control={
+              dndLoading ? (
+                <div className="w-[38px] h-[22px] rounded-full bg-neutral-200 dark:bg-neutral-800 animate-pulse" />
+              ) : (
+                <SettingsSwitch
+                  id="switch-dnd"
+                  checked={dnd}
+                  onCheckedChange={() => {
+                    void handleDndToggle();
+                  }}
+                  disabled={dndSaving}
+                  aria-label={t('settings.notifications.toggleDnd')}
+                />
+              )
+            }
+          />
+        </SettingsSection>
 
-          {/* Categories */}
-          <div>
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-stone-400 dark:text-neutral-500 mb-2 px-1">
-              {t('settings.notifications.categories')}
-            </h3>
-            <div className="bg-white dark:bg-neutral-900 rounded-xl border border-stone-200 dark:border-neutral-800 overflow-hidden divide-y divide-stone-100 dark:divide-neutral-800">
-              {CATEGORIES.map(cat => {
-                const enabled = preferences[cat.id];
-                return (
-                  <div key={cat.id} className="flex items-center justify-between p-4">
-                    <div className="flex-1 mr-4">
-                      <p className="text-sm font-medium text-stone-900 dark:text-neutral-100">
-                        {cat.title}
-                      </p>
-                      <p className="text-xs text-stone-500 dark:text-neutral-400 mt-1 leading-relaxed">
-                        {cat.description}
-                      </p>
-                    </div>
-                    <button
-                      onClick={() => handleToggle(cat.id)}
-                      className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-1 ${
-                        enabled ? 'bg-primary-500' : 'bg-stone-400 dark:bg-neutral-600'
-                      }`}
-                      role="switch"
-                      aria-checked={enabled}
-                      aria-label={`Toggle ${cat.title} notifications`}>
-                      <span
-                        className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white dark:bg-neutral-900 shadow ring-0 transition duration-200 ease-in-out ${
-                          enabled ? 'translate-x-5' : 'translate-x-0'
-                        }`}
-                      />
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
+        {/* Categories */}
+        <SettingsSection title={t('settings.notifications.categories')}>
+          {CATEGORIES.map(cat => {
+            const enabled = preferences[cat.id];
+            const switchId = `switch-notif-${cat.id}`;
+            return (
+              <SettingsRow
+                key={cat.id}
+                htmlFor={switchId}
+                label={cat.title}
+                description={cat.description}
+                control={
+                  <SettingsSwitch
+                    id={switchId}
+                    checked={enabled}
+                    onCheckedChange={() => handleToggle(cat.id)}
+                    aria-label={`Toggle ${cat.title} notifications`}
+                  />
+                }
+              />
+            );
+          })}
+        </SettingsSection>
 
-            <p className="text-xs text-stone-500 dark:text-neutral-400 leading-relaxed px-1 mt-2">
-              {t('settings.notifications.categoryFooter')}
-            </p>
-          </div>
-        </div>
+        <p className="text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed px-1">
+          {t('settings.notifications.categoryFooter')}
+        </p>
       </div>
     </div>
   );

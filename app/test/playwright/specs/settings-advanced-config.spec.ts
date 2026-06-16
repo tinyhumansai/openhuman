@@ -59,10 +59,14 @@ test.describe('Settings - Advanced Config', () => {
   test('renders the developer options route and its advanced entries', async ({ page }) => {
     await gotoSettingsRoute(page, '/settings/developer-options');
 
-    await expect(page.getByRole('heading', { name: 'Advanced' })).toBeVisible();
-    await expect(page.getByTestId('settings-nav-ai')).toBeVisible();
-    await expect(page.getByTestId('settings-nav-composio')).toBeVisible();
-    await expect(page.getByTestId('settings-nav-about')).toBeVisible();
+    // Panel title dropped in the PanelPage migration; the panel is confirmed by
+    // its diagnostics entries below.
+    // Developer Options is debug-only now: user-facing sections (AI, Integrations…)
+    // live on their section pages, so Developer Options surfaces diagnostics entries.
+    // The two-pane sidebar may also surface these ids, so scope to the first match.
+    await expect(page.getByTestId('settings-nav-memory-debug').first()).toBeVisible();
+    await expect(page.getByTestId('settings-nav-event-log').first()).toBeVisible();
+    await expect(page.getByTestId('settings-nav-build-info').first()).toBeVisible();
   });
 
   test('persists notification routing settings through core RPC', async ({ page }) => {
@@ -117,9 +121,11 @@ test.describe('Settings - Advanced Config', () => {
     const current = before.result?.max_actions_per_hour ?? 20;
     const target = current === 250 ? 251 : 250;
 
+    // /settings/autonomy redirects to Agent access, which hosts the autonomy
+    // rate-limit section (Max actions per hour).
     await gotoSettingsRoute(page, '/settings/autonomy');
 
-    await expect(page.getByText('Agent autonomy')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Max actions per hour' })).toBeVisible();
     await page.locator('#autonomy-max-actions').fill(String(target));
     await page.getByRole('button', { name: 'Save' }).click();
     await expect(page.getByText('Saved.')).toBeVisible();
@@ -172,7 +178,9 @@ test.describe('Settings - Advanced Config', () => {
   test('persists agent chat draft state to localStorage', async ({ page }) => {
     await gotoSettingsRoute(page, '/settings/agent-chat');
 
-    await expect(page.getByText('Overrides')).toBeVisible();
+    // The panel's description copy also contains the word "overrides", so scope
+    // to the section heading to avoid a strict-mode match on both.
+    await expect(page.getByRole('heading', { name: 'Overrides' })).toBeVisible();
     await page.getByPlaceholder('gpt-4o').fill('gpt-4.1-mini');
     await page.getByPlaceholder('0.7').fill('0.2');
 
@@ -193,13 +201,19 @@ test.describe('Settings - Advanced Config', () => {
 
   test('mounts the remaining advanced settings routes', async ({ page }) => {
     await gotoSettingsRoute(page, '/settings/local-model-debug');
-    await expect(page.getByText('Local Model Debug')).toBeVisible();
+    // The two-pane sidebar also renders this label, so scope to the first match.
+    await expect(page.getByText('Local Model Debug').first()).toBeVisible();
 
     await gotoSettingsRoute(page, '/settings/about');
-    await expect(page.getByText('Software updates')).toBeVisible();
+    // The About description copy also contains "software updates"; match the
+    // section label exactly to avoid a strict-mode violation.
+    await expect(page.getByText('Software updates', { exact: true })).toBeVisible();
 
+    // /settings/llm now redirects to the Connections page (LLM moved there).
     await gotoSettingsRoute(page, '/settings/llm');
-    await expect(page.getByRole('button', { name: 'AI', exact: true })).toBeVisible();
+    await expect
+      .poll(async () => page.evaluate(() => window.location.hash))
+      .toContain('/connections');
     await expect(page.getByText(/Reasoning|Cloud providers|OpenHuman/).first()).toBeVisible();
   });
 });

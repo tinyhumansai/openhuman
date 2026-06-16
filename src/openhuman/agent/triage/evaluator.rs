@@ -628,7 +628,7 @@ fn classify_error(message: String) -> ArmError {
 ///   `agent.run_turn`).
 /// - `src/openhuman/agent/harness/session/runtime.rs` — same strings in the
 ///   tool-call loop, kept identical so this classifier covers both.
-/// - `src/openhuman/local_ai/ops.rs` — user-facing variants with the
+/// - `src/openhuman/inference/local/ops.rs` — user-facing variants with the
 ///   `"Please rephrase clearly."` suffix; we match the leading phrase so
 ///   either form classifies.
 ///
@@ -735,7 +735,7 @@ fn extract_inline_prompt(def: &AgentDefinition) -> Option<String> {
                 model_name: "",
                 agent_id: &def.id,
                 tools: &empty_tools,
-                skills: &[],
+                workflows: &[],
                 dispatcher_instructions: "",
                 learned: LearnedContextData::default(),
                 visible_tool_names: &empty_visible,

@@ -1,4 +1,5 @@
 use super::*;
+use crate::openhuman::context::prompt::IntegrationConnection;
 
 #[test]
 fn parse_sync_reason_accepts_known_values() {
@@ -136,7 +137,7 @@ async fn composio_list_tools_errors_without_session() {
 async fn composio_execute_errors_without_session() {
     let tmp = tempfile::tempdir().unwrap();
     let config = test_config(&tmp);
-    let err = composio_execute(&config, "GMAIL_SEND_EMAIL", None)
+    let err = composio_execute(&config, "GMAIL_SEND_EMAIL", None, None)
         .await
         .unwrap_err();
     assert!(
@@ -1017,7 +1018,7 @@ async fn composio_execute_via_mock_succeeds_and_logs_elapsed() {
     let base = start_mock_backend(app).await;
     let tmp = tempfile::tempdir().unwrap();
     let config = config_with_backend(&tmp, base);
-    let outcome = composio_execute(&config, "GMAIL_SEND", Some(json!({"to": "a"})))
+    let outcome = composio_execute(&config, "GMAIL_SEND", Some(json!({"to": "a"})), None)
         .await
         .unwrap();
     assert!(outcome.value.successful);
@@ -1036,7 +1037,7 @@ async fn composio_execute_via_mock_propagates_backend_error() {
     let base = start_mock_backend(app).await;
     let tmp = tempfile::tempdir().unwrap();
     let config = config_with_backend(&tmp, base);
-    let err = composio_execute(&config, "ANY_TOOL", None)
+    let err = composio_execute(&config, "ANY_TOOL", None, None)
         .await
         .unwrap_err();
     // The dispatcher (`execute_composio_action`) classifies transport
@@ -1406,6 +1407,15 @@ fn integration(toolkit: &str, connected: bool) -> ConnectedIntegration {
         tools: Vec::new(),
         gated_tools: Vec::new(),
         connected,
+        connections: if connected {
+            vec![IntegrationConnection {
+                connection_id: format!("c-1"),
+                label: None,
+                is_default: true,
+            }]
+        } else {
+            Vec::new()
+        },
         non_active_status: None,
     }
 }
@@ -2001,7 +2011,7 @@ async fn composio_execute_routes_through_direct_mode() {
     // test key.
     let tmp = tempfile::tempdir().unwrap();
     let config = direct_mode_config(&tmp);
-    let err = composio_execute(&config, "GMAIL_SEND_EMAIL", None)
+    let err = composio_execute(&config, "GMAIL_SEND_EMAIL", None, None)
         .await
         .unwrap_err();
     assert!(

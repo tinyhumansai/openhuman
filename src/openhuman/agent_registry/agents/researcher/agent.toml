@@ -11,6 +11,9 @@ omit_identity = true
 omit_memory_context = true
 omit_safety_preamble = true
 omit_skills_catalog = true
+# No eager memory pre-fetch. The researcher is a pure-function web/docs
+# specialist with `omit_memory_context = true`; the orchestrator passes it
+# the focused task to research, so it never needed the memory-tree walk.
 
 [model]
 hint = "agentic"
@@ -30,7 +33,6 @@ named = [
     "grep",
     "glob",
     "list",
-    "memory_recall",
     # Parallel — full surface (search/extract are also delegated by web_search_tool;
     # chat/research/enrich/dataset unlock grounded answers and deep multi-step research).
     "parallel_search",

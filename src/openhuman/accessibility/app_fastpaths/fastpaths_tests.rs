@@ -104,6 +104,8 @@ struct Backend {
     /// Elements returned by perceive (the search results screen).
     elements: Vec<AXElement>,
     press_fail_on: Option<String>,
+    /// What `now_playing()` reports back (None = backend can't read the track).
+    now_playing: Option<(String, String)>,
 }
 
 impl Backend {
@@ -112,7 +114,12 @@ impl Backend {
             acts: Mutex::new(Vec::new()),
             elements,
             press_fail_on: None,
+            now_playing: None,
         }
+    }
+    fn with_now_playing(mut self, name: &str, artist: &str) -> Self {
+        self.now_playing = Some((name.to_string(), artist.to_string()));
+        self
     }
     fn acts(&self) -> Vec<String> {
         self.acts.lock().unwrap().clone()
@@ -148,6 +155,23 @@ impl AutomateBackend for Backend {
         self.acts.lock().unwrap().push(format!("open_url:{url}"));
         Ok("ok".into())
     }
+    async fn open_url_in_app(&self, app: &str, url: &str) -> Result<String, String> {
+        self.acts
+            .lock()
+            .unwrap()
+            .push(format!("open_url_in_app:{app}:{url}"));
+        Ok("ok".into())
+    }
+    async fn key(&self, keys: &[String]) -> Result<String, String> {
+        self.acts
+            .lock()
+            .unwrap()
+            .push(format!("key:{}", keys.join("+")));
+        Ok("ok".into())
+    }
+    async fn now_playing(&self) -> Option<(String, String)> {
+        self.now_playing.clone()
+    }
     async fn settle(&self, _app: &str) {}
     async fn wait(&self, _ms: u64) {}
 }
@@ -170,12 +194,88 @@ async fn music_fastpath_full_sequence() {
 }
 
 #[tokio::test]
-async fn music_fastpath_no_row_fails_for_fallthrough() {
-    // Search screen has nothing matching → fast-path fails (loop falls through).
-    let backend = Backend::new(vec![AXElement::new("AXButton", "Some Unrelated Button")]);
-    let out = music::run("play Numb", &backend).await;
+async fn music_fastpath_reports_verified_track_and_artist() {
+    // now_playing matches the requested artist → success names the real track.
+    let backend = Backend::new(vec![song_row("Numb"), AXElement::new("AXButton", "Play")])
+        .with_now_playing("Numb", "Linkin Park");
+    let out = music::run("play Numb by Linkin Park", &backend).await;
+    assert!(out.success, "{out:?}");
+    assert!(
+        out.summary.contains("Linkin Park") && out.summary.contains("Numb"),
+        "summary should name the verified track+artist: {}",
+        out.summary
+    );
+}
+
+#[tokio::test]
+async fn music_fastpath_flags_wrong_artist_honestly() {
+    // The search landed on a same-titled song by a different artist. The
+    // fast-path must name it AND steer the agent away from re-searching (#1/#3).
+    let backend = Backend::new(vec![song_row("Numb"), AXElement::new("AXButton", "Play")])
+        .with_now_playing("Numb", "Tom Odell");
+    let out = music::run("play Numb by Linkin Park", &backend).await;
+    let s = out.summary.to_lowercase();
+    assert!(
+        s.contains("tom odell"),
+        "must name what actually played: {}",
+        out.summary
+    );
+    // Actionable, anti-loop guidance.
+    assert!(
+        s.contains("won't surface") && s.contains("library"),
+        "must steer the agent (no blind re-search): {}",
+        out.summary
+    );
+}
+
+#[tokio::test]
+async fn music_fastpath_no_row_lists_candidates_and_warns() {
+    // Song rows exist but none match the query → response lists what WAS found
+    // and tells the agent not to repeat the same search (#1/#2).
+    let backend = Backend::new(vec![
+        AXElement::new("AXCell", "Numb - Marshmello & Khalid"),
+        AXElement::new("AXCell", "Numb - Tom Odell"),
+    ]);
+    let out = music::run("play Zelda Theme by Koji Kondo", &backend).await;
     assert!(!out.success);
-    assert!(out.summary.contains("no matching song"), "{}", out.summary);
+    let s = out.summary.to_lowercase();
+    assert!(
+        s.contains("marshmello") && s.contains("tom odell"),
+        "{}",
+        out.summary
+    );
+    assert!(
+        s.contains("won't help") || s.contains("don't repeat"),
+        "{}",
+        out.summary
+    );
+}
+
+#[tokio::test]
+async fn music_fastpath_artist_row_not_claimed_as_playing() {
+    // Only an artist AXButton matches (no song cell) and the backend can't read
+    // a track → must NOT claim "Playing"; say it only navigated (#3/#4).
+    let backend = Backend::new(vec![AXElement::new("AXButton", "LINKIN PARK")]);
+    let out = music::run("play Linkin Park Numb", &backend).await;
+    let s = out.summary.to_lowercase();
+    assert!(
+        !s.contains("playing '"),
+        "must not claim playback: {}",
+        out.summary
+    );
+    assert!(
+        s.contains("artist/album") && s.contains("specific song"),
+        "must explain it only navigated: {}",
+        out.summary
+    );
+    // It pressed the artist element, flagged as non-song in the step log.
+    assert!(
+        out.steps
+            .iter()
+            .any(|a| a.contains("artist/album 'LINKIN PARK'")),
+        "{:?}",
+        out.steps
+    );
 }
 
 #[tokio::test]
@@ -199,6 +299,121 @@ async fn try_fastpath_dispatches_music_and_skips_others() {
         .is_none());
     // Music + play → Some.
     assert!(super::try_fastpath("Music", "play Numb", &backend)
+        .await
+        .is_some());
+}
+
+// ── Browser fast-path: scripted sequence ────────────────────────────
+
+#[tokio::test]
+async fn browser_nav_to_domain_succeeds_without_model() {
+    let backend = Backend::new(vec![]);
+    let out = super::browser::run(
+        "Brave Browser",
+        "open Brave and go to example.com",
+        &backend,
+    )
+    .await;
+    assert!(out.success, "pure navigation should succeed: {out:?}");
+    let acts = backend.acts();
+    // One deterministic open in the named browser — no model `decide` call
+    // (the scripted backend panics if `decide` is hit). Bare domain is
+    // normalized to https://.
+    assert_eq!(acts.len(), 1, "{acts:?}");
+    assert_eq!(acts[0], "open_url_in_app:Brave Browser:https://example.com");
+}
+
+#[tokio::test]
+async fn browser_youtube_search_play_navigates_then_falls_through() {
+    let backend = Backend::new(vec![]);
+    let out = super::browser::run(
+        "Brave Browser",
+        "open my brave browser, go to youtube.com and play a music video",
+        &backend,
+    )
+    .await;
+    // Play intent → navigate deterministically, then return non-success so the
+    // general loop performs the single first-result click via vision_click.
+    assert!(!out.success, "play must defer the final click: {out:?}");
+    let acts = backend.acts();
+    assert_eq!(acts.len(), 1, "{acts:?}");
+    assert_eq!(
+        acts[0],
+        "open_url_in_app:Brave Browser:https://www.youtube.com/results?search_query=music%20video"
+    );
+}
+
+#[tokio::test]
+async fn browser_media_control_sends_hotkey() {
+    let backend = Backend::new(vec![]);
+    let out = super::browser::run("Brave Browser", "pause the video", &backend).await;
+    assert!(out.success, "media control should succeed: {out:?}");
+    assert_eq!(backend.acts(), vec!["key:k".to_string()]);
+}
+
+#[tokio::test]
+async fn browser_command_routes_resolved_shortcut() {
+    // "new tab" → a cross-platform chord resolved per browser+OS. Brave maps to
+    // the Chrome family; the primary modifier is OS-dependent, so accept either.
+    let backend = Backend::new(vec![]);
+    let out = super::browser::run("Brave Browser", "open a new tab", &backend).await;
+    assert!(out.success, "browser command should succeed: {out:?}");
+    let act = &backend.acts()[0];
+    assert!(
+        act == "key:Cmd+t" || act == "key:Ctrl+t",
+        "expected a new-tab chord, got {act}"
+    );
+}
+
+#[tokio::test]
+async fn try_fastpath_dispatches_browser() {
+    let backend = Backend::new(vec![]);
+    let out = super::try_fastpath(
+        "Brave Browser",
+        "open Brave and go to example.com",
+        &backend,
+    )
+    .await;
+    assert!(
+        out.is_some(),
+        "browser nav should be claimed by a fast-path"
+    );
+    assert!(out.unwrap().success);
+}
+
+// ── App-shortcut fast-path (Spotify / Apple Music / Slack) ──────────
+
+#[tokio::test]
+async fn app_shortcut_spotify_next_sends_down_arrow() {
+    let backend = Backend::new(vec![]);
+    let out = super::app_shortcuts::run("Spotify", "next song", &backend).await;
+    assert!(out.success, "{out:?}");
+    // Spotify quirk: next = Down arrow.
+    assert_eq!(backend.acts(), vec!["key:down".to_string()]);
+}
+
+#[tokio::test]
+async fn app_shortcut_slack_quick_switcher() {
+    let backend = Backend::new(vec![]);
+    let out = super::app_shortcuts::run("Slack", "jump to a conversation", &backend).await;
+    assert!(out.success, "{out:?}");
+    let act = &backend.acts()[0];
+    assert!(act == "key:Cmd+k" || act == "key:Ctrl+k", "got {act}");
+}
+
+#[tokio::test]
+async fn try_fastpath_routes_apps_and_music_still_wins_play() {
+    let backend = Backend::new(vec![song_row("Numb")]);
+    // Apple Music "pause" → app-shortcut fast-path (music.rs declines: no query).
+    assert!(super::try_fastpath("Music", "pause", &backend)
+        .await
+        .is_some());
+    // Apple Music "play Numb" → still claimed (by music.rs, song search).
+    assert!(super::try_fastpath("Music", "play Numb", &backend)
+        .await
+        .is_some());
+    // Spotify "skip" → app-shortcut fast-path.
+    assert!(super::try_fastpath("Spotify", "skip this track", &backend)
         .await
         .is_some());
 }

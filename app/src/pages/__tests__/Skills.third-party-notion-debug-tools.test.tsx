@@ -21,6 +21,7 @@ vi.mock('../../lib/composio/hooks', () => ({
   useComposioIntegrations: () => ({
     toolkits: ['notion'],
     connectionByToolkit: new Map(),
+    connectionsByToolkit: new Map(),
     refresh: vi.fn(),
     loading: false,
     error: null,
@@ -35,10 +36,10 @@ vi.mock('../../lib/composio/hooks', () => ({
 
 describe('Skills page — Notion composio integration', () => {
   it('renders Notion as a disconnected composio integration and opens its connect modal', async () => {
-    renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
-    fireEvent.click(screen.getByRole('tab', { name: 'Composio' }));
+    renderWithProviders(<Skills />, { initialEntries: ['/connections'] });
+    fireEvent.click(screen.getByTestId('two-pane-nav-composio'));
 
-    expect(screen.getByRole('heading', { name: 'Composio Integrations' })).toBeInTheDocument();
+    expect(screen.getByTestId('composio-integrations-card')).toBeInTheDocument();
     const notionTile = screen.getByRole('button', { name: /Notion.*Connect/i });
     expect(notionTile).toBeInTheDocument();
 

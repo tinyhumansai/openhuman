@@ -68,7 +68,7 @@ describe('memoryGraphLayout', () => {
       chunk({ id: 'orphan', parent_id: 'missing' }), // dangling → dropped
     ];
     const { simNodes, links } = buildGraph(nodes, [], 'tree');
-    expect(simNodes).toHaveLength(4);
+    expect(simNodes).toHaveLength(5); // 4 data nodes + synthetic root hub
     expect(simNodes.every(n => typeof n.x === 'number' && typeof n.y === 'number')).toBe(true);
     const pairs = links.map(l => `${String(l.source)}->${String(l.target)}`);
     expect(pairs).toContain('child->root');
@@ -83,7 +83,7 @@ describe('memoryGraphLayout', () => {
       { from: 'c1', to: 'ghost' }, // dangling endpoint → dropped
     ];
     const { links } = buildGraph(nodes, edges, 'contacts');
-    expect(links).toHaveLength(1);
+    expect(links).toHaveLength(1); // no source nodes → no root links
     expect(String(links[0].source)).toBe('c1');
     expect(String(links[0].target)).toBe('p1');
   });

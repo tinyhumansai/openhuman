@@ -23,6 +23,7 @@ import {
   openhumanTaskSourcesFetch,
   openhumanTaskSourcesList,
   openhumanTaskSourcesStatus,
+  openhumanTaskSourcesSync,
   openhumanTaskSourcesUpdate,
   type TaskSource,
   type TaskSourcesStatus,
@@ -32,26 +33,36 @@ type ColumnDef = { status: TaskBoardCardStatus; labelKey: string };
 
 const TASK_SOURCES_THREAD_ID = 'task-sources';
 
-// The board surfaces exactly three columns — Pending / Working / Done. The
-// richer status set the core tracks (approval flow, blocked, rejected) is
-// bucketed into these three via `columnFor`.
+// The board surfaces five columns:
+// Pending / Awaiting Approval / In Progress / Blocked / Done
 const COLUMN_DEFS: ColumnDef[] = [
   { status: 'todo', labelKey: 'conversations.taskKanban.pending' },
+  { status: 'awaiting_approval', labelKey: 'conversations.taskKanban.awaitingApprovalColumn' },
   { status: 'in_progress', labelKey: 'conversations.taskKanban.working' },
+  { status: 'blocked', labelKey: 'conversations.taskKanban.blockedColumn' },
   { status: 'done', labelKey: 'conversations.taskKanban.done' },
 ];
 
-/** The three statuses a user can set directly from the board. */
+/** The five column statuses a user can set directly from the board. */
 const COLUMN_STATUSES = COLUMN_DEFS.map(column => column.status);
 
 const STATUS_INDEX = new Map(COLUMN_DEFS.map((column, index) => [column.status, index]));
 
-/** Label key for *every* status, including the approval-flow statuses that
- *  don't own a kanban column. Drives the edit dialog's status `<select>` so a
- *  card whose status is `awaiting_approval`/`ready`/`rejected` renders a
- *  matching option instead of a controlled-select value with no option (which
- *  React warns about and which renders as the first option, hiding the real
- *  status from the user). */
+/** Per-column visual accent: left-border + background tint. Empty string = no accent. */
+const COLUMN_ACCENT: Record<TaskBoardCardStatus, string> = {
+  todo: '',
+  awaiting_approval:
+    'border-l-2 border-l-amber-400 bg-amber-50/60 dark:bg-amber-500/5 dark:border-l-amber-500/60',
+  in_progress: '',
+  blocked:
+    'border-l-2 border-l-coral-400 bg-coral-50/60 dark:bg-coral-500/5 dark:border-l-coral-500/60',
+  done: '',
+  ready: '',
+  rejected: '',
+};
+
+/** Label key for *every* status, including statuses that don't own a kanban
+ *  column. Drives the edit dialog's status <select>. */
 const STATUS_LABEL_KEYS: Record<TaskBoardCardStatus, string> = {
   todo: 'conversations.taskKanban.pending',
   awaiting_approval: 'conversations.taskKanban.awaitingApproval',
@@ -62,21 +73,18 @@ const STATUS_LABEL_KEYS: Record<TaskBoardCardStatus, string> = {
   rejected: 'conversations.taskKanban.rejected',
 };
 
-/** Whether a status owns a kanban column (vs the approval-flow / terminal
- *  statuses that are bucketed into an existing column). */
+/** Whether a status owns a kanban column. */
 function isColumnStatus(status: TaskBoardCardStatus): boolean {
   return STATUS_INDEX.has(status);
 }
 
-/** Map a card status to the column it renders under. Pre-execution approval
- *  statuses sit in `Pending`; `blocked` and `rejected` are surfaced under
- *  `Done` so the board stays a clean three-column Pending / Working / Done. */
+/** Map a card status to the column it renders under.
+ *  ready → in_progress column; rejected → done column.
+ *  All other statuses now own their own column. */
 function columnFor(status: TaskBoardCardStatus): TaskBoardCardStatus {
   switch (status) {
-    case 'awaiting_approval':
     case 'ready':
-      return 'todo';
-    case 'blocked':
+      return 'in_progress';
     case 'rejected':
       return 'done';
     default:
@@ -102,6 +110,8 @@ interface TaskKanbanBoardProps {
    *  carries a `sessionThreadId` (a run is live or has happened). */
   onViewSession?: (card: TaskBoardCard) => void;
   workingCardId?: string | null;
+  /** Card id currently being mutated (move/update) — shows a loading indicator. */
+  mutatingCardId?: string | null;
 }
 
 export function TaskKanbanBoard({
@@ -116,10 +126,13 @@ export function TaskKanbanBoard({
   onWorkTask,
   onViewSession,
   workingCardId = null,
+  mutatingCardId = null,
 }: TaskKanbanBoardProps) {
   const { t } = useT();
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   const [sourceControlsOpen, setSourceControlsOpen] = useState(false);
+  const [dragOverColumn, setDragOverColumn] = useState<TaskBoardCardStatus | null>(null);
+
   const selectedCard = useMemo(
     () => board.cards.find(card => card.id === selectedCardId) ?? null,
     [board.cards, selectedCardId]
@@ -128,8 +141,7 @@ export function TaskKanbanBoard({
   const hasSourceCards = board.cards.some(card => readSourceMetadata(card.sourceMetadata));
   const showSourceControls = isTaskSourcesBoard || hasSourceCards;
 
-  if (board.cards.length === 0 && !isTaskSourcesBoard) return null;
-
+  // Always render (even with 0 cards) so a live agent board stays visible.
   const cardsByStatus = COLUMN_DEFS.reduce(
     (acc, column) => {
       acc[column.status] = [];
@@ -143,10 +155,42 @@ export function TaskKanbanBoard({
   }
 
   const moveCard = (card: TaskBoardCard, direction: -1 | 1) => {
-    const current = STATUS_INDEX.get(card.status) ?? 0;
+    const current = STATUS_INDEX.get(columnFor(card.status)) ?? 0;
     const next = COLUMN_DEFS[current + direction]?.status;
     if (!next || disabled) return;
     onMove?.(card, next);
+  };
+
+  // Cards can only be moved when the board is enabled and a handler exists.
+  // Gate every drag-and-drop entry point on this so a disabled board cannot be
+  // mutated via drop events (parity with moveCard's `disabled` guard above).
+  const canMoveCards = !disabled && Boolean(onMove);
+
+  const handleDragOver = (e: React.DragEvent<HTMLElement>, columnStatus: TaskBoardCardStatus) => {
+    if (!canMoveCards) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDragOverColumn(columnStatus);
+  };
+
+  const handleDragLeave = (e: React.DragEvent<HTMLElement>) => {
+    if (!canMoveCards) return;
+    if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+      setDragOverColumn(null);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent<HTMLElement>, targetColumnStatus: TaskBoardCardStatus) => {
+    if (!canMoveCards) return;
+    e.preventDefault();
+    setDragOverColumn(null);
+    const cardId = e.dataTransfer.getData('application/x-task-card-id');
+    if (!cardId) return;
+    const draggedCard = board.cards.find(c => c.id === cardId);
+    if (!draggedCard) return;
+    const currentColumn = columnFor(draggedCard.status);
+    if (currentColumn === targetColumnStatus) return;
+    onMove?.(draggedCard, targetColumnStatus);
   };
 
   return (
@@ -176,38 +220,62 @@ export function TaskKanbanBoard({
       {showSourceControls && sourceControlsOpen && (
         <TaskSourceControls disabled={disabled} compact={!isTaskSourcesBoard} />
       )}
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-        {COLUMN_DEFS.map(column => (
-          <section
-            key={column.status}
-            className="min-w-0 rounded-lg bg-stone-50 dark:bg-neutral-800/60 p-2">
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <h5 className="truncate text-[11px] font-medium text-stone-600 dark:text-neutral-300">
-                {t(column.labelKey)}
-              </h5>
-              <span className="text-[10px] text-stone-400 dark:text-neutral-500">
-                {cardsByStatus[column.status].length}
-              </span>
-            </div>
-            <div className="space-y-2">
-              {cardsByStatus[column.status].map(card => (
-                <TaskBoardArticle
-                  key={card.id}
-                  card={card}
-                  columnStatus={column.status}
-                  disabled={disabled}
-                  onMove={onMove ? moveCard : undefined}
-                  hasBriefActions={Boolean(onUpdateCard || onDeleteCard)}
-                  onDecidePlan={onDecidePlan}
-                  onWorkTask={onWorkTask}
-                  onViewSession={onViewSession}
-                  working={workingCardId === card.id}
-                  onOpenBrief={() => setSelectedCardId(card.id)}
-                />
-              ))}
-            </div>
-          </section>
-        ))}
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+        {COLUMN_DEFS.map(column => {
+          const cards = cardsByStatus[column.status];
+          const isBlockedColumn = column.status === 'blocked';
+          const isDragTarget = dragOverColumn === column.status;
+          const accentClass = COLUMN_ACCENT[column.status] ?? '';
+          return (
+            <section
+              key={column.status}
+              className={`min-w-0 rounded-lg bg-stone-50 dark:bg-neutral-800/60 p-2 ${accentClass} ${
+                isDragTarget ? 'ring-2 ring-ocean-400 bg-ocean-50/30 dark:bg-ocean-500/5' : ''
+              }`}
+              onDragOver={canMoveCards ? e => handleDragOver(e, column.status) : undefined}
+              onDragLeave={canMoveCards ? handleDragLeave : undefined}
+              onDrop={canMoveCards ? e => handleDrop(e, column.status) : undefined}>
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <h5 className="truncate text-[11px] font-medium text-stone-600 dark:text-neutral-300">
+                  {t(column.labelKey)}
+                </h5>
+                <span className="text-[10px] text-stone-400 dark:text-neutral-500">
+                  {cards.length}
+                </span>
+              </div>
+              {/* "Needs your input" banner at top of Blocked column */}
+              {isBlockedColumn && cards.length > 0 && (
+                <div className="mb-2 rounded-md bg-coral-50 px-2 py-1.5 text-[10px] font-medium text-coral-700 dark:bg-coral-500/10 dark:text-coral-300">
+                  {t('conversations.taskKanban.needsInput')}
+                </div>
+              )}
+              <div className="space-y-2">
+                {cards.length === 0 ? (
+                  <p className="py-2 text-center text-[10px] text-stone-400 dark:text-neutral-600">
+                    {t('conversations.taskKanban.emptyColumn')}
+                  </p>
+                ) : (
+                  cards.map(card => (
+                    <TaskBoardArticle
+                      key={card.id}
+                      card={card}
+                      columnStatus={column.status}
+                      disabled={disabled}
+                      onMove={onMove ? moveCard : undefined}
+                      hasBriefActions={Boolean(onUpdateCard || onDeleteCard)}
+                      onDecidePlan={onDecidePlan}
+                      onWorkTask={onWorkTask}
+                      onViewSession={onViewSession}
+                      working={workingCardId === card.id}
+                      mutating={mutatingCardId === card.id}
+                      onOpenBrief={() => setSelectedCardId(card.id)}
+                    />
+                  ))
+                )}
+              </div>
+            </section>
+          );
+        })}
       </div>
       {selectedCard && (
         <TaskBriefDialog
@@ -232,6 +300,7 @@ function TaskBoardArticle({
   onWorkTask,
   onViewSession,
   working,
+  mutating,
   onOpenBrief,
 }: {
   card: TaskBoardCard;
@@ -243,13 +312,25 @@ function TaskBoardArticle({
   onWorkTask?: (card: TaskBoardCard) => void;
   onViewSession?: (card: TaskBoardCard) => void;
   working: boolean;
+  mutating: boolean;
   onOpenBrief: () => void;
 }) {
   const { t } = useT();
   const source = readSourceMetadata(card.sourceMetadata);
+  const isDraggable = !disabled && Boolean(onMove);
+
+  const handleDragStart = (e: React.DragEvent<HTMLElement>) => {
+    e.dataTransfer.setData('application/x-task-card-id', card.id);
+    e.dataTransfer.effectAllowed = 'move';
+  };
 
   return (
-    <article className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-2.5 py-2 shadow-sm">
+    <article
+      draggable={isDraggable}
+      onDragStart={isDraggable ? handleDragStart : undefined}
+      className={`rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-2.5 py-2 shadow-sm transition-opacity ${
+        mutating ? 'opacity-50' : 'opacity-100'
+      } ${isDraggable ? 'cursor-grab active:cursor-grabbing' : ''}`}>
       <div className="flex items-start gap-2">
         <p className="min-w-0 flex-1 break-words text-xs font-medium leading-snug text-stone-800 dark:text-neutral-100">
           {card.title}
@@ -294,7 +375,7 @@ function TaskBoardArticle({
               ? t('conversations.taskKanban.startingTask')
               : t('conversations.taskKanban.workTask')}
           </button>
-        ) : onMove && isColumnStatus(card.status) ? (
+        ) : onMove && isColumnStatus(columnFor(card.status)) ? (
           <div className="flex flex-shrink-0 items-center gap-0.5">
             <button
               type="button"
@@ -302,8 +383,8 @@ function TaskBoardArticle({
               aria-label={t('conversations.taskKanban.moveLeft')}
               disabled={disabled || columnStatus === 'todo'}
               onClick={() => onMove(card, -1)}
-              className="flex h-5 w-5 items-center justify-center rounded-md text-stone-400 dark:text-neutral-500 transition-colors hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 hover:text-stone-700 dark:hover:text-neutral-200 dark:text-neutral-200 disabled:opacity-25">
-              <LuArrowLeft className="h-3 w-3" />
+              className="flex h-7 w-7 items-center justify-center rounded-md text-stone-400 dark:text-neutral-500 transition-colors hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 hover:text-stone-700 dark:hover:text-neutral-200 dark:text-neutral-200 disabled:opacity-25">
+              <LuArrowLeft className="h-4 w-4" />
             </button>
             <button
               type="button"
@@ -311,8 +392,8 @@ function TaskBoardArticle({
               aria-label={t('conversations.taskKanban.moveRight')}
               disabled={disabled || columnStatus === 'done'}
               onClick={() => onMove(card, 1)}
-              className="flex h-5 w-5 items-center justify-center rounded-md text-stone-400 dark:text-neutral-500 transition-colors hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 hover:text-stone-700 dark:hover:text-neutral-200 dark:text-neutral-200 disabled:opacity-25">
-              <LuArrowRight className="h-3 w-3" />
+              className="flex h-7 w-7 items-center justify-center rounded-md text-stone-400 dark:text-neutral-500 transition-colors hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 hover:text-stone-700 dark:hover:text-neutral-200 dark:text-neutral-200 disabled:opacity-25">
+              <LuArrowRight className="h-4 w-4" />
             </button>
           </div>
         ) : null}
@@ -361,6 +442,26 @@ function TaskBoardArticle({
             {card.acceptanceCriteria.length}
           </span>
         )}
+        {/* Status badge: ready → "Ready to start" (sage); rejected → "Rejected" (coral) */}
+        {card.status === 'ready' && (
+          <span className="inline-flex items-center gap-1 rounded-md bg-sage-50 px-1.5 py-0.5 text-[10px] text-sage-700 dark:bg-sage-500/10 dark:text-sage-200">
+            {t('conversations.taskKanban.statusBadge.ready')}
+          </span>
+        )}
+        {card.status === 'rejected' && (
+          <span className="inline-flex items-center gap-1 rounded-md bg-coral-50 px-1.5 py-0.5 text-[10px] text-coral-700 dark:bg-coral-500/10 dark:text-coral-200">
+            {t('conversations.taskKanban.statusBadge.rejected')}
+          </span>
+        )}
+        {/* Evidence badge: shown on the card when evidence is present */}
+        {card.evidence && card.evidence.length > 0 && (
+          <span className="inline-flex items-center gap-1 rounded-md bg-sky-50 px-1.5 py-0.5 text-[10px] text-sky-700 dark:bg-sky-500/10 dark:text-sky-200">
+            {t('conversations.taskKanban.evidenceBadge').replace(
+              '{count}',
+              String(card.evidence.length)
+            )}
+          </span>
+        )}
       </div>
       {card.objective && (
         <p className="mt-1 break-words text-[11px] leading-snug text-stone-500 dark:text-neutral-400">
@@ -372,7 +473,8 @@ function TaskBoardArticle({
           {card.notes}
         </p>
       )}
-      {card.status === 'blocked' && card.blocker && (
+      {/* Blocker text: always shown for blocked cards (column or status) */}
+      {card.blocker && (card.status === 'blocked' || columnStatus === 'blocked') && (
         <p className="mt-1 break-words text-[11px] leading-snug text-coral-600">{card.blocker}</p>
       )}
       {(hasBriefActions ||
@@ -468,7 +570,23 @@ function formatUrgency(
 function formatFetchNotice(outcome: FetchOutcome, t: (key: string) => string): string {
   return t('settings.taskSources.fetchResult')
     .replace('{routed}', String(outcome.routed))
-    .replace('{fetched}', String(outcome.fetched));
+    .replace('{fetched}', String(outcome.fetched))
+    .replace('{pruned}', String(outcome.pruned ?? 0));
+}
+
+function formatSyncNotice(outcomes: FetchOutcome[], t: (key: string) => string): string {
+  const totals = outcomes.reduce(
+    (acc, outcome) => ({
+      fetched: acc.fetched + outcome.fetched,
+      routed: acc.routed + outcome.routed,
+      pruned: acc.pruned + (outcome.pruned ?? 0),
+    }),
+    { fetched: 0, routed: 0, pruned: 0 }
+  );
+  return t('settings.taskSources.fetchResult')
+    .replace('{routed}', String(totals.routed))
+    .replace('{fetched}', String(totals.fetched))
+    .replace('{pruned}', String(totals.pruned));
 }
 
 function TaskSourceControls({ disabled, compact }: { disabled: boolean; compact: boolean }) {
@@ -513,6 +631,7 @@ function TaskSourceControls({ disabled, compact }: { disabled: boolean; compact:
   }, [load]);
 
   const toggleSource = async (source: TaskSource) => {
+    if (busyKey) return;
     setBusyKey(`toggle:${source.id}`);
     setError(null);
     setNotice(null);
@@ -527,6 +646,7 @@ function TaskSourceControls({ disabled, compact }: { disabled: boolean; compact:
   };
 
   const fetchSource = async (source: TaskSource) => {
+    if (busyKey) return;
     setBusyKey(`fetch:${source.id}`);
     setError(null);
     setNotice(null);
@@ -537,6 +657,27 @@ function TaskSourceControls({ disabled, compact }: { disabled: boolean; compact:
         setError(outcome.error);
       } else {
         setNotice(formatFetchNotice(outcome, t));
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyKey(null);
+    }
+  };
+
+  const syncSources = async () => {
+    if (busyKey) return;
+    setBusyKey('sync');
+    setError(null);
+    setNotice(null);
+    try {
+      const outcomes = await openhumanTaskSourcesSync();
+      await load();
+      const firstError = outcomes.find(outcome => outcome.error)?.error;
+      if (firstError) {
+        setError(firstError);
+      } else {
+        setNotice(formatSyncNotice(outcomes, t));
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -563,9 +704,19 @@ function TaskSourceControls({ disabled, compact }: { disabled: boolean; compact:
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={() => navigate('/settings/task-sources')}
+            onClick={() => navigate('/settings/integrations')}
             className="text-[11px] font-medium text-ocean-600 hover:text-ocean-700 dark:text-ocean-300 dark:hover:text-ocean-200">
             {t('conversations.taskKanban.sources.manage')}
+          </button>
+          <button
+            type="button"
+            disabled={disabled || loading || busyKey !== null || sources.length === 0}
+            onClick={() => void syncSources()}
+            className="inline-flex items-center gap-1 rounded-md border border-stone-200 px-2 py-1 text-[11px] font-medium text-stone-600 hover:bg-stone-50 disabled:opacity-40 dark:border-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-800">
+            <LuRefreshCw className="h-3 w-3" />
+            {busyKey === 'sync'
+              ? t('settings.taskSources.syncing')
+              : t('settings.taskSources.syncAll')}
           </button>
           <button
             type="button"
@@ -627,7 +778,7 @@ function TaskSourceControls({ disabled, compact }: { disabled: boolean; compact:
               <div className="mt-2 flex flex-wrap gap-1.5">
                 <button
                   type="button"
-                  disabled={disabled || busyKey === `fetch:${source.id}`}
+                  disabled={disabled || busyKey !== null}
                   onClick={() => void fetchSource(source)}
                   className="inline-flex items-center gap-1 rounded-md border border-stone-200 px-2 py-1 text-[11px] font-medium text-stone-600 hover:bg-stone-50 disabled:opacity-40 dark:border-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-800">
                   <LuRefreshCw className="h-3 w-3" />
@@ -637,7 +788,7 @@ function TaskSourceControls({ disabled, compact }: { disabled: boolean; compact:
                 </button>
                 <button
                   type="button"
-                  disabled={disabled || busyKey === `toggle:${source.id}`}
+                  disabled={disabled || busyKey !== null}
                   onClick={() => void toggleSource(source)}
                   className="rounded-md border border-stone-200 px-2 py-1 text-[11px] font-medium text-stone-600 hover:bg-stone-50 disabled:opacity-40 dark:border-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-800">
                   {source.enabled

@@ -1,31 +1,69 @@
 import React from 'react';
 
+import { shadeHex } from './mascotPalette';
 import { BODY_PATH } from './paths';
 
-export const GhostyDefs: React.FC<{ idPrefix: string; bodyColor: string }> = ({
+/**
+ * `shaded` (default) is the original moody, dark-stopped body gradient used by
+ * the full-size mascot stage. `flat` is a bright, body-colour-dominant gradient
+ * that mirrors the Rive mascot's look — used for compact avatars (e.g. the
+ * "Talk to Tiny" chip) so the small mascot matches the big one in the panel
+ * rather than reading as a dark blob.
+ */
+export type GhostyVariant = 'shaded' | 'flat';
+
+export interface GhostyDefsProps {
+  idPrefix: string;
+  bodyColor: string;
+  variant?: GhostyVariant;
+}
+
+export const GhostyDefs: React.FC<GhostyDefsProps> = ({
   idPrefix,
   bodyColor,
+  variant = 'shaded',
 }) => {
   const id = (k: string) => `${idPrefix}-${k}`;
+  const flat = variant === 'flat';
+  // Derive a soft highlight + edge shadow from the body colour so any palette
+  // (including custom hexes) gets a clean, bright 3D body.
+  const highlight = shadeHex(bodyColor, 0.32);
+  const edge = shadeHex(bodyColor, -0.24);
   return (
     <defs>
-      <radialGradient id={id('body')} cx="0.32" cy="0.28" r="1.05">
-        <stop offset="0%" stopColor="#45454a" />
-        <stop offset="15%" stopColor="#393940" />
-        <stop offset="30%" stopColor="#2d2d33" />
-        <stop offset="45%" stopColor={bodyColor} />
-        <stop offset="60%" stopColor="#1a1a1e" />
-        <stop offset="75%" stopColor="#121215" />
-        <stop offset="88%" stopColor="#0a0a0c" />
-        <stop offset="100%" stopColor="#050506" />
-      </radialGradient>
-      <radialGradient id={id('dot')} cx="0.35" cy="0.3" r="1">
-        <stop offset="0%" stopColor="#45454a" />
-        <stop offset="20%" stopColor="#363639" />
-        <stop offset="45%" stopColor={bodyColor} />
-        <stop offset="70%" stopColor="#15151a" />
-        <stop offset="100%" stopColor="#050507" />
-      </radialGradient>
+      {flat ? (
+        <radialGradient id={id('body')} cx="0.35" cy="0.3" r="0.95">
+          <stop offset="0%" stopColor={highlight} />
+          <stop offset="45%" stopColor={bodyColor} />
+          <stop offset="100%" stopColor={edge} />
+        </radialGradient>
+      ) : (
+        <radialGradient id={id('body')} cx="0.32" cy="0.28" r="1.05">
+          <stop offset="0%" stopColor="#45454a" />
+          <stop offset="15%" stopColor="#393940" />
+          <stop offset="30%" stopColor="#2d2d33" />
+          <stop offset="45%" stopColor={bodyColor} />
+          <stop offset="60%" stopColor="#1a1a1e" />
+          <stop offset="75%" stopColor="#121215" />
+          <stop offset="88%" stopColor="#0a0a0c" />
+          <stop offset="100%" stopColor="#050506" />
+        </radialGradient>
+      )}
+      {flat ? (
+        <radialGradient id={id('dot')} cx="0.35" cy="0.3" r="1">
+          <stop offset="0%" stopColor={highlight} />
+          <stop offset="55%" stopColor={bodyColor} />
+          <stop offset="100%" stopColor={edge} />
+        </radialGradient>
+      ) : (
+        <radialGradient id={id('dot')} cx="0.35" cy="0.3" r="1">
+          <stop offset="0%" stopColor="#45454a" />
+          <stop offset="20%" stopColor="#363639" />
+          <stop offset="45%" stopColor={bodyColor} />
+          <stop offset="70%" stopColor="#15151a" />
+          <stop offset="100%" stopColor="#050507" />
+        </radialGradient>
+      )}
       <filter id={id('grain')} x="0%" y="0%" width="100%" height="100%">
         <feTurbulence
           type="fractalNoise"

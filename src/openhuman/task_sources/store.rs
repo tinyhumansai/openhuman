@@ -25,6 +25,12 @@ use super::types::{
     FetchReason, FilterSpec, ProviderSlug, SourceTarget, TaskSource, TaskSourcePatch,
 };
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IngestedTaskRef {
+    pub external_id: String,
+    pub card_id: Option<String>,
+}
+
 /// Compute an edit-aware content hash for a task. Two fetches of the
 /// same `external_id` whose title/body/status/updated_at/url differ produce
 /// different hashes, so an *edited* upstream item re-ingests.
@@ -307,6 +313,41 @@ pub fn get_card_id(config: &Config, source_id: &str, external_id: &str) -> Resul
             None => Ok(None),
         }
     })
+}
+
+/// Return ingested task ids/card ids for one source. Used by reconciliation
+/// to prune board cards that no longer match the upstream source/filter.
+pub fn list_ingested_refs(config: &Config, source_id: &str) -> Result<Vec<IngestedTaskRef>> {
+    with_connection(config, |conn| {
+        let mut stmt = conn.prepare(
+            "SELECT external_id, card_id FROM ingested_tasks
+             WHERE source_id = ?1
+             ORDER BY ingested_at ASC, external_id ASC",
+        )?;
+        let rows = stmt.query_map(params![source_id], |row| {
+            Ok(IngestedTaskRef {
+                external_id: row.get(0)?,
+                card_id: row.get(1)?,
+            })
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    })
+}
+
+/// Delete one ingested ledger row after its board card has been reconciled.
+pub fn remove_ingested(config: &Config, source_id: &str, external_id: &str) -> Result<bool> {
+    let changed = with_connection(config, |conn| {
+        conn.execute(
+            "DELETE FROM ingested_tasks WHERE source_id = ?1 AND external_id = ?2",
+            params![source_id, external_id],
+        )
+        .context("Failed to delete ingested task")
+    })?;
+    Ok(changed > 0)
 }
 
 /// List the most recently ingested tasks for a source (newest first).

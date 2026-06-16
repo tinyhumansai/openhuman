@@ -3,7 +3,10 @@ import { useEffect, useRef, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
 import { callCoreRpc } from '../../../services/coreRpcClient';
-import SettingsHeader from '../components/SettingsHeader';
+import PanelPage from '../../layout/PanelPage';
+import Button from '../../ui/Button';
+import SettingsBackButton from '../components/SettingsBackButton';
+import { SettingsEmptyState, SettingsSelect } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 const log = debug('openhuman:model-health');
@@ -87,7 +90,7 @@ const BADGE_STYLES: Record<StatusBadge, { bg: string; text: string; label: strin
 
 const ModelHealthPanel = () => {
   const { t } = useT();
-  const { navigateBack, breadcrumbs } = useSettingsNavigation();
+  const { navigateBack } = useSettingsNavigation();
   const [models, setModels] = useState<ModelEntry[]>([]);
   const [config, setConfig] = useState<HealthConfig>({
     hallucination_threshold: 0.1,
@@ -165,38 +168,36 @@ const ModelHealthPanel = () => {
   const sortIcon = (col: SortCol) => (sortCol === col ? (sortAsc ? ' ↑' : ' ↓') : '');
 
   return (
-    <div data-testid="model-health-panel">
-      <SettingsHeader
-        title={t('settings.modelHealth.title')}
-        showBackButton={true}
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
+    <PanelPage
+      testId="model-health-panel"
+      className="z-10"
+      contentClassName=""
+      description={t('settings.modelHealth.desc')}
+      leading={<SettingsBackButton onBack={navigateBack} />}>
       <div className="p-4 space-y-4">
         <div className="flex items-center gap-2 text-xs">
-          <select
-            className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-3 py-1.5 font-medium text-stone-700 dark:text-neutral-200"
+          <SettingsSelect
             value={filterStatus}
-            onChange={e => setFilterStatus(e.target.value)}>
+            onChange={e => setFilterStatus(e.target.value)}
+            aria-label={t('settings.modelHealth.allStatuses')}
+            inputSize="sm">
             <option value="">{t('settings.modelHealth.allStatuses')}</option>
             <option value="keep">{t('settings.modelHealth.badge.keep')}</option>
             <option value="replace">{t('settings.modelHealth.badge.replace')}</option>
             <option value="staging">{t('settings.modelHealth.badge.staging')}</option>
             <option value="vision">{t('settings.modelHealth.badge.vision')}</option>
-          </select>
-          <span className="text-stone-500 dark:text-neutral-400">
+          </SettingsSelect>
+          <span className="text-neutral-500 dark:text-neutral-400">
             {filtered.length} {t('settings.modelHealth.models')}
           </span>
         </div>
 
         {loading ? (
-          <p className="text-xs text-stone-400 py-4 text-center">
+          <p className="text-xs text-neutral-500 dark:text-neutral-400 py-4 text-center">
             {t('settings.modelHealth.loading')}
           </p>
         ) : filtered.length === 0 ? (
-          <p className="text-xs text-stone-400 py-4 text-center">
-            {t('settings.modelHealth.empty')}
-          </p>
+          <SettingsEmptyState label={t('settings.modelHealth.empty')} />
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
@@ -276,12 +277,14 @@ const ModelHealthPanel = () => {
                           {t(badge.label)}
                         </span>
                         {isReplace && candidates.length > 0 && (
-                          <button
+                          <Button
                             type="button"
-                            className="ml-1 text-[10px] text-amber-400 hover:text-amber-300"
+                            variant="ghost"
+                            size="xs"
+                            className="ml-1 text-amber-400 hover:text-amber-300"
                             onClick={() => setSwapTarget(m)}>
                             {t('settings.modelHealth.swap')}
-                          </button>
+                          </Button>
                         )}
                       </td>
                     </tr>
@@ -339,19 +342,23 @@ const ModelHealthPanel = () => {
               })}
             </div>
             <div className="flex gap-2">
-              <button
+              <Button
                 type="button"
-                className="flex-1 py-2 rounded-lg border border-stone-200 dark:border-neutral-700 text-xs"
+                variant="secondary"
+                size="sm"
+                className="flex-1"
                 onClick={() => {
                   setSwapTarget(null);
                   setSelectedCandidate(null);
                 }}>
                 {t('settings.modelHealth.modal.cancel')}
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
+                variant="primary"
+                size="sm"
+                className="flex-1"
                 disabled={!selectedCandidate}
-                className="flex-1 py-2 rounded-lg bg-blue-600 text-white text-xs font-semibold disabled:opacity-40"
                 onClick={() => {
                   if (selectedCandidate && swapTarget) {
                     // Apply is currently UI-only: the backend swap RPC is a
@@ -367,12 +374,12 @@ const ModelHealthPanel = () => {
                   setSelectedCandidate(null);
                 }}>
                 {t('settings.modelHealth.modal.apply')}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
       )}
-    </div>
+    </PanelPage>
   );
 };
 

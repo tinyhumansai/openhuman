@@ -90,6 +90,8 @@ tauri.key
 tauri.key.pub
 /target/
 src-tauri/target/
+app/src-tauri-mobile/gen/
+app/src-tauri-mobile/target/
 .target-codex/
 
 workflow
@@ -113,3 +115,14 @@ test-map.md
 .claude/skills/
 .codex-tmp
 *.enc
+
+# Apple signing and App Store Connect credentials
+AuthKey_*.p8
+*.mobileprovision
+*.certSigningRequest
+*.p12
+distribution.cer
+
+# Release note previews
+CHANGELOG.preview.md
+*.profraw

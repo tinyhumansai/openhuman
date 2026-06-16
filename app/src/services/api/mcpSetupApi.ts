@@ -56,7 +56,7 @@ interface InstallAndConnectResult {
 }
 
 export const mcpSetupApi = {
-  /** Search all enabled registries (Smithery + official). */
+  /** Search all enabled registries (official modelcontextprotocol.io primary, Smithery fallback). */
   search: async (params: {
     query?: string;
     page?: number;

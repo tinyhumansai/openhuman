@@ -16,6 +16,7 @@ jobs:
   build:
     name: Build Tauri App
     runs-on: ubuntu-22.04
+    timeout-minutes: 30
     container:
       image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
     steps:

@@ -311,7 +311,7 @@ async fn rebuild_tree_from_raw_builds_from_disk() {
     let before = get_or_create_source_tree(&cfg, scope).unwrap();
     assert_eq!(before.max_level, 0, "fresh tree should be at level 0");
 
-    let outcome = rebuild_tree_from_raw(&cfg, scope).await.unwrap();
+    let outcome = rebuild_tree_from_raw(&cfg, scope, scope).await.unwrap();
     assert_eq!(outcome.files_read, 3, "should read the 3 seeded emails");
     assert!(outcome.batches >= 1, "should produce at least one batch");
 
@@ -452,12 +452,12 @@ async fn check_and_rebuild_auto_detects_raw_without_summaries() {
 
     // Before: raw exists, tree at level 0 → rebuild needed.
     assert!(
-        needs_rebuild(&cfg, scope),
-        "needs_rebuild must be true when raw exists and max_level == 0"
+        needs_rebuild(&cfg, scope, scope),
+        "needs_rebuild must be true when raw files exist with no coverage"
     );
 
     // Drive the rebuild (what check_and_rebuild_tree calls).
-    rebuild_tree_from_raw(&cfg, scope).await.unwrap();
+    rebuild_tree_from_raw(&cfg, scope, scope).await.unwrap();
 
     // After: tree now has summaries → no further rebuild needed.
     let tree = get_or_create_source_tree(&cfg, scope).unwrap();
@@ -467,13 +467,17 @@ async fn check_and_rebuild_auto_detects_raw_without_summaries() {
         tree.max_level
     );
     assert!(
-        !needs_rebuild(&cfg, scope),
-        "needs_rebuild must be false once the tree has summaries"
+        !needs_rebuild(&cfg, scope, scope),
+        "needs_rebuild must be false once every raw file is covered"
     );
 
     // A scope with no raw files on disk never triggers a rebuild.
     assert!(
-        !needs_rebuild(&cfg, "gmail:empty-at-example-dot-com"),
+        !needs_rebuild(
+            &cfg,
+            "gmail:empty-at-example-dot-com",
+            "gmail:empty-at-example-dot-com"
+        ),
         "needs_rebuild must be false when no raw directory exists"
     );
 }

@@ -16,12 +16,14 @@ import { io, Socket } from 'socket.io-client';
 import {
   base64urlDecode,
   base64urlEncode,
+  deriveSessionKeys,
   deriveSharedSecret,
   generateKeypair,
+  keypairFromSecretKey,
   open,
   ReplayTracker,
-  seal,
   sealHandshake,
+  TunnelCipher,
   type TunnelKeypair,
 } from '../../lib/tunnel/crypto';
 import { chunk, Envelope, Reassembler, TokenBucket } from '../../lib/tunnel/framing';
@@ -50,8 +52,15 @@ export class TunnelTransport implements CoreTransport {
   readonly kind = 'tunnel' as const;
 
   private socket: Socket | null = null;
-  private sessionKey: Uint8Array | null = null; // derived after handshake
+  private staticDhKey: Uint8Array | null = null; // bootstrap key for handshake ack
+  private clientEphemeralKeypair: TunnelKeypair | null = null;
+  private cipher: TunnelCipher | null = null; // derived after handshake ack
   private deviceKeypair: TunnelKeypair | null = null;
+  private handshakeAck: {
+    resolve: () => void;
+    reject: (err: Error) => void;
+    timeoutId: ReturnType<typeof setTimeout>;
+  } | null = null;
   private readonly replayTracker = new ReplayTracker();
   private readonly reassembler = new Reassembler();
   private readonly rateLimiter = new TokenBucket(100, 100);
@@ -66,11 +75,14 @@ export class TunnelTransport implements CoreTransport {
     private readonly channelId: string,
     private readonly corePubkeyB64: string,
     private readonly authToken: string, // sessionToken (reconnect) or pairingToken (first)
+    devicePrivkeyB64?: string | null,
+    private readonly authTokenKind: 'pairing' | 'session' = 'pairing',
     private readonly role: 'client' = 'client',
     private readonly callTimeoutMs: number = 30_000
   ) {
-    // Generate device keypair on construction.
-    this.deviceKeypair = generateKeypair();
+    this.deviceKeypair = devicePrivkeyB64
+      ? keypairFromSecretKey(base64urlDecode(devicePrivkeyB64))
+      : generateKeypair();
     log('[tunnel] created channelId=%s corePubkey=%s…', channelId, corePubkeyB64.slice(0, 4));
   }
 
@@ -98,6 +110,9 @@ export class TunnelTransport implements CoreTransport {
           channelId: this.channelId,
           role: this.role,
           token: this.authToken,
+          ...(this.authTokenKind === 'session'
+            ? { sessionToken: this.authToken }
+            : { pairingToken: this.authToken }),
         });
       });
 
@@ -120,7 +135,9 @@ export class TunnelTransport implements CoreTransport {
 
       socket.on('disconnect', (reason: string) => {
         log('[tunnel] disconnected reason=%s', reason);
-        this.sessionKey = null;
+        this.staticDhKey = null;
+        this.clientEphemeralKeypair = null;
+        this.cipher = null;
         this._connectPromise = null;
       });
 
@@ -141,9 +158,15 @@ export class TunnelTransport implements CoreTransport {
 
     const corePubkey = base64urlDecode(this.corePubkeyB64);
     const devicePubkeyB64 = base64urlEncode(this.deviceKeypair.publicKey);
+    const clientEphemeral = generateKeypair();
+    const clientEphemeralPubkeyB64 = base64urlEncode(clientEphemeral.publicKey);
 
-    // Device pubkey payload (base64url-encoded, UTF-8).
-    const payload = new TextEncoder().encode(devicePubkeyB64);
+    const payload = new TextEncoder().encode(
+      JSON.stringify({
+        device_pubkey: devicePubkeyB64,
+        client_ephemeral_pubkey: clientEphemeralPubkeyB64,
+      })
+    );
 
     // Seal the handshake payload to the core's public key.
     const handshakeFrame = sealHandshake(corePubkey, payload);
@@ -152,10 +175,18 @@ export class TunnelTransport implements CoreTransport {
     log('[tunnel] sending sealed handshake frame_len=%d', handshakeFrame.length);
     this.socket!.emit('tunnel:frame', { channelId: this.channelId, payload: frameB64 });
 
-    // Derive session key from static keys (both sides derive the same key).
-    this.sessionKey = deriveSharedSecret(this.deviceKeypair.secretKey, corePubkey);
+    this.staticDhKey = deriveSharedSecret(this.deviceKeypair.secretKey, corePubkey);
+    this.clientEphemeralKeypair = clientEphemeral;
 
-    log('[tunnel] handshake complete, session key derived');
+    log('[tunnel] handshake sent, waiting for server ephemeral ack');
+
+    return new Promise<void>((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        this.handshakeAck = null;
+        reject(new Error('[tunnel] handshake ack timed out'));
+      }, 10_000);
+      this.handshakeAck = { resolve, reject, timeoutId };
+    });
   }
 
   // -- incoming frames -------------------------------------------------------
@@ -165,11 +196,6 @@ export class TunnelTransport implements CoreTransport {
     const payloadB64 = typeof obj?.payload === 'string' ? obj.payload : null;
     if (!payloadB64) {
       logErr('[tunnel] incoming frame missing payload');
-      return;
-    }
-
-    if (!this.sessionKey) {
-      log('[tunnel] frame received before session key — ignoring');
       return;
     }
 
@@ -183,7 +209,11 @@ export class TunnelTransport implements CoreTransport {
 
     let plaintext: Uint8Array;
     try {
-      plaintext = open(this.sessionKey, frameBytes, this.replayTracker);
+      if (!this.cipher) {
+        this.handleHandshakeAck(frameBytes);
+        return;
+      }
+      plaintext = this.cipher.open(frameBytes);
     } catch (err) {
       logErr('[tunnel] frame decryption failed: %s', (err as Error).message);
       return;
@@ -193,6 +223,57 @@ export class TunnelTransport implements CoreTransport {
     if (!envelope) return; // waiting for more chunks
 
     this.dispatchEnvelope(envelope);
+  }
+
+  private handleHandshakeAck(frameBytes: Uint8Array): void {
+    if (!this.staticDhKey || !this.clientEphemeralKeypair) {
+      log('[tunnel] handshake ack received before handshake state — ignoring');
+      return;
+    }
+
+    let plaintext: Uint8Array;
+    try {
+      plaintext = open(this.staticDhKey, frameBytes, this.replayTracker);
+    } catch (err) {
+      this.handshakeAck?.reject(err as Error);
+      logErr('[tunnel] handshake ack open failed: %s', (err as Error).message);
+      return;
+    }
+
+    let ack: { kind?: string; server_ephemeral_pubkey?: string };
+    try {
+      ack = JSON.parse(new TextDecoder().decode(plaintext)) as {
+        kind?: string;
+        server_ephemeral_pubkey?: string;
+      };
+    } catch (err) {
+      this.handshakeAck?.reject(err as Error);
+      logErr('[tunnel] handshake ack JSON parse failed: %o', err);
+      return;
+    }
+
+    if (ack.kind !== 'handshake_ack' || !ack.server_ephemeral_pubkey) {
+      const err = new Error(`[tunnel] invalid handshake ack kind=${ack.kind ?? 'missing'}`);
+      this.handshakeAck?.reject(err);
+      logErr(err.message);
+      return;
+    }
+
+    const serverEphemeralPubkey = base64urlDecode(ack.server_ephemeral_pubkey);
+    const ephDh = deriveSharedSecret(this.clientEphemeralKeypair.secretKey, serverEphemeralPubkey);
+    const keys = deriveSessionKeys(
+      this.staticDhKey,
+      ephDh,
+      this.clientEphemeralKeypair.publicKey,
+      serverEphemeralPubkey
+    );
+    this.cipher = new TunnelCipher('client', keys, this.replayTracker);
+    if (this.handshakeAck) {
+      clearTimeout(this.handshakeAck.timeoutId);
+      this.handshakeAck.resolve();
+      this.handshakeAck = null;
+    }
+    log('[tunnel] handshake ack complete server_eph_len=%d', serverEphemeralPubkey.length);
   }
 
   private dispatchEnvelope(envelope: Envelope): void {
@@ -238,13 +319,13 @@ export class TunnelTransport implements CoreTransport {
   // -- send ------------------------------------------------------------------
 
   private async sendEnvelope(envelope: Envelope): Promise<void> {
-    if (!this.sessionKey) throw new Error('[tunnel] no session key — handshake incomplete');
+    if (!this.cipher) throw new Error('[tunnel] no session cipher — handshake incomplete');
 
     await this.rateLimiter.consume();
 
     const chunks = chunk(envelope);
     for (const raw of chunks) {
-      const encrypted = seal(this.sessionKey, raw);
+      const encrypted = this.cipher.seal(raw);
       const frameB64 = base64urlEncode(encrypted);
       this.socket!.emit('tunnel:frame', { channelId: this.channelId, payload: frameB64 });
     }
@@ -363,7 +444,14 @@ export class TunnelTransport implements CoreTransport {
     this.socket?.disconnect();
     this.socket = null;
     this._connectPromise = null;
-    this.sessionKey = null;
+    this.staticDhKey = null;
+    this.clientEphemeralKeypair = null;
+    this.cipher = null;
+    if (this.handshakeAck) {
+      clearTimeout(this.handshakeAck.timeoutId);
+      this.handshakeAck.reject(new Error('[tunnel] transport closed'));
+      this.handshakeAck = null;
+    }
   }
 
   private rejectAllPending(err: Error): void {

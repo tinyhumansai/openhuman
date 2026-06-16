@@ -244,9 +244,113 @@ pub(crate) struct LmStudioUsage {
     pub completion_tokens: Option<u32>,
 }
 
+/// LM Studio **native** REST (`GET /api/v0/models`) model entry.
+///
+/// Unlike the OpenAI-compatible `/v1/models` (which returns only
+/// `id`/`object`/`owned_by`), the native API reports the model's context
+/// window — the value the agent harness must budget against to avoid an
+/// `n_ctx` overflow when the user loaded the model with a small context
+/// (issue #3550 / Sentry TAURI-RUST-6V0).
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct LmStudioNativeModel {
+    pub id: String,
+    /// Context window the model is *currently loaded* with — the runtime's
+    /// hard limit. Authoritative for budgeting. (LM Studio also returns a
+    /// `state` field, which we ignore — we prefer the loaded window whenever
+    /// present regardless of load state.)
+    #[serde(default)]
+    pub loaded_context_length: Option<u64>,
+    /// Model's declared maximum context. Fallback when not currently loaded.
+    #[serde(default)]
+    pub max_context_length: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct LmStudioNativeModelsResponse {
+    #[serde(default)]
+    pub data: Vec<LmStudioNativeModel>,
+}
+
+/// Map a normalized `…/v1` base URL to the LM Studio native models endpoint
+/// `…/api/v0/models` (a sibling of `/v1`, served at the host root).
+pub(crate) fn lm_studio_native_models_url(v1_base_url: &str) -> String {
+    let root = v1_base_url
+        .trim_end_matches('/')
+        .trim_end_matches("/v1")
+        .trim_end_matches('/');
+    format!("{root}/api/v0/models")
+}
+
+/// Resolve the context window LM Studio reports for `model_id` from a native
+/// `/api/v0/models` payload: prefer the *loaded* context (the limit the
+/// runtime actually enforces), else the model's declared maximum. Zero/absent
+/// values are treated as unknown. Returns `None` when the model isn't present
+/// or reports no usable window.
+pub(crate) fn lm_studio_context_window_for(
+    resp: &LmStudioNativeModelsResponse,
+    model_id: &str,
+) -> Option<u64> {
+    resp.data.iter().find(|m| m.id == model_id).and_then(|m| {
+        m.loaded_context_length
+            .filter(|&v| v > 0)
+            .or(m.max_context_length.filter(|&v| v > 0))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_models_url_derived_from_v1_base() {
+        assert_eq!(
+            lm_studio_native_models_url("http://localhost:1234/v1"),
+            "http://localhost:1234/api/v0/models"
+        );
+        // Trailing slash tolerated.
+        assert_eq!(
+            lm_studio_native_models_url("http://127.0.0.1:1234/v1/"),
+            "http://127.0.0.1:1234/api/v0/models"
+        );
+        // Remote host with path prefix.
+        assert_eq!(
+            lm_studio_native_models_url("https://lm.example.com/lmstudio/v1"),
+            "https://lm.example.com/lmstudio/api/v0/models"
+        );
+    }
+
+    #[test]
+    fn context_window_prefers_loaded_then_max() {
+        let resp: LmStudioNativeModelsResponse = serde_json::from_str(
+            r#"{"data":[
+                {"id":"qwen2.5-7b","state":"loaded","loaded_context_length":4096,"max_context_length":32768},
+                {"id":"phi-4","state":"not-loaded","max_context_length":16384}
+            ]}"#,
+        )
+        .unwrap();
+        // Loaded model → the runtime-enforced loaded window, NOT the trained max.
+        assert_eq!(
+            lm_studio_context_window_for(&resp, "qwen2.5-7b"),
+            Some(4096)
+        );
+        // Not-loaded model → declared max as fallback.
+        assert_eq!(lm_studio_context_window_for(&resp, "phi-4"), Some(16384));
+        // Unknown model id → None (caller falls back to profile default).
+        assert_eq!(lm_studio_context_window_for(&resp, "missing"), None);
+    }
+
+    #[test]
+    fn context_window_treats_zero_and_absent_as_unknown() {
+        let resp: LmStudioNativeModelsResponse = serde_json::from_str(
+            r#"{"data":[
+                {"id":"zeroed","loaded_context_length":0,"max_context_length":0},
+                {"id":"bare"}
+            ]}"#,
+        )
+        .unwrap();
+        assert_eq!(lm_studio_context_window_for(&resp, "zeroed"), None);
+        assert_eq!(lm_studio_context_window_for(&resp, "bare"), None);
+    }
 
     #[test]
     fn normalize_lm_studio_base_url_defaults_scheme_and_v1() {

@@ -16,6 +16,7 @@ jobs:
   ios-compile:
     name: iOS Compile Check
     runs-on: macos-latest
+    timeout-minutes: 30
     env:
       # Pin the deployment target so swift-rs invokes the Swift compiler with
       # `-target arm64-apple-ios16.0`. Matches Package.swift in

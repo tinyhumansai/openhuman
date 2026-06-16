@@ -124,6 +124,8 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::webview_apis::all_webview_apis_registered_controllers());
     // Agent definition and prompt inspection
     controllers.extend(crate::openhuman::agent::all_agent_registered_controllers());
+    // Persistent agent profiles (flavours): name, soul, memory sources, skills, MCP, connectors.
+    controllers.extend(crate::openhuman::profiles::all_profiles_registered_controllers());
     // User-facing agent registry: defaults, enablement, custom agents, tool policy.
     controllers
         .extend(crate::openhuman::agent_registry::all_agent_registry_registered_controllers());
@@ -151,6 +153,8 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::http_host::all_http_host_registered_controllers());
     // Token usage and billing cost tracking
     controllers.extend(crate::openhuman::cost::all_cost_registered_controllers());
+    // x402 machine-payable API payment protocol
+    controllers.extend(crate::openhuman::x402::all_x402_registered_controllers());
     // Inline autocomplete settings
     controllers.extend(crate::openhuman::autocomplete::all_autocomplete_registered_controllers());
     // External messaging channels (Web, Telegram, etc.)
@@ -177,9 +181,9 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     // Background command monitors for agent-scoped event sources
     controllers.extend(crate::openhuman::monitor::all_monitor_registered_controllers());
     // Unified inference domain: text / vision / local runtime / cloud providers.
-    // (Formerly split across inference, local_ai, and providers namespaces.)
+    // (Formerly split across inference, local AI, and providers modules.)
     controllers.extend(crate::openhuman::inference::all_inference_registered_controllers());
-    controllers.extend(crate::openhuman::inference::all_local_ai_registered_controllers());
+    controllers.extend(crate::openhuman::inference::all_local_inference_registered_controllers());
     // Embedding provider configuration and embed RPC.
     controllers.extend(crate::openhuman::embeddings::all_embeddings_registered_controllers());
     // People resolution and interaction scoring
@@ -196,6 +200,11 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::javascript::all_javascript_registered_controllers());
     // Discovered SKILL.md skills and their bundled resources
     controllers.extend(crate::openhuman::workflows::all_workflows_registered_controllers());
+    // Skill runtime: run/cancel/log skill executions and resolve Node/Python toolchains
+    controllers.extend(crate::openhuman::skill_runtime::all_skill_runtime_registered_controllers());
+    // Skill registry: browse, search, install from remote registries
+    controllers
+        .extend(crate::openhuman::skill_registry::all_skill_registry_registered_controllers());
     // User workspace and file management
     controllers.extend(crate::openhuman::workspace::all_workspace_registered_controllers());
     // Workflow tool registry
@@ -219,6 +228,8 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     // Memory sources — user-configured data connectors registry
     controllers
         .extend(crate::openhuman::memory_sources::all_memory_sources_registered_controllers());
+    // Memory diff — snapshot-based change tracking for memory sources
+    controllers.extend(crate::openhuman::memory_diff::all_memory_diff_registered_controllers());
     // Link shortener for long tracking URLs — saves LLM tokens
     controllers
         .extend(crate::openhuman::redirect_links::all_redirect_links_registered_controllers());
@@ -284,6 +295,15 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::devices::all_devices_registered_controllers());
     // Durable agent session database — queryable index over transcripts, lineage, tool calls
     controllers.extend(crate::openhuman::session_db::all_session_db_registered_controllers());
+    // Background agent command center — read-only grouped view over the run ledger
+    controllers
+        .extend(crate::openhuman::agent_orchestration::all_command_center_registered_controllers());
+    // Durable dynamic workflow runs — definitions + read surface over the run ledger
+    controllers
+        .extend(crate::openhuman::agent_orchestration::all_workflow_run_registered_controllers());
+    // Durable agent-team coordination — teams, members, dependency-aware task claiming, messaging
+    controllers
+        .extend(crate::openhuman::agent_orchestration::all_agent_team_registered_controllers());
     controllers
 }
 
@@ -318,6 +338,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::mcp_registry::all_mcp_registry_controller_schemas());
     schemas.extend(crate::openhuman::webview_apis::all_webview_apis_controller_schemas());
     schemas.extend(crate::openhuman::agent::all_agent_controller_schemas());
+    schemas.extend(crate::openhuman::profiles::all_profiles_controller_schemas());
     schemas.extend(crate::openhuman::agent_registry::all_agent_registry_controller_schemas());
     schemas.extend(crate::openhuman::agent_experience::all_agent_experience_controller_schemas());
     schemas.extend(crate::openhuman::health::all_health_controller_schemas());
@@ -330,6 +351,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::heartbeat::all_heartbeat_controller_schemas());
     schemas.extend(crate::openhuman::http_host::all_http_host_controller_schemas());
     schemas.extend(crate::openhuman::cost::all_cost_controller_schemas());
+    schemas.extend(crate::openhuman::x402::all_x402_controller_schemas());
     schemas.extend(crate::openhuman::autocomplete::all_autocomplete_controller_schemas());
     schemas
         .extend(crate::openhuman::channels::providers::web::all_web_channel_controller_schemas());
@@ -343,7 +365,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::model_council::all_model_council_controller_schemas());
     schemas.extend(crate::openhuman::monitor::all_monitor_controller_schemas());
     schemas.extend(crate::openhuman::inference::all_inference_controller_schemas());
-    schemas.extend(crate::openhuman::inference::all_local_ai_controller_schemas());
+    schemas.extend(crate::openhuman::inference::all_local_inference_controller_schemas());
     schemas.extend(crate::openhuman::embeddings::all_embeddings_controller_schemas());
     schemas.extend(crate::openhuman::people::all_people_controller_schemas());
     schemas.extend(
@@ -353,6 +375,8 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::socket::all_socket_controller_schemas());
     schemas.extend(crate::openhuman::javascript::all_javascript_controller_schemas());
     schemas.extend(crate::openhuman::workflows::all_workflows_controller_schemas());
+    schemas.extend(crate::openhuman::skill_runtime::all_skill_runtime_controller_schemas());
+    schemas.extend(crate::openhuman::skill_registry::all_skill_registry_controller_schemas());
     schemas.extend(crate::openhuman::workspace::all_workspace_controller_schemas());
     schemas.extend(crate::openhuman::tools::all_tools_controller_schemas());
     schemas.extend(crate::openhuman::tool_registry::all_tool_registry_controller_schemas());
@@ -366,6 +390,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
         crate::openhuman::memory_sync::sync_status::all_memory_sync_status_controller_schemas(),
     );
     schemas.extend(crate::openhuman::memory_sources::all_memory_sources_controller_schemas());
+    schemas.extend(crate::openhuman::memory_diff::all_memory_diff_controller_schemas());
     schemas.extend(crate::openhuman::redirect_links::all_redirect_links_controller_schemas());
     schemas.extend(crate::openhuman::referral::all_referral_controller_schemas());
     schemas.extend(crate::openhuman::billing::all_billing_controller_schemas());
@@ -406,6 +431,12 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::devices::all_devices_controller_schemas());
     // Durable agent session database
     schemas.extend(crate::openhuman::session_db::all_session_db_controller_schemas());
+    // Background agent command center
+    schemas.extend(crate::openhuman::agent_orchestration::all_command_center_controller_schemas());
+    // Durable dynamic workflow runs
+    schemas.extend(crate::openhuman::agent_orchestration::all_workflow_run_controller_schemas());
+    // Durable agent-team coordination
+    schemas.extend(crate::openhuman::agent_orchestration::all_agent_team_controller_schemas());
     schemas
 }
 
@@ -459,13 +490,14 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         "encrypt" => Some("Encrypt secure values managed by secret storage."),
         "health" => Some("Process and component health snapshots."),
         "inference" => Some("Connect to configured text, vision, and embedding inference runtimes."),
-        "local_ai" => Some("Local AI chat, inference, downloads, and media operations."),
         "migrate" => Some("Data migration utilities."),
         "javascript" => Some("First-class JavaScript runtime bridge for listing and dispatching tools."),
         "monitor" => Some("Start, inspect, read, and stop bounded background command monitors."),
         "screen_intelligence" => Some("Screen capture, permissions, and accessibility automation."),
         "security" => Some("Security policy and autonomy guardrail metadata."),
         "service" => Some("Desktop service lifecycle management."),
+        "skill_registry" => Some("Browse, search, install, and uninstall skills from remote registries (OpenHuman, Hermes, OpenClaw)."),
+        "skill_runtime" => Some("Run installed skills, inspect run logs, and resolve Node/Python skill runtimes."),
         "workflows" => Some("Discovered workflows (WORKFLOW.md/SKILL.md bundles) and their resources."),
         "socket" => Some("Backend Socket.IO bridge controls."),
         "memory" => Some("Document storage, vector search, key-value store, and knowledge graph."),
@@ -478,12 +510,24 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         "memory_sources" => Some(
             "User-configured data connectors (Composio, folders, GitHub repos, RSS, web pages) that feed memory.",
         ),
+        "memory_diff" => Some(
+            "Snapshot-based change tracking for memory sources — capture state, compute diffs, and surface changes to agents.",
+        ),
         "redirect_links" => Some(
             "Shorten long tracking URLs to `openhuman://link/<id>` placeholders (SQLite-backed) to save tokens in prompts, with round-trip rewrite helpers.",
         ),
         "referral" => Some("Referral codes, stats, and apply flows via the hosted backend API."),
         "run_ledger" => Some(
             "Durable agent and workflow run state, child lineage, events, telemetry, and checkpoint references.",
+        ),
+        "agent_work" => Some(
+            "Background agent command center — recent agent runs grouped by status (needs-input, working, completed, failed, stopped).",
+        ),
+        "workflow_run" => Some(
+            "Durable dynamic workflow runs — declarative multi-agent definitions and the read surface over persisted runs.",
+        ),
+        "agent_team" => Some(
+            "Durable agent-team coordination: teams, members, dependency-aware task claiming, and teammate messaging.",
         ),
         "billing" => Some("Subscription plan, payment links, and credit top-up via the backend."),
         "team" => Some("Team member management, invites, and role changes via the backend."),
@@ -604,7 +648,111 @@ pub fn validate_params(
         }
     }
 
+    // Type-check each present param against its declared `TypeSchema`, so every
+    // controller gets uniform validation before dispatch rather than relying on
+    // each handler's `serde_json::from_value`. Absent (optional) params are
+    // already handled by the required-presence check above.
+    for input in &schema.inputs {
+        if let Some(value) = params.get(input.name) {
+            check_type(value, &input.ty).map_err(|expected| {
+                format!(
+                    "invalid type for param '{}' in {}.{}: expected {}, got {}",
+                    input.name,
+                    schema.namespace,
+                    schema.function,
+                    expected,
+                    json_type_name(value),
+                )
+            })?;
+        }
+    }
+
     Ok(())
+}
+
+/// A short, human-readable name for the JSON kind of `value`, used in
+/// `validate_params` type-mismatch errors.
+fn json_type_name(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "bool",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
+}
+
+/// Validate a JSON `value` against a declared [`TypeSchema`].
+///
+/// Returns `Ok(())` on a match, or `Err(expected)` where `expected` is a short
+/// description of the type that was required. Unknown/opaque shapes
+/// (`Json`, `Bytes`, `Ref`) accept any value — they are validated by the
+/// handler's typed deserialization.
+fn check_type(value: &Value, ty: &crate::core::TypeSchema) -> Result<(), &'static str> {
+    use crate::core::TypeSchema;
+
+    // JSON-RPC semantics (preserved from the prior presence-only check):
+    // an explicit `null` satisfies validation for any declared type. Required
+    // fields are checked for *presence*, not value; stronger contracts are
+    // enforced by the handler's typed deserialization.
+    if value.is_null() {
+        return Ok(());
+    }
+
+    match ty {
+        // Opaque / handler-validated shapes accept any JSON value.
+        //
+        // Structured types (`Object`/`Map`/`Ref`) are deliberately lenient: a
+        // struct field may have a custom `Deserialize` impl that accepts more
+        // than one JSON shape (e.g. `agent_registry.update`'s `subagents`
+        // accepts both `{ "allowlist": [...] }` and a legacy bare array), and
+        // the declared schema can only describe one of them. Strictly checking
+        // the JSON kind here would reject inputs the handler's `serde_json`
+        // deserialization accepts. We therefore keep pre-dispatch validation to
+        // scalar leaf types (where a type confusion would otherwise reach an
+        // `as_str()/as_u64()`-style accessor) and defer object/map shape
+        // validation to the handler.
+        TypeSchema::Json
+        | TypeSchema::Bytes
+        | TypeSchema::Ref(_)
+        | TypeSchema::Object { .. }
+        | TypeSchema::Map(_) => Ok(()),
+
+        TypeSchema::Bool => value.is_boolean().then_some(()).ok_or("bool"),
+        TypeSchema::String => value.is_string().then_some(()).ok_or("string"),
+        TypeSchema::I64 => value.is_i64().then_some(()).ok_or("integer"),
+        TypeSchema::U64 => value.is_u64().then_some(()).ok_or("unsigned integer"),
+        TypeSchema::F64 => {
+            // Accept any JSON number (ints are valid floats).
+            value.is_number().then_some(()).ok_or("number")
+        }
+
+        // `Option<T>` accepts null or a value matching the inner type.
+        TypeSchema::Option(inner) => {
+            if value.is_null() {
+                Ok(())
+            } else {
+                check_type(value, inner)
+            }
+        }
+
+        TypeSchema::Array(inner) => match value.as_array() {
+            Some(items) => {
+                for item in items {
+                    check_type(item, inner)?;
+                }
+                Ok(())
+            }
+            None => Err("array"),
+        },
+
+        TypeSchema::Enum { variants } => match value.as_str() {
+            Some(s) if variants.contains(&s) => Ok(()),
+            Some(_) => Err("one of the allowed enum variants"),
+            None => Err("string"),
+        },
+    }
 }
 
 /// Attempts to invoke a registered RPC method by name.

@@ -2,7 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
-import { BubbleMarkdown, TableCellMarkdown } from './AgentMessageBubble';
+import { AgentMessageText, BubbleMarkdown, TableCellMarkdown } from './AgentMessageBubble';
 
 const mocks = vi.hoisted(() => ({ openUrl: vi.fn(), openWorkspacePath: vi.fn() }));
 
@@ -114,5 +114,27 @@ describe('BubbleMarkdown math rendering', () => {
     const { container } = render(<BubbleMarkdown content={'total is $10 versus $20'} />);
     expect(container.textContent).toContain('$10');
     expect(container.textContent).toContain('$20');
+  });
+});
+
+describe('AgentMessageText', () => {
+  test('renders openhuman link pills without assistant bubble chrome', () => {
+    render(
+      <AgentMessageText
+        content={'<openhuman-link path="settings/appearance">Appearance</openhuman-link>'}
+      />
+    );
+
+    expect(screen.getByTestId('agent-message-text')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Appearance/ })).toBeInTheDocument();
+  });
+
+  test('uses the dedicated table renderer in plain text mode', () => {
+    render(<AgentMessageText content={'| Name | Value |\n| --- | --- |\n| OpenHuman | 42 |'} />);
+
+    expect(screen.getByTestId('agent-message-text')).toBeInTheDocument();
+    expect(screen.getByRole('table')).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Name' })).toBeInTheDocument();
+    expect(screen.getByRole('cell', { name: 'OpenHuman' })).toBeInTheDocument();
   });
 });

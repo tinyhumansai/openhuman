@@ -14,6 +14,7 @@ vi.mock('../../../lib/i18n/I18nContext', () => ({
     t: (key: string) =>
       ({
         'settings.features.tools': 'Tools',
+        'pages.settings.features.toolsDesc': 'Tools desc',
         'settings.tools.chooseCapabilities': 'Choose capabilities',
         'settings.tools.saveChanges': 'Save Changes',
         'settings.tools.preferencesSaved': 'Preferences saved',
@@ -70,5 +71,31 @@ describe('<ToolsPanel />', () => {
         expect.objectContaining({ enabledTools: [] })
       )
     );
+  });
+
+  it('renders the panel header description when embedded=false (line 110)', () => {
+    // Default embedded=false shows the header description
+    render(<ToolsPanel embedded={false} />);
+    expect(screen.getByText('Tools desc')).toBeInTheDocument();
+  });
+
+  it('does not render the panel header when embedded=true (line 101-108 skipped)', () => {
+    // When embedded, the header description is not rendered
+    render(<ToolsPanel embedded={true} />);
+    expect(screen.queryByText('Tools desc')).not.toBeInTheDocument();
+  });
+
+  it('shows Save Changes button after toggling a tool (dirty state, line 145-155)', async () => {
+    render(<ToolsPanel />);
+
+    const shellToggle = screen.getByRole('switch', { name: /Shell Commands/ });
+    await waitFor(() => expect(shellToggle).toHaveAttribute('aria-checked', 'true'));
+
+    // Before toggle — no Save button
+    expect(screen.queryByRole('button', { name: 'Save Changes' })).not.toBeInTheDocument();
+
+    // After toggle — dirty=true → Save Changes appears (line 145-155)
+    fireEvent.click(shellToggle);
+    expect(screen.getByRole('button', { name: 'Save Changes' })).toBeInTheDocument();
   });
 });

@@ -10,48 +10,26 @@ const BreadcrumbProbe = () => {
   return <div data-testid="breadcrumbs">{breadcrumbs.map(b => b.label).join(' > ')}</div>;
 };
 
-describe('useSettingsNavigation breadcrumbs', () => {
-  test('notification-routing returns Settings > Developer Options', () => {
-    renderWithProviders(<BreadcrumbProbe />, {
-      initialEntries: ['/settings/notification-routing'],
-    });
-    expect(screen.getByTestId('breadcrumbs')).toHaveTextContent('Settings > Developer Options');
-  });
+/**
+ * The two-pane settings restructure retired breadcrumb navigation — the sidebar
+ * replaced the trail, so `breadcrumbs` is now always empty regardless of route.
+ * The field is retained (always []) so the many panel call sites keep compiling.
+ * Route resolution itself is covered in useSettingsNavigation.coverage.test.tsx.
+ */
+describe('useSettingsNavigation breadcrumbs (retired — always empty)', () => {
+  const routes = [
+    '/settings',
+    '/settings/notifications',
+    '/settings/tasks',
+    '/settings/developer-options',
+    '/settings/personality',
+    '/settings/recovery-phrase',
+    '/settings/wallet-balances',
+    '/settings/notification-routing',
+  ];
 
-  test('notifications-hub returns Settings > Developer Options', () => {
-    renderWithProviders(<BreadcrumbProbe />, { initialEntries: ['/settings/notifications-hub'] });
-    expect(screen.getByTestId('breadcrumbs')).toHaveTextContent('Settings > Developer Options');
-  });
-
-  test('notifications panel nests under Settings > Developer Options > Notifications', () => {
-    renderWithProviders(<BreadcrumbProbe />, { initialEntries: ['/settings/notifications'] });
-    expect(screen.getByTestId('breadcrumbs')).toHaveTextContent(
-      'Settings > Developer Options > Notifications'
-    );
-  });
-
-  test('developer-options returns Settings (section page)', () => {
-    renderWithProviders(<BreadcrumbProbe />, { initialEntries: ['/settings/developer-options'] });
-    expect(screen.getByTestId('breadcrumbs')).toHaveTextContent('Settings');
-  });
-
-  test('persona returns Settings (top-level)', () => {
-    renderWithProviders(<BreadcrumbProbe />, { initialEntries: ['/settings/persona'] });
-    expect(screen.getByTestId('breadcrumbs')).toHaveTextContent('Settings');
-  });
-
-  test('crypto returns Settings (section page)', () => {
-    renderWithProviders(<BreadcrumbProbe />, { initialEntries: ['/settings/crypto'] });
-    expect(screen.getByTestId('breadcrumbs')).toHaveTextContent('Settings');
-  });
-
-  test('recovery-phrase returns Settings > Crypto', () => {
-    renderWithProviders(<BreadcrumbProbe />, { initialEntries: ['/settings/recovery-phrase'] });
-    expect(screen.getByTestId('breadcrumbs')).toHaveTextContent('Settings > Crypto');
-  });
-
-  test('wallet-balances returns Settings > Crypto', () => {
-    renderWithProviders(<BreadcrumbProbe />, { initialEntries: ['/settings/wallet-balances'] });
-    expect(screen.getByTestId('breadcrumbs')).toHaveTextContent('Settings > Crypto');
+  test.each(routes)('breadcrumbs are empty for %s', route => {
+    renderWithProviders(<BreadcrumbProbe />, { initialEntries: [route] });
+    expect(screen.getByTestId('breadcrumbs')).toHaveTextContent('');
   });
 });

@@ -637,6 +637,12 @@ pub struct ListChunksQuery {
     pub until_ms: Option<i64>,
     /// Max rows to return (default 100 when `None`).
     pub limit: Option<usize>,
+    /// Per-profile memory-source allowlist. When `Some`, memory-source chunks
+    /// (those tagged `memory_sources`) whose source identifier is not in the set
+    /// are dropped *before* the row limit is applied, so a disallowed-source
+    /// prefix can't starve permitted rows. Non-source chunks always pass. `None`
+    /// = unrestricted (the default for every non-agent caller).
+    pub source_scope: Option<std::collections::HashSet<String>>,
 }
 
 /// List chunks matching the provided filters, ordered by `timestamp` DESC.
@@ -670,19 +676,45 @@ pub fn list_chunks(config: &Config, query: &ListChunksQuery) -> Result<Vec<Chunk
             sql.push_str(" AND timestamp_ms <= ?");
             bound.push(Box::new(until_ms));
         }
-        let limit = normalized_limit(query.limit);
+        let requested_limit = normalized_limit(query.limit);
+        // When a profile source-scope is active, fetch a wider candidate set and
+        // apply the gate in Rust *before* truncating, so a disallowed-source
+        // prefix can't push permitted rows past the requested limit. Otherwise
+        // the SQL LIMIT alone is correct and cheap.
+        let sql_limit = if query.source_scope.is_some() {
+            MAX_LIST_LIMIT as i64
+        } else {
+            requested_limit
+        };
         sql.push_str(" ORDER BY timestamp_ms DESC, seq_in_source ASC LIMIT ?");
-        bound.push(Box::new(limit));
+        bound.push(Box::new(sql_limit));
 
         let mut stmt = conn.prepare(&sql)?;
         let param_refs: Vec<&dyn rusqlite::ToSql> = bound
             .iter()
             .map(|b| b.as_ref() as &dyn rusqlite::ToSql)
             .collect();
-        let rows = stmt
+        let mut rows = stmt
             .query_map(param_refs.as_slice(), row_to_chunk)?
             .collect::<rusqlite::Result<Vec<_>>>()
             .context("Failed to collect chunks")?;
+        if let Some(ref allowed) = query.source_scope {
+            let before = rows.len();
+            rows.retain(|c| {
+                crate::openhuman::memory::source_scope::chunk_source_allowed_in(
+                    allowed,
+                    &c.metadata.tags,
+                    &c.metadata.source_id,
+                )
+            });
+            if rows.len() != before {
+                log::debug!(
+                    "[profiles] list_chunks source-scope filter: {before} -> {} row(s)",
+                    rows.len()
+                );
+            }
+            rows.truncate(requested_limit as usize);
+        }
         Ok(rows)
     })
 }
@@ -831,6 +863,85 @@ pub(crate) fn claim_source_ingest_tx(
         params![source_kind.as_str(), source_id, now_ms],
     )?;
     Ok(inserted > 0)
+}
+
+/// `source_kind` value used in `mem_tree_ingested_sources` to record that a
+/// raw archive file (relative path under `<content_root>/`, e.g.
+/// `raw/github-com-org-repo/commits/<ts>_<sha>.md`) has been covered by a
+/// tree summary. Distinct from the chunk-store [`SourceKind`] values so the
+/// two gate namespaces can never collide.
+pub const RAW_FILE_GATE_KIND: &str = "raw_file";
+
+/// Record that the given raw archive files (relative paths under
+/// `<content_root>/`) are covered by a tree summary. Idempotent
+/// (`INSERT OR IGNORE`); returns the number of newly-recorded paths.
+pub fn mark_raw_paths_ingested(config: &Config, rel_paths: &[String]) -> Result<u64> {
+    if rel_paths.is_empty() {
+        return Ok(0);
+    }
+    let now_ms = Utc::now().timestamp_millis();
+    with_connection(config, |conn| {
+        let tx = conn.unchecked_transaction()?;
+        let mut inserted: u64 = 0;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT OR IGNORE INTO mem_tree_ingested_sources \
+                    (source_kind, source_id, ingested_at_ms) \
+                 VALUES (?1, ?2, ?3)",
+            )?;
+            for path in rel_paths {
+                inserted += stmt.execute(params![RAW_FILE_GATE_KIND, path, now_ms])? as u64;
+            }
+        }
+        tx.commit()?;
+        log::debug!(
+            "[memory::chunk_store] mark_raw_paths_ingested: {} given, {} newly recorded",
+            rel_paths.len(),
+            inserted
+        );
+        Ok(inserted)
+    })
+}
+
+/// Filter `rel_paths` down to the ones NOT yet recorded as ingested raw
+/// files. Order of the surviving paths is preserved.
+pub fn filter_raw_paths_not_ingested(config: &Config, rel_paths: &[String]) -> Result<Vec<String>> {
+    if rel_paths.is_empty() {
+        return Ok(Vec::new());
+    }
+    with_connection(config, |conn| {
+        let mut stmt = conn.prepare(
+            "SELECT COUNT(*) FROM mem_tree_ingested_sources \
+             WHERE source_kind = ?1 AND source_id = ?2",
+        )?;
+        let mut out: Vec<String> = Vec::new();
+        for path in rel_paths {
+            let n: i64 = stmt.query_row(params![RAW_FILE_GATE_KIND, path], |r| r.get(0))?;
+            if n == 0 {
+                out.push(path.clone());
+            }
+        }
+        Ok(out)
+    })
+}
+
+/// Count raw-file gate rows whose path starts with `rel_prefix` (e.g.
+/// `raw/github-com-org-repo/`). Diagnostic helper for reconcile reporting.
+pub fn count_raw_paths_ingested_with_prefix(config: &Config, rel_prefix: &str) -> Result<u64> {
+    with_connection(config, |conn| {
+        // Rust-side prefix filter (not SQL LIKE) so `_` / `%` in slugs are
+        // treated literally — same convention as delete_chunks_by_source_prefix.
+        let mut stmt =
+            conn.prepare("SELECT source_id FROM mem_tree_ingested_sources WHERE source_kind = ?1")?;
+        let rows = stmt.query_map(params![RAW_FILE_GATE_KIND], |r| r.get::<_, String>(0))?;
+        let mut n: u64 = 0;
+        for row in rows {
+            if row?.starts_with(rel_prefix) {
+                n += 1;
+            }
+        }
+        Ok(n)
+    })
 }
 
 /// Delete all chunk rows for one exact `(source_kind, source_id)` and clear
@@ -1042,6 +1153,111 @@ fn delete_chunks_by_source_filter(
     Ok(deleted)
 }
 
+/// Finish off an orphaned **Source** (one with zero chunks remaining): clear its
+/// ingest dedup gates and cascade-delete its source-scoped summary tree.
+///
+/// `delete_chunks_by_source` only cascades the tree for sources whose chunks it
+/// deletes in the same call; a source whose chunks were already removed earlier
+/// (e.g. by the per-chunk `delete_chunk` path) keeps a now-stale summary tree
+/// that can still resurface in recall. This cleans up exactly that **legacy
+/// partial-delete** state.
+///
+/// Specifically, when no chunks remain it:
+/// - removes the ingest dedup gates for the source — both the bare `source_id`
+///   AND any versioned `{source_id}@{version_ms}` gates (matched Rust-side with
+///   exact/prefix comparison, never SQL `LIKE`/`GLOB`, to avoid metachar pitfalls);
+/// - cascades the **source-scoped** tree (scope == `source_id`) if present.
+///
+/// Scoped-collection conservatism: a document ingested under a shared collection
+/// `path_scope` (e.g. Notion `notion:{connection}`) lives in a tree scoped by that
+/// `path_scope`, NOT by this `source_id`, so `get_tree_by_scope(Source,
+/// source_id)` returns `None` and such shared trees are left intact — deleting one
+/// document must never tear down a tree that summarises many documents.
+///
+/// Returns `true` when a source-scoped tree was removed (drives the RPC's
+/// `deleted` flag). No-op-safe to call unconditionally after
+/// `delete_chunks_by_source`.
+pub fn delete_orphaned_source_tree(
+    config: &Config,
+    source_kind: SourceKind,
+    source_id: &str,
+) -> Result<bool> {
+    use crate::openhuman::memory_store::trees::store as tree_store;
+    use crate::openhuman::memory_store::trees::types::TreeKind;
+
+    let mut content_paths: Vec<String> = Vec::new();
+    let tree_cascaded = with_connection(config, |conn| {
+        let tx = conn.unchecked_transaction()?;
+        let remaining: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM mem_tree_chunks WHERE source_kind = ?1 AND source_id = ?2",
+            params![source_kind.as_str(), source_id],
+            |r| r.get(0),
+        )?;
+        if remaining > 0 {
+            // Source still has chunks — not orphaned; leave its live tree + gates.
+            log::debug!(
+                "[memory::chunk_store] delete_orphaned_source_tree: source_id_hash={} still has {remaining} chunk(s) — no-op",
+                redact_value(source_id),
+            );
+            return Ok(false);
+        }
+
+        // Clear ALL ingest dedup gates for this source: the bare source_id and any
+        // versioned `{source_id}@{version_ms}` gates. Filter in Rust (exact or
+        // `source_id@` prefix) so `_`/`%`/glob chars in ids are treated literally.
+        let versioned_prefix = format!("{source_id}@");
+        let gate_ids: Vec<String> = {
+            let mut stmt = tx.prepare(
+                "SELECT source_id FROM mem_tree_ingested_sources WHERE source_kind = ?1",
+            )?;
+            let rows = stmt.query_map(params![source_kind.as_str()], |r| r.get::<_, String>(0))?;
+            rows.filter_map(|row| match row {
+                Ok(s) if s == source_id || s.starts_with(&versioned_prefix) => Some(Ok(s)),
+                Ok(_) => None,
+                Err(e) => Some(Err(e)),
+            })
+            .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        for gid in &gate_ids {
+            tx.execute(
+                "DELETE FROM mem_tree_ingested_sources WHERE source_kind = ?1 AND source_id = ?2",
+                params![source_kind.as_str(), gid],
+            )?;
+        }
+
+        // Cascade the source-scoped orphan tree if one exists. Shared
+        // collection/path_scope trees are not keyed by this source_id (see fn
+        // docs), so they are intentionally left untouched.
+        let cascaded = if let Some(tree) =
+            tree_store::get_tree_by_scope_conn(&tx, TreeKind::Source, source_id)?
+        {
+            let cascade = tree_store::delete_tree_cascade_tx(&tx, &tree.id)?;
+            content_paths.extend(cascade.content_paths);
+            log::debug!(
+                    "[memory::chunk_store] delete_orphaned_source_tree: source_id_hash={} → removed stale tree_id={} summaries={} gates_cleared={}",
+                    redact_value(source_id),
+                    tree.id,
+                    cascade.removed_summaries,
+                    gate_ids.len(),
+                );
+            true
+        } else {
+            log::debug!(
+                    "[memory::chunk_store] delete_orphaned_source_tree: source_id_hash={} has no source-scoped tree (gates_cleared={}); shared/collection trees left intact",
+                    redact_value(source_id),
+                    gate_ids.len(),
+                );
+            false
+        };
+        tx.commit()?;
+        Ok(cascaded)
+    })?;
+    if tree_cascaded {
+        remove_chunk_content_files(config, &content_paths);
+    }
+    Ok(tree_cascaded)
+}
+
 fn remove_chunk_content_files(config: &Config, content_paths: &[String]) {
     use std::path::{Component, Path};
 
@@ -1178,326 +1394,17 @@ pub(crate) use connection::{
 #[cfg(test)]
 pub(crate) use connection::{is_transient_cold_start, try_cleanup_stale_files};
 
-fn migrate_legacy_embeddings_to_sidecar(conn: &Connection, config: &Config) -> Result<()> {
-    let version: i64 = conn
-        .query_row("PRAGMA user_version", [], |r| r.get(0))
-        .context("read PRAGMA user_version for #1574 migration")?;
-    if version >= TREE_EMBEDDING_MIGRATION_VERSION {
-        return Ok(());
-    }
+#[path = "migrations.rs"]
+mod migrations;
+use migrations::{migrate_legacy_embeddings_to_sidecar, purge_global_topic_trees};
 
-    let (provider, model, dims) = crate::openhuman::memory_store::effective_embedding_settings(
-        &config.memory,
-        config.workload_local_model("embeddings").as_deref(),
-    );
-    let sig = crate::openhuman::embeddings::format_embedding_signature(&provider, &model, dims);
-    log::info!(
-        "[memory_tree::migrate] #1574 §7: copying legacy embeddings → sidecar at sig={sig} (dims={dims})"
-    );
-
-    let tx = conn.unchecked_transaction()?;
-    let mut copied_chunks = 0usize;
-    let mut copied_summaries = 0usize;
-    let mut skipped_dim_mismatch = 0usize;
-
-    for (table, is_chunk) in [("mem_tree_chunks", true), ("mem_tree_summaries", false)] {
-        let mut stmt = tx.prepare(&format!(
-            "SELECT id, embedding FROM {table} WHERE embedding IS NOT NULL"
-        ))?;
-        let rows = stmt.query_map([], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?))
-        })?;
-        for row in rows {
-            let (id, blob) = row?;
-            if !blob.len().is_multiple_of(4) {
-                log::warn!(
-                    "[memory_tree::migrate] {table} id={id}: legacy blob len {} not /4, skipping",
-                    blob.len()
-                );
-                continue;
-            }
-            if blob.len() / 4 != dims {
-                // Different embedding space — unrecoverable from the blob.
-                // Leave for the §6 re-embed backfill.
-                skipped_dim_mismatch += 1;
-                continue;
-            }
-            let vec: Vec<f32> = blob
-                .chunks_exact(4)
-                .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-                .collect();
-            if is_chunk {
-                set_chunk_embedding_for_signature_tx(&tx, &id, &sig, &vec)?;
-                copied_chunks += 1;
-            } else {
-                crate::openhuman::memory_store::trees::store::set_summary_embedding_for_signature_tx(
-                    &tx, &id, &sig, &vec,
-                )?;
-                copied_summaries += 1;
-            }
-        }
-    }
-
-    // #1574 §6: enqueue the re-embed backfill ONLY if there is genuinely
-    // uncovered work at the active signature (the dim-mismatch slice, or
-    // content-bearing rows with no vector). Gating this avoids queuing a
-    // no-op job on every DB open — which would otherwise pollute the jobs
-    // table for unrelated callers/tests. Enqueued atomically with the
-    // migration; dedupe key = signature, so exactly one chain per space.
-    let has_uncovered = has_uncovered_reembed_work(&*tx, &sig)?;
-    if has_uncovered {
-        let backfill_job = crate::openhuman::memory_queue::types::NewJob::reembed_backfill(
-            &crate::openhuman::memory_queue::types::ReembedBackfillPayload {
-                signature: sig.clone(),
-            },
-        )?;
-        crate::openhuman::memory_queue::enqueue_tx(&tx, &backfill_job)?;
-    }
-
-    tx.commit()?;
-    conn.pragma_update(None, "user_version", TREE_EMBEDDING_MIGRATION_VERSION)
-        .context("set PRAGMA user_version after #1574 migration")?;
-    if has_uncovered {
-        crate::openhuman::memory_queue::set_backfill_in_progress(true);
-    }
-    log::info!(
-        "[memory_tree::migrate] #1574 §7 done: copied chunks={copied_chunks} summaries={copied_summaries} \
-         skipped_dim_mismatch={skipped_dim_mismatch} (left for §6 re-embed); user_version={TREE_EMBEDDING_MIGRATION_VERSION}"
-    );
-    Ok(())
-}
-
-/// One-shot purge of the removed global + topic trees.
-///
-/// The global (time-axis) and topic (subject-axis) trees were deleted in
-/// favour of the source trees (which hold all content). This migration
-/// removes their now-orphaned DB rows and on-disk summary folders so old
-/// vaults clean themselves up on next open. Version-gated via
-/// `PRAGMA user_version` (see [`GLOBAL_TOPIC_PURGE_MIGRATION_VERSION`]); a
-/// no-op on workspaces that never had those trees.
-fn purge_global_topic_trees(conn: &Connection, config: &Config) -> Result<()> {
-    let version: i64 = conn
-        .query_row("PRAGMA user_version", [], |r| r.get(0))
-        .context("read PRAGMA user_version for global/topic purge")?;
-    if version >= GLOBAL_TOPIC_PURGE_MIGRATION_VERSION {
-        return Ok(());
-    }
-
-    let tx = conn.unchecked_transaction()?;
-    // Child rows first (summary sidecars / skip-lists are keyed by
-    // summary_id; entity-index + buffers carry an FK on tree_id).
-    let removed_summary_sidecars = tx.execute(
-        "DELETE FROM mem_tree_summary_embeddings WHERE summary_id IN \
-         (SELECT id FROM mem_tree_summaries WHERE tree_kind IN ('global','topic'))",
-        [],
-    )?;
-    tx.execute(
-        "DELETE FROM mem_tree_summary_reembed_skipped WHERE summary_id IN \
-         (SELECT id FROM mem_tree_summaries WHERE tree_kind IN ('global','topic'))",
-        [],
-    )?;
-    tx.execute(
-        "DELETE FROM mem_tree_entity_index WHERE tree_id IN \
-         (SELECT id FROM mem_tree_trees WHERE kind IN ('global','topic'))",
-        [],
-    )?;
-    let removed_summaries = tx.execute(
-        "DELETE FROM mem_tree_summaries WHERE tree_kind IN ('global','topic')",
-        [],
-    )?;
-    tx.execute(
-        "DELETE FROM mem_tree_buffers WHERE tree_id IN \
-         (SELECT id FROM mem_tree_trees WHERE kind IN ('global','topic'))",
-        [],
-    )?;
-    let removed_trees = tx.execute(
-        "DELETE FROM mem_tree_trees WHERE kind IN ('global','topic')",
-        [],
-    )?;
-    // Drain any queued jobs for the retired kinds so the worker loop never
-    // trips over a payload it can no longer parse.
-    let removed_jobs = tx.execute(
-        "DELETE FROM mem_tree_jobs WHERE kind IN ('topic_route','digest_daily')",
-        [],
-    )?;
-    tx.commit()?;
-
-    // On-disk: drop the `wiki/summaries/global*` (both the legacy per-day
-    // `global-<date>/` folders and the singleton `global/`) and `topic-*`
-    // summary folders. Best-effort — a filesystem error must not abort the
-    // version bump, or the purge would retry forever.
-    let summaries_root = config
-        .memory_tree_content_root()
-        .join("wiki")
-        .join("summaries");
-    let mut removed_dirs = 0usize;
-    if let Ok(entries) = std::fs::read_dir(&summaries_root) {
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            if name.starts_with("global") || name.starts_with("topic-") {
-                match std::fs::remove_dir_all(entry.path()) {
-                    Ok(()) => removed_dirs += 1,
-                    Err(e) => log::warn!(
-                        "[memory_tree::migrate] purge: failed to remove {} : {e}",
-                        entry.path().display()
-                    ),
-                }
-            }
-        }
-    }
-
-    conn.pragma_update(None, "user_version", GLOBAL_TOPIC_PURGE_MIGRATION_VERSION)
-        .context("set PRAGMA user_version after global/topic purge")?;
-    log::info!(
-        "[memory_tree::migrate] global/topic purge done: trees={removed_trees} \
-         summaries={removed_summaries} sidecars={removed_summary_sidecars} jobs={removed_jobs} \
-         dirs={removed_dirs}; user_version={GLOBAL_TOPIC_PURGE_MIGRATION_VERSION}"
-    );
-    Ok(())
-}
-
-/// One pointer into the raw archive. A chunk's body is reconstructed by
-/// reading each [`RawRef`] in order and joining with `"\n\n"`.
-///
-/// `start` / `end` are byte offsets into the raw `.md` file. `end =
-/// None` means "read to end of file". Both default to "the whole
-/// file" (`start = 0`, `end = None`) for the common one-message-one-chunk
-/// path; oversize-message chunks get explicit ranges so each chunk
-/// reconstructs its sub-slice.
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub struct RawRef {
-    /// Forward-slash relative path under `<content_root>/`,
-    /// e.g. `"raw/gmail-stevent95-at-gmail-dot-com/1700000_msg-id.md"`.
-    pub path: String,
-    #[serde(default)]
-    pub start: usize,
-    #[serde(default)]
-    pub end: Option<usize>,
-}
-
-/// Stash a list of [`RawRef`] entries on a chunk row. Replaces any
-/// previous value. Used by ingest pipelines that mirror their bytes
-/// into `<content_root>/raw/...` so reads can skip the SQL preview
-/// path and pull the full body straight from the archive.
-pub fn set_chunk_raw_refs(config: &Config, chunk_id: &str, refs: &[RawRef]) -> Result<()> {
-    let json = serde_json::to_string(refs).context("serialize raw_refs")?;
-    with_connection(config, |conn| {
-        conn.execute(
-            "UPDATE mem_tree_chunks SET raw_refs_json = ?1 WHERE id = ?2",
-            params![json, chunk_id],
-        )?;
-        Ok(())
-    })
-}
-
-/// Return the raw-archive pointers stored in SQLite for `chunk_id`,
-/// or `None` if no `raw_refs_json` was recorded.
-pub fn get_chunk_raw_refs(config: &Config, chunk_id: &str) -> Result<Option<Vec<RawRef>>> {
-    with_connection(config, |conn| {
-        let row = conn
-            .query_row(
-                "SELECT raw_refs_json FROM mem_tree_chunks WHERE id = ?1",
-                params![chunk_id],
-                |r| r.get::<_, Option<String>>(0),
-            )
-            .optional()?
-            .flatten();
-        match row {
-            Some(json) if !json.is_empty() => {
-                let refs: Vec<RawRef> =
-                    serde_json::from_str(&json).context("deserialize raw_refs_json")?;
-                Ok(Some(refs))
-            }
-            _ => Ok(None),
-        }
-    })
-}
-
-/// Return both `content_path` and `content_sha256` stored in SQLite for `chunk_id`.
-///
-/// Returns `Ok(None)` if the chunk does not exist or has no content_path recorded yet.
-pub fn get_chunk_content_pointers(
-    config: &Config,
-    chunk_id: &str,
-) -> Result<Option<(String, String)>> {
-    with_connection(config, |conn| {
-        let row = conn
-            .query_row(
-                "SELECT content_path, content_sha256 FROM mem_tree_chunks WHERE id = ?1",
-                params![chunk_id],
-                |r| {
-                    let path: Option<String> = r.get(0)?;
-                    let sha: Option<String> = r.get(1)?;
-                    Ok((path, sha))
-                },
-            )
-            .optional()?;
-        Ok(row.and_then(|(p, s)| p.zip(s)))
-    })
-}
-
-/// Return the `content_path` stored in SQLite for `chunk_id`, if any.
-pub fn get_chunk_content_path(config: &Config, chunk_id: &str) -> Result<Option<String>> {
-    with_connection(config, |conn| {
-        let row = conn
-            .query_row(
-                "SELECT content_path FROM mem_tree_chunks WHERE id = ?1",
-                params![chunk_id],
-                |r| r.get::<_, Option<String>>(0),
-            )
-            .optional()?
-            .flatten();
-        Ok(row)
-    })
-}
-
-/// Return both `content_path` and `content_sha256` stored in SQLite for `summary_id`.
-///
-/// Returns `Ok(None)` if the summary does not exist or has no content_path recorded yet
-/// (legacy rows pre-MD-content migration).
-pub fn get_summary_content_pointers(
-    config: &Config,
-    summary_id: &str,
-) -> Result<Option<(String, String)>> {
-    with_connection(config, |conn| {
-        let row = conn
-            .query_row(
-                "SELECT content_path, content_sha256 FROM mem_tree_summaries WHERE id = ?1",
-                params![summary_id],
-                |r| {
-                    let path: Option<String> = r.get(0)?;
-                    let sha: Option<String> = r.get(1)?;
-                    Ok((path, sha))
-                },
-            )
-            .optional()?;
-        Ok(row.and_then(|(p, s)| p.zip(s)))
-    })
-}
-
-/// List all summary rows that have a non-NULL `content_path`. Used by the
-/// bin integrity checker.
-pub fn list_summaries_with_content_path(config: &Config) -> Result<Vec<(String, String, String)>> {
-    with_connection(config, |conn| {
-        let mut stmt = conn.prepare(
-            "SELECT id, content_path, content_sha256
-               FROM mem_tree_summaries
-              WHERE content_path IS NOT NULL AND content_sha256 IS NOT NULL
-                AND deleted = 0",
-        )?;
-        let rows = stmt
-            .query_map([], |r| {
-                let id: String = r.get(0)?;
-                let path: String = r.get(1)?;
-                let sha: String = r.get(2)?;
-                Ok((id, path, sha))
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()
-            .context("Failed to list summaries with content_path")?;
-        Ok(rows)
-    })
-}
+#[path = "raw_refs.rs"]
+mod raw_refs;
+pub use raw_refs::{
+    get_chunk_content_path, get_chunk_content_pointers, get_chunk_raw_refs,
+    get_summary_content_pointers, list_chunk_raw_ref_paths_with_prefix,
+    list_summaries_with_content_path, set_chunk_raw_refs, set_chunk_raw_refs_tx, RawRef,
+};
 
 fn normalized_limit(requested: Option<usize>) -> i64 {
     let clamped = requested

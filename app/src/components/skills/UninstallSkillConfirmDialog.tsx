@@ -3,8 +3,8 @@
  * ---------------------------
  *
  * Small centered confirm modal for destructive uninstall of a user-scope
- * SKILL.md skill. Wraps `skillsApi.uninstallSkill` which calls
- * `openhuman.workflows_uninstall` on the Rust side — that RPC only accepts
+ * SKILL.md skill. Wraps `workflowsApi.uninstallWorkflow` which calls
+ * `openhuman.skill_registry_uninstall` on the Rust side — that RPC only accepts
  * user-scope installs (`~/.openhuman/skills/<name>/`) and refuses project
  * and legacy scopes. The card that opens this dialog is responsible for
  * not surfacing the Uninstall action for non-user-scope entries.
@@ -29,23 +29,23 @@ import debug from 'debug';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import {
-  skillsApi,
-  type SkillSummary,
-  type UninstallSkillResult,
-} from '../../services/api/skillsApi';
+  workflowsApi,
+  type WorkflowSummary,
+  type UninstallWorkflowResult,
+} from '../../services/api/workflowsApi';
 import { trackEvent } from '../../services/analytics';
 
 const log = debug('skills:uninstall-dialog');
 
 interface Props {
-  skill: SkillSummary;
+  skill: WorkflowSummary;
   onClose: () => void;
   /**
    * Fires when the backend reports the uninstall succeeded. Parent is
    * responsible for refetching the skills list and closing any detail
    * panels that were showing this skill.
    */
-  onUninstalled: (result: UninstallSkillResult) => void;
+  onUninstalled: (result: UninstallWorkflowResult) => void;
 }
 
 export default function UninstallSkillConfirmDialog({ skill, onClose, onUninstalled }: Props) {
@@ -82,7 +82,7 @@ export default function UninstallSkillConfirmDialog({ skill, onClose, onUninstal
       // `skill.id` is the on-disk slug (directory under ~/.openhuman/skills/).
       // `skill.name` is the frontmatter display name and may diverge from the
       // slug — the backend resolves by slug, so pass `id`.
-      const result = await skillsApi.uninstallSkill(skill.id);
+      const result = await workflowsApi.uninstallWorkflow(skill.id);
       log('confirm: done removedPath=%s', result.removedPath);
       trackEvent('skill_uninstall', { skill_id: skill.id });
       onUninstalled(result);

@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 
 import {
   bootRuntimeReadyGuestPage,
+  callCoreRpc,
   dismissWalkthroughIfPresent,
   signInViaCallbackToken,
   waitForAppReady,
@@ -15,11 +16,12 @@ async function openSkillsPage(page: Parameters<typeof test>[0]['page'], userId: 
       localStorage.setItem('openhuman:walkthrough_completed', 'true');
       localStorage.removeItem('openhuman:walkthrough_pending');
     } catch {}
-    window.location.hash = '/skills';
+    // /skills redirects to /connections (Phase 2 rename)
+    window.location.hash = '/connections';
   });
   await expect
     .poll(async () => page.evaluate(() => window.location.hash), { timeout: 10_000 })
-    .toContain('/skills');
+    .toContain('/connections');
   await waitForAppReady(page);
   await dismissWalkthroughIfPresent(page);
 }
@@ -30,12 +32,12 @@ test.describe('Skills registry flow', () => {
     await openSkillsPage(page, 'pw-skills-registry-' + testSlug);
   });
 
-  test('navigates to /skills and renders the current tabs', async ({ page }) => {
-    await expect(page.getByRole('tab', { name: 'Composio' })).toBeVisible();
-    await expect(page.getByRole('tab', { name: 'Channels' })).toBeVisible();
-    await expect(page.getByRole('tab', { name: 'MCP Servers' })).toBeVisible();
-    await page.getByRole('tab', { name: 'Composio' }).click();
-    await expect(page.getByRole('heading', { name: 'Composio Integrations' })).toBeVisible();
+  test('navigates to /connections and renders the current tabs', async ({ page }) => {
+    await expect(page.getByTestId('two-pane-nav-composio')).toBeVisible();
+    await expect(page.getByTestId('two-pane-nav-channels')).toBeVisible();
+    await expect(page.getByTestId('two-pane-nav-mcp')).toBeVisible();
+    await page.getByTestId('two-pane-nav-composio').click();
+    await expect(page.getByTestId('composio-integrations-card')).toBeVisible();
     await expect(
       page.getByText(/Gmail|Notion|Telegram|GitHub|Google Drive/, { exact: false }).first()
     ).toBeVisible();
@@ -48,14 +50,101 @@ test.describe('Skills registry flow', () => {
   });
 
   test('channels tab renders messaging connectors', async ({ page }) => {
-    await page.getByRole('tab', { name: 'Channels' }).click();
-    await expect(page.getByRole('heading', { name: 'Channels' })).toBeVisible();
+    await page.getByTestId('two-pane-nav-channels').click();
     await expect(page.getByText(/Telegram|Discord|Slack/).first()).toBeVisible();
   });
 
-  test('mcp tab shows the placeholder panel', async ({ page }) => {
-    await page.getByRole('tab', { name: 'MCP Servers' }).click();
-    await expect(page.getByRole('heading', { name: 'MCP Servers' }).first()).toBeVisible();
-    await expect(page.getByText(/coming soon|early alpha|MCP/i).first()).toBeVisible();
+  test('MCP Servers tab renders the server table', async ({ page }) => {
+    await page.getByTestId('two-pane-nav-mcp').click();
+    await expect(
+      page
+        .getByRole('searchbox')
+        .or(page.getByPlaceholder(/search/i))
+        .first()
+    ).toBeVisible();
+    await expect(page.getByText(/^All$|^Installed$|^Registry$/i).first()).toBeVisible();
+  });
+});
+
+test.describe('Skill registry RPC smoke', () => {
+  test('sources returns upstream source names', async () => {
+    const result = await callCoreRpc<{ sources: string[] }>('openhuman.skill_registry_sources');
+    expect(result.sources).toBeDefined();
+    expect(result.sources.length).toBeGreaterThan(0);
+
+    for (const source of result.sources) {
+      expect(typeof source).toBe('string');
+      expect(source.length).toBeGreaterThan(0);
+    }
+  });
+
+  test('browse returns catalog entries', async () => {
+    test.setTimeout(30_000);
+    const result = await callCoreRpc<{
+      entries: Array<{
+        id: string;
+        name: string;
+        source: string;
+        category: string;
+        download_url: string;
+      }>;
+    }>('openhuman.skill_registry_browse', { force_refresh: true });
+    expect(result.entries).toBeDefined();
+    expect(result.entries.length).toBeGreaterThan(0);
+
+    for (const entry of result.entries.slice(0, 5)) {
+      expect(entry.id).toBeTruthy();
+      expect(entry.name).toBeTruthy();
+      expect(entry.source).toBeTruthy();
+    }
+  });
+
+  test('search filters entries by query', async () => {
+    test.setTimeout(30_000);
+    const result = await callCoreRpc<{
+      entries: Array<{ id: string; name: string; description: string }>;
+    }>('openhuman.skill_registry_search', { query: 'git' });
+    expect(result.entries).toBeDefined();
+    expect(result.entries.length).toBeGreaterThan(0);
+  });
+
+  test('search for docker returns results', async () => {
+    test.setTimeout(30_000);
+    const result = await callCoreRpc<{
+      entries: Array<{ id: string; name: string; description: string; source: string }>;
+    }>('openhuman.skill_registry_search', { query: 'docker' });
+    expect(result.entries).toBeDefined();
+    expect(result.entries.length).toBeGreaterThan(0);
+
+    const hasDockerMatch = result.entries.some(
+      e => e.name.toLowerCase().includes('docker') || e.description.toLowerCase().includes('docker')
+    );
+    expect(hasDockerMatch).toBe(true);
+  });
+
+  test('search with source filter narrows results', async () => {
+    test.setTimeout(30_000);
+    const all = await callCoreRpc<{ entries: Array<{ id: string; source: string }> }>(
+      'openhuman.skill_registry_search',
+      { query: 'git' }
+    );
+
+    const filtered = await callCoreRpc<{ entries: Array<{ id: string; source: string }> }>(
+      'openhuman.skill_registry_search',
+      { query: 'git', source: 'built-in' }
+    );
+
+    expect(filtered.entries.length).toBeLessThanOrEqual(all.entries.length);
+    for (const entry of filtered.entries) {
+      expect(entry.source).toBe('built-in');
+    }
+  });
+
+  test('search with empty query returns all entries', async () => {
+    test.setTimeout(30_000);
+    const all = await callCoreRpc<{ entries: Array<unknown> }>('openhuman.skill_registry_search', {
+      query: '',
+    });
+    expect(all.entries.length).toBeGreaterThan(0);
   });
 });

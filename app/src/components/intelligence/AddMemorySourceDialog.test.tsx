@@ -23,6 +23,7 @@ vi.mock('../../services/memorySourcesService', () => ({
   SOURCE_KIND_ICONS: {
     folder: '📁',
     composio: '🔗',
+    conversation: '💬',
     github_repo: '🐙',
     rss_feed: '📡',
     web_page: '🌐',
@@ -31,6 +32,7 @@ vi.mock('../../services/memorySourcesService', () => ({
   SOURCE_KIND_LABEL_KEYS: {
     folder: 'memorySources.kind.folder',
     composio: 'memorySources.kind.composio',
+    conversation: 'memorySources.kind.conversation',
     github_repo: 'memorySources.kind.github_repo',
     rss_feed: 'memorySources.kind.rss_feed',
     web_page: 'memorySources.kind.web_page',
@@ -199,6 +201,47 @@ describe('deduplicateConnections', () => {
     expect(result).toHaveLength(1);
     // CONNECTED ranks same as ACTIVE — must win over EXPIRED and PENDING
     expect(result[0].conn.id).toBe('connected');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Component tests: Conversation kind
+// ---------------------------------------------------------------------------
+
+describe('AddMemorySourceDialog — Conversation kind', () => {
+  beforeEach(() => {
+    mockListConnections.mockReset();
+    mockGetSupportedToolkits.mockReset();
+    mockGetSupportedToolkits.mockResolvedValue(DEFAULT_SUPPORTED);
+  });
+
+  it('shows no extra fields and submits with just a label', async () => {
+    const { addMemorySource } = await import('../../services/memorySourcesService');
+    const mockAdd = addMemorySource as ReturnType<typeof vi.fn>;
+    mockAdd.mockResolvedValue({
+      id: 'src_conv',
+      kind: 'conversation',
+      label: 'Chats',
+      enabled: true,
+    });
+
+    const { onAdded } = renderDialog();
+
+    const conversationBtn = screen.getByText('Conversation');
+    fireEvent.click(conversationBtn);
+
+    const labelInput = screen.getByPlaceholderText('My research notes');
+    fireEvent.change(labelInput, { target: { value: 'Chats' } });
+
+    const submitBtn = screen.getByRole('button', { name: 'Add' });
+    fireEvent.click(submitBtn);
+
+    await waitFor(() => {
+      expect(mockAdd).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'conversation', label: 'Chats', enabled: true })
+      );
+    });
+    await waitFor(() => expect(onAdded).toHaveBeenCalled());
   });
 });
 

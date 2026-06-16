@@ -11,6 +11,7 @@ fn default_true() -> bool {
 #[serde(rename_all = "snake_case")]
 pub enum SourceKind {
     Composio,
+    Conversation,
     Folder,
     GithubRepo,
     TwitterQuery,
@@ -22,6 +23,7 @@ impl SourceKind {
     pub fn as_str(&self) -> &'static str {
         match self {
             SourceKind::Composio => "composio",
+            SourceKind::Conversation => "conversation",
             SourceKind::Folder => "folder",
             SourceKind::GithubRepo => "github_repo",
             SourceKind::TwitterQuery => "twitter_query",
@@ -114,6 +116,9 @@ impl MemorySourceEntry {
                 require_field(&self.toolkit, "toolkit")?;
                 require_field(&self.connection_id, "connection_id")?;
             }
+            SourceKind::Conversation => {
+                // No kind-specific required fields — just enabled/disabled.
+            }
             SourceKind::Folder => {
                 require_field(&self.path, "path")?;
             }
@@ -177,6 +182,7 @@ mod tests {
     fn source_kind_round_trips_via_serde() {
         for kind in [
             SourceKind::Composio,
+            SourceKind::Conversation,
             SourceKind::Folder,
             SourceKind::GithubRepo,
             SourceKind::TwitterQuery,
@@ -236,6 +242,48 @@ mod tests {
     }
 
     #[test]
+    fn validate_conversation_needs_only_id_and_label() {
+        let entry = MemorySourceEntry {
+            id: "src_conv".into(),
+            kind: SourceKind::Conversation,
+            label: "Agent Conversations".into(),
+            enabled: true,
+            ..default_entry()
+        };
+        assert!(entry.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_conversation_fails_with_empty_id() {
+        let entry = MemorySourceEntry {
+            id: "".into(),
+            kind: SourceKind::Conversation,
+            label: "Convos".into(),
+            enabled: true,
+            ..default_entry()
+        };
+        assert!(entry.validate().is_err());
+    }
+
+    #[test]
+    fn validate_conversation_fails_with_empty_label() {
+        let entry = MemorySourceEntry {
+            id: "src_conv".into(),
+            kind: SourceKind::Conversation,
+            label: "".into(),
+            enabled: true,
+            ..default_entry()
+        };
+        assert!(entry.validate().is_err());
+    }
+
+    #[test]
+    fn conversation_kind_serializes_to_snake_case() {
+        let json = serde_json::to_string(&SourceKind::Conversation).unwrap();
+        assert_eq!(json, "\"conversation\"");
+    }
+
+    #[test]
     fn toml_round_trip() {
         let entry = MemorySourceEntry {
             id: "src_1".into(),
@@ -251,6 +299,23 @@ mod tests {
         assert_eq!(decoded.id, "src_1");
         assert_eq!(decoded.kind, SourceKind::Folder);
         assert_eq!(decoded.path.as_deref(), Some("/tmp/notes"));
+    }
+
+    #[test]
+    fn conversation_toml_round_trip() {
+        let entry = MemorySourceEntry {
+            id: "src_conv".into(),
+            kind: SourceKind::Conversation,
+            label: "Conversations".into(),
+            enabled: true,
+            ..default_entry()
+        };
+        let toml_str = toml::to_string_pretty(&entry).unwrap();
+        let decoded: MemorySourceEntry = toml::from_str(&toml_str).unwrap();
+        assert_eq!(decoded.id, "src_conv");
+        assert_eq!(decoded.kind, SourceKind::Conversation);
+        assert_eq!(decoded.label, "Conversations");
+        assert!(decoded.enabled);
     }
 
     fn default_entry() -> MemorySourceEntry {

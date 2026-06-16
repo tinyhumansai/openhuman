@@ -126,6 +126,10 @@ fn sample_turn() -> TurnContext {
 
 fn stub_parent_context() -> ParentExecutionContext {
     ParentExecutionContext {
+        agent_definition_id: "orchestrator".into(),
+        allowed_subagent_ids: ["test".to_string(), "researcher".to_string()]
+            .into_iter()
+            .collect(),
         provider: Arc::new(StubProvider),
         all_tools: Arc::new(vec![]),
         all_tool_specs: Arc::new(vec![]),
@@ -134,7 +138,7 @@ fn stub_parent_context() -> ParentExecutionContext {
         workspace_dir: std::path::PathBuf::from("/tmp"),
         memory: Arc::new(StubMemory),
         agent_config: AgentConfig::default(),
-        skills: Arc::new(vec![]),
+        workflows: Arc::new(vec![]),
         memory_context: Arc::new(Some("ctx".into())),
         session_id: "test-session".into(),
         channel: "test-channel".into(),

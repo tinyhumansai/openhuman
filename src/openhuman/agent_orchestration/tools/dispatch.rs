@@ -34,7 +34,25 @@ pub(crate) async fn dispatch_subagent(
         }
     };
 
-    let parent_session = current_parent()
+    let parent_ctx = current_parent();
+    if let Some(ctx) = &parent_ctx {
+        if !ctx.allowed_subagent_ids.contains(&definition.id) {
+            log::warn!(
+                "[agent] blocked delegation via {}: parent={} requested={} allowed={:?}",
+                tool_name,
+                ctx.agent_definition_id,
+                definition.id,
+                ctx.allowed_subagent_ids
+            );
+            return Ok(ToolResult::error(format!(
+                "{tool_name}: agent '{}' is not in parent agent '{}' subagents.allowlist",
+                definition.id, ctx.agent_definition_id
+            )));
+        }
+    }
+
+    let parent_session = parent_ctx
+        .as_ref()
         .map(|p| p.session_id.clone())
         .unwrap_or_else(|| "standalone".into());
     let task_id = format!("sub-{}", uuid::Uuid::new_v4());
@@ -90,6 +108,8 @@ pub(crate) async fn dispatch_subagent(
         worker_thread_id: None,
         initial_history: None,
         checkpoint_dir: None,
+        worktree_action_dir: None,
+        run_queue: None,
     };
 
     match run_subagent(definition, prompt, options).await {

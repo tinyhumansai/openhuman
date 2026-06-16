@@ -4,8 +4,7 @@ This directory is intentionally near-empty.
 
 Authoritative docs for AI agents and contributors:
 
-- **[`CLAUDE.md`](../../CLAUDE.md)** — repo layout, runtime scope, commands, frontend/Tauri/Rust conventions, testing, debug logging, feature workflow.
-- **[`AGENTS.md`](../../AGENTS.md)** — RPC controller patterns, `RpcOutcome<T>` contract.
+- **[`AGENTS.md`](../../AGENTS.md)** — all project conventions, commands, architecture, testing, patterns. (`CLAUDE.md` redirects here.)
 - **[`.claude/memory.md`](../memory.md)** — project memory: fixes, gotchas, strict rules, workflow notes.
 - **[`gitbooks/developing/architecture.md`](../../gitbooks/developing/architecture.md)** — narrative architecture, dual-socket sync.
 - **[`gitbooks/developing/architecture/frontend.md`](../../gitbooks/developing/architecture/frontend.md)** — frontend layout.
@@ -18,6 +17,6 @@ Authoritative docs for AI agents and contributors:
 
 ## When to add a file here
 
-Only add a `*.md` file in this directory if you need **path-gated context** loaded conditionally by Claude Code (via the `paths:` frontmatter) for a narrow part of the tree, AND the content is not already covered in `CLAUDE.md`.
+Only add a `*.md` file in this directory if you need **path-gated context** loaded conditionally by Claude Code (via the `paths:` frontmatter) for a narrow part of the tree, AND the content is not already covered in `AGENTS.md`.
 
-Each file added here ships in every agent context that matches its `paths:` glob — so keep them small, current, and non-overlapping with `CLAUDE.md`. Stale rules actively mislead agents.
+Each file added here ships in every agent context that matches its `paths:` glob — so keep them small, current, and non-overlapping with `AGENTS.md`. Stale rules actively mislead agents.

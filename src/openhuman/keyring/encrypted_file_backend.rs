@@ -18,6 +18,7 @@ use parking_lot::Mutex;
 use crate::openhuman::keyring::backend::KeyringBackend;
 use crate::openhuman::keyring::crypto::{self, KEY_LEN};
 use crate::openhuman::keyring::error::KeyringError;
+use crate::openhuman::keyring::store::BackendKind;
 
 const KEYCHAIN_SERVICE: &str = "openhuman";
 const KEYCHAIN_MASTER_KEY_USERNAME: &str = "app:master_key";
@@ -39,11 +40,18 @@ static MASTER_KEY: OnceLock<Option<[u8; KEY_LEN]>> = OnceLock::new();
 pub fn init_master_key() {
     // Ensure workspace dir is set for the backend before anything else.
     let dir = crate::openhuman::keyring::store::workspace_dir_for_file_backend();
+    log::info!(
+        "[keyring] init_master_key: resolved workspace_dir={}",
+        dir.display()
+    );
     crate::openhuman::keyring::init_workspace(&dir);
 
     MASTER_KEY.get_or_init(|| {
-        if !is_staging_or_production() {
-            log::debug!("[keyring:encrypted_file] skipping master key init (dev environment)");
+        let backend_kind = crate::openhuman::keyring::store::effective_backend_kind();
+        if backend_kind != BackendKind::EncryptedFile {
+            log::debug!(
+                "[keyring:encrypted_file] skipping master key init backend={backend_kind:?}"
+            );
             return None;
         }
 
@@ -66,13 +74,6 @@ pub fn init_master_key() {
             }
         }
     });
-}
-
-fn is_staging_or_production() -> bool {
-    matches!(
-        std::env::var("OPENHUMAN_APP_ENV").as_deref(),
-        Ok("staging") | Ok("production")
-    )
 }
 
 /// Returns `true` if the master key has been successfully loaded.

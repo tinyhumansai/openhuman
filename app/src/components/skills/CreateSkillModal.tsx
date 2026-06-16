@@ -20,7 +20,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import { useT } from '../../lib/i18n/I18nContext';
-import { type SkillSummary } from '../../services/api/skillsApi';
+import { type WorkflowSummary } from '../../services/api/workflowsApi';
 import CreateWorkflowForm from './CreateWorkflowForm';
 
 const log = debug('skills:create-modal');
@@ -29,9 +29,9 @@ const CREATE_FORM_ID = 'create-skill-modal-form';
 
 interface Props {
   onClose: () => void;
-  onCreated: (skill: SkillSummary) => void;
+  onCreated: (skill: WorkflowSummary) => void;
   /** When set, the modal edits this workflow instead of creating a new one. */
-  editing?: SkillSummary;
+  editing?: WorkflowSummary;
 }
 
 export default function CreateSkillModal({ onClose, onCreated, editing }: Props) {

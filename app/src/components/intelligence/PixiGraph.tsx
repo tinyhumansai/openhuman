@@ -24,6 +24,8 @@ interface PixiGraphProps {
   /** Called if Pixi fails to initialise at runtime so the parent can
    *  fall back to the SVG renderer. */
   onError?: () => void;
+  /** Fired once the layout settles (graph is ready to reveal). */
+  onReady?: () => void;
 }
 
 export function PixiGraph({
@@ -35,16 +37,19 @@ export function PixiGraph({
   onHover,
   onOpen,
   onError,
+  onReady,
 }: PixiGraphProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const handleRef = useRef<PixiGraphHandle | null>(null);
   const onHoverRef = useRef(onHover);
   const onOpenRef = useRef(onOpen);
   const onErrorRef = useRef(onError);
+  const onReadyRef = useRef(onReady);
   const darkRef = useRef(dark);
   onHoverRef.current = onHover;
   onOpenRef.current = onOpen;
   onErrorRef.current = onError;
+  onReadyRef.current = onReady;
   darkRef.current = dark;
 
   // Mount the renderer once; update in-place when graph data changes.
@@ -72,6 +77,7 @@ export function PixiGraph({
       dark: darkRef.current,
       onHover: n => onHoverRef.current(n),
       onOpen: n => onOpenRef.current(n),
+      onReady: () => onReadyRef.current?.(),
     })
       .then(handle => {
         if (cancelled) {

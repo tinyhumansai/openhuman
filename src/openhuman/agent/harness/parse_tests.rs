@@ -261,6 +261,7 @@ fn structured_tool_call_and_history_helpers_round_trip_expected_shapes() {
         id: "call-1".into(),
         name: "echo".into(),
         arguments: "{\"value\":\"hello\"}".into(),
+        extra_content: None,
     }];
 
     let parsed = parse_structured_tool_calls(&tool_calls);

@@ -18,7 +18,7 @@ use flate2::Compression;
 use openhuman_core::core::all::RegisteredController;
 use openhuman_core::openhuman::config::Config;
 use openhuman_core::openhuman::inference::local::{
-    all_local_ai_registered_controllers, local_ai_transcribe_bytes,
+    all_local_inference_registered_controllers, local_ai_transcribe_bytes,
 };
 use serde_json::{json, Value};
 use tempfile::{tempdir, TempDir};
@@ -107,7 +107,7 @@ async fn piper_controller_installs_skips_existing_and_records_failures_from_mock
     let _piper_bin = EnvVarGuard::unset("PIPER_BIN");
     let _whisper_bin = EnvVarGuard::unset("WHISPER_BIN");
 
-    let controllers = all_local_ai_registered_controllers();
+    let controllers = all_local_inference_registered_controllers();
     let install = controller(&controllers, "install_piper");
     let status = controller(&controllers, "piper_install_status");
 

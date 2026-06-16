@@ -384,7 +384,7 @@ fn prompt_ctx<'a>(
         model_name: "round24-model",
         agent_id: "round24-agent",
         tools,
-        skills: &[],
+        workflows: &[],
         dispatcher_instructions: "",
         learned,
         visible_tool_names: &NO_FILTER,

@@ -69,24 +69,27 @@ describe('Settings - Feature Preferences', () => {
     await stopMockServer();
   });
 
-  it('renders the features settings section route', async () => {
+  it('renders the screen-awareness settings route', async () => {
+    // The combined "Features" hub was retired: screen-awareness, notifications,
+    // and tools are now independent sidebar entries. The legacy /settings/features
+    // slug redirects to /settings/screen-intelligence (see Settings.tsx), which
+    // renders the Screen Awareness panel.
     await navigateViaHash('/settings/features');
 
-    await waitForText('Features', 15_000);
-    // Settings uses t('pages.settings.features.screenAwareness') = 'Screen awareness'
+    // ScreenIntelligencePanel renders SettingsSection title
+    // t('settings.features.screenAwareness') = 'Screen awareness'.
     await waitForText('Screen awareness', 15_000);
-    // Settings uses t('pages.settings.features.messagingChannels') = 'Messaging channels'
-    await waitForText('Messaging channels', 15_000);
-    await waitForText('Notifications', 15_000);
-    await waitForText('Tools', 15_000);
   });
 
   it('persists the default messaging channel through redux state', async () => {
-    // Default Messaging Channel moved from /settings/messaging to /skills (channels tab).
-    await navigateViaHash('/skills?tab=channels');
+    // Phase 2: Default Messaging Channel moved to /connections (Messaging tab).
+    // Old /skills?tab=channels → /connections?tab=messaging.
+    await navigateViaHash('/connections?tab=messaging');
 
     await waitForText('Default Messaging Channel', 15_000);
-    await clickText('Discord', 10_000);
+    // Use the stable channel-select test id — "Discord" text also appears on
+    // connection tiles and help copy, so clickText could hit the wrong node.
+    await clickSelector('[data-testid="channel-select-discord"]', 10_000);
     await browser.waitUntil(async () => (await defaultMessagingChannelFromStore()) === 'discord', {
       timeout: 10_000,
       interval: 500,
@@ -153,10 +156,15 @@ describe('Settings - Feature Preferences', () => {
     expect(await mascotColorChecked('burgundy')).toBe('true');
   });
 
-  it('persists the custom mascot voice override on the voice panel', async () => {
-    await navigateViaHash('/settings/voice');
+  it('persists the custom mascot voice override on the mascot/face panel', async () => {
+    // The mascot voice override moved into the Personality → Face panel
+    // (MascotPanel). The legacy /settings/mascot slug redirects to
+    // /settings/personality#face; /settings/voice now hosts STT/TTS providers.
+    await navigateViaHash('/settings/mascot');
 
-    await waitForText('Mascot Voice', 20_000);
+    await browser
+      .$('[data-testid="mascot-voice-select"]')
+      .waitForExist({ timeout: 20_000, timeoutMsg: 'mascot-voice-select did not render' });
     const selectWorked = await setSelectValueByTestId('mascot-voice-select', '__custom__');
     if (!selectWorked) {
       console.log(
@@ -182,7 +190,15 @@ describe('Settings - Feature Preferences', () => {
       interval: 500,
       timeoutMsg: 'custom mascot voice did not update',
     });
-    await reloadAndReturnTo('/settings/voice', 'Mascot Voice');
+    await browser.execute(() => window.location.reload());
+    await browser.pause(3000);
+    await navigateViaHash('/settings/mascot');
+    await browser
+      .$('[data-testid="mascot-voice-select"]')
+      .waitForExist({
+        timeout: 15_000,
+        timeoutMsg: 'mascot-voice-select did not render after reload',
+      });
 
     await browser.waitUntil(async () => (await mascotVoiceIdFromStore()) === 'voice-e2e-custom', {
       timeout: 15_000,

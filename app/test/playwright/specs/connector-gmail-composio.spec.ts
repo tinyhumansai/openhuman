@@ -66,30 +66,30 @@ async function bootSkillsPage(page: Page, userId: string) {
       localStorage.removeItem('openhuman:walkthrough_pending');
     } catch {}
   });
+  // Phase 2: /skills → /connections
   await page.evaluate(() => {
-    window.location.hash = '/skills';
+    window.location.hash = '/connections';
   });
   await expect
     .poll(async () => page.evaluate(() => window.location.hash), { timeout: 10_000 })
-    .toContain('/skills');
+    .toContain('/connections');
   await waitForAppReady(page);
   await dismissWalkthroughIfPresent(page);
-  await page.getByRole('tab', { name: 'Composio' }).click();
-  const heading = page.getByRole('heading', { name: 'Composio Integrations' });
+  // Navigate to the Composio tab
+  await page.getByTestId('two-pane-nav-composio').click();
+  const heading = page.getByTestId('composio-integrations-card');
   if (!(await heading.isVisible().catch(() => false))) {
     const connectionsButton = page.getByRole('button', { name: 'Connections' });
     if (await connectionsButton.isVisible().catch(() => false)) {
       await connectionsButton.click({ force: true });
       await expect
         .poll(async () => page.evaluate(() => window.location.hash), { timeout: 10_000 })
-        .toContain('/skills');
+        .toContain('/connections');
       await waitForAppReady(page);
       await dismissWalkthroughIfPresent(page);
     }
   }
-  await expect(page.getByRole('heading', { name: 'Composio Integrations' })).toBeVisible({
-    timeout: 20_000,
-  });
+  await expect(page.getByTestId('composio-integrations-card')).toBeVisible({ timeout: 20_000 });
 }
 
 async function reloadSkills(page: Page) {
@@ -97,17 +97,18 @@ async function reloadSkills(page: Page) {
 }
 
 async function ensureComposioSurface(page: Page) {
-  const heading = page.getByRole('heading', { name: 'Composio Integrations' });
+  // Navigate to /connections and click the Composio tab
+  const heading = page.getByTestId('composio-integrations-card');
   for (let attempt = 0; attempt < 3; attempt++) {
     await page.evaluate(() => {
-      window.location.hash = '/skills';
+      window.location.hash = '/connections';
     });
     await expect
       .poll(async () => page.evaluate(() => window.location.hash), { timeout: 10_000 })
-      .toContain('/skills');
+      .toContain('/connections');
     await waitForAppReady(page);
     await dismissWalkthroughIfPresent(page);
-    await page.getByRole('tab', { name: 'Composio' }).click();
+    await page.getByTestId('two-pane-nav-composio').click();
     if (await heading.isVisible().catch(() => false)) {
       return;
     }
@@ -116,17 +117,17 @@ async function ensureComposioSurface(page: Page) {
       await connectionsButton.click({ force: true });
       await waitForAppReady(page);
       await dismissWalkthroughIfPresent(page);
-      await page.getByRole('tab', { name: 'Composio' }).click();
+      await page.getByTestId('two-pane-nav-composio').click();
       if (await heading.isVisible().catch(() => false)) {
         return;
       }
     }
-    await page.waitForTimeout(500);
   }
   await expect(heading).toBeVisible({ timeout: 20_000 });
 }
 
 async function assertSessionNotNuked(page: Page) {
+  // Phase 2: /skills → /connections
   await expect
     .poll(async () =>
       page.evaluate(() => {
@@ -140,13 +141,16 @@ async function assertSessionNotNuked(page: Page) {
         };
         const snapshot = win.__OPENHUMAN_CORE_STATE__?.()?.snapshot;
         return {
-          hash: window.location.hash,
+          // The connections page now appends an active-tab query (e.g.
+          // `#/connections?tab=composio`); strip it so we assert we're still on
+          // the connections route (session not nuked), not the exact sub-tab.
+          hash: window.location.hash.replace(/\?.*$/, ''),
           hasToken: Boolean(snapshot?.sessionToken),
           hasUser: Boolean(snapshot?.currentUser?._id),
         };
       })
     )
-    .toEqual({ hash: '#/skills', hasToken: true, hasUser: true });
+    .toEqual({ hash: '#/connections', hasToken: true, hasUser: true });
 }
 
 async function openModal(page: Page) {

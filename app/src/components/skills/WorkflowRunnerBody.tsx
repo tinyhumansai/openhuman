@@ -11,21 +11,20 @@
 // Used by both the Settings → Developer Options → Skills Runner panel
 // AND the top-level /skills page's "Runners" tab (one source of truth;
 // the Settings panel is now a thin wrapper around this body).
-
 import createDebug from 'debug';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
-import { useT } from '../../lib/i18n/I18nContext';
 import { SCHEDULE_PRESETS } from '../../lib/cron/schedulePresets';
+import { useT } from '../../lib/i18n/I18nContext';
 import {
   type RunLogSlice,
   type ScannedRun,
-  type SkillDescription,
-  type SkillRunStarted,
-  type SkillSummary,
-  skillsApi,
-} from '../../services/api/skillsApi';
+  type WorkflowDescription,
+  type WorkflowRunStarted,
+  workflowsApi,
+  type WorkflowSummary,
+} from '../../services/api/workflowsApi';
 import {
   type CoreCronJob,
   type CoreCronRun,
@@ -38,7 +37,7 @@ import {
 import CreateSkillModal from './CreateSkillModal';
 import BranchPicker from './inputs/BranchPicker';
 import RepoPicker from './inputs/RepoPicker';
-import { isGithubGateFailure, parseSkillRunError } from './preflightGate';
+import { isGithubGateFailure, parseWorkflowRunError } from './preflightGate';
 import ScheduledCronCard from './ScheduledCronCard';
 import SmartIssuePicker from './SmartIssuePicker';
 
@@ -58,13 +57,7 @@ const SMART_PICKER_INPUT_NAMES = new Set(['repo', 'upstream', 'target_branch', '
 // conventional names get the picker for free; nothing in skill.toml
 // needs to change. (We pick a generous overlap that covers both
 // github-issue-crusher and dev-workflow's input naming.)
-const REPO_INPUT_NAMES = new Set([
-  'repo',
-  'repository',
-  'upstream',
-  'fork',
-  'fork_owner',
-]);
+const REPO_INPUT_NAMES = new Set(['repo', 'repository', 'upstream', 'fork', 'fork_owner']);
 const BRANCH_INPUT_NAMES = new Set([
   'branch',
   'target_branch',
@@ -95,9 +88,8 @@ type InputValue = string | number | boolean;
 interface RunState {
   status: 'idle' | 'submitting' | 'started' | 'error';
   message?: string;
-  result?: SkillRunStarted;
+  result?: WorkflowRunStarted;
 }
-
 
 /** Name prefix used to identify cron jobs owned by this panel (per-skill). */
 const CRON_NAME_PREFIX = 'skill-run-';
@@ -109,7 +101,7 @@ const CRON_NAME_PREFIX = 'skill-run-';
 function buildCronJobName(skillId: string, inputs: Record<string, unknown>): string {
   const keys = Object.keys(inputs).sort();
   const compact = keys
-    .map((k) => {
+    .map(k => {
       const v = inputs[k];
       if (v === undefined || v === null || v === '') return '';
       const s = typeof v === 'string' ? v : String(v);
@@ -165,7 +157,7 @@ export function parseScheduledInputs(
 /**
  * Default form value for an input based on its declared type. Strings/
  * integers default to empty (renders as placeholder); booleans to false.
- * `runSkill` later trims and drops empty optional fields before sending
+ * `runWorkflow` later trims and drops empty optional fields before sending
  * them over the wire.
  */
 function defaultForType(type: string): InputValue {
@@ -175,13 +167,13 @@ function defaultForType(type: string): InputValue {
 }
 
 /**
- * Project the form-state map back into the JSON inputs shape `skills_run`
+ * Project the form-state map back into the JSON inputs shape `skill_runtime_run`
  * expects: trim strings, coerce integer-typed fields to numbers, drop
  * empty optional fields entirely (so the backend sees them as "not
  * provided" rather than `""`).
  */
 function buildInputsPayload(
-  description: SkillDescription,
+  description: WorkflowDescription,
   values: Record<string, InputValue>
 ): Record<string, unknown> {
   const out: Record<string, unknown> = {};
@@ -217,6 +209,16 @@ function buildInputsPayload(
   return out;
 }
 
+function inferRuntimeRequirement(skill?: WorkflowSummary): 'node' | 'python' | 'all' | null {
+  const resources = skill?.resources ?? [];
+  const needsNode = resources.some(resource => /\.(?:cjs|js|mjs)$/i.test(resource));
+  const needsPython = resources.some(resource => /\.py$/i.test(resource));
+  if (needsNode && needsPython) return 'all';
+  if (needsNode) return 'node';
+  if (needsPython) return 'python';
+  return null;
+}
+
 // ── Component ──────────────────────────────────────────────────────────
 
 export interface SkillsRunnerBodyProps {
@@ -225,7 +227,7 @@ export interface SkillsRunnerBodyProps {
    * the skill picker. Defaults to the Settings-panel description so
    * the original placement is unchanged. (Named `headerText` rather
    * than `description` to avoid shadowing the internal `description`
-   * state that holds the resolved `SkillDescription` for the picked
+   * state that holds the resolved `WorkflowDescription` for the picked
    * skill.)
    */
   headerText?: string;
@@ -241,7 +243,7 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
   const { t } = useT();
 
   // Skill catalog (loaded once on mount)
-  const [skills, setSkills] = useState<SkillSummary[]>([]);
+  const [skills, setSkills] = useState<WorkflowSummary[]>([]);
   const [skillsLoading, setSkillsLoading] = useState(false);
   const [skillsError, setSkillsError] = useState<string | null>(null);
   // Edit-this-workflow modal (only meaningful when locked to a workflow).
@@ -263,7 +265,7 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
     !!searchParams.get('workflow') &&
     (searchParams.get('lock') === '1' || searchParams.get('focus') === 'schedule');
   const selectedWorkflow = skills.find(s => s.id === selectedSkillId);
-  const [description, setDescription] = useState<SkillDescription | null>(null);
+  const [description, setDescription] = useState<WorkflowDescription | null>(null);
   const [descLoading, setDescLoading] = useState(false);
   const [descError, setDescError] = useState<string | null>(null);
 
@@ -339,7 +341,7 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
   const [recentRunsLoading, setRecentRunsLoading] = useState(false);
   const [recentRunsRefreshNonce, setRecentRunsRefreshNonce] = useState(0);
   // Timers for the post-run refresh burst (cleared on unmount). A just-started
-  // run's log header is written a beat after `workflows_run` returns, so a
+  // run's log header is written a beat after `skill_runtime_run` returns, so a
   // single immediate re-scan can miss it — we bump now and a couple more times.
   const recentRunsTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   useEffect(
@@ -350,10 +352,10 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
     []
   );
   const scheduleRecentRunsRefresh = useCallback(() => {
-    setRecentRunsRefreshNonce((n) => n + 1);
+    setRecentRunsRefreshNonce(n => n + 1);
     recentRunsTimersRef.current.forEach(clearTimeout);
-    recentRunsTimersRef.current = [1500, 4000].map((ms) =>
-      setTimeout(() => setRecentRunsRefreshNonce((n) => n + 1), ms)
+    recentRunsTimersRef.current = [1500, 4000].map(ms =>
+      setTimeout(() => setRecentRunsRefreshNonce(n => n + 1), ms)
     );
   }, []);
   // Guards against a fast double-click spawning two runs. `runSubmitGuardRef`
@@ -391,7 +393,10 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
   // refetching when the user collapses-and-re-expands the same row.
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
   const [viewer, setViewer] = useState<
-    Record<string, { content: string; offset: number; complete: boolean; loading: boolean; error: string | null }>
+    Record<
+      string,
+      { content: string; offset: number; complete: boolean; loading: boolean; error: string | null }
+    >
   >({});
 
   // Mirror of `viewer` into a ref so the tail-poll interval (whose effect
@@ -449,24 +454,24 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
     return () => clearTimeout(timer);
   }, [searchParams, selectedSkillId]);
 
-  // ── Initial load: skills_list ──────────────────────────────────────
+  // ── Initial load: workflows_list ──────────────────────────────────────
   useEffect(() => {
     let cancelled = false;
     setSkillsLoading(true);
     setSkillsError(null);
-    skillsApi
-      .listSkills()
-      .then((list) => {
+    workflowsApi
+      .listWorkflows()
+      .then(list => {
         if (cancelled) return;
         // Hide the codegraph-smoke skill — internal smoke-test only.
-        const filtered = list.filter((s) => s.id !== 'codegraph-smoke');
+        const filtered = list.filter(s => s.id !== 'codegraph-smoke');
         setSkills(filtered);
         log('loaded %d skills', filtered.length);
       })
       .catch((err: unknown) => {
         if (cancelled) return;
         const msg = err instanceof Error ? err.message : String(err);
-        log('listSkills error: %s', msg);
+        log('listWorkflows error: %s', msg);
         setSkillsError(msg);
       })
       .finally(() => {
@@ -477,7 +482,7 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
     };
   }, []);
 
-  // ── On selection: skills_describe ──────────────────────────────────
+  // ── On selection: workflows_describe ──────────────────────────────────
   useEffect(() => {
     if (!selectedSkillId) {
       setDescription(null);
@@ -488,9 +493,9 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
     setDescLoading(true);
     setDescError(null);
     setRun({ status: 'idle' });
-    skillsApi
-      .describeSkill(selectedSkillId)
-      .then((desc) => {
+    workflowsApi
+      .describeWorkflow(selectedSkillId)
+      .then(desc => {
         if (cancelled) return;
         setDescription(desc);
         // Seed form values from each input's default.
@@ -504,7 +509,7 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
       .catch((err: unknown) => {
         if (cancelled) return;
         const msg = err instanceof Error ? err.message : String(err);
-        log('describeSkill error: %s', msg);
+        log('describeWorkflow error: %s', msg);
         setDescError(msg);
       })
       .finally(() => {
@@ -535,24 +540,41 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
   }, [description, formValues]);
 
   // ── Run handler ────────────────────────────────────────────────────
-  // Stop a RUNNING recent-run row via workflows_cancel, then refresh the list
+  // Stop a RUNNING recent-run row via skill_runtime_cancel, then refresh the list
   // so it flips to CANCELLED.
   const handleStopRun = useCallback(async (runId: string) => {
     log('stop run runId=%s', runId);
     try {
-      await skillsApi.cancelRun(runId);
+      await workflowsApi.cancelRun(runId);
     } catch (err) {
       log('cancelRun error: %s', err instanceof Error ? err.message : String(err));
     }
-    setRecentRunsRefreshNonce((n) => n + 1);
+    setRecentRunsRefreshNonce(n => n + 1);
   }, []);
+
+  const ensureRuntimeAvailability = useCallback(async () => {
+    const runtimeRequirement = inferRuntimeRequirement(selectedWorkflow);
+    if (!runtimeRequirement) return;
+
+    const resolved = await workflowsApi.resolveRuntimes(runtimeRequirement);
+    const unavailable = resolved.runtimes.filter(runtime => !runtime.available);
+    if (unavailable.length === 0) return;
+
+    const prefix = t('settings.skillsRunner.error.runtimeUnavailable', 'Runtime unavailable');
+    const defaultReason = t('settings.skillsRunner.error.runtimeUnavailableDefault', 'unavailable');
+    throw new Error(
+      unavailable
+        .map(runtime => `${prefix}: ${runtime.runtime} (${runtime.error ?? defaultReason})`)
+        .join('; ')
+    );
+  }, [selectedWorkflow, t]);
 
   const handleRun = useCallback(async () => {
     if (!description) return;
     // Re-entry guard: a second click before React applies the disabled state
-    // would otherwise fire `workflows_run` twice and spawn two real runs.
+    // would otherwise fire `skill_runtime_run` twice and spawn two real runs.
     if (runSubmitGuardRef.current) {
-      log('runSkill: ignoring re-entrant click while a run is starting');
+      log('runWorkflow: ignoring re-entrant click while a run is starting');
       return;
     }
     if (missingRequired.length > 0) {
@@ -567,8 +589,9 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
     setRun({ status: 'submitting' });
     try {
       const inputs = buildInputsPayload(description, formValues);
-      log('runSkill %s inputs=%o', description.id, inputs);
-      const result = await skillsApi.runSkill(description.id, inputs);
+      log('runWorkflow %s inputs=%o', description.id, inputs);
+      await ensureRuntimeAvailability();
+      const result = await workflowsApi.runWorkflow(description.id, inputs);
       setRun({ status: 'started', result });
       // Surface the new run in "Recent runs" without a manual refresh, and
       // hold the guard through a short cooldown so a second click can't spawn
@@ -577,19 +600,27 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
       releaseRunGuard(2500);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      log('runSkill error: %s', msg);
+      log('runWorkflow error: %s', msg);
       setRun({ status: 'error', message: msg });
       releaseRunGuard(0); // allow immediate retry on failure
     }
-  }, [description, formValues, missingRequired, scheduleRecentRunsRefresh, releaseRunGuard, t]);
+  }, [
+    description,
+    formValues,
+    missingRequired,
+    scheduleRecentRunsRefresh,
+    releaseRunGuard,
+    ensureRuntimeAvailability,
+    t,
+  ]);
 
   // ── Recent runs: load on mount + on skill change + on demand ───────
   useEffect(() => {
     let cancelled = false;
     setRecentRunsLoading(true);
-    skillsApi
+    workflowsApi
       .recentRuns(selectedSkillId || undefined, 10)
-      .then((list) => {
+      .then(list => {
         if (cancelled) return;
         setRecentRuns(list);
       })
@@ -622,7 +653,7 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
       // user can toggle / edit them from the unified runner.
       const isDevWorkflow = selectedSkillId === 'dev-workflow';
       setScheduledJobs(
-        allJobs.filter((j) => {
+        allJobs.filter(j => {
           const n = j.name ?? '';
           if (n.startsWith(wanted)) return true;
           if (isDevWorkflow && n.startsWith('dev-workflow-')) return true;
@@ -645,7 +676,9 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
   const handleSaveSchedule = useCallback(async () => {
     if (!description) return;
     if (missingRequired.length > 0) {
-      setScheduleError(`${t('settings.skillsRunner.error.missingRequired')} ${missingRequired.join(', ')}`);
+      setScheduleError(
+        `${t('settings.skillsRunner.error.missingRequired')} ${missingRequired.join(', ')}`
+      );
       return;
     }
     setSavingSchedule(true);
@@ -691,7 +724,7 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
 
     const fetchSlice = async (fromOffset: number): Promise<void> => {
       try {
-        setViewer((prev) => ({
+        setViewer(prev => ({
           ...prev,
           [runId]: {
             content: prev[runId]?.content ?? '',
@@ -701,9 +734,9 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
             error: null,
           },
         }));
-        const slice: RunLogSlice = await skillsApi.readRunLog(runId, fromOffset);
+        const slice: RunLogSlice = await workflowsApi.readRunLog(runId, fromOffset);
         if (cancelled) return;
-        setViewer((prev) => {
+        setViewer(prev => {
           const prior = prev[runId]?.content ?? '';
           return {
             ...prev,
@@ -720,7 +753,7 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
         if (cancelled) return;
         const msg = err instanceof Error ? err.message : String(err);
         log('readRunLog error: %s', msg);
-        setViewer((prev) => ({
+        setViewer(prev => ({
           ...prev,
           [runId]: {
             content: prev[runId]?.content ?? '',
@@ -757,11 +790,10 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
     // this effect on every viewer update would tear down and re-create the
     // timer on every poll. Equally, depending on `viewer` would cause
     // an infinite re-render loop because setViewer happens inside.
-     
   }, [expandedRunId]);
 
   const toggleExpand = useCallback((runId: string) => {
-    setExpandedRunId((prev) => (prev === runId ? null : runId));
+    setExpandedRunId(prev => (prev === runId ? null : runId));
   }, []);
 
   // ── Schedule-row actions ───────────────────────────────────────────
@@ -780,11 +812,12 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
       setRunBusy(true);
       setScheduleError(null);
       const inputs = Object.fromEntries(
-        parseScheduledInputs(job.prompt).map((i) => [i.key, i.value])
+        parseScheduledInputs(job.prompt).map(i => [i.key, i.value])
       );
       try {
         log('runJobNow: running %s directly with %o', selectedSkillId, inputs);
-        await skillsApi.runSkill(selectedSkillId, inputs);
+        await ensureRuntimeAvailability();
+        await workflowsApi.runWorkflow(selectedSkillId, inputs);
         scheduleRecentRunsRefresh();
         releaseRunGuard(2500);
       } catch (err: unknown) {
@@ -794,7 +827,7 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
         releaseRunGuard(0);
       }
     },
-    [selectedSkillId, scheduleRecentRunsRefresh, releaseRunGuard]
+    [selectedSkillId, scheduleRecentRunsRefresh, releaseRunGuard, ensureRuntimeAvailability]
   );
 
   const handleRemoveJob = useCallback(
@@ -831,7 +864,7 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
   // we get authoritative cron-run records keyed off the specific
   // schedule (status / duration / output stored at tick time).
   const loadJobHistory = useCallback(async (jobId: string) => {
-    setHistoryState((prev) => ({
+    setHistoryState(prev => ({
       ...prev,
       [jobId]: {
         runs: prev[jobId]?.runs ?? [],
@@ -844,7 +877,7 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
       const res = await openhumanCronRuns(jobId, 5);
       const raw = (res as { result?: { runs?: CoreCronRun[] } | CoreCronRun[] }).result;
       const runs = Array.isArray(raw) ? raw : (raw?.runs ?? []);
-      setHistoryState((prev) => ({
+      setHistoryState(prev => ({
         ...prev,
         [jobId]: {
           runs: Array.isArray(runs) ? runs : [],
@@ -856,7 +889,7 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
       log('loaded %d history entries for job %s', Array.isArray(runs) ? runs.length : 0, jobId);
     } catch (err: unknown) {
       log('loadJobHistory error: %s', err instanceof Error ? err.message : String(err));
-      setHistoryState((prev) => ({
+      setHistoryState(prev => ({
         ...prev,
         [jobId]: {
           runs: prev[jobId]?.runs ?? [],
@@ -870,13 +903,10 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
 
   const toggleJobHistory = useCallback(
     (jobId: string) => {
-      setHistoryState((prev) => {
+      setHistoryState(prev => {
         const cur = prev[jobId];
         if (cur?.expanded) {
-          return {
-            ...prev,
-            [jobId]: { ...cur, expanded: false },
-          };
+          return { ...prev, [jobId]: { ...cur, expanded: false } };
         }
         return prev;
       });
@@ -889,15 +919,12 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
   );
 
   const toggleHistoryRun = useCallback((jobId: string, runId: number) => {
-    setHistoryState((prev) => {
+    setHistoryState(prev => {
       const cur = prev[jobId];
       if (!cur) return prev;
       return {
         ...prev,
-        [jobId]: {
-          ...cur,
-          expandedRunId: cur.expandedRunId === runId ? null : runId,
-        },
+        [jobId]: { ...cur, expandedRunId: cur.expandedRunId === runId ? null : runId },
       };
     });
   }, []);
@@ -908,7 +935,7 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
   // instead of a plain text input. Falls through to the type-based
   // string/integer/boolean handling for everything else.
   const renderField = (
-    inp: SkillDescription['inputs'][number],
+    inp: WorkflowDescription['inputs'][number],
     value: InputValue,
     onChange: (next: InputValue) => void
   ) => {
@@ -917,8 +944,7 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
     const commonLabel = (
       <label
         htmlFor={id}
-        className="block text-sm font-medium text-stone-700 dark:text-stone-300 mb-1"
-      >
+        className="block text-sm font-medium text-stone-700 dark:text-stone-300 mb-1">
         {inp.name}
         {requiredMark}
       </label>
@@ -932,11 +958,7 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
       return (
         <div key={inp.name}>
           {commonLabel}
-          <RepoPicker
-            id={id}
-            value={typeof value === 'string' ? value : ''}
-            onChange={onChange}
-          />
+          <RepoPicker id={id} value={typeof value === 'string' ? value : ''} onChange={onChange} />
           {desc}
         </div>
       );
@@ -964,13 +986,12 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
         <div key={inp.name}>
           <label
             htmlFor={id}
-            className="flex items-center gap-2 text-sm font-medium text-stone-700 dark:text-stone-300"
-          >
+            className="flex items-center gap-2 text-sm font-medium text-stone-700 dark:text-stone-300">
             <input
               id={id}
               type="checkbox"
               checked={Boolean(value)}
-              onChange={(e) => onChange(e.target.checked)}
+              onChange={e => onChange(e.target.checked)}
               className="rounded"
             />
             {inp.name}
@@ -990,7 +1011,7 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
             type="number"
             inputMode="numeric"
             value={typeof value === 'number' ? value : (value as string)}
-            onChange={(e) => onChange(e.target.value)}
+            onChange={e => onChange(e.target.value)}
             placeholder={inp.required ? t('settings.skillsRunner.placeholder.required') : ''}
             className="w-full rounded border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-800 px-3 py-2 text-sm text-stone-900 dark:text-stone-100"
           />
@@ -1007,7 +1028,7 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
           id={id}
           type="text"
           value={value as string}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={e => onChange(e.target.value)}
           placeholder={inp.required ? t('settings.skillsRunner.placeholder.required') : ''}
           className="w-full rounded border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-800 px-3 py-2 text-sm text-stone-900 dark:text-stone-100"
         />
@@ -1023,80 +1044,77 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
         {headerText ?? t('settings.developerMenu.skillsRunner.panelDesc')}
       </div>
 
-        {/* Workflow header (locked) / picker (embedded). When the page is
+      {/* Workflow header (locked) / picker (embedded). When the page is
             locked to one workflow, the name is the page heading with Edit
             beside it — not a disabled-looking form field. */}
-        <div>
-          {locked ? (
-            <div className="flex items-center gap-2">
-              <h2
-                data-testid="skills-runner-skill-locked"
-                className="min-w-0 truncate text-lg font-semibold text-stone-900 dark:text-stone-100">
-                {selectedWorkflow?.name || selectedSkillId}
-              </h2>
-            </div>
-          ) : (
-            <>
-              <label
-                htmlFor="skills-runner-skill"
-                className="block text-sm font-medium text-stone-700 dark:text-stone-300 mb-1"
-              >
-                {t('settings.skillsRunner.skill')}
-              </label>
-              <select
-                id="skills-runner-skill"
-                value={selectedSkillId}
-                onChange={(e) => setSelectedSkillId(e.target.value)}
-                disabled={skillsLoading || skillsError !== null}
-                className="w-full rounded border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-800 px-3 py-2 text-sm text-stone-900 dark:text-stone-100"
-              >
-                <option value="">
-                  {skillsLoading
-                    ? t('settings.skillsRunner.loadingSkills')
-                    : t('settings.skillsRunner.selectSkill')}
-                </option>
-                {skills.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name || s.id}
-                  </option>
-                ))}
-              </select>
-            </>
-          )}
-          {skillsError && (
-            <p className="text-xs text-red-600 dark:text-red-400 mt-1">
-              {t('settings.skillsRunner.error.listSkills')} {skillsError}
-            </p>
-          )}
-        </div>
-
-        {/* Description + form */}
-        {selectedSkillId && (
+      <div>
+        {locked ? (
+          <div className="flex items-center gap-2">
+            <h2
+              data-testid="skills-runner-skill-locked"
+              className="min-w-0 truncate text-lg font-semibold text-stone-900 dark:text-stone-100">
+              {selectedWorkflow?.name || selectedSkillId}
+            </h2>
+          </div>
+        ) : (
           <>
-            {descLoading && (
-              <div className="text-sm text-stone-500 dark:text-stone-400">
-                {t('settings.skillsRunner.loadingDescription')}
-              </div>
-            )}
-            {descError && (
-              <div className="text-sm text-red-600 dark:text-red-400">
-                {t('settings.skillsRunner.error.describe')} {descError}
-              </div>
-            )}
-            {description && (
-              <>
-                {/* Description + Inputs + Run + Schedule in one box — read
+            <label
+              htmlFor="skills-runner-skill"
+              className="block text-sm font-medium text-stone-700 dark:text-stone-300 mb-1">
+              {t('settings.skillsRunner.skill')}
+            </label>
+            <select
+              id="skills-runner-skill"
+              value={selectedSkillId}
+              onChange={e => setSelectedSkillId(e.target.value)}
+              disabled={skillsLoading || skillsError !== null}
+              className="w-full rounded border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-800 px-3 py-2 text-sm text-stone-900 dark:text-stone-100">
+              <option value="">
+                {skillsLoading
+                  ? t('settings.skillsRunner.loadingSkills')
+                  : t('settings.skillsRunner.selectSkill')}
+              </option>
+              {skills.map(s => (
+                <option key={s.id} value={s.id}>
+                  {s.name || s.id}
+                </option>
+              ))}
+            </select>
+          </>
+        )}
+        {skillsError && (
+          <p className="text-xs text-red-600 dark:text-red-400 mt-1">
+            {t('settings.skillsRunner.error.listWorkflows')} {skillsError}
+          </p>
+        )}
+      </div>
+
+      {/* Description + form */}
+      {selectedSkillId && (
+        <>
+          {descLoading && (
+            <div className="text-sm text-stone-500 dark:text-stone-400">
+              {t('settings.skillsRunner.loadingDescription')}
+            </div>
+          )}
+          {descError && (
+            <div className="text-sm text-red-600 dark:text-red-400">
+              {t('settings.skillsRunner.error.describe')} {descError}
+            </div>
+          )}
+          {description && (
+            <>
+              {/* Description + Inputs + Run + Schedule in one box — read
                     what it does, fill the inputs once, then either Run now or
                     save a recurring schedule that snapshots them. */}
-                <div
-                  id="workflow-schedule"
-                  className="space-y-4 rounded-2xl border border-stone-200/90 dark:border-stone-700/80 bg-gradient-to-br from-stone-50 via-white to-stone-100 dark:from-stone-900 dark:via-stone-900 dark:to-stone-800/80 px-4 py-4 shadow-soft"
-                >
-                  <div className="rounded border border-stone-200 dark:border-stone-700 bg-white/70 dark:bg-stone-900/60 p-3">
-                    <p className="text-sm text-stone-700 dark:text-stone-300 whitespace-pre-wrap">
-                      {description.when_to_use}
-                    </p>
-                  </div>
+              <div
+                id="workflow-schedule"
+                className="space-y-4 rounded-2xl border border-stone-200/90 dark:border-stone-700/80 bg-gradient-to-br from-stone-50 via-white to-stone-100 dark:from-stone-900 dark:via-stone-900 dark:to-stone-800/80 px-4 py-4 shadow-soft">
+                <div className="rounded border border-stone-200 dark:border-stone-700 bg-white/70 dark:bg-stone-900/60 p-3">
+                  <p className="text-sm text-stone-700 dark:text-stone-300 whitespace-pre-wrap">
+                    {description.when_to_use}
+                  </p>
+                </div>
 
                 {description.inputs.length === 0 ? (
                   <p className="text-sm italic text-stone-500 dark:text-stone-400">
@@ -1122,13 +1140,11 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
                               ? (formValues.fork_owner as string)
                               : '',
                         }}
-                        onPatchInputs={(patch) =>
-                          setFormValues((prev) => ({ ...prev, ...patch }))
-                        }
+                        onPatchInputs={patch => setFormValues(prev => ({ ...prev, ...patch }))}
                       />
                     )}
                     {description.inputs
-                      .filter((inp) => {
+                      .filter(inp => {
                         // When the smart picker is mounted, hide the
                         // inputs it manages — the picker already drives
                         // them via onPatchInputs and the user shouldn't
@@ -1143,11 +1159,9 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
                         }
                         return true;
                       })
-                      .map((inp) =>
-                        renderField(
-                          inp,
-                          formValues[inp.name] ?? defaultForType(inp.type),
-                          (next) => setFormValues((prev) => ({ ...prev, [inp.name]: next }))
+                      .map(inp =>
+                        renderField(inp, formValues[inp.name] ?? defaultForType(inp.type), next =>
+                          setFormValues(prev => ({ ...prev, [inp.name]: next }))
                         )
                       )}
                   </div>
@@ -1159,9 +1173,10 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
                     <button
                       type="button"
                       onClick={() => void handleRun()}
-                      disabled={run.status === 'submitting' || runBusy || missingRequired.length > 0}
-                      className="rounded bg-primary-600 hover:bg-primary-700 disabled:opacity-50 px-4 py-2 text-sm font-medium text-white"
-                    >
+                      disabled={
+                        run.status === 'submitting' || runBusy || missingRequired.length > 0
+                      }
+                      className="rounded bg-primary-600 hover:bg-primary-700 disabled:opacity-50 px-4 py-2 text-sm font-medium text-white">
                       {run.status === 'submitting'
                         ? t('settings.skillsRunner.starting')
                         : t('settings.skillsRunner.runNow')}
@@ -1173,8 +1188,7 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
                           type="button"
                           data-testid="skills-runner-edit"
                           onClick={() => setEditOpen(true)}
-                          className="inline-flex items-center gap-1 rounded border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-800 px-3 py-2 text-sm font-medium text-stone-700 dark:text-stone-200 hover:bg-stone-50 dark:hover:bg-stone-700"
-                        >
+                          className="inline-flex items-center gap-1 rounded border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-800 px-3 py-2 text-sm font-medium text-stone-700 dark:text-stone-200 hover:bg-stone-50 dark:hover:bg-stone-700">
                           <span aria-hidden="true">✎</span> {t('common.edit')}
                         </button>
                       )}
@@ -1186,86 +1200,81 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
                         {t('settings.skillsRunner.started')} {run.result.run_id}
                       </p>
                       <p className="text-xs text-emerald-700 dark:text-emerald-300 mt-1 break-all">
-                        {t('settings.skillsRunner.logPath')}{' '}
-                        <code>{run.result.log}</code>
+                        {t('settings.skillsRunner.logPath')} <code>{run.result.log}</code>
                       </p>
                     </div>
                   )}
-                  {run.status === 'error' && (() => {
-                    // Detect the `[preflight:<gate>:<tag>] <body>` shape
-                    // emitted by spawn_skill_run_background's preflight
-                    // branch (src/openhuman/skills/preflight.rs). When
-                    // matched, surface a dedicated "Preflight gate
-                    // failed" pill above the body so the user knows
-                    // this isn't a generic crash — there's a concrete
-                    // remediation the body describes.
-                    const parsed = parseSkillRunError(run.message);
-                    const isGateFailure = isGithubGateFailure(parsed);
-                    return (
-                      <div
-                        data-testid="skill-run-error"
-                        className="rounded border border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-950 p-3 text-sm"
-                      >
-                        {isGateFailure && (
-                          <div
-                            data-testid="preflight-gate-pill"
-                            className="mb-1.5 inline-flex items-center gap-1 rounded-full bg-amber-100 dark:bg-amber-900 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800 dark:text-amber-200"
-                          >
-                            {t('settings.skillsRunner.error.preflightGate')}
-                            {parsed.tag ? (
-                              <code className="font-mono text-[10px] opacity-80">
-                                {parsed.tag}
-                              </code>
-                            ) : null}
-                          </div>
-                        )}
-                        <p className="text-red-800 dark:text-red-200">
-                          {isGateFailure
-                            ? parsed.body
-                            : `${t('settings.skillsRunner.error.run')} ${run.message ?? ''}`}
-                        </p>
-                      </div>
-                    );
-                  })()}
+                  {run.status === 'error' &&
+                    (() => {
+                      // Detect the `[preflight:<gate>:<tag>] <body>` shape
+                      // emitted by spawn_skill_run_background's preflight
+                      // branch (src/openhuman/skills/preflight.rs). When
+                      // matched, surface a dedicated "Preflight gate
+                      // failed" pill above the body so the user knows
+                      // this isn't a generic crash — there's a concrete
+                      // remediation the body describes.
+                      const parsed = parseWorkflowRunError(run.message);
+                      const isGateFailure = isGithubGateFailure(parsed);
+                      return (
+                        <div
+                          data-testid="skill-run-error"
+                          className="rounded border border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-950 p-3 text-sm">
+                          {isGateFailure && (
+                            <div
+                              data-testid="preflight-gate-pill"
+                              className="mb-1.5 inline-flex items-center gap-1 rounded-full bg-amber-100 dark:bg-amber-900 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800 dark:text-amber-200">
+                              {t('settings.skillsRunner.error.preflightGate')}
+                              {parsed.tag ? (
+                                <code className="font-mono text-[10px] opacity-80">
+                                  {parsed.tag}
+                                </code>
+                              ) : null}
+                            </div>
+                          )}
+                          <p className="text-red-800 dark:text-red-200">
+                            {isGateFailure
+                              ? parsed.body
+                              : `${t('settings.skillsRunner.error.run')} ${run.message ?? ''}`}
+                          </p>
+                        </div>
+                      );
+                    })()}
                 </div>
 
-                  {/* Same inputs, second action: run it on a schedule. */}
-                  <div className="border-t border-stone-200/70 dark:border-stone-700/70 pt-3">
-                    <h3 className="mb-2 text-sm font-semibold text-stone-800 dark:text-stone-200">
-                      {t('settings.skillsRunner.schedule.heading')}
-                    </h3>
-                    <div className="flex flex-col sm:flex-row sm:items-end gap-2">
-                      <div className="flex-1">
-                        <label
-                          htmlFor="skills-runner-schedule"
-                          className="block text-xs font-semibold uppercase tracking-wide text-stone-600 dark:text-stone-300 mb-1.5"
-                        >
-                          {t('settings.skillsRunner.schedule.frequency')}
-                        </label>
-                        <select
-                          id="skills-runner-schedule"
-                          value={schedule}
-                          onChange={(e) => setSchedule(e.target.value)}
-                          className="w-full rounded-xl border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-800 px-3 py-2 text-sm text-stone-900 dark:text-stone-100 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-500/40 focus:border-primary-500"
-                        >
-                          {SCHEDULE_PRESETS.map((p) => (
-                            <option key={p.value} value={p.value}>
-                              {t(p.labelKey)}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => void handleSaveSchedule()}
-                        disabled={savingSchedule || missingRequired.length > 0}
-                        className="rounded-xl border border-primary-700/30 bg-primary-600 hover:bg-primary-700 active:bg-primary-800 disabled:bg-stone-300 disabled:border-stone-300 dark:disabled:bg-stone-700 dark:disabled:border-stone-700 disabled:text-stone-600 dark:disabled:text-stone-300 px-4 py-2 text-sm font-semibold text-white shadow-soft transition-colors"
-                      >
-                        {savingSchedule
-                          ? t('settings.skillsRunner.schedule.saving')
-                          : t('settings.skillsRunner.schedule.save')}
-                      </button>
+                {/* Same inputs, second action: run it on a schedule. */}
+                <div className="border-t border-stone-200/70 dark:border-stone-700/70 pt-3">
+                  <h3 className="mb-2 text-sm font-semibold text-stone-800 dark:text-stone-200">
+                    {t('settings.skillsRunner.schedule.heading')}
+                  </h3>
+                  <div className="flex flex-col sm:flex-row sm:items-end gap-2">
+                    <div className="flex-1">
+                      <label
+                        htmlFor="skills-runner-schedule"
+                        className="block text-xs font-semibold uppercase tracking-wide text-stone-600 dark:text-stone-300 mb-1.5">
+                        {t('settings.skillsRunner.schedule.frequency')}
+                      </label>
+                      <select
+                        id="skills-runner-schedule"
+                        value={schedule}
+                        onChange={e => setSchedule(e.target.value)}
+                        className="w-full rounded-xl border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-800 px-3 py-2 text-sm text-stone-900 dark:text-stone-100 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-500/40 focus:border-primary-500">
+                        {SCHEDULE_PRESETS.map(p => (
+                          <option key={p.value} value={p.value}>
+                            {t(p.labelKey)}
+                          </option>
+                        ))}
+                      </select>
                     </div>
+                    <button
+                      type="button"
+                      onClick={() => void handleSaveSchedule()}
+                      disabled={savingSchedule || missingRequired.length > 0}
+                      className="rounded-xl border border-primary-700/30 bg-primary-600 hover:bg-primary-700 active:bg-primary-800 disabled:bg-stone-300 disabled:border-stone-300 dark:disabled:bg-stone-700 dark:disabled:border-stone-700 disabled:text-stone-600 dark:disabled:text-stone-300 px-4 py-2 text-sm font-semibold text-white shadow-soft transition-colors">
+                      {savingSchedule
+                        ? t('settings.skillsRunner.schedule.saving')
+                        : t('settings.skillsRunner.schedule.save')}
+                    </button>
+                  </div>
 
                   {scheduleSaved && (
                     <p className="mt-2 inline-flex items-center rounded-full border border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-900/40 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:text-emerald-300">
@@ -1277,26 +1286,26 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
                       {t('settings.skillsRunner.schedule.error')} {scheduleError}
                     </p>
                   )}
-                  </div>
                 </div>
+              </div>
 
-                {/* Second box — saved schedules for this workflow. */}
-                <div className="space-y-2 rounded-2xl border border-stone-200/90 dark:border-stone-700/80 bg-white dark:bg-stone-900 px-4 py-4 shadow-soft">
-                  {/* Existing scheduled jobs for this skill */}
-                  {scheduledJobsLoading ? (
-                    <p className="mt-3 text-xs text-stone-500 dark:text-stone-400">
-                      {t('settings.skillsRunner.schedule.loadingJobs')}
-                    </p>
-                  ) : scheduledJobs.length === 0 ? (
-                    <p className="mt-3 text-xs italic text-stone-500 dark:text-stone-400">
-                      {t('settings.skillsRunner.schedule.noJobs')}
-                    </p>
-                  ) : (
-                    <div className="mt-3 space-y-2 rounded-2xl border border-stone-200/80 dark:border-stone-800 bg-stone-50/70 dark:bg-stone-900/40 p-2.5">
-                      <div className="text-xs font-semibold uppercase tracking-wide text-stone-600 dark:text-stone-400 px-1">
-                        {t('settings.skillsRunner.schedule.existing')}
-                      </div>
-                      {/* Per-skill saved-schedule list — uses the shared
+              {/* Second box — saved schedules for this workflow. */}
+              <div className="space-y-2 rounded-2xl border border-stone-200/90 dark:border-stone-700/80 bg-white dark:bg-stone-900 px-4 py-4 shadow-soft">
+                {/* Existing scheduled jobs for this skill */}
+                {scheduledJobsLoading ? (
+                  <p className="mt-3 text-xs text-stone-500 dark:text-stone-400">
+                    {t('settings.skillsRunner.schedule.loadingJobs')}
+                  </p>
+                ) : scheduledJobs.length === 0 ? (
+                  <p className="mt-3 text-xs italic text-stone-500 dark:text-stone-400">
+                    {t('settings.skillsRunner.schedule.noJobs')}
+                  </p>
+                ) : (
+                  <div className="mt-3 space-y-2 rounded-2xl border border-stone-200/80 dark:border-stone-800 bg-stone-50/70 dark:bg-stone-900/40 p-2.5">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-stone-600 dark:text-stone-400 px-1">
+                      {t('settings.skillsRunner.schedule.existing')}
+                    </div>
+                    {/* Per-skill saved-schedule list — uses the shared
                           ScheduledCronCard so the runner and the global
                           /skills dashboard render the same polished card
                           chrome (toggle + cronToHuman + last/next run).
@@ -1307,278 +1316,263 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
                           `scheduled-job-<id>-toggle` (switch); the
                           history pieces below keep their own testids
                           (`history-toggle-<id>`, `history-run-<id>-<runId>`). */}
-                      {sortedScheduledJobs.map((job) => {
-                        const hist = historyState[job.id];
-                        const isActive = job.id === activeJobId;
-                        // Each job's own inputs, recovered from the prompt it
-                        // was created with.
-                        const jobInputs = parseScheduledInputs(job.prompt);
-                        return (
-                          <ScheduledCronCard
-                            key={job.id}
-                            job={job}
-                            title={job.name ?? job.id}
-                            activeBadge={isActive}
-                            onToggle={() => void handleToggleJob(job)}
-                            testIdRoot={`scheduled-job-${job.id}`}
-                            actions={
-                              <>
-                                <button
-                                  type="button"
-                                  disabled={runBusy}
-                                  onClick={() => void handleRunJobNow(job)}
-                                  className="rounded-lg border border-primary-700/30 bg-primary-600 hover:bg-primary-700 active:bg-primary-800 disabled:opacity-50 px-2.5 py-1 text-xs font-semibold text-white transition-colors"
-                                >
-                                  {t('settings.skillsRunner.schedule.runNow')}
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => void handleRemoveJob(job.id)}
-                                  className="rounded-lg border border-red-700/40 bg-red-600 hover:bg-red-700 active:bg-red-800 px-2.5 py-1 text-xs font-semibold text-white transition-colors"
-                                >
-                                  {t('settings.skillsRunner.schedule.remove')}
-                                </button>
-                              </>
-                            }
-                          >
-                            {/* The inputs this schedule was created with —
+                    {sortedScheduledJobs.map(job => {
+                      const hist = historyState[job.id];
+                      const isActive = job.id === activeJobId;
+                      // Each job's own inputs, recovered from the prompt it
+                      // was created with.
+                      const jobInputs = parseScheduledInputs(job.prompt);
+                      return (
+                        <ScheduledCronCard
+                          key={job.id}
+                          job={job}
+                          title={job.name ?? job.id}
+                          activeBadge={isActive}
+                          onToggle={() => void handleToggleJob(job)}
+                          testIdRoot={`scheduled-job-${job.id}`}
+                          actions={
+                            <>
+                              <button
+                                type="button"
+                                disabled={runBusy}
+                                onClick={() => void handleRunJobNow(job)}
+                                className="rounded-lg border border-primary-700/30 bg-primary-600 hover:bg-primary-700 active:bg-primary-800 disabled:opacity-50 px-2.5 py-1 text-xs font-semibold text-white transition-colors">
+                                {t('settings.skillsRunner.schedule.runNow')}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void handleRemoveJob(job.id)}
+                                className="rounded-lg border border-red-700/40 bg-red-600 hover:bg-red-700 active:bg-red-800 px-2.5 py-1 text-xs font-semibold text-white transition-colors">
+                                {t('settings.skillsRunner.schedule.remove')}
+                              </button>
+                            </>
+                          }>
+                          {/* The inputs this schedule was created with —
                                 each job keeps its own snapshot, so the card
                                 shows exactly what this schedule runs with. */}
-                            <div
-                              data-testid={`scheduled-job-${job.id}-inputs`}
-                              className="px-4 pt-2"
-                            >
-                              {jobInputs.length > 0 ? (
-                                <div className="flex flex-wrap items-center gap-1">
-                                  <span className="text-[10px] font-semibold uppercase tracking-wide text-stone-500 dark:text-stone-400">
-                                    {t('settings.skillsRunner.schedule.inputsLabel')}
-                                  </span>
-                                  {jobInputs.map((inp) => (
-                                    <span
-                                      key={inp.key}
-                                      className="rounded bg-stone-100 dark:bg-stone-800 px-1.5 py-0.5 font-mono text-[10px] text-stone-700 dark:text-stone-300"
-                                    >
-                                      {inp.key}: {inp.value}
-                                    </span>
-                                  ))}
-                                </div>
-                              ) : (
-                                <span className="text-[10px] italic text-stone-400 dark:text-stone-500">
-                                  {t('settings.skillsRunner.schedule.inputsNone')}
+                          <div data-testid={`scheduled-job-${job.id}-inputs`} className="px-4 pt-2">
+                            {jobInputs.length > 0 ? (
+                              <div className="flex flex-wrap items-center gap-1">
+                                <span className="text-[10px] font-semibold uppercase tracking-wide text-stone-500 dark:text-stone-400">
+                                  {t('settings.skillsRunner.schedule.inputsLabel')}
                                 </span>
-                              )}
-                            </div>
-                            {/* Per-job run history (lazy on first expand).
+                                {jobInputs.map(inp => (
+                                  <span
+                                    key={inp.key}
+                                    className="rounded bg-stone-100 dark:bg-stone-800 px-1.5 py-0.5 font-mono text-[10px] text-stone-700 dark:text-stone-300">
+                                    {inp.key}: {inp.value}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : (
+                              <span className="text-[10px] italic text-stone-400 dark:text-stone-500">
+                                {t('settings.skillsRunner.schedule.inputsNone')}
+                              </span>
+                            )}
+                          </div>
+                          {/* Per-job run history (lazy on first expand).
                                 Ports DevWorkflowPanel:591-645's pattern:
                                 a disclosure toggle reveals up to 5 runs
                                 each with status badge + duration; click
                                 a run to expand its captured output. */}
-                            <div className="px-4 pb-3 border-t border-stone-100 dark:border-stone-800">
-                              <button
-                                type="button"
-                                onClick={() => toggleJobHistory(job.id)}
-                                aria-expanded={Boolean(hist?.expanded)}
-                                data-testid={`history-toggle-${job.id}`}
-                                className="mt-2 text-[11px] text-stone-600 dark:text-stone-400 hover:underline"
-                              >
-                                {hist?.expanded ? '▾' : '▸'}{' '}
-                                {t('settings.skillsRunner.schedule.history')}
-                                {hist?.runs?.length ? ` (${hist.runs.length})` : ''}
-                              </button>
-                              {hist?.expanded && (
-                                <div className="mt-1.5 space-y-1">
-                                  {hist.loading && hist.runs.length === 0 ? (
-                                    <p className="text-[11px] text-stone-500 dark:text-stone-400">
-                                      {t('settings.skillsRunner.schedule.historyLoading')}
-                                    </p>
-                                  ) : hist.runs.length === 0 ? (
-                                    <p className="text-[11px] italic text-stone-500 dark:text-stone-400">
-                                      {t('settings.skillsRunner.schedule.historyEmpty')}
-                                    </p>
-                                  ) : (
-                                    hist.runs.map((r) => {
-                                      const open = hist.expandedRunId === r.id;
-                                      const okClass =
-                                        r.status === 'ok'
-                                          ? 'bg-sage-100 dark:bg-sage-500/20 text-sage-700 dark:text-sage-300'
-                                          : 'bg-coral-100 dark:bg-coral-500/20 text-coral-700 dark:text-coral-300';
-                                      return (
-                                        <div
-                                          key={r.id}
-                                          className="rounded bg-white dark:bg-stone-800"
-                                        >
-                                          <button
-                                            type="button"
-                                            onClick={() => toggleHistoryRun(job.id, r.id)}
-                                            aria-expanded={open}
-                                            data-testid={`history-run-${job.id}-${r.id}`}
-                                            className="w-full flex items-center justify-between px-2 py-1.5 hover:bg-stone-50 dark:hover:bg-stone-700 rounded"
-                                          >
-                                            <div className="flex items-center gap-2">
-                                              <span className="text-stone-400">
-                                                {open ? '▾' : '▸'}
+                          <div className="px-4 pb-3 border-t border-stone-100 dark:border-stone-800">
+                            <button
+                              type="button"
+                              onClick={() => toggleJobHistory(job.id)}
+                              aria-expanded={Boolean(hist?.expanded)}
+                              data-testid={`history-toggle-${job.id}`}
+                              className="mt-2 text-[11px] text-stone-600 dark:text-stone-400 hover:underline">
+                              {hist?.expanded ? '▾' : '▸'}{' '}
+                              {t('settings.skillsRunner.schedule.history')}
+                              {hist?.runs?.length ? ` (${hist.runs.length})` : ''}
+                            </button>
+                            {hist?.expanded && (
+                              <div className="mt-1.5 space-y-1">
+                                {hist.loading && hist.runs.length === 0 ? (
+                                  <p className="text-[11px] text-stone-500 dark:text-stone-400">
+                                    {t('settings.skillsRunner.schedule.historyLoading')}
+                                  </p>
+                                ) : hist.runs.length === 0 ? (
+                                  <p className="text-[11px] italic text-stone-500 dark:text-stone-400">
+                                    {t('settings.skillsRunner.schedule.historyEmpty')}
+                                  </p>
+                                ) : (
+                                  hist.runs.map(r => {
+                                    const open = hist.expandedRunId === r.id;
+                                    const okClass =
+                                      r.status === 'ok'
+                                        ? 'bg-sage-100 dark:bg-sage-500/20 text-sage-700 dark:text-sage-300'
+                                        : 'bg-coral-100 dark:bg-coral-500/20 text-coral-700 dark:text-coral-300';
+                                    return (
+                                      <div
+                                        key={r.id}
+                                        className="rounded bg-white dark:bg-stone-800">
+                                        <button
+                                          type="button"
+                                          onClick={() => toggleHistoryRun(job.id, r.id)}
+                                          aria-expanded={open}
+                                          data-testid={`history-run-${job.id}-${r.id}`}
+                                          className="w-full flex items-center justify-between px-2 py-1.5 hover:bg-stone-50 dark:hover:bg-stone-700 rounded">
+                                          <div className="flex items-center gap-2">
+                                            <span className="text-stone-400">
+                                              {open ? '▾' : '▸'}
+                                            </span>
+                                            <span className="text-stone-600 dark:text-stone-400">
+                                              {new Date(r.started_at).toLocaleString()}
+                                            </span>
+                                          </div>
+                                          <div className="flex items-center gap-2">
+                                            {r.duration_ms != null && (
+                                              <span className="text-stone-500">
+                                                {(r.duration_ms / 1000).toFixed(1)}s
                                               </span>
-                                              <span className="text-stone-600 dark:text-stone-400">
-                                                {new Date(r.started_at).toLocaleString()}
-                                              </span>
-                                            </div>
-                                            <div className="flex items-center gap-2">
-                                              {r.duration_ms != null && (
-                                                <span className="text-stone-500">
-                                                  {(r.duration_ms / 1000).toFixed(1)}s
-                                                </span>
-                                              )}
-                                              <span
-                                                className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${okClass}`}
-                                              >
-                                                {r.status}
-                                              </span>
-                                            </div>
-                                          </button>
-                                          {open && r.output && (
-                                            <pre className="mx-2 mb-2 px-3 py-2 rounded-md bg-stone-100 dark:bg-stone-900 border border-stone-200 dark:border-stone-700 text-[11px] text-stone-700 dark:text-stone-300 font-mono whitespace-pre-wrap break-words max-h-64 overflow-y-auto">
-                                              {r.output}
-                                            </pre>
-                                          )}
-                                          {open && !r.output && (
-                                            <div className="mx-2 mb-2 px-3 py-2 text-[11px] italic text-stone-400 dark:text-stone-500">
-                                              {t('settings.skillsRunner.schedule.historyNoOutput')}
-                                            </div>
-                                          )}
-                                        </div>
-                                      );
-                                    })
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          </ScheduledCronCard>
-                        );
-                      })}
+                                            )}
+                                            <span
+                                              className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${okClass}`}>
+                                              {r.status}
+                                            </span>
+                                          </div>
+                                        </button>
+                                        {open && r.output && (
+                                          <pre className="mx-2 mb-2 px-3 py-2 rounded-md bg-stone-100 dark:bg-stone-900 border border-stone-200 dark:border-stone-700 text-[11px] text-stone-700 dark:text-stone-300 font-mono whitespace-pre-wrap break-words max-h-64 overflow-y-auto">
+                                            {r.output}
+                                          </pre>
+                                        )}
+                                        {open && !r.output && (
+                                          <div className="mx-2 mb-2 px-3 py-2 text-[11px] italic text-stone-400 dark:text-stone-500">
+                                            {t('settings.skillsRunner.schedule.historyNoOutput')}
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </ScheduledCronCard>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </>
+      )}
+
+      {/* Recent runs (cross-skill if no skill picked; otherwise scoped) */}
+      <div className="pt-4 border-t border-stone-200 dark:border-stone-700 space-y-2">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-stone-700 dark:text-stone-300">
+            {selectedSkillId
+              ? t('settings.skillsRunner.recentRuns.headingForSkill')
+              : t('settings.skillsRunner.recentRuns.headingAll')}
+          </h3>
+          <button
+            type="button"
+            onClick={() => setRecentRunsRefreshNonce(n => n + 1)}
+            className="text-xs text-stone-600 dark:text-stone-400 hover:underline">
+            {t('settings.skillsRunner.recentRuns.refresh')}
+          </button>
+        </div>
+        {recentRunsLoading ? (
+          <p className="text-xs text-stone-500 dark:text-stone-400">
+            {t('settings.skillsRunner.recentRuns.loading')}
+          </p>
+        ) : recentRuns.length === 0 ? (
+          <p className="text-xs italic text-stone-500 dark:text-stone-400">
+            {t('settings.skillsRunner.recentRuns.empty')}
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {recentRuns.map(r => {
+              const badgeClass = (() => {
+                if (r.status === 'RUNNING')
+                  return 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200';
+                if (r.status === 'DONE')
+                  return 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200';
+                if (r.status === 'DEGENERATE')
+                  return 'bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200';
+                return 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200';
+              })();
+              const dur = r.duration_ms !== null ? `${Math.round(r.duration_ms / 1000)}s` : '—';
+              const expanded = expandedRunId === r.run_id;
+              const v = viewer[r.run_id];
+              return (
+                <div
+                  key={r.run_id}
+                  className="rounded border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-900 text-xs overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => toggleExpand(r.run_id)}
+                    className="w-full text-left px-3 py-2 hover:bg-stone-100 dark:hover:bg-stone-800 focus:outline-none focus:bg-stone-100 dark:focus:bg-stone-800"
+                    aria-expanded={expanded}>
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-stone-500 dark:text-stone-400">
+                        {expanded ? '▾' : '▸'}
+                      </span>
+                      <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${badgeClass}`}>
+                        {r.status}
+                      </span>
+                      <span className="font-mono text-stone-700 dark:text-stone-300">
+                        {r.run_id.slice(0, 8)}
+                      </span>
+                      <span className="text-stone-600 dark:text-stone-400">{r.workflow_id}</span>
+                      <span className="text-stone-500 dark:text-stone-400 ml-auto">{dur}</span>
+                    </div>
+                    <div className="text-stone-500 dark:text-stone-400 truncate pl-5">
+                      {r.started}
+                    </div>
+                    <div className="text-stone-400 dark:text-stone-500 font-mono text-[10px] truncate pl-5">
+                      {r.log_path}
+                    </div>
+                  </button>
+
+                  {r.status === 'RUNNING' && (
+                    <div className="px-3 pb-2 pl-8">
+                      <button
+                        type="button"
+                        data-testid={`run-stop-${r.run_id}`}
+                        onClick={() => void handleStopRun(r.run_id)}
+                        className="inline-flex items-center gap-1 rounded border border-coral-300 bg-coral-50 px-2 py-0.5 text-[11px] font-medium text-coral-700 hover:bg-coral-100">
+                        <span aria-hidden="true">◼</span> {t('autocomplete.stop')}
+                      </button>
+                    </div>
+                  )}
+
+                  {expanded && (
+                    <div className="border-t border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-950">
+                      {/* Live indicator while tailing */}
+                      {!v?.complete && (
+                        <div className="px-3 py-1.5 text-[10px] text-stone-500 dark:text-stone-400 border-b border-stone-100 dark:border-stone-800 flex items-center gap-2">
+                          <span className="inline-block h-1.5 w-1.5 rounded-full bg-blue-500 animate-pulse" />
+                          <span>
+                            {t('settings.skillsRunner.viewer.tailing')}
+                            {v?.loading ? ` · ${t('settings.skillsRunner.viewer.fetching')}` : ''}
+                          </span>
+                          <span className="ml-auto text-stone-400 dark:text-stone-500">
+                            {v?.offset ?? 0} B
+                          </span>
+                        </div>
+                      )}
+                      {v?.error && (
+                        <div className="px-3 py-2 text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-950 border-b border-red-100 dark:border-red-900">
+                          {t('settings.skillsRunner.viewer.error')} {v.error}
+                        </div>
+                      )}
+                      <pre className="px-3 py-2 m-0 max-h-96 overflow-auto font-mono text-[11px] leading-snug whitespace-pre-wrap break-words text-stone-800 dark:text-stone-200">
+                        {v?.content ??
+                          (v?.loading ? t('settings.skillsRunner.viewer.loading') : '')}
+                      </pre>
                     </div>
                   )}
                 </div>
-              </>
-            )}
-          </>
-        )}
-
-        {/* Recent runs (cross-skill if no skill picked; otherwise scoped) */}
-        <div className="pt-4 border-t border-stone-200 dark:border-stone-700 space-y-2">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-stone-700 dark:text-stone-300">
-              {selectedSkillId
-                ? t('settings.skillsRunner.recentRuns.headingForSkill')
-                : t('settings.skillsRunner.recentRuns.headingAll')}
-            </h3>
-            <button
-              type="button"
-              onClick={() => setRecentRunsRefreshNonce((n) => n + 1)}
-              className="text-xs text-stone-600 dark:text-stone-400 hover:underline"
-            >
-              {t('settings.skillsRunner.recentRuns.refresh')}
-            </button>
+              );
+            })}
           </div>
-          {recentRunsLoading ? (
-            <p className="text-xs text-stone-500 dark:text-stone-400">
-              {t('settings.skillsRunner.recentRuns.loading')}
-            </p>
-          ) : recentRuns.length === 0 ? (
-            <p className="text-xs italic text-stone-500 dark:text-stone-400">
-              {t('settings.skillsRunner.recentRuns.empty')}
-            </p>
-          ) : (
-            <div className="space-y-2">
-              {recentRuns.map((r) => {
-                const badgeClass = (() => {
-                  if (r.status === 'RUNNING')
-                    return 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200';
-                  if (r.status === 'DONE')
-                    return 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200';
-                  if (r.status === 'DEGENERATE')
-                    return 'bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200';
-                  return 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200';
-                })();
-                const dur = r.duration_ms !== null ? `${Math.round(r.duration_ms / 1000)}s` : '—';
-                const expanded = expandedRunId === r.run_id;
-                const v = viewer[r.run_id];
-                return (
-                  <div
-                    key={r.run_id}
-                    className="rounded border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-900 text-xs overflow-hidden"
-                  >
-                    <button
-                      type="button"
-                      onClick={() => toggleExpand(r.run_id)}
-                      className="w-full text-left px-3 py-2 hover:bg-stone-100 dark:hover:bg-stone-800 focus:outline-none focus:bg-stone-100 dark:focus:bg-stone-800"
-                      aria-expanded={expanded}
-                    >
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="text-stone-500 dark:text-stone-400">
-                          {expanded ? '▾' : '▸'}
-                        </span>
-                        <span
-                          className={`px-1.5 py-0.5 rounded text-xs font-medium ${badgeClass}`}
-                        >
-                          {r.status}
-                        </span>
-                        <span className="font-mono text-stone-700 dark:text-stone-300">
-                          {r.run_id.slice(0, 8)}
-                        </span>
-                        <span className="text-stone-600 dark:text-stone-400">{r.workflow_id}</span>
-                        <span className="text-stone-500 dark:text-stone-400 ml-auto">{dur}</span>
-                      </div>
-                      <div className="text-stone-500 dark:text-stone-400 truncate pl-5">
-                        {r.started}
-                      </div>
-                      <div className="text-stone-400 dark:text-stone-500 font-mono text-[10px] truncate pl-5">
-                        {r.log_path}
-                      </div>
-                    </button>
-
-                    {r.status === 'RUNNING' && (
-                      <div className="px-3 pb-2 pl-8">
-                        <button
-                          type="button"
-                          data-testid={`run-stop-${r.run_id}`}
-                          onClick={() => void handleStopRun(r.run_id)}
-                          className="inline-flex items-center gap-1 rounded border border-coral-300 bg-coral-50 px-2 py-0.5 text-[11px] font-medium text-coral-700 hover:bg-coral-100">
-                          <span aria-hidden="true">◼</span> {t('autocomplete.stop')}
-                        </button>
-                      </div>
-                    )}
-
-                    {expanded && (
-                      <div className="border-t border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-950">
-                        {/* Live indicator while tailing */}
-                        {!v?.complete && (
-                          <div className="px-3 py-1.5 text-[10px] text-stone-500 dark:text-stone-400 border-b border-stone-100 dark:border-stone-800 flex items-center gap-2">
-                            <span className="inline-block h-1.5 w-1.5 rounded-full bg-blue-500 animate-pulse" />
-                            <span>
-                              {t('settings.skillsRunner.viewer.tailing')}
-                              {v?.loading ? ` · ${t('settings.skillsRunner.viewer.fetching')}` : ''}
-                            </span>
-                            <span className="ml-auto text-stone-400 dark:text-stone-500">
-                              {v?.offset ?? 0} B
-                            </span>
-                          </div>
-                        )}
-                        {v?.error && (
-                          <div className="px-3 py-2 text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-950 border-b border-red-100 dark:border-red-900">
-                            {t('settings.skillsRunner.viewer.error')} {v.error}
-                          </div>
-                        )}
-                        <pre className="px-3 py-2 m-0 max-h-96 overflow-auto font-mono text-[11px] leading-snug whitespace-pre-wrap break-words text-stone-800 dark:text-stone-200">
-                          {v?.content ?? (v?.loading ? t('settings.skillsRunner.viewer.loading') : '')}
-                        </pre>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
+        )}
+      </div>
 
       {/* Edit-this-workflow modal (locked view only). Refreshes metadata +
           inputs on save. */}
@@ -1588,12 +1582,12 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
           onClose={() => setEditOpen(false)}
           onCreated={() => {
             setEditOpen(false);
-            void skillsApi
-              .listSkills()
-              .then((list) => setSkills(list.filter((s) => s.id !== 'codegraph-smoke')))
+            void workflowsApi
+              .listWorkflows()
+              .then(list => setSkills(list.filter(s => s.id !== 'codegraph-smoke')))
               .catch(() => {});
-            void skillsApi
-              .describeSkill(selectedSkillId)
+            void workflowsApi
+              .describeWorkflow(selectedSkillId)
               .then(setDescription)
               .catch(() => {});
           }}

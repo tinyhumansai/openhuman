@@ -6,24 +6,16 @@
 //! 1. **Environment** (kept): host/OS/workspace/time anchor.
 //! 2. **Your Identifiers** (#1365): the user's connected-account
 //!    identifiers (Slack/Gmail/Notion handles, emails, user_ids) so the
-//!    reflection LLM can disambiguate body-text mentions — "Cyrus said X"
+//!    LLM can disambiguate body-text mentions — "Cyrus said X"
 //!    is the user iff `Cyrus` (or the email/handle) appears in this list.
 //! 3. **Pending Tasks** (kept): subconscious task list from SQLite.
 //! 4. **Recently-sealed summaries** (new): rows from `mem_tree_summaries`
 //!    grouped by tree.
 //! 5. **Source-tree recap window** (new): recent source summaries since
 //!    `last_tick_at`.
-//! 6. **Recent reflections** (new): the last N reflections from the
-//!    subconscious store, used by the LLM as anti-double-emit context.
-//!
-//! The hotness-deltas and global-L0-digest sections were removed with the
-//! topic/global trees (the entity-hotness signal was a topic-curator
-//! byproduct, and there is no longer a global digest node).
 //!
 //! Sections are appended in priority order; truncation drops the tail
-//! when `token_budget` is exceeded. The legacy unified-store sections
-//! (`MemoryClient::list_documents`, `graph_query`) and the local-skills
-//! placeholder are intentionally dropped.
+//! when `token_budget` is exceeded.
 //!
 //! Each submodule is responsible for one section so churn stays local.
 
@@ -31,10 +23,7 @@ use std::path::Path;
 
 use crate::openhuman::config::Config;
 
-use super::reflection::Reflection;
-
 mod query_window;
-pub(crate) mod reflections;
 mod summaries;
 
 /// Rough chars-per-token estimate for budget enforcement.
@@ -59,15 +48,11 @@ pub struct SituationReport {
 /// `last_tick_at` is 0.0 on cold start (include everything in the
 /// configured windows). `token_budget` caps total output; sections
 /// after the cap are truncated with a marker.
-///
-/// Reflections come from `recent_reflections` so the caller can choose
-/// whatever cursor logic suits them (typically: last 8 by `created_at`).
 pub async fn build_situation_report(
     config: &Config,
     workspace_dir: &Path,
     last_tick_at: f64,
     token_budget: u32,
-    recent_reflections: &[Reflection],
 ) -> SituationReport {
     let char_budget = (token_budget as usize) * CHARS_PER_TOKEN;
     let mut report = String::with_capacity(char_budget.min(64_000));
@@ -79,7 +64,7 @@ pub async fn build_situation_report(
     append_section(&mut report, &mut remaining, &env_section);
 
     // Section 2 (#1365): the user's connected-account identifiers, so
-    // the reflection LLM can disambiguate "Cyrus said X" from body text
+    // the LLM can disambiguate "Cyrus said X" from body text
     // — that's the user iff the identifier list claims it.
     let identifiers_section = build_identifiers_section();
     append_section(&mut report, &mut remaining, &identifiers_section);
@@ -98,10 +83,6 @@ pub async fn build_situation_report(
     let (recap_section, recap_tainted) = query_window::build_section(config, last_tick_at).await;
     append_section(&mut report, &mut remaining, &recap_section);
     has_external_content |= recap_tainted;
-
-    // Section 6: previous reflections (anti-double-emit context).
-    let reflections_section = reflections::build_section(recent_reflections);
-    append_section(&mut report, &mut remaining, &reflections_section);
 
     if report.trim().is_empty() {
         report.push_str("No state changes detected since last tick.\n");
@@ -130,7 +111,7 @@ fn build_environment_section(workspace_dir: &Path) -> String {
 }
 
 /// Render the user's connected-account identifiers (#1365) so the
-/// reflection LLM can correlate body-text mentions back to the user.
+/// LLM can correlate body-text mentions back to the user.
 /// Empty string when no providers are connected — the section just
 /// disappears rather than rendering an empty header.
 fn build_identifiers_section() -> String {
@@ -144,9 +125,6 @@ fn build_identifiers_section() -> String {
     if body.trim().is_empty() {
         return String::new();
     }
-    // The shared renderer emits "## Connected Identities". Rename the
-    // heading for the situation-report context so the LLM knows this is
-    // *the user's* identity surface, not a list of contacts.
     let renamed = body.replacen("## Connected Identities", "## Your Identifiers", 1);
     let mut out = renamed;
     if !out.ends_with('\n') {
@@ -165,14 +143,11 @@ fn build_tasks_section(_workspace_dir: &Path) -> String {
 }
 
 /// Append a section, truncating at a UTF-8 char boundary if it overflows
-/// the remaining budget. Once `remaining` hits zero, subsequent sections
-/// are silently dropped (not even truncated marker added — caller
-/// already noted the cap).
+/// the remaining budget.
 fn append_section(report: &mut String, remaining: &mut usize, section: &str) {
     if *remaining == 0 {
         return;
     }
-    // +1 for the trailing newline we append
     let needed = section.len().saturating_add(1);
     if needed <= *remaining {
         report.push_str(section);
@@ -221,7 +196,6 @@ mod tests {
     #[test]
     fn append_section_truncates_at_char_boundary() {
         let mut report = String::new();
-        // "日本語" is 9 bytes (3 chars × 3 bytes each).
         let mut remaining = 5;
         append_section(&mut report, &mut remaining, "日本語タスク");
         assert!(report.starts_with("日"));

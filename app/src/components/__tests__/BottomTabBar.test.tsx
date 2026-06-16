@@ -1,10 +1,11 @@
 /**
  * Tests for BottomTabBar — verifies that:
- *  - the tab bar renders when the user has a session token and is on a non-hidden path
- *  - the walkthroughAttr mapping (line 222) is exercised by rendering the tabs
- *  - the tab bar is hidden on '/' and '/login' paths
- *
- * [#1123] Covers the walkthroughAttr object added for the Joyride walkthrough.
+ *  - 6 tabs are rendered (no Rewards or Activity tab; Human restored; Chat is a regular tab)
+ *  - Chat tab is present (id 'chat', label 'Chat')
+ *  - Walkthrough attributes reflect the new ids (tab-connections)
+ *  - Avatar menu opens and shows Account / Billing / Rewards / Invites / Wallet
+ *  - Clicking an avatar menu item navigates or opens URL
+ *  - The bar is hidden on '/' and '/login' paths
  */
 import { configureStore } from '@reduxjs/toolkit';
 import { fireEvent, render, screen } from '@testing-library/react';
@@ -13,13 +14,24 @@ import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import accountsReducer from '../../store/accountsSlice';
+import agentProfileReducer, { setAgentProfilesFromResponse } from '../../store/agentProfileSlice';
 import companionReducer from '../../store/companionSlice';
 import notificationReducer from '../../store/notificationSlice';
+import themeReducer, { setTabBarLabels, type TabBarLabels } from '../../store/themeSlice';
 import BottomTabBar from '../BottomTabBar';
 
 // ── Module-level mocks ─────────────────────────────────────────────────────
 
 vi.mock('../../providers/CoreStateProvider', () => ({ useCoreState: vi.fn() }));
+
+const agentProfilesApiMock = vi.hoisted(() => ({
+  list: vi.fn(),
+  select: vi.fn(),
+  upsert: vi.fn(),
+  delete: vi.fn(),
+}));
+
+vi.mock('../../services/api/agentProfilesApi', () => ({ agentProfilesApi: agentProfilesApiMock }));
 
 vi.mock('../../utils/config', async importOriginal => {
   const actual = await importOriginal<typeof import('../../utils/config')>();
@@ -29,11 +41,43 @@ vi.mock('../../utils/config', async importOriginal => {
 vi.mock('../../utils/accountsFullscreen', () => ({ isAccountsFullscreen: vi.fn(() => false) }));
 vi.mock('../../services/analytics', () => ({ trackEvent: vi.fn() }));
 
+// Mock openUrl so tests don't try to open real URLs
+vi.mock('../../utils/openUrl', () => ({ openUrl: vi.fn().mockResolvedValue(undefined) }));
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 interface BuildStoreOpts {
   companionSessionActive?: boolean;
+  tabBarLabels?: TabBarLabels;
 }
+
+const testProfiles = {
+  activeProfileId: 'planner',
+  profiles: [
+    {
+      id: 'default',
+      name: 'Orchestrator',
+      description: 'Default agent',
+      agentId: 'orchestrator',
+      builtIn: true,
+    },
+    {
+      id: 'planner',
+      name: 'Planner',
+      description: 'Plans multi-step work',
+      agentId: 'planner',
+      builtIn: true,
+      avatarUrl: 'https://example.com/planner.png',
+    },
+    {
+      id: 'research',
+      name: 'Research',
+      description: 'Finds and summarizes sources',
+      agentId: 'research',
+      builtIn: true,
+    },
+  ],
+};
 
 function buildStore(opts: BuildStoreOpts = {}) {
   const store = configureStore({
@@ -41,13 +85,19 @@ function buildStore(opts: BuildStoreOpts = {}) {
       accounts: accountsReducer,
       notifications: notificationReducer,
       companion: companionReducer,
+      agentProfiles: agentProfileReducer,
+      theme: themeReducer,
     },
   });
+  store.dispatch(setAgentProfilesFromResponse(testProfiles));
   if (opts.companionSessionActive) {
     store.dispatch({
       type: 'companion/setSessionActive',
       payload: { active: true, sessionId: 'sess-test' },
     });
+  }
+  if (opts.tabBarLabels) {
+    store.dispatch(setTabBarLabels(opts.tabBarLabels));
   }
   return store;
 }
@@ -56,6 +106,8 @@ interface RenderOpts {
   hasToken?: boolean;
   companionSessionActive?: boolean;
   tokenValue?: string;
+  currentUser?: unknown;
+  tabBarLabels?: TabBarLabels;
 }
 
 async function renderBottomTabBar(pathname = '/home', opts: RenderOpts | boolean = {}) {
@@ -68,7 +120,7 @@ async function renderBottomTabBar(pathname = '/home', opts: RenderOpts | boolean
     snapshot: {
       sessionToken: hasToken ? tokenValue : null,
       auth: { isAuthenticated: true, userId: 'u1', user: null, profileId: null },
-      currentUser: null,
+      currentUser: resolved.currentUser ?? null,
       onboardingCompleted: true,
       chatOnboardingCompleted: true,
       analyticsEnabled: false,
@@ -91,7 +143,10 @@ async function renderBottomTabBar(pathname = '/home', opts: RenderOpts | boolean
     refreshSnapshot: vi.fn(),
   } as never);
 
-  const store = buildStore({ companionSessionActive: resolved.companionSessionActive });
+  const store = buildStore({
+    companionSessionActive: resolved.companionSessionActive,
+    tabBarLabels: resolved.tabBarLabels,
+  });
   return render(
     <Provider store={store}>
       <MemoryRouter initialEntries={[pathname]}>
@@ -106,19 +161,90 @@ async function renderBottomTabBar(pathname = '/home', opts: RenderOpts | boolean
 describe('BottomTabBar', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    agentProfilesApiMock.select.mockResolvedValue(testProfiles);
   });
 
-  // [#1123] Covers line 222 — walkthroughAttr object created per-tab inside .map()
-  it('renders navigation tabs with data-walkthrough attributes when session is active', async () => {
+  it('renders exactly 6 regular tab buttons (Chat is a regular tab)', async () => {
     await renderBottomTabBar('/home');
+    const nav = document.querySelector('nav');
+    const navButtons = nav?.querySelectorAll('button:not([aria-haspopup])');
+    expect(navButtons).toHaveLength(6);
+  });
 
-    // The Home tab is always visible and has no walkthrough attr (not in the map)
-    expect(screen.getByRole('button', { name: 'Home' })).toBeInTheDocument();
+  it('gives every labelled tab a fixed width when labels are always visible', async () => {
+    await renderBottomTabBar('/home', { tabBarLabels: 'always' });
+    // With the "always show labels" theme setting, each regular tab is given the
+    // same fixed width (w-32) and its label is shown with a truncating class so
+    // the row stays symmetric — this exercises the `labelsAlwaysVisible` branch.
+    const humanBtn = screen.getByRole('button', { name: 'Human' });
+    expect(humanBtn).toHaveClass('w-32');
+    expect(humanBtn.querySelector('.truncate')).not.toBeNull();
+  });
 
-    // Chat tab has data-walkthrough="tab-chat" (from walkthroughAttr map)
+  it('renders the Chat tab with data-walkthrough="tab-chat"', async () => {
+    await renderBottomTabBar('/home');
     const chatBtn = screen.getByRole('button', { name: 'Chat' });
     expect(chatBtn).toBeInTheDocument();
     expect(chatBtn).toHaveAttribute('data-walkthrough', 'tab-chat');
+  });
+
+  it('navigates to /chat and tracks the change when the Chat tab is clicked', async () => {
+    const { trackEvent } = await import('../../services/analytics');
+    await renderBottomTabBar('/home');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Chat' }));
+
+    expect(trackEvent).toHaveBeenCalledWith('tab_bar_change', {
+      from_tab: 'home',
+      to_tab: 'chat',
+      from_path: '/home',
+      to_path: '/chat',
+    });
+  });
+
+  it('does NOT render a Rewards tab', async () => {
+    await renderBottomTabBar('/home');
+    expect(screen.queryByRole('button', { name: 'Rewards' })).toBeNull();
+  });
+
+  it('renders the Human tab (restored as a first-class entry)', async () => {
+    await renderBottomTabBar('/home');
+    const humanBtn = screen.getByRole('button', { name: 'Human' });
+    expect(humanBtn).toBeInTheDocument();
+    expect(humanBtn).toHaveAttribute('data-walkthrough', 'tab-human');
+  });
+
+  it('navigates to /human and tracks the change when the Human tab is clicked', async () => {
+    const { trackEvent } = await import('../../services/analytics');
+    await renderBottomTabBar('/home');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Human' }));
+
+    expect(trackEvent).toHaveBeenCalledWith('tab_bar_change', {
+      from_tab: 'home',
+      to_tab: 'human',
+      from_path: '/home',
+      to_path: '/human',
+    });
+  });
+
+  it('does NOT render an Activity tab', async () => {
+    await renderBottomTabBar('/home');
+    expect(screen.queryByRole('button', { name: 'Activity' })).toBeNull();
+  });
+
+  it('renders the Brain tab in the regular row with data-walkthrough="tab-brain"', async () => {
+    await renderBottomTabBar('/home');
+    const brainBtn = screen.getByRole('button', { name: 'Brain' });
+    expect(brainBtn).toBeInTheDocument();
+    expect(brainBtn).toHaveAttribute('data-walkthrough', 'tab-brain');
+  });
+
+  it('renders the Connections tab with data-walkthrough="tab-connections"', async () => {
+    await renderBottomTabBar('/home');
+    const connectionsBtn = screen.getByRole('button', { name: 'Connections' });
+    expect(connectionsBtn).toBeInTheDocument();
+    expect(connectionsBtn).toHaveAttribute('data-walkthrough', 'tab-connections');
   });
 
   it('renders Settings tab with data-walkthrough="tab-settings"', async () => {
@@ -130,11 +256,6 @@ describe('BottomTabBar', () => {
   it('returns null when there is no session token', async () => {
     const { container } = await renderBottomTabBar('/home', { hasToken: false });
     expect(container.firstChild).toBeNull();
-  });
-
-  it('still shows the Rewards tab for local sessions', async () => {
-    await renderBottomTabBar('/home', { tokenValue: 'header.payload.local' });
-    expect(screen.getByRole('button', { name: 'Rewards' })).toBeInTheDocument();
   });
 
   it('renders the pulsing companion dot on the Settings tab when a session is active', async () => {
@@ -160,17 +281,17 @@ describe('BottomTabBar', () => {
     expect(shell?.querySelector('nav')).toHaveClass('pointer-events-auto');
   });
 
-  it('tracks tab changes when a different tab is clicked', async () => {
+  it('tracks tab changes when a different (regular row) tab is clicked', async () => {
     const { trackEvent } = await import('../../services/analytics');
     await renderBottomTabBar('/home');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Chat' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Brain' }));
 
     expect(trackEvent).toHaveBeenCalledWith('tab_bar_change', {
       from_tab: 'home',
-      to_tab: 'chat',
+      to_tab: 'brain',
       from_path: '/home',
-      to_path: '/chat',
+      to_path: '/brain',
     });
   });
 
@@ -181,5 +302,66 @@ describe('BottomTabBar', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Home' }));
 
     expect(trackEvent).not.toHaveBeenCalled();
+  });
+
+  it('renders the avatar button with the signed-in user initials', async () => {
+    await renderBottomTabBar('/home', { currentUser: { firstName: 'Ada', lastName: 'Lovelace' } });
+
+    const avatar = screen.getByRole('button', { name: 'Account' });
+    expect(avatar).toHaveTextContent('AL');
+  });
+
+  it('falls back to a generic initial when no user is present', async () => {
+    await renderBottomTabBar('/home', { currentUser: null });
+
+    expect(screen.getByRole('button', { name: 'Account' })).toHaveTextContent('U');
+  });
+
+  it('avatar menu shows Account, Billing, Rewards, Invites, and Wallet items', async () => {
+    await renderBottomTabBar('/home');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Account' }));
+
+    const menu = screen.getByRole('menu', { name: 'Account' });
+    const menuItems = menu.querySelectorAll('[role="menuitem"]');
+    const labels = Array.from(menuItems).map(el => el.textContent?.trim());
+    expect(labels).toContain('Account');
+    expect(labels).toContain('Billing');
+    expect(labels).toContain('Rewards');
+    expect(labels).toContain('Invite a friend');
+    expect(labels).toContain('Wallet');
+  });
+
+  it('clicking Account in avatar menu closes the menu', async () => {
+    await renderBottomTabBar('/home');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Account' }));
+    expect(screen.getByRole('menu', { name: 'Account' })).toBeInTheDocument();
+
+    const accountItem = screen.getByRole('menuitem', { name: 'Account' });
+    fireEvent.click(accountItem);
+
+    // Menu should close after click
+    expect(screen.queryByRole('menu', { name: 'Account' })).toBeNull();
+  });
+
+  it('avatar menu does not show cloud-only items for local session', async () => {
+    // A local session token contains the literal string 'local'
+    await renderBottomTabBar('/home', { tokenValue: 'header.payload.local' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Account' }));
+
+    const menu = screen.getByRole('menu', { name: 'Account' });
+    const menuItems = menu.querySelectorAll('[role="menuitem"]');
+    const labels = Array.from(menuItems).map(el => el.textContent?.trim());
+
+    // Account and Wallet are always shown
+    expect(labels).toContain('Account');
+    expect(labels).toContain('Wallet');
+
+    // Cloud-only items should not appear for local sessions
+    expect(labels).not.toContain('Billing');
+    expect(labels).not.toContain('Rewards');
+    expect(labels).not.toContain('Invite a friend');
   });
 });

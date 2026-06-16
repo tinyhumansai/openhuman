@@ -158,8 +158,12 @@ export const BUILTIN_CLOUD_PROVIDERS: BuiltinCloudProvider[] = [
   {
     slug: 'minimax',
     label: 'MiniMax',
-    endpoint: 'https://api.minimax.io/anthropic',
-    authStyle: 'anthropic',
+    // OpenAI-compatible surface (`/v1/chat/completions`, `/v1/models`). The
+    // prior `/anthropic` base + anthropic auth hit MiniMax's Messages API,
+    // which OpenHuman doesn't speak — both chat and model-listing 404'd
+    // (Sentry TAURI-RUST-8X3). Keep in sync with the Rust catalog.
+    endpoint: 'https://api.minimax.io/v1',
+    authStyle: 'bearer',
     tone: TONE.rose,
   },
   {
@@ -213,6 +217,13 @@ export const BUILTIN_CLOUD_PROVIDERS: BuiltinCloudProvider[] = [
     keyPlaceholder: 'sk-...',
   },
 ];
+
+// NOTE: Claude Code CLI is intentionally NOT a builtin chip. It is a
+// CLI-backed peer provider surfaced via a dedicated "Sign in with Claude
+// Code" connect action in AIPanel (mirroring the Codex connect button), not
+// a key-based HTTP provider in the chip grid. Its slug is reserved in
+// AIPanel's BUILTIN_RESERVED_SLUGS, and its endpoint/auth-style are handled
+// by the `claude-code` cases in `defaultEndpointFor` / `authStyleForSlug`.
 
 export const BUILTIN_CLOUD_PROVIDER_SLUGS = BUILTIN_CLOUD_PROVIDERS.map(provider => provider.slug);
 

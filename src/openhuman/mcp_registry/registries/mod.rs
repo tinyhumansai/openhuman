@@ -1,5 +1,7 @@
-//! Upstream MCP registries. Today: Smithery.ai and the official
-//! [modelcontextprotocol/registry](https://github.com/modelcontextprotocol/registry).
+//! Upstream MCP registries.
+//!
+//! Primary: the official [modelcontextprotocol.io registry](https://registry.modelcontextprotocol.io/docs).
+//! Fallback: Smithery.ai (legacy, kept for servers not yet listed on the official registry).
 //!
 //! All registries implement the [`Registry`] trait and return results in the
 //! canonical [`super::types::SmitheryServerSummary`] /
@@ -9,8 +11,8 @@
 //! field so the frontend can render provenance).
 //!
 //! [`enabled_registries`] returns every registry that should participate in a
-//! query. Today both registries are always enabled; this will become
-//! config-driven once the wider scope lands.
+//! query. The official registry is listed first so its results appear at the
+//! top of merged search results and its `get` resolves first.
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -54,11 +56,13 @@ pub trait Registry: Send + Sync {
     async fn get(&self, config: &Config, qualified_name: &str) -> Result<SmitheryServerDetail>;
 }
 
-/// All registries currently enabled for the user. Today: Smithery + official.
+/// All registries currently enabled for the user.
+/// Official modelcontextprotocol.io is primary; Smithery is a fallback for
+/// servers not yet listed on the official registry.
 pub fn enabled_registries() -> Vec<Box<dyn Registry>> {
     vec![
-        Box::new(smithery::SmitheryRegistry),
         Box::new(mcp_official::McpOfficialRegistry),
+        Box::new(smithery::SmitheryRegistry),
     ]
 }
 

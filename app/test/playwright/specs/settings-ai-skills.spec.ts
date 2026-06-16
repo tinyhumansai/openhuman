@@ -12,11 +12,15 @@ test.describe('Settings - AI & Skills', () => {
   });
 
   test('mounts LLM panel and shows provider/routing controls', async ({ page }) => {
+    // /settings/llm now redirects to the Connections page (LLM moved there);
+    // the AIPanel renders on the Connections LLM tab.
     await page.goto('/#/settings/llm');
     await waitForAppReady(page);
     await dismissWalkthroughIfPresent(page);
 
-    await expect(page.getByRole('button', { name: 'AI', exact: true })).toBeVisible();
+    await expect
+      .poll(async () => page.evaluate(() => window.location.hash))
+      .toContain('/connections');
     await expect(page.getByRole('heading', { name: 'LLM Providers', exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Routing', exact: true })).toBeVisible();
   });
@@ -26,7 +30,8 @@ test.describe('Settings - AI & Skills', () => {
     await waitForAppReady(page);
     await dismissWalkthroughIfPresent(page);
 
-    await expect(page.getByText('Tools')).toBeVisible();
+    // The two-pane sidebar also renders a "Tools" nav label, so scope to first.
+    await expect(page.getByText('Tools').first()).toBeVisible();
     await expect(page.getByText(/Filesystem|Shell/).first()).toBeVisible();
   });
 });

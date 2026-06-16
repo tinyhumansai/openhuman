@@ -406,7 +406,14 @@ impl ProviderContext {
                     toolkit = %self.toolkit,
                     "[composio:provider_context] execute: direct variant"
                 );
-                direct_execute(&direct, action, arguments, &live_config.composio.entity_id).await
+                direct_execute(
+                    &direct,
+                    action,
+                    arguments,
+                    &live_config.composio.entity_id,
+                    self.connection_id.as_deref(),
+                )
+                .await
             }
         };
 

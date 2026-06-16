@@ -15,6 +15,9 @@
 use super::automate::AutomateBackend;
 use super::automate::AutomateOutcome;
 
+mod app_shortcuts;
+mod browser;
+mod browser_shortcuts;
 mod music;
 
 /// Try every registered fast-path; return the first that claims the (app, goal).
@@ -25,6 +28,12 @@ pub async fn try_fastpath(
 ) -> Option<AutomateOutcome> {
     if music::matches(app, goal) {
         return Some(music::run(goal, backend).await);
+    }
+    if browser::matches(app, goal) {
+        return Some(browser::run(app, goal, backend).await);
+    }
+    if app_shortcuts::matches(app, goal) {
+        return Some(app_shortcuts::run(app, goal, backend).await);
     }
     None
 }

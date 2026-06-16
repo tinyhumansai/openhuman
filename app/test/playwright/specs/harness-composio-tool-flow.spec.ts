@@ -170,8 +170,8 @@ test.describe('Harness - Composio tool-call prompt flow', () => {
     await setMockBehavior('llmStreamChunkDelayMs', '10');
 
     await sendMessage(page, 'check my email');
-    await expect(page.getByText(CANARY)).toBeVisible({ timeout: 60_000 });
-    await expect(page.getByText(/Q3 Budget Review/i)).toBeVisible();
+    await expect(page.getByText(CANARY).first()).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByText(/Q3 Budget Review/i).first()).toBeVisible();
 
     const log = await requests();
     const llmHits = log.filter(
@@ -210,8 +210,8 @@ test.describe('Harness - Composio tool-call prompt flow', () => {
     await setMockBehavior('llmStreamChunkDelayMs', '10');
 
     await sendMessage(page, 'list my GitHub repos');
-    await expect(page.getByText(CANARY)).toBeVisible({ timeout: 60_000 });
-    await expect(page.getByText(/openhuman/i)).toBeVisible();
+    await expect(page.getByText(CANARY).first()).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByText(/openhuman/i).first()).toBeVisible();
 
     const log = await requests();
     const llmHits = log.filter(
@@ -244,7 +244,7 @@ test.describe('Harness - Composio tool-call prompt flow', () => {
     await setMockBehavior('llmStreamChunkDelayMs', '10');
 
     await sendMessage(page, 'check my email inbox please');
-    await expect(page.getByText(CANARY)).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByText(CANARY).first()).toBeVisible({ timeout: 60_000 });
     await expect(page.getByText(/unable to fetch your emails/i)).toBeVisible();
   });
 
@@ -286,7 +286,7 @@ test.describe('Harness - Composio tool-call prompt flow', () => {
     await setMockBehavior('llmStreamChunkDelayMs', '10');
 
     await sendMessage(page, 'create a linear issue titled Fix authentication timeout');
-    await expect(page.getByText(CANARY)).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByText(CANARY).first()).toBeVisible({ timeout: 60_000 });
     await expect(page.getByText(/I have created the Linear issue/i)).toBeVisible();
   });
 });

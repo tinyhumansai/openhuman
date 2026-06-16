@@ -1,6 +1,6 @@
 //! Workflow preflight gates — run BEFORE the orchestrator boots for a
 //! `skills_run`, so failures surface as a plain `Err` from
-//! [`super::schemas::spawn_workflow_run_background`] (and from there into
+//! [`crate::openhuman::skill_runtime::spawn_workflow_run_background`] (and from there into
 //! the dashboard card / runner page UI) instead of leaking through as
 //! cryptic orchestrator output.
 //!
@@ -243,36 +243,36 @@ pub async fn run_github_preflight<P: PreflightProbes>(
     probes: &P,
 ) -> Result<(), GithubGateError> {
     let Some(cfg) = cfg else {
-        tracing::debug!("[skills:preflight] github gate skipped: no [github] block");
+        tracing::debug!("[workflows:preflight] github gate skipped: no [github] block");
         return Ok(());
     };
     if !cfg.required {
-        tracing::debug!("[skills:preflight] github gate skipped: required = false");
+        tracing::debug!("[workflows:preflight] github gate skipped: required = false");
         return Ok(());
     }
 
     // (1) Composio GitHub integration must be connected.
     if !probes.composio_toolkit_active("github").await {
-        tracing::warn!("[skills:preflight] github gate fail: composio_github_missing");
+        tracing::warn!("[workflows:preflight] github gate fail: composio_github_missing");
         return Err(GithubGateError::ComposioGithubMissing);
     }
 
     // (2) git binary present.
     if let Err(e) = probes.git_version().await {
-        tracing::warn!(error = %e, "[skills:preflight] github gate fail: git_binary_missing");
+        tracing::warn!(error = %e, "[workflows:preflight] github gate fail: git_binary_missing");
         return Err(GithubGateError::GitBinaryMissing(e));
     }
 
     // (3a) git user.name set.
     let git_name = probes.git_user_name().await;
     if git_name.is_empty() {
-        tracing::warn!("[skills:preflight] github gate fail: git_user_name_missing");
+        tracing::warn!("[workflows:preflight] github gate fail: git_user_name_missing");
         return Err(GithubGateError::GitUserNameMissing);
     }
     // (3b) git user.email set.
     let git_email = probes.git_user_email().await;
     if git_email.is_empty() {
-        tracing::warn!("[skills:preflight] github gate fail: git_user_email_missing");
+        tracing::warn!("[workflows:preflight] github gate fail: git_user_email_missing");
         return Err(GithubGateError::GitUserEmailMissing);
     }
 
@@ -280,7 +280,7 @@ pub async fn run_github_preflight<P: PreflightProbes>(
     match cfg.identity_match {
         IdentityMatch::None => {
             tracing::debug!(
-                "[skills:preflight] github gate pass (identity_match=none, reachability only)"
+                "[workflows:preflight] github gate pass (identity_match=none, reachability only)"
             );
             Ok(())
         }
@@ -289,12 +289,12 @@ pub async fn run_github_preflight<P: PreflightProbes>(
             // identity — confirms the connection is genuinely usable.
             match probes.composio_identity("github").await {
                 Some(_) => {
-                    tracing::debug!("[skills:preflight] github gate pass (identity_match=any)");
+                    tracing::debug!("[workflows:preflight] github gate pass (identity_match=any)");
                     Ok(())
                 }
                 None => {
                     tracing::warn!(
-                        "[skills:preflight] github gate fail: composio_identity_unresolved (identity_match=any)"
+                        "[workflows:preflight] github gate fail: composio_identity_unresolved (identity_match=any)"
                     );
                     Err(GithubGateError::ComposioIdentityUnresolved)
                 }
@@ -305,7 +305,7 @@ pub async fn run_github_preflight<P: PreflightProbes>(
                 Some(n) => n,
                 None => {
                     tracing::warn!(
-                        "[skills:preflight] github gate fail: composio_identity_unresolved (identity_match=strict)"
+                        "[workflows:preflight] github gate fail: composio_identity_unresolved (identity_match=strict)"
                     );
                     return Err(GithubGateError::ComposioIdentityUnresolved);
                 }
@@ -314,14 +314,14 @@ pub async fn run_github_preflight<P: PreflightProbes>(
                 tracing::debug!(
                     composio = %composio_name,
                     git = %git_name,
-                    "[skills:preflight] github gate pass (identity_match=strict)"
+                    "[workflows:preflight] github gate pass (identity_match=strict)"
                 );
                 Ok(())
             } else {
                 tracing::warn!(
                     composio = %composio_name,
                     git = %git_name,
-                    "[skills:preflight] github gate fail: identity_mismatch"
+                    "[workflows:preflight] github gate fail: identity_mismatch"
                 );
                 Err(GithubGateError::IdentityMismatch {
                     composio_username: composio_name,

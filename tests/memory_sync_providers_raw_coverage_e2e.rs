@@ -19,6 +19,15 @@ use openhuman_core::openhuman::credentials::{
     AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME,
 };
 use openhuman_core::openhuman::memory::global as memory_global;
+use openhuman_core::openhuman::memory::jobs::drain_until_idle;
+use openhuman_core::openhuman::memory::tree_source::get_or_create_source_tree;
+use openhuman_core::openhuman::memory_store::chunks::store::{
+    count_chunks_by_lifecycle_status, get_chunk_raw_refs, list_chunks, ListChunksQuery,
+    CHUNK_STATUS_BUFFERED,
+};
+use openhuman_core::openhuman::memory_store::chunks::types::SourceKind;
+use openhuman_core::openhuman::memory_store::content::read::read_chunk_body;
+use openhuman_core::openhuman::memory_store::trees::store as tree_store;
 use openhuman_core::openhuman::memory_sync::composio::bus::{
     ComposioConfigChangedSubscriber, ComposioConnectionCreatedSubscriber, ComposioTriggerSubscriber,
 };
@@ -35,6 +44,7 @@ use openhuman_core::openhuman::memory_sync::composio::providers::slack::{
 use openhuman_core::openhuman::memory_sync::composio::providers::{
     ComposioProvider, ProviderContext, SyncReason, TaskFetchFilter,
 };
+use openhuman_core::openhuman::memory_tree::tree::bucket_seal::LabelStrategy;
 
 static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
@@ -367,7 +377,11 @@ async fn gmail_ingest_archives_account_messages_and_legacy_participant_buckets()
     let raw_root = config.memory_tree_content_root().join("raw");
     let archived: Vec<_> = walk_files(&raw_root)
         .into_iter()
-        .filter(|p| p.to_string_lossy().contains("gmail-round17-a"))
+        .filter(|p| {
+            p.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.contains("gmail-round17-a"))
+        })
         .collect();
     assert_eq!(archived.len(), 1, "raw archive should include message a");
     let archived_body = std::fs::read_to_string(&archived[0]).expect("archived body");
@@ -399,6 +413,123 @@ async fn gmail_ingest_archives_account_messages_and_legacy_participant_buckets()
     .await
     .expect("legacy gmail ingest");
     assert!(legacy >= 1, "orphan fallback bucket should ingest");
+}
+
+#[tokio::test]
+async fn gmail_raw_backed_messages_drain_into_source_tree_summary() {
+    let _guard = env_lock();
+    let tmp = TempDir::new().expect("tempdir");
+    let _workspace = EnvGuard::set_path("OPENHUMAN_WORKSPACE", tmp.path());
+    let _home = EnvGuard::set_path("HOME", tmp.path());
+    let _backend = EnvGuard::unset("BACKEND_URL");
+    let config = config_in(&tmp);
+    persist_config(&config).await;
+
+    let page = vec![
+        json!({
+            "id": "gmail-tree-a",
+            "from": "Ava <ava@example.test>",
+            "to": ["Ben <ben@example.test>"],
+            "subject": "Phoenix launch plan",
+            "date": "2026-05-29T10:00:00Z",
+            "markdown": "Phoenix migration launches Friday. Ava owns rollout validation and Ben owns customer notices."
+        }),
+        json!({
+            "id": "gmail-tree-b",
+            "from": "Ben <ben@example.test>",
+            "to": ["Ava <ava@example.test>"],
+            "subject": "Re: Phoenix launch plan",
+            "date": "2026-05-29T10:05:00Z",
+            "markdown": "Confirmed. Customer notices go out after staging checks and the rollback doc is reviewed."
+        }),
+    ];
+
+    let outcome = gmail_ingest::ingest_page_into_memory_tree_with_outcome(
+        &config,
+        "owner-gmail-tree",
+        Some("flow@example.test"),
+        &page,
+    )
+    .await
+    .expect("gmail ingest outcome");
+
+    assert_eq!(
+        outcome.item_ids_ingested,
+        vec!["gmail-tree-a".to_string(), "gmail-tree-b".to_string()]
+    );
+    assert!(
+        outcome.chunks_written >= 2,
+        "expected one or more chunks per message"
+    );
+
+    let source_id = "gmail:flow-at-example-dot-test";
+    let chunks = list_chunks(
+        &config,
+        &ListChunksQuery {
+            source_kind: Some(SourceKind::Email),
+            source_id: Some(source_id.to_string()),
+            limit: Some(10),
+            ..Default::default()
+        },
+    )
+    .expect("list gmail chunks");
+    assert_eq!(chunks.len(), outcome.chunks_written);
+
+    for chunk in &chunks {
+        let refs = get_chunk_raw_refs(&config, &chunk.id)
+            .expect("raw refs lookup")
+            .expect("raw refs must be set before extract can run");
+        assert_eq!(refs.len(), 1);
+        assert!(
+            refs[0].path.contains("gmail-tree-"),
+            "raw ref should point at the source message file: {:?}",
+            refs[0].path
+        );
+        let full_body = read_chunk_body(&config, &chunk.id).expect("read raw-backed chunk body");
+        assert!(
+            full_body.contains("Phoenix") || full_body.contains("Customer notices"),
+            "chunk body should hydrate from raw archive, got: {full_body}"
+        );
+    }
+
+    drain_until_idle(&config)
+        .await
+        .expect("extract and append jobs should drain");
+    let buffered =
+        count_chunks_by_lifecycle_status(&config, CHUNK_STATUS_BUFFERED).expect("buffered count");
+    assert_eq!(buffered, outcome.chunks_written as u64);
+
+    let tree = get_or_create_source_tree(&config, source_id).expect("source tree");
+    let l0 = tree_store::get_buffer(&config, &tree.id, 0).expect("source L0 buffer");
+    assert_eq!(
+        l0.item_ids.len(),
+        outcome.chunks_written,
+        "all Gmail chunks should reach the source tree buffer"
+    );
+
+    let sealed = openhuman_core::openhuman::memory_tree::tree::flush::flush_stale_buffers(
+        &config,
+        chrono::Duration::zero(),
+        &LabelStrategy::Empty,
+    )
+    .await
+    .expect("force flush gmail source tree");
+    assert!(sealed > 0, "low-volume Gmail source should seal on flush");
+
+    let l1 =
+        tree_store::list_summaries_at_level(&config, &tree.id, 1).expect("list source summaries");
+    assert!(
+        !l1.is_empty(),
+        "Gmail source tree should have a sealed summary after flush"
+    );
+    let summary_body = openhuman_core::openhuman::memory_store::content::read::read_summary_body(
+        &config, &l1[0].id,
+    )
+    .expect("read gmail summary body");
+    assert!(
+        summary_body.contains("Phoenix") || summary_body.contains("Customer"),
+        "summary should preserve Gmail content, got: {summary_body}"
+    );
 }
 
 #[tokio::test]

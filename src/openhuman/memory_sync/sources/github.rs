@@ -225,7 +225,36 @@ pub async fn run_github_sync(
             child_basenames: batch_basenames,
         };
 
+        // `child_basenames` holds the raw-archive wikilink paths (rel path
+        // with `.md` stripped) — captured BEFORE ingest_summary moves the
+        // input. Re-suffix to recover the coverage-gate keys.
+        let batch_raw_rel_paths: Vec<String> = ingest_input
+            .child_basenames
+            .iter()
+            .flatten()
+            .map(|basename| format!("{basename}.md"))
+            .collect();
+
         let outcome = ingest_summary(config, &tree, ingest_input).await?;
+
+        // Record raw-archive coverage so the incremental reconcile
+        // (`memory_sync::sources::rebuild`) knows these files are
+        // summarised. Marked only after the summary landed: a crash in
+        // between re-summarises the batch (duplicate summary, acceptable)
+        // instead of silently losing coverage.
+        if !batch_raw_rel_paths.is_empty() {
+            if let Err(e) = crate::openhuman::memory_store::chunks::store::mark_raw_paths_ingested(
+                config,
+                &batch_raw_rel_paths,
+            ) {
+                tracing::warn!(
+                    source_id = %source_id,
+                    batch = batch_idx,
+                    error = %format!("{e:#}"),
+                    "[memory_sync:github] failed to record raw coverage — reconcile may re-summarise this batch"
+                );
+            }
+        }
 
         tracing::info!(
             source_id = %source_id,
@@ -233,7 +262,8 @@ pub async fn run_github_sync(
             summary_id = %outcome.summary_id,
             path = %outcome.content_path,
             sealed = outcome.sealed_ids.len(),
-            "[memory_sync:github] batch ingested"
+            covered_raw_files = batch_raw_rel_paths.len(),
+            "[memory_sync:github] batch ingested + coverage recorded"
         );
     }
 

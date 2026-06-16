@@ -90,7 +90,7 @@ The `local_ai.usage.*` booleans are consulted only during preset application and
 
 Prefer setting the `*_provider` fields directly when editing configuration by hand.
 
-In the desktop app, **Settings → AI & Skills → Local AI** exposes presets, pick one ("embeddings only", "memory + reflection", "everything local") and the right combination of flags is set for you. Status (Ollama reachability, model availability, per-subsystem enablement) is surfaced live via `openhuman.local_ai_status`.
+In the desktop app, **Settings → AI & Skills → Local AI** exposes presets, pick one ("embeddings only", "memory + reflection", "everything local") and the right combination of flags is set for you. Status (Ollama reachability, model availability, per-subsystem enablement) is surfaced live via `openhuman.inference_status`.
 
 ## When to turn it on
 
@@ -108,7 +108,7 @@ It is **not** worth turning on if you only have a few sources connected, the clo
 - Enough disk for the models (`gemma3:1b-it-qat` \~700 MB, `all-minilm:latest` \~23 MB).
 - Enough RAM to keep the model resident (8 GB+ recommended, 16 GB+ ideal).
 
-OpenHuman handles the rest: lifecycle (`src/openhuman/local_ai/service/`), API clients (`ollama_api.rs`, `lm_studio_api.rs`), health checks, and graceful fallback to remote when the local provider disappears.
+OpenHuman handles the rest: lifecycle (`src/openhuman/inference/local/service/`), API clients, health checks, and graceful fallback to remote when the local provider disappears.
 
 ### LM Studio troubleshooting
 

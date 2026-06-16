@@ -31,6 +31,16 @@ const DEFS: &[BackendMeetControllerDef] = &[
         schema: schema_harness_response,
         handler: handle_harness_response_wrap,
     },
+    BackendMeetControllerDef {
+        function: "speak",
+        schema: schema_speak,
+        handler: handle_speak_wrap,
+    },
+    BackendMeetControllerDef {
+        function: "notification_action",
+        schema: schema_notification_action,
+        handler: handle_notification_action_wrap,
+    },
 ];
 
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
@@ -111,6 +121,18 @@ fn schema_join() -> ControllerSchema {
                           The phrase is stripped before the text reaches the LLM.",
                 required: false,
             },
+            FieldSchema {
+                name: "correlation_id",
+                ty: TypeSchema::String,
+                comment: "Opaque correlation id echoed on all bot:* events for this session.",
+                required: false,
+            },
+            FieldSchema {
+                name: "listen_only",
+                ty: TypeSchema::Bool,
+                comment: "When true, the bot joins in listen-only mode (no microphone, no replies).",
+                required: false,
+            },
         ],
         outputs: vec![
             FieldSchema {
@@ -188,6 +210,75 @@ fn handle_harness_response_wrap(params: Map<String, Value>) -> ControllerFuture 
     Box::pin(async move { super::ops::handle_harness_response(params).await })
 }
 
+fn schema_speak() -> ControllerSchema {
+    ControllerSchema {
+        namespace: "agent_meetings",
+        function: "speak",
+        description: "Send text to the meeting bot for TTS playback. The backend converts \
+                      the text to speech and plays it into the meeting audio.",
+        inputs: vec![
+            FieldSchema {
+                name: "text",
+                ty: TypeSchema::String,
+                comment: "The text to speak in the meeting.",
+                required: true,
+            },
+            FieldSchema {
+                name: "correlation_id",
+                ty: TypeSchema::String,
+                comment: "Optional correlation id to associate with this speak request.",
+                required: false,
+            },
+        ],
+        outputs: vec![FieldSchema {
+            name: "ok",
+            ty: TypeSchema::Bool,
+            comment: "True when the speak request was emitted.",
+            required: true,
+        }],
+    }
+}
+
+fn handle_speak_wrap(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move { super::ops::handle_speak(params).await })
+}
+
+fn schema_notification_action() -> ControllerSchema {
+    ControllerSchema {
+        namespace: "agent_meetings",
+        function: "notification_action",
+        description: "Handle a click on a calendar auto-join notification button. \
+                      Actions: join_listen (muted), join_active (reply mode with the \
+                      'Hey Tiny' wake phrase), skip (dismiss this meeting), always_join \
+                      (persist auto_join_policy=always, then join).",
+        inputs: vec![
+            FieldSchema {
+                name: "action_id",
+                ty: TypeSchema::String,
+                comment: "One of: join_listen, join_active, skip, always_join.",
+                required: true,
+            },
+            FieldSchema {
+                name: "payload",
+                ty: TypeSchema::Json,
+                comment: "The notification action payload: { meetingId, meetUrl, title } \
+                          plus an optional user-edited displayName for the bot.",
+                required: false,
+            },
+        ],
+        outputs: vec![FieldSchema {
+            name: "ok",
+            ty: TypeSchema::Bool,
+            comment: "True when the action was handled (join emitted or session updated).",
+            required: true,
+        }],
+    }
+}
+
+fn handle_notification_action_wrap(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move { super::ops::handle_notification_action(params).await })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -203,7 +294,16 @@ mod tests {
             .map(|c| c.schema.function)
             .collect();
         assert_eq!(schema_fns, handler_fns);
-        assert_eq!(schema_fns, vec!["join", "leave", "harness_response"]);
+        assert_eq!(
+            schema_fns,
+            vec![
+                "join",
+                "leave",
+                "harness_response",
+                "speak",
+                "notification_action"
+            ]
+        );
     }
 
     #[test]

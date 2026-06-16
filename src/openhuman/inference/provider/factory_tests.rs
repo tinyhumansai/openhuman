@@ -227,6 +227,10 @@ fn ollama_provider_opts_out_of_native_tool_calling() {
         !caps.native_tool_calling,
         "ollama provider must report native_tool_calling=false so the agent harness emits prompt-guided tool specs instead of an OpenAI-style `tools` array"
     );
+    assert!(
+        !caps.vision,
+        "local Ollama-compatible providers stay fail-closed for vision until the configured model proves image support"
+    );
 }
 
 #[test]
@@ -241,9 +245,14 @@ fn lmstudio_provider_defaults_to_prompt_guided_tools() {
     let (provider, _model) =
         create_chat_provider_from_string("chat", "lmstudio:google/gemma-4-e4b", &config)
             .expect("lmstudio:<model> must build");
+    let caps = provider.capabilities();
     assert!(
-        !provider.capabilities().native_tool_calling,
+        !caps.native_tool_calling,
         "lmstudio provider must default to native_tool_calling=false (conservative local dispatch)"
+    );
+    assert!(
+        !caps.vision,
+        "local LM Studio-compatible providers stay fail-closed for vision until the configured model proves image support"
     );
 }
 
@@ -485,6 +494,10 @@ async fn cloud_provider_without_stored_key_fails_with_actionable_error() {
     let config = config_with_providers_in_tempdir(&tmp, vec![openai_entry("p_oai", "openai")]);
     let (provider, model) = create_chat_provider_from_string("reasoning", "openai:gpt-4o", &config)
         .expect("provider should build without eagerly requiring credentials");
+    assert!(
+        provider.capabilities().vision,
+        "cloud OpenAI-compatible providers must advertise vision so reasoning attachment turns reach the provider"
+    );
 
     let err = provider
         .chat_with_system(None, "hello", &model, 0.0)
@@ -854,6 +867,42 @@ fn invalid_models_fail() {
     assert!(!is_known_openhuman_tier("hint:"));
 }
 
+// ── oh_tier_supports_vision ──────────────────────────────────────────────────────
+
+#[test]
+fn reasoning_is_the_vision_capable_managed_tier() {
+    // `reasoning-v1` (and its hint form) is the one vision-capable managed tier.
+    assert!(oh_tier_supports_vision("reasoning-v1"));
+    assert!(oh_tier_supports_vision("hint:reasoning"));
+
+    // Every other managed tier (and its hint form) is non-vision until confirmed
+    // multimodal on the backend. Flip the corresponding arm in
+    // `oh_tier_supports_vision` to enable one.
+    for model in [
+        "chat-v1",
+        "agentic-v1",
+        "coding-v1",
+        "reasoning-quick-v1",
+        "summarization-v1",
+        "hint:chat",
+        "hint:agentic",
+        "hint:coding",
+        "hint:summarization",
+    ] {
+        assert!(
+            !oh_tier_supports_vision(model),
+            "expected managed tier '{model}' to be non-vision"
+        );
+    }
+}
+
+#[test]
+fn unknown_models_are_not_vision_capable() {
+    assert!(!oh_tier_supports_vision("gpt-5"));
+    assert!(!oh_tier_supports_vision("claude-opus-4-7"));
+    assert!(!oh_tier_supports_vision(""));
+}
+
 #[test]
 fn make_openhuman_backend_forwards_unknown_hint_verbatim() {
     // Unrecognised hint:* strings (e.g. hint:reaction for lightweight models)
@@ -876,6 +925,18 @@ fn make_openhuman_backend_translates_summarization_hint() {
     config.default_model = Some("hint:summarization".to_string());
     let (_, model) = make_openhuman_backend(&config).expect("factory should succeed");
     assert_eq!(model, crate::openhuman::config::MODEL_SUMMARIZATION_V1);
+}
+
+#[test]
+fn make_openhuman_backend_reports_vision_capability() {
+    let config = Config::default();
+    let (provider, _) = make_openhuman_backend(&config).expect("factory should succeed");
+    let caps = provider.capabilities();
+    assert!(caps.native_tool_calling);
+    assert!(
+        caps.vision,
+        "OpenHuman backend must report vision so attachment-driven reasoning turns clear the harness gate"
+    );
 }
 
 #[test]

@@ -1,9 +1,9 @@
 # Voice → System Action Feature Tracker
 
 **GitHub Issue:** [#3148](https://github.com/tinyhumansai/openhuman/issues/3148)  
-**Branch:** `feat/voice-always-on-all` (cumulative) — Phase 1 landed via [#3168](https://github.com/tinyhumansai/openhuman/pull/3168); the full feature was split from the mega-PR [#3307](https://github.com/tinyhumansai/openhuman/pull/3307) into an 8-PR stack [#3340–#3346](https://github.com/tinyhumansai/openhuman/pull/3340) + [#3362](https://github.com/tinyhumansai/openhuman/pull/3362) (Phase 1.5 vision fallback)  
+**Branch:** `feat/voice-always-on-all` (cumulative) — **all merged to `main`.** Phase 1 landed via [#3168](https://github.com/tinyhumansai/openhuman/pull/3168); the full feature was split from the mega-PR [#3307](https://github.com/tinyhumansai/openhuman/pull/3307) (now **closed** in favour of the stack) into an 8-PR stack — **all 8 merged 2026-06-04**: [#3340](https://github.com/tinyhumansai/openhuman/pull/3340) (main-thread input + CEF fix), [#3341](https://github.com/tinyhumansai/openhuman/pull/3341) (AX/UIA perception + automate engine), [#3342](https://github.com/tinyhumansai/openhuman/pull/3342) (wire automate/ax_interact tools), [#3343](https://github.com/tinyhumansai/openhuman/pull/3343) (Phase 2 always-on engine + RPC), [#3344](https://github.com/tinyhumansai/openhuman/pull/3344) (always-on Settings toggle + i18n), [#3345](https://github.com/tinyhumansai/openhuman/pull/3345) (notch status pill — supersedes the closed [#3166](https://github.com/tinyhumansai/openhuman/pull/3166)), [#3346](https://github.com/tinyhumansai/openhuman/pull/3346) (Phase 3 fast command router), [#3362](https://github.com/tinyhumansai/openhuman/pull/3362) (Phase 1.5 vision-click fallback)  
 **Started:** 2026-06-02  
-**Last updated:** 2026-06-04  
+**Last updated:** 2026-06-09 — added **Change 1.17** (PR [#3558](https://github.com/tinyhumansai/openhuman/pull/3558)): browser & app (Spotify/Apple Music/Slack) keyboard-shortcut fast-paths, cross-platform shortcut tables, the `hotkey` verb, artist-aware Music verification, and actionable `automate` failure responses — all from live-transcript analysis. Earlier this day: verified all 8 always-on stack PRs merged to `main` (code paths confirmed post-refactor [#3424](https://github.com/tinyhumansai/openhuman/pull/3424)); global push-to-talk ([#3090](https://github.com/tinyhumansai/openhuman/issues/3090) via [#3349](https://github.com/tinyhumansai/openhuman/pull/3349)) landed separately. **Only open item across all phases: the on-device audio wake-word model (Phase 3) — not started; text-based "Hey Tiny" match remains the interim.**  
 
 ---
 
@@ -330,7 +330,7 @@ test ... ok
 
 > The bridge between today's `ax_interact` primitives and the always-on voice work. **Prerequisite for Phase 3** — fast voice routing into a slow/fragile action loop still feels slow. This is where "whatever I say happens, live" actually gets delivered.
 >
-> **Status:** the Rust inner loop (M1), poll-until-stable settle (M2), Music fast-path (M3, proven live), notch progress streaming (M4), the richer element model (M5), and the **vision fallback for Electron/partial-AX apps** (Change 1.16) are all shipped. (Additional per-app native fast-paths beyond Music — e.g. Spotify/Slack — are **descoped**: the general model-driven loop covers them, so a deterministic accelerator isn't worth the per-app maintenance right now.)
+> **Status:** the Rust inner loop (M1), poll-until-stable settle (M2), Music fast-path (M3, proven live), notch progress streaming (M4), the richer element model (M5), the **vision fallback for Electron/partial-AX apps** (Change 1.16), and **Change 1.17** (browser & app fast-paths + keyboard-shortcut driving + artist-aware Music + actionable responses) are all shipped. Per-app fast-paths now cover **Music, browsers, Spotify, Apple Music, and Slack** (Spotify/Slack — previously descoped — are now handled by the `app_shortcuts.rs` keyboard-shortcut path).
 
 **Detailed implementation plan:** [`voice-automate-plan.md`](voice-automate-plan.md) — decided approach: **Rust inner loop + fast model**, first proof target **Music**.
 
@@ -389,6 +389,49 @@ enigo's keyboard-layout lookup (`TSMGetInputSourceProperty`) **must run on the a
 - Wired into the `automate` loop: new `Action.description`, a `vision_click` system-prompt verb ("use when the element list is EMPTY — Electron apps"), the no-progress signature extended with `description`, and `RealBackend::{screenshot,locate,frontmost_app,click}`. Inherits `automate`'s existing gating (Dangerous + mutations opt-in + sensitive-app denylist) — no new tool, no new approval surface.
 
 **Tests:** pure `image_to_screen` (downscale / Retina 2× / origin offset / out-of-range + negative clamp / zero-dim safety), `parse_locate_response` (found / not-found / fenced / prose / garbage), `build_locate_user` (marker), `image_dims_from_data_uri` (real PNG round-trip); loop integration via the scripted backend (locate-and-click when frontmost, proceed when frontmost unknown, **refuse when another app is frontmost**, no-click on not-found, empty-description skip). A macOS live run against a real Electron app is the remaining manual validation (vision is nondeterministic — assert tool-level success, treat the visual outcome as best-effort, same caveat as Music).
+
+---
+
+### Change 1.17 — browser & app fast-paths, keyboard-shortcut driving, artist-aware Music, actionable responses ✅ Done
+
+**Status:** ✅ Shipped (PR [#3558](https://github.com/tinyhumansai/openhuman/pull/3558)). One body of work driven by **live-transcript analysis of the `automate` agent** across browsers, Apple Music, Spotify, and Slack. The transcripts surfaced four recurring failures the agent kept hitting:
+
+1. **Browsers** — for *"open my Brave browser, go to youtube.com and play a music video"* the `desktop_control_agent` was re-delegated **6×** (each sub re-launched Brave + re-navigated), ran `ax_interact` on the **wrong app names** (`Google Chrome`/`Safari`, never the real `Brave Browser`, because Chromium exposes no AX tree), then "played" via a **blind hardcoded mouse click at (400,350)** with no verification.
+2. **Wrong track** — *"play Numb by Linkin Park"* played a **same-titled song by the wrong artist** ("Numb" by Marshmello & Khalid) and the agent **claimed success**, because the AX row label is title-only and verification only checked *that* something played.
+3. **Inert responses** — the `automate` tool's replies were *honest but gave no next move*, so the agent **re-ran the same failing search 6×** instead of changing tactics.
+4. **No keyboard-shortcut lever** — the loop hunted AX labels even where an app's own shortcut would be instant and reliable.
+
+The six parts below address all four. All fast-paths are consulted by `automate::run` **before** the model loop (`try_fastpath` order: `music` → `browser` → `app_shortcuts`); on any failure they fall through, so they can only *help*.
+
+**(a) Browser fast-path** — `app_fastpaths/browser.rs` (new). Pure parsers + `run(app, goal, backend)`:
+  - `resolve_browser(app, goal)` — aliases → macOS display names (`brave`→`Brave Browser`, `chrome`→`Google Chrome`, `edge`→`Microsoft Edge`, `safari`/`firefox`/`arc`). Checks the `app` arg first, then the goal; a generic "browser" with no named product → **`None`** so it never guesses the wrong app (the original bug).
+  - `extract_destination(goal)` — YouTube → `youtube.com/results?search_query=…` (percent-encoded); Google/"search for X" → `google.com/search?q=…`; a bare domain/URL → normalized to `https://…`.
+  - **Navigation is one deterministic step:** `backend.open_url_in_app(browser, url)` → `open -a "<browser>" "<url>"` launches/foregrounds + navigates — no address-bar typing, no AX. Pure-navigation goals **complete here**; **play goals** navigate to the results URL then return non-success so the loop does the single "click first result" via `vision_click` (no native shortcut *selects* a result — we don't fake it). In-page media control ("pause/next the video") sends the YouTube shortcut directly.
+
+**(b) Cross-platform browser shortcut table** — `app_fastpaths/browser_shortcuts.rs` (new). `shortcut(intent, browser, os)` resolves browser-level intents (address bar, new/close/reopen tab, tab N, next/prev tab, find, reload/hard-reload, back/forward, history, downloads, zoom, private window, fullscreen) per **Chrome/Firefox/Safari/Edge × macOS/Windows/Linux**. Nearly uniform (only ⌘↔Ctrl differs); encodes the real exceptions (Firefox-Linux `Alt+1‑8`, Firefox private window `⌘/Ctrl+Shift+P`, per-browser History/Downloads, Mac `⌘[`/`]` back-forward, `F11` vs `⌃⌘F` fullscreen). Sourced from the official Chrome/Firefox/Edge/Safari docs. `browser.rs` parses commands ("open a new tab", "go back", "reload", "switch to tab 3") and dispatches the resolved chord. (Brave/Arc/Chromium → Chrome family.)
+
+**(c) App-shortcut fast-path** — `app_fastpaths/app_shortcuts.rs` (new). Same model for **Spotify, Apple Music, Slack**: `shortcut(intent, app, os)` + goal parser. Drives transport/navigation by each app's own global shortcut (faster + more reliable than AX). Media intents (play/pause, next, prev, volume ±, mute, shuffle, repeat, search) for Spotify + Apple Music; Slack nav (quick-switcher, search, new message/compose DM, next/prev unread, next/prev channel, threads, all-unread, mark read). Encodes the quirks: **Spotify uses ↓/↑ for next/prev** (not ←/→); **Apple Music prefixes everything with Ctrl on Windows** (Ctrl+Space vs bare Space on Mac); Slack channel-nav uses **Option/Alt+arrows**. Intents with no simple chord (Spotify volume, Apple Music mute / Windows search access-key) return `None` → fall through. Complementary to `music.rs`, which still owns Apple Music *song search/play*.
+
+**(d) Keyboard-shortcut plumbing** —
+  - Extracted shared `pub(crate)` helpers `run_hotkey`/`run_key`/`run_type_text` from `tools/impl/computer/keyboard.rs` (one place for validation + main-thread enigo dispatch, Change 1.15) — no behavior change to the `keyboard` tool.
+  - New `AutomateBackend` methods (non-breaking defaults): `open_url_in_app`, `key`, `type_text`, `now_playing`. `RealBackend` impls `open -a` per-app, delegates keystrokes to the keyboard helpers, and reads Music state via osascript.
+  - New **`hotkey` verb** in the general loop + system prompt (`{"action":"hotkey","keys":["Cmd","L"]}`) so the model can use any app's shortcuts — folded into the no-progress signature.
+
+**(e) Artist-aware Music verification** — `music.rs` + `now_playing`. Apple Music's AX row label is title-only ("Numb - Single"), so a title match lands on the wrong artist. `music.rs` now parses the requested artist (`extract_artist`, "…by Linkin Park") and after Play reads the **now-playing name + artist** via AppleScript (`now_playing` → `osascript … get {name, artist} of current track`). On a match the summary names the verified track + artist; on a **mismatch it says so honestly** ("Now playing 'Numb' by 'Tom Odell'…") instead of claiming the requested track. Closes the wrong-artist false-success. **Follow-up:** *correcting* to the right artist is limited by AX `press`-by-label hitting only the first same-titled row — a library AppleScript `play (track whose name … and artist …)` fallback is the next step.
+
+**(f) Actionable `automate` responses** — the tool's failures are now agent-actionable, not inert. Four fixes: **(1)** terminal failures (`music.rs` no-match/mismatch, `automate.rs` budget-exhausted/no-progress) carry **next-step guidance + a "don't repeat this" steer**; **(2)** they **list the actual candidates / on-screen labels** (`candidate_labels`, `screen_hint`) instead of a bare negative; **(3)** **verified-only success** — never "Playing 'X'" unless `now_playing` confirms it, and an artist/album press is reported as "navigated, no track started"; **(4)** `pick_row` now **prefers real song rows** (`AXCell`/`AXRow`) over artist/album buttons (the live bug pressed the "LINKIN PARK" artist row) and the step log names the element *type* pressed.
+
+**Also:** the always-on toggle in `VoicePanel` is now shown in dev/debug builds (`IS_DEV_LIKE`) and hidden in production.
+
+**Follow-up fix — Full OS access now enables app control.** `ax_interact` (press/set_value) and `automate` gated **only** on `computer_control.ax_interact_mutations`, which is independent of the autonomy level. A user who granted **Full** access in Settings → Agent Access still got *"App control isn't enabled yet…"* because that flag was untouched (confirmed live: `SecurityPolicy autonomy=Full` while the tool refused). Fixed with a shared `app_control_enabled(explicit_opt_in)` gate (`tools/impl/computer/ax_interact.rs`) that returns true when the explicit flag is set **or** the **live** policy (`security::live_policy::current()`) is `AutonomyLevel::Full` — so granting Full access takes effect immediately, no session restart or separate flag flip. Both refusal messages now point at Settings → Agent Access ("Grant Full access (or turn on App UI Control / App Automation)"). Covered by `app_control_enabled_combines_optin_and_full_access` + the two pinned-policy refusal tests.
+
+**Follow-up fix — Windows browser nav + the re-delegation loop.** Live Windows transcript of *"open my browser, go to youtube.com and play a video"*: the orchestrator delegated to `desktop_control_agent` **7×**, every sub re-`launch_app`-ed Chrome (→ ~10 windows), and the AX path dead-ended — Chromium exposes no page content to UIA, `screenshot`/`vision_click` is unimplemented on Windows, and `ax_interact set_value` on the address bar **can't be submitted** (UIA Invoke on an Edit fails, no Enter). Two fixes:
+> - **`open_url_in_app` now works on Windows** (`accessibility/automate.rs`) — was macOS-only (fell back to the *default* browser). Maps the resolved browser display name → the shell `start` App-Paths token (`windows_browser_launch_token`: Chrome→`chrome`, Edge→`msedge`, Brave→`brave`, Firefox→`firefox`; Safari/Arc→`None`→default handler) and runs `cmd /C start "" <token> "<url>"`. Launches/foregrounds the named browser and navigates in **one** step; when the browser is already open this lands in a **new tab of the existing window**, so the fast-path no longer piles up windows. The browser fast-path's deterministic nav is now cross-platform (mac `open -a`, win `start`). Tested by `browser_display_names_map_to_start_tokens` (`#[cfg(target_os="windows")]`).
+> - **`desktop_control_agent` prompt steered to `automate` for browsers** (`agent_registry/agents/desktop_control_agent/prompt.md`) — it had `automate` but its only examples were Music/Slack, so it AX-fumbled the browser. Now: web browsers → use `automate{app, goal}` (deterministic URL nav), never type a URL into the address bar via `ax_interact`; **foreground each app at most once per task** (repeated `launch_app` piles up windows); and **stop after two failed attempts at a step** instead of re-launching and looping. (Still a Windows gap: `vision_click` for the final "click first result" — `screenshot` is unimplemented on Windows, so play-from-search-results can't complete deterministically yet; navigation/search now do.)
+
+**Net for the browser example:** `open -a "Brave Browser" "https://www.youtube.com/results?search_query=music%20video"` + one `vision_click` — instead of 6 delegations and 5 failed AX calls.
+
+**Tests (all green):** `app_fastpaths` **58**, `accessibility::automate` **21**, `computer::keyboard` **26**. Coverage: browser/app resolution + destination/intent parsers (incl. Spotify ↓/↑, Apple Music Win-Ctrl, Slack Alt-nav, generic-browser→None, percent-encoding); scripted-backend sequences (model-free nav, play→fall-through, media-control hotkey, dispatch order with music-wins-play); artist match→names-track / mismatch→honest; response shapes (candidate listing, wrong-artist steer, non-song honesty, song-row preference, budget/no-progress on-screen hints); a `hotkey`-verb loop test; `#[ignore]` macOS live tests. **Follow-ups:** wire the shortcut tables into the Phase 3 voice `command_router` (voice "pause"/"next" → frontmost-app shortcut); AppleScript library play-by-name+artist correction; expose `vision_click` as a standalone tool.
 
 ---
 
@@ -567,7 +610,9 @@ Shipped on the Windows machine (2026-06-02):
 
 ---
 
-## Phase 3 — Wake-Word + Fast Routing 🔨 In progress
+## Phase 3 — Wake-Word + Fast Routing 🔨 Fast routing shipped; audio wake-word model pending
+
+> Fast command routing is **merged** ([#3346](https://github.com/tinyhumansai/openhuman/pull/3346)). The single remaining Phase 3 item is the on-device **audio** wake-word model — **not started**; the text-based "Hey Tiny" transcribe-then-gate match from Phase 2 is the interim.
 
 **Fast routing — DONE & WIRED:** `src/openhuman/voice/command_router.rs` (new) — pure `route(transcript) -> VoiceIntent` classifier (Play/Pause/Resume/Next/Previous/OpenApp/SetVolume/VolumeUp·Down/Mute/Unmute, else `Unknown`). High-confidence intents execute directly (launch_app / Music fast-path / osascript volume) without a full chat-LLM turn — the ≤500 ms path; `Unknown` defers to the agent so routing only ever shortcuts. Filler-tolerant ("please open up slack"). 5 unit tests.
 
@@ -620,6 +665,86 @@ From live agent-in-the-loop testing on 2026-06-03 (grounded in `~/.openhuman/log
 
 ---
 
+## Permissions matrix — what the desktop agent needs to run
+
+> Grounded in `src/openhuman/accessibility/permissions.rs` (detection),
+> `src/openhuman/accessibility/types.rs` (`PermissionKind`),
+> `app/src-tauri/Info.plist` (usage strings), and
+> `app/src-tauri/entitlements.sidecar.plist` (Hardened-Runtime entitlements).
+> Use this as the pre-test checklist when building for macOS (Apple Silicon +
+> Intel) and Windows.
+
+### The four OS permissions the app tracks
+
+`detect_permissions()` returns a `PermissionStatus` over these four
+`PermissionKind`s:
+
+| Permission | Detected via (macOS) | Agent capability that needs it |
+|---|---|---|
+| **Microphone** | CPAL input-device probe (`detect_microphone_permission`) | All voice capture — dictation hotkey **and** always-on listening (`voice/always_on.rs` mic stream). **Required for "voice on" to capture anything.** |
+| **Accessibility** | `AXIsProcessTrusted()` | The whole app-control surface: `ax_interact` (AX tree read/press), `automate`, autocomplete focus query, **and synthetic keyboard/mouse injection** (enigo / CGEvent). |
+| **Screen Recording** | `CGPreflightScreenCaptureAccess()` | `screenshot` → `vision_click` (vision fallback for Electron/partial-AX apps) and screen-intelligence capture. |
+| **Input Monitoring** | `IOHIDCheckAccess(LISTEN_EVENT)` | Global hotkey **listening** (dictation hotkey / rdev / Globe-key listener — `accessibility/keys.rs`, `globe.rs`). Not needed for always-on (no hotkey). |
+
+### Supporting macOS entitlements + usage strings (Hardened Runtime)
+
+These are baked into the **signed build**, not runtime toggles. If missing, the
+OS blocks the call *before* any consent dialog renders — so they must be correct
+in the signed `.app`/DMG, and **cannot be validated with `tauri dev` alone**.
+
+- **`Info.plist` usage strings:** `NSMicrophoneUsageDescription`,
+  `NSCameraUsageDescription`, `NSAppleEventsUsageDescription` (+ Bluetooth /
+  Location / Contacts / Calendar / folder strings — those are mostly for the
+  **embedded provider webviews**, not the agent itself).
+- **`entitlements.sidecar.plist`:** `device.audio-input`, `device.camera`,
+  `automation.apple-events` (drives `osascript` / System Events — Music
+  transport, volume, foreground detection), `network.client` / `network.server`.
+
+### Capability → permission map (agent surfaces)
+
+| Capability | Microphone | Accessibility | Screen Recording | Apple Events / Automation | Input Monitoring |
+|---|:---:|:---:|:---:|:---:|:---:|
+| Always-on capture (mic → VAD → STT) | ✅ | — | — | — | — |
+| Dictation hotkey | ✅ | — | — | — | ✅ (listen) |
+| `launch_app` / `OpenApp` intent | — | — | — | — | — |
+| `Pause`/`Next`/volume intents (osascript) | — | — | — | ✅ | — |
+| `Play` (Music fast-path) | — | ✅ | — | ✅ (verify `player state`) | — |
+| `ax_interact` (list/press/set_value) | — | ✅ | — | — | — |
+| `automate` general loop | — | ✅ | ✅ (only for `vision_click`) | ✅ (where it uses osascript) | — |
+| `vision_click` (Electron fallback) | — | ✅ | ✅ | — | — |
+| `keyboard` / `mouse` (synthetic input) | — | ✅ | — | — | — |
+
+**Minimal "voice on" path:** Microphone to capture; then per intent —
+`OpenApp` needs nothing extra, transport/volume need Automation, `Play` needs
+Accessibility + Automation.
+
+### Per-OS differences (the three test machines)
+
+| | macOS (M-chip & Intel — identical) | Windows | Linux |
+|---|---|---|---|
+| **Microphone** | Real TCC prompt; **does** prompt | Real privacy gate — Settings → Privacy → Microphone | Ungated on standard desktops; Flatpak needs an XDG portal |
+| **Accessibility** | Manual grant in System Settings → Privacy & Security; **does not reliably auto-prompt**; usually needs an app **restart** after granting | No analog — UIA needs **no permission** for same-integrity apps; **cannot drive elevated apps** (UIPI) | App-interaction effectively **unsupported** (backend is macOS Swift helper / Windows UIA only; Linux returns a clean runtime error) |
+| **Screen Recording** | Manual grant; no reliable auto-prompt | `screenshot`/`vision_click` is **currently unimplemented on Windows** — the vision fallback can't run there yet | Unsupported |
+| **Input Monitoring** | Manual grant for hotkey listening | Not required | Not required |
+| **Entitlements** | Must be present in the signed build | n/a | n/a |
+
+### Gotchas to flag before testing
+
+1. **Detection ≠ entitlement.** On macOS the runtime checks report
+   `Denied`/`Unknown` if the *entitlement* is missing from the signed build,
+   independent of what the user clicked — so test on a **properly signed build**,
+   not `tauri dev`.
+2. **Microphone detection is a proxy.** `detect_microphone_permission` infers
+   from CPAL device enumeration, so "no device connected" and "permission denied"
+   both surface as `Unknown` on macOS/Windows (`permissions.rs`). The always-on
+   capture logging (`[voice::always_on] microphone permission: …` + device name +
+   first-chunk confirmation) disambiguates this live.
+3. **Restart after granting** Accessibility / Screen Recording / Input
+   Monitoring on macOS — TCC changes are not always picked up by a running
+   process.
+
+---
+
 ## Summary
 
 | Phase | Item | Status |
@@ -646,6 +771,12 @@ From live agent-in-the-loop testing on 2026-06-03 (grounded in `~/.openhuman/log
 | 1.5 | M5: richer element model (`enabled`) | ✅ Plumbed; AXEnabled found unreliable → informational only |
 | 1.5 | Native fast-paths beyond Music (Spotify/Slack) | ➖ Descoped (general loop covers them; Music shipped in M3) |
 | 1.5 | Vision fallback for Electron apps (Change 1.16) | ✅ Done (`vision_click`: screenshot → vision-locate → guarded click; frontmost guard; F2 coord-transform folded in) |
+| 1.5 | Browser fast-path (Change 1.17a) | ✅ Done (`browser.rs`: deterministic `open -a "<browser>" url` nav; play→fall-through to vision_click) |
+| 1.5 | Cross-platform browser shortcut table (Change 1.17b) | ✅ Done (`browser_shortcuts.rs`: Chrome/Firefox/Safari/Edge × macOS/Win/Linux) |
+| 1.5 | App-shortcut fast-path: Spotify/Apple Music/Slack (Change 1.17c) | ✅ Done (`app_shortcuts.rs`: transport + nav via each app's shortcuts) |
+| 1.5 | Keyboard-shortcut plumbing: `hotkey` verb + backend methods (Change 1.17d) | ✅ Done (`key`/`type_text`/`open_url_in_app`/`now_playing`; shared keyboard helpers) |
+| 1.5 | Artist-aware Music verification (Change 1.17e) | ✅ Done (`now_playing` osascript; honest wrong-artist report, no false success) |
+| 1.5 | Actionable `automate` responses (Change 1.17f) | ✅ Done (next-step guidance, candidate/label lists, verified-only success, song-row preference) |
 | 2 | Always-on microphone loop | ✅ Done (cpal → VAD → STT → agent) |
 | 2 | `always_on_enabled` config flag + Settings toggle | ✅ Done (RPC + UI + i18n) |
 | 2 | Privacy hook (screen lock pause) | ✅ Done (macOS; other OSes follow-up) |

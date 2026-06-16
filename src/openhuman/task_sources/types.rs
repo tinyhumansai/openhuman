@@ -239,6 +239,10 @@ pub struct FetchOutcome {
     pub routed: usize,
     /// Tasks skipped because they were already ingested.
     pub skipped_dupe: usize,
+    /// Previously ingested tasks removed because the upstream source no longer
+    /// returns them for this filter/status.
+    #[serde(default)]
+    pub pruned: usize,
     /// Optional human-readable status line.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,

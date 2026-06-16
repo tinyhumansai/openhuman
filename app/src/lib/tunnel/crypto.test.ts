@@ -12,6 +12,7 @@ import {
   generateKeypair,
   HKDF_INFO_C2S,
   HKDF_INFO_S2C,
+  keypairFromSecretKey,
   LEGACY_FRAME_VERSION_V1,
   open,
   openHandshake,
@@ -58,6 +59,19 @@ describe('generateKeypair', () => {
     const a = generateKeypair();
     const b = generateKeypair();
     expect(a.publicKey).not.toEqual(b.publicKey);
+  });
+});
+
+describe('keypairFromSecretKey', () => {
+  it('restores the public key from a private key', () => {
+    const original = generateKeypair();
+    const restored = keypairFromSecretKey(original.secretKey);
+    expect(restored.secretKey).toEqual(original.secretKey);
+    expect(restored.publicKey).toEqual(original.publicKey);
+  });
+
+  it('rejects non-X25519 private key lengths', () => {
+    expect(() => keypairFromSecretKey(new Uint8Array(31))).toThrow(/32 bytes/i);
   });
 });
 

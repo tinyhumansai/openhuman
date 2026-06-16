@@ -124,10 +124,12 @@ pub fn extract_mem_src_id(composite_source_id: &str) -> Option<&str> {
 }
 
 static MEMORY_SYNC_FRONTEND_HANDLE: OnceLock<SubscriptionHandle> = OnceLock::new();
+static MEMORY_SYNC_EMBED_HANDLE: OnceLock<SubscriptionHandle> = OnceLock::new();
 
 /// Register a lightweight bridge that translates lower-level ingestion events
-/// into the coarse sync-stage stream the frontend consumes.
-pub fn register_sync_stage_bridge() {
+/// into the coarse sync-stage stream the frontend consumes, and a post-sync
+/// embed trigger that kicks off batch embedding after sync completion.
+pub fn register_sync_stage_bridge(config: &crate::openhuman::config::Config) {
     if MEMORY_SYNC_FRONTEND_HANDLE.get().is_some() {
         return;
     }
@@ -140,6 +142,45 @@ pub fn register_sync_stage_bridge() {
             log::warn!(
                 "[event_bus] failed to register memory sync stage bridge — bus not initialized"
             );
+        }
+    }
+
+    // Trigger batch embedding when a sync completes. Extract no longer embeds
+    // inline — the backfill pass picks up all un-embedded chunks in large
+    // batches (up to 1000 items per API call).
+    if MEMORY_SYNC_EMBED_HANDLE.get().is_none() {
+        if let Some(handle) = subscribe_global(Arc::new(SyncCompleteEmbedTrigger {
+            config: config.clone(),
+        })) {
+            let _ = MEMORY_SYNC_EMBED_HANDLE.set(handle);
+            log::debug!("[event_bus] sync-complete embed trigger registered");
+        }
+    }
+}
+
+/// Triggers a `ReembedBackfill` chain when a sync completes so that all
+/// chunks admitted during the sync get their embeddings in one large batch
+/// pass (up to 1000 items per API call, ~1M tokens).
+struct SyncCompleteEmbedTrigger {
+    config: crate::openhuman::config::Config,
+}
+
+#[async_trait]
+impl EventHandler for SyncCompleteEmbedTrigger {
+    fn name(&self) -> &str {
+        "memory::sync_complete_embed_trigger"
+    }
+
+    fn domains(&self) -> Option<&[&str]> {
+        Some(&["memory"])
+    }
+
+    async fn handle(&self, event: &DomainEvent) {
+        if let DomainEvent::MemorySyncStageChanged { stage, .. } = event {
+            if stage == "completed" {
+                log::debug!("[memory-sync] sync completed — triggering batch embedding backfill");
+                crate::openhuman::memory_queue::ensure_reembed_backfill(&self.config);
+            }
         }
     }
 }

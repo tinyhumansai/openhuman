@@ -18,7 +18,8 @@ const panels: PanelCheck[] = [
     markers: ['Billing moved to the web', 'Open billing dashboard', 'credits'],
   },
   { hash: '/home', markers: ['Ask your assistant anything', 'Your device is connected'] },
-  { hash: '/chat', markers: ['Threads', 'New thread', 'Chat'] },
+  // /chat is the Assistant surface (thread list + agent chat header).
+  { hash: '/chat', markers: ['Threads', 'New thread', 'Talk to Tiny', 'Reasoning'] },
 ];
 
 async function waitForPanelLoad(page: Parameters<typeof test>[0]['page']) {

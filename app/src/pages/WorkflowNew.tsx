@@ -8,20 +8,21 @@
  * new SKILL.md drafts.
  *
  * Behaviour on submit:
- *   - Success → navigate to /skills (dashboard) so the user lands
- *     somewhere meaningful. We considered /workflows/run?workflow=<new-id>,
- *     but new skills aren't auto-scheduled and the runner picker
- *     pre-select only makes sense once the user has filled in inputs.
- *     Dashboard sends a clearer "skill created, here's what's
- *     scheduled" signal.
- *   - Cancel → /skills.
+ *   - Success → navigate to /connections so the user lands somewhere
+ *     meaningful. We considered /workflows/run?workflow=<new-id>, but
+ *     new skills aren't auto-scheduled and the runner picker pre-select
+ *     only makes sense once the user has filled in inputs. The
+ *     Connections page (defaulting to the Composio tab) provides a clear "here
+ *     are your connections" signal. Use ?tab=skills to deep-link to
+ *     the Skills tab if needed.
+ *   - Cancel → /connections.
  */
 import { useCallback, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import CreateWorkflowForm from '../components/skills/CreateWorkflowForm';
 import { useT } from '../lib/i18n/I18nContext';
-import { type SkillSummary } from '../services/api/skillsApi';
+import { type WorkflowSummary } from '../services/api/workflowsApi';
 
 const PAGE_FORM_ID = 'create-skill-page-form';
 
@@ -38,11 +39,11 @@ export default function WorkflowNew() {
   }, []);
 
   const handleCreated = useCallback(
-    (_skill: SkillSummary) => {
+    (_skill: WorkflowSummary) => {
       // The dashboard re-fetches the cron list on mount, so any
       // schedule the user adds for this new skill will appear there
       // automatically — no need to plumb the new id through state.
-      navigate('/skills?tab=runners');
+      navigate('/connections');
     },
     [navigate]
   );
@@ -68,7 +69,7 @@ export default function WorkflowNew() {
               <button
                 type="button"
                 data-testid="skill-new-cancel"
-                onClick={() => navigate('/skills?tab=runners')}
+                onClick={() => navigate('/connections')}
                 disabled={submitting}
                 className="rounded-lg px-4 py-2 text-sm font-medium text-stone-600 dark:text-neutral-300 transition-colors hover:bg-stone-100 dark:hover:bg-neutral-800 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-1 disabled:opacity-40">
                 {t('common.cancel')}

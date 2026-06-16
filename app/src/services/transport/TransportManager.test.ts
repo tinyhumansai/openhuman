@@ -84,6 +84,23 @@ describe('TransportManager', () => {
     await manager.close();
   });
 
+  it('tunnel profile can use a pairing token before a session token exists', async () => {
+    const profile = makeProfile('tunnel', {
+      rpcUrl: undefined,
+      sessionToken: undefined,
+      pairingToken: 'pair123',
+    });
+    const manager = new TransportManager(
+      profile,
+      () => Promise.resolve(''),
+      () => Promise.resolve(null),
+      'http://backend:3000'
+    );
+    const t = await manager.getTransport();
+    expect(t.kind).toBe('tunnel');
+    await manager.close();
+  });
+
   it('throws when tunnel profile missing channelId', async () => {
     const profile = makeProfile('tunnel', { channelId: undefined });
     const manager = new TransportManager(

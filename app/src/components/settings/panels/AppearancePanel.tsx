@@ -3,14 +3,19 @@ import type { ReactElement } from 'react';
 import { useT } from '../../../lib/i18n/I18nContext';
 import { useAppDispatch, useAppSelector } from '../../../store/hooks';
 import {
+  type AgentMessageViewMode,
   type FontSize,
+  setAgentMessageViewMode,
   setFontSize,
   setTabBarLabels,
   setThemeMode,
   type TabBarLabels,
   type ThemeMode,
 } from '../../../store/themeSlice';
-import SettingsHeader from '../components/SettingsHeader';
+import LanguageSelect from '../../LanguageSelect';
+import PanelPage from '../../layout/PanelPage';
+import SettingsBackButton from '../components/SettingsBackButton';
+import { SettingsRow, SettingsSection, SettingsSwitch } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 interface ModeOption {
@@ -63,15 +68,23 @@ const SystemIcon = (
 
 const AppearancePanel = () => {
   const { t } = useT();
-  const { navigateBack, breadcrumbs } = useSettingsNavigation();
+  const { navigateBack } = useSettingsNavigation();
   const dispatch = useAppDispatch();
   const mode = useAppSelector(state => state.theme.mode);
   const fontSize = useAppSelector(state => state.theme.fontSize);
   const tabBarLabels = useAppSelector(state => state.theme.tabBarLabels);
+  const agentMessageViewMode = useAppSelector(
+    state => state.theme.agentMessageViewMode ?? 'bubbles'
+  );
   const labelsAlwaysVisible = tabBarLabels === 'always';
+  const assistantTextModeEnabled = agentMessageViewMode === 'text';
   const toggleTabBarLabels = () => {
     const next: TabBarLabels = labelsAlwaysVisible ? 'hover' : 'always';
     dispatch(setTabBarLabels(next));
+  };
+  const toggleAssistantTextMode = () => {
+    const next: AgentMessageViewMode = assistantTextModeEnabled ? 'bubbles' : 'text';
+    dispatch(setAgentMessageViewMode(next));
   };
 
   // Build at render time so the labels follow the active locale; `t()` itself
@@ -126,15 +139,13 @@ const AppearancePanel = () => {
   ];
 
   return (
-    <div>
-      <SettingsHeader
-        title={t('settings.appearance.title')}
-        showBackButton
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
-
+    <PanelPage
+      className="z-10"
+      contentClassName=""
+      description={t('settings.appearance.menuDesc')}
+      leading={<SettingsBackButton onBack={navigateBack} />}>
       <div className="p-4 space-y-4">
+        {/* ── Theme picker — intentional bespoke tile UI ─────────────── */}
         <div>
           <h3 className="text-xs font-semibold uppercase tracking-wider text-neutral-400 dark:text-neutral-500 mb-2 px-1">
             {t('settings.appearance.themeHeading')}
@@ -199,6 +210,7 @@ const AppearancePanel = () => {
           </p>
         </div>
 
+        {/* ── Font size picker — intentional bespoke tile UI ─────────── */}
         <div>
           <h3 className="text-xs font-semibold uppercase tracking-wider text-neutral-400 dark:text-neutral-500 mb-2 px-1">
             {t('settings.appearance.fontSizeHeading')}
@@ -265,41 +277,50 @@ const AppearancePanel = () => {
           </p>
         </div>
 
-        <div>
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-neutral-400 dark:text-neutral-500 mb-2 px-1">
-            {t('settings.appearance.tabBarHeading')}
-          </h3>
-          <div className="bg-white dark:bg-neutral-900 rounded-xl border border-neutral-200 dark:border-neutral-800 overflow-hidden">
-            <button
-              type="button"
-              role="switch"
-              aria-checked={labelsAlwaysVisible}
-              onClick={toggleTabBarLabels}
-              className="w-full flex items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-neutral-50 dark:hover:bg-neutral-800/60 focus:outline-none focus-visible:bg-primary-50 dark:focus-visible:bg-primary-900/30">
-              <span className="flex-1 min-w-0">
-                <span className="block text-sm font-medium text-neutral-900 dark:text-neutral-100">
-                  {t('settings.appearance.tabBarAlwaysShowLabels')}
-                </span>
-                <span className="block text-xs text-neutral-500 dark:text-neutral-400">
-                  {t('settings.appearance.tabBarAlwaysShowLabelsDesc')}
-                </span>
-              </span>
-              <span
-                aria-hidden
-                className={`relative inline-flex w-10 h-6 rounded-full transition-colors flex-shrink-0 ${
-                  labelsAlwaysVisible ? 'bg-primary-500' : 'bg-neutral-300 dark:bg-neutral-700'
-                }`}>
-                <span
-                  className={`absolute top-0.5 inline-block w-5 h-5 rounded-full bg-white shadow transition-transform ${
-                    labelsAlwaysVisible ? 'translate-x-[18px]' : 'translate-x-0.5'
-                  }`}
-                />
-              </span>
-            </button>
-          </div>
-        </div>
+        {/* ── Tab bar labels toggle ──────────────────────────────────── */}
+        <SettingsSection title={t('settings.appearance.tabBarHeading')}>
+          <SettingsRow
+            htmlFor="switch-tab-bar-labels"
+            label={t('settings.appearance.tabBarAlwaysShowLabels')}
+            description={t('settings.appearance.tabBarAlwaysShowLabelsDesc')}
+            control={
+              <SettingsSwitch
+                id="switch-tab-bar-labels"
+                checked={labelsAlwaysVisible}
+                onCheckedChange={toggleTabBarLabels}
+                aria-label={t('settings.appearance.tabBarAlwaysShowLabels')}
+              />
+            }
+          />
+        </SettingsSection>
+
+        {/* ── Chat display toggle ────────────────────────────────────── */}
+        <SettingsSection title={t('settings.appearance.chatHeading')}>
+          <SettingsRow
+            htmlFor="switch-assistant-text-mode"
+            label={t('settings.appearance.assistantTextMode')}
+            description={t('settings.appearance.assistantTextModeDesc')}
+            control={
+              <SettingsSwitch
+                id="switch-assistant-text-mode"
+                checked={assistantTextModeEnabled}
+                onCheckedChange={toggleAssistantTextMode}
+                aria-label={t('settings.appearance.assistantTextMode')}
+              />
+            }
+          />
+        </SettingsSection>
+
+        {/* ── Display language (moved from the old settings home list) ── */}
+        <SettingsSection title={t('settings.language')}>
+          <SettingsRow
+            label={t('settings.language')}
+            description={t('settings.languageDesc')}
+            control={<LanguageSelect ariaLabel={t('settings.language')} />}
+          />
+        </SettingsSection>
       </div>
-    </div>
+    </PanelPage>
   );
 };
 

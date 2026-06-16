@@ -1,6 +1,6 @@
 {
   "name": "openhuman-app",
-  "version": "0.57.18",
+  "version": "0.57.41",
   "type": "module",
   "engines": {
     "node": ">=24.0.0"
@@ -8,7 +8,7 @@
   "scripts": {
     "dev": "vite",
     "dev:web": "vite",
-    "dev:app": "pnpm tauri:ensure && export CEF_PATH=\"$HOME/Library/Caches/tauri-cef\" && bash ../scripts/setup-chromium-safe-storage.sh && source ../scripts/load-dotenv.sh && APPLE_SIGNING_IDENTITY='OpenHuman Dev Signer' cargo tauri dev",
+    "dev:app": "pnpm tauri:ensure && export CEF_PATH=\"$HOME/Library/Caches/tauri-cef\" && bash ../scripts/setup-chromium-safe-storage.sh && source ../scripts/load-dotenv.sh && APPLE_SIGNING_IDENTITY='OpenHuman Dev Signer' cargo tauri dev --config '{\"build\":{\"devUrl\":\"http://localhost:'\"${OPENHUMAN_DEV_PORT:-1420}\"'\"}}' ",
     "dev:app:win": "\"C:/Program Files/Git/bin/bash.exe\" ../scripts/run-dev-win.sh",
     "dev:cef": "pnpm dev:app",
     "dev:wry": "pnpm tauri:ensure && export CEF_PATH=\"$HOME/Library/Caches/tauri-cef\" && source ../scripts/load-dotenv.sh && cargo tauri dev --no-default-features --features wry",
@@ -18,8 +18,9 @@
     "tauri:ios:dev": "cd src-tauri-mobile && IPHONEOS_DEPLOYMENT_TARGET=${IPHONEOS_DEPLOYMENT_TARGET:-16.0} npx --package=@tauri-apps/cli@^2 tauri ios dev",
     "tauri:ios:build": "cd src-tauri-mobile && IPHONEOS_DEPLOYMENT_TARGET=${IPHONEOS_DEPLOYMENT_TARGET:-16.0} npx --package=@tauri-apps/cli@^2 tauri ios build",
     "tauri:android:init": "bash ../scripts/android-init.sh",
-    "tauri:android:dev": "cd src-tauri-mobile && npx --package=@tauri-apps/cli@^2 tauri android dev",
-    "tauri:android:build": "cd src-tauri-mobile && npx --package=@tauri-apps/cli@^2 tauri android build",
+    "tauri:android:dev": "cd src-tauri-mobile && ../node_modules/.bin/tauri android dev",
+    "tauri:android:build": "cd src-tauri-mobile && ../node_modules/.bin/tauri android build",
+    "release:android:play": "bash ../scripts/release/upload-android-to-play.sh",
     "build": "tsc && vite build",
     "build:app": "tsc && vite build",
     "build:app:e2e": "tsc && vite build --mode development",

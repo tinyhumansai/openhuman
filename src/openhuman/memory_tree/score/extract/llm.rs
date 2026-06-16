@@ -150,15 +150,20 @@ impl EntityExtractor for LlmEntityExtractor {
         for attempt in 0..MAX_ATTEMPTS {
             match self.try_extract(text).await {
                 Some(extracted) => {
-                    // #002 (T013): a completed extraction that yielded
-                    // structure means the extraction model is working —
-                    // clear any prior "structure degraded" flag so the
-                    // status/doctor surface recovers. (An empty-but-valid
-                    // result, e.g. genuinely entity-free text, is left
-                    // alone — it isn't evidence the model is broken.)
-                    if !extracted.entities.is_empty() || !extracted.topics.is_empty() {
-                        crate::openhuman::memory_tree::health::clear_structure_degraded();
-                    }
+                    // #3365: the structure-degraded latch means "the extraction
+                    // model is timing out / unreachable" — set ONLY after
+                    // MAX_ATTEMPTS transport failures (below). A *completed* call
+                    // disproves that: `try_extract` returns `Some` whenever the
+                    // provider responded, including the valid-but-empty and
+                    // malformed-JSON-as-empty cases. So a completed extraction
+                    // clears the latch regardless of whether this particular text
+                    // yielded entities — liveness, not content, is what it tracks.
+                    //
+                    // (Clearing only on a non-empty result left the latch stuck
+                    // after the model recovered whenever later texts were
+                    // entity-light, so the surface kept warning "extraction model
+                    // is timing out" long after it had stopped — #3365.)
+                    crate::openhuman::memory_tree::health::clear_structure_degraded();
                     return Ok(extracted);
                 }
                 None => {

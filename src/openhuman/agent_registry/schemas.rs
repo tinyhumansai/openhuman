@@ -129,7 +129,10 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 optional_string("system_prompt", "Custom instructions."),
                 optional_string_array("tool_allowlist", "Allowed tool names; '*' means all."),
                 optional_string_array("tool_denylist", "Denied tool names."),
-                optional_string_array("subagents", "Delegated agent ids."),
+                optional_subagents_policy(
+                    "subagents",
+                    "Subagent delegation policy. Only ids in allowlist may be spawned.",
+                ),
                 optional_string_array("tags", "UI grouping/search tags."),
                 FieldSchema {
                     name: "metadata",
@@ -153,7 +156,10 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 optional_string("system_prompt", "Custom instructions."),
                 optional_string_array("tool_allowlist", "Allowed tool names; '*' means all."),
                 optional_string_array("tool_denylist", "Denied tool names."),
-                optional_string_array("subagents", "Delegated agent ids."),
+                optional_subagents_policy(
+                    "subagents",
+                    "Subagent delegation policy. Only ids in allowlist may be spawned.",
+                ),
                 optional_string_array("tags", "UI grouping/search tags."),
                 FieldSchema {
                     name: "metadata",
@@ -282,6 +288,22 @@ fn optional_string_array(name: &'static str, comment: &'static str) -> FieldSche
     FieldSchema {
         name,
         ty: TypeSchema::Array(Box::new(TypeSchema::String)),
+        comment,
+        required: false,
+    }
+}
+
+fn optional_subagents_policy(name: &'static str, comment: &'static str) -> FieldSchema {
+    FieldSchema {
+        name,
+        ty: TypeSchema::Option(Box::new(TypeSchema::Object {
+            fields: vec![FieldSchema {
+                name: "allowlist",
+                ty: TypeSchema::Array(Box::new(TypeSchema::String)),
+                comment: "Whitelisted subagent ids this agent may call.",
+                required: false,
+            }],
+        })),
         comment,
         required: false,
     }

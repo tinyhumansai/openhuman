@@ -23,6 +23,7 @@
  */
 import { waitForApp } from '../helpers/app-helpers';
 import {
+  chatMounted,
   clickByTitle,
   clickSend,
   typeIntoComposer,
@@ -119,7 +120,7 @@ describe('Chat harness — scroll + markdown render', () => {
   it('streams long markdown, renders it, auto-anchors to bottom, releases on scroll-up', async function () {
     this.timeout(90_000);
     await navigateViaHash('/chat');
-    await browser.waitUntil(async () => await textExists('Threads'), {
+    await browser.waitUntil(async () => await chatMounted(), {
       timeout: 15_000,
       timeoutMsg: 'Conversations did not mount',
     });

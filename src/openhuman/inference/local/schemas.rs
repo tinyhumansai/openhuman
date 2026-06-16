@@ -67,17 +67,17 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
         schemas("agent_chat"),
         schemas("agent_chat_simple"),
-        schemas("local_ai_transcribe"),
-        schemas("local_ai_transcribe_bytes"),
-        schemas("local_ai_tts"),
-        schemas("local_ai_assets_status"),
-        schemas("local_ai_downloads_progress"),
-        schemas("local_ai_download_asset"),
-        schemas("local_ai_install_whisper"),
-        schemas("local_ai_install_piper"),
-        schemas("local_ai_whisper_install_status"),
-        schemas("local_ai_piper_install_status"),
-        schemas("local_ai_test_connection"),
+        schemas("transcribe"),
+        schemas("transcribe_bytes"),
+        schemas("tts"),
+        schemas("assets_status"),
+        schemas("downloads_progress"),
+        schemas("download_asset"),
+        schemas("install_whisper"),
+        schemas("install_piper"),
+        schemas("whisper_install_status"),
+        schemas("piper_install_status"),
+        schemas("test_connection"),
     ]
 }
 
@@ -92,47 +92,47 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
             handler: handle_agent_chat_simple,
         },
         RegisteredController {
-            schema: schemas("local_ai_transcribe"),
+            schema: schemas("transcribe"),
             handler: handle_local_ai_transcribe,
         },
         RegisteredController {
-            schema: schemas("local_ai_transcribe_bytes"),
+            schema: schemas("transcribe_bytes"),
             handler: handle_local_ai_transcribe_bytes,
         },
         RegisteredController {
-            schema: schemas("local_ai_tts"),
+            schema: schemas("tts"),
             handler: handle_local_ai_tts,
         },
         RegisteredController {
-            schema: schemas("local_ai_assets_status"),
+            schema: schemas("assets_status"),
             handler: handle_local_ai_assets_status,
         },
         RegisteredController {
-            schema: schemas("local_ai_downloads_progress"),
+            schema: schemas("downloads_progress"),
             handler: handle_local_ai_downloads_progress,
         },
         RegisteredController {
-            schema: schemas("local_ai_download_asset"),
+            schema: schemas("download_asset"),
             handler: handle_local_ai_download_asset,
         },
         RegisteredController {
-            schema: schemas("local_ai_install_whisper"),
+            schema: schemas("install_whisper"),
             handler: handle_local_ai_install_whisper,
         },
         RegisteredController {
-            schema: schemas("local_ai_install_piper"),
+            schema: schemas("install_piper"),
             handler: handle_local_ai_install_piper,
         },
         RegisteredController {
-            schema: schemas("local_ai_whisper_install_status"),
+            schema: schemas("whisper_install_status"),
             handler: handle_local_ai_whisper_install_status,
         },
         RegisteredController {
-            schema: schemas("local_ai_piper_install_status"),
+            schema: schemas("piper_install_status"),
             handler: handle_local_ai_piper_install_status,
         },
         RegisteredController {
-            schema: schemas("local_ai_test_connection"),
+            schema: schemas("test_connection"),
             handler: handle_local_ai_test_connection,
         },
     ]
@@ -141,7 +141,7 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
 pub fn schemas(function: &str) -> ControllerSchema {
     match function {
         "agent_chat" => ControllerSchema {
-            namespace: "local_ai",
+            namespace: "inference",
             function: "agent_chat",
             description: "Run one-shot agent chat with optional model overrides.",
             inputs: vec![
@@ -152,7 +152,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
             outputs: vec![json_output("response", "Agent response payload.")],
         },
         "agent_chat_simple" => ControllerSchema {
-            namespace: "local_ai",
+            namespace: "inference",
             function: "agent_chat_simple",
             description: "Run one-shot lightweight provider chat.",
             inputs: vec![
@@ -162,15 +162,15 @@ pub fn schemas(function: &str) -> ControllerSchema {
             ],
             outputs: vec![json_output("response", "Agent response payload.")],
         },
-        "local_ai_transcribe" => ControllerSchema {
-            namespace: "local_ai",
+        "transcribe" => ControllerSchema {
+            namespace: "inference",
             function: "transcribe",
             description: "Transcribe audio from file path.",
             inputs: vec![required_string("audio_path", "Input audio path.")],
             outputs: vec![json_output("speech", "Transcription payload.")],
         },
-        "local_ai_transcribe_bytes" => ControllerSchema {
-            namespace: "local_ai",
+        "transcribe_bytes" => ControllerSchema {
+            namespace: "inference",
             function: "transcribe_bytes",
             description: "Transcribe audio from raw bytes.",
             inputs: vec![
@@ -184,8 +184,8 @@ pub fn schemas(function: &str) -> ControllerSchema {
             ],
             outputs: vec![json_output("speech", "Transcription payload.")],
         },
-        "local_ai_tts" => ControllerSchema {
-            namespace: "local_ai",
+        "tts" => ControllerSchema {
+            namespace: "inference",
             function: "tts",
             description: "Synthesize speech from text.",
             inputs: vec![
@@ -194,29 +194,29 @@ pub fn schemas(function: &str) -> ControllerSchema {
             ],
             outputs: vec![json_output("tts", "TTS result payload.")],
         },
-        "local_ai_assets_status" => ControllerSchema {
-            namespace: "local_ai",
+        "assets_status" => ControllerSchema {
+            namespace: "inference",
             function: "assets_status",
             description: "Get local AI asset installation status.",
             inputs: vec![],
             outputs: vec![json_output("status", "Assets status payload.")],
         },
-        "local_ai_downloads_progress" => ControllerSchema {
-            namespace: "local_ai",
+        "downloads_progress" => ControllerSchema {
+            namespace: "inference",
             function: "downloads_progress",
             description: "Get local AI download progress.",
             inputs: vec![],
             outputs: vec![json_output("progress", "Download progress payload.")],
         },
-        "local_ai_download_asset" => ControllerSchema {
-            namespace: "local_ai",
+        "download_asset" => ControllerSchema {
+            namespace: "inference",
             function: "download_asset",
             description: "Trigger download for one local AI asset capability.",
             inputs: vec![required_string("capability", "Asset capability id.")],
             outputs: vec![json_output("status", "Assets status payload.")],
         },
-        "local_ai_install_whisper" => ControllerSchema {
-            namespace: "local_ai",
+        "install_whisper" => ControllerSchema {
+            namespace: "inference",
             function: "install_whisper",
             description: "Download whisper.cpp's GGML model (and on Windows the whisper-cli binary) into the workspace so the local STT factory has everything it needs to run.",
             inputs: vec![
@@ -231,8 +231,8 @@ pub fn schemas(function: &str) -> ControllerSchema {
             ],
             outputs: vec![json_output("status", "Whisper install status payload.")],
         },
-        "local_ai_install_piper" => ControllerSchema {
-            namespace: "local_ai",
+        "install_piper" => ControllerSchema {
+            namespace: "inference",
             function: "install_piper",
             description: "Download the Piper binary archive and the bundled en_US-lessac-medium voice files into the workspace.",
             inputs: vec![
@@ -247,31 +247,31 @@ pub fn schemas(function: &str) -> ControllerSchema {
             ],
             outputs: vec![json_output("status", "Piper install status payload.")],
         },
-        "local_ai_whisper_install_status" => ControllerSchema {
-            namespace: "local_ai",
+        "whisper_install_status" => ControllerSchema {
+            namespace: "inference",
             function: "whisper_install_status",
             description: "Query the Whisper install state (missing / installing / installed / broken / error) plus per-stage download progress.",
             inputs: vec![],
             outputs: vec![json_output("status", "Whisper install status payload.")],
         },
-        "local_ai_piper_install_status" => ControllerSchema {
-            namespace: "local_ai",
+        "piper_install_status" => ControllerSchema {
+            namespace: "inference",
             function: "piper_install_status",
             description: "Query the Piper install state (missing / installing / installed / broken / error) plus per-stage download progress.",
             inputs: vec![],
             outputs: vec![json_output("status", "Piper install status payload.")],
         },
-        "local_ai_test_connection" => ControllerSchema {
-            namespace: "local_ai",
+        "test_connection" => ControllerSchema {
+            namespace: "inference",
             function: "test_connection",
             description: "Test connectivity to an Ollama server URL. Returns reachable status and model count.",
             inputs: vec![required_string("url", "Ollama server URL to test.")],
             outputs: vec![json_output("result", "Connection test result.")],
         },
         _ => ControllerSchema {
-            namespace: "local_ai",
+            namespace: "inference",
             function: "unknown",
-            description: "Unknown local_ai controller function.",
+            description: "Unknown local inference controller function.",
             inputs: vec![],
             outputs: vec![FieldSchema {
                 name: "error",

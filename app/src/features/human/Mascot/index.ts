@@ -2,6 +2,8 @@ export { Ghosty } from './Ghosty';
 export type { GhostyProps, MascotFace } from './Ghosty';
 export { CustomGifMascot } from './CustomGifMascot';
 export type { CustomGifMascotProps } from './CustomGifMascot';
+export { MascotChipAvatar } from './MascotChipAvatar';
+export type { MascotChipAvatarProps } from './MascotChipAvatar';
 export { RiveMascot } from './RiveMascot';
 export type { RiveMascotProps } from './RiveMascot';
 export { lerpViseme, VISEMES, visemePath } from './visemes';

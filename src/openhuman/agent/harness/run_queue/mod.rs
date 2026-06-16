@@ -52,6 +52,11 @@ impl RunQueue {
                     "[run_queue] interrupt-mode message pushed to queue — should have been handled by caller"
                 );
             }
+            QueueMode::Parallel => {
+                log::warn!(
+                    "[run_queue] parallel-mode message pushed to queue — should have spawned a forked turn at the caller"
+                );
+            }
         }
     }
 

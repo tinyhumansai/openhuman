@@ -109,6 +109,70 @@ pub async fn update_settings(
     let dims_changed = new_dims != old_dims;
     let sig_changed = new_sig != old_sig;
 
+    // Prevention (TAURI-RUST-5JR): a Custom (OpenAI-compatible) endpoint whose
+    // host has no `/embeddings` route (e.g. a chat-only provider like DeepSeek)
+    // 404s every memory re-embed forever — 2685 Sentry events / 9 users before
+    // this gate. Probe the endpoint ONCE here so a no-embeddings URL can never
+    // be persisted (and we never wipe memory for a config that can't embed).
+    // Only custom endpoints are probed: named catalog providers are
+    // embedding-capable by construction, and probing `managed`/`cloud`
+    // pre-login would false-fail. Resolve the provider string exactly as it
+    // will be stored so the probe targets the real endpoint.
+    let effective_provider = match &custom_endpoint {
+        Some(ep) if new_provider == "custom" || new_provider.starts_with("custom:") => {
+            format!("custom:{ep}")
+        }
+        _ => new_provider.clone(),
+    };
+    if effective_provider.starts_with("custom:") {
+        match build_embedder(&config, &effective_provider, &new_model, new_dims) {
+            Ok(embedder) => {
+                // Time-box the probe so a black-hole host can't hang the RPC.
+                let probe = tokio::time::timeout(
+                    std::time::Duration::from_secs(10),
+                    embedder.embed(&["connection test"]),
+                )
+                .await;
+                if let Ok(Err(e)) = probe {
+                    let detail = e.to_string();
+                    // HARD-block only the deterministic endpoint-absent shape
+                    // (404/405). Transient failures (timeout/5xx/network) fall
+                    // through and save — never lock out a valid-but-down
+                    // endpoint; the embed-time classifier handles any residual.
+                    if crate::core::observability::is_embedding_endpoint_absent(
+                        &detail.to_ascii_lowercase(),
+                    ) {
+                        tracing::warn!(
+                            provider = effective_provider.as_str(),
+                            "{LOG_PREFIX} update_settings rejected — endpoint has no embeddings API"
+                        );
+                        let payload = serde_json::json!({
+                            "error": "EMBEDDINGS_ENDPOINT_NO_API",
+                            "message": "This endpoint has no embeddings API. Choose an \
+                                        embeddings-capable provider (Managed, Voyage, OpenAI, \
+                                        Cohere, Ollama) or a different custom endpoint.",
+                            "detail": detail,
+                        });
+                        return Ok(RpcOutcome::new(
+                            payload,
+                            vec!["embeddings endpoint has no embeddings API — not saved".into()],
+                        ));
+                    }
+                    tracing::warn!(
+                        provider = effective_provider.as_str(),
+                        error = detail.as_str(),
+                        "{LOG_PREFIX} update_settings probe inconclusive — saving anyway"
+                    );
+                }
+            }
+            Err(e) => {
+                // Construction failure (unknown slug / bad config) — surface it
+                // rather than persisting a config that can never embed.
+                return Err(format!("invalid embedding provider configuration: {e}"));
+            }
+        }
+    }
+
     // Only require a wipe when dimensions actually change — switching
     // provider/model at the same dimensionality keeps vectors comparable.
     if dims_changed && !confirm_wipe {
@@ -382,15 +446,31 @@ pub async fn test_connection(
 /// [`embed`] uses, exposed so other domains (e.g. `codegraph`) can obtain a
 /// provider for `signature()` + direct embedding without a JSON-RPC round-trip.
 pub fn provider_from_config(config: &Config) -> anyhow::Result<Box<dyn super::EmbeddingProvider>> {
-    let provider_name = &config.memory.embedding_provider;
-    let model = &config.memory.embedding_model;
-    let dims = config.memory.embedding_dimensions;
+    build_embedder(
+        config,
+        &config.memory.embedding_provider,
+        &config.memory.embedding_model,
+        config.memory.embedding_dimensions,
+    )
+}
+
+/// Construct an embedding provider for an explicit `(provider_name, model,
+/// dims)` triple, resolving the stored API key + inline `custom:<url>` endpoint
+/// the same way [`embed`] / [`test_connection`] do. Single construction seam so
+/// the save-time probe in [`update_settings`] and the live embed path can't
+/// drift on slug-normalization / credential-lookup rules.
+fn build_embedder(
+    config: &Config,
+    provider_name: &str,
+    model: &str,
+    dims: usize,
+) -> anyhow::Result<Box<dyn super::EmbeddingProvider>> {
     let api_key = resolve_api_key(config, provider_name);
     let custom_endpoint = provider_name.strip_prefix("custom:").map(|s| s.to_string());
     let provider_slug = if provider_name.starts_with("custom:") {
         "custom"
     } else {
-        provider_name.as_str()
+        provider_name
     };
     create_embedding_provider_with_credentials(
         provider_slug,

@@ -2,8 +2,12 @@ import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { MeetCallRecord } from '../../../services/meetCallService';
+import {
+  setBackendMeetError,
+  setBackendMeetJoined,
+} from '../../../store/backendMeetSlice';
 import { renderWithProviders } from '../../../test/test-utils';
-import MeetingBotsCard, { MeetingBotsModal } from '../MeetingBotsCard';
+import MeetingBotsCard from '../MeetingBotsCard';
 
 const joinMock = vi.fn();
 const listMock = vi.fn();
@@ -25,70 +29,96 @@ describe('MeetingBotsCard', () => {
   beforeEach(() => {
     joinMock.mockReset();
     listMock.mockReset();
-    // Default: resolve with empty list so modal renders without flashing errors.
     listMock.mockResolvedValue([]);
   });
   afterEach(() => cleanup());
 
-  it('renders the banner and hides the modal by default', () => {
+  it('renders the inline form directly (no banner/modal)', () => {
     renderWithProviders(<MeetingBotsCard />);
-    expect(screen.getByTestId('meeting-bots-banner')).toBeInTheDocument();
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/meeting link/i)).toBeInTheDocument();
   });
 
-  it('opens the modal when the banner is clicked', () => {
-    renderWithProviders(<MeetingBotsCard />);
-    fireEvent.click(screen.getByTestId('meeting-bots-banner'));
-    expect(screen.getByRole('dialog')).toBeInTheDocument();
-  });
-
-  it('closes the modal on Cancel', () => {
-    renderWithProviders(<MeetingBotsCard />);
-    fireEvent.click(screen.getByTestId('meeting-bots-banner'));
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  });
-
-  it('closes the modal on Escape', () => {
-    renderWithProviders(<MeetingBotsCard />);
-    fireEvent.click(screen.getByTestId('meeting-bots-banner'));
-    fireEvent.keyDown(window, { key: 'Escape' });
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  });
-
-  it('submits to joinMeetViaBackendBot and fires a success toast', async () => {
+  it('submits to joinMeetViaBackendBot and transitions to active view', async () => {
     joinMock.mockResolvedValueOnce({
       meetUrl: 'https://meet.google.com/abc-defg-hij',
       platform: 'gmeet',
     });
     const onToast = vi.fn();
-    renderWithProviders(<MeetingBotsCard onToast={onToast} />);
+    const { store } = renderWithProviders(<MeetingBotsCard onToast={onToast} />);
 
-    fireEvent.click(screen.getByTestId('meeting-bots-banner'));
     fireEvent.change(screen.getByLabelText(/meeting link/i), {
       target: { value: 'https://meet.google.com/abc-defg-hij' },
     });
-    const form = screen.getByRole('dialog').querySelector('form')!;
+    fireEvent.change(screen.getByLabelText(/your name in this meeting/i), {
+      target: { value: 'Alice' },
+    });
+    const form = document.querySelector('form')!;
     fireEvent.submit(form);
 
     await vi.waitFor(() => {
       expect(joinMock).toHaveBeenCalledWith(
         expect.objectContaining({
           meetUrl: 'https://meet.google.com/abc-defg-hij',
-          displayName: 'OpenHuman',
+          displayName: 'Tiny',
           platform: 'gmeet',
-          agentName: 'OpenHuman',
+          agentName: 'Tiny',
+          // Participant-name field is wired to the backend authorized-speaker gate.
+          respondToParticipant: 'Alice',
+          // Active toggle defaults to checked → listen-only false.
+          listenOnly: false,
         })
       );
     });
+    // Dispatching setBackendMeetJoined transitions the parent MeetingBotsCard from
+    // MeetingBotsInline to ActiveMeetingView. The inline component is unmounted at
+    // that point, so its useEffect success-toast branch does not fire. Verify the
+    // active view is now shown instead.
+    store.dispatch(
+      setBackendMeetJoined({ meetUrl: 'https://meet.google.com/abc-defg-hij' })
+    );
     await vi.waitFor(() => {
-      expect(onToast).toHaveBeenCalledWith(
-        expect.objectContaining({ type: 'success', title: expect.stringMatching(/joining/i) })
-      );
+      expect(screen.getAllByText(/live/i).length).toBeGreaterThan(0);
     });
-    // Modal closes on success
+  });
+
+  it('uses the saved persona and mascot profile when joining', async () => {
+    joinMock.mockResolvedValueOnce({
+      meetUrl: 'https://meet.google.com/abc-defg-hij',
+      platform: 'gmeet',
+    });
+
+    renderWithProviders(<MeetingBotsCard />, {
+      preloadedState: {
+        persona: { displayName: 'Nova', description: 'Calm and concise.' },
+        mascot: {
+          color: 'custom',
+          voiceId: null,
+          voiceGender: 'male',
+          voiceUseLocaleDefault: false,
+          selectedMascotId: 'yellow',
+          customMascotGifUrl: null,
+          customPrimaryColor: '#123456',
+          customSecondaryColor: '#abcdef',
+        },
+      },
+    });
+
+    fireEvent.change(screen.getByLabelText(/meeting link/i), {
+      target: { value: 'https://meet.google.com/abc-defg-hij' },
+    });
+    fireEvent.submit(document.querySelector('form')!);
+
     await vi.waitFor(() => {
-      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(joinMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          meetUrl: 'https://meet.google.com/abc-defg-hij',
+          displayName: 'Nova',
+          agentName: 'Nova',
+          systemPrompt: 'Calm and concise.',
+          mascotId: 'yellow',
+          riveColors: { primaryColor: '#123456', secondaryColor: '#abcdef' },
+        })
+      );
     });
   });
 
@@ -97,11 +127,10 @@ describe('MeetingBotsCard', () => {
     const onToast = vi.fn();
     renderWithProviders(<MeetingBotsCard onToast={onToast} />);
 
-    fireEvent.click(screen.getByTestId('meeting-bots-banner'));
     fireEvent.change(screen.getByLabelText(/meeting link/i), {
       target: { value: 'https://meet.google.com/x' },
     });
-    fireEvent.submit(screen.getByRole('dialog').querySelector('form')!);
+    fireEvent.submit(document.querySelector('form')!);
 
     await vi.waitFor(() => {
       expect(onToast).toHaveBeenCalledWith(
@@ -111,24 +140,72 @@ describe('MeetingBotsCard', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('Bad URL');
   });
 
-  it('Zoom is a live platform — submit is labelled "Send to Zoom", not "coming soon"', () => {
-    renderWithProviders(<MeetingBotsCard />);
-    fireEvent.click(screen.getByTestId('meeting-bots-banner'));
-    // Zoom is fully supported via Recall.ai; submit should not say "coming soon".
-    fireEvent.click(screen.getByRole('button', { name: /Zoom/ }));
-    expect(screen.queryByRole('button', { name: /coming soon/i })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /send to zoom/i })).toBeInTheDocument();
+  it('surfaces the backend rejection error inline', async () => {
+    joinMock.mockResolvedValueOnce({
+      meetUrl: 'https://meet.google.com/abc-defg-hij',
+      platform: 'gmeet',
+    });
+    const onToast = vi.fn();
+    const { store } = renderWithProviders(<MeetingBotsCard onToast={onToast} />);
+
+    fireEvent.change(screen.getByLabelText(/meeting link/i), {
+      target: { value: 'https://meet.google.com/abc-defg-hij' },
+    });
+    fireEvent.submit(document.querySelector('form')!);
+
+    await vi.waitFor(() => expect(joinMock).toHaveBeenCalled());
+    store.dispatch(
+      setBackendMeetError({ error: 'Meeting bot is a paid-plan feature.' })
+    );
+
+    await vi.waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Meeting bot is a paid-plan feature.'
+      );
+    });
+    expect(onToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'error',
+        title: expect.stringMatching(/not start/i),
+      })
+    );
   });
 
-  it('does not require the old owner-name field for backend Recall joins', () => {
+  it('shows the Google Meet CTA button', () => {
     renderWithProviders(<MeetingBotsCard />);
-    fireEvent.click(screen.getByTestId('meeting-bots-banner'));
-    expect(screen.queryByLabelText(/your name in the call/i)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /send to google meet/i })).toBeInTheDocument();
+  });
+
+  it('asks for the meeting link and the participant the bot answers to', () => {
+    renderWithProviders(<MeetingBotsCard />);
+    expect(screen.getByLabelText(/meeting link/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/your name in this meeting/i)).toBeInTheDocument();
+  });
+
+  it('forwards listen-only when the active toggle is unchecked', async () => {
+    joinMock.mockResolvedValueOnce({
+      meetUrl: 'https://meet.google.com/abc-defg-hij',
+      platform: 'gmeet',
+    });
+    renderWithProviders(<MeetingBotsCard />);
+
+    fireEvent.change(screen.getByLabelText(/meeting link/i), {
+      target: { value: 'https://meet.google.com/abc-defg-hij' },
+    });
+    fireEvent.change(screen.getByLabelText(/your name in this meeting/i), {
+      target: { value: 'Alice' },
+    });
+    // Active toggle is checked by default; unchecking it selects listen-only.
+    fireEvent.click(screen.getByRole('checkbox'));
+    fireEvent.submit(document.querySelector('form')!);
+
+    await vi.waitFor(() => {
+      expect(joinMock).toHaveBeenCalledWith(expect.objectContaining({ listenOnly: true }));
+    });
   });
 });
 
 // ── ActiveMeetingView tests ───────────────────────────────────────────────────
-// Exercises the live-meeting banner rendered when Redux status is active/joining.
 
 const activeMeetState = {
   backendMeet: {
@@ -150,9 +227,7 @@ describe('MeetingBotsCard — ActiveMeetingView', () => {
 
   it('shows the LIVE badge and meeting code when status is active', () => {
     renderWithProviders(<MeetingBotsCard />, { preloadedState: activeMeetState });
-    // Both "Live" (badge) and "Live in meeting" (status text) are present
     expect(screen.getAllByText(/live/i).length).toBeGreaterThan(0);
-    // Pathname stripped: shows "abc-defg-hij" not the full URL
     expect(screen.getByText('abc-defg-hij')).toBeInTheDocument();
   });
 
@@ -168,7 +243,6 @@ describe('MeetingBotsCard — ActiveMeetingView', () => {
   });
 
   it('Leave button is disabled during in-flight leave call', async () => {
-    // Hang the leave call so we can inspect intermediate disabled state
     leaveMock.mockReturnValue(new Promise(() => {}));
     renderWithProviders(<MeetingBotsCard />, { preloadedState: activeMeetState });
     const btn = screen.getByRole('button', { name: /leave/i });
@@ -188,45 +262,36 @@ describe('MeetingBotsCard — ActiveMeetingView', () => {
     expect(screen.getByText(/hi there/i)).toBeInTheDocument();
   });
 
-  it('shows joining status text when status is joining', () => {
+  it('shows the inline form (not ActiveMeetingView) while status is joining', () => {
     renderWithProviders(<MeetingBotsCard />, {
       preloadedState: {
         backendMeet: { ...activeMeetState.backendMeet, status: 'joining' as const },
       },
     });
-    expect(screen.getByText(/joining/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/meeting link/i)).toBeInTheDocument();
+    expect(screen.queryByText(/live in meeting/i)).not.toBeInTheDocument();
   });
 
-  it('shows banner (not ActiveMeetingView) when status is ended', () => {
-    // MeetingBotsCard only shows ActiveMeetingView for active/joining.
-    // When ended the banner is rendered so the user can start a new call.
+  it('shows the inline form (not ActiveMeetingView) when status is ended', () => {
     renderWithProviders(<MeetingBotsCard />, {
-      preloadedState: {
-        backendMeet: { ...activeMeetState.backendMeet, status: 'ended' as const },
-      },
+      preloadedState: { backendMeet: { ...activeMeetState.backendMeet, status: 'ended' as const } },
     });
-    expect(screen.getByTestId('meeting-bots-banner')).toBeInTheDocument();
+    expect(screen.getByLabelText(/meeting link/i)).toBeInTheDocument();
     expect(screen.queryByText(/live in meeting/i)).not.toBeInTheDocument();
   });
 
   it('shows error toast when leave call fails', async () => {
     leaveMock.mockRejectedValueOnce(new Error('Network error'));
     const onToast = vi.fn();
-    renderWithProviders(<MeetingBotsCard onToast={onToast} />, {
-      preloadedState: activeMeetState,
-    });
+    renderWithProviders(<MeetingBotsCard onToast={onToast} />, { preloadedState: activeMeetState });
     fireEvent.click(screen.getByRole('button', { name: /leave/i }));
     await waitFor(() =>
-      expect(onToast).toHaveBeenCalledWith(
-        expect.objectContaining({ type: 'error' })
-      )
+      expect(onToast).toHaveBeenCalledWith(expect.objectContaining({ type: 'error' }))
     );
   });
 });
 
 // ── RecentCallsSection / RecentCallRow tests ──────────────────────────────────
-// These exercise the listMeetCalls integration inside MeetingBotsModal:
-// loading state, empty state, error state, and populated list.
 
 function makeCallRecord(overrides: Partial<MeetCallRecord> = {}): MeetCallRecord {
   return {
@@ -234,7 +299,7 @@ function makeCallRecord(overrides: Partial<MeetCallRecord> = {}): MeetCallRecord
     meet_url: 'https://meet.google.com/abc-defg-hij',
     bot_display_name: 'OpenHuman',
     owner_display_name: 'Alice',
-    started_at_ms: Date.now() - 5 * 60 * 1000, // 5 minutes ago
+    started_at_ms: Date.now() - 5 * 60 * 1000,
     ended_at_ms: Date.now() - 4 * 60 * 1000,
     listened_seconds: 30,
     spoken_seconds: 30,
@@ -243,23 +308,18 @@ function makeCallRecord(overrides: Partial<MeetCallRecord> = {}): MeetCallRecord
   };
 }
 
-describe('MeetingBotsModal — recent calls section', () => {
+describe('MeetingBotsCard — recent calls section', () => {
   afterEach(() => cleanup());
 
   it('shows a loading hint while listMeetCalls is pending', () => {
-    // Never resolves during this test — simulates a slow fetch.
     listMock.mockReturnValue(new Promise(() => {}));
-
-    renderWithProviders(<MeetingBotsModal onClose={() => {}} />);
-
+    renderWithProviders(<MeetingBotsCard />);
     expect(screen.getByText(/loading…/i)).toBeInTheDocument();
   });
 
   it('shows an empty-state message when listMeetCalls returns an empty array', async () => {
     listMock.mockResolvedValueOnce([]);
-
-    renderWithProviders(<MeetingBotsModal onClose={() => {}} />);
-
+    renderWithProviders(<MeetingBotsCard />);
     await waitFor(() => {
       expect(screen.getByText(/no previous calls yet/i)).toBeInTheDocument();
     });
@@ -267,42 +327,41 @@ describe('MeetingBotsModal — recent calls section', () => {
 
   it('renders a row for each returned call record', async () => {
     const records = [
-      makeCallRecord({ request_id: 'req-1', meet_url: 'https://meet.google.com/aaa-bbbb-ccc', turn_count: 2 }),
-      makeCallRecord({ request_id: 'req-2', meet_url: 'https://meet.google.com/ddd-eeee-fff', turn_count: 5 }),
+      makeCallRecord({
+        request_id: 'req-1',
+        meet_url: 'https://meet.google.com/aaa-bbbb-ccc',
+        turn_count: 2,
+      }),
+      makeCallRecord({
+        request_id: 'req-2',
+        meet_url: 'https://meet.google.com/ddd-eeee-fff',
+        turn_count: 5,
+      }),
     ];
     listMock.mockResolvedValueOnce(records);
-
-    renderWithProviders(<MeetingBotsModal onClose={() => {}} />);
-
+    renderWithProviders(<MeetingBotsCard />);
     await waitFor(() => {
       expect(screen.getByText('aaa-bbbb-ccc')).toBeInTheDocument();
       expect(screen.getByText('ddd-eeee-fff')).toBeInTheDocument();
     });
-    // turn counts shown in the row detail line
     expect(screen.getByText(/2 turns/i)).toBeInTheDocument();
     expect(screen.getByText(/5 turns/i)).toBeInTheDocument();
   });
 
   it('shows the count badge when there is at least one record', async () => {
     listMock.mockResolvedValueOnce([makeCallRecord()]);
-
-    renderWithProviders(<MeetingBotsModal onClose={() => {}} />);
-
+    renderWithProviders(<MeetingBotsCard />);
     await waitFor(() => {
-      // The "(1)" count badge next to the "Recent calls" heading.
       expect(screen.getByText('(1)')).toBeInTheDocument();
     });
   });
 
   it('shows an error hint and an empty list when listMeetCalls rejects', async () => {
     listMock.mockRejectedValueOnce(new Error('Network timeout'));
-
-    renderWithProviders(<MeetingBotsModal onClose={() => {}} />);
-
+    renderWithProviders(<MeetingBotsCard />);
     await waitFor(() => {
       expect(screen.getByText(/network timeout/i)).toBeInTheDocument();
     });
-    // After the error the rows state falls back to [] — no loading hint.
     expect(screen.queryByText(/loading…/i)).not.toBeInTheDocument();
   });
 
@@ -310,36 +369,24 @@ describe('MeetingBotsModal — recent calls section', () => {
     listMock.mockResolvedValueOnce([
       makeCallRecord({ meet_url: 'https://meet.google.com/xyz-1234-abc' }),
     ]);
-
-    renderWithProviders(<MeetingBotsModal onClose={() => {}} />);
-
+    renderWithProviders(<MeetingBotsCard />);
     await waitFor(() => {
       expect(screen.getByText('xyz-1234-abc')).toBeInTheDocument();
     });
-    // Full URL should NOT be visible — only the code portion.
     expect(screen.queryByText('https://meet.google.com/xyz-1234-abc')).not.toBeInTheDocument();
   });
 
   it('shows duration as combined spoken + listened seconds', async () => {
-    listMock.mockResolvedValueOnce([
-      makeCallRecord({ spoken_seconds: 40, listened_seconds: 20 }),
-    ]);
-
-    renderWithProviders(<MeetingBotsModal onClose={() => {}} />);
-
+    listMock.mockResolvedValueOnce([makeCallRecord({ spoken_seconds: 40, listened_seconds: 20 })]);
+    renderWithProviders(<MeetingBotsCard />);
     await waitFor(() => {
       expect(screen.getByText(/60s on call/i)).toBeInTheDocument();
     });
   });
 
   it('shows a relative timestamp for recent calls', async () => {
-    // started 5 minutes ago
-    listMock.mockResolvedValueOnce([
-      makeCallRecord({ started_at_ms: Date.now() - 5 * 60 * 1000 }),
-    ]);
-
-    renderWithProviders(<MeetingBotsModal onClose={() => {}} />);
-
+    listMock.mockResolvedValueOnce([makeCallRecord({ started_at_ms: Date.now() - 5 * 60 * 1000 })]);
+    renderWithProviders(<MeetingBotsCard />);
     await waitFor(() => {
       expect(screen.getByText(/\dm ago/)).toBeInTheDocument();
     });
@@ -347,21 +394,15 @@ describe('MeetingBotsModal — recent calls section', () => {
 
   it('shows "—" for a zero started_at_ms timestamp', async () => {
     listMock.mockResolvedValueOnce([makeCallRecord({ started_at_ms: 0 })]);
-
-    renderWithProviders(<MeetingBotsModal onClose={() => {}} />);
-
+    renderWithProviders(<MeetingBotsCard />);
     await waitFor(() => {
       expect(screen.getByText('—')).toBeInTheDocument();
     });
   });
 
-  // ── Extra coverage for RecentCallRow / formatRelativeTime branches ──────────
-
   it('shows singular "turn" (not "turns") when turn_count is 1', async () => {
     listMock.mockResolvedValueOnce([makeCallRecord({ turn_count: 1 })]);
-
-    renderWithProviders(<MeetingBotsModal onClose={() => {}} />);
-
+    renderWithProviders(<MeetingBotsCard />);
     await waitFor(() => {
       expect(screen.getByText(/1 turn$/)).toBeInTheDocument();
     });
@@ -370,9 +411,7 @@ describe('MeetingBotsModal — recent calls section', () => {
 
   it('falls back to the raw URL when it cannot be parsed', async () => {
     listMock.mockResolvedValueOnce([makeCallRecord({ meet_url: 'not-a-valid-url' })]);
-
-    renderWithProviders(<MeetingBotsModal onClose={() => {}} />);
-
+    renderWithProviders(<MeetingBotsCard />);
     await waitFor(() => {
       expect(screen.getByText('not-a-valid-url')).toBeInTheDocument();
     });
@@ -382,9 +421,7 @@ describe('MeetingBotsModal — recent calls section', () => {
     listMock.mockResolvedValueOnce([
       makeCallRecord({ started_at_ms: Date.now() - 3 * 60 * 60 * 1000 }),
     ]);
-
-    renderWithProviders(<MeetingBotsModal onClose={() => {}} />);
-
+    renderWithProviders(<MeetingBotsCard />);
     await waitFor(() => {
       expect(screen.getByText(/3h ago/)).toBeInTheDocument();
     });
@@ -394,9 +431,7 @@ describe('MeetingBotsModal — recent calls section', () => {
     listMock.mockResolvedValueOnce([
       makeCallRecord({ started_at_ms: Date.now() - 25 * 60 * 60 * 1000 }),
     ]);
-
-    renderWithProviders(<MeetingBotsModal onClose={() => {}} />);
-
+    renderWithProviders(<MeetingBotsCard />);
     await waitFor(() => {
       expect(screen.getByText('yesterday')).toBeInTheDocument();
     });
@@ -406,9 +441,7 @@ describe('MeetingBotsModal — recent calls section', () => {
     listMock.mockResolvedValueOnce([
       makeCallRecord({ started_at_ms: Date.now() - 3 * 24 * 60 * 60 * 1000 }),
     ]);
-
-    renderWithProviders(<MeetingBotsModal onClose={() => {}} />);
-
+    renderWithProviders(<MeetingBotsCard />);
     await waitFor(() => {
       expect(screen.getByText(/3d ago/)).toBeInTheDocument();
     });
@@ -418,11 +451,8 @@ describe('MeetingBotsModal — recent calls section', () => {
     listMock.mockResolvedValueOnce([
       makeCallRecord({ started_at_ms: Date.now() - 10 * 24 * 60 * 60 * 1000 }),
     ]);
-
-    renderWithProviders(<MeetingBotsModal onClose={() => {}} />);
-
+    renderWithProviders(<MeetingBotsCard />);
     await waitFor(() => {
-      // toLocaleDateString returns "Month Day" — just check it's not a relative label.
       const timestamp = screen.queryByText(/ago|yesterday|\dm|\dh/);
       expect(timestamp).not.toBeInTheDocument();
     });

@@ -7,7 +7,10 @@ use crate::openhuman::agent::tool_policy::{
     GeneratedToolRuntimeContext, GeneratedToolRuntimeRisk, ToolPolicy, ToolPolicyDecision,
     ToolPolicyRequest,
 };
-use crate::openhuman::inference::provider::{ChatRequest, ChatResponse, Provider, UsageInfo};
+use crate::openhuman::inference::provider::{
+    ChatMessage, ChatRequest, ChatResponse, ConversationMessage, Provider, ToolResultMessage,
+    UsageInfo,
+};
 use crate::openhuman::memory::Memory;
 use crate::openhuman::tools::ToolResult;
 use crate::openhuman::tools::{PermissionLevel, Tool};
@@ -411,6 +414,7 @@ fn trim_history_snaps_past_orphaned_tool_results() {
                 id: "call_x".into(),
                 name: "shell".into(),
                 arguments: "{}".into(),
+                extra_content: None,
             }],
             reasoning_content: None,
         },
@@ -444,7 +448,7 @@ fn trim_history_snaps_past_orphaned_tool_results() {
 fn build_parent_context_and_sanitize_helpers_cover_snapshot_paths() {
     let mut agent = make_agent(None);
     agent.last_memory_context = Some("remember this".into());
-    agent.skills = vec![crate::openhuman::workflows::Workflow {
+    agent.workflows = vec![crate::openhuman::workflows::Workflow {
         name: "demo".into(),
         ..Default::default()
     }];
@@ -455,7 +459,7 @@ fn build_parent_context_and_sanitize_helpers_cover_snapshot_paths() {
     assert_eq!(parent.memory_context.as_deref(), Some("remember this"));
     assert_eq!(parent.session_id, "turn-test-session");
     assert_eq!(parent.channel, "turn-test-channel");
-    assert_eq!(parent.skills.len(), 1);
+    assert_eq!(parent.workflows.len(), 1);
 
     assert_eq!(sanitize_learned_entry("   "), "");
     assert_eq!(
@@ -973,6 +977,91 @@ async fn turn_runs_full_tool_cycle_with_context_and_hooks() {
     assert!(requests[1]
         .iter()
         .any(|msg| msg.role == "user" && msg.content.contains("[Tool results]")));
+}
+
+#[tokio::test]
+async fn turn_triggers_configured_memory_agent_before_parent_prompt() {
+    crate::openhuman::agent::harness::definition::AgentDefinitionRegistry::init_global_builtins()
+        .expect("built-in agent definitions should load");
+    assert!(
+        crate::openhuman::agent::harness::definition::AgentDefinitionRegistry::global()
+            .and_then(|registry| registry.get("agent_memory"))
+            .is_some()
+    );
+
+    let provider_impl = Arc::new(SequenceProvider {
+        responses: AsyncMutex::new(vec![
+            Ok(ChatResponse {
+                text: Some("memory context: user prefers concise Rust changes".into()),
+                tool_calls: vec![],
+                usage: None,
+                reasoning_content: None,
+            }),
+            Ok(ChatResponse {
+                text: Some("parent final".into()),
+                tool_calls: vec![],
+                usage: None,
+                reasoning_content: None,
+            }),
+        ]),
+        requests: AsyncMutex::new(Vec::new()),
+    });
+    let provider: Arc<dyn Provider> = provider_impl.clone();
+    let workspace = tempfile::TempDir::new().expect("temp workspace");
+    let workspace_path = workspace.path().to_path_buf();
+    let memory_cfg = crate::openhuman::config::MemoryConfig {
+        backend: "none".into(),
+        ..crate::openhuman::config::MemoryConfig::default()
+    };
+    let mem: Arc<dyn Memory> = Arc::from(
+        crate::openhuman::memory_store::create_memory(&memory_cfg, &workspace_path).unwrap(),
+    );
+
+    let mut agent = Agent::builder()
+        .provider_arc(provider)
+        .tools(vec![Box::new(EchoTool)])
+        .memory(mem)
+        .memory_loader(Box::new(FixedMemoryLoader {
+            context: String::new(),
+        }))
+        .tool_dispatcher(Box::new(XmlToolDispatcher))
+        .config(crate::openhuman::config::AgentConfig {
+            max_tool_iterations: 3,
+            max_history_messages: 10,
+            ..crate::openhuman::config::AgentConfig::default()
+        })
+        .workspace_dir(workspace_path)
+        .auto_save(false)
+        .event_context("turn-test-session", "turn-test-channel")
+        .trigger_memory_agent(
+            crate::openhuman::agent::harness::definition::TriggerMemoryAgent::Always,
+        )
+        .build()
+        .unwrap();
+    assert_eq!(
+        agent.trigger_memory_agent,
+        crate::openhuman::agent::harness::definition::TriggerMemoryAgent::Always
+    );
+
+    let response = agent
+        .turn("Implement the memory trigger.")
+        .await
+        .expect("turn should succeed");
+    assert_eq!(response, "parent final");
+
+    let requests = provider_impl.requests.lock().await;
+    assert_eq!(requests.len(), 2);
+    assert!(requests[0].iter().any(|msg| {
+        msg.role == "user" && msg.content.contains("Implement the memory trigger.")
+    }));
+    assert!(requests[1].iter().any(|msg| {
+        msg.role == "user"
+            && msg.content.contains("## Memory agent context")
+            && msg
+                .content
+                .contains("memory context: user prefers concise Rust changes")
+            && msg.content.contains("Implement the memory trigger.")
+    }));
 }
 
 #[tokio::test]
@@ -1683,6 +1772,46 @@ fn integration_announcement_fires_once_for_new_toolkit() {
         "an unchanged connected set must not re-surface a slug, got: {second:?}"
     );
     assert!(integration_announcement_note(&second).is_none());
+}
+
+#[test]
+fn mcp_announcement_fires_once_for_new_server() {
+    // Seed the announced set with the startup-connected MCP server, mirroring
+    // the turn-1 seed in `run_turn` (those are already in the system prompt's
+    // `## Connected MCP Servers` block, so only mid-session connects announce).
+    let mut announced: HashSet<String> = HashSet::new();
+    announced.insert("ac.tandem/docs-mcp".to_string());
+
+    // A mid-session connect adds a weather server: it should be announced once,
+    // and recorded so it never re-announces.
+    let connected = vec![
+        "ac.tandem/docs-mcp".to_string(),
+        "io.weather/mcp".to_string(),
+    ];
+    let newly = newly_connected_slugs(&connected, &mut announced);
+    assert_eq!(newly, vec!["io.weather/mcp".to_string()]);
+    let note = mcp_announcement_note(&newly)
+        .expect("a newly-connected MCP server must produce an announcement");
+    assert!(
+        note.contains("io.weather/mcp"),
+        "announcement must name the new server, got: {note}"
+    );
+    assert!(
+        note.contains("use_mcp_server"),
+        "announcement must point the model at the use_mcp_server delegate, got: {note}"
+    );
+    assert!(
+        !note.contains("ac.tandem/docs-mcp"),
+        "an already-announced server must not be re-announced, got: {note}"
+    );
+
+    // A second pass with the identical connected set parks nothing.
+    let second = newly_connected_slugs(&connected, &mut announced);
+    assert!(
+        second.is_empty(),
+        "an unchanged connected set must not re-surface a server, got: {second:?}"
+    );
+    assert!(mcp_announcement_note(&second).is_none());
 }
 
 #[test]

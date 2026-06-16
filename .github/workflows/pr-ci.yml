@@ -26,6 +26,7 @@ jobs:
   frontend-quality:
     name: Frontend Quality (typecheck, lint, format)
     runs-on: ubuntu-22.04
+    timeout-minutes: 15
     container:
       image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
     steps:
@@ -71,6 +72,7 @@ jobs:
   i18n-coverage:
     name: i18n Coverage (parity)
     runs-on: ubuntu-22.04
+    timeout-minutes: 10
     container:
       image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
     steps:
@@ -104,6 +106,7 @@ jobs:
   rust-quality:
     name: Rust Quality (fmt, clippy)
     runs-on: ubuntu-22.04
+    timeout-minutes: 20
     container:
       image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
     env:
@@ -139,7 +142,7 @@ jobs:
     runs-on: ubuntu-22.04
     container:
       image: ghcr.io/tinyhumansai/openhuman_ci:latest
-    timeout-minutes: 45
+    timeout-minutes: 30
     env:
       CARGO_INCREMENTAL: "0"
     steps:
@@ -235,6 +238,7 @@ jobs:
     name: Frontend Coverage (Vitest)
     needs: [frontend-quality]
     runs-on: ubuntu-22.04
+    timeout-minutes: 30
     container:
       image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
     steps:
@@ -287,12 +291,32 @@ jobs:
     name: Rust Core Coverage (cargo-llvm-cov)
     needs: [rust-quality]
     runs-on: ubuntu-22.04
-    timeout-minutes: 45
+    timeout-minutes: 30
     container:
       image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
     env:
       CARGO_INCREMENTAL: "0"
+      # Coverage-instrumented test binaries are dominated by DWARF debug info,
+      # which exhausts the runner disk and SIGBUSes the linker. Drop debug info
+      # entirely for this job — llvm-cov line/region coverage is read from the
+      # embedded __llvm_covmap/__llvm_covfun sections (filenames + line numbers
+      # included), NOT from DWARF, so coverage numbers are unaffected. This is
+      # the maximum-shrink setting; line-tables-only was still too large for the
+      # instrumented build.
+      CARGO_PROFILE_DEV_DEBUG: "0"
     steps:
+      - name: Free disk space
+        run: |
+          # Coverage-instrumented builds produce huge binaries that exhaust the
+          # runner's ~14GB free disk during linking (SIGBUS). Inside a container,
+          # host paths are bind-mounted:
+          #   /opt/hostedtoolcache → /__t
+          #   /home/runner/work    → /__w
+          # Deleting /__t frees ~8GB on the same partition the build uses.
+          rm -rf /__t/* || true
+          echo "Disk after cleanup:"
+          df -h /__w || true
+
       - name: Checkout code
         uses: actions/checkout@v5
         with:
@@ -305,10 +329,6 @@ jobs:
         with:
           workspaces: . -> target
           cache-on-failure: true
-          # Coverage uses instrumented builds (-C instrument-coverage), whose
-          # rustflags hash to a different Swatinem key than the plain builds, so
-          # it gets its own cache and cannot reuse pr-rust-core. It still reuses
-          # the (non-instrumented) dependency tree run-over-run.
           shared-key: pr-rust-core-cov
 
       - name: Install cargo-llvm-cov
@@ -317,7 +337,7 @@ jobs:
       - name: Run cargo llvm-cov for openhuman core
         run: bash scripts/ci-cancel-aware.sh cargo llvm-cov --no-fail-fast -p openhuman --lcov --output-path lcov-core.info
         env:
-          CARGO_BUILD_JOBS: "2"
+          CARGO_BUILD_JOBS: "1"
 
       - name: Upload core lcov
         uses: actions/upload-artifact@v5
@@ -331,7 +351,7 @@ jobs:
     name: Rust Tauri Coverage (cargo-llvm-cov)
     needs: [rust-quality]
     runs-on: ubuntu-22.04
-    timeout-minutes: 45
+    timeout-minutes: 30
     container:
       image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
     env:
@@ -395,10 +415,21 @@ jobs:
     runs-on: ubuntu-22.04
     container:
       image: ghcr.io/tinyhumansai/openhuman_ci:latest
-    timeout-minutes: 60
+    timeout-minutes: 30
     env:
       CARGO_INCREMENTAL: "0"
+      # Trim DWARF debug info so test-binary linking doesn't exhaust runner disk
+      # (SIGBUS). Tests don't need full debug info; backtraces keep file/line.
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
     steps:
+      - name: Free disk space
+        run: |
+          # Reclaim space on the build partition before compiling/linking the
+          # Rust test binaries (host toolcache is bind-mounted at /__t inside the
+          # container). Mirrors the rust-core-coverage cleanup.
+          rm -rf /__t/* || true
+          df -h /__w || true
+
       - name: Checkout code
         uses: actions/checkout@v5
         with:
@@ -459,10 +490,12 @@ jobs:
       fail-fast: false
       matrix:
         shard: [1, 2, 3, 4]
-    # TODO(ci-flaky): the web lane currently times out on ~7 specs under CI
-    # contention (accounts-provider-modal, connector-gmail-composio, gmail-flow,
-    # harness-cron-prompt-flow, insights-dashboard, skills-registry). Run it but
-    # don't block the merge until those flakes are fixed — remove this then.
+    # TODO(ci-flaky, #3615): shard 1/4 consistently hits toBeVisible timeouts
+    # under CI resource contention — chat-tool-error-recovery, connector-gmail-
+    # composio, connector-session-guard-matrix, chat-harness-send-stream,
+    # chat-management-functional and ~7 others. Shards 2-4 pass reliably.
+    # Playwright config bumped to 90s test / 15s expect timeout + 2 retries.
+    # Run the lane but don't block merges until infra stabilises.
     continue-on-error: true
     steps:
       - name: Checkout code
@@ -537,6 +570,7 @@ jobs:
     needs: [playwright-e2e]
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Require all Playwright shards to pass
         run: |
@@ -557,6 +591,7 @@ jobs:
     name: Coverage Gate (diff-cover >= 80%)
     needs: [frontend-coverage, rust-core-coverage, rust-tauri-coverage]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout code
         uses: actions/checkout@v5

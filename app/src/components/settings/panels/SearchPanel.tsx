@@ -10,7 +10,11 @@ import {
   type SearchSettings,
   type SearchSettingsUpdate,
 } from '../../../utils/tauriCommands/config';
-import SettingsHeader from '../components/SettingsHeader';
+import PanelPage from '../../layout/PanelPage';
+import Button from '../../ui/Button';
+import Input from '../../ui/Input';
+import SettingsBackButton from '../components/SettingsBackButton';
+import { SettingsStatusLine, SettingsTextArea } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 type Status =
@@ -54,7 +58,7 @@ const normalizeAllowedHost = (raw: string): string =>
 
 const SearchPanel = ({ embedded = false }: { embedded?: boolean }) => {
   const { t } = useT();
-  const { navigateBack, breadcrumbs } = useSettingsNavigation();
+  const { navigateBack } = useSettingsNavigation();
   const { snapshot } = useCoreState();
   const isLocalSession = isLocalSessionToken(snapshot.sessionToken);
 
@@ -221,16 +225,12 @@ const SearchPanel = ({ embedded = false }: { embedded?: boolean }) => {
   };
 
   return (
-    <div className="z-10 relative" data-testid="search-settings-panel">
-      {!embedded && (
-        <SettingsHeader
-          title={t('settings.search.title')}
-          showBackButton
-          onBack={navigateBack}
-          breadcrumbs={breadcrumbs}
-        />
-      )}
-
+    <PanelPage
+      className="z-10"
+      testId="search-settings-panel"
+      contentClassName=""
+      description={embedded ? undefined : t('settings.search.menuDesc')}
+      leading={embedded ? undefined : <SettingsBackButton onBack={navigateBack} />}>
       <div className={embedded ? 'space-y-4' : 'p-4 space-y-4'}>
         <p className="text-xs text-stone-500 dark:text-neutral-400 leading-relaxed">
           {t('settings.search.description')}
@@ -425,41 +425,41 @@ const SearchPanel = ({ embedded = false }: { embedded?: boolean }) => {
               </p>
               {mode === 'custom' && (
                 <>
-                  <textarea
+                  <SettingsTextArea
                     value={allowedText}
                     onChange={e => setAllowedText(e.target.value)}
                     rows={4}
                     spellCheck={false}
                     placeholder={t('settings.search.allowedSitesPlaceholder')}
-                    className="w-full rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-2 py-1.5 text-xs font-mono text-stone-800 dark:text-neutral-100 focus:outline-none focus-visible:border-primary-400"
+                    className="font-mono text-xs"
+                    aria-label={t('settings.search.allowedSitesLabel')}
                   />
-                  <button
+                  <Button
                     type="button"
+                    variant="primary"
+                    size="xs"
                     onClick={() => persistAllowedDomains()}
-                    disabled={status.kind === 'saving'}
-                    className="px-3 py-1.5 rounded-lg text-xs font-medium bg-primary-500 text-white hover:bg-primary-600 disabled:opacity-50">
+                    disabled={status.kind === 'saving'}>
                     {t('settings.search.allowedSitesSave')}
-                  </button>
+                  </Button>
                 </>
               )}
             </div>
 
-            <div
-              role="status"
-              aria-live="polite"
-              className="text-xs min-h-[1rem] text-stone-500 dark:text-neutral-400">
-              {status.kind === 'saving' && t('settings.search.statusSaving')}
-              {status.kind === 'saved' && t('settings.search.statusSaved')}
-              {status.kind === 'error' && (
-                <span className="text-coral-600 dark:text-coral-300">
-                  {t('settings.search.statusError')}: {status.message}
-                </span>
-              )}
-            </div>
+            <SettingsStatusLine
+              saving={status.kind === 'saving'}
+              savedNote={status.kind === 'saved' ? t('settings.search.statusSaved') : null}
+              error={
+                status.kind === 'error'
+                  ? `${t('settings.search.statusError')}: ${status.message}`
+                  : null
+              }
+              savingLabel={t('settings.search.statusSaving')}
+            />
           </>
         )}
       </div>
-    </div>
+    </PanelPage>
   );
 };
 
@@ -496,12 +496,12 @@ const KeyEditor = ({
     <div
       role="group"
       aria-labelledby={inputId}
-      className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-3">
+      className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-3">
       <div className="flex items-center justify-between mb-2">
         <label
           id={inputId}
           htmlFor={`${inputId}-input`}
-          className="text-xs font-semibold text-stone-700 dark:text-neutral-200">
+          className="text-xs font-semibold text-neutral-800 dark:text-neutral-200">
           {label}
         </label>
         <a
@@ -513,34 +513,30 @@ const KeyEditor = ({
         </a>
       </div>
       <div className="flex items-center gap-2">
-        <input
+        <Input
           id={`${inputId}-input`}
           type={show ? 'text' : 'password'}
+          inputSize="sm"
           value={value}
           onChange={e => onChange(e.target.value)}
           placeholder={placeholder}
-          className="flex-1 min-w-0 px-2 py-1.5 rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-xs font-mono text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+          className="flex-1 min-w-0 font-mono"
         />
-        <button
-          type="button"
-          onClick={onToggleShow}
-          className="px-2 py-1.5 rounded-md border border-stone-200 dark:border-neutral-800 text-xs text-stone-600 dark:text-neutral-300 hover:bg-stone-50 dark:hover:bg-neutral-800">
+        <Button type="button" variant="secondary" size="xs" onClick={onToggleShow}>
           {show ? t('settings.search.hide') : t('settings.search.show')}
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
+          variant="primary"
+          size="xs"
           onClick={onSave}
-          disabled={value.trim().length === 0}
-          className="px-3 py-1.5 rounded-md bg-primary-500 hover:bg-primary-600 text-white text-xs font-medium disabled:opacity-50">
+          disabled={value.trim().length === 0}>
           {t('settings.search.save')}
-        </button>
+        </Button>
         {configured && (
-          <button
-            type="button"
-            onClick={onClear}
-            className="px-2 py-1.5 rounded-md border border-coral-200 dark:border-coral-500/30 text-xs text-coral-600 dark:text-coral-300 hover:bg-coral-50 dark:hover:bg-coral-500/10">
+          <Button type="button" variant="danger" size="xs" onClick={onClear}>
             {t('settings.search.clear')}
-          </button>
+          </Button>
         )}
       </div>
     </div>

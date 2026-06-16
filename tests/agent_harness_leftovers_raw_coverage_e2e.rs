@@ -262,6 +262,7 @@ fn tool_response(id: &str, name: &str, arguments: serde_json::Value) -> ChatResp
             id: id.to_string(),
             name: name.to_string(),
             arguments: arguments.to_string(),
+            extra_content: None,
         }],
         usage: Some(UsageInfo {
             input_tokens: 7,
@@ -296,7 +297,7 @@ fn build_agent(
         .model_name("round19-model".to_string())
         .temperature(0.0)
         .workspace_dir(workspace.to_path_buf())
-        .skills(Vec::new())
+        .workflows(Vec::new())
         .auto_save(false)
         .event_context("round19-session", "round19-channel")
         .agent_definition_name("round19_agent")
@@ -320,7 +321,7 @@ fn prompt_context<'a>(
         model_name: "round19-model",
         agent_id: "round19_agent",
         tools,
-        skills: &[],
+        workflows: &[],
         dispatcher_instructions: "dispatcher guidance",
         learned,
         visible_tool_names: visible,
@@ -361,6 +362,7 @@ fn definition(max_result_chars: Option<usize>) -> AgentDefinition {
         timeout_secs: None,
         sandbox_mode: SandboxMode::None,
         background: false,
+        trigger_memory_agent: Default::default(),
         subagents: Vec::new(),
         delegate_name: None,
         agent_tier: AgentTier::Worker,
@@ -372,6 +374,14 @@ fn parent_context(workspace: PathBuf, provider: Arc<ScriptedProvider>) -> Parent
     let tools = vec![tool("echo")];
     let specs = tools.iter().map(|tool| tool.spec()).collect();
     ParentExecutionContext {
+        agent_definition_id: "orchestrator".into(),
+        allowed_subagent_ids: [
+            "test".to_string(),
+            "researcher".to_string(),
+            "code_executor".to_string(),
+        ]
+        .into_iter()
+        .collect(),
         provider,
         all_tools: Arc::new(tools),
         all_tool_specs: Arc::new(specs),
@@ -380,7 +390,7 @@ fn parent_context(workspace: PathBuf, provider: Arc<ScriptedProvider>) -> Parent
         workspace_dir: workspace,
         memory: Arc::new(StubMemory::default()),
         agent_config: agent_config(3),
-        skills: Arc::new(Vec::new()),
+        workflows: Arc::new(Vec::new()),
         memory_context: Arc::new(Some("parent memory context".to_string())),
         session_id: "round19-parent-session".to_string(),
         channel: "round19-channel".to_string(),
@@ -637,6 +647,7 @@ fn subagent_prompt_renderer_handles_formats_caps_and_stale_tool_indices() -> Res
         tools: Vec::new(),
         gated_tools: Vec::new(),
         connected: true,
+        connections: Vec::new(),
         non_active_status: None,
     }];
 

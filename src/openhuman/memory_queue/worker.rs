@@ -18,10 +18,10 @@ use crate::openhuman::config::Config;
 use crate::openhuman::memory_queue::handlers;
 use crate::openhuman::memory_queue::redact::scrub_for_log;
 use crate::openhuman::memory_queue::store::{
-    claim_next, mark_deferred, mark_done, mark_failed_typed, recover_stale_locks,
-    release_running_locks, DEFAULT_LOCK_DURATION_MS,
+    claim_next, claim_ready_extract_batch, mark_deferred, mark_done, mark_failed_typed,
+    recover_stale_locks, release_running_locks, DEFAULT_LOCK_DURATION_MS,
 };
-use crate::openhuman::memory_queue::types::JobOutcome;
+use crate::openhuman::memory_queue::types::{Job, JobKind, JobOutcome};
 use crate::openhuman::memory_tree::health::PipelineFailure;
 
 /// Number of concurrent job-worker tasks. Each worker claims one job
@@ -214,7 +214,28 @@ pub async fn run_once(config: &Config) -> Result<bool> {
         None
     };
 
-    let result = handlers::handle_job(config, &job).await;
+    let mut jobs = vec![job];
+    if jobs[0].kind == JobKind::ExtractChunk {
+        let extra_limit = handlers::EXTRACT_EMBED_BATCH.saturating_sub(1);
+        let mut extra = claim_ready_extract_batch(config, DEFAULT_LOCK_DURATION_MS, extra_limit)?;
+        if !extra.is_empty() {
+            log::debug!(
+                "[memory::jobs] running extract batch count={}",
+                extra.len() + 1
+            );
+            jobs.append(&mut extra);
+        }
+    }
+
+    let results = if jobs.len() > 1 && jobs[0].kind == JobKind::ExtractChunk {
+        handlers::handle_extract_batch(config, &jobs).await?
+    } else {
+        let job = jobs
+            .pop()
+            .expect("worker has exactly one claimed job in non-batch path");
+        let result = handlers::handle_job(config, &job).await;
+        vec![(job, result)]
+    };
     drop(llm_permit);
 
     // A failed settle (`mark_done` / `mark_failed` / `mark_deferred` below)
@@ -223,6 +244,14 @@ pub async fn run_once(config: &Config) -> Result<bool> {
     // report) via [`is_sqlite_busy`]. On a stale settle the row's
     // `locked_until_ms` eventually elapses and `recover_stale_locks`
     // requeues it, so dropping the error here is at-most a re-run.
+    for (job, result) in results {
+        settle_job(config, &job, result)?;
+    }
+
+    Ok(true)
+}
+
+fn settle_job(config: &Config, job: &Job, result: Result<JobOutcome>) -> Result<()> {
     match result {
         Ok(JobOutcome::Done) => {
             log::debug!(
@@ -274,8 +303,7 @@ pub async fn run_once(config: &Config) -> Result<bool> {
             mark_failed_typed(config, &job, &message, typed)?;
         }
     }
-
-    Ok(true)
+    Ok(())
 }
 
 /// Classify whether an error is a transient I/O failure that should be

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import themeReducer, {
   FONT_SIZE_PX,
   type FontSize,
+  setAgentMessageViewMode,
   setFontSize,
   setTabBarLabels,
   setThemeMode,
@@ -12,6 +13,11 @@ describe('themeSlice', () => {
   it('defaults fontSize to medium', () => {
     const state = themeReducer(undefined, { type: '@@INIT' });
     expect(state.fontSize).toBe('medium');
+  });
+
+  it('defaults assistant message rendering to bubbles', () => {
+    const state = themeReducer(undefined, { type: '@@INIT' });
+    expect(state.agentMessageViewMode).toBe('bubbles');
   });
 
   it('updates fontSize via setFontSize', () => {
@@ -27,7 +33,19 @@ describe('themeSlice', () => {
     state = themeReducer(state, setThemeMode('dark'));
     state = themeReducer(state, setTabBarLabels('always'));
     state = themeReducer(state, setFontSize('xlarge'));
-    expect(state).toEqual({ mode: 'dark', tabBarLabels: 'always', fontSize: 'xlarge' });
+    expect(state).toEqual({
+      mode: 'dark',
+      tabBarLabels: 'always',
+      fontSize: 'xlarge',
+      agentMessageViewMode: 'bubbles',
+      developerMode: false,
+    });
+  });
+
+  it('updates assistant message view mode', () => {
+    let state = themeReducer(undefined, { type: '@@INIT' });
+    state = themeReducer(state, setAgentMessageViewMode('text'));
+    expect(state.agentMessageViewMode).toBe('text');
   });
 
   it('maps every font size to a concrete px value', () => {

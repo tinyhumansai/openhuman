@@ -108,6 +108,7 @@ jobs:
   validate:
     name: Validate deployment context
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     environment: ${{ inputs.environment || 'staging' }}
     outputs:
       platforms: ${{ steps.platforms.outputs.list }}
@@ -179,6 +180,7 @@ jobs:
   resolve-matrix:
     name: Resolve build matrix
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     needs: validate
     outputs:
       rust_matrix:    ${{ steps.resolve.outputs.rust_matrix }}
@@ -245,6 +247,7 @@ jobs:
   pre-checks:
     name: Pre-deployment checks
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: validate
     if: ${{ !inputs.skip_tests }}
     steps:
@@ -277,7 +280,7 @@ jobs:
     name: Build Rust core (${{ matrix.target }})
     runs-on: ${{ matrix.runner }}
     needs: [validate, resolve-matrix, pre-checks]
-    timeout-minutes: 60   # [F-7] prevent hung runners blocking the pipeline
+    timeout-minutes: 30   # [F-7] prevent hung runners blocking the pipeline
     # [F-2] proceed when pre-checks succeeded OR was intentionally skipped
     if: |
       fromJSON(needs.resolve-matrix.outputs.rust_matrix).include[0] != null &&
@@ -352,7 +355,7 @@ jobs:
     name: Build desktop (${{ matrix.artifact_suffix }})
     runs-on: ${{ matrix.platform }}
     needs: [validate, resolve-matrix, pre-checks]
-    timeout-minutes: 90   # [F-7]
+    timeout-minutes: 30   # [F-7]
     environment: ${{ inputs.environment || 'staging' }}
     # [F-2] same skip-guard as build-rust-core
     if: |
@@ -546,7 +549,7 @@ jobs:
     name: Build and push Docker image
     runs-on: ubuntu-latest
     needs: [validate, resolve-matrix, pre-checks]
-    timeout-minutes: 45   # [F-7]
+    timeout-minutes: 30   # [F-7]
     environment: ${{ inputs.environment || 'staging' }}
     # [F-2] skip guard; also gated by the docker flag from resolve-matrix
     if: |
@@ -596,6 +599,7 @@ jobs:
   publish-release:
     name: Publish release assets
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: [validate, build-rust-core, build-desktop, build-docker]
     # [F-3] build-docker / build-rust-core / build-desktop may be 'skipped'
     # when those platform groups were excluded from deploy_platforms — treat
@@ -671,6 +675,7 @@ jobs:
   verify:
     name: Verify deployment
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: [validate, publish-release]
     if: always()
     steps:

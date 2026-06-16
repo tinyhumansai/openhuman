@@ -264,6 +264,45 @@ async fn add_with_assigned_executor_persists_and_filters_blank() {
     assert_eq!(blank.value.assigned_executor, None);
 }
 
+#[tokio::test]
+async fn ops_remove_prunes_routed_cards_for_source() {
+    use crate::openhuman::task_sources::{ops, route};
+    use crate::openhuman::todos::ops::{add as todo_add, BoardLocation, CardPatch};
+
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    let src = add_source(
+        &config,
+        ProviderSlug::Github,
+        None,
+        None,
+        github_filter(),
+        1800,
+        SourceTarget::TodoOnly,
+        25,
+    )
+    .unwrap();
+    let location = BoardLocation::Thread {
+        workspace_dir: config.workspace_dir.clone(),
+        thread_id: route::TASK_SOURCES_THREAD_ID.to_string(),
+    };
+    let snapshot = todo_add(&location, "[GitHub] A", CardPatch::default()).unwrap();
+    let card_id = snapshot.cards.last().unwrap().id.clone();
+    mark_ingested(
+        &config,
+        &src.id,
+        &sample_task("1", "A", "2025-01-01"),
+        &card_id,
+    )
+    .unwrap();
+
+    let out = ops::remove(&config, &src.id).await.expect("remove source");
+    assert_eq!(out.value["removed"], true);
+    assert_eq!(out.value["pruned"], 1);
+    assert!(route::board_cards(&config).unwrap().is_empty());
+    assert!(list_ingested(&config, &src.id, 10).unwrap().is_empty());
+}
+
 #[test]
 fn content_hash_changes_when_only_url_changes() {
     // `url` is load-bearing downstream (source_metadata / external write-back),

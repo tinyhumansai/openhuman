@@ -9,6 +9,7 @@
 use std::sync::Arc;
 
 use chrono::Utc;
+use std::collections::HashSet;
 
 use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::config::Config;
@@ -40,8 +41,8 @@ pub async fn run_source_once(
     match run_inner(config, source, reason, &mut outcome).await {
         Ok(()) => {
             let status = format!(
-                "fetched {} routed {} dupes {}",
-                outcome.fetched, outcome.routed, outcome.skipped_dupe
+                "fetched {} routed {} dupes {} pruned {}",
+                outcome.fetched, outcome.routed, outcome.skipped_dupe, outcome.pruned
             );
             let _ = store::record_fetch(config, &source.id, Utc::now(), reason, &status);
             publish_global(DomainEvent::TaskSourceFetched {
@@ -56,6 +57,7 @@ pub async fn run_source_once(
                 fetched = outcome.fetched,
                 routed = outcome.routed,
                 skipped_dupe = outcome.skipped_dupe,
+                pruned = outcome.pruned,
                 "[task_sources:pipeline] fetch pass complete"
             );
         }
@@ -109,6 +111,8 @@ async fn run_inner(
     let fetch_filter = filter::to_fetch_filter(&source.filter, source.max_tasks_per_fetch);
     let tasks = provider.fetch_tasks(&ctx, &fetch_filter).await?;
     outcome.fetched = tasks.len();
+    let current_external_ids: HashSet<String> =
+        tasks.iter().map(|task| task.external_id.clone()).collect();
 
     for mut task in tasks {
         // Stamp the originating source before dedup / enrichment.
@@ -188,7 +192,48 @@ async fn run_inner(
         outcome.routed += 1;
     }
 
+    outcome.pruned = reconcile_missing_tasks(config, source, &current_external_ids)?;
+
     Ok(())
+}
+
+fn reconcile_missing_tasks(
+    config: &Config,
+    source: &TaskSource,
+    current_external_ids: &HashSet<String>,
+) -> Result<usize, String> {
+    let ingested = store::list_ingested_refs(config, &source.id)
+        .map_err(|e| format!("list_ingested_refs failed: {e}"))?;
+    let mut pruned = 0usize;
+
+    for item in ingested {
+        if current_external_ids.contains(&item.external_id) {
+            continue;
+        }
+
+        if let Some(card_id) = item.card_id.as_deref().filter(|id| !id.trim().is_empty()) {
+            route::remove_card(config, card_id).map_err(|e| {
+                format!(
+                    "remove stale card '{}' for source '{}' external task '{}': {e}",
+                    card_id, source.id, item.external_id
+                )
+            })?;
+        }
+
+        if store::remove_ingested(config, &source.id, &item.external_id)
+            .map_err(|e| format!("remove_ingested failed: {e}"))?
+        {
+            pruned += 1;
+            tracing::debug!(
+                source_id = %source.id,
+                provider = %source.provider.as_str(),
+                external_id = %item.external_id,
+                "[task_sources:pipeline] pruned task absent from latest source fetch"
+            );
+        }
+    }
+
+    Ok(pruned)
 }
 
 #[cfg(test)]

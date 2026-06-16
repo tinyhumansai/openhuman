@@ -32,13 +32,13 @@ vi.mock('../../hooks/useChannelDefinitions', () => ({
   }),
 }));
 
-vi.mock('../../services/api/skillsApi', async () => {
-  const actual = await vi.importActual<typeof import('../../services/api/skillsApi')>(
-    '../../services/api/skillsApi'
+vi.mock('../../services/api/workflowsApi', async () => {
+  const actual = await vi.importActual<typeof import('../../services/api/workflowsApi')>(
+    '../../services/api/workflowsApi'
   );
   return {
     ...actual,
-    skillsApi: { ...actual.skillsApi, listSkills: vi.fn().mockResolvedValue([]) },
+    workflowsApi: { ...actual.workflowsApi, listWorkflows: vi.fn().mockResolvedValue([]) },
   };
 });
 
@@ -46,6 +46,7 @@ vi.mock('../../lib/composio/hooks', () => ({
   useComposioIntegrations: () => ({
     toolkits: [],
     connectionByToolkit: new Map(),
+    connectionsByToolkit: new Map(),
     refresh: vi.fn(),
     loading: false,
     error: null,
@@ -62,16 +63,16 @@ vi.mock('../../lib/composio/hooks', () => ({
 
 describe('Skills page — Channels grid', () => {
   beforeEach(() => {
-    // The default tab is 'composio'; click 'Channels' to reveal the Channels card.
+    // The default tab is 'composio'; click 'Messaging' to reveal the Channels card.
   });
 
   it('renders configured channels as tiles in a dedicated card and opens the setup modal on click', async () => {
-    renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
+    renderWithProviders(<Skills />, { initialEntries: ['/connections'] });
 
     // Switch to the Channels tab to make the Channels card visible.
-    fireEvent.click(screen.getByRole('tab', { name: 'Channels' }));
+    fireEvent.click(screen.getByTestId('two-pane-nav-channels'));
 
-    const channelsHeading = screen.getByRole('heading', { name: 'Channels' });
+    const channelsHeading = screen.getByRole('heading', { name: 'Messaging' });
     expect(channelsHeading).toBeInTheDocument();
 
     const channelsCard = channelsHeading.closest('.rounded-2xl');
@@ -133,11 +134,11 @@ describe('Skills page — Channels grid', () => {
         },
       };
 
-      renderWithProviders(<Skills />, { initialEntries: ['/skills'], preloadedState });
+      renderWithProviders(<Skills />, { initialEntries: ['/connections'], preloadedState });
       // Switch to the Channels tab so the Channels card is visible.
-      fireEvent.click(screen.getByRole('tab', { name: 'Channels' }));
+      fireEvent.click(screen.getByTestId('two-pane-nav-channels'));
       const channelsCard = screen
-        .getByRole('heading', { name: 'Channels' })
+        .getByRole('heading', { name: 'Messaging' })
         .closest('.rounded-2xl');
       const telegramTile = within(channelsCard as HTMLElement).getByRole('button', {
         name: new RegExp(`Telegram.*${labelPattern.source}`, 'i'),
@@ -147,13 +148,11 @@ describe('Skills page — Channels grid', () => {
   );
 
   it('does not surface a Channels chip in the category filter inside the Integrations card', () => {
-    renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
-    fireEvent.click(screen.getByRole('tab', { name: 'Composio' }));
+    renderWithProviders(<Skills />, { initialEntries: ['/connections'] });
+    fireEvent.click(screen.getByTestId('two-pane-nav-composio'));
 
     // The Composio tab owns the Integrations category filter.
-    const integrationsHeading = screen.getByRole('heading', { name: 'Composio Integrations' });
-    const integrationsCard = integrationsHeading.closest('.rounded-2xl');
-    expect(integrationsCard).not.toBeNull();
+    const integrationsCard = screen.getByTestId('composio-integrations-card');
     const filterTabs = within(integrationsCard as HTMLElement)
       .queryAllByRole('tab')
       .map(el => el.textContent?.trim());

@@ -22,6 +22,7 @@
  */
 import { waitForApp } from '../helpers/app-helpers';
 import {
+  chatMounted,
   clickByTitle,
   clickSend,
   getSelectedThreadId,
@@ -101,7 +102,10 @@ describe('Chat harness — wallet flow', () => {
     this.timeout(90_000);
     await startMockServer();
     await waitForApp();
-    await resetApp(USER_ID);
+    // clearAuthSession drops a prior chat-harness spec's leftover session token
+    // so the crypto sub-agent run starts from a clean signed-in state (a
+    // polluted session was the source of the intermittent quote-store failures).
+    await resetApp(USER_ID, { clearAuthSession: true });
   });
 
   after(async () => {
@@ -160,7 +164,7 @@ describe('Chat harness — wallet flow', () => {
     setMockBehavior('llmStreamChunkDelayMs', '10');
 
     await navigateViaHash('/chat');
-    await browser.waitUntil(async () => await textExists('Threads'), {
+    await browser.waitUntil(async () => await chatMounted(), {
       timeout: 15_000,
       timeoutMsg: 'Conversations did not mount',
     });

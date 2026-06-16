@@ -1,6 +1,6 @@
 # inference
 
-Unified inference domain: the canonical home for everything LLM/STT/TTS/embedding-related. It owns the local-runtime manager (Ollama / LM Studio / Whisper / Piper), the unified cloud + local provider abstraction (trait, factory, router, reliability/retry wrapper), voice transcription and TTS inference, OpenAI/Codex subscription OAuth, and an OpenAI-compatible `/v1/chat/completions` HTTP endpoint. It consolidates the previously separate `local_ai/`, `providers/`, and inference parts of `voice/` under one domain root. The RPC surface is still split across the `inference.*` and `local_ai.*` namespaces for backwards compatibility.
+Unified inference domain: the canonical home for everything LLM/STT/TTS/embedding-related. It owns the local-runtime manager (Ollama / LM Studio / Whisper / Piper), the unified cloud + local provider abstraction (trait, factory, router, reliability/retry wrapper), voice transcription and TTS inference, OpenAI/Codex subscription OAuth, and an OpenAI-compatible `/v1/chat/completions` HTTP endpoint. It consolidates the previously separate `local_ai/`, `providers/`, and inference parts of `voice/` under one domain root. The RPC surface is `inference.*`; older `local_ai_*` method names are compatibility aliases in `src/core/legacy_aliases.rs`.
 
 ## Responsibilities
 
@@ -33,7 +33,7 @@ Unified inference domain: the canonical home for everything LLM/STT/TTS/embeddin
 | `local/`                                                                          | Local runtime manager (was `local_ai/`).                                                                                                                                                                                                           |
 | `local/core.rs`                                                                   | `LocalAiService` singleton (`global`/`try_global`), `model_artifact_path`.                                                                                                                                                                         |
 | `local/ops.rs`                                                                    | Local RPC entrypoints (`local_ai_status/prompt/summarize/vision_prompt/embed/should_react`, `ReactionDecision`); re-exported as `local::rpc`.                                                                                                      |
-| `local/schemas.rs`                                                                | `local_ai.*` controller schemas + handlers.                                                                                                                                                                                                        |
+| `local/schemas.rs`                                                                | Local-runtime `inference.*` controller schemas + handlers.                                                                                                                                                                                         |
 | `local/ollama.rs`, `local/lm_studio.rs`                                           | Provider-specific runtime drivers; base-url resolution.                                                                                                                                                                                            |
 | `local/install*.rs`, `local/voice_install_common.rs`                              | Whisper/Piper install + shared download logic.                                                                                                                                                                                                     |
 | `local/model_requirements.rs`                                                     | `MIN_CONTEXT_TOKENS`, `evaluate_context`, `ContextEligibility`.                                                                                                                                                                                    |
@@ -65,18 +65,18 @@ From `mod.rs` re-exports:
 - `presets::{ModelPreset, ModelTier, VisionMode}`
 - `sentiment::SentimentResult`
 - `types::{LocalAiStatus, LocalAiAssetStatus, LocalAiAssetsStatus, LocalAiDownloadProgressItem, LocalAiDownloadsProgress, LocalAiEmbeddingResult, LocalAiSpeechResult, LocalAiTtsResult}`
-- `local::all_local_ai_controller_schemas` / `local::all_local_ai_registered_controllers`
+- `local::all_local_inference_controller_schemas` / `local::all_local_inference_registered_controllers` (legacy export names; registered schemas are in the `inference` namespace)
 - `rpc` (alias for `ops`) and `all_inference_controller_schemas` / `all_inference_registered_controllers`
 
 Provider-layer (via `provider::`): `Provider`, `ChatMessage`, `ChatRequest`, `ChatResponse`, `create_chat_provider`, `provider_for_role`, `BYOK_INCOMPLETE_SENTINEL`, plus error classifiers. Local runtime: `local::{global, try_global}` → `Arc<LocalAiService>`.
 
 ## RPC / controllers
 
-Two namespaces, both wired into the controller registry (`src/core/all.rs`).
+One namespace is wired into the controller registry (`src/core/all.rs`).
 
-`inference.*` (`schemas.rs`): `status`, `get_client_config`, `update_model_settings`, `update_local_settings`, `list_models`, `device_profile`, `presets`, `apply_preset`, `diagnostics`, `openai_oauth_start`, `openai_oauth_complete`, `openai_oauth_status`, `openai_oauth_disconnect`, `summarize`, `prompt`, `vision_prompt`, `test_provider_model`, `should_react`, `analyze_sentiment`.
+`inference.*` (`schemas.rs`, `local/schemas.rs`): `status`, `get_client_config`, `update_model_settings`, `update_local_settings`, `list_models`, `device_profile`, `presets`, `apply_preset`, `diagnostics`, `openai_oauth_start`, `openai_oauth_complete`, `openai_oauth_status`, `openai_oauth_disconnect`, `summarize`, `prompt`, `vision_prompt`, `test_provider_model`, `should_react`, `analyze_sentiment`, `agent_chat`, `agent_chat_simple`, `transcribe`, `transcribe_bytes`, `tts`, `assets_status`, `downloads_progress`, `download_asset`, `install_whisper`, `install_piper`, `whisper_install_status`, `piper_install_status`, `test_connection`.
 
-`local_ai.*` (`local/schemas.rs`): `agent_chat`, `agent_chat_simple`, `transcribe`, `transcribe_bytes`, `tts`, `assets_status`, `downloads_progress`, `download_asset`, `install_whisper`, `install_piper`, `whisper_install_status`, `piper_install_status`, `test_connection`.
+Legacy `openhuman.local_ai_*` and `openhuman.update_local_ai_settings` method names are rewritten to canonical `openhuman.inference_*` methods by `src/core/legacy_aliases.rs` and `app/src/services/rpcMethods.ts`.
 
 Also exposes a non-RPC HTTP router (`http::router()`) nested at `/v1` by `src/core/jsonrpc.rs` (`/v1/chat/completions`, `/v1/models`), accepting either the core bearer or a stable external API key.
 

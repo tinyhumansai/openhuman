@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Bump version in package.json, tauri.conf.json, and both Cargo.toml manifests.
+// Bump version in package.json, Tauri configs, and Cargo.toml manifests.
 //
 // Usage:
 //   node scripts/release/bump-version.js <patch|minor|major>
@@ -26,6 +26,8 @@ const root = path.resolve(__dirname, '..', '..');
 const packagePath = path.join(root, 'app/package.json');
 const tauriPath = path.join(root, 'app/src-tauri/tauri.conf.json');
 const tauriCargoPath = path.join(root, 'app/src-tauri/Cargo.toml');
+const mobileTauriPath = path.join(root, 'app/src-tauri-mobile/tauri.conf.json');
+const mobileCargoPath = path.join(root, 'app/src-tauri-mobile/Cargo.toml');
 const coreCargoPath = path.join(root, 'Cargo.toml');
 
 // ── Read current version ────────────────────────────────────────────────────
@@ -54,9 +56,14 @@ pkg.version = nextVersion;
 fs.writeFileSync(packagePath, `${JSON.stringify(pkg, null, 2)}\n`);
 
 // ── Write tauri.conf.json ───────────────────────────────────────────────────
-const tauri = JSON.parse(fs.readFileSync(tauriPath, 'utf8'));
-tauri.version = nextVersion;
-fs.writeFileSync(tauriPath, `${JSON.stringify(tauri, null, 2)}\n`);
+function writeTauriVersion(filePath, nextVersion) {
+  const tauri = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  tauri.version = nextVersion;
+  fs.writeFileSync(filePath, `${JSON.stringify(tauri, null, 2)}\n`);
+}
+
+writeTauriVersion(tauriPath, nextVersion);
+writeTauriVersion(mobileTauriPath, nextVersion);
 
 function bumpCargoVersion(filePath, nextVersion) {
   const cargo = fs.readFileSync(filePath, 'utf8');
@@ -72,6 +79,7 @@ function bumpCargoVersion(filePath, nextVersion) {
 
 // ── Write Cargo.toml files ──────────────────────────────────────────────────
 bumpCargoVersion(tauriCargoPath, nextVersion);
+bumpCargoVersion(mobileCargoPath, nextVersion);
 bumpCargoVersion(coreCargoPath, nextVersion);
 
 // ── Output ──────────────────────────────────────────────────────────────────

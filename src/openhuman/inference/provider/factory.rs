@@ -172,6 +172,34 @@ pub(crate) fn is_known_openhuman_tier(model: &str) -> bool {
     )
 }
 
+/// Per-tier vision (image-input) capability for the managed OpenHuman backend.
+///
+/// The remote managed backend (`api.tinyhumans.ai`) does not advertise per-tier
+/// capabilities, so the core maintains this map itself. Accepts both the tier
+/// constants and their `hint:*` forms (callers may pass either pre- or
+/// post-resolution).
+///
+/// `reasoning-v1` is multimodal; the rest return `false` — flip an individual
+/// arm to `true` once that tier is confirmed multimodal on the backend. This is
+/// the **only** place to change managed-model vision; BYOK/custom models are
+/// handled separately by the user-set `model_registry.vision` flag
+/// ([`crate::openhuman::inference::model_context::model_vision_enabled`]).
+pub(crate) fn oh_tier_supports_vision(model: &str) -> bool {
+    use crate::openhuman::config::{
+        MODEL_AGENTIC_V1, MODEL_CHAT_V1, MODEL_CODING_V1, MODEL_REASONING_QUICK_V1,
+        MODEL_REASONING_V1, MODEL_SUMMARIZATION_V1,
+    };
+    match model {
+        MODEL_REASONING_V1 | "hint:reasoning" => true,
+        MODEL_CHAT_V1 | "hint:chat" => false,
+        MODEL_REASONING_QUICK_V1 => false,
+        MODEL_AGENTIC_V1 | "hint:agentic" => false,
+        MODEL_CODING_V1 | "hint:coding" => false,
+        MODEL_SUMMARIZATION_V1 | "hint:summarization" => false,
+        _ => false,
+    }
+}
+
 /// Return the configured provider string for a named workload role.
 ///
 /// Empty / `"cloud"` resolves through BYOK fallback first for the three
@@ -465,15 +493,8 @@ pub fn create_chat_provider_from_string(
                 role
             );
         }
-        let workspace = config
-            .config_path
-            .parent()
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| {
-                directories::UserDirs::new()
-                    .map(|d| d.home_dir().join(".openhuman"))
-                    .unwrap_or_else(|| std::path::PathBuf::from(".openhuman"))
-            });
+        let workspace =
+            crate::openhuman::inference::provider::claude_code::workspace_dir_from_config(config);
         log::debug!(
             "[providers][chat-factory] building claude-code CLI provider model={} workspace={}",
             model,
@@ -483,6 +504,7 @@ pub fn create_chat_provider_from_string(
             crate::openhuman::inference::provider::claude_code::ClaudeCodeProvider::from_env(
                 model.clone(),
                 workspace,
+                config.action_dir.clone(),
             )?;
         let p_box: Box<dyn Provider> = Box::new(provider);
         return Ok((p_box, model));
@@ -1016,6 +1038,7 @@ fn make_ollama_provider(
     .with_temperature_unsupported_models(config.temperature_unsupported_models.clone())
     .with_temperature_override(temperature_override)
     .with_native_tool_calling(false)
+    .with_vision(false)
     .with_ollama_num_ctx(num_ctx)
     .with_local_provider_kind(LocalProviderKind::Ollama);
     Ok((Box::new(provider), model.to_string()))
@@ -1056,6 +1079,7 @@ fn make_lm_studio_provider(
     .with_temperature_unsupported_models(config.temperature_unsupported_models.clone())
     .with_temperature_override(temperature_override)
     .with_native_tool_calling(false)
+    .with_vision(false)
     .with_local_provider_kind(LocalProviderKind::LmStudio);
     Ok((Box::new(provider), model.to_string()))
 }
@@ -1092,6 +1116,7 @@ fn make_mlx_provider(
     .with_temperature_unsupported_models(config.temperature_unsupported_models.clone())
     .with_temperature_override(temperature_override)
     .with_native_tool_calling(false)
+    .with_vision(false)
     .with_local_provider_kind(LocalProviderKind::Mlx);
     Ok((Box::new(provider), model.to_string()))
 }
@@ -1139,6 +1164,7 @@ fn make_local_openai_provider(
     .with_temperature_unsupported_models(config.temperature_unsupported_models.clone())
     .with_temperature_override(temperature_override)
     .with_native_tool_calling(false)
+    .with_vision(false)
     .with_local_provider_kind(LocalProviderKind::LocalOpenai);
     Ok((Box::new(provider), model.to_string()))
 }

@@ -218,6 +218,7 @@ impl Provider for StubProvider {
                     id: "call_1".into(),
                     name: "composio_list_tools".into(),
                     arguments: json!({ "toolkits": ["gmail"] }).to_string(),
+                    extra_content: None,
                 }],
                 usage: None,
                 reasoning_content: None,
@@ -337,6 +338,8 @@ async fn drive_subagent() {
     });
 
     let parent = ParentExecutionContext {
+        agent_definition_id: "orchestrator".into(),
+        allowed_subagent_ids: ["integrations_agent".to_string()].into_iter().collect(),
         provider: provider.clone(),
         all_tools: Arc::new(vec![]),
         all_tool_specs: Arc::new(vec![]),
@@ -345,7 +348,7 @@ async fn drive_subagent() {
         workspace_dir: std::env::temp_dir(),
         memory: Arc::new(StubMemory),
         agent_config: AgentConfig::default(),
-        skills: Arc::new(vec![]),
+        workflows: Arc::new(vec![]),
         memory_context: Arc::new(None),
         session_id: "stack-regression-session".into(),
         channel: "test".into(),

@@ -25,7 +25,7 @@
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
-use super::ingest::ingest_page_into_memory_tree;
+use super::ingest::ingest_page_into_memory_tree_with_outcome;
 use super::sync;
 use crate::openhuman::memory_sync::composio::providers::sync_state::{extract_item_id, SyncState};
 use crate::openhuman::memory_sync::composio::providers::{
@@ -312,6 +312,7 @@ impl ComposioProvider for GmailProvider {
         let mut page_token: Option<String> = None;
         let mut stop_reason: &'static str = "max_pages";
         let mut hit_cap_boundary = false;
+        let mut had_ingest_failures = false;
 
         for page_num in 0..max_pages {
             if state.budget_exhausted() {
@@ -505,7 +506,7 @@ impl ComposioProvider for GmailProvider {
             // the storage layer.
             if !new_messages.is_empty() {
                 let owner = format!("gmail-sync:{connection_id}");
-                match ingest_page_into_memory_tree(
+                match ingest_page_into_memory_tree_with_outcome(
                     ctx.config.as_ref(),
                     &owner,
                     account_email.as_deref(),
@@ -513,24 +514,43 @@ impl ComposioProvider for GmailProvider {
                 )
                 .await
                 {
-                    Ok(n) => {
-                        for id in &pending_synced_ids {
+                    Ok(outcome) => {
+                        let ingested_ids: std::collections::BTreeSet<&str> = outcome
+                            .item_ids_ingested
+                            .iter()
+                            .map(String::as_str)
+                            .collect();
+                        for id in pending_synced_ids
+                            .iter()
+                            .filter(|id| ingested_ids.contains(id.as_str()))
+                        {
                             state.mark_synced(id);
                         }
                         // total_persisted tracks messages, not chunks, for
                         // metric stability with the previous per-message
                         // persist path. n is the chunk count which we log
                         // for diagnostic purposes only.
-                        total_persisted += new_messages.len();
-                        cap.record(new_messages.len());
+                        total_persisted += outcome.item_ids_ingested.len();
+                        cap.record(outcome.item_ids_ingested.len());
                         tracing::debug!(
                             page = page_num,
                             new_messages = new_messages.len(),
-                            ingested_chunks = n,
+                            ingested_messages = outcome.item_ids_ingested.len(),
+                            ingested_chunks = outcome.chunks_written,
                             "[composio:gmail] page ingested into memory tree"
                         );
+                        if outcome.item_ids_ingested.len() < new_messages.len() {
+                            tracing::warn!(
+                                page = page_num,
+                                new_messages = new_messages.len(),
+                                ingested_messages = outcome.item_ids_ingested.len(),
+                                "[composio:gmail] partial page ingest; holding cursor for retry"
+                            );
+                            had_ingest_failures = true;
+                        }
                     }
                     Err(e) => {
+                        had_ingest_failures = true;
                         tracing::warn!(
                             error = %format!("{e:#}"),
                             page = page_num,
@@ -575,15 +595,17 @@ impl ComposioProvider for GmailProvider {
 
         // ── Step 5: advance cursor and save state ───────────────────
         // Hold the cursor on a cap-truncated pass so the next sync re-scans the unseen tail.
-        if !hit_cap_boundary {
+        if !had_ingest_failures && !hit_cap_boundary {
             if let Some(new_cursor) = newest_date {
                 state.advance_cursor(&new_cursor);
             }
         } else {
             tracing::warn!(
                 connection_id = %connection_id,
-                "[composio:gmail] holding cursor — cap-truncated pass; next sync will re-scan \
-                 the unseen tail"
+                had_ingest_failures,
+                hit_cap_boundary,
+                "[composio:gmail] holding cursor — ingest failures or cap-truncated pass; next sync \
+                 will re-scan the affected range"
             );
         }
         if let Some(ref freshest) = newest_id {

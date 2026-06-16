@@ -405,7 +405,7 @@ impl NewJob {
             payload_json: serde_json::to_string(p)?,
             dedupe_key: Some(p.dedupe_key()),
             available_at_ms: None,
-            max_attempts: None,
+            max_attempts: Some(3),
         })
     }
 
@@ -636,6 +636,7 @@ mod tests {
         let job = NewJob::reembed_backfill(&payload).unwrap();
         assert_eq!(job.kind, JobKind::ReembedBackfill);
         assert_eq!(job.dedupe_key.as_deref(), Some("reembed_backfill:embed-v2"));
+        assert_eq!(job.max_attempts, Some(3));
         let roundtrip: ReembedBackfillPayload = serde_json::from_str(&job.payload_json).unwrap();
         assert_eq!(roundtrip.signature, "embed-v2");
     }

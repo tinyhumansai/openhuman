@@ -91,6 +91,7 @@ async fn direct_composio_tool_uses_loopback_for_list_execute_connect_and_account
         "GMAIL_FETCH_EMAILS",
         Some(json!({ "query": "from:me" })),
         " entity-direct ",
+        None,
     )
     .await
     .expect("direct execute envelope");

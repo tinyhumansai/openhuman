@@ -242,6 +242,7 @@ mod tests {
     use serde_json::Value;
 
     use super::*;
+    use crate::openhuman::agent_registry::types::AgentSubagentPolicy;
 
     fn custom_agent(id: &str, enabled: bool) -> AgentRegistryEntry {
         AgentRegistryEntry {
@@ -254,7 +255,7 @@ mod tests {
             system_prompt: Some("Do custom work.".to_string()),
             tool_allowlist: vec!["memory.search".to_string()],
             tool_denylist: Vec::new(),
-            subagents: Vec::new(),
+            subagents: AgentSubagentPolicy::default(),
             tags: vec!["custom".to_string()],
             metadata: Value::Null,
         }
@@ -272,7 +273,7 @@ mod tests {
             system_prompt: None,
             tool_allowlist: vec!["*".to_string()],
             tool_denylist: Vec::new(),
-            subagents: Vec::new(),
+            subagents: AgentSubagentPolicy::default(),
             tags: Vec::new(),
             metadata: Value::Null,
         }];

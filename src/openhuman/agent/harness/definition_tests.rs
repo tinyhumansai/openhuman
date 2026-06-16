@@ -24,6 +24,7 @@ fn make_def(id: &str) -> AgentDefinition {
         timeout_secs: None,
         sandbox_mode: SandboxMode::None,
         background: false,
+        trigger_memory_agent: Default::default(),
         subagents: vec![],
         delegate_name: None,
         agent_tier: crate::openhuman::agent::harness::definition::AgentTier::Worker,
@@ -126,6 +127,35 @@ named = ["query_memory"]
     assert_eq!(
         def.subagents[2],
         SubagentEntry::Skills(SkillsWildcard { skills: "*".into() })
+    );
+}
+
+#[test]
+fn subagents_section_parses_allowlist_entries() {
+    let toml_src = r#"
+id = "orchestrator"
+when_to_use = "Routes work to the right specialist"
+temperature = 0.4
+max_iterations = 15
+
+[subagents]
+allowlist = [
+    "researcher",
+    "code_executor",
+    { skills = "*" },
+]
+
+[tools]
+named = ["query_memory"]
+"#;
+    let def: AgentDefinition = toml::from_str(toml_src).expect("toml parse");
+    assert_eq!(
+        def.subagents,
+        vec![
+            SubagentEntry::AgentId("researcher".into()),
+            SubagentEntry::AgentId("code_executor".into()),
+            SubagentEntry::Skills(SkillsWildcard { skills: "*".into() }),
+        ]
     );
 }
 

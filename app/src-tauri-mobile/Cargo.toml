@@ -1,6 +1,6 @@
 [package]
 name = "openhuman-mobile"
-version = "0.54.10"
+version = "0.57.18"
 description = "OpenHuman mobile (iOS) — Tauri host without CEF"
 authors = ["OpenHuman"]
 edition = "2021"
@@ -24,7 +24,7 @@ tauri-build = { version = "2", features = [] }
 # Stock upstream Tauri — no vendored CEF runtime. The mobile host renders via
 # WKWebView (iOS) / WebView (the Tauri default), not Chromium. CSP and the
 # React app are identical to desktop; only the host process is different.
-tauri = { version = "2.10", default-features = false, features = [
+tauri = { version = "=2.10.3", default-features = false, features = [
     "common-controls-v6",
     "devtools",
     "unstable",

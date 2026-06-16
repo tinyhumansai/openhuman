@@ -17,7 +17,9 @@ vi.mock('../components/SettingsHeader', () => ({
 
 function renderPanel(fontSize: 'small' | 'medium' | 'large' | 'xlarge' = 'medium') {
   return renderWithProviders(<AppearancePanel />, {
-    preloadedState: { theme: { mode: 'system', tabBarLabels: 'hover', fontSize } },
+    preloadedState: {
+      theme: { mode: 'system', tabBarLabels: 'hover', fontSize, agentMessageViewMode: 'bubbles' },
+    },
   });
 }
 
@@ -44,5 +46,15 @@ describe('<AppearancePanel /> font size', () => {
     fireEvent.click(xlarge);
 
     expect(store.getState().theme.fontSize).toBe('xlarge');
+  });
+
+  it('toggles assistant text mode for chat output', () => {
+    const { getByRole, store } = renderPanel('medium');
+    const toggle = getByRole('switch', { name: /settings\.appearance\.assistantTextMode/ });
+
+    expect(toggle).toHaveAttribute('aria-checked', 'false');
+    fireEvent.click(toggle);
+
+    expect(store.getState().theme.agentMessageViewMode).toBe('text');
   });
 });

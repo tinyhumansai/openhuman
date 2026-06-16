@@ -18,7 +18,7 @@ use openhuman_core::core::event_bus::{init_global, publish_global, DomainEvent};
 use openhuman_core::openhuman::channels::providers::telegram::TelegramChannel;
 use openhuman_core::openhuman::channels::providers::web::{
     cancel_chat, register_approval_surface_subscriber, start_chat, subscribe_web_channel_events,
-    test_support as web_test_support,
+    test_support as web_test_support, ChatRequestMetadata,
 };
 use openhuman_core::openhuman::channels::providers::yuanbao::{YuanbaoChannel, YuanbaoConfig};
 use openhuman_core::openhuman::channels::LarkChannel;
@@ -300,6 +300,7 @@ async fn web_channel_approval_bridge_forced_errors_and_newer_request_cancellatio
         Some("missing-profile".to_string()),
         Some("en-US".to_string()),
         None,
+        ChatRequestMetadata::default(),
     )
     .await
     .expect("forced chat accepted");
@@ -325,6 +326,7 @@ async fn web_channel_approval_bridge_forced_errors_and_newer_request_cancellatio
         None,
         None,
         None,
+        ChatRequestMetadata::default(),
     )
     .await
     .expect("first chat accepted");
@@ -337,6 +339,7 @@ async fn web_channel_approval_bridge_forced_errors_and_newer_request_cancellatio
         None,
         None,
         None,
+        ChatRequestMetadata::default(),
     )
     .await
     .expect("second chat accepted");

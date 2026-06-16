@@ -166,7 +166,7 @@ test.describe('Chat Multi Tool Round', () => {
     const threadId = await createNewThread(page);
     await sendMessage(page, PROMPT);
 
-    await expect(page.getByText(CANARY_FINAL)).toBeVisible({ timeout: 50_000 });
+    await expect(page.getByText(CANARY_FINAL).first()).toBeVisible({ timeout: 50_000 });
 
     await expect
       .poll(

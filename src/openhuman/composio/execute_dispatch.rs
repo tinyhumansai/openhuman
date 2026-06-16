@@ -18,6 +18,15 @@ pub async fn execute_composio_action(
     tool: &str,
     arguments: Option<serde_json::Value>,
 ) -> Result<ComposioExecuteResponse, String> {
+    execute_composio_action_with_connection(client, tool, arguments, None).await
+}
+
+pub async fn execute_composio_action_with_connection(
+    client: &ComposioClient,
+    tool: &str,
+    arguments: Option<serde_json::Value>,
+    connection_id: Option<&str>,
+) -> Result<ComposioExecuteResponse, String> {
     let tool = tool.trim();
     if tool.is_empty() {
         return Err("composio: tool slug must not be empty".to_string());
@@ -35,8 +44,12 @@ pub async fn execute_composio_action(
         }
     };
 
-    tracing::debug!(tool = %tool, "[composio][dispatch] execute_composio_action");
-    let resp = match execute_with_retries(client, tool, prepared).await {
+    tracing::debug!(
+        tool = %tool,
+        connection_id = ?connection_id,
+        "[composio][dispatch] execute_composio_action"
+    );
+    let resp = match execute_with_retries(client, tool, prepared, connection_id).await {
         Ok(resp) => resp,
         Err(e) => {
             tracing::debug!(tool = %tool, "[composio][dispatch] transport failure");
@@ -62,6 +75,7 @@ async fn execute_with_retries(
     client: &ComposioClient,
     tool: &str,
     args: serde_json::Value,
+    connection_id: Option<&str>,
 ) -> anyhow::Result<ComposioExecuteResponse> {
     let mut delay = RATELIMIT_INITIAL_BACKOFF;
     for attempt in 1..=RATELIMIT_MAX_ATTEMPTS {
@@ -74,6 +88,7 @@ async fn execute_with_retries(
             } else {
                 Duration::ZERO
             },
+            connection_id,
         )
         .await?;
 
@@ -126,6 +141,16 @@ pub async fn execute_composio_action_kind(
     arguments: Option<serde_json::Value>,
     entity_id: &str,
 ) -> Result<ComposioExecuteResponse, String> {
+    execute_composio_action_kind_with_connection(kind, tool, arguments, entity_id, None).await
+}
+
+pub async fn execute_composio_action_kind_with_connection(
+    kind: ComposioClientKind,
+    tool: &str,
+    arguments: Option<serde_json::Value>,
+    entity_id: &str,
+    connection_id: Option<&str>,
+) -> Result<ComposioExecuteResponse, String> {
     let tool_trim = tool.trim();
     if tool_trim.is_empty() {
         return Err("composio: tool slug must not be empty".to_string());
@@ -145,8 +170,13 @@ pub async fn execute_composio_action_kind(
 
     match kind {
         ComposioClientKind::Backend(client) => {
-            tracing::debug!(tool = %tool_trim, "[composio][dispatch] backend variant");
-            let resp = match execute_with_retries(&client, tool_trim, prepared).await {
+            tracing::debug!(
+                tool = %tool_trim,
+                connection_id = ?connection_id,
+                "[composio][dispatch] backend variant"
+            );
+            let resp = match execute_with_retries(&client, tool_trim, prepared, connection_id).await
+            {
                 Ok(resp) => resp,
                 Err(e) => {
                     tracing::debug!(tool = %tool_trim, "[composio][dispatch] transport failure");
@@ -156,12 +186,13 @@ pub async fn execute_composio_action_kind(
             Ok(format_response(tool_trim, resp))
         }
         ComposioClientKind::Direct(direct) => {
-            tracing::debug!(tool = %tool_trim, "[composio][dispatch] direct variant");
-            // Direct path skips auth_retry — the user's stored Composio
-            // API key has no backend-side refresh surface and a 401 is a
-            // config issue that should surface immediately rather than
-            // retry-loop. Local validation + error mapping still apply.
-            match direct_execute(&direct, tool_trim, Some(prepared), entity_id).await {
+            tracing::debug!(
+                tool = %tool_trim,
+                connection_id = ?connection_id,
+                "[composio][dispatch] direct variant"
+            );
+            match direct_execute(&direct, tool_trim, Some(prepared), entity_id, connection_id).await
+            {
                 Ok(resp) => Ok(format_response(tool_trim, resp)),
                 Err(e) => Err(remap_transport_error(tool_trim, &e.to_string())),
             }

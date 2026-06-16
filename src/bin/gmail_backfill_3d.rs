@@ -210,6 +210,7 @@ async fn main() -> Result<()> {
                 "GMAIL_FETCH_EMAILS",
                 Some(args.clone()),
                 &config.composio.entity_id,
+                None,
             )
             .await
             .map_err(|e| anyhow::anyhow!("GMAIL_FETCH_EMAILS (direct) page {page_num}: {e:#}"))?,

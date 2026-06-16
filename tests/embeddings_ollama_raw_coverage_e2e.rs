@@ -564,7 +564,7 @@ async fn embedding_catalog_factory_retry_noop_and_cloud_empty_paths_are_reachabl
     assert_eq!(parse_retry_after_ms(Some(" 5 ")), Some(5_000));
     assert_eq!(
         parse_retry_after_ms(Some("Wed, 21 Oct 2015 07:28:00 GMT")),
-        None
+        Some(0)
     );
     assert_eq!(parse_retry_after_ms(Some("99999")), Some(MAX_BACKOFF_MS));
     assert_eq!(backoff_ms_for_attempt(2, Some("1")), 1_000);

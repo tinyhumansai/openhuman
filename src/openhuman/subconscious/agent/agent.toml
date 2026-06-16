@@ -1,0 +1,32 @@
+id = "subconscious"
+display_name = "Subconscious Agent"
+when_to_use = "Background awareness loop — periodically wakes up, reviews the user's situation report and context, maintains a persistent scratchpad of observations, and delegates deeper research when in aggressive mode."
+temperature = 0.4
+max_iterations = 30
+sandbox_mode = "read_only"
+# Background coordinator: simple mode only edits scratchpad, but aggressive
+# mode may delegate bounded deep work through the explicit subagent policy.
+agent_tier = "reasoning"
+omit_identity = false
+omit_memory_context = false
+omit_safety_preamble = true
+omit_skills_catalog = true
+omit_profile = false
+omit_memory_md = false
+
+[model]
+hint = "chat"
+
+[subagents]
+allowlist = [
+    "orchestrator",
+    "researcher",
+]
+
+[tools]
+named = [
+    "scratchpad_add",
+    "scratchpad_edit",
+    "scratchpad_remove",
+    "spawn_subagent",
+]

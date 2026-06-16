@@ -476,6 +476,92 @@ fn error_html(message: &str) -> String {
     )
 }
 
+/// Query params for the MCP browser-OAuth callback (`/oauth/mcp/callback`).
+#[derive(Debug, serde::Deserialize)]
+struct OAuthMcpCallbackQuery {
+    code: Option<String>,
+    state: Option<String>,
+    error: Option<String>,
+    error_description: Option<String>,
+}
+
+/// Loopback redirect target for MCP browser OAuth (RFC 8252). The authorization
+/// server redirects the browser here with `?code=…&state=…`; we hand it to
+/// `mcp_registry::oauth::complete`, which exchanges the code for a token, stores
+/// it as the server's `Authorization` header, and reconnects.
+async fn oauth_mcp_callback_handler(
+    Query(query): Query<OAuthMcpCallbackQuery>,
+) -> impl IntoResponse {
+    let html = |status: StatusCode, body: String| -> Response {
+        (
+            status,
+            [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+            body,
+        )
+            .into_response()
+    };
+
+    if let Some(err) = query.error.as_deref().filter(|s| !s.is_empty()) {
+        let desc = query.error_description.as_deref().unwrap_or("");
+        log::warn!("[oauth:mcp] authorization error: {err} {desc}");
+        return html(
+            StatusCode::BAD_REQUEST,
+            error_html(&format!("Authorization was denied or failed: {err} {desc}")),
+        );
+    }
+
+    let (code, state) = match (
+        query
+            .code
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty()),
+        query
+            .state
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty()),
+    ) {
+        (Some(c), Some(s)) => (c.to_string(), s.to_string()),
+        _ => {
+            return html(
+                StatusCode::BAD_REQUEST,
+                error_html("Missing authorization code or state in the callback."),
+            )
+        }
+    };
+
+    log::info!("[oauth:mcp] callback received (state present); completing exchange");
+
+    let config = match crate::openhuman::config::Config::load_or_init().await {
+        Ok(c) => c,
+        Err(e) => {
+            log::error!("[oauth:mcp] config load failed: {e}");
+            return html(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                error_html("Internal error loading config. Please try again."),
+            );
+        }
+    };
+
+    match crate::openhuman::mcp_registry::oauth::complete(&config, &state, &code).await {
+        Ok(server_id) => {
+            log::info!("[oauth:mcp] completed sign-in for server_id={server_id}");
+            html(
+                StatusCode::OK,
+                success_html("Signed in. The MCP server is now connected — you can close this tab and return to OpenHuman."),
+            )
+        }
+        Err(e) => {
+            log::error!("[oauth:mcp] complete failed: {e}");
+            html(
+                StatusCode::BAD_GATEWAY,
+                error_html(&format!("Sign-in could not be completed: {e}")),
+            )
+        }
+    }
+}
+
 /// Require desktop `/auth` callbacks to be top-level document navigations when
 /// browser fetch-metadata headers are present.
 ///
@@ -831,9 +917,84 @@ async fn desktop_auth_handler(
     )
 }
 
+/// Query parameters for the dictation WebSocket endpoint.
+///
+/// Browser `WebSocket` cannot attach an `Authorization` header on upgrade, so
+/// the FE forwards the per-process core bearer as a `?token=…` query param —
+/// validated against the same in-process RPC token via [`verify_bearer_token`]
+/// (single source of truth, no separate credential).
+#[derive(Debug, serde::Deserialize)]
+struct DictationQuery {
+    #[serde(default)]
+    token: Option<String>,
+}
+
 /// WebSocket upgrade handler for streaming voice dictation.
-async fn dictation_ws_handler(ws: WebSocketUpgrade) -> Response {
+///
+/// Authenticated before upgrade (C4 / issue #1924): the request must carry the
+/// per-process core bearer either as `Authorization: Bearer <token>` (CLI /
+/// native callers) or as `?token=<token>` (browser `WebSocket`, which cannot
+/// set headers), and — when an `Origin` header is present — that origin must be
+/// on the local-app allowlist, mirroring the Socket.IO handshake check. Missing
+/// or wrong credentials are rejected with 401 and the socket is never upgraded.
+async fn dictation_ws_handler(
+    headers: axum::http::HeaderMap,
+    Query(query): Query<DictationQuery>,
+    ws: WebSocketUpgrade,
+) -> Response {
     log::info!("[ws] dictation WebSocket upgrade requested");
+
+    // Origin check (same allowlist Socket.IO enforces): native clients send no
+    // Origin and are accepted; cross-origin browser pages are rejected even if
+    // they somehow hold the bearer.
+    let origin = headers
+        .get(header::ORIGIN)
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim);
+    if !crate::core::socketio::origin_is_allowed(origin) {
+        log::warn!("[ws] dictation upgrade rejected: disallowed origin {origin:?}");
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({
+                "ok": false,
+                "error": "forbidden",
+                "message": "Origin not allowed for the dictation WebSocket."
+            })),
+        )
+            .into_response();
+    }
+
+    // Bearer check: header first, then `?token=` for browser WebSocket clients.
+    let header_token = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let bearer_ok = header_token
+        .map(crate::core::auth::verify_bearer_token)
+        .unwrap_or(false);
+    let bearer_ok = bearer_ok
+        || query
+            .token
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(crate::core::auth::verify_bearer_token)
+            .unwrap_or(false);
+    if !bearer_ok {
+        log::warn!("[ws] dictation upgrade rejected: missing or invalid bearer token");
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({
+                "ok": false,
+                "error": "unauthorized",
+                "message": "Missing or invalid token. Supply 'Authorization: Bearer <core>' or ?token=<core>."
+            })),
+        )
+            .into_response();
+    }
+
     ws.on_upgrade(|socket| async move {
         let config = match crate::openhuman::config::rpc::load_config_with_timeout().await {
             Ok(c) => Arc::new(c),
@@ -888,6 +1049,7 @@ pub fn build_core_http_router(socketio_enabled: bool) -> Router {
         .route("/ws/dictation", get(dictation_ws_handler))
         .route("/auth", get(desktop_auth_handler))
         .route("/auth/telegram", get(telegram_auth_handler))
+        .route("/oauth/mcp/callback", get(oauth_mcp_callback_handler))
         // OpenAI-compatible inference endpoint (/v1/chat/completions, /v1/models)
         .nest("/v1", crate::openhuman::inference::http::router())
         .fallback(not_found_handler)
@@ -1056,35 +1218,50 @@ pub(super) fn with_cors_headers(mut response: Response, origin: Option<&str>) ->
 }
 
 /// Handler for the health check endpoint.
+///
+/// Liveness is granular (#3312): a single degraded *background* component
+/// (scheduler, channels, update_checker, …) no longer 503s the whole container.
+/// `/health` returns 503 only when a *critical* component is unhealthy (see
+/// `health::CRITICAL_COMPONENTS`); otherwise it returns 200 — with a `degraded`
+/// flag and per-component buckets in the body so readiness probes and operators
+/// can still see partial failures.
 async fn health_handler() -> impl IntoResponse {
     let snapshot = crate::openhuman::health::snapshot();
-    let unhealthy: Vec<&str> = snapshot
-        .components
-        .iter()
-        .filter_map(|(name, c)| {
-            if c.status == "ok" || c.status == "starting" {
-                None
-            } else {
-                Some(name.as_str())
-            }
-        })
-        .collect();
-    let is_ok = unhealthy.is_empty();
+    let verdict = crate::openhuman::health::verdict(&snapshot);
 
-    let status = if is_ok {
+    let status = if verdict.healthy {
         StatusCode::OK
     } else {
         StatusCode::SERVICE_UNAVAILABLE
     };
 
+    // Augment the snapshot body with the verdict so the components map stays
+    // backward-compatible while exposing overall liveness/readiness.
+    let mut body = serde_json::to_value(&snapshot).unwrap_or_else(|_| serde_json::json!({}));
+    if let Some(obj) = body.as_object_mut() {
+        obj.insert("healthy".to_string(), serde_json::json!(verdict.healthy));
+        obj.insert("degraded".to_string(), serde_json::json!(verdict.degraded));
+        obj.insert(
+            "critical_unhealthy".to_string(),
+            serde_json::json!(verdict.critical_unhealthy),
+        );
+        obj.insert(
+            "degraded_components".to_string(),
+            serde_json::json!(verdict.degraded_components),
+        );
+    }
+
     tracing::debug!(
-        "[health] status={} components={} unhealthy={:?}",
+        "[health] status={} components={} healthy={} degraded={} critical_unhealthy={:?} degraded_components={:?}",
         status.as_u16(),
         snapshot.components.len(),
-        unhealthy
+        verdict.healthy,
+        verdict.degraded,
+        verdict.critical_unhealthy,
+        verdict.degraded_components,
     );
 
-    (status, Json(snapshot))
+    (status, Json(body))
 }
 
 /// Handler for the schema discovery endpoint.
@@ -1493,6 +1670,15 @@ async fn run_server_inner(
         // sets OPENHUMAN_WORKSPACE to a writable path, then restarts.
         match crate::openhuman::config::Config::load_or_init().await {
             Ok(cfg) => {
+                let keyring_dir =
+                    crate::openhuman::keyring::store::workspace_dir_for_file_backend();
+                log::info!(
+                    "[boot] paths: config={} workspace={} keyring_dir={} keyring_backend={}",
+                    cfg.config_path.display(),
+                    cfg.workspace_dir.display(),
+                    keyring_dir.display(),
+                    crate::openhuman::keyring::backend_name(),
+                );
                 match crate::openhuman::memory::global::init(cfg.workspace_dir.clone()) {
                     Ok(_) => log::info!(
                         "[boot] memory::global initialized (workspace={})",
@@ -1602,25 +1788,37 @@ async fn run_server_inner(
             .ok()
             .filter(|s| !s.trim().is_empty())
             .is_some();
-        // Auth subsystem was already initialised above; fall back to the live
-        // token if neither input matched but somehow a token is seeded (e.g.
-        // a future caller route that doesn't thread the value through here).
-        let has_initialized_token = crate::core::auth::get_rpc_token()
-            .map(|t| !t.trim().is_empty())
-            .unwrap_or(false);
-        let has_explicit_token = has_in_memory_token || has_env_token || has_initialized_token;
+        // Fail closed (#1919): a non-loopback bind exposes the entire RPC
+        // surface (tool execution, file access, credentials) to the network,
+        // so it must be guarded by an OPERATOR-supplied bearer. Only an
+        // explicit operator token counts here:
+        //   - in-memory handoff from the embedded caller (`rpc_token`), or
+        //   - `OPENHUMAN_CORE_TOKEN` in the process environment.
+        // The self-generated `core.token` file (which `init_rpc_token` may
+        // already have seeded into the auth subsystem above) does NOT satisfy
+        // this requirement: remote clients cannot read that file, so treating
+        // it as "explicit" would be fail-open. Refuse to bind instead of
+        // serving an effectively unauthenticated network surface.
+        let has_explicit_token = has_in_memory_token || has_env_token;
         if !has_explicit_token {
             log::error!(
-                "[core] ⚠️  SECURITY WARNING: Binding on public address {resolved_host} without \
-                 an explicit OPENHUMAN_CORE_TOKEN. The RPC server will auto-generate a token, \
-                 but external clients will not know it. Set OPENHUMAN_CORE_TOKEN in your \
-                 .env file to secure the RPC endpoint."
+                "[core] SECURITY: refusing to bind on public address {resolved_host} without an \
+                 explicit operator-supplied RPC token. Set {} in your environment (or hand the \
+                 bearer in-memory via the embedded core handle) to secure the RPC endpoint.",
+                crate::core::auth::CORE_TOKEN_ENV_VAR
             );
             eprintln!(
-                "\n\x1b[1;31m[SECURITY]\x1b[0m Binding on {resolved_host} without OPENHUMAN_CORE_TOKEN.\n\
-                 Set OPENHUMAN_CORE_TOKEN in .env to secure the RPC endpoint.\n\
-                 Without it, the auto-generated token is written to {{workspace}}/core.token\n\
-                 but remote clients will not be able to authenticate.\n"
+                "\n\x1b[1;31m[SECURITY]\x1b[0m Refusing to bind on {resolved_host} without {}.\n\
+                 The auto-generated {{workspace}}/core.token does NOT secure a public bind —\n\
+                 remote clients cannot read it. Set {} in your environment to secure the\n\
+                 RPC endpoint, or bind on a loopback address.\n",
+                crate::core::auth::CORE_TOKEN_ENV_VAR,
+                crate::core::auth::CORE_TOKEN_ENV_VAR
+            );
+            anyhow::bail!(
+                "refusing to bind on non-loopback address {resolved_host} without an explicit \
+                 operator-supplied RPC token ({})",
+                crate::core::auth::CORE_TOKEN_ENV_VAR
             );
         }
     }
@@ -1883,14 +2081,21 @@ fn register_domain_subscribers(
         crate::openhuman::memory_conversations::register_conversation_persistence_subscriber(
             workspace_dir.clone(),
         );
-        crate::openhuman::memory::sync::register_sync_stage_bridge();
+        crate::openhuman::memory::sync::register_sync_stage_bridge(&config);
         if let Err(error) = crate::openhuman::composio::init_composio_trigger_history(
             workspace_dir.clone(),
         ) {
             log::warn!("[composio][history] failed to initialize trigger archive: {error}");
         }
         crate::openhuman::composio::register_composio_trigger_subscriber();
+        crate::openhuman::agent_meetings::calendar::register_meet_calendar_subscriber();
+        crate::openhuman::agent_meetings::bus::register_meeting_event_subscriber();
         crate::openhuman::composio::start_periodic_sync();
+        // Workspace-kind memory sources (GitHub repos, folders, RSS, web
+        // pages) get their own cadence loop — the Composio scheduler above
+        // only walks Composio connections, so without this they only sync
+        // on manual "Sync now" and silently go stale.
+        crate::openhuman::memory_sync::workspace::start_workspace_periodic_sync();
         // Task-sources proactive ingestion: connection-created hook + poll.
         crate::openhuman::task_sources::bus::register_task_sources_subscriber();
         crate::openhuman::task_sources::start_periodic_poll();
@@ -1919,13 +2124,19 @@ fn register_domain_subscribers(
             }
             Ok(None) => {
                 log::info!(
-                    "[auth] no session token at startup — scheduler gate set to signed_out"
+                    "[auth] no session token at startup — scheduler gate set to signed_out \
+                     (config_path={}, keyring_backend={})",
+                    config.config_path.display(),
+                    crate::openhuman::keyring::backend_name(),
                 );
                 crate::openhuman::scheduler_gate::set_signed_out(true);
             }
             Err(err) => {
                 log::warn!(
-                    "[auth] failed to read session token at startup ({err}) — assuming signed_out"
+                    "[auth] failed to read session token at startup ({err}) — assuming signed_out \
+                     (config_path={}, keyring_backend={})",
+                    config.config_path.display(),
+                    crate::openhuman::keyring::backend_name(),
                 );
                 crate::openhuman::scheduler_gate::set_signed_out(true);
             }
@@ -1996,7 +2207,6 @@ fn register_domain_subscribers(
 /// surface a banner; under CLI / Docker the override is honored (with a
 /// noisy log + a domain event so any connected dashboard can flag it).
 pub async fn bootstrap_core_runtime(host_kind: crate::core::types::HostKind) {
-    use crate::core::types::HostKind;
     use crate::openhuman::socket::{set_global_socket_manager, SocketManager};
     use std::sync::Arc;
     // `embedded_core` derived from host_kind so the rest of the function (which
@@ -2019,6 +2229,10 @@ pub async fn bootstrap_core_runtime(host_kind: crate::core::types::HostKind) {
     // Uses a Once guard so repeated calls to bootstrap_core_runtime()
     // cannot double-subscribe.
     register_domain_subscribers(workspace_dir.clone(), cfg.clone(), embedded_core);
+    // Warm the remote skills catalog on every core load. This updates the
+    // cached registry used by skill discovery/search, but runs best-effort in
+    // the background so Hermes/network latency cannot block core readiness.
+    crate::openhuman::skill_registry::ops::start_boot_catalog_refresh();
 
     // --- Turn-state recovery -------------------------------------------
     // Any per-thread turn snapshots left on disk from a previous process
@@ -2046,6 +2260,15 @@ pub async fn bootstrap_core_runtime(host_kind: crate::core::types::HostKind) {
     // surface (`openhuman.cost_get_dashboard`) and `record_provider_usage`
     // share one JSONL-backed store. Idempotent.
     crate::openhuman::cost::init_global(cfg.cost.clone(), &workspace_dir);
+
+    // --- x402 payment ledger ---
+    // Initializes the JSONL-backed spending ledger for machine-payable API
+    // payments (x402 protocol). Budget defaults can be overridden via
+    // the `openhuman.x402_update_budget` RPC.
+    {
+        let x402_session = format!("x402-{}", uuid::Uuid::new_v4());
+        crate::openhuman::x402::init_ledger(&workspace_dir, &x402_session);
+    }
 
     // --- Sub-agent definition registry bootstrap ---
     // Loads built-in archetype definitions plus any custom TOML files
@@ -2091,6 +2314,16 @@ pub async fn bootstrap_core_runtime(host_kind: crate::core::types::HostKind) {
         workspace_dir.clone(),
         action_dir,
     );
+
+    // --- Triggered-workflow subscriber ---
+    // Install on the always-run serve boot, not only inside `start_channels`
+    // (skipped for web-chat-only cores with no messaging integrations, and when
+    // `OPENHUMAN_DISABLE_CHANNEL_LISTENERS=1`). Without this, any workflow
+    // declaring `triggers:` was silently ignored on web-chat-only desktop
+    // installs. Idempotent — shares a process-global OnceLock with the
+    // `start_channels` site so it registers exactly once regardless of which
+    // path runs first. (Matching only for now; activation handoff still pending.)
+    crate::openhuman::workflows::bus::ensure_triggered_workflow_subscriber(&workspace_dir);
 
     // --- Approval gate (#1339) ---
     // ON by default; opt out with `OPENHUMAN_APPROVAL_GATE=0` (or `false`).
@@ -2202,6 +2435,29 @@ pub async fn bootstrap_core_runtime(host_kind: crate::core::types::HostKind) {
         let cfg = cfg.clone();
         tokio::spawn(async move {
             crate::openhuman::mcp_registry::boot::spawn_installed_servers(&cfg).await;
+        });
+    }
+
+    // --- MCP registry reconnect supervisor (#3312) -----------------------
+    // Keep installed MCP servers connected for the life of the process:
+    // transports drop silently over long uptimes (subprocess exits, HTTP
+    // session expires) and the boot spawn above only runs once. The
+    // supervisor periodically probes each connection and reconnects dropped
+    // ones with per-server backoff. First tick is delayed so it doesn't race
+    // the boot spawn.
+    //
+    // Guarded by `Once`: `bootstrap_core_runtime` is documented idempotent, and
+    // unlike the one-shot boot spawn above the supervisor is an infinite tick
+    // loop — a second instance would race the first on the shared connections
+    // registry (duplicate probes, reconnect thrashing, nondeterministic backoff).
+    {
+        use std::sync::Once;
+        static SUPERVISOR_SPAWNED: Once = Once::new();
+        SUPERVISOR_SPAWNED.call_once(|| {
+            let cfg = cfg.clone();
+            tokio::spawn(async move {
+                crate::openhuman::mcp_registry::supervisor::run(cfg).await;
+            });
         });
     }
 

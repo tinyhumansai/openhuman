@@ -11,7 +11,7 @@
 //! ApprovalGate, and it refuses the sensitive-app denylist (password managers,
 //! Keychain, System Settings, terminals) even on auto-approved turns.
 
-use super::ax_interact::is_sensitive_app;
+use super::ax_interact::{app_control_enabled, is_sensitive_app};
 use crate::openhuman::accessibility::automate::{self, AutomateOptions, RealBackend};
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolCallOptions, ToolResult};
 use async_trait::async_trait;
@@ -121,12 +121,12 @@ impl Tool for AutomateTool {
             )));
         }
 
-        if !self.allow_mutations {
+        if !app_control_enabled(self.allow_mutations) {
             log::warn!("[automate] refused: mutations disabled");
             return Ok(ToolResult::error(
-                "App control isn't enabled yet. Turn on App Automation in \
-                 Settings → Agent Access (it grants permission to control apps), \
-                 then ask again. (Sets computer_control.ax_interact_mutations = true.)",
+                "App control isn't enabled yet. Grant Full access (or turn on App \
+                 Automation) in Settings → Agent Access — it grants permission to \
+                 control apps — then ask again.",
             ));
         }
 
@@ -194,13 +194,33 @@ mod tests {
 
     #[tokio::test]
     async fn refuses_when_mutations_disabled() {
+        // Pin a non-Full live policy so the Full-access bypass can't open the
+        // gate (other tests in this binary install a Full global policy).
+        let _env = crate::openhuman::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        {
+            use crate::openhuman::security::{live_policy, AutonomyLevel, SecurityPolicy};
+            use std::sync::Arc;
+            let ws = std::env::temp_dir().join("openhuman_automate_gate_test_ws");
+            live_policy::install(
+                Arc::new(SecurityPolicy {
+                    autonomy: AutonomyLevel::Supervised,
+                    workspace_dir: ws.clone(),
+                    ..SecurityPolicy::default()
+                }),
+                ws.clone(),
+                ws,
+            );
+        }
         let t = AutomateTool::new(false);
         let r = t
             .execute(json!({"app": "Music", "goal": "play a song"}))
             .await
             .unwrap();
         assert!(r.is_error);
-        assert!(r.output().contains("ax_interact_mutations"));
+        // Gate closed → the refusal directs the user to Settings → Agent Access.
+        assert!(r.output().contains("Agent Access"));
     }
 
     #[tokio::test]

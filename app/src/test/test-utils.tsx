@@ -15,9 +15,11 @@ import channelConnectionsReducer from '../store/channelConnectionsSlice';
 import companionReducer from '../store/companionSlice';
 import connectivityReducer from '../store/connectivitySlice';
 import coreModeReducer from '../store/coreModeSlice';
+import layoutReducer from '../store/layoutSlice';
 import localeReducer from '../store/localeSlice';
 import mascotReducer from '../store/mascotSlice';
 import personaReducer from '../store/personaSlice';
+import { pttReducer } from '../store/pttSlice';
 import socketReducer from '../store/socketSlice';
 import themeReducer from '../store/themeSlice';
 
@@ -38,9 +40,11 @@ const testRootReducer = combineReducers({
   companion: companionReducer,
   connectivity: connectivityReducer,
   coreMode: coreModeReducer,
+  layout: layoutReducer,
   locale: localeReducer,
   mascot: mascotReducer,
   persona: personaReducer,
+  ptt: pttReducer,
   socket: socketReducer,
   theme: themeReducer,
 });

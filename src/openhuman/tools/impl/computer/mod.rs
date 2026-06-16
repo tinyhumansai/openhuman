@@ -1,7 +1,9 @@
 mod automate;
 mod ax_interact;
 mod human_path;
-mod keyboard;
+// `pub(crate)` so the automate backend can reuse the shared input helpers
+// (`run_hotkey`/`run_key`/`run_type_text`) without going through the tool.
+pub(crate) mod keyboard;
 mod main_thread;
 mod mouse;
 

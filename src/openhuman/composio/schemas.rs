@@ -356,6 +356,12 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     comment: "Tool-specific arguments conforming to the tool's JSON schema.",
                     required: false,
                 },
+                FieldSchema {
+                    name: "connection_id",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Optional Composio connection id to target a specific account when multiple are connected for the same toolkit. Omit to use the default (oldest active).",
+                    required: false,
+                },
             ],
             outputs: vec![FieldSchema {
                 name: "result",
@@ -801,7 +807,11 @@ fn handle_execute(params: Map<String, Value>) -> ControllerFuture {
         let config = config_rpc::load_config_with_timeout().await?;
         let tool = read_required_non_empty(&params, "tool")?;
         let arguments = read_optional::<Value>(&params, "arguments")?;
-        to_json(super::ops::composio_execute(&config, &tool, arguments).await?)
+        let connection_id = read_optional::<String>(&params, "connection_id")?;
+        to_json(
+            super::ops::composio_execute(&config, &tool, arguments, connection_id.as_deref())
+                .await?,
+        )
     })
 }
 

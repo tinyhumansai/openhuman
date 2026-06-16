@@ -22,9 +22,11 @@ import chatRuntimeReducer, {
   setTaskBoardForThread,
   setToolTimelineForThread,
 } from '../../store/chatRuntimeSlice';
+import layoutReducer from '../../store/layoutSlice';
 import socketReducer from '../../store/socketSlice';
+import themeReducer from '../../store/themeSlice';
 import threadReducer, { setSelectedThread } from '../../store/threadSlice';
-import type { Thread } from '../../types/thread';
+import type { Thread, ThreadMessage } from '../../types/thread';
 
 // ── Hoisted mock state ─────────────────────────────────────────────────────
 
@@ -169,9 +171,11 @@ function buildStore(preload: Record<string, unknown> = {}) {
   return configureStore({
     reducer: combineReducers({
       thread: threadReducer,
+      layout: layoutReducer,
       socket: socketReducer,
       chatRuntime: chatRuntimeReducer,
       agentProfiles: agentProfileReducer,
+      theme: themeReducer,
     }),
     preloadedState: preload as never,
   });
@@ -218,8 +222,7 @@ async function openSidebar() {
 const emptyThreadState = {
   threads: [],
   selectedThreadId: null,
-  threadSidebarVisible: false,
-  activeThreadId: null,
+  activeThreadIds: {},
   welcomeThreadId: null,
   messagesByThreadId: {},
   messages: [],
@@ -294,6 +297,7 @@ async function submitComposerText(textarea: HTMLElement, text: string) {
 describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    window.localStorage.clear();
     // Reset the mock to defaults for each test
     mockGetThreads.mockResolvedValue({ threads: [], count: 0 });
     mockGetThreadMessages.mockResolvedValue({ messages: [], count: 0 });
@@ -312,38 +316,38 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     });
   });
 
-  // Covers line 906: const effectiveShowSidebar = threadSidebarVisible;
+  // Covers the page-mode sidebar (TwoPanelLayout, id `chat`) once opened.
   // Covers line 941: <div className="flex-1 overflow-y-auto"> (always rendered in page mode)
-  it('renders the Threads sidebar header in page mode', async () => {
+  it('renders the sidebar pill tabs in page mode', async () => {
     await act(async () => {
       await renderConversations({ thread: emptyThreadState });
     });
 
-    // Sidebar is hidden by default — open it first.
     await openSidebar();
 
-    // The "Threads" header is always rendered in page mode (sidebar guard removed)
-    expect(screen.getByText('Threads')).toBeInTheDocument();
+    expect(screen.getByText('General')).toBeInTheDocument();
   });
 
   it('restores and updates the persisted thread sidebar visibility', async () => {
     let renderedStore: ReturnType<typeof buildStore> | undefined;
     await act(async () => {
       renderedStore = await renderConversations({
-        thread: { ...emptyThreadState, threadSidebarVisible: true },
+        thread: emptyThreadState,
+        // Sidebar visibility now lives in the reusable `layout` slice (id `chat`).
+        layout: { panels: { chat: { sidebarVisible: true, sidebarWidth: 256 } } },
       });
     });
 
-    expect(screen.getByText('Threads')).toBeInTheDocument();
+    expect(screen.getByText('General')).toBeInTheDocument();
 
     await act(async () => {
       fireEvent.click(screen.getByTitle('Hide sidebar'));
     });
 
     await waitFor(() => {
-      expect(screen.queryByText('Threads')).not.toBeInTheDocument();
+      expect(screen.queryByText('General')).not.toBeInTheDocument();
     });
-    expect(renderedStore?.getState().thread.threadSidebarVisible).toBe(false);
+    expect(renderedStore?.getState().layout.panels.chat.sidebarVisible).toBe(false);
   });
 
   // Covers line 941 empty branch
@@ -405,31 +409,147 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     });
   });
 
-  // Covers lines 1455-1483: quota pill loading state
-  it('renders "Loading…" quota pill when isLoadingBudget=true', async () => {
-    mockUseUsageState.mockReturnValue({
-      teamUsage: null,
-      currentPlan: null,
-      currentTier: 'FREE' as const,
-      isFreeTier: true,
-      usagePct: 0.0,
-      isNearLimit: false,
-      isAtLimit: false,
-      isBudgetExhausted: false,
-      shouldShowBudgetCompletedMessage: false,
-      isLoading: true,
-      refresh: vi.fn(),
+  it('renders assistant messages as unframed text when the appearance preference is enabled', async () => {
+    const thread = makeThread({ id: 'view-mode-thread', title: 'View Mode Thread' });
+    const messages: ThreadMessage[] = [
+      {
+        id: 'm-user',
+        sender: 'user',
+        type: 'text',
+        content: 'Can you summarize this?',
+        extraMetadata: {},
+        createdAt: '2026-01-01T00:00:00.000Z',
+      },
+      {
+        id: 'm-agent',
+        sender: 'agent',
+        type: 'text',
+        content: 'Long agent output\n\nwith enough structure to prefer a text view.',
+        extraMetadata: {},
+        createdAt: '2026-01-01T00:01:00.000Z',
+      },
+    ];
+    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
+    mockGetThreadMessages.mockResolvedValue({ messages, count: messages.length });
+
+    await act(async () => {
+      await renderConversations({
+        thread: {
+          ...selectedThreadState(thread),
+          messagesByThreadId: { [thread.id]: messages },
+          messages,
+        },
+        socket: socketState('connected'),
+        theme: {
+          mode: 'system',
+          tabBarLabels: 'hover',
+          fontSize: 'medium',
+          agentMessageViewMode: 'text',
+        },
+      });
+    });
+
+    expect(screen.getByTestId('agent-message-text')).toHaveTextContent(
+      'Long agent output with enough structure to prefer a text view.'
+    );
+    expect(screen.getByText('Can you summarize this?')).toBeInTheDocument();
+  });
+
+  it('keeps bubble mode interactions for assistant citations, copy, and reactions', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    const thread = makeThread({ id: 'bubble-mode-thread', title: 'Bubble Mode Thread' });
+    const agentContent =
+      'First assistant paragraph with enough text to render.\n\nSecond assistant paragraph stays in bubbles.';
+    const messages: ThreadMessage[] = [
+      {
+        id: 'm-agent-bubble',
+        sender: 'agent',
+        type: 'text',
+        content: agentContent,
+        extraMetadata: {
+          citations: [
+            {
+              id: 'cite-1',
+              key: 'memory-key',
+              namespace: 'personal',
+              snippet: 'Remembered preference',
+              timestamp: '2026-01-01T00:00:00.000Z',
+              score: 0.91,
+            },
+          ],
+          myReactions: ['👍'],
+        },
+        createdAt: '2026-01-01T00:01:00.000Z',
+      },
+    ];
+    vi.mocked(threadApi.updateMessage).mockImplementation(
+      async (_threadId, _messageId, extraMetadata) =>
+        ({ ...messages[0], extraMetadata }) as ThreadMessage
+    );
+    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
+    mockGetThreadMessages.mockResolvedValue({ messages, count: messages.length });
+
+    await act(async () => {
+      await renderConversations({
+        thread: {
+          ...selectedThreadState(thread),
+          messagesByThreadId: { [thread.id]: messages },
+          messages,
+        },
+        socket: socketState('connected'),
+        theme: {
+          mode: 'system',
+          tabBarLabels: 'hover',
+          fontSize: 'medium',
+          agentMessageViewMode: 'bubbles',
+        },
+      });
+    });
+
+    expect(screen.queryByTestId('agent-message-text')).not.toBeInTheDocument();
+    expect(
+      screen.getByText('First assistant paragraph with enough text to render.')
+    ).toBeInTheDocument();
+    expect(screen.getByText('personal 91%')).toBeInTheDocument();
+    expect(screen.getByTitle(/Remembered preference/)).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByTitle('Copy response'));
+    });
+    expect(writeText).toHaveBeenCalledWith(agentContent);
+
+    await act(async () => {
+      fireEvent.click(screen.getByTitle('Remove 👍'));
+    });
+    await waitFor(() => {
+      expect(threadApi.updateMessage).toHaveBeenCalledWith(
+        thread.id,
+        'm-agent-bubble',
+        expect.objectContaining({ myReactions: [] })
+      );
     });
 
     await act(async () => {
-      await renderConversations({ thread: emptyThreadState });
+      fireEvent.click(screen.getByTitle('Add reaction'));
     });
-
-    expect(screen.getByText('Loading…')).toBeInTheDocument();
+    await act(async () => {
+      fireEvent.click(screen.getByTitle('🎯'));
+    });
+    await waitFor(() => {
+      expect(threadApi.updateMessage).toHaveBeenCalledWith(
+        thread.id,
+        'm-agent-bubble',
+        expect.objectContaining({ myReactions: expect.arrayContaining(['🎯']) })
+      );
+    });
   });
 
-  // Covers lines 1417-1439: budget banner + lines 1455-1516: LimitPill + tooltip
-  it('renders budget-limit banner and limit pills when teamUsage is present', async () => {
+  // CycleUsagePill moved into ChatComposer toolbar (#3611) — quota-pill
+  // loading test removed; the "Loading…" text no longer renders here.
+
+  // Covers budget banner: budget-exhausted banner + OpenRouter CTA
+  it('renders budget-limit banner when teamUsage is present', async () => {
     // cycleBudgetUsd: 0 → renders "Your included budget is complete" branch
     const teamUsage = { cycleBudgetUsd: 0, remainingUsd: 0, cycleSpentUsd: 0, cycleEndsAt: null };
 
@@ -451,12 +571,8 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       await renderConversations({ thread: emptyThreadState });
     });
 
-    // Budget-exceeded banner (lines 1417-1439) — cycleBudgetUsd=0 gives "included budget" message
     expect(screen.getByText(/Your included budget is complete/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Use OpenRouter free models/i })).toBeInTheDocument();
-
-    // LimitPill renders with the cycle label
-    expect(screen.getByText('Cycle')).toBeInTheDocument();
   });
 
   // Covers line 247: if (cancelled) return — the non-cancelled path through loadThreads callback
@@ -477,25 +593,8 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     });
   });
 
-  // Covers line 919: onClick={() => void handleCreateNewThread()} — sidebar "New thread" button
-  // Covers line 1061: onClick={() => void handleCreateNewThread()} — header "+ New" button
-  it('clicking "New thread" sidebar button calls handleCreateNewThread', async () => {
-    await act(async () => {
-      await renderConversations({ thread: emptyThreadState });
-    });
-
-    // Sidebar is hidden by default — open it first.
-    await openSidebar();
-
-    // The sidebar "New thread" button has title="New thread"
-    const newThreadBtn = screen.getByTitle('New thread');
-    await act(async () => {
-      fireEvent.click(newThreadBtn);
-    });
-
-    // createNewThread was called — verifies line 919 callback executed
-    expect(threadApi.createNewThread).toHaveBeenCalled();
-  });
+  // Sidebar "New thread" button was removed in the composer flattening refactor.
+  // The "+ New" header button (tested below) is the remaining create-thread entry point.
 
   it('clicking "+ New" header button calls handleCreateNewThread', async () => {
     // Need a selected thread so the header renders
@@ -726,7 +825,7 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     expect(chatSend).toHaveBeenCalledWith({
       threadId: thread.id,
       message: 'hello cloud',
-      model: 'reasoning-v1',
+      model: 'hint:chat',
       profileId: 'default',
       locale: 'en',
     });
@@ -750,7 +849,7 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       expect(chatSend).toHaveBeenCalledWith({
         threadId: thread.id,
         message: 'play highway to hell',
-        model: 'reasoning-v1',
+        model: 'hint:chat',
         profileId: 'default',
         locale: 'en',
       });
@@ -774,8 +873,8 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     let resolveSend: (() => void) | undefined;
     vi.mocked(chatSend).mockImplementationOnce(
       () =>
-        new Promise<void>(resolve => {
-          resolveSend = resolve;
+        new Promise<string | undefined>(resolve => {
+          resolveSend = () => resolve(undefined);
         })
     );
     const { textarea, thread } = await renderSelectedConversation();
@@ -802,7 +901,7 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     expect(chatSend).toHaveBeenCalledWith({
       threadId: thread.id,
       message: 'slow backend',
-      model: 'reasoning-v1',
+      model: 'hint:chat',
       profileId: 'default',
       locale: 'en',
     });
@@ -1083,9 +1182,12 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
         screen.getByText('Could not update task; changes were not saved.')
       ).toBeInTheDocument();
     });
+    // With the 5-column model, todo → right → awaiting_approval (not in_progress)
     expect(threadApi.putTaskBoard).toHaveBeenCalledWith(
       'board-thread',
-      expect.arrayContaining([expect.objectContaining({ id: 'task-1', status: 'in_progress' })])
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'task-1', status: 'awaiting_approval' }),
+      ])
     );
   });
 
@@ -1167,7 +1269,7 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       expect(chatSend).toHaveBeenCalledWith({
         threadId: thread.id,
         message: 'enter send',
-        model: 'reasoning-v1',
+        model: 'hint:chat',
         profileId: 'default',
         locale: 'en',
       });
@@ -1242,7 +1344,7 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       expect(chatSend).toHaveBeenCalledWith({
         threadId: thread.id,
         message: '안녕',
-        model: 'reasoning-v1',
+        model: 'hint:chat',
         profileId: 'default',
         locale: 'en',
       });
@@ -1451,63 +1553,8 @@ describe('Conversations — worker thread back-to-parent navigation (#1624)', ()
     expect(screen.getByText(/Your included budget is complete/i)).toBeInTheDocument();
   });
 
-  // Covers line 1910: cycleEndsAt truthy branch inside cycle-pill tooltip
-  it('renders reset time in cycle-pill tooltip when cycleEndsAt is set', async () => {
-    const teamUsage = {
-      cycleBudgetUsd: 10,
-      remainingUsd: 5,
-      cycleSpentUsd: 5,
-      cycleEndsAt: '2026-06-01T00:00:00.000Z',
-    };
-
-    mockUseUsageState.mockReturnValue({
-      teamUsage,
-      currentPlan: null,
-      currentTier: 'PRO' as const,
-      isFreeTier: false,
-      usagePct: 0.5,
-      isNearLimit: false,
-      isAtLimit: false,
-      isBudgetExhausted: false,
-      shouldShowBudgetCompletedMessage: false,
-      isLoading: false,
-      refresh: vi.fn(),
-    });
-
-    await act(async () => {
-      await renderConversations({ thread: emptyThreadState });
-    });
-
-    // Tooltip is hidden via CSS but present in DOM; cycleEndsAt truthy → reset span renders
-    expect(screen.getByText('Cycle')).toBeInTheDocument();
-    // The tooltip resets span contains "resets" text (covers line 1910 conditional)
-    const resetSpans = document.querySelectorAll('[class*="text-stone-400"]');
-    expect(resetSpans.length).toBeGreaterThan(0);
-  });
-
-  // Covers lines 1903-1904: loading animation span when isLoading=true, teamUsage=null
-  it('renders loading pulse span in cycle-pill area when isLoading=true', async () => {
-    mockUseUsageState.mockReturnValue({
-      teamUsage: null,
-      currentPlan: null,
-      currentTier: 'FREE' as const,
-      isFreeTier: true,
-      usagePct: 0,
-      isNearLimit: false,
-      isAtLimit: false,
-      isBudgetExhausted: false,
-      shouldShowBudgetCompletedMessage: false,
-      isLoading: true,
-      refresh: vi.fn(),
-    });
-
-    await act(async () => {
-      await renderConversations({ thread: emptyThreadState });
-    });
-
-    // Loading span with animate-pulse is present when teamUsage=null and loading
-    expect(screen.getByText('Loading…')).toBeInTheDocument();
-  });
+  // CycleUsagePill (cycle-pill tooltip, loading pulse) moved into ChatComposer
+  // toolbar (#3611) — those tests removed; the pill no longer renders here.
 });
 
 describe('Conversations — thread title editing', () => {
