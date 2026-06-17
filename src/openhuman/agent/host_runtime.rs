@@ -23,17 +23,24 @@ pub trait RuntimeAdapter: Send + Sync {
     ) -> anyhow::Result<tokio::process::Command>;
 }
 
-pub struct NativeRuntime;
-
-impl Default for NativeRuntime {
-    fn default() -> Self {
-        Self::new()
-    }
+#[derive(Default)]
+pub struct NativeRuntime {
+    /// When true, shell-family child processes are spawned with the Windows
+    /// `CREATE_NO_WINDOW` flag so no console window flashes. Sourced from
+    /// `[shell] hide_window` (#3727/#3728). No effect on macOS/Linux.
+    hide_window: bool,
 }
 
 impl NativeRuntime {
+    /// A native runtime with default behaviour (no window suppression).
     pub const fn new() -> Self {
-        Self
+        Self { hide_window: false }
+    }
+
+    /// A native runtime that suppresses the Windows console window for spawned
+    /// shell child processes when `hide_window` is true.
+    pub const fn with_hide_window(hide_window: bool) -> Self {
+        Self { hide_window }
     }
 }
 
@@ -101,7 +108,32 @@ impl RuntimeAdapter for NativeRuntime {
         // (#3353, Fix 2)
         crate::openhuman::config::ensure_usable_cwd(workspace_dir)?;
         cmd.current_dir(workspace_dir);
+        // Optionally suppress the Windows console window for this child process
+        // (`[shell] hide_window`). No-op when disabled and on non-Windows hosts.
+        maybe_hide_window(&mut cmd, self.hide_window);
         Ok(cmd)
+    }
+}
+
+/// Apply the Windows `CREATE_NO_WINDOW` creation flag (`0x08000000`) so a shell
+/// child process doesn't flash a console window, when `hide` is set. This is a
+/// no-op when `hide` is false, and on non-Windows hosts the flag does not exist
+/// so the function does nothing regardless. Mirrors the convention already used
+/// by the local-inference / node / python process helpers (#3727/#3728).
+fn maybe_hide_window(cmd: &mut tokio::process::Command, hide: bool) {
+    if !hide {
+        return;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    #[cfg(not(windows))]
+    {
+        // The flag is Windows-only; nothing to apply on macOS/Linux.
+        let _ = cmd;
     }
 }
 
@@ -195,9 +227,15 @@ impl RuntimeAdapter for DockerRuntime {
     }
 }
 
-pub fn create_runtime(config: &RuntimeConfig) -> anyhow::Result<Box<dyn RuntimeAdapter>> {
+/// Build the runtime adapter for the configured `kind`. `hide_window` comes
+/// from `[shell] hide_window` and only affects the native runtime on Windows
+/// (the docker runtime spawns the `docker` client, out of scope here).
+pub fn create_runtime(
+    config: &RuntimeConfig,
+    hide_window: bool,
+) -> anyhow::Result<Box<dyn RuntimeAdapter>> {
     match config.kind.as_str() {
-        "native" => Ok(Box::new(NativeRuntime::new())),
+        "native" => Ok(Box::new(NativeRuntime::with_hide_window(hide_window))),
         "docker" => Ok(Box::new(DockerRuntime::new(config.docker.clone()))),
         other => anyhow::bail!("Unsupported runtime kind: {other}"),
     }
@@ -285,24 +323,65 @@ mod tests {
 
     #[test]
     fn create_runtime_supports_native_and_docker_and_rejects_unknown() {
-        let native = create_runtime(&RuntimeConfig::default()).unwrap();
+        let native = create_runtime(&RuntimeConfig::default(), false).unwrap();
         assert_eq!(native.name(), "native");
 
-        let docker = create_runtime(&RuntimeConfig {
-            kind: "docker".into(),
-            docker: DockerRuntimeConfig::default(),
-            ..RuntimeConfig::default()
-        })
+        let docker = create_runtime(
+            &RuntimeConfig {
+                kind: "docker".into(),
+                docker: DockerRuntimeConfig::default(),
+                ..RuntimeConfig::default()
+            },
+            false,
+        )
         .unwrap();
         assert_eq!(docker.name(), "docker");
 
-        let err = create_runtime(&RuntimeConfig {
-            kind: "vm".into(),
-            ..RuntimeConfig::default()
-        })
+        let err = create_runtime(
+            &RuntimeConfig {
+                kind: "vm".into(),
+                ..RuntimeConfig::default()
+            },
+            false,
+        )
         .err()
         .unwrap();
         assert!(err.to_string().contains("Unsupported runtime kind: vm"));
+    }
+
+    /// `[shell] hide_window` plumbs through `create_runtime` into the native
+    /// adapter, and a hide-window native runtime still builds a usable shell
+    /// command on every platform (the `CREATE_NO_WINDOW` flag is Windows-only
+    /// and applied without disturbing the command on macOS/Linux).
+    #[test]
+    fn native_runtime_with_hide_window_still_builds_shell_command() {
+        let native = create_runtime(&RuntimeConfig::default(), true).unwrap();
+        assert_eq!(native.name(), "native");
+
+        let runtime = NativeRuntime::with_hide_window(true);
+        let command = runtime
+            .build_shell_command("echo hi", Path::new("/tmp"))
+            .expect("hide_window should not break command construction");
+        assert_eq!(command.as_std().get_current_dir(), Some(Path::new("/tmp")));
+
+        // The program/args are identical with and without the flag — hiding the
+        // window must not alter what is executed.
+        let plain = NativeRuntime::with_hide_window(false)
+            .build_shell_command("echo hi", Path::new("/tmp"))
+            .unwrap();
+        assert_eq!(command.as_std().get_program(), plain.as_std().get_program());
+    }
+
+    /// `maybe_hide_window` is a no-op when disabled (and on non-Windows hosts
+    /// even when enabled), and must never panic.
+    #[test]
+    fn maybe_hide_window_is_safe_no_op() {
+        let mut disabled = tokio::process::Command::new("echo");
+        maybe_hide_window(&mut disabled, false);
+        let mut enabled = tokio::process::Command::new("echo");
+        maybe_hide_window(&mut enabled, true);
+        assert_eq!(disabled.as_std().get_program(), "echo");
+        assert_eq!(enabled.as_std().get_program(), "echo");
     }
 
     /// Regression: a failed stage in a pipeline must surface as a non-zero exit

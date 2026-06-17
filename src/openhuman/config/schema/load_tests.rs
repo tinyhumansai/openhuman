@@ -188,6 +188,37 @@ fn apply_env_overrides_reasoning_enabled_parses_truthy_falsy() {
 }
 
 #[test]
+fn apply_env_overrides_shell_hide_window_parses_truthy_falsy() {
+    let _g = env_lock();
+    clear_env(&["OPENHUMAN_SHELL_HIDE_WINDOW", "SHELL_HIDE_WINDOW"]);
+    let mut cfg = Config::default();
+    assert!(!cfg.shell.hide_window, "default should be off");
+
+    unsafe {
+        std::env::set_var("OPENHUMAN_SHELL_HIDE_WINDOW", "on");
+    }
+    cfg.apply_env_overrides();
+    assert!(cfg.shell.hide_window);
+
+    unsafe {
+        std::env::set_var("OPENHUMAN_SHELL_HIDE_WINDOW", "false");
+    }
+    cfg.apply_env_overrides();
+    assert!(!cfg.shell.hide_window);
+
+    // Unknown value leaves the field unchanged.
+    cfg.shell.hide_window = true;
+    unsafe {
+        std::env::set_var("OPENHUMAN_SHELL_HIDE_WINDOW", "maybe");
+    }
+    cfg.apply_env_overrides();
+    assert!(cfg.shell.hide_window);
+    unsafe {
+        std::env::remove_var("OPENHUMAN_SHELL_HIDE_WINDOW");
+    }
+}
+
+#[test]
 fn apply_env_overrides_web_search_limits_only() {
     let _g = env_lock();
     clear_env(&[

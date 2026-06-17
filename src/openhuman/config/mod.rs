@@ -44,7 +44,7 @@ pub use schema::{
     ReflectionSource, ReliabilityConfig, ResourceLimitsConfig, RuntimeConfig, SandboxBackend,
     SandboxConfig, SchedulerConfig, SchedulerGateConfig, SchedulerGateMode,
     ScreenIntelligenceConfig, SearchConfig, SearchEngine, SearchEngineCredentials, SearxngConfig,
-    SecretsConfig, SecurityConfig, SlackConfig, StorageConfig, StorageProviderConfig,
+    SecretsConfig, SecurityConfig, ShellConfig, SlackConfig, StorageConfig, StorageProviderConfig,
     StorageProviderSection, StreamMode, TeamModelConfig, TelegramConfig, UpdateConfig,
     UpdateRestartStrategy, VoiceActivationMode, VoiceServerConfig, WebSearchConfig, WebhookConfig,
     DEFAULT_CLOUD_LLM_MODEL, DEFAULT_MEMORY_SYNC_INTERVAL_SECS, DEFAULT_MODEL,

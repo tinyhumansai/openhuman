@@ -253,8 +253,10 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
         tracing::warn!("Provider warmup failed (non-fatal): {e}");
     }
 
-    let runtime: Arc<dyn host_runtime::RuntimeAdapter> =
-        Arc::from(host_runtime::create_runtime(&config.runtime)?);
+    let runtime: Arc<dyn host_runtime::RuntimeAdapter> = Arc::from(host_runtime::create_runtime(
+        &config.runtime,
+        config.shell.hide_window,
+    )?);
     // Create the agent's action sandbox + default projects home and register the
     // projects dir as a ReadWrite trusted root. Shared with the always-run
     // `bootstrap_core_runtime` boot so a fresh install gets these dirs even with
