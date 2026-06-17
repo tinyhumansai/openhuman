@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import NotificationBody from '../components/notifications/NotificationBody';
@@ -58,6 +58,16 @@ const Notifications = () => {
     selectedCategory !== 'all' && !presentCategories.includes(selectedCategory)
       ? 'all'
       : selectedCategory;
+
+  // The derivation above keeps the current render correct, but the stored
+  // selection would otherwise stay stale — so if that category later reappears
+  // the filter would silently snap back to it. Reset the stored state to 'all'
+  // once a selected category leaves the feed so re-selection is always explicit.
+  useEffect(() => {
+    if (activeCategory !== selectedCategory) {
+      setSelectedCategory('all');
+    }
+  }, [activeCategory, selectedCategory]);
 
   const filteredItems = useMemo(
     () =>

@@ -10,14 +10,16 @@
  * via the shared `NotificationBody` component.
  */
 import { configureStore } from '@reduxjs/toolkit';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { Provider } from 'react-redux';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 
 import notificationsReducer, {
+  clearAll,
   type NotificationCategory,
   type NotificationItem,
+  notificationReceived,
 } from '../../store/notificationSlice';
 import Notifications from '../Notifications';
 
@@ -200,5 +202,35 @@ describe('Notifications page category filter', () => {
     // Two elements carry 'alerts.empty' (header subtext + empty-state body) — both correct.
     expect(screen.getAllByText('alerts.empty').length).toBeGreaterThan(0);
     expect(screen.queryByText('notifications.filterEmpty')).not.toBeInTheDocument();
+  });
+
+  it('falls back to All and forgets the selection when the active category drains, even if it reappears', () => {
+    const { store } = renderPage([makeItem('m-1', 'msg one', { category: 'messages' })]);
+
+    // Select the only category present.
+    fireEvent.click(screen.getByTestId('notif-filter-chip-messages'));
+    expect(screen.getByTestId('notif-filter-chip-messages')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    );
+
+    // Drain the feed — the selected category disappears, so the view falls back
+    // to All (the filter row goes away once nothing is present).
+    act(() => {
+      store.dispatch(clearAll());
+    });
+    expect(screen.queryByTestId('notification-category-filter')).not.toBeInTheDocument();
+
+    // The same category reappears. The stale 'messages' selection must NOT
+    // resurrect — the view stays on All and shows every item.
+    act(() => {
+      store.dispatch(notificationReceived(makeItem('m-2', 'msg two', { category: 'messages' })));
+    });
+    expect(screen.getByTestId('notif-filter-chip-all')).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByTestId('notif-filter-chip-messages')).toHaveAttribute(
+      'aria-pressed',
+      'false'
+    );
+    expect(screen.getAllByTestId('notification-item')).toHaveLength(1);
   });
 });
