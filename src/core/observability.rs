@@ -3680,6 +3680,47 @@ mod tests {
     }
 
     #[test]
+    fn tool_execute_backend_401_invalid_token_does_not_hard_report() {
+        // TAURI-RUST-84E: the integrations client demotes its backend 401 via
+        // `report_error_or_expected`, but ALSO `anyhow::bail!`s it. The error
+        // bubbles to the agent tool-execute loop
+        // (`agent::harness::engine::tools::run_one_tool`'s `Ok(Err(e))` arm),
+        // which previously called the unconditional `report_error` — a second,
+        // hard Sentry event (domain=tool / operation=execute) for an
+        // already-classified user-end invalid-token condition. The arm now
+        // routes through `report_error_or_expected`; this test pins the exact
+        // wire shape so a classifier regression that lets the 401 escape (and
+        // resume double-reporting) fails CI.
+        //
+        // Mirror the tool-execute call path: the integrations client bails with
+        // `anyhow::anyhow!("Backend returned {status} for POST {url}: {detail}")`,
+        // the agent arm renders it with `{e:#}`, then `report_error_or_expected`
+        // consults `expected_error_kind`. Assert that classifier returns the
+        // expected user-state bucket (so the report is demoted, not hard).
+        let e = anyhow::anyhow!(
+            "Backend returned 401 Unauthorized for POST \
+             https://api.tinyhumans.ai/agent-integrations/parallel/search: Invalid token"
+        );
+        assert_eq!(
+            expected_error_kind(&format!("{e:#}")),
+            Some(ExpectedErrorKind::BackendUserError),
+            "the 84E tool-execute backend-401 wire shape must classify as expected \
+             user-state so report_error_or_expected demotes it instead of firing a \
+             hard tool/execute Sentry event"
+        );
+
+        // A genuine tool failure (no classifier arm) must keep surfacing as a
+        // hard error — confirm routing ALL tool errors through
+        // `report_error_or_expected` does not silently swallow real failures.
+        assert_eq!(
+            expected_error_kind("tool 'web_search' panicked: index out of bounds"),
+            None,
+            "a genuine tool failure must NOT be classified as expected — it still \
+             reaches Sentry as a hard error"
+        );
+    }
+
+    #[test]
     fn does_not_classify_transient_or_server_backend_errors_as_user_error() {
         // 408 / 429 are transient — they belong to the
         // upstream-transient bucket (or are retried at the caller), not
