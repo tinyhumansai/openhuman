@@ -193,4 +193,12 @@ describe('Notifications page category filter', () => {
     renderPage([]);
     expect(screen.queryByTestId('notification-category-filter')).not.toBeInTheDocument();
   });
+
+  it('shows alerts.empty (not filterEmpty) when the feed is entirely empty', () => {
+    renderPage([]);
+    // t() mock returns the key; verify the generic empty key, not the category-filtered one.
+    // Two elements carry 'alerts.empty' (header subtext + empty-state body) — both correct.
+    expect(screen.getAllByText('alerts.empty').length).toBeGreaterThan(0);
+    expect(screen.queryByText('notifications.filterEmpty')).not.toBeInTheDocument();
+  });
 });

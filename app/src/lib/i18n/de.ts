@@ -2731,6 +2731,7 @@ const messages: TranslationMap = {
   'notifications.category.reminders': 'Erinnerungen',
   'notifications.category.important': 'Wichtig',
   'notifications.filterAll': 'Alle',
+  'notifications.filterEmpty': 'Keine Benachrichtigungen in dieser Kategorie',
   'about.update.status.checking': 'Überprüfen...',
   'about.update.status.available': 'v{version} verfügbar',
   'about.update.status.availableNoVersion': 'Update verfügbar',

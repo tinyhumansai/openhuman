@@ -2710,6 +2710,7 @@ const messages: TranslationMap = {
   'notifications.category.reminders': 'Promemoria',
   'notifications.category.important': 'Importanti',
   'notifications.filterAll': 'Tutte',
+  'notifications.filterEmpty': 'Nessun avviso in questa categoria',
   'about.update.status.checking': 'Verifica in corso...',
   'about.update.status.available': 'v{version} disponibile',
   'about.update.status.availableNoVersion': 'Aggiornamento disponibile',

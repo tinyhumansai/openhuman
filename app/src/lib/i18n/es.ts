@@ -2717,6 +2717,7 @@ const messages: TranslationMap = {
   'notifications.category.reminders': 'Recordatorios',
   'notifications.category.important': 'Importante',
   'notifications.filterAll': 'Todas',
+  'notifications.filterEmpty': 'No hay alertas en esta categoría',
   'about.update.status.checking': 'Verificando...',
   'about.update.status.available': 'v{version} disponible',
   'about.update.status.availableNoVersion': 'Actualización disponible',

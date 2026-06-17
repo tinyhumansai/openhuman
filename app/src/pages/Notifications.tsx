@@ -165,7 +165,7 @@ const Notifications = () => {
 
         {filteredItems.length === 0 ? (
           <div className="px-6 py-16 text-center text-sm text-stone-500 dark:text-neutral-400">
-            {t('alerts.empty')}
+            {activeCategory === 'all' ? t('alerts.empty') : t('notifications.filterEmpty')}
           </div>
         ) : (
           <ul className="divide-y divide-stone-100 dark:divide-neutral-800">

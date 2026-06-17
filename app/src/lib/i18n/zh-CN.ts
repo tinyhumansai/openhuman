@@ -2539,6 +2539,7 @@ const messages: TranslationMap = {
   'notifications.category.reminders': '提醒',
   'notifications.category.important': '重要',
   'notifications.filterAll': '全部',
+  'notifications.filterEmpty': '此分类暂无通知',
   'about.update.status.checking': '检查中...',
   'about.update.status.available': 'v{version} 可用',
   'about.update.status.availableNoVersion': '更新可用',

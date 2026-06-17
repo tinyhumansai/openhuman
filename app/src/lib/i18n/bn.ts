@@ -2670,6 +2670,7 @@ const messages: TranslationMap = {
   'notifications.category.reminders': 'রিমাইন্ডার',
   'notifications.category.important': 'গুরুত্বপূর্ণ',
   'notifications.filterAll': 'সব',
+  'notifications.filterEmpty': 'এই বিভাগে কোনো সতর্কতা নেই',
   'about.update.status.checking': 'পরীক্ষা হচ্ছে...',
   'about.update.status.available': 'v{version} পাওয়া গেছে',
   'about.update.status.availableNoVersion': 'আপডেট পাওয়া গেছে',
