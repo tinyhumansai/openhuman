@@ -1,7 +1,13 @@
 use super::*;
 use crate::openhuman::credentials::session_support::local_session_user_id;
+use axum::http::StatusCode;
+use axum::routing::get;
+use axum::Router;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
 use serde_json::json;
 use tempfile::TempDir;
+use tokio::net::TcpListener;
 
 struct EnvVarGuard {
     key: &'static str,
@@ -34,6 +40,21 @@ fn test_config(tmp: &TempDir) -> Config {
         config_path: tmp.path().join("config.toml"),
         ..Config::default()
     }
+}
+
+fn jwt_with_payload(payload: serde_json::Value) -> String {
+    let payload = URL_SAFE_NO_PAD.encode(payload.to_string());
+    format!("eyJhbGciOiJIUzI1NiJ9.{payload}.sig")
+}
+
+async fn spawn_auth_me_status(status: StatusCode) -> String {
+    let app = Router::new().route("/auth/me", get(move || async move { status }));
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    format!("http://{addr}")
 }
 
 // ── secret_store_for_config ────────────────────────────────────
@@ -97,6 +118,107 @@ fn sanitize_stored_session_user_discards_empty_objects() {
         sanitize_stored_session_user(Some(json!({ "firstName": "steven" }))),
         Some(json!({ "firstName": "steven" }))
     );
+}
+
+#[test]
+fn auth_me_store_failure_classifier_only_accepts_transient_shapes() {
+    assert!(auth_me_store_failure_is_transient(
+        "GET /auth/me failed (503 Service Unavailable): overloaded"
+    ));
+    assert!(auth_me_store_failure_is_transient(
+        "GET /auth/me: error sending request for url"
+    ));
+    assert!(!auth_me_store_failure_is_transient(
+        "GET /auth/me failed (401 Unauthorized): bad token"
+    ));
+}
+
+#[test]
+fn fallback_session_user_uses_supplied_user_or_jwt_claims() {
+    let supplied = json!({ "id": "from-callback", "email": "callback@example.com" });
+    assert_eq!(
+        fallback_session_user_for_deferred_validation("not-a-jwt", None, Some(&supplied)),
+        json!({
+            "id": "from-callback",
+            "email": "callback@example.com",
+            "pendingBackendValidation": true
+        })
+    );
+
+    let token = jwt_with_payload(json!({
+        "sub": "user-123",
+        "email": "jwt@example.com",
+        "name": "JWT User",
+        "exp": 4_102_444_800i64
+    }));
+    let fallback = fallback_session_user_for_deferred_validation(&token, None, None);
+    assert_eq!(fallback["id"], "user-123");
+    assert_eq!(fallback["_id"], "user-123");
+    assert_eq!(fallback["email"], "jwt@example.com");
+    assert_eq!(fallback["name"], "JWT User");
+    assert_eq!(fallback["pendingBackendValidation"], true);
+}
+
+#[tokio::test]
+async fn store_session_persists_live_jwt_when_auth_me_transient() {
+    let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let tmp = TempDir::new().unwrap();
+    std::fs::create_dir_all(tmp.path().join("workspace")).unwrap();
+    let _home = EnvVarGuard::set_to_path("HOME", tmp.path());
+    let mut config = test_config(&tmp);
+    config.api_url = Some(spawn_auth_me_status(StatusCode::SERVICE_UNAVAILABLE).await);
+    let token = jwt_with_payload(json!({
+        "exp": (chrono::Utc::now() + chrono::Duration::hours(1)).timestamp()
+    }));
+
+    let result = store_session(&config, &token, None, Some(json!({})))
+        .await
+        .unwrap();
+
+    assert!(result.value.has_token);
+    let log_text = result.logs.join(" ");
+    assert!(
+        log_text.contains("session JWT accepted with deferred GET /auth/me validation"),
+        "expected deferred validation log, got: {log_text}"
+    );
+    assert!(
+        log_text.contains("session stored"),
+        "expected session stored log, got: {log_text}"
+    );
+    let state = auth_get_state(&config).await.unwrap().value;
+    assert!(state.is_authenticated);
+    assert_eq!(
+        state.user,
+        Some(json!({ "pendingBackendValidation": true }))
+    );
+}
+
+#[tokio::test]
+async fn store_session_rejects_live_jwt_when_auth_me_unauthorized() {
+    let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let tmp = TempDir::new().unwrap();
+    std::fs::create_dir_all(tmp.path().join("workspace")).unwrap();
+    let _home = EnvVarGuard::set_to_path("HOME", tmp.path());
+    let mut config = test_config(&tmp);
+    config.api_url = Some(spawn_auth_me_status(StatusCode::UNAUTHORIZED).await);
+    let token = jwt_with_payload(json!({
+        "exp": (chrono::Utc::now() + chrono::Duration::hours(1)).timestamp()
+    }));
+
+    let err = store_session(&config, &token, None, None)
+        .await
+        .unwrap_err();
+
+    assert!(
+        err.contains("Session validation failed (GET /auth/me)"),
+        "expected auth/me validation error, got: {err}"
+    );
+    let state = auth_get_state(&config).await.unwrap().value;
+    assert!(!state.is_authenticated);
 }
 
 // ── store_session (local session) ─────────────────────────────

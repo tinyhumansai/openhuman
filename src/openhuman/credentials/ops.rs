@@ -1,9 +1,10 @@
 //! JSON-RPC / CLI controller surface for credentials and app session auth.
 
-use serde_json::json;
+use serde_json::{json, Map, Value};
+use std::time::Duration;
 
 use crate::api::config::effective_backend_api_url;
-use crate::api::jwt::get_session_token;
+use crate::api::jwt::{decode_jwt_exp, decode_jwt_payload, get_session_token};
 use crate::api::rest::{user_id_from_profile_payload, BackendOAuthClient};
 use crate::openhuman::config::Config;
 use crate::openhuman::credentials::session_support::{
@@ -19,6 +20,9 @@ use crate::openhuman::config::{
     write_active_user_id,
 };
 use crate::openhuman::memory_conversations as conversations;
+
+const AUTH_ME_STORE_RETRY_DELAY: Duration = Duration::from_millis(150);
+const AUTH_ME_STORE_TRANSIENT_STATUSES: &[u16] = &[408, 429, 500, 502, 503, 504, 520];
 
 /// Start all login-gated background services (local AI, voice, screen
 /// intelligence, autocomplete).  Called both from the initial boot path
@@ -140,6 +144,7 @@ pub async fn store_session(
     let api_url = effective_backend_api_url(&config.api_url);
     let local_session = is_local_session_token(trimmed_token);
     let local_user_id = local_session.then(local_session_user_id);
+    let mut session_validation_logs = Vec::new();
     let settings = if local_session {
         sanitize_stored_session_user(user.clone())
             .map(|value| {
@@ -151,24 +156,60 @@ pub async fn store_session(
             .ok_or_else(|| "local session requires a user payload".to_string())?
     } else {
         let client = BackendOAuthClient::new(&api_url).map_err(|e| e.to_string())?;
-        match client.fetch_current_user(trimmed_token).await {
-            Ok(user) => user,
-            Err(e) => {
+        match fetch_current_user_for_session_store(&client, trimmed_token).await {
+            Ok(fetched_user) => {
+                session_validation_logs.push(format!(
+                    "session JWT verified via GET /auth/me on {}",
+                    api_url.trim_end_matches('/')
+                ));
+                fetched_user
+            }
+            Err(reason) => {
                 // This is the store-time validation gate: if it fails the profile
                 // is NEVER persisted, so the user bounces straight back to the
                 // signin page after a "successful" OAuth. Timeouts/gateway 5xx are
                 // otherwise dropped by the Sentry transient classifier, so log an
                 // explicit, grep-friendly WARN to the app log regardless.
-                let reason = format!("{e:#}");
+                if !auth_me_store_failure_is_transient(&reason) {
+                    tracing::warn!(
+                        domain = "credentials",
+                        operation = "store_session",
+                        "[credentials][auth-store] GET /auth/me validation FAILED on {} — session NOT persisted; user will bounce to signin: {reason}",
+                        api_url.trim_end_matches('/')
+                    );
+                    return Err(format!(
+                        "Session validation failed (GET /auth/me): {reason}"
+                    ));
+                }
+
+                let Some(exp) = jwt_exp_live_at(trimmed_token, chrono::Utc::now()) else {
+                    tracing::warn!(
+                        domain = "credentials",
+                        operation = "store_session",
+                        "[credentials][auth-store] GET /auth/me transient validation failed on {} but JWT has no live local exp — session NOT persisted: {reason}",
+                        api_url.trim_end_matches('/')
+                    );
+                    return Err(format!(
+                        "Session validation failed (GET /auth/me): {reason}"
+                    ));
+                };
+
                 tracing::warn!(
                     domain = "credentials",
                     operation = "store_session",
-                    "[credentials][auth-store] GET /auth/me validation FAILED on {} — session NOT persisted; user will bounce to signin: {reason}",
+                    exp = %exp,
+                    "[credentials][auth-store] GET /auth/me transient validation failed on {} — persisting live JWT and deferring backend revalidation: {reason}",
                     api_url.trim_end_matches('/')
                 );
-                return Err(format!(
-                    "Session validation failed (GET /auth/me): {reason}"
+                session_validation_logs.push(format!(
+                    "session JWT accepted with deferred GET /auth/me validation on {} after transient failure",
+                    api_url.trim_end_matches('/')
                 ));
+                fallback_session_user_for_deferred_validation(
+                    trimmed_token,
+                    user_id.as_deref(),
+                    user.as_ref(),
+                )
             }
         }
     };
@@ -228,10 +269,7 @@ pub async fn store_session(
     let mut logs = if local_session {
         vec!["local session accepted without backend validation".to_string()]
     } else {
-        vec![format!(
-            "session JWT verified via GET /auth/me on {}",
-            api_url.trim_end_matches('/')
-        )]
+        session_validation_logs
     };
 
     if let Some(ref uid) = resolved_user_id {
@@ -379,6 +417,108 @@ pub async fn store_session(
     }
 
     Ok(RpcOutcome::new(summarize_auth_profile(&profile), logs))
+}
+
+async fn fetch_current_user_for_session_store(
+    client: &BackendOAuthClient,
+    token: &str,
+) -> Result<Value, String> {
+    match client.fetch_current_user(token).await {
+        Ok(user) => Ok(user),
+        Err(first) => {
+            let first_reason = format!("{first:#}");
+            if !auth_me_store_failure_is_transient(&first_reason) {
+                return Err(first_reason);
+            }
+
+            tokio::time::sleep(AUTH_ME_STORE_RETRY_DELAY).await;
+            client
+                .fetch_current_user(token)
+                .await
+                .map_err(|second| format!("{second:#}"))
+        }
+    }
+}
+
+fn auth_me_store_failure_is_transient(reason: &str) -> bool {
+    if crate::core::observability::contains_transient_transport_phrase(reason) {
+        return true;
+    }
+
+    let lower = reason.to_ascii_lowercase();
+    AUTH_ME_STORE_TRANSIENT_STATUSES.iter().any(|status| {
+        let status = status.to_string();
+        lower.contains(&format!("({status}"))
+            || lower.contains(&format!("http {status}"))
+            || lower.contains(&format!("status {status}"))
+            || lower.contains(&format!("status code {status}"))
+    })
+}
+
+fn jwt_exp_live_at(
+    token: &str,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Option<chrono::DateTime<chrono::Utc>> {
+    let exp = decode_jwt_exp(token)?;
+    (exp > now).then_some(exp)
+}
+
+fn fallback_session_user_for_deferred_validation(
+    token: &str,
+    user_id: Option<&str>,
+    supplied_user: Option<&Value>,
+) -> Value {
+    if let Some(mut user) = sanitize_stored_session_user(supplied_user.cloned()) {
+        if let Value::Object(ref mut map) = user {
+            map.insert("pendingBackendValidation".to_string(), Value::Bool(true));
+        }
+        return user;
+    }
+
+    let claims = decode_jwt_payload(token).unwrap_or(Value::Null);
+    let mut map = Map::new();
+    if let Some(uid) = user_id
+        .map(str::trim)
+        .filter(|uid| !uid.is_empty())
+        .map(str::to_string)
+        .or_else(|| jwt_claim_string(&claims, &["sub", "user_id", "userId", "id", "_id"]))
+    {
+        map.insert("id".to_string(), Value::String(uid.clone()));
+        map.insert("_id".to_string(), Value::String(uid));
+    }
+    copy_jwt_claim_string(&claims, &mut map, "email", "email");
+    copy_jwt_claim_string(&claims, &mut map, "name", "name");
+    copy_jwt_claim_string(&claims, &mut map, "username", "username");
+    copy_jwt_claim_string(&claims, &mut map, "firstName", "firstName");
+    copy_jwt_claim_string(&claims, &mut map, "first_name", "firstName");
+    copy_jwt_claim_string(&claims, &mut map, "lastName", "lastName");
+    copy_jwt_claim_string(&claims, &mut map, "last_name", "lastName");
+    map.insert("pendingBackendValidation".to_string(), Value::Bool(true));
+    Value::Object(map)
+}
+
+fn copy_jwt_claim_string(claims: &Value, map: &mut Map<String, Value>, claim: &str, target: &str) {
+    if map.contains_key(target) {
+        return;
+    }
+    if let Some(value) = jwt_claim_string(claims, &[claim]) {
+        map.insert(target.to_string(), Value::String(value));
+    }
+}
+
+fn jwt_claim_string(claims: &Value, keys: &[&str]) -> Option<String> {
+    let obj = claims.as_object()?;
+    for key in keys {
+        if let Some(value) = obj
+            .get(*key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            return Some(value.to_string());
+        }
+    }
+    None
 }
 
 fn sanitize_stored_session_user(user: Option<serde_json::Value>) -> Option<serde_json::Value> {
