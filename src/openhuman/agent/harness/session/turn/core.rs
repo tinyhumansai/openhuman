@@ -5,7 +5,7 @@ use super::super::turn_engine_adapter::{AgentCheckpoint, AgentObserver, AgentToo
 use super::super::types::Agent;
 use super::{
     integration_announcement_note, mcp_announcement_note, newly_connected_slugs,
-    skill_announcement_note,
+    skill_announcement_note, skill_retraction_note,
 };
 use crate::openhuman::agent::harness;
 use crate::openhuman::agent::harness::definition::TriggerMemoryAgent;
@@ -384,6 +384,16 @@ impl Agent {
         // prefix stays stable; `.take()` fires it exactly once.
         let pending_skills = std::mem::take(&mut self.pending_skill_announcement);
         let enriched = match skill_announcement_note(&pending_skills) {
+            Some(note) => format!("{note}\n\n{enriched}"),
+            None => enriched,
+        };
+
+        // Same one-shot treatment for skills uninstalled mid-session (parked by
+        // `refresh_workflows`). The model must know the skill is gone so it does
+        // not attempt `run_skill` on a removed entry. Rides the user turn for
+        // the same KV-cache reason as the install note above.
+        let pending_retracted = std::mem::take(&mut self.pending_skill_retraction);
+        let enriched = match skill_retraction_note(&pending_retracted) {
             Some(note) => format!("{note}\n\n{enriched}"),
             None => enriched,
         };
