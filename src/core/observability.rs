@@ -2892,16 +2892,29 @@ pub fn is_max_iterations_event(event: &sentry::protocol::Event<'_>) -> bool {
 /// keeps OPENHUMAN-TAURI-25 / -1Q / -27 / -1G permanently off Sentry
 /// (~185 events/day combined).
 ///
-/// Scope: only the three domains that surface session-expired today
-/// (`llm_provider`, `backend_api`, `rpc`). Composio's OAuth-state 401
-/// is excluded — that's actionable and must reach Sentry.
+/// Scope: only the four domains that surface session-expired today
+/// (`llm_provider`, `backend_api`, `rpc`, `cron`). Composio's OAuth-state
+/// 401 is excluded — that's actionable and must reach Sentry.
+///
+/// The `cron` arm targets TAURI-RUST-M (Sentry #80, 42k+ events): a
+/// cron-fired agent job (`morning_briefing`) that exhausts its retries
+/// against a global backend 401 and calls `report_error` with
+/// `domain=cron`, `operation=agent_job`, `failure=retries_exhausted`.
+/// That path carries no `status` tag, so — like the rpc pre-flight guard —
+/// it is accepted on the session-expired body alone. Primary suppression
+/// is the `is_session_expired_failure` halt-on-first guard in
+/// `cron::scheduler::execute_job_with_retry` (#3350); this arm is the
+/// defense-in-depth for any future cron call site that re-emits the same
+/// shape without routing through that guard. Genuine cron failures (a
+/// non-session error body) don't match `is_session_expired_message`, so
+/// they still page.
 #[cfg(feature = "crash-reporting")]
 pub fn is_session_expired_event(event: &sentry::protocol::Event<'_>) -> bool {
     let tags = &event.tags;
     let Some(domain) = tags.get("domain").map(String::as_str) else {
         return false;
     };
-    if !matches!(domain, "llm_provider" | "backend_api" | "rpc") {
+    if !matches!(domain, "llm_provider" | "backend_api" | "rpc" | "cron") {
         return false;
     }
 
@@ -2921,10 +2934,11 @@ pub fn is_session_expired_event(event: &sentry::protocol::Event<'_>) -> bool {
         return true;
     }
 
-    // Pre-flight rpc guard has no status tag — accept on body alone,
-    // scoped to the rpc dispatcher (other domains don't emit the
-    // "no session token stored" sentinel).
-    if domain == "rpc" && body_matches {
+    // The rpc pre-flight guard and the cron agent-job report both emit
+    // without a `status` tag — accept on the session-expired body alone,
+    // scoped to those two domains (others must carry the 401 to be
+    // suppressed, so a real defect still pages).
+    if matches!(domain, "rpc" | "cron") && body_matches {
         return true;
     }
 
@@ -7824,6 +7838,52 @@ mod tests {
     }
 
     #[cfg(feature = "crash-reporting")]
+    #[test]
+    fn session_expired_before_send_matches_cron_agent_job() {
+        // TAURI-RUST-M (Sentry #80, 42k+ events): a cron-fired `morning_briefing`
+        // agent job exhausts its retries against a global backend 401 and calls
+        // `report_error` with `domain=cron`, `operation=agent_job`,
+        // `failure=retries_exhausted` and the raw `SESSION_EXPIRED:` sentinel as
+        // the message. The cron path carries no `status` tag, so the filter must
+        // accept on the session-expired body alone (mirroring the rpc branch).
+        // Primary suppression is the `is_session_expired_failure` halt-on-first
+        // guard in `cron::scheduler::execute_job_with_retry` (#3350); this
+        // `before_send` arm is the defense-in-depth for any future cron call
+        // site that re-emits the same shape without routing through that guard.
+        let msg = "SESSION_EXPIRED: backend session not active — sign in to resume LLM work";
+        let event = event_with_tags_and_message(
+            &[
+                ("domain", "cron"),
+                ("operation", "agent_job"),
+                ("failure", "retries_exhausted"),
+            ],
+            msg,
+        );
+        assert!(
+            is_session_expired_event(&event),
+            "cron agent_job session-expired retries-exhausted events should be filtered"
+        );
+    }
+
+    #[test]
+    fn session_expired_before_send_keeps_genuine_cron_failures() {
+        // A genuine cron agent_job failure whose body is NOT a session-expired
+        // sentinel must still page — the `cron` domain is only suppressed when
+        // the body matches, so real defects keep reaching Sentry.
+        let event = event_with_tags_and_message(
+            &[
+                ("domain", "cron"),
+                ("operation", "agent_job"),
+                ("failure", "retries_exhausted"),
+            ],
+            "tool execution failed: connection reset by peer while calling search_web",
+        );
+        assert!(
+            !is_session_expired_event(&event),
+            "non-session cron failures must keep reaching Sentry"
+        );
+    }
+
     #[test]
     fn max_iterations_filter_matches_message_path() {
         // `report_error_message` calls `sentry::capture_message`, which
