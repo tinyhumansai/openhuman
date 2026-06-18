@@ -149,6 +149,11 @@ export function useConsciousItems(): UseConsciousItemsResult {
 
   // Prevent double-fetch on StrictMode double-mount
   const fetchingRef = useRef(false);
+  // Synchronous guard for triggerAnalysis: `isRunning` only flips true once the
+  // backend round-trips the `conscious_loop:started` event, leaving a window
+  // where a second synchronous call would pass the `isRunning` guard and fire a
+  // duplicate run. This ref closes that window immediately (mirrors fetchingRef).
+  const runningRef = useRef(false);
 
   const refresh = useCallback(async () => {
     if (!isTauri() || fetchingRef.current) return;
@@ -174,11 +179,14 @@ export function useConsciousItems(): UseConsciousItemsResult {
 
   const triggerAnalysis = useCallback(async () => {
     const authToken = getCoreStateSnapshot().snapshot.sessionToken;
-    if (!isTauri() || !authToken || isRunning) return;
+    if (!isTauri() || !authToken || isRunning || runningRef.current) return;
+    runningRef.current = true;
     try {
       await consciousLoopRun(authToken, await getBackendUrl());
     } catch (err) {
       console.warn('[conscious] Failed to trigger analysis:', err);
+    } finally {
+      runningRef.current = false;
     }
   }, [isRunning]);
 

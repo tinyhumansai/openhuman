@@ -457,12 +457,16 @@ const McpServersTab = () => {
 
         {/* Empty states */}
         {activeChip === 'installed' && filteredInstalled.length === 0 && (
-          <div className="py-8 text-center text-sm text-stone-400 dark:text-neutral-500">
+          <div
+            data-testid="mcp-installed-empty"
+            className="py-8 text-center text-sm text-stone-400 dark:text-neutral-500">
             {t('mcp.installed.empty')}
           </div>
         )}
         {activeChip === 'registry' && filteredCatalog.length === 0 && !catalogLoading && (
-          <div className="py-8 text-center text-sm text-stone-400 dark:text-neutral-500">
+          <div
+            data-testid="mcp-catalog-empty"
+            className="py-8 text-center text-sm text-stone-400 dark:text-neutral-500">
             {searchQuery
               ? t('mcp.catalog.noResultsFor').replace('{query}', searchQuery)
               : t('mcp.catalog.noResults')}
@@ -472,7 +476,9 @@ const McpServersTab = () => {
           filteredInstalled.length === 0 &&
           filteredCatalog.length === 0 &&
           !catalogLoading && (
-            <div className="py-8 text-center text-sm text-stone-400 dark:text-neutral-500">
+            <div
+              data-testid="mcp-catalog-empty"
+              className="py-8 text-center text-sm text-stone-400 dark:text-neutral-500">
               {searchQuery
                 ? t('mcp.catalog.noResultsFor').replace('{query}', searchQuery)
                 : t('mcp.catalog.noResults')}

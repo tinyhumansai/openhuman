@@ -5293,6 +5293,11 @@ const messages: TranslationMap = {
   'modelCouncil.modelPickerHelp':
     'Wybierz wskazówkę routingu lub przypnij dokładny model dostawcy.',
   'modelCouncil.closeModelPicker': 'Close',
+  'modelCouncil.hint.chat': 'Czat',
+  'modelCouncil.hint.code': 'Kod',
+  'modelCouncil.hint.default': 'Domyślny',
+  'modelCouncil.hint.reasoning': 'Rozumowanie',
+  'modelCouncil.hint.summarize': 'Podsumowanie',
   'modelCouncil.modelPickerHints': 'Hints',
   'modelCouncil.modelPickerProviderModel': 'Dostawca + model',
   'modelCouncil.modelProviderLabel': 'Dostawca modelu',

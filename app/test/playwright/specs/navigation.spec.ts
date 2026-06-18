@@ -14,8 +14,9 @@ interface RouteEntry {
 //   /skills      → /connections (Phase 2)
 //   /activity    → /settings/notifications (Phase 6)
 //   /intelligence → /settings/notifications (Phase 6)
+//   /home        → /chat (Home folded into the unified two-panel chat surface)
 const ROUTES: RouteEntry[] = [
-  { route: '/home' },
+  { route: '/home', expectedHash: '/chat' }, // back-compat redirect (Home → chat)
   { route: '/human' }, // first-class route again (no longer redirects to /chat)
   { route: '/chat' },
   { route: '/connections' },
