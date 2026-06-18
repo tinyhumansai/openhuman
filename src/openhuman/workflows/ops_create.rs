@@ -707,8 +707,12 @@ mod render_skill_toml_tests {
         let mut saw = false;
         loop {
             match rx.try_recv() {
-                Ok(DomainEvent::WorkflowsChanged { reason }) => {
-                    assert_eq!(reason, "create");
+                // The event bus is a process-wide singleton, so other tests
+                // running in parallel publish their own WorkflowsChanged events
+                // (e.g. "install"/"uninstall" from ops_install). Match only our
+                // own "create" reason and skip the rest rather than asserting on
+                // whichever event happens to arrive first.
+                Ok(DomainEvent::WorkflowsChanged { reason }) if reason == "create" => {
                     saw = true;
                     break;
                 }

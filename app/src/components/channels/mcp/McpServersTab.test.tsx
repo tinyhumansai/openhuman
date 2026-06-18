@@ -505,6 +505,8 @@ describe('McpServersTab', () => {
     await waitFor(() => {
       expect(screen.queryByText('File Server')).not.toBeInTheDocument();
     });
+    // No installed and no catalog match → the catalog empty-state renders.
+    expect(screen.getByTestId('mcp-catalog-empty')).toBeInTheDocument();
   });
 
   it('Registry chip hides installed rows', async () => {
