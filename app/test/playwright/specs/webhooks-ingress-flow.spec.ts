@@ -11,11 +11,7 @@ test.describe('Webhooks ingress surface (stub-level)', () => {
   test('reaches the app shell after onboarding', async ({ page }) => {
     await waitForAppReady(page);
     const text = await page.locator('#root').innerText();
-    expect(
-      ['Ask your assistant anything', 'Your device is connected'].some(marker =>
-        text.includes(marker)
-      )
-    ).toBe(true);
+    expect(['New Conversation', 'Threads'].some(marker => text.includes(marker))).toBe(true);
   });
 
   test('exposes the stub webhook RPC surface with stable result and log shapes', async () => {

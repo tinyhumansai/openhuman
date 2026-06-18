@@ -5242,6 +5242,11 @@ const messages: TranslationMap = {
   'modelCouncil.modelPickerHelp':
     'রাউটিং ইঙ্গিত নির্বাচন করুন বা সুনির্দিষ্ট প্রদানকারী মডেল পিন করুন।',
   'modelCouncil.closeModelPicker': 'Close',
+  'modelCouncil.hint.chat': 'চ্যাট',
+  'modelCouncil.hint.code': 'কোড',
+  'modelCouncil.hint.default': 'ডিফল্ট',
+  'modelCouncil.hint.reasoning': 'যুক্তি',
+  'modelCouncil.hint.summarize': 'সারসংক্ষেপ',
   'modelCouncil.modelPickerHints': 'Hints',
   'modelCouncil.modelPickerProviderModel': 'প্রদানকারী + মডেল',
   'modelCouncil.modelProviderLabel': 'মডেল প্রদানকারী',
