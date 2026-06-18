@@ -43,6 +43,7 @@ describe('builtinCloudProviders', () => {
         'venice',
         'vercel-ai-gateway',
         'sumopod',
+        'modelscope',
       ])
     );
   });

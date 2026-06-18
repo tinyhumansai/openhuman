@@ -185,6 +185,12 @@ pub const BUILTIN_CLOUD_PROVIDERS: &[BuiltinCloudProvider] = &[
         endpoint: "https://ai.sumopod.com/v1",
         auth_style: AuthStyle::Bearer,
     },
+    BuiltinCloudProvider {
+        slug: "modelscope",
+        label: "ModelScope",
+        endpoint: "https://api-inference.modelscope.cn/v1",
+        auth_style: AuthStyle::Bearer,
+    },
 ];
 
 fn builtin_cloud_provider(type_str: &str) -> Option<&'static BuiltinCloudProvider> {
