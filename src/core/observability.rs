@@ -1265,7 +1265,20 @@ fn is_provider_user_state_message(lower: &str) -> bool {
     // No `inference/provider/ops.rs::list_models` other than this site emits
     // the `provider returned NNN` prefix (verified via grep), so the prefix
     // alone is a sufficient anchor.
-    if lower.starts_with("provider returned 404") {
+    //
+    // TAURI-RUST-8X3: use `contains` rather than `starts_with` so the same
+    // arm still matches when a caller has already wrapped the raw error in a
+    // log/context prefix before re-reporting it — e.g. the
+    // `inference/ops.rs::inference_list_models` `error!` site historically
+    // captured `[inference::ops] list_models:error: provider returned 404:
+    // 404 page not found`, where the `starts_with` anchor failed and the
+    // event escaped to Sentry. The primary fix classifies the *raw* error at
+    // that source (so this never depends on log shape), and this widening is
+    // belt-and-suspenders for any other prefixed re-report path. The
+    // discrimination guard (`does_not_classify_non_404_list_models_failures_as_user_state`)
+    // confirms `provider returned 401/403/400/429/5xx` still escalate, since
+    // none of those contain the `provider returned 404` substring.
+    if lower.contains("provider returned 404") {
         return true;
     }
 
@@ -4322,6 +4335,52 @@ mod tests {
                 "OPENHUMAN-TAURI-YJ list_models 404 must classify as ProviderUserState: {raw}"
             );
         }
+    }
+
+    #[test]
+    fn couples_list_models_404_source_shape_to_classifier() {
+        // TAURI-RUST-8X3 coupling guard. Ties the TYPED SOURCE error shape
+        // emitted by `inference/provider/ops/models.rs` (the
+        // `provider returned 404: <body>` format) to the classifier, so a
+        // wording / prefix drift fails CI instead of silently leaking events.
+        //
+        // The wild Sentry message carried the `inference/ops.rs`
+        // `error!("[inference::ops] list_models:error: {err}")` PREFIX. The
+        // primary fix classifies the raw `err` at the source before that
+        // prefix is applied, but the `contains` widening above must ALSO
+        // catch the prefixed variant for any future prefixed re-report path.
+        // Assert BOTH the raw source shape and the prefixed log-line shape.
+
+        // (a) Raw source shape — exactly what `models.rs` returns for a Go
+        //     default-handler 404 (`404 page not found`).
+        let raw_source = "provider returned 404: 404 page not found";
+        assert_eq!(
+            expected_error_kind(raw_source),
+            Some(ExpectedErrorKind::ProviderUserState),
+            "raw list_models 404 source shape must classify as ProviderUserState"
+        );
+
+        // (b) Raw source shape WITH the actionable hint appended by
+        //     `models.rs` for the 404 case — the prefix anchor must survive
+        //     the suffix.
+        let raw_with_hint = "provider returned 404: 404 page not found — the configured base URL does not expose a `/models` endpoint; check the provider's base URL (it usually ends in `/v1`)";
+        assert_eq!(
+            expected_error_kind(raw_with_hint),
+            Some(ExpectedErrorKind::ProviderUserState),
+            "list_models 404 + actionable hint must still classify as ProviderUserState"
+        );
+
+        // (c) Prefixed log-line shape — the exact pattern from
+        //     `inference/ops.rs::inference_list_models` `error!`. The
+        //     `contains` widening must catch this even though it does not
+        //     start with the anchor.
+        let prefixed =
+            "[inference::ops] list_models:error: provider returned 404: 404 page not found";
+        assert_eq!(
+            expected_error_kind(prefixed),
+            Some(ExpectedErrorKind::ProviderUserState),
+            "prefixed list_models 404 log line must still classify as ProviderUserState (contains anchor)"
+        );
     }
 
     #[test]
