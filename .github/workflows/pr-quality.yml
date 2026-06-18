@@ -72,3 +72,20 @@ jobs:
             'src/**/README.md'
             '.github/PULL_REQUEST_TEMPLATE.md'
           fail: true
+  appimage-rpath-guard:
+    name: AppImage RPATH + libxdo guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    if: ${{ !contains(github.event.pull_request.labels.*.name, 'docs') && !contains(github.event.pull_request.labels.*.name, 'chore') }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+      - name: Install patchelf
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq patchelf
+      - name: Syntax check release script
+        run: bash -n scripts/release/strip-appimage-graphics-libs.sh
+      - name: Run AppImage RPATH sanitize + libxdo guard test (issue #3224)
+        run: bash scripts/release/test-strip-appimage-rpaths.sh
