@@ -157,6 +157,13 @@ pub(crate) struct LazyToolkitResolver {
     pub(crate) actions: Vec<crate::openhuman::context::prompt::ConnectedIntegrationTool>,
 }
 
+/// Minimum normalized-slug length before the prefix/superstring tier in
+/// [`LazyToolkitResolver::find_action`] engages (#3152). Below this, a stray
+/// short slug (`notion`, `gmail`) would prefix-match too many actions; the
+/// uniqueness check would reject it anyway, but the length gate makes the
+/// intent explicit and skips needless scans.
+const TIER4_MIN_SLUG_LEN: usize = 8;
+
 impl LazyToolkitResolver {
     pub(super) fn resolve(&self, name: &str) -> Option<Box<dyn crate::openhuman::tools::Tool>> {
         let action = self.find_action(name)?;
@@ -222,6 +229,38 @@ impl LazyToolkitResolver {
                     norm = %norm,
                     "[subagent_runner] ambiguous normalized-slug match — multiple actions resolve to the same slug; not resolving"
                 );
+                return None;
+            }
+
+            // Tier 4: unique prefix/superstring match (#3152). Models
+            // routinely emit a TRUNCATED action slug — `NOTION_SEARCH_NOTION`
+            // for the catalogued `NOTION_SEARCH_NOTION_PAGE` — or, less often,
+            // a suffixed one. Accept only when exactly one action's normalized
+            // slug extends the request (or vice-versa). Gated on a non-trivial
+            // request length so a short or hallucinated slug can't fan out
+            // across many actions, and strictly unique so a near-miss WRITE
+            // can never silently dispatch to the wrong action (data-integrity:
+            // a mis-resolved create/update would touch the wrong resource).
+            if norm.len() >= TIER4_MIN_SLUG_LEN {
+                let mut prefix_matches = self.actions.iter().filter(|a| {
+                    let cand = normalize_slug(&a.name);
+                    !cand.is_empty() && (cand.starts_with(&norm) || norm.starts_with(&cand))
+                });
+                if let Some(action) = prefix_matches.next() {
+                    if prefix_matches.next().is_none() {
+                        tracing::info!(
+                            requested = %name,
+                            matched = %action.name,
+                            "[subagent_runner] resolved tool by unique prefix/superstring match"
+                        );
+                        return Some(action);
+                    }
+                    tracing::warn!(
+                        requested = %name,
+                        norm = %norm,
+                        "[subagent_runner] ambiguous prefix/superstring match — multiple actions share the slug prefix; not resolving"
+                    );
+                }
             }
         }
         None
