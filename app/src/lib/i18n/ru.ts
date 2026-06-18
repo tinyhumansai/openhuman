@@ -5299,6 +5299,11 @@ const messages: TranslationMap = {
   'modelCouncil.modelPickerHelp':
     'Выберите подсказку маршрутизации или закрепите точную модель провайдера.',
   'modelCouncil.closeModelPicker': 'Close',
+  'modelCouncil.hint.chat': 'Чат',
+  'modelCouncil.hint.code': 'Код',
+  'modelCouncil.hint.default': 'По умолчанию',
+  'modelCouncil.hint.reasoning': 'Рассуждение',
+  'modelCouncil.hint.summarize': 'Сводка',
   'modelCouncil.modelPickerHints': 'Hints',
   'modelCouncil.modelPickerProviderModel': 'Провайдер + модель',
   'modelCouncil.modelProviderLabel': 'Провайдер модели',

@@ -21,11 +21,9 @@ test.describe('Linux CEF deb package runtime', () => {
   test('main web shell is created and visible', async ({ page }) => {
     await waitForAppReady(page);
     const text = await page.locator('#root').innerText();
-    expect(
-      ['Ask your assistant anything', 'Your device is connected', 'Home', 'Chat'].some(marker =>
-        text.includes(marker)
-      )
-    ).toBe(true);
+    expect(['New Conversation', 'Threads', 'Chat'].some(marker => text.includes(marker))).toBe(
+      true
+    );
   });
 
   test.skip('native core_rpc_url / tray / CEF packaging assertions are desktop-only', async () => {});

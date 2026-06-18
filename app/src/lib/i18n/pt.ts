@@ -5335,6 +5335,11 @@ const messages: TranslationMap = {
   'modelCouncil.modelPickerHelp':
     'Selecione uma dica de roteamento ou fixe um modelo de provedor exato.',
   'modelCouncil.closeModelPicker': 'Close',
+  'modelCouncil.hint.chat': 'Bate-papo',
+  'modelCouncil.hint.code': 'Código',
+  'modelCouncil.hint.default': 'Padrão',
+  'modelCouncil.hint.reasoning': 'Raciocínio',
+  'modelCouncil.hint.summarize': 'Resumo',
   'modelCouncil.modelPickerHints': 'Hints',
   'modelCouncil.modelPickerProviderModel': 'Provedor + modelo',
   'modelCouncil.modelProviderLabel': 'Provedor do modelo',
