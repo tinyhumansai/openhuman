@@ -57,6 +57,7 @@ mod ptt_overlay;
 mod reset_reboot_schedule;
 mod screen_capture;
 mod slack_scanner;
+mod stderr_panic_hook;
 mod telegram_scanner;
 mod webview_accounts;
 mod webview_apis;
@@ -2264,6 +2265,16 @@ pub fn run() {
             scope.set_tag("os_version", ver);
         }
     });
+
+    // Install the surgical broken-pipe stderr panic guard *after* `sentry::init`
+    // so it captures Sentry's panic integration as its chain target. It swallows
+    // ONLY the `failed printing to stderr: … (os error 232/109/32)` panic that
+    // fires when the parent console pipe closes (the app called
+    // `AttachConsole(ATTACH_PARENT_PROCESS)` in `main.rs` and the user's terminal
+    // exited). Every other panic — assertions, real bugs — chains through to
+    // Sentry untouched. See `stderr_panic_hook` for the full rationale and the
+    // Sentry TAURI-RUST-F broken-pipe family.
+    stderr_panic_hook::install();
 
     // Optional smoke trigger for verifying the Sentry pipeline end-to-end.
     // Run with `OPENHUMAN_TAURI_SENTRY_TEST=panic` to fire a panic, or
