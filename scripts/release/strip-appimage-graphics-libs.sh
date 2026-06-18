@@ -445,7 +445,22 @@ sanitize_elf_rpaths() {
       IFS="$old_ifs"
 
       if [ "${#kept[@]}" -eq 0 ]; then
-        cleaned='$ORIGIN:$ORIGIN/../shared/lib'
+        # No relative entry survived — synthesize a fallback that reaches the
+        # bundle's top-level shared/lib FROM THIS ELF's own directory. $ORIGIN is
+        # the ELF's dir, so the number of `../` hops equals the ELF's directory
+        # depth below the AppDir root: a file in usr/lib needs
+        # `$ORIGIN/../../shared/lib`, one in lib needs `$ORIGIN/../shared/lib`. A
+        # flat `$ORIGIN/../shared/lib` (the naive form) resolves to
+        # `usr/shared/lib` for usr/* files and would still miss libs at runtime.
+        local rel_dir comp up=""
+        rel_dir="$(dirname "${f#"$appdir"/}")"
+        local ifs_save="$IFS"
+        IFS='/'
+        for comp in $rel_dir; do
+          [ -n "$comp" ] && [ "$comp" != "." ] && up="../$up"
+        done
+        IFS="$ifs_save"
+        cleaned="\$ORIGIN:\$ORIGIN/${up}shared/lib"
       else
         cleaned="$(IFS=':'; echo "${kept[*]}")"
       fi

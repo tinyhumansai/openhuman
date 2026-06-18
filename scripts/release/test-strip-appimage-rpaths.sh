@@ -87,6 +87,34 @@ if sanitize_elf_rpaths "$APPDIR"; then
 fi
 echo "[test-rpaths] ok: second pass is a no-op (idempotent)"
 
+# --- Case 1b: pure-absolute CI RPATH → depth-aware fallback ------------------
+# This is the issue #3224 scenario: libcef.so carries ONLY an absolute
+# build-machine RPATH, no surviving $ORIGIN entry. The fallback MUST reach the
+# bundle's top-level shared/lib from usr/lib, i.e. `$ORIGIN/../../shared/lib`
+# (two hops), NOT the naive `$ORIGIN/../shared/lib` which resolves to
+# usr/shared/lib.
+ABS_DIR="$WORK/abs"
+mkdir -p "$ABS_DIR/usr/lib"
+ABS_CEF="$ABS_DIR/usr/lib/libcef.so"
+cp "$HOST_ELF" "$ABS_CEF"
+patchelf --set-rpath '/home/runner/.cache/tauri-cef/x/shared/lib' "$ABS_CEF"
+sanitize_elf_rpaths "$ABS_DIR" || fail "sanitize_elf_rpaths reported no change on a pure-absolute RPATH"
+abs_after="$(patchelf --print-rpath "$ABS_CEF")"
+[ "$abs_after" = '$ORIGIN:$ORIGIN/../../shared/lib' ] \
+  || fail "usr/lib fallback wrong: expected '\$ORIGIN:\$ORIGIN/../../shared/lib', got '$abs_after'"
+echo "[test-rpaths] ok: usr/lib pure-absolute RPATH → depth-aware fallback '$abs_after'"
+
+# A lib one level deep (lib/) needs only one hop.
+mkdir -p "$ABS_DIR/lib"
+ABS_LIB="$ABS_DIR/lib/libfoo.so"
+cp "$HOST_ELF" "$ABS_LIB"
+patchelf --set-rpath '/__w/openhuman/openhuman/shared/lib' "$ABS_LIB"
+sanitize_elf_rpaths "$ABS_DIR" >/dev/null || true
+lib_after="$(patchelf --print-rpath "$ABS_LIB")"
+[ "$lib_after" = '$ORIGIN:$ORIGIN/../shared/lib' ] \
+  || fail "lib/ fallback wrong: expected '\$ORIGIN:\$ORIGIN/../shared/lib', got '$lib_after'"
+echo "[test-rpaths] ok: lib/ pure-absolute RPATH → depth-aware fallback '$lib_after'"
+
 # --- Case 2: validate_appimage_required_libs guards libxdo -------------------
 # Build a minimal sharun AppDir. uses_sharun_launcher only inspects *ELF* entry
 # binaries (is_executable_elf) and greps them for the literal
