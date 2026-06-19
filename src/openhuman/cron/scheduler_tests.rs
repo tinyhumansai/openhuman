@@ -7,6 +7,7 @@ use chrono::{Duration as ChronoDuration, Timelike, Utc};
 #[cfg(not(windows))]
 use std::os::unix::fs::PermissionsExt;
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
 use tempfile::TempDir;
 
 async fn test_config(tmp: &TempDir) -> Config {
@@ -48,6 +49,85 @@ fn test_job(command: &str) -> CronJob {
         last_status: None,
         last_output: None,
     }
+}
+
+fn proactive_test_job(name: &str) -> CronJob {
+    let mut job = test_job("echo ok");
+    job.id = format!("{name}-{}", uuid::Uuid::new_v4());
+    job.name = Some(name.to_string());
+    job.job_type = JobType::Agent;
+    job.delivery = DeliveryConfig {
+        mode: "proactive".into(),
+        channel: None,
+        to: None,
+        best_effort: true,
+    };
+    job
+}
+
+async fn collect_proactive_messages_for_job(
+    job: &CronJob,
+    persist: impl std::future::Future<Output = bool>,
+    expected_min_messages: usize,
+) -> (bool, Arc<StdMutex<Vec<String>>>) {
+    use crate::core::event_bus::{
+        init_global, subscribe_global, DomainEvent, EventHandler, DEFAULT_CAPACITY,
+    };
+
+    #[derive(Clone)]
+    struct ProactiveCollector {
+        source: String,
+        messages: Arc<StdMutex<Vec<String>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl EventHandler for ProactiveCollector {
+        fn name(&self) -> &str {
+            "test::cron::proactive_collector"
+        }
+
+        fn domains(&self) -> Option<&[&str]> {
+            Some(&["cron"])
+        }
+
+        async fn handle(&self, event: &DomainEvent) {
+            if let DomainEvent::ProactiveMessageRequested {
+                source, message, ..
+            } = event
+            {
+                if source == &self.source {
+                    self.messages.lock().unwrap().push(message.clone());
+                }
+            }
+        }
+    }
+
+    init_global(DEFAULT_CAPACITY);
+    let messages = Arc::new(StdMutex::new(Vec::new()));
+    let collector = Arc::new(ProactiveCollector {
+        source: format!("cron:{}", job.id),
+        messages: Arc::clone(&messages),
+    });
+    let _handle = subscribe_global(collector).expect("bus subscriber installed");
+
+    let success = persist.await;
+    let deadline = std::time::Instant::now()
+        + if expected_min_messages == 0 {
+            std::time::Duration::from_millis(50)
+        } else {
+            std::time::Duration::from_secs(2)
+        };
+    loop {
+        if messages.lock().unwrap().len() >= expected_min_messages {
+            break;
+        }
+        if std::time::Instant::now() >= deadline {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+
+    (success, messages)
 }
 
 #[test]
@@ -531,6 +611,91 @@ async fn persist_job_result_failure_disables_one_shot() {
     let updated = cron::get_job(&config, &job.id).unwrap();
     assert!(!updated.enabled);
     assert_eq!(updated.last_status.as_deref(), Some("error"));
+}
+
+#[tokio::test]
+async fn persist_job_result_keeps_failed_proactive_runs_out_of_chat() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp).await;
+    let job = proactive_test_job("scheduled-failure");
+    let started = Utc::now();
+    let finished = started + ChronoDuration::milliseconds(10);
+
+    let (success, messages) = collect_proactive_messages_for_job(
+        &job,
+        persist_job_result(
+            &config,
+            &job,
+            false,
+            AGENT_JOB_USER_FAILURE_MESSAGE,
+            started,
+            finished,
+        ),
+        0,
+    )
+    .await;
+
+    assert!(!success);
+    assert!(
+        messages.lock().unwrap().is_empty(),
+        "failed scheduled proactive runs must stay out of chat"
+    );
+
+    let alerts =
+        crate::openhuman::notifications::store::list(&config, 10, 0, Some("cron"), None).unwrap();
+    assert_eq!(alerts.len(), 1);
+    assert!(alerts[0].body.contains("Something went wrong"));
+}
+
+#[tokio::test]
+async fn persist_job_result_keeps_empty_agent_placeholder_out_of_chat() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp).await;
+    let job = proactive_test_job("scheduled-empty");
+    let started = Utc::now();
+    let finished = started + ChronoDuration::milliseconds(10);
+
+    let (success, messages) = collect_proactive_messages_for_job(
+        &job,
+        persist_job_result(&config, &job, true, "agent job executed", started, finished),
+        0,
+    )
+    .await;
+
+    assert!(success);
+    assert!(
+        messages.lock().unwrap().is_empty(),
+        "empty scheduled proactive runs must stay out of chat"
+    );
+}
+
+#[tokio::test]
+async fn persist_job_result_publishes_successful_proactive_output_to_chat() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp).await;
+    let job = proactive_test_job("scheduled-success");
+    let started = Utc::now();
+    let finished = started + ChronoDuration::milliseconds(10);
+
+    let (success, messages) = collect_proactive_messages_for_job(
+        &job,
+        persist_job_result(
+            &config,
+            &job,
+            true,
+            "Daily briefing ready",
+            started,
+            finished,
+        ),
+        1,
+    )
+    .await;
+
+    assert!(success);
+    assert_eq!(
+        messages.lock().unwrap().as_slice(),
+        ["Daily briefing ready"]
+    );
 }
 
 #[tokio::test]

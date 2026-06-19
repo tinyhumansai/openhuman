@@ -16,6 +16,7 @@ use tokio::time::{self, Duration};
 
 const MIN_POLL_SECONDS: u64 = 5;
 const SHELL_JOB_TIMEOUT_SECS: u64 = 120;
+const AGENT_JOB_EMPTY_OUTPUT_PLACEHOLDER: &str = "agent job executed";
 const AGENT_JOB_USER_FAILURE_MESSAGE: &str = "Something went wrong. Please try again.\nThis error has been reported. You can also report it on Discord.\n<openhuman-link path=\"community/discord-report\">Report on Discord</openhuman-link>";
 const MORNING_BRIEFING_AGENT_ID: &str = "morning_briefing";
 const MORNING_BRIEFING_FAILURE_NOTIFICATION: &str = "Morning briefing could not run. Check your AI provider, API key, and connected apps, then run it again from Settings > Cron Jobs.";
@@ -594,7 +595,7 @@ async fn run_agent_job(config: &Config, job: &CronJob) -> (bool, String, Option<
         Ok(response) => (
             true,
             if response.trim().is_empty() {
-                "agent job executed".to_string()
+                AGENT_JOB_EMPTY_OUTPUT_PLACEHOLDER.to_string()
             } else {
                 response
             },
@@ -624,7 +625,7 @@ async fn persist_job_result(
 ) -> bool {
     let duration_ms = (finished_at - started_at).num_milliseconds();
 
-    if let Err(e) = deliver_if_configured(config, job, output).await {
+    if let Err(e) = deliver_scheduled_result_if_configured(config, job, success, output).await {
         if job.delivery.best_effort {
             tracing::warn!("Cron delivery failed (best_effort): {e}");
         } else {
@@ -669,6 +670,40 @@ async fn persist_job_result(
     }
 
     success
+}
+
+async fn deliver_scheduled_result_if_configured(
+    config: &Config,
+    job: &CronJob,
+    success: bool,
+    output: &str,
+) -> Result<()> {
+    let mode = job.delivery.mode.trim().to_ascii_lowercase();
+    if mode == "proactive" {
+        if should_publish_scheduled_proactive_message(job, success, output) {
+            return deliver_if_configured(config, job, output).await;
+        }
+
+        if !success {
+            push_cron_alert(config, job, output);
+        }
+        return Ok(());
+    }
+
+    deliver_if_configured(config, job, output).await
+}
+
+fn should_publish_scheduled_proactive_message(job: &CronJob, success: bool, output: &str) -> bool {
+    if !success {
+        return false;
+    }
+
+    let trimmed = output.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    !(matches!(job.job_type, JobType::Agent) && trimmed == AGENT_JOB_EMPTY_OUTPUT_PLACEHOLDER)
 }
 
 fn is_one_shot_auto_delete(job: &CronJob) -> bool {
