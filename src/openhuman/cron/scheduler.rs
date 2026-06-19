@@ -16,6 +16,7 @@ use tokio::time::{self, Duration};
 
 const MIN_POLL_SECONDS: u64 = 5;
 const SHELL_JOB_TIMEOUT_SECS: u64 = 120;
+/// Internal marker used when an agent cron run succeeds without user-visible output.
 const AGENT_JOB_EMPTY_OUTPUT_PLACEHOLDER: &str = "agent job executed";
 const AGENT_JOB_USER_FAILURE_MESSAGE: &str = "Something went wrong. Please try again.\nThis error has been reported. You can also report it on Discord.\n<openhuman-link path=\"community/discord-report\">Report on Discord</openhuman-link>";
 const MORNING_BRIEFING_AGENT_ID: &str = "morning_briefing";
@@ -672,6 +673,7 @@ async fn persist_job_result(
     success
 }
 
+/// Delivers scheduled run output while keeping failed or empty proactive runs out of chat.
 async fn deliver_scheduled_result_if_configured(
     config: &Config,
     job: &CronJob,
@@ -679,31 +681,109 @@ async fn deliver_scheduled_result_if_configured(
     output: &str,
 ) -> Result<()> {
     let mode = job.delivery.mode.trim().to_ascii_lowercase();
+    let output_len = output.len();
+    tracing::debug!(
+        job_id = %job.id,
+        mode = %mode,
+        success,
+        output_len,
+        "[cron] scheduled delivery gate evaluating"
+    );
     if mode == "proactive" {
         if should_publish_scheduled_proactive_message(job, success, output) {
+            tracing::debug!(
+                job_id = %job.id,
+                mode = %mode,
+                success,
+                output_len,
+                decision = "publish",
+                "[cron] scheduled proactive delivery decision"
+            );
             return deliver_if_configured(config, job, output).await;
         }
 
         if !success {
+            tracing::debug!(
+                job_id = %job.id,
+                mode = %mode,
+                success,
+                output_len,
+                decision = "suppress_failed_with_alert",
+                "[cron] scheduled proactive delivery decision"
+            );
             push_cron_alert(config, job, output);
+        } else {
+            tracing::debug!(
+                job_id = %job.id,
+                mode = %mode,
+                success,
+                output_len,
+                decision = "suppress_empty_or_placeholder",
+                "[cron] scheduled proactive delivery decision"
+            );
         }
         return Ok(());
     }
 
+    tracing::debug!(
+        job_id = %job.id,
+        mode = %mode,
+        success,
+        output_len,
+        "[cron] scheduled delivery gate delegating non-proactive delivery"
+    );
     deliver_if_configured(config, job, output).await
 }
 
+/// Returns whether a scheduled proactive run has chat-worthy output.
 fn should_publish_scheduled_proactive_message(job: &CronJob, success: bool, output: &str) -> bool {
+    let output_len = output.len();
     if !success {
+        tracing::debug!(
+            job_id = %job.id,
+            mode = "proactive",
+            success,
+            output_len,
+            reason = "failed_run",
+            "[cron] scheduled proactive delivery suppressed"
+        );
         return false;
     }
 
     let trimmed = output.trim();
     if trimmed.is_empty() {
+        tracing::debug!(
+            job_id = %job.id,
+            mode = "proactive",
+            success,
+            output_len,
+            reason = "empty_output",
+            "[cron] scheduled proactive delivery suppressed"
+        );
         return false;
     }
 
-    !(matches!(job.job_type, JobType::Agent) && trimmed == AGENT_JOB_EMPTY_OUTPUT_PLACEHOLDER)
+    if matches!(job.job_type, JobType::Agent) && trimmed == AGENT_JOB_EMPTY_OUTPUT_PLACEHOLDER {
+        tracing::debug!(
+            job_id = %job.id,
+            mode = "proactive",
+            success,
+            output_len,
+            reason = "agent_empty_output_placeholder",
+            "[cron] scheduled proactive delivery suppressed"
+        );
+        return false;
+    }
+
+    tracing::debug!(
+        job_id = %job.id,
+        mode = "proactive",
+        success,
+        output_len,
+        reason = "eligible",
+        "[cron] scheduled proactive delivery eligible"
+    );
+    true
 }
 
 fn is_one_shot_auto_delete(job: &CronJob) -> bool {

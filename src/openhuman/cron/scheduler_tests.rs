@@ -113,7 +113,7 @@ async fn collect_proactive_messages_for_job(
     let success = persist.await;
     let deadline = std::time::Instant::now()
         + if expected_min_messages == 0 {
-            std::time::Duration::from_millis(50)
+            std::time::Duration::from_millis(300)
         } else {
             std::time::Duration::from_secs(2)
         };
