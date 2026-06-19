@@ -183,6 +183,22 @@ describe('TeamPanel — create team (line 281)', () => {
       expect(screen.getByText('Team limit reached')).toBeInTheDocument();
     });
   });
+
+  it('surfaces CoreRpcError messages instead of the generic create-team fallback', async () => {
+    mockCreateTeam.mockRejectedValue(
+      new CoreRpcError('Free plan cannot create another team', 'unknown', 403)
+    );
+    render(<TeamPanel />);
+
+    const input = screen.getByLabelText('Team Name');
+    fireEvent.change(input, { target: { value: 'New Team' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Free plan cannot create another team')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('Failed to create team')).not.toBeInTheDocument();
+  });
 });
 
 describe('TeamPanel — join team (line 304)', () => {
