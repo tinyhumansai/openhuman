@@ -160,18 +160,32 @@ pub struct ContextPrefixTooLargeError {
     pub max_input_tokens: u64,
 }
 
-/// Detect the [`ContextPrefixTooLargeError`] condition: after a maximal trim the
-/// un-evictable prefix still overflows the input budget for `context_window`.
-/// Returns `Some(err)` when the prompt can never fit (so the caller should
-/// surface the actionable error instead of dispatching to the provider), `None`
-/// when trimming can keep the prompt within budget.
+/// Detect the [`ContextPrefixTooLargeError`] condition: the un-evictable prefix
+/// alone overflows the model's runtime context window, so even a maximal trim
+/// (which can only drop evictable history) can never get the prompt to fit.
+/// Returns `Some(err)` only when the prompt can *never* fit — i.e. the prefix is
+/// at least as large as the whole `context_window` (`n_keep >= n_ctx`), the exact
+/// condition the runtime rejects — so the caller surfaces the actionable error
+/// instead of dispatching. `None` when trimming can keep the prompt within
+/// budget.
+///
+/// The predicate is anchored on `context_window` (the runtime `n_ctx`), **not**
+/// `max_input_tokens` (which subtracts a conservative reply reserve). Comparing
+/// against `max_input_tokens` would abort valid requests whose prefix fits inside
+/// the context window but exceeds the reply reserve — those are over-trim
+/// candidates (the reply just gets less room), not the un-fixable
+/// `n_keep >= n_ctx` failure this actionable error is meant to report (#3550 /
+/// Sentry TAURI-RUST-6V0; CodeRabbit review on PR #3771).
 pub fn unevictable_prefix_overflow(
     messages: &[ChatMessage],
     context_window: u64,
 ) -> Option<ContextPrefixTooLargeError> {
     let max_input = max_input_tokens(context_window);
     let prefix_tokens = unevictable_prefix_tokens(messages);
-    (prefix_tokens as u64 > max_input).then_some(ContextPrefixTooLargeError {
+    // `n_keep >= n_ctx`: the un-evictable prefix is at least the whole runtime
+    // window. This is the precise condition the local runtime rejects, and the
+    // only one no trim can rescue.
+    (prefix_tokens as u64 >= context_window).then_some(ContextPrefixTooLargeError {
         prefix_tokens,
         context_window,
         max_input_tokens: max_input,
@@ -441,6 +455,43 @@ mod tests {
         assert!(
             msg.contains("n_keep >= n_ctx"),
             "must carry the diagnostic anchor"
+        );
+    }
+
+    #[test]
+    fn unevictable_prefix_overflow_anchors_on_context_window_not_reply_reserve() {
+        // CodeRabbit boundary case (PR #3771): a prefix that lands in the band
+        // `max_input_tokens < prefix < context_window` fits the runtime `n_ctx`
+        // — the reply just gets less room — so it MUST NOT be aborted as the
+        // un-fixable `n_keep >= n_ctx` failure. Anchoring on `max_input_tokens`
+        // (the old `>` predicate) would have wrongly aborted it.
+        let ctx: u64 = 8_192;
+        // output_reserve = max(819, min(8192/4=2048, 8192/10=819)) = 819, so
+        // max_input = 8192 - 819 = 7373.
+        let max_input = max_input_tokens(ctx);
+        // ~7700-token system prefix: above max_input (7373), below ctx (8192).
+        let messages = vec![
+            ChatMessage::system(&"s".repeat(30_800)), // (30800+3)/4 = 7700 tokens
+            user_msg("hi"),
+        ];
+        let prefix = unevictable_prefix_tokens(&messages) as u64;
+        assert!(
+            prefix > max_input && prefix < ctx,
+            "test precondition: prefix ({prefix}) must sit between max_input \
+             ({max_input}) and context_window ({ctx})"
+        );
+        assert!(
+            unevictable_prefix_overflow(&messages, ctx).is_none(),
+            "prefix that fits the context window (just over the reply reserve) \
+             must NOT be aborted — it is an over-trim case, not n_keep >= n_ctx"
+        );
+
+        // The same prefix against a context window it actually overflows
+        // (prefix >= n_ctx) MUST fire.
+        let small_ctx: u64 = prefix; // n_ctx == n_keep ⇒ the boundary itself fires
+        assert!(
+            unevictable_prefix_overflow(&messages, small_ctx).is_some(),
+            "prefix >= context_window (n_keep >= n_ctx) must be detected"
         );
     }
 
