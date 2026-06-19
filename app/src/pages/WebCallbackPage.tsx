@@ -3,7 +3,10 @@ import { useLocation, useParams } from 'react-router-dom';
 
 import { handleDeepLinkUrls } from '../utils/desktopDeepLinkListener';
 
-type WebCallbackPageProps = { callbackKind?: string; callbackStatus?: string };
+interface WebCallbackPageProps {
+  callbackKind?: string;
+  callbackStatus?: string;
+}
 
 function buildSyntheticDeepLink(
   kind: string | undefined,
