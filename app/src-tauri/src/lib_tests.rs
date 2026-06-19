@@ -7,7 +7,7 @@ use super::*;
 static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[test]
-fn core_process_permission_allows_ptt_hotkey_commands() {
+fn core_process_permission_allows_ptt_commands() {
     let permissions: toml::Value =
         toml::from_str(include_str!("../permissions/allow-core-process.toml"))
             .expect("allow-core-process permission TOML should parse");
@@ -20,7 +20,11 @@ fn core_process_permission_allows_ptt_hotkey_commands() {
         .and_then(toml::Value::as_array)
         .expect("permission.commands.allow should be an array");
 
-    for command in ["register_ptt_hotkey", "unregister_ptt_hotkey"] {
+    for command in [
+        "register_ptt_hotkey",
+        "unregister_ptt_hotkey",
+        "show_ptt_overlay",
+    ] {
         assert!(
             commands
                 .iter()
