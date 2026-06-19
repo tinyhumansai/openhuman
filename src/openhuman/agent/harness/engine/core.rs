@@ -137,6 +137,31 @@ pub(crate) async fn run_turn_engine(
             "[agent_loop] effective context window unavailable (cloud unknown model); pre-dispatch trimming skipped this turn"
         ),
     }
+    // Model-aware locality: a router whose *default* is cloud may still route
+    // THIS model to a local provider, so gate the pre-dispatch un-evictable
+    // prefix abort on the routed provider, not the default (#3550 /
+    // TAURI-RUST-6V0; PR #3771 review).
+    let model_is_local = provider.is_local_provider_for_model(model);
+    // Authoritative runtime-loaded window for the hard abort. `effective_context
+    // _window` above may be a *guess* (profile default / conservative floor) for
+    // a local model that exposes no loaded window — safe to TRIM against, but
+    // aborting with "reload with a larger context length" against a guess would
+    // wrongly reject a request the real loaded window would accept. So the abort
+    // only consults the genuinely-reported window (e.g. LM Studio's loaded
+    // n_ctx); `None` ⇒ window unknown ⇒ no hard abort, trimming still runs.
+    let loaded_context_window = if model_is_local {
+        provider.loaded_context_window(model).await
+    } else {
+        None
+    };
+    if let Some(loaded) = loaded_context_window {
+        tracing::debug!(
+            provider = provider_name,
+            model,
+            loaded_context_window = loaded,
+            "[agent_loop] authoritative loaded context window resolved (pre-dispatch prefix abort armed)"
+        );
+    }
     let mut context_guard = effective_context_window
         .map(ContextGuard::with_context_window)
         .unwrap_or_else(ContextGuard::new);
@@ -431,46 +456,55 @@ pub(crate) async fn run_turn_engine(
                     budget_outcome.messages_removed
                 );
             }
+        }
 
-            // Pre-dispatch guard for the un-evictable-prefix overflow
-            // (TAURI-RUST-6V0 / #3550). Trimming above can only drop conversation
-            // history — never the system prefix or the current user turn. When a
-            // *local* model is loaded with a context window smaller than that
-            // un-evictable prefix (the runtime `n_keep >= n_ctx`), no amount of
-            // trimming can fit the prompt, so dispatching guarantees an opaque
-            // upstream `400`. Detect it here and surface the remedy the user
-            // actually controls — reload the model with a larger context length —
-            // instead of letting the cryptic provider error fly. This is an
-            // expected user-state condition (S3.5: preventable-user-state), so it
-            // is demoted from Sentry via `report_error_or_expected` (its Display
-            // string matches `is_context_window_exceeded_message`).
-            if provider.is_local_provider() {
-                if let Some(prefix_err) =
-                    crate::openhuman::agent::harness::token_budget::unevictable_prefix_overflow(
-                        &prepared_messages_vec,
-                        context_window,
-                    )
-                {
-                    log::warn!(
-                        "[agent_loop] un-evictable prefix overflows local context window — aborting pre-dispatch model={} context_window={} prefix_tokens={} max_input_tokens={}",
-                        model,
-                        context_window,
-                        prefix_err.prefix_tokens,
-                        prefix_err.max_input_tokens
-                    );
-                    crate::core::observability::report_error_or_expected(
-                        &prefix_err,
-                        "agent",
-                        "context_prefix_too_large",
-                        &[
-                            ("provider", provider_name),
-                            ("model", model),
-                            ("context_window", &context_window.to_string()),
-                            ("prefix_tokens", &prefix_err.prefix_tokens.to_string()),
-                        ],
-                    );
-                    return Err(prefix_err.into());
-                }
+        // Pre-dispatch guard for the un-evictable-prefix overflow
+        // (TAURI-RUST-6V0 / #3550). Trimming above can only drop conversation
+        // history — never the system prefix or the current user turn. When a
+        // *local* model is loaded with a context window smaller than that
+        // un-evictable prefix (the runtime `n_keep >= n_ctx`), no amount of
+        // trimming can fit the prompt, so dispatching guarantees an opaque
+        // upstream `400`. Detect it here and surface the remedy the user
+        // actually controls — reload the model with a larger context length —
+        // instead of letting the cryptic provider error fly.
+        //
+        // Gated on `loaded_context_window`, the model's **authoritative**
+        // runtime window — `Some` only for a routed-local model whose runtime
+        // actually reports its loaded `n_ctx` (e.g. LM Studio). A guessed window
+        // (profile default / conservative floor) is deliberately NOT used here:
+        // it is safe to trim against (over-trim just costs reply room) but must
+        // not drive a hard "reload with a larger context length" abort, which
+        // would wrongly reject a request the real loaded window would accept
+        // (Codex P1 review on PR #3771). This is an expected user-state
+        // condition (S3.5: preventable-user-state), so it is demoted from Sentry
+        // via `report_error_or_expected` (its Display string matches
+        // `is_context_window_exceeded_message`).
+        if let Some(loaded) = loaded_context_window {
+            if let Some(prefix_err) =
+                crate::openhuman::agent::harness::token_budget::unevictable_prefix_overflow(
+                    &prepared_messages_vec,
+                    loaded,
+                )
+            {
+                log::warn!(
+                    "[agent_loop] un-evictable prefix overflows local context window — aborting pre-dispatch model={} loaded_context_window={} prefix_tokens={} max_input_tokens={}",
+                    model,
+                    loaded,
+                    prefix_err.prefix_tokens,
+                    prefix_err.max_input_tokens
+                );
+                crate::core::observability::report_error_or_expected(
+                    &prefix_err,
+                    "agent",
+                    "context_prefix_too_large",
+                    &[
+                        ("provider", provider_name),
+                        ("model", model),
+                        ("context_window", &loaded.to_string()),
+                        ("prefix_tokens", &prefix_err.prefix_tokens.to_string()),
+                    ],
+                );
+                return Err(prefix_err.into());
             }
         }
 
