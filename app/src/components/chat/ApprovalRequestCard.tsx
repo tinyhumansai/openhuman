@@ -61,7 +61,7 @@ export const ApprovalRequestCard: React.FC<Props> = ({ threadId, approval }) => 
     <div
       role="alertdialog"
       aria-label={t('chat.approval.title')}
-      className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm shadow-sm dark:border-amber-500/40 dark:bg-amber-500/10">
+      className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm shadow-sm dark:border-amber-700 dark:bg-amber-950">
       <div className="flex items-start gap-2">
         <span aria-hidden className="text-base leading-none text-amber-700 dark:text-amber-200">
           🔒
@@ -74,7 +74,7 @@ export const ApprovalRequestCard: React.FC<Props> = ({ threadId, approval }) => 
             {approval.message || t('chat.approval.fallback')}
           </p>
           {approval.command && (
-            <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded border border-amber-200/80 bg-white/70 px-2 py-1.5 font-mono text-xs text-ink shadow-inner dark:border-amber-500/30 dark:bg-neutral-950/60 dark:text-neutral-100">
+            <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded border border-amber-200/80 bg-white px-2 py-1.5 font-mono text-xs text-ink shadow-inner dark:border-amber-700 dark:bg-neutral-950 dark:text-neutral-100">
               {approval.command}
             </pre>
           )}

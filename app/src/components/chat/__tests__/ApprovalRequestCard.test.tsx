@@ -48,10 +48,14 @@ describe('ApprovalRequestCard', () => {
   it('uses an opaque warning surface so thread text does not show through', () => {
     renderCard();
     const card = screen.getByRole('alertdialog', { name: 'Approval needed' });
+    const command = screen.getByText('pip show yfinance');
 
     expect(card).toHaveClass('bg-amber-50');
-    expect(card).toHaveClass('dark:bg-amber-500/10');
+    expect(card).toHaveClass('dark:bg-amber-950');
     expect(card).not.toHaveClass('bg-amber/5');
+    expect(card.className).not.toMatch(/\bdark:bg-[^\s/]+\/\d+/);
+    expect(command).toHaveClass('dark:bg-neutral-950');
+    expect(command.className).not.toMatch(/\bdark:bg-[^\s/]+\/\d+/);
   });
 
   it('does not nudge the user to reply yes/no (buttons are the input path)', () => {
