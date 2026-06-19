@@ -12,10 +12,12 @@ path = "src/main.rs"
 [[bin]]
 name = "slack-backfill"
 path = "src/bin/slack_backfill.rs"
+required-features = ["backfill-binaries"]
 
 [[bin]]
 name = "gmail-backfill-3d"
 path = "src/bin/gmail_backfill_3d.rs"
+required-features = ["backfill-binaries"]
 
 [[bin]]
 name = "memory-tree-init-smoke"
@@ -263,6 +265,7 @@ wiremock = "0.6"
 filetime = "0.2"
 
 [features]
+backfill-binaries = []
 sandbox-landlock = ["dep:landlock"]
 sandbox-bubblewrap = []
 channel-matrix = ["dep:matrix-sdk"]
