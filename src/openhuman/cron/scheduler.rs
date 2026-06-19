@@ -17,6 +17,10 @@ use tokio::time::{self, Duration};
 const MIN_POLL_SECONDS: u64 = 5;
 const SHELL_JOB_TIMEOUT_SECS: u64 = 120;
 const AGENT_JOB_USER_FAILURE_MESSAGE: &str = "Something went wrong. Please try again.\nThis error has been reported. You can also report it on Discord.\n<openhuman-link path=\"community/discord-report\">Report on Discord</openhuman-link>";
+/// Placeholder output recorded for a successful agent run that produced no text.
+/// Never injected into the user's chat thread (see [`should_deliver_to_chat`] and
+/// issue #3788) — kept only for run history / alerts.
+const AGENT_JOB_EMPTY_OUTPUT_PLACEHOLDER: &str = "agent job executed";
 const MORNING_BRIEFING_AGENT_ID: &str = "morning_briefing";
 const MORNING_BRIEFING_FAILURE_NOTIFICATION: &str = "Morning briefing could not run. Check your AI provider, API key, and connected apps, then run it again from Settings > Cron Jobs.";
 
@@ -257,7 +261,10 @@ pub(crate) async fn tick_once(
 /// delivery mode (proactive / announce). Called by `cron_run` ("Run Now")
 /// so manual runs also push notifications and alerts.
 pub async fn deliver_job(config: &Config, job: &CronJob, output: &str) {
-    if let Err(e) = deliver_if_configured(config, job, output).await {
+    // Manual "Run Now" is user-initiated, so delivery is unconditional —
+    // pass success = true (the #3788 gate only suppresses failed/empty
+    // *scheduled* runs).
+    if let Err(e) = deliver_if_configured(config, job, true, output).await {
         if job.delivery.best_effort {
             tracing::warn!("[cron] delivery failed (best_effort, Run Now): {e}");
         } else {
@@ -594,7 +601,7 @@ async fn run_agent_job(config: &Config, job: &CronJob) -> (bool, String, Option<
         Ok(response) => (
             true,
             if response.trim().is_empty() {
-                "agent job executed".to_string()
+                AGENT_JOB_EMPTY_OUTPUT_PLACEHOLDER.to_string()
             } else {
                 response
             },
@@ -624,7 +631,7 @@ async fn persist_job_result(
 ) -> bool {
     let duration_ms = (finished_at - started_at).num_milliseconds();
 
-    if let Err(e) = deliver_if_configured(config, job, output).await {
+    if let Err(e) = deliver_if_configured(config, job, success, output).await {
         if job.delivery.best_effort {
             tracing::warn!("Cron delivery failed (best_effort): {e}");
         } else {
@@ -702,8 +709,29 @@ fn warn_if_high_frequency_agent_job(job: &CronJob) {
     }
 }
 
-async fn deliver_if_configured(config: &Config, job: &CronJob, output: &str) -> Result<()> {
+/// Whether a completed scheduled cron run's output should be injected into the
+/// user's chat thread.
+///
+/// A scheduled job runs with no user message behind it, so a failed run (whose
+/// `output` is the canned [`AGENT_JOB_USER_FAILURE_MESSAGE`] / classifier copy)
+/// or an empty / placeholder successful run must NOT be posted into the
+/// conversation — it reads as unsolicited assistant output. Such runs stay
+/// visible in the alerts tab ([`push_cron_alert`]) and run history
+/// ([`record_run`]). Manual "Run Now" delivery is user-initiated and always
+/// passes `success = true`. See issue #3788.
+fn should_deliver_to_chat(success: bool, output: &str) -> bool {
+    let trimmed = output.trim();
+    success && !trimmed.is_empty() && trimmed != AGENT_JOB_EMPTY_OUTPUT_PLACEHOLDER
+}
+
+async fn deliver_if_configured(
+    config: &Config,
+    job: &CronJob,
+    success: bool,
+    output: &str,
+) -> Result<()> {
     let delivery: &DeliveryConfig = &job.delivery;
+    let deliver_to_chat = should_deliver_to_chat(success, output);
 
     let mode = delivery.mode.trim().to_ascii_lowercase();
     match mode.as_str() {
@@ -711,19 +739,28 @@ async fn deliver_if_configured(config: &Config, job: &CronJob, output: &str) -> 
         // Used by morning briefings, welcome messages, and other
         // user-facing proactive agents.
         "proactive" => {
-            let source = format!("cron:{}", job.id);
-            tracing::debug!(
-                job_id = %job.id,
-                source = %source,
-                "[cron] publishing ProactiveMessageRequested event"
-            );
-            publish_global(DomainEvent::ProactiveMessageRequested {
-                source,
-                message: output.to_string(),
-                job_name: job.name.clone(),
-            });
+            if deliver_to_chat {
+                let source = format!("cron:{}", job.id);
+                tracing::debug!(
+                    job_id = %job.id,
+                    source = %source,
+                    "[cron] publishing ProactiveMessageRequested event"
+                );
+                publish_global(DomainEvent::ProactiveMessageRequested {
+                    source,
+                    message: output.to_string(),
+                    job_name: job.name.clone(),
+                });
+            } else {
+                tracing::debug!(
+                    job_id = %job.id,
+                    success,
+                    "[cron] skipping ProactiveMessageRequested for failed/empty run; alert + history only (#3788)"
+                );
+            }
 
-            // Also push to the alerts tab so the user sees it in /notifications.
+            // Always push to the alerts tab so the user still sees the run
+            // (including failures) in /notifications.
             push_cron_alert(config, job, output);
         }
 
@@ -739,18 +776,26 @@ async fn deliver_if_configured(config: &Config, job: &CronJob, output: &str) -> 
                 .as_deref()
                 .ok_or_else(|| anyhow::anyhow!("delivery.to is required for announce mode"))?;
 
-            tracing::debug!(
-                job_id = %job.id,
-                channel = %channel,
-                target = %target,
-                "[cron] publishing CronDeliveryRequested event"
-            );
-            publish_global(DomainEvent::CronDeliveryRequested {
-                job_id: job.id.clone(),
-                channel: channel.to_string(),
-                target: target.to_string(),
-                output: output.to_string(),
-            });
+            if deliver_to_chat {
+                tracing::debug!(
+                    job_id = %job.id,
+                    channel = %channel,
+                    target = %target,
+                    "[cron] publishing CronDeliveryRequested event"
+                );
+                publish_global(DomainEvent::CronDeliveryRequested {
+                    job_id: job.id.clone(),
+                    channel: channel.to_string(),
+                    target: target.to_string(),
+                    output: output.to_string(),
+                });
+            } else {
+                tracing::debug!(
+                    job_id = %job.id,
+                    success,
+                    "[cron] skipping CronDeliveryRequested for failed/empty run; alert + history only (#3788)"
+                );
+            }
 
             push_cron_alert(config, job, output);
         }
