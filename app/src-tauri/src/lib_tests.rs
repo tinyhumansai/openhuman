@@ -6,6 +6,30 @@ use super::*;
 // spurious failures.
 static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+#[test]
+fn core_process_permission_allows_ptt_hotkey_commands() {
+    let permissions: toml::Value =
+        toml::from_str(include_str!("../permissions/allow-core-process.toml"))
+            .expect("allow-core-process permission TOML should parse");
+    let commands = permissions
+        .get("permission")
+        .and_then(toml::Value::as_array)
+        .and_then(|permissions| permissions.first())
+        .and_then(|permission| permission.get("commands"))
+        .and_then(|commands| commands.get("allow"))
+        .and_then(toml::Value::as_array)
+        .expect("permission.commands.allow should be an array");
+
+    for command in ["register_ptt_hotkey", "unregister_ptt_hotkey"] {
+        assert!(
+            commands
+                .iter()
+                .any(|allowed| allowed.as_str() == Some(command)),
+            "{command} must be allowed by Tauri ACL"
+        );
+    }
+}
+
 /// Test that is_daemon_mode correctly detects daemon flag variations
 #[test]
 fn is_daemon_mode_detects_daemon_flag() {

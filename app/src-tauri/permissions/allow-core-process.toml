@@ -41,10 +41,14 @@ allow = [
     "service_uninstall_direct",
 
     # =========================
-    # DICTATION
+    # DICTATION / PUSH-TO-TALK
     # =========================
     "register_dictation_hotkey",
     "unregister_dictation_hotkey",
+    # Voice settings call these through `usePttHotkey`; without the ACL
+    # entries Tauri rejects PTT invoke calls as not allowed.
+    "register_ptt_hotkey",
+    "unregister_ptt_hotkey",
 
     # =========================
     # ACCOUNT WEBVIEW
