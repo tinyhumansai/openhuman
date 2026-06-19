@@ -29,6 +29,13 @@ const TIER_LOCAL_CONTEXT: u64 = 8_192;
 /// prompt. Only applied to local providers — cloud providers with an unknown
 /// model keep `None` (their windows are large; a tiny floor would needlessly
 /// truncate legitimate large-context requests).
+///
+/// This floor is a **guess**, used for *trimming only*. It is deliberately not
+/// fed into the engine's hard un-evictable-prefix abort ("reload with a larger
+/// context length") — that abort consults the provider's *authoritative*
+/// [`crate::openhuman::inference::provider::Provider::loaded_context_window`]
+/// instead, so we never reject a request against a guessed window the real
+/// loaded `n_ctx` would have accepted (Codex P1 review on PR #3771).
 const CONSERVATIVE_LOCAL_CONTEXT_FLOOR: u64 = 4_096;
 /// Summarization tier. `summarization-v1` resolves to a long-context flash
 /// model (currently DeepSeek v4 flash, ~1M tokens). `extract_from_result`
