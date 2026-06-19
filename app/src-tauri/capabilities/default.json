@@ -33,6 +33,7 @@
     "allow-workspace-files",
     "allow-artifact-download",
     "allow-app-update",
-    "allow-loopback-oauth"
+    "allow-loopback-oauth",
+    "allow-ptt-hotkey-control"
   ]
 }
