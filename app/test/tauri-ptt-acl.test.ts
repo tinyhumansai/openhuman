@@ -9,7 +9,11 @@ const DEFAULT_CAPABILITY_PATH = path.join(TAURI_ROOT, 'capabilities', 'default.j
 const PTT_PERMISSION_PATH = path.join(TAURI_ROOT, 'permissions', 'allow-ptt-hotkey-control.toml');
 
 const PTT_PERMISSION = 'allow-ptt-hotkey-control';
-const PTT_COMMANDS = ['register_ptt_hotkey', 'unregister_ptt_hotkey'] as const;
+const PTT_COMMANDS = ['register_ptt_hotkey', 'unregister_ptt_hotkey', 'show_ptt_overlay'] as const;
+
+interface DefaultCapability {
+  permissions?: unknown[];
+}
 
 function extractAllowedCommands(toml: string): string[] {
   const allowBlock = toml.match(/allow\s*=\s*\[(?<body>[\s\S]*?)\]/)?.groups?.body;
@@ -21,16 +25,16 @@ function extractAllowedCommands(toml: string): string[] {
 }
 
 describe('desktop Tauri ACL for push-to-talk hotkeys', () => {
-  const defaultCapability = JSON.parse(readFileSync(DEFAULT_CAPABILITY_PATH, 'utf8')) as {
-    permissions?: unknown[];
-  };
+  const defaultCapability = JSON.parse(
+    readFileSync(DEFAULT_CAPABILITY_PATH, 'utf8')
+  ) as DefaultCapability;
   const permissionToml = readFileSync(PTT_PERMISSION_PATH, 'utf8');
 
   it('grants the PTT hotkey permission to the default desktop capability', () => {
     expect(defaultCapability.permissions).toContain(PTT_PERMISSION);
   });
 
-  it.each(PTT_COMMANDS)('allows the %s command through that permission', command => {
-    expect(extractAllowedCommands(permissionToml)).toContain(command);
+  it('allows only the expected PTT commands through that permission', () => {
+    expect(extractAllowedCommands(permissionToml).sort()).toEqual([...PTT_COMMANDS].sort());
   });
 });

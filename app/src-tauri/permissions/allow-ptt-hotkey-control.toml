@@ -1,11 +1,11 @@
 [[permission]]
 identifier = "allow-ptt-hotkey-control"
-description = "Permission to register and unregister the desktop push-to-talk global hotkey from the main webview."
+description = "Permission to register, unregister, and display the desktop push-to-talk global hotkey flow from the main webview."
 
 [permission.commands]
 allow = [
     "register_ptt_hotkey",
     "unregister_ptt_hotkey",
+    "show_ptt_overlay",
 ]
 deny = []
-
