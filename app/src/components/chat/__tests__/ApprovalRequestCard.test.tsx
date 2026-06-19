@@ -45,6 +45,15 @@ describe('ApprovalRequestCard', () => {
     expect(screen.getByText('shell')).toBeInTheDocument();
   });
 
+  it('uses an opaque warning surface so thread text does not show through', () => {
+    renderCard();
+    const card = screen.getByRole('alertdialog', { name: 'Approval needed' });
+
+    expect(card).toHaveClass('bg-amber-50');
+    expect(card).toHaveClass('dark:bg-amber-500/10');
+    expect(card).not.toHaveClass('bg-amber/5');
+  });
+
   it('does not nudge the user to reply yes/no (buttons are the input path)', () => {
     renderCard();
     expect(screen.queryByText(/reply.*yes/i)).not.toBeInTheDocument();
