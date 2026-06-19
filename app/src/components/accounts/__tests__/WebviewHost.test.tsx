@@ -125,3 +125,64 @@ describe('WebviewHost — issue #1233 loading UX', () => {
     expect(screen.queryByTestId(`webview-loading-hint-${ACCOUNT_ID}`)).not.toBeInTheDocument();
   });
 });
+
+describe('WebviewHost — provider name substitution (#3759)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    store.dispatch(resetAccountsState());
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('substitutes provider name in loading message without literal placeholder', () => {
+    seedAccount('loading');
+    renderHost();
+    const placeholder = screen.getByTestId(`webview-placeholder-${ACCOUNT_ID}`);
+    // Should show "Loading Slack..." not "Loading {providerName}... Slack..."
+    expect(placeholder).toHaveTextContent('Loading Slack...');
+    expect(placeholder).not.toHaveTextContent('{providerName}');
+  });
+
+  it('substitutes provider name in timeout message without literal placeholder', () => {
+    seedAccount('timeout');
+    renderHost();
+    const timeout = screen.getByTestId(`webview-timeout-${ACCOUNT_ID}`);
+    // Should show "Slack is taking longer..." not "Slack {providerName} is taking longer..."
+    expect(timeout).toHaveTextContent('Slack is taking longer than expected');
+    expect(timeout).not.toHaveTextContent('{providerName}');
+  });
+
+  it('handles different provider names correctly in loading state', () => {
+    const testCases = [
+      { provider: 'discord' as const, expectedName: 'Discord' },
+      { provider: 'gmail' as const, expectedName: 'Gmail' },
+      { provider: 'telegram' as const, expectedName: 'Telegram' },
+    ];
+
+    for (const { provider, expectedName } of testCases) {
+      store.dispatch(resetAccountsState());
+      const accountId = `acct-${provider}`;
+      store.dispatch(
+        addAccount({
+          id: accountId,
+          provider,
+          label: expectedName,
+          createdAt: new Date().toISOString(),
+          status: 'loading',
+        })
+      );
+
+      render(
+        <Provider store={store}>
+          <WebviewHost accountId={accountId} provider={provider} />
+        </Provider>
+      );
+
+      const placeholder = screen.getByTestId(`webview-placeholder-${accountId}`);
+      expect(placeholder).toHaveTextContent(`Loading ${expectedName}...`);
+      expect(placeholder).not.toHaveTextContent('{providerName}');
+    }
+  });
+});
