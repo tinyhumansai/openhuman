@@ -469,6 +469,26 @@ impl Provider for ReliableProvider {
             .unwrap_or(false)
     }
 
+    /// Delegate the model-aware locality to the primary provider so a wrapped
+    /// router resolves `model` to its actual (possibly local) provider for the
+    /// engine's pre-dispatch guard (#3550 / PR #3771).
+    fn is_local_provider_for_model(&self, model: &str) -> bool {
+        self.providers
+            .first()
+            .map(|(_, p)| p.is_local_provider_for_model(model))
+            .unwrap_or(false)
+    }
+
+    /// Delegate the authoritative runtime-loaded window to the primary provider
+    /// so the engine's hard pre-dispatch abort sees the wrapped local runtime's
+    /// loaded `n_ctx` (#3550 / PR #3771).
+    async fn loaded_context_window(&self, model: &str) -> Option<u64> {
+        match self.providers.first() {
+            Some((_, provider)) => provider.loaded_context_window(model).await,
+            None => None,
+        }
+    }
+
     async fn chat_with_system(
         &self,
         system_prompt: Option<&str>,
