@@ -2062,6 +2062,18 @@ fn install_silent_x_error_handler() {
 fn install_silent_x_error_handler() {}
 
 pub fn run() {
+    // Neutralise a broken inherited stderr *pipe* BEFORE any `eprintln!` can
+    // fire. On Windows, when the GUI process inherits an stderr pipe whose
+    // parent end later closes, the next stdlib stderr write fails with a
+    // broken-pipe errno and `std::io::stdio::print_to` raises
+    // `panic!("failed printing to stderr: …")` on the main thread, aborting the
+    // app over an external condition (Sentry TAURI-RUST-F). Redirecting that
+    // pipe to NUL makes the write succeed (discarded) instead of panicking. A
+    // panic hook cannot fix this — it runs during unwinding and cannot stop the
+    // abort — so the cure is at the write path. No-op on non-Windows / when
+    // stderr is a console or file. See `stderr_panic_hook`.
+    stderr_panic_hook::neutralize_broken_parent_stderr();
+
     // Must run before any GTK/CEF code that could trigger X calls — otherwise
     // Xlib's default handler calls exit(1) on the first BadWindow and we never
     // reach this line. See helper doc above for the full reasoning.
@@ -2266,14 +2278,13 @@ pub fn run() {
         }
     });
 
-    // Install the surgical broken-pipe stderr panic guard *after* `sentry::init`
-    // so it captures Sentry's panic integration as its chain target. It swallows
-    // ONLY the `failed printing to stderr: … (os error 232/109/32)` panic that
-    // fires when the parent console pipe closes (the app called
-    // `AttachConsole(ATTACH_PARENT_PROCESS)` in `main.rs` and the user's terminal
-    // exited). Every other panic — assertions, real bugs — chains through to
-    // Sentry untouched. See `stderr_panic_hook` for the full rationale and the
-    // Sentry TAURI-RUST-F broken-pipe family.
+    // Install the panic hook *after* `sentry::init` so `take_hook()` captures
+    // Sentry's panic integration as its chain target. The hook ALWAYS chains to
+    // the previous hook for every panic — it never swallows, so no crash is ever
+    // hidden from Sentry. The actual broken-pipe-on-stderr abort is prevented at
+    // the write path by `neutralize_broken_parent_stderr()` (called at the top of
+    // `run()`); this hook only adds a diagnostic breadcrumb for that family. See
+    // `stderr_panic_hook` for the full rationale (Sentry TAURI-RUST-F).
     stderr_panic_hook::install();
 
     // Optional smoke trigger for verifying the Sentry pipeline end-to-end.
