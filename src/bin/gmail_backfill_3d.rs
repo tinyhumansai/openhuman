@@ -19,12 +19,12 @@
 //! # Usage
 //!
 //! ```sh
-//! cargo run --bin gmail-backfill-3d
-//! cargo run --bin gmail-backfill-3d -- --days 7
-//! cargo run --bin gmail-backfill-3d -- --days 14 --page-size 100
-//! cargo run --bin gmail-backfill-3d -- --skip-drain
-//! cargo run --bin gmail-backfill-3d -- --skip-verify
-//! cargo run --bin gmail-backfill-3d -- --wipe
+//! cargo run --features backfill-binaries --bin gmail-backfill-3d
+//! cargo run --features backfill-binaries --bin gmail-backfill-3d -- --days 7
+//! cargo run --features backfill-binaries --bin gmail-backfill-3d -- --days 14 --page-size 100
+//! cargo run --features backfill-binaries --bin gmail-backfill-3d -- --skip-drain
+//! cargo run --features backfill-binaries --bin gmail-backfill-3d -- --skip-verify
+//! cargo run --features backfill-binaries --bin gmail-backfill-3d -- --wipe
 //! ```
 //!
 //! Set `RUST_LOG=info` (or `debug`) for detailed output.

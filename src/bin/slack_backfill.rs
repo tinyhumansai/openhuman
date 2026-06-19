@@ -29,8 +29,8 @@
 //! export OPENHUMAN_MEMORY_SUMMARISE_MODEL=llama3.1:8b
 //! export RUST_LOG=info,openhuman_core::openhuman::composio::providers::slack=debug,openhuman_core::openhuman::memory=debug
 //!
-//! cargo run --bin slack-backfill                              # all active slack connections
-//! cargo run --bin slack-backfill -- --connection conn_abc     # one specific connection
+//! cargo run --features backfill-binaries --bin slack-backfill
+//! cargo run --features backfill-binaries --bin slack-backfill -- --connection conn_abc
 //! ```
 
 use std::sync::Arc;
