@@ -161,13 +161,14 @@ describe('<TeamPanel />', () => {
     expect(navigateToTeamManagement).toHaveBeenCalledWith('team-a');
   });
 
-  it('surfaces the localized error when createTeam rejects', async () => {
+  it('surfaces the Error message when createTeam rejects', async () => {
     teamApiMock.createTeam.mockRejectedValueOnce(new Error('boom'));
     const Panel = await importPanel();
     renderPanel(Panel);
 
     fireEvent.change(screen.getByPlaceholderText('Team name'), { target: { value: 'New Team' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create' }));
-    await waitFor(() => expect(screen.getByText('Failed to create team')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('boom')).toBeInTheDocument());
+    expect(screen.queryByText('Failed to create team')).not.toBeInTheDocument();
   });
 });
