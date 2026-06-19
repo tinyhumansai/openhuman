@@ -540,7 +540,7 @@ async fn deliver_if_configured_skips_non_announce_mode() {
     let job = test_job("echo ok");
 
     // Default delivery mode is not "announce", so nothing is published.
-    assert!(deliver_if_configured(&config, &job, "x").await.is_ok());
+    assert!(deliver_if_configured(&config, &job, true, "x").await.is_ok());
 }
 
 #[tokio::test]
@@ -596,7 +596,9 @@ async fn deliver_if_configured_publishes_event_for_announce_mode() {
     assert_eq!(received.load(Ordering::SeqCst), 1);
 
     // Also verify the function itself succeeds.
-    assert!(deliver_if_configured(&config, &job, "hello").await.is_ok());
+    assert!(deliver_if_configured(&config, &job, true, "hello")
+        .await
+        .is_ok());
 }
 
 #[test]
@@ -692,7 +694,9 @@ async fn deliver_if_configured_skips_empty_mode() {
     let config = test_config(&tmp).await;
     let mut job = test_job("echo ok");
     job.delivery.mode = "".into();
-    assert!(deliver_if_configured(&config, &job, "output").await.is_ok());
+    assert!(deliver_if_configured(&config, &job, true, "output")
+        .await
+        .is_ok());
 }
 
 #[tokio::test]
@@ -706,7 +710,7 @@ async fn deliver_if_configured_announce_missing_channel_errors() {
         to: Some("target".into()),
         best_effort: true,
     };
-    let result = deliver_if_configured(&config, &job, "out").await;
+    let result = deliver_if_configured(&config, &job, true, "out").await;
     assert!(result.is_err());
 }
 
@@ -721,7 +725,7 @@ async fn deliver_if_configured_announce_missing_target_errors() {
         to: None,
         best_effort: true,
     };
-    let result = deliver_if_configured(&config, &job, "out").await;
+    let result = deliver_if_configured(&config, &job, true, "out").await;
     assert!(result.is_err());
 }
 
@@ -736,7 +740,97 @@ async fn deliver_if_configured_proactive_mode_succeeds() {
         to: None,
         best_effort: true,
     };
-    assert!(deliver_if_configured(&config, &job, "hello").await.is_ok());
+    assert!(deliver_if_configured(&config, &job, true, "hello")
+        .await
+        .is_ok());
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// #3788 — failed / empty scheduled runs must NOT be injected into chat.
+//
+// A scheduled cron run has no user message behind it, so `deliver_if_configured`
+// must only publish `ProactiveMessageRequested` (proactive) /
+// `CronDeliveryRequested` (announce) when the run succeeded AND produced real,
+// non-placeholder output. The pure decision is `should_deliver_to_chat`; these
+// cover every branch.
+// ──────────────────────────────────────────────────────────────────────
+
+#[test]
+fn should_deliver_to_chat_true_only_for_successful_nonempty_output() {
+    // Successful, real output → deliver.
+    assert!(should_deliver_to_chat(true, "morning briefing: 3 new emails"));
+    assert!(should_deliver_to_chat(true, "  trimmed but real  "));
+
+    // Failed run (canned error copy) → never deliver, even though non-empty.
+    assert!(!should_deliver_to_chat(
+        false,
+        AGENT_JOB_USER_FAILURE_MESSAGE
+    ));
+    assert!(!should_deliver_to_chat(false, "Something went wrong."));
+
+    // Empty / whitespace-only successful run → never deliver.
+    assert!(!should_deliver_to_chat(true, ""));
+    assert!(!should_deliver_to_chat(true, "   \n\t  "));
+
+    // Empty-success placeholder → never deliver (incl. surrounding whitespace).
+    assert!(!should_deliver_to_chat(
+        true,
+        AGENT_JOB_EMPTY_OUTPUT_PLACEHOLDER
+    ));
+    assert!(!should_deliver_to_chat(
+        true,
+        "  agent job executed  "
+    ));
+}
+
+#[tokio::test]
+async fn deliver_if_configured_proactive_suppresses_failed_run() {
+    // A failed proactive run must not error and must not panic — the chat
+    // publish is skipped while the alert/history paths still run.
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp).await;
+    let mut job = test_job("echo ok");
+    job.delivery = DeliveryConfig {
+        mode: "proactive".into(),
+        channel: None,
+        to: None,
+        best_effort: true,
+    };
+
+    // success = false with the canned failure string — the exact #3788 repro.
+    assert!(
+        deliver_if_configured(&config, &job, false, AGENT_JOB_USER_FAILURE_MESSAGE)
+            .await
+            .is_ok()
+    );
+    // Empty successful run.
+    assert!(deliver_if_configured(&config, &job, true, "")
+        .await
+        .is_ok());
+    // Placeholder successful run.
+    assert!(
+        deliver_if_configured(&config, &job, true, AGENT_JOB_EMPTY_OUTPUT_PLACEHOLDER)
+            .await
+            .is_ok()
+    );
+}
+
+#[tokio::test]
+async fn deliver_if_configured_announce_validates_before_gate_even_on_failure() {
+    // Announce config validation (missing channel/target) must still fire for a
+    // failed run — the gate only affects the publish, not config correctness.
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp).await;
+    let mut job = test_job("echo ok");
+    job.delivery = DeliveryConfig {
+        mode: "announce".into(),
+        channel: None,
+        to: Some("target".into()),
+        best_effort: true,
+    };
+    let result =
+        deliver_if_configured(&config, &job, false, AGENT_JOB_USER_FAILURE_MESSAGE).await;
+    assert!(result.is_err());
 }
 
 // ──────────────────────────────────────────────────────────────────────
