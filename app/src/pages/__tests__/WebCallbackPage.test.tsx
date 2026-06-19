@@ -19,6 +19,7 @@ describe('WebCallbackPage', () => {
     return render(
       <MemoryRouter initialEntries={[initialEntry]}>
         <Routes>
+          <Route path="/auth" element={<WebCallbackPage callbackKind="auth" />} />
           <Route path="/callback/:kind" element={<WebCallbackPage />} />
           <Route path="/callback/:kind/:status" element={<WebCallbackPage />} />
         </Routes>
@@ -28,6 +29,18 @@ describe('WebCallbackPage', () => {
 
   it('routes auth callbacks through the synthetic auth deep link handler', async () => {
     renderRoute('/callback/auth?token=jwt-token&key=auth');
+
+    expect(screen.getByText('Completing sign-in')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(handleDeepLinkUrls).toHaveBeenCalledWith(
+        ['openhuman://auth?token=jwt-token&key=auth'],
+        { requireStateNonce: false }
+      );
+    });
+  });
+
+  it('routes legacy /auth callbacks through the synthetic auth deep link handler', async () => {
+    renderRoute('/auth?token=jwt-token&key=auth');
 
     expect(screen.getByText('Completing sign-in')).toBeInTheDocument();
     await waitFor(() => {

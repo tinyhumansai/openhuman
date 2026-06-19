@@ -42,6 +42,7 @@ const AppRoutes = () => {
         }
       />
 
+      <Route path="/auth" element={<WebCallbackPage callbackKind="auth" />} />
       <Route path="/callback/:kind" element={<WebCallbackPage />} />
       <Route path="/callback/:kind/:status" element={<WebCallbackPage />} />
 
