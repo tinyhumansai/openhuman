@@ -521,24 +521,30 @@ pub fn is_openai_oauth_session_expired_http(
     body: &str,
 ) -> bool {
     if status.as_u16() != 401 {
+        tracing::debug!(
+            domain = "llm_provider",
+            operation = "http_error_classifier",
+            provider = provider,
+            status = status.as_u16(),
+            matched = false,
+            reason = "openai_oauth_session_expired_probe:non_401",
+            "[llm_provider] OpenAI OAuth session-expiry classifier skipped — status is not 401"
+        );
         return false;
     }
     if provider == openhuman_backend::PROVIDER_LABEL {
+        tracing::debug!(
+            domain = "llm_provider",
+            operation = "http_error_classifier",
+            provider = provider,
+            status = status.as_u16(),
+            matched = false,
+            reason = "openai_oauth_session_expired_probe:backend_excluded",
+            "[llm_provider] OpenAI OAuth session-expiry classifier skipped — backend owns app-session expiry"
+        );
         return false;
     }
-    let lower = body.to_ascii_lowercase();
-    // OAuth-session-expiry envelope markers. `token_expired` is OpenAI's OAuth
-    // error code; the prose variants cover sanitized/reworded bodies. An
-    // API-key rejection never carries these (it emits "incorrect api key" /
-    // "invalid_api_key"), so the gate cannot swallow a real misconfig.
-    const OAUTH_EXPIRY_MARKERS: &[&str] = &[
-        "token_expired",
-        "authentication token is expired",
-        "please try signing in again",
-    ];
-    let matched = OAUTH_EXPIRY_MARKERS
-        .iter()
-        .any(|marker| lower.contains(marker));
+    let matched = is_openai_oauth_session_expired_message(body);
     tracing::debug!(
         domain = "llm_provider",
         operation = "http_error_classifier",
@@ -549,6 +555,35 @@ pub fn is_openai_oauth_session_expired_http(
         "[llm_provider] evaluated OpenAI OAuth session-expiry classifier"
     );
     matched
+}
+
+/// Message-level half of [`is_openai_oauth_session_expired_http`]: matches the
+/// OpenAI OAuth session-expiry body markers without a status/provider gate.
+///
+/// The provider HTTP layer demotes its own per-attempt event via the `_http`
+/// gate, but the same `anyhow::bail!` string is re-raised at the JSON-RPC
+/// boundary (`core::jsonrpc` → `report_error_or_expected` →
+/// `core::observability::expected_error_kind`), which has only the message
+/// string — no status. This predicate lets that central classifier demote the
+/// re-report too, so an RPC-triggered chat/test call does not leak the event
+/// the `_http` gate already suppressed (TAURI-RUST-8FQ). Mirrors the
+/// `is_provider_config_rejection_message` / `_http` split.
+///
+/// `token_expired` is OpenAI's OAuth error code; the prose variants cover
+/// sanitized/reworded bodies. An API-key rejection never carries these (it
+/// emits "incorrect api key" / "invalid_api_key"), and the backend app-session
+/// "invalid token" / "please sign in again" wording differs, so this cannot
+/// swallow a real misconfig or a backend session-expiry.
+pub fn is_openai_oauth_session_expired_message(message: &str) -> bool {
+    const OAUTH_EXPIRY_MARKERS: &[&str] = &[
+        "token_expired",
+        "authentication token is expired",
+        "please try signing in again",
+    ];
+    let lower = message.to_ascii_lowercase();
+    OAUTH_EXPIRY_MARKERS
+        .iter()
+        .any(|marker| lower.contains(marker))
 }
 
 /// Demote an OpenAI OAuth session-expiry `401` to an info log (user-state,

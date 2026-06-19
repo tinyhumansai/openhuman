@@ -398,6 +398,19 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     if is_provider_user_state_message(&lower) {
         return Some(ExpectedErrorKind::ProviderUserState);
     }
+    // TAURI-RUST-8FQ — the OpenAI ChatGPT/Codex OAuth access token expired with
+    // no usable refresh token. The provider HTTP layer
+    // (`provider::ops::api_error` / `chat_via_responses`) already demotes its
+    // own per-attempt event, but the same `anyhow::bail!` string re-raises here
+    // at the RPC boundary (`jsonrpc` → `report_error_or_expected`); route it to
+    // the shared `ProviderUserState` bucket so the re-report is demoted too
+    // instead of leaking the event the emit-site already suppressed. User-state
+    // — recovery is reconnecting OpenAI; Sentry has no remediation path. The
+    // markers are distinct from the backend "invalid token" session-expiry
+    // wording matched below, so this does not shadow that arm.
+    if crate::openhuman::inference::provider::is_openai_oauth_session_expired_message(message) {
+        return Some(ExpectedErrorKind::ProviderUserState);
+    }
     if is_backend_user_error_message(&lower) {
         return Some(ExpectedErrorKind::BackendUserError);
     }
@@ -2437,6 +2450,30 @@ mod tests {
                 "real-defect/unrelated error must NOT be demoted as codex auth-unavailable: {msg}"
             );
         }
+    }
+
+    /// Sentry TAURI-RUST-8FQ: the OpenAI ChatGPT/Codex OAuth `token_expired`
+    /// 401 re-raised at the RPC boundary (`{provider} Responses API error: …`)
+    /// must classify as `ProviderUserState` so the re-report is demoted, not
+    /// just the emit-site event. A genuine bad-key 401 must stay reportable.
+    #[test]
+    fn classifies_openai_oauth_token_expired_as_provider_user_state() {
+        let bail = "openai Responses API error: {\"error\":{\"message\":\"Provided \
+            authentication token is expired. Please try signing in again.\",\
+            \"type\":null,\"code\":\"token_expired\"}}";
+        assert_eq!(
+            expected_error_kind(bail),
+            Some(ExpectedErrorKind::ProviderUserState),
+            "OAuth token_expired re-report must be demoted at the RPC boundary"
+        );
+        // A real misconfigured key must NOT be swallowed by this arm.
+        let bad_key = "openai Responses API error: {\"error\":{\"code\":\"invalid_api_key\",\
+            \"message\":\"Incorrect API key provided.\"}}";
+        assert_ne!(
+            expected_error_kind(bad_key),
+            Some(ExpectedErrorKind::ProviderUserState),
+            "a genuine bad-key 401 must remain reportable"
+        );
     }
 
     /// Sentry TAURI-RUST-R4: the composio direct-mode factory bail must
