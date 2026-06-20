@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
+import { useCoreState } from '../../../providers/CoreStateProvider';
 import {
   clearEmbeddingsApiKey,
   type EmbeddingProviderEntry,
@@ -18,6 +19,7 @@ import {
   testEmbeddingsConnection,
   updateEmbeddingsSettings,
 } from '../../../services/api/embeddingsApi';
+import { isLocalSessionToken } from '../../../utils/localSession';
 import PanelPage from '../../layout/PanelPage';
 import Button from '../../ui/Button';
 import SettingsBackButton from '../components/SettingsBackButton';
@@ -42,12 +44,22 @@ interface EmbeddingsPanelProps {
   embedded?: boolean;
 }
 
+const MANAGED_LOGIN_MESSAGE =
+  'Managed embeddings require OpenHuman sign-in. Sign in to use the OpenHuman backend.';
+
+function isBackendSessionError(message: string | undefined): boolean {
+  return /no backend session/i.test(message ?? '');
+}
+
 const EmbeddingsPanel = ({ embedded = false }: EmbeddingsPanelProps = {}) => {
   const { t } = useT();
   const { navigateBack } = useSettingsNavigation();
+  const { snapshot, clearSession } = useCoreState();
+  const isLocalSession = isLocalSessionToken(snapshot.sessionToken);
 
   const [settings, setSettings] = useState<EmbeddingsSettings | null>(null);
   const [status, setStatus] = useState<Status>({ kind: 'loading' });
+  const [managedSessionMissing, setManagedSessionMissing] = useState(false);
 
   // Setup popup state
   const [setupProvider, setSetupProvider] = useState<EmbeddingProviderEntry | null>(null);
@@ -110,9 +122,19 @@ const EmbeddingsPanel = ({ embedded = false }: EmbeddingsPanelProps = {}) => {
   const currentModels = currentEntry?.models ?? [];
   const currentModel = currentModels.find(m => m.id === settings.model) ?? currentModels[0];
   const allowedDims = currentModel?.allowed_dimensions ?? [];
+  const managedRequiresLogin = isLocalSession && selectedProvider === 'managed';
+  const showManagedLoginPrompt =
+    selectedProvider === 'managed' && (managedRequiresLogin || managedSessionMissing);
 
   function handleProviderClick(entry: EmbeddingProviderEntry) {
     if (entry.slug === selectedProvider) return;
+
+    if (entry.slug === 'managed' && isLocalSession) {
+      setStatus({ kind: 'error', message: MANAGED_LOGIN_MESSAGE });
+      return;
+    }
+
+    if (entry.slug !== 'managed') setManagedSessionMissing(false);
 
     if (entry.slug === 'custom') {
       // For custom, open setup popup to enter endpoint
@@ -143,6 +165,7 @@ const EmbeddingsPanel = ({ embedded = false }: EmbeddingsPanelProps = {}) => {
     const newModel = model ?? defaultModel?.id ?? settings!.model;
     const newDims = dims ?? defaultModel?.default_dimensions ?? settings!.dimensions;
 
+    if (slug !== 'managed') setManagedSessionMissing(false);
     setStatus({ kind: 'saving' });
     try {
       const result = await updateEmbeddingsSettings({
@@ -338,12 +361,25 @@ const EmbeddingsPanel = ({ embedded = false }: EmbeddingsPanelProps = {}) => {
     try {
       const result = await testEmbeddingsConnection();
       if (result.success) {
+        setManagedSessionMissing(false);
         setStatus({ kind: 'saved' });
       } else {
-        setStatus({ kind: 'error', message: result.error ?? 'Test failed' });
+        const message = result.error ?? 'Test failed';
+        if (selectedProvider === 'managed' && isBackendSessionError(message)) {
+          setManagedSessionMissing(true);
+          setStatus({ kind: 'error', message: MANAGED_LOGIN_MESSAGE });
+        } else {
+          setStatus({ kind: 'error', message });
+        }
       }
     } catch (err) {
-      setStatus({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
+      const message = err instanceof Error ? err.message : String(err);
+      if (selectedProvider === 'managed' && isBackendSessionError(message)) {
+        setManagedSessionMissing(true);
+        setStatus({ kind: 'error', message: MANAGED_LOGIN_MESSAGE });
+      } else {
+        setStatus({ kind: 'error', message });
+      }
     }
   }
 
@@ -389,6 +425,9 @@ const EmbeddingsPanel = ({ embedded = false }: EmbeddingsPanelProps = {}) => {
                             : t('settings.embeddings.statusNeedsKey')}
                         </SettingsBadge>
                       )}
+                      {isLocalSession && entry.slug === 'managed' && (
+                        <SettingsBadge variant="warning">Requires OpenHuman sign-in</SettingsBadge>
+                      )}
                     </span>
                     <span className="block mt-0.5 text-xs text-neutral-500 dark:text-neutral-400">
                       {entry.description}
@@ -414,6 +453,28 @@ const EmbeddingsPanel = ({ embedded = false }: EmbeddingsPanelProps = {}) => {
             })}
           </div>
         </SettingsSection>
+
+        {showManagedLoginPrompt && (
+          <div className="rounded-xl border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-900/10 p-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <p className="text-xs text-amber-800 dark:text-amber-200 leading-relaxed">
+                Managed embeddings route through the OpenHuman backend and require an OpenHuman
+                account session.{' '}
+                {isLocalSession
+                  ? 'Exit local session and sign in to use this provider, or switch to a local or bring-your-own embeddings provider.'
+                  : 'Sign in again to refresh your OpenHuman session, or switch to a local or bring-your-own embeddings provider.'}
+              </p>
+              <Button
+                type="button"
+                variant="secondary"
+                size="xs"
+                className="shrink-0"
+                onClick={() => void clearSession()}>
+                {isLocalSession ? t('settings.exitLocalSession') : 'Sign in again'}
+              </Button>
+            </div>
+          </div>
+        )}
 
         {/* Vector search disabled notice */}
         {selectedProvider === 'none' && (
@@ -487,7 +548,7 @@ const EmbeddingsPanel = ({ embedded = false }: EmbeddingsPanelProps = {}) => {
                   variant="secondary"
                   size="xs"
                   onClick={() => void handleTestConnection()}
-                  disabled={selectedProvider === 'none'}>
+                  disabled={selectedProvider === 'none' || managedRequiresLogin}>
                   {t('settings.embeddings.testConnection')}
                 </Button>
               </div>
