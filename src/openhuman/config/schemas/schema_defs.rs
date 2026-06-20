@@ -274,7 +274,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 ),
                 optional_string(
                     "provider",
-                    "Local provider identifier. Supported values: ollama, lm_studio.",
+                    "Local provider identifier. Supported values: ollama, lm_studio, omlx.",
                 ),
                 optional_json(
                     "base_url",
