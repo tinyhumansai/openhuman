@@ -373,9 +373,13 @@ pub async fn apply_local_ai_settings(
         config.local_ai.base_url = match base_url {
             None => None,
             Some(base_url) if base_url.trim().is_empty() => None,
+            // OMLX is an OpenAI-v1 endpoint: the `/v1` suffix is significant, so it
+            // must NOT go through `validate_ollama_url` (which strips the path).
+            // `provider_from_config` maps omlx → Ollama, so guard on the slug here.
             Some(base_url)
-                if crate::openhuman::inference::local::provider::provider_from_config(config)
-                    == crate::openhuman::inference::local::provider::LocalAiProvider::Ollama =>
+                if config.local_ai.provider != "omlx"
+                    && crate::openhuman::inference::local::provider::provider_from_config(config)
+                        == crate::openhuman::inference::local::provider::LocalAiProvider::Ollama =>
             {
                 Some(crate::openhuman::inference::local::validate_ollama_url(
                     &base_url,
