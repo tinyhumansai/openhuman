@@ -337,6 +337,10 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     "base_url",
                     "Optional local provider base URL string, or null to clear.",
                 ),
+                optional_string(
+                    "api_key",
+                    "Optional Bearer API key for a local provider that requires one (e.g. OMLX); empty string clears it.",
+                ),
                 optional_string("model_id", "Optional generic model id override."),
                 optional_string("chat_model_id", "Optional chat model id override."),
                 optional_bool("usage_embeddings", "Whether embeddings workload may use the local provider."),
