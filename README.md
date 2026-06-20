@@ -3,7 +3,7 @@
 <p align="center">
  <img src="./gitbooks/.gitbook/assets/demo.png" alt="The Tet" />
 </p>
- 
+  
 <p align="center" style="display: inline-block">
 	<a href="https://trendshift.io/repositories/23680" target="_blank" style="display: inline-block">
 		<img src="https://trendshift.io/api/badge/repositories/23680" alt="tinyhumansai%2Fopenhuman | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/>
