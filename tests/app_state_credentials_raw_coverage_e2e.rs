@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
 
 use chrono::Utc;
 use openhuman_core::openhuman::app_state::{
@@ -219,6 +220,35 @@ async fn auth_me_failing_server() -> (
                     );
                     let _ = stream.write_all(response.as_bytes()).await;
                     let _ = stream.shutdown().await;
+                }
+            }
+        }
+    });
+    (url, task, shutdown_tx)
+}
+
+async fn auth_me_hanging_server() -> (
+    String,
+    tokio::task::JoinHandle<()>,
+    tokio::sync::oneshot::Sender<()>,
+) {
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .expect("bind hanging auth/me listener");
+    let url = format!("http://{}", listener.local_addr().expect("listener addr"));
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    let task = tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = &mut shutdown_rx => break,
+                accepted = listener.accept() => {
+                    let Ok((mut stream, _)) = accepted else { break; };
+                    tokio::spawn(async move {
+                        let mut req = [0_u8; 2048];
+                        let _ = stream.read(&mut req).await;
+                        tokio::time::sleep(Duration::from_secs(30)).await;
+                        let _ = stream.shutdown().await;
+                    });
                 }
             }
         }
@@ -542,6 +572,104 @@ async fn snapshot_clears_pending_session_when_backend_revalidation_is_rejected()
     assert!(
         profile.is_none(),
         "rejected pending session profile must be cleared"
+    );
+
+    let _ = shutdown_tx.send(());
+    let _ = server_task.await;
+}
+
+#[tokio::test]
+async fn snapshot_clears_pending_session_when_revalidation_request_errors() {
+    let _lock = env_lock();
+    let harness = setup("http://127.0.0.1:9");
+    let config = harness.config().await;
+
+    let mut metadata = HashMap::new();
+    metadata.insert("user_id".to_string(), "pending-error-user".to_string());
+    metadata.insert(
+        "user_json".to_string(),
+        json!({
+            "id": "pending-error-user",
+            "email": "pending-error@example.test",
+            "pendingBackendValidation": true
+        })
+        .to_string(),
+    );
+    AuthService::from_config(&config)
+        .store_provider_token(
+            APP_SESSION_PROVIDER,
+            DEFAULT_AUTH_PROFILE_NAME,
+            "round14.pending.error",
+            metadata,
+            true,
+        )
+        .expect("seed errored pending app session");
+
+    let snap = snapshot()
+        .await
+        .expect("snapshot with errored pending revalidation")
+        .value;
+    assert!(
+        !snap.auth.is_authenticated,
+        "pending session must fail closed when revalidation request errors"
+    );
+    assert!(snap.auth.user.is_none());
+    assert!(snap.current_user.is_none());
+    assert!(snap.session_token.is_none());
+    let profile = AuthService::from_config(&config)
+        .get_profile(APP_SESSION_PROVIDER, None)
+        .expect("read profile after request error");
+    assert!(
+        profile.is_none(),
+        "errored pending session profile must be cleared"
+    );
+}
+
+#[tokio::test]
+async fn snapshot_clears_pending_session_when_revalidation_times_out() {
+    let _lock = env_lock();
+    let (api_url, server_task, shutdown_tx) = auth_me_hanging_server().await;
+    let harness = setup(&api_url);
+    let config = harness.config().await;
+
+    let mut metadata = HashMap::new();
+    metadata.insert("user_id".to_string(), "pending-timeout-user".to_string());
+    metadata.insert(
+        "user_json".to_string(),
+        json!({
+            "id": "pending-timeout-user",
+            "email": "pending-timeout@example.test",
+            "pendingBackendValidation": true
+        })
+        .to_string(),
+    );
+    AuthService::from_config(&config)
+        .store_provider_token(
+            APP_SESSION_PROVIDER,
+            DEFAULT_AUTH_PROFILE_NAME,
+            "round14.pending.timeout",
+            metadata,
+            true,
+        )
+        .expect("seed timed-out pending app session");
+
+    let snap = snapshot()
+        .await
+        .expect("snapshot with timed-out pending revalidation")
+        .value;
+    assert!(
+        !snap.auth.is_authenticated,
+        "pending session must fail closed when revalidation times out"
+    );
+    assert!(snap.auth.user.is_none());
+    assert!(snap.current_user.is_none());
+    assert!(snap.session_token.is_none());
+    let profile = AuthService::from_config(&config)
+        .get_profile(APP_SESSION_PROVIDER, None)
+        .expect("read profile after timeout");
+    assert!(
+        profile.is_none(),
+        "timed-out pending session profile must be cleared"
     );
 
     let _ = shutdown_tx.send(());

@@ -394,7 +394,7 @@ async fn persist_revalidated_session_user(
 
 async fn clear_deferred_session_after_backend_rejection(config: &Config) -> Result<(), String> {
     let config = config.clone();
-    tokio::task::spawn_blocking(move || {
+    let clear_result = tokio::task::spawn_blocking(move || {
         AuthService::from_config(&config)
             .remove_profile(APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME)
             .map(|_| ())
@@ -405,11 +405,11 @@ async fn clear_deferred_session_after_backend_rejection(config: &Config) -> Resu
         Err(format!(
             "{LOG_PREFIX} deferred session clear task panicked: {e}"
         ))
-    })?;
+    });
 
     *CURRENT_USER_CACHE.lock() = None;
     crate::openhuman::scheduler_gate::set_signed_out(true);
-    Ok(())
+    clear_result
 }
 
 async fn fetch_current_user_cached(
@@ -738,9 +738,32 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
                 SnapshotCurrentUser::DeferredSessionRejected
             }
             Ok(Ok(None)) => SnapshotCurrentUser::User(stored_user.clone()),
+            Ok(Err(error)) if pending_backend_validation => {
+                warn!(
+                    "{LOG_PREFIX} pending current user refresh failed; clearing stored app session: {error}"
+                );
+                if let Err(clear_error) =
+                    clear_deferred_session_after_backend_rejection(&config).await
+                {
+                    warn!("{LOG_PREFIX} failed to clear rejected pending session: {clear_error}");
+                }
+                SnapshotCurrentUser::DeferredSessionRejected
+            }
             Ok(Err(error)) => {
                 warn!("{LOG_PREFIX} current user refresh failed; using stored snapshot fallback: {error}");
                 SnapshotCurrentUser::User(stored_user.clone())
+            }
+            Err(_) if pending_backend_validation => {
+                warn!(
+                    "{LOG_PREFIX} pending current user fetch timed out after {}s; clearing stored app session",
+                    AUTH_FETCH_TIMEOUT.as_secs()
+                );
+                if let Err(clear_error) =
+                    clear_deferred_session_after_backend_rejection(&config).await
+                {
+                    warn!("{LOG_PREFIX} failed to clear rejected pending session: {clear_error}");
+                }
+                SnapshotCurrentUser::DeferredSessionRejected
             }
             Err(_) => {
                 warn!(
