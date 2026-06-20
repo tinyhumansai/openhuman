@@ -255,13 +255,15 @@ describe('Conversations — sidebar composer footer overflow (#3785)', () => {
 
     const footer = container.querySelector('[data-walkthrough="home-cta"]');
     expect(footer).not.toBeNull();
-    // Height-clamped + internally scrollable: on a short window the footer (and
-    // the error CTAs / composer it stacks) surfaces a scrollbar instead of being
-    // silently clipped by the overflow-hidden mainPanel.
-    expect(footer).toHaveClass('max-h-full');
+    // Shrinkable + internally scrollable: on a short window the flex algorithm
+    // caps the footer to the available height and it scrolls, instead of being
+    // silently clipped by the overflow-hidden mainPanel. (Uses flex shrink, not
+    // a percentage max-height — the latter doesn't reliably resolve inside a
+    // stretched flex item in Chromium.)
     expect(footer).toHaveClass('overflow-y-auto');
-    // The composer still pins to the bottom under normal (non-cramped) heights.
-    expect(footer).toHaveClass('flex-shrink-0');
+    expect(footer).toHaveClass('min-h-0');
+    // It must be allowed to shrink (no flex-shrink-0) so it can give way + scroll.
+    expect(footer).not.toHaveClass('flex-shrink-0');
   });
 
   it('keeps the floating page-variant composer absolutely positioned (no regression)', async () => {
@@ -287,6 +289,6 @@ describe('Conversations — sidebar composer footer overflow (#3785)', () => {
     // Page variant floats over the message fade; it must NOT adopt the sidebar's
     // in-flow scroll cap.
     expect(footer).toHaveClass('absolute');
-    expect(footer).not.toHaveClass('max-h-full');
+    expect(footer).not.toHaveClass('overflow-y-auto');
   });
 });

@@ -1722,8 +1722,10 @@ const Conversations = ({
       <div
         ref={messagesContainerRef}
         // Full-width scroll (scrollbar hugs the window edge); inner content is
-        // centered and width-capped per branch below.
-        className="flex-1 overflow-y-auto">
+        // centered and width-capped per branch below. `min-h-0` lets this
+        // basis-0 flex child shrink to 0 so the composer footer can take the
+        // space (and scroll) on short windows (#3785).
+        className="flex-1 min-h-0 overflow-y-auto">
         {isLoadingMessages ? (
           <div className="mx-auto w-full max-w-[48.75rem] space-y-4 px-5 py-4">
             {Array.from({ length: 4 }).map((_, i) => (
@@ -2249,18 +2251,20 @@ const Conversations = ({
         // width-capped to match the messages. `z-20` keeps it above messages
         // that would otherwise paint over it while scrolling.
         //
-        // Sidebar embed keeps the in-flow composer, but caps its height to the
-        // panel and scrolls internally (#3785). Without this, the footer stacks
-        // the upsell/error banners + actionable error CTAs (e.g. the voice
-        // "Setup" link) + the composer in a single `flex-shrink-0` block inside
-        // the `overflow-hidden` mainPanel; on a short window the footer's natural
-        // height exceeds the panel and its bottom is clipped with no scroll
-        // affordance, leaving the composer/CTA unreachable. `overflow-y-auto`
-        // zeroes the flex auto-min-height so `max-h-full` can clamp the footer
-        // and surface a scrollbar instead of clipping.
+        // Sidebar embed keeps the in-flow composer pinned at the bottom, but it
+        // must stay reachable when the panel is too short to hold the whole
+        // footer — it stacks the upsell/error banners + actionable error CTAs
+        // (e.g. the voice "Setup" link) + the composer (#3785). Rather than a
+        // percentage `max-height` (which does not reliably resolve inside a
+        // stretched flex item in Chromium), let the footer SHRINK: dropping
+        // `flex-shrink-0` and adding `min-h-0 overflow-y-auto` makes the flex
+        // algorithm cap it to the available height (the basis-0 message list
+        // gives up its space first) and scroll internally instead of being
+        // clipped by the `overflow-hidden` mainPanel. On a tall window there is
+        // free space, so the footer keeps its natural height (composer pinned).
         className={
           isSidebar
-            ? 'mx-auto w-full max-w-[48.75rem] flex-shrink-0 max-h-full overflow-y-auto px-4 py-3'
+            ? 'mx-auto w-full max-w-[48.75rem] min-h-0 overflow-y-auto px-4 py-3'
             : 'absolute inset-x-0 bottom-0 z-20 mx-auto w-full max-w-[48.75rem] px-4 pb-4 pt-6'
         }>
         <>
