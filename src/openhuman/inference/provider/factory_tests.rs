@@ -1927,3 +1927,13 @@ fn resolve_model_for_hint_handles_unknown_hint_passthrough() {
     let result = resolve_model_for_hint("hint:unknown_tier", &config);
     assert_eq!(result, "hint:unknown_tier");
 }
+
+#[test]
+fn omlx_provider_builds_with_bearer_key() {
+    let mut config = crate::openhuman::config::Config::default();
+    config.local_ai.api_key = Some("sk-omlx-test".to_string());
+    config.local_ai.base_url = Some("http://127.0.0.1:8000/v1".to_string());
+    let (_provider, model) =
+        super::make_omlx_provider("my-model", None, &config).expect("omlx provider builds");
+    assert_eq!(model, "my-model");
+}
