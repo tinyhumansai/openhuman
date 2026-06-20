@@ -216,7 +216,10 @@ fn omlx_routing_ref_is_not_orphaned() {
 
     let stats = run(&mut config).expect("migration should succeed");
 
-    assert_eq!(stats.workload_fields_scrubbed, 0, "omlx: prefix is local and must not be scrubbed");
+    assert_eq!(
+        stats.workload_fields_scrubbed, 0,
+        "omlx: prefix is local and must not be scrubbed"
+    );
     assert_eq!(
         config.chat_provider.as_deref(),
         Some("omlx:my-model"),

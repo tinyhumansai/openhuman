@@ -411,7 +411,11 @@ pub async fn apply_local_ai_settings(
         };
         log::debug!(
             "[config][local_ai] api_key {}",
-            if config.local_ai.api_key.is_some() { "set" } else { "cleared" }
+            if config.local_ai.api_key.is_some() {
+                "set"
+            } else {
+                "cleared"
+            }
         );
     }
     config.save().await.map_err(|e| e.to_string())?;

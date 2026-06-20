@@ -548,7 +548,11 @@ const LOCAL_CHIP_TONE: Record<LocalChipSlug, string> = {
   omlx: 'bg-amber-50 dark:bg-amber-500/10 ring-amber-200 text-amber-900 dark:text-amber-100',
 };
 
-const LOCAL_CHIP_LABEL: Record<LocalChipSlug, string> = { lmstudio: 'LM Studio', ollama: 'Ollama', omlx: 'OMLX' };
+const LOCAL_CHIP_LABEL: Record<LocalChipSlug, string> = {
+  lmstudio: 'LM Studio',
+  ollama: 'Ollama',
+  omlx: 'OMLX',
+};
 
 function providerToggleAriaLabel(
   t: (key: string, fallback?: string) => string,
@@ -2897,7 +2901,13 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
        * for `endpoint` mode, where `value` IS the endpoint.
        */
       endpoint?: string | null;
-      credentialMode: 'api_key' | 'oauth' | 'codex_oauth' | 'endpoint' | 'endpoint_key' | 'cli_login';
+      credentialMode:
+        | 'api_key'
+        | 'oauth'
+        | 'codex_oauth'
+        | 'endpoint'
+        | 'endpoint_key'
+        | 'cli_login';
     }) => {
       const isLocalRuntime = credentialMode === 'endpoint' || credentialMode === 'endpoint_key';
       // `endpoint_key` (OMLX) carries the API key in `value` and the endpoint
