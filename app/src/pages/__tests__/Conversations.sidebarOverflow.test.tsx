@@ -10,10 +10,11 @@
  * natural height exceeded the panel and its bottom was clipped with no scroll
  * affordance — the composer and the fix button became unreachable.
  *
- * The fix caps the footer to the panel height and lets it scroll internally
- * (`max-h-full overflow-y-auto`). jsdom does not lay out, so we assert the
- * footer is class-wise scroll-capable + height-clamped, which is what prevents
- * the silent clipping from coming back.
+ * The fix lets the footer SHRINK and scroll instead of staying rigid: dropping
+ * `flex-shrink-0` and adding `min-h-0 overflow-y-auto` makes the flex algorithm
+ * cap it to the available height and scroll it internally. jsdom does not lay
+ * out, so we assert the footer is class-wise scroll-capable + shrinkable, which
+ * is what prevents the silent clipping from coming back.
  */
 import { combineReducers, configureStore } from '@reduxjs/toolkit';
 import { act, render } from '@testing-library/react';
