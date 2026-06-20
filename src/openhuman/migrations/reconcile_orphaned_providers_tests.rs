@@ -207,3 +207,19 @@ fn idempotent_second_run_scrubs_nothing() {
     assert_eq!(second.workload_fields_scrubbed, 0);
     assert!(!second.primary_cloud_cleared);
 }
+
+#[test]
+fn omlx_routing_ref_is_not_orphaned() {
+    // An omlx:<model> ref is a local provider and must be left intact.
+    let mut config = Config::default();
+    config.chat_provider = Some("omlx:my-model".to_string());
+
+    let stats = run(&mut config).expect("migration should succeed");
+
+    assert_eq!(stats.workload_fields_scrubbed, 0, "omlx: prefix is local and must not be scrubbed");
+    assert_eq!(
+        config.chat_provider.as_deref(),
+        Some("omlx:my-model"),
+        "omlx:<model> ref must survive reconciliation"
+    );
+}
