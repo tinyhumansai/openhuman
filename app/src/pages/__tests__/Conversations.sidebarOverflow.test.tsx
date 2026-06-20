@@ -150,6 +150,7 @@ vi.mock('../../lib/coreState/store', () => ({
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
+/** Build a minimal Redux store with the slices Conversations reads, optionally preloaded. */
 function buildStore(preload: Record<string, unknown> = {}) {
   return configureStore({
     reducer: combineReducers({
@@ -164,6 +165,7 @@ function buildStore(preload: Record<string, unknown> = {}) {
   });
 }
 
+/** Construct a `Thread` fixture with sensible defaults, overridable per field. */
 function makeThread(overrides: Partial<Thread> = {}): Thread {
   return {
     id: 't-1',
@@ -190,6 +192,7 @@ const emptyThreadState = {
   messagesError: null,
 };
 
+/** Thread-slice preload with `thread` present, selected, and holding an empty message list. */
 function selectedThreadState(thread: Thread) {
   return {
     ...emptyThreadState,
@@ -200,6 +203,7 @@ function selectedThreadState(thread: Thread) {
   };
 }
 
+/** Socket-slice preload that pins the pending-user connection to the given status. */
 function socketState(status: 'connected' | 'disconnected') {
   return {
     byUser: { __pending__: { status, socketId: status === 'connected' ? 'socket-1' : null } },
