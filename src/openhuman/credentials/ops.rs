@@ -432,6 +432,12 @@ async fn fetch_current_user_for_session_store(
             }
 
             tokio::time::sleep(AUTH_ME_STORE_RETRY_DELAY).await;
+            tracing::debug!(
+                domain = "credentials",
+                operation = "fetch_current_user_for_session_store",
+                reason = %first_reason,
+                "[credentials][auth-store] retrying GET /auth/me after transient failure"
+            );
             client
                 .fetch_current_user(token)
                 .await

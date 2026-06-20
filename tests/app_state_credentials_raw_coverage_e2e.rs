@@ -416,6 +416,138 @@ async fn round14_snapshot_uses_stored_user_when_backend_user_is_empty_or_unreach
     let _ = server_task.await;
 }
 
+#[tokio::test]
+async fn snapshot_clears_pending_backend_validation_after_successful_revalidation() {
+    let _lock = env_lock();
+    let (api_url, server_task, shutdown_tx) = auth_me_server(
+        r#"{"data":{"id":"fresh-pending-user","name":"Fresh Pending","email":"fresh-pending@example.test"}}"#,
+    )
+    .await;
+    let harness = setup(&api_url);
+    let config = harness.config().await;
+
+    let mut metadata = HashMap::new();
+    metadata.insert("user_id".to_string(), "pending-user".to_string());
+    metadata.insert(
+        "user_json".to_string(),
+        json!({
+            "id": "pending-user",
+            "name": "Pending User",
+            "email": "pending@example.test",
+            "pendingBackendValidation": true
+        })
+        .to_string(),
+    );
+    AuthService::from_config(&config)
+        .store_provider_token(
+            APP_SESSION_PROVIDER,
+            DEFAULT_AUTH_PROFILE_NAME,
+            "round14.pending.success",
+            metadata,
+            true,
+        )
+        .expect("seed pending app session");
+
+    let snap = snapshot()
+        .await
+        .expect("snapshot with successful pending revalidation")
+        .value;
+    assert!(snap.auth.is_authenticated);
+    assert_eq!(
+        snap.session_token.as_deref(),
+        Some("round14.pending.success")
+    );
+    assert_eq!(
+        snap.current_user.as_ref().and_then(|v| v.get("id")),
+        Some(&json!("fresh-pending-user"))
+    );
+    assert!(
+        snap.current_user
+            .as_ref()
+            .and_then(|v| v.get("pendingBackendValidation"))
+            .is_none(),
+        "fresh snapshot user must not keep pendingBackendValidation"
+    );
+
+    let profile = AuthService::from_config(&config)
+        .get_profile(APP_SESSION_PROVIDER, None)
+        .expect("read profile")
+        .expect("profile remains after successful revalidation");
+    assert_eq!(
+        profile.metadata.get("user_id").map(String::as_str),
+        Some("fresh-pending-user")
+    );
+    let stored_user: Value = serde_json::from_str(
+        profile
+            .metadata
+            .get("user_json")
+            .expect("persisted user_json"),
+    )
+    .expect("stored user json");
+    assert_eq!(
+        stored_user.get("id").and_then(Value::as_str),
+        Some("fresh-pending-user")
+    );
+    assert!(
+        stored_user.get("pendingBackendValidation").is_none(),
+        "successful revalidation must clear persisted pendingBackendValidation"
+    );
+
+    let _ = shutdown_tx.send(());
+    let _ = server_task.await;
+}
+
+#[tokio::test]
+async fn snapshot_clears_pending_session_when_backend_revalidation_is_rejected() {
+    let _lock = env_lock();
+    let (api_url, server_task, shutdown_tx) = auth_me_failing_server().await;
+    let harness = setup(&api_url);
+    let config = harness.config().await;
+
+    let mut metadata = HashMap::new();
+    metadata.insert("user_id".to_string(), "pending-reject-user".to_string());
+    metadata.insert(
+        "user_json".to_string(),
+        json!({
+            "id": "pending-reject-user",
+            "email": "pending-reject@example.test",
+            "pendingBackendValidation": true
+        })
+        .to_string(),
+    );
+    AuthService::from_config(&config)
+        .store_provider_token(
+            APP_SESSION_PROVIDER,
+            DEFAULT_AUTH_PROFILE_NAME,
+            "round14.pending.rejected",
+            metadata,
+            true,
+        )
+        .expect("seed rejected pending app session");
+
+    let snap = snapshot()
+        .await
+        .expect("snapshot with rejected pending revalidation")
+        .value;
+    assert!(
+        !snap.auth.is_authenticated,
+        "pending session must fail closed when backend revalidation is rejected"
+    );
+    assert!(snap.auth.user.is_none());
+    assert!(snap.current_user.is_none());
+    assert!(snap.session_token.is_none());
+    let profile = AuthService::from_config(&config)
+        .get_profile(APP_SESSION_PROVIDER, None)
+        .expect("read profile after rejection");
+    assert!(
+        profile.is_none(),
+        "rejected pending session profile must be cleared"
+    );
+
+    let _ = shutdown_tx.send(());
+    let _ = server_task.await;
+}
+
 #[test]
 fn round14_profiles_cover_oauth_token_selection_schema_and_quarantine_edges() {
     let _lock = env_lock();

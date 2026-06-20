@@ -1,3 +1,4 @@
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 #[cfg(unix)]
 use std::fs::File;
@@ -16,6 +17,7 @@ use tempfile::NamedTempFile;
 
 use crate::api::config::effective_backend_api_url;
 use crate::api::jwt::bearer_authorization_value;
+use crate::api::rest::user_id_from_profile_payload;
 use crate::openhuman::autocomplete::AutocompleteStatus;
 use crate::openhuman::config::rpc as config_rpc;
 use crate::openhuman::config::Config;
@@ -23,6 +25,7 @@ use crate::openhuman::credentials::session_support::{
     is_local_session_token, load_app_session_profile, session_state_from_profile,
     session_token_from_profile,
 };
+use crate::openhuman::credentials::{AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME};
 use crate::openhuman::inference::LocalAiStatus;
 use crate::openhuman::screen_intelligence::AccessibilityStatus;
 use crate::openhuman::service::{ServiceState, ServiceStatus};
@@ -35,6 +38,7 @@ const RUNTIME_SNAPSHOT_TTL: Duration = Duration::from_secs(2);
 const AUTH_FETCH_TIMEOUT: Duration = Duration::from_secs(5);
 const RUNTIME_SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(10);
 const SNAPSHOT_SUB_OP_TIMEOUT: Duration = Duration::from_secs(5);
+const PENDING_BACKEND_VALIDATION_FIELD: &str = "pendingBackendValidation";
 static APP_STATE_FILE_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 static CURRENT_USER_CACHE: Lazy<Mutex<Option<CachedCurrentUser>>> = Lazy::new(|| Mutex::new(None));
 static RUNTIME_SNAPSHOT_CACHE: Lazy<Mutex<Option<CachedRuntimeSnapshot>>> =
@@ -53,6 +57,12 @@ struct CachedCurrentUser {
     token: String,
     fetched_at: Instant,
     user: Value,
+}
+
+#[derive(Debug, Clone)]
+enum SnapshotCurrentUser {
+    User(Option<Value>),
+    DeferredSessionRejected,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -334,13 +344,85 @@ fn sanitize_snapshot_user(user: Option<Value>) -> Option<Value> {
     }
 }
 
-async fn fetch_current_user_cached(config: &Config, token: &str) -> Result<Option<Value>, String> {
+fn snapshot_user_pending_backend_validation(user: Option<&Value>) -> bool {
+    user.and_then(Value::as_object)
+        .and_then(|obj| obj.get(PENDING_BACKEND_VALIDATION_FIELD))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn clear_pending_backend_validation_flag(mut user: Value) -> Value {
+    if let Value::Object(ref mut map) = user {
+        map.remove(PENDING_BACKEND_VALIDATION_FIELD);
+    }
+    user
+}
+
+async fn persist_revalidated_session_user(
+    config: &Config,
+    token: &str,
+    base_metadata: BTreeMap<String, String>,
+    user: Value,
+) -> Result<(), String> {
+    let config = config.clone();
+    let token = token.to_string();
+    let mut metadata: HashMap<String, String> = base_metadata.into_iter().collect();
+    if let Some(user_id) = user_id_from_profile_payload(&user) {
+        metadata.insert("user_id".to_string(), user_id);
+    }
+    metadata.insert("user_json".to_string(), user.to_string());
+
+    tokio::task::spawn_blocking(move || {
+        AuthService::from_config(&config)
+            .store_provider_token(
+                APP_SESSION_PROVIDER,
+                DEFAULT_AUTH_PROFILE_NAME,
+                &token,
+                metadata,
+                true,
+            )
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .unwrap_or_else(|e| {
+        Err(format!(
+            "{LOG_PREFIX} revalidated session persist task panicked: {e}"
+        ))
+    })
+}
+
+async fn clear_deferred_session_after_backend_rejection(config: &Config) -> Result<(), String> {
+    let config = config.clone();
+    tokio::task::spawn_blocking(move || {
+        AuthService::from_config(&config)
+            .remove_profile(APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .unwrap_or_else(|e| {
+        Err(format!(
+            "{LOG_PREFIX} deferred session clear task panicked: {e}"
+        ))
+    })?;
+
+    *CURRENT_USER_CACHE.lock() = None;
+    crate::openhuman::scheduler_gate::set_signed_out(true);
+    Ok(())
+}
+
+async fn fetch_current_user_cached(
+    config: &Config,
+    token: &str,
+    allow_cache: bool,
+) -> Result<Option<Value>, String> {
     let api_base = effective_backend_api_url(&config.api_url)
         .trim()
         .trim_end_matches('/')
         .to_string();
 
-    {
+    if allow_cache {
         let cache = CURRENT_USER_CACHE.lock();
         if let Some(entry) = cache.as_ref() {
             if entry.api_base == api_base
@@ -590,8 +672,13 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
             .await
             .unwrap_or_else(|e| Err(format!("[app_state] auth profile load task panicked: {e}")))?;
     let mut auth = session_state_from_profile(session_profile.as_ref());
-    let session_token = session_token_from_profile(session_profile.as_ref());
+    let mut session_token = session_token_from_profile(session_profile.as_ref());
     let stored_user = sanitize_snapshot_user(auth.user.clone());
+    let pending_backend_validation = snapshot_user_pending_backend_validation(stored_user.as_ref());
+    let session_metadata = session_profile
+        .as_ref()
+        .map(|profile| profile.metadata.clone())
+        .unwrap_or_default();
     let auth_ms = t_auth.elapsed().as_millis();
 
     // Resolve the live current-user refresh and the runtime snapshot
@@ -605,28 +692,62 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
     let t_enrich = Instant::now();
     let current_user_future = async {
         let Some(token) = session_token.clone().filter(|t| !t.trim().is_empty()) else {
-            return stored_user.clone();
+            return SnapshotCurrentUser::User(stored_user.clone());
         };
         if is_local_session_token(&token) {
-            return stored_user.clone();
+            return SnapshotCurrentUser::User(stored_user.clone());
         }
         match tokio::time::timeout(
             AUTH_FETCH_TIMEOUT,
-            fetch_current_user_cached(&config, &token),
+            fetch_current_user_cached(&config, &token, !pending_backend_validation),
         )
         .await
         {
-            Ok(Ok(fresh_user)) => fresh_user.or(stored_user.clone()),
+            Ok(Ok(Some(fresh_user))) => {
+                let fresh_user = clear_pending_backend_validation_flag(fresh_user);
+                if pending_backend_validation {
+                    match persist_revalidated_session_user(
+                        &config,
+                        &token,
+                        session_metadata.clone(),
+                        fresh_user.clone(),
+                    )
+                    .await
+                    {
+                        Ok(()) => {
+                            debug!(
+                                "{LOG_PREFIX} cleared pending backend validation after successful current user refresh"
+                            );
+                        }
+                        Err(error) => {
+                            warn!(
+                                "{LOG_PREFIX} failed to persist cleared pending backend validation: {error}"
+                            );
+                        }
+                    }
+                }
+                SnapshotCurrentUser::User(Some(fresh_user))
+            }
+            Ok(Ok(None)) if pending_backend_validation => {
+                warn!(
+                    "{LOG_PREFIX} backend rejected pending session revalidation; clearing stored app session"
+                );
+                if let Err(error) = clear_deferred_session_after_backend_rejection(&config).await {
+                    warn!("{LOG_PREFIX} failed to clear rejected pending session: {error}");
+                }
+                SnapshotCurrentUser::DeferredSessionRejected
+            }
+            Ok(Ok(None)) => SnapshotCurrentUser::User(stored_user.clone()),
             Ok(Err(error)) => {
                 warn!("{LOG_PREFIX} current user refresh failed; using stored snapshot fallback: {error}");
-                stored_user.clone()
+                SnapshotCurrentUser::User(stored_user.clone())
             }
             Err(_) => {
                 warn!(
                     "{LOG_PREFIX} current user fetch timed out after {}s; using stored snapshot fallback",
                     AUTH_FETCH_TIMEOUT.as_secs()
                 );
-                stored_user.clone()
+                SnapshotCurrentUser::User(stored_user.clone())
             }
         }
     };
@@ -650,7 +771,26 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
     };
     let (current_user, runtime) = tokio::join!(current_user_future, runtime_future);
     let enrich_ms = t_enrich.elapsed().as_millis();
-    auth.user = current_user.clone();
+    let current_user = match current_user {
+        SnapshotCurrentUser::User(current_user) => {
+            if pending_backend_validation {
+                if let Some(user_id) = current_user.as_ref().and_then(user_id_from_profile_payload)
+                {
+                    auth.user_id = Some(user_id);
+                }
+            }
+            auth.user = current_user.clone();
+            current_user
+        }
+        SnapshotCurrentUser::DeferredSessionRejected => {
+            auth.is_authenticated = false;
+            auth.user_id = None;
+            auth.user = None;
+            auth.profile_id = None;
+            session_token = None;
+            None
+        }
+    };
 
     let t_local_state = Instant::now();
     let local_state = load_stored_app_state(&config)?;
