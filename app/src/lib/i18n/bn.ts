@@ -1093,6 +1093,16 @@ const messages: TranslationMap = {
   'settings.embeddings.providerAria': 'এমবেডিং প্রদানকারী',
   'settings.embeddings.statusConfigured': 'কনফিগার করা হয়েছে',
   'settings.embeddings.statusNeedsKey': 'API কী প্রয়োজন',
+  'settings.embeddings.requiresSignIn': 'OpenHuman-এ সাইন-ইন প্রয়োজন',
+  'settings.embeddings.managedLoginRequired':
+    'ম্যানেজড এমবেডিংসের জন্য OpenHuman সাইন-ইন প্রয়োজন। OpenHuman ব্যাকএন্ড ব্যবহার করতে সাইন ইন করুন।',
+  'settings.embeddings.managedBannerIntro':
+    'ম্যানেজড এমবেডিংস OpenHuman ব্যাকএন্ডের মাধ্যমে চলে এবং একটি OpenHuman অ্যাকাউন্ট সেশন প্রয়োজন।',
+  'settings.embeddings.managedBannerLocalSession':
+    'এই প্রোভাইডার ব্যবহার করতে স্থানীয় সেশন থেকে বেরিয়ে সাইন ইন করুন, অথবা স্থানীয়/নিজস্ব-কী এমবেডিং প্রোভাইডারে যান।',
+  'settings.embeddings.managedBannerRemoteSession':
+    'OpenHuman সেশন রিফ্রেশ করতে আবার সাইন ইন করুন, অথবা স্থানীয়/নিজস্ব-কী এমবেডিং প্রোভাইডারে যান।',
+  'settings.embeddings.signInAgain': 'আবার সাইন ইন করুন',
   'settings.embeddings.apiKeyLabel': '{provider} API কী',
   'settings.embeddings.placeholderStored': '•••••••• (সঞ্চিত)',
   'settings.embeddings.placeholderKey': 'আপনার API কী পেস্ট করুন…',
@@ -1110,6 +1120,7 @@ const messages: TranslationMap = {
   'settings.embeddings.testConnection': 'সংযোগ পরীক্ষা',
   'settings.embeddings.testing': 'পরীক্ষা হচ্ছে…',
   'settings.embeddings.testSuccess': 'সংযুক্ত — {dims} মাত্রা',
+  'settings.embeddings.connectionTestFailed': 'পরীক্ষা ব্যর্থ হয়েছে',
   'settings.embeddings.testFailed': 'ব্যর্থ: {error}',
   'settings.embeddings.saving': 'সংরক্ষণ হচ্ছে…',
   'settings.embeddings.saved': 'সংরক্ষিত।',

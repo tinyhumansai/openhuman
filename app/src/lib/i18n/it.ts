@@ -1116,6 +1116,16 @@ const messages: TranslationMap = {
   'settings.embeddings.providerAria': 'Fornitore di embeddings',
   'settings.embeddings.statusConfigured': 'Configurato',
   'settings.embeddings.statusNeedsKey': 'Chiave API necessaria',
+  'settings.embeddings.requiresSignIn': 'Accesso OpenHuman richiesto',
+  'settings.embeddings.managedLoginRequired':
+    'Gli embedding gestiti richiedono l’accesso a OpenHuman. Accedi per usare il backend OpenHuman.',
+  'settings.embeddings.managedBannerIntro':
+    'Gli embedding gestiti passano dal backend OpenHuman e richiedono una sessione account OpenHuman.',
+  'settings.embeddings.managedBannerLocalSession':
+    'Esci dalla sessione locale e accedi per usare questo provider, oppure passa a un provider di embedding locale o con chiave personale.',
+  'settings.embeddings.managedBannerRemoteSession':
+    'Accedi di nuovo per aggiornare la sessione OpenHuman, oppure passa a un provider di embedding locale o con chiave personale.',
+  'settings.embeddings.signInAgain': 'Accedi di nuovo',
   'settings.embeddings.apiKeyLabel': 'Chiave API {provider}',
   'settings.embeddings.placeholderStored': '•••••••• (memorizzato)',
   'settings.embeddings.placeholderKey': 'Incolla la tua chiave API…',
@@ -1134,6 +1144,7 @@ const messages: TranslationMap = {
   'settings.embeddings.testConnection': 'Testa connessione',
   'settings.embeddings.testing': 'Test in corso…',
   'settings.embeddings.testSuccess': 'Connesso — {dims} dimensioni',
+  'settings.embeddings.connectionTestFailed': 'Test non riuscito',
   'settings.embeddings.testFailed': 'Fallito: {error}',
   'settings.embeddings.saving': 'Salvataggio…',
   'settings.embeddings.saved': 'Salvato.',

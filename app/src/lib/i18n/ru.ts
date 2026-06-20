@@ -1108,6 +1108,16 @@ const messages: TranslationMap = {
   'settings.embeddings.providerAria': 'Провайдер эмбеддингов',
   'settings.embeddings.statusConfigured': 'Настроено',
   'settings.embeddings.statusNeedsKey': 'Нужен API-ключ',
+  'settings.embeddings.requiresSignIn': 'Требуется вход в OpenHuman',
+  'settings.embeddings.managedLoginRequired':
+    'Для управляемых эмбеддингов требуется вход в OpenHuman. Войдите, чтобы использовать backend OpenHuman.',
+  'settings.embeddings.managedBannerIntro':
+    'Управляемые эмбеддинги проходят через backend OpenHuman и требуют сеанс учетной записи OpenHuman.',
+  'settings.embeddings.managedBannerLocalSession':
+    'Выйдите из локального сеанса и войдите, чтобы использовать этого провайдера, или переключитесь на локального провайдера эмбеддингов либо провайдера с собственным ключом.',
+  'settings.embeddings.managedBannerRemoteSession':
+    'Войдите снова, чтобы обновить сеанс OpenHuman, или переключитесь на локального провайдера эмбеддингов либо провайдера с собственным ключом.',
+  'settings.embeddings.signInAgain': 'Войти снова',
   'settings.embeddings.apiKeyLabel': 'API-ключ {provider}',
   'settings.embeddings.placeholderStored': '•••••••• (сохранено)',
   'settings.embeddings.placeholderKey': 'Вставьте API-ключ…',
@@ -1126,6 +1136,7 @@ const messages: TranslationMap = {
   'settings.embeddings.testConnection': 'Проверить подключение',
   'settings.embeddings.testing': 'Проверка…',
   'settings.embeddings.testSuccess': 'Подключено — {dims} измерений',
+  'settings.embeddings.connectionTestFailed': 'Проверка не удалась',
   'settings.embeddings.testFailed': 'Ошибка: {error}',
   'settings.embeddings.saving': 'Сохранение…',
   'settings.embeddings.saved': 'Сохранено.',

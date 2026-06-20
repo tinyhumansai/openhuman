@@ -1091,6 +1091,16 @@ const messages: TranslationMap = {
   'settings.embeddings.providerAria': '임베딩 제공자',
   'settings.embeddings.statusConfigured': '구성됨',
   'settings.embeddings.statusNeedsKey': 'API 키 필요',
+  'settings.embeddings.requiresSignIn': 'OpenHuman 로그인 필요',
+  'settings.embeddings.managedLoginRequired':
+    '관리형 임베딩을 사용하려면 OpenHuman 로그인이 필요합니다. OpenHuman 백엔드를 사용하려면 로그인하세요.',
+  'settings.embeddings.managedBannerIntro':
+    '관리형 임베딩은 OpenHuman 백엔드를 통해 라우팅되며 OpenHuman 계정 세션이 필요합니다.',
+  'settings.embeddings.managedBannerLocalSession':
+    '이 공급자를 사용하려면 로컬 세션을 종료하고 로그인하거나, 로컬 또는 자체 키 임베딩 공급자로 전환하세요.',
+  'settings.embeddings.managedBannerRemoteSession':
+    'OpenHuman 세션을 새로 고치려면 다시 로그인하거나, 로컬 또는 자체 키 임베딩 공급자로 전환하세요.',
+  'settings.embeddings.signInAgain': '다시 로그인',
   'settings.embeddings.apiKeyLabel': '{provider} API 키',
   'settings.embeddings.placeholderStored': '•••••••(저장됨)',
   'settings.embeddings.placeholderKey': 'API 키를 붙여넣으세요…',
@@ -1108,6 +1118,7 @@ const messages: TranslationMap = {
   'settings.embeddings.testConnection': '연결 테스트',
   'settings.embeddings.testing': '테스트 중…',
   'settings.embeddings.testSuccess': '연결됨 — {dims} 차원',
+  'settings.embeddings.connectionTestFailed': '테스트 실패',
   'settings.embeddings.testFailed': '실패: {error}',
   'settings.embeddings.saving': '저장 중…',
   'settings.embeddings.saved': '저장됨.',

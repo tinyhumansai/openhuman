@@ -1076,6 +1076,16 @@ const messages: TranslationMap = {
   'settings.embeddings.providerAria': 'مزود التضمينات',
   'settings.embeddings.statusConfigured': 'تم التهيئة',
   'settings.embeddings.statusNeedsKey': 'يحتاج مفتاح API',
+  'settings.embeddings.requiresSignIn': 'يتطلب تسجيل الدخول إلى OpenHuman',
+  'settings.embeddings.managedLoginRequired':
+    'تتطلب التضمينات المُدارة تسجيل الدخول إلى OpenHuman. سجّل الدخول لاستخدام خلفية OpenHuman.',
+  'settings.embeddings.managedBannerIntro':
+    'تمر التضمينات المُدارة عبر خلفية OpenHuman وتتطلب جلسة حساب OpenHuman.',
+  'settings.embeddings.managedBannerLocalSession':
+    'اخرج من الجلسة المحلية وسجّل الدخول لاستخدام هذا المزوّد، أو انتقل إلى مزوّد تضمينات محلي أو بمفتاحك الخاص.',
+  'settings.embeddings.managedBannerRemoteSession':
+    'سجّل الدخول مرة أخرى لتحديث جلسة OpenHuman، أو انتقل إلى مزوّد تضمينات محلي أو بمفتاحك الخاص.',
+  'settings.embeddings.signInAgain': 'تسجيل الدخول مرة أخرى',
   'settings.embeddings.apiKeyLabel': 'مفتاح API لـ {provider}',
   'settings.embeddings.placeholderStored': '•••••••• (مخزن)',
   'settings.embeddings.placeholderKey': 'الصق مفتاح API الخاص بك…',
@@ -1093,6 +1103,7 @@ const messages: TranslationMap = {
   'settings.embeddings.testConnection': 'اختبار الاتصال',
   'settings.embeddings.testing': 'جارٍ الاختبار…',
   'settings.embeddings.testSuccess': 'متصل — {dims} بُعد',
+  'settings.embeddings.connectionTestFailed': 'فشل الاختبار',
   'settings.embeddings.testFailed': 'فشل: {error}',
   'settings.embeddings.saving': 'جارٍ الحفظ…',
   'settings.embeddings.saved': 'تم الحفظ.',

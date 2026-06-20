@@ -1042,6 +1042,16 @@ const messages: TranslationMap = {
   'settings.embeddings.providerAria': '嵌入提供商',
   'settings.embeddings.statusConfigured': '已配置',
   'settings.embeddings.statusNeedsKey': '需要 API 密钥',
+  'settings.embeddings.requiresSignIn': '需要登录 OpenHuman',
+  'settings.embeddings.managedLoginRequired':
+    '托管嵌入需要登录 OpenHuman。请登录后使用 OpenHuman 后端。',
+  'settings.embeddings.managedBannerIntro':
+    '托管嵌入会通过 OpenHuman 后端，并且需要 OpenHuman 账号会话。',
+  'settings.embeddings.managedBannerLocalSession':
+    '退出本地会话并登录即可使用此提供商，或切换到本地/自带密钥的嵌入提供商。',
+  'settings.embeddings.managedBannerRemoteSession':
+    '重新登录以刷新 OpenHuman 会话，或切换到本地/自带密钥的嵌入提供商。',
+  'settings.embeddings.signInAgain': '重新登录',
   'settings.embeddings.apiKeyLabel': '{provider} API 密钥',
   'settings.embeddings.placeholderStored': '••••••••（已存储）',
   'settings.embeddings.placeholderKey': '粘贴您的 API 密钥…',
@@ -1059,6 +1069,7 @@ const messages: TranslationMap = {
   'settings.embeddings.testConnection': '测试连接',
   'settings.embeddings.testing': '测试中…',
   'settings.embeddings.testSuccess': '已连接 — {dims} 维度',
+  'settings.embeddings.connectionTestFailed': '测试失败',
   'settings.embeddings.testFailed': '失败：{error}',
   'settings.embeddings.saving': '保存中…',
   'settings.embeddings.saved': '已保存。',

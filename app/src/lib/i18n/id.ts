@@ -1100,6 +1100,16 @@ const messages: TranslationMap = {
   'settings.embeddings.providerAria': 'Penyedia embedding',
   'settings.embeddings.statusConfigured': 'Dikonfigurasi',
   'settings.embeddings.statusNeedsKey': 'Perlu kunci API',
+  'settings.embeddings.requiresSignIn': 'Memerlukan masuk OpenHuman',
+  'settings.embeddings.managedLoginRequired':
+    'Embedding terkelola memerlukan masuk OpenHuman. Masuk untuk menggunakan backend OpenHuman.',
+  'settings.embeddings.managedBannerIntro':
+    'Embedding terkelola dirutekan melalui backend OpenHuman dan memerlukan sesi akun OpenHuman.',
+  'settings.embeddings.managedBannerLocalSession':
+    'Keluar dari sesi lokal dan masuk untuk menggunakan penyedia ini, atau beralih ke penyedia embedding lokal atau bawa-kunci-sendiri.',
+  'settings.embeddings.managedBannerRemoteSession':
+    'Masuk lagi untuk menyegarkan sesi OpenHuman Anda, atau beralih ke penyedia embedding lokal atau bawa-kunci-sendiri.',
+  'settings.embeddings.signInAgain': 'Masuk lagi',
   'settings.embeddings.apiKeyLabel': 'Kunci API {provider}',
   'settings.embeddings.placeholderStored': '•••••••• (disimpan)',
   'settings.embeddings.placeholderKey': 'Tempel kunci API Anda…',
@@ -1117,6 +1127,7 @@ const messages: TranslationMap = {
   'settings.embeddings.testConnection': 'Uji koneksi',
   'settings.embeddings.testing': 'Menguji…',
   'settings.embeddings.testSuccess': 'Terhubung — {dims} dimensi',
+  'settings.embeddings.connectionTestFailed': 'Pengujian gagal',
   'settings.embeddings.testFailed': 'Gagal: {error}',
   'settings.embeddings.saving': 'Menyimpan…',
   'settings.embeddings.saved': 'Tersimpan.',

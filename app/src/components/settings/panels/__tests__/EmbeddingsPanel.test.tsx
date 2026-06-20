@@ -168,6 +168,9 @@ describe('EmbeddingsPanel', () => {
     await waitFor(() =>
       expect(screen.getByText(/Managed embeddings require OpenHuman sign-in/i)).toBeInTheDocument()
     );
+    expect(
+      screen.getByText(/Managed embeddings route through the OpenHuman backend/i)
+    ).toBeInTheDocument();
     expect(vi.mocked(updateEmbeddingsSettings)).not.toHaveBeenCalled();
   });
 

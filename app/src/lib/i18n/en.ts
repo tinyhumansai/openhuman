@@ -1440,6 +1440,16 @@ const en: TranslationMap = {
   'settings.embeddings.providerAria': 'Embedding provider',
   'settings.embeddings.statusConfigured': 'Configured',
   'settings.embeddings.statusNeedsKey': 'Needs API key',
+  'settings.embeddings.requiresSignIn': 'Requires OpenHuman sign-in',
+  'settings.embeddings.managedLoginRequired':
+    'Managed embeddings require OpenHuman sign-in. Sign in to use the OpenHuman backend.',
+  'settings.embeddings.managedBannerIntro':
+    'Managed embeddings route through the OpenHuman backend and require an OpenHuman account session.',
+  'settings.embeddings.managedBannerLocalSession':
+    'Exit local session and sign in to use this provider, or switch to a local or bring-your-own embeddings provider.',
+  'settings.embeddings.managedBannerRemoteSession':
+    'Sign in again to refresh your OpenHuman session, or switch to a local or bring-your-own embeddings provider.',
+  'settings.embeddings.signInAgain': 'Sign in again',
   'settings.embeddings.apiKeyLabel': '{provider} API key',
   'settings.embeddings.placeholderStored': '•••••••• (stored)',
   'settings.embeddings.placeholderKey': 'Paste your API key…',
@@ -1457,6 +1467,7 @@ const en: TranslationMap = {
   'settings.embeddings.testConnection': 'Test connection',
   'settings.embeddings.testing': 'Testing…',
   'settings.embeddings.testSuccess': 'Connected — {dims} dimensions',
+  'settings.embeddings.connectionTestFailed': 'Test failed',
   'settings.embeddings.testFailed': 'Failed: {error}',
   'settings.embeddings.saving': 'Saving…',
   'settings.embeddings.saved': 'Saved.',

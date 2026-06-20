@@ -1091,6 +1091,16 @@ const messages: TranslationMap = {
   'settings.embeddings.providerAria': 'एम्बेडिंग प्रदाता',
   'settings.embeddings.statusConfigured': 'कॉन्फ़िगर किया गया',
   'settings.embeddings.statusNeedsKey': 'API कुंजी चाहिए',
+  'settings.embeddings.requiresSignIn': 'OpenHuman साइन-इन आवश्यक',
+  'settings.embeddings.managedLoginRequired':
+    'प्रबंधित एम्बेडिंग के लिए OpenHuman साइन-इन आवश्यक है। OpenHuman बैकएंड का उपयोग करने के लिए साइन इन करें।',
+  'settings.embeddings.managedBannerIntro':
+    'प्रबंधित एम्बेडिंग OpenHuman बैकएंड से होकर चलते हैं और OpenHuman खाता सत्र की आवश्यकता होती है।',
+  'settings.embeddings.managedBannerLocalSession':
+    'इस प्रदाता का उपयोग करने के लिए स्थानीय सत्र से बाहर निकलें और साइन इन करें, या स्थानीय/अपनी-कुंजी वाले एम्बेडिंग प्रदाता पर स्विच करें।',
+  'settings.embeddings.managedBannerRemoteSession':
+    'अपने OpenHuman सत्र को रीफ़्रेश करने के लिए फिर से साइन इन करें, या स्थानीय/अपनी-कुंजी वाले एम्बेडिंग प्रदाता पर स्विच करें।',
+  'settings.embeddings.signInAgain': 'फिर से साइन इन करें',
   'settings.embeddings.apiKeyLabel': '{provider} API कुंजी',
   'settings.embeddings.placeholderStored': '•••••••• (संग्रहीत)',
   'settings.embeddings.placeholderKey': 'अपनी API कुंजी पेस्ट करें…',
@@ -1109,6 +1119,7 @@ const messages: TranslationMap = {
   'settings.embeddings.testConnection': 'कनेक्शन परीक्षण',
   'settings.embeddings.testing': 'परीक्षण हो रहा है…',
   'settings.embeddings.testSuccess': 'कनेक्ट — {dims} आयाम',
+  'settings.embeddings.connectionTestFailed': 'परीक्षण विफल',
   'settings.embeddings.testFailed': 'विफल: {error}',
   'settings.embeddings.saving': 'सहेजा जा रहा है…',
   'settings.embeddings.saved': 'सहेजा गया।',

@@ -40,15 +40,12 @@ type Status =
   | { kind: 'saved' }
   | { kind: 'error'; message: string };
 
-interface EmbeddingsPanelProps {
-  embedded?: boolean;
-}
-
-const MANAGED_LOGIN_MESSAGE =
-  'Managed embeddings require OpenHuman sign-in. Sign in to use the OpenHuman backend.';
-
 function isBackendSessionError(message: string | undefined): boolean {
   return /no backend session/i.test(message ?? '');
+}
+
+interface EmbeddingsPanelProps {
+  embedded?: boolean;
 }
 
 const EmbeddingsPanel = ({ embedded = false }: EmbeddingsPanelProps = {}) => {
@@ -122,19 +119,21 @@ const EmbeddingsPanel = ({ embedded = false }: EmbeddingsPanelProps = {}) => {
   const currentModels = currentEntry?.models ?? [];
   const currentModel = currentModels.find(m => m.id === settings.model) ?? currentModels[0];
   const allowedDims = currentModel?.allowed_dimensions ?? [];
+  const managedLoginMessage = t('settings.embeddings.managedLoginRequired');
   const managedRequiresLogin = isLocalSession && selectedProvider === 'managed';
   const showManagedLoginPrompt =
-    selectedProvider === 'managed' && (managedRequiresLogin || managedSessionMissing);
+    (selectedProvider === 'managed' && (managedRequiresLogin || managedSessionMissing)) ||
+    (isLocalSession && managedSessionMissing);
 
   function handleProviderClick(entry: EmbeddingProviderEntry) {
+    if (entry.slug !== 'managed') setManagedSessionMissing(false);
     if (entry.slug === selectedProvider) return;
 
     if (entry.slug === 'managed' && isLocalSession) {
-      setStatus({ kind: 'error', message: MANAGED_LOGIN_MESSAGE });
+      setManagedSessionMissing(true);
+      setStatus({ kind: 'error', message: managedLoginMessage });
       return;
     }
-
-    if (entry.slug !== 'managed') setManagedSessionMissing(false);
 
     if (entry.slug === 'custom') {
       // For custom, open setup popup to enter endpoint
@@ -364,10 +363,10 @@ const EmbeddingsPanel = ({ embedded = false }: EmbeddingsPanelProps = {}) => {
         setManagedSessionMissing(false);
         setStatus({ kind: 'saved' });
       } else {
-        const message = result.error ?? 'Test failed';
+        const message = result.error ?? t('settings.embeddings.connectionTestFailed');
         if (selectedProvider === 'managed' && isBackendSessionError(message)) {
           setManagedSessionMissing(true);
-          setStatus({ kind: 'error', message: MANAGED_LOGIN_MESSAGE });
+          setStatus({ kind: 'error', message: managedLoginMessage });
         } else {
           setStatus({ kind: 'error', message });
         }
@@ -376,7 +375,7 @@ const EmbeddingsPanel = ({ embedded = false }: EmbeddingsPanelProps = {}) => {
       const message = err instanceof Error ? err.message : String(err);
       if (selectedProvider === 'managed' && isBackendSessionError(message)) {
         setManagedSessionMissing(true);
-        setStatus({ kind: 'error', message: MANAGED_LOGIN_MESSAGE });
+        setStatus({ kind: 'error', message: managedLoginMessage });
       } else {
         setStatus({ kind: 'error', message });
       }
@@ -426,7 +425,9 @@ const EmbeddingsPanel = ({ embedded = false }: EmbeddingsPanelProps = {}) => {
                         </SettingsBadge>
                       )}
                       {isLocalSession && entry.slug === 'managed' && (
-                        <SettingsBadge variant="warning">Requires OpenHuman sign-in</SettingsBadge>
+                        <SettingsBadge variant="warning">
+                          {t('settings.embeddings.requiresSignIn')}
+                        </SettingsBadge>
                       )}
                     </span>
                     <span className="block mt-0.5 text-xs text-neutral-500 dark:text-neutral-400">
@@ -458,11 +459,10 @@ const EmbeddingsPanel = ({ embedded = false }: EmbeddingsPanelProps = {}) => {
           <div className="rounded-xl border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-900/10 p-3">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <p className="text-xs text-amber-800 dark:text-amber-200 leading-relaxed">
-                Managed embeddings route through the OpenHuman backend and require an OpenHuman
-                account session.{' '}
+                {t('settings.embeddings.managedBannerIntro')}{' '}
                 {isLocalSession
-                  ? 'Exit local session and sign in to use this provider, or switch to a local or bring-your-own embeddings provider.'
-                  : 'Sign in again to refresh your OpenHuman session, or switch to a local or bring-your-own embeddings provider.'}
+                  ? t('settings.embeddings.managedBannerLocalSession')
+                  : t('settings.embeddings.managedBannerRemoteSession')}
               </p>
               <Button
                 type="button"
@@ -470,7 +470,9 @@ const EmbeddingsPanel = ({ embedded = false }: EmbeddingsPanelProps = {}) => {
                 size="xs"
                 className="shrink-0"
                 onClick={() => void clearSession()}>
-                {isLocalSession ? t('settings.exitLocalSession') : 'Sign in again'}
+                {isLocalSession
+                  ? t('settings.exitLocalSession')
+                  : t('settings.embeddings.signInAgain')}
               </Button>
             </div>
           </div>

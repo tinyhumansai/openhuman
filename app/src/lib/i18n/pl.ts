@@ -1110,6 +1110,16 @@ const messages: TranslationMap = {
   'settings.embeddings.providerAria': 'Dostawca embeddings',
   'settings.embeddings.statusConfigured': 'Skonfigurowano',
   'settings.embeddings.statusNeedsKey': 'Wymaga klucza API',
+  'settings.embeddings.requiresSignIn': 'Wymagane logowanie do OpenHuman',
+  'settings.embeddings.managedLoginRequired':
+    'Zarządzane osadzania wymagają logowania do OpenHuman. Zaloguj się, aby użyć backendu OpenHuman.',
+  'settings.embeddings.managedBannerIntro':
+    'Zarządzane osadzania są kierowane przez backend OpenHuman i wymagają sesji konta OpenHuman.',
+  'settings.embeddings.managedBannerLocalSession':
+    'Zakończ sesję lokalną i zaloguj się, aby użyć tego dostawcy, albo przełącz się na lokalnego dostawcę osadzań lub dostawcę z własnym kluczem.',
+  'settings.embeddings.managedBannerRemoteSession':
+    'Zaloguj się ponownie, aby odświeżyć sesję OpenHuman, albo przełącz się na lokalnego dostawcę osadzań lub dostawcę z własnym kluczem.',
+  'settings.embeddings.signInAgain': 'Zaloguj się ponownie',
   'settings.embeddings.apiKeyLabel': 'Klucz API {provider}',
   'settings.embeddings.placeholderStored': '•••••••• (zapisane)',
   'settings.embeddings.placeholderKey': 'Wklej swój klucz API…',
@@ -1127,6 +1137,7 @@ const messages: TranslationMap = {
   'settings.embeddings.testConnection': 'Przetestuj połączenie',
   'settings.embeddings.testing': 'Testowanie…',
   'settings.embeddings.testSuccess': 'Połączono — wymiarów: {dims}',
+  'settings.embeddings.connectionTestFailed': 'Test nie powiódł się',
   'settings.embeddings.testFailed': 'Niepowodzenie: {error}',
   'settings.embeddings.saving': 'Zapisywanie…',
   'settings.embeddings.saved': 'Zapisano.',
