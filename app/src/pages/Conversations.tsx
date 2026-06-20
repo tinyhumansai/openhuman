@@ -2247,11 +2247,20 @@ const Conversations = ({
         data-walkthrough="home-cta"
         // Page variant: float at the bottom (absolute) over the fade; centered +
         // width-capped to match the messages. `z-20` keeps it above messages
-        // that would otherwise paint over it while scrolling. Sidebar embed
-        // keeps the in-flow composer.
+        // that would otherwise paint over it while scrolling.
+        //
+        // Sidebar embed keeps the in-flow composer, but caps its height to the
+        // panel and scrolls internally (#3785). Without this, the footer stacks
+        // the upsell/error banners + actionable error CTAs (e.g. the voice
+        // "Setup" link) + the composer in a single `flex-shrink-0` block inside
+        // the `overflow-hidden` mainPanel; on a short window the footer's natural
+        // height exceeds the panel and its bottom is clipped with no scroll
+        // affordance, leaving the composer/CTA unreachable. `overflow-y-auto`
+        // zeroes the flex auto-min-height so `max-h-full` can clamp the footer
+        // and surface a scrollbar instead of clipping.
         className={
           isSidebar
-            ? 'mx-auto w-full max-w-[48.75rem] flex-shrink-0 px-4 py-3'
+            ? 'mx-auto w-full max-w-[48.75rem] flex-shrink-0 max-h-full overflow-y-auto px-4 py-3'
             : 'absolute inset-x-0 bottom-0 z-20 mx-auto w-full max-w-[48.75rem] px-4 pb-4 pt-6'
         }>
         <>
