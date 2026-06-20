@@ -8,7 +8,7 @@
  */
 import type { CloudProvider, ProviderRef, RoutingMap } from './AIPanel';
 
-const LOCAL_RUNTIME_SLUGS = ['ollama', 'lmstudio'] as const;
+const LOCAL_RUNTIME_SLUGS = ['ollama', 'lmstudio', 'omlx'] as const;
 
 /**
  * Reset any workload routing ref pinned to a now-removed provider back to

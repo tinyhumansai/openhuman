@@ -131,6 +131,7 @@ const BUILTIN_RESERVED_SLUGS = [
   'custom',
   'ollama',
   'lmstudio',
+  'omlx',
   // Claude Code is a CLI-backed peer provider surfaced via a dedicated
   // connect button (not a chip), so reserve its slug so it never renders in
   // the generic custom-provider chip list.
@@ -288,6 +289,7 @@ function slugifyCustomProviderName(name: string): string {
 function authStyleForSlug(slug: string): AuthStyle {
   if (slug === 'openhuman') return 'openhuman_jwt';
   if (slug === 'lmstudio' || slug === 'ollama') return 'none';
+  if (slug === 'omlx') return 'bearer';
   // Claude Code authenticates via the local CLI, never an HTTP key.
   if (slug === 'claude-code') return 'none';
   return authStyleForBuiltinCloudProvider(slug) ?? 'bearer';
@@ -537,15 +539,16 @@ function useInstalledModels(snapshot: LocalProviderSnapshot | null): OllamaModel
 
 // Local-runtime chip slugs (Ollama / LM Studio) that aren't actual slugs in
 // the cloud_providers list but need the same chip affordance.
-type LocalChipSlug = 'lmstudio' | 'ollama';
+type LocalChipSlug = 'lmstudio' | 'ollama' | 'omlx';
 
 // Tints per local-runtime chip slug.
 const LOCAL_CHIP_TONE: Record<LocalChipSlug, string> = {
   lmstudio: 'bg-cyan-50 dark:bg-cyan-500/10 ring-cyan-200 text-cyan-900 dark:text-cyan-100',
   ollama: 'bg-violet-50 dark:bg-violet-500/10 ring-violet-200 text-violet-900 dark:text-violet-100',
+  omlx: 'bg-amber-50 dark:bg-amber-500/10 ring-amber-200 text-amber-900 dark:text-amber-100',
 };
 
-const LOCAL_CHIP_LABEL: Record<LocalChipSlug, string> = { lmstudio: 'LM Studio', ollama: 'Ollama' };
+const LOCAL_CHIP_LABEL: Record<LocalChipSlug, string> = { lmstudio: 'LM Studio', ollama: 'Ollama', omlx: 'OMLX' };
 
 function providerToggleAriaLabel(
   t: (key: string, fallback?: string) => string,
@@ -3786,6 +3789,8 @@ function defaultEndpointFor(slug: string): string {
       return 'http://localhost:11434/v1';
     case 'lmstudio':
       return 'http://localhost:1234/v1';
+    case 'omlx':
+      return 'http://localhost:8000/v1';
     default:
       return '';
   }
