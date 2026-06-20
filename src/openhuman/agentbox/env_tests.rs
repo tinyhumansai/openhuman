@@ -33,12 +33,13 @@ fn collect_reports_each_missing_var() {
     );
 }
 
-// `OPENHUMAN_AGENTBOX_MODE` is process-global. No other test mutates it
-// concurrently (see `disabled_mode_tests.rs`), so toggling it inline here is
-// safe today; we restore the prior value to avoid leaking state into other
-// tests in the same binary.
+// `OPENHUMAN_AGENTBOX_MODE` is process-global. Use the repo-wide env lock so
+// this does not race status/router tests that read or mutate the same key.
 #[test]
 fn mode_enabled_only_when_flag_is_exactly_one() {
+    let _env_lock = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let prior = std::env::var(AGENTBOX_MODE_ENV_VAR).ok();
 
     std::env::set_var(AGENTBOX_MODE_ENV_VAR, "1");
