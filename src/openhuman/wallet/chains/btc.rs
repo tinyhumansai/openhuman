@@ -546,7 +546,7 @@ mod tests {
             .unwrap_or_else(|e| e.into_inner());
         reset_quote_store_for_tests();
         let temp = TempDir::new().unwrap();
-        setup_wallet_in(&temp).await.unwrap();
+        let _workspace_guard = setup_wallet_in(&temp).await.unwrap();
 
         // Mock state: collect raw tx hex posted to /tx.
         let raw_txs: Arc<parking_lot::Mutex<Vec<String>>> =
@@ -635,7 +635,7 @@ mod tests {
             .unwrap_or_else(|e| e.into_inner());
         reset_quote_store_for_tests();
         let temp = TempDir::new().unwrap();
-        setup_wallet_in(&temp).await.unwrap();
+        let _workspace_guard = setup_wallet_in(&temp).await.unwrap();
 
         // Empty UTXO set — must error.
         let app = Router::new().route(

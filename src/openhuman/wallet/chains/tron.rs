@@ -547,7 +547,7 @@ mod tests {
             .unwrap_or_else(|e| e.into_inner());
         reset_quote_store_for_tests();
         let temp = TempDir::new().unwrap();
-        setup_wallet_in(&temp).await.unwrap();
+        let _workspace_guard = setup_wallet_in(&temp).await.unwrap();
 
         let record = TronMockRecord::default();
         let addr = start_tron_mock(record.clone()).await;
@@ -602,7 +602,7 @@ mod tests {
             .unwrap_or_else(|e| e.into_inner());
         reset_quote_store_for_tests();
         let temp = TempDir::new().unwrap();
-        setup_wallet_in(&temp).await.unwrap();
+        let _workspace_guard = setup_wallet_in(&temp).await.unwrap();
 
         let record = TronMockRecord::default();
         let addr = start_tron_mock(record.clone()).await;
@@ -656,7 +656,7 @@ mod tests {
             .unwrap_or_else(|e| e.into_inner());
         reset_quote_store_for_tests();
         let temp = TempDir::new().unwrap();
-        setup_wallet_in(&temp).await.unwrap();
+        let _workspace_guard = setup_wallet_in(&temp).await.unwrap();
 
         // Custom mock returning result=false on broadcast.
         let app = Router::new()

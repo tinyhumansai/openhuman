@@ -2,7 +2,6 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::{extract::State, routing::post, Json, Router};
-use once_cell::sync::Lazy;
 use serde_json::{json, Value};
 use tempfile::TempDir;
 use tokio::net::TcpListener;
@@ -10,8 +9,9 @@ use tokio::net::TcpListener;
 use super::*;
 use crate::openhuman::config::rpc as config_rpc;
 use crate::openhuman::wallet::ops::{setup, WalletSetupParams, WalletSetupSource};
-
-pub(crate) static TEST_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+use crate::openhuman::wallet::test_support::{
+    set_workspace_env_for_test, WorkspaceEnvGuard, TEST_LOCK,
+};
 
 #[derive(Clone)]
 struct MockRpcState {
@@ -101,8 +101,8 @@ async fn start_mock_rpc(
     start_mock_rpc_with_chain_id("0x1").await
 }
 
-pub(crate) async fn setup_wallet_in(temp: &TempDir) -> Result<(), String> {
-    std::env::set_var("OPENHUMAN_WORKSPACE", temp.path());
+pub(crate) async fn setup_wallet_in(temp: &TempDir) -> Result<WorkspaceEnvGuard, String> {
+    let workspace_guard = set_workspace_env_for_test(temp);
     let config = config_rpc::load_config_with_timeout().await?;
     let encrypted = crate::openhuman::encryption::rpc::encrypt_secret(
         &config,
@@ -128,7 +128,7 @@ pub(crate) async fn setup_wallet_in(temp: &TempDir) -> Result<(), String> {
         force: true,
     })
     .await?;
-    Ok(())
+    Ok(workspace_guard)
 }
 
 #[test]
@@ -239,7 +239,7 @@ async fn prepare_transfer_rejects_unknown_asset_symbol() {
         .unwrap_or_else(|e| e.into_inner());
     reset_quote_store_for_tests();
     let temp = TempDir::new().unwrap();
-    setup_wallet_in(&temp).await.unwrap();
+    let _workspace_guard = setup_wallet_in(&temp).await.unwrap();
     let err = prepare_transfer(PrepareTransferParams {
         chain: WalletChain::Evm,
         to_address: "0x1111111111111111111111111111111111111111".into(),
@@ -259,7 +259,7 @@ async fn balances_fans_evm_account_into_eth_base_bsc_rows() {
         .lock()
         .unwrap_or_else(|e| e.into_inner());
     let temp = TempDir::new().unwrap();
-    setup_wallet_in(&temp).await.unwrap();
+    let _workspace_guard = setup_wallet_in(&temp).await.unwrap();
     // Point all three displayed EVM networks at a mock returning 1e18 wei.
     let (addr, _estimate_calls, _raw_txs) = start_mock_rpc().await.unwrap();
     for var in [
@@ -323,7 +323,7 @@ async fn execute_prepared_broadcasts_native_evm_transaction() {
         .unwrap_or_else(|e| e.into_inner());
     reset_quote_store_for_tests();
     let temp = TempDir::new().unwrap();
-    setup_wallet_in(&temp).await.unwrap();
+    let _workspace_guard = setup_wallet_in(&temp).await.unwrap();
     let (addr, estimate_calls, raw_txs) = start_mock_rpc().await.unwrap();
     std::env::set_var("OPENHUMAN_WALLET_RPC_EVM", format!("http://{addr}"));
 
@@ -363,7 +363,7 @@ async fn execute_prepared_broadcasts_erc20_transfer_using_default_token_catalog(
         .unwrap_or_else(|e| e.into_inner());
     reset_quote_store_for_tests();
     let temp = TempDir::new().unwrap();
-    setup_wallet_in(&temp).await.unwrap();
+    let _workspace_guard = setup_wallet_in(&temp).await.unwrap();
     let (addr, estimate_calls, raw_txs) = start_mock_rpc().await.unwrap();
     std::env::set_var("OPENHUMAN_WALLET_RPC_EVM", format!("http://{addr}"));
 
@@ -407,7 +407,7 @@ async fn execute_prepared_broadcasts_native_evm_on_base_with_chain_id_8453() {
         .unwrap_or_else(|e| e.into_inner());
     reset_quote_store_for_tests();
     let temp = TempDir::new().unwrap();
-    setup_wallet_in(&temp).await.unwrap();
+    let _workspace_guard = setup_wallet_in(&temp).await.unwrap();
     // Base uses chain_id 8453 = 0x2105.
     let (addr, _estimate_calls, raw_txs) = start_mock_rpc_with_chain_id("0x2105").await.unwrap();
     std::env::set_var("OPENHUMAN_WALLET_RPC_BASE", format!("http://{addr}"));
@@ -642,7 +642,7 @@ async fn prepare_stamps_owner_via_task_local() {
         .unwrap_or_else(|e| e.into_inner());
     reset_quote_store_for_tests();
     let temp = TempDir::new().unwrap();
-    setup_wallet_in(&temp).await.unwrap();
+    let _workspace_guard = setup_wallet_in(&temp).await.unwrap();
 
     let expected = owner_a();
     let ctx = chat_ctx_from(&expected);
@@ -677,7 +677,7 @@ async fn execute_prepared_rejects_evm_chain_id_mismatch() {
         .unwrap_or_else(|e| e.into_inner());
     reset_quote_store_for_tests();
     let temp = TempDir::new().unwrap();
-    setup_wallet_in(&temp).await.unwrap();
+    let _workspace_guard = setup_wallet_in(&temp).await.unwrap();
     // Quote says Base; mock reports Ethereum (0x1) — must fail.
     let (addr, _e, _r) = start_mock_rpc_with_chain_id("0x1").await.unwrap();
     std::env::set_var("OPENHUMAN_WALLET_RPC_BASE", format!("http://{addr}"));

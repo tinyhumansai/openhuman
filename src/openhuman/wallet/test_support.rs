@@ -69,11 +69,17 @@ impl Drop for WorkspaceEnvGuard {
     }
 }
 
-pub(crate) async fn setup_wallet_in(temp: &TempDir) -> Result<(), String> {
-    // We intentionally leak the env-var change for the duration of the test
-    // (wallet state lookups rely on it). The shared `TEST_LOCK` mutex
-    // serializes tests so concurrent tests can't race on the var.
+pub(crate) fn set_workspace_env_for_test(temp: &TempDir) -> WorkspaceEnvGuard {
+    let prev = std::env::var_os("OPENHUMAN_WORKSPACE");
     std::env::set_var("OPENHUMAN_WORKSPACE", temp.path());
+    WorkspaceEnvGuard { prev }
+}
+
+pub(crate) async fn setup_wallet_in(temp: &TempDir) -> Result<WorkspaceEnvGuard, String> {
+    // Wallet state lookups rely on OPENHUMAN_WORKSPACE for the duration of
+    // each test. Return a guard so the tempdir path does not leak into later
+    // parallel tests after this test's TempDir has been dropped.
+    let workspace_guard = set_workspace_env_for_test(temp);
     let config = config_rpc::load_config_with_timeout().await?;
     let encrypted = crate::openhuman::encryption::rpc::encrypt_secret(&config, TEST_MNEMONIC)
         .await?
@@ -96,5 +102,39 @@ pub(crate) async fn setup_wallet_in(temp: &TempDir) -> Result<(), String> {
         force: true,
     })
     .await?;
-    Ok(())
+    Ok(workspace_guard)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn setup_wallet_in_restores_workspace_env_when_guard_drops() {
+        let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let previous = std::env::var_os("OPENHUMAN_WORKSPACE");
+        std::env::set_var("OPENHUMAN_WORKSPACE", "/tmp/openhuman-existing-workspace");
+
+        let temp = TempDir::new().expect("temp dir");
+        let workspace_guard = setup_wallet_in(&temp).await.expect("setup wallet");
+        assert_eq!(
+            std::env::var_os("OPENHUMAN_WORKSPACE"),
+            Some(temp.path().as_os_str().to_os_string())
+        );
+
+        drop(workspace_guard);
+        assert_eq!(
+            std::env::var_os("OPENHUMAN_WORKSPACE"),
+            Some(std::ffi::OsString::from(
+                "/tmp/openhuman-existing-workspace"
+            ))
+        );
+
+        match previous {
+            Some(value) => std::env::set_var("OPENHUMAN_WORKSPACE", value),
+            None => std::env::remove_var("OPENHUMAN_WORKSPACE"),
+        }
+    }
 }

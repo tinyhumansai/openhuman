@@ -515,7 +515,7 @@ mod tests {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         let temp = TempDir::new().unwrap();
-        setup_wallet_in(&temp).await.unwrap();
+        let _workspace_guard = setup_wallet_in(&temp).await.unwrap();
         let (addr, calls) = start_evm_mock(JsonValue::Null, JsonValue::Null).await;
         set_evm_rpc(addr);
         let result = sign_and_broadcast_evm(
