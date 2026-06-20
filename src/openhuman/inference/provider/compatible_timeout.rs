@@ -13,6 +13,7 @@
 //! (logged at debug level by [`resolve`]), so a typo can never disable the
 //! timeout or wedge a turn indefinitely.
 
+use std::sync::OnceLock;
 use std::time::Duration;
 
 /// Default whole-request timeout in seconds (preserves the prior hardcoded value).
@@ -59,22 +60,34 @@ fn resolve(env_var: &str, default: u64, max: u64) -> Duration {
 
 /// Whole-request timeout for inference HTTP calls.
 /// Override via `OPENHUMAN_INFERENCE_TIMEOUT_SECS` (default 120s, range 1..=3600).
+///
+/// `http_client()` is rebuilt on every inference request (80+ call sites), so
+/// the value is resolved once per process and cached — env vars don't change at
+/// runtime, and this keeps the hot path off `std::env::var` and avoids logging
+/// the resolution on every request (mirrors `tool_timeout`'s cached value).
 pub(super) fn request_timeout() -> Duration {
-    resolve(
-        REQUEST_ENV_VAR,
-        DEFAULT_REQUEST_TIMEOUT_SECS,
-        MAX_REQUEST_TIMEOUT_SECS,
-    )
+    static CACHED: OnceLock<Duration> = OnceLock::new();
+    *CACHED.get_or_init(|| {
+        resolve(
+            REQUEST_ENV_VAR,
+            DEFAULT_REQUEST_TIMEOUT_SECS,
+            MAX_REQUEST_TIMEOUT_SECS,
+        )
+    })
 }
 
 /// Connection-establishment timeout for inference HTTP calls.
 /// Override via `OPENHUMAN_INFERENCE_CONNECT_TIMEOUT_SECS` (default 10s, range 1..=300).
+/// Resolved once per process and cached — see [`request_timeout`].
 pub(super) fn connect_timeout() -> Duration {
-    resolve(
-        CONNECT_ENV_VAR,
-        DEFAULT_CONNECT_TIMEOUT_SECS,
-        MAX_CONNECT_TIMEOUT_SECS,
-    )
+    static CACHED: OnceLock<Duration> = OnceLock::new();
+    *CACHED.get_or_init(|| {
+        resolve(
+            CONNECT_ENV_VAR,
+            DEFAULT_CONNECT_TIMEOUT_SECS,
+            MAX_CONNECT_TIMEOUT_SECS,
+        )
+    })
 }
 
 #[cfg(test)]
