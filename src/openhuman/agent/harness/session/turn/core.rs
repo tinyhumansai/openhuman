@@ -418,6 +418,20 @@ impl Agent {
             .inject_triggered_memory_agent_context(user_message, enriched, &parent_context)
             .await;
 
+        // #3602: stamp every turn's user message with the live local time
+        // so time-relative phrasing (greetings, "today"/"tonight") is
+        // grounded on the real clock. Rides the user message — not the
+        // frozen system-prompt prefix (see core.rs KV-cache note above) — so
+        // it stays fresh across a long-lived session without busting the
+        // cached prefix. This path runs for every `turn()` caller, including
+        // one-shot `run_single` flows (cron/morning-briefing/meet), so those
+        // get a fresh stamp too. The grounding *rule* lives in the system
+        // prompt's `## Current Date & Time` section.
+        let enriched = format!(
+            "{}\n\n{enriched}",
+            crate::openhuman::agent::prompts::current_datetime_line()
+        );
+
         self.history
             .push(ConversationMessage::Chat(ChatMessage::user(enriched)));
 

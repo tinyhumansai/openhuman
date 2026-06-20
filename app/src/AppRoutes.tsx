@@ -1,5 +1,7 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 
+import AgentWorldShell from './agentworld/AgentWorldShell';
+import AgentWorld from './agentworld/pages/AgentWorld';
 import AppRoutesIOS from './AppRoutesIOS';
 import DefaultRedirect from './components/DefaultRedirect';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -9,7 +11,6 @@ import { getIsMobile } from './lib/platform';
 import Accounts from './pages/Accounts';
 import Brain from './pages/Brain';
 import AgentInsightsPreview from './pages/dev/AgentInsightsPreview';
-import Home from './pages/Home';
 import Invites from './pages/Invites';
 import Notifications from './pages/Notifications';
 import Onboarding from './pages/onboarding/Onboarding';
@@ -55,14 +56,9 @@ const AppRoutes = () => {
       />
 
       {/* Protected routes */}
-      <Route
-        path="/home"
-        element={
-          <ProtectedRoute requireAuth={true}>
-            <Home />
-          </ProtectedRoute>
-        }
-      />
+      {/* Home is merged into the unified chat surface — /home redirects to /chat
+          (the chat's empty "new window" state is the former Home greeting). */}
+      <Route path="/home" element={<Navigate to="/chat" replace />} />
 
       {/* Human — first-class destination again (restored after the IA Phase 6
           merge into Assistant). Renders the Human/mascot surface. iOS serves
@@ -193,6 +189,19 @@ const AppRoutes = () => {
 
       {/* Dev-only visual preview of the Agentic task insights surface. */}
       <Route path="/dev/agent-insights" element={<AgentInsightsPreview />} />
+
+      {/* Agent World — tiny.place A2A social network integration.
+          Nested routes (explore, directory, …) are handled inside AgentWorld. */}
+      <Route
+        path="/agent-world/*"
+        element={
+          <ProtectedRoute requireAuth={true}>
+            <AgentWorldShell>
+              <AgentWorld />
+            </AgentWorldShell>
+          </ProtectedRoute>
+        }
+      />
 
       {/* Default redirect based on auth status */}
       <Route path="*" element={<DefaultRedirect />} />

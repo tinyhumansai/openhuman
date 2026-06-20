@@ -619,12 +619,41 @@ fn tool_timeout_parse_default_and_boundaries() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Item 8 — DateTimeSection: ISO 8601 timestamp + IANA timezone token.
-//           Extended coverage beyond the existing mod_tests.rs test.
+// Item 8 — Current-time grounding (#3602). The volatile timestamp now rides the
+//           per-turn user message via `current_datetime_line` (so a long-lived
+//           session's frozen prompt prefix can't go stale); `DateTimeSection`
+//           carries only the static grounding *rule*. Pin both halves.
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn datetime_section_output_matches_iso8601_date_and_utc_offset_pattern() {
+fn current_datetime_line_matches_iso8601_date_and_utc_offset_pattern() {
+    // The per-turn stamp is the one carrying the concrete clock — assert its
+    // ISO-8601 date, UTC offset, and IANA zone (or `UTC` fallback).
+    let payload = crate::openhuman::agent::prompts::current_datetime_line();
+
+    // Parse the concrete `YYYY-MM-DD HH:MM:SS` prefix rather than counting
+    // loose digits, so a malformed layout can't slip through.
+    let rest = payload
+        .strip_prefix("Current Date & Time: ")
+        .expect("stamp must start with the canonical prefix");
+    let dt = rest
+        .get(0..19)
+        .expect("stamp must include YYYY-MM-DD HH:MM:SS");
+    chrono::NaiveDateTime::parse_from_str(dt, "%Y-%m-%d %H:%M:%S")
+        .expect("timestamp must match YYYY-MM-DD HH:MM:SS");
+    assert!(
+        payload.contains("UTC"),
+        "stamp must contain UTC offset marker: {payload}"
+    );
+    let has_iana = payload.contains('/') || payload.contains(" UTC ");
+    assert!(
+        has_iana,
+        "stamp must contain an IANA zone (slashed) or UTC fallback: {payload}"
+    );
+}
+
+#[test]
+fn datetime_section_is_static_grounding_rule_not_a_volatile_timestamp() {
     use crate::openhuman::agent::prompts::{DateTimeSection, PromptContext, PromptSection};
     use std::collections::HashSet;
     use std::path::Path;
@@ -660,23 +689,21 @@ fn datetime_section_output_matches_iso8601_date_and_utc_offset_pattern() {
         .strip_prefix("## Current Date & Time\n\n")
         .expect("DateTimeSection must start with the heading");
 
-    // Must contain a date token matching YYYY-MM-DD.
-    let has_date = payload.chars().filter(|c| c.is_ascii_digit()).count() >= 8;
+    // The section is a static rule: it must carry the greeting-grounding
+    // guidance and point at the per-turn line, but NOT bake in a date — a
+    // concrete YYYY-MM-DD here would re-freeze the volatile clock into the
+    // cached prefix (the #3602 regression this guards against).
     assert!(
-        has_date,
-        "payload must contain enough digits for a date: {payload}"
+        payload.contains("match the actual local hour") && payload.contains("Current Date & Time:"),
+        "section must carry the grounding rule pointing at the per-turn stamp: {payload}"
     );
-
-    // Must include a UTC offset in the form UTC+HH:MM or UTC-HH:MM or UTC+00:00.
-    assert!(
-        payload.contains("UTC"),
-        "payload must contain UTC offset marker: {payload}"
-    );
-
-    // The IANA timezone string is either a slashed zone or the literal "UTC" fallback.
-    let has_iana = payload.contains('/') || payload.contains(" UTC ");
-    assert!(
-        has_iana,
-        "payload must contain an IANA zone (slashed) or UTC fallback: {payload}"
+    // Byte-stability is the real no-volatile-timestamp invariant (a static
+    // literal like "11 PM" in the rule is fine; a baked `Local::now()` is
+    // not): two renders a moment apart must be identical, or the cached
+    // prefix would churn every second.
+    let again = DateTimeSection.build(&ctx).unwrap();
+    assert_eq!(
+        rendered, again,
+        "datetime section must be byte-stable (no volatile timestamp baked in)"
     );
 }

@@ -970,6 +970,123 @@ async fn thread_not_found_rpc_error_does_not_report_to_sentry() {
         events[0].tags.get("method").map(String::as_str),
         Some("core.not_a_real_method")
     );
+    // #3567: an unrecognised (non-allow-listed) method is still recorded for
+    // triage, but downgraded from error to *warning* severity so it no longer
+    // pages. The JSON-RPC method-not-found response above is unchanged.
+    assert_eq!(
+        events[0].level,
+        sentry::Level::Warning,
+        "unknown-method events should be warn-level (triage, not paging)"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn unknown_method_severity_split_by_probe_allow_list() {
+    // #3567: prove the full severity split at the transport boundary —
+    // (1) an allow-listed probe name is NOT captured to Sentry (debug-only),
+    // (2) a genuinely-unknown method still surfaces at warn for triage,
+    // (3) the JSON-RPC error response to the caller is unchanged in both cases.
+    use axum::body::to_bytes;
+    use axum::extract::State;
+    use axum::Json;
+    use sentry::test::TestTransport;
+    use tracing::Level;
+    use tracing_subscriber::layer::SubscriberExt;
+
+    let workspace = tempfile::tempdir().expect("workspace tempdir");
+    let _env = EnvVarGuard::set_many(vec![(
+        "OPENHUMAN_WORKSPACE",
+        workspace.path().as_os_str().to_os_string(),
+    )]);
+
+    let transport = TestTransport::new();
+    let sentry_options = sentry::ClientOptions {
+        dsn: Some("https://public@sentry.invalid/1".parse().unwrap()),
+        transport: Some(Arc::new(transport.clone())),
+        ..Default::default()
+    };
+    let sentry_hub = Arc::new(sentry::Hub::new(
+        Some(Arc::new(sentry_options.into())),
+        Arc::new(Default::default()),
+    ));
+    let _sentry_guard = sentry::HubSwitchGuard::new(sentry_hub);
+
+    let subscriber = tracing_subscriber::registry().with(
+        sentry::integrations::tracing::layer().event_filter(|metadata| {
+            // Mirror production: diagnostics from the report_* helpers are
+            // captured directly via `sentry::capture_message`, so the bridge
+            // must ignore their marker target to avoid double events.
+            if metadata.target() == crate::core::observability::REPORT_ERROR_TRACING_TARGET {
+                return sentry::integrations::tracing::EventFilter::Ignore;
+            }
+            match *metadata.level() {
+                Level::ERROR => sentry::integrations::tracing::EventFilter::Event,
+                Level::WARN | Level::INFO => sentry::integrations::tracing::EventFilter::Breadcrumb,
+                _ => sentry::integrations::tracing::EventFilter::Ignore,
+            }
+        }),
+    );
+    let _subscriber_guard = tracing::subscriber::set_default(subscriber);
+
+    // (1) Allow-listed probe → debug-only, never reaches Sentry.
+    let probe_request = crate::core::types::RpcRequest {
+        jsonrpc: "2.0".to_string(),
+        id: json!(1),
+        method: "rpc.discover".to_string(),
+        params: json!({}),
+    };
+    let response = rpc_handler(State(default_state()), Json(probe_request)).await;
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("response body");
+    let body: serde_json::Value = serde_json::from_slice(&body).expect("json response");
+    // (3) Response is the unchanged JSON-RPC method-not-found envelope.
+    assert_eq!(body["error"]["code"], json!(-32000));
+    assert_eq!(
+        body["error"]["message"],
+        json!("unknown method: rpc.discover")
+    );
+    assert_eq!(body["error"]["data"], serde_json::Value::Null);
+    assert!(
+        transport.fetch_and_clear_events().is_empty(),
+        "allow-listed probe methods must not reach Sentry"
+    );
+
+    // (2) Genuinely-unknown method → still captured, but at warn for triage.
+    let unknown_request = crate::core::types::RpcRequest {
+        jsonrpc: "2.0".to_string(),
+        id: json!(2),
+        method: "totally.made.up.method".to_string(),
+        params: json!({}),
+    };
+    let response = rpc_handler(State(default_state()), Json(unknown_request)).await;
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("response body");
+    let body: serde_json::Value = serde_json::from_slice(&body).expect("json response");
+    // (3) Same unchanged method-not-found envelope for the unknown method.
+    assert_eq!(body["error"]["code"], json!(-32000));
+    assert_eq!(
+        body["error"]["message"],
+        json!("unknown method: totally.made.up.method")
+    );
+    assert_eq!(body["error"]["data"], serde_json::Value::Null);
+
+    let events = transport.fetch_and_clear_events();
+    assert_eq!(
+        events.len(),
+        1,
+        "genuinely-unknown methods should still be captured for triage"
+    );
+    assert_eq!(events[0].level, sentry::Level::Warning);
+    assert_eq!(
+        events[0].tags.get("domain").map(String::as_str),
+        Some("rpc")
+    );
+    assert_eq!(
+        events[0].tags.get("method").map(String::as_str),
+        Some("totally.made.up.method")
+    );
 }
 
 #[test]

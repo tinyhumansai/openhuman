@@ -82,8 +82,63 @@ pub async fn dispatch(
         return result;
     }
 
-    log::warn!("[rpc:dispatch] unknown_method method={}", method);
-    Err(format!("unknown method: {method}"))
+    // Tier 4: unrecognised method. The JSON-RPC response is unchanged — the
+    // caller still receives a method-not-found error. Only the *severity* of
+    // how the transport layer records it differs by class (see
+    // `jsonrpc::rpc_handler`): known external probes (`is_known_probe_method`)
+    // are debug-only and never reach Sentry (#3567), while any other unknown
+    // method is downgraded to a warn-level capture (recorded for triage, no
+    // page) instead of an error event. Log here at debug with the method name
+    // so the path stays diagnosable without re-creating the Sentry noise.
+    if is_known_probe_method(method) {
+        log::debug!(
+            "[rpc] unknown_method method={} class=known_probe (debug-only; not reported to Sentry)",
+            method
+        );
+    } else {
+        log::debug!(
+            "[rpc] unknown_method method={} class=unrecognized (reported to Sentry at warn for triage)",
+            method
+        );
+    }
+    Err(format!("{UNKNOWN_METHOD_PREFIX}{method}"))
+}
+
+/// Prefix of the error string returned for an unrecognised RPC method. Kept as
+/// a shared constant so the emit site (above) and the transport-layer
+/// classifier ([`unknown_method_name`]) cannot drift apart.
+pub const UNKNOWN_METHOD_PREFIX: &str = "unknown method: ";
+
+/// Generic external probe / legacy method names that are never real RPC
+/// methods and never will be (issue #3567). Infra health-checks and JSON-RPC
+/// introspection clients poll these — `rpc.discover` (JSON-RPC service
+/// discovery), `list_methods`, liveness `status`, `auth.status`, `config/get`
+/// — and each miss previously produced a recurring Sentry ERROR event with
+/// zero user impact. The transport layer keeps these debug-only (never
+/// captured). The matching health-method *aliases* land separately in
+/// `legacy_aliases` (#3566), which depends on this severity change.
+const KNOWN_PROBE_METHODS: &[&str] = &[
+    "rpc.discover",
+    "list_methods",
+    "status",
+    "auth.status",
+    "config/get",
+];
+
+/// Returns `true` when `method` is a known external probe / legacy health name
+/// from [`KNOWN_PROBE_METHODS`]. Matched against the *resolved* method name
+/// (after legacy-alias rewrite), i.e. the name embedded in the
+/// [`UNKNOWN_METHOD_PREFIX`] error string.
+pub fn is_known_probe_method(method: &str) -> bool {
+    KNOWN_PROBE_METHODS.contains(&method)
+}
+
+/// Extracts the offending method name from an unknown-method error string, or
+/// `None` if `message` is not an unknown-method error. The transport layer uses
+/// this to classify the failure for Sentry severity without re-deriving the
+/// method from the request (which may differ post legacy-alias rewrite).
+pub fn unknown_method_name(message: &str) -> Option<&str> {
+    message.strip_prefix(UNKNOWN_METHOD_PREFIX)
 }
 
 /// Handles internal core-level RPC methods.
@@ -312,6 +367,51 @@ mod tests {
             .await
             .expect("openhuman.ping should be rewritten to core.ping and succeed");
         assert_eq!(out, json!({ "ok": true }));
+    }
+
+    #[test]
+    fn is_known_probe_method_matches_allow_list_exactly() {
+        // Every allow-listed probe / legacy health name is recognised.
+        for m in [
+            "rpc.discover",
+            "list_methods",
+            "status",
+            "auth.status",
+            "config/get",
+        ] {
+            assert!(is_known_probe_method(m), "{m} should be a known probe");
+        }
+        // Genuinely-unknown methods and near-misses are NOT allow-listed, so
+        // they stay on the warn-for-triage path rather than being silenced.
+        assert!(!is_known_probe_method("does.not.exist"));
+        assert!(!is_known_probe_method("core.not_a_real_method"));
+        assert!(!is_known_probe_method("Status")); // case-sensitive
+        assert!(!is_known_probe_method("rpc.discover.extra")); // exact match only
+        assert!(!is_known_probe_method(""));
+    }
+
+    #[test]
+    fn unknown_method_name_extracts_from_error_string_only() {
+        // The classifier round-trips the exact string `dispatch` emits.
+        let err = format!("{UNKNOWN_METHOD_PREFIX}rpc.discover");
+        assert_eq!(unknown_method_name(&err), Some("rpc.discover"));
+        // Unrelated error strings are not misclassified as unknown-method.
+        assert_eq!(unknown_method_name("unknown param 'x' for ns.fn"), None);
+        assert_eq!(unknown_method_name("Session expired"), None);
+    }
+
+    #[tokio::test]
+    async fn dispatch_probe_method_still_returns_unknown_method_error() {
+        // Allow-listed probe names must not be silently "handled" — the caller
+        // still gets a method-not-found error. Only the Sentry severity (in the
+        // transport layer) changes; the dispatch contract is unchanged.
+        let err = dispatch(test_state(), "rpc.discover", json!({}))
+            .await
+            .expect_err("probe methods are still unknown to the dispatcher");
+        assert_eq!(unknown_method_name(&err), Some("rpc.discover"));
+        assert!(is_known_probe_method(
+            unknown_method_name(&err).expect("unknown-method error")
+        ));
     }
 
     #[tokio::test]

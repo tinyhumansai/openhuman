@@ -114,6 +114,14 @@ export const LEGACY_METHOD_ALIASES: Record<string, CoreRpcMethod> = {
   'openhuman.providers_list_models': CORE_RPC_METHODS.inferenceListModels,
   'openhuman.inference_embed': CORE_RPC_METHODS.embeddingsEmbed,
   health_snapshot: CORE_RPC_METHODS.healthSnapshot,
+  // Dotted / bare health probes from older clients and SDK callers (#3566,
+  // Sentry CORE-2C). No distinct status/get handler exists — the snapshot
+  // already carries the health verdict — so all four alias to the snapshot.
+  // Keep in sync with src/core/legacy_aliases.rs (drift guard enforces it).
+  health: CORE_RPC_METHODS.healthSnapshot,
+  'health.get': CORE_RPC_METHODS.healthSnapshot,
+  'health.snapshot': CORE_RPC_METHODS.healthSnapshot,
+  'health.status': CORE_RPC_METHODS.healthSnapshot,
   // `openhuman.system_info` was used by older clients / SDK callers before the
   // method was namespaced as `openhuman.health_system_info`.
   // Sentry CORE-RUST-G0 — https://sentry.tinyhumans.ai/organizations/tinyhumans/issues/6340/

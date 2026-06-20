@@ -573,6 +573,7 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
     let io_mcp_setup = io.clone();
     let io_memory_sync = io.clone();
     let io_agent_meetings = io.clone();
+    let io_tinyplace = io.clone();
 
     // 2. Dictation hotkey events → broadcast to all connected clients.
     tokio::spawn(async move {
@@ -1067,6 +1068,80 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
             }
         }
         log::debug!("[socketio] agent_meetings bridge stopped");
+    });
+
+    // 10. Tinyplace stream events → broadcast to all connected frontend sockets.
+    tokio::spawn(async move {
+        let bus = {
+            const RETRY_INTERVAL_MS: u64 = 250;
+            const MAX_WAIT_SECS: u64 = 30;
+            let max_attempts = (MAX_WAIT_SECS * 1000) / RETRY_INTERVAL_MS;
+            let mut attempts: u64 = 0;
+            loop {
+                if let Some(bus) = crate::core::event_bus::global() {
+                    break bus;
+                }
+                attempts += 1;
+                if attempts > max_attempts {
+                    log::warn!(
+                        "[socketio] event_bus not initialised after {}s — tinyplace bridge giving up",
+                        MAX_WAIT_SECS
+                    );
+                    return;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(RETRY_INTERVAL_MS)).await;
+            }
+        };
+        let mut rx = bus.raw_receiver();
+        loop {
+            let event = match rx.recv().await {
+                Ok(event) => event,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                    log::warn!(
+                        "[socketio] dropped {} event_bus events due to lag (tinyplace bridge)",
+                        skipped
+                    );
+                    continue;
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            };
+            match event {
+                crate::core::event_bus::DomainEvent::TinyPlaceStreamMessage {
+                    stream_id,
+                    kind,
+                    message,
+                } => {
+                    let payload = json!({
+                        "stream_id": stream_id,
+                        "kind": kind,
+                        "message": message,
+                    });
+                    log::debug!(
+                        "[socketio] broadcast tinyplace:stream_message stream_id={} kind={}",
+                        stream_id,
+                        kind
+                    );
+                    let _ = io_tinyplace.emit("tinyplace:stream_message", &payload);
+                }
+                crate::core::event_bus::DomainEvent::TinyPlaceStreamStatusChanged {
+                    stream_id,
+                    status,
+                } => {
+                    let payload = json!({
+                        "stream_id": stream_id,
+                        "status": status,
+                    });
+                    log::debug!(
+                        "[socketio] broadcast tinyplace:stream_status stream_id={} status={}",
+                        stream_id,
+                        status
+                    );
+                    let _ = io_tinyplace.emit("tinyplace:stream_status", &payload);
+                }
+                _ => {}
+            }
+        }
+        log::debug!("[socketio] tinyplace stream bridge stopped");
     });
 }
 

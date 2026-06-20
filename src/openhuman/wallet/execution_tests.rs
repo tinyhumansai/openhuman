@@ -124,6 +124,8 @@ pub(crate) async fn setup_wallet_in(temp: &TempDir) -> Result<(), String> {
         .into_iter()
         .map(sample_account)
         .collect(),
+        // Test helper: force=true allows re-setup in tests that start from a fresh temp dir.
+        force: true,
     })
     .await?;
     Ok(())

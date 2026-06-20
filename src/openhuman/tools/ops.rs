@@ -515,6 +515,11 @@ pub fn all_tools_with_runtime(
         Box::new(WorkspaceUpdatePersonaTool::new(config.clone())),
         Box::new(WorkspaceResetPersonaTool::new(config.clone())),
         Box::new(WorkspaceInitTool),
+        // tiny.place agent tools — submit proposals on behalf of the user.
+        // Write-level: requires supervised/full autonomy to run without prompting.
+        // Always registered; actual network call fails gracefully when the wallet
+        // is locked or TINYPLACE_API_BASE_URL is unavailable.
+        Box::new(TinyplaceJobApplyTool),
     ];
 
     log::debug!(

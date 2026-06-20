@@ -42,7 +42,7 @@ const initialState: ThemeState = {
   mode: 'system',
   tabBarLabels: 'hover',
   fontSize: 'medium',
-  agentMessageViewMode: 'bubbles',
+  agentMessageViewMode: 'text',
   developerMode: false,
 };
 

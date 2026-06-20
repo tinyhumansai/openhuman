@@ -58,7 +58,8 @@ type StatusLabelKey =
   | 'conversations.backgroundTasks.statusRunning'
   | 'conversations.backgroundTasks.statusDone'
   | 'conversations.backgroundTasks.statusFailed'
-  | 'conversations.backgroundTasks.statusNeedsYou';
+  | 'conversations.backgroundTasks.statusNeedsYou'
+  | 'conversations.backgroundTasks.statusCancelled';
 
 function statusStyle(status: ToolTimelineEntryStatus): {
   dot: string;
@@ -83,6 +84,12 @@ function statusStyle(status: ToolTimelineEntryStatus): {
         dot: 'bg-blue-500',
         labelKey: 'conversations.backgroundTasks.statusNeedsYou',
         pill: 'text-blue-700 dark:text-blue-300',
+      };
+    case 'cancelled':
+      return {
+        dot: 'bg-stone-400 dark:bg-neutral-500',
+        labelKey: 'conversations.backgroundTasks.statusCancelled',
+        pill: 'text-stone-600 dark:text-neutral-300',
       };
     default:
       return {

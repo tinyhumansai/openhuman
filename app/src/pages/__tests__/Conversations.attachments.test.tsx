@@ -9,6 +9,7 @@ import { Provider } from 'react-redux';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { SidebarSlotOutlet, SidebarSlotProvider } from '../../components/layout/shell/SidebarSlot';
 import agentProfileReducer from '../../store/agentProfileSlice';
 import chatRuntimeReducer from '../../store/chatRuntimeSlice';
 import socketReducer from '../../store/socketSlice';
@@ -127,6 +128,10 @@ vi.mock('../../services/api/agentProfilesApi', () => ({
 }));
 
 vi.mock('../../hooks/useUsageState', () => ({ useUsageState: mockUseUsageState }));
+
+// The new-window hero pulls useUser/useCoreState; stub it (these tests assert
+// the composer/attachments, not the empty-state hero).
+vi.mock('../../components/chat/ChatNewWindowHero', () => ({ default: () => null }));
 
 vi.mock('../../utils/config', async importActual => ({
   ...(await importActual<typeof import('../../utils/config')>()),
@@ -247,7 +252,10 @@ async function renderWithSelectedThread() {
   render(
     <Provider store={store}>
       <MemoryRouter initialEntries={['/conversations']}>
-        <Conversations />
+        <SidebarSlotProvider>
+          <SidebarSlotOutlet />
+          <Conversations />
+        </SidebarSlotProvider>
       </MemoryRouter>
     </Provider>
   );
@@ -564,7 +572,10 @@ describe('Conversations — attachment feature', () => {
     render(
       <Provider store={store}>
         <MemoryRouter>
-          <Conversations />
+          <SidebarSlotProvider>
+            <SidebarSlotOutlet />
+            <Conversations />
+          </SidebarSlotProvider>
         </MemoryRouter>
       </Provider>
     );
@@ -613,7 +624,10 @@ describe('Conversations — attachment feature', () => {
     render(
       <Provider store={store}>
         <MemoryRouter>
-          <Conversations />
+          <SidebarSlotProvider>
+            <SidebarSlotOutlet />
+            <Conversations />
+          </SidebarSlotProvider>
         </MemoryRouter>
       </Provider>
     );
@@ -621,6 +635,126 @@ describe('Conversations — attachment feature', () => {
     // The document attachment surfaces as a filename chip (not an <img>).
     await waitFor(() => {
       expect(document.body.textContent).toContain('report.pdf');
+    });
+  });
+});
+
+describe('Conversations — thread rename', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetThreads.mockResolvedValue({ threads: [], count: 0 });
+    mockGetThreadMessages.mockResolvedValue({ messages: [], count: 0 });
+  });
+
+  it('commits an inline thread-title rename from the sidebar thread row', async () => {
+    const { thread } = await renderWithSelectedThread();
+    const { threadApi } = await import('../../services/api/threadApi');
+
+    // Enter edit mode via the thread row pencil affordance.
+    fireEvent.click(screen.getByRole('button', { name: 'Edit thread title' }));
+    const input = await screen.findByRole('textbox', { name: 'Edit thread title' });
+    fireEvent.change(input, { target: { value: 'Renamed in header' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    await waitFor(() => {
+      expect(threadApi.updateTitle).toHaveBeenCalledWith(thread.id, 'Renamed in header');
+    });
+  });
+
+  it('cancels the rename on Escape without dispatching an update', async () => {
+    await renderWithSelectedThread();
+    const { threadApi } = await import('../../services/api/threadApi');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit thread title' }));
+    const input = await screen.findByRole('textbox', { name: 'Edit thread title' });
+    fireEvent.change(input, { target: { value: 'Discarded title' } });
+    fireEvent.keyDown(input, { key: 'Escape' });
+
+    // Editor closes back to the title heading; no persistence call fired.
+    await waitFor(() => {
+      expect(screen.queryByRole('textbox', { name: 'Edit thread title' })).toBeNull();
+    });
+    expect(threadApi.updateTitle).not.toHaveBeenCalled();
+  });
+
+  it('does not commit on the Enter that confirms an IME composition', async () => {
+    await renderWithSelectedThread();
+    const { threadApi } = await import('../../services/api/threadApi');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit thread title' }));
+    const input = await screen.findByRole('textbox', { name: 'Edit thread title' });
+    fireEvent.change(input, { target: { value: '日本語' } });
+    // keyCode 229 marks an IME composition keydown — Enter here confirms a
+    // candidate, not the rename.
+    fireEvent.keyDown(input, { key: 'Enter', keyCode: 229 });
+
+    expect(threadApi.updateTitle).not.toHaveBeenCalled();
+    // Editor stays open for continued composition.
+    expect(screen.getByRole('textbox', { name: 'Edit thread title' })).toBeInTheDocument();
+  });
+
+  it('skips persistence when the committed title is unchanged', async () => {
+    await renderWithSelectedThread();
+    const { threadApi } = await import('../../services/api/threadApi');
+
+    // The input seeds with the current title ("Attach Thread"); committing it
+    // unchanged must not dispatch an update.
+    fireEvent.click(screen.getByRole('button', { name: 'Edit thread title' }));
+    const input = await screen.findByRole('textbox', { name: 'Edit thread title' });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    await waitFor(() => {
+      expect(screen.queryByRole('textbox', { name: 'Edit thread title' })).toBeNull();
+    });
+    expect(threadApi.updateTitle).not.toHaveBeenCalled();
+  });
+
+  it('skips persistence when the committed title is blank', async () => {
+    await renderWithSelectedThread();
+    const { threadApi } = await import('../../services/api/threadApi');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit thread title' }));
+    const input = await screen.findByRole('textbox', { name: 'Edit thread title' });
+    fireEvent.change(input, { target: { value: '   ' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    await waitFor(() => {
+      expect(screen.queryByRole('textbox', { name: 'Edit thread title' })).toBeNull();
+    });
+    expect(threadApi.updateTitle).not.toHaveBeenCalled();
+  });
+
+  it('opens the editor and ignores the immediate focus-blur', async () => {
+    await renderWithSelectedThread();
+    const { threadApi } = await import('../../services/api/threadApi');
+
+    // Clicking the row pencil opens edit mode; the blur fired while the input
+    // is grabbing focus is ignored (no spurious commit).
+    fireEvent.click(screen.getByRole('button', { name: 'Edit thread title' }));
+    const input = await screen.findByRole('textbox', { name: 'Edit thread title' });
+    fireEvent.blur(input);
+
+    expect(threadApi.updateTitle).not.toHaveBeenCalled();
+  });
+
+  it('swallows a rename persistence failure without crashing', async () => {
+    const { thread } = await renderWithSelectedThread();
+    const { threadApi } = await import('../../services/api/threadApi');
+    (threadApi.updateTitle as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error('rename boom')
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit thread title' }));
+    const input = await screen.findByRole('textbox', { name: 'Edit thread title' });
+    fireEvent.change(input, { target: { value: 'Doomed rename' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    await waitFor(() => {
+      expect(threadApi.updateTitle).toHaveBeenCalledWith(thread.id, 'Doomed rename');
+    });
+    // The editor still closes and the UI stays mounted.
+    await waitFor(() => {
+      expect(screen.queryByRole('textbox', { name: 'Edit thread title' })).toBeNull();
     });
   });
 });

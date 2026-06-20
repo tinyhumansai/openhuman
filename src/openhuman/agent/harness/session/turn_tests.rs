@@ -1101,7 +1101,19 @@ async fn turn_uses_cached_transcript_prefix_on_first_iteration() {
     assert_eq!(requests[0][0].content, "cached-system");
     assert_eq!(requests[0][1].content, "cached-assistant");
     assert_eq!(requests[0][2].role, "user");
-    assert_eq!(requests[0][2].content, "fresh");
+    // #3602: every turn's user message is prefixed with the live
+    // `Current Date & Time:` stamp, then the raw prompt. Assert the stamp
+    // leads and the original prompt is preserved at the tail.
+    assert!(
+        requests[0][2].content.starts_with("Current Date & Time:"),
+        "user message must lead with the per-turn time stamp: {}",
+        requests[0][2].content
+    );
+    assert!(
+        requests[0][2].content.ends_with("fresh"),
+        "user message must preserve the original prompt: {}",
+        requests[0][2].content
+    );
 }
 
 #[tokio::test]
