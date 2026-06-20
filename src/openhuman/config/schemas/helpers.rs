@@ -155,6 +155,7 @@ pub(super) struct LocalAiSettingsUpdate {
     pub(super) usage_heartbeat: Option<bool>,
     pub(super) usage_learning_reflection: Option<bool>,
     pub(super) usage_subconscious: Option<bool>,
+    pub(super) api_key: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

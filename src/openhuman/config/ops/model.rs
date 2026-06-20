@@ -83,6 +83,7 @@ pub struct LocalAiSettingsPatch {
     pub usage_heartbeat: Option<bool>,
     pub usage_learning_reflection: Option<bool>,
     pub usage_subconscious: Option<bool>,
+    pub api_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -400,6 +401,14 @@ pub async fn apply_local_ai_settings(
     }
     if let Some(v) = update.usage_subconscious {
         config.local_ai.usage.subconscious = v;
+    }
+    if let Some(api_key) = update.api_key {
+        let trimmed = api_key.trim();
+        config.local_ai.api_key = if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        };
     }
     config.save().await.map_err(|e| e.to_string())?;
     let snapshot = snapshot_config_json(config)?;

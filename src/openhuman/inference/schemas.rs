@@ -115,6 +115,7 @@ struct InferenceUpdateLocalSettingsParams {
     usage_heartbeat: Option<bool>,
     usage_learning_reflection: Option<bool>,
     usage_subconscious: Option<bool>,
+    api_key: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -779,6 +780,7 @@ fn handle_inference_update_local_settings(params: Map<String, Value>) -> Control
             usage_heartbeat: update.usage_heartbeat,
             usage_learning_reflection: update.usage_learning_reflection,
             usage_subconscious: update.usage_subconscious,
+            api_key: update.api_key,
         };
         to_json(crate::openhuman::inference::rpc::inference_update_local_settings(patch).await?)
     })
