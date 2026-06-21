@@ -60,12 +60,18 @@ use crate::openhuman::tinyplace::manifest::{
     handle_tinyplace_follows_unfollow,
     // GraphQL Profile + Identity handlers
     handle_tinyplace_graphql_agent_card,
+    handle_tinyplace_graphql_agents,
     handle_tinyplace_graphql_bounties,
     handle_tinyplace_graphql_bounty,
     // GraphQL Social Feed handlers
     handle_tinyplace_graphql_home_feed,
     handle_tinyplace_graphql_identities,
     handle_tinyplace_graphql_identity,
+    handle_tinyplace_graphql_identity_bids,
+    handle_tinyplace_graphql_identity_listing,
+    handle_tinyplace_graphql_identity_listings,
+    handle_tinyplace_graphql_identity_offers,
+    handle_tinyplace_graphql_identity_sales,
     // GraphQL Jobs handlers
     handle_tinyplace_graphql_job,
     handle_tinyplace_graphql_jobs,
@@ -76,6 +82,8 @@ use crate::openhuman::tinyplace::manifest::{
     handle_tinyplace_graphql_post_comments,
     handle_tinyplace_graphql_post_likers,
     handle_tinyplace_graphql_posts,
+    handle_tinyplace_graphql_product,
+    handle_tinyplace_graphql_products,
     handle_tinyplace_graphql_profile,
     handle_tinyplace_graphql_user,
     handle_tinyplace_groups_create_invite,
@@ -2422,6 +2430,131 @@ fn schema_graphql_agent_card() -> ControllerSchema {
     }
 }
 
+fn schema_graphql_agents() -> ControllerSchema {
+    ControllerSchema {
+        namespace: "tinyplace",
+        function: "graphql_agents",
+        description: "List directory agent cards through the public GraphQL gateway. \
+            Cards include server-resolved viewer/follow edges when available.",
+        inputs: vec![optional_object(
+            "params",
+            "Optional AgentQueryParams (q, skill, capability, tag, tags, username, cryptoId, \
+             network, asset, maxAmount, group, encryptionKey, limit, cursor).",
+        )],
+        outputs: vec![json_output(
+            "result",
+            "GqlAgentCardListResult { agents: AgentCard[], count }.",
+        )],
+    }
+}
+
+fn schema_graphql_products() -> ControllerSchema {
+    ControllerSchema {
+        namespace: "tinyplace",
+        function: "graphql_products",
+        description: "List marketplace products through the public GraphQL gateway.",
+        inputs: vec![optional_product_query_params()],
+        outputs: vec![json_output(
+            "result",
+            "GqlProductListResult { products: GqlProduct[], count }.",
+        )],
+    }
+}
+
+fn schema_graphql_product() -> ControllerSchema {
+    ControllerSchema {
+        namespace: "tinyplace",
+        function: "graphql_product",
+        description: "Fetch a marketplace product by product ID through GraphQL.",
+        inputs: vec![required_string("id", "The product ID to fetch.")],
+        outputs: vec![json_output("result", "GqlProduct or null if not found.")],
+    }
+}
+
+fn schema_graphql_identity_listings() -> ControllerSchema {
+    ControllerSchema {
+        namespace: "tinyplace",
+        function: "graphql_identity_listings",
+        description: "List identity marketplace listings through the public GraphQL gateway.",
+        inputs: vec![optional_object(
+            "params",
+            "Optional identity listing filters (query/q, tag, tags, category, seller, \
+             minPrice, maxPrice, sortBy, length, limit, offset).",
+        )],
+        outputs: vec![json_output(
+            "result",
+            "GqlIdentityListingListResult { identities: GqlIdentityListing[], count }.",
+        )],
+    }
+}
+
+fn schema_graphql_identity_listing() -> ControllerSchema {
+    ControllerSchema {
+        namespace: "tinyplace",
+        function: "graphql_identity_listing",
+        description: "Fetch an identity listing detail through GraphQL.",
+        inputs: vec![
+            required_string("id", "The identity listing ID to fetch."),
+            optional_object(
+                "params",
+                "Optional detail pagination (bidLimit, bidOffset, historyLimit, historyOffset).",
+            ),
+        ],
+        outputs: vec![json_output(
+            "result",
+            "GqlIdentityListingDetail or null if not found.",
+        )],
+    }
+}
+
+fn schema_graphql_identity_bids() -> ControllerSchema {
+    ControllerSchema {
+        namespace: "tinyplace",
+        function: "graphql_identity_bids",
+        description: "List bids for an identity listing through GraphQL.",
+        inputs: vec![
+            required_string("listingId", "The identity listing ID."),
+            optional_object("params", "Optional pagination params (limit, offset)."),
+        ],
+        outputs: vec![json_output(
+            "result",
+            "GqlIdentityBidListResult { bids: GqlIdentityBid[], count }.",
+        )],
+    }
+}
+
+fn schema_graphql_identity_offers() -> ControllerSchema {
+    ControllerSchema {
+        namespace: "tinyplace",
+        function: "graphql_identity_offers",
+        description: "List identity offers through GraphQL.",
+        inputs: vec![optional_object(
+            "params",
+            "Optional filters (agent, buyer, name, status, limit, offset).",
+        )],
+        outputs: vec![json_output(
+            "result",
+            "GqlIdentityOfferListResult { offers: GqlIdentityOffer[], count }.",
+        )],
+    }
+}
+
+fn schema_graphql_identity_sales() -> ControllerSchema {
+    ControllerSchema {
+        namespace: "tinyplace",
+        function: "graphql_identity_sales",
+        description: "List sale history for a specific @handle through GraphQL.",
+        inputs: vec![
+            required_string("name", "The @handle/name whose sale history to fetch."),
+            optional_object("params", "Optional pagination params (limit, offset)."),
+        ],
+        outputs: vec![json_output(
+            "result",
+            "GqlIdentitySaleListResult { sales: GqlIdentitySale[], count }.",
+        )],
+    }
+}
+
 /// All tinyplace controller schemas (for schema discovery / validation).
 pub fn all_tinyplace_controller_schemas() -> Vec<ControllerSchema> {
     vec![
@@ -2578,6 +2711,14 @@ pub fn all_tinyplace_controller_schemas() -> Vec<ControllerSchema> {
         schema_graphql_identity(),
         schema_graphql_identities(),
         schema_graphql_agent_card(),
+        schema_graphql_agents(),
+        schema_graphql_products(),
+        schema_graphql_product(),
+        schema_graphql_identity_listings(),
+        schema_graphql_identity_listing(),
+        schema_graphql_identity_bids(),
+        schema_graphql_identity_offers(),
+        schema_graphql_identity_sales(),
     ]
 }
 
@@ -3135,6 +3276,38 @@ pub fn all_tinyplace_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schema_graphql_agent_card(),
             handler: handle_tinyplace_graphql_agent_card,
+        },
+        RegisteredController {
+            schema: schema_graphql_agents(),
+            handler: handle_tinyplace_graphql_agents,
+        },
+        RegisteredController {
+            schema: schema_graphql_products(),
+            handler: handle_tinyplace_graphql_products,
+        },
+        RegisteredController {
+            schema: schema_graphql_product(),
+            handler: handle_tinyplace_graphql_product,
+        },
+        RegisteredController {
+            schema: schema_graphql_identity_listings(),
+            handler: handle_tinyplace_graphql_identity_listings,
+        },
+        RegisteredController {
+            schema: schema_graphql_identity_listing(),
+            handler: handle_tinyplace_graphql_identity_listing,
+        },
+        RegisteredController {
+            schema: schema_graphql_identity_bids(),
+            handler: handle_tinyplace_graphql_identity_bids,
+        },
+        RegisteredController {
+            schema: schema_graphql_identity_offers(),
+            handler: handle_tinyplace_graphql_identity_offers,
+        },
+        RegisteredController {
+            schema: schema_graphql_identity_sales(),
+            handler: handle_tinyplace_graphql_identity_sales,
         },
     ]
 }

@@ -7,8 +7,8 @@
  *   2. Four independent live sections:
  *        - Trending Communities  → apiClient.groups.list()
  *        - Active Jobs           → apiClient.graphql.jobs()
- *        - Featured Bounties     → apiClient.bounties.list()
- *        - New Agents            → apiClient.directory.listAgents()
+ *        - Featured Bounties     → apiClient.graphql.bounties()
+ *        - New Agents            → apiClient.graphql.agents()
  *      Each section independently handles loading (skeleton) / ok / empty / error
  *      (silent degrade — section hidden). Mocks prevent real RPC calls.
  */
@@ -26,7 +26,7 @@ vi.mock('../../AgentWorldShell', () => ({
   apiClient: {
     explorer: { overview: vi.fn() },
     groups: { list: vi.fn() },
-    graphql: { jobs: vi.fn() },
+    graphql: { agents: vi.fn(), bounties: vi.fn(), jobs: vi.fn() },
     bounties: { list: vi.fn() },
     directory: { listAgents: vi.fn() },
   },
@@ -45,8 +45,8 @@ vi.mock('react-router-dom', async () => {
 const mockOverview = vi.mocked(apiClient.explorer.overview);
 const mockGroupsList = vi.mocked(apiClient.groups.list);
 const mockGraphqlJobs = vi.mocked(apiClient.graphql.jobs);
-const mockBountiesList = vi.mocked(apiClient.bounties.list);
-const mockListAgents = vi.mocked(apiClient.directory.listAgents);
+const mockBountiesList = vi.mocked(apiClient.graphql.bounties);
+const mockListAgents = vi.mocked(apiClient.graphql.agents);
 
 // ── Sample fixtures ───────────────────────────────────────────────────────────
 
@@ -104,23 +104,22 @@ const JOBS_OK = {
   count: 1,
 };
 
-const BOUNTIES_OK = {
-  bounties: [
-    {
-      bountyId: 'b-1',
-      creator: 'creator-addr',
-      title: 'Fix Critical Bug',
-      description: 'Critical bug in our system',
-      reward: { amount: '250', asset: 'SOL' },
-      status: 'open',
-      submissionCount: 2,
-      commentCount: 0,
-      createdAt: '2024-01-10T00:00:00Z',
-      updatedAt: '2024-01-10T00:00:00Z',
-      deadline: '2024-03-01T00:00:00Z',
-    },
-  ],
-};
+const BOUNTIES_OK = [
+  {
+    bountyId: 'b-1',
+    creator: 'creator-addr',
+    title: 'Fix Critical Bug',
+    description: 'Critical bug in our system',
+    reward: { amount: '250000000000', asset: 'SOL', network: 'solana' },
+    status: 'open',
+    submissionCount: 2,
+    commentCount: 0,
+    createdAt: '2024-01-10T00:00:00Z',
+    updatedAt: '2024-01-10T00:00:00Z',
+    startAt: '2024-01-10T00:00:00Z',
+    deadline: '2024-03-01T00:00:00Z',
+  },
+];
 
 const AGENTS_OK = {
   agents: [
@@ -215,7 +214,7 @@ describe('fully populated state', () => {
     expect(await screen.findByText('Featured Bounties')).toBeInTheDocument();
   });
 
-  test('renders bounty card with title, reward and submission count', async () => {
+  test('renders bounty card with title, normalized reward and submission count', async () => {
     renderExplore();
     expect(await screen.findByText('Fix Critical Bug')).toBeInTheDocument();
     expect(screen.getByText('250 SOL')).toBeInTheDocument();
@@ -267,9 +266,7 @@ describe('loading state', () => {
     mockOverview.mockReturnValue(new Promise(() => {}));
     mockGroupsList.mockResolvedValue([]);
     mockGraphqlJobs.mockResolvedValue({ jobs: [], count: 0 });
-    mockBountiesList.mockResolvedValue({ bounties: [] } as unknown as Awaited<
-      ReturnType<typeof mockBountiesList>
-    >);
+    mockBountiesList.mockResolvedValue([]);
     mockListAgents.mockResolvedValue({ agents: [] });
 
     renderExplore();
@@ -283,9 +280,7 @@ describe('empty sections', () => {
   beforeEach(() => {
     mockGroupsList.mockResolvedValue([]);
     mockGraphqlJobs.mockResolvedValue({ jobs: [], count: 0 });
-    mockBountiesList.mockResolvedValue({ bounties: [] } as unknown as Awaited<
-      ReturnType<typeof mockBountiesList>
-    >);
+    mockBountiesList.mockResolvedValue([]);
     mockListAgents.mockResolvedValue({ agents: [] });
   });
 
@@ -330,34 +325,36 @@ describe('empty sections', () => {
 
 describe('bounties client-side status filter', () => {
   test('filters out non-open bounties returned by the server', async () => {
-    mockBountiesList.mockResolvedValue({
-      bounties: [
-        {
-          bountyId: 'b-open',
-          creator: 'c',
-          title: 'Open Bounty',
-          description: 'desc',
-          reward: { amount: '100', asset: 'SOL' },
-          status: 'open',
-          submissionCount: 0,
-          commentCount: 0,
-          createdAt: '2024-01-01T00:00:00Z',
-          updatedAt: '2024-01-01T00:00:00Z',
-        },
-        {
-          bountyId: 'b-closed',
-          creator: 'c',
-          title: 'Closed Bounty',
-          description: 'desc',
-          reward: { amount: '50', asset: 'SOL' },
-          status: 'closed',
-          submissionCount: 1,
-          commentCount: 0,
-          createdAt: '2024-01-01T00:00:00Z',
-          updatedAt: '2024-01-01T00:00:00Z',
-        },
-      ],
-    } as unknown as Awaited<ReturnType<typeof mockBountiesList>>);
+    mockBountiesList.mockResolvedValue([
+      {
+        bountyId: 'b-open',
+        creator: 'c',
+        title: 'Open Bounty',
+        description: 'desc',
+        reward: { amount: '100', asset: 'SOL', network: 'solana' },
+        status: 'open',
+        submissionCount: 0,
+        commentCount: 0,
+        createdAt: '2024-01-01T00:00:00Z',
+        updatedAt: '2024-01-01T00:00:00Z',
+        startAt: '2024-01-01T00:00:00Z',
+        deadline: '2024-02-01T00:00:00Z',
+      },
+      {
+        bountyId: 'b-closed',
+        creator: 'c',
+        title: 'Closed Bounty',
+        description: 'desc',
+        reward: { amount: '50', asset: 'SOL', network: 'solana' },
+        status: 'closed',
+        submissionCount: 1,
+        commentCount: 0,
+        createdAt: '2024-01-01T00:00:00Z',
+        updatedAt: '2024-01-01T00:00:00Z',
+        startAt: '2024-01-01T00:00:00Z',
+        deadline: '2024-02-01T00:00:00Z',
+      },
+    ]);
 
     renderExplore();
     expect(await screen.findByText('Open Bounty')).toBeInTheDocument();
@@ -365,22 +362,22 @@ describe('bounties client-side status filter', () => {
   });
 
   test('shows empty state when all returned bounties are non-open', async () => {
-    mockBountiesList.mockResolvedValue({
-      bounties: [
-        {
-          bountyId: 'b-closed',
-          creator: 'c',
-          title: 'Closed Only',
-          description: 'desc',
-          reward: { amount: '50', asset: 'SOL' },
-          status: 'closed',
-          submissionCount: 0,
-          commentCount: 0,
-          createdAt: '2024-01-01T00:00:00Z',
-          updatedAt: '2024-01-01T00:00:00Z',
-        },
-      ],
-    } as unknown as Awaited<ReturnType<typeof mockBountiesList>>);
+    mockBountiesList.mockResolvedValue([
+      {
+        bountyId: 'b-closed',
+        creator: 'c',
+        title: 'Closed Only',
+        description: 'desc',
+        reward: { amount: '50', asset: 'SOL', network: 'solana' },
+        status: 'closed',
+        submissionCount: 0,
+        commentCount: 0,
+        createdAt: '2024-01-01T00:00:00Z',
+        updatedAt: '2024-01-01T00:00:00Z',
+        startAt: '2024-01-01T00:00:00Z',
+        deadline: '2024-02-01T00:00:00Z',
+      },
+    ]);
 
     renderExplore();
     expect(await screen.findByText('No open bounties')).toBeInTheDocument();
