@@ -112,7 +112,7 @@ test.describe('Runtime picker -> login -> logout', () => {
 
     await expect
       .poll(async () => page.evaluate(() => window.location.hash))
-      .toMatch(/^#\/(home|chat)/);
+      .toMatch(/^#\/(home|chat)(\/|$)/);
     await expect(await waitForMockRequest('GET', '/auth/me')).toBeTruthy();
 
     await page.goto('/#/settings/account');

@@ -37,9 +37,13 @@ describe('Webhooks ingress surface (stub-level)', () => {
 
   it('reaches the app shell after onboarding', async () => {
     // Home.tsx: t('home.askAssistant') is the stable home page CTA button text.
+    // After the /home → /chat redirect (AppRoutes.tsx), the chat new-window hero
+    // renders t('home.statusOk') instead of the old CTA button.
     const atHome =
       (await textExists('Ask your assistant anything')) ||
-      (await textExists('Your device is connected'));
+      (await textExists('Your device is connected')) ||
+      (await textExists('Your assistant is ready when you are')) ||
+      (await textExists('Type something below to get started'));
     expect(atHome).toBe(true);
   });
 

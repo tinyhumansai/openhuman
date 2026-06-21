@@ -123,6 +123,22 @@ fn filter_wildcard_includes_all_minus_disallowed() {
 }
 
 #[test]
+fn filter_wildcard_honours_disallowed_prefix_entries() {
+    let parent: Vec<Box<dyn Tool>> = vec![
+        stub("alpha"),
+        stub("tinyplace_registry_register"),
+        stub("tinyplace_marketplace_buy_identity"),
+        stub("gamma"),
+    ];
+    let mut def = make_def_named_tools(&[]);
+    def.tools = ToolScope::Wildcard;
+    def.disallowed_tools = vec!["tinyplace_*".into()];
+    let idx = filter_tool_indices(&parent, &def.tools, &def.disallowed_tools, None);
+    let names: Vec<&str> = idx.iter().map(|&i| parent[i].name()).collect();
+    assert_eq!(names, vec!["alpha", "gamma"]);
+}
+
+#[test]
 fn filter_skill_filter_restricts_to_prefix() {
     let parent: Vec<Box<dyn Tool>> = vec![
         stub("notion__search"),

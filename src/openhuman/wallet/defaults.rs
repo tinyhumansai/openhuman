@@ -19,7 +19,64 @@ const TRONSCAN_TX_BASE: &str = "https://tronscan.org/#/transaction/";
 
 const DEFAULT_BTC_REST_URL: &str = "https://blockstream.info/api";
 const DEFAULT_SOLANA_RPC_URL: &str = "https://api.mainnet-beta.solana.com";
+/// Default tiny.place API base (mirrors `tinyplace::state`) — used to derive the
+/// tiny.place Solana settlement RPC when no explicit override is set.
+const TINYPLACE_API_BASE_DEFAULT: &str = "https://api.tiny.place";
+const DEVNET_SOLANA_RPC_URL: &str = "https://api.devnet.solana.com";
 const DEFAULT_TRON_REST_URL: &str = "https://api.trongrid.io";
+
+// USDC SPL-token mint per Solana cluster. The mainnet and devnet mints differ,
+// so the selected cluster must drive both the RPC endpoint and the mint.
+const SOLANA_USDC_MINT_MAINNET: &str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+const SOLANA_USDC_MINT_DEVNET: &str = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU";
+
+/// The Solana cluster the wallet broadcasts to, selected via the
+/// `OPENHUMAN_SOLANA_CLUSTER` env (default [`SolanaCluster::Mainnet`]).
+///
+/// Drives **both** the default Solana RPC endpoint and the USDC SPL mint, so a
+/// devnet x402 payment challenge's on-chain transfer lands on devnet with the
+/// devnet mint rather than mainnet. Pair `OPENHUMAN_SOLANA_CLUSTER=devnet` with
+/// a staging `TINYPLACE_API_BASE_URL` when testing tiny.place on devnet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SolanaCluster {
+    Mainnet,
+    Devnet,
+}
+
+impl SolanaCluster {
+    /// Default JSON-RPC endpoint for the cluster (overridable per-call by
+    /// `OPENHUMAN_WALLET_RPC_SOLANA`).
+    pub fn rpc_url(self) -> &'static str {
+        match self {
+            Self::Mainnet => DEFAULT_SOLANA_RPC_URL,
+            Self::Devnet => DEVNET_SOLANA_RPC_URL,
+        }
+    }
+
+    /// USDC SPL-token mint address for the cluster.
+    pub fn usdc_mint(self) -> &'static str {
+        match self {
+            Self::Mainnet => SOLANA_USDC_MINT_MAINNET,
+            Self::Devnet => SOLANA_USDC_MINT_DEVNET,
+        }
+    }
+}
+
+/// Resolve the configured Solana cluster from `OPENHUMAN_SOLANA_CLUSTER`
+/// (case-insensitive `devnet` → [`SolanaCluster::Devnet`]; anything else or
+/// unset → [`SolanaCluster::Mainnet`], preserving the default behaviour).
+pub fn solana_cluster() -> SolanaCluster {
+    let configured = std::env::var("OPENHUMAN_SOLANA_CLUSTER")
+        .ok()
+        .map(|v| v.trim().to_ascii_lowercase());
+    match configured.as_deref() {
+        Some("devnet") => {
+            log::debug!("[wallet] Solana cluster = devnet (via OPENHUMAN_SOLANA_CLUSTER)");
+            SolanaCluster::Devnet
+        }
+        _ => SolanaCluster::Mainnet,
+    }
+}
 
 /// Recognized EVM networks. New L2s plug in here.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -170,7 +227,7 @@ pub fn default_rpc_url(chain: WalletChain) -> &'static str {
     match chain {
         WalletChain::Evm => EvmNetwork::EthereumMainnet.default_rpc_url(),
         WalletChain::Btc => DEFAULT_BTC_REST_URL,
-        WalletChain::Solana => DEFAULT_SOLANA_RPC_URL,
+        WalletChain::Solana => solana_cluster().rpc_url(),
         WalletChain::Tron => DEFAULT_TRON_REST_URL,
     }
 }
@@ -180,10 +237,61 @@ pub fn rpc_url_for_chain(chain: WalletChain) -> String {
         WalletChain::Evm => EvmNetwork::EthereumMainnet.rpc_url(),
         WalletChain::Btc => env_or_default("OPENHUMAN_WALLET_RPC_BTC", DEFAULT_BTC_REST_URL),
         WalletChain::Solana => {
-            env_or_default("OPENHUMAN_WALLET_RPC_SOLANA", DEFAULT_SOLANA_RPC_URL)
+            env_or_default("OPENHUMAN_WALLET_RPC_SOLANA", solana_cluster().rpc_url())
         }
         WalletChain::Tron => env_or_default("OPENHUMAN_WALLET_RPC_TRON", DEFAULT_TRON_REST_URL),
     }
+}
+
+/// Ordered Solana JSON-RPC endpoints used **only for tiny.place settlement
+/// broadcasts** — primary first, fallback after.
+///
+/// tiny.place settles on its own Solana RPC (the chain where agent accounts are
+/// actually funded); broadcasting to the generic public cluster RPC is what
+/// produces "AccountNotFound / debit an account but found no record of a prior
+/// credit". So the tiny.place payment path tries the tiny.place RPC first and
+/// only falls back to the public cluster on a *transport-level* failure (the
+/// endpoint is unreachable), never on a well-formed JSON-RPC error (an
+/// authoritative answer such as a real insufficient-funds result).
+///
+/// Priority:
+///   1. tiny.place's own Solana RPC — `TINYPLACE_SOLANA_RPC_URL` if set, else
+///      derived from the tiny.place API base (`<TINYPLACE_API_BASE_URL>/solana/rpc`,
+///      default `https://api.tiny.place/solana/rpc`) so it tracks prod/staging.
+///   2. `solana_cluster().rpc_url()` — public mainnet (or devnet) as fallback.
+///
+/// General wallet operations are unaffected — they keep using the single
+/// [`rpc_url_for_chain`] endpoint.
+pub fn tinyplace_solana_rpc_endpoints() -> Vec<String> {
+    let mut endpoints: Vec<String> = vec![
+        tinyplace_solana_rpc_url(),
+        solana_cluster().rpc_url().to_string(),
+    ];
+
+    // De-dup while preserving order (the override may equal the public URL).
+    let mut seen = std::collections::HashSet::new();
+    endpoints.retain(|url| seen.insert(url.clone()));
+    endpoints
+}
+
+/// tiny.place's Solana settlement RPC — explicit `TINYPLACE_SOLANA_RPC_URL`
+/// override, else `<TINYPLACE_API_BASE_URL>/solana/rpc` (default base
+/// `https://api.tiny.place`).
+fn tinyplace_solana_rpc_url() -> String {
+    if let Some(url) = env_nonempty("TINYPLACE_SOLANA_RPC_URL") {
+        return url;
+    }
+    let base = env_nonempty("TINYPLACE_API_BASE_URL")
+        .unwrap_or_else(|| TINYPLACE_API_BASE_DEFAULT.to_string());
+    format!("{}/solana/rpc", base.trim_end_matches('/'))
+}
+
+/// Trimmed value of `env_var`, or `None` when unset/blank.
+fn env_nonempty(env_var: &str) -> Option<String> {
+    std::env::var(env_var)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 pub fn rpc_url_for_evm_network(network: EvmNetwork) -> String {
@@ -268,7 +376,7 @@ pub fn asset_catalog(chain: WalletChain) -> Vec<WalletAssetDefinition> {
                 name: "USD Coin (Solana)".to_string(),
                 native: false,
                 decimals: 6,
-                contract_address: Some("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v".to_string()),
+                contract_address: Some(solana_cluster().usdc_mint().to_string()),
             },
         ],
         WalletChain::Tron => vec![
@@ -501,5 +609,145 @@ mod tests {
             .expect("base usdc lookup");
         assert_eq!(usdc.decimals, 6);
         assert_eq!(usdc.evm_network, Some(EvmNetwork::BaseMainnet));
+    }
+
+    // ── Solana cluster (devnet) ───────────────────────────────────────────────
+    //
+    // `OPENHUMAN_SOLANA_CLUSTER` is process-global env. Serialise these so they
+    // don't race each other (or other env-reading tests) and always restore the
+    // prior value afterwards.
+    static CLUSTER_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn with_cluster_env<T>(value: Option<&str>, f: impl FnOnce() -> T) -> T {
+        let _guard = CLUSTER_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let prev = std::env::var("OPENHUMAN_SOLANA_CLUSTER").ok();
+        match value {
+            Some(v) => std::env::set_var("OPENHUMAN_SOLANA_CLUSTER", v),
+            None => std::env::remove_var("OPENHUMAN_SOLANA_CLUSTER"),
+        }
+        let out = f();
+        match prev {
+            Some(v) => std::env::set_var("OPENHUMAN_SOLANA_CLUSTER", v),
+            None => std::env::remove_var("OPENHUMAN_SOLANA_CLUSTER"),
+        }
+        out
+    }
+
+    #[test]
+    fn solana_cluster_defaults_to_mainnet() {
+        with_cluster_env(None, || {
+            assert_eq!(solana_cluster(), SolanaCluster::Mainnet);
+            assert_eq!(solana_cluster().rpc_url(), DEFAULT_SOLANA_RPC_URL);
+            assert_eq!(default_rpc_url(WalletChain::Solana), DEFAULT_SOLANA_RPC_URL);
+            let usdc = find_asset(WalletChain::Solana, "USDC").expect("solana usdc present");
+            assert_eq!(
+                usdc.contract_address.as_deref(),
+                Some(SOLANA_USDC_MINT_MAINNET)
+            );
+        });
+    }
+
+    #[test]
+    fn devnet_cluster_uses_devnet_rpc_and_mint() {
+        // Case-insensitive parse.
+        with_cluster_env(Some("DevNet"), || {
+            assert_eq!(solana_cluster(), SolanaCluster::Devnet);
+            assert_eq!(solana_cluster().rpc_url(), DEVNET_SOLANA_RPC_URL);
+            assert_eq!(default_rpc_url(WalletChain::Solana), DEVNET_SOLANA_RPC_URL);
+            let usdc = find_asset(WalletChain::Solana, "USDC").expect("solana usdc present");
+            assert_eq!(
+                usdc.contract_address.as_deref(),
+                Some(SOLANA_USDC_MINT_DEVNET)
+            );
+            assert_eq!(usdc.decimals, 6);
+        });
+    }
+
+    #[test]
+    fn unknown_cluster_value_falls_back_to_mainnet() {
+        with_cluster_env(Some("testnet"), || {
+            assert_eq!(solana_cluster(), SolanaCluster::Mainnet);
+        });
+    }
+
+    // ── tiny.place Solana settlement endpoints ────────────────────────────────
+    //
+    // These read TINYPLACE_* env in addition to the cluster, so serialise them
+    // under the same lock as the cluster tests and always restore prior values.
+    fn with_tinyplace_env<T>(
+        rpc_url: Option<&str>,
+        api_base: Option<&str>,
+        cluster: Option<&str>,
+        f: impl FnOnce() -> T,
+    ) -> T {
+        let _guard = CLUSTER_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let prev_rpc = std::env::var("TINYPLACE_SOLANA_RPC_URL").ok();
+        let prev_base = std::env::var("TINYPLACE_API_BASE_URL").ok();
+        let prev_cluster = std::env::var("OPENHUMAN_SOLANA_CLUSTER").ok();
+        let set = |key: &str, val: Option<&str>| match val {
+            Some(v) => std::env::set_var(key, v),
+            None => std::env::remove_var(key),
+        };
+        set("TINYPLACE_SOLANA_RPC_URL", rpc_url);
+        set("TINYPLACE_API_BASE_URL", api_base);
+        set("OPENHUMAN_SOLANA_CLUSTER", cluster);
+        // Catch panics (e.g. assertion failures) so env is always restored —
+        // otherwise a failing test leaks process-global env into later tests.
+        let out = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+        set("TINYPLACE_SOLANA_RPC_URL", prev_rpc.as_deref());
+        set("TINYPLACE_API_BASE_URL", prev_base.as_deref());
+        set("OPENHUMAN_SOLANA_CLUSTER", prev_cluster.as_deref());
+        match out {
+            Ok(v) => v,
+            Err(panic) => std::panic::resume_unwind(panic),
+        }
+    }
+
+    #[test]
+    fn tinyplace_endpoints_default_to_api_tiny_place_then_public_mainnet() {
+        with_tinyplace_env(None, None, None, || {
+            assert_eq!(
+                tinyplace_solana_rpc_endpoints(),
+                vec![
+                    "https://api.tiny.place/solana/rpc".to_string(),
+                    DEFAULT_SOLANA_RPC_URL.to_string(),
+                ]
+            );
+        });
+    }
+
+    #[test]
+    fn tinyplace_endpoints_derive_primary_from_api_base() {
+        with_tinyplace_env(None, Some("https://staging-api.tiny.place/"), None, || {
+            // Trailing slash trimmed; primary tracks the configured API base.
+            assert_eq!(
+                tinyplace_solana_rpc_endpoints()[0],
+                "https://staging-api.tiny.place/solana/rpc"
+            );
+        });
+    }
+
+    #[test]
+    fn tinyplace_endpoints_explicit_override_wins_as_primary() {
+        with_tinyplace_env(Some("https://my-rpc.example/rpc"), None, None, || {
+            let endpoints = tinyplace_solana_rpc_endpoints();
+            assert_eq!(endpoints[0], "https://my-rpc.example/rpc");
+            assert_eq!(endpoints[1], DEFAULT_SOLANA_RPC_URL);
+        });
+    }
+
+    #[test]
+    fn tinyplace_endpoints_dedup_when_primary_equals_public() {
+        with_tinyplace_env(Some(DEFAULT_SOLANA_RPC_URL), None, None, || {
+            // Primary == public fallback collapses to a single endpoint.
+            assert_eq!(
+                tinyplace_solana_rpc_endpoints(),
+                vec![DEFAULT_SOLANA_RPC_URL.to_string()]
+            );
+        });
     }
 }
