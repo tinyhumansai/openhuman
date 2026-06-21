@@ -199,6 +199,45 @@ describe('TeamPanel — create team (line 281)', () => {
     });
     expect(screen.queryByText('Failed to create team')).not.toBeInTheDocument();
   });
+
+  it('surfaces string createTeam rejections', async () => {
+    mockCreateTeam.mockRejectedValue('Plan limit reached');
+    render(<TeamPanel />);
+
+    const input = screen.getByLabelText('Team Name');
+    fireEvent.change(input, { target: { value: 'New Team' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Plan limit reached')).toBeInTheDocument();
+    });
+  });
+
+  it('surfaces message-shaped createTeam rejections', async () => {
+    mockCreateTeam.mockRejectedValue({ message: 'Duplicate team name' });
+    render(<TeamPanel />);
+
+    const input = screen.getByLabelText('Team Name');
+    fireEvent.change(input, { target: { value: 'New Team' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Duplicate team name')).toBeInTheDocument();
+    });
+  });
+
+  it('falls back to the generic create-team copy for empty error details', async () => {
+    mockCreateTeam.mockRejectedValue({ error: '   ', message: '   ' });
+    render(<TeamPanel />);
+
+    const input = screen.getByLabelText('Team Name');
+    fireEvent.change(input, { target: { value: 'New Team' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Failed to create team')).toBeInTheDocument();
+    });
+  });
 });
 
 describe('TeamPanel — join team (line 304)', () => {
@@ -232,6 +271,24 @@ describe('TeamPanel — join team (line 304)', () => {
 
     await waitFor(() => {
       expect(screen.getByText('Code not found')).toBeInTheDocument();
+    });
+  });
+});
+
+describe('TeamPanel — switch team', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('surfaces switchTeam error messages', async () => {
+    mockSwitchTeam.mockRejectedValue({ message: 'Switch blocked by policy' });
+    setupState({ teams: [makeTeamEntry({ team: { _id: 'team-1' } })], activeTeamId: 'team-other' });
+    render(<TeamPanel />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Switch' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Switch blocked by policy')).toBeInTheDocument();
     });
   });
 });
