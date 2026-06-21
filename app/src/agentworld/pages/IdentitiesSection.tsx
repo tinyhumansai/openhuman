@@ -45,6 +45,65 @@ type AsyncState<T> =
   | { status: 'error'; message: string }
   | { status: 'ok'; data: T };
 
+const MARKETPLACE_PAGE_SIZE = 50;
+const MARKETPLACE_TARGET_ACTIVE = 50;
+const MARKETPLACE_MAX_PAGES = 5;
+const FLOOR_PAGE_SIZE = 20;
+const FLOOR_MAX_PAGES = 10;
+
+function isActiveListing(identity: IdentityListing): boolean {
+  return identity.status == null || identity.status === 'active';
+}
+
+async function fetchActiveMarketplaceIdentities(): Promise<IdentitiesResponse> {
+  const active: Array<IdentityListing> = [];
+  let lastResponse: IdentitiesResponse | null = null;
+
+  for (
+    let page = 0;
+    page < MARKETPLACE_MAX_PAGES && active.length < MARKETPLACE_TARGET_ACTIVE;
+    page++
+  ) {
+    const response = await apiClient.graphql.identityListings({
+      limit: MARKETPLACE_PAGE_SIZE,
+      offset: page * MARKETPLACE_PAGE_SIZE,
+    });
+    lastResponse = response;
+    const identities = response.identities ?? [];
+    active.push(...identities.filter(isActiveListing));
+    if (identities.length < MARKETPLACE_PAGE_SIZE) {
+      break;
+    }
+  }
+
+  return {
+    ...(lastResponse ?? { identities: [] }),
+    identities: active.slice(0, MARKETPLACE_TARGET_ACTIVE),
+    count: active.length,
+  };
+}
+
+async function fetchActiveFloorPrice(length: number): Promise<IdentityFloor> {
+  for (let page = 0; page < FLOOR_MAX_PAGES; page++) {
+    const response = await apiClient.graphql.identityListings({
+      length,
+      limit: FLOOR_PAGE_SIZE,
+      offset: page * FLOOR_PAGE_SIZE,
+      sortBy: 'price_asc',
+    });
+    const identities = response.identities ?? [];
+    const listing = identities.find(isActiveListing);
+    if (listing) {
+      return { length, price: listing.price };
+    }
+    if (identities.length < FLOOR_PAGE_SIZE) {
+      break;
+    }
+  }
+
+  return { length, price: undefined };
+}
+
 // ── Small hooks ───────────────────────────────────────────────────────────────
 
 function useHandleAvailability(
@@ -82,10 +141,11 @@ function useMarketplaceIdentities(): AsyncState<IdentitiesResponse> {
   const [state, setState] = useState<AsyncState<IdentitiesResponse>>({ status: 'loading' });
   useEffect(() => {
     let cancelled = false;
-    void apiClient.marketplace
-      .listIdentities({ status: 'active' })
+    void fetchActiveMarketplaceIdentities()
       .then(data => {
-        if (!cancelled) setState({ status: 'ok', data });
+        if (!cancelled) {
+          setState({ status: 'ok', data });
+        }
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -132,10 +192,10 @@ function useFloorPrice(length: number): AsyncState<IdentityFloor> {
   const [state, setState] = useState<AsyncState<IdentityFloor>>({ status: 'loading' });
   useEffect(() => {
     let cancelled = false;
-    void apiClient.marketplace
-      .identityFloor(length)
+    void fetchActiveFloorPrice(length)
       .then(data => {
-        if (!cancelled) setState({ status: 'ok', data });
+        if (cancelled) return;
+        setState({ status: 'ok', data });
       })
       .catch((err: unknown) => {
         if (cancelled) return;

@@ -35,7 +35,7 @@ crate-type = ["rlib"]
 
 [dependencies]
 # tiny.place A2A social network SDK — published on crates.io (tinyhumansai/tiny.place)
-tinyplace = "0.10.0"
+tinyplace = "1.0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_repr = "0.1"
