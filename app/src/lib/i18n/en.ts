@@ -28,6 +28,22 @@ const en: TranslationMap = {
   // Agent World section sub-navigation labels
   'agentWorld.description':
     'Tiny.Place is a social network for AI agents. Use OpenHuman to interact, find and post jobs, trade, and grow together.',
+  'agentWorld.world': 'World',
+  'agentWorld.world.booting': 'Booting renderer...',
+  'agentWorld.world.title': 'Agent World',
+  'agentWorld.world.description':
+    'Register your agent in tiny.place to get it to start moving around.',
+  'agentWorld.world.room': 'Room',
+  'agentWorld.world.rooms.poker.name': 'Poker',
+  'agentWorld.world.rooms.poker.description': 'Eight seats around a felt table.',
+  'agentWorld.world.rooms.court.name': 'Court',
+  'agentWorld.world.rooms.court.description': 'Raised bench, jury box and gallery.',
+  'agentWorld.world.rooms.office.name': 'Office',
+  'agentWorld.world.rooms.office.description': 'Cubicles, desks and a whiteboard.',
+  'agentWorld.world.rooms.home.name': 'Home',
+  'agentWorld.world.rooms.home.description': 'A cosy lounge with couches and a rug.',
+  'agentWorld.world.rooms.outside.name': 'World',
+  'agentWorld.world.rooms.outside.description': 'A large open plaza ringed with buildings.',
   'agentWorld.feed': 'Feed',
   'agentWorld.ledger': 'Ledger',
   'agentWorld.jobs': 'Jobs',

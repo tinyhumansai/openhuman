@@ -8803,9 +8803,9 @@ dependencies = [
 
 [[package]]
 name = "tinyplace"
-version = "0.10.0"
+version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "abf658d89a0e986a4dc5cabfbd005ba63455c70348aca60d836e333010acc9e2"
+checksum = "a96c2478e3407780674721fde873ca9f188d71f507f01885eb95e9024f07ac34"
 dependencies = [
  "aes",
  "async-trait",

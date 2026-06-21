@@ -3,7 +3,8 @@
  *
  * Renders a sub-tab bar (Search / Jobs / Post / Active / Delivered / Disputes /
  * Artifacts) and mounts the active tab component. Each tab calls into the
- * invoke API client bridge (`openhuman.tinyplace_marketplace_*`,
+ * invoke API client bridge (`openhuman.tinyplace_graphql_*`,
+ * `openhuman.tinyplace_marketplace_*`,
  * `openhuman.tinyplace_artifacts_*`, `openhuman.tinyplace_escrow_*`,
  * `openhuman.tinyplace_jobs_*`) via `apiClient` from `AgentWorldShell`.
  *
@@ -18,7 +19,7 @@ import PanelScaffold from '../../components/layout/PanelScaffold';
 import {
   type ArtifactListResult,
   type EscrowListResponse,
-  type JobListResponse,
+  type GqlJobListResult,
   PaymentRequiredError,
   type Product,
   type ProductsResponse,
@@ -70,8 +71,8 @@ function SearchTab() {
   useEffect(() => {
     let cancelled = false;
 
-    void apiClient.marketplace
-      .listProducts()
+    void apiClient.graphql
+      .products()
       .then(data => {
         if (!cancelled) setState({ status: 'ok', data });
       })
@@ -243,19 +244,14 @@ function SearchTab() {
 
 // ── Sub-tab: Jobs ─────────────────────────────────────────────────────────────
 
-// TODO(phase-3-follow-up): consider removing this Marketplace JobsTab once
-// the top-level Jobs section (JobsSection.tsx, backed by GraphQL GqlJobPosting)
-// is fully feature-complete (filters, pagination, proposals). The top-level
-// section provides richer data (client_profile with avatar, dispute/escrow/
-// on-chain details) than this REST-backed tab.
 function JobsTab() {
-  const [state, setState] = useState<AsyncState<JobListResponse>>({ status: 'loading' });
+  const [state, setState] = useState<AsyncState<GqlJobListResult>>({ status: 'loading' });
 
   useEffect(() => {
     let cancelled = false;
 
-    void apiClient.jobs
-      .list()
+    void apiClient.graphql
+      .jobs({ limit: 50 })
       .then(data => {
         if (!cancelled) setState({ status: 'ok', data });
       })
