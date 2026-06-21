@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
 use chrono::Utc;
 use openhuman_core::openhuman::app_state::{
     peek_cached_current_user_identity, snapshot, update_local_state, StoredAppStatePatch,
@@ -88,6 +90,11 @@ fn tempdir() -> TempDir {
         .prefix("app-state-credentials-round14-")
         .tempdir_in("target")
         .expect("round14 tempdir")
+}
+
+fn jwt_with_payload(payload: Value) -> String {
+    let payload = URL_SAFE_NO_PAD.encode(payload.to_string());
+    format!("eyJhbGciOiJIUzI1NiJ9.{payload}.sig")
 }
 
 fn write_min_config(root: &Path, api_url: &str) {
@@ -572,6 +579,73 @@ async fn snapshot_clears_pending_session_when_backend_revalidation_is_rejected()
     assert!(
         profile.is_none(),
         "rejected pending session profile must be cleared"
+    );
+
+    let _ = shutdown_tx.send(());
+    let _ = server_task.await;
+}
+
+#[tokio::test]
+async fn snapshot_clears_transiently_stored_supplied_user_after_revalidation_failure() {
+    let _lock = env_lock();
+    let (api_url, server_task, shutdown_tx) = auth_me_failing_server().await;
+    let harness = setup(&api_url);
+    let config = harness.config().await;
+    let token = jwt_with_payload(json!({
+        "exp": (Utc::now() + chrono::Duration::hours(1)).timestamp()
+    }));
+
+    let stored = store_session(
+        &config,
+        &token,
+        None,
+        Some(json!({
+            "name": "Callback User",
+            "email": "callback@example.test"
+        })),
+    )
+    .await
+    .expect("transient auth/me failure should defer validation for live JWT");
+    assert!(stored.value.has_token);
+
+    let profile = AuthService::from_config(&config)
+        .get_profile(APP_SESSION_PROVIDER, None)
+        .expect("read deferred profile")
+        .expect("deferred profile is persisted");
+    let stored_user: Value = serde_json::from_str(
+        profile
+            .metadata
+            .get("user_json")
+            .expect("persisted user_json"),
+    )
+    .expect("stored deferred user json");
+    assert_eq!(
+        stored_user.get("pendingBackendValidation"),
+        Some(&json!(true)),
+        "supplied callback user must keep the pending marker"
+    );
+    assert_eq!(
+        stored_user.get("email").and_then(Value::as_str),
+        Some("callback@example.test")
+    );
+
+    let snap = snapshot()
+        .await
+        .expect("snapshot with transiently stored supplied user")
+        .value;
+    assert!(
+        !snap.auth.is_authenticated,
+        "transiently stored supplied user must fail closed when revalidation is rejected"
+    );
+    assert!(snap.auth.user.is_none());
+    assert!(snap.current_user.is_none());
+    assert!(snap.session_token.is_none());
+    let profile = AuthService::from_config(&config)
+        .get_profile(APP_SESSION_PROVIDER, None)
+        .expect("read profile after supplied-user rejection");
+    assert!(
+        profile.is_none(),
+        "rejected supplied-user pending session profile must be cleared"
     );
 
     let _ = shutdown_tx.send(());

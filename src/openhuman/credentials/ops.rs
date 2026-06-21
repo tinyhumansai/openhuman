@@ -227,7 +227,13 @@ pub async fn store_session(
     } {
         metadata.insert("user_id".to_string(), uid);
     }
-    let user_for_store = if local_session {
+    let user_for_store = if local_session
+        || settings
+            .as_object()
+            .and_then(|map| map.get("pendingBackendValidation"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    {
         settings.clone()
     } else {
         sanitize_stored_session_user(user).unwrap_or(settings)
