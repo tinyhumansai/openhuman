@@ -19,10 +19,11 @@ vi.mock('../../../services/analytics', () => ({ trackEvent: vi.fn() }));
 describe('CollapsedNavRail', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('renders Home plus every primary nav destination as an icon button', () => {
+  it('renders Home, Wallet, and every primary nav destination as icon buttons', () => {
     renderWithProviders(<CollapsedNavRail />, { initialEntries: ['/home'] });
     for (const key of [
       'nav.home',
+      'nav.wallet',
       'nav.chat',
       'nav.human',
       'nav.brain',
@@ -31,6 +32,26 @@ describe('CollapsedNavRail', () => {
     ]) {
       expect(screen.getByRole('button', { name: key })).toBeInTheDocument();
     }
+  });
+
+  it('wallet button navigates to /settings/wallet-balances', () => {
+    renderWithProviders(<CollapsedNavRail />, { initialEntries: ['/home'] });
+    fireEvent.click(screen.getByRole('button', { name: 'nav.wallet' }));
+    expect(mockNavigate).toHaveBeenCalledWith('/settings/wallet-balances');
+  });
+
+  it('wallet button has correct data-analytics-id', () => {
+    renderWithProviders(<CollapsedNavRail />, { initialEntries: ['/home'] });
+    expect(screen.getByRole('button', { name: 'nav.wallet' })).toHaveAttribute(
+      'data-analytics-id',
+      'collapsed-rail-wallet'
+    );
+  });
+
+  it('wallet button is marked active when on /settings/wallet-balances', () => {
+    renderWithProviders(<CollapsedNavRail />, { initialEntries: ['/settings/wallet-balances'] });
+    const btn = screen.getByRole('button', { name: 'nav.wallet' });
+    expect(btn.className).toMatch(/bg-white|dark:bg-neutral-800/);
   });
 
   it('navigates to a destination path when its icon is clicked', () => {

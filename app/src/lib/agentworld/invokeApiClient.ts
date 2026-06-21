@@ -86,8 +86,10 @@ export interface AgentQueryParams {
 
 export interface AgentCard {
   agentId: string;
+  cryptoId?: string;
   name?: string;
   description?: string;
+  username?: string;
   [key: string]: unknown;
 }
 
@@ -97,6 +99,9 @@ export interface ListAgentsResponse {
 }
 
 export interface ExplorerOverview {
+  allTime?: { feesUsd?: string; registeredAgents?: number; volumeUsd?: string };
+  last24h?: { feesUsd?: string; transactions?: number; uniqueAgents?: number; volumeUsd?: string };
+  ledger?: { totalEntries?: number; latestTxId?: string; latestTimestamp?: string };
   [key: string]: unknown;
 }
 
@@ -598,6 +603,62 @@ export interface ProductsResponse {
   [key: string]: unknown;
 }
 
+export interface GqlAgentCardListResult {
+  agents: AgentCard[];
+  count?: number;
+  [key: string]: unknown;
+}
+
+export interface GqlProduct extends Omit<Product, 'seller' | 'sellerCryptoId'> {
+  seller: FeedAuthor;
+  sellerCryptoId?: string;
+}
+
+export interface GqlProductListResult {
+  products: GqlProduct[];
+  count?: number;
+  [key: string]: unknown;
+}
+
+export interface GqlIdentityListing extends Omit<IdentityListing, 'seller' | 'sellerCryptoId'> {
+  seller?: FeedAuthor;
+  sellerCryptoId?: string;
+}
+
+export interface GqlIdentityListingListResult {
+  identities?: GqlIdentityListing[];
+  listings?: GqlIdentityListing[];
+  count?: number;
+  [key: string]: unknown;
+}
+
+export interface GqlIdentityBidListResult {
+  bids: IdentityBid[];
+  count?: number;
+  [key: string]: unknown;
+}
+
+export interface GqlIdentityOffer extends Omit<IdentityOffer, 'buyer'> {
+  buyer: FeedAuthor;
+}
+
+export interface GqlIdentityOfferListResult {
+  offers: GqlIdentityOffer[];
+  count?: number;
+  [key: string]: unknown;
+}
+
+export interface GqlIdentitySale extends Omit<IdentitySale, 'buyer' | 'seller'> {
+  buyer: FeedAuthor;
+  seller?: FeedAuthor;
+}
+
+export interface GqlIdentitySaleListResult {
+  sales: GqlIdentitySale[];
+  count?: number;
+  [key: string]: unknown;
+}
+
 export interface BroadcastChannel {
   broadcastId: string;
   name: string;
@@ -666,6 +727,8 @@ export interface GroupQueryParams {
   minMembers?: number;
   maxMembers?: number;
   limit?: number;
+  /** When set, returns only groups this agent is an active member of. */
+  member?: string;
   [key: string]: unknown;
 }
 // ── Groups invite/role types ────────────────────────────────────────────────
@@ -1165,7 +1228,40 @@ export interface GqlJobPosting {
 
 export interface GqlJobListResult {
   jobs: GqlJobPosting[];
-  count: number;
+  count?: number;
+}
+
+/** Reward block on a GraphQL bounty (amount in the asset's smallest base unit). */
+export interface GqlBountyReward {
+  amount: string;
+  asset: string;
+  network: string;
+}
+
+/** A bounty as returned by the tiny.place GraphQL gateway. */
+export interface GqlBounty {
+  bountyId: string;
+  creator: string;
+  title: string;
+  description: string;
+  reward: GqlBountyReward;
+  status: string;
+  submissionCount: number;
+  commentCount: number;
+  winnerSubmissionId?: string;
+  winnerAgent?: string;
+  startAt: string;
+  deadline: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Filters for the GraphQL bounties query (all optional). */
+export interface GqlBountyQueryParams {
+  status?: string;
+  creator?: string;
+  limit?: number;
+  offset?: number;
 }
 
 /**
@@ -1451,6 +1547,40 @@ export interface MessageEnvelope {
   contentHint?: string;
   signal?: SignalMetadataEnvelope;
   [key: string]: unknown;
+}
+
+function authorId(author: FeedAuthor | undefined, fallback = ''): string {
+  return author?.handle || author?.cryptoId || fallback;
+}
+
+function normalizeGraphqlProduct(product: GqlProduct): Product {
+  const seller = authorId(product.seller, product.sellerCryptoId);
+  return {
+    ...(product as unknown as Product),
+    seller,
+    sellerCryptoId: product.sellerCryptoId || product.seller?.cryptoId || seller,
+  };
+}
+
+function normalizeGraphqlIdentityListing(listing: GqlIdentityListing): IdentityListing {
+  const seller = authorId(listing.seller, listing.sellerCryptoId);
+  return {
+    ...(listing as unknown as IdentityListing),
+    seller,
+    sellerCryptoId: listing.sellerCryptoId || listing.seller?.cryptoId || seller,
+  };
+}
+
+function normalizeGraphqlIdentityOffer(offer: GqlIdentityOffer): IdentityOffer {
+  return { ...(offer as unknown as IdentityOffer), buyer: authorId(offer.buyer) };
+}
+
+function normalizeGraphqlIdentitySale(sale: GqlIdentitySale): IdentitySale {
+  return {
+    ...(sale as unknown as IdentitySale),
+    buyer: authorId(sale.buyer),
+    seller: authorId(sale.seller),
+  };
 }
 
 // ── Client factory ────────────────────────────────────────────────────────────
@@ -1790,13 +1920,6 @@ export function createInvokeApiClient() {
           durationDays: params.durationDays ?? null,
           confirmed: opts?.confirmed ?? false,
         }),
-      /** Fund a bounty via x402 confirm-before-spend. confirmed:false returns
-       *  the challenge (no spend); confirmed:true pays and funds. */
-      fund: (bountyId: string, opts?: { confirmed?: boolean }) =>
-        call<X402BuyResult>('openhuman.tinyplace_bounties_fund', {
-          bountyId,
-          confirmed: opts?.confirmed ?? false,
-        }),
       cancel: (bountyId: string) =>
         call<Bounty>('openhuman.tinyplace_bounties_cancel', { bountyId }),
       submit: (bountyId: string, url: string, title?: string, note?: string) =>
@@ -1925,6 +2048,11 @@ export function createInvokeApiClient() {
           offset: params?.offset ?? null,
           includeSelf: params?.includeSelf ?? null,
         }),
+      /** List directory agents through GraphQL, including server-resolved edges. */
+      agents: (params?: AgentQueryParams) =>
+        call<GqlAgentCardListResult>('openhuman.tinyplace_graphql_agents', {
+          params: params ?? null,
+        }),
       /** List posts by a specific agent handle (public). */
       posts: (handle: string, params?: { limit?: number; before?: number; viewer?: string }) =>
         call<GqlPostListResult>('openhuman.tinyplace_graphql_posts', {
@@ -1980,11 +2108,27 @@ export function createInvokeApiClient() {
       /** Fetch a single ledger transaction by ID (public, no auth). */
       ledgerTransaction: (id: string) =>
         call<GqlLedgerTransaction | null>('openhuman.tinyplace_graphql_ledger_transaction', { id }),
+      products: async (params?: ProductQueryParams) => {
+        const result = await call<GqlProductListResult>('openhuman.tinyplace_graphql_products', {
+          params: params ?? null,
+        });
+        return {
+          ...result,
+          products: result.products.map(normalizeGraphqlProduct),
+        } satisfies ProductsResponse & { count?: number };
+      },
+      product: async (id: string) => {
+        const result = await call<GqlProduct | null>('openhuman.tinyplace_graphql_product', { id });
+        return result ? normalizeGraphqlProduct(result) : null;
+      },
       /** List job postings with optional filters (public, no auth). */
       jobs: (params?: GqlJobQueryParams) =>
         call<GqlJobListResult>('openhuman.tinyplace_graphql_jobs', { params: params ?? null }),
       /** Fetch a single job posting by ID (public, no auth). */
       job: (id: string) => call<GqlJobPosting | null>('openhuman.tinyplace_graphql_job', { id }),
+      bounties: (params?: GqlBountyQueryParams) =>
+        call<GqlBounty[]>('openhuman.tinyplace_graphql_bounties', { params: params ?? null }),
+      bounty: (id: string) => call<GqlBounty | null>('openhuman.tinyplace_graphql_bounty', { id }),
       /** Fetch a full GqlProfile by @handle (public GraphQL). */
       profile: (username: string) =>
         call<GqlProfile | null>('openhuman.tinyplace_graphql_profile', { username }),
@@ -2000,6 +2144,64 @@ export function createInvokeApiClient() {
       /** Fetch an agent card by agent ID (public GraphQL). */
       agentCard: (id: string) =>
         call<AgentCard | null>('openhuman.tinyplace_graphql_agent_card', { id }),
+      identityListings: async (params?: IdentityListingQueryParams) => {
+        const result = await call<GqlIdentityListingListResult>(
+          'openhuman.tinyplace_graphql_identity_listings',
+          { params: params ?? null }
+        );
+        const identities = result.identities ?? result.listings ?? [];
+        return {
+          ...result,
+          identities: identities.map(normalizeGraphqlIdentityListing),
+        } satisfies IdentitiesResponse & { count?: number };
+      },
+      identityListing: async (
+        id: string,
+        params?: {
+          bidLimit?: number;
+          bidOffset?: number;
+          historyLimit?: number;
+          historyOffset?: number;
+        }
+      ) => {
+        const result = await call<GqlIdentityListing | null>(
+          'openhuman.tinyplace_graphql_identity_listing',
+          { id, params: params ?? null }
+        );
+        return result ? normalizeGraphqlIdentityListing(result) : null;
+      },
+      identityBids: (listingId: string, params?: { limit?: number; offset?: number }) =>
+        call<GqlIdentityBidListResult>('openhuman.tinyplace_graphql_identity_bids', {
+          listingId,
+          params: params ?? null,
+        }),
+      identityOffers: async (params?: {
+        agent?: string;
+        buyer?: string;
+        name?: string;
+        status?: string;
+        limit?: number;
+        offset?: number;
+      }) => {
+        const result = await call<GqlIdentityOfferListResult>(
+          'openhuman.tinyplace_graphql_identity_offers',
+          { params: params ?? null }
+        );
+        return {
+          ...result,
+          offers: result.offers.map(normalizeGraphqlIdentityOffer),
+        } satisfies OffersResponse & { count?: number };
+      },
+      identitySales: async (name: string, params?: { limit?: number; offset?: number }) => {
+        const result = await call<GqlIdentitySaleListResult>(
+          'openhuman.tinyplace_graphql_identity_sales',
+          { name, params: params ?? null }
+        );
+        return {
+          ...result,
+          sales: result.sales.map(normalizeGraphqlIdentitySale),
+        } satisfies RecentSalesResponse & { count?: number };
+      },
     },
     jobsWrite: {
       create: (params: JobCreateParams) =>

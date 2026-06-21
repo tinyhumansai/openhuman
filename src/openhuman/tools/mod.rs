@@ -44,6 +44,7 @@ pub use crate::openhuman::skill_runtime::tools::*;
 pub use crate::openhuman::task_sources::tools::*;
 pub use crate::openhuman::team::tools::*;
 pub use crate::openhuman::threads::tools::*;
+pub use crate::openhuman::tinyplace::tools::*;
 pub use crate::openhuman::todos::tools::*;
 pub use crate::openhuman::wallet::tools::*;
 pub use crate::openhuman::whatsapp_data::tools::*;
