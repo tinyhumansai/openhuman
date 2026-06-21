@@ -132,6 +132,31 @@ pub async fn rpc_handler(State(state): State<AppState>, Json(req): Json<RpcReque
                     error = %redacted,
                     "[rpc] transient downstream failure — not reporting to Sentry (message redacted)"
                 );
+            } else if let Some(unknown_method) =
+                crate::core::dispatch::unknown_method_name(&display_message)
+            {
+                // An unrecognised RPC method is a transport-boundary mismatch
+                // (infra probe traffic, or a client on a different release than
+                // the running core), not an actionable core defect (#3567).
+                // Known external probes never become real methods, so they are
+                // debug-only and never reach Sentry; any other unknown method
+                // is still recorded for triage but at warn severity (captured,
+                // no page) rather than an error event. Either way the JSON-RPC
+                // method-not-found response to the caller below is unchanged.
+                if crate::core::dispatch::is_known_probe_method(unknown_method) {
+                    tracing::debug!(
+                        method = %method,
+                        elapsed_ms = ms as u64,
+                        "[rpc] unknown probe/legacy method (allow-listed) — debug only, not reporting to Sentry"
+                    );
+                } else {
+                    crate::core::observability::report_warning_message(
+                        display_message.as_str(),
+                        "rpc",
+                        "invoke_method",
+                        &[("method", method.as_str()), ("elapsed_ms", &ms.to_string())],
+                    );
+                }
             } else {
                 crate::core::observability::report_error_or_expected(
                     display_message.as_str(),

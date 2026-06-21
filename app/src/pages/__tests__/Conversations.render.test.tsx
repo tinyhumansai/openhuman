@@ -13,6 +13,7 @@ import { Provider } from 'react-redux';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { SidebarSlotOutlet, SidebarSlotProvider } from '../../components/layout/shell/SidebarSlot';
 import { threadApi } from '../../services/api/threadApi';
 import { chatSend } from '../../services/chatService';
 import { CoreRpcError } from '../../services/coreRpcClient';
@@ -127,6 +128,11 @@ vi.mock('../../services/api/openrouterFreeModels', () => ({
 
 vi.mock('../../hooks/useUsageState', () => ({ useUsageState: mockUseUsageState }));
 
+// The new-window hero pulls useUser/useCoreState; stub it so the page renders
+// without a CoreStateProvider (these tests assert the sidebar/composer, not the
+// empty-state hero).
+vi.mock('../../components/chat/ChatNewWindowHero', () => ({ default: () => null }));
+
 vi.mock('../../store/socketSelectors', () => ({
   selectSocketStatus: (state: { socket?: { byUser?: Record<string, { status: string }> } }) =>
     state.socket?.byUser?.__pending__?.status ?? 'disconnected',
@@ -202,7 +208,12 @@ async function renderConversations(preload: Record<string, unknown> = {}) {
   render(
     <Provider store={store}>
       <MemoryRouter initialEntries={['/conversations']}>
-        <Conversations />
+        {/* The thread sidebar is projected into the root sidebar slot, so the
+            page needs a provider + outlet for that portal to mount in tests. */}
+        <SidebarSlotProvider>
+          <SidebarSlotOutlet />
+          <Conversations />
+        </SidebarSlotProvider>
       </MemoryRouter>
     </Provider>
   );
@@ -210,12 +221,9 @@ async function renderConversations(preload: Record<string, unknown> = {}) {
   return store;
 }
 
-/** Click the sidebar toggle so the thread list becomes visible. */
+/** The thread sidebar is always projected now (no toggle); just flush effects. */
 async function openSidebar() {
-  const toggleBtn = screen.getByTitle('Show sidebar');
-  await act(async () => {
-    fireEvent.click(toggleBtn);
-  });
+  await act(async () => {});
 }
 
 // Default empty state
@@ -316,50 +324,30 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     });
   });
 
-  // Covers the page-mode sidebar (TwoPanelLayout, id `chat`) once opened.
-  // Covers line 941: <div className="flex-1 overflow-y-auto"> (always rendered in page mode)
-  it('renders the sidebar pill tabs in page mode', async () => {
+  // Covers the page-mode sidebar (TwoPanelLayout, id `chat`) once opened. The
+  // General/Subconscious/Tasks filter chips were removed; the thread search is
+  // the stable top-of-sidebar control.
+  it('renders the sidebar thread search in page mode', async () => {
     await act(async () => {
       await renderConversations({ thread: emptyThreadState });
     });
 
     await openSidebar();
 
-    expect(screen.getByText('General')).toBeInTheDocument();
+    expect(screen.getByTestId('chat-thread-search-input')).toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'General' })).not.toBeInTheDocument();
   });
 
-  it('restores and updates the persisted thread sidebar visibility', async () => {
-    let renderedStore: ReturnType<typeof buildStore> | undefined;
-    await act(async () => {
-      renderedStore = await renderConversations({
-        thread: emptyThreadState,
-        // Sidebar visibility now lives in the reusable `layout` slice (id `chat`).
-        layout: { panels: { chat: { sidebarVisible: true, sidebarWidth: 256 } } },
-      });
-    });
-
-    expect(screen.getByText('General')).toBeInTheDocument();
-
-    await act(async () => {
-      fireEvent.click(screen.getByTitle('Hide sidebar'));
-    });
-
-    await waitFor(() => {
-      expect(screen.queryByText('General')).not.toBeInTheDocument();
-    });
-    expect(renderedStore?.getState().layout.panels.chat.sidebarVisible).toBe(false);
-  });
-
-  // Covers line 941 empty branch
-  it('shows the General empty message when the default bucket has no threads', async () => {
+  // Covers the empty branch — with the filter chips gone the list always shows
+  // the generic empty message when no (General-bucket) threads exist.
+  it('shows the empty message when there are no threads', async () => {
     await act(async () => {
       await renderConversations({ thread: emptyThreadState });
     });
 
     // Sidebar is hidden by default — open it first.
     await openSidebar();
-    expect(screen.getByRole('tab', { name: 'General' })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByText('No "General" threads')).toBeInTheDocument();
+    expect(screen.getByText('No threads yet')).toBeInTheDocument();
   });
 
   // Covers lines 1002-1004, 1007, 1011-1012, 1014: thread list items rendered unconditionally
@@ -1351,11 +1339,10 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     });
   });
 
-  // Batch-5: Conversation category tabs keep stable labels and mapping (pr#1646).
-  //
-  // The tab set is fixed so categories do not disappear when the thread list
-  // is empty, and the active-filter state remains unambiguous.
-  it('renders the fixed chat bucket tabs with stable labels', async () => {
+  // The General/Subconscious/Tasks filter chips were removed — the thread list
+  // is now fixed to the General bucket with no in-sidebar bucket switcher.
+  // Subconscious reflections and task/worker threads have dedicated surfaces.
+  it('does not render the removed bucket filter tabs', async () => {
     await act(async () => {
       await renderConversations({ thread: emptyThreadState });
     });
@@ -1363,60 +1350,9 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     // Sidebar is hidden by default — open it first.
     await openSidebar();
 
-    // Bucket tabs must be present regardless of thread count.
-    expect(screen.getByRole('tab', { name: 'General' })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: 'Subconscious' })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: 'Tasks' })).toBeInTheDocument();
-    expect(screen.queryByRole('tab', { name: 'All' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('tab', { name: 'Briefing' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('tab', { name: 'Notification' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('tab', { name: 'Workers' })).not.toBeInTheDocument();
-    expect(screen.getByRole('tablist')).toHaveClass('flex-wrap');
-  });
-
-  it('starts with the "General" tab selected', async () => {
-    await act(async () => {
-      await renderConversations({ thread: emptyThreadState });
-    });
-
-    // Sidebar is hidden by default — open it first.
-    await openSidebar();
-
-    expect(screen.getByRole('tab', { name: 'General' })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByRole('tab', { name: 'Subconscious' })).toHaveAttribute(
-      'aria-selected',
-      'false'
-    );
-  });
-
-  it('shows category-specific empty message when a label tab is selected and no threads match', async () => {
-    await act(async () => {
-      await renderConversations({ thread: emptyThreadState });
-    });
-
-    // Sidebar is hidden by default — open it first.
-    await openSidebar();
-
-    fireEvent.click(screen.getByRole('tab', { name: 'General' }));
-
-    await waitFor(() => {
-      expect(screen.getByText(/"General" threads/i)).toBeInTheDocument();
-    });
-  });
-
-  it('shows a category-specific empty message when the Tasks tab is selected', async () => {
-    await act(async () => {
-      await renderConversations({ thread: emptyThreadState });
-    });
-
-    // Sidebar is hidden by default — open it first.
-    await openSidebar();
-
-    fireEvent.click(screen.getByRole('tab', { name: 'Tasks' }));
-
-    await waitFor(() => {
-      expect(screen.getByText(/"Tasks" threads/i)).toBeInTheDocument();
-    });
+    expect(screen.queryByRole('tab', { name: 'General' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'Subconscious' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'Tasks' })).not.toBeInTheDocument();
   });
 });
 
@@ -1681,139 +1617,6 @@ describe('Conversations — agent task insights panel anchoring (#3717 Bug 2)', 
     await act(async () => {
       fireEvent.click(screen.getByTestId('subagent-view-processing'));
     });
-  });
-});
-
-describe('Conversations — thread title editing', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockUseUsageState.mockReturnValue({
-      teamUsage: null,
-      currentPlan: null,
-      currentTier: 'FREE' as const,
-      isFreeTier: true,
-      usagePct: 0,
-      isNearLimit: false,
-      isAtLimit: false,
-      isBudgetExhausted: false,
-      shouldShowBudgetCompletedMessage: false,
-      isLoading: false,
-      refresh: vi.fn(),
-    });
-    mockGetThreadMessages.mockResolvedValue({ messages: [], count: 0 });
-  });
-
-  it('shows pencil icon on hover and enters edit mode on click', async () => {
-    const thread = makeThread({ id: 'edit-title-thread', title: 'Original Title' });
-    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
-
-    await act(async () => {
-      await renderConversations({
-        thread: selectedThreadState(thread),
-        socket: socketState('connected'),
-      });
-    });
-
-    expect(screen.getByText('Original Title')).toBeInTheDocument();
-
-    const editBtn = screen.getByRole('button', { name: 'Edit thread title' });
-    expect(editBtn).toBeInTheDocument();
-
-    await act(async () => {
-      fireEvent.mouseDown(editBtn);
-    });
-
-    const input = screen.getByRole('textbox', { name: 'Edit thread title' });
-    expect(input).toBeInTheDocument();
-    expect(input).toHaveValue('Original Title');
-  });
-
-  it('commits edited title on Enter and dispatches updateThreadTitle', async () => {
-    const thread = makeThread({ id: 'commit-title-thread', title: 'Old Title' });
-    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
-    (threadApi.updateTitle as ReturnType<typeof vi.fn>).mockResolvedValue({
-      ...thread,
-      title: 'New Title',
-    });
-
-    await act(async () => {
-      await renderConversations({
-        thread: selectedThreadState(thread),
-        socket: socketState('connected'),
-      });
-    });
-
-    const editBtn = screen.getByRole('button', { name: 'Edit thread title' });
-    await act(async () => {
-      fireEvent.mouseDown(editBtn);
-    });
-
-    const input = screen.getByRole('textbox', { name: 'Edit thread title' });
-    await act(async () => {
-      fireEvent.change(input, { target: { value: 'New Title' } });
-    });
-    await act(async () => {
-      fireEvent.keyDown(input, { key: 'Enter' });
-    });
-
-    await waitFor(() => {
-      expect(threadApi.updateTitle).toHaveBeenCalledWith('commit-title-thread', 'New Title');
-    });
-  });
-
-  it('cancels editing on Escape without dispatching', async () => {
-    const thread = makeThread({ id: 'cancel-title-thread', title: 'Keep Me' });
-    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
-
-    await act(async () => {
-      await renderConversations({
-        thread: selectedThreadState(thread),
-        socket: socketState('connected'),
-      });
-    });
-
-    const editBtn = screen.getByRole('button', { name: 'Edit thread title' });
-    await act(async () => {
-      fireEvent.click(editBtn);
-    });
-
-    const input = screen.getByLabelText('Edit thread title');
-    await act(async () => {
-      fireEvent.change(input, { target: { value: 'Changed' } });
-    });
-    await act(async () => {
-      fireEvent.keyDown(input, { key: 'Escape' });
-    });
-
-    expect(screen.getByText('Keep Me')).toBeInTheDocument();
-    expect(threadApi.updateTitle).not.toHaveBeenCalled();
-  });
-
-  it('does not dispatch when title is empty after trim', async () => {
-    const thread = makeThread({ id: 'empty-title-thread', title: 'Has Title' });
-    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
-
-    await act(async () => {
-      await renderConversations({
-        thread: selectedThreadState(thread),
-        socket: socketState('connected'),
-      });
-    });
-
-    const editBtn = screen.getByRole('button', { name: 'Edit thread title' });
-    await act(async () => {
-      fireEvent.click(editBtn);
-    });
-
-    const input = screen.getByLabelText('Edit thread title');
-    await act(async () => {
-      fireEvent.change(input, { target: { value: '   ' } });
-    });
-    await act(async () => {
-      fireEvent.keyDown(input, { key: 'Enter' });
-    });
-
-    expect(threadApi.updateTitle).not.toHaveBeenCalled();
   });
 });
 

@@ -92,12 +92,12 @@ mod tests {
 
     #[test]
     fn build_includes_runtime_and_datetime_sections() {
-        // Issue #926: the morning briefing must carry the host's
-        // current date/time + IANA timezone + runtime in its system
-        // prompt so the agent never asks the user "what timezone are
-        // you in?". This test pins the wiring at the parse layer so a
-        // future edit that drops `render_ambient_environment` from
-        // the builder fails loudly here.
+        // Issue #926 + #3602: the morning briefing must carry the `## Runtime`
+        // host block and the `## Current Date & Time` grounding section so the
+        // agent never asks the user "what timezone are you in?" and grounds its
+        // greeting on the real clock. The concrete "now" itself rides the
+        // per-turn user message (`current_datetime_line`) — see #3602 — so this
+        // pins the *section wiring*, not a volatile timestamp.
         let body = build(&ctx_with_identity(None)).unwrap();
         assert!(
             body.contains("## Runtime"),
@@ -108,27 +108,16 @@ mod tests {
             body.contains("## Current Date & Time"),
             "morning_briefing prompt must carry `## Current Date & Time` (#926); got:\n{body}"
         );
-        // IANA zone — either a slashed zone (`America/Los_Angeles`)
-        // or the `UTC` fallback for hosts where `iana-time-zone`
-        // can't resolve one. Keying the assertion on this catches
-        // any regression that switches `DateTimeSection` back to a
-        // bare `%Z` abbreviation.
+        // The grounding rule must reach the model so it matches greetings to
+        // the actual local hour (#3602). The live clock is injected per turn,
+        // so we assert the rule, not a baked-in timestamp.
         let dt = body
             .split("## Current Date & Time")
             .nth(1)
             .expect("datetime section must follow its heading");
-        // `" UTC "` (space-bounded) — not bare `"UTC"` — because the
-        // format string always emits a `UTC{offset}` literal in the
-        // suffix (`UTC-07:00`), so a substring check on `"UTC"` alone
-        // is trivially satisfied even by a bare-`%Z` regression.
-        // Either a slashed IANA zone (`America/Los_Angeles`) or the
-        // explicit space-bounded `" UTC "` fallback must appear before
-        // the offset.
         assert!(
-            dt.contains('/') || dt.contains(" UTC "),
-            "datetime section must include IANA zone or `UTC` fallback (a bare \
-             `UTC-07:00` offset isn't enough — that's the locale-independent \
-             offset, not the IANA zone); got:\n{dt}"
+            dt.contains("match the actual local hour"),
+            "datetime section must carry the greeting-grounding rule (#3602); got:\n{dt}"
         );
     }
 

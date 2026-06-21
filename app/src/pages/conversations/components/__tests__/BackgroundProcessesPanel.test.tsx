@@ -128,12 +128,13 @@ describe('BackgroundProcessesPanel', () => {
     expect(screen.getByText(/No background tasks in this chat/i)).toBeInTheDocument();
   });
 
-  it('renders every status variant (running / done / failed / needs-you)', () => {
+  it('renders every status variant (running / done / failed / needs-you / cancelled)', () => {
     const all: BackgroundProcess[] = [
       { taskId: 'r', name: 'R', goal: 'g', status: 'running', toolCount: 2 },
       { taskId: 'd', name: 'D', goal: 'g', status: 'success', toolCount: 2 },
       { taskId: 'e', name: 'E', goal: 'g', status: 'error', toolCount: 2 },
       { taskId: 'a', name: 'A', goal: 'g', status: 'awaiting_user', toolCount: 2 },
+      { taskId: 'c', name: 'C', goal: 'g', status: 'cancelled', toolCount: 2 },
     ];
     render(
       <BackgroundProcessesPanel open processes={all} onClose={vi.fn()} onOpenProcess={vi.fn()} />
@@ -142,6 +143,7 @@ describe('BackgroundProcessesPanel', () => {
     expect(screen.getByText('Done')).toBeInTheDocument();
     expect(screen.getByText('Failed')).toBeInTheDocument();
     expect(screen.getByText('Needs you')).toBeInTheDocument();
+    expect(screen.getByText('Cancelled')).toBeInTheDocument();
   });
 
   it('renders singular tool-call wording, step count, and suppresses an empty goal', () => {

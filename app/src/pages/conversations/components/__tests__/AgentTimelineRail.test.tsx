@@ -27,6 +27,12 @@ describe('agentNameTone', () => {
   it('treats an unknown status as in-progress', () => {
     expect(agentNameTone(undefined)).toContain('animate-pulse');
   });
+
+  it('renders a cancelled agent muted and static (terminal, not pulsing)', () => {
+    const tone = agentNameTone('cancelled');
+    expect(tone).not.toContain('animate-pulse');
+    expect(tone).toContain('stone');
+  });
 });
 
 describe('AgentTimelineRail', () => {

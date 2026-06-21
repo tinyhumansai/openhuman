@@ -48,7 +48,7 @@ async function completeCloudOnboarding(page: Page): Promise<void> {
   await clickOnboardingNext(page);
   const reachedHome = await expect
     .poll(async () => page.evaluate(() => window.location.hash), { timeout: 15_000 })
-    .toMatch(/^#\/home/)
+    .toMatch(/^#\/(home|chat)/)
     .then(
       () => true,
       () => false

@@ -293,16 +293,14 @@ async fn run_typed_mode(
 
     // ── Force-include extra_tools ──────────────────────────────────────
     if !definition.extra_tools.is_empty() {
-        let disallow_set: std::collections::HashSet<&str> = definition
-            .disallowed_tools
-            .iter()
-            .map(|s| s.as_str())
-            .collect();
         for (i, tool) in parent.all_tools.iter().enumerate() {
             let name = tool.name();
             if definition.extra_tools.iter().any(|n| n == name)
                 && !allowed_indices.contains(&i)
-                && !disallow_set.contains(name)
+                && !super::super::tool_prep::disallowed_tool_matches(
+                    &definition.disallowed_tools,
+                    name,
+                )
                 && !is_subagent_spawn_tool(name)
             {
                 allowed_indices.push(i);
@@ -624,12 +622,10 @@ async fn run_typed_mode(
     let system_prompt = append_subagent_role_contract(system_prompt, &definition.id);
 
     // ── Build the user message (with optional context prefix) ──────────
-    let now = chrono::Local::now();
-    let now_str = format!(
-        "Current Date & Time: {} ({})",
-        now.format("%Y-%m-%d %H:%M:%S"),
-        now.format("%Z")
-    );
+    // Shared one-line stamp (#3602) so sub-agents report time in the same
+    // format as the main agent. Lives on the user message because sub-agent
+    // system prompts are byte-stable for prefix caching.
+    let now_str = crate::openhuman::agent::prompts::current_datetime_line();
 
     let mut context_parts: Vec<&str> = Vec::new();
     if !definition.omit_memory_context {

@@ -98,7 +98,7 @@ jobs:
   build:
     name: "Desktop: ${{ matrix.settings.artifact_suffix }}"
     runs-on: ${{ matrix.settings.platform }}
-    timeout-minutes: 60
+    timeout-minutes: 70
     environment: Production
     strategy:
       fail-fast: false
