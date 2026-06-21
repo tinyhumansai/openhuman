@@ -2,40 +2,18 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::{extract::State, routing::post, Json, Router};
-use once_cell::sync::Lazy;
 use serde_json::{json, Value};
 use tempfile::TempDir;
 use tokio::net::TcpListener;
 
 use super::*;
-use crate::openhuman::config::rpc as config_rpc;
-use crate::openhuman::wallet::ops::{setup, WalletSetupParams, WalletSetupSource};
-
-pub(crate) static TEST_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+use crate::openhuman::wallet::test_support::{setup_wallet_in, TEST_LOCK};
 
 #[derive(Clone)]
 struct MockRpcState {
     estimate_calls: Arc<Mutex<Vec<Value>>>,
     raw_txs: Arc<Mutex<Vec<String>>>,
     chain_id: String,
-}
-
-fn sample_account(chain: WalletChain) -> super::WalletAccount {
-    super::WalletAccount {
-        chain,
-        address: match chain {
-            WalletChain::Evm => "0x9858EfFD232B4033E47d90003D41EC34EcaEda94".to_string(),
-            WalletChain::Btc => "bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu".to_string(),
-            WalletChain::Solana => "HAgk14JpMQLgt6rVgv7cBQFJWFto5Dqxi472uT3DKpqk".to_string(),
-            WalletChain::Tron => "TUEZSdKsoDHQMeZwihtdoBiN46zxhGWYdH".to_string(),
-        },
-        derivation_path: match chain {
-            WalletChain::Evm => "m/44'/60'/0'/0/0".to_string(),
-            WalletChain::Btc => "m/84'/0'/0'/0/0".to_string(),
-            WalletChain::Solana => "m/44'/501'/0'/0'".to_string(),
-            WalletChain::Tron => "m/44'/195'/0'/0/0".to_string(),
-        },
-    }
 }
 
 async fn mock_rpc(State(state): State<MockRpcState>, Json(payload): Json<Value>) -> Json<Value> {
@@ -99,36 +77,6 @@ pub(crate) async fn start_mock_rpc_with_chain_id(
 async fn start_mock_rpc(
 ) -> Result<(SocketAddr, Arc<Mutex<Vec<Value>>>, Arc<Mutex<Vec<String>>>), String> {
     start_mock_rpc_with_chain_id("0x1").await
-}
-
-pub(crate) async fn setup_wallet_in(temp: &TempDir) -> Result<(), String> {
-    std::env::set_var("OPENHUMAN_WORKSPACE", temp.path());
-    let config = config_rpc::load_config_with_timeout().await?;
-    let encrypted = crate::openhuman::encryption::rpc::encrypt_secret(
-        &config,
-        "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-    )
-    .await?
-    .value;
-    setup(WalletSetupParams {
-        consent_granted: true,
-        source: WalletSetupSource::Imported,
-        mnemonic_word_count: 12,
-        encrypted_mnemonic: Some(encrypted),
-        accounts: [
-            WalletChain::Evm,
-            WalletChain::Btc,
-            WalletChain::Solana,
-            WalletChain::Tron,
-        ]
-        .into_iter()
-        .map(sample_account)
-        .collect(),
-        // Test helper: force=true allows re-setup in tests that start from a fresh temp dir.
-        force: true,
-    })
-    .await?;
-    Ok(())
 }
 
 #[test]

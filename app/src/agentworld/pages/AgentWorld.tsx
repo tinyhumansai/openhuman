@@ -25,6 +25,7 @@ import LedgerSection from './LedgerSection';
 import MarketplaceSection from './MarketplaceSection';
 import MessagingSection from './MessagingSection';
 import ProfilesSection from './ProfilesSection';
+import WorldSection from './WorldSection';
 
 // Sub-nav section definition (one per section).
 interface AgentWorldSection {
@@ -48,6 +49,12 @@ const navIcon = (d: string) => (
 // (their routes still exist below so existing flows / deep links remain
 // reachable) — hidden, not removed. Jobs is superseded by Bounties.
 const SECTIONS: AgentWorldSection[] = [
+  {
+    slug: 'world',
+    labelKey: 'agentWorld.world',
+    iconPath:
+      'M3 9.75L12 4l9 5.75M5.25 10.75V19h13.5v-8.25M9 19v-4.5h6V19M8 12h.01M12 10h.01M16 12h.01',
+  },
   {
     slug: 'feed',
     labelKey: 'agentWorld.feed',
@@ -101,6 +108,8 @@ export default function AgentWorld() {
   // e.g. /agent-world/explore → 'explore'
   const pathParts = location.pathname.split('/');
   const activeSlug = pathParts[pathParts.length - 1] || 'feed';
+  const activeSection = activeSlug === 'agent-world' ? 'world' : activeSlug;
+  const isWorld = activeSection === 'world';
 
   return (
     <div className="h-full">
@@ -110,7 +119,7 @@ export default function AgentWorld() {
         <div className="h-full overflow-hidden">
           <TwoPaneNav
             ariaLabel={t('nav.agentWorld')}
-            selected={activeSlug}
+            selected={activeSection}
             onSelect={slug => navigate(`/agent-world/${slug}`)}
             groups={[
               {
@@ -135,10 +144,16 @@ export default function AgentWorld() {
       {/* Card surface around the active section so the section chrome and its
           inner cards sit on a framed panel (matching Brain) instead of floating
           flush on the bare shell background. */}
-      <div className="mx-auto h-full w-full max-w-6xl p-4">
-        <div className="h-full overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-soft dark:border-neutral-800 dark:bg-neutral-900">
+      <div className={isWorld ? 'h-full w-full p-0' : 'mx-auto h-full w-full max-w-6xl p-4'}>
+        <div
+          className={
+            isWorld
+              ? 'h-full overflow-hidden bg-black'
+              : 'h-full overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-soft dark:border-neutral-800 dark:bg-neutral-900'
+          }>
           <Routes>
-            <Route index element={<Navigate to="/agent-world/feed" replace />} />
+            <Route index element={<Navigate to="/agent-world/world" replace />} />
+            <Route path="world" element={<WorldSection />} />
             <Route path="feed" element={<FeedSection />} />
             <Route path="ledger" element={<LedgerSection />} />
             <Route path="jobs" element={<JobsSection />} />
@@ -150,7 +165,7 @@ export default function AgentWorld() {
             <Route path="identities" element={<IdentitiesSection />} />
             <Route path="marketplace" element={<MarketplaceSection />} />
             <Route path="messaging" element={<MessagingSection />} />
-            <Route path="*" element={<Navigate to="/agent-world/feed" replace />} />
+            <Route path="*" element={<Navigate to="/agent-world/world" replace />} />
           </Routes>
         </div>
       </div>

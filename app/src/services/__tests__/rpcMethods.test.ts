@@ -113,6 +113,17 @@ describe('rpcMethods catalog', () => {
     });
   });
 
+  describe('channels legacy alias resolution (Sentry OPENHUMAN-CORE-1Y / OPENHUMAN-CORE-1Z)', () => {
+    test('dotted channel list aliases resolve to channels_list', () => {
+      expect(normalizeRpcMethod('channels.list')).toBe(CORE_RPC_METHODS.channelsList);
+      expect(normalizeRpcMethod('openhuman.channels.list')).toBe(CORE_RPC_METHODS.channelsList);
+    });
+
+    test('canonical channels_list passes through unchanged', () => {
+      expect(normalizeRpcMethod('openhuman.channels_list')).toBe('openhuman.channels_list');
+    });
+  });
+
   test('catalog canonical methods exist in core schema registry (drift guard)', () => {
     const schemaSources = [
       fs.readFileSync(
@@ -147,6 +158,10 @@ describe('rpcMethods catalog', () => {
         path.resolve(__dirname, '../../../../src/openhuman/health/schemas.rs'),
         'utf8'
       ),
+      fs.readFileSync(
+        path.resolve(__dirname, '../../../../src/openhuman/channels/controllers/schemas.rs'),
+        'utf8'
+      ),
     ].join('\n');
 
     for (const method of Object.values(CORE_RPC_METHODS)) {
@@ -165,7 +180,9 @@ describe('rpcMethods catalog', () => {
                 ? 'mcp_clients'
                 : methodRoot.startsWith('health_')
                   ? 'health'
-                  : 'config';
+                  : methodRoot.startsWith('channels_')
+                    ? 'channels'
+                    : 'config';
       const fnName = methodRoot.slice(`${namespace}_`.length);
       expect(schemaSources).toContain(`namespace: "${namespace}"`);
       expect(schemaSources).toContain(`function: "${fnName}"`);

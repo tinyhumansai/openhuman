@@ -86,6 +86,12 @@ const RESOURCE_CATALOG: &[PromptResource] = &[
         content: include_str!("../agent_registry/agents/markets_agent/prompt.md"),
     },
     PromptResource {
+        uri: "openhuman://prompts/agents/tinyplace_agent",
+        name: "tinyplace_agent",
+        description: "Specialist worker for tiny.place identity, marketplace, messaging, and jobs.",
+        content: include_str!("../tinyplace/agent/prompt.md"),
+    },
+    PromptResource {
         uri: "openhuman://prompts/agents/tools_agent",
         name: "tools_agent",
         description: "Generalist worker with access to the full tool surface.",
