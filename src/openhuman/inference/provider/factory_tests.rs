@@ -1974,3 +1974,20 @@ fn omlx_provider_builds_without_key_uses_no_auth() {
         super::make_omlx_provider("m", None, &config).expect("omlx provider builds without key");
     assert_eq!(model, "m");
 }
+
+#[test]
+fn omlx_dispatch_success_builds_provider() {
+    // Covers the success arms (non-empty model -> make_omlx_provider) in both
+    // create_chat_provider_from_string and create_local_chat_provider_from_string.
+    let mut config = crate::openhuman::config::Config::default();
+    config.local_ai.api_key = Some("sk-omlx-test".to_string());
+    config.local_ai.base_url = Some("http://127.0.0.1:8000/v1".to_string());
+
+    let (_p, model) = create_chat_provider_from_string("chat", "omlx:my-model", &config)
+        .expect("omlx:<model> builds via public factory");
+    assert_eq!(model, "my-model");
+
+    let (_p_local, model_local) = create_local_chat_provider_from_string("omlx:my-model", &config)
+        .expect("omlx:<model> builds via local dispatch");
+    assert_eq!(model_local, "my-model");
+}

@@ -226,3 +226,24 @@ fn omlx_routing_ref_is_not_orphaned() {
         "omlx:<model> ref must survive reconciliation"
     );
 }
+
+#[test]
+fn factory_resolvable_local_provider_refs_are_not_orphaned() {
+    // mlx: and local-openai: also resolve in the factory without a
+    // cloud_providers entry, so they must survive reconciliation too.
+    let mut config = Config::default();
+    config.chat_provider = Some("mlx:some-model".to_string());
+    config.reasoning_provider = Some("local-openai:some-model".to_string());
+
+    let stats = run(&mut config).expect("migration should succeed");
+
+    assert_eq!(
+        stats.workload_fields_scrubbed, 0,
+        "mlx: and local-openai: prefixes are local and must not be scrubbed"
+    );
+    assert_eq!(config.chat_provider.as_deref(), Some("mlx:some-model"));
+    assert_eq!(
+        config.reasoning_provider.as_deref(),
+        Some("local-openai:some-model")
+    );
+}

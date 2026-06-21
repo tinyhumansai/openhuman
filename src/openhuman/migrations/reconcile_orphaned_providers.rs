@@ -54,7 +54,8 @@
 
 use crate::openhuman::config::Config;
 use crate::openhuman::inference::provider::factory::{
-    LM_STUDIO_PROVIDER_PREFIX, OLLAMA_PROVIDER_PREFIX, OMLX_PROVIDER_PREFIX, PROVIDER_OPENHUMAN,
+    LM_STUDIO_PROVIDER_PREFIX, LOCAL_OPENAI_PROVIDER_PREFIX, MLX_PROVIDER_PREFIX,
+    OLLAMA_PROVIDER_PREFIX, OMLX_PROVIDER_PREFIX, PROVIDER_OPENHUMAN,
 };
 use std::collections::HashSet;
 
@@ -103,14 +104,18 @@ pub fn run(config: &mut Config) -> anyhow::Result<MigrationStats> {
         };
         let s = raw.trim();
 
-        // Managed sentinels and local providers (ollama:, lmstudio:, omlx:)
-        // resolve without a cloud_providers entry — leave them alone.
+        // Managed sentinels and factory-resolvable local providers (ollama:,
+        // lmstudio:, mlx:, omlx:, local-openai:) resolve without a
+        // cloud_providers entry — leave them alone. Keep this in sync with the
+        // local provider prefixes the factory accepts.
         if s.is_empty()
             || s == "cloud"
             || s == PROVIDER_OPENHUMAN
             || s.starts_with(OLLAMA_PROVIDER_PREFIX)
             || s.starts_with(LM_STUDIO_PROVIDER_PREFIX)
+            || s.starts_with(MLX_PROVIDER_PREFIX)
             || s.starts_with(OMLX_PROVIDER_PREFIX)
+            || s.starts_with(LOCAL_OPENAI_PROVIDER_PREFIX)
         {
             continue;
         }

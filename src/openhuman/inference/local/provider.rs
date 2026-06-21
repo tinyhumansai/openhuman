@@ -30,7 +30,13 @@ pub(crate) fn normalize_provider(value: &str) -> String {
         // OMLX is a keyed OpenAI-v1 local runtime handled by the provider factory
         // (`omlx:<model>`), not by `LocalAiProvider`. Preserve the slug so the
         // saved config keeps `provider = "omlx"` instead of collapsing to ollama.
-        "omlx" | "omlx-server" => "omlx".to_string(),
+        "omlx" | "omlx-server" => {
+            log::trace!(
+                "[local-provider] normalized provider '{}' -> omlx (factory-resolved local runtime)",
+                value.trim()
+            );
+            "omlx".to_string()
+        }
         _ => LocalAiProvider::Ollama.as_str().to_string(),
     }
 }

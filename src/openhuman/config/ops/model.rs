@@ -377,7 +377,9 @@ pub async fn apply_local_ai_settings(
             // must NOT go through `validate_ollama_url` (which strips the path).
             // `provider_from_config` maps omlx → Ollama, so guard on the slug here.
             Some(base_url)
-                if config.local_ai.provider != "omlx"
+                if crate::openhuman::inference::local::provider::normalize_provider(
+                    &config.local_ai.provider,
+                ) != "omlx"
                     && crate::openhuman::inference::local::provider::provider_from_config(config)
                         == crate::openhuman::inference::local::provider::LocalAiProvider::Ollama =>
             {
