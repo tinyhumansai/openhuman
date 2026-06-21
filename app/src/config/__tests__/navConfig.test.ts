@@ -3,16 +3,28 @@ import { describe, expect, it } from 'vitest';
 import { AVATAR_MENU_ITEMS, NAV_TABS } from '../navConfig';
 
 describe('NAV_TABS', () => {
-  it('has exactly 4 entries', () => {
-    expect(NAV_TABS).toHaveLength(4);
+  it('has exactly 5 entries', () => {
+    expect(NAV_TABS).toHaveLength(5);
   });
 
   it('has the correct ids in order', () => {
-    expect(NAV_TABS.map(t => t.id)).toEqual(['chat', 'human', 'brain', 'connections']);
+    expect(NAV_TABS.map(t => t.id)).toEqual([
+      'chat',
+      'human',
+      'brain',
+      'agent-world',
+      'connections',
+    ]);
   });
 
   it('has the correct paths', () => {
-    expect(NAV_TABS.map(t => t.path)).toEqual(['/chat', '/human', '/brain', '/connections']);
+    expect(NAV_TABS.map(t => t.path)).toEqual([
+      '/chat',
+      '/human',
+      '/brain',
+      '/agent-world',
+      '/connections',
+    ]);
   });
 
   it('has the correct labelKeys', () => {
@@ -20,6 +32,7 @@ describe('NAV_TABS', () => {
       'nav.chat',
       'nav.human',
       'nav.brain',
+      'nav.agentWorld',
       'nav.connections',
     ]);
   });
@@ -29,6 +42,7 @@ describe('NAV_TABS', () => {
       'tab-chat',
       'tab-human',
       'tab-brain',
+      'tab-agent-world',
       'tab-connections',
     ]);
   });

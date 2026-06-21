@@ -52,7 +52,7 @@ test.describe('Login Flow', () => {
 
     await expect
       .poll(async () => page.evaluate(() => window.location.hash))
-      .toMatch(/^#\/(home|chat)/);
+      .toMatch(/^#\/(home|chat)(\/|$)/);
     await expect(await waitForMockRequest('GET', '/auth/me')).toBeTruthy();
   });
 
@@ -61,7 +61,7 @@ test.describe('Login Flow', () => {
 
     await expect
       .poll(async () => page.evaluate(() => window.location.hash))
-      .toMatch(/^#\/(home|chat)/);
+      .toMatch(/^#\/(home|chat)(\/|$)/);
 
     const consumeCall = (await requests()).find(
       request => request.method === 'POST' && request.url.includes('/telegram/login-tokens/')

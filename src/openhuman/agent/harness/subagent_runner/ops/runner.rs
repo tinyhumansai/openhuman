@@ -293,16 +293,14 @@ async fn run_typed_mode(
 
     // ── Force-include extra_tools ──────────────────────────────────────
     if !definition.extra_tools.is_empty() {
-        let disallow_set: std::collections::HashSet<&str> = definition
-            .disallowed_tools
-            .iter()
-            .map(|s| s.as_str())
-            .collect();
         for (i, tool) in parent.all_tools.iter().enumerate() {
             let name = tool.name();
             if definition.extra_tools.iter().any(|n| n == name)
                 && !allowed_indices.contains(&i)
-                && !disallow_set.contains(name)
+                && !super::super::tool_prep::disallowed_tool_matches(
+                    &definition.disallowed_tools,
+                    name,
+                )
                 && !is_subagent_spawn_tool(name)
             {
                 allowed_indices.push(i);
