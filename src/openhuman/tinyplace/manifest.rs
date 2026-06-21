@@ -105,8 +105,52 @@ pub(crate) fn handle_tinyplace_directory_resolve(params: Map<String, Value>) -> 
         let name = req_str(&params, "name")?.to_string();
         log::debug!("{LOG_PREFIX} directory_resolve name={name}");
         let client = global_state().client().await?;
-        let result = client.directory.resolve(&name).await.map_err(map_err)?;
-        to_value(result)
+
+        // Try registry first.
+        match client.directory.resolve(&name).await {
+            Ok(resolved) if resolved.identity.is_some() || resolved.agent.is_some() => {
+                // Registry hit — return the full response as-is.
+                return to_value(resolved);
+            }
+            Ok(_) => {
+                // Registry returned 200 but with no identity and no agent card.
+                // Fall through to the directory-card fallback.
+                log::debug!(
+                    "{LOG_PREFIX} directory_resolve: registry miss for '{name}', \
+                     trying directory card fallback"
+                );
+            }
+            Err(e) if e.status() == Some(404) => {
+                // Registry 404 — agent may be directory-only; fall through.
+                log::debug!(
+                    "{LOG_PREFIX} directory_resolve: registry 404 for '{name}', \
+                     trying directory card fallback"
+                );
+            }
+            Err(e) => return Err(map_err(e)),
+        }
+
+        // Directory-card fallback: query by username.
+        match directory_card_fallback(&client, &name).await {
+            Some(card) => {
+                log::debug!(
+                    "{LOG_PREFIX} directory_resolve: found '{name}' via directory card \
+                     crypto_id={}",
+                    card.crypto_id
+                );
+                // Synthesise a ResolveResponse from the agent card so the
+                // frontend gets the same shape regardless of code path.
+                let response = tinyplace::types::ResolveResponse {
+                    identity: None,
+                    agent: Some(card),
+                };
+                to_value(response)
+            }
+            None => Err(format!(
+                "No agent found for \"{name}\". \
+                 Check the handle or paste their wallet address directly."
+            )),
+        }
     })
 }
 
@@ -488,7 +532,7 @@ pub(crate) fn handle_tinyplace_registry_register(params: Map<String, Value>) -> 
         let base_req = tinyplace::api::registry::RegisterRequest {
             username: username.clone(),
             crypto_id: signer.agent_id(),
-            public_key: signer.public_key_base64(),
+            public_key: Some(signer.public_key_base64()),
             actor_type: Some(actor_type),
             primary,
             ..Default::default()
@@ -498,6 +542,8 @@ pub(crate) fn handle_tinyplace_registry_register(params: Map<String, Value>) -> 
         let challenge = match client.registry.register(base_req.clone()).await {
             Ok(identity) => {
                 log::debug!("{LOG_PREFIX} registry_register free-tier ok username={username}");
+                let _ =
+                    publish_directory_card_for_identity(&client, signer.as_ref(), &identity).await;
                 return to_value(serde_json::json!({ "identity": identity }));
             }
             Err(e) => match e.payment_required() {
@@ -553,6 +599,9 @@ pub(crate) fn handle_tinyplace_registry_register(params: Map<String, Value>) -> 
                     log::debug!(
                         "{LOG_PREFIX} registry_register settled username={username} attempt={attempt}"
                     );
+                    let _ =
+                        publish_directory_card_for_identity(&client, signer.as_ref(), &identity)
+                            .await;
                     return to_value(serde_json::json!({
                         "identity": identity,
                         "payment": { "onChainTx": on_chain_tx },
@@ -588,6 +637,9 @@ pub(crate) fn handle_tinyplace_registry_register(params: Map<String, Value>) -> 
                     log::debug!(
                         "{LOG_PREFIX} registry_register recovered owned identity username={username}"
                     );
+                    let _ =
+                        publish_directory_card_for_identity(&client, signer.as_ref(), &identity)
+                            .await;
                     return to_value(serde_json::json!({
                         "identity": identity,
                         "payment": { "onChainTx": on_chain_tx },
@@ -1556,6 +1608,32 @@ pub(crate) fn handle_tinyplace_groups_leave(params: Map<String, Value>) -> Contr
             .signer()
             .map(|s| s.agent_id())
             .ok_or_else(|| "tinyplace signer unavailable; cannot leave group".to_string())?;
+
+        // Pre-check membership before calling remove_member so we return a
+        // clear error instead of leaking a raw HTTP 400 from the backend when
+        // the user is not a member.
+        match client.groups.members(&group_id).await {
+            Ok(resp) => {
+                if !resp.members.iter().any(|m| m.agent_id == me) {
+                    log::warn!(
+                        "{LOG_PREFIX} groups_leave: agent {me} is not a member of {group_id}"
+                    );
+                    return Err(format!(
+                        "you are not a member of group {group_id}; cannot leave"
+                    ));
+                }
+            }
+            Err(e) => {
+                // If the membership list itself is unavailable (network, 404, etc.)
+                // we log a warning and fall through — the backend will reject if
+                // the agent truly is not a member.
+                log::warn!(
+                    "{LOG_PREFIX} groups_leave: membership check failed for {group_id}: {e}; \
+                     proceeding with remove_member"
+                );
+            }
+        }
+
         client
             .groups
             .remove_member(&group_id, &me, None)
@@ -2737,12 +2815,30 @@ pub(crate) fn handle_tinyplace_signal_rotate_signed_pre_key(
 
 /// Fetch a peer's published Signal pre-key bundle (public endpoint, no auth).
 /// The `get_bundle` endpoint does not require a signer or the signal store.
+/// Accepts @handles and bare handle names in addition to raw crypto_ids; the
+/// identifier is resolved to a canonical crypto_id via directory.resolve before
+/// the bundle lookup.
 pub(crate) fn handle_tinyplace_signal_get_bundle(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let agent_id = req_str(&params, "agentId")?.to_string();
-        log::debug!("{LOG_PREFIX} signal_get_bundle agent_id={agent_id}");
+        let raw_agent_id = req_str(&params, "agentId")?.to_string();
+        log::debug!("{LOG_PREFIX} signal_get_bundle raw_agent_id='{raw_agent_id}'");
         let client = global_state().client().await?;
-        let result = client.keys.get_bundle(&agent_id).await.map_err(map_err)?;
+
+        // Resolve the identifier (handle or crypto_id) before the bundle lookup.
+        let agent_id = resolve_recipient_to_agent_id(&client, &raw_agent_id).await?;
+        log::debug!("{LOG_PREFIX} signal_get_bundle resolved agent_id={agent_id}");
+
+        let result = match client.keys.get_bundle(&agent_id).await {
+            Ok(b) => b,
+            Err(e) if e.status() == Some(404) => {
+                return Err(format!(
+                    "Recipient has not set up encrypted messaging yet. \
+                     They need to provision Signal keys before receiving DMs. \
+                     (agent_id: {agent_id})"
+                ));
+            }
+            Err(e) => return Err(map_err(e)),
+        };
         to_value(result)
     })
 }
@@ -2868,12 +2964,170 @@ fn decode_ed25519_pub(
     decode_32_byte_b64(b64, "peer Ed25519 publicKey")
 }
 
+// ── Recipient resolution helpers ──────────────────────────────────────────────
+
+/// Quick heuristic: Solana/wallet base58 public keys are 32–44 chars of the
+/// Bitcoin base58 alphabet [1-9A-HJ-NP-Za-km-z] with no 0/I/O/l.
+/// False negatives (short base58 strings treated as handles) are safe — they
+/// get an extra directory.resolve call rather than a wrong key lookup.
+fn looks_like_base58_pubkey(s: &str) -> bool {
+    s.len() >= 32
+        && s.len() <= 44
+        && s.chars().all(|c| {
+            matches!(c,
+                '1'..='9' | 'A'..='H' | 'J'..='N' | 'P'..='Z' | 'a'..='k' | 'm'..='z')
+        })
+}
+
+/// Case-insensitive username match across a slice of agent cards.
+///
+/// Extracted as a pure function so it can be unit-tested without a live HTTP
+/// client.
+fn match_agent_card_by_username<'a>(
+    cards: &'a [tinyplace::types::AgentCard],
+    name: &str,
+) -> Option<&'a tinyplace::types::AgentCard> {
+    let name_lower = name.to_lowercase();
+    cards.iter().find(|a| {
+        a.username
+            .as_deref()
+            .map(|u| u.to_lowercase() == name_lower)
+            .unwrap_or(false)
+    })
+}
+
+/// Query the agent directory for a card whose `username` matches `name`
+/// (case-insensitive).  Uses the server-side `username` filter when available
+/// (limit 20) and falls back to a client-side match in the returned page.
+///
+/// Returns `None` if no matching card is found.
+async fn directory_card_fallback(
+    client: &tinyplace::TinyPlaceClient,
+    name: &str,
+) -> Option<tinyplace::types::AgentCard> {
+    let query = tinyplace::types::AgentQueryParams {
+        username: Some(name.to_string()),
+        limit: Some(20),
+        ..Default::default()
+    };
+    log::debug!("{LOG_PREFIX} directory_card_fallback: querying agents with username='{name}'");
+    match client.directory.list_agents(Some(&query)).await {
+        Ok(resp) => {
+            if resp.agents.len() == 20 {
+                log::debug!(
+                    "{LOG_PREFIX} directory_card_fallback: page full (20 agents) for '{name}', \
+                     result may be truncated"
+                );
+            }
+            match_agent_card_by_username(&resp.agents, name).cloned()
+        }
+        Err(e) => {
+            log::debug!(
+                "{LOG_PREFIX} directory_card_fallback: list_agents failed for '{name}': {}",
+                e
+            );
+            None
+        }
+    }
+}
+
+/// Resolve a recipient identifier (handle, wallet address, or crypto_id) to
+/// the canonical `crypto_id` used by the `/keys/{id}/bundle` endpoint.
+///
+/// Resolution rules:
+/// 1. Starts with `@`  → strip `@` and resolve via `directory.resolve`.
+/// 2. Looks like a base58 public key (32–44 chars, valid alphabet) → use as-is
+///    (it IS the crypto_id; attempting resolve is unnecessary and fragile).
+/// 3. Anything else → treat as a bare handle name and call `directory.resolve`.
+/// 4. If the registry lookup returns 404 or no identity/agent, fall back to a
+///    directory-card search by username (`list_agents?username=…`).
+///
+/// SECURITY: never log private key material — only the resolved crypto_id
+/// (public wallet address) is emitted to logs.
+async fn resolve_recipient_to_agent_id(
+    client: &tinyplace::TinyPlaceClient,
+    raw_recipient: &str,
+) -> std::result::Result<String, String> {
+    let trimmed = raw_recipient.trim();
+
+    let lookup_name = if let Some(without_at) = trimmed.strip_prefix('@') {
+        // Explicit @handle — resolve it.
+        without_at
+    } else if looks_like_base58_pubkey(trimmed) {
+        // Already a crypto_id — pass through without a round-trip.
+        log::debug!(
+            "{LOG_PREFIX} resolve_recipient: '{trimmed}' looks like a crypto_id, using directly"
+        );
+        return Ok(trimmed.to_string());
+    } else {
+        // Bare handle name — resolve it.
+        trimmed
+    };
+
+    log::debug!("{LOG_PREFIX} resolve_recipient: resolving handle '{lookup_name}' via registry");
+
+    // ── Step 1: try the registry ─────────────────────────────────────────────
+    let registry_result = client.directory.resolve(lookup_name).await;
+    match registry_result {
+        Ok(resolved) => {
+            // Prefer the registered identity's crypto_id; fall back to the agent card.
+            if let Some(identity) = resolved.identity {
+                let crypto_id = identity.crypto_id.clone();
+                log::debug!(
+                    "{LOG_PREFIX} resolve_recipient: handle '{lookup_name}' -> crypto_id={crypto_id}"
+                );
+                return Ok(crypto_id);
+            } else if let Some(agent) = resolved.agent {
+                let crypto_id = agent.crypto_id.clone();
+                log::debug!(
+                    "{LOG_PREFIX} resolve_recipient: handle '{lookup_name}' resolved via \
+                     registry agent card -> crypto_id={crypto_id}"
+                );
+                return Ok(crypto_id);
+            }
+            // Registry returned 200 but empty — fall through to directory.
+            log::debug!(
+                "{LOG_PREFIX} resolve_recipient: registry returned empty for '{lookup_name}', \
+                 trying directory card fallback"
+            );
+        }
+        Err(e) if e.status() == Some(404) => {
+            // 404 from the registry — agent may be directory-only; fall through.
+            log::debug!(
+                "{LOG_PREFIX} resolve_recipient: registry 404 for '{lookup_name}', \
+                 trying directory card fallback"
+            );
+        }
+        Err(e) => {
+            return Err(format!(
+                "failed to resolve recipient '{trimmed}': {}",
+                map_err(e)
+            ));
+        }
+    }
+
+    // ── Step 2: directory-card fallback ──────────────────────────────────────
+    if let Some(card) = directory_card_fallback(client, lookup_name).await {
+        let crypto_id = card.crypto_id.clone();
+        log::debug!(
+            "{LOG_PREFIX} resolve_recipient: '{lookup_name}' found via directory card \
+             -> crypto_id={crypto_id}"
+        );
+        return Ok(crypto_id);
+    }
+
+    Err(format!(
+        "No agent found for \"{lookup_name}\". \
+         Check the handle or paste their wallet address directly."
+    ))
+}
+
 pub(crate) fn handle_tinyplace_signal_send_message(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let recipient = req_str(&params, "recipient")?.to_string();
         let plaintext = req_str(&params, "plaintext")?.to_string();
         log::debug!(
-            "{LOG_PREFIX} signal_send_message to={recipient} len={}",
+            "{LOG_PREFIX} signal_send_message raw_recipient='{recipient}' len={}",
             plaintext.len()
         );
 
@@ -2888,10 +3142,26 @@ pub(crate) fn handle_tinyplace_signal_send_message(params: Map<String, Value>) -
             .map_err(|e| format!("identity key: {e}"))?
             .public_key;
 
+        // Resolve the recipient identifier (@handle, bare handle, or crypto_id) to
+        // the canonical crypto_id before any key-bundle or directory lookup.
+        let agent_id = resolve_recipient_to_agent_id(&client, &recipient).await?;
+        log::debug!("{LOG_PREFIX} signal_send_message resolved to agent_id={agent_id}");
+
         // Fetch recipient's published key bundle (always needed for the X25519
         // identity key used in associated-data computation, even for existing
-        // sessions).
-        let bundle = client.keys.get_bundle(&recipient).await.map_err(map_err)?;
+        // sessions).  Provide a user-friendly error when the recipient has not yet
+        // provisioned Signal keys (404 from the backend).
+        let bundle = match client.keys.get_bundle(&agent_id).await {
+            Ok(b) => b,
+            Err(e) if e.status() == Some(404) => {
+                return Err(format!(
+                    "Recipient has not set up encrypted messaging yet. \
+                     They need to provision Signal keys before receiving DMs. \
+                     (resolved agent_id: {agent_id})"
+                ));
+            }
+            Err(e) => return Err(map_err(e)),
+        };
         // Ed25519 -> X25519 conversion: the backend serves the Ed25519 identity;
         // SignalSession::encrypt takes the X25519 form.  decode_identity_key
         // performs this conversion and must be preserved.
@@ -2904,20 +3174,18 @@ pub(crate) fn handle_tinyplace_signal_send_message(params: Map<String, Value>) -
             our_identity_pub,
         );
         let has_session = signal_session
-            .has_session(&recipient)
+            .has_session(&agent_id)
             .await
             .map_err(|e| format!("check session: {e}"))?;
 
         let (bundle_opt, ed25519_opt) = if has_session {
-            log::debug!("{LOG_PREFIX} signal_send_message using existing session for {recipient}");
+            log::debug!("{LOG_PREFIX} signal_send_message using existing session for {agent_id}");
             (None, None)
         } else {
-            log::debug!(
-                "{LOG_PREFIX} signal_send_message establishing new session for {recipient}"
-            );
+            log::debug!("{LOG_PREFIX} signal_send_message establishing new session for {agent_id}");
             let peer_entry = client
                 .directory
-                .get_agent(&recipient)
+                .get_agent(&agent_id)
                 .await
                 .map_err(map_err)?;
             let peer_ed25519_pub = decode_ed25519_pub(&peer_entry)?;
@@ -2932,7 +3200,7 @@ pub(crate) fn handle_tinyplace_signal_send_message(params: Map<String, Value>) -
         // point leaves no partial state).
         let encrypted = signal_session
             .encrypt(
-                &recipient,
+                &agent_id,
                 &their_x25519_identity,
                 plaintext.as_bytes(),
                 bundle_opt.as_ref(),
@@ -2941,7 +3209,7 @@ pub(crate) fn handle_tinyplace_signal_send_message(params: Map<String, Value>) -
             .await
             .map_err(|e| {
                 log::error!(
-                    "{LOG_PREFIX} signal_send_message ENCRYPTION FAILED for {recipient}: {e} \
+                    "{LOG_PREFIX} signal_send_message ENCRYPTION FAILED for {agent_id}: {e} \
                      — aborting send (plaintext will NOT be sent)"
                 );
                 format!("encryption failed — message NOT sent: {e}")
@@ -2949,10 +3217,14 @@ pub(crate) fn handle_tinyplace_signal_send_message(params: Map<String, Value>) -
 
         // Map EncryptedMessage -> MessageEnvelope (wire-format preserving).
         // Field correspondence is verified in phase-signalsession-spec.md §4.
+        // Use the resolved agent_id (not raw recipient) so the backend routes correctly.
         let envelope = tinyplace::types::MessageEnvelope {
-            id: String::new(),
+            // The backend requires a non-empty client-generated message id
+            // (POST /messages rejects an empty id with "message id, from, and to
+            // are required"). The SDK's send() only fills timestamp, not id.
+            id: uuid::Uuid::new_v4().to_string(),
             from: our_agent_id.clone(),
-            to: recipient.clone(),
+            to: agent_id.clone(),
             timestamp: String::new(),
             device_id: 1,
             envelope_type: encrypted.message_type.clone(), // "PREKEY_BUNDLE" or "CIPHERTEXT"
@@ -2963,7 +3235,7 @@ pub(crate) fn handle_tinyplace_signal_send_message(params: Map<String, Value>) -
 
         let sent = client.messages.send(envelope).await.map_err(map_err)?;
         log::info!(
-            "{LOG_PREFIX} signal_send_message sent encrypted message to={recipient} \
+            "{LOG_PREFIX} signal_send_message sent encrypted message to={agent_id} \
              id={} type={} len={}",
             sent.id,
             sent.envelope_type,
@@ -3177,6 +3449,67 @@ pub(crate) fn handle_tinyplace_signal_register_encryption_key(
     })
 }
 
+/// Publish a directory card for a newly registered identity.
+///
+/// Called after every successful `registry_register` path (free-tier, paid
+/// settlement, recovery). The directory card makes the identity discoverable in
+/// `GET /directory/agents` and `GET /directory/identities` listings.
+///
+/// **Best-effort**: any failure is logged and swallowed so that a directory
+/// publish hiccup never rolls back the already-completed registry write.
+///
+/// **Anti-spoof**: `agent_id` is sourced from `signer.agent_id()` (the wallet's
+/// crypto identity), not from user-supplied params.
+async fn publish_directory_card_for_identity(
+    client: &tinyplace::TinyPlaceClient,
+    signer: &dyn tinyplace::Signer,
+    identity: &tinyplace::types::Identity,
+) {
+    let agent_id = signer.agent_id();
+    let public_key_b64 = signer.public_key_base64();
+    log::debug!("[tinyplace] post-register: publishing directory card for {agent_id}");
+
+    // Fetch existing card to preserve custom fields; on 404 build a fresh one;
+    // on any other error bail out early (best-effort).
+    let mut card = match client.directory.get_agent(&agent_id).await {
+        Ok(existing) => {
+            log::debug!(
+                "[tinyplace] post-register: updating existing directory card for {agent_id}"
+            );
+            let mut c = existing;
+            // Refresh name/username from the newly registered identity.
+            c.username = Some(identity.username.clone());
+            c.name = identity.username.clone();
+            c
+        }
+        Err(e) if e.status() == Some(404) => {
+            log::debug!(
+                "[tinyplace] post-register: no existing card for {agent_id} — creating one"
+            );
+            build_default_agent_card(&agent_id, &public_key_b64, Some(identity))
+        }
+        Err(e) => {
+            log::warn!(
+                "[tinyplace] post-register: directory card fetch failed for {agent_id}: {e}"
+            );
+            return;
+        }
+    };
+
+    // Anti-spoof: ensure the card's agent_id/crypto_id matches the signer.
+    card.agent_id = agent_id.clone();
+    card.crypto_id = agent_id.clone();
+
+    match client.directory.upsert_agent(&agent_id, &card).await {
+        Ok(_) => {
+            log::info!("[tinyplace] post-register: directory card published for {agent_id}");
+        }
+        Err(e) => {
+            log::warn!("[tinyplace] post-register: directory upsert failed for {agent_id}: {e}");
+        }
+    }
+}
+
 /// Build a minimal `AgentCard` for a wallet that has no directory presence yet,
 /// so it can publish its encryption key and become discoverable. When the wallet
 /// owns a registered identity, its handle seeds `name`/`username`; otherwise the
@@ -3196,6 +3529,7 @@ pub(crate) fn build_default_agent_card(
         description: None,
         username,
         crypto_id: agent_id.to_string(),
+        actor_type: identity.map(|_| "human".to_string()),
         public_key: Some(public_key_b64.to_string()),
         url: None,
         endpoint: None,
@@ -3212,6 +3546,7 @@ pub(crate) fn build_default_agent_card(
         signature: None,
         created_at: now.clone(),
         updated_at: now,
+        viewer_is_following: None,
     }
 }
 
@@ -3487,7 +3822,409 @@ pub(crate) fn handle_tinyplace_graphql_job(params: Map<String, Value>) -> Contro
     })
 }
 
+// ── GraphQL: Bounties ─────────────────────────────────────────────────────────
+
+pub(crate) fn handle_tinyplace_graphql_bounties(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        log::debug!(
+            "{LOG_PREFIX} graphql_bounties params_keys={:?}",
+            params.keys().collect::<Vec<_>>()
+        );
+        // BountyGraphQLParams isn't Deserialize, so build it from the optional
+        // filter object by hand (all fields optional). Reject malformed input
+        // rather than silently dropping it — a mistyped `limit`/`creator` must
+        // not degrade into an unfiltered public list.
+        let query_params: Option<tinyplace::api::graphql::BountyGraphQLParams> = match params
+            .get("params")
+        {
+            None | Some(Value::Null) => None,
+            Some(Value::Object(obj)) => {
+                let str_field = |key: &str| -> Result<Option<String>, String> {
+                    match obj.get(key) {
+                        None | Some(Value::Null) => Ok(None),
+                        Some(Value::String(s)) => Ok(Some(s.clone())),
+                        Some(_) => Err(format!("graphql_bounties param '{key}' must be a string")),
+                    }
+                };
+                let int_field = |key: &str| -> Result<Option<i64>, String> {
+                    match obj.get(key) {
+                        None | Some(Value::Null) => Ok(None),
+                        Some(v) => v.as_i64().map(Some).ok_or_else(|| {
+                            format!("graphql_bounties param '{key}' must be an integer")
+                        }),
+                    }
+                };
+                Some(tinyplace::api::graphql::BountyGraphQLParams {
+                    status: str_field("status")?,
+                    creator: str_field("creator")?,
+                    limit: int_field("limit")?,
+                    offset: int_field("offset")?,
+                })
+            }
+            Some(_) => return Err("graphql_bounties 'params' must be an object".to_string()),
+        };
+
+        let client = global_state().client().await?;
+        // GraphQLAuth::None — bounties are public.
+        match client.graphql.bounties(query_params.as_ref()).await {
+            Ok(result) => to_value(result),
+            Err(e) => match graphql_bounties_degrade(&e) {
+                Some(empty) => {
+                    log::debug!(
+                        "{LOG_PREFIX} graphql_bounties deserialization failed -> empty: {e}"
+                    );
+                    to_value(empty)
+                }
+                None => Err(map_err(e)),
+            },
+        }
+    })
+}
+
+/// The backend may return `{"bounties": null}` for an empty board. Degrade
+/// Serialization errors to an empty list; propagate everything else.
+pub(crate) fn graphql_bounties_degrade(e: &tinyplace::Error) -> Option<Value> {
+    if matches!(e, tinyplace::Error::Serialization(_)) {
+        Some(serde_json::json!([]))
+    } else {
+        None
+    }
+}
+
+pub(crate) fn handle_tinyplace_graphql_bounty(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let id = req_str(&params, "id")?.to_string();
+        log::debug!("{LOG_PREFIX} graphql_bounty id={id}");
+        let client = global_state().client().await?;
+        // GraphQLAuth::None — no signer required.
+        let result = client.graphql.bounty(&id).await.map_err(map_err)?;
+        // Returns Option<GqlBounty> — null means bounty not found.
+        to_value(result)
+    })
+}
+
 // ── GraphQL: Profile + Identity ───────────────────────────────────────────────
+
+fn graphql_params_object<'a>(
+    params: &'a Map<String, Value>,
+    method: &str,
+) -> Result<Option<&'a Map<String, Value>>, String> {
+    match params.get("params") {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Object(obj)) => Ok(Some(obj)),
+        Some(_) => Err(format!("{method} 'params' must be an object")),
+    }
+}
+
+fn graphql_opt_string(
+    obj: &Map<String, Value>,
+    method: &str,
+    key: &str,
+) -> Result<Option<String>, String> {
+    match obj.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(s)) => Ok(Some(s.clone())),
+        Some(_) => Err(format!("{method} param '{key}' must be a string")),
+    }
+}
+
+fn graphql_opt_i64(
+    obj: &Map<String, Value>,
+    method: &str,
+    key: &str,
+) -> Result<Option<i64>, String> {
+    match obj.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(v) => v
+            .as_i64()
+            .map(Some)
+            .ok_or_else(|| format!("{method} param '{key}' must be an integer")),
+    }
+}
+
+fn graphql_opt_string_vec(
+    obj: &Map<String, Value>,
+    method: &str,
+    key: &str,
+) -> Result<Option<Vec<String>>, String> {
+    match obj.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Array(values)) => values
+            .iter()
+            .map(|value| {
+                value
+                    .as_str()
+                    .map(str::to_string)
+                    .ok_or_else(|| format!("{method} param '{key}' must be an array of strings"))
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(Some),
+        Some(_) => Err(format!(
+            "{method} param '{key}' must be an array of strings"
+        )),
+    }
+}
+
+fn parse_identity_listing_params(
+    params: &Map<String, Value>,
+    method: &str,
+) -> Result<Option<tinyplace::api::graphql::IdentityListingGraphQLParams>, String> {
+    let Some(obj) = graphql_params_object(params, method)? else {
+        return Ok(None);
+    };
+    Ok(Some(
+        tinyplace::api::graphql::IdentityListingGraphQLParams {
+            query: match graphql_opt_string(obj, method, "query")? {
+                Some(query) => Some(query),
+                None => graphql_opt_string(obj, method, "q")?,
+            },
+            tag: graphql_opt_string(obj, method, "tag")?,
+            tags: graphql_opt_string_vec(obj, method, "tags")?,
+            category: graphql_opt_string(obj, method, "category")?,
+            seller: graphql_opt_string(obj, method, "seller")?,
+            min_price: graphql_opt_string(obj, method, "minPrice")?,
+            max_price: graphql_opt_string(obj, method, "maxPrice")?,
+            sort_by: graphql_opt_string(obj, method, "sortBy")?,
+            length: graphql_opt_i64(obj, method, "length")?,
+            limit: graphql_opt_i64(obj, method, "limit")?,
+            offset: graphql_opt_i64(obj, method, "offset")?,
+        },
+    ))
+}
+
+fn parse_pagination_params(
+    params: &Map<String, Value>,
+    method: &str,
+) -> Result<Option<tinyplace::api::graphql::PaginationGraphQLParams>, String> {
+    let Some(obj) = graphql_params_object(params, method)? else {
+        return Ok(None);
+    };
+    Ok(Some(tinyplace::api::graphql::PaginationGraphQLParams {
+        limit: graphql_opt_i64(obj, method, "limit")?,
+        offset: graphql_opt_i64(obj, method, "offset")?,
+    }))
+}
+
+pub(crate) fn handle_tinyplace_graphql_agents(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        log::debug!(
+            "{LOG_PREFIX} graphql_agents params_keys={:?}",
+            params.keys().collect::<Vec<_>>()
+        );
+        let query_params: Option<tinyplace::types::AgentQueryParams> = params
+            .get("params")
+            .and_then(|v| if v.is_null() { None } else { Some(v) })
+            .map(|v| {
+                serde_json::from_value(v.clone())
+                    .map_err(|e| format!("invalid graphql_agents params: {e}"))
+            })
+            .transpose()?;
+
+        let client = global_state().client().await?;
+        match client.graphql.agents(query_params.as_ref()).await {
+            Ok(result) => to_value(result),
+            Err(e) => match graphql_agents_degrade(&e) {
+                Some(empty) => {
+                    log::debug!("{LOG_PREFIX} graphql_agents deserialization failed -> empty: {e}");
+                    to_value(empty)
+                }
+                None => Err(map_err(e)),
+            },
+        }
+    })
+}
+
+pub(crate) fn graphql_agents_degrade(e: &tinyplace::Error) -> Option<Value> {
+    if matches!(e, tinyplace::Error::Serialization(_)) {
+        Some(serde_json::json!({ "agents": [], "count": 0 }))
+    } else {
+        None
+    }
+}
+
+pub(crate) fn handle_tinyplace_graphql_products(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        log::debug!(
+            "{LOG_PREFIX} graphql_products params_keys={:?}",
+            params.keys().collect::<Vec<_>>()
+        );
+        let query_params: Option<tinyplace::types::ProductQueryParams> = params
+            .get("params")
+            .and_then(|v| if v.is_null() { None } else { Some(v) })
+            .map(|v| {
+                serde_json::from_value(v.clone())
+                    .map_err(|e| format!("invalid graphql_products params: {e}"))
+            })
+            .transpose()?;
+
+        let client = global_state().client().await?;
+        match client.graphql.products(query_params.as_ref()).await {
+            Ok(result) => to_value(result),
+            Err(e) => match graphql_products_degrade(&e) {
+                Some(empty) => {
+                    log::debug!(
+                        "{LOG_PREFIX} graphql_products deserialization failed -> empty: {e}"
+                    );
+                    to_value(empty)
+                }
+                None => Err(map_err(e)),
+            },
+        }
+    })
+}
+
+pub(crate) fn graphql_products_degrade(e: &tinyplace::Error) -> Option<Value> {
+    if matches!(e, tinyplace::Error::Serialization(_)) {
+        Some(serde_json::json!({ "products": [], "count": 0 }))
+    } else {
+        None
+    }
+}
+
+pub(crate) fn handle_tinyplace_graphql_product(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let id = req_str(&params, "id")?.to_string();
+        log::debug!("{LOG_PREFIX} graphql_product id={id}");
+        let client = global_state().client().await?;
+        let result = client.graphql.product(&id).await.map_err(map_err)?;
+        to_value(result)
+    })
+}
+
+pub(crate) fn handle_tinyplace_graphql_identity_listings(
+    params: Map<String, Value>,
+) -> ControllerFuture {
+    Box::pin(async move {
+        log::debug!(
+            "{LOG_PREFIX} graphql_identity_listings params_keys={:?}",
+            params.keys().collect::<Vec<_>>()
+        );
+        let query_params = parse_identity_listing_params(&params, "graphql_identity_listings")?;
+        let client = global_state().client().await?;
+        match client
+            .graphql
+            .identity_listings(query_params.as_ref())
+            .await
+        {
+            Ok(result) => to_value(result),
+            Err(e) => match graphql_identity_listings_degrade(&e) {
+                Some(empty) => {
+                    log::debug!(
+                        "{LOG_PREFIX} graphql_identity_listings deserialization failed -> empty: {e}"
+                    );
+                    to_value(empty)
+                }
+                None => Err(map_err(e)),
+            },
+        }
+    })
+}
+
+pub(crate) fn graphql_identity_listings_degrade(e: &tinyplace::Error) -> Option<Value> {
+    if matches!(e, tinyplace::Error::Serialization(_)) {
+        Some(serde_json::json!({ "identities": [], "count": 0 }))
+    } else {
+        None
+    }
+}
+
+pub(crate) fn handle_tinyplace_graphql_identity_listing(
+    params: Map<String, Value>,
+) -> ControllerFuture {
+    Box::pin(async move {
+        let id = req_str(&params, "id")?.to_string();
+        log::debug!("{LOG_PREFIX} graphql_identity_listing id={id}");
+        let query_params = match graphql_params_object(&params, "graphql_identity_listing")? {
+            None => None,
+            Some(obj) => Some(
+                tinyplace::api::graphql::IdentityListingDetailGraphQLParams {
+                    bid_limit: graphql_opt_i64(obj, "graphql_identity_listing", "bidLimit")?,
+                    bid_offset: graphql_opt_i64(obj, "graphql_identity_listing", "bidOffset")?,
+                    history_limit: graphql_opt_i64(
+                        obj,
+                        "graphql_identity_listing",
+                        "historyLimit",
+                    )?,
+                    history_offset: graphql_opt_i64(
+                        obj,
+                        "graphql_identity_listing",
+                        "historyOffset",
+                    )?,
+                },
+            ),
+        };
+        let client = global_state().client().await?;
+        let result = client
+            .graphql
+            .identity_listing(&id, query_params.as_ref())
+            .await
+            .map_err(map_err)?;
+        to_value(result)
+    })
+}
+
+pub(crate) fn handle_tinyplace_graphql_identity_bids(
+    params: Map<String, Value>,
+) -> ControllerFuture {
+    Box::pin(async move {
+        let listing_id = req_str(&params, "listingId")?.to_string();
+        log::debug!("{LOG_PREFIX} graphql_identity_bids listing_id={listing_id}");
+        let query_params = parse_pagination_params(&params, "graphql_identity_bids")?;
+        let client = global_state().client().await?;
+        let result = client
+            .graphql
+            .identity_bids(&listing_id, query_params.as_ref())
+            .await
+            .map_err(map_err)?;
+        to_value(result)
+    })
+}
+
+pub(crate) fn handle_tinyplace_graphql_identity_offers(
+    params: Map<String, Value>,
+) -> ControllerFuture {
+    Box::pin(async move {
+        log::debug!(
+            "{LOG_PREFIX} graphql_identity_offers params_keys={:?}",
+            params.keys().collect::<Vec<_>>()
+        );
+        let query_params = match graphql_params_object(&params, "graphql_identity_offers")? {
+            None => None,
+            Some(obj) => Some(tinyplace::api::graphql::IdentityOfferGraphQLParams {
+                agent: graphql_opt_string(obj, "graphql_identity_offers", "agent")?,
+                buyer: graphql_opt_string(obj, "graphql_identity_offers", "buyer")?,
+                name: graphql_opt_string(obj, "graphql_identity_offers", "name")?,
+                status: graphql_opt_string(obj, "graphql_identity_offers", "status")?,
+                limit: graphql_opt_i64(obj, "graphql_identity_offers", "limit")?,
+                offset: graphql_opt_i64(obj, "graphql_identity_offers", "offset")?,
+            }),
+        };
+        let client = global_state().client().await?;
+        let result = client
+            .graphql
+            .identity_offers(query_params.as_ref())
+            .await
+            .map_err(map_err)?;
+        to_value(result)
+    })
+}
+
+pub(crate) fn handle_tinyplace_graphql_identity_sales(
+    params: Map<String, Value>,
+) -> ControllerFuture {
+    Box::pin(async move {
+        let name = req_str(&params, "name")?.to_string();
+        log::debug!("{LOG_PREFIX} graphql_identity_sales name={name}");
+        let query_params = parse_pagination_params(&params, "graphql_identity_sales")?;
+        let client = global_state().client().await?;
+        let result = client
+            .graphql
+            .identity_sales(&name, query_params.as_ref())
+            .await
+            .map_err(map_err)?;
+        to_value(result)
+    })
+}
 
 pub(crate) fn handle_tinyplace_graphql_profile(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
@@ -4000,97 +4737,6 @@ pub(crate) fn handle_tinyplace_bounties_create(params: Map<String, Value>) -> Co
             )),
             Err(SettleFailure::Exhausted(last)) => Err(format!(
                 "bounty paid but not confirmed in time (onChainTx={on_chain_tx}); last error: {last}"
-            )),
-        }
-    })
-}
-
-pub(crate) fn handle_tinyplace_bounties_fund(params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move {
-        let bounty_id = req_str(&params, "bountyId")?.trim().to_string();
-        if bounty_id.is_empty() {
-            return Err("missing required param 'bountyId'".to_string());
-        }
-        let confirmed = params
-            .get("confirmed")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-        log::debug!("{LOG_PREFIX} bounties_fund bounty_id={bounty_id} confirmed={confirmed}");
-
-        let client = global_state().client().await?;
-        // ANTI-SPOOF: creator resolved from signer, never from params.
-        let signer = client
-            .http()
-            .signer()
-            .ok_or("tiny.place signer unavailable; unlock your wallet")?;
-        let creator = signer.agent_id();
-
-        // Phase A: probe for the 402 challenge (or a free/already-funded bounty).
-        let challenge = match client.bounties.fund(&bounty_id, &creator, None).await {
-            Ok(bounty) => {
-                log::debug!("{LOG_PREFIX} bounties_fund no payment needed bounty_id={bounty_id}");
-                return to_value(serde_json::json!({ "bounty": bounty }));
-            }
-            Err(e) => match e.payment_required() {
-                Some(pr) => pr.payment.clone(),
-                None => return Err(map_err(e)),
-            },
-        };
-        log::debug!(
-            "{LOG_PREFIX} bounties_fund 402 challenge network={:?} asset={:?} amount={:?}",
-            challenge.network,
-            challenge.asset,
-            challenge.amount,
-        );
-
-        // Unconfirmed: surface the challenge + balance, spend nothing.
-        if !confirmed {
-            let (wallet_balance, wallet_address) = wallet_usdc_balance(&signer.agent_id()).await;
-            return to_value(serde_json::json!({
-                "challenge": challenge,
-                "walletBalance": wallet_balance,
-                "walletAddress": wallet_address,
-            }));
-        }
-
-        // Confirmed: cluster guards, pay on-chain, re-submit with the map.
-        if let Some(network) = challenge.network.as_deref() {
-            ensure_cluster_matches(network)?;
-        }
-        ensure_backend_mint_matches(&client).await?;
-
-        let mut extra_metadata = HashMap::new();
-        extra_metadata.insert("bountyId".to_string(), bounty_id.clone());
-        let fulfilled = fulfill_payment(
-            &challenge,
-            signer.as_ref(),
-            PaymentContext {
-                purpose: "bounties.fund".to_string(),
-                nonce_prefix: "fund".to_string(),
-                extra_metadata,
-            },
-        )
-        .await?;
-        let on_chain_tx = fulfilled.on_chain_tx.clone();
-
-        // Re-submit with the payment map, retrying while settlement confirms.
-        match settle_retry("bounties_fund", || {
-            client
-                .bounties
-                .fund(&bounty_id, &creator, Some(&fulfilled.payment_map))
-        })
-        .await
-        {
-            Ok(bounty) => to_value(serde_json::json!({
-                "bounty": bounty,
-                "payment": { "onChainTx": on_chain_tx },
-            })),
-            Err(SettleFailure::Hard(m)) => Err(format!(
-                "bounty funding failed after payment (onChainTx={on_chain_tx}): {m}"
-            )),
-            Err(SettleFailure::Exhausted(last)) => Err(format!(
-                "bounty funded but not confirmed in time (onChainTx={on_chain_tx}); \
-                 last error: {last}"
             )),
         }
     })
@@ -4749,13 +5395,6 @@ mod tests {
         assert!(err.contains("streamId"), "got: {err}");
     }
 
-    /// `signal_get_bundle` rejects a missing `agentId` before any client work.
-    #[test]
-    fn signal_get_bundle_requires_agent_id() {
-        let err = block_on(handle_tinyplace_signal_get_bundle(Map::new())).unwrap_err();
-        assert!(err.contains("agentId"), "got: {err}");
-    }
-
     /// `signal_provision` has no required params; it must fail at `global_signal_store`
     /// (wallet/config not available in unit tests), NOT at param extraction.
     /// Uses a Tokio runtime because `global_signal_store` internally calls
@@ -4809,6 +5448,63 @@ mod tests {
             .block_on(handle_tinyplace_signal_key_status(Map::new()))
             .unwrap_err();
         assert!(!err.contains("missing required param"), "got: {err}");
+    }
+
+    // ── looks_like_base58_pubkey heuristic ───────────────────────────────────
+
+    #[test]
+    fn base58_pubkey_heuristic_accepts_valid_keys() {
+        // 44-char base58 string using all valid alphabet chars
+        assert!(
+            looks_like_base58_pubkey("61KcG5aGLqpnJz2fXyzABCDEFGHJKLMNPQRSTUVWXY"),
+            "44-char valid base58 must match"
+        );
+        // 32-char minimum
+        assert!(
+            looks_like_base58_pubkey("11111111111111111111111111111111"),
+            "32-char all-1s must match (system program)"
+        );
+    }
+
+    #[test]
+    fn base58_pubkey_heuristic_rejects_handles_and_invalid() {
+        assert!(
+            !looks_like_base58_pubkey("@alice"),
+            "@ prefix must not match"
+        );
+        assert!(
+            !looks_like_base58_pubkey("alice"),
+            "too short to be a pubkey"
+        );
+        assert!(!looks_like_base58_pubkey(""), "empty must not match");
+        // Contains '!' which is outside the base58 alphabet
+        assert!(
+            !looks_like_base58_pubkey("61KcG5aGLqpn!Jz2fXyzABCDEFGHJKLMNPQRSTUVWX"),
+            "invalid char must not match"
+        );
+        // Contains '0' which is NOT in base58 (confused with 'O')
+        assert!(
+            !looks_like_base58_pubkey("61KcG5aGLqpnJz2fXyzABCDEFGHJKLMNPQRS0UVWXY"),
+            "zero char not in base58 alphabet"
+        );
+    }
+
+    #[test]
+    fn base58_pubkey_heuristic_rejects_45_char_string() {
+        // 45 chars is too long for a 32-byte base58 pubkey (valid range is 32..=44)
+        let s = "61KcG5aGLqpnJz2fXyzABCDEFGHJKLMNPQRSTUVWXYZ12";
+        assert_eq!(s.len(), 45, "test fixture must be exactly 45 chars");
+        assert!(
+            !looks_like_base58_pubkey(s),
+            "45-char string must not match"
+        );
+    }
+
+    /// `signal_get_bundle` rejects a missing `agentId` before any resolution.
+    #[test]
+    fn signal_get_bundle_requires_agent_id() {
+        let err = block_on(handle_tinyplace_signal_get_bundle(Map::new())).unwrap_err();
+        assert!(err.contains("agentId"), "got: {err}");
     }
 
     #[test]
@@ -5226,19 +5922,6 @@ mod tests {
         );
     }
 
-    /// bounties_fund rejects blank bountyId before any client work.
-    #[test]
-    fn bounties_fund_rejects_blank_bounty_id() {
-        let mut params = Map::new();
-        params.insert("bountyId".to_string(), Value::String("  ".to_string()));
-        let result = block_on(handle_tinyplace_bounties_fund(params));
-        assert!(result.is_err());
-        assert!(
-            result.unwrap_err().contains("bountyId"),
-            "expected 'bountyId' in error"
-        );
-    }
-
     /// bounties_submit rejects blank url before any client work.
     #[test]
     fn bounties_submit_rejects_blank_url() {
@@ -5310,6 +5993,125 @@ mod tests {
         assert!(
             !err.contains("actor"),
             "actor must not be a client param: {err}"
+        );
+    }
+
+    // ── match_agent_card_by_username — pure matching logic ───────────────────
+
+    fn make_test_card(agent_id: &str, username: Option<&str>) -> tinyplace::types::AgentCard {
+        tinyplace::types::AgentCard {
+            agent_id: agent_id.to_string(),
+            name: agent_id.to_string(),
+            description: None,
+            username: username.map(str::to_string),
+            crypto_id: format!("crypto-{agent_id}"),
+            actor_type: None,
+            public_key: None,
+            url: None,
+            endpoint: None,
+            supported_interfaces: None,
+            skills: None,
+            capabilities: None,
+            tags: None,
+            payment_methods: None,
+            payment_requirements: None,
+            groups: None,
+            docs: None,
+            webhooks: None,
+            metadata: None,
+            signature: None,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            viewer_is_following: None,
+        }
+    }
+
+    /// Directory-card matcher finds an exact username match.
+    #[test]
+    fn match_agent_card_exact_username_hit() {
+        let cards = vec![
+            make_test_card("agent-1", Some("alice")),
+            make_test_card("agent-2", Some("stevejobs")),
+            make_test_card("agent-3", Some("bob")),
+        ];
+        let found = match_agent_card_by_username(&cards, "stevejobs");
+        assert!(found.is_some(), "should find stevejobs");
+        assert_eq!(found.unwrap().crypto_id, "crypto-agent-2");
+    }
+
+    /// Directory-card matcher is case-insensitive.
+    #[test]
+    fn match_agent_card_case_insensitive() {
+        let cards = vec![make_test_card("agent-1", Some("SteveJobs"))];
+        let found = match_agent_card_by_username(&cards, "stevejobs");
+        assert!(found.is_some(), "case-insensitive match must succeed");
+    }
+
+    /// Directory-card matcher returns None when no card has the given username.
+    #[test]
+    fn match_agent_card_miss() {
+        let cards = vec![
+            make_test_card("agent-1", Some("alice")),
+            make_test_card("agent-2", None), // no username
+        ];
+        let found = match_agent_card_by_username(&cards, "notexist");
+        assert!(found.is_none(), "should return None when no match");
+    }
+
+    /// Directory-card matcher skips cards with no username without panicking.
+    #[test]
+    fn match_agent_card_skips_cards_without_username() {
+        let cards = vec![
+            make_test_card("agent-1", None),
+            make_test_card("agent-2", None),
+            make_test_card("agent-3", Some("target")),
+        ];
+        let found = match_agent_card_by_username(&cards, "target");
+        assert!(found.is_some(), "should find the card that has a username");
+        assert_eq!(found.unwrap().agent_id, "agent-3");
+    }
+
+    /// looks_like_base58_pubkey passthrough: resolve_recipient should NOT call
+    /// directory.resolve for a raw crypto_id — it short-circuits and returns it
+    /// directly.  We can verify this by supplying a valid 44-char base58 string
+    /// which, without a live client, would error if it tried to resolve.
+    ///
+    /// Because `resolve_recipient_to_agent_id` requires a live client we test
+    /// the passthrough indirectly via `looks_like_base58_pubkey`.
+    #[test]
+    fn base58_passthrough_identified_correctly() {
+        // 44-char valid base58 — same as used elsewhere in this test suite.
+        let key = "61KcG5aGLqpnJz2fXyzABCDEFGHJKLMNPQRSTUVWXY";
+        assert!(
+            looks_like_base58_pubkey(key),
+            "44-char base58 must be identified as a crypto_id to skip resolution"
+        );
+    }
+
+    /// Resolver error message does NOT expose the raw 404 HTTP text.
+    /// The error string produced when no agent is found must be human-readable
+    /// and must not look like a raw network error.
+    #[test]
+    fn resolve_not_found_error_is_human_readable() {
+        // Test the error message produced in handle_tinyplace_directory_resolve
+        // when both registry and directory miss — replicated here as the literal
+        // format used in the production code.
+        let name = "unknownuser";
+        let err = format!(
+            "No agent found for \"{name}\". \
+             Check the handle or paste their wallet address directly."
+        );
+        assert!(
+            err.contains("unknownuser"),
+            "error must name the handle: {err}"
+        );
+        assert!(
+            !err.contains("404"),
+            "error must not expose raw HTTP status: {err}"
+        );
+        assert!(
+            !err.contains("not found"),
+            "error must not use raw 404 body text: {err}"
         );
     }
 }

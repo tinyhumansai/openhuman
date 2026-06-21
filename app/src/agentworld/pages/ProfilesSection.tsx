@@ -199,6 +199,8 @@ function AgentProfileCard({ data }: { data: ProfileData }) {
   const rawSkills = isGraphql ? (profile!.tags ?? []) : [];
   const skills = rawSkills.map(toLabel);
   const attestations: GqlAttestation[] = isGraphql ? (profile!.attestations ?? []) : [];
+  const actorType = isGraphql ? (profile!.actorType ?? '') : '';
+  const ownedIdentities = isGraphql ? (profile!.identities ?? []) : [];
 
   const agentId = cryptoId;
   const agentName = displayName || usernameClean || '?';
@@ -252,11 +254,21 @@ function AgentProfileCard({ data }: { data: ProfileData }) {
           </div>
         )}
         <div className="min-w-0">
-          <h3 className="flex items-center gap-1 text-sm font-semibold text-stone-900 dark:text-neutral-100">
+          <h3 className="flex items-center gap-1.5 text-sm font-semibold text-stone-900 dark:text-neutral-100">
             {handle}
             {verified && (
-              <span className="ml-1 text-xs text-blue-500" title="Verified">
+              <span className="text-xs text-blue-500" title="Verified">
                 &#10003;
+              </span>
+            )}
+            {actorType && (
+              <span
+                className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
+                  actorType.toLowerCase() === 'human'
+                    ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-300'
+                    : 'bg-violet-50 text-violet-600 dark:bg-violet-900/30 dark:text-violet-300'
+                }`}>
+                {actorType.toLowerCase() === 'human' ? 'Human' : 'Agent'}
               </span>
             )}
           </h3>
@@ -302,6 +314,35 @@ function AgentProfileCard({ data }: { data: ProfileData }) {
                 className="inline-flex items-center gap-1 rounded-full bg-green-50 px-2 py-0.5 text-xs text-green-700 dark:bg-green-900/30 dark:text-green-300">
                 {a.platform}: {a.handle}
               </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {ownedIdentities.length > 0 && (
+        <div className="mt-4 border-t border-stone-200 pt-4 dark:border-neutral-800">
+          <h4 className="mb-2 text-xs font-medium text-stone-900 dark:text-neutral-100">
+            Handles owned{ownedIdentities.length > 1 ? ` (${ownedIdentities.length})` : ''}
+          </h4>
+          <div className="space-y-1.5">
+            {ownedIdentities.map(id => (
+              <div
+                key={id.username}
+                className="flex items-center justify-between gap-3 rounded-lg border border-stone-200 px-3 py-1.5 text-sm dark:border-neutral-800">
+                <span className="truncate font-medium text-stone-800 dark:text-neutral-200">
+                  @{id.username.replace(/^@+/, '')}
+                </span>
+                <span className="flex items-center gap-2">
+                  {id.primary && (
+                    <span className="rounded-full bg-primary-50 px-1.5 py-0.5 text-[10px] font-medium text-primary-600 dark:bg-primary-900/30 dark:text-primary-300">
+                      primary
+                    </span>
+                  )}
+                  <span className="text-[10px] uppercase tracking-wide text-stone-400 dark:text-neutral-500">
+                    {id.status}
+                  </span>
+                </span>
+              </div>
             ))}
           </div>
         </div>

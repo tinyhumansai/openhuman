@@ -7,8 +7,6 @@
 //! [`crate::openhuman::agent::debug`] can mirror the live runner
 //! byte-for-byte instead of carrying its own drifting copies.
 
-use std::collections::HashSet;
-
 use super::super::definition::{PromptSource, ToolScope};
 use super::types::SubagentRunError;
 use crate::openhuman::context::prompt::PromptContext;
@@ -105,6 +103,8 @@ pub(crate) fn build_text_mode_tool_instructions(_specs: &[ToolSpec]) -> String {
 /// * every synthesised per-archetype `delegate_*` tool
 ///   ([`crate::openhuman::tools::orchestrator_tools::collect_orchestrator_tools`]
 ///   emits `delegate_researcher`, `delegate_planner`, …).
+/// * custom delegate names that intentionally do not use the `delegate_*`
+///   prefix, currently `use_tinyplace`.
 ///
 /// Kept as a tight prefix/exact match rather than a registry lookup so
 /// the strip is cheap to run inside [`super::ops::run_typed_mode`]'s
@@ -112,7 +112,7 @@ pub(crate) fn build_text_mode_tool_instructions(_specs: &[ToolSpec]) -> String {
 /// this function and the corresponding generator in
 /// `orchestrator_tools.rs` together.
 pub(super) fn is_subagent_spawn_tool(name: &str) -> bool {
-    name == "spawn_subagent" || name.starts_with("delegate_")
+    name == "spawn_subagent" || name.starts_with("delegate_") || name == "use_tinyplace"
 }
 
 /// Returns indices into `parent_tools` for the tools the sub-agent may
@@ -133,7 +133,6 @@ pub(crate) fn filter_tool_indices(
     disallowed: &[String],
     skill_filter: Option<&str>,
 ) -> Vec<usize> {
-    let disallow_set: HashSet<&str> = disallowed.iter().map(|s| s.as_str()).collect();
     let skill_prefix = skill_filter.map(|s| format!("{s}__"));
 
     parent_tools
@@ -141,7 +140,7 @@ pub(crate) fn filter_tool_indices(
         .enumerate()
         .filter(|(_, tool)| {
             let name = tool.name();
-            if disallow_set.contains(name) {
+            if disallowed_tool_matches(disallowed, name) {
                 return false;
             }
             if let Some(prefix) = skill_prefix.as_deref() {
@@ -156,6 +155,29 @@ pub(crate) fn filter_tool_indices(
         })
         .map(|(i, _)| i)
         .collect()
+}
+
+pub(crate) fn disallowed_tool_matches(disallowed: &[String], name: &str) -> bool {
+    disallowed.iter().any(|entry| {
+        if let Some(prefix) = entry.strip_suffix('*') {
+            name.starts_with(prefix)
+        } else {
+            entry == name
+        }
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn custom_tinyplace_delegate_is_treated_as_spawn_tool() {
+        assert!(is_subagent_spawn_tool("spawn_subagent"));
+        assert!(is_subagent_spawn_tool("delegate_researcher"));
+        assert!(is_subagent_spawn_tool("use_tinyplace"));
+        assert!(!is_subagent_spawn_tool("tinyplace_directory_resolve"));
+    }
 }
 
 // ── Prompt loading ──────────────────────────────────────────────────────

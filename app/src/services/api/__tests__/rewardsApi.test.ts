@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { normalizeRewardsApiError, normalizeRewardsSnapshot, rewardsApi } from '../rewardsApi';
 
-vi.mock('../../apiClient', () => ({ apiClient: { get: vi.fn() } }));
+vi.mock('../../apiClient', () => ({ apiClient: { get: vi.fn(), delete: vi.fn() } }));
 
 describe('normalizeRewardsSnapshot', () => {
   it('normalizes a backend rewards payload', () => {
@@ -149,6 +149,50 @@ describe('rewardsApi', () => {
     await expect(rewardsApi.getMyRewards()).rejects.toMatchObject({
       success: false,
       error: 'Rewards sync timed out. Check your connection and try again.',
+    });
+  });
+});
+
+describe('rewardsApi.disconnectDiscord', () => {
+  it('resolves when the backend returns success', async () => {
+    const { apiClient } = await import('../../apiClient');
+    vi.mocked(apiClient.delete).mockResolvedValueOnce({ success: true, data: null });
+
+    await expect(rewardsApi.disconnectDiscord()).resolves.toBeUndefined();
+    expect(apiClient.delete).toHaveBeenCalledWith('/rewards/discord', { timeout: 15000 });
+  });
+
+  it('throws a normalized error on transport failure', async () => {
+    const { apiClient } = await import('../../apiClient');
+    vi.mocked(apiClient.delete).mockRejectedValueOnce(new Error('network error'));
+
+    await expect(rewardsApi.disconnectDiscord()).rejects.toMatchObject({
+      success: false,
+      error: 'network error',
+    });
+  });
+
+  it('throws a RewardsApiError when the backend reports failure', async () => {
+    const { apiClient } = await import('../../apiClient');
+    vi.mocked(apiClient.delete).mockResolvedValueOnce({
+      success: false,
+      data: null,
+      error: 'Unable to disconnect Discord',
+    });
+
+    await expect(rewardsApi.disconnectDiscord()).rejects.toMatchObject({
+      success: false,
+      error: 'Unable to disconnect Discord',
+    });
+  });
+
+  it('falls back to a default message when backend error has no message', async () => {
+    const { apiClient } = await import('../../apiClient');
+    vi.mocked(apiClient.delete).mockResolvedValueOnce({ success: false, data: null });
+
+    await expect(rewardsApi.disconnectDiscord()).rejects.toMatchObject({
+      success: false,
+      error: 'Unable to disconnect Discord',
     });
   });
 });
