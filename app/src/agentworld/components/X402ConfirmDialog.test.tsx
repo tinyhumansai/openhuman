@@ -10,11 +10,15 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, test, vi } from 'vitest';
 
+import { openUrl } from '../../utils/openUrl';
 import X402ConfirmDialog, {
   formatUnits,
+  fundingUrl,
   isInsufficient,
   type X402WalletBalance,
 } from './X402ConfirmDialog';
+
+vi.mock('../../utils/openUrl', () => ({ openUrl: vi.fn() }));
 
 const BALANCE: X402WalletBalance = {
   raw: '50000000',
@@ -60,6 +64,20 @@ describe('isInsufficient', () => {
   });
 });
 
+describe('fundingUrl', () => {
+  test('builds the tiny.place fund URL with address + asset params', () => {
+    expect(fundingUrl('GW1jU1ZoVpugX4Z164j7x7rpTsKQn1QvK4Techu7P6PH', 'USDC')).toBe(
+      'https://tiny.place/fund?address=GW1jU1ZoVpugX4Z164j7x7rpTsKQn1QvK4Techu7P6PH&asset=USDC'
+    );
+  });
+
+  test('url-encodes param values', () => {
+    expect(fundingUrl('addr+slash/value', 'US DC')).toBe(
+      'https://tiny.place/fund?address=addr%2Bslash%2Fvalue&asset=US+DC'
+    );
+  });
+});
+
 describe('X402ConfirmDialog', () => {
   test('renders amount, asset, network, balance and a truncated wallet', () => {
     render(<X402ConfirmDialog {...baseProps()} />);
@@ -88,10 +106,16 @@ describe('X402ConfirmDialog', () => {
     expect(props.onCancel).toHaveBeenCalledTimes(1);
   });
 
-  test('disables confirm and shows a notice when balance is insufficient', () => {
+  test('replaces Pay with an Add-funds redirect when balance is insufficient', async () => {
     render(<X402ConfirmDialog {...baseProps()} amount="60000000" />);
-    expect(screen.getByTestId('x402-confirm')).toBeDisabled();
+    // The dead disabled Pay button is gone; the notice + fund redirect appear.
+    expect(screen.queryByTestId('x402-confirm')).not.toBeInTheDocument();
     expect(screen.getByTestId('x402-insufficient')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByTestId('x402-add-funds'));
+    expect(vi.mocked(openUrl)).toHaveBeenCalledWith(
+      'https://tiny.place/fund?address=WaLLetdeadbeef0123456789&asset=USDC'
+    );
   });
 
   test('shows "Unknown" balance and still allows confirm when balance is null', () => {
