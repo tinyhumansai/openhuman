@@ -234,6 +234,33 @@ const WORKLOAD_MODEL_HINT_KEYS: Record<WorkloadId, string> = {
   subconscious: 'settings.ai.routing.workload.subconscious.hint',
 };
 
+// Build the "pending routing changes" summary: one `"<label> → <target>"`
+// entry per workload whose draft route differs from the saved route. Extracted
+// as a pure, exported function so the (translated) formatting is unit-testable
+// without rendering the whole panel.
+export function buildRoutingDiffSummary(
+  saved: RoutingMap,
+  draft: RoutingMap,
+  t: (key: string) => string
+): string[] {
+  const describe = (r: ProviderRef): string => {
+    if (r.kind === 'openhuman') return 'openhuman';
+    if (r.kind === 'default') return 'cloud';
+    const tempSuffix = r.temperature != null ? `@${r.temperature.toFixed(2)}` : '';
+    if (r.kind === 'cloud') return `${r.providerSlug}:${r.model}${tempSuffix}`;
+    return `local:${r.model}${tempSuffix}`;
+  };
+  const out: string[] = [];
+  for (const w of WORKLOADS) {
+    const a = saved[w.id];
+    const b = draft[w.id];
+    if (JSON.stringify(a) !== JSON.stringify(b)) {
+      out.push(`${t(w.labelKey)} → ${describe(b)}`);
+    }
+  }
+  return out;
+}
+
 // TIER_PRESETS removed alongside the Local provider section.
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2968,24 +2995,10 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
   // applyPreset removed alongside the Cloud / Local / Mixed preset pills —
   // the new Default/Custom binary toggle handles routing per workload.
 
-  const diffSummary = useMemo(() => {
-    const out: string[] = [];
-    for (const w of WORKLOADS) {
-      const a = saved.routing[w.id];
-      const b = draft.routing[w.id];
-      if (JSON.stringify(a) !== JSON.stringify(b)) {
-        const describe = (r: ProviderRef) => {
-          if (r.kind === 'openhuman') return 'openhuman';
-          if (r.kind === 'default') return 'cloud';
-          const tempSuffix = r.temperature != null ? `@${r.temperature.toFixed(2)}` : '';
-          if (r.kind === 'cloud') return `${r.providerSlug}:${r.model}${tempSuffix}`;
-          return `local:${r.model}${tempSuffix}`;
-        };
-        out.push(`${t(w.labelKey)} → ${describe(b)}`);
-      }
-    }
-    return out;
-  }, [saved, draft, t]);
+  const diffSummary = useMemo(
+    () => buildRoutingDiffSummary(saved.routing, draft.routing, t),
+    [saved, draft, t]
+  );
 
   const chatRows = WORKLOADS.filter(w => w.group === 'chat');
   const bgRows = WORKLOADS.filter(w => w.group === 'background');
