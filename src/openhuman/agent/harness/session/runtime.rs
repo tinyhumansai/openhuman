@@ -88,6 +88,11 @@ impl Agent {
         Arc::clone(&self.tool_specs)
     }
 
+    #[cfg(test)]
+    pub(crate) fn visible_tool_names_for_test(&self) -> &std::collections::HashSet<String> {
+        &self.visible_tool_names
+    }
+
     /// Borrow the agent's memory backing store as an `Arc`.
     pub fn memory_arc(&self) -> Arc<dyn Memory> {
         Arc::clone(&self.memory)

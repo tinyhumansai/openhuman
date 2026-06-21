@@ -5,7 +5,13 @@ import { setLocale } from '../store/localeSlice';
 // Listed roughly by speaker count (English first as the source-of-truth locale).
 // Labels are intentionally rendered in each locale's own script so the picker
 // is recognisable to a native speaker even before the rest of the UI rerenders.
-const LOCALE_OPTIONS: Array<{ value: Locale; flag: string; label: string }> = [
+interface LocaleOption {
+  value: Locale;
+  flag: string;
+  label: string;
+}
+
+export const LOCALE_OPTIONS: LocaleOption[] = [
   { value: 'en', flag: '🇬🇧', label: 'English' },
   { value: 'ko', flag: '🇰🇷', label: '한국어' },
   { value: 'zh-CN', flag: '🇨🇳', label: '简体中文' },

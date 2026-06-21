@@ -1831,6 +1831,48 @@ pub(crate) fn report_error_message(
     );
 }
 
+/// Capture a message to Sentry at **warning** severity with structured tags.
+///
+/// Mirror of [`report_error_message`] but at `sentry::Level::Warning`: the
+/// event is still recorded in Sentry (so it stays available for triage and
+/// dashboards) while warning-severity events do not trip the error-rate
+/// alert/paging rules that `Level::Error` events do (see the
+/// `sentry_tracing_layer` mapping in `core::logging`, where `ERROR` becomes a
+/// captured `Event` and `WARN`/`INFO` only a `Breadcrumb`). Use this for
+/// transport-boundary conditions worth seeing in aggregate that are never an
+/// actionable core defect — e.g. unrecognised RPC method names (#3567).
+///
+/// Like [`report_error_message`], capture is an explicit, synchronous
+/// `sentry::capture_message` rather than the `sentry-tracing` bridge; the
+/// accompanying diagnostic line is tagged with [`REPORT_ERROR_TRACING_TARGET`]
+/// so the production layer ignores it and we never double-report.
+pub(crate) fn report_warning_message(
+    message: &str,
+    domain: &str,
+    operation: &str,
+    extra: &[Tag<'_>],
+) {
+    sentry::with_scope(
+        |scope| {
+            scope.set_tag("domain", domain);
+            scope.set_tag("operation", operation);
+            for (k, v) in extra {
+                scope.set_tag(k, v);
+            }
+        },
+        || {
+            sentry::capture_message(message, sentry::Level::Warning);
+            tracing::warn!(
+                target: REPORT_ERROR_TRACING_TARGET,
+                domain = domain,
+                operation = operation,
+                message = %message,
+                "[observability] {domain}.{operation} warning: {message}"
+            );
+        },
+    );
+}
+
 /// Returns true when a Sentry event is a per-attempt provider HTTP failure
 /// that the reliable-provider layer already handles via retry + fallback.
 ///

@@ -29,6 +29,10 @@ const PROVIDER_COPY: Record<AccountProvider, string> = {
   linkedin: 'LinkedIn',
   slack: 'Slack',
   discord: 'Discord',
+  gmail: 'Gmail',
+  outlook: 'Outlook',
+  instagram: 'Instagram',
+  twitter: 'X (Twitter)',
   'google-meet': 'Google Meet',
   zoom: 'Zoom',
   browserscan: 'BrowserScan',
@@ -132,14 +136,13 @@ const WebviewHost = ({ accountId, provider }: WebviewHostProps) => {
     const measureAndSync = () => {
       if (!el || cancelled) return;
       const rect = el.getBoundingClientRect();
-      // Inset the native webview by the container's border-radius so the
-      // rounded HTML border is visible around the edges.
-      const inset = 8;
+      // The native webview fills the placeholder edge-to-edge (no inset) so the
+      // embedded app occupies the full main content area.
       const bounds = {
-        x: Math.round(rect.left + inset),
-        y: Math.round(rect.top + inset),
-        width: Math.max(1, Math.round(rect.width - inset * 2)),
-        height: Math.max(1, Math.round(rect.height - inset * 2)),
+        x: Math.round(rect.left),
+        y: Math.round(rect.top),
+        width: Math.max(1, Math.round(rect.width)),
+        height: Math.max(1, Math.round(rect.height)),
       };
       const last = lastBoundsRef.current;
       const unchanged =
@@ -195,7 +198,7 @@ const WebviewHost = ({ accountId, provider }: WebviewHostProps) => {
   return (
     <div
       ref={ref}
-      className="relative h-full w-full overflow-hidden rounded-2xl border border-stone-200 dark:border-neutral-800/70 bg-stone-100 dark:bg-neutral-800 shadow-soft"
+      className="relative h-full w-full overflow-hidden bg-stone-100 dark:bg-neutral-800"
       aria-label={`webview host for account ${accountId}`}>
       {/* Branded placeholder + (optional) loading overlay collapsed into a
           single absolute container so we never paint two stacked / offset

@@ -151,10 +151,26 @@ pub async fn store_session(
             .ok_or_else(|| "local session requires a user payload".to_string())?
     } else {
         let client = BackendOAuthClient::new(&api_url).map_err(|e| e.to_string())?;
-        client
-            .fetch_current_user(trimmed_token)
-            .await
-            .map_err(|e| format!("Session validation failed (GET /auth/me): {e:#}"))?
+        match client.fetch_current_user(trimmed_token).await {
+            Ok(user) => user,
+            Err(e) => {
+                // This is the store-time validation gate: if it fails the profile
+                // is NEVER persisted, so the user bounces straight back to the
+                // signin page after a "successful" OAuth. Timeouts/gateway 5xx are
+                // otherwise dropped by the Sentry transient classifier, so log an
+                // explicit, grep-friendly WARN to the app log regardless.
+                let reason = format!("{e:#}");
+                tracing::warn!(
+                    domain = "credentials",
+                    operation = "store_session",
+                    "[credentials][auth-store] GET /auth/me validation FAILED on {} — session NOT persisted; user will bounce to signin: {reason}",
+                    api_url.trim_end_matches('/')
+                );
+                return Err(format!(
+                    "Session validation failed (GET /auth/me): {reason}"
+                ));
+            }
+        }
     };
 
     let mut metadata = std::collections::HashMap::new();

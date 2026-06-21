@@ -8,6 +8,7 @@ use openhuman_core::openhuman::app_state::{
     StoredOnboardingTasks,
 };
 use openhuman_core::openhuman::config::rpc as config_rpc;
+use openhuman_core::openhuman::credentials::ops::store_session;
 use openhuman_core::openhuman::credentials::profiles::{
     AuthProfile, AuthProfileKind, AuthProfilesStore, TokenSet,
 };
@@ -186,6 +187,89 @@ async fn auth_me_server(
         }
     });
     (url, task, shutdown_tx)
+}
+
+/// Like `auth_me_server` but always replies HTTP 500, so `store_session`'s
+/// `GET /auth/me` validation gate fails — exercising the WARN + `Err` path that
+/// leaves the session unpersisted (the "OAuth succeeded but app is back on the
+/// signin page" bug).
+async fn auth_me_failing_server() -> (
+    String,
+    tokio::task::JoinHandle<()>,
+    tokio::sync::oneshot::Sender<()>,
+) {
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .expect("bind failing auth/me listener");
+    let url = format!("http://{}", listener.local_addr().expect("listener addr"));
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    let task = tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = &mut shutdown_rx => break,
+                accepted = listener.accept() => {
+                    let Ok((mut stream, _)) = accepted else { break; };
+                    let mut req = [0_u8; 2048];
+                    let _ = stream.read(&mut req).await;
+                    let body = "{\"error\":\"mock /auth/me 500\"}";
+                    let response = format!(
+                        "HTTP/1.1 500 Internal Server Error\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    let _ = stream.write_all(response.as_bytes()).await;
+                    let _ = stream.shutdown().await;
+                }
+            }
+        }
+    });
+    (url, task, shutdown_tx)
+}
+
+/// Store-time `/auth/me` failure must surface as `Err` (and NOT persist a
+/// profile), which is what bounces the user back to signin after a "successful"
+/// OAuth. Covers the WARN/`Err` gate added in `credentials::ops::store_session`.
+#[tokio::test]
+async fn store_session_auth_me_failure_returns_err_and_does_not_persist() {
+    let _lock = env_lock();
+    let (api_url, server_task, shutdown_tx) = auth_me_failing_server().await;
+    let harness = setup(&api_url);
+    let config = harness.config().await;
+
+    // Non-local token (3 dot-parts, not ".local") forces the backend
+    // `GET /auth/me` validation path inside `store_session`.
+    let result = store_session(&config, "header.payload.signature", None, None).await;
+
+    let _ = shutdown_tx.send(());
+    let _ = server_task.await;
+
+    let err = result.expect_err("store_session must fail when GET /auth/me returns 500");
+    // Lock the cross-layer error-string contract: this exact prefix is what the
+    // frontend `classifyAuthStoreFailure` matches on. Assert `starts_with` (not
+    // just `contains`) so a reword in `store_session`/`rest.rs` fails CI here
+    // instead of silently degrading the FE classifier to 'other'.
+    assert!(
+        err.starts_with("Session validation failed (GET /auth/me):"),
+        "store_session error must keep the contract prefix; got: {err}"
+    );
+
+    // Explicitly verify the failure path persisted NOTHING — the gate returns
+    // before the persist step, so the snapshot must read back as unauthenticated
+    // with no session token (a partial regression that wrote a profile would
+    // otherwise still pass on the Err check alone). This is what leaves the user
+    // on the signin page.
+    let snap = snapshot()
+        .await
+        .expect("snapshot after failed store_session")
+        .value;
+    assert!(
+        !snap.auth.is_authenticated,
+        "auth must remain unauthenticated after a failed store_session"
+    );
+    assert!(
+        snap.session_token.is_none(),
+        "session token must not be persisted after a failed store_session"
+    );
 }
 
 #[tokio::test]

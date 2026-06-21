@@ -17,6 +17,7 @@ import {
   oauthAuthReadinessUserMessage,
   waitForOAuthAuthReadiness,
 } from './oauthAppVersionGate';
+import { clearOAuthReturnRoute, takeOAuthReturnRoute } from './oauthReturnRoute';
 import { openUrl } from './openUrl';
 import { storeSession } from './tauriCommands';
 import { isTauri as coreIsTauri } from './tauriCommands/common';
@@ -265,6 +266,25 @@ const handleAuthDeepLink = async (parsed: URL, requireStateNonce = true) => {
         { requiresAppDataReset: true }
       );
     } else {
+      const kind = classifyAuthStoreFailure(rawMessage);
+      // Capture a SYNTHETIC error keyed only by `kind` — never the raw error.
+      // Two reasons (both raised in review):
+      //  1. PII: the upstream `/auth/me` failure embeds the verbatim backend
+      //     response body (`rest.rs`: `GET /auth/me failed ({status}): {text}`),
+      //     and `beforeSend` does NOT scrub `exception.values[].value`. Severing
+      //     the message (vs. scrubbing) guarantees no body/email/token-adjacent
+      //     text ships.
+      //  2. Timeout shape: a hang surfaces as `CoreRpcError(kind='timeout')`,
+      //     which `beforeSend` drops via `isCoreRpcTimeoutError(originalException)`
+      //     BEFORE our tag applies. A plain `Error` makes `originalException`
+      //     non-matching, so the lead cause finally reaches Sentry.
+      // The PII-free `kind` tag + stable fingerprint are all we need to group.
+      Sentry.captureException(new Error(`auth store failed: ${kind}`), {
+        level: 'error',
+        tags: { surface: 'react', phase: 'deep-link-auth-store', auth_store_failure: kind },
+        fingerprint: ['deep-link-auth', 'session-store-failed', kind],
+      });
+      console.warn('[DeepLink][auth] session store failed — staying on signin (kind=%s)', kind);
       failDeepLinkAuthProcessing('Sign-in failed. Please try again.');
     }
   }
@@ -277,6 +297,28 @@ const isDecryptionFailure = (message: string): boolean => {
     lowered.includes('wrong key or tampered data') ||
     lowered.includes('corrupt data')
   );
+};
+
+/**
+ * Classify a sign-in *store* failure into a short, PII-free kind. A store-time
+ * `/auth/me` failure (esp. a timeout) is the lead root cause of "OAuth succeeded
+ * but the app is back on the login page", yet it currently emits NO Sentry signal
+ * on any layer: the FE has no console-capture integration, the Rust core drops
+ * `"timeout"`/408/504 as transient (`observability.rs`), and the backend only
+ * pages genuine 500s (`shouldHandleError: status === 500`, BACKEND-ALPHAHUMAN-40)
+ * — so gateway/timeout 5xx never reach Sentry. Tagging the kind here is the one
+ * place the bounce becomes debuggable. Returns a stable enum-like string (no URLs,
+ * no tokens) safe to use as a Sentry tag / fingerprint.
+ */
+export const classifyAuthStoreFailure = (message: string): string => {
+  const m = message.toLowerCase();
+  if (/timed out|timeout|operation timed out|deadline/.test(m)) return 'auth_me_timeout';
+  if (/\b401\b|unauthorized/.test(m)) return 'auth_me_unauthorized';
+  if (/\b50[234]\b|bad gateway|service unavailable|gateway timeout/.test(m))
+    return 'auth_me_gateway';
+  if (/network|fetch failed|connection|dns|unreachable/.test(m)) return 'network';
+  if (/auth\/me|session validation failed/.test(m)) return 'auth_me_other';
+  return 'other';
 };
 
 /**
@@ -385,8 +427,12 @@ const handleOAuthDeepLink = async (parsed: URL) => {
       `[DeepLink] OAuth success for integration=${integrationId}${toolkit ? ` toolkit=${toolkit}` : ''}`
     );
     window.dispatchEvent(new CustomEvent('oauth:success', { detail: { integrationId, toolkit } }));
-    window.location.hash = '/connections';
+    // Return to whichever page started the connect (e.g. the Rewards tab); defaults to /connections.
+    window.location.hash = takeOAuthReturnRoute();
   } else if (path === 'error') {
+    // The flow failed — drop any remembered return route so it can't leak into a later
+    // unrelated OAuth success and misroute the user.
+    clearOAuthReturnRoute();
     const provider = sanitizeOAuthDiagnosticValue(
       parsed.searchParams.get('provider'),
       'unknown',

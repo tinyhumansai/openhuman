@@ -54,6 +54,10 @@ fn provider_url(provider: &str) -> Option<&'static str> {
         "linkedin" => Some("https://www.linkedin.com/messaging/"),
         "slack" => Some("https://app.slack.com/client/"),
         "discord" => Some("https://discord.com/channels/@me"),
+        "gmail" => Some("https://mail.google.com/mail/u/0/"),
+        "outlook" => Some("https://outlook.live.com/mail/"),
+        "instagram" => Some("https://www.instagram.com/direct/inbox/"),
+        "twitter" => Some("https://x.com/messages/"),
         "google-meet" => Some("https://meet.google.com/"),
         "zoom" => Some("https://zoom.us/"),
         "browserscan" => Some("https://www.browserscan.net/bot-detection"),
@@ -123,6 +127,49 @@ fn provider_allowed_hosts(provider: &str) -> &'static [&'static str] {
             "discord.gg",
             "discordapp.com",
             "discordapp.net",
+        ],
+        "gmail" => &[
+            "google.com",
+            "googleusercontent.com",
+            "gstatic.com",
+            "googleapis.com",
+            "accounts.google.com",
+            "accounts.googleusercontent.com",
+        ],
+        "outlook" => &[
+            "outlook.live.com",
+            "outlook.office.com",
+            "outlook.office365.com",
+            "live.com",
+            "login.live.com",
+            "microsoft.com",
+            "microsoftonline.com",
+            "office.com",
+            "office365.com",
+            "msftauth.net",
+            "msauth.net",
+            "office.net",
+        ],
+        "instagram" => &[
+            "instagram.com",
+            "cdninstagram.com",
+            "fbcdn.net",
+            "facebook.com",
+        ],
+        "twitter" => &[
+            "x.com",
+            "twitter.com",
+            "twimg.com",
+            "t.co",
+            // X offers "Continue with Google" — keep the OAuth
+            // account-chooser popup inside this account's CEF profile.
+            "accounts.google.com",
+            "accounts.googleusercontent.com",
+            "ssl.gstatic.com",
+            "fonts.gstatic.com",
+            "lh3.googleusercontent.com",
+            "oauth2.googleapis.com",
+            "www.googleapis.com",
         ],
         "google-meet" => &[
             "google.com",
@@ -326,7 +373,10 @@ fn is_provider_native_deep_link_scheme(scheme: &str) -> bool {
 /// `accounts.google.com` popups should be listed. Other providers
 /// continue to fall through to the default popup-handling path.
 fn provider_supports_google_sso(provider: &str) -> bool {
-    matches!(provider, "google-meet" | "slack" | "zoom" | "linkedin")
+    matches!(
+        provider,
+        "google-meet" | "slack" | "zoom" | "linkedin" | "gmail" | "twitter"
+    )
 }
 
 /// `true` if a popup request should be denied AND the parent webview
@@ -661,6 +711,10 @@ pub fn provider_display_name(provider: &str) -> &'static str {
         "linkedin" => "LinkedIn",
         "slack" => "Slack",
         "discord" => "Discord",
+        "gmail" => "Gmail",
+        "outlook" => "Outlook",
+        "instagram" => "Instagram",
+        "twitter" => "X",
         "google-meet" => "Google Meet",
         "zoom" => "Zoom",
         "browserscan" => "BrowserScan",

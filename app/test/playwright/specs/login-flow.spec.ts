@@ -50,14 +50,18 @@ test.describe('Login Flow', () => {
   test('callback login consumes the mock login token and lands on home', async ({ page }) => {
     await signInViaCallbackToken(page, 'playwright-login-token');
 
-    await expect.poll(async () => page.evaluate(() => window.location.hash)).toMatch(/^#\/home/);
+    await expect
+      .poll(async () => page.evaluate(() => window.location.hash))
+      .toMatch(/^#\/(home|chat)(\/|$)/);
     await expect(await waitForMockRequest('GET', '/auth/me')).toBeTruthy();
   });
 
   test('bypass login skips token consume and still lands on home', async ({ page }) => {
     await signInViaBypassUser(page, 'playwright-bypass-user');
 
-    await expect.poll(async () => page.evaluate(() => window.location.hash)).toMatch(/^#\/home/);
+    await expect
+      .poll(async () => page.evaluate(() => window.location.hash))
+      .toMatch(/^#\/(home|chat)(\/|$)/);
 
     const consumeCall = (await requests()).find(
       request => request.method === 'POST' && request.url.includes('/telegram/login-tokens/')

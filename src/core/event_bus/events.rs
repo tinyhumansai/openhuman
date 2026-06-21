@@ -1073,6 +1073,26 @@ pub enum DomainEvent {
         correlation_id: Option<String>,
         summary: String,
     },
+    /// A JSON message arrived on a tinyplace WebSocket stream.
+    /// Published by the stream manager's recv loop. Carries the raw
+    /// server-sent JSON value (inbox item, conversation message, etc.)
+    /// so the Socket.IO bridge can forward it to the renderer.
+    TinyPlaceStreamMessage {
+        /// Stream identifier (e.g. `"inbox"`, `"conversation:abc123"`).
+        stream_id: String,
+        /// Stream kind for routing.
+        kind: String,
+        /// The raw JSON message from the tinyplace server.
+        message: serde_json::Value,
+    },
+    /// A tinyplace WebSocket stream changed lifecycle status.
+    /// Published by the stream manager on connect, disconnect, and failure.
+    TinyPlaceStreamStatusChanged {
+        /// Stream identifier.
+        stream_id: String,
+        /// New status: `"connecting"`, `"connected"`, `"disconnected"`, `"failed"`.
+        status: String,
+    },
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -1222,6 +1242,10 @@ impl DomainEvent {
             | Self::MeetingSessionCreated { .. }
             | Self::MeetingAutoJoinTriggered { .. }
             | Self::MeetingSummaryGenerated { .. } => "agent_meetings",
+
+            Self::TinyPlaceStreamMessage { .. } | Self::TinyPlaceStreamStatusChanged { .. } => {
+                "tinyplace"
+            }
         }
     }
 
@@ -1345,6 +1369,8 @@ impl DomainEvent {
             Self::MeetingSessionCreated { .. } => "MeetingSessionCreated",
             Self::MeetingAutoJoinTriggered { .. } => "MeetingAutoJoinTriggered",
             Self::MeetingSummaryGenerated { .. } => "MeetingSummaryGenerated",
+            Self::TinyPlaceStreamMessage { .. } => "TinyPlaceStreamMessage",
+            Self::TinyPlaceStreamStatusChanged { .. } => "TinyPlaceStreamStatusChanged",
             Self::Voice(_) => "Voice",
         }
     }

@@ -82,12 +82,52 @@ pub fn render_runtime(ctx: &PromptContext<'_>) -> Result<String> {
     RuntimeSection.build(ctx)
 }
 
-/// Render the `## Current Date & Time` block. Intentionally **not**
-/// included in byte-stable sub-agent prompts (`for_subagent`) because
-/// injecting `Local::now()` defeats prefix caching. Exposed so full-
-/// assembly main-agent builders can opt in.
+/// Render the `## Current Date & Time` block: the static time-discipline
+/// *rules* (greeting/clock grounding + the gated `resolve_time` rule). The
+/// concrete "now" is **not** here — it rides the user message per turn via
+/// [`current_datetime_line`] so it stays fresh and keeps this section
+/// byte-stable for prefix caching (#3602).
 pub fn render_datetime(ctx: &PromptContext<'_>) -> Result<String> {
     DateTimeSection.build(ctx)
+}
+
+/// Canonical one-line "now" stamp, injected per turn alongside the user
+/// message by both the main session loop (`session::turn`) and the
+/// sub-agent runner so every flow reports the current time identically
+/// (#3602). Local time + IANA zone + `%Z`/offset + weekday, so the model
+/// can localize greetings and date math without a tool call.
+///
+/// Deliberately lives on the *user message*, never the cached
+/// system-prompt prefix: `Local::now()` is volatile, so freezing it into
+/// the prefix both busts the KV cache and goes stale across a long-lived
+/// session. The static grounding *rule* that tells the model to read this
+/// line lives in [`DateTimeSection`] / [`render_datetime`].
+pub fn current_datetime_line() -> String {
+    // When the host resolves an IANA zone, stamp local time + that zone. When
+    // it can't (CI, stripped containers), fall back to true UTC — formatting
+    // `Utc::now()` so the time, offset, and zone label all agree rather than
+    // pairing a "UTC" label with a local clock/offset.
+    match iana_time_zone::get_timezone() {
+        Ok(iana) => {
+            let now = chrono::Local::now();
+            format!(
+                "Current Date & Time: {} {} ({}, UTC{}), {}",
+                now.format("%Y-%m-%d %H:%M:%S"),
+                iana,
+                now.format("%Z"),
+                now.format("%:z"),
+                now.format("%A"),
+            )
+        }
+        Err(_) => {
+            let now = chrono::Utc::now();
+            format!(
+                "Current Date & Time: {} UTC (UTC, UTC+00:00), {}",
+                now.format("%Y-%m-%d %H:%M:%S"),
+                now.format("%A"),
+            )
+        }
+    }
 }
 
 /// Render the `## User` identity block. Empty when

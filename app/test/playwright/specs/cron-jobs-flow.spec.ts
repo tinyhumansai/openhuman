@@ -18,14 +18,11 @@ test.describe('Cron jobs settings panel', () => {
     await bootAuthenticatedPage(page, 'pw-cron-jobs-flow', '/home');
   });
 
-  test('home screen is reachable after login', async ({ page }) => {
+  test('chat surface is reachable after login', async ({ page }) => {
+    // Home folded into the unified chat surface: post-login landing is /chat.
     await waitForAppReady(page);
     const text = await page.locator('#root').innerText();
-    expect(
-      ['Ask your assistant anything', 'Your device is connected'].some(marker =>
-        text.includes(marker)
-      )
-    ).toBe(true);
+    expect(['New Conversation', 'Threads'].some(marker => text.includes(marker))).toBe(true);
   });
 
   test('cron jobs panel renders in the browser lane and surfaces the current fallback state', async ({
