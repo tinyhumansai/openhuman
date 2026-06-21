@@ -324,28 +324,30 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     });
   });
 
-  // Covers the page-mode sidebar (TwoPanelLayout, id `chat`) once opened.
-  // Covers line 941: <div className="flex-1 overflow-y-auto"> (always rendered in page mode)
-  it('renders the sidebar pill tabs in page mode', async () => {
+  // Covers the page-mode sidebar (TwoPanelLayout, id `chat`) once opened. The
+  // General/Subconscious/Tasks filter chips were removed; the thread search is
+  // the stable top-of-sidebar control.
+  it('renders the sidebar thread search in page mode', async () => {
     await act(async () => {
       await renderConversations({ thread: emptyThreadState });
     });
 
     await openSidebar();
 
-    expect(screen.getByText('General')).toBeInTheDocument();
+    expect(screen.getByTestId('chat-thread-search-input')).toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'General' })).not.toBeInTheDocument();
   });
 
-  // Covers line 941 empty branch
-  it('shows the General empty message when the default bucket has no threads', async () => {
+  // Covers the empty branch — with the filter chips gone the list always shows
+  // the generic empty message when no (General-bucket) threads exist.
+  it('shows the empty message when there are no threads', async () => {
     await act(async () => {
       await renderConversations({ thread: emptyThreadState });
     });
 
     // Sidebar is hidden by default — open it first.
     await openSidebar();
-    expect(screen.getByRole('tab', { name: 'General' })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByText('No "General" threads')).toBeInTheDocument();
+    expect(screen.getByText('No threads yet')).toBeInTheDocument();
   });
 
   // Covers lines 1002-1004, 1007, 1011-1012, 1014: thread list items rendered unconditionally
@@ -1337,11 +1339,10 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     });
   });
 
-  // Batch-5: Conversation category tabs keep stable labels and mapping (pr#1646).
-  //
-  // The tab set is fixed so categories do not disappear when the thread list
-  // is empty, and the active-filter state remains unambiguous.
-  it('renders the fixed chat bucket tabs with stable labels', async () => {
+  // The General/Subconscious/Tasks filter chips were removed — the thread list
+  // is now fixed to the General bucket with no in-sidebar bucket switcher.
+  // Subconscious reflections and task/worker threads have dedicated surfaces.
+  it('does not render the removed bucket filter tabs', async () => {
     await act(async () => {
       await renderConversations({ thread: emptyThreadState });
     });
@@ -1349,60 +1350,9 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     // Sidebar is hidden by default — open it first.
     await openSidebar();
 
-    // Bucket tabs must be present regardless of thread count.
-    expect(screen.getByRole('tab', { name: 'General' })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: 'Subconscious' })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: 'Tasks' })).toBeInTheDocument();
-    expect(screen.queryByRole('tab', { name: 'All' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('tab', { name: 'Briefing' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('tab', { name: 'Notification' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('tab', { name: 'Workers' })).not.toBeInTheDocument();
-    expect(screen.getByRole('tablist')).toHaveClass('flex-nowrap');
-  });
-
-  it('starts with the "General" tab selected', async () => {
-    await act(async () => {
-      await renderConversations({ thread: emptyThreadState });
-    });
-
-    // Sidebar is hidden by default — open it first.
-    await openSidebar();
-
-    expect(screen.getByRole('tab', { name: 'General' })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByRole('tab', { name: 'Subconscious' })).toHaveAttribute(
-      'aria-selected',
-      'false'
-    );
-  });
-
-  it('shows category-specific empty message when a label tab is selected and no threads match', async () => {
-    await act(async () => {
-      await renderConversations({ thread: emptyThreadState });
-    });
-
-    // Sidebar is hidden by default — open it first.
-    await openSidebar();
-
-    fireEvent.click(screen.getByRole('tab', { name: 'General' }));
-
-    await waitFor(() => {
-      expect(screen.getByText(/"General" threads/i)).toBeInTheDocument();
-    });
-  });
-
-  it('shows a category-specific empty message when the Tasks tab is selected', async () => {
-    await act(async () => {
-      await renderConversations({ thread: emptyThreadState });
-    });
-
-    // Sidebar is hidden by default — open it first.
-    await openSidebar();
-
-    fireEvent.click(screen.getByRole('tab', { name: 'Tasks' }));
-
-    await waitFor(() => {
-      expect(screen.getByText(/"Tasks" threads/i)).toBeInTheDocument();
-    });
+    expect(screen.queryByRole('tab', { name: 'General' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'Subconscious' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'Tasks' })).not.toBeInTheDocument();
   });
 });
 

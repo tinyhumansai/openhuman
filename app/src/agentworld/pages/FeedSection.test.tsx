@@ -226,92 +226,6 @@ describe('Feed list', () => {
   });
 });
 
-// ── Post detail drill-down ────────────────────────────────────────────────────
-
-describe('Post detail drill-down', () => {
-  test('clicking a post card loads the post detail', async () => {
-    const user = userEvent.setup();
-    vi.mocked(apiClient.graphql.homeFeed).mockResolvedValue({ items: [sampleFeedItem], count: 1 });
-    render(<FeedSection />);
-
-    await waitFor(() => {
-      expect(screen.getByText('Hello from the network')).toBeInTheDocument();
-    });
-
-    await user.click(screen.getByText('Hello from the network'));
-
-    expect(vi.mocked(apiClient.graphql.post)).toHaveBeenCalledWith(
-      samplePost.author.handle,
-      samplePost.postId,
-      expect.objectContaining({ commentLimit: 20, likerLimit: 10 })
-    );
-
-    await waitFor(() => {
-      expect(screen.getByText('Great post!')).toBeInTheDocument();
-    });
-    expect(screen.getByText('Agent Beta')).toBeInTheDocument();
-  });
-
-  test('back button returns to the feed list', async () => {
-    const user = userEvent.setup();
-    vi.mocked(apiClient.graphql.homeFeed).mockResolvedValue({ items: [sampleFeedItem], count: 1 });
-    render(<FeedSection />);
-
-    await waitFor(() => {
-      expect(screen.getByText('Hello from the network')).toBeInTheDocument();
-    });
-
-    await user.click(screen.getByText('Hello from the network'));
-    await waitFor(() => {
-      expect(screen.getByText(/back to feed/i)).toBeInTheDocument();
-    });
-
-    await user.click(screen.getByText(/back to feed/i));
-
-    await waitFor(() => {
-      expect(screen.getByText('Hello from the network')).toBeInTheDocument();
-    });
-    expect(screen.queryByText(/back to feed/i)).not.toBeInTheDocument();
-  });
-
-  test('shows empty comments and likers messages when post has none', async () => {
-    const user = userEvent.setup();
-    vi.mocked(apiClient.graphql.homeFeed).mockResolvedValue({ items: [sampleFeedItem], count: 1 });
-    vi.mocked(apiClient.graphql.post).mockResolvedValue({
-      ...samplePost,
-      comments: [],
-      likers: [],
-    });
-    render(<FeedSection />);
-
-    await waitFor(() => {
-      expect(screen.getByText('Hello from the network')).toBeInTheDocument();
-    });
-    await user.click(screen.getByText('Hello from the network'));
-
-    await waitFor(() => {
-      expect(screen.getByText(/no comments yet/i)).toBeInTheDocument();
-      expect(screen.getByText(/no likes yet/i)).toBeInTheDocument();
-    });
-  });
-
-  test('shows error message when post detail fetch fails', async () => {
-    const user = userEvent.setup();
-    vi.mocked(apiClient.graphql.homeFeed).mockResolvedValue({ items: [sampleFeedItem], count: 1 });
-    vi.mocked(apiClient.graphql.post).mockRejectedValue(new Error('fetch failed'));
-    render(<FeedSection />);
-
-    await waitFor(() => {
-      expect(screen.getByText('Hello from the network')).toBeInTheDocument();
-    });
-    await user.click(screen.getByText('Hello from the network'));
-
-    await waitFor(() => {
-      expect(screen.getByText(/failed to load post details/i)).toBeInTheDocument();
-    });
-  });
-});
-
 // ── Follow/Unfollow ───────────────────────────────────────────────────────────
 
 describe('Follow/Unfollow', () => {
@@ -500,14 +414,16 @@ describe('like toggle', () => {
 // ── Comment composer ──────────────────────────────────────────────────────────
 
 describe('comment composer', () => {
-  test('submitting comment calls feeds.addComment then refetches post detail', async () => {
+  // Comments expand inline under each post card (the comment-count toggle), then
+  // InlineComments fetches the thread via graphql.post.
+  test('submitting comment calls feeds.addComment then refetches comments', async () => {
     const user = userEvent.setup();
     vi.mocked(apiClient.graphql.homeFeed).mockResolvedValue({ items: [sampleFeedItem], count: 1 });
     render(<FeedSection />);
     await waitFor(() => {
       expect(screen.getByText('Hello from the network')).toBeInTheDocument();
     });
-    await user.click(screen.getByText('Hello from the network'));
+    await user.click(screen.getByRole('button', { name: '3 comments' }));
     await waitFor(() => {
       expect(screen.getByPlaceholderText(/write a comment/i)).toBeInTheDocument();
     });
@@ -520,7 +436,7 @@ describe('comment composer', () => {
         'My test comment'
       );
     });
-    // Refetch post detail after comment
+    // graphql.post: once on expand + once on refetch after comment.
     expect(vi.mocked(apiClient.graphql.post)).toHaveBeenCalledTimes(2);
   });
 
@@ -531,11 +447,8 @@ describe('comment composer', () => {
     await waitFor(() => {
       expect(screen.getByText('Hello from the network')).toBeInTheDocument();
     });
-    await user.click(screen.getByText('Hello from the network'));
-    await waitFor(() => {
-      expect(screen.getByPlaceholderText(/write a comment/i)).toBeInTheDocument();
-    });
-    const input = screen.getByPlaceholderText(/write a comment/i);
+    await user.click(screen.getByRole('button', { name: '3 comments' }));
+    const input = await screen.findByPlaceholderText(/write a comment/i);
     await user.type(input, 'test');
     await user.click(screen.getByRole('button', { name: /^comment$/i }));
     await waitFor(() => {
@@ -544,15 +457,17 @@ describe('comment composer', () => {
   });
 
   test('comment composer hidden when wallet locked', async () => {
+    const user = userEvent.setup();
     vi.mocked(fetchWalletStatus).mockRejectedValue(new Error('wallet locked'));
     vi.mocked(apiClient.graphql.homeFeed).mockResolvedValue({ items: [sampleFeedItem], count: 1 });
     render(<FeedSection />);
     await waitFor(() => {
       expect(screen.getByText('Hello from the network')).toBeInTheDocument();
     });
-    await userEvent.setup().click(screen.getByText('Hello from the network'));
+    // Expand comments — the composer must stay hidden with no agent id.
+    await user.click(screen.getByRole('button', { name: '3 comments' }));
     await waitFor(() => {
-      expect(screen.getByText(/back to feed/i)).toBeInTheDocument();
+      expect(vi.mocked(apiClient.graphql.post)).toHaveBeenCalled();
     });
     expect(screen.queryByPlaceholderText(/write a comment/i)).not.toBeInTheDocument();
   });
@@ -561,27 +476,20 @@ describe('comment composer', () => {
 // ── Post composer ─────────────────────────────────────────────────────────────
 
 describe('post composer', () => {
-  test('New Post button appears when wallet unlocked and feed loaded', async () => {
+  test('inline composer appears when wallet unlocked and feed loaded', async () => {
     vi.mocked(apiClient.graphql.homeFeed).mockResolvedValue({ items: [sampleFeedItem], count: 1 });
     render(<FeedSection />);
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /new post/i })).toBeInTheDocument();
-    });
-  });
-
-  test('new post button opens modal and submitting calls feeds.createPost', async () => {
-    const user = userEvent.setup();
-    vi.mocked(apiClient.graphql.homeFeed).mockResolvedValue({ items: [sampleFeedItem], count: 1 });
-    render(<FeedSection />);
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /new post/i })).toBeInTheDocument();
-    });
-    await user.click(screen.getByRole('button', { name: /new post/i }));
-    // Modal should appear
     await waitFor(() => {
       expect(screen.getByPlaceholderText(/what's on your mind/i)).toBeInTheDocument();
     });
-    await user.type(screen.getByPlaceholderText(/what's on your mind/i), 'My new post');
+  });
+
+  test('typing and clicking Post calls feeds.createPost', async () => {
+    const user = userEvent.setup();
+    vi.mocked(apiClient.graphql.homeFeed).mockResolvedValue({ items: [sampleFeedItem], count: 1 });
+    render(<FeedSection />);
+    const textarea = await screen.findByPlaceholderText(/what's on your mind/i);
+    await user.type(textarea, 'My new post');
     await user.click(screen.getByRole('button', { name: /^post$/i }));
     await waitFor(() => {
       expect(vi.mocked(apiClient.feeds.createPost)).toHaveBeenCalledWith('My new post');
@@ -592,14 +500,8 @@ describe('post composer', () => {
     const user = userEvent.setup();
     vi.mocked(apiClient.graphql.homeFeed).mockResolvedValue({ items: [sampleFeedItem], count: 1 });
     render(<FeedSection />);
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /new post/i })).toBeInTheDocument();
-    });
-    await user.click(screen.getByRole('button', { name: /new post/i }));
-    await waitFor(() => {
-      expect(screen.getByPlaceholderText(/what's on your mind/i)).toBeInTheDocument();
-    });
-    await user.type(screen.getByPlaceholderText(/what's on your mind/i), 'test post');
+    const textarea = await screen.findByPlaceholderText(/what's on your mind/i);
+    await user.type(textarea, 'test post');
     await user.click(screen.getByRole('button', { name: /^post$/i }));
     await waitFor(() => {
       // homeFeed called once on mount + once after create
@@ -607,32 +509,24 @@ describe('post composer', () => {
     });
   });
 
-  test('cancel closes modal without posting', async () => {
+  test('Post button is disabled until a draft is entered', async () => {
     const user = userEvent.setup();
     vi.mocked(apiClient.graphql.homeFeed).mockResolvedValue({ items: [sampleFeedItem], count: 1 });
     render(<FeedSection />);
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /new post/i })).toBeInTheDocument();
-    });
-    await user.click(screen.getByRole('button', { name: /new post/i }));
-    await waitFor(() => {
-      expect(screen.getByPlaceholderText(/what's on your mind/i)).toBeInTheDocument();
-    });
-    await user.click(screen.getByRole('button', { name: /cancel/i }));
-    await waitFor(() => {
-      expect(screen.queryByPlaceholderText(/what's on your mind/i)).not.toBeInTheDocument();
-    });
-    expect(vi.mocked(apiClient.feeds.createPost)).not.toHaveBeenCalled();
+    const textarea = await screen.findByPlaceholderText(/what's on your mind/i);
+    expect(screen.getByRole('button', { name: /^post$/i })).toBeDisabled();
+    await user.type(textarea, 'hi');
+    expect(screen.getByRole('button', { name: /^post$/i })).toBeEnabled();
   });
 
-  test('new post button hidden when wallet locked', async () => {
+  test('composer hidden when wallet locked', async () => {
     vi.mocked(fetchWalletStatus).mockRejectedValue(new Error('wallet locked'));
     vi.mocked(apiClient.graphql.homeFeed).mockResolvedValue({ items: [sampleFeedItem], count: 1 });
     render(<FeedSection />);
     await waitFor(() => {
       expect(screen.getByText('Hello from the network')).toBeInTheDocument();
     });
-    expect(screen.queryByRole('button', { name: /new post/i })).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText(/what's on your mind/i)).not.toBeInTheDocument();
   });
 });
 
@@ -709,11 +603,11 @@ describe('delete actions', () => {
     await waitFor(() => {
       expect(screen.getByText('Hello from the network')).toBeInTheDocument();
     });
-    await user.click(screen.getByText('Hello from the network'));
+    // Expand the inline comment thread, then delete own comment.
+    await user.click(screen.getByRole('button', { name: '3 comments' }));
     await waitFor(() => {
       expect(screen.getByText('Great post!')).toBeInTheDocument();
     });
-    // Delete button for own comment (use getByText to avoid matching parent wrappers)
     const deleteBtn = screen.getByText('Delete');
     await user.click(deleteBtn);
     await waitFor(() => {

@@ -4,8 +4,8 @@
  * Ported from tiny.place `website/src/components/explore/Directory.tsx`. Renders
  * a browsable grid of agents registered in the tiny.place directory inside the
  * standard `PanelScaffold` chrome (section title comes from the sidebar). Each
- * card shows the agent's handle, description, follower count, and skills/tags.
- * Authenticated users can follow/unfollow agents directly from the card.
+ * card shows the agent's handle, description, and skills/tags. Authenticated
+ * users can follow/unfollow agents directly from the card.
  */
 import debugFactory from 'debug';
 import { useCallback, useEffect, useState } from 'react';
@@ -83,13 +83,13 @@ function useDirectoryAgents(): State {
 
   useEffect(() => {
     let cancelled = false;
-    debug('fetching directory agents');
+    debug('fetching directory agents through GraphQL');
 
-    void apiClient.directory
-      .listAgents()
+    void apiClient.graphql
+      .agents()
       .then(data => {
         if (cancelled) return;
-        debug('[tinyplace][ui] DirectorySection: loaded %d agents', data.agents.length);
+        debug('[tinyplace][ui] DirectorySection: loaded %d GraphQL agents', data.agents.length);
         setState({ status: 'ok', data });
       })
       .catch((err: unknown) => {
@@ -124,6 +124,19 @@ function useMyAgentId(): string | null {
   return agentId;
 }
 
+function getViewerIsFollowing(agent: AgentCard): boolean | null {
+  const value = agent['viewerIsFollowing'];
+  return typeof value === 'boolean' ? value : null;
+}
+
+function getFollowerCount(agent: AgentCard): number | null {
+  for (const key of ['followerCount', 'followersCount']) {
+    const value = agent[key];
+    if (typeof value === 'number') return value;
+  }
+  return null;
+}
+
 // ── Sub-components ────────────────────────────────────────────────────────────
 
 const CARD_CLASS =
@@ -153,50 +166,41 @@ function LoadingSkeleton() {
 
 function AgentCardItem({ agent, myAgentId }: { agent: AgentCard; myAgentId: string | null }) {
   const [selected, setSelected] = useState(false);
-  const [followState, setFollowState] = useState<'unknown' | 'following' | 'not_following'>(
-    'unknown'
-  );
-  const [followerCount, setFollowerCount] = useState<number | null>(null);
+  const [localFollow, setLocalFollow] = useState<'following' | 'not_following' | null>(null);
+  const [statsFollowerCount, setStatsFollowerCount] = useState<number | null>(null);
+  const [followerDelta, setFollowerDelta] = useState(0);
   const [actionLoading, setActionLoading] = useState(false);
   const handle = getHandle(agent);
   const skills = getSkills(agent);
   const isSelf = myAgentId != null && agent.agentId === myAgentId;
+  const baseFollowerCount = getFollowerCount(agent);
+  const effectiveBaseFollowerCount = baseFollowerCount ?? statsFollowerCount;
+  const followerCount =
+    effectiveBaseFollowerCount == null
+      ? null
+      : Math.max(0, effectiveBaseFollowerCount + followerDelta);
+  const serverFollow = getViewerIsFollowing(agent);
 
-  // Fetch follow stats on mount.
+  const followState: 'unknown' | 'following' | 'not_following' =
+    localFollow ??
+    (serverFollow == null ? 'unknown' : serverFollow ? 'following' : 'not_following');
+
   useEffect(() => {
+    if (baseFollowerCount != null) return;
     let cancelled = false;
+    debug('fetching fallback follow stats agent=%s', agent.agentId);
     void apiClient.follows
       .stats(agent.agentId)
       .then(stats => {
-        if (cancelled) return;
-        setFollowerCount(stats.followerCount);
+        if (!cancelled) setStatsFollowerCount(stats.followerCount);
       })
-      .catch(() => {
-        // Stats unavailable -- leave null (hidden).
+      .catch(err => {
+        debug('fallback follow stats error agent=%s error=%s', agent.agentId, String(err));
       });
     return () => {
       cancelled = true;
     };
-  }, [agent.agentId]);
-
-  // Check if we are following this agent.
-  useEffect(() => {
-    if (!myAgentId || isSelf) return;
-    let cancelled = false;
-    void apiClient.follows
-      .followers(agent.agentId, { limit: 100 })
-      .then(res => {
-        if (cancelled) return;
-        const isFollowing = res.followers.some(f => f.follower === myAgentId);
-        setFollowState(isFollowing ? 'following' : 'not_following');
-      })
-      .catch(() => {
-        if (!cancelled) setFollowState('not_following');
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [agent.agentId, myAgentId, isSelf]);
+  }, [agent.agentId, baseFollowerCount]);
 
   const handleFollow = useCallback(
     async (e: React.MouseEvent) => {
@@ -206,13 +210,13 @@ function AgentCardItem({ agent, myAgentId }: { agent: AgentCard; myAgentId: stri
       try {
         if (followState === 'following') {
           await apiClient.follows.unfollow(agent.agentId);
-          setFollowState('not_following');
-          setFollowerCount(c => (c != null ? c - 1 : c));
+          setLocalFollow('not_following');
+          setFollowerDelta(delta => delta - 1);
           debug('unfollowed %s', agent.agentId);
         } else {
           await apiClient.follows.follow(agent.agentId);
-          setFollowState('following');
-          setFollowerCount(c => (c != null ? c + 1 : c));
+          setLocalFollow('following');
+          setFollowerDelta(delta => delta + 1);
           debug('followed %s', agent.agentId);
         }
       } catch (err) {

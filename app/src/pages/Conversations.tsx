@@ -13,7 +13,6 @@ import ChatNewWindowHero from '../components/chat/ChatNewWindowHero';
 import ComposerTokenStats from '../components/chat/ComposerTokenStats';
 import { ConfirmationModal } from '../components/intelligence/ConfirmationModal';
 import { SidebarContent } from '../components/layout/shell/SidebarSlot';
-import PillTabBar from '../components/PillTabBar';
 import UpsellBanner from '../components/upsell/UpsellBanner';
 import { dismissBanner, shouldShowBanner } from '../components/upsell/upsellDismissState';
 import MicComposer from '../features/human/MicComposer';
@@ -108,12 +107,7 @@ import {
   formatResetTime,
   getInlineCompletionSuffix,
 } from './conversations/utils/format';
-import {
-  GENERAL_TAB_VALUE,
-  isThreadVisibleInTab,
-  SUBCONSCIOUS_TAB_VALUE,
-  TASKS_TAB_VALUE,
-} from './conversations/utils/threadFilter';
+import { GENERAL_TAB_VALUE, isThreadVisibleInTab } from './conversations/utils/threadFilter';
 
 const CHAT_MODEL_HINT = 'hint:chat';
 /** Maximum trailing characters rendered in the live-streaming assistant
@@ -248,7 +242,10 @@ const Conversations = ({
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState<string | null>(null);
   const [isPlayingReply, setIsPlayingReply] = useState(false);
-  const [selectedLabel, setSelectedLabel] = useState<string>(GENERAL_TAB_VALUE);
+  // Thread-list filtering is fixed to the General bucket — the in-sidebar
+  // General/Subconscious/Tasks chips were removed. Subconscious reflections and
+  // task/worker threads have dedicated surfaces (Intelligence, Tasks board).
+  const selectedLabel = GENERAL_TAB_VALUE;
   const [threadSearch, setThreadSearch] = useState('');
   const [inlineSuggestionValue, setInlineSuggestionValue] = useState('');
   const [sendError, setSendError] = useState<ChatSendError | null>(null);
@@ -308,8 +305,9 @@ const Conversations = ({
   );
   const rustChat = useRustChat();
   const [reactionPickerMsgId, setReactionPickerMsgId] = useState<string | null>(null);
-  // Inline thread-title rename in the conversation header.
-  const [editingTitle, setEditingTitle] = useState(false);
+  // Inline thread-title rename in the sidebar thread list — keyed by the
+  // thread id being edited (null = none) so any row can rename in place.
+  const [editingThreadId, setEditingThreadId] = useState<string | null>(null);
   const [editTitleValue, setEditTitleValue] = useState('');
   const editTitleInputRef = useRef<HTMLInputElement>(null);
   const ignoreNextTitleBlurRef = useRef(false);
@@ -440,13 +438,12 @@ const Conversations = ({
     }
   };
 
-  const handleStartEditTitle = () => {
-    if (!selectedThreadId) return;
-    const thr = threads.find(t => t.id === selectedThreadId);
-    debug('[chat] thread rename: start thread=%s', selectedThreadId);
+  const handleStartEditTitle = (threadId: string) => {
+    const thr = threads.find(t => t.id === threadId);
+    debug('[chat] thread rename: start thread=%s', threadId);
     setEditTitleValue(thr?.title ?? '');
     ignoreNextTitleBlurRef.current = true;
-    setEditingTitle(true);
+    setEditingThreadId(threadId);
     const scheduleSelect = window.requestAnimationFrame ?? window.setTimeout;
     scheduleSelect(() => {
       editTitleInputRef.current?.select();
@@ -454,27 +451,27 @@ const Conversations = ({
     });
   };
 
-  const handleCommitTitle = () => {
+  const handleCommitTitle = (threadId: string) => {
     const trimmed = editTitleValue.trim();
-    setEditingTitle(false);
+    setEditingThreadId(null);
     // Title length only — never log the title text itself (may carry PII).
-    if (!selectedThreadId || !trimmed) {
-      debug('[chat] thread rename: commit skipped thread=%s empty=%s', selectedThreadId, !trimmed);
+    if (!threadId || !trimmed) {
+      debug('[chat] thread rename: commit skipped thread=%s empty=%s', threadId, !trimmed);
       return;
     }
-    const currentTitle = threads.find(t => t.id === selectedThreadId)?.title?.trim();
+    const currentTitle = threads.find(t => t.id === threadId)?.title?.trim();
     if (trimmed === currentTitle) {
-      debug('[chat] thread rename: commit skipped thread=%s (unchanged)', selectedThreadId);
+      debug('[chat] thread rename: commit skipped thread=%s (unchanged)', threadId);
       return;
     }
-    debug('[chat] thread rename: commit thread=%s len=%d', selectedThreadId, trimmed.length);
-    void dispatch(updateThreadTitle({ threadId: selectedThreadId, title: trimmed }))
+    debug('[chat] thread rename: commit thread=%s len=%d', threadId, trimmed.length);
+    void dispatch(updateThreadTitle({ threadId, title: trimmed }))
       .unwrap()
-      .then(() => debug('[chat] thread rename: committed thread=%s', selectedThreadId))
+      .then(() => debug('[chat] thread rename: committed thread=%s', threadId))
       .catch(err =>
         debug(
           '[chat] thread rename: failed thread=%s err=%s',
-          selectedThreadId,
+          threadId,
           err instanceof Error ? err.message : String(err)
         )
       );
@@ -505,16 +502,9 @@ const Conversations = ({
         const openThreadId = (location.state as { openThreadId?: string } | null)?.openThreadId;
         const openThread = openThreadId ? data.threads.find(t => t.id === openThreadId) : undefined;
         if (openThread) {
-          // Switch the sidebar tab to the bucket that contains the opened
-          // thread (e.g. Tasks for a task session) so it's visible/selected in
-          // the list instead of hidden behind the default General tab.
-          setSelectedLabel(
-            isThreadVisibleInTab(openThread, TASKS_TAB_VALUE)
-              ? TASKS_TAB_VALUE
-              : isThreadVisibleInTab(openThread, SUBCONSCIOUS_TAB_VALUE)
-                ? SUBCONSCIOUS_TAB_VALUE
-                : GENERAL_TAB_VALUE
-          );
+          // An explicit open intent (e.g. View work from the Tasks board) opens
+          // the thread in the main pane directly; the thread list itself stays
+          // filtered to General.
           dispatch(setSelectedThread(openThread.id));
           void dispatch(loadThreadMessages(openThread.id));
           return;
@@ -1469,16 +1459,6 @@ const Conversations = ({
     return sortedThreads.filter(thread => (thread.title ?? '').toLowerCase().includes(q));
   }, [sortedThreads, threadSearch]);
 
-  // Fixed bucket set so categories don't disappear when empty and the active
-  // filter state remains unambiguous regardless of what threads exist.
-  const labelTabs = [
-    { label: t('chat.filter.general'), value: GENERAL_TAB_VALUE },
-    { label: t('chat.filter.subconscious'), value: SUBCONSCIOUS_TAB_VALUE },
-    { label: t('chat.filter.tasks'), value: TASKS_TAB_VALUE },
-  ];
-  const selectedLabelDisplay =
-    labelTabs.find(tab => tab.value === selectedLabel)?.label ?? selectedLabel;
-
   const isSidebar = variant === 'sidebar';
   // "New window" = the merged Home surface: a page-variant chat whose selected
   // thread has no messages yet. We show the greeting + banners hero above a
@@ -1563,17 +1543,8 @@ const Conversations = ({
           </button>
         )}
       </div>
-      <div className="px-2 py-2 border-b border-stone-50 dark:border-neutral-800">
-        <PillTabBar
-          items={labelTabs}
-          selected={selectedLabel}
-          onChange={setSelectedLabel}
-          containerClassName="scrollbar-hide flex flex-nowrap gap-1 overflow-x-auto py-1"
-          itemClassName="flex-none whitespace-nowrap px-2"
-        />
-      </div>
       {/* New conversation — a subtle, centered thread-style row (not a loud
-          button), below the pills and above the thread list. */}
+          button), below the search and above the thread list. */}
       <button
         type="button"
         data-testid="new-thread-button"
@@ -1597,7 +1568,7 @@ const Conversations = ({
       <div className="flex-1 overflow-y-auto">
         {visibleThreads.length === 0 ? (
           <p className="px-4 py-6 text-xs text-stone-400 dark:text-neutral-500 text-center">
-            {t('chat.noLabelThreads').replace('{label}', selectedLabelDisplay)}
+            {t('chat.noThreads')}
           </p>
         ) : (
           visibleThreads.map(thread => (
@@ -1625,14 +1596,68 @@ const Conversations = ({
                   : 'hover:bg-stone-50 dark:hover:bg-neutral-800/60'
               }`}>
               <div className="flex items-center justify-between">
-                <p
-                  className={`text-xs truncate flex-1 ${
-                    selectedThreadId === thread.id
-                      ? 'font-medium text-primary-700 dark:text-primary-200'
-                      : 'text-stone-700 dark:text-neutral-200'
-                  }`}>
-                  {resolveThreadDisplayTitle(thread.id)}
-                </p>
+                {editingThreadId === thread.id ? (
+                  <input
+                    ref={editTitleInputRef}
+                    value={editTitleValue}
+                    onClick={e => e.stopPropagation()}
+                    onChange={e => setEditTitleValue(e.target.value)}
+                    onKeyDown={e => {
+                      e.stopPropagation();
+                      // Ignore the Enter that confirms an IME composition
+                      // candidate (CJK input) so it doesn't prematurely commit.
+                      if (isImeCompositionKeyEvent(e)) return;
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleCommitTitle(thread.id);
+                      } else if (e.key === 'Escape') {
+                        // Escape is an explicit cancel — suppress the commit the
+                        // ensuing blur would otherwise fire.
+                        ignoreNextTitleBlurRef.current = true;
+                        setEditingThreadId(null);
+                      }
+                    }}
+                    onBlur={() => {
+                      if (ignoreNextTitleBlurRef.current) {
+                        ignoreNextTitleBlurRef.current = false;
+                        return;
+                      }
+                      handleCommitTitle(thread.id);
+                    }}
+                    aria-label={t('chat.editThreadTitle')}
+                    data-testid={`thread-title-input-${thread.id}`}
+                    className="h-5 min-w-0 flex-1 border-b border-primary-400 bg-transparent py-0 text-xs font-medium leading-none text-stone-700 outline-none dark:text-neutral-200"
+                    autoFocus
+                  />
+                ) : (
+                  <p
+                    className={`text-xs truncate flex-1 ${
+                      selectedThreadId === thread.id
+                        ? 'font-medium text-primary-700 dark:text-primary-200'
+                        : 'text-stone-700 dark:text-neutral-200'
+                    }`}>
+                    {resolveThreadDisplayTitle(thread.id)}
+                  </p>
+                )}
+                <button
+                  type="button"
+                  data-analytics-id="chat-sidebar-edit-thread-title"
+                  onClick={e => {
+                    e.stopPropagation();
+                    handleStartEditTitle(thread.id);
+                  }}
+                  aria-label={t('chat.editThreadTitle')}
+                  title={t('chat.editThreadTitle')}
+                  className="ml-2 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-stone-200 dark:bg-neutral-800 dark:hover:bg-neutral-800 text-stone-400 dark:text-neutral-500 hover:text-primary-500 transition-all flex-shrink-0">
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
+                    />
+                  </svg>
+                </button>
                 <button
                   type="button"
                   data-analytics-id="chat-sidebar-delete-thread"
@@ -2514,66 +2539,7 @@ const Conversations = ({
           </button>
         )}
 
-        {/* Thread title + inline rename (page variant). Hover the title to
-            reveal the edit affordance; Enter commits, Escape cancels. */}
-        {!isSidebar && selectedThreadId && (
-          <div className="mt-2 min-w-0">
-            {editingTitle ? (
-              <input
-                ref={editTitleInputRef}
-                value={editTitleValue}
-                onChange={e => setEditTitleValue(e.target.value)}
-                onKeyDown={e => {
-                  // Ignore the Enter that confirms an IME composition candidate
-                  // (CJK input) so it doesn't prematurely commit the rename.
-                  if (isImeCompositionKeyEvent(e)) return;
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    handleCommitTitle();
-                  } else if (e.key === 'Escape') {
-                    setEditingTitle(false);
-                  }
-                }}
-                onBlur={() => {
-                  if (ignoreNextTitleBlurRef.current) {
-                    ignoreNextTitleBlurRef.current = false;
-                    return;
-                  }
-                  handleCommitTitle();
-                }}
-                aria-label={t('chat.editThreadTitle')}
-                className="h-6 w-full min-w-0 border-b border-primary-400 bg-transparent py-0 text-sm font-medium leading-none text-stone-700 outline-none dark:text-neutral-200"
-                autoFocus
-              />
-            ) : (
-              <div className="group/title flex min-w-0 items-center gap-1">
-                <h3 className="truncate text-sm font-medium text-stone-700 dark:text-neutral-200">
-                  {resolveThreadDisplayTitle(selectedThreadId)}
-                </h3>
-                <button
-                  type="button"
-                  data-analytics-id="chat-header-edit-thread-title"
-                  onMouseDown={e => {
-                    e.preventDefault();
-                    handleStartEditTitle();
-                  }}
-                  onClick={handleStartEditTitle}
-                  aria-label={t('chat.editThreadTitle')}
-                  title={t('chat.editThreadTitle')}
-                  className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded text-stone-400 opacity-0 transition-all hover:bg-stone-100 hover:text-stone-600 group-hover/title:opacity-100 group-focus-within/title:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 dark:text-neutral-500 dark:hover:bg-neutral-800 dark:hover:text-neutral-300">
-                  <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
-                    />
-                  </svg>
-                </button>
-              </div>
-            )}
-          </div>
-        )}
+        {/* Thread title + inline rename moved to the sidebar thread list rows. */}
 
         {/* Model + token stats (left) and the quick/reasoning toggle + files
             chip (right) share one line. */}

@@ -865,13 +865,31 @@ impl Agent {
         // contract (empty == no filter) stays intact: an empty set
         // means "no filter" for both legacy callers and the new
         // agent-scoped path.
-        let visible: std::collections::HashSet<String> = match filter_from_scope {
+        let mut visible: std::collections::HashSet<String> = match filter_from_scope {
             Some(set) => set,
             None => delegation_tools
                 .iter()
                 .map(|t| t.name().to_string())
                 .collect(),
         };
+        if let Some(def) = target_def {
+            if !def.disallowed_tools.is_empty() {
+                match &def.tools {
+                    ToolScope::Wildcard => {
+                        visible = tools
+                            .iter()
+                            .map(|t| t.name().to_string())
+                            .chain(delegation_tools.iter().map(|t| t.name().to_string()))
+                            .filter(|name| !definition_disallows_tool(&def.disallowed_tools, name))
+                            .collect();
+                    }
+                    ToolScope::Named(_) => {
+                        visible
+                            .retain(|name| !definition_disallows_tool(&def.disallowed_tools, name));
+                    }
+                }
+            }
+        }
 
         // Phase 4 (#566): add the MemoryAccessSection bias instruction only
         // when at least one retrieval tool is actually loaded AND survives
@@ -1146,4 +1164,14 @@ impl Agent {
         agent.synthesized_tool_names = synthesized_tool_names;
         Ok(agent)
     }
+}
+
+fn definition_disallows_tool(disallowed: &[String], name: &str) -> bool {
+    disallowed.iter().any(|entry| {
+        if let Some(prefix) = entry.strip_suffix('*') {
+            name.starts_with(prefix)
+        } else {
+            entry == name
+        }
+    })
 }
