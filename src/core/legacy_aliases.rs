@@ -21,6 +21,10 @@
 /// Order doesn't matter for correctness, but is kept alphabetical by legacy
 /// key for easier diffing against the frontend table.
 const LEGACY_ALIASES: &[(&str, &str)] = &[
+    // #3565: old desktop clients called the channels controller with a dotted
+    // namespace/function spelling before the canonical
+    // `openhuman.<namespace>_<function>` form was established.
+    ("channels.list", "openhuman.channels_list"),
     // MCP clients — old method names that appeared in Sentry (CORE-RUST-DR/DS/DT/DV/DW).
     // Callers used dotted namespace, bare `mcp_list`, `mcp_servers_list`, and
     // `mcp_clients_list` before the canonical `mcp_clients_installed_list` was
@@ -28,6 +32,7 @@ const LEGACY_ALIASES: &[(&str, &str)] = &[
     // `mcp_clients_tool_call` that shipped in at least one older bundle.
     // `mcp_clients.list` sorts before all `openhuman.*` entries (m < o).
     ("mcp_clients.list", "openhuman.mcp_clients_installed_list"),
+    ("openhuman.channels.list", "openhuman.channels_list"),
     (
         "openhuman.get_analytics_settings",
         "openhuman.config_get_analytics_settings",
@@ -561,6 +566,15 @@ mod tests {
         // the table when it matches, not a copy of the input.
         let out = resolve_legacy("openhuman.ping");
         assert_eq!(out, "core.ping");
+    }
+
+    #[test]
+    fn resolve_legacy_rewrites_dotted_channel_list_aliases() {
+        assert_eq!(resolve_legacy("channels.list"), "openhuman.channels_list");
+        assert_eq!(
+            resolve_legacy("openhuman.channels.list"),
+            "openhuman.channels_list"
+        );
     }
 
     #[test]

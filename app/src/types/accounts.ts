@@ -57,6 +57,15 @@ export interface AccountsState {
   messages: Record<string, IngestedMessage[]>;
   unread: Record<string, number>;
   logs: Record<string, AccountLogEntry[]>;
+  /**
+   * True while a rail overlay (add-account modal or the right-click context
+   * menu) is open. The app rail now lives in the persistent sidebar, while the
+   * active provider webview is composited by the chat page — so the rail signals
+   * overlay state here and the chat page hides/restores the native webview
+   * accordingly (DOM z-index can't paint React overlays above a CEF webview).
+   * Transient: not in the persist whitelist.
+   */
+  overlayOpen: boolean;
 }
 
 export interface AccountLogEntry {

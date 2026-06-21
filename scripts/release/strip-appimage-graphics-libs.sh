@@ -265,9 +265,11 @@ ensure_sharun_interpreter() {
   fi
 
   local target="$appdir/lib/$loader_name"
-  if [ -e "$target" ]; then
-    return 1
-  fi
+  # Always replace — lib4bin may bundle an ld-linux from the CI runner
+  # that is incompatible with newer host glibc (#3224, #3099).
+  # The host_dynamic_loader source is the CI runner's own system ld-linux,
+  # which is guaranteed compatible with the binary compiled on the same runner.
+  rm -f "$target"
 
   local source
   if ! source="$(host_dynamic_loader "$loader_name")"; then
