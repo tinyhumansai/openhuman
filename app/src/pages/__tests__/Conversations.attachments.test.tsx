@@ -646,11 +646,11 @@ describe('Conversations — thread rename', () => {
     mockGetThreadMessages.mockResolvedValue({ messages: [], count: 0 });
   });
 
-  it('commits an inline thread-title rename from the conversation header', async () => {
+  it('commits an inline thread-title rename from the sidebar thread row', async () => {
     const { thread } = await renderWithSelectedThread();
     const { threadApi } = await import('../../services/api/threadApi');
 
-    // Enter edit mode via the header pencil affordance.
+    // Enter edit mode via the thread row pencil affordance.
     fireEvent.click(screen.getByRole('button', { name: 'Edit thread title' }));
     const input = await screen.findByRole('textbox', { name: 'Edit thread title' });
     fireEvent.change(input, { target: { value: 'Renamed in header' } });
@@ -724,13 +724,13 @@ describe('Conversations — thread rename', () => {
     expect(threadApi.updateTitle).not.toHaveBeenCalled();
   });
 
-  it('opens the editor via mousedown and ignores the immediate focus-blur', async () => {
+  it('opens the editor and ignores the immediate focus-blur', async () => {
     await renderWithSelectedThread();
     const { threadApi } = await import('../../services/api/threadApi');
 
-    // onMouseDown opens edit mode; the blur fired while the input is grabbing
-    // focus is ignored (no spurious commit).
-    fireEvent.mouseDown(screen.getByRole('button', { name: 'Edit thread title' }));
+    // Clicking the row pencil opens edit mode; the blur fired while the input
+    // is grabbing focus is ignored (no spurious commit).
+    fireEvent.click(screen.getByRole('button', { name: 'Edit thread title' }));
     const input = await screen.findByRole('textbox', { name: 'Edit thread title' });
     fireEvent.blur(input);
 

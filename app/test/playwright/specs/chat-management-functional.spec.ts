@@ -170,13 +170,13 @@ test.describe('Chat management functional coverage', () => {
     const threadId = await newThread(page);
     const title = `Playwright thread ${Date.now()}`;
 
-    // Inline rename from the conversation header (restored after #3751). The
-    // chat-as-home surface may auto-select a different empty thread, so assert
-    // on the unique renamed title appearing in the thread list rather than
-    // pinning to a specific row — that deterministically proves the header
-    // rename committed end-to-end. (Rename targeting is covered deterministically
-    // by the Conversations rename unit test.)
-    await page.getByRole('button', { name: 'Edit thread title' }).click({ force: true });
+    // Inline rename now lives on each sidebar thread row (moved off the
+    // conversation header). Every row has its own "Edit thread title" button, so
+    // scope to this thread's row to avoid a strict-mode multi-match.
+    await page
+      .getByTestId(`thread-row-${threadId}`)
+      .getByRole('button', { name: 'Edit thread title' })
+      .click({ force: true });
     await page.getByRole('textbox', { name: 'Edit thread title' }).fill(title);
     await page.keyboard.press('Enter');
     await expect(page.getByText(title).first()).toBeVisible({ timeout: 10_000 });

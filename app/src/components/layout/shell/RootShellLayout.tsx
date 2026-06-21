@@ -9,6 +9,7 @@ import {
   setSidebarWidth,
   toggleSidebar,
 } from '../../../store/layoutSlice';
+import CollapsedNavRail from './CollapsedNavRail';
 
 // `app-shell` (not the older `root-shell`) so the persisted geometry seeds
 // fresh with the sidebar visible by default.
@@ -176,7 +177,7 @@ export default function RootShellLayout({ sidebar, children }: RootShellLayoutPr
           native CEF webview glued to the content's bounds, which composites
           above the HTML layer — starts to its right and never covers it. */}
       {!isOpen && (
-        <div className="flex w-9 flex-none flex-col items-center border-r border-stone-200 bg-white pt-2 dark:border-neutral-800 dark:bg-neutral-900">
+        <div className="flex w-9 flex-none flex-col items-center gap-0.5 border-r border-stone-200 bg-white pt-2 dark:border-neutral-800 dark:bg-neutral-900">
           <button
             type="button"
             onClick={() => dispatch(setSidebarVisible({ id: LAYOUT_ID, visible: true }))}
@@ -194,6 +195,10 @@ export default function RootShellLayout({ sidebar, children }: RootShellLayoutPr
               />
             </svg>
           </button>
+          {/* Keep the primary nav reachable while collapsed: an icon-only rail. */}
+          <div className="mt-1 w-full border-t border-stone-200/70 pt-1 dark:border-neutral-800/70">
+            <CollapsedNavRail />
+          </div>
         </div>
       )}
 

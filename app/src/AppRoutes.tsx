@@ -1,5 +1,7 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 
+import AgentWorldShell from './agentworld/AgentWorldShell';
+import AgentWorld from './agentworld/pages/AgentWorld';
 import AppRoutesIOS from './AppRoutesIOS';
 import DefaultRedirect from './components/DefaultRedirect';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -187,6 +189,19 @@ const AppRoutes = () => {
 
       {/* Dev-only visual preview of the Agentic task insights surface. */}
       <Route path="/dev/agent-insights" element={<AgentInsightsPreview />} />
+
+      {/* Agent World — tiny.place A2A social network integration.
+          Nested routes (explore, directory, …) are handled inside AgentWorld. */}
+      <Route
+        path="/agent-world/*"
+        element={
+          <ProtectedRoute requireAuth={true}>
+            <AgentWorldShell>
+              <AgentWorld />
+            </AgentWorldShell>
+          </ProtectedRoute>
+        }
+      />
 
       {/* Default redirect based on auth status */}
       <Route path="*" element={<DefaultRedirect />} />
