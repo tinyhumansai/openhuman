@@ -304,4 +304,45 @@ describe('Rewards page', () => {
 
     expect(openUrl).toHaveBeenCalledWith('https://discord.gg/openhuman');
   });
+
+  it('refetches the snapshot when an oauth:success event fires', async () => {
+    rewardsApi.getMyRewards.mockResolvedValue({
+      discord: {
+        linked: false,
+        discordId: null,
+        username: null,
+        inviteUrl: 'https://discord.gg/openhuman',
+        membershipStatus: 'not_linked',
+      },
+      summary: {
+        unlockedCount: 0,
+        totalCount: 0,
+        assignedDiscordRoleCount: 0,
+        plan: 'FREE',
+        hasActiveSubscription: false,
+      },
+      metrics: {
+        currentStreakDays: 0,
+        longestStreakDays: 0,
+        cumulativeTokens: 0,
+        featuresUsedCount: 0,
+        trackedFeaturesCount: 0,
+        lastEvaluatedAt: null,
+        lastSyncedAt: null,
+      },
+      achievements: [],
+    });
+
+    render(
+      <MemoryRouter>
+        <Rewards />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => expect(rewardsApi.getMyRewards).toHaveBeenCalledTimes(1));
+
+    fireEvent(window, new CustomEvent('oauth:success', { detail: { toolkit: 'discord' } }));
+
+    await waitFor(() => expect(rewardsApi.getMyRewards).toHaveBeenCalledTimes(2));
+  });
 });

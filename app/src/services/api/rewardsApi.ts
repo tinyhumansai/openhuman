@@ -116,6 +116,7 @@ export function normalizeRewardsSnapshot(payload: unknown): RewardsSnapshot {
     discord: {
       linked: rawDiscord.linked === true,
       discordId: asStringOrNull(rawDiscord.discordId),
+      username: asStringOrNull(rawDiscord.username),
       inviteUrl: asStringOrNull(rawDiscord.inviteUrl),
       membershipStatus:
         rawDiscord.membershipStatus === 'member' ||
@@ -189,5 +190,29 @@ export const rewardsApi = {
         : 0
     );
     return normalizeRewardsSnapshot(response.data);
+  },
+
+  async disconnectDiscord(): Promise<void> {
+    let response: ApiResponse<unknown>;
+    try {
+      response = await apiClient.delete<ApiResponse<unknown>>('/rewards/discord', {
+        timeout: REWARDS_SNAPSHOT_TIMEOUT_MS,
+      });
+    } catch (transportError) {
+      const normalized = normalizeRewardsApiError(transportError);
+      log('disconnect transport failed error=%s', normalized.error);
+      throw normalized;
+    }
+
+    if (!response.success) {
+      const appError: RewardsApiError = {
+        success: false,
+        error: response.error ?? response.message ?? 'Unable to disconnect Discord',
+      };
+      log('disconnect backend error error=%s', appError.error);
+      throw appError;
+    }
+
+    log('discord disconnected');
   },
 };

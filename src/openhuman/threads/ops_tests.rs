@@ -623,12 +623,30 @@ async fn thread_delete_removes_persisted_turn_state_snapshot() {
     turn_state::store::put(dir.clone(), &snapshot).expect("put snapshot");
     assert!(turn_state::store::get(dir, thread_id).unwrap().is_some());
 
+    // Queue a finished background sub-agent result for this thread; deleting the
+    // thread must discard it so it's never delivered into a dead thread.
+    use crate::openhuman::agent_orchestration::background_completions as bg;
+    bg::record_completion(
+        "sess-del",
+        "sub-del-1",
+        "researcher",
+        "result",
+        Some(thread_id.to_string()),
+    );
+    assert_eq!(bg::pending_count("sess-del"), 1);
+
     thread_delete(DeleteConversationThreadRequest {
         thread_id: thread_id.to_string(),
         deleted_at: "2026-01-01T00:02:00Z".into(),
     })
     .await
     .expect("delete thread");
+
+    assert_eq!(
+        bg::pending_count("sess-del"),
+        0,
+        "queued completion for the deleted thread should be discarded"
+    );
 
     let turn_state = turn_state_get(GetTurnStateRequest {
         thread_id: thread_id.to_string(),
@@ -663,9 +681,30 @@ async fn threads_purge_removes_valid_and_corrupted_turn_state_files() {
     )
     .unwrap();
 
+    // Queue background sub-agent results across sessions; a full purge must wipe
+    // them all since no parent thread survives.
+    use crate::openhuman::agent_orchestration::background_completions as bg;
+    bg::record_completion(
+        "sess-p1",
+        "sub-p1",
+        "researcher",
+        "x",
+        Some("thread-a".into()),
+    );
+    bg::record_completion(
+        "sess-p2",
+        "sub-p2",
+        "researcher",
+        "y",
+        Some("thread-b".into()),
+    );
+
     threads_purge(EmptyRequest {})
         .await
         .expect("purge threads should also clear snapshots");
+
+    assert!(!bg::has_pending("sess-p1"));
+    assert!(!bg::has_pending("sess-p2"));
 
     if turn_state_dir.exists() {
         let remaining_json: Vec<_> = std::fs::read_dir(&turn_state_dir)

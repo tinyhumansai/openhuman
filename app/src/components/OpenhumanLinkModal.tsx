@@ -227,9 +227,7 @@ const NotificationsBody = ({ close }: { close: () => void }) => {
     try {
       if (!isTauri()) {
         setStatus('error');
-        setError(
-          'Native notifications are only available in the desktop app (run `pnpm dev:app`).'
-        );
+        setError(t('app.openhumanLink.notifications.desktopOnly'));
         return;
       }
 
@@ -238,22 +236,17 @@ const NotificationsBody = ({ close }: { close: () => void }) => {
         const nextState = await getNotificationPermissionState({ requestIfNeeded: false });
         setPermissionState(nextState);
         setStatus('error');
-        setError(
-          'Notification permission is off. Enable OpenHuman in System Settings → Notifications, then retry.'
-        );
+        setError(t('app.openhumanLink.notifications.permissionOff'));
         return;
       }
       const sendResult = await showNativeNotification({
-        title: 'OpenHuman is good to go',
-        body: 'You will get pings here when something needs your attention.',
+        title: t('app.openhumanLink.notifications.welcomeTitle'),
+        body: t('app.openhumanLink.notifications.welcomeBody'),
         tag: 'welcome-notification-test',
       });
       if (!sendResult.delivered) {
         setStatus('error');
-        setError(
-          sendResult.error ??
-            'OpenHuman could not trigger a system notification. Check OS notification settings and retry.'
-        );
+        setError(sendResult.error ?? t('app.openhumanLink.notifications.triggerFailed'));
         return;
       }
       setPermissionState('granted');
@@ -438,21 +431,25 @@ function makeAccountId(): string {
   return `acct-${Date.now().toString(36)}`;
 }
 
-/** Status label + color for a given account lifecycle status. */
-function statusDisplay(status: AccountStatus): { label: string; dotClass: string } {
+/**
+ * Translation key + color for a given account lifecycle status. Returns a
+ * `labelKey` (not a literal) so the caller can localize it via `useT()` —
+ * this is a module-level helper with no hook scope of its own.
+ */
+export function statusDisplay(status: AccountStatus): { labelKey: string; dotClass: string } {
   switch (status) {
     case 'open':
-      return { label: 'Connected', dotClass: 'bg-emerald-500' };
+      return { labelKey: 'app.openhumanLink.status.connected', dotClass: 'bg-emerald-500' };
     case 'loading':
-      return { label: 'Loading…', dotClass: 'bg-amber-400' };
+      return { labelKey: 'app.openhumanLink.status.loading', dotClass: 'bg-amber-400' };
     case 'pending':
-      return { label: 'Needs sign-in', dotClass: 'bg-amber-400' };
+      return { labelKey: 'app.openhumanLink.status.needsSignIn', dotClass: 'bg-amber-400' };
     case 'timeout':
-      return { label: 'Timed out', dotClass: 'bg-red-400' };
+      return { labelKey: 'app.openhumanLink.status.timedOut', dotClass: 'bg-red-400' };
     case 'error':
-      return { label: 'Error', dotClass: 'bg-red-400' };
+      return { labelKey: 'app.openhumanLink.status.error', dotClass: 'bg-red-400' };
     case 'closed':
-      return { label: 'Closed', dotClass: 'bg-stone-300' };
+      return { labelKey: 'app.openhumanLink.status.closed', dotClass: 'bg-stone-300' };
   }
 }
 
@@ -549,7 +546,7 @@ const AccountsSetupBody = ({ close }: { close: () => void }) => {
                       className={`inline-block h-1.5 w-1.5 rounded-full ${statusDisplay(status).dotClass}`}
                     />
                     <span className="text-xs text-stone-500 dark:text-neutral-400">
-                      {statusDisplay(status).label}
+                      {t(statusDisplay(status).labelKey)}
                     </span>
                   </div>
                 ) : (

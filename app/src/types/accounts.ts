@@ -7,6 +7,10 @@ export type AccountProvider =
   | 'linkedin'
   | 'slack'
   | 'discord'
+  | 'gmail'
+  | 'outlook'
+  | 'instagram'
+  | 'twitter'
   | 'google-meet'
   | 'zoom'
   | 'browserscan';
@@ -53,6 +57,15 @@ export interface AccountsState {
   messages: Record<string, IngestedMessage[]>;
   unread: Record<string, number>;
   logs: Record<string, AccountLogEntry[]>;
+  /**
+   * True while a rail overlay (add-account modal or the right-click context
+   * menu) is open. The app rail now lives in the persistent sidebar, while the
+   * active provider webview is composited by the chat page — so the rail signals
+   * overlay state here and the chat page hides/restores the native webview
+   * accordingly (DOM z-index can't paint React overlays above a CEF webview).
+   * Transient: not in the persist whitelist.
+   */
+  overlayOpen: boolean;
 }
 
 export interface AccountLogEntry {
@@ -104,6 +117,30 @@ const BASE_PROVIDERS: ProviderDescriptor[] = [
     label: 'Discord',
     description: 'Discord servers and DMs — channel list and unread counts.',
     serviceUrl: 'https://discord.com/channels/@me',
+  },
+  {
+    id: 'gmail',
+    label: 'Gmail',
+    description: 'Your Gmail inbox, embedded and observed.',
+    serviceUrl: 'https://mail.google.com/mail/u/0/',
+  },
+  {
+    id: 'outlook',
+    label: 'Outlook',
+    description: 'Outlook / Microsoft 365 mail, embedded in-app.',
+    serviceUrl: 'https://outlook.live.com/mail/',
+  },
+  {
+    id: 'instagram',
+    label: 'Instagram',
+    description: 'Instagram direct messages — DMs and conversations.',
+    serviceUrl: 'https://www.instagram.com/direct/inbox/',
+  },
+  {
+    id: 'twitter',
+    label: 'X (Twitter)',
+    description: 'X / Twitter direct messages.',
+    serviceUrl: 'https://x.com/messages/',
   },
   // Google Meet + Zoom are hidden from the picker for now — usage is low
   // and the integrations need more polish before re-surfacing them. Their

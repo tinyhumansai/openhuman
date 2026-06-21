@@ -121,12 +121,32 @@ async fn test_orchestrator_has_current_date_context() -> Result<()> {
     let _ = agent.turn("what is on my calendar this week?").await?;
 
     let messages = captured_messages.lock();
-    let system_prompt = messages
+    // The system prompt carries the static grounding *rule* (#3602) — the
+    // concrete clock no longer lives here, it rides the per-turn user message
+    // so a long-lived session can't go stale.
+    messages
         .iter()
         .find(|m| m.role == "system" && m.content.contains("## Current Date & Time"))
-        .expect("System prompt should contain Current Date & Time");
+        .expect("System prompt should carry the Current Date & Time grounding rule");
 
-    assert!(system_prompt.content.contains("202"));
+    // The live date/time is injected on the user message every turn. Assert it
+    // carries the stamp and a concrete year token.
+    let user_msg = messages
+        .iter()
+        .find(|m| m.role == "user" && m.content.contains("Current Date & Time:"))
+        .expect("User message should carry the per-turn Current Date & Time stamp");
+    // Assert a concrete `YYYY-MM-DD HH:MM:SS` shape rather than a decade token
+    // (which would rot as years advance).
+    let after = user_msg
+        .content
+        .split("Current Date & Time: ")
+        .nth(1)
+        .expect("stamp must follow the canonical prefix");
+    let dt = after
+        .get(0..19)
+        .expect("stamp must include YYYY-MM-DD HH:MM:SS");
+    chrono::NaiveDateTime::parse_from_str(dt, "%Y-%m-%d %H:%M:%S")
+        .expect("user message stamp must include a parseable YYYY-MM-DD HH:MM:SS");
 
     Ok(())
 }

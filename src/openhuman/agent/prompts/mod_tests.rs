@@ -214,7 +214,13 @@ fn identity_section_creates_missing_workspace_files() {
 }
 
 #[test]
-fn datetime_section_includes_timestamp_and_timezone() {
+fn datetime_section_is_static_grounding_rule_without_volatile_timestamp() {
+    // #3602: the concrete "now" moved to the per-turn user message
+    // (`current_datetime_line`) so a long-lived session's frozen
+    // system-prompt prefix never goes stale. The section must therefore
+    // carry the greeting/clock grounding *rule* but NOT a volatile
+    // timestamp — otherwise the prefix is no longer byte-stable and a
+    // stale clock contradicts the fresh per-turn one.
     let tools: Vec<Box<dyn Tool>> = vec![];
     let prompt_tools = PromptTool::from_tools(&tools);
     let ctx = PromptContext {
@@ -240,20 +246,45 @@ fn datetime_section_includes_timestamp_and_timezone() {
 
     let rendered = DateTimeSection.build(&ctx).unwrap();
     assert!(rendered.starts_with("## Current Date & Time\n\n"));
-
-    let payload = rendered.trim_start_matches("## Current Date & Time\n\n");
-    assert!(payload.chars().any(|c| c.is_ascii_digit()));
-    assert!(payload.contains(" ("));
-    assert!(payload.ends_with(')'));
-    // IANA zone is included so agents can reason about the host's
-    // timezone without parsing a locale-dependent abbreviation. Either
-    // a slashed zone (`America/Los_Angeles`) or the `UTC` fallback for
-    // hosts where `iana-time-zone` can't resolve one.
+    // Greeting/clock grounding rule must be present, ungated (no tools here).
     assert!(
-        payload.contains('/') || payload.contains(" UTC "),
-        "rendered payload missing IANA timezone: {payload}"
+        rendered.contains("good morning") && rendered.contains("match the actual local hour"),
+        "datetime section must carry the greeting-grounding rule; got:\n{rendered}"
     );
-    assert!(payload.contains("UTC"), "missing UTC offset: {payload}");
+    assert!(
+        rendered.contains("Current Date & Time:"),
+        "rule must point at the per-turn `Current Date & Time:` line; got:\n{rendered}"
+    );
+    // Byte-stability guard: two renders a moment apart must be identical —
+    // i.e. no embedded volatile clock. A frozen timestamp would make these
+    // diverge (and bust the KV-cache prefix).
+    let again = DateTimeSection.build(&ctx).unwrap();
+    assert_eq!(
+        rendered, again,
+        "datetime section must be byte-stable (no volatile timestamp baked in)"
+    );
+}
+
+#[test]
+fn current_datetime_line_is_fresh_local_stamp() {
+    // The per-turn stamp carries a parseable local date, IANA zone (or the
+    // `UTC` fallback), a UTC offset, and the weekday — everything the model
+    // needs to localize a greeting without a tool call (#3602).
+    let line = super::current_datetime_line();
+    let rest = line
+        .strip_prefix("Current Date & Time: ")
+        .unwrap_or_else(|| panic!("stamp must start with canonical prefix: {line}"));
+    // The first 19 chars must be a canonical `YYYY-MM-DD HH:MM:SS`.
+    let dt = rest
+        .get(0..19)
+        .unwrap_or_else(|| panic!("stamp too short for YYYY-MM-DD HH:MM:SS: {line}"));
+    chrono::NaiveDateTime::parse_from_str(dt, "%Y-%m-%d %H:%M:%S")
+        .unwrap_or_else(|e| panic!("timestamp must match YYYY-MM-DD HH:MM:SS ({e}): {line}"));
+    assert!(line.contains("UTC"), "missing UTC offset: {line}");
+    assert!(
+        line.contains('/') || line.contains(" UTC "),
+        "missing IANA zone or UTC fallback: {line}"
+    );
 }
 
 #[test]

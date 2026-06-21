@@ -594,28 +594,34 @@ impl PromptSection for DateTimeSection {
     }
 
     fn build(&self, ctx: &PromptContext<'_>) -> Result<String> {
-        // IANA zone first because it's the unambiguous machine-readable
-        // form (`America/Los_Angeles`) — agents that need to reason about
-        // timezone rules should grep this, not the locale-dependent
-        // `%Z` abbreviation. Falls back to "UTC" when the host can't
-        // resolve a zone (CI, stripped containers).
-        let iana = iana_time_zone::get_timezone().unwrap_or_else(|_| "UTC".to_string());
-        let now = chrono::Local::now();
-        let mut out = format!(
-            "## Current Date & Time\n\n{} {} ({}, UTC{})",
-            now.format("%Y-%m-%d %H:%M:%S"),
-            iana,
-            now.format("%Z"),
-            now.format("%:z"),
+        // No concrete timestamp here. The live "now" is injected per turn
+        // on the user message via `render_helpers::current_datetime_line`
+        // (the main session loop and the sub-agent runner both do this), so
+        // it stays fresh across a long-lived session instead of freezing
+        // into the cached system-prompt prefix and going stale (#3602).
+        // This section carries only the *static* discipline rules for using
+        // that stamp — keeping the prefix byte-stable for KV-cache reuse.
+        //
+        // Greeting/clock grounding is ungated: every agent that emits a
+        // time-relative word (a greeting, "today"/"tonight") needs it,
+        // whether or not it owns `resolve_time`. Without this rule the model
+        // treats the time line as passive reference and defaults to a
+        // learned "good morning" regardless of the actual hour (#3602).
+        let mut out = String::from(
+            "## Current Date & Time\n\n> The current local date and time is provided on a \
+             `Current Date & Time:` line with the latest message (local time, IANA timezone, \
+             UTC offset, weekday). Before any time-relative wording in your reply — greetings \
+             like \"good morning\"/\"good evening\", or \"today\"/\"tonight\"/\"tomorrow\" — read \
+             that line and match the actual local hour. Never assume it is morning. The time is \
+             already in context; no tool call is needed to greet or to reason about the current day.",
         );
-        // Time-discipline rule, gated on the agent actually having the
+        // Tool-argument discipline, gated on the agent actually having the
         // `resolve_time` tool. LLMs are unreliable at epoch arithmetic — a
         // real incident had an agent compute "24h ago" ~10 months off, then
         // fetch Slack history ascending from that wrong floor and never reach
         // the latest messages. Telling agents to lean on the tool (rather
-        // than hand-computing) is the fix; rendered right under the volatile
-        // time block so the two are read together. Auto-scopes: agents
-        // without the tool never see the rule.
+        // than hand-computing) is the fix. Auto-scopes: agents without the
+        // tool never see the rule.
         if ctx.tools.iter().any(|t| t.name == "resolve_time") {
             out.push_str(
                 "\n\n> For any date/time you pass as a tool argument \

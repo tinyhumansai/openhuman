@@ -635,6 +635,29 @@ pub async fn lookup_tx(hash: &str) -> Result<TxLookupInfo, String> {
     })
 }
 
+/// Returns the 32-byte Ed25519 seed for the tiny.place `LocalSigner`, derived
+/// from the user's primary Solana wallet key via the same SLIP-0010 path used
+/// for all Solana signing operations.
+///
+/// The seed is consumed immediately by the caller and **never logged, never
+/// returned across any IPC boundary, never persisted**.  Mirrors the exact
+/// derivation at `wallet/chains/solana.rs:369–376`.
+pub(crate) async fn tinyplace_signer_seed() -> Result<[u8; 32], String> {
+    log::debug!("[tinyplace] deriving signer seed from Solana wallet key");
+    let secret = secret_material(WalletChain::Solana).await?;
+    let config = config_rpc::load_config_with_timeout().await?;
+    // Mirror exactly the decrypt call at solana.rs:371-374 (.value extraction).
+    let mnemonic =
+        crate::openhuman::encryption::rpc::decrypt_secret(&config, &secret.encrypted_mnemonic)
+            .await?
+            .value;
+    let signing_key = derive_solana_keypair(&mnemonic, &secret.derivation_path)?;
+    // Extract 32-byte SLIP-0010 secret — same bytes LocalSigner::from_seed expects.
+    // Never logged: the log below omits the seed.
+    log::debug!("[tinyplace] signer seed derived (seed not logged)");
+    Ok(signing_key.to_bytes())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

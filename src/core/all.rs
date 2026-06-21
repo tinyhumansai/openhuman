@@ -309,6 +309,10 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     // Git-worktree isolation manager — list / status / diff / remove worker worktrees (#3376)
     controllers
         .extend(crate::openhuman::agent_orchestration::all_worktree_registered_controllers());
+    // User-driven cancel of detached background sub-agents (#3711)
+    controllers.extend(
+        crate::openhuman::agent_orchestration::all_subagent_control_registered_controllers(),
+    );
     controllers
 }
 
@@ -324,6 +328,9 @@ fn build_internal_only_controllers() -> Vec<RegisteredController> {
     // MCP write audit list: internal-only so the desktop UI/CLI can inspect
     // local write history without exposing cross-client history as an MCP tool.
     controllers.extend(crate::openhuman::mcp_audit::all_mcp_audit_internal_controllers());
+    // tiny.place A2A social-network integration: renderer-callable via core_rpc_relay
+    // but NOT advertised to agents in tool listings or schema discovery.
+    controllers.extend(crate::openhuman::tinyplace::all_tinyplace_registered_controllers());
     controllers
 }
 
@@ -445,6 +452,9 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::agent_orchestration::all_agent_team_controller_schemas());
     // Git-worktree isolation manager (#3376)
     schemas.extend(crate::openhuman::agent_orchestration::all_worktree_controller_schemas());
+    // User-driven cancel of detached background sub-agents (#3711)
+    schemas
+        .extend(crate::openhuman::agent_orchestration::all_subagent_control_controller_schemas());
     schemas
 }
 
@@ -597,6 +607,9 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         ),
         "companion" => Some(
             "Desktop companion — Clicky-style hotkey-driven interaction loop with STT, LLM, TTS, and visual pointing.",
+        ),
+        "tinyplace" => Some(
+            "tiny.place A2A social-network integration: directory, explorer, and search over the agent network.",
         ),
         _ => None,
     }

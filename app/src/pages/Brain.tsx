@@ -15,7 +15,7 @@ import { MemorySourcesRegistry } from '../components/intelligence/MemorySourcesR
 import { MemoryTreeStatusPanel } from '../components/intelligence/MemoryTreeStatusPanel';
 import { ToastContainer } from '../components/intelligence/Toast';
 import PanelPage from '../components/layout/PanelPage';
-import TwoPanelLayout from '../components/layout/TwoPanelLayout';
+import { SidebarContent } from '../components/layout/shell/SidebarSlot';
 import TwoPaneNav from '../components/layout/TwoPaneNav';
 import { SettingsLayoutProvider } from '../components/settings/layout/SettingsLayoutContext';
 import AnalysisViewsPanel from '../components/settings/panels/AnalysisViewsPanel';
@@ -139,17 +139,9 @@ export default function Brain() {
 
   return (
     <div className="h-full">
-      <TwoPanelLayout
-        id="brain"
-        // Max-width applied once to the whole panel (sidebar + content) and
-        // centered, matching the settings two-pane shell.
-        className="mx-auto h-full w-full max-w-6xl p-4 pt-6"
-        defaultSidebarVisible
-        defaultSidebarWidth={210}
-        minSidebarWidth={170}
-        maxSidebarWidth={320}
-        seamless
-        sidebar={
+      {/* The Brain navigation lives in the root app sidebar's dynamic region. */}
+      <SidebarContent>
+        <div className="h-full overflow-hidden">
           <TwoPaneNav
             ariaLabel={t('nav.brain')}
             selected={activeTab}
@@ -225,31 +217,35 @@ export default function Brain() {
               },
             ]}
             header={
-              <div className="min-w-0">
-                <h1 className="text-base font-bold text-stone-900 dark:text-neutral-100">
-                  {t('nav.brain')}
-                </h1>
-                <p className="mt-0.5 text-[11px] text-stone-500 dark:text-neutral-400">
-                  {t('brain.subtitle')}
-                </p>
-              </div>
+              <p className="min-w-0 text-[11px] text-stone-500 dark:text-neutral-400">
+                {t('brain.subtitle')}
+              </p>
             }
           />
-        }>
+        </div>
+      </SidebarContent>
+      <div className="mx-auto h-full w-full max-w-5xl">
         {/* Knowledge & Memory panels relocated from Settings are themselves
             PanelPage panels (description, no title; the back button hides
             because the Brain sidebar owns navigation here), so they fill the
             content pane and own their own scroll directly. */}
         {KNOWLEDGE_TABS.has(activeTab) ? (
-          <SettingsLayoutProvider value={{ inTwoPaneShell: true }}>
-            {/* Distinct tab query key so the embedded Intelligence panel's
-                internal tab switches don't overwrite Brain's own
-                `?tab=intelligence` and unmount it. */}
-            {activeTab === 'intelligence' && <Intelligence tabParamKey="itab" />}
-            {activeTab === 'memory-data' && <MemoryDataPanel />}
-            {activeTab === 'memory-debug' && <MemoryDebugPanel />}
-            {activeTab === 'analysis-views' && <AnalysisViewsPanel />}
-          </SettingsLayoutProvider>
+          // Knowledge subpages were orphaned flush on the shell — give them a
+          // card surface (the bespoke graph/sources/etc. tabs keep their own
+          // scaffold below and stay flush).
+          <div className="h-full p-4">
+            <div className="h-full overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-soft dark:border-neutral-800 dark:bg-neutral-900">
+              <SettingsLayoutProvider value={{ inTwoPaneShell: true }}>
+                {/* Distinct tab query key so the embedded Intelligence panel's
+                    internal tab switches don't overwrite Brain's own
+                    `?tab=intelligence` and unmount it. */}
+                {activeTab === 'intelligence' && <Intelligence tabParamKey="itab" />}
+                {activeTab === 'memory-data' && <MemoryDataPanel />}
+                {activeTab === 'memory-debug' && <MemoryDebugPanel />}
+                {activeTab === 'analysis-views' && <AnalysisViewsPanel />}
+              </SettingsLayoutProvider>
+            </div>
+          </div>
         ) : (
           // Bespoke tabs share the standard scaffold: a single scrolling body,
           // all custom controls live inside it.
@@ -316,7 +312,7 @@ export default function Brain() {
             </div>
           </PanelPage>
         )}
-      </TwoPanelLayout>
+      </div>
 
       <ToastContainer notifications={toasts} onRemove={removeToast} />
     </div>
