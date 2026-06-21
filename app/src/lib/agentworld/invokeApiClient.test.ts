@@ -1528,3 +1528,113 @@ describe('graphql.agentCard', () => {
     expect(result).toBeNull();
   });
 });
+
+describe('graphql marketplace reads', () => {
+  test('routes agents through GraphQL with nullable params', async () => {
+    mockCallCoreRpc.mockResolvedValueOnce({ agents: [] });
+    const client = createInvokeApiClient();
+    await client.graphql.agents({ q: 'bot', limit: 5 });
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.tinyplace_graphql_agents',
+      params: { params: { q: 'bot', limit: 5 } },
+    });
+  });
+
+  test('normalizes product seller handles and crypto IDs', async () => {
+    mockCallCoreRpc.mockResolvedValueOnce({
+      products: [
+        {
+          id: 'product-1',
+          seller: { handle: '@seller', cryptoId: 'seller-crypto' },
+          sellerCryptoId: '',
+        },
+        { id: 'product-2', seller: { cryptoId: 'fallback-crypto' } },
+      ],
+      count: 2,
+    });
+    const client = createInvokeApiClient();
+    const result = await client.graphql.products({ limit: 2 });
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.tinyplace_graphql_products',
+      params: { params: { limit: 2 } },
+    });
+    expect(result.products[0]).toMatchObject({
+      seller: '@seller',
+      sellerCryptoId: 'seller-crypto',
+    });
+    expect(result.products[1]).toMatchObject({
+      seller: 'fallback-crypto',
+      sellerCryptoId: 'fallback-crypto',
+    });
+  });
+
+  test('normalizes a single GraphQL product and preserves null misses', async () => {
+    mockCallCoreRpc
+      .mockResolvedValueOnce({ id: 'product-3', sellerCryptoId: 'seller-from-field' })
+      .mockResolvedValueOnce(null);
+    const client = createInvokeApiClient();
+
+    await expect(client.graphql.product('product-3')).resolves.toMatchObject({
+      seller: 'seller-from-field',
+      sellerCryptoId: 'seller-from-field',
+    });
+    await expect(client.graphql.product('missing')).resolves.toBeNull();
+  });
+
+  test('normalizes identity listing sellers and nullable detail results', async () => {
+    mockCallCoreRpc
+      .mockResolvedValueOnce({
+        listings: [
+          {
+            listingId: 'listing-1',
+            seller: { handle: '@owner', cryptoId: 'owner-crypto' },
+            sellerCryptoId: '',
+          },
+        ],
+        count: 1,
+      })
+      .mockResolvedValueOnce({ listingId: 'listing-2', sellerCryptoId: 'seller-field' })
+      .mockResolvedValueOnce(null);
+    const client = createInvokeApiClient();
+
+    const list = await client.graphql.identityListings({ status: 'active' });
+    expect(mockCallCoreRpc).toHaveBeenNthCalledWith(1, {
+      method: 'openhuman.tinyplace_graphql_identity_listings',
+      params: { params: { status: 'active' } },
+    });
+    expect(list.identities[0]).toMatchObject({ seller: '@owner', sellerCryptoId: 'owner-crypto' });
+
+    await expect(client.graphql.identityListing('listing-2')).resolves.toMatchObject({
+      seller: 'seller-field',
+      sellerCryptoId: 'seller-field',
+    });
+    await expect(client.graphql.identityListing('missing')).resolves.toBeNull();
+  });
+
+  test('routes identity bids and normalizes offer and sale parties', async () => {
+    mockCallCoreRpc
+      .mockResolvedValueOnce({ bids: [] })
+      .mockResolvedValueOnce({ offers: [{ offerId: 'offer-1', buyer: { handle: '@buyer' } }] })
+      .mockResolvedValueOnce({
+        sales: [
+          { saleId: 'sale-1', buyer: { cryptoId: 'buyer-crypto' }, seller: { handle: '@seller' } },
+        ],
+      });
+    const client = createInvokeApiClient();
+
+    await client.graphql.identityBids('listing-1', { limit: 3 });
+    expect(mockCallCoreRpc).toHaveBeenNthCalledWith(1, {
+      method: 'openhuman.tinyplace_graphql_identity_bids',
+      params: { listingId: 'listing-1', params: { limit: 3 } },
+    });
+
+    await expect(client.graphql.identityOffers({ status: 'open' })).resolves.toMatchObject({
+      offers: [{ buyer: '@buyer' }],
+    });
+    await expect(client.graphql.identitySales('@seller', { limit: 1 })).resolves.toMatchObject({
+      sales: [{ buyer: 'buyer-crypto', seller: '@seller' }],
+    });
+  });
+});

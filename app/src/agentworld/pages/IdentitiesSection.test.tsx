@@ -25,6 +25,7 @@ import IdentitiesSection from './IdentitiesSection';
 
 vi.mock('../AgentWorldShell', () => ({
   apiClient: {
+    graphql: { identityListings: vi.fn() },
     registry: { get: vi.fn(), register: vi.fn() },
     directoryIdentities: { list: vi.fn() },
     marketplace: {
@@ -53,6 +54,31 @@ beforeEach(() => {
   vi.mocked(apiClient.marketplace.buyIdentity).mockResolvedValue({ result: { saleId: 's1' } });
   vi.mocked(apiClient.marketplace.bid).mockResolvedValue({ result: {}, committed: true });
   vi.mocked(apiClient.marketplace.offer).mockResolvedValue({ result: {}, committed: true });
+  vi.mocked(apiClient.graphql.identityListings).mockImplementation(params => {
+    if (typeof params?.length === 'number') {
+      return vi
+        .mocked(apiClient.marketplace.identityFloor)(params.length)
+        .then(floor => ({
+          identities: floor.price
+            ? [
+                {
+                  listingId: `floor-${params.length}`,
+                  name: `@floor-${params.length}`,
+                  price: floor.price,
+                  updatedAt: '',
+                },
+              ]
+            : [],
+        }));
+    }
+    if (params?.limit === 20) {
+      return vi.mocked(apiClient.directoryIdentities.list)(params);
+    }
+    return vi.mocked(apiClient.marketplace.listIdentities)({
+      limit: params?.limit,
+      status: 'active',
+    });
+  });
 });
 
 afterEach(() => {
@@ -637,6 +663,86 @@ describe('Trading tab — floor prices', () => {
     expect(await screen.findByText('250 USDC')).toBeInTheDocument();
     // the other two cards resolve without a price → "No floor"
     expect(screen.getAllByText('No floor').length).toBeGreaterThanOrEqual(2);
+    expect(apiClient.graphql.identityListings).toHaveBeenCalledWith({
+      length: 3,
+      limit: 20,
+      offset: 0,
+      sortBy: 'price_asc',
+    });
+  });
+
+  test('ignores inactive cheaper listings when choosing a floor price', async () => {
+    vi.mocked(apiClient.graphql.identityListings).mockImplementation(params => {
+      if (params?.length === 3) {
+        return Promise.resolve({
+          identities: [
+            {
+              listingId: 'sold-floor',
+              name: '@soldfloor',
+              price: { amount: '50', asset: 'USDC' },
+              status: 'sold',
+              updatedAt: '2026-02-03T00:00:00Z',
+            },
+            {
+              listingId: 'active-floor',
+              name: '@activefloor',
+              price: { amount: '250', asset: 'USDC' },
+              status: 'active',
+              updatedAt: '2026-02-03T00:00:00Z',
+            },
+          ],
+        });
+      }
+      if (typeof params?.length === 'number') return Promise.resolve({ identities: [] });
+      return Promise.resolve({ identities: [] });
+    });
+    render(<IdentitiesSection />);
+    await gotoTab('Trading');
+    expect(await screen.findByText('250 USDC')).toBeInTheDocument();
+    expect(screen.queryByText('50 USDC')).not.toBeInTheDocument();
+  });
+
+  test('paginates floor lookup past inactive rows before declaring no floor', async () => {
+    vi.mocked(apiClient.graphql.identityListings).mockImplementation(params => {
+      if (params?.length !== 3) return Promise.resolve({ identities: [] });
+      if ((params.offset ?? 0) === 0) {
+        return Promise.resolve({
+          identities: Array.from({ length: 20 }, (_, index) => ({
+            listingId: `sold-floor-${index}`,
+            name: `@soldfloor${index}`,
+            price: { amount: '50', asset: 'USDC' },
+            status: 'sold',
+            updatedAt: '2026-02-03T00:00:00Z',
+          })),
+        });
+      }
+      return Promise.resolve({
+        identities: [
+          {
+            listingId: 'active-floor-page-2',
+            name: '@activefloorpage2',
+            price: { amount: '250', asset: 'USDC' },
+            status: 'active',
+            updatedAt: '2026-02-03T00:00:00Z',
+          },
+        ],
+      });
+    });
+    render(<IdentitiesSection />);
+    await gotoTab('Trading');
+    expect(await screen.findByText('250 USDC')).toBeInTheDocument();
+    expect(apiClient.graphql.identityListings).toHaveBeenCalledWith({
+      length: 3,
+      limit: 20,
+      offset: 0,
+      sortBy: 'price_asc',
+    });
+    expect(apiClient.graphql.identityListings).toHaveBeenCalledWith({
+      length: 3,
+      limit: 20,
+      offset: 20,
+      sortBy: 'price_asc',
+    });
   });
 
   test('shows "Unavailable" when a floor card fetch rejects', async () => {
@@ -672,24 +778,27 @@ describe('Trading tab — listed for sale', () => {
   });
 
   test('renders listing cards including an auction badge and seller line', async () => {
-    vi.mocked(apiClient.marketplace.listIdentities).mockResolvedValue({
-      identities: [
-        {
-          listingId: 'sale-1',
-          name: '@forsale',
-          price: { amount: '42', asset: 'USDC' },
-          listingType: 'auction',
-          seller: 'seller-x',
-          updatedAt: '2026-02-03T00:00:00Z',
-        },
-        {
-          listingId: 'sale-2',
-          name: '@fixedone',
-          price: { amount: '7', asset: 'USDC' },
-          listingType: 'fixed',
-          updatedAt: '2026-02-03T00:00:00Z',
-        },
-      ],
+    vi.mocked(apiClient.graphql.identityListings).mockImplementation(params => {
+      if (typeof params?.length === 'number') return Promise.resolve({ identities: [] });
+      return Promise.resolve({
+        identities: [
+          {
+            listingId: 'sale-1',
+            name: '@forsale',
+            price: { amount: '42', asset: 'USDC' },
+            listingType: 'auction',
+            seller: 'seller-x',
+            updatedAt: '2026-02-03T00:00:00Z',
+          },
+          {
+            listingId: 'sale-2',
+            name: '@fixedone',
+            price: { amount: '7', asset: 'USDC' },
+            listingType: 'fixed',
+            updatedAt: '2026-02-03T00:00:00Z',
+          },
+        ],
+      });
     });
     render(<IdentitiesSection />);
     await gotoTab('Trading');
@@ -704,19 +813,84 @@ describe('Trading tab — listed for sale', () => {
     expect(screen.getByText('7 USDC')).toBeInTheDocument();
   });
 
+  test('filters inactive GraphQL marketplace listings before rendering cards', async () => {
+    vi.mocked(apiClient.graphql.identityListings).mockImplementation(params => {
+      if (typeof params?.length === 'number') return Promise.resolve({ identities: [] });
+      return Promise.resolve({
+        identities: [
+          {
+            listingId: 'active-1',
+            name: '@activeone',
+            price: { amount: '5', asset: 'USDC' },
+            status: 'active',
+            updatedAt: '2026-02-03T00:00:00Z',
+          },
+          {
+            listingId: 'sold-1',
+            name: '@soldone',
+            price: { amount: '9', asset: 'USDC' },
+            status: 'sold',
+            updatedAt: '2026-02-03T00:00:00Z',
+          },
+        ],
+      });
+    });
+    render(<IdentitiesSection />);
+    await gotoTab('Trading');
+
+    expect(await screen.findByText('@activeone')).toBeInTheDocument();
+    expect(screen.queryByText('@soldone')).not.toBeInTheDocument();
+  });
+
+  test('paginates GraphQL marketplace listings until active rows are found', async () => {
+    vi.mocked(apiClient.graphql.identityListings).mockImplementation(params => {
+      if (typeof params?.length === 'number') return Promise.resolve({ identities: [] });
+      if ((params?.offset ?? 0) === 0) {
+        return Promise.resolve({
+          identities: Array.from({ length: 50 }, (_, index) => ({
+            listingId: `sold-${index}`,
+            name: `@sold${index}`,
+            price: { amount: '9', asset: 'USDC' },
+            status: 'sold',
+            updatedAt: '2026-02-03T00:00:00Z',
+          })),
+        });
+      }
+      return Promise.resolve({
+        identities: [
+          {
+            listingId: 'active-page-2',
+            name: '@activepage2',
+            price: { amount: '11', asset: 'USDC' },
+            status: 'active',
+            updatedAt: '2026-02-03T00:00:00Z',
+          },
+        ],
+      });
+    });
+    render(<IdentitiesSection />);
+    await gotoTab('Trading');
+
+    expect(await screen.findByText('@activepage2')).toBeInTheDocument();
+    expect(apiClient.graphql.identityListings).toHaveBeenCalledWith({ limit: 50, offset: 0 });
+    expect(apiClient.graphql.identityListings).toHaveBeenCalledWith({ limit: 50, offset: 50 });
+  });
+
   test('shows the payment-required banner when listings are gated', async () => {
-    vi.mocked(apiClient.marketplace.listIdentities).mockRejectedValueOnce(
-      new PaymentRequiredError({ terms: 'x402' })
-    );
+    vi.mocked(apiClient.graphql.identityListings).mockImplementation(params => {
+      if (typeof params?.length === 'number') return Promise.resolve({ identities: [] });
+      return Promise.reject(new PaymentRequiredError({ terms: 'x402' }));
+    });
     render(<IdentitiesSection />);
     await gotoTab('Trading');
     expect(await screen.findByText('Access requires payment')).toBeInTheDocument();
   });
 
   test('shows the error banner when listings fetch rejects', async () => {
-    vi.mocked(apiClient.marketplace.listIdentities).mockRejectedValueOnce(
-      new Error('listings down')
-    );
+    vi.mocked(apiClient.graphql.identityListings).mockImplementation(params => {
+      if (typeof params?.length === 'number') return Promise.resolve({ identities: [] });
+      return Promise.reject(new Error('listings down'));
+    });
     render(<IdentitiesSection />);
     await gotoTab('Trading');
     expect(await screen.findByText('Failed to load')).toBeInTheDocument();
