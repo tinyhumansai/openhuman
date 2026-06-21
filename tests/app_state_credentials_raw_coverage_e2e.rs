@@ -594,12 +594,16 @@ async fn snapshot_clears_transiently_stored_supplied_user_after_revalidation_fai
     let token = jwt_with_payload(json!({
         "exp": (Utc::now() + chrono::Duration::hours(1)).timestamp()
     }));
+    let user_id = "callback-user";
+    let active_user_root = openhuman_core::openhuman::config::default_root_openhuman_dir()
+        .expect("default openhuman root");
 
     let stored = store_session(
         &config,
         &token,
-        None,
+        Some(user_id.to_string()),
         Some(json!({
+            "id": user_id,
             "name": "Callback User",
             "email": "callback@example.test"
         })),
@@ -607,8 +611,14 @@ async fn snapshot_clears_transiently_stored_supplied_user_after_revalidation_fai
     .await
     .expect("transient auth/me failure should defer validation for live JWT");
     assert!(stored.value.has_token);
+    assert_eq!(
+        openhuman_core::openhuman::config::read_active_user_id(&active_user_root).as_deref(),
+        Some(user_id),
+        "deferred store_session with a user id must activate the user directory"
+    );
 
-    let profile = AuthService::from_config(&config)
+    let active_config = harness.config().await;
+    let profile = AuthService::from_config(&active_config)
         .get_profile(APP_SESSION_PROVIDER, None)
         .expect("read deferred profile")
         .expect("deferred profile is persisted");
@@ -640,7 +650,12 @@ async fn snapshot_clears_transiently_stored_supplied_user_after_revalidation_fai
     assert!(snap.auth.user.is_none());
     assert!(snap.current_user.is_none());
     assert!(snap.session_token.is_none());
-    let profile = AuthService::from_config(&config)
+    assert_eq!(
+        openhuman_core::openhuman::config::read_active_user_id(&active_user_root),
+        None,
+        "rejected supplied-user pending session must clear active_user.toml"
+    );
+    let profile = AuthService::from_config(&active_config)
         .get_profile(APP_SESSION_PROVIDER, None)
         .expect("read profile after supplied-user rejection");
     assert!(

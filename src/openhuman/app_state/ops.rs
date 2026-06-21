@@ -393,9 +393,9 @@ async fn persist_revalidated_session_user(
 }
 
 async fn clear_deferred_session_after_backend_rejection(config: &Config) -> Result<(), String> {
-    let config = config.clone();
+    let config_for_remove = config.clone();
     let clear_result = tokio::task::spawn_blocking(move || {
-        AuthService::from_config(&config)
+        AuthService::from_config(&config_for_remove)
             .remove_profile(APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME)
             .map(|_| ())
             .map_err(|e| e.to_string())
@@ -409,6 +409,18 @@ async fn clear_deferred_session_after_backend_rejection(config: &Config) -> Resu
 
     *CURRENT_USER_CACHE.lock() = None;
     crate::openhuman::scheduler_gate::set_signed_out(true);
+
+    if let Ok(root_dir) = crate::openhuman::config::default_root_openhuman_dir() {
+        if let Err(error) = crate::openhuman::config::clear_active_user(&root_dir) {
+            warn!(
+                "{LOG_PREFIX} failed to clear active_user.toml for rejected pending session: {error}"
+            );
+        }
+    }
+    crate::openhuman::credentials::stop_login_gated_services(config).await;
+    crate::openhuman::subconscious::global::reset_engine_for_user_switch().await;
+    crate::openhuman::credentials::sentry_scope::clear();
+
     clear_result
 }
 
