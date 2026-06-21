@@ -27,10 +27,15 @@ pub(crate) struct TinyPlaceState {
 
 impl TinyPlaceState {
     /// Build from the environment.  `TINYPLACE_API_BASE_URL` overrides the
-    /// default staging endpoint.
+    /// default production endpoint (set it to the staging host for testing).
     pub(crate) fn from_env() -> Self {
+        // Treat a blank/whitespace override as unset so it can't produce an
+        // invalid base_url (mirrors wallet::defaults env handling).
         let base_url = std::env::var("TINYPLACE_API_BASE_URL")
-            .unwrap_or_else(|_| "https://staging-api.tiny.place".to_string());
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "https://api.tiny.place".to_string());
         log::debug!("{LOG_PREFIX} state created base_url={base_url}");
         Self {
             client: OnceCell::new(),

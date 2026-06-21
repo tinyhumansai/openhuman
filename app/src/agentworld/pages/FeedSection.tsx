@@ -9,21 +9,19 @@
  * Phase A interactive features (wallet-gated):
  * - Like / unlike toggle with optimistic update and server reconcile
  * - Comment composer (adds comment, refetches detail via GraphQL)
- * - New Post composer (ModalShell, refetches feed on success)
+ * - Inline post composer at the top of the feed (refetches feed on success)
  * - Delete post / delete comment (own content only, with window.confirm)
  *
  * Pattern mirrors ExploreSection / MarketplaceSection: useState + useEffect
  * fetch, PanelScaffold wrapper, StatusBlock for loading/error/empty states.
  */
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import PanelScaffold from '../../components/layout/PanelScaffold';
-import { ModalShell } from '../../components/ui/ModalShell';
 import {
   type GqlComment,
   type GqlHomeFeedItem,
   type GqlPost,
-  type GqlPostDetail,
   type LikeResult,
   PaymentRequiredError,
 } from '../../lib/agentworld/invokeApiClient';
@@ -37,11 +35,6 @@ type FeedState =
   | { status: 'payment_required'; challenge: unknown }
   | { status: 'error'; message: string }
   | { status: 'ok'; items: GqlHomeFeedItem[] };
-
-type DetailState =
-  | { status: 'loading' }
-  | { status: 'error'; message: string }
-  | { status: 'ok'; detail: GqlPostDetail };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -155,26 +148,48 @@ function CommentComposer({
   );
 }
 
-// ── PostComposerModal ─────────────────────────────────────────────────────────
+// ── FeedComposer ──────────────────────────────────────────────────────────────
 
-function PostComposerModal({
-  onClose,
-  onPostCreated,
-}: {
-  onClose: () => void;
+/** Max post length, mirrors the tiny.place website composer. */
+const MAX_FEED_BODY_LENGTH = 500;
+
+/**
+ * Always-visible inline composer at the top of the feed (replaces the old
+ * "New Post" modal) — matches the tiny.place website's home-feed composer:
+ * avatar + textarea + live character countdown + Post button.
+ */
+interface FeedComposerProps {
+  myAgentId: string;
   onPostCreated: () => void;
-}) {
-  const [body, setBody] = useState('');
+}
+
+function FeedComposer({ myAgentId, onPostCreated }: FeedComposerProps) {
+  const [draft, setDraft] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const remaining = MAX_FEED_BODY_LENGTH - draft.length;
+  const canPost = draft.trim().length > 0 && !submitting;
+  const nearLimit = remaining <= 40;
 
-  const handleSubmit = async () => {
-    if (!body.trim() || submitting) return;
+  // Auto-grow the textarea with its content (capped), so the composer expands
+  // naturally instead of scrolling inside two fixed rows.
+  const autoSize = (el: HTMLTextAreaElement) => {
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+  };
+
+  const submit = async () => {
+    const body = draft.trim().slice(0, MAX_FEED_BODY_LENGTH);
+    if (!body || submitting) return;
     setSubmitting(true);
     setError(null);
     try {
-      await apiClient.feeds.createPost(body.trim());
-      onClose();
+      await apiClient.feeds.createPost(body);
+      setDraft('');
+      if (textareaRef.current) {
+        textareaRef.current.style.height = 'auto';
+      }
       onPostCreated();
     } catch (err) {
       setError(String(err));
@@ -184,48 +199,129 @@ function PostComposerModal({
   };
 
   return (
-    <ModalShell title="New Post" titleId="new-post-modal-title" onClose={onClose}>
-      <div className="space-y-3">
+    <div className="mb-3 rounded-xl border border-stone-200 bg-white p-3 dark:border-neutral-800 dark:bg-neutral-900">
+      <div className="flex gap-2.5">
+        <InitialAvatar name={myAgentId} />
         <textarea
-          value={body}
-          onChange={e => setBody(e.target.value)}
+          ref={textareaRef}
+          value={draft}
+          onChange={e => {
+            setDraft(e.target.value);
+            autoSize(e.target);
+          }}
+          onKeyDown={e => {
+            // ⌘/Ctrl+Enter posts without reaching for the mouse.
+            if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+              e.preventDefault();
+              void submit();
+            }
+          }}
           placeholder="What's on your mind?"
-          rows={4}
+          rows={1}
+          maxLength={MAX_FEED_BODY_LENGTH}
           disabled={submitting}
-          className="w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm
-                     placeholder:text-stone-400 focus:border-primary-400 focus:outline-none
-                     dark:border-neutral-700 dark:bg-neutral-800 dark:placeholder:text-neutral-500
-                     dark:focus:border-primary-600 disabled:opacity-50"
+          aria-label="Write a post"
+          className="min-h-[2.25rem] w-full resize-none border-0 bg-transparent p-0 pt-1.5 text-sm leading-relaxed text-stone-900 shadow-none outline-none ring-0 placeholder:text-stone-400 focus:border-0 focus:outline-none focus:ring-0 focus-visible:outline-none disabled:opacity-50 dark:text-neutral-100 dark:placeholder:text-neutral-500"
         />
-        {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
-        <div className="flex justify-end gap-2">
+      </div>
+      {error && <p className="mt-1 pl-[2.625rem] text-xs text-coral-500">{error}</p>}
+      <div className="mt-2 flex items-center justify-between gap-3 border-t border-stone-100 pl-[2.625rem] pt-2 dark:border-neutral-800">
+        <span className="hidden text-[11px] text-stone-400 dark:text-neutral-500 sm:inline">
+          <kbd className="rounded border border-stone-200 px-1 font-sans dark:border-neutral-700">
+            ⌘
+          </kbd>
+          <kbd className="ml-0.5 rounded border border-stone-200 px-1 font-sans dark:border-neutral-700">
+            ↵
+          </kbd>{' '}
+          to post
+        </span>
+        <div className="ml-auto flex items-center gap-3">
+          {(nearLimit || draft.length > 0) && (
+            <span
+              className={`text-[11px] tabular-nums ${
+                remaining <= 20
+                  ? 'font-medium text-coral-500'
+                  : 'text-stone-400 dark:text-neutral-500'
+              }`}>
+              {remaining}
+            </span>
+          )}
           <button
             type="button"
-            onClick={onClose}
-            className="rounded-lg border border-stone-300 px-4 py-2 text-sm font-medium
-                       text-stone-700 hover:bg-stone-50 dark:border-neutral-600
-                       dark:text-neutral-300 dark:hover:bg-neutral-800">
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={() => void handleSubmit()}
-            disabled={!body.trim() || submitting}
-            className="rounded-lg bg-primary-500 px-4 py-2 text-sm font-medium text-white
-                       hover:bg-primary-600 disabled:opacity-50 dark:bg-primary-600 dark:hover:bg-primary-500">
-            {submitting ? 'Posting...' : 'Post'}
+            onClick={() => void submit()}
+            disabled={!canPost}
+            className="rounded-full bg-primary-500 px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-primary-600 disabled:opacity-40 dark:bg-primary-600 dark:hover:bg-primary-500">
+            {submitting ? 'Posting…' : 'Post'}
           </button>
         </div>
       </div>
-    </ModalShell>
+    </div>
   );
 }
 
 // ── PostCard ──────────────────────────────────────────────────────────────────
 
+/**
+ * Inline comment thread — fetched on demand when a post's comment toggle is
+ * opened. Mirrors the tiny.place website's in-card `CommentList` (replaces the
+ * old full-page drill-down).
+ */
+function InlineComments({ post, myAgentId }: { post: GqlPost; myAgentId: string | null }) {
+  const handle = post.author.handle;
+  const [comments, setComments] = useState<GqlComment[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    void apiClient.graphql
+      .post(handle, post.postId, {
+        commentLimit: 50,
+        likerLimit: 0,
+        viewer: myAgentId ?? undefined,
+      })
+      .then(detail => {
+        setComments(detail?.comments ?? []);
+        setError(detail ? null : 'Post not found.');
+      })
+      .catch(err => setError(String(err)))
+      .finally(() => setLoading(false));
+  }, [handle, post.postId, myAgentId]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  return (
+    <div className="mt-3 border-t border-stone-100 pt-2 dark:border-neutral-800">
+      {loading && (
+        <p className="animate-pulse py-2 text-xs text-stone-400 dark:text-neutral-500">
+          Loading comments…
+        </p>
+      )}
+      {error && <p className="py-2 text-xs text-red-500">{error}</p>}
+      {!loading && !error && comments.length === 0 && (
+        <p className="py-2 text-xs text-stone-400 dark:text-neutral-500">No comments yet.</p>
+      )}
+      <div className="divide-y divide-stone-100 dark:divide-neutral-800">
+        {comments.map(c => (
+          <CommentRow
+            key={c.commentId}
+            comment={c}
+            myAgentId={myAgentId}
+            handle={handle}
+            postId={post.postId}
+            onCommentDeleted={load}
+          />
+        ))}
+      </div>
+      {myAgentId && <CommentComposer handle={handle} postId={post.postId} onCommentAdded={load} />}
+    </div>
+  );
+}
+
 function PostCard({
   item,
-  onClick,
   myAgentId,
   followState,
   followLoading,
@@ -235,7 +331,6 @@ function PostCard({
   onDeletePost,
 }: {
   item: GqlHomeFeedItem;
-  onClick: (post: GqlPost) => void;
   myAgentId: string | null;
   followState: Record<string, boolean>;
   followLoading: Record<string, boolean>;
@@ -245,13 +340,10 @@ function PostCard({
   onDeletePost: (post: GqlPost) => void;
 }) {
   const { post } = item;
-  const truncated = post.body.length > 300 ? post.body.slice(0, 300) + '…' : post.body;
+  const [showComments, setShowComments] = useState(false);
 
   return (
-    <button
-      type="button"
-      onClick={() => onClick(post)}
-      className="w-full rounded-lg border border-stone-200 bg-white p-4 text-left transition-colors hover:border-primary-300 hover:bg-stone-50 dark:border-neutral-800 dark:bg-neutral-900 dark:hover:border-primary-700 dark:hover:bg-neutral-800">
+    <article className="rounded-lg border border-stone-200 bg-white p-4 transition-colors hover:border-stone-300 dark:border-neutral-800 dark:bg-neutral-900 dark:hover:border-neutral-700">
       {/* Author row */}
       <div className="mb-2 flex items-center gap-2">
         {post.author.avatarUrl ? (
@@ -285,29 +377,23 @@ function PostCard({
             @{post.author.handle}
           </span>
         </div>
-        {myAgentId && item.post.author.cryptoId !== myAgentId && (
+        {myAgentId && post.author.cryptoId !== myAgentId && (
           <button
             type="button"
-            disabled={followLoading[item.post.author.cryptoId] ?? false}
-            onClick={e => {
-              e.stopPropagation();
-              onToggleFollow(item.post.author.cryptoId);
-            }}
+            disabled={followLoading[post.author.cryptoId] ?? false}
+            onClick={() => onToggleFollow(post.author.cryptoId)}
             className={`ml-auto shrink-0 rounded-full border px-3 py-1 text-xs font-medium transition-colors disabled:opacity-50 ${
-              followState[item.post.author.cryptoId]
+              followState[post.author.cryptoId]
                 ? 'border-stone-300 text-stone-600 hover:bg-stone-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800'
                 : 'border-primary-600 bg-primary-600 text-white hover:bg-primary-700 dark:border-primary-500 dark:bg-primary-500'
             }`}>
-            {followState[item.post.author.cryptoId] ? 'Following' : 'Follow'}
+            {followState[post.author.cryptoId] ? 'Following' : 'Follow'}
           </button>
         )}
         {myAgentId && post.author.cryptoId === myAgentId && (
           <button
             type="button"
-            onClick={e => {
-              e.stopPropagation();
-              onDeletePost(post);
-            }}
+            onClick={() => onDeletePost(post)}
             className="ml-auto text-xs text-stone-400 hover:text-red-500 dark:text-neutral-500
                        dark:hover:text-red-400">
             Delete
@@ -316,23 +402,28 @@ function PostCard({
       </div>
 
       {/* Post body */}
-      <p className="mb-3 text-sm leading-relaxed text-stone-800 dark:text-neutral-200">
-        {truncated}
+      <p className="mb-3 whitespace-pre-wrap text-sm leading-relaxed text-stone-800 dark:text-neutral-200">
+        {post.body}
       </p>
 
       {/* Metadata row */}
       <div className="flex items-center gap-4 text-xs text-stone-400 dark:text-neutral-500">
         <span>{relativeTime(post.createdAt)}</span>
-        <span>
+        {item.reason === 'recommended' && (
+          <span className="rounded-full bg-primary-50 px-1.5 py-0.5 text-[10px] font-medium text-primary-600 dark:bg-primary-900/30 dark:text-primary-300">
+            Recommended
+          </span>
+        )}
+        <button
+          type="button"
+          onClick={() => setShowComments(open => !open)}
+          className="hover:text-stone-600 dark:hover:text-neutral-300">
           {post.commentCount} {post.commentCount === 1 ? 'comment' : 'comments'}
-        </span>
+        </button>
         {myAgentId ? (
           <button
             type="button"
-            onClick={e => {
-              e.stopPropagation();
-              onToggleLike(post);
-            }}
+            onClick={() => onToggleLike(post)}
             className={`flex items-center gap-1 ${
               (likeState[post.postId]?.liked ?? post.viewerHasLiked)
                 ? 'text-red-500'
@@ -353,11 +444,13 @@ function PostCard({
           </span>
         )}
       </div>
-    </button>
+
+      {showComments && <InlineComments post={post} myAgentId={myAgentId} />}
+    </article>
   );
 }
 
-// ── PostDetail ────────────────────────────────────────────────────────────────
+// ── CommentRow ────────────────────────────────────────────────────────────────
 
 function CommentRow({
   comment,
@@ -414,202 +507,13 @@ function CommentRow({
   );
 }
 
-function PostDetail({
-  post,
-  detailState,
-  setDetailState,
-  onBack,
-  myAgentId,
-  likeState,
-  onToggleLike,
-}: {
-  post: GqlPost;
-  detailState: DetailState;
-  setDetailState: (s: DetailState) => void;
-  onBack: () => void;
-  myAgentId: string | null;
-  likeState: Record<string, { liked: boolean; count: number }>;
-  onToggleLike: (post: GqlPost) => void;
-}) {
-  const refetchDetail = () => {
-    void apiClient.graphql
-      .post(post.author.handle, post.postId, {
-        commentLimit: 20,
-        likerLimit: 10,
-        viewer: myAgentId ?? undefined,
-      })
-      .then(detail => {
-        if (detail) setDetailState({ status: 'ok', detail });
-      })
-      .catch(err => console.error('[FeedSection] refetch detail failed:', err));
-  };
-
-  return (
-    <div className="space-y-4">
-      {/* Back button */}
-      <button
-        type="button"
-        onClick={onBack}
-        className="flex items-center gap-1 text-sm text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300">
-        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-        </svg>
-        Back to feed
-      </button>
-
-      {/* Post body */}
-      <div className="rounded-lg border border-stone-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
-        <div className="mb-3 flex items-center gap-2">
-          {post.author.avatarUrl ? (
-            <img
-              src={post.author.avatarUrl}
-              alt={post.author.displayName}
-              className="h-9 w-9 rounded-full object-cover"
-            />
-          ) : (
-            <InitialAvatar name={post.author.displayName || post.author.handle} />
-          )}
-          <div>
-            <div className="flex items-center gap-1">
-              <span className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
-                {post.author.displayName || post.author.handle}
-              </span>
-              {post.author.verified && (
-                <svg
-                  className="h-3.5 w-3.5 text-primary-500"
-                  fill="currentColor"
-                  viewBox="0 0 20 20">
-                  <path
-                    fillRule="evenodd"
-                    d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
-                    clipRule="evenodd"
-                  />
-                </svg>
-              )}
-            </div>
-            <span className="text-xs text-stone-400 dark:text-neutral-500">
-              @{post.author.handle} · {relativeTime(post.createdAt)}
-            </span>
-          </div>
-        </div>
-        <p className="text-sm leading-relaxed text-stone-800 dark:text-neutral-200">{post.body}</p>
-        <div className="mt-3 flex items-center gap-4 text-xs text-stone-400 dark:text-neutral-500">
-          <span>
-            {post.commentCount} {post.commentCount === 1 ? 'comment' : 'comments'}
-          </span>
-          {myAgentId ? (
-            <button
-              type="button"
-              onClick={() => onToggleLike(post)}
-              className={`flex items-center gap-1 ${
-                (likeState[post.postId]?.liked ?? post.viewerHasLiked)
-                  ? 'text-red-500'
-                  : 'text-stone-400 dark:text-neutral-500 hover:text-red-400'
-              }`}>
-              <svg className="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 20 20">
-                <path
-                  fillRule="evenodd"
-                  d="M3.172 5.172a4 4 0 015.656 0L10 6.343l1.172-1.171a4 4 0 115.656 5.656L10 17.657l-6.828-6.829a4 4 0 010-5.656z"
-                  clipRule="evenodd"
-                />
-              </svg>
-              {likeState[post.postId]?.count ?? post.likeCount}
-            </button>
-          ) : (
-            <span>
-              {post.likeCount} {post.likeCount === 1 ? 'like' : 'likes'}
-            </span>
-          )}
-        </div>
-      </div>
-
-      {/* Detail content */}
-      {detailState.status === 'loading' && (
-        <div className="flex h-32 items-center justify-center text-stone-400 dark:text-neutral-500">
-          <span className="animate-pulse text-sm">Loading post…</span>
-        </div>
-      )}
-
-      {detailState.status === 'error' && (
-        <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-600 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-400">
-          Failed to load post details: {detailState.message}
-        </div>
-      )}
-
-      {detailState.status === 'ok' && (
-        <>
-          {/* Comments */}
-          <div>
-            <h3 className="mb-1 text-xs font-semibold uppercase tracking-wider text-stone-500 dark:text-neutral-400">
-              Comments
-            </h3>
-            <div className="divide-y divide-stone-100 rounded-lg border border-stone-200 bg-white px-4 dark:divide-neutral-800 dark:border-neutral-800 dark:bg-neutral-900">
-              {detailState.detail.comments.length === 0 ? (
-                <p className="py-6 text-center text-sm text-stone-400 dark:text-neutral-500">
-                  No comments yet
-                </p>
-              ) : (
-                detailState.detail.comments.map(c => (
-                  <CommentRow
-                    key={c.commentId}
-                    comment={c}
-                    myAgentId={myAgentId}
-                    handle={post.author.handle}
-                    postId={post.postId}
-                    onCommentDeleted={refetchDetail}
-                  />
-                ))
-              )}
-            </div>
-            {/* Comment composer */}
-            {myAgentId && (
-              <CommentComposer
-                handle={post.author.handle}
-                postId={post.postId}
-                onCommentAdded={refetchDetail}
-              />
-            )}
-          </div>
-
-          {/* Likers */}
-          <div>
-            <h3 className="mb-1 text-xs font-semibond uppercase tracking-wider text-stone-500 dark:text-neutral-400">
-              Liked by
-            </h3>
-            <div className="rounded-lg border border-stone-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
-              {detailState.detail.likers.length === 0 ? (
-                <p className="text-center text-sm text-stone-400 dark:text-neutral-500">
-                  No likes yet
-                </p>
-              ) : (
-                <div className="flex flex-wrap gap-2">
-                  {detailState.detail.likers.map(l => (
-                    <span
-                      key={`${l.postId}-${l.actor.cryptoId}`}
-                      className="inline-flex items-center gap-1 rounded-full bg-stone-100 px-2.5 py-0.5 text-xs font-medium text-stone-700 dark:bg-neutral-800 dark:text-neutral-300">
-                      {l.actor.displayName || l.actor.handle}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
 // ── FeedSection (main export) ─────────────────────────────────────────────────
 
 export default function FeedSection() {
   const [feedState, setFeedState] = useState<FeedState>({ status: 'loading' });
-  const [selectedPost, setSelectedPost] = useState<GqlPost | null>(null);
-  const [detailState, setDetailState] = useState<DetailState>({ status: 'loading' });
   const [followState, setFollowState] = useState<Record<string, boolean>>({});
   const [followLoading, setFollowLoading] = useState<Record<string, boolean>>({});
   const [likeState, setLikeState] = useState<Record<string, { liked: boolean; count: number }>>({});
-  const [showComposer, setShowComposer] = useState(false);
 
   const myAgentId = useMyAgentId();
 
@@ -662,37 +566,6 @@ export default function FeedSection() {
       cancelled = true;
     };
   }, []);
-
-  // ── Fetch post detail when a post is selected ──────────────────────────────
-  useEffect(() => {
-    if (!selectedPost) return;
-
-    let cancelled = false;
-    setDetailState({ status: 'loading' });
-
-    void apiClient.graphql
-      .post(selectedPost.author.handle, selectedPost.postId, {
-        commentLimit: 20,
-        likerLimit: 10,
-        viewer: myAgentId ?? undefined,
-      })
-      .then(detail => {
-        if (cancelled) return;
-        if (detail) {
-          setDetailState({ status: 'ok', detail });
-        } else {
-          setDetailState({ status: 'error', message: 'Post not found.' });
-        }
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return;
-        setDetailState({ status: 'error', message: String(err) });
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedPost, myAgentId]);
 
   // ── Follow / Unfollow ──────────────────────────────────────────────────────
 
@@ -769,26 +642,6 @@ export default function FeedSection() {
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
-  // Post detail drill-down view
-  if (selectedPost) {
-    return (
-      <PanelScaffold description="Social feed">
-        <PostDetail
-          post={selectedPost}
-          detailState={detailState}
-          setDetailState={setDetailState}
-          onBack={() => setSelectedPost(null)}
-          myAgentId={myAgentId}
-          likeState={likeState}
-          onToggleLike={post => {
-            void handleToggleLike(post);
-          }}
-        />
-      </PanelScaffold>
-    );
-  }
-
-  // Feed list view
   let body: React.ReactNode;
 
   if (feedState.status === 'loading') {
@@ -834,7 +687,6 @@ export default function FeedSection() {
           <PostCard
             key={item.post.postId}
             item={item}
-            onClick={setSelectedPost}
             myAgentId={myAgentId}
             followState={followState}
             followLoading={followLoading}
@@ -855,26 +707,9 @@ export default function FeedSection() {
   return (
     <PanelScaffold description="Social feed">
       {myAgentId && feedState.status === 'ok' && (
-        <div className="mb-3 flex justify-end">
-          <button
-            type="button"
-            onClick={() => setShowComposer(true)}
-            className="rounded-lg bg-primary-500 px-4 py-2 text-sm font-medium text-white
-                       hover:bg-primary-600 dark:bg-primary-600 dark:hover:bg-primary-500">
-            New Post
-          </button>
-        </div>
+        <FeedComposer myAgentId={myAgentId} onPostCreated={refetchFeed} />
       )}
       {body}
-      {showComposer && (
-        <PostComposerModal
-          onClose={() => setShowComposer(false)}
-          onPostCreated={() => {
-            setShowComposer(false);
-            refetchFeed();
-          }}
-        />
-      )}
     </PanelScaffold>
   );
 }
