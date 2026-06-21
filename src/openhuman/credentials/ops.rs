@@ -453,12 +453,16 @@ async fn fetch_current_user_for_session_store(
 }
 
 fn auth_me_store_failure_is_transient(reason: &str) -> bool {
-    if crate::core::observability::contains_transient_transport_phrase(reason) {
-        return true;
+    if let Some(status) = auth_me_failure_status(reason) {
+        return AUTH_ME_STORE_TRANSIENT_STATUSES.contains(&status);
     }
 
+    crate::core::observability::contains_transient_transport_phrase(reason)
+}
+
+fn auth_me_failure_status(reason: &str) -> Option<u16> {
     let lower = reason.to_ascii_lowercase();
-    AUTH_ME_STORE_TRANSIENT_STATUSES.iter().any(|status| {
+    (100..600).find(|status| {
         let status = status.to_string();
         lower.contains(&format!("({status}"))
             || lower.contains(&format!("http {status}"))

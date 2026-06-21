@@ -126,10 +126,19 @@ fn auth_me_store_failure_classifier_only_accepts_transient_shapes() {
         "GET /auth/me failed (503 Service Unavailable): overloaded"
     ));
     assert!(auth_me_store_failure_is_transient(
+        "GET /auth/me failed (503 Service Unavailable): session timeout"
+    ));
+    assert!(auth_me_store_failure_is_transient(
         "GET /auth/me: error sending request for url"
     ));
     assert!(!auth_me_store_failure_is_transient(
         "GET /auth/me failed (401 Unauthorized): bad token"
+    ));
+    assert!(!auth_me_store_failure_is_transient(
+        "GET /auth/me failed (401 Unauthorized): session timeout"
+    ));
+    assert!(!auth_me_store_failure_is_transient(
+        "GET /auth/me failed (403 Forbidden): connection reset"
     ));
 }
 

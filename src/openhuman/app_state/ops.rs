@@ -39,6 +39,7 @@ const AUTH_FETCH_TIMEOUT: Duration = Duration::from_secs(5);
 const RUNTIME_SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(10);
 const SNAPSHOT_SUB_OP_TIMEOUT: Duration = Duration::from_secs(5);
 const PENDING_BACKEND_VALIDATION_FIELD: &str = "pendingBackendValidation";
+const AUTH_ME_REVALIDATION_TRANSIENT_STATUSES: &[u16] = &[408, 429, 500, 502, 503, 504, 520];
 static APP_STATE_FILE_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 static CURRENT_USER_CACHE: Lazy<Mutex<Option<CachedCurrentUser>>> = Lazy::new(|| Mutex::new(None));
 static RUNTIME_SNAPSHOT_CACHE: Lazy<Mutex<Option<CachedRuntimeSnapshot>>> =
@@ -63,6 +64,23 @@ struct CachedCurrentUser {
 enum SnapshotCurrentUser {
     User(Option<Value>),
     DeferredSessionRejected,
+}
+
+#[derive(Debug, Clone)]
+enum CurrentUserFetchError {
+    Rejected(String),
+    TransientResponse(String),
+    FetchFailed(String),
+}
+
+impl CurrentUserFetchError {
+    fn message(&self) -> &str {
+        match self {
+            CurrentUserFetchError::Rejected(message)
+            | CurrentUserFetchError::TransientResponse(message)
+            | CurrentUserFetchError::FetchFailed(message) => message,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -298,32 +316,39 @@ fn resolve_base(config: &Config) -> Result<Url, String> {
     Ok(parsed)
 }
 
-async fn fetch_current_user(config: &Config, token: &str) -> Result<Option<Value>, String> {
-    let client = build_client()?;
-    let base = resolve_base(config)?;
+async fn fetch_current_user(
+    config: &Config,
+    token: &str,
+) -> Result<Option<Value>, CurrentUserFetchError> {
+    let client = build_client().map_err(CurrentUserFetchError::FetchFailed)?;
+    let base = resolve_base(config).map_err(CurrentUserFetchError::FetchFailed)?;
     let url = base
         .join("auth/me")
-        .map_err(|e| format!("build URL failed: {e}"))?;
+        .map_err(|e| CurrentUserFetchError::FetchFailed(format!("build URL failed: {e}")))?;
     let response = client
         .request(Method::GET, url.clone())
         .header(AUTHORIZATION, bearer_authorization_value(token))
         .send()
         .await
-        .map_err(|e| format!("request failed: {e}"))?;
+        .map_err(|e| CurrentUserFetchError::FetchFailed(format!("request failed: {e}")))?;
     let status = response.status();
-    let text = response
-        .text()
-        .await
-        .map_err(|e| format!("failed to read backend response body: {e}"))?;
+    let text = response.text().await.map_err(|e| {
+        CurrentUserFetchError::FetchFailed(format!("failed to read backend response body: {e}"))
+    })?;
 
     debug!("{LOG_PREFIX} GET /auth/me -> {}", status);
 
     if !status.is_success() {
+        let message = format!("{status} {text}");
         warn!(
             "{LOG_PREFIX} current user fetch failed: {} {}",
             status, text
         );
-        return Ok(None);
+        return if AUTH_ME_REVALIDATION_TRANSIENT_STATUSES.contains(&status.as_u16()) {
+            Err(CurrentUserFetchError::TransientResponse(message))
+        } else {
+            Err(CurrentUserFetchError::Rejected(message))
+        };
     }
 
     let raw: Value =
@@ -428,7 +453,7 @@ async fn fetch_current_user_cached(
     config: &Config,
     token: &str,
     allow_cache: bool,
-) -> Result<Option<Value>, String> {
+) -> Result<Option<Value>, CurrentUserFetchError> {
     let api_base = effective_backend_api_url(&config.api_url)
         .trim()
         .trim_end_matches('/')
@@ -742,7 +767,7 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
             }
             Ok(Ok(None)) if pending_backend_validation => {
                 warn!(
-                    "{LOG_PREFIX} backend rejected pending session revalidation; clearing stored app session"
+                    "{LOG_PREFIX} backend returned empty user for pending session revalidation; clearing stored app session"
                 );
                 if let Err(error) = clear_deferred_session_after_backend_rejection(&config).await {
                     warn!("{LOG_PREFIX} failed to clear rejected pending session: {error}");
@@ -750,9 +775,9 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
                 SnapshotCurrentUser::DeferredSessionRejected
             }
             Ok(Ok(None)) => SnapshotCurrentUser::User(stored_user.clone()),
-            Ok(Err(error)) if pending_backend_validation => {
+            Ok(Err(CurrentUserFetchError::Rejected(error))) if pending_backend_validation => {
                 warn!(
-                    "{LOG_PREFIX} pending current user refresh failed; clearing stored app session: {error}"
+                    "{LOG_PREFIX} pending current user refresh was rejected; clearing stored app session: {error}"
                 );
                 if let Err(clear_error) =
                     clear_deferred_session_after_backend_rejection(&config).await
@@ -761,8 +786,30 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
                 }
                 SnapshotCurrentUser::DeferredSessionRejected
             }
+            Ok(Err(CurrentUserFetchError::FetchFailed(error))) if pending_backend_validation => {
+                warn!(
+                    "{LOG_PREFIX} pending current user refresh failed before a backend response; clearing stored app session: {error}"
+                );
+                if let Err(clear_error) =
+                    clear_deferred_session_after_backend_rejection(&config).await
+                {
+                    warn!("{LOG_PREFIX} failed to clear rejected pending session: {clear_error}");
+                }
+                SnapshotCurrentUser::DeferredSessionRejected
+            }
+            Ok(Err(CurrentUserFetchError::TransientResponse(error)))
+                if pending_backend_validation =>
+            {
+                warn!(
+                    "{LOG_PREFIX} pending current user refresh received transient backend response; keeping stored pending session: {error}"
+                );
+                SnapshotCurrentUser::User(stored_user.clone())
+            }
             Ok(Err(error)) => {
-                warn!("{LOG_PREFIX} current user refresh failed; using stored snapshot fallback: {error}");
+                warn!(
+                    "{LOG_PREFIX} current user refresh failed; using stored snapshot fallback: {}",
+                    error.message()
+                );
                 SnapshotCurrentUser::User(stored_user.clone())
             }
             Err(_) if pending_backend_validation => {

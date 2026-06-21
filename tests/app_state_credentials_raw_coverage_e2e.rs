@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -197,10 +198,7 @@ async fn auth_me_server(
     (url, task, shutdown_tx)
 }
 
-/// Like `auth_me_server` but always replies HTTP 500, so `store_session`'s
-/// `GET /auth/me` validation gate fails — exercising the WARN + `Err` path that
-/// leaves the session unpersisted (the "OAuth succeeded but app is back on the
-/// signin page" bug).
+/// Like `auth_me_server` but always replies HTTP 500.
 async fn auth_me_failing_server() -> (
     String,
     tokio::task::JoinHandle<()>,
@@ -222,6 +220,62 @@ async fn auth_me_failing_server() -> (
                     let body = "{\"error\":\"mock /auth/me 500\"}";
                     let response = format!(
                         "HTTP/1.1 500 Internal Server Error\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    let _ = stream.write_all(response.as_bytes()).await;
+                    let _ = stream.shutdown().await;
+                }
+            }
+        }
+    });
+    (url, task, shutdown_tx)
+}
+
+async fn auth_me_rejected_server() -> (
+    String,
+    tokio::task::JoinHandle<()>,
+    tokio::sync::oneshot::Sender<()>,
+) {
+    auth_me_status_sequence_server(vec![(
+        401,
+        "Unauthorized",
+        "{\"error\":\"revoked session\"}",
+    )])
+    .await
+}
+
+async fn auth_me_status_sequence_server(
+    responses: Vec<(u16, &'static str, &'static str)>,
+) -> (
+    String,
+    tokio::task::JoinHandle<()>,
+    tokio::sync::oneshot::Sender<()>,
+) {
+    assert!(!responses.is_empty(), "status sequence must not be empty");
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .expect("bind sequenced auth/me listener");
+    let url = format!("http://{}", listener.local_addr().expect("listener addr"));
+    let responses = Arc::new(responses);
+    let next_response = Arc::new(AtomicUsize::new(0));
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    let task = tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = &mut shutdown_rx => break,
+                accepted = listener.accept() => {
+                    let Ok((mut stream, _)) = accepted else { break; };
+                    let mut req = [0_u8; 2048];
+                    let _ = stream.read(&mut req).await;
+                    let idx = next_response.fetch_add(1, Ordering::SeqCst);
+                    let (status, reason, body) = responses
+                        .get(idx)
+                        .or_else(|| responses.last())
+                        .copied()
+                        .expect("non-empty response sequence");
+                    let response = format!(
+                        "HTTP/1.1 {status} {reason}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
                         body.len(),
                         body
                     );
@@ -537,7 +591,7 @@ async fn snapshot_clears_pending_backend_validation_after_successful_revalidatio
 #[tokio::test]
 async fn snapshot_clears_pending_session_when_backend_revalidation_is_rejected() {
     let _lock = env_lock();
-    let (api_url, server_task, shutdown_tx) = auth_me_failing_server().await;
+    let (api_url, server_task, shutdown_tx) = auth_me_rejected_server().await;
     let harness = setup(&api_url);
     let config = harness.config().await;
 
@@ -586,9 +640,84 @@ async fn snapshot_clears_pending_session_when_backend_revalidation_is_rejected()
 }
 
 #[tokio::test]
-async fn snapshot_clears_transiently_stored_supplied_user_after_revalidation_failure() {
+async fn snapshot_preserves_pending_session_when_backend_revalidation_is_transient() {
     let _lock = env_lock();
     let (api_url, server_task, shutdown_tx) = auth_me_failing_server().await;
+    let harness = setup(&api_url);
+    let config = harness.config().await;
+
+    let mut metadata = HashMap::new();
+    metadata.insert("user_id".to_string(), "pending-transient-user".to_string());
+    metadata.insert(
+        "user_json".to_string(),
+        json!({
+            "id": "pending-transient-user",
+            "email": "pending-transient@example.test",
+            "pendingBackendValidation": true
+        })
+        .to_string(),
+    );
+    AuthService::from_config(&config)
+        .store_provider_token(
+            APP_SESSION_PROVIDER,
+            DEFAULT_AUTH_PROFILE_NAME,
+            "round14.pending.transient",
+            metadata,
+            true,
+        )
+        .expect("seed transient pending app session");
+
+    let snap = snapshot()
+        .await
+        .expect("snapshot with transient pending revalidation")
+        .value;
+    assert!(
+        snap.auth.is_authenticated,
+        "pending session must stay authenticated when revalidation is transient"
+    );
+    assert_eq!(
+        snap.session_token.as_deref(),
+        Some("round14.pending.transient")
+    );
+    assert_eq!(
+        snap.current_user.as_ref().and_then(|v| v.get("id")),
+        Some(&json!("pending-transient-user"))
+    );
+    assert_eq!(
+        snap.current_user
+            .as_ref()
+            .and_then(|v| v.get("pendingBackendValidation")),
+        Some(&json!(true))
+    );
+    let profile = AuthService::from_config(&config)
+        .get_profile(APP_SESSION_PROVIDER, None)
+        .expect("read profile after transient revalidation");
+    assert!(
+        profile.is_some(),
+        "transient pending session profile must be preserved for retry"
+    );
+
+    let _ = shutdown_tx.send(());
+    let _ = server_task.await;
+}
+
+#[tokio::test]
+async fn snapshot_clears_transiently_stored_supplied_user_after_revalidation_rejection() {
+    let _lock = env_lock();
+    let (api_url, server_task, shutdown_tx) = auth_me_status_sequence_server(vec![
+        (
+            500,
+            "Internal Server Error",
+            "{\"error\":\"transient one\"}",
+        ),
+        (
+            500,
+            "Internal Server Error",
+            "{\"error\":\"transient two\"}",
+        ),
+        (401, "Unauthorized", "{\"error\":\"revoked session\"}"),
+    ])
+    .await;
     let harness = setup(&api_url);
     let config = harness.config().await;
     let token = jwt_with_payload(json!({
