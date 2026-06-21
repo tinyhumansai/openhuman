@@ -1,61 +1,21 @@
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 
 import { useT } from '../../../lib/i18n/I18nContext';
-import type { Locale } from '../../../lib/i18n/types';
-import { setActiveAccount } from '../../../store/accountsSlice';
-import { useAppDispatch, useAppSelector } from '../../../store/hooks';
-import { setLocale } from '../../../store/localeSlice';
-import { createNewThread, loadThreadMessages, setSelectedThread } from '../../../store/threadSlice';
-import { AGENT_ACCOUNT_ID } from '../../../utils/accountsFullscreen';
-import { LOCALE_OPTIONS } from '../../LanguageSelect';
 import { useRootSidebar } from './RootShellLayout';
+import { useHomeNav } from './useHomeNav';
 
 const ICON_BTN =
   'flex h-7 w-7 flex-none items-center justify-center rounded-md text-stone-500 transition-colors hover:bg-stone-100 hover:text-stone-700 dark:text-neutral-400 dark:hover:bg-neutral-800/60 dark:hover:text-neutral-200';
 
 /**
- * Thin utility header at the top of the root sidebar: collapse the sidebar,
- * jump to Settings, and switch language. The language control is a globe icon
- * with a transparent native <select> overlaid on top, so clicking the icon
- * opens the OS locale picker (reusing the shared LOCALE_OPTIONS + setLocale).
+ * Thin utility header at the top of the root sidebar: jump Home, open Settings,
+ * and collapse the sidebar. Language is chosen from Settings, not here.
  */
 export default function SidebarHeader() {
   const { t } = useT();
   const navigate = useNavigate();
-  const location = useLocation();
-  const dispatch = useAppDispatch();
   const { hide } = useRootSidebar();
-  const locale = useAppSelector(state => state.locale.current);
-  const threads = useAppSelector(state => state.thread.threads);
-
-  // Home → the unified chat on a blank thread. When we're NOT already on chat,
-  // just navigate and let the mounting Conversations page own blank-thread
-  // landing (avoids a duplicate-create race). When already on chat (no remount),
-  // reset to a blank thread here: reuse an existing empty one, else create.
-  const handleHome = () => {
-    // Switch back to the agent account first — otherwise a selected connected
-    // app (WhatsApp/Slack/…) keeps Accounts rendering its webview instead of the
-    // blank agent thread.
-    dispatch(setActiveAccount(AGENT_ACCOUNT_ID));
-    const onChat = location.pathname === '/chat' || location.pathname.startsWith('/chat/');
-    if (!onChat) {
-      navigate('/chat');
-      return;
-    }
-    const empty = threads.find(thr => (thr.messageCount ?? 0) === 0);
-    if (empty) {
-      dispatch(setSelectedThread(empty.id));
-      void dispatch(loadThreadMessages(empty.id));
-      return;
-    }
-    void dispatch(createNewThread())
-      .unwrap()
-      .then(thr => {
-        dispatch(setSelectedThread(thr.id));
-        void dispatch(loadThreadMessages(thr.id));
-      })
-      .catch(() => {});
-  };
+  const handleHome = useHomeNav();
 
   return (
     <div className="flex items-center justify-between gap-1 px-2 py-1.5">
@@ -77,32 +37,23 @@ export default function SidebarHeader() {
       </button>
 
       <div className="flex items-center gap-0.5">
-        {/* Language — globe icon with a transparent select overlay. `overflow-hidden`
-          clips the native <select> to the icon box: a select won't shrink below
-          its longest option's width, so without clipping it spills to the right
-          and steals clicks from the Settings / collapse buttons. */}
-        <label className={`relative overflow-hidden ${ICON_BTN}`} title={t('settings.language')}>
+        {/* Wallet shortcut — one-click access to wallet balances. */}
+        <button
+          type="button"
+          onClick={() => navigate('/settings/wallet-balances')}
+          className={ICON_BTN}
+          data-analytics-id="sidebar-header-wallet"
+          aria-label={t('nav.wallet')}
+          title={t('nav.wallet')}>
           <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path
               strokeLinecap="round"
               strokeLinejoin="round"
               strokeWidth={1.8}
-              d="M21 12a9 9 0 11-18 0 9 9 0 0118 0zM3.6 9h16.8M3.6 15h16.8M12 3a15 15 0 010 18 15 15 0 010-18z"
+              d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"
             />
           </svg>
-          <select
-            value={locale}
-            onChange={e => dispatch(setLocale(e.target.value as Locale))}
-            aria-label={t('settings.language')}
-            data-analytics-id="sidebar-header-language"
-            className="absolute inset-0 h-full w-full cursor-pointer opacity-0">
-            {LOCALE_OPTIONS.map(opt => (
-              <option key={opt.value} value={opt.value}>
-                {opt.flag} {opt.label}
-              </option>
-            ))}
-          </select>
-        </label>
+        </button>
 
         <button
           type="button"

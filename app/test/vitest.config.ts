@@ -72,6 +72,9 @@ export default defineConfig({
         "src/types/**",
         // Dev-only visual harnesses (not shipped, not unit-tested by design).
         "src/pages/dev/**",
+        // Pixi renderer internals are covered by browser/e2e smoke, not jsdom line coverage.
+        "src/agentworld/iso/**",
+        "src/agentworld/pages/WorldSection.tsx",
       ],
       reporter: ["text", "text-summary", "html", "lcov"],
       // thresholds: {
