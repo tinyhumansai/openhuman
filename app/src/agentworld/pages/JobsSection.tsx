@@ -14,7 +14,7 @@
  * Pattern mirrors LedgerSection / FeedSection: useState + useEffect fetch,
  * PanelScaffold wrapper, StatusBlock for loading/error/empty states.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import PanelScaffold from '../../components/layout/PanelScaffold';
 import Button from '../../components/ui/Button';
@@ -25,6 +25,7 @@ import {
   type Proposal,
   type ProposalCreateParams,
 } from '../../lib/agentworld/invokeApiClient';
+import { useT } from '../../lib/i18n/I18nContext';
 import { fetchWalletStatus } from '../../services/walletApi';
 import { apiClient } from '../AgentWorldShell';
 import { explorerTxUrl } from '../hooks/useX402Buy';
@@ -187,6 +188,7 @@ function ClientAvatar({ avatarUrl, displayName }: { avatarUrl?: string; displayN
 // ── PostJobModal ──────────────────────────────────────────────────────────────
 
 function PostJobModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+  const { t } = useT();
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [category, setCategory] = useState('');
@@ -202,6 +204,22 @@ function PostJobModal({ onClose, onCreated }: { onClose: () => void; onCreated: 
     if (!title.trim() || !budgetAmount.trim()) return;
     setSubmitting(true);
     setError(null);
+    // <input type="date"> yields "YYYY-MM-DD" but the server requires RFC3339.
+    // Pin to end-of-day UTC, consistent with BountiesSection.
+    const deadlineDate = proposalDeadline.trim();
+    const deadlineIso = deadlineDate ? `${deadlineDate}T23:59:59Z` : undefined;
+    // Reject today and past dates by comparing the raw date string against the
+    // local calendar date — end-of-day UTC would otherwise let "today" pass
+    // until midnight UTC.
+    if (deadlineDate) {
+      const now = new Date();
+      const todayLocal = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+      if (deadlineDate <= todayLocal) {
+        setError(t('agentWorld.jobs.deadlineFuture', 'Proposal deadline must be in the future'));
+        setSubmitting(false);
+        return;
+      }
+    }
     const params: JobCreateParams = {
       title: title.trim(),
       description: description.trim() || undefined,
@@ -214,7 +232,7 @@ function PostJobModal({ onClose, onCreated }: { onClose: () => void; onCreated: 
         : undefined,
       budgetAmount: budgetAmount.trim(),
       budgetAsset: budgetAsset.trim() || 'USDC',
-      proposalDeadline: proposalDeadline || undefined,
+      proposalDeadline: deadlineIso,
     };
     try {
       await apiClient.jobsWrite.create(params);
@@ -350,11 +368,23 @@ function ApplyModal({
   onClose: () => void;
   onApplied: () => void;
 }) {
+  const { t } = useT();
   const [coverLetter, setCoverLetter] = useState('');
   const [bidAmount, setBidAmount] = useState('');
   const [estimatedDelivery, setEstimatedDelivery] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [succeeded, setSucceeded] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Clear the auto-close timer on unmount to avoid state updates after teardown.
+  useEffect(() => {
+    return () => {
+      if (successTimerRef.current) {
+        clearTimeout(successTimerRef.current);
+      }
+    };
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -367,8 +397,12 @@ function ApplyModal({
     };
     try {
       await apiClient.jobsWrite.apply(jobId, params);
+      setSucceeded(true);
       onApplied();
-      onClose();
+      // Auto-close after a short success display window.
+      successTimerRef.current = setTimeout(() => {
+        onClose();
+      }, 1500);
     } catch (err) {
       setError(String(err));
     } finally {
@@ -379,60 +413,80 @@ function ApplyModal({
   return (
     <ModalShell
       onClose={onClose}
-      title="Apply for Job"
+      title={t('agentworld.jobs.applyModal.title')}
       titleId="apply-modal-title"
       maxWidthClassName="max-w-lg">
-      <form
-        onSubmit={e => {
-          void handleSubmit(e);
-        }}
-        className="space-y-3">
-        <div>
-          <label className="mb-1 block text-xs font-medium text-stone-700 dark:text-neutral-300">
-            Cover Letter
-          </label>
-          <textarea
-            rows={4}
-            value={coverLetter}
-            onChange={e => setCoverLetter(e.target.value)}
-            className="w-full rounded border border-stone-300 bg-white px-2.5 py-1.5 text-sm text-stone-900 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
-            placeholder="Describe your experience and why you're a good fit"
-          />
+      {succeeded ? (
+        <div
+          role="status"
+          aria-live="polite"
+          className="flex flex-col items-center gap-3 py-6 text-center">
+          <p className="text-sm font-medium text-green-700 dark:text-green-400">
+            {t('agentworld.jobs.applyModal.successHeading')}
+          </p>
+          <p className="text-xs text-stone-500 dark:text-neutral-400">
+            {t('agentworld.jobs.applyModal.successBody')}
+          </p>
         </div>
-        <div>
-          <label className="mb-1 block text-xs font-medium text-stone-700 dark:text-neutral-300">
-            Bid Amount
-          </label>
-          <input
-            type="text"
-            value={bidAmount}
-            onChange={e => setBidAmount(e.target.value)}
-            className="w-full rounded border border-stone-300 bg-white px-2.5 py-1.5 text-sm text-stone-900 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
-            placeholder="e.g. 450 USDC"
-          />
-        </div>
-        <div>
-          <label className="mb-1 block text-xs font-medium text-stone-700 dark:text-neutral-300">
-            Estimated Delivery
-          </label>
-          <input
-            type="text"
-            value={estimatedDelivery}
-            onChange={e => setEstimatedDelivery(e.target.value)}
-            className="w-full rounded border border-stone-300 bg-white px-2.5 py-1.5 text-sm text-stone-900 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
-            placeholder="e.g. 2 weeks"
-          />
-        </div>
-        {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
-        <div className="flex justify-end gap-2 pt-1">
-          <Button type="button" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button type="submit" disabled={submitting}>
-            {submitting ? 'Applying…' : 'Submit Application'}
-          </Button>
-        </div>
-      </form>
+      ) : (
+        <form
+          onSubmit={e => {
+            void handleSubmit(e);
+          }}
+          className="space-y-3">
+          <div>
+            <label className="mb-1 block text-xs font-medium text-stone-700 dark:text-neutral-300">
+              {t('agentworld.jobs.applyModal.coverLetterLabel')}
+            </label>
+            <textarea
+              rows={4}
+              value={coverLetter}
+              onChange={e => setCoverLetter(e.target.value)}
+              className="w-full rounded border border-stone-300 bg-white px-2.5 py-1.5 text-sm text-stone-900 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
+              placeholder={t('agentworld.jobs.applyModal.coverLetterPlaceholder')}
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-stone-700 dark:text-neutral-300">
+              {t('agentworld.jobs.applyModal.bidAmountLabel')}
+            </label>
+            <input
+              type="text"
+              value={bidAmount}
+              onChange={e => setBidAmount(e.target.value)}
+              className="w-full rounded border border-stone-300 bg-white px-2.5 py-1.5 text-sm text-stone-900 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
+              placeholder={t('agentworld.jobs.applyModal.bidAmountPlaceholder')}
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-stone-700 dark:text-neutral-300">
+              {t('agentworld.jobs.applyModal.deliveryLabel')}
+            </label>
+            <input
+              type="text"
+              value={estimatedDelivery}
+              onChange={e => setEstimatedDelivery(e.target.value)}
+              className="w-full rounded border border-stone-300 bg-white px-2.5 py-1.5 text-sm text-stone-900 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
+              placeholder={t('agentworld.jobs.applyModal.deliveryPlaceholder')}
+            />
+          </div>
+          {error && (
+            <p role="alert" className="text-xs text-red-600 dark:text-red-400">
+              {error}
+            </p>
+          )}
+          <div className="flex justify-end gap-2 pt-1">
+            <Button type="button" onClick={onClose} disabled={submitting}>
+              {t('agentworld.jobs.applyModal.cancel')}
+            </Button>
+            <Button type="submit" disabled={submitting}>
+              {submitting
+                ? t('agentworld.jobs.applyModal.submitting')
+                : t('agentworld.jobs.applyModal.submit')}
+            </Button>
+          </div>
+        </form>
+      )}
     </ModalShell>
   );
 }
@@ -1226,7 +1280,9 @@ export default function JobsSection() {
         <ApplyModal
           jobId={applyingJobId}
           onClose={() => setApplyingJobId(null)}
-          onApplied={() => setApplyingJobId(null)}
+          onApplied={() => {
+            refetchJobs();
+          }}
         />
       )}
       {disputeJobId && (

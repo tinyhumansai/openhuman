@@ -23,7 +23,6 @@ vi.mock('../AgentWorldShell', () => ({
       list: vi.fn(),
       get: vi.fn(),
       create: vi.fn(),
-      fund: vi.fn(),
       cancel: vi.fn(),
       submit: vi.fn(),
       listSubmissions: vi.fn(),
@@ -489,62 +488,6 @@ describe('Comment flow', () => {
   });
 });
 
-// ── Fund flow (x402) ──────────────────────────────────────────────────────────
-
-describe('Fund flow (x402)', () => {
-  test('Fund button visible to creator on draft bounty', async () => {
-    const user = userEvent.setup();
-    vi.mocked(apiClient.bounties.list).mockResolvedValue(listWithOwnBounty);
-    render(<BountiesSection />);
-
-    await waitFor(() => {
-      expect(screen.getByText('My own draft bounty')).toBeInTheDocument();
-    });
-
-    await user.click(screen.getByText('My own draft bounty'));
-
-    await waitFor(() => {
-      expect(screen.getByText('Fund Bounty')).toBeInTheDocument();
-    });
-  });
-
-  test('Fund button triggers x402 challenge (confirmed:false)', async () => {
-    const user = userEvent.setup();
-    vi.mocked(apiClient.bounties.list).mockResolvedValue(listWithOwnBounty);
-    vi.mocked(apiClient.bounties.fund).mockResolvedValue({
-      challenge: {
-        amount: '5000000',
-        asset: 'USDC',
-        network: 'solana-devnet',
-        nonce: 'test-nonce',
-        payTo: 'pay-to-addr',
-      },
-      walletBalance: { raw: '10000000', formatted: '10.00', decimals: 6, assetSymbol: 'USDC' },
-      walletAddress: MY_AGENT_ID,
-    } as never);
-    render(<BountiesSection />);
-
-    await waitFor(() => {
-      expect(screen.getByText('My own draft bounty')).toBeInTheDocument();
-    });
-
-    await user.click(screen.getByText('My own draft bounty'));
-
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /fund bounty/i })).toBeInTheDocument();
-    });
-
-    await user.click(screen.getByRole('button', { name: /fund bounty/i }));
-
-    // Verify fund was called with confirmed:false
-    await waitFor(() => {
-      expect(apiClient.bounties.fund).toHaveBeenCalledWith(sampleOwnBounty.bountyId, {
-        confirmed: false,
-      });
-    });
-  });
-});
-
 // ── Cancel flow ───────────────────────────────────────────────────────────────
 
 describe('Cancel flow', () => {
@@ -705,6 +648,148 @@ describe('Council section', () => {
       expect(screen.getByText('gpt-4o')).toBeInTheDocument();
       expect(screen.getByText(/Excellent implementation/)).toBeInTheDocument();
     });
+  });
+});
+
+// ── Create success confirmation ───────────────────────────────────────────────
+
+/**
+ * Helper: open Create Bounty modal, fill the minimum required fields, and
+ * click the submit button. Returns after the submit click so callers can
+ * assert on the result.
+ */
+async function openAndSubmitCreateForm(user: ReturnType<typeof userEvent.setup>) {
+  await waitFor(() => {
+    expect(screen.getByRole('button', { name: /create bounty/i })).toBeInTheDocument();
+  });
+
+  const createBtn = screen
+    .getAllByRole('button')
+    .find(
+      btn => btn.textContent?.includes('Create Bounty') && btn.getAttribute('type') === 'button'
+    );
+  expect(createBtn).toBeDefined();
+  await user.click(createBtn!);
+
+  await waitFor(() => {
+    expect(document.querySelector('input[placeholder="Bounty title"]')).not.toBeNull();
+  });
+
+  await user.type(screen.getByPlaceholderText(/bounty title/i), 'My new bounty');
+  await user.type(screen.getByPlaceholderText(/describe the bounty/i), 'Some description');
+  // Amount field is required and must be positive
+  await user.clear(screen.getByPlaceholderText('5'));
+  await user.type(screen.getByPlaceholderText('5'), '10');
+
+  const submitBtn = screen
+    .getAllByRole('button')
+    .find(btn => btn.getAttribute('type') === 'submit');
+  expect(submitBtn).toBeDefined();
+  await user.click(submitBtn!);
+}
+
+describe('Create success confirmation', () => {
+  test('shows success toast with title after bounty creation (free/open path)', async () => {
+    const user = userEvent.setup();
+    vi.mocked(apiClient.bounties.create).mockResolvedValue({
+      bounty: { ...sampleOwnBounty, status: 'open', title: 'My new bounty' },
+    } as never);
+    vi.mocked(apiClient.bounties.list).mockResolvedValue(listWithOwnBounty);
+    vi.mocked(fetchWalletStatus).mockResolvedValue(sampleWalletStatus as never);
+
+    render(<BountiesSection />);
+    await openAndSubmitCreateForm(user);
+
+    await waitFor(() => {
+      expect(screen.getByText('Bounty created')).toBeInTheDocument();
+      expect(screen.getByText('My new bounty')).toBeInTheDocument();
+      expect(screen.getByText('View')).toBeInTheDocument();
+    });
+  });
+
+  test('View action in toast expands the created bounty row', async () => {
+    const user = userEvent.setup();
+    vi.mocked(apiClient.bounties.create).mockResolvedValue({
+      bounty: { ...sampleOwnBounty, status: 'open', title: 'My new bounty' },
+    } as never);
+    // List returns the created bounty so the row exists to expand
+    vi.mocked(apiClient.bounties.list).mockResolvedValue({
+      bounties: [{ ...sampleOwnBounty, status: 'open', title: 'My new bounty' }],
+    });
+    vi.mocked(fetchWalletStatus).mockResolvedValue(sampleWalletStatus as never);
+
+    render(<BountiesSection />);
+    await openAndSubmitCreateForm(user);
+
+    // Wait for the toast to appear
+    await waitFor(() => {
+      expect(screen.getByText('View')).toBeInTheDocument();
+    });
+
+    // Click "View" — should expand the bounty row (description becomes visible)
+    await user.click(screen.getByText('View'));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText('Create a TypeScript plugin that connects to our API.')
+      ).toBeInTheDocument();
+    });
+  });
+
+  test('list refetches after successful creation', async () => {
+    const user = userEvent.setup();
+    vi.mocked(apiClient.bounties.create).mockResolvedValue({
+      bounty: { ...sampleOwnBounty, status: 'open', title: 'My new bounty' },
+    } as never);
+    vi.mocked(apiClient.bounties.list).mockResolvedValue(listWithOwnBounty);
+    vi.mocked(fetchWalletStatus).mockResolvedValue(sampleWalletStatus as never);
+
+    render(<BountiesSection />);
+
+    // list is called once on mount
+    await waitFor(() => {
+      expect(apiClient.bounties.list).toHaveBeenCalledTimes(1);
+    });
+
+    await openAndSubmitCreateForm(user);
+
+    // list should be called a second time after create succeeds
+    await waitFor(() => {
+      expect(apiClient.bounties.list).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  test('toast can be dismissed', async () => {
+    const user = userEvent.setup();
+    vi.mocked(apiClient.bounties.create).mockResolvedValue({
+      bounty: { ...sampleOwnBounty, status: 'open', title: 'My new bounty' },
+    } as never);
+    vi.mocked(apiClient.bounties.list).mockResolvedValue(listWithOwnBounty);
+    vi.mocked(fetchWalletStatus).mockResolvedValue(sampleWalletStatus as never);
+
+    render(<BountiesSection />);
+    await openAndSubmitCreateForm(user);
+
+    await waitFor(() => {
+      expect(screen.getByText('Bounty created')).toBeInTheDocument();
+    });
+
+    // Find the close button inside the toast (svg close button, aria unlabelled)
+    // The Toast component renders a close <button> after the action button.
+    // We locate it by finding all buttons visible and clicking the one without
+    // meaningful text content that follows the "View" action button.
+    const closeBtn = screen.getAllByRole('button').find(btn => btn.textContent?.trim() === '');
+    expect(closeBtn).toBeDefined();
+    await user.click(closeBtn!);
+
+    // After dismiss animation (200ms) the toast is removed; but in jsdom
+    // setTimeout fires synchronously via fake timers — use waitFor instead.
+    await waitFor(
+      () => {
+        expect(screen.queryByText('Bounty created')).not.toBeInTheDocument();
+      },
+      { timeout: 1000 }
+    );
   });
 });
 
