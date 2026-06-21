@@ -25,6 +25,7 @@ import IdentitiesSection from './IdentitiesSection';
 
 vi.mock('../AgentWorldShell', () => ({
   apiClient: {
+    graphql: { identityListings: vi.fn() },
     registry: { get: vi.fn(), register: vi.fn() },
     directoryIdentities: { list: vi.fn() },
     marketplace: {
@@ -53,6 +54,31 @@ beforeEach(() => {
   vi.mocked(apiClient.marketplace.buyIdentity).mockResolvedValue({ result: { saleId: 's1' } });
   vi.mocked(apiClient.marketplace.bid).mockResolvedValue({ result: {}, committed: true });
   vi.mocked(apiClient.marketplace.offer).mockResolvedValue({ result: {}, committed: true });
+  vi.mocked(apiClient.graphql.identityListings).mockImplementation(params => {
+    if (typeof params?.length === 'number') {
+      return vi
+        .mocked(apiClient.marketplace.identityFloor)(params.length)
+        .then(floor => ({
+          identities: floor.price
+            ? [
+                {
+                  listingId: `floor-${params.length}`,
+                  name: `@floor-${params.length}`,
+                  price: floor.price,
+                  updatedAt: '',
+                },
+              ]
+            : [],
+        }));
+    }
+    if (params?.limit === 20) {
+      return vi.mocked(apiClient.directoryIdentities.list)(params);
+    }
+    return vi.mocked(apiClient.marketplace.listIdentities)({
+      limit: params?.limit,
+      status: 'active',
+    });
+  });
 });
 
 afterEach(() => {
@@ -239,7 +265,7 @@ describe('Register tab — x402 registration', () => {
     expect(screen.getByTestId('x402-confirm')).toBeEnabled();
   });
 
-  test('insufficient balance disables the confirm button', async () => {
+  test('insufficient balance swaps Pay for an Add-funds redirect', async () => {
     vi.mocked(apiClient.registry.register).mockResolvedValueOnce({
       challenge: { amount: FREE_AMOUNT, asset: 'USDC', network: 'solana-devnet' },
       walletBalance: { raw: '1000000', formatted: '1', decimals: 6, assetSymbol: 'USDC' },
@@ -249,7 +275,9 @@ describe('Register tab — x402 registration', () => {
     await checkAndRegister('buyer');
 
     expect(await screen.findByTestId('x402-insufficient')).toBeInTheDocument();
-    expect(screen.getByTestId('x402-confirm')).toBeDisabled();
+    // The disabled Pay button is replaced by an Add-funds action.
+    expect(screen.queryByTestId('x402-confirm')).not.toBeInTheDocument();
+    expect(screen.getByTestId('x402-add-funds')).toBeInTheDocument();
   });
 
   test('confirmed:true success renders the registered identity + explorer link', async () => {
@@ -369,6 +397,119 @@ describe('Register tab — x402 registration', () => {
     expect(await screen.findByTestId('register-error')).toHaveTextContent(
       'Registration did not complete.'
     );
+  });
+});
+
+// ── Register tab — post-registration directory refresh ─────────────────────────
+//
+// After a successful registration (free-tier or paid), the parent increments
+// `registryKey` via `bumpRegistryKey` → `RegistryTab` remounts → the directory
+// fetch re-runs and surfaces the newly published agent card.
+
+describe('Register tab — post-registration directory refresh', () => {
+  beforeEach(() => {
+    vi.mocked(apiClient.registry.get).mockResolvedValue({ available: true, name: '@buyer' });
+  });
+
+  test('free-tier success: Registry tab re-fetches and shows new card', async () => {
+    // RegistryTab calls list() once per mount. After registration bumps the
+    // registry key, it remounts and calls list() again with the updated response.
+    vi.mocked(apiClient.directoryIdentities.list)
+      .mockResolvedValueOnce({ identities: [] })
+      .mockResolvedValueOnce({
+        identities: [
+          {
+            listingId: 'new-id-1',
+            name: '@buyer',
+            price: { amount: '10', asset: 'USDC' },
+            updatedAt: '2026-06-01T00:00:00Z',
+            status: 'active',
+          },
+        ],
+      });
+    vi.mocked(apiClient.registry.register).mockResolvedValueOnce({
+      identity: { username: '@buyer' },
+    });
+
+    render(<IdentitiesSection />);
+    // Navigate to Registry first so it fetches the initial (empty) list.
+    await gotoTab('Registry');
+    expect(
+      await screen.findByText(/No directory identities are currently listed/)
+    ).toBeInTheDocument();
+
+    // Go back to Register tab and trigger free-tier registration.
+    await gotoTab('Register');
+    await checkAndRegister('buyer');
+    expect(await screen.findByTestId('register-success')).toBeInTheDocument();
+
+    // Navigate to Registry tab again — RegistryTab remounts with new key,
+    // re-fetches, and the new card appears.
+    await gotoTab('Registry');
+    expect(await screen.findByText('@buyer')).toBeInTheDocument();
+    // list() was called twice: once on initial Registry mount, once on remount.
+    expect(apiClient.directoryIdentities.list).toHaveBeenCalledTimes(2);
+  });
+
+  test('paid registration success: Registry tab re-fetches and shows new card', async () => {
+    vi.mocked(apiClient.directoryIdentities.list)
+      .mockResolvedValueOnce({ identities: [] })
+      .mockResolvedValueOnce({
+        identities: [
+          {
+            listingId: 'new-id-2',
+            name: '@buyer',
+            price: { amount: '10', asset: 'USDC' },
+            updatedAt: '2026-06-01T00:00:00Z',
+            status: 'active',
+          },
+        ],
+      });
+    vi.mocked(apiClient.registry.register)
+      .mockResolvedValueOnce({
+        challenge: { amount: FREE_AMOUNT, asset: 'USDC', network: 'solana-devnet' },
+        walletBalance: { raw: '50000000', formatted: '50', decimals: 6, assetSymbol: 'USDC' },
+        walletAddress: 'WaLLetdeadbeef0123456789',
+      })
+      .mockResolvedValueOnce({
+        identity: { username: '@buyer' },
+        payment: { onChainTx: 'TxSig999' },
+      });
+
+    render(<IdentitiesSection />);
+    // Navigate to Registry first to consume the initial (empty) list response.
+    await gotoTab('Registry');
+    expect(
+      await screen.findByText(/No directory identities are currently listed/)
+    ).toBeInTheDocument();
+
+    // Go back to Register tab and complete paid registration.
+    await gotoTab('Register');
+    await checkAndRegister('buyer');
+    await userEvent.click(await screen.findByTestId('x402-confirm'));
+    expect(await screen.findByTestId('register-success')).toBeInTheDocument();
+
+    // Navigate to Registry tab — RegistryTab remounts and shows the new card.
+    await gotoTab('Registry');
+    expect(await screen.findByText('@buyer')).toBeInTheDocument();
+    expect(apiClient.directoryIdentities.list).toHaveBeenCalledTimes(2);
+  });
+
+  test('failed registration does not bump registry key (no extra remount)', async () => {
+    vi.mocked(apiClient.directoryIdentities.list).mockResolvedValue({ identities: [] });
+    vi.mocked(apiClient.registry.register).mockRejectedValueOnce(new Error('probe-failed'));
+
+    render(<IdentitiesSection />);
+    // Trigger a failed registration.
+    await checkAndRegister('buyer');
+    expect(await screen.findByTestId('register-error')).toBeInTheDocument();
+
+    // Navigate to Registry tab — only one list() call (normal mount, no extra bump).
+    await gotoTab('Registry');
+    expect(
+      await screen.findByText(/No directory identities are currently listed/)
+    ).toBeInTheDocument();
+    expect(apiClient.directoryIdentities.list).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -522,6 +663,86 @@ describe('Trading tab — floor prices', () => {
     expect(await screen.findByText('250 USDC')).toBeInTheDocument();
     // the other two cards resolve without a price → "No floor"
     expect(screen.getAllByText('No floor').length).toBeGreaterThanOrEqual(2);
+    expect(apiClient.graphql.identityListings).toHaveBeenCalledWith({
+      length: 3,
+      limit: 20,
+      offset: 0,
+      sortBy: 'price_asc',
+    });
+  });
+
+  test('ignores inactive cheaper listings when choosing a floor price', async () => {
+    vi.mocked(apiClient.graphql.identityListings).mockImplementation(params => {
+      if (params?.length === 3) {
+        return Promise.resolve({
+          identities: [
+            {
+              listingId: 'sold-floor',
+              name: '@soldfloor',
+              price: { amount: '50', asset: 'USDC' },
+              status: 'sold',
+              updatedAt: '2026-02-03T00:00:00Z',
+            },
+            {
+              listingId: 'active-floor',
+              name: '@activefloor',
+              price: { amount: '250', asset: 'USDC' },
+              status: 'active',
+              updatedAt: '2026-02-03T00:00:00Z',
+            },
+          ],
+        });
+      }
+      if (typeof params?.length === 'number') return Promise.resolve({ identities: [] });
+      return Promise.resolve({ identities: [] });
+    });
+    render(<IdentitiesSection />);
+    await gotoTab('Trading');
+    expect(await screen.findByText('250 USDC')).toBeInTheDocument();
+    expect(screen.queryByText('50 USDC')).not.toBeInTheDocument();
+  });
+
+  test('paginates floor lookup past inactive rows before declaring no floor', async () => {
+    vi.mocked(apiClient.graphql.identityListings).mockImplementation(params => {
+      if (params?.length !== 3) return Promise.resolve({ identities: [] });
+      if ((params.offset ?? 0) === 0) {
+        return Promise.resolve({
+          identities: Array.from({ length: 20 }, (_, index) => ({
+            listingId: `sold-floor-${index}`,
+            name: `@soldfloor${index}`,
+            price: { amount: '50', asset: 'USDC' },
+            status: 'sold',
+            updatedAt: '2026-02-03T00:00:00Z',
+          })),
+        });
+      }
+      return Promise.resolve({
+        identities: [
+          {
+            listingId: 'active-floor-page-2',
+            name: '@activefloorpage2',
+            price: { amount: '250', asset: 'USDC' },
+            status: 'active',
+            updatedAt: '2026-02-03T00:00:00Z',
+          },
+        ],
+      });
+    });
+    render(<IdentitiesSection />);
+    await gotoTab('Trading');
+    expect(await screen.findByText('250 USDC')).toBeInTheDocument();
+    expect(apiClient.graphql.identityListings).toHaveBeenCalledWith({
+      length: 3,
+      limit: 20,
+      offset: 0,
+      sortBy: 'price_asc',
+    });
+    expect(apiClient.graphql.identityListings).toHaveBeenCalledWith({
+      length: 3,
+      limit: 20,
+      offset: 20,
+      sortBy: 'price_asc',
+    });
   });
 
   test('shows "Unavailable" when a floor card fetch rejects', async () => {
@@ -557,24 +778,27 @@ describe('Trading tab — listed for sale', () => {
   });
 
   test('renders listing cards including an auction badge and seller line', async () => {
-    vi.mocked(apiClient.marketplace.listIdentities).mockResolvedValue({
-      identities: [
-        {
-          listingId: 'sale-1',
-          name: '@forsale',
-          price: { amount: '42', asset: 'USDC' },
-          listingType: 'auction',
-          seller: 'seller-x',
-          updatedAt: '2026-02-03T00:00:00Z',
-        },
-        {
-          listingId: 'sale-2',
-          name: '@fixedone',
-          price: { amount: '7', asset: 'USDC' },
-          listingType: 'fixed',
-          updatedAt: '2026-02-03T00:00:00Z',
-        },
-      ],
+    vi.mocked(apiClient.graphql.identityListings).mockImplementation(params => {
+      if (typeof params?.length === 'number') return Promise.resolve({ identities: [] });
+      return Promise.resolve({
+        identities: [
+          {
+            listingId: 'sale-1',
+            name: '@forsale',
+            price: { amount: '42', asset: 'USDC' },
+            listingType: 'auction',
+            seller: 'seller-x',
+            updatedAt: '2026-02-03T00:00:00Z',
+          },
+          {
+            listingId: 'sale-2',
+            name: '@fixedone',
+            price: { amount: '7', asset: 'USDC' },
+            listingType: 'fixed',
+            updatedAt: '2026-02-03T00:00:00Z',
+          },
+        ],
+      });
     });
     render(<IdentitiesSection />);
     await gotoTab('Trading');
@@ -589,19 +813,84 @@ describe('Trading tab — listed for sale', () => {
     expect(screen.getByText('7 USDC')).toBeInTheDocument();
   });
 
+  test('filters inactive GraphQL marketplace listings before rendering cards', async () => {
+    vi.mocked(apiClient.graphql.identityListings).mockImplementation(params => {
+      if (typeof params?.length === 'number') return Promise.resolve({ identities: [] });
+      return Promise.resolve({
+        identities: [
+          {
+            listingId: 'active-1',
+            name: '@activeone',
+            price: { amount: '5', asset: 'USDC' },
+            status: 'active',
+            updatedAt: '2026-02-03T00:00:00Z',
+          },
+          {
+            listingId: 'sold-1',
+            name: '@soldone',
+            price: { amount: '9', asset: 'USDC' },
+            status: 'sold',
+            updatedAt: '2026-02-03T00:00:00Z',
+          },
+        ],
+      });
+    });
+    render(<IdentitiesSection />);
+    await gotoTab('Trading');
+
+    expect(await screen.findByText('@activeone')).toBeInTheDocument();
+    expect(screen.queryByText('@soldone')).not.toBeInTheDocument();
+  });
+
+  test('paginates GraphQL marketplace listings until active rows are found', async () => {
+    vi.mocked(apiClient.graphql.identityListings).mockImplementation(params => {
+      if (typeof params?.length === 'number') return Promise.resolve({ identities: [] });
+      if ((params?.offset ?? 0) === 0) {
+        return Promise.resolve({
+          identities: Array.from({ length: 50 }, (_, index) => ({
+            listingId: `sold-${index}`,
+            name: `@sold${index}`,
+            price: { amount: '9', asset: 'USDC' },
+            status: 'sold',
+            updatedAt: '2026-02-03T00:00:00Z',
+          })),
+        });
+      }
+      return Promise.resolve({
+        identities: [
+          {
+            listingId: 'active-page-2',
+            name: '@activepage2',
+            price: { amount: '11', asset: 'USDC' },
+            status: 'active',
+            updatedAt: '2026-02-03T00:00:00Z',
+          },
+        ],
+      });
+    });
+    render(<IdentitiesSection />);
+    await gotoTab('Trading');
+
+    expect(await screen.findByText('@activepage2')).toBeInTheDocument();
+    expect(apiClient.graphql.identityListings).toHaveBeenCalledWith({ limit: 50, offset: 0 });
+    expect(apiClient.graphql.identityListings).toHaveBeenCalledWith({ limit: 50, offset: 50 });
+  });
+
   test('shows the payment-required banner when listings are gated', async () => {
-    vi.mocked(apiClient.marketplace.listIdentities).mockRejectedValueOnce(
-      new PaymentRequiredError({ terms: 'x402' })
-    );
+    vi.mocked(apiClient.graphql.identityListings).mockImplementation(params => {
+      if (typeof params?.length === 'number') return Promise.resolve({ identities: [] });
+      return Promise.reject(new PaymentRequiredError({ terms: 'x402' }));
+    });
     render(<IdentitiesSection />);
     await gotoTab('Trading');
     expect(await screen.findByText('Access requires payment')).toBeInTheDocument();
   });
 
   test('shows the error banner when listings fetch rejects', async () => {
-    vi.mocked(apiClient.marketplace.listIdentities).mockRejectedValueOnce(
-      new Error('listings down')
-    );
+    vi.mocked(apiClient.graphql.identityListings).mockImplementation(params => {
+      if (typeof params?.length === 'number') return Promise.resolve({ identities: [] });
+      return Promise.reject(new Error('listings down'));
+    });
     render(<IdentitiesSection />);
     await gotoTab('Trading');
     expect(await screen.findByText('Failed to load')).toBeInTheDocument();
