@@ -115,6 +115,13 @@ allowlist = [
     # so there is exactly one canonical route — through this delegate —
     # which keeps the venue-specific approval-gate prompt in scope.
     "markets_agent",
+    # tiny.place specialist. Synthesised into a `use_tinyplace` tool
+    # at agent-build time. Route requests about tiny.place/tinyplace, Agent
+    # Cards, @handles, jobs, proposals, groups, messages, escrow,
+    # registration/status, and x402 payment challenges here. This keeps the
+    # tinyplace_* tool surface behind one worker instead of leaking individual
+    # social-economy actions into the chat agent.
+    "tinyplace_agent",
     # MCP setup specialist (#3039). Synthesised into a `delegate_setup_mcp_server`
     # tool at agent-build time. Route any "install / add / set up / connect an MCP
     # server" request here — the agent owns the full flow: search registries →

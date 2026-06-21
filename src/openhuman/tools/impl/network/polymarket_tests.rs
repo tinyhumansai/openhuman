@@ -410,6 +410,8 @@ async fn configure_wallet_for_place_order_test(
         mnemonic_word_count: 12,
         encrypted_mnemonic: Some(encrypted_mnemonic),
         accounts: test_wallet_accounts(&evm_address, evm_derivation_path),
+        // Test helper: force=true allows setup in fresh temp environments.
+        force: true,
     })
     .await
     .map_err(|e| format!("failed to configure wallet state: {e}"))?;

@@ -250,6 +250,7 @@ mod tests {
             "profile_memory_agent",
             "account_admin_agent",
             "screen_awareness_agent",
+            "tinyplace_agent",
             "tool_maker",
             "skill_creator",
             "researcher",

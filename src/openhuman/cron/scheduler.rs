@@ -1,5 +1,6 @@
 use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::agent::error::AgentError;
+use crate::openhuman::agent::Agent;
 use crate::openhuman::config::Config;
 use crate::openhuman::cron::{
     due_jobs, next_run_for_schedule, record_last_run, record_run, remove_job, reschedule_after_run,
@@ -463,8 +464,6 @@ async fn execute_and_persist_job(
 }
 
 async fn run_agent_job(config: &Config, job: &CronJob) -> (bool, String, Option<String>) {
-    use crate::openhuman::agent::Agent;
-
     let name = job.name.clone().unwrap_or_else(|| "cron-job".to_string());
     let prompt = job.prompt.clone().unwrap_or_default();
     let prefixed_prompt = format!("[cron:{} {name}] {prompt}", job.id);
@@ -562,7 +561,7 @@ async fn run_agent_job(config: &Config, job: &CronJob) -> (bool, String, Option<
                 target = ?job.session_target,
                 "[cron] building isolated agent for scheduled job"
             );
-            match Agent::from_config(&effective) {
+            match build_agent_for_cron_job(&effective, job) {
                 Ok(mut agent) => {
                     // Tag events so downstream subscribers can correlate
                     // cron-triggered turns. `cron` is the channel so the
@@ -611,6 +610,32 @@ async fn run_agent_job(config: &Config, job: &CronJob) -> (bool, String, Option<
             let user_message = classify_agent_anyhow_for_user(&e);
             (false, user_message.to_string(), Some(e.to_string()))
         }
+    }
+}
+
+fn build_agent_for_cron_job(config: &Config, job: &CronJob) -> anyhow::Result<Agent> {
+    if let Some(agent_id) = job.agent_id.as_deref() {
+        match Agent::from_config_for_agent(config, agent_id) {
+            Ok(agent) => {
+                tracing::debug!(
+                    job_id = %job.id,
+                    agent_id = %agent_id,
+                    "[cron] built scheduled job agent from definition"
+                );
+                Ok(agent)
+            }
+            Err(e) => {
+                tracing::warn!(
+                    job_id = %job.id,
+                    agent_id = %agent_id,
+                    error = %e,
+                    "[cron] failed to build agent from definition; falling back to generic agent"
+                );
+                Agent::from_config(config)
+            }
+        }
+    } else {
+        Agent::from_config(config)
     }
 }
 
