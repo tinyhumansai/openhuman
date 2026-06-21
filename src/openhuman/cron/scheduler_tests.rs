@@ -409,6 +409,34 @@ async fn run_agent_job_returns_error_without_provider_key() {
 }
 
 #[tokio::test]
+async fn cron_agent_job_uses_agent_definition_tool_scope() {
+    crate::openhuman::agent::harness::definition::AgentDefinitionRegistry::init_global_builtins()
+        .expect("init built-in agent definitions");
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp).await;
+    let mut job = test_job("");
+    job.job_type = JobType::Agent;
+    job.name = Some("morning_briefing".into());
+    job.agent_id = Some("morning_briefing".into());
+
+    let agent = build_agent_for_cron_job(&config, &job).expect("build cron agent");
+    let visible = agent.visible_tool_names_for_test();
+
+    assert!(
+        !visible.is_empty(),
+        "morning briefing has a wildcard scope plus a disallowlist, so the builder must materialize an explicit visible-tool filter"
+    );
+    assert!(
+        !visible.contains("use_tinyplace"),
+        "morning briefing cron jobs must use the morning_briefing definition scope, not the orchestrator delegate surface"
+    );
+    assert!(
+        !visible.iter().any(|name| name.starts_with("tinyplace_")),
+        "morning briefing cron jobs must preserve tinyplace_* disallowlist"
+    );
+}
+
+#[tokio::test]
 async fn persist_job_result_records_run_and_reschedules_shell_job() {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp).await;
