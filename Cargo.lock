@@ -5130,7 +5130,7 @@ dependencies = [
 
 [[package]]
 name = "openhuman"
-version = "0.57.46"
+version = "0.57.52"
 dependencies = [
  "aes-gcm",
  "aho-corasick",
@@ -7913,9 +7913,9 @@ dependencies = [
 
 [[package]]
 name = "tinyplace"
-version = "0.6.0"
+version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46921f859da27a14a5526b289b32399c5c328c26de1a1dcb3f68b0f9d19310ea"
+checksum = "a96c2478e3407780674721fde873ca9f188d71f507f01885eb95e9024f07ac34"
 dependencies = [
  "aes",
  "async-trait",

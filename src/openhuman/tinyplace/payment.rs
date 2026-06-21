@@ -34,9 +34,10 @@ use tinyplace::x402::{
 };
 use tinyplace::PaymentChallenge;
 
+use crate::openhuman::wallet::rpc::with_tinyplace_solana_endpoints;
 use crate::openhuman::wallet::{
-    execute_prepared, prepare_transfer, solana_cluster, ExecutePreparedParams,
-    PrepareTransferParams, SolanaCluster, WalletChain,
+    execute_prepared, prepare_transfer, solana_cluster, tinyplace_solana_rpc_endpoints,
+    ExecutePreparedParams, PrepareTransferParams, SolanaCluster, WalletChain,
 };
 
 const LOG_PREFIX: &str = "[tinyplace-pay]";
@@ -366,17 +367,29 @@ pub(crate) async fn fulfill_payment(
         truncate(&v.to),
     );
 
-    let prepared = prepare_transfer(to_transfer_params(&v)).await?.value;
-    let quote_id = prepared.quote_id;
-    log::debug!("{LOG_PREFIX} prepared transfer quote_id={quote_id}");
+    // Run the prepare + broadcast inside the tiny.place Solana endpoint scope so
+    // both hit the tiny.place settlement RPC (where agent accounts are funded),
+    // falling back to the public cluster only if that endpoint is unreachable.
+    // Scoped to this task — general wallet ops are unaffected.
+    let endpoints = tinyplace_solana_rpc_endpoints();
+    log::debug!(
+        "{LOG_PREFIX} settlement solana endpoints={} (primary + fallbacks)",
+        endpoints.len()
+    );
+    let (quote_id, on_chain_tx) = with_tinyplace_solana_endpoints(endpoints, async {
+        let prepared = prepare_transfer(to_transfer_params(&v)).await?.value;
+        let quote_id = prepared.quote_id;
+        log::debug!("{LOG_PREFIX} prepared transfer quote_id={quote_id}");
 
-    let exec = execute_prepared(ExecutePreparedParams {
-        quote_id: quote_id.clone(),
-        confirmed: true,
+        let exec = execute_prepared(ExecutePreparedParams {
+            quote_id: quote_id.clone(),
+            confirmed: true,
+        })
+        .await?
+        .value;
+        Ok::<(String, String), String>((quote_id, exec.transaction_hash))
     })
-    .await?
-    .value;
-    let on_chain_tx = exec.transaction_hash;
+    .await?;
     log::debug!(
         "{LOG_PREFIX} transfer broadcast tx={} quote_id={quote_id}",
         truncate(&on_chain_tx),

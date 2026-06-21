@@ -14,7 +14,8 @@ import { useEffect, useState } from 'react';
 import PanelScaffold from '../../components/layout/PanelScaffold';
 import { type GqlLedgerTransaction } from '../../lib/agentworld/invokeApiClient';
 import { apiClient } from '../AgentWorldShell';
-import { friendlyNetwork } from '../components/X402ConfirmDialog';
+import { decimalsForAsset, resolveAssetSymbol } from '../assets';
+import { formatUnits, friendlyNetwork } from '../components/X402ConfirmDialog';
 import { explorerTxUrl } from '../hooks/useX402Buy';
 
 // ── State types ───────────────────────────────────────────────────────────────
@@ -57,6 +58,22 @@ export function formatAmount(amount: string | undefined): string {
   const grouped = Number(intPart).toLocaleString('en-US');
   const out = fracPart != null ? `${grouped}.${fracPart}` : grouped;
   return negative ? `-${out}` : out;
+}
+
+/**
+ * Ledger amounts arrive in the asset's smallest base unit (e.g. USDC in 1e-6
+ * micro-units), so they must be scaled to display units before grouping —
+ * otherwise every value reads ~1,000,000× too large. `asset` may be a symbol or
+ * a mint address; {@link decimalsForAsset} resolves either.
+ */
+export function formatLedgerAmount(amount: string | undefined, asset: string | undefined): string {
+  if (!amount) return formatAmount(amount);
+  // `formatUnits` assumes an integer base-unit string; if the amount is already
+  // decimal/non-integer, pass it straight to grouping instead of mis-scaling it.
+  if (!/^-?\d+$/.test(amount)) return formatAmount(amount);
+  const decimals = decimalsForAsset(asset);
+  const display = decimals > 0 ? formatUnits(amount, decimals) : amount;
+  return formatAmount(display);
 }
 
 /** Centered status message for loading / error / info states. */
@@ -156,8 +173,8 @@ function TransactionRow({
           {/* Line 1: amount + type + status */}
           <div className="flex items-center gap-2">
             <span className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
-              {formatAmount(tx.amount)}
-              {tx.asset ? ` ${tx.asset}` : ''}
+              {formatLedgerAmount(tx.amount, tx.asset)}
+              {tx.asset ? ` ${resolveAssetSymbol(tx.asset)}` : ''}
             </span>
             <TypeBadge type={tx.type} />
             <StatusBadge status={tx.status} />
