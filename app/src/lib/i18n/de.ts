@@ -3686,6 +3686,49 @@ const messages: TranslationMap = {
   'settings.ai.routing.backgroundTasks': 'Hintergrundaufgaben',
   'settings.ai.routing.bgTasksDesc':
     'Modelle, die außerhalb des Hauptgesprächsflusses für Zusammenfassung, Herzschlag, Lernen und unbewusste Bewertung verwendet werden.',
+  'settings.ai.routing.workload.chat.label': 'Chat',
+  'settings.ai.routing.workload.chat.description':
+    'Direkter dialogischer Austausch hin und her – „Schnell“-Modus in Unterhaltungen',
+  'settings.ai.routing.workload.chat.hint':
+    'Empfohlen: ein günstiges oder mittelpreisiges, schnelles Chat-Modell mit hohem Tokens/Sek.-Durchsatz und geringer Latenz. Quelloffene lokale Modelle eignen sich hier gut, wenn sie sich reaktionsschnell anfühlen.',
+  'settings.ai.routing.workload.reasoning.label': 'Reasoning',
+  'settings.ai.routing.workload.reasoning.description':
+    'Haupt-Chat-Agent, Meeting-Zusammenfasser – „Reasoning“-Modus in Unterhaltungen',
+  'settings.ai.routing.workload.reasoning.hint':
+    'Empfohlen: ein leistungsfähigeres Frontier- oder starkes Reasoning-Modell für tiefes Nachdenken. Wird für den Haupt-Chat-Agenten, Meeting-Zusammenfassungen und aufwändigere Antwortsynthese genutzt.',
+  'settings.ai.routing.workload.agentic.label': 'Agentisch',
+  'settings.ai.routing.workload.agentic.description':
+    'Sub-Agent-Runner, Tool-Schleifen, GIF-Entscheidungen',
+  'settings.ai.routing.workload.agentic.hint':
+    'Empfohlen: ein zuverlässiges, anweisungstreues Modell mit starker Tool-Nutzung. Mittelpreisige Frontier-Modelle sind meist am sichersten; leistungsfähige Open-Source-Modelle funktionieren, wenn das Tool-Calling stabil ist.',
+  'settings.ai.routing.workload.coding.label': 'Programmierung',
+  'settings.ai.routing.workload.coding.description': 'Code-Generierung und Refactoring-Durchläufe',
+  'settings.ai.routing.workload.coding.hint':
+    'Empfohlen: ein auf Programmierung abgestimmtes Modell mit starker Anweisungstreue, Edit-Qualität und Long-Context-Leistung. Hier lohnt sich meist eine größere Investition.',
+  'settings.ai.routing.workload.vision.label': 'Vision',
+  'settings.ai.routing.workload.vision.description':
+    'Bildverständnis für den Vision-Sub-Agenten – immer multimodal',
+  'settings.ai.routing.workload.vision.hint':
+    'Empfohlen: ein multimodales Modell, das Bildeingaben akzeptiert. Der verwaltete Standard (vision-v1) ist bildfähig; jeder hier zugewiesene Anbieter wird stets als vision-fähig behandelt.',
+  'settings.ai.routing.workload.memory.label': 'Memory-Zusammenfassung',
+  'settings.ai.routing.workload.memory.description': 'Baum-Extraktionen und Konsolidierungen',
+  'settings.ai.routing.workload.memory.hint':
+    'Empfohlen: ein günstigeres Zusammenfassungsmodell. Es sollte konsistent und kompakt sein, braucht aber keine erstklassige Frontier-Reasoning-Leistung.',
+  'settings.ai.routing.workload.heartbeat.label': 'Heartbeat',
+  'settings.ai.routing.workload.heartbeat.description':
+    'Hintergrund-Reasoning zwischen Nutzer-Eingaben',
+  'settings.ai.routing.workload.heartbeat.hint':
+    'Empfohlen: ein günstiges, effizientes Hintergrundmodell. Läuft häufig zwischen den Eingaben, daher zählen niedrige Kosten mehr als maximale Intelligenz.',
+  'settings.ai.routing.workload.learning.label': 'Lernen · Reflexionen',
+  'settings.ai.routing.workload.learning.description':
+    'Periodische Reflexion über den jüngsten Verlauf',
+  'settings.ai.routing.workload.learning.hint':
+    'Empfohlen: ein stärkeres reflektierendes Modell. Kann mittelpreisig oder Premium sein, da es von besserer Synthese über den jüngsten Verlauf profitiert.',
+  'settings.ai.routing.workload.subconscious.label': 'Unterbewusstsein',
+  'settings.ai.routing.workload.subconscious.description':
+    'Bewertung der Ereignishaftigkeit + Drift-Prüfungen',
+  'settings.ai.routing.workload.subconscious.hint':
+    'Empfohlen: ein sehr günstiges Überwachungsmodell, idealerweise leichtgewichtig und vorhersehbar. Für Ereignishaftigkeits-Bewertung, Drift-Prüfungen und stille Hintergrundauswertung.',
   'settings.ai.routing.addCustomProvider': 'Benutzerdefinierten Anbieter hinzufügen',
   'settings.ai.globalModel.title': 'Wählen Sie ein Modell für alles',
   'settings.ai.globalModel.desc':
