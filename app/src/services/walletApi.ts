@@ -46,6 +46,13 @@ export interface SetupWalletParams {
   mnemonicWordCount: number;
   encryptedMnemonic?: string;
   accounts: WalletAccount[];
+  /**
+   * Must be `true` to overwrite an existing wallet.
+   * Only pass after explicit double-confirmation by the user.
+   * Defaults to `false` — the backend rejects the call without it when a
+   * wallet already exists.
+   */
+  force?: boolean;
 }
 
 export const fetchWalletStatus = async (): Promise<WalletStatus> => {
@@ -164,6 +171,24 @@ export const executePrepared = async (quoteId: string): Promise<ExecutionResult>
   const response = await callCoreRpc<{ result: ExecutionResult }>({
     method: 'openhuman.wallet_execute_prepared',
     params: { quoteId, confirmed: true },
+  });
+  return response.result;
+};
+
+export interface RevealRecoveryPhraseResult {
+  phrase: string;
+  wordCount: number;
+}
+
+/**
+ * Reveal the plaintext recovery phrase for the currently configured wallet.
+ *
+ * The phrase is held only in transient React state — never written to disk.
+ * Calls openhuman.wallet_reveal_recovery_phrase on the Rust core.
+ */
+export const revealRecoveryPhrase = async (): Promise<RevealRecoveryPhraseResult> => {
+  const response = await callCoreRpc<{ result: RevealRecoveryPhraseResult }>({
+    method: 'openhuman.wallet_reveal_recovery_phrase',
   });
   return response.result;
 };
