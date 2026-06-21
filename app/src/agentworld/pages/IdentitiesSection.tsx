@@ -13,7 +13,7 @@
  * Money only moves after the user confirms. The read-only data views (Registry
  * listing, floor prices, recent sales) are fully functional.
  */
-import { useEffect, useReducer, useRef, useState } from 'react';
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 
 import PanelScaffold from '../../components/layout/PanelScaffold';
 import {
@@ -44,6 +44,65 @@ type AsyncState<T> =
   | { status: 'payment_required'; challenge: unknown }
   | { status: 'error'; message: string }
   | { status: 'ok'; data: T };
+
+const MARKETPLACE_PAGE_SIZE = 50;
+const MARKETPLACE_TARGET_ACTIVE = 50;
+const MARKETPLACE_MAX_PAGES = 5;
+const FLOOR_PAGE_SIZE = 20;
+const FLOOR_MAX_PAGES = 10;
+
+function isActiveListing(identity: IdentityListing): boolean {
+  return identity.status == null || identity.status === 'active';
+}
+
+async function fetchActiveMarketplaceIdentities(): Promise<IdentitiesResponse> {
+  const active: Array<IdentityListing> = [];
+  let lastResponse: IdentitiesResponse | null = null;
+
+  for (
+    let page = 0;
+    page < MARKETPLACE_MAX_PAGES && active.length < MARKETPLACE_TARGET_ACTIVE;
+    page++
+  ) {
+    const response = await apiClient.graphql.identityListings({
+      limit: MARKETPLACE_PAGE_SIZE,
+      offset: page * MARKETPLACE_PAGE_SIZE,
+    });
+    lastResponse = response;
+    const identities = response.identities ?? [];
+    active.push(...identities.filter(isActiveListing));
+    if (identities.length < MARKETPLACE_PAGE_SIZE) {
+      break;
+    }
+  }
+
+  return {
+    ...(lastResponse ?? { identities: [] }),
+    identities: active.slice(0, MARKETPLACE_TARGET_ACTIVE),
+    count: active.length,
+  };
+}
+
+async function fetchActiveFloorPrice(length: number): Promise<IdentityFloor> {
+  for (let page = 0; page < FLOOR_MAX_PAGES; page++) {
+    const response = await apiClient.graphql.identityListings({
+      length,
+      limit: FLOOR_PAGE_SIZE,
+      offset: page * FLOOR_PAGE_SIZE,
+      sortBy: 'price_asc',
+    });
+    const identities = response.identities ?? [];
+    const listing = identities.find(isActiveListing);
+    if (listing) {
+      return { length, price: listing.price };
+    }
+    if (identities.length < FLOOR_PAGE_SIZE) {
+      break;
+    }
+  }
+
+  return { length, price: undefined };
+}
 
 // ── Small hooks ───────────────────────────────────────────────────────────────
 
@@ -82,10 +141,11 @@ function useMarketplaceIdentities(): AsyncState<IdentitiesResponse> {
   const [state, setState] = useState<AsyncState<IdentitiesResponse>>({ status: 'loading' });
   useEffect(() => {
     let cancelled = false;
-    void apiClient.marketplace
-      .listIdentities({ status: 'active' })
+    void fetchActiveMarketplaceIdentities()
       .then(data => {
-        if (!cancelled) setState({ status: 'ok', data });
+        if (!cancelled) {
+          setState({ status: 'ok', data });
+        }
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -132,10 +192,10 @@ function useFloorPrice(length: number): AsyncState<IdentityFloor> {
   const [state, setState] = useState<AsyncState<IdentityFloor>>({ status: 'loading' });
   useEffect(() => {
     let cancelled = false;
-    void apiClient.marketplace
-      .identityFloor(length)
+    void fetchActiveFloorPrice(length)
       .then(data => {
-        if (!cancelled) setState({ status: 'ok', data });
+        if (cancelled) return;
+        setState({ status: 'ok', data });
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -308,7 +368,7 @@ function useRegistration() {
   return { state, reset, begin, confirmPay };
 }
 
-function RegisterTab() {
+function RegisterTab({ onRegistered }: { onRegistered?: () => void }) {
   const [input, setInput] = useState('');
   // sanitize: lowercase a-z, digits, _ only (mirrors tiny.place sanitizeHandle)
   function sanitize(value: string): string {
@@ -317,6 +377,14 @@ function RegisterTab() {
 
   const { check, ...availState } = useHandleAvailability(input);
   const reg = useRegistration();
+
+  // Notify the parent once when registration transitions to success so it can
+  // trigger a directory refetch (makes the new card immediately discoverable).
+  useEffect(() => {
+    if (reg.state.phase === 'success') {
+      onRegistered?.();
+    }
+  }, [reg.state.phase, onRegistered]);
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -935,6 +1003,11 @@ function tabReducer(state: TabState, action: TabAction): TabState {
 
 export default function IdentitiesSection() {
   const [{ tab, key }, dispatch] = useReducer(tabReducer, { tab: 'register', key: 0 });
+  // Incremented on successful registration. RegistryTab uses this as its React
+  // `key` so it fully remounts and re-fetches the directory — making the newly
+  // published agent card visible without a manual reload.
+  const [registryKey, setRegistryKey] = useState(0);
+  const bumpRegistryKey = useCallback(() => setRegistryKey(k => k + 1), []);
 
   return (
     <PanelScaffold description="Claim handles, manage your registry, and trade identities">
@@ -959,8 +1032,8 @@ export default function IdentitiesSection() {
       </div>
 
       <div key={key}>
-        {tab === 'register' && <RegisterTab />}
-        {tab === 'registry' && <RegistryTab />}
+        {tab === 'register' && <RegisterTab onRegistered={bumpRegistryKey} />}
+        {tab === 'registry' && <RegistryTab key={registryKey} />}
         {tab === 'trading' && <TradingTab />}
       </div>
     </PanelScaffold>

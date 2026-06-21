@@ -14,6 +14,7 @@ import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-
 import { SidebarContent } from '../../components/layout/shell/SidebarSlot';
 import TwoPaneNav from '../../components/layout/TwoPaneNav';
 import { useT } from '../../lib/i18n/I18nContext';
+import WalletAddressChip from '../components/WalletAddressChip';
 import BountiesSection from './BountiesSection';
 import DirectorySection from './DirectorySection';
 import ExploreSection from './ExploreSection';
@@ -24,6 +25,7 @@ import LedgerSection from './LedgerSection';
 import MarketplaceSection from './MarketplaceSection';
 import MessagingSection from './MessagingSection';
 import ProfilesSection from './ProfilesSection';
+import WorldSection from './WorldSection';
 
 // Sub-nav section definition (one per section).
 interface AgentWorldSection {
@@ -43,9 +45,16 @@ const navIcon = (d: string) => (
 // Format: { slug: '<path-segment>', labelKey: 'agentWorld.<name>', iconPath: '<svg d>' }
 // Fan-out agents: add a row here AND a <Route> below AND an i18n key.
 // Sidebar order: Feed first, then Messages, then the rest; Profiles sits at the
-// end. Marketplace is intentionally OMITTED from the sidebar (its route still
-// exists below so buy/bid/offer flows remain reachable) — hidden, not removed.
+// end. Marketplace, Jobs and Explore are intentionally OMITTED from the sidebar
+// (their routes still exist below so existing flows / deep links remain
+// reachable) — hidden, not removed. Jobs is superseded by Bounties.
 const SECTIONS: AgentWorldSection[] = [
+  {
+    slug: 'world',
+    labelKey: 'agentWorld.world',
+    iconPath:
+      'M3 9.75L12 4l9 5.75M5.25 10.75V19h13.5v-8.25M9 19v-4.5h6V19M8 12h.01M12 10h.01M16 12h.01',
+  },
   {
     slug: 'feed',
     labelKey: 'agentWorld.feed',
@@ -65,21 +74,10 @@ const SECTIONS: AgentWorldSection[] = [
       'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01',
   },
   {
-    slug: 'jobs',
-    labelKey: 'agentWorld.jobs',
-    iconPath:
-      'M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2M3.20898 7H20.791C21.4593 7 22 7.54066 22 8.20898V10.291C22 10.9593 21.4593 11.5 20.791 11.5H3.20898C2.54066 11.5 2 10.9593 2 10.291V8.20898C2 7.54066 2.54066 7 3.20898 7ZM5 11.5V19C5 20.1046 5.89543 21 7 21H17C18.1046 21 19 20.1046 19 19V11.5',
-  },
-  {
     slug: 'bounties',
     labelKey: 'agentWorld.bounties',
     iconPath:
       'M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z',
-  },
-  {
-    slug: 'explore',
-    labelKey: 'agentWorld.explore',
-    iconPath: 'M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z',
   },
   {
     slug: 'directory',
@@ -110,6 +108,8 @@ export default function AgentWorld() {
   // e.g. /agent-world/explore → 'explore'
   const pathParts = location.pathname.split('/');
   const activeSlug = pathParts[pathParts.length - 1] || 'feed';
+  const activeSection = activeSlug === 'agent-world' ? 'world' : activeSlug;
+  const isWorld = activeSection === 'world';
 
   return (
     <div className="h-full">
@@ -119,7 +119,7 @@ export default function AgentWorld() {
         <div className="h-full overflow-hidden">
           <TwoPaneNav
             ariaLabel={t('nav.agentWorld')}
-            selected={activeSlug}
+            selected={activeSection}
             onSelect={slug => navigate(`/agent-world/${slug}`)}
             groups={[
               {
@@ -131,9 +131,12 @@ export default function AgentWorld() {
               },
             ]}
             header={
-              <p className="min-w-0 text-[11px] leading-relaxed text-stone-500 dark:text-neutral-400">
-                {t('agentWorld.description')}
-              </p>
+              <div className="space-y-2">
+                <p className="min-w-0 text-[11px] leading-relaxed text-stone-500 dark:text-neutral-400">
+                  {t('agentWorld.description')}
+                </p>
+                <WalletAddressChip />
+              </div>
             }
           />
         </div>
@@ -141,10 +144,16 @@ export default function AgentWorld() {
       {/* Card surface around the active section so the section chrome and its
           inner cards sit on a framed panel (matching Brain) instead of floating
           flush on the bare shell background. */}
-      <div className="mx-auto h-full w-full max-w-6xl p-4">
-        <div className="h-full overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-soft dark:border-neutral-800 dark:bg-neutral-900">
+      <div className={isWorld ? 'h-full w-full p-0' : 'mx-auto h-full w-full max-w-6xl p-4'}>
+        <div
+          className={
+            isWorld
+              ? 'h-full overflow-hidden bg-black'
+              : 'h-full overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-soft dark:border-neutral-800 dark:bg-neutral-900'
+          }>
           <Routes>
-            <Route index element={<Navigate to="/agent-world/feed" replace />} />
+            <Route index element={<Navigate to="/agent-world/world" replace />} />
+            <Route path="world" element={<WorldSection />} />
             <Route path="feed" element={<FeedSection />} />
             <Route path="ledger" element={<LedgerSection />} />
             <Route path="jobs" element={<JobsSection />} />
@@ -156,7 +165,7 @@ export default function AgentWorld() {
             <Route path="identities" element={<IdentitiesSection />} />
             <Route path="marketplace" element={<MarketplaceSection />} />
             <Route path="messaging" element={<MessagingSection />} />
-            <Route path="*" element={<Navigate to="/agent-world/feed" replace />} />
+            <Route path="*" element={<Navigate to="/agent-world/world" replace />} />
           </Routes>
         </div>
       </div>

@@ -16,6 +16,10 @@ omit_memory_context = true
 omit_safety_preamble = true
 omit_skills_catalog = true
 
+# Specialist-owned external action families stay behind their dedicated
+# subagent prompts and confirmations.
+disallowed_tools = ["tinyplace_*"]
+
 [model]
 hint = "agentic"
 

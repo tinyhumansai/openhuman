@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import RecoveryPhrasePanel from './RecoveryPhrasePanel';
@@ -30,13 +30,42 @@ vi.mock('../../../features/wallet/setupLocalWalletFromMnemonic', () => ({
   persistLocalWalletFromMnemonic: vi.fn(),
 }));
 
+// Mock fetchWalletStatus to return unconfigured by default (no existing wallet).
+vi.mock('../../../services/walletApi', () => ({
+  fetchWalletStatus: vi.fn(async () => ({
+    configured: false,
+    onboardingCompleted: false,
+    consentGranted: false,
+    secretStored: false,
+    source: null,
+    mnemonicWordCount: null,
+    accounts: [],
+    updatedAtMs: null,
+  })),
+  setupLocalWallet: vi.fn(async () => ({
+    configured: true,
+    onboardingCompleted: true,
+    consentGranted: true,
+    secretStored: true,
+    source: 'generated',
+    mnemonicWordCount: 12,
+    accounts: [],
+    updatedAtMs: Date.now(),
+  })),
+}));
+
 describe('<RecoveryPhrasePanel />', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('initially hides the recovery phrase and reveals it when clicking the reveal button', () => {
+  it('initially hides the recovery phrase and reveals it when clicking the reveal button', async () => {
     render(<RecoveryPhrasePanel />);
+
+    // Wait for wallet status check to complete and enter generate mode
+    await waitFor(() =>
+      expect(screen.queryByLabelText('mnemonic.revealPhrase')).toBeInTheDocument()
+    );
 
     const copyButton = screen.getByText('mnemonic.copyToClipboard').closest('button')!;
     expect(copyButton).toBeDisabled();
