@@ -20,9 +20,14 @@ use serde_json::{Map, Value};
 const SENSITIVE_KEYS: &[&str] = &[
     "body",
     "content",
+    "description",
+    "plaintext",
     "text",
     "message",
     "messages",
+    "coverletter",
+    "note",
+    "reason",
     "html",
     "html_body",
     "snippet",
@@ -44,6 +49,11 @@ const SENSITIVE_KEYS: &[&str] = &[
     "first_name",
     "last_name",
     "full_name",
+    "displayname",
+    "bio",
+    "avatar",
+    "links",
+    "tags",
     "channel_name",
     "user",
     "user_id",
@@ -58,6 +68,7 @@ const SENSITIVE_KEYS: &[&str] = &[
     "password",
     "authorization",
     "auth",
+    "code",
 ];
 
 /// Produce a redacted clone of `args` suitable for persistence /
@@ -219,6 +230,116 @@ mod tests {
             "got {:?}",
             red["body"]
         );
+    }
+
+    #[test]
+    fn plaintext_field_is_redacted_for_encrypted_dm_tools() {
+        let args = json!({
+            "recipient": "@alice",
+            "plaintext": "meet me at the usual spot",
+            "associatedData": { "topic": "tinyplace dm" }
+        });
+        let red = redact_args(&args);
+
+        assert!(
+            red["plaintext"]
+                .as_str()
+                .unwrap()
+                .starts_with("<redacted: string ("),
+            "got {:?}",
+            red["plaintext"]
+        );
+        assert!(
+            red["recipient"]
+                .as_str()
+                .unwrap()
+                .starts_with("<redacted: string ("),
+            "got {:?}",
+            red["recipient"]
+        );
+        assert_eq!(red["associatedData"]["topic"], "tinyplace dm");
+    }
+
+    #[test]
+    fn email_verification_code_is_redacted() {
+        let args = json!({
+            "cryptoId": "did:example:alice",
+            "email": "alice@example.test",
+            "code": "123456",
+        });
+        let red = redact_args(&args);
+
+        assert_eq!(red["cryptoId"], "did:example:alice");
+        assert!(
+            red["email"]
+                .as_str()
+                .unwrap()
+                .starts_with("<redacted: string ("),
+            "got {:?}",
+            red["email"]
+        );
+        assert!(
+            red["code"]
+                .as_str()
+                .unwrap()
+                .starts_with("<redacted: string ("),
+            "got {:?}",
+            red["code"]
+        );
+    }
+
+    #[test]
+    fn tinyplace_write_content_fields_are_redacted() {
+        let args = json!({
+            "title": "Build my thing",
+            "description": "Long private task brief",
+            "coverLetter": "I can do this because...",
+            "note": "Submission context",
+            "reason": "Dispute details",
+            "amount": "5",
+            "asset": "USDC"
+        });
+        let red = redact_args(&args);
+
+        for key in ["title", "description", "coverLetter", "note", "reason"] {
+            assert!(
+                red[key]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("<redacted: string ("),
+                "{key} was not redacted: {:?}",
+                red[key]
+            );
+        }
+        assert_eq!(red["amount"], "5");
+        assert_eq!(red["asset"], "USDC");
+    }
+
+    #[test]
+    fn tinyplace_profile_update_fields_are_redacted() {
+        let args = json!({
+            "cryptoId": "did:example:alice",
+            "update": {
+                "displayName": "Alice Example",
+                "bio": "Private bio",
+                "avatar": "https://example.test/avatar.png",
+                "links": ["https://example.test/private"],
+                "tags": ["private-tag"],
+                "actorType": "agent"
+            }
+        });
+        let red = redact_args(&args);
+        let update = red["update"].as_object().unwrap();
+
+        assert_eq!(red["cryptoId"], "did:example:alice");
+        for key in ["displayName", "bio", "avatar", "links", "tags"] {
+            assert!(
+                update[key].as_str().unwrap().starts_with("<redacted:"),
+                "{key} was not redacted: {:?}",
+                update[key]
+            );
+        }
+        assert_eq!(update["actorType"], "agent");
     }
 
     #[test]

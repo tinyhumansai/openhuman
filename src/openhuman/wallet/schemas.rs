@@ -28,6 +28,10 @@ struct SetupWalletParams {
     mnemonic_word_count: u8,
     encrypted_mnemonic: String,
     accounts: Vec<WalletAccount>,
+    /// Explicit overwrite permission — must be `true` to replace an existing wallet.
+    /// Defaults to `false`; set by the frontend only after double-confirmation.
+    #[serde(default)]
+    force: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -64,6 +68,7 @@ pub fn all_wallet_controller_schemas() -> Vec<ControllerSchema> {
         wallet_schemas("tx_status"),
         wallet_schemas("tx_receipt"),
         wallet_schemas("lookup_tx"),
+        wallet_schemas("reveal_recovery_phrase"),
     ]
 }
 
@@ -117,6 +122,10 @@ pub fn all_wallet_registered_controllers() -> Vec<RegisteredController> {
             schema: wallet_schemas("lookup_tx"),
             handler: handle_lookup_tx,
         },
+        RegisteredController {
+            schema: wallet_schemas("reveal_recovery_phrase"),
+            handler: handle_reveal_recovery_phrase,
+        },
     ]
 }
 
@@ -157,6 +166,14 @@ pub fn wallet_schemas(function: &str) -> ControllerSchema {
                     "accounts",
                     "Exactly one derived account for each supported chain: EVM, BTC, Solana, and Tron.",
                 ),
+                FieldSchema {
+                    name: "force",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Json)),
+                    comment:
+                        "Optional boolean. Must be true to overwrite an existing wallet. Defaults to false. \
+                         Only pass true after the user has explicitly confirmed wallet replacement.",
+                    required: false,
+                },
             ],
             outputs: vec![FieldSchema {
                 name: "result",
@@ -318,6 +335,20 @@ pub fn wallet_schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "reveal_recovery_phrase" => ControllerSchema {
+            namespace: "wallet",
+            function: "reveal_recovery_phrase",
+            description: "Reveal the plaintext recovery phrase for an existing configured wallet. \
+                The phrase is decrypted in-core and returned only in the RPC response; \
+                it must be held in transient React state and never written to disk.",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Json,
+                comment: "{phrase: string, wordCount: number} — the decrypted BIP-39 mnemonic.",
+                required: true,
+            }],
+        },
         _ => ControllerSchema {
             namespace: "wallet",
             function: "unknown",
@@ -351,6 +382,7 @@ fn handle_setup(params: Map<String, Value>) -> ControllerFuture {
             mnemonic_word_count: payload.mnemonic_word_count,
             encrypted_mnemonic: Some(payload.encrypted_mnemonic),
             accounts: payload.accounts,
+            force: payload.force,
         })
         .await?
         .into_cli_compatible_json()
@@ -434,6 +466,14 @@ fn handle_lookup_tx(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+fn handle_reveal_recovery_phrase(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        crate::openhuman::wallet::reveal_recovery_phrase()
+            .await?
+            .into_cli_compatible_json()
+    })
+}
+
 /// Shared input schema for the tx_status / tx_receipt / lookup_tx readers.
 fn tx_query_inputs() -> Vec<FieldSchema> {
     vec![
@@ -464,12 +504,12 @@ mod tests {
 
     #[test]
     fn all_schemas_lists_every_controller() {
-        assert_eq!(all_wallet_controller_schemas().len(), 12);
+        assert_eq!(all_wallet_controller_schemas().len(), 13);
     }
 
     #[test]
     fn all_controllers_lists_every_handler() {
-        assert_eq!(all_wallet_registered_controllers().len(), 12);
+        assert_eq!(all_wallet_registered_controllers().len(), 13);
     }
 
     #[test]
@@ -496,13 +536,20 @@ mod tests {
     #[test]
     fn setup_schema_requires_all_inputs() {
         let schema = wallet_schemas("setup");
-        assert_eq!(schema.inputs.len(), 5);
+        // 5 original fields + 1 optional `force` field = 6 total
+        assert_eq!(schema.inputs.len(), 6);
         let encrypted = schema
             .inputs
             .iter()
             .find(|field| field.name == "encryptedMnemonic")
             .expect("encryptedMnemonic input present");
         assert!(encrypted.required);
+        let force = schema
+            .inputs
+            .iter()
+            .find(|field| field.name == "force")
+            .expect("force input present");
+        assert!(!force.required, "force must be optional");
     }
 
     #[test]

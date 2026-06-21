@@ -472,6 +472,105 @@ describe('Jobs write actions', () => {
     });
   });
 
+  test('Apply success shows success state and triggers refetch', async () => {
+    const user = userEvent.setup();
+    vi.mocked(fetchWalletStatus).mockResolvedValue(sampleWalletStatus as any);
+    // First call: initial load; second call should happen after successful apply.
+    vi.mocked(apiClient.graphql.jobs).mockResolvedValue({ jobs: [sampleJob], count: 1 });
+    vi.mocked(apiClient.jobsWrite.apply).mockResolvedValue(sampleProposal as any);
+
+    render(<JobsSection />);
+    await waitFor(() => {
+      expect(screen.getByText('Build a dashboard widget')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByText('Build a dashboard widget'));
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /^apply$/i })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /^apply$/i }));
+
+    await user.click(screen.getByRole('button', { name: /submit application/i }));
+
+    // After success, the jobs list should be refetched (called a second time).
+    await waitFor(() => {
+      expect(vi.mocked(apiClient.graphql.jobs)).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  test('Apply form shows error on failure', async () => {
+    const user = userEvent.setup();
+    vi.mocked(fetchWalletStatus).mockResolvedValue(sampleWalletStatus as any);
+    vi.mocked(apiClient.graphql.jobs).mockResolvedValue({ jobs: [sampleJob], count: 1 });
+    vi.mocked(apiClient.jobsWrite.apply).mockRejectedValue(new Error('Network error'));
+
+    render(<JobsSection />);
+    await waitFor(() => {
+      expect(screen.getByText('Build a dashboard widget')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByText('Build a dashboard widget'));
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /^apply$/i })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /^apply$/i }));
+
+    await user.click(screen.getByRole('button', { name: /submit application/i }));
+
+    await waitFor(() => {
+      // The error message should appear in the modal.
+      expect(screen.getByRole('alert')).toBeInTheDocument();
+      expect(screen.getByRole('alert')).toHaveTextContent(/network error/i);
+    });
+
+    // Modal stays open so user can retry.
+    expect(screen.getByRole('button', { name: /submit application/i })).toBeInTheDocument();
+    // Refetch should NOT have been called on failure.
+    expect(vi.mocked(apiClient.graphql.jobs)).toHaveBeenCalledTimes(1);
+  });
+
+  test('Apply button shows loading state while submitting', async () => {
+    const user = userEvent.setup();
+    vi.mocked(fetchWalletStatus).mockResolvedValue(sampleWalletStatus as any);
+    vi.mocked(apiClient.graphql.jobs).mockResolvedValue({ jobs: [sampleJob], count: 1 });
+
+    let resolveApply: (v: unknown) => void;
+    vi.mocked(apiClient.jobsWrite.apply).mockReturnValue(
+      new Promise(resolve => {
+        resolveApply = resolve;
+      }) as any
+    );
+
+    render(<JobsSection />);
+    await waitFor(() => {
+      expect(screen.getByText('Build a dashboard widget')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByText('Build a dashboard widget'));
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /^apply$/i })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /^apply$/i }));
+
+    await user.click(screen.getByRole('button', { name: /submit application/i }));
+
+    // While the request is in-flight, the button shows "Applying..." and is disabled.
+    await waitFor(() => {
+      const btn = screen.getByRole('button', { name: /applying/i });
+      expect(btn).toBeInTheDocument();
+      expect(btn).toBeDisabled();
+    });
+
+    // Clean up the pending promise.
+    resolveApply!(sampleProposal);
+  });
+
   test('Own job shows Cancel Job and View Proposals buttons', async () => {
     const user = userEvent.setup();
     vi.mocked(fetchWalletStatus).mockResolvedValue({
@@ -618,5 +717,101 @@ describe('Jobs write actions', () => {
     await waitFor(() => {
       expect(screen.getByText(/unlock your wallet/i)).toBeInTheDocument();
     });
+  });
+});
+
+// ── Proposal deadline normalization ───────────────────────────────────────────
+
+describe('Proposal deadline normalization', () => {
+  // Helper: open the Post Job modal and fill required fields.
+  async function openPostJobModal(user: ReturnType<typeof userEvent.setup>) {
+    vi.mocked(fetchWalletStatus).mockResolvedValue(sampleWalletStatus as any);
+    vi.mocked(apiClient.graphql.jobs).mockResolvedValue({ jobs: [], count: 0 });
+
+    render(<JobsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /post a job/i })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /post a job/i }));
+
+    // Fill required fields: title and budget amount.
+    await user.type(screen.getByPlaceholderText(/build a solana/i), 'Test Job Title');
+    await user.type(screen.getByPlaceholderText('500'), '100');
+  }
+
+  test('date-only input is normalized to RFC3339 end-of-day UTC before submit', async () => {
+    const user = userEvent.setup();
+    vi.mocked(apiClient.jobsWrite.create).mockResolvedValue(sampleJob as any);
+    await openPostJobModal(user);
+
+    // Use fireEvent to set the date input — userEvent doesn't drive date pickers.
+    // The modal has exactly one input[type="date"] (Proposal Deadline).
+    const { fireEvent } = await import('@testing-library/react');
+    const dateInput = document.querySelector('input[type="date"]') as HTMLInputElement;
+    fireEvent.change(dateInput, { target: { value: '2099-12-31' } });
+
+    await user.click(screen.getByRole('button', { name: /post job/i }));
+
+    await waitFor(() => {
+      expect(vi.mocked(apiClient.jobsWrite.create)).toHaveBeenCalledWith(
+        expect.objectContaining({ proposalDeadline: '2099-12-31T23:59:59Z' })
+      );
+    });
+  });
+
+  test('empty deadline is omitted (sent as undefined)', async () => {
+    const user = userEvent.setup();
+    vi.mocked(apiClient.jobsWrite.create).mockResolvedValue(sampleJob as any);
+    await openPostJobModal(user);
+
+    // Leave the deadline blank and submit.
+    await user.click(screen.getByRole('button', { name: /post job/i }));
+
+    await waitFor(() => {
+      expect(vi.mocked(apiClient.jobsWrite.create)).toHaveBeenCalledWith(
+        expect.objectContaining({ proposalDeadline: undefined })
+      );
+    });
+  });
+
+  test('past deadline shows validation error and does not call create', async () => {
+    const user = userEvent.setup();
+    vi.mocked(apiClient.jobsWrite.create).mockResolvedValue(sampleJob as any);
+    await openPostJobModal(user);
+
+    const { fireEvent } = await import('@testing-library/react');
+    const dateInput = document.querySelector('input[type="date"]') as HTMLInputElement;
+    fireEvent.change(dateInput, { target: { value: '2020-01-01' } });
+
+    await user.click(screen.getByRole('button', { name: /post job/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/proposal deadline must be in the future/i)).toBeInTheDocument();
+    });
+    expect(vi.mocked(apiClient.jobsWrite.create)).not.toHaveBeenCalled();
+  });
+
+  test('current-day deadline shows validation error and does not call create', async () => {
+    const user = userEvent.setup();
+    vi.mocked(apiClient.jobsWrite.create).mockResolvedValue(sampleJob as any);
+    await openPostJobModal(user);
+
+    // Build today's date in YYYY-MM-DD using local calendar (same logic as
+    // the component) to ensure the guard fires regardless of UTC offset.
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+
+    const { fireEvent } = await import('@testing-library/react');
+    const dateInput = document.querySelector('input[type="date"]') as HTMLInputElement;
+    fireEvent.change(dateInput, { target: { value: today } });
+
+    await user.click(screen.getByRole('button', { name: /post job/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/proposal deadline must be in the future/i)).toBeInTheDocument();
+    });
+    expect(vi.mocked(apiClient.jobsWrite.create)).not.toHaveBeenCalled();
   });
 });

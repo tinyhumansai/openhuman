@@ -1,6 +1,7 @@
 import { useT } from '../../../lib/i18n/I18nContext';
 import { APP_VERSION } from '../../../utils/config';
 import ConnectionIndicator from '../../ConnectionIndicator';
+import SidebarAppRail from './SidebarAppRail';
 import SidebarHeader from './SidebarHeader';
 import SidebarNav from './SidebarNav';
 import { SidebarSlotOutlet } from './SidebarSlot';
@@ -12,6 +13,8 @@ import { SidebarSlotOutlet } from './SidebarSlot';
  *   │ SidebarHeader │  utility row (collapse / settings / language)
  *   ├──────────────┤
  *   │ SidebarNav    │  static primary navigation
+ *   ├──────────────┤
+ *   │ SidebarAppRail│  persistent app switcher (agent + connected apps)
  *   ├──────────────┤
  *   │ SidebarSlot   │  dynamic, per-route content (scrolls)
  *   │  (Outlet)     │
@@ -31,6 +34,12 @@ export default function AppSidebar() {
       </div>
       <div className="flex-shrink-0">
         <SidebarNav />
+      </div>
+      {/* Persistent app switcher — sticks across routes so the agent + connected
+          apps are always one click away. Selecting one routes to /chat where the
+          provider webview / agent chat actually render. */}
+      <div className="flex-shrink-0 border-t border-stone-200/70 dark:border-neutral-800/70">
+        <SidebarAppRail />
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto border-t border-stone-200/70 dark:border-neutral-800/70">
         {/* Flex column so routes that project more than one region (e.g. Chat's

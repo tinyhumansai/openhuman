@@ -13,7 +13,12 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { type GqlLedgerTransaction } from '../../lib/agentworld/invokeApiClient';
 import { apiClient } from '../AgentWorldShell';
-import LedgerSection, { abbreviateAddress, formatAmount, StatusBadge } from './LedgerSection';
+import LedgerSection, {
+  abbreviateAddress,
+  formatAmount,
+  formatLedgerAmount,
+  StatusBadge,
+} from './LedgerSection';
 
 vi.mock('../AgentWorldShell', () => ({
   apiClient: { graphql: { ledgerTransactions: vi.fn(), ledgerTransaction: vi.fn() } },
@@ -27,7 +32,8 @@ const sampleTransaction: GqlLedgerTransaction = {
   type: 'REGISTRATION',
   from: 'AAAA1111bbbb2222cccc3333dddd4444eeee5555',
   to: 'FFFF6666gggg7777hhhh8888iiii9999jjjj0000',
-  amount: '0.50',
+  // Smallest base unit (USDC has 6 decimals): 500000 micro-USDC = 0.50 USDC.
+  amount: '500000',
   asset: 'USDC',
   network: 'solana-devnet',
   timestamp: '2026-06-01T12:00:00Z',
@@ -71,7 +77,8 @@ describe('Ledger list', () => {
     await waitFor(() => {
       expect(screen.getByText('REGISTRATION')).toBeInTheDocument();
     });
-    expect(screen.getByText('0.50 USDC')).toBeInTheDocument();
+    // 500000 micro-USDC scaled to display units → 0.5 USDC (trailing zero trimmed).
+    expect(screen.getByText('0.5 USDC')).toBeInTheDocument();
     expect(screen.getByText('SETTLED')).toBeInTheDocument();
     expect(screen.getByText('View on chain')).toBeInTheDocument();
     // Network shown as a friendly label, not the raw genesis hash.
@@ -217,5 +224,32 @@ describe('formatAmount', () => {
   test('passes through non-numeric and empty', () => {
     expect(formatAmount(undefined)).toBe('—');
     expect(formatAmount('n/a')).toBe('n/a');
+  });
+});
+
+describe('formatLedgerAmount', () => {
+  test('scales USDC base units (6 decimals) to display units', () => {
+    // Regression: amounts were shown raw, reading ~1,000,000× too large.
+    expect(formatLedgerAmount('1000000', 'USDC')).toBe('1');
+    expect(formatLedgerAmount('500000', 'USDC')).toBe('0.5');
+    expect(formatLedgerAmount('123456789', 'USDC')).toBe('123.456789');
+  });
+
+  test('scales SOL base units (9 decimals) and groups the integer part', () => {
+    expect(formatLedgerAmount('2500000000', 'SOL')).toBe('2.5');
+    expect(formatLedgerAmount('1000000000000', 'SOL')).toBe('1,000');
+  });
+
+  test('preserves the sign for debits', () => {
+    expect(formatLedgerAmount('-500000', 'USDC')).toBe('-0.5');
+  });
+
+  test('leaves unknown / zero-decimal assets unscaled', () => {
+    expect(formatLedgerAmount('42', 'POINTS')).toBe('42');
+    expect(formatLedgerAmount('1000000', undefined)).toBe('1,000,000');
+  });
+
+  test('passes through empty', () => {
+    expect(formatLedgerAmount(undefined, 'USDC')).toBe('—');
   });
 });

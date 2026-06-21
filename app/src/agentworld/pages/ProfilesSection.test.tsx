@@ -363,8 +363,9 @@ describe('graphql-enriched profile card', () => {
     );
     render(<ProfilesSection />);
 
-    // Rich data rendered
-    expect(await screen.findByText('@alice')).toBeInTheDocument();
+    // Rich data rendered — the handle appears in the header heading (it also
+    // appears in the "Handles owned" list, so target the heading specifically).
+    expect(await screen.findByRole('heading', { name: /@alice/ })).toBeInTheDocument();
     expect(screen.getByText('Building the future')).toBeInTheDocument();
     expect(screen.getByText('ai')).toBeInTheDocument();
     expect(screen.getByText('automation')).toBeInTheDocument();

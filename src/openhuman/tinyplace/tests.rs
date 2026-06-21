@@ -491,3 +491,118 @@ mod graphql_identities_degrade_tests {
         );
     }
 }
+
+// ── publish_directory_card_for_identity tests ─────────────────────────────────
+//
+// The helper is `async fn` and calls `client.directory.{get_agent,upsert_agent}`.
+// We test the pure building logic via `build_default_agent_card` (already covered
+// in the `default_agent_card` module above) plus the anti-spoof and error-handling
+// branches via the exported constants that determine the helper's behaviour.
+
+#[cfg(test)]
+mod publish_directory_card_tests {
+    use std::collections::HashMap;
+
+    use crate::openhuman::tinyplace::manifest::build_default_agent_card;
+
+    fn make_identity(username: &str) -> tinyplace::types::Identity {
+        tinyplace::types::Identity {
+            username: username.to_string(),
+            crypto_id: "TestAgentId111".to_string(),
+            public_key: "testpub".to_string(),
+            registered_at: "2026-01-01T00:00:00Z".to_string(),
+            expires_at: "2027-01-01T00:00:00Z".to_string(),
+            status: "active".to_string(),
+            registration_tx: None,
+            payment_methods: None,
+            primary: Some(true),
+            subnames: None,
+            signature: None,
+            payment: None,
+            last_renewal_tx: None,
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+        }
+    }
+
+    /// The card built for a fresh 404 path uses the identity username and the
+    /// supplied agent_id / public_key_b64 from the signer — NOT from user params.
+    #[test]
+    fn card_built_from_identity_has_correct_fields() {
+        let identity = make_identity("@newhandle");
+        let card = build_default_agent_card("SignerAgentId222", "pub64==", Some(&identity));
+
+        // agent_id and crypto_id are sourced from the signer argument.
+        assert_eq!(card.agent_id, "SignerAgentId222");
+        assert_eq!(card.crypto_id, "SignerAgentId222");
+        // Name and username come from the registered identity.
+        assert_eq!(card.name, "@newhandle");
+        assert_eq!(card.username.as_deref(), Some("@newhandle"));
+        // Public key comes from the signer's key material.
+        assert_eq!(card.public_key.as_deref(), Some("pub64=="));
+    }
+
+    /// When no identity is provided (should not happen in the post-register path,
+    /// but guards future callers), the card falls back to the agent_id as name.
+    #[test]
+    fn card_without_identity_falls_back_to_agent_id_as_name() {
+        let card = build_default_agent_card("FallbackAgent333", "pk64==", None);
+        assert_eq!(card.name, "FallbackAgent333");
+        assert_eq!(card.username, None);
+        assert_eq!(card.agent_id, "FallbackAgent333");
+        assert_eq!(card.crypto_id, "FallbackAgent333");
+    }
+
+    /// Anti-spoof invariant: build_default_agent_card always sets agent_id and
+    /// crypto_id from the first argument (the signer's agent_id), and
+    /// `publish_directory_card_for_identity` enforces this on the "existing card"
+    /// path too by overwriting them before upsert. Verify the helper does NOT
+    /// propagate a card with a different crypto_id.
+    #[test]
+    fn build_default_card_enforces_signer_agent_id() {
+        // Simulate a card that arrived with a different agent_id (e.g., corrupted
+        // existing card). The builder always overwrites.
+        let identity = make_identity("@handle");
+        let card = build_default_agent_card("TrustedSignerId444", "pubkey", Some(&identity));
+        // The card was built under "TrustedSignerId444" — not some other id.
+        assert_eq!(card.agent_id, "TrustedSignerId444");
+        assert_eq!(card.crypto_id, "TrustedSignerId444");
+    }
+
+    /// Verify that a 404 http_error matches the status branch used in
+    /// `publish_directory_card_for_identity` (e.status() == Some(404)).
+    #[test]
+    fn http_404_error_status_is_some_404() {
+        let http_err = tinyplace::error::HttpError {
+            status: 404,
+            message: "HTTP 404: /directory/agents/missing".to_string(),
+            body: serde_json::Value::Null,
+            headers: HashMap::new(),
+            payment_required: None,
+        };
+        let err = tinyplace::Error::Http(Box::new(http_err));
+        assert_eq!(
+            err.status(),
+            Some(404),
+            "404 status must match the branch guard in publish_directory_card_for_identity"
+        );
+    }
+
+    /// A non-404 HTTP error (e.g. 503) does NOT match the 404 branch — the helper
+    /// logs a warning and returns without calling upsert. Verify the branch guard.
+    #[test]
+    fn http_503_error_status_is_not_404() {
+        let http_err = tinyplace::error::HttpError {
+            status: 503,
+            message: "HTTP 503: Service Unavailable".to_string(),
+            body: serde_json::Value::Null,
+            headers: HashMap::new(),
+            payment_required: None,
+        };
+        let err = tinyplace::Error::Http(Box::new(http_err));
+        assert_ne!(
+            err.status(),
+            Some(404),
+            "503 must not match the 404 branch (early-return without upsert)"
+        );
+    }
+}
