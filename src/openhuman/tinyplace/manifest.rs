@@ -532,7 +532,7 @@ pub(crate) fn handle_tinyplace_registry_register(params: Map<String, Value>) -> 
         let base_req = tinyplace::api::registry::RegisterRequest {
             username: username.clone(),
             crypto_id: signer.agent_id(),
-            public_key: signer.public_key_base64(),
+            public_key: Some(signer.public_key_base64()),
             actor_type: Some(actor_type),
             primary,
             ..Default::default()
@@ -3529,6 +3529,7 @@ pub(crate) fn build_default_agent_card(
         description: None,
         username,
         crypto_id: agent_id.to_string(),
+        actor_type: identity.map(|_| "human".to_string()),
         public_key: Some(public_key_b64.to_string()),
         url: None,
         endpoint: None,
@@ -3545,6 +3546,7 @@ pub(crate) fn build_default_agent_card(
         signature: None,
         created_at: now.clone(),
         updated_at: now,
+        viewer_is_following: None,
     }
 }
 
@@ -3902,6 +3904,327 @@ pub(crate) fn handle_tinyplace_graphql_bounty(params: Map<String, Value>) -> Con
 }
 
 // ── GraphQL: Profile + Identity ───────────────────────────────────────────────
+
+fn graphql_params_object<'a>(
+    params: &'a Map<String, Value>,
+    method: &str,
+) -> Result<Option<&'a Map<String, Value>>, String> {
+    match params.get("params") {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Object(obj)) => Ok(Some(obj)),
+        Some(_) => Err(format!("{method} 'params' must be an object")),
+    }
+}
+
+fn graphql_opt_string(
+    obj: &Map<String, Value>,
+    method: &str,
+    key: &str,
+) -> Result<Option<String>, String> {
+    match obj.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(s)) => Ok(Some(s.clone())),
+        Some(_) => Err(format!("{method} param '{key}' must be a string")),
+    }
+}
+
+fn graphql_opt_i64(
+    obj: &Map<String, Value>,
+    method: &str,
+    key: &str,
+) -> Result<Option<i64>, String> {
+    match obj.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(v) => v
+            .as_i64()
+            .map(Some)
+            .ok_or_else(|| format!("{method} param '{key}' must be an integer")),
+    }
+}
+
+fn graphql_opt_string_vec(
+    obj: &Map<String, Value>,
+    method: &str,
+    key: &str,
+) -> Result<Option<Vec<String>>, String> {
+    match obj.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Array(values)) => values
+            .iter()
+            .map(|value| {
+                value
+                    .as_str()
+                    .map(str::to_string)
+                    .ok_or_else(|| format!("{method} param '{key}' must be an array of strings"))
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(Some),
+        Some(_) => Err(format!(
+            "{method} param '{key}' must be an array of strings"
+        )),
+    }
+}
+
+fn parse_identity_listing_params(
+    params: &Map<String, Value>,
+    method: &str,
+) -> Result<Option<tinyplace::api::graphql::IdentityListingGraphQLParams>, String> {
+    let Some(obj) = graphql_params_object(params, method)? else {
+        return Ok(None);
+    };
+    Ok(Some(
+        tinyplace::api::graphql::IdentityListingGraphQLParams {
+            query: match graphql_opt_string(obj, method, "query")? {
+                Some(query) => Some(query),
+                None => graphql_opt_string(obj, method, "q")?,
+            },
+            tag: graphql_opt_string(obj, method, "tag")?,
+            tags: graphql_opt_string_vec(obj, method, "tags")?,
+            category: graphql_opt_string(obj, method, "category")?,
+            seller: graphql_opt_string(obj, method, "seller")?,
+            min_price: graphql_opt_string(obj, method, "minPrice")?,
+            max_price: graphql_opt_string(obj, method, "maxPrice")?,
+            sort_by: graphql_opt_string(obj, method, "sortBy")?,
+            length: graphql_opt_i64(obj, method, "length")?,
+            limit: graphql_opt_i64(obj, method, "limit")?,
+            offset: graphql_opt_i64(obj, method, "offset")?,
+        },
+    ))
+}
+
+fn parse_pagination_params(
+    params: &Map<String, Value>,
+    method: &str,
+) -> Result<Option<tinyplace::api::graphql::PaginationGraphQLParams>, String> {
+    let Some(obj) = graphql_params_object(params, method)? else {
+        return Ok(None);
+    };
+    Ok(Some(tinyplace::api::graphql::PaginationGraphQLParams {
+        limit: graphql_opt_i64(obj, method, "limit")?,
+        offset: graphql_opt_i64(obj, method, "offset")?,
+    }))
+}
+
+pub(crate) fn handle_tinyplace_graphql_agents(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        log::debug!(
+            "{LOG_PREFIX} graphql_agents params_keys={:?}",
+            params.keys().collect::<Vec<_>>()
+        );
+        let query_params: Option<tinyplace::types::AgentQueryParams> = params
+            .get("params")
+            .and_then(|v| if v.is_null() { None } else { Some(v) })
+            .map(|v| {
+                serde_json::from_value(v.clone())
+                    .map_err(|e| format!("invalid graphql_agents params: {e}"))
+            })
+            .transpose()?;
+
+        let client = global_state().client().await?;
+        match client.graphql.agents(query_params.as_ref()).await {
+            Ok(result) => to_value(result),
+            Err(e) => match graphql_agents_degrade(&e) {
+                Some(empty) => {
+                    log::debug!("{LOG_PREFIX} graphql_agents deserialization failed -> empty: {e}");
+                    to_value(empty)
+                }
+                None => Err(map_err(e)),
+            },
+        }
+    })
+}
+
+pub(crate) fn graphql_agents_degrade(e: &tinyplace::Error) -> Option<Value> {
+    if matches!(e, tinyplace::Error::Serialization(_)) {
+        Some(serde_json::json!({ "agents": [], "count": 0 }))
+    } else {
+        None
+    }
+}
+
+pub(crate) fn handle_tinyplace_graphql_products(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        log::debug!(
+            "{LOG_PREFIX} graphql_products params_keys={:?}",
+            params.keys().collect::<Vec<_>>()
+        );
+        let query_params: Option<tinyplace::types::ProductQueryParams> = params
+            .get("params")
+            .and_then(|v| if v.is_null() { None } else { Some(v) })
+            .map(|v| {
+                serde_json::from_value(v.clone())
+                    .map_err(|e| format!("invalid graphql_products params: {e}"))
+            })
+            .transpose()?;
+
+        let client = global_state().client().await?;
+        match client.graphql.products(query_params.as_ref()).await {
+            Ok(result) => to_value(result),
+            Err(e) => match graphql_products_degrade(&e) {
+                Some(empty) => {
+                    log::debug!(
+                        "{LOG_PREFIX} graphql_products deserialization failed -> empty: {e}"
+                    );
+                    to_value(empty)
+                }
+                None => Err(map_err(e)),
+            },
+        }
+    })
+}
+
+pub(crate) fn graphql_products_degrade(e: &tinyplace::Error) -> Option<Value> {
+    if matches!(e, tinyplace::Error::Serialization(_)) {
+        Some(serde_json::json!({ "products": [], "count": 0 }))
+    } else {
+        None
+    }
+}
+
+pub(crate) fn handle_tinyplace_graphql_product(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let id = req_str(&params, "id")?.to_string();
+        log::debug!("{LOG_PREFIX} graphql_product id={id}");
+        let client = global_state().client().await?;
+        let result = client.graphql.product(&id).await.map_err(map_err)?;
+        to_value(result)
+    })
+}
+
+pub(crate) fn handle_tinyplace_graphql_identity_listings(
+    params: Map<String, Value>,
+) -> ControllerFuture {
+    Box::pin(async move {
+        log::debug!(
+            "{LOG_PREFIX} graphql_identity_listings params_keys={:?}",
+            params.keys().collect::<Vec<_>>()
+        );
+        let query_params = parse_identity_listing_params(&params, "graphql_identity_listings")?;
+        let client = global_state().client().await?;
+        match client
+            .graphql
+            .identity_listings(query_params.as_ref())
+            .await
+        {
+            Ok(result) => to_value(result),
+            Err(e) => match graphql_identity_listings_degrade(&e) {
+                Some(empty) => {
+                    log::debug!(
+                        "{LOG_PREFIX} graphql_identity_listings deserialization failed -> empty: {e}"
+                    );
+                    to_value(empty)
+                }
+                None => Err(map_err(e)),
+            },
+        }
+    })
+}
+
+pub(crate) fn graphql_identity_listings_degrade(e: &tinyplace::Error) -> Option<Value> {
+    if matches!(e, tinyplace::Error::Serialization(_)) {
+        Some(serde_json::json!({ "identities": [], "count": 0 }))
+    } else {
+        None
+    }
+}
+
+pub(crate) fn handle_tinyplace_graphql_identity_listing(
+    params: Map<String, Value>,
+) -> ControllerFuture {
+    Box::pin(async move {
+        let id = req_str(&params, "id")?.to_string();
+        log::debug!("{LOG_PREFIX} graphql_identity_listing id={id}");
+        let query_params = match graphql_params_object(&params, "graphql_identity_listing")? {
+            None => None,
+            Some(obj) => Some(
+                tinyplace::api::graphql::IdentityListingDetailGraphQLParams {
+                    bid_limit: graphql_opt_i64(obj, "graphql_identity_listing", "bidLimit")?,
+                    bid_offset: graphql_opt_i64(obj, "graphql_identity_listing", "bidOffset")?,
+                    history_limit: graphql_opt_i64(
+                        obj,
+                        "graphql_identity_listing",
+                        "historyLimit",
+                    )?,
+                    history_offset: graphql_opt_i64(
+                        obj,
+                        "graphql_identity_listing",
+                        "historyOffset",
+                    )?,
+                },
+            ),
+        };
+        let client = global_state().client().await?;
+        let result = client
+            .graphql
+            .identity_listing(&id, query_params.as_ref())
+            .await
+            .map_err(map_err)?;
+        to_value(result)
+    })
+}
+
+pub(crate) fn handle_tinyplace_graphql_identity_bids(
+    params: Map<String, Value>,
+) -> ControllerFuture {
+    Box::pin(async move {
+        let listing_id = req_str(&params, "listingId")?.to_string();
+        log::debug!("{LOG_PREFIX} graphql_identity_bids listing_id={listing_id}");
+        let query_params = parse_pagination_params(&params, "graphql_identity_bids")?;
+        let client = global_state().client().await?;
+        let result = client
+            .graphql
+            .identity_bids(&listing_id, query_params.as_ref())
+            .await
+            .map_err(map_err)?;
+        to_value(result)
+    })
+}
+
+pub(crate) fn handle_tinyplace_graphql_identity_offers(
+    params: Map<String, Value>,
+) -> ControllerFuture {
+    Box::pin(async move {
+        log::debug!(
+            "{LOG_PREFIX} graphql_identity_offers params_keys={:?}",
+            params.keys().collect::<Vec<_>>()
+        );
+        let query_params = match graphql_params_object(&params, "graphql_identity_offers")? {
+            None => None,
+            Some(obj) => Some(tinyplace::api::graphql::IdentityOfferGraphQLParams {
+                agent: graphql_opt_string(obj, "graphql_identity_offers", "agent")?,
+                buyer: graphql_opt_string(obj, "graphql_identity_offers", "buyer")?,
+                name: graphql_opt_string(obj, "graphql_identity_offers", "name")?,
+                status: graphql_opt_string(obj, "graphql_identity_offers", "status")?,
+                limit: graphql_opt_i64(obj, "graphql_identity_offers", "limit")?,
+                offset: graphql_opt_i64(obj, "graphql_identity_offers", "offset")?,
+            }),
+        };
+        let client = global_state().client().await?;
+        let result = client
+            .graphql
+            .identity_offers(query_params.as_ref())
+            .await
+            .map_err(map_err)?;
+        to_value(result)
+    })
+}
+
+pub(crate) fn handle_tinyplace_graphql_identity_sales(
+    params: Map<String, Value>,
+) -> ControllerFuture {
+    Box::pin(async move {
+        let name = req_str(&params, "name")?.to_string();
+        log::debug!("{LOG_PREFIX} graphql_identity_sales name={name}");
+        let query_params = parse_pagination_params(&params, "graphql_identity_sales")?;
+        let client = global_state().client().await?;
+        let result = client
+            .graphql
+            .identity_sales(&name, query_params.as_ref())
+            .await
+            .map_err(map_err)?;
+        to_value(result)
+    })
+}
 
 pub(crate) fn handle_tinyplace_graphql_profile(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
@@ -5682,6 +6005,7 @@ mod tests {
             description: None,
             username: username.map(str::to_string),
             crypto_id: format!("crypto-{agent_id}"),
+            actor_type: None,
             public_key: None,
             url: None,
             endpoint: None,
@@ -5698,6 +6022,7 @@ mod tests {
             signature: None,
             created_at: "2026-01-01T00:00:00Z".to_string(),
             updated_at: "2026-01-01T00:00:00Z".to_string(),
+            viewer_is_following: None,
         }
     }
 

@@ -23,8 +23,8 @@ import MarketplaceSection from './MarketplaceSection';
 
 vi.mock('../AgentWorldShell', () => ({
   apiClient: {
-    marketplace: { listProducts: vi.fn(), buyProduct: vi.fn() },
-    jobs: { list: vi.fn() },
+    graphql: { jobs: vi.fn(), products: vi.fn() },
+    marketplace: { buyProduct: vi.fn() },
     escrow: { list: vi.fn() },
     artifacts: { list: vi.fn() },
   },
@@ -64,9 +64,25 @@ const sampleJob = {
   client: 'client-alpha',
   title: 'Translate document',
   description: 'Translate from EN to FR',
+  budget: { amount: '50', asset: 'USDC' },
+  proposalCount: 0,
+  createdAt: '2026-01-01T00:00:00Z',
+  updatedAt: '2026-01-01T00:00:00Z',
+  clientProfile: {
+    handle: 'client-alpha',
+    cryptoId: 'client-alpha',
+    displayName: 'Client Alpha',
+    verified: false,
+  },
 };
 
-const sampleJobNoTitle = { jobId: 'job-2', status: 'open', client: 'client-beta' };
+const sampleJobNoTitle = {
+  ...sampleJob,
+  jobId: 'job-2',
+  status: 'open',
+  client: 'client-beta',
+  title: undefined,
+};
 
 const activeEscrow = {
   escrowId: 'esc-active-1',
@@ -99,8 +115,8 @@ const sampleArtifactMinimal = { artifactId: 'art-2', owner: 'owner-2' };
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.mocked(apiClient.marketplace.listProducts).mockResolvedValue({ products: [] });
-  vi.mocked(apiClient.jobs.list).mockResolvedValue({ jobs: [] });
+  vi.mocked(apiClient.graphql.products).mockResolvedValue({ products: [] });
+  vi.mocked(apiClient.graphql.jobs).mockResolvedValue({ jobs: [], count: 0 });
   vi.mocked(apiClient.escrow.list).mockResolvedValue({ escrows: [] });
   vi.mocked(apiClient.artifacts.list).mockResolvedValue({ artifacts: [] });
   vi.mocked(apiClient.marketplace.buyProduct).mockResolvedValue({ result: { purchaseId: 'p1' } });
@@ -126,7 +142,7 @@ describe('tab navigation', () => {
     render(<MarketplaceSection />);
     await userEvent.click(screen.getByRole('tab', { name: 'Jobs' }));
     expect(screen.getByRole('tab', { name: 'Jobs' })).toHaveAttribute('aria-selected', 'true');
-    expect(apiClient.jobs.list).toHaveBeenCalled();
+    expect(apiClient.graphql.jobs).toHaveBeenCalledWith({ limit: 50 });
   });
 
   test('switching to Active fetches escrows', async () => {
@@ -147,7 +163,7 @@ describe('tab navigation', () => {
 describe('Search tab', () => {
   test('shows the loading spinner before the fetch resolves', () => {
     // A never-resolving promise keeps the tab in its loading state.
-    vi.mocked(apiClient.marketplace.listProducts).mockReturnValue(new Promise(() => {}));
+    vi.mocked(apiClient.graphql.products).mockReturnValue(new Promise(() => {}));
     render(<MarketplaceSection />);
     expect(screen.getByText('Loading products…')).toBeInTheDocument();
   });
@@ -158,7 +174,7 @@ describe('Search tab', () => {
   });
 
   test('renders populated products with tags, price and category', async () => {
-    vi.mocked(apiClient.marketplace.listProducts).mockResolvedValue({
+    vi.mocked(apiClient.graphql.products).mockResolvedValue({
       products: [sampleProduct, sampleProductNoTags],
     });
     render(<MarketplaceSection />);
@@ -173,7 +189,7 @@ describe('Search tab', () => {
   });
 
   test('search input filters products by name', async () => {
-    vi.mocked(apiClient.marketplace.listProducts).mockResolvedValue({
+    vi.mocked(apiClient.graphql.products).mockResolvedValue({
       products: [sampleProduct, sampleProductNoTags],
     });
     render(<MarketplaceSection />);
@@ -187,7 +203,7 @@ describe('Search tab', () => {
   });
 
   test('search input shows "no match" empty state when nothing matches', async () => {
-    vi.mocked(apiClient.marketplace.listProducts).mockResolvedValue({ products: [sampleProduct] });
+    vi.mocked(apiClient.graphql.products).mockResolvedValue({ products: [sampleProduct] });
     render(<MarketplaceSection />);
     await screen.findByText('Widget Builder');
 
@@ -198,7 +214,7 @@ describe('Search tab', () => {
   });
 
   test('search matches against seller and tags too', async () => {
-    vi.mocked(apiClient.marketplace.listProducts).mockResolvedValue({
+    vi.mocked(apiClient.graphql.products).mockResolvedValue({
       products: [sampleProduct, sampleProductNoTags],
     });
     render(<MarketplaceSection />);
@@ -212,20 +228,20 @@ describe('Search tab', () => {
   });
 
   test('tolerates a response missing the products field', async () => {
-    vi.mocked(apiClient.marketplace.listProducts).mockResolvedValue({} as { products: never[] });
+    vi.mocked(apiClient.graphql.products).mockResolvedValue({} as { products: never[] });
     render(<MarketplaceSection />);
     expect(await screen.findByText('No products listed yet.')).toBeInTheDocument();
   });
 
   test('shows the generic error state on a plain rejection', async () => {
-    vi.mocked(apiClient.marketplace.listProducts).mockRejectedValueOnce(new Error('boom'));
+    vi.mocked(apiClient.graphql.products).mockRejectedValueOnce(new Error('boom'));
     render(<MarketplaceSection />);
     expect(await screen.findByText('Failed to load')).toBeInTheDocument();
     expect(screen.getByText(/boom/)).toBeInTheDocument();
   });
 
   test('shows the wallet-locked error state when wallet is not configured', async () => {
-    vi.mocked(apiClient.marketplace.listProducts).mockRejectedValueOnce(
+    vi.mocked(apiClient.graphql.products).mockRejectedValueOnce(
       new Error('wallet is not configured')
     );
     render(<MarketplaceSection />);
@@ -233,7 +249,7 @@ describe('Search tab', () => {
   });
 
   test('shows the wallet-locked error state when wallet secret material is missing', async () => {
-    vi.mocked(apiClient.marketplace.listProducts).mockRejectedValueOnce(
+    vi.mocked(apiClient.graphql.products).mockRejectedValueOnce(
       new Error('wallet secret material is missing')
     );
     render(<MarketplaceSection />);
@@ -241,7 +257,7 @@ describe('Search tab', () => {
   });
 
   test('shows the payment-required state on a PaymentRequiredError', async () => {
-    vi.mocked(apiClient.marketplace.listProducts).mockRejectedValueOnce(
+    vi.mocked(apiClient.graphql.products).mockRejectedValueOnce(
       new PaymentRequiredError({ terms: 'x402' })
     );
     render(<MarketplaceSection />);
@@ -263,7 +279,7 @@ describe('Jobs tab', () => {
   });
 
   test('renders a job with title, description and status badge', async () => {
-    vi.mocked(apiClient.jobs.list).mockResolvedValue({ jobs: [sampleJob] });
+    vi.mocked(apiClient.graphql.jobs).mockResolvedValue({ jobs: [sampleJob] });
     await openJobs();
     expect(await screen.findByText('Translate document')).toBeInTheDocument();
     expect(screen.getByText('Translate from EN to FR')).toBeInTheDocument();
@@ -272,7 +288,7 @@ describe('Jobs tab', () => {
   });
 
   test('falls back to jobId when title is not a string', async () => {
-    vi.mocked(apiClient.jobs.list).mockResolvedValue({ jobs: [sampleJobNoTitle] });
+    vi.mocked(apiClient.graphql.jobs).mockResolvedValue({ jobs: [sampleJobNoTitle as never] });
     await openJobs();
     expect(await screen.findByText('job-2')).toBeInTheDocument();
     // Unknown status uses the default badge styling but still renders the label.
@@ -280,25 +296,25 @@ describe('Jobs tab', () => {
   });
 
   test('tolerates a response missing the jobs field', async () => {
-    vi.mocked(apiClient.jobs.list).mockResolvedValue({} as { jobs: never[] });
+    vi.mocked(apiClient.graphql.jobs).mockResolvedValue({} as { jobs: never[] });
     await openJobs();
     expect(await screen.findByText('No job postings yet.')).toBeInTheDocument();
   });
 
   test('shows the error state on rejection', async () => {
-    vi.mocked(apiClient.jobs.list).mockRejectedValueOnce(new Error('jobs down'));
+    vi.mocked(apiClient.graphql.jobs).mockRejectedValueOnce(new Error('jobs down'));
     await openJobs();
     expect(await screen.findByText('Failed to load')).toBeInTheDocument();
   });
 
   test('shows payment-required on a PaymentRequiredError', async () => {
-    vi.mocked(apiClient.jobs.list).mockRejectedValueOnce(new PaymentRequiredError(null));
+    vi.mocked(apiClient.graphql.jobs).mockRejectedValueOnce(new PaymentRequiredError(null));
     await openJobs();
     expect(await screen.findByText('Access requires payment')).toBeInTheDocument();
   });
 
   test('shows the loading spinner while jobs are pending', async () => {
-    vi.mocked(apiClient.jobs.list).mockReturnValue(new Promise(() => {}));
+    vi.mocked(apiClient.graphql.jobs).mockReturnValue(new Promise(() => {}));
     await openJobs();
     expect(screen.getByText('Loading jobs…')).toBeInTheDocument();
   });
@@ -488,7 +504,7 @@ describe('status badges', () => {
 
 describe('Search tab — buy product (x402)', () => {
   beforeEach(() => {
-    vi.mocked(apiClient.marketplace.listProducts).mockResolvedValue({ products: [sampleProduct] });
+    vi.mocked(apiClient.graphql.products).mockResolvedValue({ products: [sampleProduct] });
   });
 
   test('Buy → confirm dialog shows the challenge amount + balance', async () => {
