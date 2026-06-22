@@ -2223,6 +2223,25 @@ pub fn run() {
                 );
                 return None;
             }
+            // Drop provider insufficient-credits 402s — the user's own BYO
+            // account (e.g. OpenRouter) is out of balance, a billing state
+            // OpenHuman has no lever over once the request already caps
+            // max_tokens. The core binary's main.rs before_send already
+            // filters these; since #1061 the core runs in-process inside this
+            // shell, so the cron `agent_job` retries-exhausted report (and any
+            // other compatible-provider path) lands in THIS Sentry client and
+            // must be filtered identically. Closes the #3617 drift that wired
+            // the filter only into the standalone-CLI chain (TAURI-RUST-514 /
+            // -C62).
+            if openhuman_core::core::observability::is_insufficient_credits_event(&event) {
+                // Metadata-only log shape — `event.message` carries the raw
+                // provider 402 body which CLAUDE.md forbids from local logs.
+                log::debug!(
+                    "[sentry-insufficient-credits-filter] dropping insufficient-credits 402 event_id={:?}",
+                    event.event_id
+                );
+                return None;
+            }
             // Strip server_name (hostname) to avoid leaking machine identity.
             event.server_name = None;
             // Attach the cached account uid so Sentry can count unique users
