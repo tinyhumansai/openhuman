@@ -41,6 +41,7 @@ use openhuman_core::openhuman::memory_sync::composio::providers::slack::ingest a
 use openhuman_core::openhuman::memory_sync::composio::providers::slack::{
     SlackMessage, SlackProvider,
 };
+use openhuman_core::openhuman::memory_sync::composio::providers::sync_state::SyncState;
 use openhuman_core::openhuman::memory_sync::composio::providers::{
     ComposioProvider, ProviderContext, SyncReason, TaskFetchFilter,
 };
@@ -987,6 +988,161 @@ async fn gmail_sync_max_items_caps_ingest_to_exact_count() {
     assert_eq!(
         outcome.items_ingested, 2,
         "max_items=2 must cap Gmail ingest to exactly 2 even though the page held 5"
+    );
+
+    server.abort();
+}
+
+#[tokio::test]
+async fn gmail_sync_depth_days_injects_after_floor_into_query() {
+    let _guard = env_lock();
+    let tmp = TempDir::new().expect("tempdir");
+    let _workspace = EnvGuard::set_path("OPENHUMAN_WORKSPACE", tmp.path());
+    let _home = EnvGuard::set_path("HOME", tmp.path());
+    let _backend = EnvGuard::unset("BACKEND_URL");
+
+    // Gmail applies sync_depth_days server-side: on the first sync (no cursor)
+    // it must inject an `after:<epoch>` qualifier into the GMAIL_FETCH_EMAILS
+    // query, proving the window actually narrows what is fetched.
+    let requests: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
+    let (base, server) = loopback_router(gmail_cap_router(
+        gmail_cap_messages(1),
+        Arc::clone(&requests),
+    ))
+    .await;
+
+    let mut config = config_in(&tmp);
+    config.api_url = Some(base);
+    persist_config(&config).await;
+    store_session(&config);
+    memory_global::init(config.workspace_dir.clone()).expect("init global memory");
+
+    let ctx = ProviderContext {
+        config: Arc::new(config),
+        toolkit: "gmail".to_string(),
+        connection_id: Some("conn-gmail-depth".to_string()),
+        usage: Default::default(),
+        max_items: None,
+        sync_depth_days: Some(7),
+    };
+
+    GmailProvider::new()
+        .sync(&ctx, SyncReason::ConnectionCreated)
+        .await
+        .expect("gmail depth sync");
+
+    let reqs = requests.lock().unwrap();
+    let fetch = reqs
+        .iter()
+        .find(|b| b.get("tool").and_then(Value::as_str) == Some("GMAIL_FETCH_EMAILS"))
+        .expect("a GMAIL_FETCH_EMAILS request was issued");
+    let query = fetch
+        .get("arguments")
+        .and_then(|a| a.get("query"))
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    assert!(
+        query.contains("after:"),
+        "sync_depth_days=7 must inject an `after:` floor into the query, got: {query}"
+    );
+
+    server.abort();
+}
+
+/// Router whose `GMAIL_FETCH_EMAILS` always returns the same page **with a
+/// non-empty `nextPageToken`** — so absent an all-synced early stop the provider
+/// would paginate to the page ceiling. Used to pin `stop_on_empty_pending`.
+fn gmail_repeating_router(messages: Vec<Value>, requests: Arc<Mutex<Vec<Value>>>) -> Router {
+    Router::new().route(
+        "/agent-integrations/composio/execute",
+        any(move |Json(body): Json<Value>| {
+            let messages = messages.clone();
+            let requests = Arc::clone(&requests);
+            async move {
+                requests.lock().unwrap().push(body.clone());
+                let tool = body.get("tool").and_then(Value::as_str).unwrap_or("");
+                let resp = match tool {
+                    "GMAIL_GET_PROFILE" => {
+                        execute_envelope(json!({ "emailAddress": "stop@example.test" }))
+                    }
+                    "GMAIL_FETCH_EMAILS" => execute_envelope(json!({
+                        "messages": messages,
+                        "nextPageToken": "more"
+                    })),
+                    _ => execute_envelope(json!({})),
+                };
+                Json(resp)
+            }
+        }),
+    )
+}
+
+// Replaces gmail's dropped `last_seen_id` head-unchanged optimization: prove the
+// provider halts after a single `GMAIL_FETCH_EMAILS` round-trip when the first
+// page is already fully synced. We pre-seed `synced_ids` with the page's message
+// ids and leave the cursor `None` — so the cursor/depth boundary cannot fire and
+// **only** `stop_on_empty_pending` can stop the loop. The router hands back a
+// perpetual `nextPageToken`, so without the early stop the provider would walk
+// every page up to the ceiling.
+#[tokio::test]
+async fn gmail_sync_stops_after_an_all_already_synced_page() {
+    let _guard = env_lock();
+    let tmp = TempDir::new().expect("tempdir");
+    let _workspace = EnvGuard::set_path("OPENHUMAN_WORKSPACE", tmp.path());
+    let _home = EnvGuard::set_path("HOME", tmp.path());
+    let _backend = EnvGuard::unset("BACKEND_URL");
+
+    let requests: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
+    let (base, server) = loopback_router(gmail_repeating_router(
+        gmail_cap_messages(3),
+        Arc::clone(&requests),
+    ))
+    .await;
+
+    let mut config = config_in(&tmp);
+    config.api_url = Some(base);
+    persist_config(&config).await;
+    store_session(&config);
+    let memory = memory_global::init(config.workspace_dir.clone()).expect("init global memory");
+
+    // Pre-seed: the 3 page-1 message ids are already synced; cursor stays None.
+    let mut state = SyncState::new("gmail", "conn-gmail-stop");
+    for i in 1..=3 {
+        state.mark_synced(format!("gmail-cap-msg-{i}"));
+    }
+    state
+        .save(&memory)
+        .await
+        .expect("save pre-seeded sync state");
+
+    let ctx = ProviderContext {
+        config: Arc::new(config),
+        toolkit: "gmail".to_string(),
+        connection_id: Some("conn-gmail-stop".to_string()),
+        usage: Default::default(),
+        max_items: None,
+        sync_depth_days: None,
+    };
+
+    let outcome = GmailProvider::new()
+        .sync(&ctx, SyncReason::ConnectionCreated)
+        .await
+        .expect("gmail sync");
+
+    assert_eq!(
+        outcome.items_ingested, 0,
+        "every page-1 message was already synced — nothing to ingest"
+    );
+    let fetch_calls = requests
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|b| b.get("tool").and_then(Value::as_str) == Some("GMAIL_FETCH_EMAILS"))
+        .count();
+    assert_eq!(
+        fetch_calls, 1,
+        "stop_on_empty_pending must halt after one all-synced page, not paginate the \
+         perpetual nextPageToken — got {fetch_calls} GMAIL_FETCH_EMAILS calls"
     );
 
     server.abort();

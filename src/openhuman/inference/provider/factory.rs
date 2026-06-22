@@ -47,6 +47,8 @@ pub const OLLAMA_PROVIDER_PREFIX: &str = "ollama:";
 pub const LM_STUDIO_PROVIDER_PREFIX: &str = "lmstudio:";
 /// Prefix for MLX-compatible local providers: `"mlx:<model>"`.
 pub const MLX_PROVIDER_PREFIX: &str = "mlx:";
+/// Prefix for OMLX local providers: `"omlx:<model>"`.
+pub const OMLX_PROVIDER_PREFIX: &str = "omlx:";
 /// Prefix for generic local OpenAI-compatible providers: `"local-openai:<model>"`.
 pub const LOCAL_OPENAI_PROVIDER_PREFIX: &str = "local-openai:";
 /// Prefix for the Claude Agent SDK subprocess provider: `"claude_agent_sdk:<model>"`.
@@ -361,8 +363,8 @@ fn route_has_usable_credentials(resolved: &str, config: &Config) -> bool {
 }
 
 /// Find the first BYOK cloud provider string configured across all workload
-/// routes, skipping local providers (ollama, lmstudio) and managed-backend
-/// sentinels ("openhuman", "cloud", empty).
+/// routes, skipping local providers and managed-backend sentinels
+/// ("openhuman", "cloud", empty).
 ///
 /// Returns `None` when no BYOK cloud provider is configured, in which case
 /// the caller should fall through to `resolve_primary_cloud_provider_string`.
@@ -386,6 +388,7 @@ pub(crate) fn resolve_byok_fallback_provider_string(config: &Config) -> Option<S
         if s.starts_with(OLLAMA_PROVIDER_PREFIX)
             || s.starts_with(LM_STUDIO_PROVIDER_PREFIX)
             || s.starts_with(MLX_PROVIDER_PREFIX)
+            || s.starts_with(OMLX_PROVIDER_PREFIX)
             || s.starts_with(LOCAL_OPENAI_PROVIDER_PREFIX)
         {
             continue;
@@ -633,6 +636,19 @@ pub fn create_chat_provider_from_string(
         return make_mlx_provider(&model, temperature_override, config);
     }
 
+    if let Some(model_with_temp) = p.strip_prefix(OMLX_PROVIDER_PREFIX) {
+        let (model, temperature_override) = split_model_and_temperature(model_with_temp);
+        if model.is_empty() {
+            anyhow::bail!(
+                "[chat-factory] provider string '{}' for role '{}' has an empty model — \
+                 use 'omlx:<model-id>'",
+                p,
+                role
+            );
+        }
+        return make_omlx_provider(&model, temperature_override, config);
+    }
+
     if let Some(model_with_temp) = p.strip_prefix(LOCAL_OPENAI_PROVIDER_PREFIX) {
         let (model, temperature_override) = split_model_and_temperature(model_with_temp);
         if model.is_empty() {
@@ -681,7 +697,7 @@ pub fn create_chat_provider_from_string(
     // than an opaque parse failure.
     anyhow::bail!(
         "[chat-factory] unrecognised provider string '{}' for role '{}'. \
-         Valid forms: openhuman, ollama:<model>, lmstudio:<model>, mlx:<model>, \
+         Valid forms: openhuman, ollama:<model>, lmstudio:<model>, mlx:<model>, omlx:<model>, \
          local-openai:<model>, claude_agent_sdk, claude_agent_sdk:<model>, <slug>:<model>. \
          Configured slugs: [{}]",
         p,
@@ -753,6 +769,17 @@ pub(crate) fn create_local_chat_provider_from_string(
         return make_mlx_provider(&model, temperature_override, config);
     }
 
+    if let Some(model_with_temp) = p.strip_prefix(OMLX_PROVIDER_PREFIX) {
+        let (model, temperature_override) = split_model_and_temperature(model_with_temp);
+        if model.is_empty() {
+            anyhow::bail!(
+                "[chat-factory] provider string '{}' has an empty model — use 'omlx:<model-id>'",
+                p
+            );
+        }
+        return make_omlx_provider(&model, temperature_override, config);
+    }
+
     if let Some(model_with_temp) = p.strip_prefix(LOCAL_OPENAI_PROVIDER_PREFIX) {
         let (model, temperature_override) = split_model_and_temperature(model_with_temp);
         if model.is_empty() {
@@ -766,7 +793,7 @@ pub(crate) fn create_local_chat_provider_from_string(
 
     anyhow::bail!(
         "[chat-factory] '{}' is not a supported local provider string. Valid local forms: \
-         ollama:<model>, lmstudio:<model>, mlx:<model>, local-openai:<model>",
+         ollama:<model>, lmstudio:<model>, mlx:<model>, omlx:<model>, local-openai:<model>",
         p
     );
 }
@@ -1233,6 +1260,59 @@ fn make_mlx_provider(
     .with_native_tool_calling(false)
     .with_vision(false)
     .with_local_provider_kind(LocalProviderKind::Mlx);
+    Ok((Box::new(provider), model.to_string()))
+}
+
+/// Build an OMLX local provider.
+///
+/// OMLX servers expose an OpenAI v1-compatible endpoint and require a Bearer API key.
+/// Default URL: `http://127.0.0.1:8000/v1` (override via `OMLX_SERVER_URL` env
+/// or `local_ai.base_url` when provider is set to "omlx").
+fn make_omlx_provider(
+    model: &str,
+    temperature_override: Option<f64>,
+    config: &Config,
+) -> anyhow::Result<(Box<dyn Provider>, String)> {
+    use crate::openhuman::inference::local::profile::{LocalProviderKind, OMLX_PROFILE};
+
+    let endpoint = std::env::var("OMLX_SERVER_URL")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| config.local_ai.base_url.clone())
+        .unwrap_or_else(|| OMLX_PROFILE.default_base_url.to_string());
+    let api_key = config.local_ai.api_key.as_deref().unwrap_or("");
+    if api_key.trim().is_empty() {
+        log::warn!(
+            "[providers][chat-factory] omlx: no api_key configured — OMLX requires a Bearer key; \
+             requests will likely 401"
+        );
+    }
+    log::info!(
+        "[providers][chat-factory] building omlx provider model={} endpoint_host={} temp_override={:?}",
+        model,
+        redact_endpoint(&endpoint),
+        temperature_override
+    );
+    let auth = if api_key.trim().is_empty() {
+        CompatAuthStyle::None
+    } else {
+        CompatAuthStyle::Bearer
+    };
+    let provider = OpenAiCompatibleProvider::new_no_responses_fallback(
+        "omlx",
+        &endpoint,
+        if api_key.trim().is_empty() {
+            None
+        } else {
+            Some(api_key)
+        },
+        auth,
+    )
+    .with_temperature_unsupported_models(config.temperature_unsupported_models.clone())
+    .with_temperature_override(temperature_override)
+    .with_native_tool_calling(false)
+    .with_vision(false)
+    .with_local_provider_kind(LocalProviderKind::Omlx);
     Ok((Box::new(provider), model.to_string()))
 }
 

@@ -135,6 +135,24 @@ pub(crate) trait IncrementalSource: Send + Sync {
     /// [`ItemCap::max_pages`], applied *per scope*.
     fn max_pages(&self) -> u32;
 
+    /// The page ceiling for *this pass*, given the reason and current state.
+    /// Defaults to the fixed [`Self::max_pages`]; gmail overrides it to apply an
+    /// adaptive cap (e.g. only a couple of pages when the previous sync ran very
+    /// recently). The orchestrator hands the result to [`ItemCap::max_pages`].
+    fn page_ceiling(&self, reason: SyncReason, state: &SyncState) -> u32 {
+        let _ = (reason, state);
+        self.max_pages()
+    }
+
+    /// Whether to stop paginating a scope once a fetched page yields **no new
+    /// items** (everything deduped away as already-synced). Default `false` —
+    /// the orchestrator keeps paginating until the cursor/depth boundary or the
+    /// last page. Gmail overrides to `true`: its result set is ordered so an
+    /// all-already-synced page means there is nothing newer left to fetch.
+    fn stop_on_empty_pending(&self) -> bool {
+        false
+    }
+
     /// Resolve identity and list the scopes to iterate.
     ///
     /// Flat providers return `vec![SyncScope::flat()]`. Nested providers call
@@ -435,8 +453,11 @@ pub(crate) async fn run_sync<S: IncrementalSource + ?Sized>(
     // ── Step 4: caps + window ───────────────────────────────────────────
     let page_size = source.page_size(reason);
     let mut cap = ItemCap::new(ctx.max_items);
-    let effective_max_pages = cap.max_pages(page_size, source.max_pages());
-    if ctx.max_items.is_some() && effective_max_pages < source.max_pages() {
+    // `page_ceiling` lets a provider apply a state-aware cap (gmail's adaptive
+    // cap); it defaults to the fixed `max_pages`.
+    let page_ceiling = source.page_ceiling(reason, &state);
+    let effective_max_pages = cap.max_pages(page_size, page_ceiling);
+    if ctx.max_items.is_some() && effective_max_pages < page_ceiling {
         tracing::debug!(
             toolkit,
             connection_id = %connection_id,
@@ -560,6 +581,11 @@ pub(crate) async fn run_sync<S: IncrementalSource + ?Sized>(
             let (mut pending, mut hit_cursor_boundary) =
                 select_pending(source, &fetch.items, boundary_cursor, &state, ts_acc);
 
+            // A non-empty page whose items all deduped away as already-synced
+            // (the gmail "all already synced" signal — captured before the
+            // depth/cap filters narrow `pending` for other reasons).
+            let page_had_no_new_items = pending.is_empty();
+
             // sync_depth_days: `pending` is in descending-timestamp order, so
             // truncate at the first item below the floor and stop paginating.
             if let Some(ref floor) = depth_floor {
@@ -604,6 +630,16 @@ pub(crate) async fn run_sync<S: IncrementalSource + ?Sized>(
                     scope = %scope.label,
                     page = page_num,
                     "[composio:sync_orch] reached cursor/depth boundary, stopping scope"
+                );
+                break;
+            }
+
+            if page_had_no_new_items && source.stop_on_empty_pending() {
+                tracing::debug!(
+                    toolkit,
+                    scope = %scope.label,
+                    page = page_num,
+                    "[composio:sync_orch] page had no new items, stopping scope"
                 );
                 break;
             }
@@ -780,6 +816,14 @@ mod tests {
         /// Scope id whose `fetch_page` returns a transport error (used to
         /// exercise per-scope error tolerance). `None` → every scope succeeds.
         fail_scope: Option<String>,
+        /// When `Some`, drive multi-page returns: page `i` returns `pages[i]`
+        /// with the opaque cursor = next page index. Overrides the single-page
+        /// synth path.
+        pages: Option<Vec<Vec<Value>>>,
+        /// When true, override `stop_on_empty_pending()` (gmail's behaviour).
+        stop_on_empty: bool,
+        /// When `Some`, override `page_ceiling()` (gmail's adaptive cap).
+        page_ceiling: Option<u32>,
     }
 
     impl FakeSource {
@@ -802,6 +846,12 @@ mod tests {
         }
         fn max_pages(&self) -> u32 {
             20
+        }
+        fn stop_on_empty_pending(&self) -> bool {
+            self.stop_on_empty
+        }
+        fn page_ceiling(&self, _reason: SyncReason, _state: &SyncState) -> u32 {
+            self.page_ceiling.unwrap_or_else(|| self.max_pages())
         }
         async fn preamble(
             &self,
@@ -854,6 +904,13 @@ mod tests {
             if self.provider_fail_fetch {
                 // Completed but the provider reported failure — already recorded.
                 return Err("fake provider-reported page failure".to_string());
+            }
+            // Multi-page mode: cursor is the page index.
+            if let Some(pages) = &self.pages {
+                let idx: usize = cursor.and_then(|c| c.parse().ok()).unwrap_or(0);
+                let items = pages.get(idx).cloned().unwrap_or_default();
+                let next = (idx + 1 < pages.len()).then(|| (idx + 1).to_string());
+                return Ok(PageFetch { items, next });
             }
             // Single page per scope: everything comes back on the first call.
             if cursor.is_some() {
@@ -1003,6 +1060,75 @@ mod tests {
         assert_eq!(
             outcome.items_ingested, 3,
             "server_side_depth must skip the orchestrator's client-side window filter"
+        );
+    }
+
+    /// Two pages of items, keyed `id`+`ts`.
+    fn page(prefix: &str, n: usize) -> Vec<Value> {
+        (0..n)
+            .map(|i| json!({ "id": format!("{prefix}{i}"), "ts": "2099-01-01T00:00:00Z" }))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn page_ceiling_caps_the_pages_fetched() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = fake_ctx(&tmp, None, None);
+        // Two pages of 2 items each. With a page ceiling of 1 (gmail's adaptive
+        // cap), only the first page is fetched → 2 ingested, not 4.
+        let source = FakeSource {
+            scopes: vec![SyncScope::flat()],
+            pages: Some(vec![page("a", 2), page("b", 2)]),
+            page_ceiling: Some(1),
+            ..Default::default()
+        };
+        let outcome = run_sync(&source, &ctx, SyncReason::Periodic)
+            .await
+            .expect("run_sync");
+        assert_eq!(
+            outcome.items_ingested, 2,
+            "page_ceiling=1 must fetch only the first page"
+        );
+    }
+
+    #[tokio::test]
+    async fn stop_on_empty_pending_halts_at_an_all_synced_page() {
+        let tmp = TempDir::new().unwrap();
+        // Page 0 = [a0,a1] (new), page 1 = same ids (all synced after page 0),
+        // page 2 = [c0,c1] (new). With stop_on_empty the pass halts at page 1
+        // and never reaches page 2 → 2 ingested; without it, page 2's items are
+        // also ingested → 4.
+        let pages = vec![page("a", 2), page("a", 2), page("c", 2)];
+
+        let stop = FakeSource {
+            scopes: vec![SyncScope::flat()],
+            pages: Some(pages.clone()),
+            stop_on_empty: true,
+            ..Default::default()
+        };
+        let stop_ctx = fake_ctx(&tmp, None, None);
+        let stopped = run_sync(&stop, &stop_ctx, SyncReason::Periodic)
+            .await
+            .expect("run_sync");
+        assert_eq!(
+            stopped.items_ingested, 2,
+            "stop_on_empty must halt at the all-synced page before page 2"
+        );
+
+        // Control: same pages, no stop_on_empty → keeps going to page 2.
+        let tmp2 = TempDir::new().unwrap();
+        let keep = FakeSource {
+            scopes: vec![SyncScope::flat()],
+            pages: Some(pages),
+            ..Default::default()
+        };
+        let keep_ctx = fake_ctx(&tmp2, None, None);
+        let kept = run_sync(&keep, &keep_ctx, SyncReason::Periodic)
+            .await
+            .expect("run_sync");
+        assert_eq!(
+            kept.items_ingested, 4,
+            "without stop_on_empty the pass continues past the all-synced page"
         );
     }
 

@@ -83,6 +83,7 @@ pub struct LocalAiSettingsPatch {
     pub usage_heartbeat: Option<bool>,
     pub usage_learning_reflection: Option<bool>,
     pub usage_subconscious: Option<bool>,
+    pub api_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -372,9 +373,15 @@ pub async fn apply_local_ai_settings(
         config.local_ai.base_url = match base_url {
             None => None,
             Some(base_url) if base_url.trim().is_empty() => None,
+            // OMLX is an OpenAI-v1 endpoint: the `/v1` suffix is significant, so it
+            // must NOT go through `validate_ollama_url` (which strips the path).
+            // `provider_from_config` maps omlx → Ollama, so guard on the slug here.
             Some(base_url)
-                if crate::openhuman::inference::local::provider::provider_from_config(config)
-                    == crate::openhuman::inference::local::provider::LocalAiProvider::Ollama =>
+                if crate::openhuman::inference::local::provider::normalize_provider(
+                    &config.local_ai.provider,
+                ) != "omlx"
+                    && crate::openhuman::inference::local::provider::provider_from_config(config)
+                        == crate::openhuman::inference::local::provider::LocalAiProvider::Ollama =>
             {
                 Some(crate::openhuman::inference::local::validate_ollama_url(
                     &base_url,
@@ -400,6 +407,22 @@ pub async fn apply_local_ai_settings(
     }
     if let Some(v) = update.usage_subconscious {
         config.local_ai.usage.subconscious = v;
+    }
+    if let Some(api_key) = update.api_key {
+        let trimmed = api_key.trim();
+        config.local_ai.api_key = if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        };
+        log::debug!(
+            "[config][local_ai] api_key {}",
+            if config.local_ai.api_key.is_some() {
+                "set"
+            } else {
+                "cleared"
+            }
+        );
     }
     config.save().await.map_err(|e| e.to_string())?;
     let snapshot = snapshot_config_json(config)?;
