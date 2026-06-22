@@ -44,7 +44,9 @@ describe('ToolPolicyDiagnosticsPanel', () => {
     expect(screen.getByText(/Total tools/i)).toBeInTheDocument();
     expect(screen.getAllByText('10').length).toBeGreaterThan(0);
     expect(screen.getByText(/Recent \(24h\): 5/i)).toBeInTheDocument();
-    expect(hoisted.callCoreRpc).toHaveBeenCalled();
+    expect(hoisted.callCoreRpc).toHaveBeenCalledWith(
+      expect.objectContaining({ method: 'openhuman.tool_registry_diagnostics' })
+    );
   });
 
   test('renders unavailable card when the RPC throws', async () => {
