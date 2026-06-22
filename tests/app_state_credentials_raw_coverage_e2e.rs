@@ -810,6 +810,88 @@ async fn snapshot_activates_user_dir_after_pending_revalidation_without_initial_
 }
 
 #[tokio::test]
+async fn snapshot_preserves_pending_session_when_revalidated_user_activation_fails() {
+    let _lock = env_lock();
+    let (api_url, server_task, shutdown_tx) = auth_me_server(
+        r#"{"data":{"id":"fresh-activation-failure","name":"Activation Failure","email":"activation-failure@example.test"}}"#,
+    )
+    .await;
+    let harness = setup_default_paths(&api_url);
+    let config = harness.config().await;
+    let active_user_root = openhuman_core::openhuman::config::default_root_openhuman_dir()
+        .expect("default openhuman root");
+    assert_eq!(
+        openhuman_core::openhuman::config::read_active_user_id(&active_user_root),
+        None,
+        "test must start without active_user.toml"
+    );
+    std::fs::create_dir_all(active_user_root.join("active_user.toml"))
+        .expect("block active user marker write");
+
+    let mut metadata = HashMap::new();
+    metadata.insert(
+        "user_json".to_string(),
+        json!({
+            "pendingBackendValidation": true
+        })
+        .to_string(),
+    );
+    AuthService::from_config(&config)
+        .store_provider_token(
+            APP_SESSION_PROVIDER,
+            DEFAULT_AUTH_PROFILE_NAME,
+            "round14.pending.activation-failure",
+            metadata,
+            true,
+        )
+        .expect("seed activation-failure pending app session");
+
+    let snap = snapshot()
+        .await
+        .expect("snapshot with failed pending activation")
+        .value;
+    assert!(
+        snap.auth.is_authenticated,
+        "activation write failure should keep the pending local session for retry"
+    );
+    assert_eq!(
+        snap.session_token.as_deref(),
+        Some("round14.pending.activation-failure")
+    );
+    assert_eq!(
+        snap.current_user
+            .as_ref()
+            .and_then(|v| v.get("pendingBackendValidation")),
+        Some(&json!(true)),
+        "failed activation must not return a validated backend user"
+    );
+    assert!(
+        active_user_root.join("active_user.toml").is_dir(),
+        "failed active_user.toml write must not be treated as an activated user"
+    );
+
+    let profile = AuthService::from_config(&config)
+        .get_profile(APP_SESSION_PROVIDER, None)
+        .expect("read profile after failed activation")
+        .expect("source pending profile remains available for retry");
+    let stored_user: Value = serde_json::from_str(
+        profile
+            .metadata
+            .get("user_json")
+            .expect("persisted activation-failure user_json"),
+    )
+    .expect("activation-failure stored user json");
+    assert_eq!(
+        stored_user.get("pendingBackendValidation"),
+        Some(&json!(true)),
+        "activation failure must not clear persisted pendingBackendValidation"
+    );
+
+    let _ = shutdown_tx.send(());
+    let _ = server_task.await;
+}
+
+#[tokio::test]
 async fn snapshot_clears_pending_session_when_backend_revalidation_is_rejected() {
     let _lock = env_lock();
     let (api_url, server_task, shutdown_tx) = auth_me_rejected_server().await;

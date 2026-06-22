@@ -442,44 +442,33 @@ fn config_is_workspace_env_scoped(config: &Config) -> bool {
         .is_some_and(|env_config_dir| env_config_dir == config_dir)
 }
 
-async fn activate_revalidated_user_dir(config: &Config, user_id: &str) -> Config {
-    if let Ok(root_dir) = crate::openhuman::config::default_root_openhuman_dir() {
-        let previous_active = crate::openhuman::config::read_active_user_id(&root_dir);
-        let user_dir = crate::openhuman::config::user_openhuman_dir(&root_dir, user_id);
-        if let Err(error) = fs::create_dir_all(&user_dir) {
-            warn!(
-                "{LOG_PREFIX} failed to create user directory for revalidated pending session user_id={user_id}: {error}"
-            );
-        } else if let Err(error) =
-            crate::openhuman::config::write_active_user_id(&root_dir, user_id)
-        {
-            warn!(
-                "{LOG_PREFIX} failed to write active_user.toml for revalidated pending session user_id={user_id}: {error}"
-            );
-        } else {
+async fn activate_revalidated_user_dir(user_id: &str) -> Result<Config, String> {
+    let root_dir = crate::openhuman::config::default_root_openhuman_dir()
+        .map_err(|error| format!("failed to locate default root: {error}"))?;
+    let previous_active = crate::openhuman::config::read_active_user_id(&root_dir);
+    let user_dir = crate::openhuman::config::user_openhuman_dir(&root_dir, user_id);
+    fs::create_dir_all(&user_dir).map_err(|error| {
+        format!("failed to create user directory for revalidated pending session user_id={user_id}: {error}")
+    })?;
+    crate::openhuman::config::write_active_user_id(&root_dir, user_id).map_err(|error| {
+        format!("failed to write active_user.toml for revalidated pending session user_id={user_id}: {error}")
+    })?;
+
+    debug!(
+        "{LOG_PREFIX} activated user directory for revalidated pending session user_id={user_id}"
+    );
+    if previous_active.is_none() {
+        let pre_ws = crate::openhuman::config::pre_login_user_dir(&root_dir).join("workspace");
+        if let Err(error) = crate::openhuman::memory_conversations::purge_threads(pre_ws) {
             debug!(
-                "{LOG_PREFIX} activated user directory for revalidated pending session user_id={user_id}"
+                "{LOG_PREFIX} pre-login conversation purge skipped after pending session revalidation: {error}"
             );
-            if previous_active.is_none() {
-                let pre_ws =
-                    crate::openhuman::config::pre_login_user_dir(&root_dir).join("workspace");
-                if let Err(error) = crate::openhuman::memory_conversations::purge_threads(pre_ws) {
-                    debug!(
-                        "{LOG_PREFIX} pre-login conversation purge skipped after pending session revalidation: {error}"
-                    );
-                }
-            }
         }
     }
 
-    Config::load_from_default_paths()
-        .await
-        .unwrap_or_else(|error| {
-            warn!(
-                "{LOG_PREFIX} failed to reload config after pending session user activation: {error}"
-            );
-            config.clone()
-        })
+    Config::load_from_default_paths().await.map_err(|error| {
+        format!("failed to reload config after pending session user activation: {error}")
+    })
 }
 
 async fn finish_revalidated_user_activation(
@@ -537,7 +526,7 @@ async fn persist_revalidated_session_user(
     let workspace_env_scoped = config_is_workspace_env_scoped(config);
     let target_config = if let Some(user_id) = user_id.as_deref().filter(|_| !workspace_env_scoped)
     {
-        activate_revalidated_user_dir(config, user_id).await
+        activate_revalidated_user_dir(user_id).await?
     } else {
         if user_id.is_some() && workspace_env_scoped {
             debug!(
@@ -972,6 +961,7 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
                             warn!(
                                 "{LOG_PREFIX} failed to persist cleared pending backend validation: {error}"
                             );
+                            return SnapshotCurrentUser::User(stored_user.clone());
                         }
                     }
                 }
