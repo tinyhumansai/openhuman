@@ -1843,11 +1843,28 @@ fn byok_fallback_skips_mlx_and_local_openai() {
 }
 
 #[test]
+fn byok_fallback_skips_omlx() {
+    let mut config = Config::default();
+    config.chat_provider = Some("omlx:llama3".to_string());
+
+    assert!(
+        resolve_byok_fallback_provider_string(&config).is_none(),
+        "OMLX is a local provider and must not be treated as a BYOK cloud fallback"
+    );
+    assert_eq!(
+        provider_for_role("coding", &config),
+        "openhuman",
+        "unset coding must not inherit chat OMLX as a BYOK fallback"
+    );
+}
+
+#[test]
 fn local_provider_string_detection() {
     use crate::openhuman::inference::local::profile::is_local_provider_string;
     assert!(is_local_provider_string("ollama:phi3"));
     assert!(is_local_provider_string("lmstudio:model"));
     assert!(is_local_provider_string("mlx:llama"));
+    assert!(is_local_provider_string("omlx:llama"));
     assert!(is_local_provider_string("local-openai:qwen2"));
     assert!(!is_local_provider_string("openai:gpt-4o"));
     assert!(!is_local_provider_string("openhuman"));

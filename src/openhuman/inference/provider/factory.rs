@@ -363,8 +363,8 @@ fn route_has_usable_credentials(resolved: &str, config: &Config) -> bool {
 }
 
 /// Find the first BYOK cloud provider string configured across all workload
-/// routes, skipping local providers (ollama, lmstudio) and managed-backend
-/// sentinels ("openhuman", "cloud", empty).
+/// routes, skipping local providers and managed-backend sentinels
+/// ("openhuman", "cloud", empty).
 ///
 /// Returns `None` when no BYOK cloud provider is configured, in which case
 /// the caller should fall through to `resolve_primary_cloud_provider_string`.
@@ -388,6 +388,7 @@ pub(crate) fn resolve_byok_fallback_provider_string(config: &Config) -> Option<S
         if s.starts_with(OLLAMA_PROVIDER_PREFIX)
             || s.starts_with(LM_STUDIO_PROVIDER_PREFIX)
             || s.starts_with(MLX_PROVIDER_PREFIX)
+            || s.starts_with(OMLX_PROVIDER_PREFIX)
             || s.starts_with(LOCAL_OPENAI_PROVIDER_PREFIX)
         {
             continue;
