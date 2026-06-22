@@ -36,7 +36,7 @@ describe('AgentBoxPanel', () => {
     expect(screen.getByText('https://api.gmi-serving.com')).toBeInTheDocument();
     expect(screen.getByText('deepseek-ai/DeepSeek-V4-Pro')).toBeInTheDocument();
     expect(hoisted.callCoreRpc).toHaveBeenCalledWith(
-      expect.objectContaining({ method: 'agentbox.status' })
+      expect.objectContaining({ method: 'openhuman.agentbox_status' })
     );
   });
 

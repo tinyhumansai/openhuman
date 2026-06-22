@@ -44,7 +44,7 @@ const AgentBoxPanel = () => {
     setState({ kind: 'loading' });
     try {
       const status = await callCoreRpc<AgentBoxStatus>({
-        method: 'agentbox.status',
+        method: 'openhuman.agentbox_status',
         params: {},
         timeoutMs: 10_000,
       });
