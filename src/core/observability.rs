@@ -553,26 +553,20 @@ fn is_disk_full_message(lower: &str) -> bool {
     {
         return true;
     }
-    // SQLITE_FULL extended shape — `"... database or disk is full: Error code
-    // 13: Insertion failed because database is full"` (TAURI-RUST-4R8). The
-    // canonical phrase is mid-string here, so the suffix anchor below misses
-    // it; anchor on the SQLITE_FULL `code_to_str` token instead. Same
-    // `"backend returned "` guard so a remote 5xx body that quotes it still
-    // surfaces.
-    if lower.contains("insertion failed because database is full")
-        && !lower.contains("backend returned ")
-    {
-        return true;
-    }
-    // SQLITE_FULL bare shape — see the fifth-shape section above for the
-    // scoping rationale. Suffix anchor (after trimming trailing whitespace and
-    // punctuation that closures / JSON wrappers commonly append) pins to the
-    // local-emit shape; the negative `"backend returned "` guard rejects the
-    // remote envelope as a second line of defense.
+    // Two SQLITE_FULL renderings — see the fifth-shape section above. The
+    // **bare** shape lands the phrase as a suffix (after trimming trailing
+    // whitespace / punctuation that closures + JSON wrappers append); the
+    // **extended** shape (TAURI-RUST-4R8) puts the phrase mid-string followed
+    // by `: Error code 13: Insertion failed because database is full`, so anchor
+    // additionally on the distinctive SQLITE_FULL `code_to_str` token. The
+    // negative `"backend returned "` guard rejects the remote 5xx envelope for
+    // both anchors as a second line of defense.
     let trimmed = lower.trim_end_matches(|c: char| {
         c.is_ascii_whitespace() || matches!(c, '.' | ',' | ';' | ':' | '"' | '\'')
     });
-    trimmed.ends_with("database or disk is full") && !lower.contains("backend returned ")
+    let is_sqlite_full = trimmed.ends_with("database or disk is full")
+        || lower.contains("insertion failed because database is full");
+    is_sqlite_full && !lower.contains("backend returned ")
 }
 
 /// Detect the literal `"Config loading timed out"` string produced by
