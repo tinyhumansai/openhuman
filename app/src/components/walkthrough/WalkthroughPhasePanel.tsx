@@ -7,7 +7,7 @@ import { useWalkthroughUI } from './WalkthroughProvider';
  * Renders the current walkthrough phase: progress bar, phase header with icon
  * and description, and the list of action cards for the current phase.
  *
- * When the phase is 'review', shows a summary of what was configured.
+ * When the phase is 'review', shows a summary of the setup areas previewed.
  * When the phase is 'done', shows a celebration screen.
  */
 const WalkthroughPhasePanel = () => {
@@ -27,7 +27,7 @@ const WalkthroughPhasePanel = () => {
         <p className="text-sm text-stone-500 dark:text-neutral-400 max-w-sm mx-auto">
           {t(
             'walkthrough.done.description',
-            'Your assistant is ready to help. Connections are set up and automations are configured.'
+            'Your assistant is ready to help. You can connect tools and turn on automations later from Settings.'
           )}
         </p>
       </div>
@@ -62,7 +62,7 @@ const WalkthroughPhasePanel = () => {
                     'walkthrough.review.skipped',
                     'You skipped the setup. You can configure these anytime in Settings.'
                   )
-                : t('walkthrough.review.empty', 'No actions completed yet.')}
+                : t('walkthrough.review.empty', 'No items reviewed yet.')}
             </p>
           ) : (
             steps.map(step => <WalkthroughActionCard key={step.key} step={step} />)
@@ -74,7 +74,7 @@ const WalkthroughPhasePanel = () => {
             type="button"
             onClick={advance}
             className="rounded-xl bg-[#2F6EF4] px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#2559c7]">
-            {t('walkthrough.review.finish', 'Finish setup')}
+            {t('walkthrough.review.finish', 'Continue')}
           </button>
         </div>
       </div>
@@ -125,8 +125,14 @@ const WalkthroughPhasePanel = () => {
         ))}
       </div>
 
-      {/* Skip button */}
-      <div className="text-center">
+      {/* Continue and skip controls */}
+      <div className="flex flex-col items-center gap-3 text-center">
+        <button
+          type="button"
+          onClick={advance}
+          className="rounded-xl bg-[#2F6EF4] px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#2559c7]">
+          {t('walkthrough.phase.continue', 'Continue')}
+        </button>
         <button
           type="button"
           onClick={skip}

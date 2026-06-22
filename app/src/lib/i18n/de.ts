@@ -5203,9 +5203,10 @@ const messages: TranslationMap = {
   'walkthrough.phase.review': 'Überprüfen',
   'walkthrough.phase.done': 'Fertig',
   'walkthrough.phase.skip': 'Diesen Schritt überspringen',
+  'walkthrough.phase.continue': 'Weiter',
   'walkthrough.progress.completed': 'abgeschlossen',
   'walkthrough.progress.current': 'aktuell',
-  'walkthrough.review.finish': 'Einrichtung abschließen',
+  'walkthrough.review.finish': 'Weiter',
   'walkthrough.step.start': 'Einrichtung starten',
   'walkthrough.step.gmail': 'Gmail',
   'walkthrough.step.slack': 'Slack',
@@ -5229,7 +5230,7 @@ const messages: TranslationMap = {
   'walkthrough.desc.scheduling': 'Lassen Sie KI Ihren Kalender verwalten',
   'walkthrough.desc.summaries': 'Verpassen Sie nie wieder ein Besprechungsdetail',
   'walkthrough.card.completedAria': '{label} — abgeschlossen',
-  'walkthrough.card.actionAria': '{label} abschließen',
+  'walkthrough.card.actionAria': 'Weiter {label}',
   'walkthrough.welcome.description':
     'Lassen Sie sich von uns durch die Einrichtung Ihres KI-Assistenten führen.',
   'walkthrough.connect.description':
@@ -5237,13 +5238,13 @@ const messages: TranslationMap = {
   'walkthrough.automate.description':
     'Wählen Sie aus, was Ihr Assistent automatisch erledigen soll.',
   'walkthrough.review.description':
-    'Hier ist eine Zusammenfassung dessen, was Sie eingerichtet haben. Sie können diese später jederzeit ändern.',
+    'Hier ist eine Zusammenfassung der Setup-Bereiche, die du angesehen hast. Du kannst sie später in den Einstellungen verbinden oder ändern.',
   'walkthrough.review.skipped':
     'Sie haben die Einrichtung übersprungen. Sie können diese jederzeit in den Einstellungen konfigurieren.',
-  'walkthrough.review.empty': 'Noch keine Aktionen abgeschlossen.',
+  'walkthrough.review.empty': 'Noch keine Elemente angesehen.',
   'walkthrough.done.title': 'Sie sind startklar!',
   'walkthrough.done.description':
-    'Ihr Assistent ist bereit zu helfen. Verbindungen sind eingerichtet und Automatisierungen sind konfiguriert.',
+    'Dein Assistent ist einsatzbereit. Du kannst Tools und Automationen später in den Einstellungen verbinden und aktivieren.',
   'webhooks.activity.empty': 'Leer',
   'webhooks.activity.title': 'Letzte Aktivität',
   'webhooks.composioHistory.empty': 'Leer',

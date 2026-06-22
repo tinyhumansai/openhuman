@@ -4825,9 +4825,10 @@ const messages: TranslationMap = {
   'walkthrough.phase.review': '回顾',
   'walkthrough.phase.done': '完成',
   'walkthrough.phase.skip': '跳过此步骤',
+  'walkthrough.phase.continue': '继续',
   'walkthrough.progress.completed': '已完成',
   'walkthrough.progress.current': '当前',
-  'walkthrough.review.finish': '完成设置',
+  'walkthrough.review.finish': '继续',
   'walkthrough.step.start': '开始设置',
   // ── Walkthrough step labels (a03) ──────────────────────────────────────
   'walkthrough.step.gmail': 'Gmail',
@@ -4852,16 +4853,18 @@ const messages: TranslationMap = {
   'walkthrough.desc.summaries': '不再错过任何会议细节',
   // ── Walkthrough card aria labels (a03) ─────────────────────────────────
   'walkthrough.card.completedAria': '{label} — 已完成',
-  'walkthrough.card.actionAria': '完成 {label}',
+  'walkthrough.card.actionAria': '继续 {label}',
   // ── Walkthrough phase descriptions (a03) ───────────────────────────────
   'walkthrough.welcome.description': '让我们引导你完成 AI 助手的设置。',
   'walkthrough.connect.description': '连接你常用的工具，每个连接都为助手增添新能力。',
   'walkthrough.automate.description': '选择助手应自动处理的事项。',
-  'walkthrough.review.description': '以下是你已设置的摘要，你可以随时在设置中更改。',
+  'walkthrough.review.description':
+    '以下是你已查看的设置区域摘要。你可以稍后在设置中连接或更改它们。',
   'walkthrough.review.skipped': '你跳过了设置，可以随时在设置中配置这些选项。',
-  'walkthrough.review.empty': '尚未完成任何操作。',
+  'walkthrough.review.empty': '尚未查看任何项目。',
   'walkthrough.done.title': '一切就绪！',
-  'walkthrough.done.description': '你的助手已准备好为你服务。连接已建立，自动化已配置。',
+  'walkthrough.done.description':
+    '你的助手已准备好提供帮助。你可以稍后在设置中连接工具并开启自动化。',
   'webhooks.activity.empty': '暂无活动',
   'webhooks.activity.title': '最近活动',
   'webhooks.composioHistory.empty': '暂无记录',

@@ -199,33 +199,24 @@ describe('OnboardingLayout — Joyride walkthrough integration (#1123)', () => {
     await setupLayout();
 
     expect(screen.getByText('Start setup')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Complete Start setup/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Continue' })).toBeInTheDocument();
   });
 
   it('advances walkthrough phases and can finish from review', async () => {
     await setupLayout();
 
-    fireEvent.click(screen.getByRole('button', { name: /Complete Start setup/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
     expect(screen.getByText('Gmail')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Gmail/i })).not.toBeInTheDocument();
 
-    for (const label of ['Gmail', 'Slack', 'WhatsApp', 'Telegram', 'Discord']) {
-      fireEvent.click(screen.getByRole('button', { name: new RegExp(`Complete ${label}`, 'i') }));
-    }
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
     expect(screen.getByText('Daily Briefings')).toBeInTheDocument();
 
-    for (const label of [
-      'Daily Briefings',
-      'Smart Notifications',
-      'Auto Scheduling',
-      'Meeting Summaries',
-    ]) {
-      fireEvent.click(screen.getByRole('button', { name: new RegExp(`Complete ${label}`, 'i') }));
-    }
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
 
-    expect(screen.getByText('Finish setup')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Daily Briefings — completed/i })).toBeDisabled();
+    expect(screen.getByText('Daily Briefings')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Finish setup' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
     expect(screen.getByText("You're all set!")).toBeInTheDocument();
   });
 

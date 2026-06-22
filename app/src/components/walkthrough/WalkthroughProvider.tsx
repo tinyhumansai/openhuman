@@ -8,8 +8,6 @@ export interface WalkthroughUIContextValue {
   state: WalkthroughState;
   /** Advance to the next phase. */
   advance: () => void;
-  /** Mark a specific action card as completed and advance if all done. */
-  completeStep: (stepKey: string) => void;
   /** Skip the remaining walkthrough. */
   skip: () => void;
   /** Phase labels for the progress bar. */
@@ -99,29 +97,13 @@ export const WalkthroughProvider = ({
     [t]
   );
 
-  const completeStep = useCallback(
-    (stepKey: string) => {
-      onAdvance(stepKey);
-    },
-    [onAdvance]
-  );
-
   const advance = useCallback(() => {
     onAdvance();
   }, [onAdvance]);
 
   const value: WalkthroughUIContextValue = useMemo(
-    () => ({
-      state,
-      advance,
-      completeStep,
-      skip: onSkip,
-      phaseLabels,
-      phaseIcons,
-      stepLabels,
-      stepDescriptions,
-    }),
-    [state, advance, completeStep, onSkip, phaseLabels, phaseIcons, stepLabels, stepDescriptions]
+    () => ({ state, advance, skip: onSkip, phaseLabels, phaseIcons, stepLabels, stepDescriptions }),
+    [state, advance, onSkip, phaseLabels, phaseIcons, stepLabels, stepDescriptions]
   );
 
   return <WalkthroughUIContext.Provider value={value}>{children}</WalkthroughUIContext.Provider>;

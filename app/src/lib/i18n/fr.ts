@@ -5185,9 +5185,10 @@ const messages: TranslationMap = {
   'walkthrough.phase.review': 'Réviser',
   'walkthrough.phase.done': 'Terminé',
   'walkthrough.phase.skip': 'Passer cette étape',
+  'walkthrough.phase.continue': 'Continuer',
   'walkthrough.progress.completed': 'terminé',
   'walkthrough.progress.current': 'actuel',
-  'walkthrough.review.finish': 'Terminer la configuration',
+  'walkthrough.review.finish': 'Continuer',
   'walkthrough.step.start': 'Démarrer la configuration',
   'walkthrough.step.gmail': 'Gmail',
   'walkthrough.step.slack': 'Slack',
@@ -5210,7 +5211,7 @@ const messages: TranslationMap = {
   'walkthrough.desc.scheduling': "Laissez l'IA gérer votre agenda",
   'walkthrough.desc.summaries': 'Ne manquez plus jamais un détail de réunion',
   'walkthrough.card.completedAria': '{label} — terminé',
-  'walkthrough.card.actionAria': 'Terminer {label}',
+  'walkthrough.card.actionAria': 'Continuer {label}',
   'walkthrough.welcome.description':
     'Laissez-nous vous guider dans la configuration de votre assistant IA.',
   'walkthrough.connect.description':
@@ -5218,13 +5219,13 @@ const messages: TranslationMap = {
   'walkthrough.automate.description':
     'Choisissez ce que votre assistant doit gérer automatiquement.',
   'walkthrough.review.description':
-    'Voici un résumé de ce que vous avez configuré. Vous pouvez toujours les modifier plus tard.',
+    'Voici un résumé des zones de configuration que vous avez parcourues. Vous pourrez les connecter ou les modifier plus tard dans les paramètres.',
   'walkthrough.review.skipped':
     'Vous avez sauté la configuration. Vous pouvez les configurer à tout moment dans les Paramètres.',
-  'walkthrough.review.empty': 'Aucune action terminée pour le moment.',
+  'walkthrough.review.empty': 'Aucun élément encore parcouru.',
   'walkthrough.done.title': 'Vous êtes prêt !',
   'walkthrough.done.description':
-    'Votre assistant est prêt à vous aider. Les connexions sont configurées et les automatisations sont en place.',
+    'Votre assistant est prêt à aider. Vous pourrez connecter des outils et activer des automatisations plus tard dans les paramètres.',
   'webhooks.activity.empty': 'Vide',
   'webhooks.activity.title': 'Activité récente',
   'webhooks.composioHistory.empty': 'Vide',

@@ -5154,9 +5154,10 @@ const messages: TranslationMap = {
   'walkthrough.phase.review': 'Rivedi',
   'walkthrough.phase.done': 'Fatto',
   'walkthrough.phase.skip': 'Salta questo passaggio',
+  'walkthrough.phase.continue': 'Continua',
   'walkthrough.progress.completed': 'completato',
   'walkthrough.progress.current': 'corrente',
-  'walkthrough.review.finish': 'Completa configurazione',
+  'walkthrough.review.finish': 'Continua',
   'walkthrough.step.start': 'Avvia configurazione',
   'walkthrough.step.gmail': 'Gmail',
   'walkthrough.step.slack': 'Slack',
@@ -5179,20 +5180,20 @@ const messages: TranslationMap = {
   'walkthrough.desc.scheduling': "Lascia che l'IA gestisca il tuo calendario",
   'walkthrough.desc.summaries': 'Non perdere mai più un dettaglio della riunione',
   'walkthrough.card.completedAria': '{label} — completato',
-  'walkthrough.card.actionAria': 'Completa {label}',
+  'walkthrough.card.actionAria': 'Continua {label}',
   'walkthrough.welcome.description': 'Lasciati guidare nella configurazione del tuo assistente AI.',
   'walkthrough.connect.description':
     'Collega gli strumenti che usi già. Ogni connessione offre nuove capacità al tuo assistente.',
   'walkthrough.automate.description':
     'Scegli cosa il tuo assistente dovrebbe gestire automaticamente.',
   'walkthrough.review.description':
-    'Ecco un riepilogo di ciò che hai configurato. Puoi sempre modificarli in seguito.',
+    'Ecco un riepilogo delle aree di configurazione che hai esaminato. Puoi collegarle o modificarle più tardi nelle Impostazioni.',
   'walkthrough.review.skipped':
     'Hai saltato la configurazione. Puoi configurarli in qualsiasi momento nelle Impostazioni.',
-  'walkthrough.review.empty': 'Nessuna azione ancora completata.',
+  'walkthrough.review.empty': 'Nessun elemento ancora esaminato.',
   'walkthrough.done.title': 'Sei tutto pronto!',
   'walkthrough.done.description':
-    'Il tuo assistente è pronto ad aiutare. Le connessioni sono configurate e le automazioni sono impostate.',
+    'Il tuo assistente è pronto ad aiutarti. Puoi collegare strumenti e attivare automazioni più tardi dalle Impostazioni.',
   'webhooks.activity.empty': 'Vuoto',
   'webhooks.activity.title': 'Attività recente',
   'webhooks.composioHistory.empty': 'Vuoto',

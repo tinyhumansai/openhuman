@@ -5087,9 +5087,10 @@ const messages: TranslationMap = {
   'walkthrough.phase.review': 'Tinjau',
   'walkthrough.phase.done': 'Selesai',
   'walkthrough.phase.skip': 'Lewati langkah ini',
+  'walkthrough.phase.continue': 'Lanjutkan',
   'walkthrough.progress.completed': 'selesai',
   'walkthrough.progress.current': 'saat ini',
-  'walkthrough.review.finish': 'Selesaikan penyiapan',
+  'walkthrough.review.finish': 'Lanjutkan',
   'walkthrough.step.start': 'Mulai penyiapan',
   'walkthrough.step.gmail': 'Gmail',
   'walkthrough.step.slack': 'Slack',
@@ -5111,20 +5112,20 @@ const messages: TranslationMap = {
   'walkthrough.desc.scheduling': 'Biarkan AI menangani kalender Anda',
   'walkthrough.desc.summaries': 'Jangan lewatkan detail rapat lagi',
   'walkthrough.card.completedAria': '{label} — selesai',
-  'walkthrough.card.actionAria': 'Selesaikan {label}',
+  'walkthrough.card.actionAria': 'Lanjutkan {label}',
   'walkthrough.welcome.description': 'Biarkan kami memandu Anda menyiapkan asisten AI Anda.',
   'walkthrough.connect.description':
     'Hubungkan alat yang sudah Anda gunakan. Setiap koneksi memberikan kemampuan baru kepada asisten Anda.',
   'walkthrough.automate.description':
     'Pilih apa yang harus ditangani asisten Anda secara otomatis.',
   'walkthrough.review.description':
-    'Berikut ringkasan dari apa yang telah Anda siapkan. Anda selalu dapat mengubahnya nanti.',
+    'Berikut ringkasan area penyiapan yang Anda tinjau. Anda dapat menghubungkan atau mengubahnya nanti di Pengaturan.',
   'walkthrough.review.skipped':
     'Anda melewatkan pengaturan. Anda dapat mengonfigurasinya kapan saja di Pengaturan.',
-  'walkthrough.review.empty': 'Belum ada tindakan yang selesai.',
+  'walkthrough.review.empty': 'Belum ada item yang ditinjau.',
   'walkthrough.done.title': 'Anda Siap!',
   'walkthrough.done.description':
-    'Asisten Anda siap membantu. Koneksi telah disiapkan dan otomatisasi telah dikonfigurasi.',
+    'Asisten Anda siap membantu. Anda dapat menghubungkan alat dan menyalakan otomasi nanti dari Pengaturan.',
   'webhooks.activity.empty': 'Kosong',
   'webhooks.activity.title': 'Aktivitas Terbaru',
   'webhooks.composioHistory.empty': 'Kosong',

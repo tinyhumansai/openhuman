@@ -27,9 +27,9 @@ describe('WalkthroughPhasePanel', () => {
       skipped: false,
     });
 
-    expect(screen.getByRole('button', { name: /Daily Briefings — completed/i })).toBeDisabled();
-    expect(screen.getByRole('button', { name: /Meeting Summaries — completed/i })).toBeDisabled();
-    expect(screen.queryByText('No actions completed yet.')).not.toBeInTheDocument();
+    expect(screen.getByText('Daily Briefings')).toBeInTheDocument();
+    expect(screen.getByText('Meeting Summaries')).toBeInTheDocument();
+    expect(screen.queryByText('No items reviewed yet.')).not.toBeInTheDocument();
   });
 
   it('finishes the review phase through the provider advance callback', () => {
@@ -40,7 +40,21 @@ describe('WalkthroughPhasePanel', () => {
       skipped: true,
     });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Finish setup' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    expect(onAdvance).toHaveBeenCalledWith();
+  });
+
+  it('renders active phase cards as informational and advances with continue', () => {
+    const { onAdvance } = renderPanel({
+      phase: 'connect',
+      steps: [{ key: 'gmail', completed: false }],
+      completed: false,
+      skipped: false,
+    });
+
+    expect(screen.queryByRole('button', { name: /Gmail/i })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
     expect(onAdvance).toHaveBeenCalledWith();
   });
 

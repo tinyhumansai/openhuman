@@ -47,7 +47,7 @@ function createInitialWalkthrough(): WalkthroughState {
  * navigate to /home). Individual steps render through `<Outlet />`.
  *
  * Also manages the integrated walkthrough narrative state, advancing through
- * phases as the user completes action cards.
+ * preview phases without claiming setup work happened outside real setup flows.
  */
 const OnboardingLayout = () => {
   const navigate = useNavigate();
@@ -72,12 +72,13 @@ const OnboardingLayout = () => {
         steps = steps.map(s => (s.key === stepKey ? { ...s, completed: true } : s));
       }
 
-      // Determine if all steps in current phase are done.
-      const allDone = steps.every(s => s.completed);
+      // Phase-level continue advances informational walkthrough cards without
+      // claiming that integrations or automations were actually configured.
+      const shouldAdvance = stepKey ? steps.every(s => s.completed) : true;
 
       // Advance to next phase if all steps are completed.
       let nextPhase: WalkthroughPhase = wt.phase;
-      if (allDone) {
+      if (shouldAdvance) {
         const currentIdx = WALKTHROUGH_PHASES.indexOf(wt.phase);
         if (currentIdx < WALKTHROUGH_PHASES.length - 1) {
           nextPhase = WALKTHROUGH_PHASES[currentIdx + 1];

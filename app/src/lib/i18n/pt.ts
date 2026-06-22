@@ -5156,9 +5156,10 @@ const messages: TranslationMap = {
   'walkthrough.phase.review': 'Revisar',
   'walkthrough.phase.done': 'Concluído',
   'walkthrough.phase.skip': 'Pular esta etapa',
+  'walkthrough.phase.continue': 'Continuar',
   'walkthrough.progress.completed': 'concluído',
   'walkthrough.progress.current': 'atual',
-  'walkthrough.review.finish': 'Concluir configuração',
+  'walkthrough.review.finish': 'Continuar',
   'walkthrough.step.start': 'Iniciar configuração',
   'walkthrough.step.gmail': 'Gmail',
   'walkthrough.step.slack': 'Slack',
@@ -5180,20 +5181,20 @@ const messages: TranslationMap = {
   'walkthrough.desc.scheduling': 'Deixe a IA gerenciar sua agenda',
   'walkthrough.desc.summaries': 'Nunca mais perca um detalhe de reunião',
   'walkthrough.card.completedAria': '{label} — concluído',
-  'walkthrough.card.actionAria': 'Concluir {label}',
+  'walkthrough.card.actionAria': 'Continuar {label}',
   'walkthrough.welcome.description': 'Deixe-nos guiá-lo na configuração do seu assistente de IA.',
   'walkthrough.connect.description':
     'Conecte as ferramentas que você já usa. Cada conexão dá ao seu assistente novas habilidades.',
   'walkthrough.automate.description':
     'Escolha o que seu assistente deve gerenciar automaticamente.',
   'walkthrough.review.description':
-    'Aqui está um resumo do que você configurou. Você sempre pode alterar depois.',
+    'Aqui está um resumo das áreas de configuração que você revisou. Você pode conectá-las ou alterá-las depois em Configurações.',
   'walkthrough.review.skipped':
     'Você pulou a configuração. Pode configurar a qualquer momento nas Configurações.',
-  'walkthrough.review.empty': 'Nenhuma ação concluída ainda.',
+  'walkthrough.review.empty': 'Nenhum item revisado ainda.',
   'walkthrough.done.title': 'Tudo pronto!',
   'walkthrough.done.description':
-    'Seu assistente está pronto para ajudar. As conexões estão configuradas e as automações estão ativas.',
+    'Seu assistente está pronto para ajudar. Você pode conectar ferramentas e ativar automações depois em Configurações.',
   'webhooks.activity.empty': 'Vazio',
   'webhooks.activity.title': 'Atividade Recente',
   'webhooks.composioHistory.empty': 'Vazio',

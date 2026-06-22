@@ -5118,9 +5118,10 @@ const messages: TranslationMap = {
   'walkthrough.phase.review': 'Обзор',
   'walkthrough.phase.done': 'Готово',
   'walkthrough.phase.skip': 'Пропустить этот шаг',
+  'walkthrough.phase.continue': 'Продолжить',
   'walkthrough.progress.completed': 'завершено',
   'walkthrough.progress.current': 'текущий',
-  'walkthrough.review.finish': 'Завершить настройку',
+  'walkthrough.review.finish': 'Продолжить',
   'walkthrough.step.start': 'Начать настройку',
   'walkthrough.step.gmail': 'Gmail',
   'walkthrough.step.slack': 'Slack',
@@ -5142,20 +5143,20 @@ const messages: TranslationMap = {
   'walkthrough.desc.scheduling': 'Позвольте ИИ управлять вашим календарем',
   'walkthrough.desc.summaries': 'Больше никогда не упускайте детали встреч',
   'walkthrough.card.completedAria': '{label} — завершено',
-  'walkthrough.card.actionAria': 'Завершить {label}',
+  'walkthrough.card.actionAria': 'Продолжить {label}',
   'walkthrough.welcome.description': 'Позвольте нам помочь вам настроить вашего ИИ-ассистента.',
   'walkthrough.connect.description':
     'Подключите инструменты, которые вы уже используете. Каждое подключение дает ассистенту новые возможности.',
   'walkthrough.automate.description':
     'Выберите, что ваш ассистент должен обрабатывать автоматически.',
   'walkthrough.review.description':
-    'Вот краткий обзор того, что вы настроили. Вы всегда можете изменить это позже.',
+    'Вот сводка разделов настройки, которые вы просмотрели. Вы сможете подключить или изменить их позже в настройках.',
   'walkthrough.review.skipped':
     'Вы пропустили настройку. Вы можете настроить их в любое время в Настройках.',
-  'walkthrough.review.empty': 'Действия еще не выполнены.',
+  'walkthrough.review.empty': 'Пока нет просмотренных элементов.',
   'walkthrough.done.title': 'Всё готово!',
   'walkthrough.done.description':
-    'Ваш ассистент готов помочь. Подключения настроены, автоматизация сконфигурирована.',
+    'Ваш помощник готов помогать. Инструменты и автоматизации можно подключить позже в настройках.',
   'webhooks.activity.empty': 'Пусто',
   'webhooks.activity.title': 'Последняя активность',
   'webhooks.composioHistory.empty': 'Пусто',

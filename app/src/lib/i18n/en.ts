@@ -5687,9 +5687,10 @@ const en: TranslationMap = {
   'walkthrough.phase.review': 'Review',
   'walkthrough.phase.done': 'Done',
   'walkthrough.phase.skip': 'Skip this step',
+  'walkthrough.phase.continue': 'Continue',
   'walkthrough.progress.completed': 'completed',
   'walkthrough.progress.current': 'current',
-  'walkthrough.review.finish': 'Finish setup',
+  'walkthrough.review.finish': 'Continue',
   'walkthrough.step.start': 'Start setup',
   // ── Walkthrough step labels (a03) ──────────────────────────────────────
   'walkthrough.step.gmail': 'Gmail',
@@ -5714,20 +5715,20 @@ const en: TranslationMap = {
   'walkthrough.desc.summaries': 'Never miss a meeting detail again',
   // ── Walkthrough card aria labels (a03) ─────────────────────────────────
   'walkthrough.card.completedAria': '{label} — completed',
-  'walkthrough.card.actionAria': 'Complete {label}',
+  'walkthrough.card.actionAria': 'Continue {label}',
   // ── Walkthrough phase descriptions (a03) ───────────────────────────────
   'walkthrough.welcome.description': 'Let us guide you through setting up your AI assistant.',
   'walkthrough.connect.description':
     'Connect the tools you already use. Each connection gives your assistant new abilities.',
   'walkthrough.automate.description': 'Choose what your assistant should handle automatically.',
   'walkthrough.review.description':
-    "Here's a summary of what you've set up. You can always change these later.",
+    "Here's a summary of the setup areas you reviewed. You can connect or change them later in Settings.",
   'walkthrough.review.skipped':
     'You skipped the setup. You can configure these anytime in Settings.',
-  'walkthrough.review.empty': 'No actions completed yet.',
+  'walkthrough.review.empty': 'No items reviewed yet.',
   'walkthrough.done.title': "You're all set!",
   'walkthrough.done.description':
-    'Your assistant is ready to help. Connections are set up and automations are configured.',
+    'Your assistant is ready to help. You can connect tools and turn on automations later from Settings.',
   'webhooks.activity.empty': 'No recent activity',
   'webhooks.activity.title': 'Recent Activity',
   'webhooks.composioHistory.empty': 'Empty',

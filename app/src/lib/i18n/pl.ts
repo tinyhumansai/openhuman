@@ -5149,9 +5149,10 @@ const messages: TranslationMap = {
   'walkthrough.phase.review': 'Przegląd',
   'walkthrough.phase.done': 'Gotowe',
   'walkthrough.phase.skip': 'Pomiń ten krok',
+  'walkthrough.phase.continue': 'Kontynuuj',
   'walkthrough.progress.completed': 'ukończono',
   'walkthrough.progress.current': 'bieżący',
-  'walkthrough.review.finish': 'Zakończ konfigurację',
+  'walkthrough.review.finish': 'Kontynuuj',
   'walkthrough.step.start': 'Rozpocznij konfigurację',
   'walkthrough.step.gmail': 'Gmail',
   'walkthrough.step.slack': 'Slack',
@@ -5174,7 +5175,7 @@ const messages: TranslationMap = {
   'walkthrough.desc.scheduling': 'Pozwól AI zarządzać Twoim kalendarzem',
   'walkthrough.desc.summaries': 'Nigdy więcej nie przegap szczegółów spotkania',
   'walkthrough.card.completedAria': '{label} — ukończono',
-  'walkthrough.card.actionAria': 'Ukończ {label}',
+  'walkthrough.card.actionAria': 'Kontynuuj {label}',
   'walkthrough.welcome.description':
     'Pozwól nam poprowadzić Cię przez konfigurację Twojego asystenta AI.',
   'walkthrough.connect.description':
@@ -5182,13 +5183,13 @@ const messages: TranslationMap = {
   'walkthrough.automate.description':
     'Wybierz, co Twój asystent powinien obsługiwać automatycznie.',
   'walkthrough.review.description':
-    'Oto podsumowanie tego, co skonfigurowałeś. Zawsze możesz to zmienić później.',
+    'Oto podsumowanie obszarów konfiguracji, które przejrzano. Możesz połączyć lub zmienić je później w Ustawieniach.',
   'walkthrough.review.skipped':
     'Pominąłeś konfigurację. Możesz ją skonfigurować w dowolnym momencie w Ustawieniach.',
-  'walkthrough.review.empty': 'Nie ukończono jeszcze żadnych działań.',
+  'walkthrough.review.empty': 'Nie przejrzano jeszcze żadnych elementów.',
   'walkthrough.done.title': 'Wszystko gotowe!',
   'walkthrough.done.description':
-    'Twój asystent jest gotowy do pomocy. Połączenia są skonfigurowane, a automatyzacje ustawione.',
+    'Asystent jest gotowy do pomocy. Narzędzia i automatyzacje możesz podłączyć później w Ustawieniach.',
   'webhooks.activity.empty': 'Brak aktywności.',
   'webhooks.activity.title': 'Ostatnia aktywność',
   'webhooks.composioHistory.empty': 'Brak historii.',

@@ -5072,9 +5072,10 @@ const messages: TranslationMap = {
   'walkthrough.phase.review': 'পর্যালোচনা',
   'walkthrough.phase.done': 'সম্পন্ন',
   'walkthrough.phase.skip': 'এই ধাপটি এড়িয়ে যান',
+  'walkthrough.phase.continue': 'চালিয়ে যান',
   'walkthrough.progress.completed': 'সম্পন্ন',
   'walkthrough.progress.current': 'বর্তমান',
-  'walkthrough.review.finish': 'সেটআপ শেষ করুন',
+  'walkthrough.review.finish': 'চালিয়ে যান',
   'walkthrough.step.start': 'সেটআপ শুরু করুন',
   'walkthrough.step.gmail': 'Gmail',
   'walkthrough.step.slack': 'Slack',
@@ -5096,20 +5097,20 @@ const messages: TranslationMap = {
   'walkthrough.desc.scheduling': 'AI-কে আপনার ক্যালেন্ডার পরিচালনা করতে দিন',
   'walkthrough.desc.summaries': 'আর কখনো মিটিংয়ের বিস্তারিত মিস করবেন না',
   'walkthrough.card.completedAria': '{label} — সম্পন্ন',
-  'walkthrough.card.actionAria': '{label} সম্পন্ন করুন',
+  'walkthrough.card.actionAria': 'চালিয়ে যান {label}',
   'walkthrough.welcome.description': 'আমাদের আপনার AI সহকারী সেটআপ করার মাধ্যমে গাইড করতে দিন।',
   'walkthrough.connect.description':
     'আপনি ইতিমধ্যে ব্যবহার করেন এমন টুলগুলি সংযুক্ত করুন। প্রতিটি সংযোগ আপনার সহকারীকে নতুন ক্ষমতা দেয়।',
   'walkthrough.automate.description':
     'আপনার সহকারীকে স্বয়ংক্রিয়ভাবে কী পরিচালনা করা উচিত তা চয়ন করুন।',
   'walkthrough.review.description':
-    'আপনি যা সেটআপ করেছেন তার একটি সারসংক্ষেপ এখানে দেওয়া হল। আপনি সবসময় পরে এগুলি পরিবর্তন করতে পারেন।',
+    'আপনি যে সেটআপ ক্ষেত্রগুলো দেখেছেন তার সারাংশ এখানে। পরে সেটিংসে এগুলো সংযোগ বা পরিবর্তন করতে পারবেন।',
   'walkthrough.review.skipped':
     'আপনি সেটআপ এড়িয়ে গেছেন। আপনি সেটিংস থেকে যেকোনো সময় এগুলি কনফিগার করতে পারেন।',
-  'walkthrough.review.empty': 'এখনও কোনো কাজ সম্পন্ন হয়নি।',
+  'walkthrough.review.empty': 'এখনও কোনো আইটেম দেখা হয়নি।',
   'walkthrough.done.title': 'আপনি সম্পূর্ণ প্রস্তুত!',
   'walkthrough.done.description':
-    'আপনার সহকারী সাহায্য করতে প্রস্তুত। সংযোগগুলি সেটআপ করা হয়েছে এবং স্বয়ংক্রিয়তা কনফিগার করা হয়েছে।',
+    'আপনার সহকারী সাহায্যের জন্য প্রস্তুত। পরে সেটিংস থেকে টুল সংযোগ ও অটোমেশন চালু করতে পারবেন।',
   'webhooks.activity.empty': 'খালি',
   'webhooks.activity.title': 'সাম্প্রতিক কার্যক্রম',
   'webhooks.composioHistory.empty': 'খালি',
