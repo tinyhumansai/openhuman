@@ -703,7 +703,10 @@ mod tests {
                 "sourceUrl": url
             });
             let entry = parse_hermes_entry(&item).expect("entry");
-            assert_eq!(entry.download_url, "", "portal url must not be downloadable: {url}");
+            assert_eq!(
+                entry.download_url, "",
+                "portal url must not be downloadable: {url}"
+            );
             assert_eq!(entry.source_url.as_deref(), Some(url));
         }
     }
