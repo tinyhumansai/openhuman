@@ -133,9 +133,9 @@ echo "[rust-e2e] Running ${#SUITES[@]} suite(s) serially."
 for suite in "${SUITES[@]}"; do
   if [ "${#EXTRA_ARGS[@]}" -gt 0 ]; then
     echo "[rust-e2e]   cargo test --manifest-path Cargo.toml --test $suite -- ${EXTRA_ARGS[*]}"
-    cargo test --manifest-path Cargo.toml --test "$suite" -- "${EXTRA_ARGS[@]}"
+    "$SCRIPT_DIR/ci-cancel-aware.sh" cargo test --manifest-path Cargo.toml --test "$suite" -- "${EXTRA_ARGS[@]}"
   else
     echo "[rust-e2e]   cargo test --manifest-path Cargo.toml --test $suite"
-    cargo test --manifest-path Cargo.toml --test "$suite"
+    "$SCRIPT_DIR/ci-cancel-aware.sh" cargo test --manifest-path Cargo.toml --test "$suite"
   fi
 done

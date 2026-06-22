@@ -216,6 +216,14 @@ export const BUILTIN_CLOUD_PROVIDERS: BuiltinCloudProvider[] = [
     tone: TONE.amber,
     keyPlaceholder: 'sk-...',
   },
+  {
+    slug: 'modelscope',
+    label: 'ModelScope',
+    endpoint: 'https://api-inference.modelscope.cn/v1',
+    authStyle: 'bearer',
+    tone: TONE.indigo,
+    keyPlaceholder: 'ms-...',
+  },
 ];
 
 // NOTE: Claude Code CLI is intentionally NOT a builtin chip. It is a

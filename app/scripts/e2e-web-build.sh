@@ -24,4 +24,4 @@ fi
 echo "Building web E2E bundle with backend ${VITE_BACKEND_URL}"
 pnpm run build:web
 echo "Building standalone openhuman-core for web E2E into ${E2E_WEB_CORE_TARGET_DIR}..."
-CARGO_TARGET_DIR="$E2E_WEB_CORE_TARGET_DIR" cargo build --manifest-path "$REPO_ROOT/Cargo.toml" --bin openhuman-core
+CARGO_TARGET_DIR="$E2E_WEB_CORE_TARGET_DIR" "$REPO_ROOT/scripts/ci-cancel-aware.sh" cargo build --manifest-path "$REPO_ROOT/Cargo.toml" --bin openhuman-core
