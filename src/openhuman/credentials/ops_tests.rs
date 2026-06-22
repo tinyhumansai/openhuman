@@ -244,6 +244,33 @@ async fn store_session_preserves_pending_marker_on_supplied_user_when_auth_me_tr
 }
 
 #[tokio::test]
+async fn store_session_marks_non_object_user_pending_when_auth_me_transient() {
+    let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let tmp = TempDir::new().unwrap();
+    std::fs::create_dir_all(tmp.path().join("workspace")).unwrap();
+    let _home = EnvVarGuard::set_to_path("HOME", tmp.path());
+    let mut config = test_config(&tmp);
+    config.api_url = Some(spawn_auth_me_status(StatusCode::SERVICE_UNAVAILABLE).await);
+    let token = jwt_with_payload(json!({
+        "exp": (chrono::Utc::now() + chrono::Duration::hours(1)).timestamp()
+    }));
+
+    let result = store_session(&config, &token, None, Some(json!("callback-user")))
+        .await
+        .unwrap();
+
+    assert!(result.value.has_token);
+    let state = auth_get_state(&config).await.unwrap().value;
+    assert!(state.is_authenticated);
+    assert_eq!(
+        state.user,
+        Some(json!({ "pendingBackendValidation": true }))
+    );
+}
+
+#[tokio::test]
 async fn store_session_rejects_live_jwt_when_auth_me_unauthorized() {
     let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
         .lock()

@@ -487,8 +487,8 @@ fn fallback_session_user_for_deferred_validation(
     if let Some(mut user) = sanitize_stored_session_user(supplied_user.cloned()) {
         if let Value::Object(ref mut map) = user {
             map.insert("pendingBackendValidation".to_string(), Value::Bool(true));
+            return user;
         }
-        return user;
     }
 
     let claims = decode_jwt_payload(token).unwrap_or(Value::Null);
