@@ -115,26 +115,26 @@ impl RuntimeAdapter for NativeRuntime {
     }
 }
 
-/// Apply the Windows `CREATE_NO_WINDOW` creation flag (`0x08000000`) so a shell
-/// child process doesn't flash a console window, when `hide` is set. This is a
-/// no-op when `hide` is false, and on non-Windows hosts the flag does not exist
-/// so the function does nothing regardless. Mirrors the convention already used
-/// by the local-inference / node / python process helpers (#3727/#3728).
+/// Suppress the Windows console window for a shell child process when `hide` is
+/// set, by applying the `CREATE_NO_WINDOW` creation flag (`0x08000000`). No-op
+/// when `hide` is false, and on non-Windows hosts the flag does not exist so this
+/// does nothing regardless. Delegates to the shared [`apply_no_window`] helper so
+/// there is a single source of truth for the flag (#3727/#3728).
 fn maybe_hide_window(cmd: &mut tokio::process::Command, hide: bool) {
+    tracing::trace!(
+        hide_window = hide,
+        windows = cfg!(windows),
+        "[agent][runtime] hide_window evaluated for shell child process"
+    );
     if !hide {
         return;
     }
+    crate::openhuman::inference::local::process_util::apply_no_window(cmd);
     #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
-    #[cfg(not(windows))]
-    {
-        // The flag is Windows-only; nothing to apply on macOS/Linux.
-        let _ = cmd;
-    }
+    tracing::debug!(
+        creation_flags = "0x08000000",
+        "[agent][runtime] applied CREATE_NO_WINDOW to shell child process"
+    );
 }
 
 /// Locate a `bash` binary once (cached — this is hit on every shell call) for

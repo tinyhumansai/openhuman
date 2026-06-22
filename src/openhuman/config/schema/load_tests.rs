@@ -206,10 +206,30 @@ fn apply_env_overrides_shell_hide_window_parses_truthy_falsy() {
     cfg.apply_env_overrides();
     assert!(!cfg.shell.hide_window);
 
+    // The unprefixed alias `SHELL_HIDE_WINDOW` is honored too.
+    unsafe {
+        std::env::remove_var("OPENHUMAN_SHELL_HIDE_WINDOW");
+        std::env::set_var("SHELL_HIDE_WINDOW", "on");
+    }
+    cfg.apply_env_overrides();
+    assert!(cfg.shell.hide_window, "alias should set hide_window");
+
+    // The namespaced var takes precedence over the alias when both are set.
+    unsafe {
+        std::env::set_var("OPENHUMAN_SHELL_HIDE_WINDOW", "off");
+        std::env::set_var("SHELL_HIDE_WINDOW", "on");
+    }
+    cfg.apply_env_overrides();
+    assert!(
+        !cfg.shell.hide_window,
+        "OPENHUMAN_-prefixed var should win over the alias"
+    );
+
     // Unknown value leaves the field unchanged.
     cfg.shell.hide_window = true;
     unsafe {
         std::env::set_var("OPENHUMAN_SHELL_HIDE_WINDOW", "maybe");
+        std::env::remove_var("SHELL_HIDE_WINDOW");
     }
     cfg.apply_env_overrides();
     assert!(cfg.shell.hide_window);
