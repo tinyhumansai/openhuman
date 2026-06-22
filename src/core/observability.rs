@@ -2133,6 +2133,54 @@ pub fn is_session_expired_event(event: &sentry::protocol::Event<'_>) -> bool {
     false
 }
 
+/// Defense-in-depth `before_send` filter for opaque `openhuman.auth_get_me`
+/// RPC failures whose message body has been collapsed to just the bare
+/// HTTP method + path (`"GET /auth/me"`) with no underlying transport error.
+///
+/// Pairs with the primary fix at `openhuman::credentials::ops::auth_get_me`,
+/// which replaced `e.to_string()` with `format!("{e:#}")` so the full
+/// `anyhow` context chain reaches the rpc dispatcher. Before that
+/// fix, every transient network failure under this RPC — reqwest timeout,
+/// connection reset, TLS handshake EOF, DNS hiccup — fingerprinted to one
+/// opaque "GET /auth/me" Sentry group (TAURI-RUST-10, ~409 events / 17
+/// users) because `is_transient_message_failure` could not see the
+/// stripped transport phrases.
+///
+/// This filter is the catch-all if anyone re-introduces the same anyhow
+/// `.to_string()` collapse at another call site that eventually reaches
+/// `report_error_or_expected` with the same shape, OR if the existing fix
+/// regresses. Genuine `auth_get_me` errors that carry the underlying
+/// context chain (`"GET /auth/me: error sending request for url (...): …"`)
+/// still page — only the bare path-only body is dropped.
+///
+/// Match criteria (all required):
+/// - tag `domain == "rpc"`
+/// - tag `operation == "invoke_method"`
+/// - tag `method == "openhuman.auth_get_me"`
+/// - `event.message` (or last exception `value`) trims to **exactly**
+///   `"GET /auth/me"` — strict equality, not `contains`, so a body with
+///   the chain appended still surfaces.
+pub fn is_auth_get_me_opaque_transport_event(event: &sentry::protocol::Event<'_>) -> bool {
+    let tags = &event.tags;
+    if tags.get("domain").map(String::as_str) != Some("rpc") {
+        return false;
+    }
+    if tags.get("operation").map(String::as_str) != Some("invoke_method") {
+        return false;
+    }
+    if tags.get("method").map(String::as_str) != Some("openhuman.auth_get_me") {
+        return false;
+    }
+
+    const OPAQUE_BODY: &str = "GET /auth/me";
+    let direct = event.message.as_deref();
+    let from_exception = event.exception.last().and_then(|e| e.value.as_deref());
+    [direct, from_exception]
+        .into_iter()
+        .flatten()
+        .any(|body| body.trim() == OPAQUE_BODY)
+}
+
 pub fn is_transient_http_status(status: &str) -> bool {
     TRANSIENT_HTTP_STATUSES.contains(&status)
 }
@@ -6354,5 +6402,131 @@ mod tests {
             "operation timed out",
         );
         assert!(!is_transient_provider_transport_failure(&event));
+    }
+
+    // ── is_auth_get_me_opaque_transport_event ────────────────────────────
+    // Covers the TAURI-RUST-10 fingerprint shape: `domain=rpc`,
+    // `operation=invoke_method`, `method=openhuman.auth_get_me`, message
+    // body = exactly "GET /auth/me" (no underlying chain). See the
+    // function docstring + the `auth_get_me` fix in
+    // `openhuman::credentials::ops::auth_get_me` for the broader
+    // context.
+
+    fn auth_get_me_tags() -> Vec<(&'static str, &'static str)> {
+        vec![
+            ("domain", "rpc"),
+            ("operation", "invoke_method"),
+            ("method", "openhuman.auth_get_me"),
+            ("elapsed_ms", "5003"),
+        ]
+    }
+
+    #[test]
+    fn auth_get_me_opaque_filter_drops_bare_method_path_message() {
+        let event = event_with_tags_and_message(&auth_get_me_tags(), "GET /auth/me");
+        assert!(
+            is_auth_get_me_opaque_transport_event(&event),
+            "bare 'GET /auth/me' message must be dropped (TAURI-RUST-10 shape)"
+        );
+    }
+
+    #[test]
+    fn auth_get_me_opaque_filter_tolerates_surrounding_whitespace() {
+        let event = event_with_tags_and_message(&auth_get_me_tags(), "  GET /auth/me  ");
+        assert!(
+            is_auth_get_me_opaque_transport_event(&event),
+            "trimmed equality must still match the opaque shape"
+        );
+    }
+
+    #[test]
+    fn auth_get_me_opaque_filter_keeps_full_anyhow_chain_message() {
+        // Post-fix shape from `auth_get_me` now using `format!("{e:#}")`.
+        let event = event_with_tags_and_message(
+            &auth_get_me_tags(),
+            "GET /auth/me: error sending request for url \
+             (https://api.tinyhumans.ai/auth/me): operation timed out",
+        );
+        assert!(
+            !is_auth_get_me_opaque_transport_event(&event),
+            "messages carrying the underlying transport chain must surface — \
+             the transient classifier handles those at the rpc dispatcher"
+        );
+    }
+
+    #[test]
+    fn auth_get_me_opaque_filter_keeps_other_rpc_methods() {
+        // Same opaque shape but for a different RPC must NOT be dropped —
+        // we don't have evidence the same anti-pattern exists elsewhere,
+        // and a path-only body might be a legitimate distinct error for a
+        // future endpoint.
+        for method in [
+            "openhuman.consume_login_token",
+            "openhuman.auth_create_channel_link_token",
+            "openhuman.thread_list",
+        ] {
+            let mut tags = auth_get_me_tags();
+            // Replace the method tag.
+            if let Some(slot) = tags.iter_mut().find(|(k, _)| *k == "method") {
+                slot.1 = method;
+            }
+            let event = event_with_tags_and_message(&tags, "GET /auth/me");
+            assert!(
+                !is_auth_get_me_opaque_transport_event(&event),
+                "filter must be scoped strictly to method=openhuman.auth_get_me \
+                 — saw method={method}"
+            );
+        }
+    }
+
+    #[test]
+    fn auth_get_me_opaque_filter_requires_rpc_invoke_method_domain() {
+        // Wrong domain → must surface.
+        let mut tags = auth_get_me_tags();
+        if let Some(slot) = tags.iter_mut().find(|(k, _)| *k == "domain") {
+            slot.1 = "backend_api";
+        }
+        let event = event_with_tags_and_message(&tags, "GET /auth/me");
+        assert!(!is_auth_get_me_opaque_transport_event(&event));
+
+        // Wrong operation → must surface.
+        let mut tags = auth_get_me_tags();
+        if let Some(slot) = tags.iter_mut().find(|(k, _)| *k == "operation") {
+            slot.1 = "post";
+        }
+        let event = event_with_tags_and_message(&tags, "GET /auth/me");
+        assert!(!is_auth_get_me_opaque_transport_event(&event));
+    }
+
+    #[test]
+    fn auth_get_me_opaque_filter_matches_exception_value_path() {
+        // sentry-tracing path: message empty, exception last value carries
+        // the body. The filter must still match.
+        let mut event = event_with_tags(&auth_get_me_tags());
+        event.exception.values.push(sentry::protocol::Exception {
+            value: Some("GET /auth/me".to_string()),
+            ..Default::default()
+        });
+        assert!(
+            is_auth_get_me_opaque_transport_event(&event),
+            "must also catch the exception-value shape (sentry-tracing bridge)"
+        );
+    }
+
+    #[test]
+    fn auth_get_me_opaque_filter_ignores_empty_and_unrelated() {
+        // No message and no exception → false.
+        let event = event_with_tags(&auth_get_me_tags());
+        assert!(!is_auth_get_me_opaque_transport_event(&event));
+
+        // Unrelated message body with the right tags → false.
+        let event = event_with_tags_and_message(
+            &auth_get_me_tags(),
+            "session JWT verified via GET /auth/me on https://api.tinyhumans.ai",
+        );
+        assert!(
+            !is_auth_get_me_opaque_transport_event(&event),
+            "substring match must NOT trigger — strict equality only"
+        );
     }
 }

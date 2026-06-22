@@ -168,6 +168,12 @@ export interface LocalAiSettingsUpdate {
   opt_in_confirmed?: boolean | null;
   provider?: string | null;
   base_url?: string | null;
+  /**
+   * Bearer credential for OpenAI-compatible local runtimes that require a key
+   * (e.g. OMLX). Stored in `config.local_ai.api_key` and sent as a Bearer token
+   * on inference. Keyless runtimes (Ollama / LM Studio) omit this.
+   */
+  api_key?: string | null;
   model_id?: string | null;
   chat_model_id?: string | null;
   usage_embeddings?: boolean | null;

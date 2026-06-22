@@ -27,6 +27,16 @@ impl LocalAiProvider {
 pub(crate) fn normalize_provider(value: &str) -> String {
     match value.trim().to_ascii_lowercase().as_str() {
         "lmstudio" | "lm-studio" | "lm_studio" => LocalAiProvider::LmStudio.as_str().to_string(),
+        // OMLX is a keyed OpenAI-v1 local runtime handled by the provider factory
+        // (`omlx:<model>`), not by `LocalAiProvider`. Preserve the slug so the
+        // saved config keeps `provider = "omlx"` instead of collapsing to ollama.
+        "omlx" | "omlx-server" => {
+            log::trace!(
+                "[local-provider] normalized provider '{}' -> omlx (factory-resolved local runtime)",
+                value.trim()
+            );
+            "omlx".to_string()
+        }
         _ => LocalAiProvider::Ollama.as_str().to_string(),
     }
 }
@@ -53,5 +63,12 @@ mod tests {
     fn normalize_provider_falls_back_to_ollama() {
         assert_eq!(normalize_provider(""), "ollama");
         assert_eq!(normalize_provider("unknown"), "ollama");
+    }
+
+    #[test]
+    fn normalize_provider_keeps_omlx() {
+        assert_eq!(normalize_provider("omlx"), "omlx");
+        assert_eq!(normalize_provider("omlx-server"), "omlx");
+        assert_eq!(normalize_provider("OMLX"), "omlx");
     }
 }
