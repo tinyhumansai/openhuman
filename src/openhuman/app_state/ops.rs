@@ -383,6 +383,22 @@ fn clear_pending_backend_validation_flag(mut user: Value) -> Value {
     user
 }
 
+fn pending_session_user_id_for_cleanup(
+    stored_user: Option<&Value>,
+    metadata: &BTreeMap<String, String>,
+) -> Option<String> {
+    stored_user
+        .and_then(user_id_from_profile_payload)
+        .or_else(|| {
+            metadata
+                .get("user_id")
+                .map(String::as_str)
+                .map(str::trim)
+                .filter(|user_id| !user_id.is_empty())
+                .map(str::to_string)
+        })
+}
+
 fn config_state_dir(config: &Config) -> Option<PathBuf> {
     config.config_path.parent().map(Path::to_path_buf)
 }
@@ -562,7 +578,11 @@ async fn persist_revalidated_session_user(
     Ok(())
 }
 
-async fn clear_deferred_session_after_backend_rejection(config: &Config) -> Result<(), String> {
+async fn clear_deferred_session_after_backend_rejection(
+    config: &Config,
+    pending_user_id: Option<&str>,
+) -> Result<(), String> {
+    let workspace_env_scoped = config_is_workspace_env_scoped(config);
     let config_for_remove = config.clone();
     let clear_result = tokio::task::spawn_blocking(move || {
         AuthService::from_config(&config_for_remove)
@@ -580,12 +600,32 @@ async fn clear_deferred_session_after_backend_rejection(config: &Config) -> Resu
     *CURRENT_USER_CACHE.lock() = None;
     crate::openhuman::scheduler_gate::set_signed_out(true);
 
-    if let Ok(root_dir) = crate::openhuman::config::default_root_openhuman_dir() {
-        if let Err(error) = crate::openhuman::config::clear_active_user(&root_dir) {
+    match crate::openhuman::config::default_root_openhuman_dir() {
+        Ok(root_dir) => {
+            let active_user = crate::openhuman::config::read_active_user_id(&root_dir);
+            let should_clear_active_user = if workspace_env_scoped {
+                pending_user_id.is_some_and(|pending| active_user.as_deref() == Some(pending))
+            } else {
+                true
+            };
+            if should_clear_active_user {
+                if let Err(error) = crate::openhuman::config::clear_active_user(&root_dir) {
+                    warn!(
+                        "{LOG_PREFIX} failed to clear active_user.toml for rejected pending session: {error}"
+                    );
+                }
+            } else {
+                debug!(
+                    "{LOG_PREFIX} preserving default active_user.toml for rejected OPENHUMAN_WORKSPACE-scoped pending session"
+                );
+            }
+        }
+        Err(error) if !workspace_env_scoped => {
             warn!(
-                "{LOG_PREFIX} failed to clear active_user.toml for rejected pending session: {error}"
+                "{LOG_PREFIX} failed to locate default root while clearing rejected pending session: {error}"
             );
         }
+        Err(_) => {}
     }
     crate::openhuman::credentials::stop_login_gated_services(config).await;
     crate::openhuman::subconscious::global::reset_engine_for_user_switch().await;
@@ -861,6 +901,9 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
         .as_ref()
         .map(|profile| profile.metadata.clone())
         .unwrap_or_default();
+    let pending_session_user_id = pending_backend_validation
+        .then(|| pending_session_user_id_for_cleanup(stored_user.as_ref(), &session_metadata))
+        .flatten();
     let auth_ms = t_auth.elapsed().as_millis();
 
     // Resolve the live current-user refresh and the runtime snapshot
@@ -914,7 +957,12 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
                 warn!(
                     "{LOG_PREFIX} backend returned empty user for pending session revalidation; clearing stored app session"
                 );
-                if let Err(error) = clear_deferred_session_after_backend_rejection(&config).await {
+                if let Err(error) = clear_deferred_session_after_backend_rejection(
+                    &config,
+                    pending_session_user_id.as_deref(),
+                )
+                .await
+                {
                     warn!("{LOG_PREFIX} failed to clear rejected pending session: {error}");
                 }
                 SnapshotCurrentUser::DeferredSessionRejected
@@ -924,8 +972,11 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
                 warn!(
                     "{LOG_PREFIX} pending current user refresh was rejected; clearing stored app session: {error}"
                 );
-                if let Err(clear_error) =
-                    clear_deferred_session_after_backend_rejection(&config).await
+                if let Err(clear_error) = clear_deferred_session_after_backend_rejection(
+                    &config,
+                    pending_session_user_id.as_deref(),
+                )
+                .await
                 {
                     warn!("{LOG_PREFIX} failed to clear rejected pending session: {clear_error}");
                 }

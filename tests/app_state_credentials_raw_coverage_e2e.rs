@@ -784,6 +784,66 @@ async fn snapshot_clears_pending_session_when_backend_revalidation_is_rejected()
 }
 
 #[tokio::test]
+async fn snapshot_preserves_default_active_user_when_env_scoped_revalidation_is_rejected() {
+    let _lock = env_lock();
+    let (api_url, server_task, shutdown_tx) = auth_me_rejected_server().await;
+    let harness = setup(&api_url);
+    let config = harness.config().await;
+    let active_user_root = openhuman_core::openhuman::config::default_root_openhuman_dir()
+        .expect("default openhuman root");
+    openhuman_core::openhuman::config::write_active_user_id(&active_user_root, "desktop-user")
+        .expect("seed default active user");
+
+    let mut metadata = HashMap::new();
+    metadata.insert("user_id".to_string(), "pending-env-rejected".to_string());
+    metadata.insert(
+        "user_json".to_string(),
+        json!({
+            "id": "pending-env-rejected",
+            "email": "pending-env-rejected@example.test",
+            "pendingBackendValidation": true
+        })
+        .to_string(),
+    );
+    AuthService::from_config(&config)
+        .store_provider_token(
+            APP_SESSION_PROVIDER,
+            DEFAULT_AUTH_PROFILE_NAME,
+            "round14.pending.env.rejected",
+            metadata,
+            true,
+        )
+        .expect("seed env-scoped rejected pending app session");
+
+    let snap = snapshot()
+        .await
+        .expect("snapshot with env-scoped rejected pending revalidation")
+        .value;
+    assert!(
+        !snap.auth.is_authenticated,
+        "env-scoped pending session must fail closed when backend revalidation is rejected"
+    );
+    assert!(snap.auth.user.is_none());
+    assert!(snap.current_user.is_none());
+    assert!(snap.session_token.is_none());
+    let profile = AuthService::from_config(&config)
+        .get_profile(APP_SESSION_PROVIDER, None)
+        .expect("read env-scoped profile after rejection");
+    assert!(
+        profile.is_none(),
+        "rejected env-scoped pending session profile must be cleared"
+    );
+    assert_eq!(
+        openhuman_core::openhuman::config::read_active_user_id(&active_user_root).as_deref(),
+        Some("desktop-user"),
+        "env-scoped rejection cleanup must not clear the default active user"
+    );
+
+    let _ = shutdown_tx.send(());
+    let _ = server_task.await;
+}
+
+#[tokio::test]
 async fn snapshot_preserves_pending_session_when_backend_revalidation_is_transient() {
     let _lock = env_lock();
     let (api_url, server_task, shutdown_tx) = auth_me_failing_server().await;
