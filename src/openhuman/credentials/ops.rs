@@ -1,10 +1,10 @@
 //! JSON-RPC / CLI controller surface for credentials and app session auth.
 
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 use std::time::Duration;
 
 use crate::api::config::effective_backend_api_url;
-use crate::api::jwt::{decode_jwt_exp, decode_jwt_payload, get_session_token};
+use crate::api::jwt::{decode_jwt_exp, get_session_token};
 use crate::api::rest::{user_id_from_profile_payload, BackendOAuthClient};
 use crate::openhuman::config::Config;
 use crate::openhuman::credentials::session_support::{
@@ -182,34 +182,15 @@ pub async fn store_session(
                     ));
                 }
 
-                let Some(exp) = jwt_exp_live_at(trimmed_token, chrono::Utc::now()) else {
-                    tracing::warn!(
-                        domain = "credentials",
-                        operation = "store_session",
-                        "[credentials][auth-store] GET /auth/me transient validation failed on {} but JWT has no live local exp — session NOT persisted: {reason}",
-                        api_url.trim_end_matches('/')
-                    );
-                    return Err(format!(
-                        "Session validation failed (GET /auth/me): {reason}"
-                    ));
-                };
-
                 tracing::warn!(
                     domain = "credentials",
                     operation = "store_session",
-                    exp = %exp,
-                    "[credentials][auth-store] GET /auth/me transient validation failed on {} — persisting live JWT and deferring backend revalidation: {reason}",
+                    "[credentials][auth-store] GET /auth/me transient validation failed on {} — session NOT persisted; backend proof required before storing remote JWT: {reason}",
                     api_url.trim_end_matches('/')
                 );
-                session_validation_logs.push(format!(
-                    "session JWT accepted with deferred GET /auth/me validation on {} after transient failure",
-                    api_url.trim_end_matches('/')
+                return Err(format!(
+                    "Session validation failed (GET /auth/me): {reason}"
                 ));
-                fallback_session_user_for_deferred_validation(
-                    trimmed_token,
-                    user_id.as_deref(),
-                    user.as_ref(),
-                )
             }
         }
     };
@@ -246,7 +227,7 @@ pub async fn store_session(
     // `exp`; `decode_jwt_exp` returns None for them and the key is simply omitted
     // (presence-only check + the `flatten_authed_error` 401 net still apply).
     if !local_session {
-        match crate::api::jwt::decode_jwt_exp(trimmed_token) {
+        match decode_jwt_exp(trimmed_token) {
             Some(exp) => {
                 metadata.insert(
                     crate::openhuman::credentials::session_support::SESSION_EXPIRES_AT_META
@@ -469,72 +450,6 @@ fn auth_me_failure_status(reason: &str) -> Option<u16> {
             || lower.contains(&format!("status {status}"))
             || lower.contains(&format!("status code {status}"))
     })
-}
-
-fn jwt_exp_live_at(
-    token: &str,
-    now: chrono::DateTime<chrono::Utc>,
-) -> Option<chrono::DateTime<chrono::Utc>> {
-    let exp = decode_jwt_exp(token)?;
-    (exp > now).then_some(exp)
-}
-
-fn fallback_session_user_for_deferred_validation(
-    token: &str,
-    user_id: Option<&str>,
-    supplied_user: Option<&Value>,
-) -> Value {
-    if let Some(mut user) = sanitize_stored_session_user(supplied_user.cloned()) {
-        if let Value::Object(ref mut map) = user {
-            map.insert("pendingBackendValidation".to_string(), Value::Bool(true));
-            return user;
-        }
-    }
-
-    let claims = decode_jwt_payload(token).unwrap_or(Value::Null);
-    let mut map = Map::new();
-    if let Some(uid) = user_id
-        .map(str::trim)
-        .filter(|uid| !uid.is_empty())
-        .map(str::to_string)
-        .or_else(|| jwt_claim_string(&claims, &["sub", "user_id", "userId", "id", "_id"]))
-    {
-        map.insert("id".to_string(), Value::String(uid.clone()));
-        map.insert("_id".to_string(), Value::String(uid));
-    }
-    copy_jwt_claim_string(&claims, &mut map, "email", "email");
-    copy_jwt_claim_string(&claims, &mut map, "name", "name");
-    copy_jwt_claim_string(&claims, &mut map, "username", "username");
-    copy_jwt_claim_string(&claims, &mut map, "firstName", "firstName");
-    copy_jwt_claim_string(&claims, &mut map, "first_name", "firstName");
-    copy_jwt_claim_string(&claims, &mut map, "lastName", "lastName");
-    copy_jwt_claim_string(&claims, &mut map, "last_name", "lastName");
-    map.insert("pendingBackendValidation".to_string(), Value::Bool(true));
-    Value::Object(map)
-}
-
-fn copy_jwt_claim_string(claims: &Value, map: &mut Map<String, Value>, claim: &str, target: &str) {
-    if map.contains_key(target) {
-        return;
-    }
-    if let Some(value) = jwt_claim_string(claims, &[claim]) {
-        map.insert(target.to_string(), Value::String(value));
-    }
-}
-
-fn jwt_claim_string(claims: &Value, keys: &[&str]) -> Option<String> {
-    let obj = claims.as_object()?;
-    for key in keys {
-        if let Some(value) = obj
-            .get(*key)
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
-            return Some(value.to_string());
-        }
-    }
-    None
 }
 
 fn sanitize_stored_session_user(user: Option<serde_json::Value>) -> Option<serde_json::Value> {

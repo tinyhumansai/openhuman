@@ -4,8 +4,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use base64::Engine;
 use chrono::Utc;
 use openhuman_core::openhuman::app_state::{
     peek_cached_current_user_identity, snapshot, update_local_state, StoredAppStatePatch,
@@ -91,11 +89,6 @@ fn tempdir() -> TempDir {
         .prefix("app-state-credentials-round14-")
         .tempdir_in("target")
         .expect("round14 tempdir")
-}
-
-fn jwt_with_payload(payload: Value) -> String {
-    let payload = URL_SAFE_NO_PAD.encode(payload.to_string());
-    format!("eyJhbGciOiJIUzI1NiJ9.{payload}.sig")
 }
 
 fn write_min_config(root: &Path, api_url: &str) {
@@ -1065,48 +1058,42 @@ async fn snapshot_preserves_pending_session_when_backend_revalidation_is_transie
 }
 
 #[tokio::test]
-async fn snapshot_clears_transiently_stored_supplied_user_after_revalidation_rejection() {
+async fn snapshot_clears_supplied_user_pending_session_after_revalidation_rejection() {
     let _lock = env_lock();
-    let (api_url, server_task, shutdown_tx) = auth_me_status_sequence_server(vec![
-        (
-            500,
-            "Internal Server Error",
-            "{\"error\":\"transient one\"}",
-        ),
-        (
-            500,
-            "Internal Server Error",
-            "{\"error\":\"transient two\"}",
-        ),
-        (401, "Unauthorized", "{\"error\":\"revoked session\"}"),
-    ])
-    .await;
+    let (api_url, server_task, shutdown_tx) = auth_me_rejected_server().await;
     let harness = setup(&api_url);
     let config = harness.config().await;
-    let token = jwt_with_payload(json!({
-        "exp": (Utc::now() + chrono::Duration::hours(1)).timestamp()
-    }));
     let user_id = "callback-user";
     let active_user_root = openhuman_core::openhuman::config::default_root_openhuman_dir()
         .expect("default openhuman root");
+    openhuman_core::openhuman::config::write_active_user_id(&active_user_root, user_id)
+        .expect("seed active user marker for supplied pending session");
 
-    let stored = store_session(
-        &config,
-        &token,
-        Some(user_id.to_string()),
-        Some(json!({
+    let mut metadata = HashMap::new();
+    metadata.insert("user_id".to_string(), user_id.to_string());
+    metadata.insert(
+        "user_json".to_string(),
+        json!({
             "id": user_id,
             "name": "Callback User",
-            "email": "callback@example.test"
-        })),
-    )
-    .await
-    .expect("transient auth/me failure should defer validation for live JWT");
-    assert!(stored.value.has_token);
+            "email": "callback@example.test",
+            "pendingBackendValidation": true
+        })
+        .to_string(),
+    );
+    AuthService::from_config(&config)
+        .store_provider_token(
+            APP_SESSION_PROVIDER,
+            DEFAULT_AUTH_PROFILE_NAME,
+            "round14.pending.callback",
+            metadata,
+            true,
+        )
+        .expect("seed supplied pending app session");
     assert_eq!(
         openhuman_core::openhuman::config::read_active_user_id(&active_user_root).as_deref(),
         Some(user_id),
-        "deferred store_session with a user id must activate the user directory"
+        "test must start with active_user.toml pointing at the supplied pending user"
     );
 
     let active_config = harness.config().await;
@@ -1133,11 +1120,11 @@ async fn snapshot_clears_transiently_stored_supplied_user_after_revalidation_rej
 
     let snap = snapshot()
         .await
-        .expect("snapshot with transiently stored supplied user")
+        .expect("snapshot with supplied pending user")
         .value;
     assert!(
         !snap.auth.is_authenticated,
-        "transiently stored supplied user must fail closed when revalidation is rejected"
+        "supplied pending user must fail closed when revalidation is rejected"
     );
     assert!(snap.auth.user.is_none());
     assert!(snap.current_user.is_none());

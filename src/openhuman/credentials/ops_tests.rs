@@ -142,34 +142,8 @@ fn auth_me_store_failure_classifier_only_accepts_transient_shapes() {
     ));
 }
 
-#[test]
-fn fallback_session_user_uses_supplied_user_or_jwt_claims() {
-    let supplied = json!({ "id": "from-callback", "email": "callback@example.com" });
-    assert_eq!(
-        fallback_session_user_for_deferred_validation("not-a-jwt", None, Some(&supplied)),
-        json!({
-            "id": "from-callback",
-            "email": "callback@example.com",
-            "pendingBackendValidation": true
-        })
-    );
-
-    let token = jwt_with_payload(json!({
-        "sub": "user-123",
-        "email": "jwt@example.com",
-        "name": "JWT User",
-        "exp": 4_102_444_800i64
-    }));
-    let fallback = fallback_session_user_for_deferred_validation(&token, None, None);
-    assert_eq!(fallback["id"], "user-123");
-    assert_eq!(fallback["_id"], "user-123");
-    assert_eq!(fallback["email"], "jwt@example.com");
-    assert_eq!(fallback["name"], "JWT User");
-    assert_eq!(fallback["pendingBackendValidation"], true);
-}
-
 #[tokio::test]
-async fn store_session_persists_live_jwt_when_auth_me_transient() {
+async fn store_session_rejects_live_jwt_when_auth_me_transient() {
     let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
         .lock()
         .unwrap_or_else(|e| e.into_inner());
@@ -182,30 +156,21 @@ async fn store_session_persists_live_jwt_when_auth_me_transient() {
         "exp": (chrono::Utc::now() + chrono::Duration::hours(1)).timestamp()
     }));
 
-    let result = store_session(&config, &token, None, Some(json!({})))
+    let err = store_session(&config, &token, None, Some(json!({})))
         .await
-        .unwrap();
+        .unwrap_err();
 
-    assert!(result.value.has_token);
-    let log_text = result.logs.join(" ");
     assert!(
-        log_text.contains("session JWT accepted with deferred GET /auth/me validation"),
-        "expected deferred validation log, got: {log_text}"
-    );
-    assert!(
-        log_text.contains("session stored"),
-        "expected session stored log, got: {log_text}"
+        err.contains("Session validation failed (GET /auth/me)"),
+        "expected auth/me validation error, got: {err}"
     );
     let state = auth_get_state(&config).await.unwrap().value;
-    assert!(state.is_authenticated);
-    assert_eq!(
-        state.user,
-        Some(json!({ "pendingBackendValidation": true }))
-    );
+    assert!(!state.is_authenticated);
+    assert!(state.user.is_none());
 }
 
 #[tokio::test]
-async fn store_session_preserves_pending_marker_on_supplied_user_when_auth_me_transient() {
+async fn store_session_rejects_supplied_user_when_auth_me_transient() {
     let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
         .lock()
         .unwrap_or_else(|e| e.into_inner());
@@ -218,7 +183,7 @@ async fn store_session_preserves_pending_marker_on_supplied_user_when_auth_me_tr
         "exp": (chrono::Utc::now() + chrono::Duration::hours(1)).timestamp()
     }));
 
-    let result = store_session(
+    let err = store_session(
         &config,
         &token,
         None,
@@ -228,23 +193,19 @@ async fn store_session_preserves_pending_marker_on_supplied_user_when_auth_me_tr
         })),
     )
     .await
-    .unwrap();
+    .unwrap_err();
 
-    assert!(result.value.has_token);
-    let state = auth_get_state(&config).await.unwrap().value;
-    assert!(state.is_authenticated);
-    assert_eq!(
-        state.user,
-        Some(json!({
-            "name": "Callback User",
-            "email": "callback@example.test",
-            "pendingBackendValidation": true
-        }))
+    assert!(
+        err.contains("Session validation failed (GET /auth/me)"),
+        "expected auth/me validation error, got: {err}"
     );
+    let state = auth_get_state(&config).await.unwrap().value;
+    assert!(!state.is_authenticated);
+    assert!(state.user.is_none());
 }
 
 #[tokio::test]
-async fn store_session_marks_non_object_user_pending_when_auth_me_transient() {
+async fn store_session_rejects_non_object_user_when_auth_me_transient() {
     let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
         .lock()
         .unwrap_or_else(|e| e.into_inner());
@@ -257,17 +218,17 @@ async fn store_session_marks_non_object_user_pending_when_auth_me_transient() {
         "exp": (chrono::Utc::now() + chrono::Duration::hours(1)).timestamp()
     }));
 
-    let result = store_session(&config, &token, None, Some(json!("callback-user")))
+    let err = store_session(&config, &token, None, Some(json!("callback-user")))
         .await
-        .unwrap();
+        .unwrap_err();
 
-    assert!(result.value.has_token);
-    let state = auth_get_state(&config).await.unwrap().value;
-    assert!(state.is_authenticated);
-    assert_eq!(
-        state.user,
-        Some(json!({ "pendingBackendValidation": true }))
+    assert!(
+        err.contains("Session validation failed (GET /auth/me)"),
+        "expected auth/me validation error, got: {err}"
     );
+    let state = auth_get_state(&config).await.unwrap().value;
+    assert!(!state.is_authenticated);
+    assert!(state.user.is_none());
 }
 
 #[tokio::test]
