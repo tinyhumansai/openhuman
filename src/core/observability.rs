@@ -2233,6 +2233,30 @@ pub fn is_budget_event(event: &sentry::protocol::Event<'_>) -> bool {
     event_contains_budget_exhausted_message(event)
 }
 
+/// Whether a raw error / message string is a provider **insufficient-credits
+/// 402** — the BYO account (e.g. OpenRouter) genuinely lacks the balance to
+/// satisfy the request. Anchored on BOTH a 402-status shape AND a credit
+/// phrase, so a bare `402` (or a non-402 error whose body merely contains the
+/// digits `402`) is not swallowed and keeps reaching Sentry.
+///
+/// Single source of truth shared by the message-level cron halt
+/// (`openhuman::cron::scheduler`'s `is_insufficient_credits_failure`, which
+/// stops retrying a permanent 402 and skips its `report_error`) and the
+/// event-level `before_send` filter [`is_insufficient_credits_event`] — the
+/// same split as [`is_session_expired_message`] ↔ [`is_session_expired_event`].
+/// TAURI-RUST-514 / -C62.
+pub fn is_insufficient_credits_message(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    // Anchor the 402 to a status shape — the emit sites format the message
+    // as "<provider> API error (402 Payment Required): <body>". Matching a
+    // bare "402" would false-positive on body digits (e.g. a 400 error
+    // whose body says "can only afford 402 tokens"), which is NOT this
+    // user-state and must keep reaching Sentry.
+    let is_402_status = lower.contains("(402") || lower.contains("402 payment required");
+    is_402_status
+        && crate::openhuman::inference::provider::body_indicates_insufficient_credits(text)
+}
+
 /// Defense-in-depth `before_send` filter for **insufficient-credits 402**
 /// provider events (TAURI-RUST-C62): the user's own BYO provider account
 /// (e.g. OpenRouter) is out of balance — a billing state OpenHuman has no
@@ -2252,22 +2276,10 @@ pub fn is_budget_event(event: &sentry::protocol::Event<'_>) -> bool {
 /// - that same text carries an insufficient-credits phrase
 ///   (`provider::body_indicates_insufficient_credits`).
 pub fn is_insufficient_credits_event(event: &sentry::protocol::Event<'_>) -> bool {
-    fn text_is_insufficient_credits_402(text: &str) -> bool {
-        let lower = text.to_ascii_lowercase();
-        // Anchor the 402 to a status shape — the emit sites format the message
-        // as "<provider> API error (402 Payment Required): <body>". Matching a
-        // bare "402" would false-positive on body digits (e.g. a 400 error
-        // whose body says "can only afford 402 tokens"), which is NOT this
-        // user-state and must keep reaching Sentry.
-        let is_402_status = lower.contains("(402") || lower.contains("402 payment required");
-        is_402_status
-            && crate::openhuman::inference::provider::body_indicates_insufficient_credits(text)
-    }
-
     if event
         .message
         .as_deref()
-        .is_some_and(text_is_insufficient_credits_402)
+        .is_some_and(is_insufficient_credits_message)
     {
         return true;
     }
@@ -2275,7 +2287,7 @@ pub fn is_insufficient_credits_event(event: &sentry::protocol::Event<'_>) -> boo
         exception
             .value
             .as_deref()
-            .is_some_and(text_is_insufficient_credits_402)
+            .is_some_and(is_insufficient_credits_message)
     })
 }
 
@@ -5342,6 +5354,50 @@ mod tests {
         // not an arbitrary number in the body.
         assert!(!is_insufficient_credits_event(&event_with_message(
             "provider API error (400): can only afford 402 tokens"
+        )));
+    }
+
+    #[test]
+    fn is_insufficient_credits_message_matches_verbatim_cron_402() {
+        // Verbatim TAURI-RUST-514 body as it reaches the cron `report_error`
+        // call site (`domain=cron`, `operation=agent_job`): the message-level
+        // matcher must catch it so the cron halt skips the leaking report.
+        assert!(is_insufficient_credits_message(
+            "openrouter API error (402 Payment Required): {\"error\":{\"message\":\"This \
+             request requires more credits, or fewer max_tokens. You requested up to 65536 \
+             tokens, but can only afford 5081.\"}}",
+        ));
+        assert!(is_insufficient_credits_message(
+            "custom_openai API error (402 Payment Required): insufficient balance",
+        ));
+    }
+
+    #[test]
+    fn is_insufficient_credits_message_requires_402_and_credit_phrase() {
+        // A 402 without a credit phrase, and a credit phrase without a 402
+        // status, must both stay reportable (could be a real defect).
+        assert!(!is_insufficient_credits_message(
+            "provider API error (402): some unrelated condition"
+        ));
+        assert!(!is_insufficient_credits_message(
+            "provider API error (500): internal error, insufficient memory"
+        ));
+        // The status must be the 402, not a digit in the body.
+        assert!(!is_insufficient_credits_message(
+            "provider API error (400): can only afford 402 tokens"
+        ));
+    }
+
+    #[test]
+    fn is_insufficient_credits_event_delegates_to_message_matcher() {
+        // Parity: the event-level filter is now a thin wrapper over the
+        // message-level matcher across both the message and exception paths.
+        let body = "myopenrouter API error (402 Payment Required): This request requires \
+                    more credits, or fewer max_tokens.";
+        assert!(is_insufficient_credits_message(body));
+        assert!(is_insufficient_credits_event(&event_with_message(body)));
+        assert!(is_insufficient_credits_event(&event_with_exception_value(
+            body
         )));
     }
 
