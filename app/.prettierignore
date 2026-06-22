@@ -1,5 +1,6 @@
 node_modules
 dist
+dist-web
 coverage
 app
 src-tauri
