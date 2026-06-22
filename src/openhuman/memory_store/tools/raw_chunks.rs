@@ -102,6 +102,7 @@ impl Tool for MemoryStoreRawChunksTool {
             until_ms: parsed.until_ms,
             limit: parsed.limit,
             source_scope: crate::openhuman::memory::source_scope::current_source_scope(),
+            exclude_dropped: false,
         };
         let mut rows = list_chunks(&cfg, &query)?;
         if let Some(required) = parsed.tags_all_of.as_ref() {

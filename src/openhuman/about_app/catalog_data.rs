@@ -14,6 +14,14 @@ const DERIVED_TO_BACKEND: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
     destinations: &["OpenHuman backend", "TinyHumans Neocortex"],
 });
 
+// Vision sub-agent ships the attached image (raw pixels) to the managed
+// multimodal model for analysis.
+const IMAGE_TO_BACKEND: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
+    leaves_device: true,
+    data_kind: PrivacyDataKind::Raw,
+    destinations: &["OpenHuman backend", "TinyHumans Neocortex"],
+});
+
 const LOCAL_CREDENTIALS: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
     leaves_device: false,
     data_kind: PrivacyDataKind::Credentials,
@@ -232,6 +240,16 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         how_to: "Human > ask the assistant to delegate work to sub-agents",
         status: CapabilityStatus::Beta,
         privacy: None,
+    },
+    Capability {
+        id: "intelligence.vision_subagent",
+        name: "Vision Sub-agent",
+        domain: "agent",
+        category: CapabilityCategory::Intelligence,
+        description: "Delegate image / screenshot understanding to a dedicated vision sub-agent — describe, OCR, read charts/diagrams, compare images, or locate UI elements. Rides the multimodal `vision-v1` tier so attached images are always analyzed.",
+        how_to: "Attach an image in chat, or ask the assistant to look at a screenshot / image file",
+        status: CapabilityStatus::Beta,
+        privacy: IMAGE_TO_BACKEND,
     },
     Capability {
         id: "conversation.label_filter",
@@ -504,6 +522,16 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         privacy: DERIVED_TO_BACKEND,
     },
     Capability {
+        id: "intelligence.workflow_orchestration",
+        name: "Workflow Orchestration",
+        domain: "workflow_runs",
+        category: CapabilityCategory::Intelligence,
+        description: "Run declarative multi-agent workflows such as parallel research with cross-checking: a question is decomposed into angles, researched in parallel, adversarially cross-checked, and synthesized into one cited report. Watch each phase progress with its child agent results, stop or resume a run, and read the final synthesis. High-cost / high-concurrency runs require explicit approval before starting.",
+        how_to: "Intelligence > Orchestration > pick a workflow and Start",
+        status: CapabilityStatus::Beta,
+        privacy: DERIVED_TO_BACKEND,
+    },
+    Capability {
         id: "intelligence.agent_library",
         name: "Agents Library",
         domain: "intelligence",
@@ -512,6 +540,16 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         how_to: "Intelligence > Agent Tasks > Agents Library",
         status: CapabilityStatus::Beta,
         privacy: DERIVED_TO_BACKEND,
+    },
+    Capability {
+        id: "intelligence.worktree_manager",
+        name: "Agent Worktrees",
+        domain: "intelligence",
+        category: CapabilityCategory::Intelligence,
+        description: "Inspect and clean up the isolated git worktrees that parallel sub-agents check out under <repo>/.claude/worktrees. Each row shows the worktree's branch, dirty state, and changed files, plus a cross-worktree overlap warning when two workers touched the same file. Open, diff, or remove a worktree (a dirty worktree requires an explicit discard confirmation; the worker branch is preserved).",
+        how_to: "Intelligence > Worktrees",
+        status: CapabilityStatus::Beta,
+        privacy: None,
     },
     Capability {
         id: "intelligence.slack_memory_ingest",

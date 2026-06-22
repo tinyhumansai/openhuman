@@ -65,6 +65,34 @@ const MAX_SEGMENT_DELIVERIES = 100;
 
 type SegmentDelivery = { segments: Map<number, string>; createdAt: number; lastSeenAt: number };
 
+type ThreadSliceState = ReturnType<typeof store.getState>['thread'];
+
+/**
+ * Whether a thread should be treated as occupied for proactive delivery — a
+ * thread is only a valid target when it is provably "fresh" (holds no
+ * messages). We check the in-memory message cache and the persisted
+ * `messageCount` snapshot, so a thread that already has a conversation
+ * server-side (but whose messages aren't loaded into the cache yet) is still
+ * treated as occupied and never reused.
+ *
+ * Crucially, *unknown* thread metadata counts as occupied: when only a
+ * rehydrated `selectedThreadId` is present (e.g. before `loadThreads`
+ * resolves, or after caches were reset while selection was preserved),
+ * `state.threads.find` returns `undefined`. Treating that as fresh would let
+ * a proactive event append into a conversation we simply haven't loaded yet.
+ * We fail closed and open a new thread instead. See #3713.
+ */
+function threadHasMessages(state: ThreadSliceState, threadId: string): boolean {
+  const cached = state.messagesByThreadId[threadId];
+  if (cached && cached.length > 0) return true;
+  if (threadId === state.selectedThreadId && state.messages.length > 0) return true;
+  const thread = state.threads.find(t => t.id === threadId);
+  // Unknown metadata → fail closed (occupied) rather than risk interrupting an
+  // unloaded conversation.
+  if (!thread) return true;
+  return thread.messageCount > 0;
+}
+
 function rtLog(message: string, fields?: Record<string, string | number | null | undefined>) {
   if (IS_PROD) return;
   if (fields && Object.keys(fields).length > 0) {
@@ -262,14 +290,18 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
       }
 
       const state = store.getState().thread;
-      // Resolution priority: selected > any in-flight inference thread > first
-      // thread. With parallel inference there may be several active threads;
-      // any one is an acceptable proactive target when nothing is selected.
-      const firstActiveThreadId = Object.keys(state.activeThreadIds)[0] ?? null;
-      const targetFromState =
-        state.selectedThreadId ?? firstActiveThreadId ?? state.threads[0]?.id ?? null;
-      if (targetFromState) {
-        return targetFromState;
+      // Reuse an existing thread for proactive delivery ONLY when it is
+      // fresh (no messages). Injecting a morning brief / subconscious
+      // update into a thread that already holds a conversation interrupts
+      // the active chat flow (#3713). Candidate priority is selected >
+      // first thread; if the candidate already has messages we fall
+      // through and open a dedicated new thread instead. An in-flight
+      // inference thread always has at least the user's message, so it is
+      // never considered fresh — that is why `activeThreadIds` is no
+      // longer used as a target here.
+      const candidateThreadId = state.selectedThreadId ?? state.threads[0]?.id ?? null;
+      if (candidateThreadId && !threadHasMessages(state, candidateThreadId)) {
+        return candidateThreadId;
       }
 
       if (proactiveThreadCreationPromiseRef.current) {
@@ -540,6 +572,12 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
                     iterations: event.subagent?.iterations ?? entry.subagent.iterations,
                     elapsedMs: event.subagent?.elapsed_ms ?? entry.subagent.elapsedMs,
                     outputChars: event.subagent?.output_chars ?? entry.subagent.outputChars,
+                    // Worktree isolation metadata (#3376) — present only for
+                    // workers that ran with `isolation = "worktree"`. Drives the
+                    // inline worktree row's open/diff/remove affordances.
+                    worktreePath: event.subagent?.worktree_path ?? entry.subagent.worktreePath,
+                    changedFiles: event.subagent?.changed_files ?? entry.subagent.changedFiles,
+                    isDirty: event.subagent?.dirty_status ?? entry.subagent.isDirty,
                   }
                 : entry.subagent,
             });

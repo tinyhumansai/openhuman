@@ -61,6 +61,7 @@ export type SettingsRoute =
   | 'security'
   | 'migration'
   | 'companion'
+  | 'meetings'
   | 'embeddings'
   | 'search'
   | 'skills-runner'

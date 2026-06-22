@@ -485,11 +485,16 @@ pub const TODOIST_CURATED: &[CuratedTool] = &[
         scope: ToolScope::Read,
     },
     CuratedTool {
-        slug: "TODOIST_GET_ACTIVE_TASKS",
+        // Composio's catalog has no `TODOIST_GET_ACTIVE_TASKS`; the real
+        // incomplete-tasks slug is `TODOIST_GET_ALL_TASKS` (docs.composio.dev/
+        // toolkits/todoist). The old slug was rejected as an unknown action.
+        slug: "TODOIST_GET_ALL_TASKS",
         scope: ToolScope::Read,
     },
     CuratedTool {
-        slug: "TODOIST_GET_COMPLETED_TASKS",
+        // Real completed-tasks slug; `TODOIST_GET_COMPLETED_TASKS` does not
+        // exist in Composio's catalog.
+        slug: "TODOIST_LIST_COMPLETED_TASKS",
         scope: ToolScope::Read,
     },
     CuratedTool {

@@ -7,6 +7,7 @@
 //! the recommended single entry point for the `memory` orchestration layer.
 
 mod backend;
+mod cover_window;
 mod drill_down;
 mod fetch_leaves;
 mod ingest_document;
@@ -17,6 +18,7 @@ pub mod walk;
 
 // Re-export individual tool types for callers that need them directly
 // (e.g. tool registration in ops.rs).
+pub use cover_window::MemoryTreeCoverWindowTool;
 pub use drill_down::MemoryTreeDrillDownTool;
 pub use fetch_leaves::MemoryTreeFetchLeavesTool;
 pub use ingest_document::MemoryTreeIngestDocumentTool;
@@ -51,6 +53,7 @@ impl Tool for MemoryTreeTool {
          canonical id — call first when the user mentions someone by name), \
          `query_source` (filter by source type + time window), \
          `drill_down` (expand a coarse summary one level), \
+         `cover_window` (minimum node set covering a time window [since_ms, until_ms] — use for last-24h / time-bounded recaps), \
          `fetch_leaves` (pull raw chunks for citation), `ingest_document` (write a document into the tree for future retrieval), \
          `walk` (agentic multi-turn walk — LLM navigates summaries and returns a synthesized answer for a natural-language query), \
          `smart_walk` (multi-strategy retrieval — combines vector search, keyword search, entity lookup, \
@@ -64,9 +67,18 @@ impl Tool for MemoryTreeTool {
                 "mode": {
                     "type": "string",
                     "enum": ["search_entities", "query_source",
-                             "drill_down", "fetch_leaves", "ingest_document", "walk",
+                             "drill_down", "cover_window", "fetch_leaves", "ingest_document", "walk",
                              "smart_walk"],
                     "description": "Which operation to run (retrieval or write)."
+                },
+                // cover_window params (epoch-milliseconds)
+                "since_ms": {
+                    "type": "integer",
+                    "description": "cover_window: inclusive window start, epoch-milliseconds."
+                },
+                "until_ms": {
+                    "type": "integer",
+                    "description": "cover_window: inclusive window end, epoch-milliseconds."
                 },
                 // search_entities params
                 "query": {
@@ -143,6 +155,7 @@ impl Tool for MemoryTreeTool {
             "search_entities" => MemoryTreeSearchEntitiesTool.execute(args).await,
             "query_source" => MemoryTreeQuerySourceTool.execute(args).await,
             "drill_down" => MemoryTreeDrillDownTool.execute(args).await,
+            "cover_window" => MemoryTreeCoverWindowTool.execute(args).await,
             "fetch_leaves" => MemoryTreeFetchLeavesTool.execute(args).await,
             "ingest_document" => MemoryTreeIngestDocumentTool.execute(args).await,
             "walk" => MemoryTreeWalkTool.execute(args).await,
@@ -150,7 +163,7 @@ impl Tool for MemoryTreeTool {
             other => {
                 log::debug!("[tool][memory_tree] unknown_mode mode={other}");
                 Err(anyhow::anyhow!(
-                    "memory_tree: unknown mode `{other}`. Valid: search_entities, query_source, drill_down, fetch_leaves, ingest_document, walk, smart_walk"
+                    "memory_tree: unknown mode `{other}`. Valid: search_entities, query_source, drill_down, cover_window, fetch_leaves, ingest_document, walk, smart_walk"
                 ))
             }
         }
@@ -193,6 +206,7 @@ mod memory_tree_dispatcher_tests {
         assert!(modes.contains(&"search_entities"));
         assert!(modes.contains(&"query_source"));
         assert!(modes.contains(&"drill_down"));
+        assert!(modes.contains(&"cover_window"));
         assert!(modes.contains(&"fetch_leaves"));
         assert!(modes.contains(&"ingest_document"));
         assert!(modes.contains(&"walk"));

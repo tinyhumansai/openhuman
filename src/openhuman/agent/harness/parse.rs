@@ -183,6 +183,92 @@ pub(crate) fn matching_tool_call_close_tag(open_tag: &str) -> Option<&'static st
     }
 }
 
+/// `<invoke` prefix shared by the bare (`<invoke>`) and Claude-native
+/// attribute (`<invoke name="…">`) forms.
+const INVOKE_PREFIX: &str = "<invoke";
+
+/// Locate the earliest Claude-native attribute-form `<invoke …>` open tag
+/// (issue #3493). Matches `<invoke` only when the next character is whitespace
+/// — i.e. attributes follow. The bare `<invoke>` form (next char `>`) is
+/// intentionally skipped here; it is recognised as a literal tag with a JSON
+/// body via [`TOOL_CALL_OPEN_TAGS`], preserving back-compat.
+fn find_invoke_attr_tag(haystack: &str) -> Option<usize> {
+    let mut from = 0;
+    while let Some(rel) = haystack[from..].find(INVOKE_PREFIX) {
+        let idx = from + rel;
+        let after = &haystack[idx + INVOKE_PREFIX.len()..];
+        match after.chars().next() {
+            Some(c) if c.is_whitespace() => return Some(idx),
+            _ => from = idx + INVOKE_PREFIX.len(),
+        }
+    }
+    None
+}
+
+/// Scalar policy for `<parameter>` values: a value that parses as JSON
+/// (number, bool, null, array, object) is kept as that JSON type; anything
+/// else — the common case of bare text — stays a string. Mirrors the tolerant
+/// arg handling in [`parse_arguments_value`].
+fn parameter_scalar_value(raw: &str) -> serde_json::Value {
+    let trimmed = raw.trim();
+    match serde_json::from_str::<serde_json::Value>(trimmed) {
+        Ok(
+            value @ (serde_json::Value::Number(_)
+            | serde_json::Value::Bool(_)
+            | serde_json::Value::Null
+            | serde_json::Value::Array(_)
+            | serde_json::Value::Object(_)),
+        ) => value,
+        _ => serde_json::Value::String(trimmed.to_string()),
+    }
+}
+
+/// Parse a Claude-native attribute-form invoke block whose text begins
+/// immediately after the `<invoke` prefix (at the attributes). Returns the
+/// recovered call and the number of bytes consumed up to and including the
+/// closing `</invoke>`. `None` when the `name` attribute or the closing tag is
+/// missing — the caller then leaves the markup as text rather than dropping it.
+fn parse_invoke_attribute_block(after_prefix: &str) -> Option<(ParsedToolCall, usize)> {
+    static INVOKE_NAME_RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r#"name\s*=\s*"([^"]*)""#).unwrap());
+    static PARAMETER_RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r#"(?s)<parameter\s+name\s*=\s*"([^"]*)"\s*>(.*?)</parameter>"#).unwrap()
+    });
+
+    let open_end = after_prefix.find('>')?;
+    let attrs = &after_prefix[..open_end];
+    let name = INVOKE_NAME_RE
+        .captures(attrs)
+        .and_then(|c| c.get(1))
+        .map(|m| m.as_str().trim().to_string())
+        .filter(|n| !n.is_empty())?;
+
+    let body = &after_prefix[open_end + 1..];
+    let close_rel = body.find("</invoke>")?;
+    let inner = &body[..close_rel];
+
+    let mut arguments = serde_json::Map::new();
+    for cap in PARAMETER_RE.captures_iter(inner) {
+        // Groups 1 (name) and 2 (value) are mandatory in the pattern, so a
+        // captured match always has both — index access is safe.
+        let key = cap[1].trim();
+        if key.is_empty() {
+            continue;
+        }
+        arguments.insert(key.to_string(), parameter_scalar_value(&cap[2]));
+    }
+
+    let consumed = open_end + 1 + close_rel + "</invoke>".len();
+    Some((
+        ParsedToolCall {
+            name,
+            arguments: serde_json::Value::Object(arguments),
+            id: None,
+        },
+        consumed,
+    ))
+}
+
 pub(crate) fn extract_first_json_value_with_end(input: &str) -> Option<(serde_json::Value, usize)> {
     let trimmed = input.trim_start();
     let trim_offset = input.len().saturating_sub(trimmed.len());
@@ -439,7 +525,48 @@ pub(crate) fn parse_tool_calls(response: &str) -> (String, Vec<ParsedToolCall>) 
     }
 
     // Fall back to XML-style tool-call tag parsing.
-    while let Some((start, open_tag)) = find_first_tag(remaining, &TOOL_CALL_OPEN_TAGS) {
+    loop {
+        let literal = find_first_tag(remaining, &TOOL_CALL_OPEN_TAGS);
+        let invoke_attr = find_invoke_attr_tag(remaining);
+
+        // Choose the earliest-positioned recognised open tag. The bare
+        // `<invoke>` literal and the attribute form `<invoke …>` never collide
+        // at one offset (one is followed by `>`, the other by whitespace), so a
+        // simple index comparison disambiguates them (issue #3493).
+        let use_invoke_attr = match (invoke_attr, literal.as_ref()) {
+            (Some(i), Some((l, _))) => i < *l,
+            (Some(_), None) => true,
+            _ => false,
+        };
+
+        if use_invoke_attr {
+            let start = invoke_attr.expect("use_invoke_attr implies Some");
+            let before = &remaining[..start];
+            if !before.trim().is_empty() {
+                text_parts.push(before.trim().to_string());
+            }
+
+            let after_prefix = &remaining[start + INVOKE_PREFIX.len()..];
+            if let Some((parsed, consumed)) = parse_invoke_attribute_block(after_prefix) {
+                calls.push(parsed);
+                remaining = &after_prefix[consumed..];
+                continue;
+            }
+
+            // Unparseable attribute-form block (no `name`/no close tag): leave
+            // it and the rest as text instead of silently dropping content.
+            tracing::warn!(
+                body_chars = after_prefix.chars().count(),
+                "[agent_parse] malformed <invoke> attribute block: missing name or close tag"
+            );
+            remaining = &remaining[start..];
+            break;
+        }
+
+        let Some((start, open_tag)) = literal else {
+            break;
+        };
+
         // Everything before the tag is text.
         let before = &remaining[..start];
         if !before.trim().is_empty() {
@@ -611,11 +738,31 @@ pub(crate) fn build_native_assistant_history(
     let calls_json: Vec<serde_json::Value> = tool_calls
         .iter()
         .map(|tc| {
-            serde_json::json!({
+            let mut call = serde_json::json!({
                 "id": tc.id,
                 "name": tc.name,
                 "arguments": tc.arguments,
-            })
+            });
+            // Persist Gemini's per-call `thought_signature` (TAURI-RUST-4PK /
+            // 4PJ) into the stored assistant turn. PR #3553 threaded the
+            // signature through the live response→request hop and the
+            // stored-history *parser* (`parse_provider_tool_call_from_value`),
+            // but this writer — the single sink the agent loop persists every
+            // native tool-call turn through (engine/core.rs) — dropped it. On a
+            // history reload the rebuilt assistant turn therefore lacked
+            // `extra_content`, so the echoed `functionCall` part went out with
+            // no `thought_signature` and Gemini 400'd ("Function call is
+            // missing a thought_signature in functionCall parts"). Write it
+            // per-part so EVERY call in a parallel/multi-call turn round-trips,
+            // not just the first; `skip_serializing_if = "Option::is_none"` on
+            // `extra_content` keeps the stored JSON byte-identical for every
+            // provider that doesn't emit it.
+            if let Some(extra) = tc.extra_content.clone() {
+                if let Some(obj) = call.as_object_mut() {
+                    obj.insert("extra_content".to_string(), extra);
+                }
+            }
+            call
         })
         .collect();
 

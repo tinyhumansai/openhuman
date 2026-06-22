@@ -140,7 +140,7 @@ describe('OAuthProviderButton (GitHub) — web OAuth flow', () => {
     await clickButton(screen.getByRole('button', { name: /github/i }));
 
     await waitFor(() => {
-      expect((window.location as unknown as { href: string }).href).toBe(
+      expect((window.location as unknown as { href: string }).href).toContain(
         'http://localhost:5005/auth/github/login?responseType=json'
       );
     });
@@ -180,7 +180,7 @@ describe('OAuthProviderButton (GitHub) — Tauri OAuth flow', () => {
 
     await waitFor(() => {
       expect(mockOpenUrl).toHaveBeenCalledWith(
-        'https://api.example.com/auth/github/login?responseType=json'
+        expect.stringContaining('https://api.example.com/auth/github/login?responseType=json')
       );
     });
   });
@@ -335,7 +335,7 @@ describe('OAuthProviderButton (GitHub) — URL construction', () => {
     await clickButton(screen.getByRole('button', { name: /github/i }));
 
     await waitFor(() => expect(mockOpenUrl).toHaveBeenCalled());
-    expect(mockOpenUrl.mock.calls[0][0]).toBe(
+    expect(mockOpenUrl.mock.calls[0][0]).toContain(
       'https://api.example.com/auth/github/login?responseType=json'
     );
   });

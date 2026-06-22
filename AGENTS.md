@@ -79,7 +79,7 @@ pnpm debug logs last                               # print most recent
 
 ### Coverage requirement (merge gate)
 
-PRs need **≥ 80% coverage on changed lines** via `diff-cover` over Vitest + `cargo-llvm-cov` lcov. Enforced by `.github/workflows/coverage.yml`.
+PRs need **≥ 80% coverage on changed lines** via `diff-cover` over Vitest + `cargo-llvm-cov` lcov. Enforced by the coverage jobs (`frontend-coverage`/`rust-core-coverage`/`rust-tauri-coverage`/`coverage-gate`) in `.github/workflows/pr-ci.yml`.
 
 ---
 

@@ -13,18 +13,20 @@ pub(crate) const COOKIES_DB_ENV: &str = "OPENHUMAN_CEF_COOKIES_DB";
 
 /// A provider surfaced in the webview-account snapshot.
 ///
-/// `host_suffix` is matched against Chromium's `host_key` column with a
-/// trailing-wildcard SQL `LIKE`. `session_cookie_names` are the cookie
-/// `name` values that indicate an active login — any one match is
-/// sufficient.
+/// Each entry in `host_suffixes` is matched against Chromium's `host_key`
+/// column with a trailing-wildcard SQL `LIKE`; a match on any suffix
+/// counts. `session_cookie_names` are the cookie `name` values that
+/// indicate an active login — any one match is sufficient.
 struct Provider {
     /// Stable key surfaced in the JSON snapshot (e.g. `"gmail"`).
     key: &'static str,
-    /// Host suffix the auth cookie must live under. Chromium stores
+    /// Host suffixes the auth cookie may live under. Chromium stores
     /// host_key with a leading dot for domain cookies (e.g.
     /// `.google.com`) or the full host for host-only cookies. We match
-    /// with `%suffix`.
-    host_suffix: &'static str,
+    /// each with `%suffix` and a login on **any** suffix counts — needed
+    /// for providers that span domains (e.g. X on both `.x.com` and the
+    /// legacy `.twitter.com`).
+    host_suffixes: &'static [&'static str],
     /// Cookie names that indicate a logged-in session. Picked per-provider
     /// to avoid false positives from analytics/consent cookies.
     session_cookie_names: &'static [&'static str],
@@ -35,47 +37,62 @@ struct Provider {
 pub(crate) const PROVIDERS: &[Provider] = &[
     Provider {
         key: "gmail",
-        host_suffix: ".google.com",
+        host_suffixes: &[".google.com"],
         session_cookie_names: &["SID", "HSID", "SSID", "APISID", "SAPISID"],
     },
     Provider {
         key: "whatsapp",
-        host_suffix: "web.whatsapp.com",
+        host_suffixes: &["web.whatsapp.com"],
         session_cookie_names: &["wa_ul", "wa_build"],
     },
     Provider {
         key: "wechat",
-        host_suffix: "web.wechat.com",
+        host_suffixes: &["web.wechat.com"],
         session_cookie_names: &["wxuin", "webwx_data_ticket", "webwx_auth_ticket"],
     },
     Provider {
         key: "telegram",
-        host_suffix: "web.telegram.org",
+        host_suffixes: &["web.telegram.org"],
         session_cookie_names: &["stel_ssid", "stel_token"],
     },
     Provider {
         key: "slack",
-        host_suffix: ".slack.com",
+        host_suffixes: &[".slack.com"],
         session_cookie_names: &["d", "d-s"],
     },
     Provider {
         key: "discord",
-        host_suffix: ".discord.com",
+        host_suffixes: &[".discord.com"],
         session_cookie_names: &["__Secure-recent_session", "__Secure-authjs.session-token"],
     },
     Provider {
         key: "linkedin",
-        host_suffix: ".linkedin.com",
+        host_suffixes: &[".linkedin.com"],
         session_cookie_names: &["li_at"],
     },
     Provider {
+        key: "outlook",
+        host_suffixes: &[".live.com"],
+        session_cookie_names: &["MSPAuth", "MSPProf", "RPSSecAuth"],
+    },
+    Provider {
+        key: "instagram",
+        host_suffixes: &[".instagram.com"],
+        session_cookie_names: &["sessionid", "ds_user_id"],
+    },
+    Provider {
+        key: "twitter",
+        host_suffixes: &[".x.com", ".twitter.com"],
+        session_cookie_names: &["auth_token", "ct0"],
+    },
+    Provider {
         key: "zoom",
-        host_suffix: ".zoom.us",
+        host_suffixes: &[".zoom.us"],
         session_cookie_names: &["_zm_ssid", "zm_aid"],
     },
     Provider {
         key: "google_messages",
-        host_suffix: "messages.google.com",
+        host_suffixes: &["messages.google.com"],
         session_cookie_names: &["SID", "HSID"],
     },
 ];
@@ -172,12 +189,21 @@ pub fn detect_webview_logins() -> Value {
 }
 
 /// Return `true` when the cookie DB has at least one row whose host_key
-/// ends with `host_suffix` and whose name is one of the provider's
-/// session-cookie names. Any SQL failure maps to `false`.
+/// ends with one of the provider's `host_suffixes` and whose name is one
+/// of the provider's session-cookie names. Any SQL failure maps to
+/// `false`.
 fn provider_has_session_cookie(conn: &Connection, provider: &Provider) -> bool {
-    if provider.session_cookie_names.is_empty() {
+    if provider.session_cookie_names.is_empty() || provider.host_suffixes.is_empty() {
         return false;
     }
+    // One `host_key LIKE ?` clause per suffix, OR-ed together — a login on
+    // ANY suffix counts (e.g. X cookies on `.x.com` or legacy `.twitter.com`).
+    let host_clause = provider
+        .host_suffixes
+        .iter()
+        .map(|_| "host_key LIKE ? ESCAPE '\\'")
+        .collect::<Vec<_>>()
+        .join(" OR ");
     let placeholders = provider
         .session_cookie_names
         .iter()
@@ -186,15 +212,19 @@ fn provider_has_session_cookie(conn: &Connection, provider: &Provider) -> bool {
         .join(",");
     let sql = format!(
         "SELECT 1 FROM cookies \
-         WHERE host_key LIKE ?1 ESCAPE '\\' \
+         WHERE ({host_clause}) \
          AND name IN ({placeholders}) \
          LIMIT 1"
     );
 
-    // Escape SQL-LIKE metacharacters in the suffix so a provider entry
+    // Escape SQL-LIKE metacharacters in each suffix so a provider entry
     // with `_` or `%` can't silently widen the match. All current
     // entries are plain hostnames but future additions might not be.
-    let like_pattern = format!("%{}", escape_like(provider.host_suffix));
+    let like_patterns = provider
+        .host_suffixes
+        .iter()
+        .map(|s| format!("%{}", escape_like(s)))
+        .collect::<Vec<_>>();
 
     let mut stmt = match conn.prepare(&sql) {
         Ok(s) => s,
@@ -207,9 +237,13 @@ fn provider_has_session_cookie(conn: &Connection, provider: &Provider) -> bool {
             return false;
         }
     };
+    // Anonymous `?` params bind positionally: host patterns first (in the
+    // order they appear in `host_clause`), then the cookie names.
     let mut params: Vec<&dyn rusqlite::ToSql> =
-        Vec::with_capacity(1 + provider.session_cookie_names.len());
-    params.push(&like_pattern);
+        Vec::with_capacity(like_patterns.len() + provider.session_cookie_names.len());
+    for pattern in &like_patterns {
+        params.push(pattern);
+    }
     for name in provider.session_cookie_names {
         params.push(name);
     }
@@ -345,6 +379,43 @@ mod tests {
         assert_eq!(v["slack"], Value::Bool(true));
         assert_eq!(v["linkedin"], Value::Bool(true));
         assert_eq!(v["gmail"], Value::Bool(false));
+        std::env::remove_var(COOKIES_DB_ENV);
+    }
+
+    #[test]
+    fn detects_outlook_instagram_and_twitter() {
+        let _lock = lock_env();
+        let tmp = TempDir::new().unwrap();
+        let db = tmp.path().join("Cookies");
+        make_cookies_db(
+            &db,
+            &[
+                ("login.live.com", "MSPAuth"),
+                (".instagram.com", "sessionid"),
+                (".x.com", "auth_token"),
+            ],
+        );
+        std::env::set_var(COOKIES_DB_ENV, &db);
+        let v = detect_webview_logins();
+        assert_eq!(v["outlook"], Value::Bool(true));
+        assert_eq!(v["instagram"], Value::Bool(true));
+        assert_eq!(v["twitter"], Value::Bool(true));
+        assert_eq!(v["gmail"], Value::Bool(false));
+        std::env::remove_var(COOKIES_DB_ENV);
+    }
+
+    /// X migrated to x.com but still sets auth cookies on the legacy
+    /// `.twitter.com` domain for some accounts; detection must catch
+    /// either host suffix (#3755 CodeRabbit).
+    #[test]
+    fn detects_twitter_via_legacy_twitter_com_cookie() {
+        let _lock = lock_env();
+        let tmp = TempDir::new().unwrap();
+        let db = tmp.path().join("Cookies");
+        make_cookies_db(&db, &[(".twitter.com", "auth_token")]);
+        std::env::set_var(COOKIES_DB_ENV, &db);
+        let v = detect_webview_logins();
+        assert_eq!(v["twitter"], Value::Bool(true));
         std::env::remove_var(COOKIES_DB_ENV);
     }
 

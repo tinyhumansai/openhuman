@@ -29,6 +29,7 @@ import {
   selectSelectedMascotId,
 } from '../../store/mascotSlice';
 import { selectPersonaDescription, selectPersonaDisplayName } from '../../store/personaSlice';
+import { RecentCallsSection } from './RecentCallsSection';
 
 type Toast = { type: 'success' | 'error' | 'info'; title: string; message?: string };
 
@@ -202,7 +203,15 @@ function MeetingBotsInline({ onToast, hasSubmittedRef }: MeetingBotsInlineProps)
   const { t } = useT();
   const dispatch = useAppDispatch();
   const [meetUrl, setMeetUrl] = useState('');
-  const [respondTo] = useState('');
+  // The participant the bot answers to (authorized speaker). Wired to the
+  // backend join payload as `respondToParticipant` → `respondTo`, which the
+  // meeting stream uses to gate in-call requests to this speaker only.
+  const [respondTo, setRespondTo] = useState('');
+  // Active (respond when addressed) vs listen-only (transcribe only). Defaults
+  // to active; the bot still only replies after being addressed by the wake
+  // phrase. Forwarded to the backend as `listenOnly` and mirrored into the
+  // meet slice so the active view shows the right status.
+  const [listenOnly, setListenOnly] = useState(false);
   const personaDisplayName = useAppSelector(selectPersonaDisplayName);
   const personaDescription = useAppSelector(selectPersonaDescription);
   const selectedMascotId = useAppSelector(selectSelectedMascotId);
@@ -231,10 +240,19 @@ function MeetingBotsInline({ onToast, hasSubmittedRef }: MeetingBotsInlineProps)
 
   useEffect(() => {
     void refreshRecentCalls();
+    // This inline form remounts the instant a call ends, but the core writes
+    // the call record asynchronously a few ms after the transcript arrives —
+    // so the mount-time fetch can race ahead of that write and miss the just-
+    // ended call. A couple of short delayed re-fetches reliably reflect it
+    // without the user having to reopen the tab. Cheap (a ~2ms RPC each).
+    const retries = [1200, 3000].map(delay =>
+      setTimeout(() => void refreshRecentCalls(), delay)
+    );
+    return () => retries.forEach(clearTimeout);
   }, [refreshRecentCalls]);
 
   const selectedLabel = t('skills.meetingBots.platforms.gmeet');
-  const agentName = personaDisplayName.trim() || 'OpenHuman';
+  const agentName = personaDisplayName.trim() || 'Tiny';
   const systemPrompt = personaDescription.trim() || undefined;
   const mascotId = selectedMascotId ?? (mascotColor === 'custom' ? undefined : mascotColor);
   const riveColors =
@@ -264,7 +282,7 @@ function MeetingBotsInline({ onToast, hasSubmittedRef }: MeetingBotsInlineProps)
     hasSubmittedRef.current = true;
     try {
       const meetingId = crypto.randomUUID();
-      dispatch(setBackendMeetJoining({ meetUrl: meetUrl.trim(), meetingId }));
+      dispatch(setBackendMeetJoining({ meetUrl: meetUrl.trim(), meetingId, listenOnly }));
       await joinMeetViaBackendBot({
         meetUrl,
         displayName: agentName,
@@ -275,6 +293,7 @@ function MeetingBotsInline({ onToast, hasSubmittedRef }: MeetingBotsInlineProps)
         riveColors,
         correlationId: meetingId,
         respondToParticipant: respondTo.trim() || undefined,
+        listenOnly,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : t('skills.meetingBots.failedToStart');
@@ -315,6 +334,44 @@ function MeetingBotsInline({ onToast, hasSubmittedRef }: MeetingBotsInlineProps)
           />
         </label>
 
+        <label className="block">
+          <span className="text-[10px] font-medium uppercase tracking-wide text-stone-500 dark:text-neutral-400">
+            {t('skills.meetingBots.respondToParticipant')}
+          </span>
+          <input
+            type="text"
+            autoComplete="off"
+            spellCheck={false}
+            value={respondTo}
+            onChange={e => setRespondTo(e.target.value)}
+            placeholder={t('skills.meetingBots.respondToParticipantHint')}
+            disabled={submitting}
+            required
+            className="mt-1 w-full rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-100 disabled:cursor-not-allowed disabled:bg-stone-50 dark:disabled:bg-neutral-800/60"
+          />
+          <p className="mt-1 text-[10px] text-stone-400 dark:text-neutral-500">
+            {t('skills.meetingBots.respondToParticipantDesc')}
+          </p>
+        </label>
+
+        <label className="flex items-start gap-3 rounded-xl border border-stone-200 dark:border-neutral-800 px-3 py-2.5">
+          <input
+            type="checkbox"
+            checked={!listenOnly}
+            onChange={e => setListenOnly(!e.target.checked)}
+            disabled={submitting}
+            className="mt-0.5 h-4 w-4 shrink-0 rounded border-stone-300 text-primary-500 focus:ring-2 focus:ring-primary-100 disabled:cursor-not-allowed"
+          />
+          <span className="min-w-0">
+            <span className="block text-sm font-medium text-stone-800 dark:text-neutral-100">
+              {t('skills.meetingBots.activeMode')}
+            </span>
+            <span className="mt-0.5 block text-[10px] leading-relaxed text-stone-400 dark:text-neutral-500">
+              {t('skills.meetingBots.activeModeDesc')}
+            </span>
+          </span>
+        </label>
+
         {error && (
           <div
             role="alert"
@@ -326,7 +383,7 @@ function MeetingBotsInline({ onToast, hasSubmittedRef }: MeetingBotsInlineProps)
         <div className="flex items-center justify-end gap-2 pt-1">
           <button
             type="submit"
-            disabled={submitting || !meetUrl.trim()}
+            disabled={submitting || !meetUrl.trim() || !respondTo.trim()}
             className="rounded-xl bg-primary-500 px-4 py-2 text-sm font-semibold text-white hover:bg-primary-600 disabled:cursor-not-allowed disabled:bg-stone-200 dark:disabled:bg-neutral-700 disabled:text-stone-400 dark:disabled:text-neutral-500">
             {submitting
               ? t('skills.meetingBots.starting')
@@ -340,99 +397,3 @@ function MeetingBotsInline({ onToast, hasSubmittedRef }: MeetingBotsInlineProps)
   );
 }
 
-function RecentCallsSection({
-  rows,
-  error,
-}: {
-  rows: MeetCallRecord[] | null;
-  error: string | null;
-}) {
-  const { t } = useT();
-  return (
-    <section
-      aria-label={t('skills.meetingBots.recentCallsAriaLabel')}
-      className="mt-4 border-t border-stone-200 dark:border-neutral-800 pt-4">
-      <div className="flex items-baseline justify-between">
-        <h3 className="text-[11px] font-semibold uppercase tracking-wide text-stone-500 dark:text-neutral-400">
-          {t('skills.meetingBots.recentCallsHeading')}
-          {rows && rows.length > 0 && (
-            <span className="ml-1 text-stone-400 dark:text-neutral-500 normal-case font-normal">
-              ({rows.length})
-            </span>
-          )}
-        </h3>
-      </div>
-
-      {error && (
-        <p className="mt-2 text-[11px] text-coral-600 dark:text-coral-400">{error}</p>
-      )}
-
-      {rows === null ? (
-        <p className="mt-2 text-[11px] text-stone-400 dark:text-neutral-500">
-          {t('skills.meetingBots.recentCallsLoading')}
-        </p>
-      ) : rows.length === 0 ? (
-        <p className="mt-2 text-[11px] text-stone-400 dark:text-neutral-500">
-          {t('skills.meetingBots.recentCallsEmpty')}
-        </p>
-      ) : (
-        <ul className="mt-2 max-h-48 space-y-1 overflow-y-auto pr-1">
-          {rows.map(call => (
-            <RecentCallRow key={call.request_id} call={call} />
-          ))}
-        </ul>
-      )}
-    </section>
-  );
-}
-
-function RecentCallRow({ call }: { call: MeetCallRecord }) {
-  const meetingCode = (() => {
-    try {
-      const parsed = new URL(call.meet_url);
-      const tail = parsed.pathname.replace(/^\/+/, '');
-      return tail || call.meet_url;
-    } catch {
-      return call.meet_url || '(unknown URL)';
-    }
-  })();
-  const duration = Math.max(0, Math.round(call.spoken_seconds + call.listened_seconds));
-  return (
-    <li className="rounded-lg px-2 py-1.5 text-[11px] text-stone-700 dark:text-neutral-300 hover:bg-stone-50 dark:hover:bg-neutral-800/40">
-      <div className="flex items-center justify-between gap-2">
-        <span className="truncate font-mono text-stone-800 dark:text-neutral-200">
-          {meetingCode}
-        </span>
-        <span className="shrink-0 text-stone-400 dark:text-neutral-500">
-          {formatRelativeTime(call.started_at_ms)}
-        </span>
-      </div>
-      <div className="mt-0.5 flex items-center gap-3 text-[10px] text-stone-500 dark:text-neutral-400">
-        <span>
-          {call.turn_count} turn{call.turn_count === 1 ? '' : 's'}
-        </span>
-        <span>{duration}s on call</span>
-      </div>
-    </li>
-  );
-}
-
-function formatRelativeTime(ms: number): string {
-  if (!ms) return '—';
-  const diff = Date.now() - ms;
-  if (diff < 0) return 'just now';
-  const seconds = Math.floor(diff / 1000);
-  if (seconds < 60) return 'just now';
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days === 1) return 'yesterday';
-  if (days < 7) return `${days}d ago`;
-  try {
-    return new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-  } catch {
-    return '—';
-  }
-}

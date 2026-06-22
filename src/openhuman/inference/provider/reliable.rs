@@ -8,8 +8,38 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
+/// Extract an HTTP `4xx` status code from an error message, but only when it
+/// appears in a *structured* position — never from arbitrary digit runs in
+/// free text (audit C10). Recognised positions:
+///
+/// - the documented provider envelope `"… API error (<status>): …"`
+///   (e.g. `"OpenAI API error (401 Unauthorized): …"`),
+/// - an explicit `HTTP <status>` marker,
+/// - a `status: <status>` / `status <status>` field,
+/// - a status code that *leads* the message (e.g. `"404 Not Found"`).
+///
+/// Returns the matched code (always in `400..=499`) or `None`.
+fn structured_http_4xx(msg: &str) -> Option<u16> {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = RE.get_or_init(|| {
+        // (?i) case-insensitive; capture the 4xx in any one of the structured
+        // anchors. `\A` matches start-of-string for the leading-status form.
+        regex::Regex::new(r"(?i)(?:\(|HTTP\s+|status[:\s]+|\A)(4\d\d)\b")
+            .expect("static is_non_retryable 4xx regex is valid")
+    });
+    re.captures(msg)
+        .and_then(|c| c.get(1))
+        .and_then(|m| m.as_str().parse::<u16>().ok())
+}
+
 /// Check if an error is non-retryable (client errors that won't resolve with retries).
-fn is_non_retryable(err: &anyhow::Error) -> bool {
+///
+/// `pub(crate)` so other layers that run their own retry loop over a provider
+/// call (e.g. `memory_tree::extract::llm`) classify failures against the same
+/// source of truth instead of treating every error as a retryable transport
+/// blip — retrying a permanent 4xx (402 out of credits, bad key, model gone)
+/// only multiplies wasted calls and Sentry events (TAURI-RUST-C62).
+pub(crate) fn is_non_retryable(err: &anyhow::Error) -> bool {
     if is_context_window_exceeded(err) {
         return true;
     }
@@ -27,12 +57,14 @@ fn is_non_retryable(err: &anyhow::Error) -> bool {
             return status.is_client_error() && code != 429 && code != 408;
         }
     }
-    for word in msg.split(|c: char| !c.is_ascii_digit()) {
-        if let Ok(code) = word.parse::<u16>() {
-            if (400..500).contains(&code) {
-                return code != 429 && code != 408;
-            }
-        }
+    // Don't infer an HTTP status from *any* free-text digit run — strings like
+    // "took 450ms" (→450) or model ids like "gpt-4-0409" (→409) would be
+    // misclassified as permanent client errors and short-circuit retries
+    // (audit C10). Match only a 4xx code in a *structured* position: the
+    // documented `… API error (<status>): …` envelope, an `HTTP <status>` /
+    // `status: <status>` marker, or a status that leads the message.
+    if let Some(code) = structured_http_4xx(&msg) {
+        return code != 429 && code != 408;
     }
 
     let msg_lower = msg.to_lowercase();
@@ -330,7 +362,13 @@ fn format_failure_aggregate(
 
 /// Provider wrapper with retry, fallback, auth rotation, and model failover.
 pub struct ReliableProvider {
-    providers: Vec<(String, Box<dyn Provider>)>,
+    /// Stored behind `Arc` (not `Box`) so the streaming failover path can hand
+    /// owned, `'static` provider handles to the consumer task and create
+    /// candidate streams *lazily* — issuing each upstream request only when the
+    /// previous candidate has actually failed (see `stream_chat_with_system`).
+    /// The public `new` constructor still accepts `Box<dyn Provider>`; the
+    /// conversion happens internally so callers are unaffected.
+    providers: Vec<(String, std::sync::Arc<dyn Provider>)>,
     max_retries: u32,
     base_backoff_ms: u64,
     /// Extra API keys for rotation (index tracks round-robin position).
@@ -347,7 +385,10 @@ impl ReliableProvider {
         base_backoff_ms: u64,
     ) -> Self {
         Self {
-            providers,
+            providers: providers
+                .into_iter()
+                .map(|(name, p)| (name, std::sync::Arc::from(p)))
+                .collect(),
             max_retries,
             base_backoff_ms: base_backoff_ms.max(50),
             api_keys: Vec::new(),
@@ -407,6 +448,45 @@ impl Provider for ReliableProvider {
             }
         }
         Ok(())
+    }
+
+    /// Delegate to the primary provider so a wrapped local runtime reports its
+    /// runtime-loaded window (LM Studio `n_ctx`) for pre-dispatch trimming
+    /// instead of the static-table default (#3550 / TAURI-RUST-6V0).
+    async fn effective_context_window(&self, model: &str) -> Option<u64> {
+        match self.providers.first() {
+            Some((_, provider)) => provider.effective_context_window(model).await,
+            None => crate::openhuman::inference::context_window_for_model(model),
+        }
+    }
+
+    /// Delegate to the primary provider so the engine's pre-dispatch
+    /// un-evictable-prefix guard fires for a wrapped local model (#3550).
+    fn is_local_provider(&self) -> bool {
+        self.providers
+            .first()
+            .map(|(_, p)| p.is_local_provider())
+            .unwrap_or(false)
+    }
+
+    /// Delegate the model-aware locality to the primary provider so a wrapped
+    /// router resolves `model` to its actual (possibly local) provider for the
+    /// engine's pre-dispatch guard (#3550 / PR #3771).
+    fn is_local_provider_for_model(&self, model: &str) -> bool {
+        self.providers
+            .first()
+            .map(|(_, p)| p.is_local_provider_for_model(model))
+            .unwrap_or(false)
+    }
+
+    /// Delegate the authoritative runtime-loaded window to the primary provider
+    /// so the engine's hard pre-dispatch abort sees the wrapped local runtime's
+    /// loaded `n_ctx` (#3550 / PR #3771).
+    async fn loaded_context_window(&self, model: &str) -> Option<u64> {
+        match self.providers.first() {
+            Some((_, provider)) => provider.loaded_context_window(model).await,
+            None => None,
+        }
     }
 
     async fn chat_with_system(
@@ -725,6 +805,7 @@ impl Provider for ReliableProvider {
                         messages: request.messages,
                         tools: request.tools,
                         stream: stream_this_attempt,
+                        max_tokens: request.max_tokens,
                     };
                     match provider.chat(req, current_model, temperature).await {
                         Ok(resp) => {
@@ -1006,25 +1087,27 @@ impl Provider for ReliableProvider {
         let model_chain: Vec<String> = models.into_iter().map(|m| m.to_string()).collect();
         let base_backoff_ms = self.base_backoff_ms;
 
-        // Collect provider streams lazily inside the task — we need owned data
-        // Provider trait is object-safe, so we call stream_chat_with_system per attempt
-        // We need to pre-create all possible streams since Provider is behind &self
-        // Instead, collect the streams for each provider+model combo upfront
-        let mut candidate_streams: Vec<(
-            String,
-            String,
-            stream::BoxStream<'static, StreamResult<StreamChunk>>,
-        )> = Vec::new();
+        // Capture only owned `(provider_name, provider, model)` *tuples* up-front
+        // — NOT the streams themselves. The provider impl spawns the upstream
+        // HTTP POST the instant a stream is created, so eagerly building the
+        // full provider×model product here would fire every fallback request
+        // at once (duplicate billing/side-effects). Instead we clone the
+        // `Arc<dyn Provider>` handles and call `stream_chat_with_system` lazily
+        // inside the consumer task, immediately before each candidate is tried
+        // — mirroring the sequential non-streaming paths. (audit C2)
+        //
+        // `system_prompt` / `message` are borrowed from the caller and the
+        // spawned task is `'static`, so own them here.
+        let system_prompt_owned: Option<String> = system_prompt.map(|s| s.to_string());
+        let message_owned: String = message.to_string();
+        let mut candidates: Vec<(String, std::sync::Arc<dyn Provider>, String)> = Vec::new();
         for current_model in &model_chain {
             for (provider_name, provider) in &streaming_providers {
-                let s = provider.stream_chat_with_system(
-                    system_prompt,
-                    message,
-                    current_model,
-                    temperature,
-                    options,
-                );
-                candidate_streams.push(((*provider_name).clone(), current_model.clone(), s));
+                candidates.push((
+                    (*provider_name).clone(),
+                    std::sync::Arc::clone(provider),
+                    current_model.clone(),
+                ));
             }
         }
 
@@ -1032,11 +1115,24 @@ impl Provider for ReliableProvider {
         let max_retries = self.max_retries;
 
         tokio::spawn(async move {
-            for (provider_name, current_model, mut candidate_stream) in candidate_streams {
+            for (provider_name, provider, current_model) in candidates {
                 let mut backoff_ms = base_backoff_ms;
                 let mut attempts = 0u32;
 
                 loop {
+                    // Create (and thereby fire) the candidate stream lazily here,
+                    // immediately before we attempt it. On a retryable failure we
+                    // re-create it on the next loop iteration rather than
+                    // re-polling the previous, already-exhausted stream (which
+                    // only yields `None` after its single error). (audit C2/C6)
+                    let mut candidate_stream = provider.stream_chat_with_system(
+                        system_prompt_owned.as_deref(),
+                        &message_owned,
+                        &current_model,
+                        temperature,
+                        options,
+                    );
+
                     match candidate_stream.next().await {
                         Some(Ok(chunk)) => {
                             // First chunk succeeded — commit to this stream
@@ -1069,7 +1165,8 @@ impl Provider for ReliableProvider {
                             attempts += 1;
                             tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
                             backoff_ms = (backoff_ms.saturating_mul(2)).min(10_000);
-                            // Continue inner loop — stream may yield more items
+                            // Re-create the candidate stream on the next iteration.
+                            continue;
                         }
                         None => {
                             // Stream exhausted without success

@@ -75,14 +75,19 @@ const ConnectionIndicator = ({
     }
   })();
 
+  // Simplified two-state label (the dot colour still reflects the nuanced
+  // connecting/reconnecting states).
+  const isConnected = overrideStatus ? overrideStatus === 'connected' : blocking === 'ok';
+  const label = isConnected
+    ? t('app.connectionIndicator.connected')
+    : t('app.connectionIndicator.disconnected');
+
   return (
-    <div className={`${className}`}>
-      <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-stone-50 dark:bg-neutral-800/60 border border-stone-200 dark:border-neutral-800">
-        <div
-          className={`w-2 h-2 ${config.color} rounded-full ${config.pulse ? 'animate-pulse' : ''}`}
-        />
-        <span className={`text-xs font-medium ${config.textColor}`}>{config.text}</span>
-      </div>
+    <div className={`inline-flex items-center gap-1.5 ${className}`}>
+      <div
+        className={`w-2 h-2 ${config.color} rounded-full ${config.pulse ? 'animate-pulse' : ''}`}
+      />
+      <span className={`text-[10px] font-medium ${config.textColor}`}>{label}</span>
     </div>
   );
 };

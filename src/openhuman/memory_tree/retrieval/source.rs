@@ -154,6 +154,59 @@ fn collect_hits_and_nodes(
             }
         }
     }
+
+    // #1574 read-path: embeddings live in the per-model sidecar
+    // (`mem_tree_summary_embeddings`); the legacy in-row
+    // `mem_tree_summaries.embedding` column is left NULL by the write path
+    // after the per-model cutover. `rerank_by_semantic_similarity` reads
+    // `SummaryNode.embedding`, so without hydrating from the sidecar every
+    // summary looks un-embedded and semantic recall silently degrades to
+    // recency order (identical results for unrelated queries). Hydrate in a
+    // single batched lookup at the active signature, only for nodes the legacy
+    // column left empty — so pre-cutover rows that still carry an in-row vector
+    // are untouched.
+    let node_count = nodes.len();
+    let unembedded: Vec<String> = nodes
+        .iter()
+        .filter(|(node, _)| node.embedding.is_none())
+        .map(|(node, _)| node.id.clone())
+        .collect();
+    if !unembedded.is_empty() {
+        log::debug!(
+            "[retrieval::source] sidecar hydration: unembedded_count={} node_count={} source_kind={:?}",
+            unembedded.len(),
+            node_count,
+            source_kind.map(|k| k.as_str())
+        );
+        match store::get_summary_embeddings_batch(config, &unembedded) {
+            Ok(by_id) => {
+                let mut hydrated = 0usize;
+                for (node, _) in nodes.iter_mut() {
+                    if node.embedding.is_none() {
+                        if let Some(vec) = by_id.get(&node.id) {
+                            node.embedding = Some(vec.clone());
+                            hydrated += 1;
+                        }
+                    }
+                }
+                log::debug!(
+                    "[retrieval::source] sidecar hydration done: hydrated_count={} missing_count={} unembedded_count={}",
+                    hydrated,
+                    unembedded.len() - hydrated,
+                    unembedded.len()
+                );
+            }
+            Err(e) => log::warn!(
+                "[retrieval::source] sidecar summary-embedding batch read failed \
+                 (unembedded_count={} node_count={} source_kind={:?}): {e:#} — \
+                 semantic rerank may degrade to recency",
+                unembedded.len(),
+                node_count,
+                source_kind.map(|k| k.as_str())
+            ),
+        }
+    }
+
     Ok((hits, nodes))
 }
 
@@ -777,5 +830,103 @@ mod tests {
         // The embedded row must come before the NULL one.
         assert_eq!(resp.hits[0].tree_scope, "slack:#with-embedding");
         assert_eq!(resp.hits[1].tree_scope, "slack:#legacy-null");
+    }
+
+    /// #1574 read-path regression: when summary embeddings live ONLY in the
+    /// per-model sidecar (`mem_tree_summary_embeddings`) and the legacy in-row
+    /// `mem_tree_summaries.embedding` column is NULL — the post-cutover state —
+    /// `collect_hits_and_nodes` must hydrate `SummaryNode.embedding` from the
+    /// sidecar so the rerank can score by query similarity. Without the fix the
+    /// in-row column is NULL, every node looks un-embedded, and recall collapses
+    /// to one recency order for all queries.
+    #[tokio::test]
+    async fn sidecar_only_embeddings_hydrate_for_rerank() {
+        use crate::openhuman::memory_store::chunks::store::{
+            tree_active_signature, with_connection,
+        };
+        use crate::openhuman::memory_tree::score::embed::{cosine_similarity, EMBEDDING_DIM};
+
+        let (_tmp, cfg) = test_config();
+        let ts = Utc::now();
+        seed_source(&cfg, "slack:#alpha", ts).await;
+        seed_source(&cfg, "slack:#beta", ts).await;
+
+        let alpha_tree = get_or_create_source_tree(&cfg, "slack:#alpha").unwrap();
+        let beta_tree = get_or_create_source_tree(&cfg, "slack:#beta").unwrap();
+        let alpha = store::list_summaries_at_level(&cfg, &alpha_tree.id, 1).unwrap();
+        let beta = store::list_summaries_at_level(&cfg, &beta_tree.id, 1).unwrap();
+        assert_eq!(alpha.len(), 1, "alpha tree should seal one L1 summary");
+        assert_eq!(beta.len(), 1, "beta tree should seal one L1 summary");
+        let alpha_id = alpha[0].id.clone();
+        let beta_id = beta[0].id.clone();
+
+        // Orthogonal unit vectors, written to the SIDECAR only.
+        fn unit(axis: usize) -> Vec<f32> {
+            let mut v = vec![0.0_f32; EMBEDDING_DIM];
+            v[axis] = 1.0;
+            v
+        }
+        let alpha_vec = unit(0);
+        let beta_vec = unit(1);
+        let sig = tree_active_signature(&cfg);
+        store::set_summary_embedding_for_signature(&cfg, &alpha_id, &sig, &alpha_vec).unwrap();
+        store::set_summary_embedding_for_signature(&cfg, &beta_id, &sig, &beta_vec).unwrap();
+
+        // Force the legacy in-row column NULL (the seal path already leaves it
+        // NULL, but be explicit so the precondition is pinned regardless).
+        with_connection(&cfg, |conn| {
+            conn.execute("UPDATE mem_tree_summaries SET embedding = NULL", [])?;
+            Ok(())
+        })
+        .unwrap();
+
+        // (1)+(2) preconditions: in-row NULL, sidecar populated.
+        with_connection(&cfg, |conn| {
+            let non_null: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM mem_tree_summaries WHERE embedding IS NOT NULL",
+                [],
+                |r| r.get(0),
+            )?;
+            assert_eq!(non_null, 0, "in-row embedding column must be NULL");
+            Ok(())
+        })
+        .unwrap();
+        assert!(
+            store::get_summary_embedding_for_signature(&cfg, &alpha_id, &sig)
+                .unwrap()
+                .is_some(),
+            "sidecar must hold the alpha embedding"
+        );
+
+        // (3) the fix: collect_hits_and_nodes hydrates node.embedding from the sidecar.
+        // 4th arg `source_scope` (added upstream after this PR was opened): None = unrestricted.
+        let (_hits, nodes) =
+            collect_hits_and_nodes(&cfg, None, Some(SourceKind::Chat), None).unwrap();
+        let emb_of = |id: &str| {
+            nodes
+                .iter()
+                .find(|(n, _)| n.id == id)
+                .and_then(|(n, _)| n.embedding.clone())
+        };
+        let alpha_emb = emb_of(&alpha_id).expect("alpha node embedding hydrated from sidecar");
+        let beta_emb = emb_of(&beta_id).expect("beta node embedding hydrated from sidecar");
+        assert_eq!(
+            alpha_emb, alpha_vec,
+            "hydrated vector must equal the sidecar vector"
+        );
+        assert_eq!(beta_emb, beta_vec);
+
+        // (4) different query vectors → different rankings over the hydrated
+        // embeddings (before the fix both were None and tied at the bottom).
+        let q_alpha = unit(0);
+        let q_beta = unit(1);
+        assert!(
+            cosine_similarity(&q_alpha, &alpha_emb) > cosine_similarity(&q_alpha, &beta_emb),
+            "alpha-aligned query must score alpha above beta"
+        );
+        assert!(
+            cosine_similarity(&q_beta, &beta_emb) > cosine_similarity(&q_beta, &alpha_emb),
+            "beta-aligned query must score beta above alpha"
+        );
     }
 }

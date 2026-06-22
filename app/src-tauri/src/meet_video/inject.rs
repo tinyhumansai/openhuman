@@ -110,7 +110,11 @@ pub async fn confirm_bridge_alive(cdp: &mut CdpConn, session: &str) {
 /// Lives only when `OPENHUMAN_DEV_MEET_CAMERA_DIAG=1`; otherwise no-op.
 /// Self-terminates when the CDP connection closes (e.g. the meet
 /// window was destroyed).
-pub fn spawn_diagnostics_poller(meet_url: String) {
+pub fn spawn_diagnostics_poller<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    request_id: String,
+    meet_url: String,
+) {
     let enabled = std::env::var("OPENHUMAN_DEV_MEET_CAMERA_DIAG")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
@@ -124,8 +128,17 @@ pub fn spawn_diagnostics_poller(meet_url: String) {
     tauri::async_runtime::spawn(async move {
         // Allow the bridge time to install before the first poll.
         tokio::time::sleep(Duration::from_secs(3)).await;
+        let label = crate::meet_call::window_label_for(&request_id);
+        let meet_url_for_pred = meet_url.clone();
+        let pred = move |t: &crate::cdp::target::CdpTarget| -> bool {
+            t.url.starts_with(&meet_url_for_pred)
+        };
         let (mut cdp, session) =
-            match crate::cdp::connect_and_attach_matching(|t| t.url.starts_with(&meet_url)).await {
+            match crate::cdp::target::connect_and_attach_matching_in_process_by_label::<R, _>(
+                &app, &label, pred,
+            )
+            .await
+            {
                 Ok(pair) => pair,
                 Err(err) => {
                     log::warn!("[meet-camera-diag] cdp attach failed: {err}");

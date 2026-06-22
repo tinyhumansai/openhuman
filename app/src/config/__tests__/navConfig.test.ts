@@ -9,46 +9,51 @@ describe('NAV_TABS', () => {
 
   it('has the correct ids in order', () => {
     expect(NAV_TABS.map(t => t.id)).toEqual([
-      'home',
       'chat',
       'human',
       'brain',
+      'agent-world',
       'connections',
-      'settings',
+      'feedback',
     ]);
   });
 
   it('has the correct paths', () => {
     expect(NAV_TABS.map(t => t.path)).toEqual([
-      '/home',
       '/chat',
       '/human',
       '/brain',
+      '/agent-world',
       '/connections',
-      '/settings',
+      '/feedback',
     ]);
   });
 
   it('has the correct labelKeys', () => {
     expect(NAV_TABS.map(t => t.labelKey)).toEqual([
-      'nav.home',
       'nav.chat',
       'nav.human',
       'nav.brain',
+      'nav.agentWorld',
       'nav.connections',
-      'nav.settings',
+      'nav.feedback',
     ]);
   });
 
   it('has the correct walkthroughAttrs', () => {
     expect(NAV_TABS.map(t => t.walkthroughAttr)).toEqual([
-      'tab-home',
       'tab-chat',
       'tab-human',
       'tab-brain',
+      'tab-agent-world',
       'tab-connections',
-      'tab-settings',
+      'tab-feedback',
     ]);
+  });
+
+  it('no longer contains home or settings tabs (moved to the sidebar header)', () => {
+    expect(NAV_TABS.find(t => t.id === 'home')).toBeUndefined();
+    expect(NAV_TABS.find(t => t.id === 'settings')).toBeUndefined();
   });
 
   it('does not contain an activity tab', () => {

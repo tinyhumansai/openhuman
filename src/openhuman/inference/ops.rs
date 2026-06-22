@@ -34,6 +34,12 @@ pub struct InferenceTestProviderModelResult {
     pub reply: String,
 }
 
+fn expected_test_provider_model_error_kind(
+    err: &str,
+) -> Option<crate::core::observability::ExpectedErrorKind> {
+    crate::core::observability::expected_error_kind(err)
+}
+
 pub async fn inference_status(config: &Config) -> Result<RpcOutcome<LocalAiStatus>, String> {
     debug!("{LOG_PREFIX} status:start");
     let result = local_runtime::rpc::local_ai_status(config).await;
@@ -179,12 +185,24 @@ pub async fn inference_test_provider_model(
             output_len = outcome.value.reply.len(),
             "{LOG_PREFIX} test_provider_model:ok"
         ),
-        Err(err) => error!(
-            workload,
-            provider,
-            error = %err,
-            "{LOG_PREFIX} test_provider_model:error"
-        ),
+        Err(err) => {
+            if let Some(kind) = expected_test_provider_model_error_kind(err) {
+                warn!(
+                    workload,
+                    provider,
+                    expected_error_kind = ?kind,
+                    error = %err,
+                    "{LOG_PREFIX} test_provider_model:expected_error"
+                );
+            } else {
+                error!(
+                    workload,
+                    provider,
+                    error = %err,
+                    "{LOG_PREFIX} test_provider_model:error"
+                );
+            }
+        }
     }
     result
 }
@@ -276,6 +294,32 @@ pub async fn inference_list_models(provider_id: &str) -> Result<RpcOutcome<Value
                     provider_id,
                     error = %err,
                     "{LOG_PREFIX} list_models:unknown-provider (user-config)"
+                );
+            } else if let Some(kind) = crate::core::observability::expected_error_kind(err) {
+                // Classify at the TYPED SOURCE — run the raw provider error
+                // through the central classifier BEFORE the
+                // `[inference::ops] list_models:error: …` prefix is applied,
+                // then `warn!` so the Sentry tracing layer records at most a
+                // breadcrumb instead of a hard error event.
+                //
+                // TAURI-RUST-8X3: a user pointed a custom OpenAI-compatible
+                // provider at a base URL with no `/models` route, so the
+                // probe returns `provider returned 404: 404 page not found`.
+                // That is a preventable user-state condition (wrong base URL;
+                // the dropdown already surfaces an actionable hint inline) —
+                // not a code bug. The 404 arm of
+                // `is_provider_user_state_message` matched the *raw* error
+                // string fine, but the previous `error!` path captured the
+                // PREFIXED log line, so the demotion never reached Sentry's
+                // classifier. Classifying the raw `err` here removes that
+                // dependency on the log-string shape entirely; any
+                // `ExpectedErrorKind` the central classifier recognizes is
+                // demoted at the source.
+                warn!(
+                    provider_id,
+                    error = %err,
+                    expected_kind = ?kind,
+                    "{LOG_PREFIX} list_models:expected (user-config): {err}"
                 );
             } else {
                 // Real error — embed `{err}` in the format string so

@@ -18,6 +18,28 @@ fn telegram_channel_name() {
 }
 
 #[test]
+fn proactive_target_uses_configured_chat_id() {
+    // Unset by default ⇒ proactive routing skips Telegram (#3712 parity).
+    let default = TelegramChannel::new("fake-token".into(), vec!["*".into()], false);
+    assert_eq!(default.proactive_target(), None);
+
+    // Configured chat_id ⇒ recipient-less proactive sends have a target.
+    let with_chat = TelegramChannel::new("fake-token".into(), vec!["*".into()], false)
+        .with_chat_id(Some("12345".into()));
+    assert_eq!(with_chat.proactive_target(), Some("12345".to_string()));
+
+    // Whitespace-only chat_id is normalized to unset.
+    let blank = TelegramChannel::new("fake-token".into(), vec!["*".into()], false)
+        .with_chat_id(Some("   ".into()));
+    assert_eq!(blank.proactive_target(), None);
+
+    // Explicit None passed to the builder stays unset.
+    let none =
+        TelegramChannel::new("fake-token".into(), vec!["*".into()], false).with_chat_id(None);
+    assert_eq!(none.proactive_target(), None);
+}
+
+#[test]
 fn typing_handle_starts_as_none() {
     let ch = TelegramChannel::new("fake-token".into(), vec!["*".into()], false);
     let guard = ch.typing_handle.lock();
@@ -447,6 +469,275 @@ fn parse_update_message_sets_thread_ts_to_current_message_id_for_outbound_reply(
         .expect("message should parse");
     assert_eq!(msg.thread_ts.as_deref(), Some("99"));
     assert_eq!(msg.reply_target, "12345");
+}
+
+#[test]
+fn parse_update_voice_attachment_extracts_telegram_voice_metadata() {
+    let update = serde_json::json!({
+        "update_id": 6,
+        "message": {
+            "message_id": 101,
+            "voice": {
+                "file_id": "AwACAgUAAxkBAAIB",
+                "file_unique_id": "AgADabc",
+                "duration": 3,
+                "mime_type": "audio/ogg",
+                "file_size": 4096
+            },
+            "from": {
+                "id": 555,
+                "username": "alice"
+            },
+            "chat": {
+                "id": 12345
+            }
+        }
+    });
+
+    let voice = TelegramChannel::parse_update_voice_attachment(&update)
+        .expect("voice attachment should parse");
+
+    assert_eq!(voice.file_id, "AwACAgUAAxkBAAIB");
+    assert_eq!(voice.file_unique_id.as_deref(), Some("AgADabc"));
+    assert_eq!(voice.mime_type.as_deref(), Some("audio/ogg"));
+    assert_eq!(voice.file_size, Some(4096));
+}
+
+#[test]
+fn inbound_voice_context_preserves_reply_mapping_for_transcript_dispatch() {
+    let ch = TelegramChannel::new("token".into(), vec!["*".into()], false);
+    let update = serde_json::json!({
+        "update_id": 7,
+        "message": {
+            "message_id": 202,
+            "voice": {
+                "file_id": "voice-file-id"
+            },
+            "from": {
+                "id": 555,
+                "username": "alice"
+            },
+            "chat": {
+                "id": -100200300
+            },
+            "message_thread_id": 42,
+            "reply_to_message": {
+                "message_id": 199
+            }
+        }
+    });
+
+    let ctx = ch
+        .parse_incoming_message_context(&update["message"], None)
+        .expect("authorized voice message context should parse");
+    let msg = ch.channel_message_from_context(ctx, "transcribed voice text".to_string());
+
+    assert_eq!(msg.sender, "alice");
+    assert_eq!(msg.reply_target, "-100200300:42");
+    assert_eq!(msg.thread_ts.as_deref(), Some("202"));
+    assert_eq!(msg.id, "telegram_-100200300_202");
+    assert_eq!(msg.content, "transcribed voice text");
+}
+
+#[test]
+fn inbound_voice_context_mention_only_group_requires_caption_mention() {
+    let ch = TelegramChannel::new("token".into(), vec!["*".into()], true);
+    *ch.bot_username.lock() = Some("mybot".to_string());
+    let update = serde_json::json!({
+        "update_id": 8,
+        "message": {
+            "message_id": 303,
+            "caption": "@mybot summarize this",
+            "voice": {
+                "file_id": "voice-file-id"
+            },
+            "from": {
+                "id": 555,
+                "username": "alice"
+            },
+            "chat": {
+                "id": -100200300,
+                "type": "supergroup"
+            }
+        }
+    });
+
+    let ctx = ch
+        .parse_incoming_message_context(&update["message"], Some("@mybot summarize this"))
+        .expect("caption mention should allow voice in mention-only group");
+
+    assert_eq!(ctx.mention_text.as_deref(), Some("summarize this"));
+
+    let no_caption_update = serde_json::json!({
+        "update_id": 9,
+        "message": {
+            "message_id": 304,
+            "voice": {
+                "file_id": "voice-file-id"
+            },
+            "from": {
+                "id": 555,
+                "username": "alice"
+            },
+            "chat": {
+                "id": -100200300,
+                "type": "supergroup"
+            }
+        }
+    });
+
+    assert!(ch
+        .parse_incoming_message_context(&no_caption_update["message"], None)
+        .is_none());
+}
+
+#[test]
+fn inbound_voice_content_preserves_caption_outside_mention_only_groups() {
+    let ch = TelegramChannel::new("token".into(), vec!["*".into()], false);
+    let update = serde_json::json!({
+        "message": {
+            "message_id": 305,
+            "caption": "summarize this",
+            "voice": {
+                "file_id": "voice-file-id"
+            },
+            "from": {
+                "id": 555,
+                "username": "alice"
+            },
+            "chat": {
+                "id": 12345,
+                "type": "private"
+            }
+        }
+    });
+
+    let ctx = ch
+        .parse_incoming_message_context(&update["message"], Some("summarize this"))
+        .expect("authorized voice message context should parse");
+    let content = TelegramChannel::voice_message_content(
+        "transcribed voice",
+        Some("summarize this"),
+        &ctx,
+        false,
+    );
+
+    assert_eq!(content, "summarize this\n\ntranscribed voice");
+}
+
+#[test]
+fn inbound_voice_content_uses_normalized_caption_in_mention_only_groups() {
+    let ch = TelegramChannel::new("token".into(), vec!["*".into()], true);
+    *ch.bot_username.lock() = Some("mybot".to_string());
+    let update = serde_json::json!({
+        "message": {
+            "message_id": 306,
+            "caption": "@mybot summarize this",
+            "voice": {
+                "file_id": "voice-file-id"
+            },
+            "from": {
+                "id": 555,
+                "username": "alice"
+            },
+            "chat": {
+                "id": -100200300,
+                "type": "supergroup"
+            }
+        }
+    });
+
+    let ctx = ch
+        .parse_incoming_message_context(&update["message"], Some("@mybot summarize this"))
+        .expect("caption mention should allow voice in mention-only group");
+    let content = TelegramChannel::voice_message_content(
+        "transcribed voice",
+        Some("@mybot summarize this"),
+        &ctx,
+        true,
+    );
+
+    assert_eq!(content, "summarize this\n\ntranscribed voice");
+}
+
+#[test]
+fn unauthorized_approval_only_supports_text_or_voice_messages() {
+    let text = serde_json::json!({ "text": "hello" });
+    let voice = serde_json::json!({ "voice": { "file_id": "voice-file-id" } });
+    let sticker = serde_json::json!({ "sticker": { "file_id": "sticker-file-id" } });
+    let photo = serde_json::json!({ "photo": [{ "file_id": "photo-file-id" }] });
+
+    assert!(TelegramChannel::is_supported_unauthorized_message(&text));
+    assert!(TelegramChannel::is_supported_unauthorized_message(&voice));
+    assert!(!TelegramChannel::is_supported_unauthorized_message(
+        &sticker
+    ));
+    assert!(!TelegramChannel::is_supported_unauthorized_message(&photo));
+}
+
+#[test]
+fn telegram_error_redaction_hides_bot_token() {
+    let ch = TelegramChannel::new("123456:ABCSECRET".into(), vec!["*".into()], false);
+    let redacted = ch.redact_bot_token(
+        "request failed for https://api.telegram.org/bot123456:ABCSECRET/getFile",
+    );
+
+    assert!(!redacted.contains("123456:ABCSECRET"));
+    assert!(redacted.contains("<redacted>"));
+}
+
+#[tokio::test]
+async fn download_telegram_voice_file_uses_get_file_path_and_downloads_bytes() {
+    use wiremock::matchers::{body_json, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    let mut ch = TelegramChannel::new("token".into(), vec!["*".into()], false);
+    ch.api_base = server.uri();
+
+    Mock::given(method("POST"))
+        .and(path("/bottoken/getFile"))
+        .and(body_json(serde_json::json!({ "file_id": "voice-file-id" })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "ok": true,
+            "result": {
+                "file_path": "voice/file_1.ogg",
+                "file_size": 4
+            }
+        })))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/file/bottoken/voice/file_1.ogg"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(vec![1, 2, 3, 4]))
+        .mount(&server)
+        .await;
+
+    let (bytes, file_name, file_size) = ch
+        .download_telegram_voice_file("voice-file-id", Some("voice-unique-id"))
+        .await
+        .expect("mocked Telegram voice download should succeed");
+
+    assert_eq!(bytes, vec![1, 2, 3, 4]);
+    assert_eq!(file_name, "file_1.ogg");
+    assert_eq!(file_size, Some(4));
+}
+
+#[test]
+fn append_telegram_voice_download_chunk_enforces_size_cap() {
+    let mut bytes = vec![1, 2, 3];
+
+    TelegramChannel::append_telegram_voice_download_chunk(&mut bytes, &[4], 4)
+        .expect("chunk within cap should append");
+    assert_eq!(bytes, vec![1, 2, 3, 4]);
+
+    let error = TelegramChannel::append_telegram_voice_download_chunk(&mut bytes, &[5], 4)
+        .expect_err("chunk beyond cap should fail");
+    assert!(error
+        .to_string()
+        .contains("Telegram voice download too large"));
+    assert_eq!(bytes, vec![1, 2, 3, 4]);
 }
 
 #[test]

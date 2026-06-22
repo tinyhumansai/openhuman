@@ -21,6 +21,10 @@ const STATUS_META: Record<ServerStatus, { i18nKey: string; className: string }> 
     className:
       'bg-stone-100 dark:bg-neutral-800 text-stone-500 dark:text-neutral-400 border-stone-200 dark:border-neutral-700',
   },
+  unauthorized: {
+    i18nKey: 'mcp.status.unauthorized',
+    className: 'bg-amber-500/10 text-amber-700 border-amber-500/30 dark:text-amber-300',
+  },
   error: {
     i18nKey: 'channels.status.error',
     className: 'bg-coral-500/10 text-coral-700 border-coral-500/30 dark:text-coral-300',

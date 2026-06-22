@@ -282,6 +282,25 @@ const EmbeddingsPanel = ({ embedded = false }: EmbeddingsPanelProps = {}) => {
         custom_endpoint: customEndpoint.trim(),
         confirm_wipe: false,
       });
+      // Setup-time verification failed: the endpoint couldn't prove it can
+      // embed, so the config was NOT saved. Covers no `/embeddings` route
+      // (TAURI-RUST-5JR), LM Studio with no model loaded (TAURI-RUST-4P4), and
+      // any other probe failure/timeout. Keep the setup popup open and surface
+      // the actionable message so the user can fix it (load a model, correct the
+      // endpoint, …) and retry.
+      if (
+        result.error === 'EMBEDDINGS_ENDPOINT_NO_API' ||
+        result.error === 'EMBEDDINGS_NO_MODEL_LOADED' ||
+        result.error === 'EMBEDDINGS_VERIFICATION_FAILED'
+      ) {
+        setSetupError(
+          typeof result.message === 'string'
+            ? result.message
+            : "Couldn't verify the embeddings endpoint. Make sure it's running and serving an embedding model, then save again."
+        );
+        setStatus({ kind: 'idle' });
+        return;
+      }
       if (result.error === 'EMBEDDINGS_DIMENSION_CHANGE_REQUIRES_WIPE') {
         setPendingWipe({
           provider: 'custom',

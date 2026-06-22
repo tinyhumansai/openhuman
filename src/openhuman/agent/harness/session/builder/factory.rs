@@ -315,8 +315,9 @@ impl Agent {
                 "[profiles] applying per-profile session gate"
             );
         }
-        let runtime: Arc<dyn host_runtime::RuntimeAdapter> =
-            Arc::from(host_runtime::create_runtime(&config.runtime)?);
+        let runtime: Arc<dyn host_runtime::RuntimeAdapter> = Arc::from(
+            host_runtime::create_runtime(&config.runtime, config.shell.hide_window)?,
+        );
         let security = Arc::new(SecurityPolicy::from_config(
             &config.autonomy,
             &config.workspace_dir,
@@ -865,13 +866,41 @@ impl Agent {
         // contract (empty == no filter) stays intact: an empty set
         // means "no filter" for both legacy callers and the new
         // agent-scoped path.
-        let visible: std::collections::HashSet<String> = match filter_from_scope {
+        let mut visible: std::collections::HashSet<String> = match filter_from_scope {
             Some(set) => set,
             None => delegation_tools
                 .iter()
                 .map(|t| t.name().to_string())
                 .collect(),
         };
+        // Compaction applies to every agent's tool output, so the CCR recovery
+        // tool must be a *real* member of any non-empty allowlist — this is the
+        // single source of truth that the policy session, advertised specs, and
+        // the run-time visible-name gate all consume, so adding it here makes a
+        // `retrieve_tool_output("…")` footer actionable for Named-scope agents
+        // (e.g. the orchestrator's curated list). An empty set already means
+        // "no filter", so it needs nothing. Added BEFORE the disallow filter
+        // below so an agent that explicitly disallows it still has it removed.
+        super::ensure_recovery_tool_visible(&mut visible);
+
+        if let Some(def) = target_def {
+            if !def.disallowed_tools.is_empty() {
+                match &def.tools {
+                    ToolScope::Wildcard => {
+                        visible = tools
+                            .iter()
+                            .map(|t| t.name().to_string())
+                            .chain(delegation_tools.iter().map(|t| t.name().to_string()))
+                            .filter(|name| !definition_disallows_tool(&def.disallowed_tools, name))
+                            .collect();
+                    }
+                    ToolScope::Named(_) => {
+                        visible
+                            .retain(|name| !definition_disallows_tool(&def.disallowed_tools, name));
+                    }
+                }
+            }
+        }
 
         // Phase 4 (#566): add the MemoryAccessSection bias instruction only
         // when at least one retrieval tool is actually loaded AND survives
@@ -1146,4 +1175,14 @@ impl Agent {
         agent.synthesized_tool_names = synthesized_tool_names;
         Ok(agent)
     }
+}
+
+fn definition_disallows_tool(disallowed: &[String], name: &str) -> bool {
+    disallowed.iter().any(|entry| {
+        if let Some(prefix) = entry.strip_suffix('*') {
+            name.starts_with(prefix)
+        } else {
+            entry == name
+        }
+    })
 }

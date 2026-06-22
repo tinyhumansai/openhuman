@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::openhuman::config::Config;
 use crate::openhuman::memory_store::chunks::types::SourceKind;
 use crate::openhuman::memory_tree::retrieval::{
+    cover::cover_window,
     drill_down::drill_down,
     fetch::fetch_leaves,
     search::search_entities,
@@ -72,6 +73,76 @@ pub async fn query_source_rpc(
             req.source_id.is_some(),
             req.source_kind,
             req.query.is_some(),
+            n
+        ),
+    ))
+}
+
+// ── cover_window ──────────────────────────────────────────────────────
+
+/// Request body for `memory_tree_cover_window`. `since_ms`/`until_ms` are the
+/// inclusive window bounds in epoch-milliseconds; the source filter mirrors
+/// `query_source`. See [`super::cover::cover_window`] for cover semantics.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct CoverWindowRequest {
+    pub since_ms: i64,
+    pub until_ms: i64,
+    #[serde(default)]
+    pub source_id: Option<String>,
+    #[serde(default)]
+    pub source_kind: Option<String>,
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+/// JSON-RPC handler body for `memory_tree_cover_window`. Parses the request,
+/// delegates to [`super::cover::cover_window`], logs PII-redacted counts.
+pub async fn cover_window_rpc(
+    config: &Config,
+    req: CoverWindowRequest,
+) -> Result<RpcOutcome<QueryResponse>, String> {
+    log::debug!(
+        "[rpc][memory_tree] cover_window enter since_ms={} until_ms={} has_source_id={} has_source_kind={} has_limit={}",
+        req.since_ms,
+        req.until_ms,
+        req.source_id.is_some(),
+        req.source_kind.is_some(),
+        req.limit.is_some()
+    );
+    let source_kind = match req.source_kind.as_deref() {
+        Some(s) => {
+            log::trace!("[rpc][memory_tree] cover_window parse_source_kind");
+            Some(SourceKind::parse(s).map_err(|e| format!("cover_window: {e}"))?)
+        }
+        None => None,
+    };
+    let limit = req.limit.unwrap_or(0);
+    log::trace!("[rpc][memory_tree] cover_window dispatch limit={limit}");
+    let resp = cover_window(
+        config,
+        req.since_ms,
+        req.until_ms,
+        req.source_id.as_deref(),
+        source_kind,
+        limit,
+    )
+    .await
+    .map_err(|e| format!("cover_window: {e}"))?;
+    let n = resp.hits.len();
+    log::debug!(
+        "[rpc][memory_tree] cover_window exit hits={} total={}",
+        n,
+        resp.total
+    );
+    // Omit scope / source_id from the log — can carry PII. Counts only.
+    Ok(RpcOutcome::single_log(
+        resp,
+        format!(
+            "memory_tree: cover_window since_ms={} until_ms={} has_source_id={} source_kind={:?} hits={}",
+            req.since_ms,
+            req.until_ms,
+            req.source_id.is_some(),
+            req.source_kind,
             n
         ),
     ))
@@ -329,6 +400,104 @@ mod tests {
         };
         let err = query_source_rpc(&cfg, req).await.unwrap_err();
         assert!(err.contains("unknown source kind: bogus"), "got {err}");
+    }
+
+    // ── cover_window_rpc ──────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn cover_window_rpc_returns_empty_with_no_data_and_redacts_log() {
+        let (_tmp, cfg) = test_config();
+        let req = CoverWindowRequest {
+            since_ms: 0,
+            until_ms: 4_000_000_000_000,
+            source_id: Some("slack:#eng".into()),
+            source_kind: Some("chat".into()),
+            limit: None,
+        };
+        let outcome = cover_window_rpc(&cfg, req).await.unwrap();
+        assert!(outcome.value.hits.is_empty());
+        assert_eq!(outcome.value.total, 0);
+        assert_eq!(outcome.logs.len(), 1);
+        let log = &outcome.logs[0];
+        assert!(log.contains("has_source_id=true"), "log: {log}");
+        assert!(log.contains("source_kind=Some(\"chat\")"), "log: {log}");
+        assert!(log.contains("hits=0"), "log: {log}");
+        // PII redaction: the raw source_id must NOT leak into the log.
+        assert!(!log.contains("slack:#eng"), "log leaked source_id: {log}");
+    }
+
+    #[tokio::test]
+    async fn cover_window_rpc_rejects_invalid_source_kind() {
+        let (_tmp, cfg) = test_config();
+        let req = CoverWindowRequest {
+            since_ms: 0,
+            until_ms: 1,
+            source_id: None,
+            source_kind: Some("bogus".into()),
+            limit: None,
+        };
+        let err = cover_window_rpc(&cfg, req).await.unwrap_err();
+        assert!(err.contains("cover_window:"), "got {err}");
+        assert!(err.contains("unknown source kind: bogus"), "got {err}");
+    }
+
+    #[tokio::test]
+    async fn cover_window_rpc_honors_profile_source_scope() {
+        use crate::openhuman::memory::source_scope::with_source_scope;
+        let (_tmp, cfg) = test_config();
+        // Two memory-source chunks in different sources, both inside the window.
+        let mut allowed = sample_chunk("slack:#eng", 0);
+        allowed.metadata.tags = vec!["memory_sources".into(), "chat".into()];
+        let mut blocked = sample_chunk("slack:#secret", 0);
+        blocked.metadata.tags = vec!["memory_sources".into(), "chat".into()];
+        upsert_chunks(&cfg, &[allowed.clone(), blocked.clone()]).unwrap();
+        stage_test_chunks(&cfg, &[allowed.clone(), blocked.clone()]);
+
+        let req = || CoverWindowRequest {
+            since_ms: 0,
+            until_ms: 4_000_000_000_000,
+            source_id: None,
+            source_kind: None,
+            limit: None,
+        };
+
+        // A restricted profile (allowlist = #eng only) must not surface #secret,
+        // even though cover_window does its DB work on a spawn_blocking thread
+        // that does not inherit the source_scope task-local.
+        let resp = with_source_scope(Some(vec!["slack:#eng".into()]), async {
+            cover_window_rpc(&cfg, req()).await
+        })
+        .await
+        .unwrap();
+        let ids: Vec<&str> = resp.value.hits.iter().map(|h| h.node_id.as_str()).collect();
+        assert!(
+            ids.contains(&allowed.id.as_str()),
+            "allowlisted source must be present: {ids:?}"
+        );
+        assert!(
+            !ids.contains(&blocked.id.as_str()),
+            "disallowed source must be filtered out: {ids:?}"
+        );
+
+        // With no profile scope active, both sources are visible.
+        let unrestricted = cover_window_rpc(&cfg, req()).await.unwrap();
+        assert_eq!(unrestricted.value.hits.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn cover_window_rpc_rejects_inverted_window() {
+        let (_tmp, cfg) = test_config();
+        let req = CoverWindowRequest {
+            since_ms: 100,
+            until_ms: 50,
+            source_id: None,
+            source_kind: None,
+            limit: None,
+        };
+        let err = cover_window_rpc(&cfg, req).await.unwrap_err();
+        // The guard names both bounds so callers can see the inversion.
+        assert!(err.contains("until_ms"), "got {err}");
+        assert!(err.contains("since_ms"), "got {err}");
     }
 
     // ── search_entities_rpc ───────────────────────────────────────────

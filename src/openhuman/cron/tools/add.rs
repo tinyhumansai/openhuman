@@ -590,6 +590,7 @@ mod tests {
         };
         config.channels_config.telegram = Some(TelegramConfig {
             bot_token: "test-token".into(),
+            chat_id: None,
             allowed_users: allowed,
             stream_mode: Default::default(),
             draft_update_interval_ms: 1000,

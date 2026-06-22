@@ -47,6 +47,17 @@ allow = [
     "unregister_dictation_hotkey",
 
     # =========================
+    # PUSH-TO-TALK (PTT)
+    # =========================
+    # Voice settings panel registers/unregisters the global PTT hotkey and shows
+    # the PTT overlay via these invokes. Without these allow entries the invoke
+    # is rejected with "Command <name> not allowed by ACL" and PTT (plus the
+    # always-on listening flow that depends on hotkey registration) never works.
+    "register_ptt_hotkey",
+    "unregister_ptt_hotkey",
+    "show_ptt_overlay",
+
+    # =========================
     # ACCOUNT WEBVIEW
     # =========================
     "webview_account_open",

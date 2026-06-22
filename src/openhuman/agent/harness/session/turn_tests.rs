@@ -1101,7 +1101,19 @@ async fn turn_uses_cached_transcript_prefix_on_first_iteration() {
     assert_eq!(requests[0][0].content, "cached-system");
     assert_eq!(requests[0][1].content, "cached-assistant");
     assert_eq!(requests[0][2].role, "user");
-    assert_eq!(requests[0][2].content, "fresh");
+    // #3602: every turn's user message is prefixed with the live
+    // `Current Date & Time:` stamp, then the raw prompt. Assert the stamp
+    // leads and the original prompt is preserved at the tail.
+    assert!(
+        requests[0][2].content.starts_with("Current Date & Time:"),
+        "user message must lead with the per-turn time stamp: {}",
+        requests[0][2].content
+    );
+    assert!(
+        requests[0][2].content.ends_with("fresh"),
+        "user message must preserve the original prompt: {}",
+        requests[0][2].content
+    );
 }
 
 #[tokio::test]
@@ -1856,5 +1868,47 @@ fn integration_announcement_accumulates_two_connects_in_one_note() {
     assert!(
         !note.contains("gmail"),
         "startup slug must not re-announce: {note}"
+    );
+}
+
+#[test]
+fn skill_announcement_note_empty_yields_none() {
+    assert!(super::skill_announcement_note(&[]).is_none());
+}
+
+#[test]
+fn skill_announcement_note_mentions_ids_and_run_skill() {
+    let note =
+        super::skill_announcement_note(&["ascii-art".to_string(), "github-issues".to_string()])
+            .expect("non-empty input should yield a note");
+    assert!(note.contains("[skills update]"));
+    assert!(note.contains("ascii-art"));
+    assert!(note.contains("github-issues"));
+    assert!(
+        note.contains("run_skill"),
+        "note must steer the model to run_skill: {note}"
+    );
+}
+
+#[test]
+fn skill_retraction_note_empty_yields_none() {
+    assert!(super::skill_retraction_note(&[]).is_none());
+}
+
+#[test]
+fn skill_retraction_note_names_removed_skills_and_warns_against_run_skill() {
+    let note =
+        super::skill_retraction_note(&["ascii-art".to_string(), "github-issues".to_string()])
+            .expect("non-empty input should yield a note");
+    assert!(note.contains("[skills retracted]"));
+    assert!(note.contains("ascii-art"));
+    assert!(note.contains("github-issues"));
+    assert!(
+        note.contains("run_skill"),
+        "note must mention run_skill so the model knows not to invoke it: {note}"
+    );
+    assert!(
+        !note.contains("[skills update]"),
+        "retraction note must not look like an install announcement: {note}"
     );
 }

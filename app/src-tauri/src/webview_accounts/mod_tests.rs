@@ -161,6 +161,64 @@ fn wechat_allowed_hosts_cover_web_and_login_domains() {
 }
 
 #[test]
+fn new_mail_and_social_providers_registered_in_provider_url() {
+    assert_eq!(
+        provider_url("gmail"),
+        Some("https://mail.google.com/mail/u/0/")
+    );
+    assert_eq!(
+        provider_url("outlook"),
+        Some("https://outlook.live.com/mail/")
+    );
+    assert_eq!(
+        provider_url("instagram"),
+        Some("https://www.instagram.com/direct/inbox/")
+    );
+    assert_eq!(provider_url("twitter"), Some("https://x.com/messages/"));
+}
+
+#[test]
+fn new_providers_are_supported_with_no_js_injection() {
+    // Per the CLAUDE.md "no new JS injection" rule, these CEF-only
+    // providers must be supported via Rust navigation handlers + CDP
+    // scanners — never a `recipe.js`.
+    for p in ["gmail", "outlook", "instagram", "twitter"] {
+        assert!(provider_is_supported(p), "{p} is supported");
+        assert!(provider_recipe_js(p).is_none(), "{p} has no recipe.js");
+    }
+}
+
+#[test]
+fn new_providers_allowed_hosts_cover_web_and_login_domains() {
+    assert!(provider_allowed_hosts("gmail").contains(&"google.com"));
+    assert!(provider_allowed_hosts("gmail").contains(&"accounts.google.com"));
+    assert!(provider_allowed_hosts("outlook").contains(&"outlook.live.com"));
+    assert!(provider_allowed_hosts("outlook").contains(&"login.live.com"));
+    assert!(provider_allowed_hosts("instagram").contains(&"instagram.com"));
+    assert!(provider_allowed_hosts("instagram").contains(&"facebook.com"));
+    assert!(provider_allowed_hosts("twitter").contains(&"x.com"));
+    assert!(provider_allowed_hosts("twitter").contains(&"twitter.com"));
+    // X "Continue with Google" must keep the OAuth popup in-profile.
+    assert!(provider_allowed_hosts("twitter").contains(&"accounts.google.com"));
+}
+
+#[test]
+fn gmail_and_twitter_support_google_sso() {
+    assert!(provider_supports_google_sso("gmail"));
+    // X offers "Continue with Google" — the popup must stay in the
+    // per-account CEF session (#3755).
+    assert!(provider_supports_google_sso("twitter"));
+}
+
+#[test]
+fn new_providers_have_display_names() {
+    assert_eq!(provider_display_name("gmail"), "Gmail");
+    assert_eq!(provider_display_name("outlook"), "Outlook");
+    assert_eq!(provider_display_name("instagram"), "Instagram");
+    assert_eq!(provider_display_name("twitter"), "X");
+}
+
+#[test]
 fn zoom_has_no_recipe_js_injection() {
     // Per the CLAUDE.md "no new JS injection" rule for CEF child
     // webviews, Zoom must rely solely on Rust `on_navigation` +

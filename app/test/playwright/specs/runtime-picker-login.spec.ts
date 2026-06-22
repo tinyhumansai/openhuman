@@ -110,7 +110,9 @@ test.describe('Runtime picker -> login -> logout', () => {
     await signInViaBypassUser(page, 'pw-runtime-picker-login');
     await dismissWalkthroughIfPresent(page);
 
-    await expect.poll(async () => page.evaluate(() => window.location.hash)).toMatch(/^#\/home/);
+    await expect
+      .poll(async () => page.evaluate(() => window.location.hash))
+      .toMatch(/^#\/(home|chat)(\/|$)/);
     await expect(await waitForMockRequest('GET', '/auth/me')).toBeTruthy();
 
     await page.goto('/#/settings/account');

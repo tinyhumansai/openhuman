@@ -335,7 +335,7 @@ impl SubconsciousEngine {
                 effective.autonomy.level = crate::openhuman::security::AutonomyLevel::ReadOnly;
                 effective.agent.max_tool_iterations = 15;
             }
-            SubconsciousMode::Aggressive => {
+            SubconsciousMode::Aggressive | SubconsciousMode::EventDriven => {
                 effective.autonomy.level = crate::openhuman::security::AutonomyLevel::Full;
                 effective.agent.max_tool_iterations = 30;
             }

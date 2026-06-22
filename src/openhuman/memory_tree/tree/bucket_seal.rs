@@ -38,6 +38,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
+use futures::stream::{StreamExt, TryStreamExt};
 use rusqlite::Transaction;
 
 use crate::openhuman::config::Config;
@@ -412,8 +413,21 @@ pub(crate) async fn seal_one_level(
         target_level,
         token_budget: OUTPUT_TOKEN_BUDGET,
     };
+    // #13021: treat a blank summary (LLM returned only whitespace, so
+    // `summarise()` succeeded with `content = ""`) the same as a hard error —
+    // fall back to the deterministic `fallback_summary` so we never persist a
+    // parent node with `content = ""` / `token_count = 0`. Without this, the
+    // child text is lost: the level buffer is cleared and the parent has no
+    // recoverable content for the next rollup or for retrieval.
     let output = match summarise(config, &inputs, &ctx).await {
-        Ok(o) => o,
+        Ok(o) if !o.content.trim().is_empty() => o,
+        Ok(_) => {
+            log::warn!(
+                "[memory_tree::seal] summarise returned blank for tree_id={} level={} — using fallback (#13021)",
+                ctx.tree_id, ctx.target_level,
+            );
+            fallback_summary(&inputs, ctx.token_budget)
+        }
         Err(e) => {
             log::warn!(
                 "[memory_tree::seal] summarise failed for tree_id={} level={}: {e:#} — using fallback",
@@ -466,43 +480,59 @@ pub(crate) async fn seal_one_level(
     // (build_write_embedder returns None) rather than writing a fake all-zero
     // vector. The summary is sealed embedding-less (re-embeddable later) and
     // the semantic-recall degraded flag is already set with a typed cause.
-    let embedding: Option<Vec<f32>> = match build_write_embedder(config)
-        .context("build embedder during seal")?
-    {
-        None => {
-            log::warn!(
-                "[tree::bucket_seal] embeddings unavailable for tree_id={} level={}→{} \
+    //
+    // #13021: also skip when `embed_input.trim().is_empty()`. `summarise()`
+    // returns `SummaryOutput::default()` (content = "") when every input is
+    // whitespace, and `fallback_summary` joins zero parts the same way. An
+    // empty `embed_input` is guaranteed to 400 from the upstream embedding
+    // API — short-circuit to the same "embedding-less, re-embeddable later"
+    // path as the no-provider case.
+    let embedding: Option<Vec<f32>> = if embed_input.trim().is_empty() {
+        log::warn!(
+            "[tree::bucket_seal] empty summary content for tree_id={} level={}→{} \
+                 — sealing without embedding (#13021)",
+            tree.id,
+            level,
+            target_level
+        );
+        None
+    } else {
+        match build_write_embedder(config).context("build embedder during seal")? {
+            None => {
+                log::warn!(
+                    "[tree::bucket_seal] embeddings unavailable for tree_id={} level={}→{} \
                      — sealing summary without embedding (semantic recall degraded)",
-                tree.id,
-                level,
-                target_level
-            );
-            None
-        }
-        Some(embedder) => {
-            let v = match embedder.embed(&embed_input).await {
-                Ok(v) => v,
-                Err(e) => {
-                    // #002: classify so the seal job fails fast on
-                    // unrecoverable embed causes (budget/auth/dim) with a
-                    // typed reason instead of retrying; original chain
-                    // preserved as context.
-                    let failure = crate::openhuman::memory_tree::health::classify_embed_error(&e);
-                    return Err(anyhow::Error::new(failure).context(format!(
-                        "embed summary during seal tree_id={} level={}: {e:#}",
-                        tree.id, level
-                    )));
-                }
-            };
-            // Dimension guard: reject wrong-dimensionality vectors before
-            // they reach the store — same contract as handle_extract's
-            // pack_checked. Without this a provider returning the wrong
-            // shape slips into the summary sidecar silently.
-            crate::openhuman::memory_tree::score::embed::pack_checked(&v).context(format!(
-                "seal embed dim check tree_id={} level={}",
-                tree.id, level
-            ))?;
-            log::debug!(
+                    tree.id,
+                    level,
+                    target_level
+                );
+                None
+            }
+            Some(embedder) => {
+                let v = match embedder.embed(&embed_input).await {
+                    Ok(v) => v,
+                    Err(e) => {
+                        // #002: classify so the seal job fails fast on
+                        // unrecoverable embed causes (budget/auth/dim) with a
+                        // typed reason instead of retrying; original chain
+                        // preserved as context.
+                        let failure =
+                            crate::openhuman::memory_tree::health::classify_embed_error(&e);
+                        return Err(anyhow::Error::new(failure).context(format!(
+                            "embed summary during seal tree_id={} level={}: {e:#}",
+                            tree.id, level
+                        )));
+                    }
+                };
+                // Dimension guard: reject wrong-dimensionality vectors before
+                // they reach the store — same contract as handle_extract's
+                // pack_checked. Without this a provider returning the wrong
+                // shape slips into the summary sidecar silently.
+                crate::openhuman::memory_tree::score::embed::pack_checked(&v).context(format!(
+                    "seal embed dim check tree_id={} level={}",
+                    tree.id, level
+                ))?;
+                log::debug!(
                 "[tree::bucket_seal] embedded summary tree_id={} level={}→{} bytes={} provider={}",
                 tree.id,
                 level,
@@ -510,8 +540,9 @@ pub(crate) async fn seal_one_level(
                 output.content.len(),
                 embedder.name()
             );
-            crate::openhuman::memory_tree::health::clear_semantic_recall_degraded();
-            Some(v)
+                crate::openhuman::memory_tree::health::clear_semantic_recall_degraded();
+                Some(v)
+            }
         }
     };
 
@@ -982,6 +1013,17 @@ pub const MERGE_LEVEL_BASE: u32 = 1_000;
 /// children. Independent of [`SUMMARY_FANOUT`] (which gates the merge tier).
 const DOC_SUBTREE_MAX_FANIN: usize = 32;
 
+/// Bound on how many sibling batches within a single document-subtree level
+/// are sealed concurrently. Each [`seal_explicit_children`] call is one
+/// independent summarise + embed round-trip pair, so overlapping them with a
+/// small pool collapses the serial `N × (LLM + embed RTT)` wall-time toward
+/// `N/CONCURRENCY × RTT` on the ingest path. Kept low: the SQLite write tx
+/// serialises on a single writer anyway, and networked summarise/embed
+/// providers (Voyage, cloud LLMs) rate-limit — so a large pool buys nothing
+/// and risks 429s. `buffered` (ordered) preserves the serial cascade's batch
+/// order, so the resulting tree shape is identical.
+const DOC_SUBTREE_SEAL_CONCURRENCY: usize = 8;
+
 /// Build (or re-build, for a new version) one document's subtree and merge
 /// its doc-root into the connection tree.
 ///
@@ -1037,21 +1079,61 @@ pub async fn seal_document_subtree(
             batch_by_count(&current_ids, DOC_SUBTREE_MAX_FANIN)
         };
 
-        let mut next_ids: Vec<String> = Vec::with_capacity(batches.len());
-        for batch in &batches {
-            let node = seal_explicit_children(
-                config,
-                tree,
+        // Within one level the batches are disjoint child sets, and
+        // `seal_explicit_children` touches no shared `(tree, level)` buffer
+        // and never advances the tree root (see its docstring) — so the
+        // sibling seals are independent and their summarise + embed
+        // round-trips can overlap. Run them with bounded concurrency.
+        //
+        // `buffered` (ordered), NOT `buffer_unordered`: the next level groups
+        // `next_ids` positionally via `batch_by_count`, so the output order
+        // must match the serial cascade to keep the tree shape identical.
+        // `try_collect` short-circuits on the first error, preserving the
+        // old `?`-on-first-failure behaviour. Levels stay sequential — level
+        // N+1 consumes level N's output — so only siblings overlap, not the
+        // cross-level fan-in. The blocking SQLite write inside each seal
+        // still serialises (single writer), which is fine: the win is the
+        // overlapped network RTTs, not the DB writes.
+        // Build the per-batch futures eagerly into a `Vec` (they don't run until
+        // polled) rather than lazily inside a `stream::iter(...).map(closure)`:
+        // the lazy form makes rustc try to infer a higher-ranked `FnOnce` over
+        // the borrowed `batch` lifetime, which fails ("implementation of
+        // `FnOnce` is not general enough") once this async fn is spawned. Eager
+        // collection ties each future to this stack frame's concrete lifetime.
+        if batches.len() > 1 {
+            log::debug!(
+                "[tree::bucket_seal] doc-subtree concurrent seal tree_id={} doc_id_hash={} level={} batches={} concurrency={}",
+                tree.id,
+                redact(doc_id),
                 current_level,
-                batch,
-                Some(doc_id),
-                version_ms,
-                strategy,
-            )
-            .await?;
-            next_ids.push(node.id.clone());
-            doc_root = Some(node);
+                batches.len(),
+                DOC_SUBTREE_SEAL_CONCURRENCY
+            );
         }
+        let batch_futures: Vec<_> = batches
+            .iter()
+            .map(|batch| {
+                seal_explicit_children(
+                    config,
+                    tree,
+                    current_level,
+                    batch,
+                    Some(doc_id),
+                    version_ms,
+                    strategy,
+                )
+            })
+            .collect();
+        let nodes: Vec<SummaryNode> = futures::stream::iter(batch_futures)
+            .buffered(DOC_SUBTREE_SEAL_CONCURRENCY)
+            .try_collect()
+            .await?;
+
+        let next_ids: Vec<String> = nodes.iter().map(|n| n.id.clone()).collect();
+        // The terminal level produces exactly one node (the loop breaks once
+        // `current_ids.len() <= 1`); preserving batch order means the last
+        // node is the doc-root, identical to the serial assignment.
+        doc_root = nodes.into_iter().next_back();
 
         current_level += 1;
         current_ids = next_ids;
@@ -1216,8 +1298,18 @@ async fn seal_explicit_children(
             charged_amount_usd: None,
         }
     } else {
+        // #13021: blank summary (whitespace-only LLM output) → fallback. See
+        // the matching branch in `seal_one_level` for why we treat blank
+        // content as a hard fail rather than persisting `content = ""`.
         match summarise(config, &inputs, &ctx).await {
-            Ok(o) => o,
+            Ok(o) if !o.content.trim().is_empty() => o,
+            Ok(_) => {
+                log::warn!(
+                    "[tree::bucket_seal] doc-subtree summarise returned blank tree_id={} doc_id_hash={} level={} — fallback (#13021)",
+                    tree.id, doc_id.map(redact).unwrap_or_default(), level,
+                );
+                fallback_summary(&inputs, ctx.token_budget)
+            }
             Err(e) => {
                 log::warn!(
                     "[tree::bucket_seal] doc-subtree summarise failed tree_id={} doc_id_hash={} level={}: {e:#} — fallback",
@@ -1232,8 +1324,22 @@ async fn seal_explicit_children(
 
     // Embed before any write so a failure aborts cleanly — same contract as
     // seal_one_level. No-provider configs seal embedding-less.
+    //
+    // #13021: skip when the embed input is empty/whitespace. `summarise()`
+    // returns an empty content default when every input is whitespace, which
+    // would otherwise round-trip a guaranteed 400 from the upstream embedding
+    // API. The doc-subtree seal is sealed embedding-less, matching the
+    // no-provider branch.
     let embed_input = truncate_for_embed(&output.content, 1_000);
-    let embedding: Option<Vec<f32>> =
+    let embedding: Option<Vec<f32>> = if embed_input.trim().is_empty() {
+        log::warn!(
+            "[tree::bucket_seal] doc-subtree: empty summary content for tree_id={} level={} \
+             — sealing without embedding (#13021)",
+            tree.id,
+            level
+        );
+        None
+    } else {
         match build_write_embedder(config).context("build embedder during doc-subtree seal")? {
             None => None,
             Some(embedder) => {
@@ -1250,7 +1356,8 @@ async fn seal_explicit_children(
                 ))?;
                 Some(v)
             }
-        };
+        }
+    };
 
     let now = Utc::now();
     let summary_id = new_summary_id(target_level);

@@ -78,6 +78,20 @@ describe('AgentMessageBubble markdown links', () => {
 });
 
 describe('BubbleMarkdown math rendering', () => {
+  test('renders GFM markdown tables when they appear inside regular bubble markdown', () => {
+    render(
+      <BubbleMarkdown
+        content={
+          'Release notes:\n\n| PR | What it does |\n| --- | --- |\n| #3784 | Render tables |'
+        }
+      />
+    );
+
+    expect(screen.getByRole('table')).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'PR' })).toBeInTheDocument();
+    expect(screen.getByRole('cell', { name: '#3784' })).toBeInTheDocument();
+  });
+
   test('renders \\[ ... \\] block math (raw delimiters consumed, math visible)', () => {
     const { container } = render(<BubbleMarkdown content={'\\[ x^2 + y^2 = z^2 \\]'} />);
     const text = container.textContent ?? '';

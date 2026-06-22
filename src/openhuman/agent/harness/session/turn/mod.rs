@@ -118,6 +118,40 @@ Use the use_mcp_server delegate to act on them immediately — do not tell the u
     ))
 }
 
+/// One-shot note prepended to the next user turn when skills are installed
+/// mid-session. Mirrors [`integration_announcement_note`] for the
+/// `## Installed Skills` catalogue: tells the model the freshly-installed
+/// skills are usable now (via `run_skill`) so it acts instead of claiming
+/// they aren't installed from stale context. Returns `None` when nothing is
+/// pending. Rides the user turn (not the system prompt) to keep the KV-cache
+/// prefix stable.
+pub(super) fn skill_announcement_note(skill_ids: &[String]) -> Option<String> {
+    if skill_ids.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "[skills update] These skill(s) were installed during this conversation and are available right now: {}. \
+They are in your `## Installed Skills` list — run one with `run_skill` immediately; do not tell the user to reinstall or restart.",
+        skill_ids.join(", ")
+    ))
+}
+
+/// One-shot note prepended to the next user turn when skills are uninstalled
+/// mid-session. Symmetric to [`skill_announcement_note`]: tells the model the
+/// listed skills are no longer present and `run_skill` will fail for them, so
+/// it does not attempt to invoke them. Rides the user turn (not the system
+/// prompt) to keep the KV-cache prefix stable.
+pub(super) fn skill_retraction_note(skill_ids: &[String]) -> Option<String> {
+    if skill_ids.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "[skills retracted] These skill(s) were uninstalled during this conversation and are no longer available: {}. \
+Do not attempt to run them with `run_skill` — they have been removed. Tell the user to reinstall if they want to use them again.",
+        skill_ids.join(", ")
+    ))
+}
+
 /// Wrapper around
 /// [`crate::openhuman::memory_tree::tree_runtime::store::collect_root_summaries_with_caps`]
 /// that takes user-resolved per-namespace and total caps. The actual

@@ -37,6 +37,7 @@ pub struct ModelSettingsPatch {
     pub reasoning_provider: Option<String>,
     pub agentic_provider: Option<String>,
     pub coding_provider: Option<String>,
+    pub vision_provider: Option<String>,
     pub memory_provider: Option<String>,
     pub embeddings_provider: Option<String>,
     pub heartbeat_provider: Option<String>,
@@ -218,6 +219,9 @@ pub async fn apply_model_settings(
     }
     if let Some(s) = update.coding_provider {
         config.coding_provider = normalise_provider(s);
+    }
+    if let Some(s) = update.vision_provider {
+        config.vision_provider = normalise_provider(s);
     }
     if let Some(s) = update.memory_provider {
         config.memory_provider = normalise_provider(s);

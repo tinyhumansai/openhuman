@@ -23,7 +23,7 @@ lang: zh-CN
 | `VITE_MINIMUM_SUPPORTED_APP_VERSION` | 例如 `0.51.0` —— 桌面应用必须 **≥** 此版本才能完成 `openhuman://oauth/success`。 |
 | `VITE_LATEST_APP_DOWNLOAD_URL` | 可选；默认为 `https://github.com/tinyhumansai/openhuman/releases/latest`。当门禁阻止 OAuth 时打开。 |
 
-将这些配置为 **GitHub Actions 变量**。它们必须同时存在于独立的 **`pnpm build`** 步骤和 **`.github/workflows/build-desktop.yml`** 中的 **`tauri-apps/tauri-action`** 步骤环境变量中（由 `release-production.yml` / `release-staging.yml` 调用的可重用矩阵）以及 `build-windows.yml`，以便嵌入已发布安装包的 Vite bundle 包含该门禁。本地开发时保持 `VITE_MINIMUM_SUPPORTED_APP_VERSION` **未设置**（门禁禁用）。
+将这些配置为 **GitHub Actions 变量**。它们必须同时存在于独立的 **`pnpm build`** 步骤和 **`.github/workflows/build-desktop.yml`** 中的 **`tauri-apps/tauri-action`** 步骤环境变量中（由 `release-production.yml` / `release-staging.yml` 调用的可重用矩阵），以便嵌入已发布安装包的 Vite bundle 包含该门禁。本地开发时保持 `VITE_MINIMUM_SUPPORTED_APP_VERSION` **未设置**（门禁禁用）。
 
 实现：`app/src/utils/oauthAppVersionGate.ts`、`app/src/utils/desktopDeepLinkListener.ts`。
 

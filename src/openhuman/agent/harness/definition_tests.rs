@@ -76,6 +76,14 @@ fn model_spec_resolve_hint_appends_v1() {
 }
 
 #[test]
+fn model_spec_resolve_vision_hint_yields_vision_v1() {
+    // The vision sub-agent's `hint = "vision"` must resolve to the `vision-v1`
+    // tier alias — which `oh_tier_supports_vision` reports as image-capable.
+    let spec = ModelSpec::Hint("vision".into());
+    assert_eq!(spec.resolve("parent-model"), "vision-v1");
+}
+
+#[test]
 fn display_name_falls_back_to_id() {
     let def = make_def("alpha");
     assert_eq!(def.display_name(), "alpha");

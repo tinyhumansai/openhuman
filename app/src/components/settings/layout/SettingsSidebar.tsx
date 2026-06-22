@@ -1,7 +1,6 @@
 import { useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
-import { APP_VERSION } from '../../../utils/config';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 import SettingsSearchBar from '../search/SettingsSearchBar';
 import { useSettingsSearch } from '../search/useSettingsSearch';
@@ -137,11 +136,6 @@ const SettingsSidebar = () => {
             {t('settings.settingsSearch.noResults').replace('{query}', searchQuery.trim())}
           </p>
         )}
-      </div>
-
-      {/* Sticky, centered version footer. */}
-      <div className="shrink-0 border-t border-stone-200 py-1 text-center text-[10px] text-stone-400 dark:border-neutral-800 dark:text-neutral-500">
-        {t('settings.betaBuild').replace('{version}', APP_VERSION)}
       </div>
     </nav>
   );

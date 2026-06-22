@@ -116,8 +116,8 @@ impl OpenAiCompatibleProvider {
 
             // Platform-appropriate TLS backend — see [`crate::openhuman::tls`].
             let builder = crate::openhuman::tls::tls_client_builder()
-                .timeout(std::time::Duration::from_secs(120))
-                .connect_timeout(std::time::Duration::from_secs(10))
+                .timeout(super::compatible_timeout::request_timeout())
+                .connect_timeout(super::compatible_timeout::connect_timeout())
                 .default_headers(headers);
             let builder = crate::openhuman::config::apply_runtime_proxy_to_builder(
                 builder,
@@ -134,8 +134,8 @@ impl OpenAiCompatibleProvider {
 
         // Platform-appropriate TLS backend — see [`crate::openhuman::tls`].
         let builder = crate::openhuman::tls::tls_client_builder()
-            .timeout(std::time::Duration::from_secs(120))
-            .connect_timeout(std::time::Duration::from_secs(10));
+            .timeout(super::compatible_timeout::request_timeout())
+            .connect_timeout(super::compatible_timeout::connect_timeout());
         let builder = crate::openhuman::config::apply_runtime_proxy_to_builder(
             builder,
             "provider.compatible",

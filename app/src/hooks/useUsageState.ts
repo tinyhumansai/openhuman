@@ -1,3 +1,4 @@
+import debug from 'debug';
 import { useCallback, useEffect, useState } from 'react';
 
 import { useCoreState } from '../providers/CoreStateProvider';
@@ -34,6 +35,8 @@ export interface UsageState {
   isLoading: boolean;
   refresh: () => void;
 }
+
+const logBillingGate = debug('openhuman:billing:gate');
 
 const CACHE_TTL_MS = 60_000;
 
@@ -114,7 +117,12 @@ async function fetchUsageData(): Promise<{
   return data;
 }
 
-export function useUsageState(): UsageState {
+/**
+ * @param activeChatRole the chat-mode tier the caller is gating on — `chat` for
+ * Quick mode (default), `reasoning` for Reasoning mode. The credits bypass is
+ * checked against this tier so the prompt reflects the mode the user selected.
+ */
+export function useUsageState(activeChatRole: 'chat' | 'reasoning' = 'chat'): UsageState {
   const { snapshot } = useCoreState();
   const isAuthenticated = snapshot.auth.isAuthenticated;
   const [teamUsage, setTeamUsage] = useState<TeamUsage | null>(null);
@@ -192,7 +200,17 @@ export function useUsageState(): UsageState {
   // user. Conservative on missing aiSettings (treat as still using
   // openhuman) so we never silently disable the gate after a transient
   // fetch failure (#2040, #2041).
-  const isFullyRoutedAway = aiSettings ? workloadsRoutedAway(aiSettings, CHAT_WORKLOADS) : false;
+  //
+  // #3767: prefer the authoritative, core-side `creditsBypass` decision for the
+  // selected chat-mode tier (Quick → `chat`, Reasoning → `reasoning`) — true when
+  // that tier runs on a usable non-managed provider the user funds themselves —
+  // and OR it with the existing routing-string heuristic. This closes the gap
+  // where the selected mode runs on a BYO provider but the raw routing strings
+  // still read as managed, so the buy-credits prompt stayed up.
+  const creditsBypassForMode = aiSettings?.creditsBypass?.[activeChatRole] === true;
+  const isFullyRoutedAway = aiSettings
+    ? creditsBypassForMode || workloadsRoutedAway(aiSettings, CHAT_WORKLOADS)
+    : false;
 
   const rawBudgetExhausted = teamUsage
     ? teamUsage.cycleBudgetUsd > 0.01 && teamUsage.remainingUsd <= 0.01
@@ -214,6 +232,24 @@ export function useUsageState(): UsageState {
   // near-limit warning is equally irrelevant (#3097 — top-up banner shown
   // despite custom provider).
   const isNearLimit = !isAtLimit && !isFullyRoutedAway && teamUsage !== null && usagePct >= 0.8;
+
+  // #3767: verbose gate-decision diagnostics — which branch (gated vs bypassed)
+  // and why. Keyed on the inputs so it only fires when the decision changes.
+  useEffect(() => {
+    if (!teamUsage && !aiSettings) return;
+    logBillingGate(
+      `[billing][gate] mode=${activeChatRole} budgetExhausted=${rawBudgetExhausted} ` +
+        `creditsBypass=${creditsBypassForMode} ` +
+        `fullyRoutedAway=${isFullyRoutedAway} -> ${isAtLimit ? 'GATED' : 'bypassed'}`
+    );
+  }, [
+    activeChatRole,
+    creditsBypassForMode,
+    rawBudgetExhausted,
+    isFullyRoutedAway,
+    isAtLimit,
+    teamUsage,
+  ]);
 
   return {
     teamUsage,

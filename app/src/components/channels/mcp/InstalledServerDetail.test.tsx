@@ -262,6 +262,30 @@ describe('InstalledServerDetail', () => {
     expect(screen.getByText('Timed out')).toBeInTheDocument();
   });
 
+  it('renders a graceful auth notice (not a raw error) for unauthorized status', () => {
+    render(
+      <InstalledServerDetail
+        server={BASE_SERVER}
+        connStatus={{
+          server_id: 'srv-1',
+          qualified_name: 'acme/test-server',
+          display_name: 'Test Server',
+          status: 'unauthorized',
+          tool_count: 0,
+          // Core sends no raw error for a 401 (avoids leaking the OAuth URL).
+          last_error: undefined,
+        }}
+        onUninstalled={() => {}}
+      />
+    );
+    // Friendly "sign in needed" badge + actionable notice, no raw HTTP string.
+    expect(screen.getByText('Sign in needed')).toBeInTheDocument();
+    expect(screen.getByText(/needs you to sign in or add an access token/i)).toBeInTheDocument();
+    expect(screen.queryByText(/HTTP 401/i)).not.toBeInTheDocument();
+    // The primary action is relabelled "Sign in" (it opens the auth modal).
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeInTheDocument();
+  });
+
   // ----------------------------------------------------------------------
   // Env reconfiguration (issue #3039)
   // ----------------------------------------------------------------------

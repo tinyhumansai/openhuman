@@ -78,13 +78,19 @@ async function completeAuthCallback(page: Page, token: string): Promise<void> {
   await page.goto(`/#/callback/auth?token=${encodeURIComponent(token)}&key=auth`);
   try {
     // The app-side auth callback waits up to 15s for CoreStateProvider to
-    // commit currentUser before navigating to /home; CI occasionally needs
-    // more than Playwright's default 10s assertion window here.
+    // commit currentUser before navigating to the post-auth landing surface;
+    // CI occasionally needs more than Playwright's default 10s assertion
+    // window here. Since the root two-panel shell folded Home into the unified
+    // chat surface, the post-auth landing is /chat (the former /home route now
+    // redirects there). We must wait for the *settled* #/chat rather than the
+    // transient #/home redirect frame — otherwise callers that navigate
+    // immediately after sign-in can have their target clobbered by the late
+    // /home → /chat redirect.
     await expect
       .poll(async () => page.evaluate(() => window.location.hash), {
         timeout: AUTH_CALLBACK_HOME_TIMEOUT_MS,
       })
-      .toMatch(/^#\/home/);
+      .toMatch(/^#\/chat/);
     return;
   } catch {
     const runtimePickerVisible = await page
@@ -94,7 +100,7 @@ async function completeAuthCallback(page: Page, token: string): Promise<void> {
       .catch(() => false);
     if (!runtimePickerVisible) {
       throw new Error(
-        'auth callback did not reach /home and no runtime picker fallback was available'
+        'auth callback did not reach the post-auth landing surface (/home → /chat) and no runtime picker fallback was available'
       );
     }
   }
@@ -105,7 +111,7 @@ async function completeAuthCallback(page: Page, token: string): Promise<void> {
     .poll(async () => page.evaluate(() => window.location.hash), {
       timeout: AUTH_CALLBACK_HOME_TIMEOUT_MS,
     })
-    .toMatch(/^#\/home/);
+    .toMatch(/^#\/chat/);
 }
 
 export async function resetCoreForWebGuest(): Promise<void> {

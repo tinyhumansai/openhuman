@@ -105,7 +105,10 @@ test.describe('Settings leaf workflows', () => {
     await page
       .getByPlaceholder('https://your-endpoint.com/v1')
       .fill('http://127.0.0.1:18473/openai/v1');
-    await page.getByPlaceholder('text-embedding-3-small').fill('e2e-embedding-model');
+    // Use a `text-embedding-3-*` model so the save-time verification probe sends
+    // `dimensions: 64` — the mock backend (scripts/mock-api) echoes that length,
+    // so the live test embed verifies and the config can be persisted.
+    await page.getByPlaceholder('text-embedding-3-small').fill('text-embedding-3-small');
     await page.getByPlaceholder('1024').fill('64');
     await page.getByRole('button', { name: 'Save & switch' }).click();
 
@@ -127,7 +130,7 @@ test.describe('Settings leaf workflows', () => {
       })
       .toEqual({
         provider: 'custom:http://127.0.0.1:18473/openai/v1',
-        model: 'e2e-embedding-model',
+        model: 'text-embedding-3-small',
         dimensions: 64,
       });
   });

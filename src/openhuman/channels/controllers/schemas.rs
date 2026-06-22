@@ -49,6 +49,12 @@ struct StatusParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct SetDefaultParams {
+    channel: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct TestParams {
     channel: String,
     auth_mode: String,
@@ -128,6 +134,8 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("connect"),
         schemas("disconnect"),
         schemas("status"),
+        schemas("set_default"),
+        schemas("get_default"),
         schemas("test"),
         schemas("telegram_login_start"),
         schemas("telegram_login_check"),
@@ -165,6 +173,14 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("status"),
             handler: handle_status,
+        },
+        RegisteredController {
+            schema: schemas("set_default"),
+            handler: handle_set_default,
+        },
+        RegisteredController {
+            schema: schemas("get_default"),
+            handler: handle_get_default,
         },
         RegisteredController {
             schema: schemas("test"),
@@ -288,6 +304,30 @@ pub fn schemas(function: &str) -> ControllerSchema {
             outputs: vec![json_output(
                 "entries",
                 "Array of status entries per channel and auth mode.",
+            )],
+        },
+        "set_default" => ControllerSchema {
+            namespace: "channels",
+            function: "set_default",
+            description: "Set the default messaging channel for proactive agent \
+                          delivery (persists active_channel + applies live).",
+            inputs: vec![required_string(
+                "channel",
+                "Channel identifier to make default (e.g. telegram, discord, web).",
+            )],
+            outputs: vec![json_output(
+                "result",
+                "Object with the new active_channel and restart_required flag.",
+            )],
+        },
+        "get_default" => ControllerSchema {
+            namespace: "channels",
+            function: "get_default",
+            description: "Get the persisted default messaging channel.",
+            inputs: vec![],
+            outputs: vec![json_output(
+                "result",
+                "Object with the current active_channel.",
             )],
         },
         "test" => ControllerSchema {
@@ -506,6 +546,21 @@ fn handle_status(params: Map<String, Value>) -> ControllerFuture {
             .map(str::trim)
             .filter(|s| !s.is_empty());
         to_json(ops::channel_status(&config, filter).await?)
+    })
+}
+
+fn handle_set_default(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let mut config = config_rpc::load_config_with_timeout().await?;
+        let p = deserialize_params::<SetDefaultParams>(params)?;
+        to_json(ops::set_default_channel(&mut config, p.channel.trim()).await?)
+    })
+}
+
+fn handle_get_default(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(ops::get_default_channel(&config)?)
     })
 }
 

@@ -1,0 +1,7 @@
+{
+  "id": "gmail",
+  "name": "Gmail",
+  "version": "0.1.0",
+  "serviceURL": "https://mail.google.com/mail/u/0/",
+  "icon": "icon.svg"
+}

@@ -3,14 +3,46 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { FALLBACK_DEFINITIONS } from '../lib/channels/definitions';
 import { channelConnectionsApi } from '../services/api/channelConnectionsApi';
+import { store } from '../store';
 import {
   completeBreakingMigration,
+  setDefaultMessagingChannel,
   upsertChannelConnection,
 } from '../store/channelConnectionsSlice';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
-import type { ChannelAuthMode, ChannelDefinition, ChannelType } from '../types/channels';
+import {
+  type ChannelAuthMode,
+  type ChannelConnectionStatus,
+  type ChannelDefinition,
+  type ChannelStatusEntry,
+  isChannelType,
+} from '../types/channels';
 
 const log = debug('channels:definitions');
+
+/**
+ * Map a backend channel-status entry to the Redux status patch to apply
+ * (issue #3712). A connected entry asserts `connected`; a configured-but-failing
+ * entry asserts `error` and carries the live failure reason. A not-connected
+ * entry with no error is skipped while a connect flow is still `connecting`, so
+ * a stale status poll doesn't stomp an in-flight attempt. Returns `null` when
+ * there is nothing to assert.
+ */
+export function resolveStatusPatch(
+  entry: ChannelStatusEntry,
+  currentStatus: ChannelConnectionStatus | undefined
+): { status: ChannelConnectionStatus; lastError: string | undefined } | null {
+  if (entry.connected) {
+    return { status: 'connected', lastError: undefined };
+  }
+  if (entry.error) {
+    return { status: 'error', lastError: entry.error };
+  }
+  if (currentStatus === 'connecting') {
+    return null;
+  }
+  return { status: 'disconnected', lastError: undefined };
+}
 
 export function useChannelDefinitions() {
   const dispatch = useAppDispatch();
@@ -33,11 +65,19 @@ export function useChannelDefinitions() {
     setError(null);
 
     try {
-      const [defs, statusEntries] = await Promise.all([
+      const [defs, statusEntries, defaultChannel] = await Promise.all([
         channelConnectionsApi.listDefinitions().catch(() => null),
         channelConnectionsApi.listStatus().catch(() => null),
+        channelConnectionsApi.getDefaultChannel().catch(() => null),
       ]);
       if (cancelled) return;
+
+      // Seed the default messaging channel from the core (source of truth for
+      // proactive routing) so the UI reflects the persisted selection across
+      // reloads, not just redux-persist's local copy (issue #3712).
+      if (defaultChannel) {
+        dispatch(setDefaultMessagingChannel(defaultChannel));
+      }
 
       const resolvedDefs =
         defs && Array.isArray(defs) && defs.length > 0 ? defs : FALLBACK_DEFINITIONS;
@@ -45,18 +85,34 @@ export function useChannelDefinitions() {
       log('loaded %d channel definitions', resolvedDefs.length);
 
       if (statusEntries && Array.isArray(statusEntries)) {
+        // Read live store state (not the closed-over selector value) so the
+        // connecting-guard in `resolveStatusPatch` sees the current status.
+        const liveConnections = store.getState().channelConnections.connections;
         for (const entry of statusEntries) {
-          const channel = entry.channel_id as ChannelType;
-          const authMode = entry.auth_mode as ChannelAuthMode;
-          if (entry.connected) {
-            dispatch(
-              upsertChannelConnection({
-                channel,
-                authMode,
-                patch: { status: 'connected', capabilities: ['read', 'write'] },
-              })
-            );
+          // Skip unknown channels from core rather than coercing them into
+          // state as if valid (#3794 review).
+          if (!isChannelType(entry.channel_id)) {
+            log('ignoring unknown channel_id from status sync: %s', entry.channel_id);
+            continue;
           }
+          const channel = entry.channel_id;
+          const authMode = entry.auth_mode as ChannelAuthMode;
+          const currentStatus = liveConnections[channel]?.[authMode]?.status;
+          const patch = resolveStatusPatch(entry, currentStatus);
+          if (!patch) continue;
+          dispatch(
+            upsertChannelConnection({
+              channel,
+              authMode,
+              patch: {
+                status: patch.status,
+                lastError: patch.lastError,
+                // Only assert capabilities when actually connected; leave them
+                // untouched otherwise so a disconnect doesn't wipe them.
+                ...(entry.connected ? { capabilities: ['read', 'write'] } : {}),
+              },
+            })
+          );
         }
         log('synced %d status entries', statusEntries.length);
       }

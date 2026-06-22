@@ -25,6 +25,7 @@ use crate::openhuman::agent::cost::TurnCost;
 use crate::openhuman::agent::multimodal;
 use crate::openhuman::agent::stop_hooks::{current_stop_hooks, StopDecision, TurnState};
 use crate::openhuman::context::guard::{ContextCheckResult, ContextGuard};
+use crate::openhuman::context::{summarize_chat_history, EngineAutocompact};
 use crate::openhuman::inference::provider::{
     ChatMessage, ChatRequest, Provider, ProviderCapabilityError,
 };
@@ -68,6 +69,19 @@ fn truncate_with_ellipsis(s: &str, max: usize) -> String {
     format!("{head}…")
 }
 
+/// Resolve whether the current turn's model accepts image input.
+///
+/// The per-model/tier flag (`model_vision`, set at session build from
+/// `oh_tier_supports_vision` + the user's `model_registry.vision`) is
+/// authoritative. The provider-level `supports_vision()` is too coarse on the
+/// managed backend — it advertises `vision: true` for the backend as a whole,
+/// which would wrongly rehydrate images for non-vision tiers (e.g. the `chat-v1`
+/// orchestrator) and 400 on `image_url`. So it is only a fallback when no
+/// per-model scope is active (CLI / direct invocation / tests).
+fn turn_accepts_images(model_vision: Option<bool>, provider_supports_vision: bool) -> bool {
+    model_vision.unwrap_or(provider_supports_vision)
+}
+
 /// Run the agent loop over `history` using `tools`. `max_iterations` must be
 /// pre-normalized (callers map `0` to a sane default). See the module docs for
 /// the per-iteration flow.
@@ -90,11 +104,25 @@ pub(crate) async fn run_turn_engine(
     on_delta: Option<tokio::sync::mpsc::Sender<String>>,
     early_exit_tool_names: &[&str],
     run_queue: Option<Arc<RunQueue>>,
+    // When `Some`, the engine summarizes `history` in place once the context
+    // guard reports the window is filling (the soft compaction threshold).
+    // The main `Agent` path leaves this `None` — it compacts through its typed
+    // `ContextManager` in `observer.before_dispatch` instead — so only the
+    // sub-agent loop (which has no `ContextManager`) opts in.
+    autocompact: Option<&EngineAutocompact>,
 ) -> Result<TurnEngineOutcome> {
     // Resolve the model's context window once per turn. Local providers (e.g.
     // LM Studio) report their *runtime-loaded* window here, which can be far
     // smaller than the model's trained maximum in the static table — trimming
     // to the max would overflow the loaded `n_ctx` (#3550 / TAURI-RUST-6V0).
+    //
+    // For local providers this is now always `Some` (a conservative floor backs
+    // up any missing profile default — see
+    // `context_window_for_model_with_local_fallback`), so trimming always
+    // engages for them. `None` therefore means a *cloud* provider with an
+    // unknown model: those windows are large, so skipping the pre-dispatch trim
+    // is the correct conservative choice (a tiny floor would needlessly truncate
+    // a legitimate large-context request).
     let effective_context_window = provider.effective_context_window(model).await;
     match effective_context_window {
         Some(context_window) => tracing::debug!(
@@ -106,8 +134,33 @@ pub(crate) async fn run_turn_engine(
         None => tracing::debug!(
             provider = provider_name,
             model,
-            "[agent_loop] effective context window unavailable; pre-dispatch trimming disabled this turn"
+            "[agent_loop] effective context window unavailable (cloud unknown model); pre-dispatch trimming skipped this turn"
         ),
+    }
+    // Model-aware locality: a router whose *default* is cloud may still route
+    // THIS model to a local provider, so gate the pre-dispatch un-evictable
+    // prefix abort on the routed provider, not the default (#3550 /
+    // TAURI-RUST-6V0; PR #3771 review).
+    let model_is_local = provider.is_local_provider_for_model(model);
+    // Authoritative runtime-loaded window for the hard abort. `effective_context
+    // _window` above may be a *guess* (profile default / conservative floor) for
+    // a local model that exposes no loaded window — safe to TRIM against, but
+    // aborting with "reload with a larger context length" against a guess would
+    // wrongly reject a request the real loaded window would accept. So the abort
+    // only consults the genuinely-reported window (e.g. LM Studio's loaded
+    // n_ctx); `None` ⇒ window unknown ⇒ no hard abort, trimming still runs.
+    let loaded_context_window = if model_is_local {
+        provider.loaded_context_window(model).await
+    } else {
+        None
+    };
+    if let Some(loaded) = loaded_context_window {
+        tracing::debug!(
+            provider = provider_name,
+            model,
+            loaded_context_window = loaded,
+            "[agent_loop] authoritative loaded context window resolved (pre-dispatch prefix abort armed)"
+        );
     }
     let mut context_guard = effective_context_window
         .map(ContextGuard::with_context_window)
@@ -171,6 +224,50 @@ pub(crate) async fn run_turn_engine(
                     "[agent_loop] context guard: compaction needed (>{:.0}% full)",
                     crate::openhuman::context::guard::COMPACTION_TRIGGER_THRESHOLD * 100.0
                 );
+                // Engine-level LLM autocompaction (sub-agent path opts in via
+                // `autocompact`; the main `Agent` path is `None` and compacts in
+                // `before_dispatch` instead). Runs BEFORE the hard token-budget
+                // trim below so the summary captures content the trim would
+                // otherwise drop. Feeds the guard's circuit breaker so three
+                // consecutive failures disable it and the next `check()` returns
+                // `ContextExhausted` rather than looping.
+                if let Some(ac) = autocompact {
+                    let summary_model = ac.summarizer_model.as_deref().unwrap_or(model);
+                    match summarize_chat_history(
+                        provider,
+                        history,
+                        summary_model,
+                        ac.keep_recent,
+                        ac.temperature,
+                    )
+                    .await
+                    {
+                        Ok(stats) if stats.messages_removed > 0 => {
+                            context_guard.record_compaction_success();
+                            tracing::info!(
+                                iteration,
+                                messages_removed = stats.messages_removed,
+                                approx_tokens_freed = stats.approx_tokens_freed,
+                                "[agent_loop] engine autocompaction freed context"
+                            );
+                        }
+                        Ok(_) => {
+                            tracing::debug!(
+                                iteration,
+                                "[agent_loop] engine autocompaction: nothing to summarize \
+                                 (history below keep_recent); relying on token-budget trim"
+                            );
+                        }
+                        Err(e) => {
+                            context_guard.record_compaction_failure();
+                            tracing::warn!(
+                                iteration,
+                                error = %e,
+                                "[agent_loop] engine autocompaction failed"
+                            );
+                        }
+                    }
+                }
             }
             ContextCheckResult::ContextExhausted {
                 utilization_pct,
@@ -265,13 +362,21 @@ pub(crate) async fn run_turn_engine(
 
         tracing::debug!(iteration, "[agent_loop] sending LLM request");
         let image_marker_count = multimodal::count_image_markers(history);
-        // A model accepts images when its provider advertises vision (managed
-        // backend) OR the user marked it vision-capable in `model_registry`
-        // (custom/BYOK) — surfaced via the `current_model_vision` task-local set
-        // at session build. Unset (CLI/tests) falls back to the provider flag.
-        let has_vision = provider.supports_vision()
-            || crate::openhuman::agent::harness::model_vision_context::current_model_vision()
-                .unwrap_or(false);
+        // Whether *this turn's model* accepts image input. The per-model/tier
+        // flag (`current_model_vision`, set at session build from
+        // `oh_tier_supports_vision` + the user's `model_registry.vision`) is the
+        // source of truth and is consulted FIRST. The provider-level
+        // `supports_vision()` is too coarse on the managed backend — it
+        // advertises `vision: true` for the backend as a whole, which would
+        // wrongly rehydrate images for non-vision tiers like `chat-v1` (the
+        // orchestrator) and 400 on `image_url`. So the provider flag is only a
+        // fallback when no per-model scope is active (CLI / direct invocation /
+        // tests). This keeps the placeholder on non-vision models and lets only
+        // the vision sub-agent's model rehydrate the image.
+        let has_vision = turn_accepts_images(
+            crate::openhuman::agent::harness::model_vision_context::current_model_vision(),
+            provider.supports_vision(),
+        );
         if image_marker_count > 0 && !has_vision {
             let cap_err = ProviderCapabilityError {
                 provider: provider_name.to_string(),
@@ -353,6 +458,56 @@ pub(crate) async fn run_turn_engine(
             }
         }
 
+        // Pre-dispatch guard for the un-evictable-prefix overflow
+        // (TAURI-RUST-6V0 / #3550). Trimming above can only drop conversation
+        // history — never the system prefix or the current user turn. When a
+        // *local* model is loaded with a context window smaller than that
+        // un-evictable prefix (the runtime `n_keep >= n_ctx`), no amount of
+        // trimming can fit the prompt, so dispatching guarantees an opaque
+        // upstream `400`. Detect it here and surface the remedy the user
+        // actually controls — reload the model with a larger context length —
+        // instead of letting the cryptic provider error fly.
+        //
+        // Gated on `loaded_context_window`, the model's **authoritative**
+        // runtime window — `Some` only for a routed-local model whose runtime
+        // actually reports its loaded `n_ctx` (e.g. LM Studio). A guessed window
+        // (profile default / conservative floor) is deliberately NOT used here:
+        // it is safe to trim against (over-trim just costs reply room) but must
+        // not drive a hard "reload with a larger context length" abort, which
+        // would wrongly reject a request the real loaded window would accept
+        // (Codex P1 review on PR #3771). This is an expected user-state
+        // condition (S3.5: preventable-user-state), so it is demoted from Sentry
+        // via `report_error_or_expected` (its Display string matches
+        // `is_context_window_exceeded_message`).
+        if let Some(loaded) = loaded_context_window {
+            if let Some(prefix_err) =
+                crate::openhuman::agent::harness::token_budget::unevictable_prefix_overflow(
+                    &prepared_messages_vec,
+                    loaded,
+                )
+            {
+                log::warn!(
+                    "[agent_loop] un-evictable prefix overflows local context window — aborting pre-dispatch model={} loaded_context_window={} prefix_tokens={} max_input_tokens={}",
+                    model,
+                    loaded,
+                    prefix_err.prefix_tokens,
+                    prefix_err.max_input_tokens
+                );
+                crate::core::observability::report_error_or_expected(
+                    &prefix_err,
+                    "agent",
+                    "context_prefix_too_large",
+                    &[
+                        ("provider", provider_name),
+                        ("model", model),
+                        ("context_window", &loaded.to_string()),
+                        ("prefix_tokens", &prefix_err.prefix_tokens.to_string()),
+                    ],
+                );
+                return Err(prefix_err.into());
+            }
+        }
+
         // Recomputed each iteration: a `ToolSource` may register tools lazily
         // mid-turn, so native-tool enablement can flip from off to on.
         let request_tools = if provider.supports_native_tools() && !tools.request_specs().is_empty()
@@ -373,6 +528,7 @@ pub(crate) async fn run_turn_engine(
                     messages: &prepared_messages_vec,
                     tools: request_tools,
                     stream: delta_tx_opt.as_ref(),
+                    max_tokens: None,
                 },
                 model,
                 temperature,
@@ -668,6 +824,17 @@ pub(crate) async fn run_turn_engine(
                     "[agent_loop] circuit breaker tripped — halting with root cause"
                 );
                 halt_reason = Some(reason);
+                // Stop executing the rest of this assistant message's tool-call
+                // batch (#3104). Native-tool providers can emit multiple tool
+                // calls in one message; without this break the loop would drain
+                // the remaining calls — and on a permanent inference failure
+                // (out of budget / provider-config) that means launching the
+                // *next* paid sub-agent delegation right after the first one
+                // proved the wall is unrecoverable. Breaking here makes the
+                // "halt on the first occurrence" guarantee hold for batched
+                // calls too. The tool results recorded so far are still threaded
+                // into history below, so the caller keeps full context.
+                break;
             }
 
             // Early-exit when a sub-agent calls ask_user_clarification:
@@ -684,6 +851,55 @@ pub(crate) async fn run_turn_engine(
             }
         }
 
+        // A circuit-breaker / early-exit `break` can stop the batch before every
+        // tool call ran, so `individual_results` (one entry per EXECUTED call)
+        // may be shorter than `native_tool_calls` (every call the model emitted).
+        // The persisted assistant message must reference ONLY the executed calls:
+        // a native-mode assistant turn carrying N `tool_call` ids followed by
+        // fewer than N `role: tool` results is rejected by OpenAI-compatible
+        // providers ("an assistant message with tool_calls must be followed by
+        // tool messages responding to each tool_call_id") on the next request —
+        // exactly the raw `ChatMessage` histories used by run_tool_call_loop /
+        // the sub-agent paths (Codex review #3779). Trim the persisted tool-call
+        // list to the executed prefix so call-ids and tool-results stay in
+        // lockstep. `tool_calls` is a 1:1, same-order map of `native_tool_calls`
+        // (see `parse_structured_tool_calls`), so the executed prefix is simply
+        // the first `individual_results.len()` native calls.
+        let executed = individual_results.len();
+        let executed_native_calls = &native_tool_calls[..executed.min(native_tool_calls.len())];
+        // The parsed list is a 1:1, same-order map of the native list, so the
+        // executed prefix lines up. Trim it too: the typed-history observer
+        // (`turn_engine_adapter::persisted_tool_calls`) builds the `Agent::turn`
+        // `AssistantToolCalls` entry from these, and would otherwise persist a
+        // tool-call for every emitted call while only collecting results for the
+        // executed prefix — the same orphaned-id mismatch in the raw-ChatMessage
+        // path (Codex review #3779).
+        let executed_parsed_calls = &tool_calls[..executed.min(tool_calls.len())];
+        let assistant_history_content = if executed < native_tool_calls.len() {
+            tracing::debug!(
+                iteration,
+                emitted = native_tool_calls.len(),
+                executed,
+                "[agent_loop] batch truncated before all tool calls ran — trimming \
+                 persisted assistant tool-calls to the executed prefix so tool_call_ids \
+                 match tool-results (no orphaned id)"
+            );
+            // Rebuild from the executed prefix. Empty prefix (a break before the
+            // first call could ever produce one) degrades to the plain
+            // response-text assistant message, mirroring the no-tool-call path.
+            if executed_native_calls.is_empty() {
+                response_text.clone()
+            } else {
+                build_native_assistant_history(
+                    &response_text,
+                    reasoning_content.as_deref(),
+                    executed_native_calls,
+                )
+            }
+        } else {
+            assistant_history_content
+        };
+
         // Add assistant message with tool calls + tool results to history.
         // Native mode: JSON-structured messages so convert_messages() can
         // reconstruct OpenAI-format tool_calls + tool result messages. Prompt
@@ -694,8 +910,8 @@ pub(crate) async fn run_turn_engine(
                 &display_text,
                 &response_text,
                 reasoning_content.as_deref(),
-                &native_tool_calls,
-                &tool_calls,
+                executed_native_calls,
+                executed_parsed_calls,
                 iteration,
                 false,
             )
@@ -705,7 +921,11 @@ pub(crate) async fn run_turn_engine(
             observer.on_results_batch(&content, iteration);
             history.push(ChatMessage::user(content));
         } else {
-            for (native_call, result) in native_tool_calls.iter().zip(individual_results.iter()) {
+            // Zip over the executed prefix only — one `role: tool` result per
+            // executed `tool_call_id`, matching the trimmed assistant message
+            // above so the next provider request has no orphaned tool-call id.
+            for (native_call, result) in executed_native_calls.iter().zip(individual_results.iter())
+            {
                 let tool_msg = serde_json::json!({
                     "tool_call_id": native_call.id,
                     "content": result,
@@ -781,3 +1001,30 @@ pub(crate) async fn run_turn_engine(
         early_exit_tool: None,
     })
 }
+
+#[cfg(test)]
+mod gate_tests {
+    use super::turn_accepts_images;
+
+    #[test]
+    fn per_model_flag_overrides_coarse_provider_flag() {
+        // Managed backend advertises provider-level vision=true, but a non-vision
+        // tier (e.g. chat-v1 orchestrator) must keep the placeholder: per-model
+        // flag false wins → no rehydrate → no `image_url` 400.
+        assert!(!turn_accepts_images(Some(false), true));
+        // Vision tier (vision-v1 / the vision sub-agent): per-model flag true →
+        // rehydrate even if the provider flag were false.
+        assert!(turn_accepts_images(Some(true), false));
+    }
+
+    #[test]
+    fn falls_back_to_provider_when_no_scope() {
+        // CLI / direct invocation / tests: no per-model scope → provider flag.
+        assert!(turn_accepts_images(None, true));
+        assert!(!turn_accepts_images(None, false));
+    }
+}
+
+#[cfg(test)]
+#[path = "core_tests.rs"]
+mod tests;

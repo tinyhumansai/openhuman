@@ -102,6 +102,7 @@ export interface ModelSettingsUpdate {
   reasoning_provider?: string | null;
   agentic_provider?: string | null;
   coding_provider?: string | null;
+  vision_provider?: string | null;
   memory_provider?: string | null;
   embeddings_provider?: string | null;
   heartbeat_provider?: string | null;
@@ -237,11 +238,21 @@ export interface ClientConfig {
   model_registry: ModelRegistryEntry[];
   /** Id of the `cloud_providers` entry resolved by the `"cloud"` sentinel. */
   primary_cloud: string | null;
+  /**
+   * #3767: authoritative, core-side per-tier flags — for each chat-mode tier
+   * (`chat` = Quick mode, `reasoning` = Reasoning mode), true when that tier runs
+   * on a non-managed provider the user funds themselves (a usable BYO key, local
+   * runtime, or claude-code). The UI checks whichever tier the user has selected;
+   * when true the "buy credits" prompt is suppressed for that mode. Optional for
+   * back-compat with older snapshots.
+   */
+  credits_bypass?: { chat?: boolean; reasoning?: boolean };
   /** Per-workload provider strings (e.g. `"cloud"`, `"ollama:llama3.1:8b"`, `"openai:gpt-4o"`). */
   chat_provider: string | null;
   reasoning_provider: string | null;
   agentic_provider: string | null;
   coding_provider: string | null;
+  vision_provider: string | null;
   memory_provider: string | null;
   embeddings_provider: string | null;
   heartbeat_provider: string | null;
@@ -718,9 +729,32 @@ export async function openhumanGetAnalyticsSettings(): Promise<
   });
 }
 
-export async function openhumanUpdateMeetSettings(update: {
+/** Meeting Assistant calendar auto-join policy (issue #3511). */
+export type MeetAutoJoinPolicy = 'ask_each_time' | 'always' | 'never';
+/** Meeting Assistant post-call summary policy. */
+export type MeetAutoSummarizePolicy = 'ask' | 'always' | 'never';
+
+/** Full shape returned by `openhuman.config_get_meet_settings`. */
+export interface MeetSettings {
+  auto_orchestrator_handoff: boolean;
+  auto_join_policy: MeetAutoJoinPolicy;
+  auto_summarize_policy: MeetAutoSummarizePolicy;
+  listen_only_default: boolean;
+  ingest_backend_transcripts: boolean;
+}
+
+/** Partial update accepted by `openhuman.config_update_meet_settings`. */
+export interface MeetSettingsUpdate {
   auto_orchestrator_handoff?: boolean;
-}): Promise<CommandResponse<ConfigSnapshot>> {
+  auto_join_policy?: MeetAutoJoinPolicy;
+  auto_summarize_policy?: MeetAutoSummarizePolicy;
+  listen_only_default?: boolean;
+  ingest_backend_transcripts?: boolean;
+}
+
+export async function openhumanUpdateMeetSettings(
+  update: MeetSettingsUpdate
+): Promise<CommandResponse<ConfigSnapshot>> {
   if (!isTauri()) {
     throw new Error('Not running in Tauri');
   }
@@ -730,13 +764,11 @@ export async function openhumanUpdateMeetSettings(update: {
   });
 }
 
-export async function openhumanGetMeetSettings(): Promise<
-  CommandResponse<{ auto_orchestrator_handoff: boolean }>
-> {
+export async function openhumanGetMeetSettings(): Promise<CommandResponse<MeetSettings>> {
   if (!isTauri()) {
     throw new Error('Not running in Tauri');
   }
-  return await callCoreRpc<CommandResponse<{ auto_orchestrator_handoff: boolean }>>({
+  return await callCoreRpc<CommandResponse<MeetSettings>>({
     method: 'openhuman.config_get_meet_settings',
   });
 }

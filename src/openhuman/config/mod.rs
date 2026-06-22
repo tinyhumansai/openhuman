@@ -44,13 +44,14 @@ pub use schema::{
     ReflectionSource, ReliabilityConfig, ResourceLimitsConfig, RuntimeConfig, SandboxBackend,
     SandboxConfig, SchedulerConfig, SchedulerGateConfig, SchedulerGateMode,
     ScreenIntelligenceConfig, SearchConfig, SearchEngine, SearchEngineCredentials, SearxngConfig,
-    SecretsConfig, SecurityConfig, SlackConfig, StorageConfig, StorageProviderConfig,
+    SecretsConfig, SecurityConfig, ShellConfig, SlackConfig, StorageConfig, StorageProviderConfig,
     StorageProviderSection, StreamMode, TeamModelConfig, TelegramConfig, UpdateConfig,
     UpdateRestartStrategy, VoiceActivationMode, VoiceServerConfig, WebSearchConfig, WebhookConfig,
     DEFAULT_CLOUD_LLM_MODEL, DEFAULT_MEMORY_SYNC_INTERVAL_SECS, DEFAULT_MODEL,
     MEMORY_SYNC_INTERVAL_PRESETS_SECS, MODEL_AGENTIC_V1, MODEL_CHAT_V1, MODEL_CODING_V1,
-    MODEL_REASONING_QUICK_V1, MODEL_REASONING_V1, MODEL_SUMMARIZATION_V1, SEARCH_ENGINE_BRAVE,
-    SEARCH_ENGINE_DISABLED, SEARCH_ENGINE_MANAGED, SEARCH_ENGINE_PARALLEL, SEARCH_ENGINE_QUERIT,
+    MODEL_REASONING_QUICK_V1, MODEL_REASONING_V1, MODEL_SUMMARIZATION_V1, MODEL_VISION_V1,
+    SEARCH_ENGINE_BRAVE, SEARCH_ENGINE_DISABLED, SEARCH_ENGINE_MANAGED, SEARCH_ENGINE_PARALLEL,
+    SEARCH_ENGINE_QUERIT,
 };
 pub use schemas::{
     all_controller_schemas as all_config_controller_schemas,
@@ -81,6 +82,7 @@ mod tests {
     fn reexported_channel_configs_are_constructible() {
         let telegram = TelegramConfig {
             bot_token: "token".into(),
+            chat_id: None,
             allowed_users: vec!["alice".into()],
             stream_mode: StreamMode::default(),
             draft_update_interval_ms: 1000,

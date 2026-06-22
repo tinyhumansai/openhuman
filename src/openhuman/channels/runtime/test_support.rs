@@ -283,16 +283,36 @@ fn memory_entry(input: TestMemoryEntry) -> MemoryEntry {
     }
 }
 
+/// Shared serialization guard for any test code that mutates the
+/// process-global native agent-turn handler (`AGENT_RUN_TURN_METHOD`).
+///
+/// The dispatch harness registers a *mock* `AGENT_RUN_TURN_METHOD` handler,
+/// while `start_channels` registers the *real* one (latest-wins on the global
+/// registry). Both can run concurrently inside the same test binary, so the
+/// real handler can clobber the harness's mock mid-run — producing flaky
+/// assertions (e.g. `handler_had_progress` going false because the real
+/// handler never feeds the harness progress channel). Every test path that
+/// touches that global slot must hold this guard for the whole run.
+fn agent_handler_lock() -> &'static tokio::sync::Mutex<()> {
+    static HARNESS_GUARD: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+    HARNESS_GUARD.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
+/// Acquire the shared agent-handler guard. Hold the returned guard across any
+/// call that re-registers `AGENT_RUN_TURN_METHOD` (the harness, or
+/// `start_channels`) so concurrent registrations cannot race in the same
+/// process.
+pub async fn lock_agent_handler() -> tokio::sync::MutexGuard<'static, ()> {
+    agent_handler_lock().lock().await
+}
+
 pub async fn run_dispatch_harness(options: DispatchHarnessOptions) -> DispatchHarnessObservation {
     // `init_global` + `register_native_global` mutate process-global state, so
-    // concurrent harness runs in the same process can overwrite each other's
-    // handlers mid-run and produce flaky assertions. Serialize the whole run
-    // (handler registration through observation capture) behind a single lock.
-    static HARNESS_GUARD: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
-    let _harness_guard = HARNESS_GUARD
-        .get_or_init(|| tokio::sync::Mutex::new(()))
-        .lock()
-        .await;
+    // concurrent harness runs (and concurrent `start_channels` calls) in the
+    // same process can overwrite each other's handlers mid-run and produce
+    // flaky assertions. Serialize the whole run (handler registration through
+    // observation capture) behind the shared agent-handler lock.
+    let _harness_guard = lock_agent_handler().await;
 
     init_global(DEFAULT_CAPACITY);
     let _ =

@@ -179,6 +179,11 @@ pub enum ServerStatus {
     Disconnected,
     Connecting,
     Connected,
+    /// Connect failed specifically because the server returned HTTP 401 — the
+    /// server is reachable but needs authentication (OAuth sign-in or an API
+    /// token). Distinct from `Error` so the UI can offer a re-auth path instead
+    /// of a raw failure (#3719).
+    Unauthorized,
     Error,
     Disabled,
 }
@@ -189,6 +194,7 @@ impl ServerStatus {
             Self::Disconnected => "disconnected",
             Self::Connecting => "connecting",
             Self::Connected => "connected",
+            Self::Unauthorized => "unauthorized",
             Self::Error => "error",
             Self::Disabled => "disabled",
         }
@@ -322,6 +328,7 @@ mod tests {
         assert_eq!(ServerStatus::Connected.as_str(), "connected");
         assert_eq!(ServerStatus::Disconnected.as_str(), "disconnected");
         assert_eq!(ServerStatus::Connecting.as_str(), "connecting");
+        assert_eq!(ServerStatus::Unauthorized.as_str(), "unauthorized");
         assert_eq!(ServerStatus::Error.as_str(), "error");
         assert_eq!(ServerStatus::Disabled.as_str(), "disabled");
     }

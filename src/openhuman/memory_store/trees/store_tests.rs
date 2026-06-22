@@ -89,6 +89,107 @@ fn summary_insert_and_fetch() {
 }
 
 #[test]
+fn list_summaries_in_window_keeps_only_fully_contained() {
+    // The cover's eligibility filter: a summary is returned only when its
+    // ENTIRE envelope falls inside [since, until]. A node that straddles the
+    // window edge (starts before `since`) must be excluded — using it would
+    // drag in out-of-window content.
+    let (_tmp, cfg) = test_config();
+    insert_tree(&cfg, &sample_tree("tree-1", "slack:#eng")).unwrap();
+
+    let mk = |id: &str, start_ms: i64, end_ms: i64| {
+        let mut n = sample_summary(id, "tree-1", 1);
+        n.time_range_start = Utc.timestamp_millis_opt(start_ms).unwrap();
+        n.time_range_end = Utc.timestamp_millis_opt(end_ms).unwrap();
+        n
+    };
+    // window = [1000, 2000]
+    let inside = mk("inside", 1100, 1900); // fully contained → eligible
+    let straddle_start = mk("straddle", 900, 1500); // begins before since → excluded
+    let straddle_end = mk("overrun", 1500, 2100); // ends after until → excluded
+    let outside = mk("outside", 3000, 3500); // wholly after → excluded
+
+    with_connection(&cfg, |conn| {
+        let tx = conn.unchecked_transaction()?;
+        for n in [&inside, &straddle_start, &straddle_end, &outside] {
+            insert_summary_tx(&tx, n, None, "test")?;
+        }
+        tx.commit()?;
+        Ok(())
+    })
+    .unwrap();
+
+    let eligible = list_summaries_in_window(&cfg, "tree-1", 1000, 2000).unwrap();
+    let ids: Vec<&str> = eligible.iter().map(|s| s.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        vec!["inside"],
+        "only the fully-contained summary is eligible"
+    );
+}
+
+#[test]
+fn list_summaries_in_window_includes_exact_boundaries() {
+    // The window is inclusive on both ends: a summary whose envelope touches
+    // `since`/`until` exactly is still fully contained, so it must be eligible.
+    let (_tmp, cfg) = test_config();
+    insert_tree(&cfg, &sample_tree("tree-1", "slack:#eng")).unwrap();
+
+    let mk = |id: &str, start_ms: i64, end_ms: i64| {
+        let mut n = sample_summary(id, "tree-1", 1);
+        n.time_range_start = Utc.timestamp_millis_opt(start_ms).unwrap();
+        n.time_range_end = Utc.timestamp_millis_opt(end_ms).unwrap();
+        n
+    };
+    // window = [1000, 2000]
+    let start_on_edge = mk("start-edge", 1000, 1500); // starts exactly at `since`
+    let end_on_edge = mk("end-edge", 1500, 2000); // ends exactly at `until`
+    let both_edges = mk("both-edges", 1000, 2000); // spans the whole window
+
+    with_connection(&cfg, |conn| {
+        let tx = conn.unchecked_transaction()?;
+        for n in [&start_on_edge, &end_on_edge, &both_edges] {
+            insert_summary_tx(&tx, n, None, "test")?;
+        }
+        tx.commit()?;
+        Ok(())
+    })
+    .unwrap();
+
+    let eligible = list_summaries_in_window(&cfg, "tree-1", 1000, 2000).unwrap();
+    let mut ids: Vec<&str> = eligible.iter().map(|s| s.id.as_str()).collect();
+    ids.sort_unstable();
+    assert_eq!(
+        ids,
+        vec!["both-edges", "end-edge", "start-edge"],
+        "summaries touching the inclusive window edges are eligible"
+    );
+}
+
+#[test]
+fn list_summaries_in_window_excludes_deleted() {
+    let (_tmp, cfg) = test_config();
+    insert_tree(&cfg, &sample_tree("tree-1", "slack:#eng")).unwrap();
+    let mut node = sample_summary("sum-1", "tree-1", 1);
+    node.time_range_start = Utc.timestamp_millis_opt(1100).unwrap();
+    node.time_range_end = Utc.timestamp_millis_opt(1900).unwrap();
+    node.deleted = true;
+    with_connection(&cfg, |conn| {
+        let tx = conn.unchecked_transaction()?;
+        insert_summary_tx(&tx, &node, None, "test")?;
+        tx.commit()?;
+        Ok(())
+    })
+    .unwrap();
+    assert!(
+        list_summaries_in_window(&cfg, "tree-1", 1000, 2000)
+            .unwrap()
+            .is_empty(),
+        "tombstoned summaries are never eligible"
+    );
+}
+
+#[test]
 fn summary_insert_is_idempotent_on_id() {
     let (_tmp, cfg) = test_config();
     insert_tree(&cfg, &sample_tree("tree-1", "slack:#eng")).unwrap();
