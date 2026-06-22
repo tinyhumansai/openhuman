@@ -72,6 +72,8 @@ impl Drop for WorkspaceEnvGuard {
 }
 
 pub(crate) fn set_workspace_env_for_test(temp: &TempDir) -> WorkspaceEnvGuard {
+    // OPENHUMAN_WORKSPACE is process-global, so hold the shared config env lock
+    // for the full lifetime of the test workspace override.
     let env_lock = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let prev = std::env::var_os("OPENHUMAN_WORKSPACE");
     std::env::set_var("OPENHUMAN_WORKSPACE", temp.path());
