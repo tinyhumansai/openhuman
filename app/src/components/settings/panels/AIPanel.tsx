@@ -138,6 +138,7 @@ const BUILTIN_RESERVED_SLUGS = [
   'custom',
   'ollama',
   'lmstudio',
+  'omlx',
   // Claude Code is a CLI-backed peer provider surfaced via a dedicated
   // connect button (not a chip), so reserve its slug so it never renders in
   // the generic custom-provider chip list.
@@ -315,6 +316,7 @@ function slugifyCustomProviderName(name: string): string {
 function authStyleForSlug(slug: string): AuthStyle {
   if (slug === 'openhuman') return 'openhuman_jwt';
   if (slug === 'lmstudio' || slug === 'ollama') return 'none';
+  if (slug === 'omlx') return 'bearer';
   // Claude Code authenticates via the local CLI, never an HTTP key.
   if (slug === 'claude-code') return 'none';
   return authStyleForBuiltinCloudProvider(slug) ?? 'bearer';
@@ -564,15 +566,20 @@ function useInstalledModels(snapshot: LocalProviderSnapshot | null): OllamaModel
 
 // Local-runtime chip slugs (Ollama / LM Studio) that aren't actual slugs in
 // the cloud_providers list but need the same chip affordance.
-type LocalChipSlug = 'lmstudio' | 'ollama';
+type LocalChipSlug = 'lmstudio' | 'ollama' | 'omlx';
 
 // Tints per local-runtime chip slug.
 const LOCAL_CHIP_TONE: Record<LocalChipSlug, string> = {
   lmstudio: 'bg-cyan-50 dark:bg-cyan-500/10 ring-cyan-200 text-cyan-900 dark:text-cyan-100',
   ollama: 'bg-violet-50 dark:bg-violet-500/10 ring-violet-200 text-violet-900 dark:text-violet-100',
+  omlx: 'bg-amber-50 dark:bg-amber-500/10 ring-amber-200 text-amber-900 dark:text-amber-100',
 };
 
-const LOCAL_CHIP_LABEL: Record<LocalChipSlug, string> = { lmstudio: 'LM Studio', ollama: 'Ollama' };
+const LOCAL_CHIP_LABEL: Record<LocalChipSlug, string> = {
+  lmstudio: 'LM Studio',
+  ollama: 'Ollama',
+  omlx: 'OMLX',
+};
 
 function providerToggleAriaLabel(
   t: (key: string, fallback?: string) => string,
@@ -645,7 +652,9 @@ const ProviderKeyDialog = ({
   slug,
   label,
   isLocalRuntime,
+  endpointKeyMode = false,
   initialValue,
+  initialKeyValue,
   oauthAction,
   onCancel,
   onSubmit,
@@ -654,18 +663,30 @@ const ProviderKeyDialog = ({
   label: string;
   /** When true, render an "Endpoint URL" field instead of API key. */
   isLocalRuntime: boolean;
+  /**
+   * When true (OMLX), render BOTH an "Endpoint URL" field AND an "API key"
+   * field. `onSubmit` then receives the API key as `value` and the endpoint
+   * via the `endpoint` argument.
+   */
+  endpointKeyMode?: boolean;
   /** Pre-populate the field when editing an existing provider's endpoint. */
   initialValue?: string;
+  /** Pre-populate the API key field in `endpointKeyMode`. */
+  initialKeyValue?: string;
   oauthAction?: { label: string; description?: string; onClick: () => Promise<void> | void } | null;
   onCancel: () => void;
-  /** Returns the entered value. For local runtimes this is the endpoint URL;
-   *  for cloud providers it's the API key. */
-  onSubmit: (value: string) => Promise<void> | void;
+  /** Returns the entered value(s). For plain local runtimes this is the
+   *  endpoint URL; for cloud providers it's the API key. In `endpointKeyMode`
+   *  the API key is `value` and the endpoint URL is `endpoint`. */
+  onSubmit: (value: string, endpoint?: string) => Promise<void> | void;
 }) => {
   const { t } = useT();
+  // In `endpointKeyMode`, `value` holds the endpoint URL and `keyValue` holds
+  // the API key. Otherwise `value` is either the endpoint (local) or key (cloud).
   const [value, setValue] = useState<string>(
     initialValue ?? (isLocalRuntime ? defaultEndpointFor(slug) : '')
   );
+  const [keyValue, setKeyValue] = useState<string>(initialKeyValue ?? '');
   const [phase, setPhase] = useState<'idle' | 'saving' | 'oauth'>('idle');
   const [error, setError] = useState<string | null>(null);
   const busy = phase !== 'idle';
@@ -673,6 +694,7 @@ const ProviderKeyDialog = ({
   const placeholder = isLocalRuntime
     ? defaultEndpointFor(slug) || t('settings.ai.defaultLocalEndpoint')
     : (builtinCloudProvider(slug)?.keyPlaceholder ?? 'your-api-key');
+  const keyPlaceholder = builtinCloudProvider(slug)?.keyPlaceholder ?? 'your-api-key';
 
   const fieldLabel = isLocalRuntime
     ? t('settings.ai.endpointUrlLabel')
@@ -684,6 +706,7 @@ const ProviderKeyDialog = ({
 
   const handleSave = async () => {
     const trimmed = value.trim();
+    const trimmedKey = keyValue.trim();
     if (!trimmed) {
       setError(
         isLocalRuntime ? t('settings.ai.endpointUrlRequired') : t('settings.ai.apiKeyRequired')
@@ -694,6 +717,10 @@ const ProviderKeyDialog = ({
       setError(t('settings.ai.endpointProtocolRequired'));
       return;
     }
+    if (endpointKeyMode && !trimmedKey) {
+      setError(t('settings.ai.apiKeyRequired'));
+      return;
+    }
     setError(null);
 
     // A provider credential is being saved. This adds/updates a `cloudProviders`
@@ -702,12 +729,18 @@ const ProviderKeyDialog = ({
     console.debug('[ai-settings][routing] saving provider credential', {
       slug,
       local_runtime: isLocalRuntime,
-      kind: isLocalRuntime ? 'endpoint' : 'apiKey',
+      kind: endpointKeyMode ? 'endpointKey' : isLocalRuntime ? 'endpoint' : 'apiKey',
     });
 
     setPhase('saving');
     try {
-      await onSubmit(trimmed);
+      // In endpointKeyMode the API key is the primary value, endpoint is the
+      // second arg; otherwise the single field is the primary value.
+      if (endpointKeyMode) {
+        await onSubmit(trimmedKey, trimmed);
+      } else {
+        await onSubmit(trimmed);
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.warn('[ai-settings] provider setup failed', {
@@ -793,6 +826,36 @@ const ProviderKeyDialog = ({
               setError(null);
             }}
           />
+          {/* OMLX (endpointKeyMode): render the API key field in addition to
+              the endpoint field above — the runtime is OpenAI-compatible but
+              gated behind a Bearer key. */}
+          {endpointKeyMode ? (
+            <>
+              <label
+                htmlFor="provider-key-input-key"
+                className="mt-3 text-xs font-medium text-neutral-700 dark:text-neutral-200">
+                {t('settings.ai.apiKeyFieldLabel')}
+              </label>
+              <SettingsTextField
+                id="provider-key-input-key"
+                type="text"
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="off"
+                spellCheck={false}
+                data-form-type="other"
+                data-lpignore="true"
+                data-1p-ignore="true"
+                value={keyValue}
+                placeholder={keyPlaceholder}
+                disabled={busy}
+                onChange={e => {
+                  setKeyValue(e.target.value);
+                  setError(null);
+                }}
+              />
+            </>
+          ) : null}
           {error ? <ProviderSetupErrorNotice error={error} /> : null}
         </div>
 
@@ -2855,14 +2918,30 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
       slug,
       localLabel = null,
       value,
+      endpoint: endpointOverride,
       credentialMode,
     }: {
       slug: string;
       localLabel?: string | null;
       value: string;
-      credentialMode: 'api_key' | 'oauth' | 'codex_oauth' | 'endpoint' | 'cli_login';
+      /**
+       * For `endpoint_key` runtimes (OMLX): the endpoint URL. `value` carries
+       * the API key in that mode, so the endpoint comes in separately. Ignored
+       * for `endpoint` mode, where `value` IS the endpoint.
+       */
+      endpoint?: string | null;
+      credentialMode:
+        | 'api_key'
+        | 'oauth'
+        | 'codex_oauth'
+        | 'endpoint'
+        | 'endpoint_key'
+        | 'cli_login';
     }) => {
-      const isLocalRuntime = credentialMode === 'endpoint';
+      const isLocalRuntime = credentialMode === 'endpoint' || credentialMode === 'endpoint_key';
+      // `endpoint_key` (OMLX) carries the API key in `value` and the endpoint
+      // separately; `endpoint` mode carries the endpoint URL in `value`.
+      const isEndpointKey = credentialMode === 'endpoint_key';
       const isCodexOAuth = credentialMode === 'codex_oauth';
       // CLI-backed login (Claude Code): no API key is written and no HTTP
       // /models probe is made — auth + execution both go through the local
@@ -2872,9 +2951,13 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
 
       try {
         const trimmed = value.trim();
+        // For `endpoint_key` (OMLX), the endpoint URL arrives via `endpointOverride`
+        // (the dialog's endpoint field) and `trimmed` is the API key. For plain
+        // `endpoint` runtimes, `trimmed` itself is the endpoint URL.
+        const rawEndpoint = isEndpointKey ? (endpointOverride ?? '').trim() : trimmed;
         const endpoint = isLocalRuntime
           ? (() => {
-              const url = new URL(trimmed);
+              const url = new URL(rawEndpoint);
               if (!/^https?:$/.test(url.protocol)) {
                 throw new Error('Endpoint must start with http:// or https://');
               }
@@ -2918,6 +3001,17 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
           await openhumanUpdateLocalAiSettings({
             base_url: endpoint,
             provider: 'lm_studio',
+            runtime_enabled: true,
+            opt_in_confirmed: true,
+          });
+        } else if (isLocalRuntime && slug === 'omlx') {
+          // OMLX: OpenAI-compatible local runtime that also requires a Bearer
+          // key. Persist both the endpoint and the key into local_ai (the Rust
+          // factory's omlx branch reads `local_ai.api_key` as the Bearer token).
+          await openhumanUpdateLocalAiSettings({
+            base_url: endpoint,
+            api_key: trimmed,
+            provider: 'omlx',
             runtime_enabled: true,
             opt_in_confirmed: true,
           });
@@ -3133,7 +3227,7 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
 
               {/* LM Studio + Ollama — local runtimes stored with a slug of
                   "lmstudio" / "ollama" so they're distinct from generic custom. */}
-              {(['lmstudio', 'ollama'] as const).map(localKind => {
+              {(['lmstudio', 'ollama', 'omlx'] as const).map(localKind => {
                 const label = LOCAL_CHIP_LABEL[localKind];
                 const tone = LOCAL_CHIP_TONE[localKind];
                 const existing = draft.cloudProviders.find(cp => cp.slug === localKind);
@@ -3567,9 +3661,13 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
           slug={keyDialogFor}
           label={pendingLocalLabel ?? BUILTIN_PROVIDER_META[keyDialogFor]?.label ?? keyDialogFor}
           isLocalRuntime={Boolean(pendingLocalLabel)}
+          // OMLX is the only endpoint+key local runtime: render both an endpoint
+          // field (prefilled with the localhost default) and an API key field.
+          endpointKeyMode={keyDialogFor === 'omlx'}
           initialValue={
             pendingLocalLabel
-              ? (draft.cloudProviders.find(cp => cp.slug === keyDialogFor)?.endpoint ?? undefined)
+              ? (draft.cloudProviders.find(cp => cp.slug === keyDialogFor)?.endpoint ??
+                (keyDialogFor === 'omlx' ? defaultEndpointFor('omlx') : undefined))
               : undefined
           }
           oauthAction={
@@ -3601,12 +3699,20 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
             setKeyDialogFor(null);
             setPendingLocalLabel(null);
           }}
-          onSubmit={async value =>
+          onSubmit={async (value, endpoint) =>
             await connectProvider({
               slug: keyDialogFor,
               localLabel: pendingLocalLabel,
+              // In endpoint_key (OMLX) mode the dialog hands back the API key as
+              // `value` and the endpoint URL as `endpoint`.
               value,
-              credentialMode: pendingLocalLabel ? 'endpoint' : 'api_key',
+              endpoint,
+              credentialMode:
+                keyDialogFor === 'omlx'
+                  ? 'endpoint_key'
+                  : pendingLocalLabel
+                    ? 'endpoint'
+                    : 'api_key',
             })
           }
         />
@@ -3801,6 +3907,8 @@ function defaultEndpointFor(slug: string): string {
       return 'http://localhost:11434/v1';
     case 'lmstudio':
       return 'http://localhost:1234/v1';
+    case 'omlx':
+      return 'http://localhost:8000/v1';
     default:
       return '';
   }

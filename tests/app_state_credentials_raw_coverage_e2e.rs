@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Duration;
 
 use chrono::Utc;
 use openhuman_core::openhuman::app_state::{
@@ -153,6 +155,33 @@ fn setup(api_url: &str) -> Harness {
     }
 }
 
+fn setup_default_paths(api_url: &str) -> Harness {
+    let tmp = tempdir();
+    let guards = vec![
+        EnvGuard::set_to_path("HOME", tmp.path()),
+        EnvGuard::unset("OPENHUMAN_WORKSPACE"),
+        EnvGuard::unset("BACKEND_URL"),
+        EnvGuard::unset("VITE_BACKEND_URL"),
+        EnvGuard::unset("OPENHUMAN_API_URL"),
+        EnvGuard::unset("OPENHUMAN_CORE_RPC_URL"),
+        EnvGuard::unset("OPENHUMAN_CORE_PORT"),
+        EnvGuard::set("OPENHUMAN_KEYRING_BACKEND", "file"),
+        EnvGuard::set("OPENHUMAN_MEMORY_EMBED_STRICT", "false"),
+        EnvGuard::set("OPENHUMAN_MEMORY_EMBED_ENDPOINT", ""),
+        EnvGuard::set("OPENHUMAN_MEMORY_EMBED_MODEL", ""),
+    ];
+    let default_root = openhuman_core::openhuman::config::default_root_openhuman_dir()
+        .expect("default openhuman root");
+    let root = openhuman_core::openhuman::config::pre_login_user_dir(&default_root);
+    write_min_config(&root, api_url);
+
+    Harness {
+        _tmp: tmp,
+        root,
+        _guards: guards,
+    }
+}
+
 async fn auth_me_server(
     body: &'static str,
 ) -> (
@@ -189,10 +218,7 @@ async fn auth_me_server(
     (url, task, shutdown_tx)
 }
 
-/// Like `auth_me_server` but always replies HTTP 500, so `store_session`'s
-/// `GET /auth/me` validation gate fails — exercising the WARN + `Err` path that
-/// leaves the session unpersisted (the "OAuth succeeded but app is back on the
-/// signin page" bug).
+/// Like `auth_me_server` but always replies HTTP 500.
 async fn auth_me_failing_server() -> (
     String,
     tokio::task::JoinHandle<()>,
@@ -219,6 +245,91 @@ async fn auth_me_failing_server() -> (
                     );
                     let _ = stream.write_all(response.as_bytes()).await;
                     let _ = stream.shutdown().await;
+                }
+            }
+        }
+    });
+    (url, task, shutdown_tx)
+}
+
+async fn auth_me_rejected_server() -> (
+    String,
+    tokio::task::JoinHandle<()>,
+    tokio::sync::oneshot::Sender<()>,
+) {
+    auth_me_status_sequence_server(vec![(
+        401,
+        "Unauthorized",
+        "{\"error\":\"revoked session\"}",
+    )])
+    .await
+}
+
+async fn auth_me_status_sequence_server(
+    responses: Vec<(u16, &'static str, &'static str)>,
+) -> (
+    String,
+    tokio::task::JoinHandle<()>,
+    tokio::sync::oneshot::Sender<()>,
+) {
+    assert!(!responses.is_empty(), "status sequence must not be empty");
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .expect("bind sequenced auth/me listener");
+    let url = format!("http://{}", listener.local_addr().expect("listener addr"));
+    let responses = Arc::new(responses);
+    let next_response = Arc::new(AtomicUsize::new(0));
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    let task = tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = &mut shutdown_rx => break,
+                accepted = listener.accept() => {
+                    let Ok((mut stream, _)) = accepted else { break; };
+                    let mut req = [0_u8; 2048];
+                    let _ = stream.read(&mut req).await;
+                    let idx = next_response.fetch_add(1, Ordering::SeqCst);
+                    let (status, reason, body) = responses
+                        .get(idx)
+                        .or_else(|| responses.last())
+                        .copied()
+                        .expect("non-empty response sequence");
+                    let response = format!(
+                        "HTTP/1.1 {status} {reason}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    let _ = stream.write_all(response.as_bytes()).await;
+                    let _ = stream.shutdown().await;
+                }
+            }
+        }
+    });
+    (url, task, shutdown_tx)
+}
+
+async fn auth_me_hanging_server() -> (
+    String,
+    tokio::task::JoinHandle<()>,
+    tokio::sync::oneshot::Sender<()>,
+) {
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .expect("bind hanging auth/me listener");
+    let url = format!("http://{}", listener.local_addr().expect("listener addr"));
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    let task = tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = &mut shutdown_rx => break,
+                accepted = listener.accept() => {
+                    let Ok((mut stream, _)) = accepted else { break; };
+                    tokio::spawn(async move {
+                        let mut req = [0_u8; 2048];
+                        let _ = stream.read(&mut req).await;
+                        tokio::time::sleep(Duration::from_secs(30)).await;
+                        let _ = stream.shutdown().await;
+                    });
                 }
             }
         }
@@ -410,6 +521,766 @@ async fn round14_snapshot_uses_stored_user_when_backend_user_is_empty_or_unreach
     assert_eq!(
         snap.auth.user.as_ref().and_then(|v| v.get("displayName")),
         Some(&json!("Fallback User"))
+    );
+
+    let _ = shutdown_tx.send(());
+    let _ = server_task.await;
+}
+
+#[tokio::test]
+async fn snapshot_clears_pending_backend_validation_after_successful_revalidation() {
+    let _lock = env_lock();
+    let (api_url, server_task, shutdown_tx) = auth_me_server(
+        r#"{"data":{"id":"fresh-pending-user","name":"Fresh Pending","email":"fresh-pending@example.test"}}"#,
+    )
+    .await;
+    let harness = setup(&api_url);
+    let config = harness.config().await;
+    let active_user_root = openhuman_core::openhuman::config::default_root_openhuman_dir()
+        .expect("default openhuman root");
+
+    let mut metadata = HashMap::new();
+    metadata.insert("user_id".to_string(), "pending-user".to_string());
+    metadata.insert(
+        "user_json".to_string(),
+        json!({
+            "id": "pending-user",
+            "name": "Pending User",
+            "email": "pending@example.test",
+            "pendingBackendValidation": true
+        })
+        .to_string(),
+    );
+    AuthService::from_config(&config)
+        .store_provider_token(
+            APP_SESSION_PROVIDER,
+            DEFAULT_AUTH_PROFILE_NAME,
+            "round14.pending.success",
+            metadata,
+            true,
+        )
+        .expect("seed pending app session");
+
+    let snap = snapshot()
+        .await
+        .expect("snapshot with successful pending revalidation")
+        .value;
+    assert!(snap.auth.is_authenticated);
+    assert_eq!(
+        snap.session_token.as_deref(),
+        Some("round14.pending.success")
+    );
+    assert_eq!(
+        snap.current_user.as_ref().and_then(|v| v.get("id")),
+        Some(&json!("fresh-pending-user"))
+    );
+    assert!(
+        snap.current_user
+            .as_ref()
+            .and_then(|v| v.get("pendingBackendValidation"))
+            .is_none(),
+        "fresh snapshot user must not keep pendingBackendValidation"
+    );
+
+    let profile = AuthService::from_config(&config)
+        .get_profile(APP_SESSION_PROVIDER, None)
+        .expect("read profile")
+        .expect("profile remains in env-scoped config after successful revalidation");
+    assert_eq!(
+        profile.metadata.get("user_id").map(String::as_str),
+        Some("fresh-pending-user")
+    );
+    let stored_user: Value = serde_json::from_str(
+        profile
+            .metadata
+            .get("user_json")
+            .expect("persisted user_json"),
+    )
+    .expect("stored user json");
+    assert_eq!(
+        stored_user.get("id").and_then(Value::as_str),
+        Some("fresh-pending-user")
+    );
+    assert!(
+        stored_user.get("pendingBackendValidation").is_none(),
+        "successful revalidation must clear persisted pendingBackendValidation"
+    );
+    assert_eq!(
+        openhuman_core::openhuman::config::read_active_user_id(&active_user_root).as_deref(),
+        None,
+        "env-scoped revalidation must not move auth state into default active_user.toml"
+    );
+    let next_snap = snapshot()
+        .await
+        .expect("next env-scoped snapshot remains authenticated")
+        .value;
+    assert!(next_snap.auth.is_authenticated);
+    assert_eq!(
+        next_snap.auth.user_id.as_deref(),
+        Some("fresh-pending-user"),
+        "next env-scoped snapshot must keep loading the revalidated profile"
+    );
+
+    let _ = shutdown_tx.send(());
+    let _ = server_task.await;
+}
+
+#[tokio::test]
+async fn snapshot_preserves_pending_session_when_revalidation_user_lacks_id() {
+    let _lock = env_lock();
+    let (api_url, server_task, shutdown_tx) =
+        auth_me_server(r#"{"data":{"name":"No Id User","email":"no-id@example.test"}}"#).await;
+    let harness = setup(&api_url);
+    let config = harness.config().await;
+
+    let mut metadata = HashMap::new();
+    metadata.insert("user_id".to_string(), "pending-no-id-user".to_string());
+    metadata.insert(
+        "user_json".to_string(),
+        json!({
+            "id": "pending-no-id-user",
+            "name": "Pending No Id User",
+            "email": "pending-no-id@example.test",
+            "pendingBackendValidation": true
+        })
+        .to_string(),
+    );
+    AuthService::from_config(&config)
+        .store_provider_token(
+            APP_SESSION_PROVIDER,
+            DEFAULT_AUTH_PROFILE_NAME,
+            "round14.pending.no-id",
+            metadata,
+            true,
+        )
+        .expect("seed no-id pending app session");
+
+    let snap = snapshot()
+        .await
+        .expect("snapshot with no-id pending revalidation")
+        .value;
+    assert!(
+        snap.auth.is_authenticated,
+        "pending session remains locally authenticated while backend identity lacks id"
+    );
+    assert_eq!(snap.session_token.as_deref(), Some("round14.pending.no-id"));
+    assert_eq!(
+        snap.current_user.as_ref().and_then(|v| v.get("id")),
+        Some(&json!("pending-no-id-user"))
+    );
+    assert_eq!(
+        snap.current_user
+            .as_ref()
+            .and_then(|v| v.get("pendingBackendValidation")),
+        Some(&json!(true)),
+        "no-id revalidation must not clear pendingBackendValidation"
+    );
+
+    let profile = AuthService::from_config(&config)
+        .get_profile(APP_SESSION_PROVIDER, None)
+        .expect("read profile after no-id revalidation")
+        .expect("profile remains pending after no-id revalidation");
+    assert_eq!(
+        profile.metadata.get("user_id").map(String::as_str),
+        Some("pending-no-id-user"),
+        "stale pending user id remains marked pending rather than validated"
+    );
+    let stored_user: Value = serde_json::from_str(
+        profile
+            .metadata
+            .get("user_json")
+            .expect("persisted no-id user_json"),
+    )
+    .expect("stored no-id user json");
+    assert_eq!(
+        stored_user.get("pendingBackendValidation"),
+        Some(&json!(true)),
+        "persisted no-id session must stay pending"
+    );
+
+    let _ = shutdown_tx.send(());
+    let _ = server_task.await;
+}
+
+#[tokio::test]
+async fn snapshot_activates_user_dir_after_pending_revalidation_without_initial_user_id() {
+    let _lock = env_lock();
+    let (api_url, server_task, shutdown_tx) = auth_me_server(
+        r#"{"data":{"id":"fresh-activated-user","name":"Fresh Activated","email":"fresh-activated@example.test"}}"#,
+    )
+    .await;
+    let harness = setup_default_paths(&api_url);
+    let config = harness.config().await;
+    let active_user_root = openhuman_core::openhuman::config::default_root_openhuman_dir()
+        .expect("default openhuman root");
+    assert_eq!(
+        openhuman_core::openhuman::config::read_active_user_id(&active_user_root),
+        None,
+        "test must start without active_user.toml"
+    );
+    update_local_state(StoredAppStatePatch {
+        keyring_consent: None,
+        encryption_key: Some(Some("pre-login-key".to_string())),
+        onboarding_tasks: None,
+    })
+    .await
+    .expect("seed pre-login local state");
+    let activated_user_dir = openhuman_core::openhuman::config::user_openhuman_dir(
+        &active_user_root,
+        "fresh-activated-user",
+    );
+    write_min_config(&activated_user_dir, &api_url);
+    let activated_state_dir = activated_user_dir.join("workspace/state");
+    std::fs::create_dir_all(&activated_state_dir).expect("create activated user state dir");
+    std::fs::write(
+        activated_state_dir.join("app-state.json"),
+        r#"{"encryptionKey":"activated-user-key"}"#,
+    )
+    .expect("seed activated user local state");
+
+    let mut metadata = HashMap::new();
+    metadata.insert(
+        "user_json".to_string(),
+        json!({
+            "pendingBackendValidation": true
+        })
+        .to_string(),
+    );
+    AuthService::from_config(&config)
+        .store_provider_token(
+            APP_SESSION_PROVIDER,
+            DEFAULT_AUTH_PROFILE_NAME,
+            "round14.pending.activate",
+            metadata,
+            true,
+        )
+        .expect("seed pending app session without user id");
+
+    let snap = snapshot()
+        .await
+        .expect("snapshot with successful pending activation")
+        .value;
+    assert!(snap.auth.is_authenticated);
+    assert_eq!(
+        snap.session_token.as_deref(),
+        Some("round14.pending.activate")
+    );
+    assert_eq!(snap.auth.user_id.as_deref(), Some("fresh-activated-user"));
+    assert_eq!(
+        snap.current_user.as_ref().and_then(|v| v.get("id")),
+        Some(&json!("fresh-activated-user"))
+    );
+    assert!(
+        snap.current_user
+            .as_ref()
+            .and_then(|v| v.get("pendingBackendValidation"))
+            .is_none(),
+        "activated snapshot user must not keep pendingBackendValidation"
+    );
+    assert_eq!(
+        openhuman_core::openhuman::config::read_active_user_id(&active_user_root).as_deref(),
+        Some("fresh-activated-user"),
+        "successful pending revalidation must activate the backend user"
+    );
+    assert_eq!(
+        snap.local_state.encryption_key.as_deref(),
+        Some("activated-user-key"),
+        "first successful activation snapshot must reload the activated user's local state"
+    );
+
+    let active_config = openhuman_core::openhuman::config::Config::load_from_default_paths()
+        .await
+        .expect("load activated user config");
+    let active_profile = AuthService::from_config(&active_config)
+        .get_profile(APP_SESSION_PROVIDER, None)
+        .expect("read active profile")
+        .expect("profile must be written under activated user config");
+    assert_eq!(
+        active_profile.metadata.get("user_id").map(String::as_str),
+        Some("fresh-activated-user")
+    );
+    let stored_user: Value = serde_json::from_str(
+        active_profile
+            .metadata
+            .get("user_json")
+            .expect("persisted activated user_json"),
+    )
+    .expect("activated stored user json");
+    assert_eq!(
+        stored_user.get("id").and_then(Value::as_str),
+        Some("fresh-activated-user")
+    );
+    assert!(
+        stored_user.get("pendingBackendValidation").is_none(),
+        "activated persisted user must not keep pendingBackendValidation"
+    );
+    let source_profile = AuthService::from_config(&config)
+        .get_profile(APP_SESSION_PROVIDER, None)
+        .expect("read source profile after activation");
+    assert!(
+        source_profile.is_none(),
+        "source pre-login pending profile must be removed after activated persist succeeds"
+    );
+
+    let _ = shutdown_tx.send(());
+    let _ = server_task.await;
+}
+
+#[tokio::test]
+async fn snapshot_preserves_pending_session_when_revalidated_user_activation_fails() {
+    let _lock = env_lock();
+    let (api_url, server_task, shutdown_tx) = auth_me_server(
+        r#"{"data":{"id":"fresh-activation-failure","name":"Activation Failure","email":"activation-failure@example.test"}}"#,
+    )
+    .await;
+    let harness = setup_default_paths(&api_url);
+    let config = harness.config().await;
+    let active_user_root = openhuman_core::openhuman::config::default_root_openhuman_dir()
+        .expect("default openhuman root");
+    assert_eq!(
+        openhuman_core::openhuman::config::read_active_user_id(&active_user_root),
+        None,
+        "test must start without active_user.toml"
+    );
+    std::fs::create_dir_all(active_user_root.join("active_user.toml"))
+        .expect("block active user marker write");
+
+    let mut metadata = HashMap::new();
+    metadata.insert(
+        "user_json".to_string(),
+        json!({
+            "pendingBackendValidation": true
+        })
+        .to_string(),
+    );
+    AuthService::from_config(&config)
+        .store_provider_token(
+            APP_SESSION_PROVIDER,
+            DEFAULT_AUTH_PROFILE_NAME,
+            "round14.pending.activation-failure",
+            metadata,
+            true,
+        )
+        .expect("seed activation-failure pending app session");
+
+    let snap = snapshot()
+        .await
+        .expect("snapshot with failed pending activation")
+        .value;
+    assert!(
+        snap.auth.is_authenticated,
+        "activation write failure should keep the pending local session for retry"
+    );
+    assert_eq!(
+        snap.session_token.as_deref(),
+        Some("round14.pending.activation-failure")
+    );
+    assert_eq!(
+        snap.current_user
+            .as_ref()
+            .and_then(|v| v.get("pendingBackendValidation")),
+        Some(&json!(true)),
+        "failed activation must not return a validated backend user"
+    );
+    assert!(
+        active_user_root.join("active_user.toml").is_dir(),
+        "failed active_user.toml write must not be treated as an activated user"
+    );
+
+    let profile = AuthService::from_config(&config)
+        .get_profile(APP_SESSION_PROVIDER, None)
+        .expect("read profile after failed activation")
+        .expect("source pending profile remains available for retry");
+    let stored_user: Value = serde_json::from_str(
+        profile
+            .metadata
+            .get("user_json")
+            .expect("persisted activation-failure user_json"),
+    )
+    .expect("activation-failure stored user json");
+    assert_eq!(
+        stored_user.get("pendingBackendValidation"),
+        Some(&json!(true)),
+        "activation failure must not clear persisted pendingBackendValidation"
+    );
+
+    let _ = shutdown_tx.send(());
+    let _ = server_task.await;
+}
+
+#[tokio::test]
+async fn snapshot_clears_pending_session_when_backend_revalidation_is_rejected() {
+    let _lock = env_lock();
+    let (api_url, server_task, shutdown_tx) = auth_me_rejected_server().await;
+    let harness = setup(&api_url);
+    let config = harness.config().await;
+
+    let mut metadata = HashMap::new();
+    metadata.insert("user_id".to_string(), "pending-reject-user".to_string());
+    metadata.insert(
+        "user_json".to_string(),
+        json!({
+            "id": "pending-reject-user",
+            "email": "pending-reject@example.test",
+            "pendingBackendValidation": true
+        })
+        .to_string(),
+    );
+    AuthService::from_config(&config)
+        .store_provider_token(
+            APP_SESSION_PROVIDER,
+            DEFAULT_AUTH_PROFILE_NAME,
+            "round14.pending.rejected",
+            metadata,
+            true,
+        )
+        .expect("seed rejected pending app session");
+
+    let snap = snapshot()
+        .await
+        .expect("snapshot with rejected pending revalidation")
+        .value;
+    assert!(
+        !snap.auth.is_authenticated,
+        "pending session must fail closed when backend revalidation is rejected"
+    );
+    assert!(snap.auth.user.is_none());
+    assert!(snap.current_user.is_none());
+    assert!(snap.session_token.is_none());
+    let profile = AuthService::from_config(&config)
+        .get_profile(APP_SESSION_PROVIDER, None)
+        .expect("read profile after rejection");
+    assert!(
+        profile.is_none(),
+        "rejected pending session profile must be cleared"
+    );
+
+    let _ = shutdown_tx.send(());
+    let _ = server_task.await;
+}
+
+#[tokio::test]
+async fn snapshot_preserves_default_active_user_when_env_scoped_revalidation_is_rejected() {
+    let _lock = env_lock();
+    let (api_url, server_task, shutdown_tx) = auth_me_rejected_server().await;
+    let harness = setup(&api_url);
+    let config = harness.config().await;
+    let active_user_root = openhuman_core::openhuman::config::default_root_openhuman_dir()
+        .expect("default openhuman root");
+    openhuman_core::openhuman::config::write_active_user_id(&active_user_root, "desktop-user")
+        .expect("seed default active user");
+
+    let mut metadata = HashMap::new();
+    metadata.insert("user_id".to_string(), "pending-env-rejected".to_string());
+    metadata.insert(
+        "user_json".to_string(),
+        json!({
+            "id": "pending-env-rejected",
+            "email": "pending-env-rejected@example.test",
+            "pendingBackendValidation": true
+        })
+        .to_string(),
+    );
+    AuthService::from_config(&config)
+        .store_provider_token(
+            APP_SESSION_PROVIDER,
+            DEFAULT_AUTH_PROFILE_NAME,
+            "round14.pending.env.rejected",
+            metadata,
+            true,
+        )
+        .expect("seed env-scoped rejected pending app session");
+
+    let snap = snapshot()
+        .await
+        .expect("snapshot with env-scoped rejected pending revalidation")
+        .value;
+    assert!(
+        !snap.auth.is_authenticated,
+        "env-scoped pending session must fail closed when backend revalidation is rejected"
+    );
+    assert!(snap.auth.user.is_none());
+    assert!(snap.current_user.is_none());
+    assert!(snap.session_token.is_none());
+    let profile = AuthService::from_config(&config)
+        .get_profile(APP_SESSION_PROVIDER, None)
+        .expect("read env-scoped profile after rejection");
+    assert!(
+        profile.is_none(),
+        "rejected env-scoped pending session profile must be cleared"
+    );
+    assert_eq!(
+        openhuman_core::openhuman::config::read_active_user_id(&active_user_root).as_deref(),
+        Some("desktop-user"),
+        "env-scoped rejection cleanup must not clear the default active user"
+    );
+
+    let _ = shutdown_tx.send(());
+    let _ = server_task.await;
+}
+
+#[tokio::test]
+async fn snapshot_preserves_pending_session_when_backend_revalidation_is_transient() {
+    let _lock = env_lock();
+    let (api_url, server_task, shutdown_tx) = auth_me_failing_server().await;
+    let harness = setup(&api_url);
+    let config = harness.config().await;
+
+    let mut metadata = HashMap::new();
+    metadata.insert("user_id".to_string(), "pending-transient-user".to_string());
+    metadata.insert(
+        "user_json".to_string(),
+        json!({
+            "id": "pending-transient-user",
+            "email": "pending-transient@example.test",
+            "pendingBackendValidation": true
+        })
+        .to_string(),
+    );
+    AuthService::from_config(&config)
+        .store_provider_token(
+            APP_SESSION_PROVIDER,
+            DEFAULT_AUTH_PROFILE_NAME,
+            "round14.pending.transient",
+            metadata,
+            true,
+        )
+        .expect("seed transient pending app session");
+
+    let snap = snapshot()
+        .await
+        .expect("snapshot with transient pending revalidation")
+        .value;
+    assert!(
+        snap.auth.is_authenticated,
+        "pending session must stay authenticated when revalidation is transient"
+    );
+    assert_eq!(
+        snap.session_token.as_deref(),
+        Some("round14.pending.transient")
+    );
+    assert_eq!(
+        snap.current_user.as_ref().and_then(|v| v.get("id")),
+        Some(&json!("pending-transient-user"))
+    );
+    assert_eq!(
+        snap.current_user
+            .as_ref()
+            .and_then(|v| v.get("pendingBackendValidation")),
+        Some(&json!(true))
+    );
+    let profile = AuthService::from_config(&config)
+        .get_profile(APP_SESSION_PROVIDER, None)
+        .expect("read profile after transient revalidation");
+    assert!(
+        profile.is_some(),
+        "transient pending session profile must be preserved for retry"
+    );
+
+    let _ = shutdown_tx.send(());
+    let _ = server_task.await;
+}
+
+#[tokio::test]
+async fn snapshot_clears_supplied_user_pending_session_after_revalidation_rejection() {
+    let _lock = env_lock();
+    let (api_url, server_task, shutdown_tx) = auth_me_rejected_server().await;
+    let harness = setup(&api_url);
+    let config = harness.config().await;
+    let user_id = "callback-user";
+    let active_user_root = openhuman_core::openhuman::config::default_root_openhuman_dir()
+        .expect("default openhuman root");
+    openhuman_core::openhuman::config::write_active_user_id(&active_user_root, user_id)
+        .expect("seed active user marker for supplied pending session");
+
+    let mut metadata = HashMap::new();
+    metadata.insert("user_id".to_string(), user_id.to_string());
+    metadata.insert(
+        "user_json".to_string(),
+        json!({
+            "id": user_id,
+            "name": "Callback User",
+            "email": "callback@example.test",
+            "pendingBackendValidation": true
+        })
+        .to_string(),
+    );
+    AuthService::from_config(&config)
+        .store_provider_token(
+            APP_SESSION_PROVIDER,
+            DEFAULT_AUTH_PROFILE_NAME,
+            "round14.pending.callback",
+            metadata,
+            true,
+        )
+        .expect("seed supplied pending app session");
+    assert_eq!(
+        openhuman_core::openhuman::config::read_active_user_id(&active_user_root).as_deref(),
+        Some(user_id),
+        "test must start with active_user.toml pointing at the supplied pending user"
+    );
+
+    let active_config = harness.config().await;
+    let profile = AuthService::from_config(&active_config)
+        .get_profile(APP_SESSION_PROVIDER, None)
+        .expect("read deferred profile")
+        .expect("deferred profile is persisted");
+    let stored_user: Value = serde_json::from_str(
+        profile
+            .metadata
+            .get("user_json")
+            .expect("persisted user_json"),
+    )
+    .expect("stored deferred user json");
+    assert_eq!(
+        stored_user.get("pendingBackendValidation"),
+        Some(&json!(true)),
+        "supplied callback user must keep the pending marker"
+    );
+    assert_eq!(
+        stored_user.get("email").and_then(Value::as_str),
+        Some("callback@example.test")
+    );
+
+    let snap = snapshot()
+        .await
+        .expect("snapshot with supplied pending user")
+        .value;
+    assert!(
+        !snap.auth.is_authenticated,
+        "supplied pending user must fail closed when revalidation is rejected"
+    );
+    assert!(snap.auth.user.is_none());
+    assert!(snap.current_user.is_none());
+    assert!(snap.session_token.is_none());
+    assert_eq!(
+        openhuman_core::openhuman::config::read_active_user_id(&active_user_root),
+        None,
+        "rejected supplied-user pending session must clear active_user.toml"
+    );
+    let profile = AuthService::from_config(&active_config)
+        .get_profile(APP_SESSION_PROVIDER, None)
+        .expect("read profile after supplied-user rejection");
+    assert!(
+        profile.is_none(),
+        "rejected supplied-user pending session profile must be cleared"
+    );
+
+    let _ = shutdown_tx.send(());
+    let _ = server_task.await;
+}
+
+#[tokio::test]
+async fn snapshot_preserves_pending_session_when_revalidation_request_errors() {
+    let _lock = env_lock();
+    let harness = setup("http://127.0.0.1:9");
+    let config = harness.config().await;
+
+    let mut metadata = HashMap::new();
+    metadata.insert("user_id".to_string(), "pending-error-user".to_string());
+    metadata.insert(
+        "user_json".to_string(),
+        json!({
+            "id": "pending-error-user",
+            "email": "pending-error@example.test",
+            "pendingBackendValidation": true
+        })
+        .to_string(),
+    );
+    AuthService::from_config(&config)
+        .store_provider_token(
+            APP_SESSION_PROVIDER,
+            DEFAULT_AUTH_PROFILE_NAME,
+            "round14.pending.error",
+            metadata,
+            true,
+        )
+        .expect("seed errored pending app session");
+
+    let snap = snapshot()
+        .await
+        .expect("snapshot with errored pending revalidation")
+        .value;
+    assert!(
+        snap.auth.is_authenticated,
+        "pending session must stay authenticated when revalidation request errors before a backend response"
+    );
+    assert_eq!(snap.session_token.as_deref(), Some("round14.pending.error"));
+    assert_eq!(
+        snap.current_user.as_ref().and_then(|v| v.get("id")),
+        Some(&json!("pending-error-user"))
+    );
+    assert_eq!(
+        snap.current_user
+            .as_ref()
+            .and_then(|v| v.get("pendingBackendValidation")),
+        Some(&json!(true))
+    );
+    let profile = AuthService::from_config(&config)
+        .get_profile(APP_SESSION_PROVIDER, None)
+        .expect("read profile after request error");
+    assert!(
+        profile.is_some(),
+        "errored pending session profile must be preserved for retry"
+    );
+}
+
+#[tokio::test]
+async fn snapshot_preserves_pending_session_when_revalidation_times_out() {
+    let _lock = env_lock();
+    let (api_url, server_task, shutdown_tx) = auth_me_hanging_server().await;
+    let harness = setup(&api_url);
+    let config = harness.config().await;
+
+    let mut metadata = HashMap::new();
+    metadata.insert("user_id".to_string(), "pending-timeout-user".to_string());
+    metadata.insert(
+        "user_json".to_string(),
+        json!({
+            "id": "pending-timeout-user",
+            "email": "pending-timeout@example.test",
+            "pendingBackendValidation": true
+        })
+        .to_string(),
+    );
+    AuthService::from_config(&config)
+        .store_provider_token(
+            APP_SESSION_PROVIDER,
+            DEFAULT_AUTH_PROFILE_NAME,
+            "round14.pending.timeout",
+            metadata,
+            true,
+        )
+        .expect("seed timed-out pending app session");
+
+    let snap = snapshot()
+        .await
+        .expect("snapshot with timed-out pending revalidation")
+        .value;
+    assert!(
+        snap.auth.is_authenticated,
+        "pending session must stay authenticated when revalidation times out before a backend response"
+    );
+    assert_eq!(
+        snap.session_token.as_deref(),
+        Some("round14.pending.timeout")
+    );
+    assert_eq!(
+        snap.current_user.as_ref().and_then(|v| v.get("id")),
+        Some(&json!("pending-timeout-user"))
+    );
+    assert_eq!(
+        snap.current_user
+            .as_ref()
+            .and_then(|v| v.get("pendingBackendValidation")),
+        Some(&json!(true))
+    );
+    let profile = AuthService::from_config(&config)
+        .get_profile(APP_SESSION_PROVIDER, None)
+        .expect("read profile after timeout");
+    assert!(
+        profile.is_some(),
+        "timed-out pending session profile must be preserved for retry"
     );
 
     let _ = shutdown_tx.send(());

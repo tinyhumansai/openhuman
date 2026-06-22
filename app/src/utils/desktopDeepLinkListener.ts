@@ -167,7 +167,7 @@ const applySessionToken = async (sessionToken: string): Promise<void> => {
     new CustomEvent('core-state:suppress-reauth', { detail: { until: Date.now() + 15_000 } })
   );
   try {
-    await storeSession(sessionToken, {});
+    await storeSession(sessionToken, {}, { allowPendingBackendValidation: true });
   } finally {
     window.dispatchEvent(new CustomEvent('core-state:suppress-reauth', { detail: { until: 0 } }));
   }

@@ -115,6 +115,7 @@ struct InferenceUpdateLocalSettingsParams {
     usage_heartbeat: Option<bool>,
     usage_learning_reflection: Option<bool>,
     usage_subconscious: Option<bool>,
+    api_key: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -335,6 +336,10 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 optional_json(
                     "base_url",
                     "Optional local provider base URL string, or null to clear.",
+                ),
+                optional_string(
+                    "api_key",
+                    "Optional Bearer API key for a local provider that requires one (e.g. OMLX); empty string clears it.",
                 ),
                 optional_string("model_id", "Optional generic model id override."),
                 optional_string("chat_model_id", "Optional chat model id override."),
@@ -779,6 +784,7 @@ fn handle_inference_update_local_settings(params: Map<String, Value>) -> Control
             usage_heartbeat: update.usage_heartbeat,
             usage_learning_reflection: update.usage_learning_reflection,
             usage_subconscious: update.usage_subconscious,
+            api_key: update.api_key,
         };
         to_json(crate::openhuman::inference::rpc::inference_update_local_settings(patch).await?)
     })

@@ -14,6 +14,8 @@ permissions:
 env:
   NPM_CONFIG_STORE_DIR: .pnpm-store
 
+# Keep only the newest run per PR/branch. Long Rust/Tauri build commands must
+# run through scripts/ci-cancel-aware.sh so cancellation reaches descendants.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.head_ref || github.ref }}
   cancel-in-progress: true
@@ -56,11 +58,9 @@ jobs:
               - 'app/vite.config.*'
               - 'app/tailwind.config.*'
               - 'app/postcss.config.*'
-              - 'scripts/ci-cancel-aware.sh'
             i18n:
               - '.github/workflows/pr-ci.yml'
               - 'app/src/**'
-              - 'scripts/ci-cancel-aware.sh'
             rust-core:
               - '.github/workflows/pr-ci.yml'
               - 'Cargo.toml'
@@ -69,6 +69,7 @@ jobs:
               - 'src/**'
               - 'tests/**'
               - 'scripts/ci-cancel-aware.sh'
+              - 'scripts/test-rust-e2e.sh'
               - 'scripts/test-rust-with-mock.sh'
             rust-tauri:
               - '.github/workflows/pr-ci.yml'
@@ -116,7 +117,7 @@ jobs:
             pnpm-store-${{ runner.os }}-
 
       - name: Install dependencies
-        run: bash scripts/ci-cancel-aware.sh pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Save pnpm store cache
         if: always() && steps.pnpm-cache.outputs.cache-hit != 'true'
@@ -126,17 +127,17 @@ jobs:
           key: ${{ steps.pnpm-cache.outputs.cache-primary-key }}
 
       - name: Type check TypeScript files
-        run: bash scripts/ci-cancel-aware.sh pnpm --filter openhuman-app compile
+        run: pnpm --filter openhuman-app compile
         env:
           NODE_ENV: test
 
       - name: Check Prettier formatting
-        run: bash scripts/ci-cancel-aware.sh pnpm --filter openhuman-app format:check
+        run: pnpm --filter openhuman-app format:check
         env:
           NODE_ENV: test
 
       - name: Run ESLint
-        run: bash scripts/ci-cancel-aware.sh pnpm --filter openhuman-app lint
+        run: pnpm --filter openhuman-app lint
         env:
           NODE_ENV: test
 
@@ -164,7 +165,7 @@ jobs:
             pnpm-store-${{ runner.os }}-
 
       - name: Install dependencies
-        run: bash scripts/ci-cancel-aware.sh pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Save pnpm store cache
         if: always() && steps.pnpm-cache.outputs.cache-hit != 'true'
@@ -174,7 +175,7 @@ jobs:
           key: ${{ steps.pnpm-cache.outputs.cache-primary-key }}
 
       - name: Verify i18n coverage (missing / extra / drifted keys across locales)
-        run: bash scripts/ci-cancel-aware.sh pnpm i18n:check
+        run: pnpm i18n:check
 
   rust-quality:
     name: Rust Quality (fmt, clippy)
@@ -207,7 +208,7 @@ jobs:
           shared-key: pr-rust-quality
 
       - name: Check Rust formatting
-        run: bash scripts/ci-cancel-aware.sh cargo fmt --all -- --check
+        run: cargo fmt --all -- --check
 
       - name: Run clippy (core crate)
         run: bash scripts/ci-cancel-aware.sh cargo clippy -p openhuman
@@ -258,7 +259,7 @@ jobs:
 
       - name: Install dependencies
         if: steps.playwright-artifact-cache.outputs.cache-hit != 'true'
-        run: bash scripts/ci-cancel-aware.sh pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Save pnpm store cache
         if: always() && steps.pnpm-cache.outputs.cache-hit != 'true'
@@ -277,7 +278,7 @@ jobs:
         if: steps.playwright-artifact-cache.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
-          bash scripts/ci-cancel-aware.sh pnpm --filter openhuman-app test:e2e:web:build
+          pnpm --filter openhuman-app test:e2e:web:build
 
           RUST_HOST_TRIPLE="$(rustc -vV | awk '/^host: / { print $2 }')"
           WEB_CORE_TARGET_DIR="target/e2e-web-${RUST_HOST_TRIPLE}"
@@ -335,7 +336,7 @@ jobs:
             pnpm-store-${{ runner.os }}-
 
       - name: Install dependencies
-        run: bash scripts/ci-cancel-aware.sh pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Save pnpm store cache
         if: always() && steps.pnpm-cache.outputs.cache-hit != 'true'
@@ -345,7 +346,7 @@ jobs:
           key: ${{ steps.pnpm-cache.outputs.cache-primary-key }}
 
       - name: Run Vitest with coverage
-        run: bash ../scripts/ci-cancel-aware.sh pnpm test:coverage
+        run: pnpm test:coverage
         working-directory: app
         env:
           NODE_ENV: test
@@ -562,7 +563,7 @@ jobs:
           shared-key: pr-rust-core
 
       - name: Install dependencies
-        run: bash scripts/ci-cancel-aware.sh pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Save pnpm store cache
         if: always() && steps.pnpm-cache.outputs.cache-hit != 'true'
@@ -577,7 +578,7 @@ jobs:
           touch app/.env
 
       - name: Run Rust E2E suite
-        run: bash scripts/ci-cancel-aware.sh pnpm test:rust:e2e
+        run: pnpm test:rust:e2e
         env:
           RUST_BACKTRACE: "1"
 
@@ -627,7 +628,7 @@ jobs:
             pnpm-store-${{ runner.os }}-
 
       - name: Install JS dependencies (test harness)
-        run: bash scripts/ci-cancel-aware.sh pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Save pnpm store cache
         if: always() && steps.pnpm-cache.outputs.cache-hit != 'true'
@@ -653,14 +654,14 @@ jobs:
           chmod +x target/e2e-web-*/debug/openhuman-core
 
       - name: Install Playwright Chromium headless shell
-        run: bash scripts/ci-cancel-aware.sh pnpm --filter openhuman-app exec playwright install chromium-headless-shell
+        run: pnpm --filter openhuman-app exec playwright install chromium-headless-shell
 
       - name: Run Playwright web E2E suite (shard ${{ matrix.shard }}/4)
         env:
           OPENHUMAN_WORKSPACE: ${{ runner.temp }}/openhuman-playwright-workspace
         run: |
           mkdir -p "$OPENHUMAN_WORKSPACE"
-          bash scripts/ci-cancel-aware.sh bash app/scripts/e2e-web-session.sh \
+          bash app/scripts/e2e-web-session.sh \
             --shard=${{ matrix.shard }}/4
 
       - name: Upload Playwright E2E failure artifacts

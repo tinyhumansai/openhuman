@@ -2,11 +2,14 @@
 //!
 //! Provides:
 //! - [`TEST_LOCK`]: serializes wallet tests that mutate the global quote store
-//!   and per-chain env-var overrides.
+//!   and per-chain env-var overrides. Tests that mutate
+//!   `OPENHUMAN_WORKSPACE` also hold the config `TEST_ENV_LOCK`.
 //! - [`setup_wallet_in`]: writes a configured wallet state into a
 //!   [`tempfile::TempDir`] using the standard "abandon × 11 about" mnemonic
 //!   so every chain's signer derives a deterministic address.
 //! - Sample addresses corresponding to that mnemonic (one per chain).
+
+use std::path::Path;
 
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
@@ -60,6 +63,14 @@ pub(crate) struct WorkspaceEnvGuard {
     prev: Option<std::ffi::OsString>,
 }
 
+impl WorkspaceEnvGuard {
+    pub(crate) fn set(path: impl AsRef<Path>) -> Self {
+        let prev = std::env::var_os("OPENHUMAN_WORKSPACE");
+        std::env::set_var("OPENHUMAN_WORKSPACE", path.as_ref());
+        Self { prev }
+    }
+}
+
 impl Drop for WorkspaceEnvGuard {
     fn drop(&mut self) {
         match self.prev.take() {
@@ -71,8 +82,8 @@ impl Drop for WorkspaceEnvGuard {
 
 pub(crate) async fn setup_wallet_in(temp: &TempDir) -> Result<(), String> {
     // We intentionally leak the env-var change for the duration of the test
-    // (wallet state lookups rely on it). The shared `TEST_LOCK` mutex
-    // serializes tests so concurrent tests can't race on the var.
+    // (wallet state lookups rely on it). Callers that run under the full lib
+    // suite hold the repo-wide config TEST_ENV_LOCK while this env var is set.
     std::env::set_var("OPENHUMAN_WORKSPACE", temp.path());
     let config = config_rpc::load_config_with_timeout().await?;
     let encrypted = crate::openhuman::encryption::rpc::encrypt_secret(&config, TEST_MNEMONIC)

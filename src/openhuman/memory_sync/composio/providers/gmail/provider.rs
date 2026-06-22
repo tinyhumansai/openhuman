@@ -184,6 +184,7 @@ impl ComposioProvider for GmailProvider {
     }
 }
 
-// Cap/date-floor math lives in the shared `super::super::helpers` module
-// (`ItemCap`, `pages_for_max_items`, `epoch_floor_from_depth`) so every provider
-// shares one implementation — see that module for the unit tests.
+// The `max_items` cap math (`ItemCap`) lives in the orchestrator now that it is
+// the sole consumer; the `sync_depth_days` date floor (`epoch_floor_from_depth`)
+// stays in `super::super::helpers` because `gmail::source` builds an
+// `after:<epoch>` filter from it.

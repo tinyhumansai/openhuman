@@ -522,6 +522,7 @@ fn handle_update_local_ai_settings(params: Map<String, Value>) -> ControllerFutu
             usage_heartbeat: update.usage_heartbeat,
             usage_learning_reflection: update.usage_learning_reflection,
             usage_subconscious: update.usage_subconscious,
+            api_key: update.api_key,
         };
         to_json(config_rpc::load_and_apply_local_ai_settings(patch).await?)
     })
