@@ -5,6 +5,8 @@ not catch.
 
 ## What runs
 
+Workflow: retired; the previous scheduled GitHub Actions workflow was removed
+when redundant workflows were pruned.
 Script: [`scripts/weekly-code-review.sh`](../scripts/weekly-code-review.sh).
 
 The aggregator currently collects:
@@ -58,7 +60,9 @@ for the JSON shaping. Missing tools are skipped with a note in the report.
 
 ## Disabling / overrides
 
-- **Retire** — delete `scripts/weekly-code-review.sh` and remove the
+- **One-off skip** — cancel the scheduled run from the Actions tab.
+- **Pause indefinitely** — no scheduled workflow is currently installed.
+- **Retire fully** — delete `scripts/weekly-code-review.sh` and remove the
   `weekly-code-review` label. No other code references them.
 
 ## Intentionally out of scope for the first cut
