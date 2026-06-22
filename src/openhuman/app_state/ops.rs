@@ -383,22 +383,111 @@ fn clear_pending_backend_validation_flag(mut user: Value) -> Value {
     user
 }
 
+fn config_state_dir(config: &Config) -> Option<PathBuf> {
+    config.config_path.parent().map(Path::to_path_buf)
+}
+
+fn same_config_state_dir(a: &Config, b: &Config) -> bool {
+    config_state_dir(a) == config_state_dir(b)
+}
+
+async fn activate_revalidated_user_dir(config: &Config, user_id: &str) -> Config {
+    if let Ok(root_dir) = crate::openhuman::config::default_root_openhuman_dir() {
+        let previous_active = crate::openhuman::config::read_active_user_id(&root_dir);
+        let user_dir = crate::openhuman::config::user_openhuman_dir(&root_dir, user_id);
+        if let Err(error) = fs::create_dir_all(&user_dir) {
+            warn!(
+                "{LOG_PREFIX} failed to create user directory for revalidated pending session user_id={user_id}: {error}"
+            );
+        } else if let Err(error) =
+            crate::openhuman::config::write_active_user_id(&root_dir, user_id)
+        {
+            warn!(
+                "{LOG_PREFIX} failed to write active_user.toml for revalidated pending session user_id={user_id}: {error}"
+            );
+        } else {
+            debug!(
+                "{LOG_PREFIX} activated user directory for revalidated pending session user_id={user_id}"
+            );
+            if previous_active.is_none() {
+                let pre_ws =
+                    crate::openhuman::config::pre_login_user_dir(&root_dir).join("workspace");
+                if let Err(error) = crate::openhuman::memory_conversations::purge_threads(pre_ws) {
+                    debug!(
+                        "{LOG_PREFIX} pre-login conversation purge skipped after pending session revalidation: {error}"
+                    );
+                }
+            }
+        }
+    }
+
+    Config::load_from_default_paths()
+        .await
+        .unwrap_or_else(|error| {
+            warn!(
+                "{LOG_PREFIX} failed to reload config after pending session user activation: {error}"
+            );
+            config.clone()
+        })
+}
+
+async fn finish_revalidated_user_activation(config: &Config, user_id: &str) {
+    if let Err(error) = crate::openhuman::memory::global::init(config.workspace_dir.clone()) {
+        warn!(
+            "{LOG_PREFIX} failed to bind memory client after pending session revalidation: {error}"
+        );
+    }
+    crate::openhuman::memory_conversations::register_conversation_persistence_subscriber(
+        config.workspace_dir.clone(),
+    );
+    if let Err(error) = crate::openhuman::subconscious::global::bootstrap_after_login().await {
+        warn!("{LOG_PREFIX} subconscious bootstrap failed after pending session revalidation: {error}");
+    }
+    crate::openhuman::credentials::start_login_gated_services(config).await;
+    crate::openhuman::scheduler_gate::set_signed_out(false);
+    crate::openhuman::credentials::sentry_scope::bind(user_id);
+}
+
+async fn remove_revalidated_source_profile(config: &Config) -> Result<(), String> {
+    let config = config.clone();
+    tokio::task::spawn_blocking(move || {
+        AuthService::from_config(&config)
+            .remove_profile(APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .unwrap_or_else(|e| {
+        Err(format!(
+            "{LOG_PREFIX} revalidated source profile remove task panicked: {e}"
+        ))
+    })
+}
+
 async fn persist_revalidated_session_user(
     config: &Config,
     token: &str,
     base_metadata: BTreeMap<String, String>,
     user: Value,
 ) -> Result<(), String> {
-    let config = config.clone();
+    let user_id = user_id_from_profile_payload(&user);
+    let target_config = if let Some(user_id) = user_id.as_deref() {
+        activate_revalidated_user_dir(config, user_id).await
+    } else {
+        config.clone()
+    };
+    let source_config = config.clone();
+    let source_moved = user_id.is_some() && !same_config_state_dir(config, &target_config);
     let token = token.to_string();
     let mut metadata: HashMap<String, String> = base_metadata.into_iter().collect();
-    if let Some(user_id) = user_id_from_profile_payload(&user) {
+    if let Some(user_id) = user_id.clone() {
         metadata.insert("user_id".to_string(), user_id);
     }
     metadata.insert("user_json".to_string(), user.to_string());
 
+    let config_for_store = target_config.clone();
     tokio::task::spawn_blocking(move || {
-        AuthService::from_config(&config)
+        AuthService::from_config(&config_for_store)
             .store_provider_token(
                 APP_SESSION_PROVIDER,
                 DEFAULT_AUTH_PROFILE_NAME,
@@ -414,7 +503,21 @@ async fn persist_revalidated_session_user(
         Err(format!(
             "{LOG_PREFIX} revalidated session persist task panicked: {e}"
         ))
-    })
+    })?;
+
+    if source_moved {
+        if let Err(error) = remove_revalidated_source_profile(&source_config).await {
+            warn!(
+                "{LOG_PREFIX} failed to remove source pending session profile after user activation: {error}"
+            );
+        }
+    }
+
+    if let Some(user_id) = user_id.as_deref() {
+        finish_revalidated_user_activation(&target_config, user_id).await;
+    }
+
+    Ok(())
 }
 
 async fn clear_deferred_session_after_backend_rejection(config: &Config) -> Result<(), String> {

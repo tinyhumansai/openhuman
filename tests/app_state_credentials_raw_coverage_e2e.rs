@@ -516,6 +516,8 @@ async fn snapshot_clears_pending_backend_validation_after_successful_revalidatio
     .await;
     let harness = setup(&api_url);
     let config = harness.config().await;
+    let active_user_root = openhuman_core::openhuman::config::default_root_openhuman_dir()
+        .expect("default openhuman root");
 
     let mut metadata = HashMap::new();
     metadata.insert("user_id".to_string(), "pending-user".to_string());
@@ -560,7 +562,10 @@ async fn snapshot_clears_pending_backend_validation_after_successful_revalidatio
         "fresh snapshot user must not keep pendingBackendValidation"
     );
 
-    let profile = AuthService::from_config(&config)
+    let active_config = openhuman_core::openhuman::config::Config::load_from_default_paths()
+        .await
+        .expect("load activated user config");
+    let profile = AuthService::from_config(&active_config)
         .get_profile(APP_SESSION_PROVIDER, None)
         .expect("read profile")
         .expect("profile remains after successful revalidation");
@@ -582,6 +587,118 @@ async fn snapshot_clears_pending_backend_validation_after_successful_revalidatio
     assert!(
         stored_user.get("pendingBackendValidation").is_none(),
         "successful revalidation must clear persisted pendingBackendValidation"
+    );
+    assert_eq!(
+        openhuman_core::openhuman::config::read_active_user_id(&active_user_root).as_deref(),
+        Some("fresh-pending-user"),
+        "successful pending revalidation must activate the fresh backend user"
+    );
+    let source_profile = AuthService::from_config(&config)
+        .get_profile(APP_SESSION_PROVIDER, None)
+        .expect("read source profile after successful revalidation");
+    assert!(
+        source_profile.is_none(),
+        "source pending profile must be removed after successful user activation"
+    );
+
+    let _ = shutdown_tx.send(());
+    let _ = server_task.await;
+}
+
+#[tokio::test]
+async fn snapshot_activates_user_dir_after_pending_revalidation_without_initial_user_id() {
+    let _lock = env_lock();
+    let (api_url, server_task, shutdown_tx) = auth_me_server(
+        r#"{"data":{"id":"fresh-activated-user","name":"Fresh Activated","email":"fresh-activated@example.test"}}"#,
+    )
+    .await;
+    let harness = setup(&api_url);
+    let config = harness.config().await;
+    let active_user_root = openhuman_core::openhuman::config::default_root_openhuman_dir()
+        .expect("default openhuman root");
+    assert_eq!(
+        openhuman_core::openhuman::config::read_active_user_id(&active_user_root),
+        None,
+        "test must start without active_user.toml"
+    );
+
+    let mut metadata = HashMap::new();
+    metadata.insert(
+        "user_json".to_string(),
+        json!({
+            "pendingBackendValidation": true
+        })
+        .to_string(),
+    );
+    AuthService::from_config(&config)
+        .store_provider_token(
+            APP_SESSION_PROVIDER,
+            DEFAULT_AUTH_PROFILE_NAME,
+            "round14.pending.activate",
+            metadata,
+            true,
+        )
+        .expect("seed pending app session without user id");
+
+    let snap = snapshot()
+        .await
+        .expect("snapshot with successful pending activation")
+        .value;
+    assert!(snap.auth.is_authenticated);
+    assert_eq!(
+        snap.session_token.as_deref(),
+        Some("round14.pending.activate")
+    );
+    assert_eq!(snap.auth.user_id.as_deref(), Some("fresh-activated-user"));
+    assert_eq!(
+        snap.current_user.as_ref().and_then(|v| v.get("id")),
+        Some(&json!("fresh-activated-user"))
+    );
+    assert!(
+        snap.current_user
+            .as_ref()
+            .and_then(|v| v.get("pendingBackendValidation"))
+            .is_none(),
+        "activated snapshot user must not keep pendingBackendValidation"
+    );
+    assert_eq!(
+        openhuman_core::openhuman::config::read_active_user_id(&active_user_root).as_deref(),
+        Some("fresh-activated-user"),
+        "successful pending revalidation must activate the backend user"
+    );
+
+    let active_config = openhuman_core::openhuman::config::Config::load_from_default_paths()
+        .await
+        .expect("load activated user config");
+    let active_profile = AuthService::from_config(&active_config)
+        .get_profile(APP_SESSION_PROVIDER, None)
+        .expect("read active profile")
+        .expect("profile must be written under activated user config");
+    assert_eq!(
+        active_profile.metadata.get("user_id").map(String::as_str),
+        Some("fresh-activated-user")
+    );
+    let stored_user: Value = serde_json::from_str(
+        active_profile
+            .metadata
+            .get("user_json")
+            .expect("persisted activated user_json"),
+    )
+    .expect("activated stored user json");
+    assert_eq!(
+        stored_user.get("id").and_then(Value::as_str),
+        Some("fresh-activated-user")
+    );
+    assert!(
+        stored_user.get("pendingBackendValidation").is_none(),
+        "activated persisted user must not keep pendingBackendValidation"
+    );
+    let source_profile = AuthService::from_config(&config)
+        .get_profile(APP_SESSION_PROVIDER, None)
+        .expect("read source profile after activation");
+    assert!(
+        source_profile.is_none(),
+        "source pre-login pending profile must be removed after activated persist succeeds"
     );
 
     let _ = shutdown_tx.send(());
