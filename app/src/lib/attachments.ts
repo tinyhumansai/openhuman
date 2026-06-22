@@ -247,8 +247,9 @@ export function buildMessageWithAttachments(text: string, attachments: Attachmen
 }
 
 /**
- * Parse `[IMAGE:<data-uri>]` markers out of a stored message string.
- * Returns the clean text (markers removed) and the list of data URIs found.
+ * Parse `[IMAGE:<data-uri>]` and `[FILE:<data-uri>]` markers out of a stored message string.
+ * Returns the clean text (markers removed) and the list of image data URIs found.
+ * File markers are stripped from text but not returned (file data lives in extraMetadata).
  */
 export function parseMessageImages(content: string): { text: string; dataUris: string[] } {
   const dataUris: string[] = [];
@@ -257,6 +258,11 @@ export function parseMessageImages(content: string): { text: string; dataUris: s
       dataUris.push(uri);
       return '';
     })
+    .replace(/\[FILE:([^\]]+)\]/g, '') // Strip file markers
+    // Collapse only runs of plain spaces (not \s) left behind by marker
+    // removal — using \s here would also eat intentional newlines/paragraph
+    // breaks in the user's own text.
+    .replace(/ {2,}/g, ' ')
     .trim();
   return { text, dataUris };
 }

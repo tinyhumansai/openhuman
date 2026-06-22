@@ -351,6 +351,121 @@ async fn seal_document_subtree_single_chunk_is_verbatim_passthrough_no_llm() {
     );
 }
 
+/// Multi-batch document subtree: a doc whose chunks span several level-0
+/// batches must seal its siblings **concurrently** (overlapping the
+/// summarise + embed round-trips) while still producing an identical
+/// doc-root. A `ChatProvider` probe records the peak number of in-flight
+/// summarise calls; with four independent level-0 batches the peak must
+/// exceed 1 (proving overlap) yet stay within `DOC_SUBTREE_SEAL_CONCURRENCY`
+/// (proving the bound is respected). This is the regression guard for the
+/// serial → bounded-concurrency change in `seal_document_subtree`.
+#[tokio::test]
+async fn seal_document_subtree_seals_sibling_batches_concurrently() {
+    use crate::openhuman::memory::chat::ChatPrompt;
+    use crate::openhuman::memory_store::chunks::store::upsert_chunks;
+    use crate::openhuman::memory_store::chunks::types::{
+        chunk_id, Chunk, Metadata, SourceKind, SourceRef,
+    };
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Records concurrent in-flight `chat_for_json` calls and the peak; a
+    /// short sleep forces would-be-concurrent calls to actually overlap so
+    /// the peak reflects real scheduling, not luck.
+    struct ConcurrencyProbe {
+        in_flight: AtomicUsize,
+        peak: AtomicUsize,
+        calls: AtomicUsize,
+    }
+    #[async_trait::async_trait]
+    impl ChatProvider for ConcurrencyProbe {
+        fn name(&self) -> &str {
+            "test:concurrency-probe"
+        }
+        async fn chat_for_json(&self, _p: &ChatPrompt) -> anyhow::Result<String> {
+            let now = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+            self.peak.fetch_max(now, Ordering::SeqCst);
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            self.in_flight.fetch_sub(1, Ordering::SeqCst);
+            Ok("doc batch summary".to_string())
+        }
+    }
+
+    let (_tmp, cfg) = test_config();
+    let tree = get_or_create_source_tree(&cfg, "notion:conn1").unwrap();
+    let doc_id = "notion:conn1:pageM";
+
+    // Four chunks, each ~60% of the input budget, so the greedy token-budget
+    // batcher puts each in its OWN level-0 batch → four independent
+    // summarise calls that should overlap under bounded concurrency.
+    let per_chunk = INPUT_TOKEN_BUDGET * 6 / 10;
+    let ts = Utc::now();
+    let mut ids = Vec::new();
+    let mut chunks = Vec::new();
+    for seq in 0..4u32 {
+        let content = format!("substantive document body number {seq}");
+        let c = Chunk {
+            id: chunk_id(SourceKind::Document, doc_id, seq, &content),
+            content,
+            metadata: Metadata {
+                source_kind: SourceKind::Document,
+                source_id: doc_id.to_string(),
+                owner: "notion:conn1".into(),
+                timestamp: ts,
+                time_range: (ts, ts),
+                tags: vec!["notion".into()],
+                source_ref: Some(SourceRef::new("notion://page/pageM")),
+                path_scope: Some("notion:conn1".into()),
+            },
+            token_count: per_chunk,
+            seq_in_source: seq,
+            created_at: ts,
+            partial_message: false,
+        };
+        ids.push(c.id.clone());
+        chunks.push(c);
+    }
+    upsert_chunks(&cfg, &chunks).unwrap();
+    stage_test_chunks(&cfg, &chunks);
+
+    let probe = Arc::new(ConcurrencyProbe {
+        in_flight: AtomicUsize::new(0),
+        peak: AtomicUsize::new(0),
+        calls: AtomicUsize::new(0),
+    });
+    let provider: Arc<dyn ChatProvider> = probe.clone();
+
+    let doc_root_id = test_override::with_provider(provider, async {
+        seal_document_subtree(&cfg, &tree, doc_id, Some(7), &ids, &LabelStrategy::Empty)
+            .await
+            .unwrap()
+    })
+    .await;
+
+    // Correctness: the four chunks roll up under a single doc-root tagged
+    // with the document id + version — tree shape unchanged by batching.
+    let root = store::get_summary(&cfg, &doc_root_id).unwrap().unwrap();
+    assert_eq!(root.doc_id.as_deref(), Some(doc_id));
+    assert_eq!(root.version_ms, Some(7));
+    assert_eq!(
+        root.child_ids.len(),
+        4,
+        "all four level-0 siblings must fan into the doc-root"
+    );
+
+    // Concurrency: at least two level-0 siblings overlapped, and the pool
+    // bound was respected.
+    let peak = probe.peak.load(Ordering::SeqCst);
+    assert!(
+        peak >= 2,
+        "expected overlapping sibling seals (peak in-flight = {peak})"
+    );
+    assert!(
+        peak <= DOC_SUBTREE_SEAL_CONCURRENCY,
+        "concurrency must stay within the pool bound (peak = {peak})"
+    );
+}
+
 #[tokio::test]
 async fn crossing_budget_triggers_seal() {
     use crate::openhuman::memory_store::chunks::store::upsert_chunks;

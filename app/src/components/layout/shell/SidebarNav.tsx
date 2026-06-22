@@ -4,9 +4,11 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { NAV_TABS, type NavTab } from '../../../config/navConfig';
 import { useT } from '../../../lib/i18n/I18nContext';
 import { trackEvent } from '../../../services/analytics';
+import { setActiveAccount } from '../../../store/accountsSlice';
 import { selectCompanionSessionActive } from '../../../store/companionSlice';
-import { useAppSelector } from '../../../store/hooks';
+import { useAppDispatch, useAppSelector } from '../../../store/hooks';
 import { selectUnreadCount } from '../../../store/notificationSlice';
+import { AGENT_ACCOUNT_ID } from '../../../utils/accountsFullscreen';
 import { NavIcon } from './navIcons';
 
 /**
@@ -35,6 +37,7 @@ function matchActive(path: string, pathname: string): boolean {
  */
 export default function SidebarNav() {
   const { t } = useT();
+  const dispatch = useAppDispatch();
   const location = useLocation();
   const navigate = useNavigate();
   const unreadCount = useAppSelector(state => selectUnreadCount(state.notifications.items));
@@ -44,6 +47,7 @@ export default function SidebarNav() {
   const activeTab = tabs.find(tab => matchActive(tab.path, location.pathname));
 
   const handleClick = (tab: NavTab, active: boolean) => {
+    dispatch(setActiveAccount(AGENT_ACCOUNT_ID));
     if (!active) {
       trackEvent('tab_bar_change', {
         from_tab: activeTab?.id ?? 'unknown',

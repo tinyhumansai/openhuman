@@ -18,6 +18,8 @@ mod compatible_request;
 mod compatible_stream;
 #[path = "compatible_stream_native.rs"]
 mod compatible_stream_native;
+#[path = "compatible_timeout.rs"]
+mod compatible_timeout;
 #[path = "compatible_types.rs"]
 mod compatible_types;
 

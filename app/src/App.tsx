@@ -10,6 +10,7 @@ import {
 import { PersistGate } from 'redux-persist/integration/react';
 
 import AppRoutes from './AppRoutes';
+import WebviewHost from './components/accounts/WebviewHost';
 import AppBackground from './components/AppBackground';
 import AppUpdatePrompt from './components/AppUpdatePrompt';
 import BootCheckGate from './components/BootCheckGate/BootCheckGate';
@@ -57,7 +58,8 @@ import {
   stopWebviewAccountService,
 } from './services/webviewAccountService';
 import { persistor, store } from './store';
-import { useAppSelector } from './store/hooks';
+import { setActiveAccount } from './store/accountsSlice';
+import { useAppDispatch, useAppSelector } from './store/hooks';
 import { AGENT_ACCOUNT_ID } from './utils/accountsFullscreen';
 import { DEV_FORCE_ONBOARDING } from './utils/config';
 
@@ -161,9 +163,10 @@ function AppShell() {
 }
 
 /** Desktop inner shell — lives inside the Router so it can use useLocation. */
-function AppShellDesktop() {
+export function AppShellDesktop() {
   const location = useLocation();
   const navigate = useNavigate();
+  const dispatch = useAppDispatch();
   const { snapshot, isBootstrapping } = useCoreState();
   const onOnboardingRoute = location.pathname.startsWith('/onboarding');
   const onboardingPending =
@@ -200,15 +203,24 @@ function AppShellDesktop() {
   }, [location.pathname]);
 
   // Hide the active connected-app webview when we navigate away from the chat
-  // surface. The native CEF webview composites above the HTML, so without this
-  // it lingers on top of the newly-routed page until the user returns.
+  // surface. Provider CEF selection is intentionally route-independent; any
+  // real route change clears that high-level selection so the native view
+  // cannot linger over the newly-routed page.
   const activeAccountId = useAppSelector(state => state.accounts.activeAccountId);
+  const accountsById = useAppSelector(state => state.accounts.accounts);
+  const accountsOverlayOpen = useAppSelector(state => state.accounts.overlayOpen);
+  const previousPathRef = useRef(location.pathname);
   useEffect(() => {
-    const onChat = location.pathname === '/chat' || location.pathname.startsWith('/chat/');
-    if (!onChat && activeAccountId && activeAccountId !== AGENT_ACCOUNT_ID) {
+    if (
+      location.pathname !== previousPathRef.current &&
+      activeAccountId &&
+      activeAccountId !== AGENT_ACCOUNT_ID
+    ) {
       void hideWebviewAccount(activeAccountId);
+      dispatch(setActiveAccount(AGENT_ACCOUNT_ID));
     }
-  }, [location.pathname, activeAccountId]);
+    previousPathRef.current = location.pathname;
+  }, [dispatch, location.pathname, activeAccountId]);
 
   // Sync the notch indicator to the persisted always-on listening state once
   // the core is ready (once per boot). Extracted to a hook so it's testable.
@@ -232,10 +244,23 @@ function AppShellDesktop() {
   );
   const chromeless = !token || onOnboardingRoute || onHiddenChromePath;
 
+  const activeProviderAccount =
+    activeAccountId && activeAccountId !== AGENT_ACCOUNT_ID
+      ? (accountsById[activeAccountId] ?? null)
+      : null;
+
   const content = (
     <div ref={scrollRef} className="relative h-full overflow-y-auto">
       <GlobalUpsellBanner />
       <AppRoutes />
+      {activeProviderAccount && !accountsOverlayOpen && (
+        <div className="absolute inset-0 z-30">
+          <WebviewHost
+            accountId={activeProviderAccount.id}
+            provider={activeProviderAccount.provider}
+          />
+        </div>
+      )}
     </div>
   );
 

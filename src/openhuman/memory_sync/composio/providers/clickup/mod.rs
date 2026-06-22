@@ -15,6 +15,7 @@
 
 mod ingest;
 mod provider;
+mod source;
 mod sync;
 #[cfg(test)]
 mod tests;

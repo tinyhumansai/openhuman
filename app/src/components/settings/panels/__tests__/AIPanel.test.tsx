@@ -29,7 +29,11 @@ import {
   openhumanHeartbeatSettingsSet,
   openhumanHeartbeatTickNow,
 } from '../../../../utils/tauriCommands/heartbeat';
-import AIPanel, { BackgroundLoopControls } from '../AIPanel';
+import AIPanel, {
+  BackgroundLoopControls,
+  buildRoutingDiffSummary,
+  type RoutingMap,
+} from '../AIPanel';
 
 vi.mock('../../../../services/api/aiSettingsApi', () => ({
   ALL_WORKLOADS: [
@@ -144,7 +148,9 @@ const baseHeartbeatSettings = {
   meeting_lookahead_minutes: 60,
   max_calendar_connections_per_tick: 2,
   reminder_lookahead_minutes: 30,
-  subconscious_mode: 'off' as 'off' | 'simple' | 'aggressive',
+  subconscious_mode: 'off' as 'off' | 'simple' | 'aggressive' | 'event_driven',
+  triggers_enabled: false,
+  max_promotions_per_hour: 30,
 };
 
 const baseUsage = {
@@ -1537,5 +1543,43 @@ describe('AIPanel', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Planner tick now' }));
     await waitFor(() => expect(screen.getByText('tick failed')).toBeInTheDocument());
+  });
+});
+
+describe('buildRoutingDiffSummary', () => {
+  const allDefault = (): RoutingMap => ({
+    chat: { kind: 'default' },
+    reasoning: { kind: 'default' },
+    agentic: { kind: 'default' },
+    coding: { kind: 'default' },
+    vision: { kind: 'default' },
+    memory: { kind: 'default' },
+    heartbeat: { kind: 'default' },
+    learning: { kind: 'default' },
+    subconscious: { kind: 'default' },
+  });
+
+  it('emits one "<label> → <target>" entry per changed workload and skips unchanged ones', () => {
+    // Identity `t` so we can assert the workload's i18n label key is used.
+    const t = (key: string) => key;
+    const saved = allDefault();
+    saved.coding = { kind: 'cloud', providerSlug: 'x', model: 'y' };
+    const draft = allDefault();
+    draft.chat = { kind: 'cloud', providerSlug: 'openai', model: 'gpt-4o', temperature: 0.3 };
+    draft.reasoning = { kind: 'openhuman' };
+    draft.agentic = { kind: 'local', model: 'llama3' };
+    // coding: saved=cloud, draft=default → changed; describe(default) === 'cloud'.
+
+    expect(buildRoutingDiffSummary(saved, draft, t)).toEqual([
+      'settings.ai.routing.workload.chat.label → openai:gpt-4o@0.30',
+      'settings.ai.routing.workload.reasoning.label → openhuman',
+      'settings.ai.routing.workload.agentic.label → local:llama3',
+      'settings.ai.routing.workload.coding.label → cloud',
+    ]);
+  });
+
+  it('returns an empty list when draft matches saved', () => {
+    const routing = allDefault();
+    expect(buildRoutingDiffSummary(routing, { ...routing }, k => k)).toEqual([]);
   });
 });

@@ -13,6 +13,7 @@ import { MemoryControls } from '../components/intelligence/MemoryControls';
 import { MemoryGraph } from '../components/intelligence/MemoryGraph';
 import { MemorySourcesRegistry } from '../components/intelligence/MemorySourcesRegistry';
 import { MemoryTreeStatusPanel } from '../components/intelligence/MemoryTreeStatusPanel';
+import SubconsciousTriggersPanel from '../components/intelligence/SubconsciousTriggersPanel';
 import { ToastContainer } from '../components/intelligence/Toast';
 import PanelPage from '../components/layout/PanelPage';
 import { SidebarContent } from '../components/layout/shell/SidebarSlot';
@@ -307,6 +308,7 @@ export default function Brain() {
                       setIntervalMinutes={sub.setIntervalMinutes}
                     />
                   </div>
+                  <SubconsciousTriggersPanel />
                 </div>
               )}
             </div>

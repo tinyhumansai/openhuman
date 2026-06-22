@@ -26,6 +26,7 @@
 //! The seed is never logged, persisted, or returned across any IPC boundary.
 
 pub(crate) mod agent;
+mod agent_tools;
 mod manifest;
 mod ops;
 mod payment;

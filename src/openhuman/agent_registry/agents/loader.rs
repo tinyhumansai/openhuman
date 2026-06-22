@@ -768,17 +768,19 @@ mod tests {
         assert_eq!(def.delegate_name.as_deref(), Some("use_tinyplace"));
         match &def.tools {
             ToolScope::Named(names) => {
+                // Curated flow surface (replaced the per-controller 1:1 tools).
                 for required in [
+                    "tinyplace_whoami",
+                    "tinyplace_status",
+                    "tinyplace_feed",
+                    "tinyplace_find_work",
+                    "tinyplace_register",
+                    "tinyplace_post_bounty",
+                    "tinyplace_submit_work",
                     "tinyplace_job_apply",
-                    "tinyplace_registry_register",
-                    "tinyplace_marketplace_buy_identity",
-                    "tinyplace_marketplace_bid",
-                    "tinyplace_inbox_list",
-                    "tinyplace_signal_send_message",
-                    "tinyplace_messages_list",
-                    "tinyplace_groups_set_member_role",
-                    "tinyplace_bounties_approve",
-                    "tinyplace_jobs_select",
+                    "tinyplace_graphql",
+                    "tinyplace_call",
+                    "tinyplace_help",
                     "ask_user_clarification",
                     "resolve_time",
                     "current_time",

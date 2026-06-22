@@ -629,12 +629,7 @@ fly machine restart --config .fly/fly.toml
 
 ## Smoke test
 
-The repo ships [`.github/workflows/deploy-smoke.yml`](../../.github/workflows/deploy-smoke.yml),
-which runs on every PR that touches the deploy artifacts. It builds the
-Docker image, boots it, and polls `/health`, so a regression in the cloud
-deploy path fails CI before it lands on `main`.
-
-The workflow contains two jobs:
+Two failure modes guard the cloud deploy path:
 
 - **`docker-image`** — sets `OPENHUMAN_CORE_TOKEN` and mounts no volume.
   Protects the DigitalOcean App Platform path (`.do/app.yaml`) where the
@@ -644,7 +639,7 @@ The workflow contains two jobs:
   exact failure mode of issue #2065 and asserts that `/health` returns 200
   and that `Permission denied (os error 13)` is absent from the logs.
 
-To run the same check locally:
+Run the smoke check locally:
 
 ```bash
 docker build -t openhuman-core:smoke .

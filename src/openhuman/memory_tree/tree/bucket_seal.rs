@@ -38,6 +38,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
+use futures::stream::{StreamExt, TryStreamExt};
 use rusqlite::Transaction;
 
 use crate::openhuman::config::Config;
@@ -1012,6 +1013,17 @@ pub const MERGE_LEVEL_BASE: u32 = 1_000;
 /// children. Independent of [`SUMMARY_FANOUT`] (which gates the merge tier).
 const DOC_SUBTREE_MAX_FANIN: usize = 32;
 
+/// Bound on how many sibling batches within a single document-subtree level
+/// are sealed concurrently. Each [`seal_explicit_children`] call is one
+/// independent summarise + embed round-trip pair, so overlapping them with a
+/// small pool collapses the serial `N × (LLM + embed RTT)` wall-time toward
+/// `N/CONCURRENCY × RTT` on the ingest path. Kept low: the SQLite write tx
+/// serialises on a single writer anyway, and networked summarise/embed
+/// providers (Voyage, cloud LLMs) rate-limit — so a large pool buys nothing
+/// and risks 429s. `buffered` (ordered) preserves the serial cascade's batch
+/// order, so the resulting tree shape is identical.
+const DOC_SUBTREE_SEAL_CONCURRENCY: usize = 8;
+
 /// Build (or re-build, for a new version) one document's subtree and merge
 /// its doc-root into the connection tree.
 ///
@@ -1067,21 +1079,61 @@ pub async fn seal_document_subtree(
             batch_by_count(&current_ids, DOC_SUBTREE_MAX_FANIN)
         };
 
-        let mut next_ids: Vec<String> = Vec::with_capacity(batches.len());
-        for batch in &batches {
-            let node = seal_explicit_children(
-                config,
-                tree,
+        // Within one level the batches are disjoint child sets, and
+        // `seal_explicit_children` touches no shared `(tree, level)` buffer
+        // and never advances the tree root (see its docstring) — so the
+        // sibling seals are independent and their summarise + embed
+        // round-trips can overlap. Run them with bounded concurrency.
+        //
+        // `buffered` (ordered), NOT `buffer_unordered`: the next level groups
+        // `next_ids` positionally via `batch_by_count`, so the output order
+        // must match the serial cascade to keep the tree shape identical.
+        // `try_collect` short-circuits on the first error, preserving the
+        // old `?`-on-first-failure behaviour. Levels stay sequential — level
+        // N+1 consumes level N's output — so only siblings overlap, not the
+        // cross-level fan-in. The blocking SQLite write inside each seal
+        // still serialises (single writer), which is fine: the win is the
+        // overlapped network RTTs, not the DB writes.
+        // Build the per-batch futures eagerly into a `Vec` (they don't run until
+        // polled) rather than lazily inside a `stream::iter(...).map(closure)`:
+        // the lazy form makes rustc try to infer a higher-ranked `FnOnce` over
+        // the borrowed `batch` lifetime, which fails ("implementation of
+        // `FnOnce` is not general enough") once this async fn is spawned. Eager
+        // collection ties each future to this stack frame's concrete lifetime.
+        if batches.len() > 1 {
+            log::debug!(
+                "[tree::bucket_seal] doc-subtree concurrent seal tree_id={} doc_id_hash={} level={} batches={} concurrency={}",
+                tree.id,
+                redact(doc_id),
                 current_level,
-                batch,
-                Some(doc_id),
-                version_ms,
-                strategy,
-            )
-            .await?;
-            next_ids.push(node.id.clone());
-            doc_root = Some(node);
+                batches.len(),
+                DOC_SUBTREE_SEAL_CONCURRENCY
+            );
         }
+        let batch_futures: Vec<_> = batches
+            .iter()
+            .map(|batch| {
+                seal_explicit_children(
+                    config,
+                    tree,
+                    current_level,
+                    batch,
+                    Some(doc_id),
+                    version_ms,
+                    strategy,
+                )
+            })
+            .collect();
+        let nodes: Vec<SummaryNode> = futures::stream::iter(batch_futures)
+            .buffered(DOC_SUBTREE_SEAL_CONCURRENCY)
+            .try_collect()
+            .await?;
+
+        let next_ids: Vec<String> = nodes.iter().map(|n| n.id.clone()).collect();
+        // The terminal level produces exactly one node (the loop breaks once
+        // `current_ids.len() <= 1`); preserving batch order means the last
+        // node is the doc-root, identical to the serial assignment.
+        doc_root = nodes.into_iter().next_back();
 
         current_level += 1;
         current_ids = next_ids;

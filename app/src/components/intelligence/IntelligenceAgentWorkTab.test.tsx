@@ -8,6 +8,8 @@ import {
 } from '../../services/api/agentWorkApi';
 import IntelligenceAgentWorkTab from './IntelligenceAgentWorkTab';
 
+const hoisted = vi.hoisted(() => ({ dispatch: vi.fn(), navigate: vi.fn() }));
+
 vi.mock('../../services/api/agentWorkApi', () => ({
   agentWorkApi: { list: vi.fn(), control: vi.fn() },
 }));
@@ -16,8 +18,8 @@ vi.mock('../../services/api/agentWorkApi', () => ({
 vi.mock('../../lib/i18n/I18nContext', () => ({ useT: () => ({ t: (k: string) => k }) }));
 
 // Navigation + store: the tab only dispatches + navigates on click; stub them.
-vi.mock('react-router-dom', () => ({ useNavigate: () => vi.fn() }));
-vi.mock('../../store/hooks', () => ({ useAppDispatch: () => vi.fn() }));
+vi.mock('react-router-dom', () => ({ useNavigate: () => hoisted.navigate }));
+vi.mock('../../store/hooks', () => ({ useAppDispatch: () => hoisted.dispatch }));
 vi.mock('../../store/threadSlice', () => ({
   loadThreadMessages: vi.fn(),
   loadThreads: vi.fn(),
@@ -104,6 +106,8 @@ describe('IntelligenceAgentWorkTab', () => {
     // call history, not queued *Once values / persistent implementations).
     mockList.mockReset();
     mockControl.mockReset();
+    hoisted.dispatch.mockReset();
+    hoisted.navigate.mockReset();
   });
 
   it('fetches agent work on mount', async () => {
@@ -146,6 +150,16 @@ describe('IntelligenceAgentWorkTab', () => {
     expect(screen.getByText('$0.05')).toBeInTheDocument();
     // worker-thread jump button present
     expect(screen.getByText('intelligence.agentWork.openWorker')).toBeInTheDocument();
+  });
+
+  it('opens worker threads on the routed chat URL', async () => {
+    mockList.mockResolvedValue(workingResponse());
+    render(<IntelligenceAgentWorkTab />);
+    await waitFor(() => expect(screen.getByText('Researcher')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText('intelligence.agentWork.openWorker'));
+
+    expect(hoisted.navigate).toHaveBeenCalledWith('/chat/thread-w');
   });
 
   it('shows Stop (not Retry/Continue) for a live working run', async () => {

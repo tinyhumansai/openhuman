@@ -31,6 +31,7 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 
 use crate::openhuman::agent::harness::current_sandbox_mode;
+use crate::openhuman::agent::harness::current_task_recency_window;
 use crate::openhuman::agent::harness::definition::SandboxMode;
 use crate::openhuman::config::rpc as config_rpc;
 use crate::openhuman::config::Config;
@@ -1078,6 +1079,20 @@ impl Tool for ComposioExecuteTool {
         let arguments =
             super::googlecalendar_args::apply_calendar_query_defaults(&tool, arguments, &iana);
 
+        // Task-recency window (morning briefing): when the calling agent
+        // installed a window, inject best-effort server-side narrowing for
+        // curated task-fetch slugs. No-op for every other slug and for
+        // normal chat / CLI / JSON-RPC (window unset → None). The
+        // authoritative enforcement is the post-filter on the response below.
+        let task_window_since = current_task_recency_window().map(|w| {
+            chrono::Utc::now()
+                - chrono::Duration::from_std(w).unwrap_or_else(|_| chrono::Duration::zero())
+        });
+        let arguments = match task_window_since {
+            Some(since) => super::task_window::apply_window_args(&tool, arguments, since),
+            None => arguments,
+        };
+
         // Resolve the client through the mode-aware factory on every
         // call so a direct-mode toggle takes effect immediately
         // (#1710). The pre-baked-client variant of this code routed all
@@ -1122,6 +1137,14 @@ impl Tool for ComposioExecuteTool {
         let elapsed_ms = started.elapsed().as_millis() as u64;
         match res {
             Ok(resp) => {
+                // Authoritative task-recency enforcement: drop task rows older
+                // than the window. No-op unless a window is installed AND the
+                // slug is a curated task-fetch action. Runs before the
+                // markdown/JSON body decision so the agent reads filtered data.
+                let resp = match task_window_since {
+                    Some(since) => super::task_window::filter_response(&tool, resp, since),
+                    None => resp,
+                };
                 tracing::info!(
                     tool = %tool,
                     successful = resp.successful,
