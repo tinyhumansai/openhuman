@@ -66,6 +66,18 @@ enum SnapshotCurrentUser {
     DeferredSessionRejected,
 }
 
+impl SnapshotCurrentUser {
+    fn user(user: Option<Value>) -> Self {
+        Self::User(user)
+    }
+}
+
+type SnapshotCurrentUserResult = (SnapshotCurrentUser, Option<Box<Config>>);
+
+fn snapshot_current_user_result(user: Option<Value>) -> SnapshotCurrentUserResult {
+    (SnapshotCurrentUser::user(user), None)
+}
+
 #[derive(Debug, Clone)]
 enum CurrentUserFetchError {
     Rejected(String),
@@ -521,7 +533,7 @@ async fn persist_revalidated_session_user(
     token: &str,
     base_metadata: BTreeMap<String, String>,
     user: Value,
-) -> Result<(), String> {
+) -> Result<Box<Config>, String> {
     let user_id = user_id_from_profile_payload(&user);
     let workspace_env_scoped = config_is_workspace_env_scoped(config);
     let target_config = if let Some(user_id) = user_id.as_deref().filter(|_| !workspace_env_scoped)
@@ -581,7 +593,7 @@ async fn persist_revalidated_session_user(
         .await;
     }
 
-    Ok(())
+    Ok(Box::new(target_config))
 }
 
 async fn clear_deferred_session_after_backend_rejection(
@@ -921,12 +933,12 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
     // OpenHuman" (the FE clears `isBootstrapping` on this call). `tokio::join!`
     // polls both on the current task — no extra threads.
     let t_enrich = Instant::now();
-    let current_user_future = async {
+    let current_user_future = Box::pin(async {
         let Some(token) = session_token.clone().filter(|t| !t.trim().is_empty()) else {
-            return SnapshotCurrentUser::User(stored_user.clone());
+            return snapshot_current_user_result(stored_user.clone());
         };
         if is_local_session_token(&token) {
-            return SnapshotCurrentUser::User(stored_user.clone());
+            return snapshot_current_user_result(stored_user.clone());
         }
         match tokio::time::timeout(
             AUTH_FETCH_TIMEOUT,
@@ -940,11 +952,11 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
                     warn!(
                         "{LOG_PREFIX} pending current user refresh returned a user without an id; keeping stored pending session for retry"
                     );
-                    return SnapshotCurrentUser::User(stored_user.clone());
+                    return snapshot_current_user_result(stored_user.clone());
                 }
                 let fresh_user = clear_pending_backend_validation_flag(fresh_user);
                 if pending_backend_validation {
-                    match persist_revalidated_session_user(
+                    let snapshot_config = match persist_revalidated_session_user(
                         &config,
                         &token,
                         session_metadata.clone(),
@@ -952,20 +964,25 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
                     )
                     .await
                     {
-                        Ok(()) => {
+                        Ok(snapshot_config) => {
                             debug!(
                                 "{LOG_PREFIX} cleared pending backend validation after successful current user refresh"
                             );
+                            snapshot_config
                         }
                         Err(error) => {
                             warn!(
                                 "{LOG_PREFIX} failed to persist cleared pending backend validation: {error}"
                             );
-                            return SnapshotCurrentUser::User(stored_user.clone());
+                            return snapshot_current_user_result(stored_user.clone());
                         }
-                    }
+                    };
+                    return (
+                        SnapshotCurrentUser::user(Some(fresh_user)),
+                        Some(snapshot_config),
+                    );
                 }
-                SnapshotCurrentUser::User(Some(fresh_user))
+                snapshot_current_user_result(Some(fresh_user))
             }
             Ok(Ok(None)) if pending_backend_validation => {
                 warn!(
@@ -979,9 +996,9 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
                 {
                     warn!("{LOG_PREFIX} failed to clear rejected pending session: {error}");
                 }
-                SnapshotCurrentUser::DeferredSessionRejected
+                (SnapshotCurrentUser::DeferredSessionRejected, None)
             }
-            Ok(Ok(None)) => SnapshotCurrentUser::User(stored_user.clone()),
+            Ok(Ok(None)) => snapshot_current_user_result(stored_user.clone()),
             Ok(Err(CurrentUserFetchError::Rejected(error))) if pending_backend_validation => {
                 warn!(
                     "{LOG_PREFIX} pending current user refresh was rejected; clearing stored app session: {error}"
@@ -994,13 +1011,13 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
                 {
                     warn!("{LOG_PREFIX} failed to clear rejected pending session: {clear_error}");
                 }
-                SnapshotCurrentUser::DeferredSessionRejected
+                (SnapshotCurrentUser::DeferredSessionRejected, None)
             }
             Ok(Err(CurrentUserFetchError::FetchFailed(error))) if pending_backend_validation => {
                 warn!(
                     "{LOG_PREFIX} pending current user refresh failed before a backend response; keeping stored pending session for retry: {error}"
                 );
-                SnapshotCurrentUser::User(stored_user.clone())
+                snapshot_current_user_result(stored_user.clone())
             }
             Ok(Err(CurrentUserFetchError::TransientResponse(error)))
                 if pending_backend_validation =>
@@ -1008,32 +1025,32 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
                 warn!(
                     "{LOG_PREFIX} pending current user refresh received transient backend response; keeping stored pending session: {error}"
                 );
-                SnapshotCurrentUser::User(stored_user.clone())
+                snapshot_current_user_result(stored_user.clone())
             }
             Ok(Err(error)) => {
                 warn!(
                     "{LOG_PREFIX} current user refresh failed; using stored snapshot fallback: {}",
                     error.message()
                 );
-                SnapshotCurrentUser::User(stored_user.clone())
+                snapshot_current_user_result(stored_user.clone())
             }
             Err(_) if pending_backend_validation => {
                 warn!(
                     "{LOG_PREFIX} pending current user fetch timed out after {}s; keeping stored pending session for retry",
                     AUTH_FETCH_TIMEOUT.as_secs()
                 );
-                SnapshotCurrentUser::User(stored_user.clone())
+                snapshot_current_user_result(stored_user.clone())
             }
             Err(_) => {
                 warn!(
                     "{LOG_PREFIX} current user fetch timed out after {}s; using stored snapshot fallback",
                     AUTH_FETCH_TIMEOUT.as_secs()
                 );
-                SnapshotCurrentUser::User(stored_user.clone())
+                snapshot_current_user_result(stored_user.clone())
             }
         }
-    };
-    let runtime_future = async {
+    });
+    let runtime_future = Box::pin(async {
         match tokio::time::timeout(
             RUNTIME_SNAPSHOT_TIMEOUT,
             build_runtime_snapshot(&config, req_id),
@@ -1050,9 +1067,14 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
                 degraded_runtime_snapshot(&config)
             }
         }
-    };
-    let (current_user, runtime) = tokio::join!(current_user_future, runtime_future);
+    });
+    let (current_user_result, runtime) = tokio::join!(current_user_future, runtime_future);
     let enrich_ms = t_enrich.elapsed().as_millis();
+    let (current_user, revalidated_config) = current_user_result;
+    let mut snapshot_config = config.clone();
+    if let Some(revalidated_config) = revalidated_config {
+        snapshot_config = *revalidated_config;
+    }
     let current_user = match current_user {
         SnapshotCurrentUser::User(current_user) => {
             if pending_backend_validation {
@@ -1073,9 +1095,32 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
             None
         }
     };
+    let runtime = if same_config_state_dir(&config, &snapshot_config) {
+        runtime
+    } else {
+        warn!(
+            "{LOG_PREFIX} pending session revalidation changed config scope; rebuilding runtime snapshot with activated user config"
+        );
+        match tokio::time::timeout(
+            RUNTIME_SNAPSHOT_TIMEOUT,
+            build_runtime_snapshot(&snapshot_config, req_id),
+        )
+        .await
+        {
+            Ok(snapshot) => snapshot,
+            Err(_) => {
+                warn!(
+                    "{LOG_PREFIX} activated-config runtime snapshot timed out after {}s req_id={}; returning degraded runtime snapshot",
+                    RUNTIME_SNAPSHOT_TIMEOUT.as_secs(),
+                    req_id
+                );
+                degraded_runtime_snapshot(&snapshot_config)
+            }
+        }
+    };
 
     let t_local_state = Instant::now();
-    let local_state = load_stored_app_state(&config)?;
+    let local_state = load_stored_app_state(&snapshot_config)?;
     crate::openhuman::keyring_consent::policy::initialize(local_state.keyring_consent.clone());
     let local_state_ms = t_local_state.elapsed().as_millis();
 
@@ -1089,10 +1134,10 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
         "{LOG_PREFIX} snapshot req_id={} auth={} onboarding={} chat_onboarding={} analytics={} meet_handoff={} si_active={} local_ai_state={} autocomplete_phase={} service_state={:?}",
         req_id,
         auth.is_authenticated,
-        config.onboarding_completed,
-        config.chat_onboarding_completed,
-        config.observability.analytics_enabled,
-        config.meet.auto_orchestrator_handoff,
+        snapshot_config.onboarding_completed,
+        snapshot_config.chat_onboarding_completed,
+        snapshot_config.observability.analytics_enabled,
+        snapshot_config.meet.auto_orchestrator_handoff,
         runtime.screen_intelligence.session.active,
         runtime.local_ai.state,
         runtime.autocomplete.phase,
@@ -1106,10 +1151,10 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
             auth,
             session_token,
             current_user,
-            onboarding_completed: config.onboarding_completed,
-            chat_onboarding_completed: config.chat_onboarding_completed,
-            analytics_enabled: config.observability.analytics_enabled,
-            meet_auto_orchestrator_handoff: config.meet.auto_orchestrator_handoff,
+            onboarding_completed: snapshot_config.onboarding_completed,
+            chat_onboarding_completed: snapshot_config.chat_onboarding_completed,
+            analytics_enabled: snapshot_config.observability.analytics_enabled,
+            meet_auto_orchestrator_handoff: snapshot_config.meet.auto_orchestrator_handoff,
             local_state,
             keyring_status,
             runtime,

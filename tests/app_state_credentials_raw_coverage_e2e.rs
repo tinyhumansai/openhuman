@@ -718,6 +718,25 @@ async fn snapshot_activates_user_dir_after_pending_revalidation_without_initial_
         None,
         "test must start without active_user.toml"
     );
+    update_local_state(StoredAppStatePatch {
+        keyring_consent: None,
+        encryption_key: Some(Some("pre-login-key".to_string())),
+        onboarding_tasks: None,
+    })
+    .await
+    .expect("seed pre-login local state");
+    let activated_user_dir = openhuman_core::openhuman::config::user_openhuman_dir(
+        &active_user_root,
+        "fresh-activated-user",
+    );
+    write_min_config(&activated_user_dir, &api_url);
+    let activated_state_dir = activated_user_dir.join("workspace/state");
+    std::fs::create_dir_all(&activated_state_dir).expect("create activated user state dir");
+    std::fs::write(
+        activated_state_dir.join("app-state.json"),
+        r#"{"encryptionKey":"activated-user-key"}"#,
+    )
+    .expect("seed activated user local state");
 
     let mut metadata = HashMap::new();
     metadata.insert(
@@ -762,6 +781,11 @@ async fn snapshot_activates_user_dir_after_pending_revalidation_without_initial_
         openhuman_core::openhuman::config::read_active_user_id(&active_user_root).as_deref(),
         Some("fresh-activated-user"),
         "successful pending revalidation must activate the backend user"
+    );
+    assert_eq!(
+        snap.local_state.encryption_key.as_deref(),
+        Some("activated-user-key"),
+        "first successful activation snapshot must reload the activated user's local state"
     );
 
     let active_config = openhuman_core::openhuman::config::Config::load_from_default_paths()
