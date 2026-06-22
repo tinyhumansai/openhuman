@@ -554,7 +554,14 @@ fn is_disk_full_message(lower: &str) -> bool {
     let trimmed = lower.trim_end_matches(|c: char| {
         c.is_ascii_whitespace() || matches!(c, '.' | ',' | ';' | ':' | '"' | '\'')
     });
-    trimmed.ends_with("database or disk is full") && !lower.contains("backend returned ")
+    // Two SQLITE_FULL renderings: the bare suffix `… database or disk is full`
+    // (#3672), and the rusqlite *extended-code* form where that phrase sits
+    // mid-string followed by `: Error code 13: Insertion failed because
+    // database is full` (#3909) — anchor on the distinctive trailing token so
+    // both demote on any write path, not just the worker.
+    let is_sqlite_full = trimmed.ends_with("database or disk is full")
+        || lower.contains("insertion failed because database is full");
+    is_sqlite_full && !lower.contains("backend returned ")
 }
 
 /// Detect the literal `"Config loading timed out"` string produced by
@@ -2954,6 +2961,13 @@ mod tests {
             // `openhuman.memory_doc_ingest`, in the same burst that emits
             // os-error-112 siblings (Sentry TAURI-RUST-B6N).
             "commit tx: database or disk is full",
+            // SQLITE_FULL *extended-code* rendering — the canonical phrase sits
+            // mid-string followed by the rusqlite extended detail. The
+            // memory-queue worker's `claim_next` hits this on a full disk
+            // (Sentry TAURI-RUST-4R8, #3909); the pre-fix suffix anchor missed
+            // it because the string does not END with "database or disk is full".
+            "Failed to claim next mem_tree_jobs row: database or disk is full: \
+             Error code 13: Insertion failed because database is full",
         ] {
             assert_eq!(
                 expected_error_kind(raw),
