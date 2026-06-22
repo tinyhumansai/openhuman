@@ -530,6 +530,12 @@ mod tests {
                 "https://ai.sumopod.com/v1",
                 AuthStyle::Bearer,
             ),
+            (
+                "modelscope",
+                "ModelScope",
+                "https://api-inference.modelscope.cn/v1",
+                AuthStyle::Bearer,
+            ),
         ] {
             let mut entry = CloudProviderCreds {
                 id: format!("p_{slug}"),
