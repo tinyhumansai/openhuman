@@ -299,7 +299,10 @@ async fn slack_full_sync_search_backfill_and_bus_use_loopback_composio() {
     assert_eq!(outcome.toolkit, "slack");
     assert_eq!(outcome.connection_id.as_deref(), Some("conn-slack-round19"));
     assert_eq!(outcome.items_ingested, 4);
-    assert_eq!(outcome.details["channels_processed"], 2);
+    // Slack now rides the generic orchestrator: two channels synced cleanly,
+    // none errored. (`channels_processed` → orchestrator's `scopes_synced`.)
+    assert_eq!(outcome.details["scopes_synced"], 2);
+    assert_eq!(outcome.details["scopes_errored"], 0);
 
     let search = run_backfill_via_search(&ctx, 2)
         .await

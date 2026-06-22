@@ -533,6 +533,112 @@ fn refresh_workflows_picks_up_skill_installed_on_disk() {
     );
 }
 
+#[test]
+fn refresh_workflows_retracts_skill_removed_from_disk() {
+    use crate::openhuman::workflows::ops_types::{SKILL_MD, TRUST_MARKER};
+
+    let ws = tempfile::TempDir::new().expect("temp workspace");
+    let wsp = ws.path().to_path_buf();
+    std::fs::create_dir_all(wsp.join(".openhuman")).unwrap();
+    std::fs::write(wsp.join(".openhuman").join(TRUST_MARKER), "").unwrap();
+
+    // Write a skill to disk.
+    let skill_dir = wsp
+        .join(".openhuman")
+        .join("skills")
+        .join("zz-retract-test");
+    std::fs::create_dir_all(&skill_dir).unwrap();
+    std::fs::write(
+        skill_dir.join(SKILL_MD),
+        "---\nname: zz-retract-test\ndescription: a retraction test skill\n---\n# body\n",
+    )
+    .unwrap();
+
+    let memory_cfg = crate::openhuman::config::MemoryConfig {
+        backend: "none".into(),
+        ..crate::openhuman::config::MemoryConfig::default()
+    };
+    let mem: Arc<dyn Memory> =
+        Arc::from(crate::openhuman::memory_store::create_memory(&memory_cfg, &wsp).unwrap());
+    let provider = Box::new(MockProvider {
+        responses: Mutex::new(vec![]),
+    });
+    let mut agent = Agent::builder()
+        .provider(provider)
+        .tools(vec![Box::new(MockTool)])
+        .memory(mem)
+        .tool_dispatcher(Box::new(NativeToolDispatcher))
+        .workspace_dir(wsp.clone())
+        .build()
+        .expect("agent build should succeed");
+
+    // First refresh: picks up the installed skill.
+    assert!(agent.refresh_workflows("test-install"));
+    assert!(
+        agent
+            .test_workflow_ids()
+            .iter()
+            .any(|id| id == "zz-retract-test"),
+        "skill should be in catalogue after first refresh"
+    );
+    assert!(
+        agent
+            .test_pending_skill_announcement()
+            .iter()
+            .any(|id| id == "zz-retract-test"),
+        "skill should be parked for announcement"
+    );
+    // Now remove the skill from disk.
+    std::fs::remove_dir_all(&skill_dir).unwrap();
+
+    // Second refresh: detects the removal, parks the retraction.
+    assert!(
+        agent.refresh_workflows("test-remove"),
+        "removing a skill should change the set"
+    );
+    assert!(
+        !agent
+            .test_workflow_ids()
+            .iter()
+            .any(|id| id == "zz-retract-test"),
+        "skill should be gone from catalogue after removal"
+    );
+    assert!(
+        agent
+            .test_pending_skill_retraction()
+            .iter()
+            .any(|id| id == "zz-retract-test"),
+        "removed skill should be parked for retraction"
+    );
+    // Retraction should have cleared it from announced_skills; re-install will
+    // be announced fresh (not silently re-added). Verify by re-adding the skill
+    // and confirming it gets announced again.
+    std::fs::create_dir_all(&skill_dir).unwrap();
+    std::fs::write(
+        skill_dir.join(SKILL_MD),
+        "---\nname: zz-retract-test\ndescription: a retraction test skill\n---\n# body\n",
+    )
+    .unwrap();
+    assert!(agent.refresh_workflows("test-reinstall"));
+    assert!(
+        agent
+            .test_pending_skill_announcement()
+            .iter()
+            .any(|id| id == "zz-retract-test"),
+        "re-installed skill should be announced again after retraction cleared it from announced set"
+    );
+    // Re-install must also cancel the still-pending retraction so the user turn
+    // never carries a contradictory "installed" + "retracted" pair for the same
+    // skill.
+    assert!(
+        !agent
+            .test_pending_skill_retraction()
+            .iter()
+            .any(|id| id == "zz-retract-test"),
+        "re-install should cancel the pending retraction for the same skill"
+    );
+}
+
 #[tokio::test]
 async fn turn_without_tools_returns_text() {
     let workspace = tempfile::TempDir::new().expect("temp workspace");

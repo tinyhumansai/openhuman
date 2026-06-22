@@ -1889,3 +1889,26 @@ fn skill_announcement_note_mentions_ids_and_run_skill() {
         "note must steer the model to run_skill: {note}"
     );
 }
+
+#[test]
+fn skill_retraction_note_empty_yields_none() {
+    assert!(super::skill_retraction_note(&[]).is_none());
+}
+
+#[test]
+fn skill_retraction_note_names_removed_skills_and_warns_against_run_skill() {
+    let note =
+        super::skill_retraction_note(&["ascii-art".to_string(), "github-issues".to_string()])
+            .expect("non-empty input should yield a note");
+    assert!(note.contains("[skills retracted]"));
+    assert!(note.contains("ascii-art"));
+    assert!(note.contains("github-issues"));
+    assert!(
+        note.contains("run_skill"),
+        "note must mention run_skill so the model knows not to invoke it: {note}"
+    );
+    assert!(
+        !note.contains("[skills update]"),
+        "retraction note must not look like an install announcement: {note}"
+    );
+}

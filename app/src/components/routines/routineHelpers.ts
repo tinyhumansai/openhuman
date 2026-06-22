@@ -132,7 +132,10 @@ export function formatNextRun(iso: string): string {
 
   if (diffMs < 0) return target.toLocaleString();
 
-  const diffMin = Math.round(diffMs / 60_000);
+  // Floor (not round) so a value just under an hour stays in the minute branch.
+  // Rounding pushed [59.5, 60) min up to 60, skipping this branch; the hour
+  // branch then floored to 0 and rendered "in 0 hours" (#3757).
+  const diffMin = Math.floor(diffMs / 60_000);
   if (diffMin < 1) return 'in less than a minute';
   if (diffMin < 60) return `in ${diffMin} minute${diffMin !== 1 ? 's' : ''}`;
 

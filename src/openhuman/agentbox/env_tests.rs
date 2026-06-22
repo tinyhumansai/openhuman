@@ -33,13 +33,10 @@ fn collect_reports_each_missing_var() {
     );
 }
 
-// `OPENHUMAN_AGENTBOX_MODE` is process-global. Use the repo-wide env lock so
-// this does not race status/router tests that read or mutate the same key.
+// `OPENHUMAN_AGENTBOX_MODE` is process-global, so serialize tests that mutate it.
 #[test]
 fn mode_enabled_only_when_flag_is_exactly_one() {
-    let _env_lock = crate::openhuman::config::TEST_ENV_LOCK
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
+    let _lock = super::test_support::test_env_lock();
     let prior = std::env::var(AGENTBOX_MODE_ENV_VAR).ok();
 
     std::env::set_var(AGENTBOX_MODE_ENV_VAR, "1");

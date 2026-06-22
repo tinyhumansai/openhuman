@@ -579,10 +579,30 @@ pub(crate) fn classify_inference_error(err: &str) -> ClassifiedError {
         // neither can be shadowed by the broad provider-429 / 5xx arms below.
         // No `with_provider_detail` — an empty response carries no JSON body
         // to quote.
+        //
+        // Issue #3335: the prior copy ("Try a different model or check your
+        // local provider in Settings → AI → LLM") sent Managed users in
+        // exactly the wrong direction — there is no local provider on the
+        // Managed route, and the common underlying cause is credit
+        // exhaustion (see #3386). The provider name is not available here
+        // because `EmptyProviderResponse`'s flattened Display carries no
+        // `" API error"` infix for `extract_provider_name` to anchor on,
+        // and routing the typed provider through every layer is out of
+        // scope for this fix. So the copy is rewritten to be accurate for
+        // ALL providers: it names the three real remedies (credits, model
+        // health, configuration) without claiming any single one of them
+        // applies, and lets the user pick which is relevant to their
+        // setup. The companion empty-2xx-stream diagnostic in
+        // `compatible.rs::stream_native_chat` records elapsed_ms,
+        // chunk_count, and has_usage so the next iteration of this arm
+        // can be provider-aware once we have evidence on which path is
+        // dominant in production.
         ClassifiedError {
             error_type: "empty_response",
-            message: "The model returned an empty response. Try a different model or check \
-                 your local provider in Settings → AI → LLM."
+            message: "The model returned an empty response. This usually means your inference \
+                 credits are exhausted (Settings → Billing), the upstream model is temporarily \
+                 unhealthy, or your provider configuration is rejecting the request \
+                 (Settings → AI → LLM). Try one of those, or pick a different model."
                 .to_string(),
             source: "agent_loop",
             retryable: true,

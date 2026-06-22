@@ -43,12 +43,11 @@ mod tests {
     use super::*;
     use crate::openhuman::agentbox::env::AGENTBOX_MODE_ENV_VAR;
 
-    // Env vars are process-global; hold the repo-wide env lock so these tests
-    // do not race each other or the AgentBox mode tests in the full lib suite.
+    // Env vars are process-global; hold the AgentBox test env lock so these
+    // tests do not race each other or other AgentBox mode tests in the full
+    // lib suite.
     fn with_clean_env<F: FnOnce()>(f: F) {
-        let _env_lock = crate::openhuman::config::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let _lock = super::super::test_support::test_env_lock();
         let prior_mode = std::env::var(AGENTBOX_MODE_ENV_VAR).ok();
         let prior_url = std::env::var("GMI_MAAS_BASE_URL").ok();
         let prior_key = std::env::var("GMI_MAAS_API_KEY").ok();

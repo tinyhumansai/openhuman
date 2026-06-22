@@ -144,8 +144,9 @@ const accountsSlice = createSlice({
 
     /**
      * Signals that a rail overlay (add-account modal / context menu) opened or
-     * closed. Read by the chat page to hide/restore the active provider webview,
-     * which composites above HTML and would otherwise paint over the overlay.
+     * closed. Read by the desktop shell to hide/restore the active provider
+     * webview, which composites above HTML and would otherwise paint over the
+     * overlay.
      */
     setAccountsOverlayOpen(state, action: PayloadAction<boolean>) {
       state.overlayOpen = action.payload;

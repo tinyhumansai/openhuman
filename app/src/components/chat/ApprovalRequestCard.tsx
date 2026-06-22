@@ -61,24 +61,28 @@ export const ApprovalRequestCard: React.FC<Props> = ({ threadId, approval }) => 
     <div
       role="alertdialog"
       aria-label={t('chat.approval.title')}
-      className="rounded-xl border border-amber/40 bg-amber/5 p-3 text-sm">
+      className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm shadow-sm dark:border-amber-700 dark:bg-amber-950">
       <div className="flex items-start gap-2">
-        <span aria-hidden className="text-base leading-none">
+        <span aria-hidden className="text-base leading-none text-amber-700 dark:text-amber-200">
           🔒
         </span>
         <div className="min-w-0 flex-1">
-          <p className="font-semibold text-ink">{t('chat.approval.title')}</p>
-          <p className="mt-1 text-ink-soft break-words">
+          <p className="font-semibold text-amber-900 dark:text-amber-100">
+            {t('chat.approval.title')}
+          </p>
+          <p className="mt-1 break-words text-amber-800/90 dark:text-amber-200/90">
             {approval.message || t('chat.approval.fallback')}
           </p>
           {approval.command && (
-            <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded bg-ink/5 px-2 py-1.5 font-mono text-xs text-ink">
+            <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded border border-amber-200/80 bg-white px-2 py-1.5 font-mono text-xs text-ink shadow-inner dark:border-amber-700 dark:bg-neutral-950 dark:text-neutral-100">
               {approval.command}
             </pre>
           )}
-          <p className="mt-1 text-xs text-ink-soft">
+          <p className="mt-1 text-xs text-amber-800/80 dark:text-amber-200/80">
             {t('chat.approval.tool')}{' '}
-            <span className="font-mono text-ink">{approval.toolName}</span>
+            <span className="font-mono text-amber-950 dark:text-amber-100">
+              {approval.toolName}
+            </span>
           </p>
 
           {errorMsg && <p className="mt-2 text-xs text-coral">⚠ {errorMsg}</p>}

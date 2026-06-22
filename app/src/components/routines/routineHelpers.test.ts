@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { cronToHuman, formatDuration, formatRoutineName } from './routineHelpers';
+import { cronToHuman, formatDuration, formatNextRun, formatRoutineName } from './routineHelpers';
 
 describe('cronToHuman', () => {
   it('handles "every" schedule kind', () => {
@@ -97,6 +97,37 @@ describe('formatRoutineName', () => {
 
   it('handles already-formatted names', () => {
     expect(formatRoutineName('Morning Briefing')).toBe('Morning Briefing');
+  });
+});
+
+describe('formatNextRun', () => {
+  // Offsets are kept well clear of bucket boundaries so the few-ms test
+  // execution delay (formatNextRun reads `new Date()` internally) can't flip
+  // the result.
+  const inMs = (ms: number) => new Date(Date.now() + ms).toISOString();
+
+  it('does not render "in 0 hours" just under an hour out (#3757 regression)', () => {
+    // 59m 45s away — used to round minutes up to 60, skip the minute branch,
+    // then floor hours to 0 → "in 0 hours".
+    const out = formatNextRun(inMs(59 * 60_000 + 45_000));
+    expect(out).not.toContain('0 hour');
+    expect(out).toBe('in 59 minutes');
+  });
+
+  it('crosses into hours only at/after 60 minutes', () => {
+    expect(formatNextRun(inMs(60 * 60_000 + 30_000))).toBe('in 1 hour');
+    expect(formatNextRun(inMs(2 * 60 * 60_000 + 30_000))).toBe('in 2 hours');
+  });
+
+  it('reports sub-minute and minute ranges', () => {
+    expect(formatNextRun(inMs(20_000))).toBe('in less than a minute');
+    expect(formatNextRun(inMs(60_000 + 30_000))).toBe('in 1 minute');
+    expect(formatNextRun(inMs(5 * 60_000 + 30_000))).toBe('in 5 minutes');
+  });
+
+  it('renders a past timestamp as an absolute locale string, not a relative one', () => {
+    const out = formatNextRun(inMs(-60_000));
+    expect(out).not.toContain('in ');
   });
 });
 

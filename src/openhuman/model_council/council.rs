@@ -320,10 +320,16 @@ pub async fn synthesize_members(
     let chair_model_label = model_label_for_result(config, chair_model);
     let chair_model_override = model_override_for_call(chair_model);
     log::debug!("[model-council] convening chair model: {chair_model_label}");
-    let synthesis = agent_chat_simple(config, &synthesis_prompt, chair_model_override, temperature)
-        .await
-        .map_err(|e| format!("model council: chair synthesis failed: {e}"))?
-        .value;
+    let synthesis = agent_chat_simple(
+        config,
+        &synthesis_prompt,
+        chair_model_override,
+        temperature,
+        None,
+    )
+    .await
+    .map_err(|e| format!("model council: chair synthesis failed: {e}"))?
+    .value;
     log::debug!(
         "[model-council] synthesis complete: {} chars",
         synthesis.len()

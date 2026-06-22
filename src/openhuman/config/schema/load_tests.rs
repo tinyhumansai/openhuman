@@ -985,6 +985,30 @@ fn env_overlay_context_tool_result_budget_env_suppresses_legacy_migration() {
 }
 
 #[test]
+fn env_overlay_compaction_default_on_and_kill_switch() {
+    // Default is on.
+    assert!(Config::default().context.compaction_enabled);
+
+    // `OPENHUMAN_COMPACTION=0` disables it.
+    let mut cfg = Config::default();
+    cfg.apply_env_overlay_with(&HashMapEnv::new().with("OPENHUMAN_COMPACTION", "0"));
+    assert!(!cfg.context.compaction_enabled);
+
+    // Truthy re-enables; the namespaced alias works too.
+    let mut cfg = Config::default();
+    cfg.context.compaction_enabled = false;
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new().with("OPENHUMAN_CONTEXT_COMPACTION_ENABLED", "on"),
+    );
+    assert!(cfg.context.compaction_enabled);
+
+    // Garbage is ignored (leaves the prior value untouched).
+    let mut cfg = Config::default();
+    cfg.apply_env_overlay_with(&HashMapEnv::new().with("OPENHUMAN_COMPACTION", "maybe"));
+    assert!(cfg.context.compaction_enabled);
+}
+
+#[test]
 fn env_overlay_context_tool_result_budget_legacy_migration_when_env_absent() {
     // Env absent, context at default, agent customised → agent value copies forward.
     let default_budget = crate::openhuman::context::DEFAULT_TOOL_RESULT_BUDGET_BYTES;

@@ -114,6 +114,53 @@ fn notion_keeps_page_when_either_timestamp_fresh() {
     assert_eq!(results[0]["id"], "edited");
 }
 
+// ── post-filter: Todoist (added_at / updated_at) ────────────────────
+
+#[test]
+fn todoist_drops_tasks_added_before_floor() {
+    // Real Todoist v1 field is `added_at` (not created_at).
+    let resp = ok_resp(json!({
+        "tasks": [
+            { "id": "old", "added_at": "2026-06-19T09:00:00.000Z" },
+            { "id": "new", "added_at": "2026-06-20T12:00:00.000Z" },
+        ]
+    }));
+    let out = filter_response("TODOIST_GET_ALL_TASKS", resp, floor());
+    let tasks = out.data["tasks"].as_array().unwrap();
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0]["id"], "new");
+}
+
+#[test]
+fn todoist_keeps_task_updated_in_window_even_if_added_earlier() {
+    // created-or-modified: added long ago but updated recently → keep.
+    let resp = ok_resp(json!({
+        "tasks": [
+            { "id": "touched", "added_at": "2026-01-01T00:00:00.000Z",
+              "updated_at": "2026-06-20T12:00:00.000Z" },
+            { "id": "stale", "added_at": "2026-01-01T00:00:00.000Z",
+              "updated_at": "2026-01-02T00:00:00.000Z" },
+        ]
+    }));
+    let out = filter_response("TODOIST_GET_ALL_TASKS", resp, floor());
+    let tasks = out.data["tasks"].as_array().unwrap();
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0]["id"], "touched");
+}
+
+#[test]
+fn todoist_handles_bare_array_and_data_wrapped_rows() {
+    // Composio may return a bare array and/or wrap each row under `data`.
+    let resp = ok_resp(json!([
+        { "data": { "id": "old", "added_at": "2026-01-01T00:00:00.000Z" } },
+        { "data": { "id": "new", "added_at": "2026-06-20T12:00:00.000Z" } },
+    ]));
+    let out = filter_response("TODOIST_GET_ALL_TASKS", resp, floor());
+    let tasks = out.data.as_array().unwrap();
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0]["data"]["id"], "new");
+}
+
 // ── conservative behaviors ──────────────────────────────────────────
 
 #[test]
@@ -200,4 +247,21 @@ fn asana_gets_modified_since_injected() {
 fn apply_window_args_noop_for_unknown_slug() {
     let out = apply_window_args("GMAIL_FETCH_EMAILS", Some(json!({ "a": 1 })), floor());
     assert_eq!(out.unwrap(), json!({ "a": 1 }));
+}
+
+#[test]
+fn todoist_gets_no_server_side_narrowing() {
+    // GET /tasks has no `filter` param (that's the /tasks/filter endpoint),
+    // so we must NOT inject one — enforcement is pure post-filter.
+    let out = apply_window_args(
+        "TODOIST_GET_ALL_TASKS",
+        Some(json!({ "limit": 50 })),
+        floor(),
+    )
+    .unwrap();
+    assert!(
+        out.get("filter").is_none(),
+        "must not inject a filter param"
+    );
+    assert_eq!(out["limit"], 50, "caller args preserved");
 }

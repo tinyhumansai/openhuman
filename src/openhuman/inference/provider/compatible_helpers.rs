@@ -122,6 +122,17 @@ impl OpenAiCompatibleProvider {
                     Some(model),
                     status,
                 );
+            } else if super::super::is_openai_oauth_session_expired_http(
+                self.name.as_str(),
+                status,
+                &error,
+            ) {
+                super::super::log_openai_oauth_session_expired(
+                    "responses_api",
+                    self.name.as_str(),
+                    Some(model),
+                    status,
+                );
             } else if super::super::should_report_provider_http_failure(status) {
                 crate::core::observability::report_error(
                     message.as_str(),

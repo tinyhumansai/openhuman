@@ -32,6 +32,11 @@ impl OpenAiCompatibleProvider {
             native_request.tools.as_ref().map_or(0, |t| t.len()),
         );
 
+        // Captured at request send so the empty-2xx-stream diagnostic
+        // below can report elapsed_ms — a fast empty stream points at a
+        // backend reject, a slow one at an upstream stall / timeout.
+        let stream_started_at = std::time::Instant::now();
+
         let response = self
             .apply_auth_header(
                 self.http_client()
@@ -157,9 +162,45 @@ impl OpenAiCompatibleProvider {
                 self.name,
             );
             let response_bytes = response.bytes().await?;
+            let body_bytes_received = response_bytes.len();
             dump_response_if_enabled(&self.name, &native_request.model, dump_seq, &response_bytes);
             let api_resp: ApiChatResponse = serde_json::from_slice(&response_bytes)
                 .map_err(|err| anyhow::anyhow!("{} response parse error: {err}", self.name))?;
+
+            // Mirror the SSE-branch empty-2xx-stream diagnostic (#3335 /
+            // #3386) on the buffered JSON path. The same upstream
+            // collapse to `AgentError::EmptyProviderResponse` is
+            // reachable here when a managed backend returns 200 with a
+            // content-less JSON payload (credit exhaustion served as
+            // JSON instead of SSE, or an upstream stall flushed as an
+            // empty completion). Without this sibling guard the warn
+            // would only fire on the SSE branch and the buffered case
+            // would silently miss the very signal we're trying to
+            // capture.
+            let buffered_is_empty = api_resp
+                .choices
+                .first()
+                .map(|c| {
+                    let m = &c.message;
+                    let content_empty = m.content.as_deref().is_none_or(str::is_empty);
+                    let reasoning_empty = m.reasoning_content.as_deref().is_none_or(str::is_empty);
+                    let tool_calls_empty = m.tool_calls.as_ref().is_none_or(|t| t.is_empty());
+                    let function_call_empty = m.function_call.is_none();
+                    content_empty && reasoning_empty && tool_calls_empty && function_call_empty
+                })
+                .unwrap_or(true);
+            if buffered_is_empty {
+                let elapsed_ms = stream_started_at.elapsed().as_millis() as u64;
+                log::warn!(
+                    "[stream] {} empty 2xx buffered JSON — model={} elapsed_ms={} body_bytes={} has_usage={} has_openhuman_meta={}",
+                    self.name,
+                    native_request.model,
+                    elapsed_ms,
+                    body_bytes_received,
+                    api_resp.usage.is_some(),
+                    api_resp.openhuman.is_some(),
+                );
+            }
             return Self::parse_native_response(api_resp, &self.name);
         }
 
@@ -174,9 +215,23 @@ impl OpenAiCompatibleProvider {
         let mut buffer = String::new();
         let mut repeat_detector = StreamRepeatDetector::new();
         let mut degenerate_repeat = false;
+        // Forensic counters for the empty-2xx-stream diagnostic below
+        // (issue #3335 / #3386). Both are append-only, never read by
+        // request path logic — strictly observability.
+        //
+        // `body_bytes_received` is the count of body bytes yielded by
+        // `bytes_stream()`. This crate builds reqwest without the
+        // `gzip` / `brotli` / `zstd` / `deflate` features (see
+        // root Cargo.toml), so no Content-Encoding decompression happens
+        // and the count matches what's on the wire. The neutral name
+        // (rather than `raw_bytes` / `decoded_bytes`) sidesteps the
+        // ambiguity an operator would otherwise hit reading the log.
+        let mut sse_chunks_parsed: usize = 0;
+        let mut body_bytes_received: usize = 0;
 
         'stream: while let Some(item) = bytes_stream.next().await {
             let bytes = item?;
+            body_bytes_received += bytes.len();
             buffer.push_str(&String::from_utf8_lossy(&bytes));
 
             while let Some(sep_idx) = buffer.find("\n\n") {
@@ -214,7 +269,10 @@ impl OpenAiCompatibleProvider {
                     }
 
                     let chunk: StreamChunkResponse = match serde_json::from_str(data) {
-                        Ok(v) => v,
+                        Ok(v) => {
+                            sse_chunks_parsed += 1;
+                            v
+                        }
                         Err(e) => {
                             log::debug!(
                                 "[stream] {} skipping unparseable chunk: {} — data={}",
@@ -412,6 +470,42 @@ impl OpenAiCompatibleProvider {
             thinking_accum.chars().count(),
             tool_call_count,
         );
+
+        // Issue #3335 / #3386 forensic signal. The streaming chat call
+        // completed with HTTP 2xx but delivered zero visible text, zero
+        // thinking, and zero tool calls. This is the upstream shape that
+        // collapses to `AgentError::EmptyProviderResponse` and gets
+        // rendered to the user as "The model returned an empty
+        // response" with the wrong remediation. Most likely causes:
+        //   (a) backend closed the SSE cleanly under credit exhaustion
+        //       (no `[stream] streaming API error` breadcrumb fires
+        //       because status was 200) — common on the OpenHuman
+        //       managed route under #3386,
+        //   (b) backend's upstream LLM provider stalled / timed out
+        //       and the backend forwarded an empty stream instead of
+        //       propagating the upstream error,
+        //   (c) a genuine degenerate model output (rare on hosted
+        //       reasoning models; more common on community quants).
+        // Logged at warn so it lands in Sentry breadcrumbs even after
+        // `AgentError::skips_sentry()` (PR #2790) silences the parent
+        // event. Correlate by elapsed_ms (fast == reject, slow ==
+        // stall), sse_chunks (0 == no SSE at all, >0 == backend
+        // streamed metadata-only chunks), has_usage (the upstream
+        // counted tokens but delivered no content), and
+        // has_openhuman_meta (managed backend reported routing info).
+        if text_accum.is_empty() && thinking_accum.is_empty() && tool_call_count == 0 {
+            let elapsed_ms = stream_started_at.elapsed().as_millis() as u64;
+            log::warn!(
+                "[stream] {} empty 2xx stream — model={} elapsed_ms={} sse_chunks={} body_bytes={} has_usage={} has_openhuman_meta={}",
+                self.name,
+                native_request.model,
+                elapsed_ms,
+                sse_chunks_parsed,
+                body_bytes_received,
+                last_usage.is_some(),
+                last_openhuman.is_some(),
+            );
+        }
 
         let tool_calls_for_api: Vec<ToolCall> = tool_accum
             .into_values()

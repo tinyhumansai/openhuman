@@ -4,6 +4,45 @@ import type { TranslationMap } from './types';
 // English-identical values fall back to English via I18nContext.resolveEn().
 const messages: TranslationMap = {
   'conversations.backgroundTasks.title': 'Background tasks',
+  'nav.feedback': 'Feedback',
+  'feedback.board': 'Bacheca dei feedback',
+  'feedback.empty': 'Ancora nessun feedback. Sii il primo a condividere un’idea.',
+  'feedback.loadMore': 'Carica altro',
+  'feedback.loadError': 'Impossibile caricare i feedback',
+  'feedback.expand': 'Mostra di più',
+  'feedback.collapse': 'Mostra di meno',
+  'feedback.comments': 'commenti',
+  'feedback.viewIssue': 'Visualizza issue',
+  'feedback.status.open': 'Aperto',
+  'feedback.status.planned': 'Pianificato',
+  'feedback.status.completed': 'Completato',
+  'feedback.status.closed': 'Chiuso',
+  'feedback.type.feature': 'Funzionalità',
+  'feedback.type.bug': 'Bug',
+  'feedback.sort.hot': 'Di tendenza',
+  'feedback.sort.top': 'Top',
+  'feedback.sort.new': 'Recenti',
+  'feedback.filter.allTypes': 'Tutti i tipi',
+  'feedback.filter.allStatuses': 'Tutti gli stati',
+  'feedback.vote.up': 'Vota a favore',
+  'feedback.vote.down': 'Vota contro',
+  'feedback.submit.heading': 'Condividi un feedback',
+  'feedback.submit.subheading':
+    'Proponi una funzionalità o segnala un bug. Gli altri possono votarlo.',
+  'feedback.submit.titlePlaceholder': 'Titolo',
+  'feedback.submit.bodyPlaceholder': 'Descrivi la tua idea o il problema che hai riscontrato',
+  'feedback.submit.action': 'Invia',
+  'feedback.submit.success': 'Grazie! Il tuo feedback è ora sulla bacheca.',
+  'feedback.submit.rejected': 'Non è stato possibile pubblicare il tuo feedback.',
+  'feedback.submit.error': 'Qualcosa è andato storto. Riprova.',
+  'feedback.admin.status': 'Stato',
+  'feedback.admin.updateFailed': 'Impossibile aggiornare lo stato',
+  'feedback.comments.empty': 'Ancora nessun commento.',
+  'feedback.comments.placeholder': 'Aggiungi un commento',
+  'feedback.comments.post': 'Pubblica',
+  'feedback.comments.loadError': 'Impossibile caricare i commenti',
+  'feedback.comments.postError': 'Impossibile pubblicare il commento',
+  'feedback.comments.you': 'Tu',
   'conversations.backgroundTasks.titleWithCount': 'Background tasks ({count})',
   'conversations.backgroundTasks.running': '{count} running',
   'conversations.backgroundTasks.noneRunning': 'none running',
@@ -110,6 +149,21 @@ const messages: TranslationMap = {
   'common.create': 'Crea',
   'common.search': 'Cerca',
   'common.loading': 'caricamento…',
+  'sync.runs': 'sincronizzazioni',
+  'sync.totalCost': 'totale',
+  'sync.when': 'Quando',
+  'sync.source': 'Origine',
+  'sync.items': 'Elementi',
+  'sync.tokens': 'Token',
+  'sync.cost': 'Costo',
+  'sync.duration': 'Durata',
+  'sync.noAuditEntries': 'Nessuna sincronizzazione registrata finora.',
+  'sync.timeAgo.justNow': 'proprio ora',
+  'sync.timeAgo.minutes': '{n} min fa',
+  'sync.timeAgo.hours': '{n} h fa',
+  'sync.timeAgo.days': '{n} g fa',
+  'sync.status.success': 'Riuscito',
+  'sync.status.failed': 'Non riuscito',
   'common.error': 'Errore',
   'common.success': 'Successo',
   'common.back': 'Indietro',
@@ -2477,6 +2531,22 @@ const messages: TranslationMap = {
   'subconscious.decision.failed': 'Fallito',
   'subconscious.decision.cancelled': 'Annullato',
   'subconscious.decision.skipped': 'Saltato',
+  // Subconscious triggers (event-driven orchestrator) debug panel
+  'subconsciousTriggers.title': 'Trigger del subconscio',
+  'subconsciousTriggers.subtitle': 'Orchestratore in background guidato dagli eventi',
+  'subconsciousTriggers.pipeline': 'Pipeline',
+  'subconsciousTriggers.mode': 'Modalità',
+  'subconsciousTriggers.orchestrator': 'Orchestratore',
+  'subconsciousTriggers.running': 'In esecuzione',
+  'subconsciousTriggers.stopped': 'Arrestato',
+  'subconsciousTriggers.promotionsPerHour': 'Promozioni / ora',
+  'subconsciousTriggers.queueDepth': 'Profondità della coda',
+  'subconsciousTriggers.orchestratorThread': "Thread dell'orchestratore",
+  'subconsciousTriggers.userThread': "Thread dell'utente",
+  'subconsciousTriggers.disabledHint':
+    'Attiva la modalità guidata dagli eventi per avviare la pipeline.',
+  'subconsciousTriggers.enable': 'Attiva',
+  'subconsciousTriggers.disable': 'Disattiva',
   'actionable.complete': 'Completa',
   'actionable.dismiss': 'Ignora',
   'actionable.snooze': 'Posticipa',
@@ -3670,6 +3740,46 @@ const messages: TranslationMap = {
   'settings.ai.routing.backgroundTasks': 'Attività in background',
   'settings.ai.routing.bgTasksDesc':
     'Modelli utilizzati al di fuori del flusso principale della conversazione per sintesi, battito, apprendimento e valutazione subconscia.',
+  'settings.ai.routing.workload.chat.label': 'Chat',
+  'settings.ai.routing.workload.chat.description':
+    'Direct conversational back-and-forth — “Quick” mode in Conversations',
+  'settings.ai.routing.workload.chat.hint':
+    'Recommended: a cheap or mid-cost fast chat model with high tokens/sec and low latency. Open-source local models can work well here if they feel responsive.',
+  'settings.ai.routing.workload.reasoning.label': 'Reasoning',
+  'settings.ai.routing.workload.reasoning.description':
+    'Main chat agent, meeting summarizer — “Reasoning” mode in Conversations',
+  'settings.ai.routing.workload.reasoning.hint':
+    'Recommended: a more expensive frontier or strong reasoning model for deep thinking. This is used for the main chat agent, meeting summaries, and heavier answer synthesis.',
+  'settings.ai.routing.workload.agentic.label': 'Agentic',
+  'settings.ai.routing.workload.agentic.description':
+    'Sub-agent runners, tool loops, GIF decisions',
+  'settings.ai.routing.workload.agentic.hint':
+    'Recommended: a reliable instruction-following model with strong tool use. Mid-cost frontier models are usually safest; capable open-source models can work if tool calling is stable.',
+  'settings.ai.routing.workload.coding.label': 'Coding',
+  'settings.ai.routing.workload.coding.description': 'Code generation and refactor passes',
+  'settings.ai.routing.workload.coding.hint':
+    'Recommended: a coding-tuned model with strong instruction following, edit quality, and long-context performance. This is usually worth spending more on.',
+  'settings.ai.routing.workload.vision.label': 'Vision',
+  'settings.ai.routing.workload.vision.description':
+    'Image understanding for the vision sub-agent — always multimodal',
+  'settings.ai.routing.workload.vision.hint':
+    'Recommended: a multimodal model that accepts image input. The managed default (vision-v1) is image-capable; any provider you route here is always treated as vision-enabled.',
+  'settings.ai.routing.workload.memory.label': 'Memory summarization',
+  'settings.ai.routing.workload.memory.description': 'Tree-extracts and consolidations',
+  'settings.ai.routing.workload.memory.hint':
+    'Recommended: a cheaper summarization model. It should be consistent and compact, but it does not need premium frontier-level reasoning.',
+  'settings.ai.routing.workload.heartbeat.label': 'Heartbeat',
+  'settings.ai.routing.workload.heartbeat.description': 'Background reasoning between user turns',
+  'settings.ai.routing.workload.heartbeat.hint':
+    'Recommended: a cheap, efficient background model. This runs often between turns, so low cost matters more than maximum intelligence.',
+  'settings.ai.routing.workload.learning.label': 'Learning · Reflections',
+  'settings.ai.routing.workload.learning.description': 'Periodic reflection over recent history',
+  'settings.ai.routing.workload.learning.hint':
+    'Recommended: a stronger reflective model. This can be mid-cost or premium because it benefits from better synthesis over recent history.',
+  'settings.ai.routing.workload.subconscious.label': 'Subconscious',
+  'settings.ai.routing.workload.subconscious.description': 'Eventfulness scoring + drift checks',
+  'settings.ai.routing.workload.subconscious.hint':
+    'Recommended: a very cheap monitoring model, ideally one that is lightweight and predictable. This is for eventfulness scoring, drift checks, and quiet background evaluation.',
   'settings.ai.routing.addCustomProvider': 'Aggiungi provider personalizzato',
   'settings.ai.globalModel.title': 'Scegli un modello per tutto',
   'settings.ai.globalModel.desc':
@@ -5892,6 +6002,8 @@ const messages: TranslationMap = {
   'agentworld.jobs.applyModal.cancel': 'Annulla',
   'agentworld.jobs.applyModal.submit': 'Invia candidatura',
   'agentworld.jobs.applyModal.submitting': 'Candidatura in corso…',
+  'agentworld.messaging.missingSignalBundle':
+    'Questo utente non ha ancora attivato la messaggistica crittografata. Chiedigli di aprire Agent World e attivare i DM sicuri prima di inviare un messaggio.',
 };
 
 export default messages;
