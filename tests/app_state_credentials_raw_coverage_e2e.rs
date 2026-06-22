@@ -941,7 +941,7 @@ async fn snapshot_clears_transiently_stored_supplied_user_after_revalidation_rej
 }
 
 #[tokio::test]
-async fn snapshot_clears_pending_session_when_revalidation_request_errors() {
+async fn snapshot_preserves_pending_session_when_revalidation_request_errors() {
     let _lock = env_lock();
     let harness = setup("http://127.0.0.1:9");
     let config = harness.config().await;
@@ -972,23 +972,31 @@ async fn snapshot_clears_pending_session_when_revalidation_request_errors() {
         .expect("snapshot with errored pending revalidation")
         .value;
     assert!(
-        !snap.auth.is_authenticated,
-        "pending session must fail closed when revalidation request errors"
+        snap.auth.is_authenticated,
+        "pending session must stay authenticated when revalidation request errors before a backend response"
     );
-    assert!(snap.auth.user.is_none());
-    assert!(snap.current_user.is_none());
-    assert!(snap.session_token.is_none());
+    assert_eq!(snap.session_token.as_deref(), Some("round14.pending.error"));
+    assert_eq!(
+        snap.current_user.as_ref().and_then(|v| v.get("id")),
+        Some(&json!("pending-error-user"))
+    );
+    assert_eq!(
+        snap.current_user
+            .as_ref()
+            .and_then(|v| v.get("pendingBackendValidation")),
+        Some(&json!(true))
+    );
     let profile = AuthService::from_config(&config)
         .get_profile(APP_SESSION_PROVIDER, None)
         .expect("read profile after request error");
     assert!(
-        profile.is_none(),
-        "errored pending session profile must be cleared"
+        profile.is_some(),
+        "errored pending session profile must be preserved for retry"
     );
 }
 
 #[tokio::test]
-async fn snapshot_clears_pending_session_when_revalidation_times_out() {
+async fn snapshot_preserves_pending_session_when_revalidation_times_out() {
     let _lock = env_lock();
     let (api_url, server_task, shutdown_tx) = auth_me_hanging_server().await;
     let harness = setup(&api_url);
@@ -1020,18 +1028,29 @@ async fn snapshot_clears_pending_session_when_revalidation_times_out() {
         .expect("snapshot with timed-out pending revalidation")
         .value;
     assert!(
-        !snap.auth.is_authenticated,
-        "pending session must fail closed when revalidation times out"
+        snap.auth.is_authenticated,
+        "pending session must stay authenticated when revalidation times out before a backend response"
     );
-    assert!(snap.auth.user.is_none());
-    assert!(snap.current_user.is_none());
-    assert!(snap.session_token.is_none());
+    assert_eq!(
+        snap.session_token.as_deref(),
+        Some("round14.pending.timeout")
+    );
+    assert_eq!(
+        snap.current_user.as_ref().and_then(|v| v.get("id")),
+        Some(&json!("pending-timeout-user"))
+    );
+    assert_eq!(
+        snap.current_user
+            .as_ref()
+            .and_then(|v| v.get("pendingBackendValidation")),
+        Some(&json!(true))
+    );
     let profile = AuthService::from_config(&config)
         .get_profile(APP_SESSION_PROVIDER, None)
         .expect("read profile after timeout");
     assert!(
-        profile.is_none(),
-        "timed-out pending session profile must be cleared"
+        profile.is_some(),
+        "timed-out pending session profile must be preserved for retry"
     );
 
     let _ = shutdown_tx.send(());

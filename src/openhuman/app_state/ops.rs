@@ -933,14 +933,9 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
             }
             Ok(Err(CurrentUserFetchError::FetchFailed(error))) if pending_backend_validation => {
                 warn!(
-                    "{LOG_PREFIX} pending current user refresh failed before a backend response; clearing stored app session: {error}"
+                    "{LOG_PREFIX} pending current user refresh failed before a backend response; keeping stored pending session for retry: {error}"
                 );
-                if let Err(clear_error) =
-                    clear_deferred_session_after_backend_rejection(&config).await
-                {
-                    warn!("{LOG_PREFIX} failed to clear rejected pending session: {clear_error}");
-                }
-                SnapshotCurrentUser::DeferredSessionRejected
+                SnapshotCurrentUser::User(stored_user.clone())
             }
             Ok(Err(CurrentUserFetchError::TransientResponse(error)))
                 if pending_backend_validation =>
@@ -959,15 +954,10 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
             }
             Err(_) if pending_backend_validation => {
                 warn!(
-                    "{LOG_PREFIX} pending current user fetch timed out after {}s; clearing stored app session",
+                    "{LOG_PREFIX} pending current user fetch timed out after {}s; keeping stored pending session for retry",
                     AUTH_FETCH_TIMEOUT.as_secs()
                 );
-                if let Err(clear_error) =
-                    clear_deferred_session_after_backend_rejection(&config).await
-                {
-                    warn!("{LOG_PREFIX} failed to clear rejected pending session: {clear_error}");
-                }
-                SnapshotCurrentUser::DeferredSessionRejected
+                SnapshotCurrentUser::User(stored_user.clone())
             }
             Err(_) => {
                 warn!(
