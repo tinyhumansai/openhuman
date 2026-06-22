@@ -383,6 +383,74 @@ fn is_session_expired_failure_does_not_halt_shell_jobs() {
     );
 }
 
+// TAURI-RUST-514 — a BYO provider insufficient-credits 402 ("requires more
+// credits") leaks from a cron-fired agent job through `last_agent_error`.
+// `is_insufficient_credits_failure` must consult the message classifier so the
+// retry loop halts on the first occurrence (a permanent billing state) instead
+// of retrying N times and reporting `failure=retries_exhausted` to Sentry.
+#[test]
+fn is_insufficient_credits_failure_matches_verbatim_402_in_agent_error() {
+    let wire = r#"openrouter API error (402 Payment Required): {"error":{"message":"This request requires more credits, or fewer max_tokens. You requested up to 65536 tokens, but can only afford 5081."}}"#;
+    assert!(
+        is_insufficient_credits_failure(
+            &JobType::Agent,
+            Some(wire),
+            AGENT_JOB_USER_FAILURE_MESSAGE
+        ),
+        "raw agent error carrying the 402 credit body must trip the halt"
+    );
+}
+
+// Defense-in-depth: classify even if a future path surfaces the raw 402 in
+// `last_output` rather than `last_agent_error`.
+#[test]
+fn is_insufficient_credits_failure_matches_when_only_output_carries_signal() {
+    let wire = r#"openrouter API error (402 Payment Required): insufficient balance — add credits"#;
+    assert!(is_insufficient_credits_failure(&JobType::Agent, None, wire));
+}
+
+// Negative guard: the canned user-facing message carries no 402 signal, and an
+// ordinary provider error (500, or a 400 whose body merely names a token
+// count) must NOT halt — those are exactly what the retry loop +
+// `failure=retries_exhausted` capture exist for.
+#[test]
+fn is_insufficient_credits_failure_does_not_match_non_credit_errors() {
+    assert!(!is_insufficient_credits_failure(
+        &JobType::Agent,
+        Some(AGENT_JOB_USER_FAILURE_MESSAGE),
+        AGENT_JOB_USER_FAILURE_MESSAGE,
+    ));
+    let server_err =
+        r#"OpenHuman API error (500 Internal Server Error): {"error":"Internal server error"}"#;
+    assert!(!is_insufficient_credits_failure(
+        &JobType::Agent,
+        Some(server_err),
+        ""
+    ));
+    let digit_in_body = r#"provider API error (400): can only afford 402 tokens"#;
+    assert!(
+        !is_insufficient_credits_failure(&JobType::Agent, Some(digit_in_body), ""),
+        "the 402 must be the status, not an arbitrary token count in a 400 body"
+    );
+}
+
+// Scope guard: shell jobs that echo a 402-shaped string keep their retry
+// semantics — only agent jobs route through the inference layer.
+#[test]
+fn is_insufficient_credits_failure_does_not_halt_shell_jobs() {
+    let wire = r#"openrouter API error (402 Payment Required): requires more credits"#;
+    assert!(!is_insufficient_credits_failure(
+        &JobType::Shell,
+        None,
+        wire
+    ));
+    assert!(!is_insufficient_credits_failure(
+        &JobType::Shell,
+        Some(wire),
+        wire
+    ));
+}
+
 #[tokio::test]
 async fn run_agent_job_returns_error_without_provider_key() {
     let tmp = TempDir::new().unwrap();

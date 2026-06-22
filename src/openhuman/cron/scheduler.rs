@@ -328,6 +328,35 @@ fn is_session_expired_failure(
     crate::core::observability::is_session_expired_message(signal)
 }
 
+/// Did this failed agent-job attempt hit a provider **insufficient-credits
+/// 402** state (BYO account out of balance, e.g. OpenRouter)?
+///
+/// Same shape as [`is_session_expired_failure`], for the same reason: the
+/// condition is a deterministic, permanent user-state error with no local
+/// lever — retrying it across the backoff loop cannot recover, it only burns
+/// cycles and (pre-this-guard) multiplied the per-attempt
+/// `report_error` events that flooded Sentry (TAURI-RUST-514: the residual
+/// after #3617 capped the extraction path, surfacing here via the cron
+/// `agent_job` `report_error` which the desktop `before_send` chain did not
+/// yet filter). So we halt after the first occurrence and skip the report,
+/// matching the source demotion already applied at the provider emit site
+/// (`is_provider_insufficient_credits_402`).
+///
+/// Routes on `last_agent_error` first (the raw anyhow chain carrying the
+/// provider's 402 wire body), falling back to `last_output`, identical to
+/// [`is_session_expired_failure`]. Restricted to `JobType::Agent`.
+fn is_insufficient_credits_failure(
+    job_type: &JobType,
+    last_agent_error: Option<&str>,
+    last_output: &str,
+) -> bool {
+    if !matches!(job_type, JobType::Agent) {
+        return false;
+    }
+    let signal = last_agent_error.unwrap_or(last_output);
+    crate::core::observability::is_insufficient_credits_message(signal)
+}
+
 async fn execute_job_with_retry(
     config: &Config,
     security: &SecurityPolicy,
@@ -338,6 +367,7 @@ async fn execute_job_with_retry(
     let retries = config.reliability.scheduler_retries;
     let mut backoff_ms = config.reliability.provider_backoff_ms.max(200);
     let mut session_expired = false;
+    let mut credits_exhausted = false;
 
     for attempt in 0..=retries {
         let (success, output, agent_error) = match job.job_type {
@@ -375,6 +405,21 @@ async fn execute_job_with_retry(
             break;
         }
 
+        if is_insufficient_credits_failure(
+            &job.job_type,
+            last_agent_error.as_deref(),
+            last_output.as_str(),
+        ) {
+            // Halt on the first occurrence — a BYO provider 402 (out of
+            // balance) is permanent across the backoff loop, and the
+            // provider emit site already demoted it from Sentry. Skipping
+            // the retries-exhausted `report_error` below keeps the residual
+            // off Sentry at source, independent of the `before_send` chain
+            // (TAURI-RUST-514). See `is_insufficient_credits_failure`.
+            credits_exhausted = true;
+            break;
+        }
+
         if attempt < retries {
             let jitter_ms = u64::from(Utc::now().timestamp_subsec_millis() % 250);
             time::sleep(Duration::from_millis(backoff_ms + jitter_ms)).await;
@@ -382,7 +427,7 @@ async fn execute_job_with_retry(
         }
     }
 
-    if matches!(job.job_type, JobType::Agent) && !session_expired {
+    if matches!(job.job_type, JobType::Agent) && !session_expired && !credits_exhausted {
         let report_message = last_agent_error
             .as_deref()
             .unwrap_or_else(|| last_output.as_str());
