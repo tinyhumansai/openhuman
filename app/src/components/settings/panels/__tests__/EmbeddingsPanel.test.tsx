@@ -707,7 +707,14 @@ describe('EmbeddingsPanel', () => {
     await waitFor(() => expect(screen.getByText(/connection refused/i)).toBeInTheDocument());
   });
 
-  it('turns Managed backend-session test failures into sign-in guidance', async () => {
+  it.each([
+    ['missing backend session', 'No backend session for cloud embeddings: log in to OpenHuman'],
+    ['session-expired sentinel', 'SESSION_EXPIRED: backend session not active'],
+    [
+      'backend invalid token',
+      'Embedding API error (401 Unauthorized): {"success":false,"error":"Invalid token"}',
+    ],
+  ])('turns Managed %s test failures into sign-in guidance', async (_case, error) => {
     const settings = makeSettings({
       provider: 'managed',
       providers: [
@@ -729,7 +736,7 @@ describe('EmbeddingsPanel', () => {
       success: false,
       provider: 'managed',
       model: 'managed-model-v1',
-      error: 'No backend session for cloud embeddings: log in to OpenHuman',
+      error,
     });
 
     renderWithProviders(<EmbeddingsPanel />);

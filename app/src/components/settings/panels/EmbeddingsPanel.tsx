@@ -41,7 +41,13 @@ type Status =
   | { kind: 'error'; message: string };
 
 function isBackendSessionError(message: string | undefined): boolean {
-  return /no backend session/i.test(message ?? '');
+  const text = message ?? '';
+  return (
+    /no backend session/i.test(text) ||
+    /SESSION_EXPIRED/i.test(text) ||
+    /session expired/i.test(text) ||
+    (/invalid token/i.test(text) && /(401|unauthorized)/i.test(text))
+  );
 }
 
 interface EmbeddingsPanelProps {
