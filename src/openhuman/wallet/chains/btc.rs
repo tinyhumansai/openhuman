@@ -541,9 +541,6 @@ mod tests {
     #[tokio::test]
     async fn execute_btc_quote_builds_psbt_signs_and_broadcasts() {
         let _guard = TEST_LOCK.lock();
-        let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
         reset_quote_store_for_tests();
         let temp = TempDir::new().unwrap();
         let _workspace_guard = setup_wallet_in(&temp).await.unwrap();
@@ -630,9 +627,6 @@ mod tests {
     #[tokio::test]
     async fn execute_btc_quote_rejects_insufficient_utxos() {
         let _guard = TEST_LOCK.lock();
-        let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
         reset_quote_store_for_tests();
         let temp = TempDir::new().unwrap();
         let _workspace_guard = setup_wallet_in(&temp).await.unwrap();

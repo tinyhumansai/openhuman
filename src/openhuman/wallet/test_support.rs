@@ -14,6 +14,7 @@ use tempfile::TempDir;
 
 use super::ops::{setup, WalletAccount, WalletChain, WalletSetupParams, WalletSetupSource};
 use crate::openhuman::config::rpc as config_rpc;
+use crate::openhuman::config::TEST_ENV_LOCK;
 
 pub(crate) static TEST_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
@@ -58,6 +59,7 @@ pub(crate) fn sample_account(chain: WalletChain) -> WalletAccount {
 /// out of scope at the end of the test.
 pub(crate) struct WorkspaceEnvGuard {
     prev: Option<std::ffi::OsString>,
+    _env_lock: std::sync::MutexGuard<'static, ()>,
 }
 
 impl Drop for WorkspaceEnvGuard {
@@ -70,9 +72,13 @@ impl Drop for WorkspaceEnvGuard {
 }
 
 pub(crate) fn set_workspace_env_for_test(temp: &TempDir) -> WorkspaceEnvGuard {
+    let env_lock = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let prev = std::env::var_os("OPENHUMAN_WORKSPACE");
     std::env::set_var("OPENHUMAN_WORKSPACE", temp.path());
-    WorkspaceEnvGuard { prev }
+    WorkspaceEnvGuard {
+        prev,
+        _env_lock: env_lock,
+    }
 }
 
 pub(crate) async fn setup_wallet_in(temp: &TempDir) -> Result<WorkspaceEnvGuard, String> {
@@ -110,21 +116,25 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn setup_wallet_in_restores_workspace_env_when_guard_drops() {
-        let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+    async fn workspace_env_guard_restores_workspace_env_when_dropped() {
+        let env_lock = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let previous = std::env::var_os("OPENHUMAN_WORKSPACE");
         std::env::set_var("OPENHUMAN_WORKSPACE", "/tmp/openhuman-existing-workspace");
 
         let temp = TempDir::new().expect("temp dir");
-        let workspace_guard = setup_wallet_in(&temp).await.expect("setup wallet");
+        let prev = std::env::var_os("OPENHUMAN_WORKSPACE");
+        std::env::set_var("OPENHUMAN_WORKSPACE", temp.path());
+        let workspace_guard = WorkspaceEnvGuard {
+            prev,
+            _env_lock: env_lock,
+        };
         assert_eq!(
             std::env::var_os("OPENHUMAN_WORKSPACE"),
             Some(temp.path().as_os_str().to_os_string())
         );
 
         drop(workspace_guard);
+        let _cleanup_lock = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         assert_eq!(
             std::env::var_os("OPENHUMAN_WORKSPACE"),
             Some(std::ffi::OsString::from(

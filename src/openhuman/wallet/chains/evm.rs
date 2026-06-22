@@ -511,9 +511,6 @@ mod tests {
     #[tokio::test]
     async fn sign_and_broadcast_evm_signs_raw_calldata() {
         let _guard = TEST_LOCK.lock();
-        let _env = crate::openhuman::config::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
         let temp = TempDir::new().unwrap();
         let _workspace_guard = setup_wallet_in(&temp).await.unwrap();
         let (addr, calls) = start_evm_mock(JsonValue::Null, JsonValue::Null).await;

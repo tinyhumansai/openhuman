@@ -182,9 +182,6 @@ async fn supported_assets_lists_default_erc20s_and_l2() {
 #[tokio::test]
 async fn prepare_transfer_rejects_unknown_asset_symbol() {
     let _guard = TEST_LOCK.lock();
-    let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
     reset_quote_store_for_tests();
     let temp = TempDir::new().unwrap();
     let _workspace_guard = setup_wallet_in(&temp).await.unwrap();
@@ -203,9 +200,6 @@ async fn prepare_transfer_rejects_unknown_asset_symbol() {
 #[tokio::test]
 async fn balances_fans_evm_account_into_eth_base_bsc_rows() {
     let _guard = TEST_LOCK.lock();
-    let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
     let temp = TempDir::new().unwrap();
     let _workspace_guard = setup_wallet_in(&temp).await.unwrap();
     // Point all three displayed EVM networks at a mock returning 1e18 wei.
@@ -266,9 +260,6 @@ async fn tx_status_rejects_empty_hash() {
 #[tokio::test]
 async fn execute_prepared_broadcasts_native_evm_transaction() {
     let _guard = TEST_LOCK.lock();
-    let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
     reset_quote_store_for_tests();
     let temp = TempDir::new().unwrap();
     let _workspace_guard = setup_wallet_in(&temp).await.unwrap();
@@ -306,9 +297,6 @@ async fn execute_prepared_broadcasts_native_evm_transaction() {
 #[tokio::test]
 async fn execute_prepared_broadcasts_erc20_transfer_using_default_token_catalog() {
     let _guard = TEST_LOCK.lock();
-    let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
     reset_quote_store_for_tests();
     let temp = TempDir::new().unwrap();
     let _workspace_guard = setup_wallet_in(&temp).await.unwrap();
@@ -350,9 +338,6 @@ async fn execute_prepared_broadcasts_erc20_transfer_using_default_token_catalog(
 #[tokio::test]
 async fn execute_prepared_broadcasts_native_evm_on_base_with_chain_id_8453() {
     let _guard = TEST_LOCK.lock();
-    let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
     reset_quote_store_for_tests();
     let temp = TempDir::new().unwrap();
     let _workspace_guard = setup_wallet_in(&temp).await.unwrap();
@@ -585,9 +570,6 @@ async fn execute_prepared_owner_mismatch_error_matches_not_found_shape() {
 async fn prepare_stamps_owner_via_task_local() {
     use crate::openhuman::approval::APPROVAL_CHAT_CONTEXT;
     let _guard = TEST_LOCK.lock();
-    let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
     reset_quote_store_for_tests();
     let temp = TempDir::new().unwrap();
     let _workspace_guard = setup_wallet_in(&temp).await.unwrap();
@@ -620,9 +602,6 @@ async fn prepare_stamps_owner_via_task_local() {
 #[tokio::test]
 async fn execute_prepared_rejects_evm_chain_id_mismatch() {
     let _guard = TEST_LOCK.lock();
-    let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
     reset_quote_store_for_tests();
     let temp = TempDir::new().unwrap();
     let _workspace_guard = setup_wallet_in(&temp).await.unwrap();
