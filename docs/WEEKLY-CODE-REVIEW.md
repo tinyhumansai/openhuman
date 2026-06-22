@@ -5,7 +5,6 @@ not catch.
 
 ## What runs
 
-Workflow: [`.github/workflows/weekly-code-review.yml`](../.github/workflows/weekly-code-review.yml).
 Script: [`scripts/weekly-code-review.sh`](../scripts/weekly-code-review.sh).
 
 The aggregator currently collects:
@@ -20,11 +19,10 @@ Each sub-check is **best-effort**: a missing tool or transient failure is
 reported inline in the Markdown, not fatal. A full lane going red never stops
 the rest of the report from being produced.
 
-## Schedule + manual trigger
+## Manual trigger
 
-- Cron: every Monday at **06:00 UTC** (`0 6 * * 1`).
-- Manual: **Actions → Weekly Code Review → Run workflow**.
-- Concurrency: one run at a time; subsequent triggers queue rather than cancel.
+Run the script locally from the repository root when a weekly snapshot is
+needed. The scheduled GitHub Actions workflow has been retired.
 
 ## Outputs
 
@@ -60,11 +58,8 @@ for the JSON shaping. Missing tools are skipped with a note in the report.
 
 ## Disabling / overrides
 
-- **One-off skip** — cancel the scheduled run from the Actions tab.
-- **Pause indefinitely** — comment out the `schedule:` block in
-  `.github/workflows/weekly-code-review.yml`. `workflow_dispatch` still works.
-- **Retire** — delete the workflow + `scripts/weekly-code-review.sh` and
-  remove the `weekly-code-review` label. No other code references them.
+- **Retire** — delete `scripts/weekly-code-review.sh` and remove the
+  `weekly-code-review` label. No other code references them.
 
 ## Intentionally out of scope for the first cut
 
