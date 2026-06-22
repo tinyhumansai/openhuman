@@ -534,26 +534,22 @@ async fn persist_revalidated_session_user(
     base_metadata: BTreeMap<String, String>,
     user: Value,
 ) -> Result<Box<Config>, String> {
-    let user_id = user_id_from_profile_payload(&user);
+    let user_id = user_id_from_profile_payload(&user)
+        .ok_or_else(|| "backend user id required before clearing pending validation".to_string())?;
     let workspace_env_scoped = config_is_workspace_env_scoped(config);
-    let target_config = if let Some(user_id) = user_id.as_deref().filter(|_| !workspace_env_scoped)
-    {
-        activate_revalidated_user_dir(user_id).await?
+    let target_config = if !workspace_env_scoped {
+        activate_revalidated_user_dir(&user_id).await?
     } else {
-        if user_id.is_some() && workspace_env_scoped {
-            debug!(
-                "{LOG_PREFIX} keeping revalidated pending session in OPENHUMAN_WORKSPACE-scoped config"
-            );
-        }
+        debug!(
+            "{LOG_PREFIX} keeping revalidated pending session in OPENHUMAN_WORKSPACE-scoped config"
+        );
         config.clone()
     };
     let source_config = config.clone();
-    let source_moved = user_id.is_some() && !same_config_state_dir(config, &target_config);
+    let source_moved = !same_config_state_dir(config, &target_config);
     let token = token.to_string();
     let mut metadata: HashMap<String, String> = base_metadata.into_iter().collect();
-    if let Some(user_id) = user_id.clone() {
-        metadata.insert("user_id".to_string(), user_id);
-    }
+    metadata.insert("user_id".to_string(), user_id.clone());
     metadata.insert("user_json".to_string(), user.to_string());
 
     let config_for_store = target_config.clone();
@@ -584,14 +580,12 @@ async fn persist_revalidated_session_user(
         }
     }
 
-    if let Some(user_id) = user_id.as_deref() {
-        finish_revalidated_user_activation(
-            &target_config,
-            user_id,
-            source_moved.then_some(&source_config),
-        )
-        .await;
-    }
+    finish_revalidated_user_activation(
+        &target_config,
+        &user_id,
+        source_moved.then_some(&source_config),
+    )
+    .await;
 
     Ok(Box::new(target_config))
 }

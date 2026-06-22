@@ -276,6 +276,68 @@ async fn store_session_defers_minimal_live_jwt_when_auth_me_transient_and_allowe
 }
 
 #[tokio::test]
+async fn deferred_session_without_user_id_does_not_replace_active_user_profile() {
+    let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let tmp = TempDir::new().unwrap();
+    let _home = EnvVarGuard::set_to_path("HOME", tmp.path());
+    let root_dir = default_root_openhuman_dir().unwrap();
+    let active_user_id = "existing-active-user";
+    write_active_user_id(&root_dir, active_user_id).unwrap();
+    let active_user_dir = user_openhuman_dir(&root_dir, active_user_id);
+    std::fs::create_dir_all(active_user_dir.join("workspace")).unwrap();
+    let mut config = Config {
+        config_path: active_user_dir.join("config.toml"),
+        workspace_dir: active_user_dir.join("workspace"),
+        action_dir: active_user_dir.join("workspace"),
+        ..Config::default()
+    };
+    config.api_url = Some(spawn_auth_me_status(StatusCode::SERVICE_UNAVAILABLE).await);
+    let mut metadata = std::collections::HashMap::new();
+    metadata.insert("user_id".to_string(), active_user_id.to_string());
+    metadata.insert(
+        "user_json".to_string(),
+        json!({
+            "id": active_user_id,
+            "name": "Existing Active User"
+        })
+        .to_string(),
+    );
+    AuthService::from_config(&config)
+        .store_provider_token(
+            APP_SESSION_PROVIDER,
+            DEFAULT_AUTH_PROFILE_NAME,
+            "existing.active.session",
+            metadata,
+            true,
+        )
+        .unwrap();
+    let pending_token = jwt_with_payload(json!({
+        "exp": (chrono::Utc::now() + chrono::Duration::hours(1)).timestamp()
+    }));
+
+    let err =
+        store_session_with_deferred_validation(&config, &pending_token, None, Some(json!({})))
+            .await
+            .unwrap_err();
+
+    assert!(
+        err.contains("backend user id required before replacing the active session"),
+        "expected active-session protection error, got: {err}"
+    );
+    let state = auth_get_state(&config).await.unwrap().value;
+    assert!(state.is_authenticated);
+    let token = auth_get_session_token_json(&config).await.unwrap().value;
+    assert_eq!(token.get("token"), Some(&json!("existing.active.session")));
+    assert_eq!(state.user_id.as_deref(), Some(active_user_id));
+    assert_eq!(
+        state.user.as_ref().and_then(|value| value.get("id")),
+        Some(&json!(active_user_id))
+    );
+}
+
+#[tokio::test]
 async fn store_session_rejects_live_jwt_when_auth_me_unauthorized() {
     let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
         .lock()

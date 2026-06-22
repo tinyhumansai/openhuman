@@ -257,13 +257,12 @@ async fn store_session_inner(
     } {
         metadata.insert("user_id".to_string(), uid);
     }
-    let user_for_store = if local_session
-        || settings
-            .as_object()
-            .and_then(|map| map.get("pendingBackendValidation"))
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
-    {
+    let pending_backend_validation = settings
+        .as_object()
+        .and_then(|map| map.get("pendingBackendValidation"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let user_for_store = if local_session || pending_backend_validation {
         settings.clone()
     } else {
         sanitize_stored_session_user(user).unwrap_or(settings)
@@ -299,6 +298,25 @@ async fn store_session_inner(
 
     // Determine user_id so we can scope the openhuman directory to this user.
     let resolved_user_id = metadata.get("user_id").cloned();
+    if pending_backend_validation && resolved_user_id.is_none() {
+        if let Ok(root_dir) = default_root_openhuman_dir() {
+            if let Some(active_user_id) = read_active_user_id(&root_dir) {
+                let active_user_dir = user_openhuman_dir(&root_dir, &active_user_id);
+                if config.config_path.parent() == Some(active_user_dir.as_path()) {
+                    tracing::warn!(
+                        domain = "credentials",
+                        operation = "store_session",
+                        active_user_id = %active_user_id,
+                        "[credentials][auth-store] unresolved pending session would replace active user's app-session; session NOT persisted"
+                    );
+                    return Err(
+                        "Session validation failed (GET /auth/me): backend user id required before replacing the active session"
+                            .to_string(),
+                    );
+                }
+            }
+        }
+    }
 
     // If we know the user_id, activate the user-scoped directory BEFORE storing
     // the auth profile so that credentials land in the correct place.
