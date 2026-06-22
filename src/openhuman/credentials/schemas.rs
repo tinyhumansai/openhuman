@@ -14,6 +14,8 @@ struct AuthStoreSessionParams {
     user_id: Option<String>,
     #[serde(default)]
     user: Option<serde_json::Value>,
+    #[serde(default, alias = "allowPendingBackendValidation")]
+    allow_pending_backend_validation: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -183,6 +185,10 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required_string("token", "Session JWT token."),
                 optional_json("user_id", "Optional user id hint."),
                 optional_json("user", "Optional user payload."),
+                optional_bool(
+                    "allowPendingBackendValidation",
+                    "Allow trusted callback flows to defer backend validation after transient auth/me failure.",
+                ),
             ],
             outputs: vec![json_output("profile", "Stored auth profile summary.")],
         },
@@ -323,15 +329,25 @@ fn handle_auth_store_session(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
         let payload = deserialize_params::<AuthStoreSessionParams>(params)?;
-        to_json(
+        let allow_pending_backend_validation =
+            payload.allow_pending_backend_validation.unwrap_or(false);
+        to_json(if allow_pending_backend_validation {
+            crate::openhuman::credentials::rpc::store_session_with_deferred_validation(
+                &config,
+                &payload.token,
+                payload.user_id,
+                payload.user,
+            )
+            .await?
+        } else {
             crate::openhuman::credentials::rpc::store_session(
                 &config,
                 &payload.token,
                 payload.user_id,
                 payload.user,
             )
-            .await?,
-        )
+            .await?
+        })
     })
 }
 

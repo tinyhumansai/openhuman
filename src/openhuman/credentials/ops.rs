@@ -136,6 +136,28 @@ pub async fn store_session(
     user_id: Option<String>,
     user: Option<serde_json::Value>,
 ) -> Result<RpcOutcome<super::responses::AuthProfileSummary>, String> {
+    store_session_inner(config, token, user_id, user, false).await
+}
+
+/// Store a session from a callback flow that already exchanged a backend
+/// login token. Generic callers should use `store_session`, which requires
+/// immediate `/auth/me` proof before persisting remote JWTs.
+pub async fn store_session_with_deferred_validation(
+    config: &Config,
+    token: &str,
+    user_id: Option<String>,
+    user: Option<serde_json::Value>,
+) -> Result<RpcOutcome<super::responses::AuthProfileSummary>, String> {
+    store_session_inner(config, token, user_id, user, true).await
+}
+
+async fn store_session_inner(
+    config: &Config,
+    token: &str,
+    user_id: Option<String>,
+    user: Option<serde_json::Value>,
+    allow_pending_backend_validation: bool,
+) -> Result<RpcOutcome<super::responses::AuthProfileSummary>, String> {
     let trimmed_token = token.trim();
     if trimmed_token.is_empty() {
         return Err("token is required".to_string());
@@ -182,15 +204,42 @@ pub async fn store_session(
                     ));
                 }
 
+                if !allow_pending_backend_validation {
+                    tracing::warn!(
+                        domain = "credentials",
+                        operation = "store_session",
+                        "[credentials][auth-store] GET /auth/me transient validation failed on {} — session NOT persisted; backend proof required before storing remote JWT: {reason}",
+                        api_url.trim_end_matches('/')
+                    );
+                    return Err(format!(
+                        "Session validation failed (GET /auth/me): {reason}"
+                    ));
+                }
+
+                let Some(exp) = jwt_exp_live_at(trimmed_token, chrono::Utc::now()) else {
+                    tracing::warn!(
+                        domain = "credentials",
+                        operation = "store_session",
+                        "[credentials][auth-store] GET /auth/me transient validation failed on {} but JWT has no live local exp — session NOT persisted: {reason}",
+                        api_url.trim_end_matches('/')
+                    );
+                    return Err(format!(
+                        "Session validation failed (GET /auth/me): {reason}"
+                    ));
+                };
+
                 tracing::warn!(
                     domain = "credentials",
                     operation = "store_session",
-                    "[credentials][auth-store] GET /auth/me transient validation failed on {} — session NOT persisted; backend proof required before storing remote JWT: {reason}",
+                    exp = %exp,
+                    "[credentials][auth-store] GET /auth/me transient validation failed on {} — persisting caller-authorized pending session for backend revalidation: {reason}",
                     api_url.trim_end_matches('/')
                 );
-                return Err(format!(
-                    "Session validation failed (GET /auth/me): {reason}"
+                session_validation_logs.push(format!(
+                    "session JWT accepted with deferred GET /auth/me validation on {} after transient failure",
+                    api_url.trim_end_matches('/')
                 ));
+                fallback_session_user_for_deferred_validation()
             }
         }
     };
@@ -450,6 +499,18 @@ fn auth_me_failure_status(reason: &str) -> Option<u16> {
             || lower.contains(&format!("status {status}"))
             || lower.contains(&format!("status code {status}"))
     })
+}
+
+fn jwt_exp_live_at(
+    token: &str,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Option<chrono::DateTime<chrono::Utc>> {
+    let exp = decode_jwt_exp(token)?;
+    (exp > now).then_some(exp)
+}
+
+fn fallback_session_user_for_deferred_validation() -> Value {
+    json!({ "pendingBackendValidation": true })
 }
 
 fn sanitize_stored_session_user(user: Option<serde_json::Value>) -> Option<serde_json::Value> {

@@ -232,6 +232,50 @@ async fn store_session_rejects_non_object_user_when_auth_me_transient() {
 }
 
 #[tokio::test]
+async fn store_session_defers_minimal_live_jwt_when_auth_me_transient_and_allowed() {
+    let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let tmp = TempDir::new().unwrap();
+    std::fs::create_dir_all(tmp.path().join("workspace")).unwrap();
+    let _home = EnvVarGuard::set_to_path("HOME", tmp.path());
+    let mut config = test_config(&tmp);
+    config.api_url = Some(spawn_auth_me_status(StatusCode::SERVICE_UNAVAILABLE).await);
+    let token = jwt_with_payload(json!({
+        "sub": "unverified-jwt-user",
+        "email": "jwt@example.test",
+        "name": "Unverified JWT User",
+        "exp": (chrono::Utc::now() + chrono::Duration::hours(1)).timestamp()
+    }));
+
+    let result = store_session_with_deferred_validation(
+        &config,
+        &token,
+        None,
+        Some(json!({
+            "id": "supplied-callback-user",
+            "name": "Supplied Callback User"
+        })),
+    )
+    .await
+    .unwrap();
+
+    assert!(result.value.has_token);
+    let log_text = result.logs.join(" ");
+    assert!(
+        log_text.contains("session JWT accepted with deferred GET /auth/me validation"),
+        "expected deferred validation log, got: {log_text}"
+    );
+    let state = auth_get_state(&config).await.unwrap().value;
+    assert!(state.is_authenticated);
+    assert_eq!(
+        state.user,
+        Some(json!({ "pendingBackendValidation": true })),
+        "deferred fallback must not copy identity claims from an unverified JWT or callback payload"
+    );
+}
+
+#[tokio::test]
 async fn store_session_rejects_live_jwt_when_auth_me_unauthorized() {
     let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
         .lock()
