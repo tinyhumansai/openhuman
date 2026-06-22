@@ -5,7 +5,7 @@ not catch.
 
 ## What runs
 
-Workflow: [`.github/workflows/weekly-code-review.yml`](../.github/workflows/weekly-code-review.yml).
+Workflow: `.github/workflows/weekly-code-review.yml`.
 Script: [`scripts/weekly-code-review.sh`](../scripts/weekly-code-review.sh).
 
 The aggregator currently collects:
