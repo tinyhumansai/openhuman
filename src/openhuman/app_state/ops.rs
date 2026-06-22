@@ -391,6 +391,41 @@ fn same_config_state_dir(a: &Config, b: &Config) -> bool {
     config_state_dir(a) == config_state_dir(b)
 }
 
+fn config_dir_for_workspace_env() -> Option<PathBuf> {
+    let workspace = std::env::var_os("OPENHUMAN_WORKSPACE")?;
+    if workspace.as_os_str().is_empty() {
+        return None;
+    }
+
+    let workspace_dir = PathBuf::from(workspace);
+    let workspace_config_dir = workspace_dir.clone();
+    if workspace_config_dir.join("config.toml").exists() {
+        return Some(workspace_config_dir);
+    }
+
+    if let Some(parent) = workspace_dir.parent() {
+        let legacy_dir = parent.join(".openhuman");
+        if legacy_dir.join("config.toml").exists()
+            || workspace_dir
+                .file_name()
+                .is_some_and(|name| name == std::ffi::OsStr::new("workspace"))
+        {
+            return Some(legacy_dir);
+        }
+    }
+
+    Some(workspace_config_dir)
+}
+
+fn config_is_workspace_env_scoped(config: &Config) -> bool {
+    let Some(config_dir) = config_state_dir(config) else {
+        return false;
+    };
+    config_dir_for_workspace_env()
+        .as_deref()
+        .is_some_and(|env_config_dir| env_config_dir == config_dir)
+}
+
 async fn activate_revalidated_user_dir(config: &Config, user_id: &str) -> Config {
     if let Ok(root_dir) = crate::openhuman::config::default_root_openhuman_dir() {
         let previous_active = crate::openhuman::config::read_active_user_id(&root_dir);
@@ -471,9 +506,16 @@ async fn persist_revalidated_session_user(
     user: Value,
 ) -> Result<(), String> {
     let user_id = user_id_from_profile_payload(&user);
-    let target_config = if let Some(user_id) = user_id.as_deref() {
+    let workspace_env_scoped = config_is_workspace_env_scoped(config);
+    let target_config = if let Some(user_id) = user_id.as_deref().filter(|_| !workspace_env_scoped)
+    {
         activate_revalidated_user_dir(config, user_id).await
     } else {
+        if user_id.is_some() && workspace_env_scoped {
+            debug!(
+                "{LOG_PREFIX} keeping revalidated pending session in OPENHUMAN_WORKSPACE-scoped config"
+            );
+        }
         config.clone()
     };
     let source_config = config.clone();

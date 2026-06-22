@@ -162,6 +162,33 @@ fn setup(api_url: &str) -> Harness {
     }
 }
 
+fn setup_default_paths(api_url: &str) -> Harness {
+    let tmp = tempdir();
+    let guards = vec![
+        EnvGuard::set_to_path("HOME", tmp.path()),
+        EnvGuard::unset("OPENHUMAN_WORKSPACE"),
+        EnvGuard::unset("BACKEND_URL"),
+        EnvGuard::unset("VITE_BACKEND_URL"),
+        EnvGuard::unset("OPENHUMAN_API_URL"),
+        EnvGuard::unset("OPENHUMAN_CORE_RPC_URL"),
+        EnvGuard::unset("OPENHUMAN_CORE_PORT"),
+        EnvGuard::set("OPENHUMAN_KEYRING_BACKEND", "file"),
+        EnvGuard::set("OPENHUMAN_MEMORY_EMBED_STRICT", "false"),
+        EnvGuard::set("OPENHUMAN_MEMORY_EMBED_ENDPOINT", ""),
+        EnvGuard::set("OPENHUMAN_MEMORY_EMBED_MODEL", ""),
+    ];
+    let default_root = openhuman_core::openhuman::config::default_root_openhuman_dir()
+        .expect("default openhuman root");
+    let root = openhuman_core::openhuman::config::pre_login_user_dir(&default_root);
+    write_min_config(&root, api_url);
+
+    Harness {
+        _tmp: tmp,
+        root,
+        _guards: guards,
+    }
+}
+
 async fn auth_me_server(
     body: &'static str,
 ) -> (
@@ -562,13 +589,10 @@ async fn snapshot_clears_pending_backend_validation_after_successful_revalidatio
         "fresh snapshot user must not keep pendingBackendValidation"
     );
 
-    let active_config = openhuman_core::openhuman::config::Config::load_from_default_paths()
-        .await
-        .expect("load activated user config");
-    let profile = AuthService::from_config(&active_config)
+    let profile = AuthService::from_config(&config)
         .get_profile(APP_SESSION_PROVIDER, None)
         .expect("read profile")
-        .expect("profile remains after successful revalidation");
+        .expect("profile remains in env-scoped config after successful revalidation");
     assert_eq!(
         profile.metadata.get("user_id").map(String::as_str),
         Some("fresh-pending-user")
@@ -590,15 +614,18 @@ async fn snapshot_clears_pending_backend_validation_after_successful_revalidatio
     );
     assert_eq!(
         openhuman_core::openhuman::config::read_active_user_id(&active_user_root).as_deref(),
-        Some("fresh-pending-user"),
-        "successful pending revalidation must activate the fresh backend user"
+        None,
+        "env-scoped revalidation must not move auth state into default active_user.toml"
     );
-    let source_profile = AuthService::from_config(&config)
-        .get_profile(APP_SESSION_PROVIDER, None)
-        .expect("read source profile after successful revalidation");
-    assert!(
-        source_profile.is_none(),
-        "source pending profile must be removed after successful user activation"
+    let next_snap = snapshot()
+        .await
+        .expect("next env-scoped snapshot remains authenticated")
+        .value;
+    assert!(next_snap.auth.is_authenticated);
+    assert_eq!(
+        next_snap.auth.user_id.as_deref(),
+        Some("fresh-pending-user"),
+        "next env-scoped snapshot must keep loading the revalidated profile"
     );
 
     let _ = shutdown_tx.send(());
@@ -612,7 +639,7 @@ async fn snapshot_activates_user_dir_after_pending_revalidation_without_initial_
         r#"{"data":{"id":"fresh-activated-user","name":"Fresh Activated","email":"fresh-activated@example.test"}}"#,
     )
     .await;
-    let harness = setup(&api_url);
+    let harness = setup_default_paths(&api_url);
     let config = harness.config().await;
     let active_user_root = openhuman_core::openhuman::config::default_root_openhuman_dir()
         .expect("default openhuman root");
