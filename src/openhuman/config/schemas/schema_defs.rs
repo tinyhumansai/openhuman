@@ -280,6 +280,10 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     "base_url",
                     "Provider base URL string, or null to clear. For LM Studio this defaults to http://localhost:1234/v1.",
                 ),
+                optional_string(
+                    "api_key",
+                    "Bearer credential for keyed local runtimes such as OMLX. Pass an empty string to clear.",
+                ),
                 optional_string("model_id", "Default local chat model identifier."),
                 optional_string("chat_model_id", "Local chat model identifier."),
                 optional_bool(
