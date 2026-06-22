@@ -156,9 +156,9 @@ pub fn start(config: Config) {
                                 // `notify` still wakes us on new enqueues.
                                 log::warn!(
                                     "[memory::jobs] worker {idx} hit SQLITE_FULL (disk full), \
-                                     backing off 60s: {err:#}"
+                                     backing off 300s without reporting: {err:#}"
                                 );
-                                tokio::time::sleep(Duration::from_secs(60)).await;
+                                tokio::time::sleep(Duration::from_secs(300)).await;
                             } else {
                                 crate::core::observability::report_error(
                                     &err,
