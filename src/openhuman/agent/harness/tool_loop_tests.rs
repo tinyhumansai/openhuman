@@ -1493,6 +1493,89 @@ fn terminal_inference_failure_requires_delegated_inference_envelope() {
 }
 
 #[test]
+fn bare_provider_api_error_in_tool_stderr_does_not_classify() {
+    // Codex review #3779 (follow-up): a recoverable `shell`/`run_code` task that
+    // is debugging its OWN API client can print the verbatim provider-HTTP
+    // envelope shape (`<provider> API error (status): …`). Without a
+    // harness-generated wrapper (`failed and did not complete` /
+    // `all providers/models failed` / `may not be available on your provider`)
+    // that output must NOT be treated as a delegated inference failure — else the
+    // whole turn halts after a single failed command with a misleading "fix your
+    // model in Settings → AI" message.
+    for tool_stderr in [
+        // The exact shape called out in the review: a config-rejection body that
+        // a debugging script could print to stdout/stderr.
+        "OpenAI API error (400): invalid temperature",
+        "OpenAI API error (400): model field is required",
+        // Budget-flavoured body, same forged-envelope risk.
+        "custom_openai API error (402 Payment Required): {\"error\":\"Insufficient balance\"}",
+        // Responses/streaming envelope variants, still bare (no harness wrapper).
+        "custom_openai Responses API error: {\"error\":{\"message\":\"model 'x' not found\"}}",
+        "custom_openai streaming API error (404 Not Found): model 'llama3.3' not found",
+    ] {
+        assert_eq!(
+            terminal_inference_failure_kind(tool_stderr),
+            None,
+            "a bare provider-HTTP envelope without a harness wrapper must NOT \
+             classify as a terminal inference failure: {tool_stderr:?}"
+        );
+    }
+}
+
+#[test]
+fn bare_provider_api_error_keeps_consecutive_failure_grace() {
+    // The behavioural consequence of the above at the guard level: a `run_code`
+    // task printing a bare provider API-error body on each attempt must keep its
+    // normal consecutive-failure grace (it is recoverable user code, not a
+    // delegated wall), and only trip the 6-in-a-row no-progress backstop — never
+    // halt on the FIRST failure.
+    let mut g = RepeatFailureGuard::new();
+    let bare = "OpenAI API error (400): invalid temperature";
+    for i in 0..(NO_PROGRESS_FAILURE_THRESHOLD - 1) {
+        assert!(
+            g.record("run_code", &format!("debug-attempt{i}"), false, bare)
+                .is_none(),
+            "a bare provider API-error in tool stderr must NOT halt on failure #{}",
+            i + 1
+        );
+    }
+    // The Nth consecutive failure trips the generic no-progress backstop, as for
+    // any other recoverable failure — proving the grace was preserved, not that
+    // the terminal classifier fired.
+    let halt = g.record(
+        "run_code",
+        &format!("debug-attempt{}", NO_PROGRESS_FAILURE_THRESHOLD - 1),
+        false,
+        bare,
+    );
+    let msg = halt.expect("the consecutive no-progress backstop still trips");
+    assert!(
+        msg.contains("in a row failed with no progress"),
+        "must halt via the generic no-progress path, not the terminal-inference \
+         path: {msg}"
+    );
+    assert!(
+        !msg.contains("Settings → AI") && !msg.contains("out of inference budget"),
+        "must NOT use the terminal-inference remediation copy: {msg}"
+    );
+}
+
+#[test]
+fn delegated_provider_failure_still_halts_first_after_narrowing() {
+    // Boundary guard for the #3779 narrowing: a GENUINE delegated provider
+    // failure — the same config-rejection body, but wrapped by the sub-agent
+    // dispatch (`failed and did not complete`) — MUST still halt on the first
+    // occurrence. Narrowing the envelope must not regress the #3104 fix.
+    let mut g = RepeatFailureGuard::new();
+    let delegated = "run_code failed and did not complete — no work was performed. \
+                     Error: OpenAI API error (400): invalid temperature";
+    let halt = g.record("run_code", "{\"prompt\":\"x\"}", false, delegated);
+    let msg = halt.expect("a wrapped delegated provider-config rejection must halt first");
+    assert!(msg.contains("rejected the request"), "got: {msg}");
+    assert!(msg.contains("Settings → AI"), "actionable remediation: {msg}");
+}
+
+#[test]
 fn terminal_budget_failure_halts_on_first_occurrence() {
     let mut g = RepeatFailureGuard::new();
     let budget = "run_code failed and did not complete — no work was performed. \
