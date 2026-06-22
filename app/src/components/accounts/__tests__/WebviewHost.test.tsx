@@ -154,35 +154,30 @@ describe('WebviewHost — provider name substitution (#3759)', () => {
     expect(timeout).not.toHaveTextContent('{providerName}');
   });
 
-  it('handles different provider names correctly in loading state', () => {
-    const testCases = [
-      { provider: 'discord' as const, expectedName: 'Discord' },
-      { provider: 'gmail' as const, expectedName: 'Gmail' },
-      { provider: 'telegram' as const, expectedName: 'Telegram' },
-    ];
+  it.each([
+    { provider: 'discord' as const, expectedName: 'Discord' },
+    { provider: 'gmail' as const, expectedName: 'Gmail' },
+    { provider: 'telegram' as const, expectedName: 'Telegram' },
+  ])('renders $expectedName correctly in loading state', ({ provider, expectedName }) => {
+    const accountId = `acct-${provider}`;
+    store.dispatch(
+      addAccount({
+        id: accountId,
+        provider,
+        label: expectedName,
+        createdAt: new Date().toISOString(),
+        status: 'loading',
+      })
+    );
 
-    for (const { provider, expectedName } of testCases) {
-      store.dispatch(resetAccountsState());
-      const accountId = `acct-${provider}`;
-      store.dispatch(
-        addAccount({
-          id: accountId,
-          provider,
-          label: expectedName,
-          createdAt: new Date().toISOString(),
-          status: 'loading',
-        })
-      );
+    render(
+      <Provider store={store}>
+        <WebviewHost accountId={accountId} provider={provider} />
+      </Provider>
+    );
 
-      render(
-        <Provider store={store}>
-          <WebviewHost accountId={accountId} provider={provider} />
-        </Provider>
-      );
-
-      const placeholder = screen.getByTestId(`webview-placeholder-${accountId}`);
-      expect(placeholder).toHaveTextContent(`Loading ${expectedName}...`);
-      expect(placeholder).not.toHaveTextContent('{providerName}');
-    }
+    const placeholder = screen.getByTestId(`webview-placeholder-${accountId}`);
+    expect(placeholder).toHaveTextContent(`Loading ${expectedName}...`);
+    expect(placeholder).not.toHaveTextContent('{providerName}');
   });
 });
