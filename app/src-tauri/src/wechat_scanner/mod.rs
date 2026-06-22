@@ -45,7 +45,7 @@ pub fn spawn_scanner<R: Runtime>(
         sleep(STARTUP_DELAY).await;
         let mut last_hash: Option<u64> = None;
         loop {
-            match scan_once(&url_prefix, &fragment).await {
+            match scan_once(&app, &account_id, &url_prefix, &fragment).await {
                 Ok(scan) => {
                     if Some(scan.hash) == last_hash {
                         sleep(SCAN_INTERVAL).await;
@@ -74,13 +74,20 @@ pub fn spawn_scanner<R: Runtime>(
     .abort_handle()
 }
 
-async fn scan_once(url_prefix: &str, url_fragment: &str) -> Result<dom_snapshot::DomScan, String> {
+async fn scan_once<R: Runtime>(
+    app: &AppHandle<R>,
+    account_id: &str,
+    url_prefix: &str,
+    url_fragment: &str,
+) -> Result<dom_snapshot::DomScan, String> {
     let prefix = url_prefix.to_string();
     let fragment = url_fragment.to_string();
-    let (mut cdp, session) = crate::cdp::connect_and_attach_matching(move |t| {
+    let pred = move |t: &crate::cdp::target::CdpTarget| -> bool {
         t.url.starts_with(&prefix) && t.url.ends_with(&fragment)
-    })
-    .await?;
+    };
+    let (mut cdp, session) =
+        crate::cdp::target::connect_and_attach_matching_in_process::<R, _>(app, account_id, pred)
+            .await?;
     let scan = dom_snapshot::scan(&mut cdp, &session).await;
     crate::cdp::detach_session(&mut cdp, &session).await;
     scan

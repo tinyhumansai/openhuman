@@ -293,6 +293,7 @@ async fn list_subagents() -> Result<Value, ToolCallError> {
 }
 
 async fn run_subagent_tool(params: &Map<String, Value>) -> Result<Value, ToolCallError> {
+    use super::super::subagent_depth;
     use super::params::required_non_empty_string;
 
     let agent_id = required_non_empty_string(params, "agent_id")?;
@@ -302,6 +303,23 @@ async fn run_subagent_tool(params: &Map<String, Value>) -> Result<Value, ToolCal
             "agent.run_subagent does not yet support `integrations_agent`; first-level MCP support is currently limited to standalone agents that do not require toolkit binding".to_string(),
         ));
     }
+
+    // Bound nested recursion per delegation chain (CC → run_subagent → CC → …).
+    // `current_depth()` is the depth of THIS chain (carried across the loopback
+    // MCP hop via the depth header); the subagent we're about to spawn sits one
+    // level deeper. Refuse before spawning if the child would exceed the cap —
+    // unrelated parallel callers each track their own chain, so they never trip
+    // each other.
+    // Guard BEFORE incrementing so a forged/clamped depth at the cap cannot
+    // overflow `chain_depth + 1` (panic in debug, wrap-to-0 in release).
+    let chain_depth = subagent_depth::current_depth();
+    if chain_depth >= subagent_depth::MAX_SUBAGENT_DEPTH {
+        return Err(ToolCallError::Internal(format!(
+            "agent.run_subagent delegation depth limit reached (chain depth {chain_depth} ≥ {}); refusing to spawn another nested subagent",
+            subagent_depth::MAX_SUBAGENT_DEPTH
+        )));
+    }
+    let child_depth = chain_depth + 1;
 
     let config = load_config_and_init_registry().await?;
     let mut agent = Agent::from_config_for_agent(&config, &agent_id).map_err(|err| {
@@ -328,12 +346,16 @@ async fn run_subagent_tool(params: &Map<String, Value>) -> Result<Value, ToolCal
         reply_target: agent_id.clone(),
         message_id: uuid::Uuid::new_v4().to_string(),
     };
-    let response =
-        crate::openhuman::agent::turn_origin::with_origin(origin, agent.run_single(&prompt))
-            .await
-            .map_err(|err| {
-                ToolCallError::Internal(format!("subagent `{agent_id}` failed: {err}"))
-            })?;
+    // Run the subagent one level deeper in the chain, so its own Claude Code
+    // turns stamp `child_depth` onto any grandchildren they spawn. The agent
+    // turn future is large; box it onto the heap so this tool (and the
+    // `handle_json_value` dispatch above it) keeps a small stack frame.
+    let response = Box::pin(subagent_depth::scope(
+        child_depth,
+        crate::openhuman::agent::turn_origin::with_origin(origin, agent.run_single(&prompt)),
+    ))
+    .await
+    .map_err(|err| ToolCallError::Internal(format!("subagent `{agent_id}` failed: {err}")))?;
 
     Ok(json!({
         "content": [{
@@ -373,4 +395,32 @@ pub fn tool_error(message: String) -> Value {
         }],
         "isError": true
     })
+}
+
+#[cfg(test)]
+mod depth_tests {
+    use super::super::super::subagent_depth::{current_depth, scope, MAX_SUBAGENT_DEPTH};
+
+    #[tokio::test]
+    async fn child_depth_is_bounded_per_chain() {
+        // The dispatch refuses when `current_depth() >= MAX` (guarding before the
+        // `+1` so a clamped depth at the cap can't overflow). At depth MAX the
+        // next subagent is refused; below it, allowed. (Parallel unrelated chains
+        // each start at 0 — no interference.)
+        assert_eq!(current_depth(), 0, "top level starts at depth 0");
+        scope(MAX_SUBAGENT_DEPTH, async {
+            assert!(
+                current_depth() >= MAX_SUBAGENT_DEPTH,
+                "at the cap, spawning a deeper child must be refused"
+            );
+        })
+        .await;
+        scope(MAX_SUBAGENT_DEPTH - 1, async {
+            assert!(
+                current_depth() < MAX_SUBAGENT_DEPTH,
+                "one below the cap, a child is still allowed"
+            );
+        })
+        .await;
+    }
 }

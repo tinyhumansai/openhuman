@@ -11,8 +11,9 @@ import {
   openhumanAutocompleteStop,
   openhumanGetConfig,
 } from '../../../utils/tauriCommands';
+import PanelPage from '../../layout/PanelPage';
 import Button from '../../ui/Button';
-import SettingsHeader from '../components/SettingsHeader';
+import SettingsBackButton from '../components/SettingsBackButton';
 import {
   SettingsNumberField,
   SettingsRow,
@@ -69,7 +70,7 @@ const parseAutocompleteConfig = (raw: unknown): AutocompleteConfig => {
 
 const AutocompletePanel = () => {
   const { t } = useT();
-  const { navigateBack, navigateToSettings, breadcrumbs } = useSettingsNavigation();
+  const { navigateBack, navigateToSettings } = useSettingsNavigation();
   const [status, setStatus] = useState<AutocompleteStatus | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -216,14 +217,10 @@ const AutocompletePanel = () => {
   };
 
   return (
-    <div className="z-10 relative">
-      <SettingsHeader
-        title={t('autocomplete.title')}
-        showBackButton={true}
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
-
+    <PanelPage
+      className="z-10"
+      contentClassName=""
+      leading={<SettingsBackButton onBack={navigateBack} />}>
       <div className="p-4 pt-2 space-y-5">
         {/* ── Settings ──────────────────────────────────────────────── */}
         <SettingsSection title={t('autocomplete.settings')}>
@@ -394,7 +391,7 @@ const AutocompletePanel = () => {
           </svg>
         </button>
       </div>
-    </div>
+    </PanelPage>
   );
 };
 

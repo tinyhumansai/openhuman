@@ -18,8 +18,9 @@ import {
   testEmbeddingsConnection,
   updateEmbeddingsSettings,
 } from '../../../services/api/embeddingsApi';
+import PanelPage from '../../layout/PanelPage';
 import Button from '../../ui/Button';
-import SettingsHeader from '../components/SettingsHeader';
+import SettingsBackButton from '../components/SettingsBackButton';
 import {
   SettingsBadge,
   SettingsRow,
@@ -43,7 +44,7 @@ interface EmbeddingsPanelProps {
 
 const EmbeddingsPanel = ({ embedded = false }: EmbeddingsPanelProps = {}) => {
   const { t } = useT();
-  const { navigateBack, breadcrumbs } = useSettingsNavigation();
+  const { navigateBack } = useSettingsNavigation();
 
   const [settings, setSettings] = useState<EmbeddingsSettings | null>(null);
   const [status, setStatus] = useState<Status>({ kind: 'loading' });
@@ -86,15 +87,11 @@ const EmbeddingsPanel = ({ embedded = false }: EmbeddingsPanelProps = {}) => {
 
   if (!settings) {
     return (
-      <div className="z-10 relative">
-        {!embedded && (
-          <SettingsHeader
-            title={t('settings.embeddings.title')}
-            showBackButton
-            onBack={navigateBack}
-            breadcrumbs={breadcrumbs}
-          />
-        )}
+      <PanelPage
+        className="z-10"
+        contentClassName=""
+        description={embedded ? undefined : t('pages.settings.ai.embeddingsDesc')}
+        leading={embedded ? undefined : <SettingsBackButton onBack={navigateBack} />}>
         <div className={embedded ? '' : 'p-4'}>
           <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 text-xs text-neutral-500 dark:text-neutral-400">
             {status.kind === 'loading'
@@ -104,7 +101,7 @@ const EmbeddingsPanel = ({ embedded = false }: EmbeddingsPanelProps = {}) => {
                 : ''}
           </div>
         </div>
-      </div>
+      </PanelPage>
     );
   }
 
@@ -285,6 +282,25 @@ const EmbeddingsPanel = ({ embedded = false }: EmbeddingsPanelProps = {}) => {
         custom_endpoint: customEndpoint.trim(),
         confirm_wipe: false,
       });
+      // Setup-time verification failed: the endpoint couldn't prove it can
+      // embed, so the config was NOT saved. Covers no `/embeddings` route
+      // (TAURI-RUST-5JR), LM Studio with no model loaded (TAURI-RUST-4P4), and
+      // any other probe failure/timeout. Keep the setup popup open and surface
+      // the actionable message so the user can fix it (load a model, correct the
+      // endpoint, …) and retry.
+      if (
+        result.error === 'EMBEDDINGS_ENDPOINT_NO_API' ||
+        result.error === 'EMBEDDINGS_NO_MODEL_LOADED' ||
+        result.error === 'EMBEDDINGS_VERIFICATION_FAILED'
+      ) {
+        setSetupError(
+          typeof result.message === 'string'
+            ? result.message
+            : "Couldn't verify the embeddings endpoint. Make sure it's running and serving an embedding model, then save again."
+        );
+        setStatus({ kind: 'idle' });
+        return;
+      }
       if (result.error === 'EMBEDDINGS_DIMENSION_CHANGE_REQUIRES_WIPE') {
         setPendingWipe({
           provider: 'custom',
@@ -332,16 +348,11 @@ const EmbeddingsPanel = ({ embedded = false }: EmbeddingsPanelProps = {}) => {
   }
 
   return (
-    <div className="z-10 relative">
-      {!embedded && (
-        <SettingsHeader
-          title={t('settings.embeddings.title')}
-          showBackButton
-          onBack={navigateBack}
-          breadcrumbs={breadcrumbs}
-        />
-      )}
-
+    <PanelPage
+      className="z-10"
+      contentClassName=""
+      description={embedded ? undefined : t('pages.settings.ai.embeddingsDesc')}
+      leading={embedded ? undefined : <SettingsBackButton onBack={navigateBack} />}>
       <div className={embedded ? 'space-y-4' : 'p-4 space-y-4'}>
         <p className="text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed">
           {t('settings.embeddings.description')}
@@ -708,7 +719,7 @@ const EmbeddingsPanel = ({ embedded = false }: EmbeddingsPanelProps = {}) => {
           </div>
         </div>
       )}
-    </div>
+    </PanelPage>
   );
 };
 

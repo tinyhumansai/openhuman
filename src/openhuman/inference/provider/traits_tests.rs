@@ -271,6 +271,7 @@ async fn provider_chat_prompt_guided_fallback() {
         messages: &[ChatMessage::user("Hello")],
         tools: Some(&tools),
         stream: None,
+        max_tokens: None,
     };
 
     let response = provider.chat(request, "model", 0.7).await.unwrap();
@@ -289,6 +290,7 @@ async fn provider_chat_without_tools() {
         messages: &[ChatMessage::user("Hello")],
         tools: None,
         stream: None,
+        max_tokens: None,
     };
 
     let response = provider.chat(request, "model", 0.7).await.unwrap();
@@ -390,6 +392,7 @@ async fn provider_chat_prompt_guided_preserves_existing_system_not_first() {
         ],
         tools: Some(&tools),
         stream: None,
+        max_tokens: None,
     };
 
     let response = provider.chat(request, "model", 0.7).await.unwrap();
@@ -413,6 +416,7 @@ async fn provider_chat_prompt_guided_uses_convert_tools_override() {
         messages: &[ChatMessage::system("BASE"), ChatMessage::user("Hello")],
         tools: Some(&tools),
         stream: None,
+        max_tokens: None,
     };
 
     let response = provider.chat(request, "model", 0.7).await.unwrap();
@@ -436,6 +440,7 @@ async fn provider_chat_prompt_guided_rejects_non_prompt_payload() {
         messages: &[ChatMessage::user("Hello")],
         tools: Some(&tools),
         stream: None,
+        max_tokens: None,
     };
 
     let err = provider.chat(request, "model", 0.7).await.unwrap_err();

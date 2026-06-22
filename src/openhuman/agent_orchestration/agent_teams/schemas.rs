@@ -4,7 +4,8 @@
 //! Surface: create a team with members, list/get teams, assign dependency-aware
 //! tasks, atomically claim a task, exchange + list teammate messages, complete a
 //! claimed task behind a quality gate, shut a member down (releasing its tasks),
-//! and close a team. Live agent execution is a follow-up.
+//! close a team, and — via `start_member` — spawn a live worker that claims and
+//! runs a task to completion (see [`super::runtime`]).
 
 use serde_json::{Map, Value};
 
@@ -15,6 +16,7 @@ use crate::openhuman::session_db::run_ledger::AgentTeamListRequest;
 use crate::rpc::RpcOutcome;
 
 use super::ops::{self, NewMember};
+use super::runtime;
 
 /// Controller schemas exposed by the agent-teams module.
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
@@ -29,6 +31,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schema_for("agent_team_complete_task"),
         schema_for("agent_team_shutdown_member"),
         schema_for("agent_team_close"),
+        schema_for("agent_team_start_member"),
     ]
 }
 
@@ -74,6 +77,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schema_for("agent_team_close"),
             handler: handle_close,
+        },
+        RegisteredController {
+            schema: schema_for("agent_team_start_member"),
+            handler: handle_start_member,
         },
     ]
 }
@@ -151,7 +158,10 @@ fn schema_for(function: &str) -> ControllerSchema {
             description: "Send a message from one member to another (or broadcast to the team).",
             inputs: vec![
                 required_str("teamId", "Team id."),
-                required_str("fromMemberId", "Sender member id."),
+                optional_str(
+                    "fromMemberId",
+                    "Sender member id; omit for a lead/user-originated message.",
+                ),
                 optional_str("toMemberId", "Recipient member id (omit to broadcast)."),
                 required_str("content", "Message content."),
                 optional_str("visibility", "Message visibility (default team)."),
@@ -216,6 +226,27 @@ fn schema_for(function: &str) -> ControllerSchema {
                 optional_str("summary", "Closing summary."),
             ],
             outputs: vec![json_output("team", "The closed AgentTeam.")],
+        },
+        "agent_team_start_member" => ControllerSchema {
+            namespace: "agent_team",
+            function: "start_member",
+            description: "Spawn a live worker for a member: claims a task and runs a real sub-agent to completion.",
+            inputs: vec![
+                required_str("teamId", "Team id."),
+                required_str("memberId", "Member to run."),
+                optional_str(
+                    "taskId",
+                    "Specific task id; omit to auto-pick the member's next claimable task.",
+                ),
+                optional_str(
+                    "modelOverride",
+                    "Test-only: pin the spawned worker to this model (production omits).",
+                ),
+            ],
+            outputs: vec![json_output(
+                "result",
+                "StartMemberOutcome: started | blocked | alreadyClaimed | noClaimableTask | unknownTask.",
+            )],
         },
         other => unreachable!("unknown agent_team schema: {other}"),
     }
@@ -337,14 +368,16 @@ fn handle_message_member(params: Map<String, Value>) -> ControllerFuture {
             log::warn!(target: "agent_team_rpc", "[agent_team_rpc][{cid}] message_member.config_failed err={err}");
         })?;
         let team_id = require_str(&params, "teamId")?;
-        let from = require_str(&params, "fromMemberId")?;
+        // `fromMemberId` is optional: omitted ⇒ lead/user-originated message
+        // (stored as `from = "lead"`); present ⇒ teammate-to-teammate.
+        let from = opt_str(&params, "fromMemberId");
         let to = opt_str(&params, "toMemberId");
         let content = require_str(&params, "content")?;
         let visibility = opt_str(&params, "visibility");
         let event = ops::message_member(
             &config,
             &team_id,
-            &from,
+            from.as_deref(),
             to.as_deref(),
             &content,
             visibility.as_deref(),
@@ -433,6 +466,32 @@ fn handle_close(params: Map<String, Value>) -> ControllerFuture {
             .map_err(|e| log_err(&cid, "close", e))?;
         log::debug!(target: "agent_team_rpc", "[agent_team_rpc][{cid}] close.success team={team_id}");
         to_json(serde_json::json!({ "team": team }))
+    })
+}
+
+fn handle_start_member(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let cid = new_correlation_id();
+        log::debug!(target: "agent_team_rpc", "[agent_team_rpc][{cid}] start_member.entry");
+        let config = config_rpc::load_config_with_timeout().await.inspect_err(|err| {
+            log::warn!(target: "agent_team_rpc", "[agent_team_rpc][{cid}] start_member.config_failed err={err}");
+        })?;
+        let team_id = require_str(&params, "teamId")?;
+        let member_id = require_str(&params, "memberId")?;
+        let task_id = opt_str(&params, "taskId");
+        // Test-only seam: pin the spawned worker to a model (e.g. the e2e mock).
+        let model_override = opt_str(&params, "modelOverride");
+        let outcome = runtime::start_member_run(
+            &config,
+            &team_id,
+            &member_id,
+            task_id.as_deref(),
+            model_override,
+        )
+        .await
+        .map_err(|e| log_err(&cid, "start_member", e))?;
+        log::debug!(target: "agent_team_rpc", "[agent_team_rpc][{cid}] start_member.success team={team_id} member={member_id}");
+        to_json(serde_json::json!({ "result": outcome }))
     })
 }
 
@@ -570,7 +629,7 @@ mod tests {
         let schemas = all_controller_schemas();
         let registered = all_registered_controllers();
         assert_eq!(schemas.len(), registered.len());
-        assert_eq!(schemas.len(), 10);
+        assert_eq!(schemas.len(), 11);
         assert!(schemas.iter().all(|s| s.namespace == "agent_team"));
         assert_eq!(schema_for("agent_team_claim_task").function, "claim_task");
         assert_eq!(

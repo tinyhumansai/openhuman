@@ -173,4 +173,73 @@ describe('SubagentDrawer', () => {
     await userEvent.click(screen.getByText('✕'));
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+
+  it('shows the Cancel task CTA only while running and with an onCancel handler', () => {
+    // No handler → no CTA.
+    const { rerender } = render(
+      <SubagentDrawer subagent={activity()} status="running" onClose={() => {}} />
+    );
+    expect(screen.queryByTestId('subagent-cancel')).toBeNull();
+
+    // Handler present but already finished → no CTA.
+    rerender(
+      <SubagentDrawer
+        subagent={activity()}
+        status="success"
+        onCancel={vi.fn()}
+        onClose={() => {}}
+      />
+    );
+    expect(screen.queryByTestId('subagent-cancel')).toBeNull();
+
+    // Running + handler → CTA shown.
+    rerender(
+      <SubagentDrawer
+        subagent={activity()}
+        status="running"
+        onCancel={vi.fn()}
+        onClose={() => {}}
+      />
+    );
+    expect(screen.getByTestId('subagent-cancel')).toBeTruthy();
+  });
+
+  it('cancels via onCancel, then closes on success', async () => {
+    const onCancel = vi.fn().mockResolvedValue(undefined);
+    const onClose = vi.fn();
+    render(
+      <SubagentDrawer
+        subagent={activity()}
+        status="running"
+        onCancel={onCancel}
+        onClose={onClose}
+      />
+    );
+    await userEvent.click(screen.getByTestId('subagent-cancel'));
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    expect(screen.queryByTestId('subagent-cancel-error')).toBeNull();
+  });
+
+  it('surfaces an error and stays open when cancel fails', async () => {
+    const onCancel = vi.fn().mockRejectedValue(new Error('boom'));
+    const onClose = vi.fn();
+    render(
+      <SubagentDrawer
+        subagent={activity()}
+        status="running"
+        onCancel={onCancel}
+        onClose={onClose}
+      />
+    );
+    await userEvent.click(screen.getByTestId('subagent-cancel'));
+    await waitFor(() => expect(screen.getByTestId('subagent-cancel-error')).toBeTruthy());
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('renders the cancelled status label', () => {
+    render(<SubagentDrawer subagent={activity()} status="cancelled" onClose={() => {}} />);
+    // Case-robust: the label may be rendered as "Cancelled" or "cancelled".
+    expect(screen.getByTestId('subagent-drawer').textContent?.toLowerCase()).toContain('cancelled');
+  });
 });

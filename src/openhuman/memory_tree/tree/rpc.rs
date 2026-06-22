@@ -139,6 +139,8 @@ pub async fn list_chunks_rpc(
         since_ms: req.since_ms,
         until_ms: req.until_ms,
         limit: req.limit,
+        source_scope: None,
+        exclude_dropped: false,
     };
     let rows = tokio::task::spawn_blocking({
         let config = config.clone();
@@ -367,21 +369,29 @@ pub async fn pipeline_status_rpc(
             msg
         })??;
 
-    // Job counters — three parallel-safe blocking calls.
+    // Job counters — parallel-safe blocking calls. `failed_unrecoverable` is the
+    // #3365 left-right split: of the failed jobs, how many are the hard,
+    // user-actionable kind (`failure_class = 'unrecoverable'`) vs transient ones
+    // that self-heal via auto-requeue. Only the former escalates to `error`.
     let cfg_for_jobs = config.clone();
-    let pipeline_jobs =
-        tokio::task::spawn_blocking(move || -> Result<PipelineJobCounts, String> {
+    let (pipeline_jobs, failed_unrecoverable) =
+        tokio::task::spawn_blocking(move || -> Result<(PipelineJobCounts, u64), String> {
             let ready = queue_store::count_by_status(&cfg_for_jobs, JobStatus::Ready)
                 .map_err(|e| format!("count_by_status(ready): {e:#}"))?;
             let running = queue_store::count_by_status(&cfg_for_jobs, JobStatus::Running)
                 .map_err(|e| format!("count_by_status(running): {e:#}"))?;
             let failed = queue_store::count_by_status(&cfg_for_jobs, JobStatus::Failed)
                 .map_err(|e| format!("count_by_status(failed): {e:#}"))?;
-            Ok(PipelineJobCounts {
-                ready,
-                running,
-                failed,
-            })
+            let failed_unrecoverable = queue_store::count_failed_unrecoverable(&cfg_for_jobs)
+                .map_err(|e| format!("count_failed_unrecoverable: {e:#}"))?;
+            Ok((
+                PipelineJobCounts {
+                    ready,
+                    running,
+                    failed,
+                },
+                failed_unrecoverable,
+            ))
         })
         .await
         .map_err(|e| {
@@ -410,7 +420,11 @@ pub async fn pipeline_status_rpc(
 
     // #002: read the process-global degradation snapshot (set by the embed /
     // extract stages) so a half-working sync surfaces as `degraded` with a
-    // cause rather than a misleading `running`.
+    // cause rather than a misleading `running`. The structure-degraded latch is
+    // a liveness signal ("the extraction model is timing out") kept honest at
+    // its source in `extract::llm` — it self-clears on the next *completed*
+    // extraction (#3365), so the status surface never consults the unrelated
+    // `extraction_coverage` metric to second-guess it here.
     let degraded = crate::openhuman::memory_tree::health::current_degraded_state();
 
     let (status, reason) = derive_pipeline_status(
@@ -418,6 +432,7 @@ pub async fn pipeline_status_rpc(
         config.scheduler_gate.mode,
         is_syncing,
         pipeline_jobs.failed,
+        failed_unrecoverable,
         total_chunks,
         &degraded,
     );
@@ -428,7 +443,10 @@ pub async fn pipeline_status_rpc(
     // to `None` rather than failing the polled status RPC.
     //   - first_blocking_cause (FR-004): the most-recent failed job's typed
     //     reason, surfaced verbatim by the UI.
-    //   - extraction_coverage (FR-010/US5): fraction of chunks with structure.
+    //   - extraction_coverage (FR-010/US5): fraction of chunks with structure,
+    //     surfaced as its own display metric — deliberately NOT folded into the
+    //     status pill (#3365: coverage is a cumulative measure, unrelated to the
+    //     live structure-degraded liveness signal).
     //     `None` (not `0.0`) on a read error, so a broken measurement path is
     //     never mistaken for a genuine 0% extraction rate.
     let (latest_failure, extraction_coverage) = {
@@ -633,6 +651,7 @@ fn derive_pipeline_status(
     mode: crate::openhuman::config::SchedulerGateMode,
     is_syncing: bool,
     failed: u64,
+    failed_unrecoverable: u64,
     total_chunks: u64,
     degraded: &crate::openhuman::memory_tree::health::DegradedState,
 ) -> (String, Option<String>) {
@@ -642,28 +661,44 @@ fn derive_pipeline_status(
             Some(format!("scheduler gate mode = {}", mode.as_str())),
         );
     }
-    if failed > 0 {
+    // #3365: split the failed bucket by class. Only an UNRECOVERABLE failure
+    // (budget / auth / dim-mismatch) is a hard `error` the user must act on —
+    // it stays parked and can't self-heal. Transient failures are auto-requeued
+    // by `requeue_transient_failed`, so they must NOT escalate to `error`; they
+    // fall through to `degraded` ("failed, retrying") below. This fixes the prior
+    // `failed > 0 → error` that flashed a scary error for a job about to retry.
+    if failed_unrecoverable > 0 {
         return (
             "error".to_string(),
-            Some(format!("{failed} failed job(s) in pipeline")),
+            Some(format!(
+                "{failed_unrecoverable} unrecoverable failure(s) need action"
+            )),
         );
     }
     // #002 (FR-005): "degraded" sits below error but above syncing/running —
-    // the pipeline is making progress, but recall/structure is reduced and the
-    // user should be told why. Beats syncing/running so a half-working sync
-    // isn't reported as plain "running"/"syncing".
+    // the pipeline is making progress, but recall/structure is reduced (or some
+    // jobs failed transiently and are retrying) and the user should be told why.
+    // Beats syncing/running so a half-working sync isn't reported as plain
+    // "running"/"syncing".
     //
     // Only fires when there are chunks: degraded recall/structure is only
     // meaningful when there's actual content affected. An empty workspace with
     // a misconfigured embedder should show "idle" (nothing to recall) rather
     // than "degraded" (recall is broken for existing content).
-    if degraded.is_degraded() && total_chunks > 0 {
-        let mut parts = Vec::new();
+    //
+    // `failed` here is transient-only — any unrecoverable failure returned
+    // `error` above, so a non-zero `failed` at this point means jobs that will
+    // be auto-requeued.
+    if (degraded.is_degraded() || failed > 0) && total_chunks > 0 {
+        let mut parts: Vec<String> = Vec::new();
         if degraded.semantic_recall {
-            parts.push("semantic recall disabled");
+            parts.push("semantic recall disabled".to_string());
         }
         if degraded.structure {
-            parts.push("wiki structure incomplete");
+            parts.push("wiki structure incomplete".to_string());
+        }
+        if failed > 0 {
+            parts.push(format!("{failed} job(s) failed, retrying"));
         }
         return ("degraded".to_string(), Some(parts.join("; ")));
     }
@@ -1066,29 +1101,50 @@ mod tests {
             cause: Some(PipelineFailure::new(FailureCode::ExtractionTimeout)),
         };
 
+        // Args: (is_paused, mode, is_syncing, failed, failed_unrecoverable,
+        //        total_chunks, &degraded).
+
         // paused beats everything else (even degradation)
-        let (s, reason) =
-            derive_pipeline_status(true, SchedulerGateMode::Off, true, 5, 100, &recall_degraded);
+        let (s, reason) = derive_pipeline_status(
+            true,
+            SchedulerGateMode::Off,
+            true,
+            5,
+            5,
+            100,
+            &recall_degraded,
+        );
         assert_eq!(s, "paused");
         assert!(reason.unwrap().contains("off"));
 
-        // error beats degraded / syncing / running / idle
+        // error beats degraded / syncing / running / idle — but ONLY for
+        // unrecoverable failures (#3365).
         let (s, reason) = derive_pipeline_status(
             false,
             SchedulerGateMode::Auto,
             true,
             2,
+            2, // both failures unrecoverable
             100,
             &recall_degraded,
         );
         assert_eq!(s, "error");
-        assert!(reason.unwrap().contains("2 failed"));
+        assert!(reason.unwrap().contains("unrecoverable"));
+
+        // #3365: transient-only failures (failed > 0, none unrecoverable) do NOT
+        // escalate to error — they self-heal via auto-requeue, so they surface
+        // as `degraded` ("retrying"), beating syncing/running.
+        let (s, reason) =
+            derive_pipeline_status(false, SchedulerGateMode::Auto, true, 3, 0, 100, &healthy);
+        assert_eq!(s, "degraded", "transient failures must not read as error");
+        assert!(reason.unwrap().contains("3 job(s) failed, retrying"));
 
         // #002: degraded beats syncing / running / idle (but loses to paused/error)
         let (s, reason) = derive_pipeline_status(
             false,
             SchedulerGateMode::Auto,
             true, // syncing
+            0,
             0,
             100,
             &recall_degraded,
@@ -1101,6 +1157,7 @@ mod tests {
             SchedulerGateMode::Auto,
             false,
             0,
+            0,
             100,
             &structure_degraded,
         );
@@ -1109,17 +1166,19 @@ mod tests {
 
         // syncing beats running / idle (when healthy)
         let (s, reason) =
-            derive_pipeline_status(false, SchedulerGateMode::Auto, true, 0, 100, &healthy);
+            derive_pipeline_status(false, SchedulerGateMode::Auto, true, 0, 0, 100, &healthy);
         assert_eq!(s, "syncing");
         assert!(reason.is_none());
 
         // running when chunks exist but nothing in flight
         let (s, _) =
-            derive_pipeline_status(false, SchedulerGateMode::Auto, false, 0, 100, &healthy);
+            derive_pipeline_status(false, SchedulerGateMode::Auto, false, 0, 0, 100, &healthy);
         assert_eq!(s, "running");
 
-        // idle when the store is empty and nothing is in flight
-        let (s, _) = derive_pipeline_status(false, SchedulerGateMode::Auto, false, 0, 0, &healthy);
+        // idle when the store is empty and nothing is in flight (transient
+        // failures with no content don't manufacture a `degraded`).
+        let (s, _) =
+            derive_pipeline_status(false, SchedulerGateMode::Auto, false, 2, 0, 0, &healthy);
         assert_eq!(s, "idle");
     }
 

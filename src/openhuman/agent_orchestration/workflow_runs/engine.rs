@@ -27,15 +27,15 @@
 //! the root, inheriting a real provider, tool registry, memory, and model — the
 //! same construction path `agent_chat` uses.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
 
-use crate::openhuman::agent::harness::fork_context::{with_parent_context, ParentExecutionContext};
-use crate::openhuman::agent::Agent;
+use crate::openhuman::agent::harness::fork_context::with_parent_context;
+use crate::openhuman::agent_orchestration::parent_context::build_root_parent;
 use crate::openhuman::config::Config;
 use crate::openhuman::session_db::run_ledger::{
     get_workflow_run, upsert_workflow_run, WorkflowRun, WorkflowRunStatus, WorkflowRunUpsert,
@@ -287,7 +287,7 @@ pub async fn resume_workflow_run(config: &Config, id: &str) -> Result<WorkflowRu
 async fn run_engine_loop(config: &Config, run_id: &str, definition: WorkflowDefinition) {
     let cancel = lookup_cancel_flag(run_id).unwrap_or_else(|| register_cancel_flag(run_id));
 
-    let outcome = match build_root_parent(config).await {
+    let outcome = match build_root_parent(config, "workflow_engine", "workflow", "workflow").await {
         Ok(parent) => {
             with_parent_context(parent, async {
                 drive_phases(config, run_id, &definition, &cancel).await
@@ -325,58 +325,6 @@ async fn run_engine_loop(config: &Config, run_id: &str, definition: WorkflowDefi
     }
 
     clear_cancel_flag(run_id);
-}
-
-/// Build a root [`ParentExecutionContext`] from a config-built [`Agent`].
-///
-/// Mirrors `triage::escalation::dispatch_target_agent` — the proven path for
-/// running sub-agents without an enclosing agent turn.
-async fn build_root_parent(config: &Config) -> Result<ParentExecutionContext> {
-    // The engine fans out builtin sub-agents (planner / researcher / critic /
-    // summarizer), so the agent-definition registry MUST be initialised before
-    // any spawn. The full runtime boot (`bootstrap_core_runtime`) does this, but
-    // the engine can also be reached from contexts that only built the HTTP
-    // router (e.g. JSON-RPC e2e harness) — so init defensively here. `OnceLock`
-    // makes this idempotent: a no-op when the registry is already loaded.
-    if crate::openhuman::agent::harness::AgentDefinitionRegistry::global().is_none() {
-        if let Err(err) = crate::openhuman::agent::harness::AgentDefinitionRegistry::init_global(
-            &config.workspace_dir,
-        ) {
-            log::warn!(
-                target: LOG_TARGET,
-                "[workflow_run_engine] root_parent.registry_init_failed err={err}"
-            );
-        }
-    }
-
-    let mut agent = Agent::from_config(config)
-        .context("build Agent from config for workflow engine root parent")?;
-
-    let integrations = crate::openhuman::composio::fetch_connected_integrations(config).await;
-    agent.set_connected_integrations(integrations);
-
-    Ok(ParentExecutionContext {
-        agent_definition_id: "workflow_engine".to_string(),
-        allowed_subagent_ids: HashSet::new(),
-        provider: agent.provider_arc(),
-        all_tools: agent.tools_arc(),
-        all_tool_specs: agent.tool_specs_arc(),
-        model_name: agent.model_name().to_string(),
-        temperature: agent.temperature(),
-        workspace_dir: agent.workspace_dir().to_path_buf(),
-        memory: agent.memory_arc(),
-        agent_config: agent.agent_config().clone(),
-        workflows: Arc::new(agent.workflows().to_vec()),
-        memory_context: Arc::new(None),
-        session_id: format!("workflow-{}", uuid::Uuid::new_v4()),
-        channel: "workflow".to_string(),
-        connected_integrations: agent.connected_integrations().to_vec(),
-        tool_call_format: crate::openhuman::context::prompt::ToolCallFormat::PFormat,
-        session_key: agent.session_key().to_string(),
-        session_parent_prefix: agent.session_parent_prefix().map(str::to_string),
-        on_progress: None,
-        run_queue: None,
-    })
 }
 
 /// Topologically walk the phase DAG, executing each phase whose dependencies

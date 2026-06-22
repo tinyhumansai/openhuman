@@ -496,7 +496,7 @@ async fn agent_profile_lifecycle_persists_custom_profile_and_validates_delete() 
     let upsert = rpc(
         &harness.rpc_base,
         301,
-        "openhuman.agent_profile_upsert",
+        "openhuman.profiles_upsert",
         json!({
             "profile": {
                 "id": "worker-b-custom",
@@ -517,7 +517,7 @@ async fn agent_profile_lifecycle_persists_custom_profile_and_validates_delete() 
         }),
     )
     .await;
-    let profiles = ok(&upsert, "agent_profile_upsert")
+    let profiles = ok(&upsert, "profiles_upsert")
         .get("profiles")
         .and_then(Value::as_array)
         .expect("profiles after upsert");
@@ -534,12 +534,12 @@ async fn agent_profile_lifecycle_persists_custom_profile_and_validates_delete() 
     let select = rpc(
         &harness.rpc_base,
         302,
-        "openhuman.agent_profile_select",
+        "openhuman.profiles_select",
         json!({ "profile_id": "worker-b-custom" }),
     )
     .await;
     assert_eq!(
-        ok(&select, "agent_profile_select")
+        ok(&select, "profiles_select")
             .get("activeProfileId")
             .and_then(Value::as_str),
         Some("worker-b-custom")
@@ -548,7 +548,7 @@ async fn agent_profile_lifecycle_persists_custom_profile_and_validates_delete() 
     let delete_default = rpc(
         &harness.rpc_base,
         303,
-        "openhuman.agent_profile_delete",
+        "openhuman.profiles_delete",
         json!({ "profile_id": "default" }),
     )
     .await;
@@ -560,12 +560,12 @@ async fn agent_profile_lifecycle_persists_custom_profile_and_validates_delete() 
     let delete_custom = rpc(
         &harness.rpc_base,
         304,
-        "openhuman.agent_profile_delete",
+        "openhuman.profiles_delete",
         json!({ "profile_id": "worker-b-custom" }),
     )
     .await;
     assert_eq!(
-        ok(&delete_custom, "agent_profile_delete")
+        ok(&delete_custom, "profiles_delete")
             .get("activeProfileId")
             .and_then(Value::as_str),
         Some("default"),

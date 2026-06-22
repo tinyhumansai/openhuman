@@ -7,9 +7,10 @@ const MORNING_BRIEFING = 'morning_briefing';
 async function openCronJobsPanel(page: import('@playwright/test').Page): Promise<void> {
   await page.goto('/#/settings/cron-jobs');
   await waitForAppReady(page);
-  await expect(page.getByRole('heading', { name: 'Cron Jobs', exact: true })).toBeVisible();
-  await expect(page.getByText('Scheduled Jobs').first()).toBeVisible();
+  // Panel title dropped in the PanelPage migration; the panel test id and its
+  // Scheduled Jobs section confirm it mounted.
   await expect(page.getByTestId('cron-jobs-panel')).toBeVisible();
+  await expect(page.getByText('Scheduled Jobs').first()).toBeVisible();
 }
 
 test.describe('Cron jobs settings panel', () => {
@@ -17,14 +18,11 @@ test.describe('Cron jobs settings panel', () => {
     await bootAuthenticatedPage(page, 'pw-cron-jobs-flow', '/home');
   });
 
-  test('home screen is reachable after login', async ({ page }) => {
+  test('chat surface is reachable after login', async ({ page }) => {
+    // Home folded into the unified chat surface: post-login landing is /chat.
     await waitForAppReady(page);
     const text = await page.locator('#root').innerText();
-    expect(
-      ['Ask your assistant anything', 'Your device is connected'].some(marker =>
-        text.includes(marker)
-      )
-    ).toBe(true);
+    expect(['New Conversation', 'Threads'].some(marker => text.includes(marker))).toBe(true);
   });
 
   test('cron jobs panel renders in the browser lane and surfaces the current fallback state', async ({

@@ -207,7 +207,7 @@ fn openai_codex_models_url_includes_client_version_query() {
     let url = append_query_param(
         "https://chatgpt.com/backend-api/codex/models",
         "client_version",
-        openai_codex_client_version(),
+        &openai_codex_client_version(),
     );
     let parsed = reqwest::Url::parse(&url).expect("url");
 
@@ -1080,6 +1080,135 @@ fn is_backend_auth_failure_only_matches_openhuman_backend_401_403() {
             "{provider} 403 must reach Sentry as actionable BYO-key error"
         );
     }
+}
+
+/// `is_byo_provider_auth_failure_http` demotes a non-backend provider's
+/// 401/403 from Sentry when the body looks like a missing/invalid BYO API
+/// key (TAURI-RUST-DHM: a `kiro` custom provider with no key flooded Sentry
+/// with 5,636 identical events from one user via the memory-tree retry loop).
+/// The gate is provider-scoped (backend keeps its SessionExpired branch) and
+/// body-shape-anchored (a non-auth 401, e.g. quota / geo-block, still reports).
+#[test]
+fn byo_provider_auth_failure_demotes_authentication_error_bodies() {
+    use reqwest::StatusCode;
+
+    // The exact kiro 401 envelope from the Sentry report.
+    let kiro_body =
+        r#"{"error":{"message":"Invalid or missing API key","type":"authentication_error"}}"#;
+    assert!(is_byo_provider_auth_failure_http(
+        "kiro",
+        StatusCode::UNAUTHORIZED,
+        kiro_body
+    ));
+    // 403 with the same envelope is demoted too.
+    assert!(is_byo_provider_auth_failure_http(
+        "kiro",
+        StatusCode::FORBIDDEN,
+        kiro_body
+    ));
+
+    // Every recognised auth-key marker across the BYO providers in Sentry.
+    for body in [
+        r#"{"error":{"type":"authentication_error"}}"#,
+        r#"{"error":{"code":"invalid_api_key","message":"Incorrect API key provided"}}"#,
+        "Invalid API key",
+        "invalid or missing api key",
+        "missing api key",
+        r#"{"message":"no api key supplied"}"#,
+        "invalid authentication",
+    ] {
+        assert!(
+            is_byo_provider_auth_failure_http("custom_openai", StatusCode::UNAUTHORIZED, body),
+            "BYO auth body must be demoted: {body}"
+        );
+    }
+}
+
+/// The backend keeps its `is_backend_auth_failure` → SessionExpired branch:
+/// a backend 401 with an auth-error body must NOT be swallowed here, or the
+/// session-expiry reauth path (and its existing test) would silently break.
+#[test]
+fn byo_provider_auth_failure_excludes_openhuman_backend() {
+    use reqwest::StatusCode;
+    let backend = crate::openhuman::inference::provider::openhuman_backend::PROVIDER_LABEL;
+    let body = r#"{"error":{"type":"authentication_error"}}"#;
+    assert!(!is_byo_provider_auth_failure_http(
+        backend,
+        StatusCode::UNAUTHORIZED,
+        body
+    ));
+    assert!(!is_byo_provider_auth_failure_http(
+        backend,
+        StatusCode::FORBIDDEN,
+        body
+    ));
+}
+
+/// Body-shape anchoring: a 401/403 whose body is NOT an auth-key envelope
+/// (quota, geo-block, opaque gateway text) still reaches Sentry — the gate
+/// keys on the body, not the bare status. And a non-401/403 status with an
+/// auth-ish body is out of scope (handled by the budget / config-rejection
+/// branches or the status gate).
+#[test]
+fn byo_provider_auth_failure_is_body_and_status_scoped() {
+    use reqwest::StatusCode;
+
+    // 401/403 without an auth-key envelope — still actionable, must report.
+    for body in [
+        r#"{"error":{"message":"Access denied for your region","type":"forbidden"}}"#,
+        r#"{"error":{"message":"Quota exceeded for this account"}}"#,
+        "Unauthorized",
+    ] {
+        assert!(
+            !is_byo_provider_auth_failure_http("custom_openai", StatusCode::UNAUTHORIZED, body),
+            "non-auth-envelope body must stay reportable: {body}"
+        );
+    }
+
+    // Auth-shaped body on a non-401/403 status is out of this predicate's scope.
+    for status in [
+        StatusCode::BAD_REQUEST,
+        StatusCode::TOO_MANY_REQUESTS,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        StatusCode::NOT_FOUND,
+    ] {
+        assert!(
+            !is_byo_provider_auth_failure_http(
+                "custom_openai",
+                status,
+                r#"{"error":{"type":"authentication_error"}}"#
+            ),
+            "status {status} with auth body must not be demoted here"
+        );
+    }
+}
+
+/// End-to-end through `api_error`: a non-backend 401 with an auth-error body
+/// returns the sanitized provider error (so the chat/UI surface is unchanged)
+/// while the BYO-auth branch demotes it from Sentry. Exercises the wired-in
+/// cascade, not just the predicate in isolation.
+#[tokio::test]
+async fn api_error_byo_auth_failure_returns_message_via_demoted_branch() {
+    let http_response = axum::http::Response::builder()
+        .status(StatusCode::UNAUTHORIZED)
+        .body(
+            r#"{"error":{"message":"Invalid or missing API key","type":"authentication_error"}}"#
+                .to_string(),
+        )
+        .expect("build 401 response");
+    let response = reqwest::Response::from(http_response);
+
+    let err = api_error("kiro", response).await;
+    let msg = err.to_string();
+    assert!(
+        msg.contains("kiro API error (401"),
+        "error must still carry the provider/status prefix for the UI: {msg}"
+    );
+    assert!(
+        msg.to_ascii_lowercase()
+            .contains("invalid or missing api key"),
+        "sanitized upstream body must propagate to the caller: {msg}"
+    );
 }
 
 /// `publish_backend_session_expired` must emit a `SessionExpired` event on

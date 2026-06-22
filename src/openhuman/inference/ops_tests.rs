@@ -112,6 +112,26 @@ async fn inference_test_provider_model_routes_ollama_prefix_through_provider_lay
     assert_eq!(outcome.value.reply, "OLLAMA_PROVIDER_OK");
 }
 
+#[test]
+fn inference_test_provider_model_demotes_expected_config_errors() {
+    let kind = expected_test_provider_model_error_kind(
+        "OpenAI API error (401 Unauthorized): missing API key",
+    );
+
+    assert_eq!(
+        kind,
+        Some(crate::core::observability::ExpectedErrorKind::ApiKeyMissing)
+    );
+}
+
+#[test]
+fn inference_test_provider_model_keeps_unexpected_errors_reportable() {
+    assert_eq!(
+        expected_test_provider_model_error_kind("provider task panicked while parsing response"),
+        None
+    );
+}
+
 #[tokio::test]
 async fn inference_should_react_short_circuits_for_empty_message() {
     let (config, _tmp) = disabled_config();
@@ -141,6 +161,21 @@ async fn inference_get_client_config_returns_safe_snapshot() {
         .expect("client config snapshot");
     assert!(outcome.value.get("cloud_providers").is_some());
     assert!(outcome.value.get("api_key_set").is_some());
+    // #3767: authoritative per-tier credits-gate bypass map is present and, with
+    // no BYO provider configured, every tier defaults to false (inference still
+    // bills managed credits).
+    let credits_bypass = outcome
+        .value
+        .get("credits_bypass")
+        .expect("credits_bypass present");
+    assert_eq!(
+        credits_bypass.get("chat"),
+        Some(&serde_json::Value::Bool(false))
+    );
+    assert_eq!(
+        credits_bypass.get("reasoning"),
+        Some(&serde_json::Value::Bool(false))
+    );
 }
 
 #[tokio::test]

@@ -102,6 +102,40 @@ Use delegate_to_integrations_agent with the matching toolkit slug to act on them
     ))
 }
 
+/// Render the one-shot user-turn note for MCP server(s) that connected
+/// mid-session. The MCP analogue of [`integration_announcement_note`]: the
+/// system-prompt `## Connected MCP Servers` block is frozen at turn 1 (KV-cache
+/// prefix), so a server connected mid-conversation is surfaced here instead, on
+/// the user turn. Empty input yields `None`.
+pub(super) fn mcp_announcement_note(servers: &[String]) -> Option<String> {
+    if servers.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "[MCP update] These MCP server(s) connected during this conversation and are available right now: {}. \
+Use the use_mcp_server delegate to act on them immediately — do not tell the user to reconnect or restart.",
+        servers.join(", ")
+    ))
+}
+
+/// One-shot note prepended to the next user turn when skills are installed
+/// mid-session. Mirrors [`integration_announcement_note`] for the
+/// `## Installed Skills` catalogue: tells the model the freshly-installed
+/// skills are usable now (via `run_skill`) so it acts instead of claiming
+/// they aren't installed from stale context. Returns `None` when nothing is
+/// pending. Rides the user turn (not the system prompt) to keep the KV-cache
+/// prefix stable.
+pub(super) fn skill_announcement_note(skill_ids: &[String]) -> Option<String> {
+    if skill_ids.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "[skills update] These skill(s) were installed during this conversation and are available right now: {}. \
+They are in your `## Installed Skills` list — run one with `run_skill` immediately; do not tell the user to reinstall or restart.",
+        skill_ids.join(", ")
+    ))
+}
+
 /// Wrapper around
 /// [`crate::openhuman::memory_tree::tree_runtime::store::collect_root_summaries_with_caps`]
 /// that takes user-resolved per-namespace and total caps. The actual

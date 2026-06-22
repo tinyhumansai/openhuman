@@ -412,6 +412,7 @@ async fn reliable_provider_covers_chat_tools_streaming_and_context_bail_edges() 
                 messages: &[ChatMessage::user("retry me")],
                 tools: None,
                 stream: None,
+                max_tokens: None,
             },
             "retry-model",
             0.2,

@@ -1,17 +1,11 @@
-// [settings] navigation hook — route resolution and breadcrumb derivation.
-// Uses the settingsRouteRegistry as the single source of truth so that every
-// registered route automatically yields a correct breadcrumb trail without
-// maintaining a parallel switch-statement.
+// [settings] navigation hook — route resolution for the two-pane settings
+// layout. Uses the settingsRouteRegistry as the single source of truth so
+// every registered route resolves without a parallel switch-statement.
 import debug from 'debug';
 import { useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
-import {
-  entryRoute,
-  findEntryByRoute,
-  SETTINGS_ROUTE_REGISTRY,
-  type SettingsSection,
-} from '../settingsRouteRegistry';
+import { entryRoute, findEntryByRoute, SETTINGS_ROUTE_REGISTRY } from '../settingsRouteRegistry';
 
 const log = debug('settings:nav');
 
@@ -22,12 +16,11 @@ const log = debug('settings:nav');
 export type SettingsRoute =
   | 'home'
   | 'agents'
-  | 'agents-settings'
   | 'agent-access'
   | 'account'
-  | 'features'
   | 'cron-jobs'
   | 'screen-intelligence'
+  | 'desktop-agent'
   | 'autocomplete'
   | 'privacy'
   | 'billing'
@@ -35,15 +28,12 @@ export type SettingsRoute =
   | 'team-members'
   | 'team-invites'
   | 'developer-options'
-  | 'autonomy'
-  | 'ai'
   | 'llm'
   | 'voice'
   | 'tools'
   | 'memory-data'
   | 'memory-sync'
   | 'memory-debug'
-  | 'crypto'
   | 'recovery-phrase'
   | 'wallet-balances'
   | 'webhooks-debug'
@@ -53,18 +43,13 @@ export type SettingsRoute =
   | 'voice-debug'
   | 'local-model-debug'
   | 'notifications'
-  | 'notifications-hub'
   | 'notification-routing'
-  | 'mascot'
-  | 'persona'
+  | 'personality'
   | 'appearance'
   | 'approval-history'
   | 'intelligence'
-  | 'webhooks-triggers'
+  | 'integrations'
   | 'composio-triggers'
-  | 'composio-routing'
-  | 'composio'
-  | 'task-sources'
   | 'tasks'
   | 'mcp-server'
   | 'dev-workflow'
@@ -72,13 +57,12 @@ export type SettingsRoute =
   | 'permissions'
   | 'activity-level'
   | 'devices'
-  | 'heartbeat'
+  | 'usage'
   | 'security'
   | 'migration'
   | 'companion'
+  | 'meetings'
   | 'embeddings'
-  | 'ledger-usage'
-  | 'cost-dashboard'
   | 'search'
   | 'skills-runner'
   | 'event-log'
@@ -159,24 +143,6 @@ const getCurrentRoute = (pathname: string): SettingsRoute => {
   return 'home';
 };
 
-// ---------------------------------------------------------------------------
-// Section → breadcrumb label mapping (static, no i18n hook dependency).
-// Breadcrumb labels are intentionally English-only for now (the existing
-// implementation was also English). A future pass can thread the translator.
-// ---------------------------------------------------------------------------
-
-const SECTION_LABEL: Record<SettingsSection, string> = {
-  home: 'Settings',
-  account: 'Account',
-  ai: 'AI & Models',
-  agents: 'Agents',
-  features: 'Features',
-  composio: 'Integrations',
-  crypto: 'Crypto',
-  notifications: 'Notifications',
-  developer: 'Developer Options',
-};
-
 export const useSettingsNavigation = (): SettingsNavigationHook => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -228,78 +194,12 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
   // -------------------------------------------------------------------------
   // Breadcrumbs — derived from the registry.
   //
-  // The root crumb is always "Settings" (pointing to /settings).
-  // Section pages (section === 'home') trail: [Settings].
-  // Leaf panels trail:  [Settings] > [Section label].
-  // Special multi-level trails (team sub-pages, approval-history) are handled
-  // explicitly below.
+  // Breadcrumbs were replaced by the two-pane sidebar — the trail is no longer
+  // rendered anywhere. The field is kept (always empty) so the ~50 panel call
+  // sites keep compiling until the prop is mechanically removed.
   // -------------------------------------------------------------------------
 
-  const settingsCrumb: BreadcrumbItem = { label: 'Settings', onClick: () => navigate('/settings') };
-
-  const getBreadcrumbs = (): BreadcrumbItem[] => {
-    if (currentRoute === 'home') return [];
-
-    // Special cases with deeper trails.
-    if (currentRoute === 'team-members' || currentRoute === 'team-invites') {
-      return [
-        settingsCrumb,
-        { label: SECTION_LABEL.account, onClick: () => navigate('/settings/account') },
-        { label: 'Team', onClick: () => navigate('/settings/team') },
-      ];
-    }
-
-    if (currentRoute === 'approval-history') {
-      return [
-        settingsCrumb,
-        { label: SECTION_LABEL.agents, onClick: () => navigate('/settings/agents-settings') },
-        { label: 'Agent access', onClick: () => navigate('/settings/agent-access') },
-      ];
-    }
-
-    // Notification preferences panel nests under notifications-hub.
-    if (currentRoute === 'notifications') {
-      return [
-        settingsCrumb,
-        {
-          label: SECTION_LABEL.notifications,
-          onClick: () => navigate('/settings/notifications-hub'),
-        },
-      ];
-    }
-
-    // Legacy redirect target — kept working but mapped to developer.
-    if (currentRoute === 'notification-routing') {
-      return [
-        settingsCrumb,
-        { label: SECTION_LABEL.developer, onClick: () => navigate('/settings/developer-options') },
-      ];
-    }
-
-    // Look up the entry in the registry using the current route.
-    // The currentRoute is the entry id; try by id first, then by resolved route.
-    const entry =
-      SETTINGS_ROUTE_REGISTRY.find(e => e.id === currentRoute) ??
-      SETTINGS_ROUTE_REGISTRY.find(e => entryRoute(e) === currentRoute);
-
-    if (!entry) {
-      log('breadcrumbs: no registry entry for "%s"', currentRoute);
-      return [settingsCrumb];
-    }
-
-    // Home-level entries (section === 'home') are top-level section pages.
-    if (entry.section === 'home') {
-      return [settingsCrumb];
-    }
-
-    // Leaf panels: Settings → <section label>.
-    const sectionLabel = SECTION_LABEL[entry.section];
-    const sectionRoute = sectionRouteForSection(entry.section);
-
-    return [settingsCrumb, { label: sectionLabel, onClick: () => navigate(sectionRoute) }];
-  };
-
-  const breadcrumbs = getBreadcrumbs();
+  const breadcrumbs: BreadcrumbItem[] = [];
 
   return {
     currentRoute,
@@ -309,31 +209,4 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
     closeSettings,
     breadcrumbs,
   };
-};
-
-// ---------------------------------------------------------------------------
-// Helper: canonical section-page route for a given section.
-// ---------------------------------------------------------------------------
-
-const sectionRouteForSection = (section: SettingsSection): string => {
-  switch (section) {
-    case 'account':
-      return '/settings/account';
-    case 'ai':
-      return '/settings/ai';
-    case 'agents':
-      return '/settings/agents-settings';
-    case 'features':
-      return '/settings/features';
-    case 'composio':
-      return '/settings/composio';
-    case 'crypto':
-      return '/settings/crypto';
-    case 'notifications':
-      return '/settings/notifications-hub';
-    case 'developer':
-      return '/settings/developer-options';
-    case 'home':
-      return '/settings';
-  }
 };

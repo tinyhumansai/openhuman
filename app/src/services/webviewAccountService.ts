@@ -1368,6 +1368,12 @@ export async function setWebviewAccountBounds(
 
 export async function hideWebviewAccount(accountId: string): Promise<void> {
   if (!isTauri()) return;
+  // Hide is used when the React host unmounts for route changes or shell
+  // overlays. Clear reveal-eligible state before the IPC so a late
+  // `webview-account:load` event cannot reveal the native CEF view over UI
+  // that no longer owns it.
+  lastBoundsByAccount.delete(accountId);
+  loadingAccounts.delete(accountId);
   try {
     await invoke('webview_account_hide', { args: { account_id: accountId } });
   } catch (err) {

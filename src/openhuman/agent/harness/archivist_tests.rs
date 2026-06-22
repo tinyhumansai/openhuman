@@ -892,3 +892,141 @@ async fn phase2_flush_also_triggers_tree_ingest() {
         "Expected ≥ 1 tree chunk after flush_open_segment triggers segment ingest; got {after}"
     );
 }
+
+// ── #13021 empty/whitespace recap embed-skip guard ───────────────────────────
+//
+// `on_segment_closed` defends against ever passing an empty or whitespace
+// recap into the embedder by calling `embed_segment_recap`, which short-
+// circuits before `Embedder::embed` runs. The skip is unreachable through
+// the current `summarize_entries` call graph today (the heuristic
+// `fallback_summary` always returns non-empty text), so these tests drive
+// `embed_segment_recap` directly to lock the guard against future
+// regressions where `summarize_entries` could return `""`.
+
+/// Embedder stub that panics if `embed` is invoked. Used to prove that
+/// the empty-summary guard short-circuits BEFORE the upstream provider
+/// is contacted (the very fault the #13021 fix prevents).
+struct PanicOnEmbedEmbedder;
+
+#[async_trait::async_trait]
+impl crate::openhuman::memory_tree::score::embed::Embedder for PanicOnEmbedEmbedder {
+    fn name(&self) -> &'static str {
+        "panic-embedder-v1"
+    }
+
+    async fn embed(&self, text: &str) -> anyhow::Result<Vec<f32>> {
+        panic!(
+            "embed_segment_recap must not call Embedder::embed for empty/whitespace recap (got {text:?})"
+        );
+    }
+}
+
+fn hook_with_panic_embedder(conn: Arc<Mutex<Connection>>) -> ArchivistHook {
+    ArchivistHook::new_with_stubs(
+        conn,
+        Arc::new(StubChatProvider),
+        Arc::new(PanicOnEmbedEmbedder),
+    )
+}
+
+/// An empty recap must short-circuit before calling `Embedder::embed`, and
+/// must not write a row to `segment_embeddings`. The segment row itself
+/// remains intact (this helper does not touch segment status).
+#[tokio::test]
+async fn embed_segment_recap_skips_empty_summary() {
+    let conn = setup_conn();
+    let hook = hook_with_panic_embedder(conn.clone());
+
+    let segment_id = "seg-empty-recap";
+    seg::segment_create(
+        &conn,
+        segment_id,
+        "session-x",
+        "global",
+        1,
+        Some(0),
+        1.0,
+        1.0,
+    )
+    .unwrap();
+    seg::segment_close(&conn, segment_id, 2.0).unwrap();
+
+    // PanicOnEmbedEmbedder would panic if Embedder::embed were invoked;
+    // reaching this point proves the guard short-circuited.
+    hook.embed_segment_recap(&conn, segment_id, "", 3.0).await;
+
+    let row = seg::segment_embedding_get(&conn, segment_id, "panic-embedder-v1").unwrap();
+    assert!(
+        row.is_none(),
+        "No embedding row should exist for an empty-recap segment"
+    );
+}
+
+/// Whitespace-only recaps (newlines, tabs, spaces) must also short-circuit
+/// — the upstream provider rejects whitespace inputs the same way it
+/// rejects empty inputs (#13021).
+#[tokio::test]
+async fn embed_segment_recap_skips_whitespace_summary() {
+    let conn = setup_conn();
+    let hook = hook_with_panic_embedder(conn.clone());
+
+    let segment_id = "seg-ws-recap";
+    seg::segment_create(
+        &conn,
+        segment_id,
+        "session-y",
+        "global",
+        1,
+        Some(0),
+        1.0,
+        1.0,
+    )
+    .unwrap();
+    seg::segment_close(&conn, segment_id, 2.0).unwrap();
+
+    hook.embed_segment_recap(&conn, segment_id, "   \n\t  ", 3.0)
+        .await;
+
+    let row = seg::segment_embedding_get(&conn, segment_id, "panic-embedder-v1").unwrap();
+    assert!(
+        row.is_none(),
+        "No embedding row should exist for a whitespace-only recap segment"
+    );
+}
+
+/// Positive control: a non-empty recap is embedded and the row IS written.
+/// Without this, the empty/whitespace tests above would pass even if the
+/// guard erroneously skipped every recap.
+#[tokio::test]
+async fn embed_segment_recap_writes_row_for_non_empty_summary() {
+    let conn = setup_conn();
+    let hook = hook_with_stubs(conn.clone());
+
+    let segment_id = "seg-ok-recap";
+    seg::segment_create(
+        &conn,
+        segment_id,
+        "session-z",
+        "global",
+        1,
+        Some(0),
+        1.0,
+        1.0,
+    )
+    .unwrap();
+    seg::segment_close(&conn, segment_id, 2.0).unwrap();
+
+    hook.embed_segment_recap(&conn, segment_id, "real recap text", 3.0)
+        .await;
+
+    let row = seg::segment_embedding_get(&conn, segment_id, "stub-embedder-v1").unwrap();
+    assert!(
+        row.is_some(),
+        "Embedding row should exist when recap is non-empty"
+    );
+    assert_eq!(
+        row.unwrap().len(),
+        4,
+        "Expected 4-dim vector from stub embedder"
+    );
+}

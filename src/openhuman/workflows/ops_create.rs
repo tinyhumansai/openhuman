@@ -382,6 +382,15 @@ pub(crate) fn create_workflow_inner(
         .into_iter()
         .find(|s| s.name == slug)
         .ok_or_else(|| format!("created skill '{slug}' but failed to re-discover"))?;
+
+    // Notify live agent sessions so they pick up the new skill in their
+    // `## Installed Skills` catalogue (see `Agent::refresh_workflows`).
+    let _ = crate::core::event_bus::publish_global(
+        crate::core::event_bus::DomainEvent::WorkflowsChanged {
+            reason: "create".to_string(),
+        },
+    );
+
     Ok(created)
 }
 
@@ -666,6 +675,55 @@ mod render_skill_toml_tests {
         assert_eq!(
             entry["description"].as_str(),
             Some("has \"quotes\" and \\ backslash\nand newline")
+        );
+    }
+
+    /// The trigger half of mid-session refresh: creating a workflow must
+    /// publish `DomainEvent::WorkflowsChanged` so live sessions re-scan. This
+    /// guards the `publish_global` emission line (the `refresh_workflows` test
+    /// writes to disk directly and bypasses create/install, so without this a
+    /// dropped emission would stay green while silently killing the feature).
+    #[test]
+    fn create_workflow_inner_emits_workflows_changed() {
+        use crate::core::event_bus::{global, init_global, DomainEvent};
+        use tokio::sync::broadcast::error::TryRecvError;
+
+        let _ = init_global(64);
+        let mut rx = global()
+            .expect("event bus should be initialized")
+            .raw_receiver();
+
+        let home = tempfile::TempDir::new().expect("temp home");
+        let ws = tempfile::TempDir::new().expect("temp workspace");
+        let params = CreateWorkflowParams {
+            name: "zz-emit-test".into(),
+            description: "emit test skill".into(),
+            scope: WorkflowScope::User,
+            ..Default::default()
+        };
+        create_workflow_inner(Some(home.path()), ws.path(), params)
+            .expect("create_workflow_inner should succeed");
+
+        let mut saw = false;
+        loop {
+            match rx.try_recv() {
+                // The event bus is a process-wide singleton, so other tests
+                // running in parallel publish their own WorkflowsChanged events
+                // (e.g. "install"/"uninstall" from ops_install). Match only our
+                // own "create" reason and skip the rest rather than asserting on
+                // whichever event happens to arrive first.
+                Ok(DomainEvent::WorkflowsChanged { reason }) if reason == "create" => {
+                    saw = true;
+                    break;
+                }
+                Ok(_) => continue,
+                Err(TryRecvError::Lagged(_)) => continue,
+                Err(TryRecvError::Empty) | Err(TryRecvError::Closed) => break,
+            }
+        }
+        assert!(
+            saw,
+            "create_workflow_inner must publish DomainEvent::WorkflowsChanged"
         );
     }
 }

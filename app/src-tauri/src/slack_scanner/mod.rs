@@ -1,7 +1,8 @@
 //! Slack Web scanner driven purely over the Chrome DevTools Protocol (CDP).
 //!
-//! Pairs with the embedded CEF webview's remote-debugging port (set in
-//! `lib.rs`). One polling loop per tracked Slack account:
+//! Attaches to the embedded CEF webview via the in-process CDP transport
+//! installed by `webview_accounts::open` (no TCP listener). One polling
+//! loop per tracked Slack account:
 //!
 //!   * **IDB tick** (`IDB_SCAN_INTERVAL`, 30s) — walks every Slack-owned
 //!     IndexedDB database via CDP (`IndexedDB.requestDatabaseNames`,
@@ -25,31 +26,19 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use futures_util::{SinkExt, StreamExt};
 use parking_lot::Mutex;
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Runtime};
 use tokio::task::AbortHandle;
 use tokio::time::sleep;
-use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 mod dom_snapshot;
 mod extract;
 mod idb;
 
-use crate::cdp::{CDP_HOST, CDP_PORT};
-
 /// How often we walk IDB. Tune down for faster iteration during dev; the
 /// walk itself is bounded by per-store record caps in `idb.rs`.
 const IDB_SCAN_INTERVAL: Duration = Duration::from_secs(30);
-
-/// One CDP target descriptor (from `Target.getTargets`).
-#[derive(Debug, Clone)]
-struct CdpTarget {
-    id: String,
-    kind: String,
-    url: String,
-}
 
 /// Spawn a per-account CDP poller. Caller is expected to guard against
 /// double-spawning via `ScannerRegistry`.
@@ -85,7 +74,15 @@ pub fn spawn_scanner<R: Runtime>(
         // multi-account session (CodeRabbit #3162652711).
         let mut pinned_target_id: Option<String> = None;
         loop {
-            match scan_once(&account_id, &url_prefix, &fragment, &mut pinned_target_id).await {
+            match scan_once(
+                &app,
+                &account_id,
+                &url_prefix,
+                &fragment,
+                &mut pinned_target_id,
+            )
+            .await
+            {
                 Ok(dump) => {
                     let team_id = infer_team_id(&dump);
                     let (messages, users, channels, workspace_name) = extract::harvest(&dump);
@@ -128,17 +125,21 @@ pub fn spawn_scanner<R: Runtime>(
 /// function resolves by id first so multi-account Slack sessions can't
 /// accidentally cross-wire scanner A onto scanner B's page target after
 /// Slack's router strips the `#openhuman-account-<id>` fragment.
-async fn scan_once(
+async fn scan_once<R: Runtime>(
+    app: &AppHandle<R>,
     account_id: &str,
     url_prefix: &str,
     url_fragment: &str,
     pinned_target_id: &mut Option<String>,
 ) -> Result<idb::IdbDump, String> {
-    let browser_ws = browser_ws_url().await?;
-    let mut cdp = CdpConn::open(&browser_ws).await?;
-
+    // Look up the in-process transport for this account, enumerate targets,
+    // then attach to the chosen target via the canonical CdpConn. The
+    // attach is manual (not via `connect_and_attach_matching_in_process`)
+    // so the pin / strict-fragment / relaxed fallback hierarchy stays
+    // intact.
+    let mut cdp = crate::cdp::target::conn_for_account(app, account_id)?;
     let targets_v = cdp.call("Target.getTargets", json!({}), None).await?;
-    let targets = parse_targets(&targets_v);
+    let targets = crate::cdp::target::parse_targets(&targets_v);
     // Slack's client-side router does pushState to `/client/<workspace>/<channel>`
     // shortly after first load, which strips the `#openhuman-account-<id>` fragment.
     // The fragment is only reliable on the FIRST scan tick (immediately after
@@ -590,130 +591,6 @@ fn channels_key_looks_clean(name: &str) -> bool {
         .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
 }
 
-fn parse_targets(v: &Value) -> Vec<CdpTarget> {
-    v.get("targetInfos")
-        .and_then(|x| x.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|t| {
-                    Some(CdpTarget {
-                        id: t.get("targetId")?.as_str()?.to_string(),
-                        kind: t.get("type")?.as_str()?.to_string(),
-                        url: t
-                            .get("url")
-                            .and_then(|u| u.as_str())
-                            .unwrap_or("")
-                            .to_string(),
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-async fn browser_ws_url() -> Result<String, String> {
-    let url = format!("http://{CDP_HOST}:{CDP_PORT}/json/version");
-    let resp = reqwest::Client::builder()
-        .user_agent("openhuman-cdp/1.0")
-        .timeout(Duration::from_secs(5))
-        .build()
-        .map_err(|e| format!("reqwest build: {e}"))?
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| format!("GET {url}: {e}"))?;
-    let v: Value = resp.json().await.map_err(|e| format!("parse: {e}"))?;
-    v.get("webSocketDebuggerUrl")
-        .and_then(|x| x.as_str())
-        .map(|s| s.to_string())
-        .ok_or_else(|| "no webSocketDebuggerUrl in /json/version".to_string())
-}
-
-/// Minimal CDP client — keeps a WebSocket open and sends JSON-RPC requests
-/// with auto-incrementing ids. Same pattern as `whatsapp_scanner::CdpConn`;
-/// kept per-module rather than factored out to avoid coupling the two
-/// scanners until we actually need to share state.
-pub(crate) struct CdpConn {
-    sink: futures_util::stream::SplitSink<
-        tokio_tungstenite::WebSocketStream<
-            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-        >,
-        Message,
-    >,
-    stream: futures_util::stream::SplitStream<
-        tokio_tungstenite::WebSocketStream<
-            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-        >,
-    >,
-    next_id: i64,
-}
-
-impl CdpConn {
-    async fn open(ws_url: &str) -> Result<Self, String> {
-        let (ws, _resp) = connect_async(ws_url)
-            .await
-            .map_err(|e| format!("ws connect: {e}"))?;
-        let (sink, stream) = ws.split();
-        Ok(Self {
-            sink,
-            stream,
-            next_id: 1,
-        })
-    }
-
-    pub(crate) async fn call(
-        &mut self,
-        method: &str,
-        params: Value,
-        session_id: Option<&str>,
-    ) -> Result<Value, String> {
-        self.call_with_timeout(method, params, session_id, Duration::from_secs(30))
-            .await
-    }
-
-    pub(crate) async fn call_with_timeout(
-        &mut self,
-        method: &str,
-        params: Value,
-        session_id: Option<&str>,
-        timeout: Duration,
-    ) -> Result<Value, String> {
-        let id = self.next_id;
-        self.next_id += 1;
-        let mut req = json!({ "id": id, "method": method, "params": params });
-        if let Some(s) = session_id {
-            req["sessionId"] = json!(s);
-        }
-        let body = serde_json::to_string(&req).map_err(|e| format!("encode: {e}"))?;
-        self.sink
-            .send(Message::Text(body))
-            .await
-            .map_err(|e| format!("ws send: {e}"))?;
-        loop {
-            let msg = tokio::time::timeout(timeout, self.stream.next())
-                .await
-                .map_err(|_| format!("ws read timeout (method={method})"))?
-                .ok_or_else(|| format!("ws closed (method={method})"))?
-                .map_err(|e| format!("ws recv: {e}"))?;
-            let text = match msg {
-                Message::Text(t) => t,
-                Message::Binary(_) | Message::Ping(_) | Message::Pong(_) | Message::Frame(_) => {
-                    continue
-                }
-                Message::Close(_) => return Err("ws closed".into()),
-            };
-            let v: Value = serde_json::from_str(&text).map_err(|e| format!("decode: {e}"))?;
-            if v.get("id").and_then(|x| x.as_i64()) != Some(id) {
-                continue;
-            }
-            if let Some(err) = v.get("error") {
-                return Err(format!("cdp error: {err}"));
-            }
-            return Ok(v.get("result").cloned().unwrap_or(Value::Null));
-        }
-    }
-}
-
 const DOM_POLL_INTERVAL: Duration = Duration::from_secs(2);
 
 fn spawn_dom_poll<R: Runtime>(
@@ -730,7 +607,15 @@ fn spawn_dom_poll<R: Runtime>(
         // `scan_once` for rationale.
         let mut pinned_target_id: Option<String> = None;
         loop {
-            match dom_scan_once(&account_id, &url_prefix, &fragment, &mut pinned_target_id).await {
+            match dom_scan_once(
+                &app,
+                &account_id,
+                &url_prefix,
+                &fragment,
+                &mut pinned_target_id,
+            )
+            .await
+            {
                 Ok(scan) => {
                     let current_unread_by_channel: HashMap<String, u32> = scan
                         .rows
@@ -794,61 +679,31 @@ fn spawn_dom_poll<R: Runtime>(
     task.abort_handle()
 }
 
-async fn dom_scan_once(
+async fn dom_scan_once<R: Runtime>(
+    app: &AppHandle<R>,
     account_id: &str,
     url_prefix: &str,
     url_fragment: &str,
     pinned_target_id: &mut Option<String>,
 ) -> Result<dom_snapshot::DomScan, String> {
-    // Same pin-on-strict-match contract as `scan_once`. Resolution
-    // order: pinned id → strict fragment → relaxed `/client` fallback.
-    // Pin is only persisted when the strict fragment is still present
-    // so a relaxed match can never feed back into the lock.
+    // Same pin-on-strict-match contract as `scan_once`. Resolution order:
+    // pinned id → strict fragment → relaxed `/client` fallback. Pin is
+    // only persisted when the strict fragment is still present so a
+    // relaxed match can never feed back into the lock.
     //
-    // We drive CDP via the canonical `crate::cdp::connect_and_attach_matching`
-    // helper so this stays consistent with the IDB scan path. The
-    // pin/strict/relaxed choice is decided up-front by reading
-    // `Target.getTargets` ourselves; the predicate then fixes that target.
-    use crate::cdp::CdpConn as CanonicalCdpConn;
-
-    let browser_ws = crate::cdp::browser_ws_url().await?;
-    let mut probe = CanonicalCdpConn::open_ws(&browser_ws).await?;
-    let targets_v = probe
-        .call("Target.getTargets", serde_json::json!({}), None)
-        .await?;
-    drop(probe);
-
-    let target_infos = targets_v
-        .get("targetInfos")
-        .and_then(|x| x.as_array())
-        .cloned()
-        .unwrap_or_default();
-    // Reduce to (id, kind, url) tuples so the pin-resolution logic
-    // mirrors `scan_once` line-for-line.
-    let candidates: Vec<(String, String, String)> = target_infos
-        .iter()
-        .filter_map(|t| {
-            Some((
-                t.get("targetId")?.as_str()?.to_string(),
-                t.get("type")?.as_str()?.to_string(),
-                t.get("url")
-                    .and_then(|u| u.as_str())
-                    .unwrap_or("")
-                    .to_string(),
-            ))
-        })
-        .collect();
+    // We reuse the account's in-process CDP transport to enumerate
+    // targets, then attach to the chosen target via the same handle —
+    // no separate probe connection is needed.
+    let mut cdp = crate::cdp::target::conn_for_account(app, account_id)?;
+    let targets_v = cdp.call("Target.getTargets", json!({}), None).await?;
+    let candidates = crate::cdp::target::parse_targets(&targets_v);
 
     let chosen = pinned_target_id
         .as_ref()
-        .and_then(|pid| {
-            candidates
-                .iter()
-                .find(|(id, kind, _)| id == pid && kind == "page")
-        })
+        .and_then(|pid| candidates.iter().find(|t| &t.id == pid && t.kind == "page"))
         .or_else(|| {
-            candidates.iter().find(|(_, kind, url)| {
-                kind == "page" && url.starts_with(url_prefix) && url.ends_with(url_fragment)
+            candidates.iter().find(|t| {
+                t.kind == "page" && t.url.starts_with(url_prefix) && t.url.ends_with(url_fragment)
             })
         })
         .or_else(|| {
@@ -856,14 +711,14 @@ async fn dom_scan_once(
             // `/client/...`. Restrict the relaxed fallback to the
             // `/client` path so we never pick up the marketing page or
             // a login redirect for a sibling account.
-            candidates.iter().find(|(_, kind, url)| {
-                kind == "page" && url.starts_with(url_prefix) && url.contains("/client")
+            candidates.iter().find(|t| {
+                t.kind == "page" && t.url.starts_with(url_prefix) && t.url.contains("/client")
             })
         })
-        .cloned()
         .ok_or_else(|| format!("no page target matching {url_prefix} fragment={url_fragment}"))?;
 
-    let (chosen_id, _, chosen_url) = chosen;
+    let chosen_id = chosen.id.clone();
+    let chosen_url = chosen.url.clone();
 
     if pinned_target_id.is_none()
         && chosen_url.starts_with(url_prefix)
@@ -877,9 +732,18 @@ async fn dom_scan_once(
         *pinned_target_id = Some(chosen_id.clone());
     }
 
-    let chosen_id_for_pred = chosen_id.clone();
-    let (mut cdp, session) =
-        crate::cdp::connect_and_attach_matching(move |t| t.id == chosen_id_for_pred).await?;
+    let attach = cdp
+        .call(
+            "Target.attachToTarget",
+            json!({ "targetId": chosen_id, "flatten": true }),
+            None,
+        )
+        .await?;
+    let session = attach
+        .get("sessionId")
+        .and_then(|x| x.as_str())
+        .ok_or_else(|| "page attach missing sessionId".to_string())?
+        .to_string();
     let scan = dom_snapshot::scan(&mut cdp, &session).await;
     crate::cdp::detach_session(&mut cdp, &session).await;
     scan

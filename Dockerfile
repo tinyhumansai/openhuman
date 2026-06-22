@@ -113,6 +113,9 @@ ENV OPENHUMAN_WORKSPACE=/home/openhuman/.openhuman
 ENV OPENHUMAN_CORE_HOST=0.0.0.0
 ENV OPENHUMAN_CORE_PORT=7788
 ENV RUST_LOG=info
+# AgentBox marketplace mode — off by default for desktop builds. The
+# AgentBox console flips this on per deployment, along with GMI_MAAS_*.
+ENV OPENHUMAN_AGENTBOX_MODE=0
 
 EXPOSE 7788
 

@@ -13,8 +13,9 @@ import {
   openhumanCronRuns,
   openhumanCronUpdate,
 } from '../../../utils/tauriCommands';
+import PanelPage from '../../layout/PanelPage';
 import Button from '../../ui/Button';
-import SettingsHeader from '../components/SettingsHeader';
+import SettingsBackButton from '../components/SettingsBackButton';
 import { SettingsSection, SettingsStatusLine } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 import CoreJobList from './cron/CoreJobList';
@@ -24,7 +25,7 @@ const loadCronJobsLog = createDebug('app:settings:CronJobsPanel:loadCronSkills')
 
 const CronJobsPanel = () => {
   const { t } = useT();
-  const { navigateBack, breadcrumbs } = useSettingsNavigation();
+  const { navigateBack } = useSettingsNavigation();
   const formatCronError = useCallback(
     (key: string, message: string) => t(key).replace('{message}', message),
     [t]
@@ -187,14 +188,12 @@ const CronJobsPanel = () => {
   };
 
   return (
-    <div className="z-10 relative" data-testid="cron-jobs-panel">
-      <SettingsHeader
-        title={t('cron.title')}
-        showBackButton={true}
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
-
+    <PanelPage
+      className="z-10"
+      contentClassName=""
+      testId="cron-jobs-panel"
+      description={t('settings.developerMenu.cronJobs.desc')}
+      leading={<SettingsBackButton onBack={navigateBack} />}>
       <div className="p-4 pt-2 space-y-5">
         <SettingsSection title={t('cron.scheduledJobs')} description={t('cron.manageCronJobs')}>
           <div className="px-4 pb-4 space-y-4">
@@ -264,7 +263,7 @@ const CronJobsPanel = () => {
           onUpdate={handleUpdate}
         />
       )}
-    </div>
+    </PanelPage>
   );
 };
 

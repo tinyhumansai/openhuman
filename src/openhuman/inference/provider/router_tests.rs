@@ -192,6 +192,7 @@ fn resolve_translates_openhuman_tier_aliases_via_route_table() {
             ("reasoning", "smart", "gpt-5.5"),
             ("chat", "smart", "gpt-5.5-mini"),
             ("summarization", "smart", "gpt-4.1-nano"),
+            ("vision", "smart", "gpt-5.5-vision"),
         ],
     );
 
@@ -206,6 +207,11 @@ fn resolve_translates_openhuman_tier_aliases_via_route_table() {
     let (summary_idx, summary_model) = router.resolve("summarization-v1");
     assert_eq!(summary_idx, 1);
     assert_eq!(summary_model, "gpt-4.1-nano");
+
+    // The vision tier alias routes through the `vision` hint to the BYOK model.
+    let (vision_idx, vision_model) = router.resolve("vision-v1");
+    assert_eq!(vision_idx, 1);
+    assert_eq!(vision_model, "gpt-5.5-vision");
 }
 
 // -- #2079: tier alias must not leak to upstream when no route configured ---
@@ -254,6 +260,7 @@ fn every_tier_alias_falls_back_to_default_model_when_unrouted() {
         "agentic-v1",
         "coding-v1",
         "summarization-v1",
+        "vision-v1",
     ] {
         let (idx, model) = router.resolve(alias);
         assert_eq!(idx, 0, "alias {} → default provider index", alias);

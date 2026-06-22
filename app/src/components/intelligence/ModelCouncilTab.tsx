@@ -84,12 +84,14 @@ interface ModelPickerState {
   onSelect: (model: string) => void;
 }
 
+// `value` is the stable hint identifier; `labelKey` is resolved via `useT()`
+// at render (this is a module-level const with no hook scope of its own).
 const MODEL_HINTS = [
-  { value: 'default', label: 'Default' },
-  { value: 'hint:chat', label: 'Chat' },
-  { value: 'hint:reasoning', label: 'Reasoning' },
-  { value: 'hint:code', label: 'Code' },
-  { value: 'hint:summarize', label: 'Summarize' },
+  { value: 'default', labelKey: 'modelCouncil.hint.default' },
+  { value: 'hint:chat', labelKey: 'modelCouncil.hint.chat' },
+  { value: 'hint:reasoning', labelKey: 'modelCouncil.hint.reasoning' },
+  { value: 'hint:code', labelKey: 'modelCouncil.hint.code' },
+  { value: 'hint:summarize', labelKey: 'modelCouncil.hint.summarize' },
 ] as const;
 
 interface ConnectedModelProvider {
@@ -326,7 +328,7 @@ const ModelPickerDialog = ({
                     ? 'border-primary-500 bg-primary-50 text-primary-700 dark:bg-primary-500/15 dark:text-primary-200'
                     : 'border-stone-200 text-stone-700 hover:bg-stone-50 dark:border-neutral-700 dark:text-neutral-200 dark:hover:bg-neutral-900'
                 }`}>
-                {hint.label}
+                {t(hint.labelKey)}
                 <span className="block font-mono text-[11px] text-stone-500 dark:text-neutral-400">
                   {hint.value}
                 </span>

@@ -192,28 +192,47 @@ pub fn claim_task(
     run_ledger::claim_agent_team_task(config, team_id, task_id, member_id, claim_token)
 }
 
+/// Sentinel `from` value for a message that originates from the team lead / the
+/// human user rather than a teammate member. The UI send-composer uses this so a
+/// person can address a named teammate without being a member row themselves.
+pub const LEAD_SENDER: &str = "lead";
+
 /// Send a message from one member to another (or broadcast).
 ///
-/// Persisted as a run-ledger event keyed by `run_id = team_id`, so the messaging
-/// stream reuses the durable event log with no new table.
+/// `from_member_id = None` marks a lead/user-originated message (stored with
+/// `from = "lead"`); `Some(id)` is a teammate-to-teammate message and must
+/// reference a real member. Persisted as a run-ledger event keyed by
+/// `run_id = team_id`, so the messaging stream reuses the durable event log with
+/// no new table.
 pub fn message_member(
     config: &Config,
     team_id: &str,
-    from_member_id: &str,
+    from_member_id: Option<&str>,
     to_member_id: Option<&str>,
     content: &str,
     visibility: Option<&str>,
 ) -> Result<RunEvent> {
     log::debug!(
-        "{LOG_PREFIX} message_member.entry team={team_id} from={from_member_id} to={:?}",
+        "{LOG_PREFIX} message_member.entry team={team_id} from={:?} to={:?}",
+        from_member_id,
         to_member_id
     );
 
+    // Reject unknown teams up front. A lead-origin broadcast (`from = None`,
+    // `to = None`) skips both member checks below, so without this guard an
+    // unknown `team_id` would still append an orphan `team_message` event to a
+    // non-existent team's run ledger.
+    if run_ledger::get_agent_team(config, team_id)?.is_none() {
+        return Err(anyhow!("unknown team: {team_id}"));
+    }
+
     let members = run_ledger::list_agent_team_members(config, team_id)?;
-    if !members.iter().any(|m| m.id == from_member_id) {
-        return Err(anyhow!(TeamError::UnknownMember {
-            member_id: from_member_id.to_string(),
-        }));
+    if let Some(from) = from_member_id {
+        if !members.iter().any(|m| m.id == from) {
+            return Err(anyhow!(TeamError::UnknownMember {
+                member_id: from.to_string(),
+            }));
+        }
     }
     if let Some(to) = to_member_id {
         if !members.iter().any(|m| m.id == to) {
@@ -223,13 +242,14 @@ pub fn message_member(
         }
     }
 
+    let from_value = from_member_id.unwrap_or(LEAD_SENDER);
     let event = run_ledger::append_run_event(
         config,
         RunEventAppend {
             run_id: team_id.to_string(),
             event_type: TEAM_MESSAGE_EVENT.to_string(),
             payload: json!({
-                "from": from_member_id,
+                "from": from_value,
                 "to": to_member_id,
                 "content": content,
                 "visibility": visibility.unwrap_or("team"),
@@ -571,8 +591,8 @@ mod tests {
         let alice = view.members[0].id.clone();
         let bob = view.members[1].id.clone();
 
-        message_member(&config, &team_id, &alice, Some(&bob), "first", None).unwrap();
-        message_member(&config, &team_id, &bob, Some(&alice), "second", None).unwrap();
+        message_member(&config, &team_id, Some(&alice), Some(&bob), "first", None).unwrap();
+        message_member(&config, &team_id, Some(&bob), Some(&alice), "second", None).unwrap();
 
         let messages = list_messages(&config, &team_id, None).unwrap();
         assert_eq!(messages.len(), 2);
@@ -580,6 +600,31 @@ mod tests {
         assert_eq!(messages[1].sequence, 2);
         assert_eq!(messages[0].payload["content"], "first");
         assert_eq!(messages[1].payload["content"], "second");
+    }
+
+    #[test]
+    fn message_member_lead_origin_and_unknown_from() {
+        let dir = TempDir::new().unwrap();
+        let config = test_config(&dir);
+        let (team_id, alice) = solo_team(&config, "alice");
+
+        // Lead/user-originated message: from = None → stored as "lead", no
+        // member validation on the sender.
+        message_member(&config, &team_id, None, Some(&alice), "from the lead", None).unwrap();
+        let messages = list_messages(&config, &team_id, None).unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].payload["from"], LEAD_SENDER);
+        assert_eq!(messages[0].payload["to"], alice);
+
+        // A non-None sender that is not a member is still rejected.
+        let err =
+            message_member(&config, &team_id, Some("ghost"), Some(&alice), "x", None).unwrap_err();
+        assert_eq!(
+            team_err(err),
+            TeamError::UnknownMember {
+                member_id: "ghost".into()
+            }
+        );
     }
 
     /// Create a single-member team and return `(team_id, member_id)`.

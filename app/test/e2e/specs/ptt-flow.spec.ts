@@ -68,12 +68,12 @@
  */
 import { waitForApp } from '../helpers/app-helpers';
 import {
+  chatMounted,
   getSelectedThreadId,
   waitForAssistantReplyContaining,
   waitForSocketConnected,
 } from '../helpers/chat-harness';
 import { callOpenhumanRpc } from '../helpers/core-rpc';
-import { textExists } from '../helpers/element-helpers';
 import { resetApp } from '../helpers/reset-app';
 import { navigateViaHash } from '../helpers/shared-flows';
 import {
@@ -287,7 +287,7 @@ describe('PTT — global push-to-talk flow', function () {
     // create one as needed; this just makes the assertion at step 9
     // easier (we can read selectedThreadId and assert message presence).
     await navigateViaHash('/chat');
-    await browser.waitUntil(async () => await textExists('Threads'), {
+    await browser.waitUntil(async () => await chatMounted(), {
       timeout: 15_000,
       timeoutMsg: 'Conversations did not mount under /chat',
     });

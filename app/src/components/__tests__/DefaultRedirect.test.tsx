@@ -31,6 +31,7 @@ function renderRedirect(initialEntry = '*') {
         <Route path="/" element={<div>Welcome</div>} />
         <Route path="/onboarding" element={<div>Onboarding</div>} />
         <Route path="/home" element={<div>Home</div>} />
+        <Route path="/chat" element={<div>Chat</div>} />
         <Route path="*" element={<DefaultRedirect />} />
       </Routes>
     </MemoryRouter>
@@ -96,7 +97,7 @@ describe('DefaultRedirect', () => {
     expect(screen.getByText('Onboarding')).toBeInTheDocument();
   });
 
-  it('redirects to /home for a returning user who already completed onboarding', () => {
+  it('redirects to /chat for a returning user who already completed onboarding', () => {
     mockUseCoreState.mockReturnValue({
       isBootstrapping: false,
       snapshot: {
@@ -108,6 +109,6 @@ describe('DefaultRedirect', () => {
 
     renderRedirect();
 
-    expect(screen.getByText('Home')).toBeInTheDocument();
+    expect(screen.getByText('Chat')).toBeInTheDocument();
   });
 });

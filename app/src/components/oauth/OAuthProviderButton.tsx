@@ -10,7 +10,7 @@ import {
 } from '../../store/deepLinkAuthState';
 import type { OAuthProviderConfig } from '../../types/oauth';
 import { IS_DEV } from '../../utils/config';
-import { handleDeepLinkUrls } from '../../utils/desktopDeepLinkListener';
+import { handleDeepLinkUrls, registerAuthDeepLinkState } from '../../utils/desktopDeepLinkListener';
 import { startLoopbackOauthListener } from '../../utils/loopbackOauthListener';
 import { prepareOAuthLoginLaunch } from '../../utils/oauthAppVersionGate';
 import { openUrl } from '../../utils/openUrl';
@@ -247,7 +247,34 @@ const OAuthProviderButton = ({
       // it shortcircuits the redirect so the loopback listener never fires.
       // Only set it when we have no loopback handle (web build, or bind failed).
       if (IS_DEV && !loopback) params.set('responseType', 'json');
-      if (loopback) params.set('redirectUri', loopback.redirectUri);
+      if (loopback) {
+        params.set('redirectUri', loopback.redirectUri);
+        // Bind the inbound `openhuman://auth` deep link to a per-attempt state
+        // nonce (finding C3). The loopback handle already carries a `state` the
+        // Rust shell verifies AND the backend echoes back on the callback URL;
+        // register it so `handleAuthDeepLink` accepts the rewritten callback and
+        // rejects any unsolicited deep link.
+        registerAuthDeepLinkState(loopback.state);
+      } else {
+        // Fallback `openhuman://auth` deep-link path (Tauri without loopback) and
+        // the web build (full-page navigation): mint an in-app nonce, pass it to
+        // the backend so it is echoed back on the callback, then verify on
+        // return. The web build navigates away and loses module memory, so the
+        // nonce is also stashed in sessionStorage and re-registered by
+        // WebCallbackPage; the desktop fallback keeps it in memory. Without this,
+        // the callback would carry no verifiable state and be rejected (C3).
+        const nonce = registerAuthDeepLinkState();
+        params.set('state', nonce);
+        if (!isTauri()) {
+          try {
+            window.sessionStorage.setItem('openhuman:auth-deep-link-state', nonce);
+          } catch {
+            // Private mode / storage disabled — WebCallbackPage will still
+            // re-register from the echoed `state`, accepting the same-origin
+            // backend redirect.
+          }
+        }
+      }
       const loginUrl = params.toString() ? `${loginUrlBase}?${params}` : loginUrlBase;
 
       if (loopback) {

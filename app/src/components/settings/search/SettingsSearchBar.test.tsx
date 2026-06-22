@@ -1,27 +1,21 @@
 /**
- * Tests for SettingsSearchBar — the global Settings search input + result list.
+ * Tests for SettingsSearchBar — the settings sidebar search input.
  *
- * The translator is mocked to identity so we can assert against the stable i18n
- * keys, and the registry's own keys (e.g. 'settings.appearance.title') contain
- * the words we search for. Navigation and developer-mode are mocked so the bar
- * is exercised in isolation.
+ * The two-pane restructure reduced this to a plain controlled text input: it no
+ * longer renders its own result list or performs navigation. The parent
+ * (SettingsSidebar) consumes the query to filter the visible nav tabs in place,
+ * so these tests cover only the input's own behavior (typing, Escape, clear).
  */
 import { fireEvent, render, screen } from '@testing-library/react';
 import { useState } from 'react';
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 
 import SettingsSearchBar from './SettingsSearchBar';
 
-const hoisted = vi.hoisted(() => ({ devMode: false, navigate: vi.fn() }));
-
 vi.mock('../../../lib/i18n/I18nContext', () => ({ useT: () => ({ t: (key: string) => key }) }));
-vi.mock('../../../hooks/useDeveloperMode', () => ({ useDeveloperMode: () => hoisted.devMode }));
-vi.mock('../hooks/useSettingsNavigation', () => ({
-  useSettingsNavigation: () => ({ navigateToSettings: hoisted.navigate }),
-}));
 
 // Controlled wrapper so typing flows through value/onValueChange like in
-// SettingsHome.
+// SettingsSidebar.
 const Harness = () => {
   const [value, setValue] = useState('');
   return <SettingsSearchBar value={value} onValueChange={setValue} />;
@@ -30,56 +24,28 @@ const Harness = () => {
 const type = (text: string) =>
   fireEvent.change(screen.getByTestId('settings-search-input'), { target: { value: text } });
 
-beforeEach(() => {
-  hoisted.devMode = false;
-  hoisted.navigate.mockReset();
-});
-
 describe('SettingsSearchBar', () => {
-  test('shows no results list until a query is entered', () => {
+  test('renders the input without any embedded result list', () => {
     render(<Harness />);
+    expect(screen.getByTestId('settings-search-input')).toBeTruthy();
+    // The bar itself never renders a result dropdown — filtering lives in the
+    // sidebar.
     expect(screen.queryByTestId('settings-search-results')).toBeNull();
     expect(screen.queryByTestId('settings-search-empty')).toBeNull();
   });
 
-  test('filters entries by query and navigates on click', () => {
+  test('reflects typed text in the controlled value', () => {
     render(<Harness />);
+    const input = screen.getByTestId('settings-search-input') as HTMLInputElement;
     type('appearance');
-
-    const result = screen.getByTestId('settings-search-result-appearance');
-    expect(result).toBeTruthy();
-
-    fireEvent.click(result);
-    expect(hoisted.navigate).toHaveBeenCalledWith('appearance');
+    expect(input.value).toBe('appearance');
   });
 
-  test('renders an empty state when nothing matches', () => {
+  test('shows the clear button only once a query is entered', () => {
     render(<Harness />);
-    type('zzzznomatchqq');
-    expect(screen.getByTestId('settings-search-empty')).toBeTruthy();
-    expect(screen.queryByTestId('settings-search-results')).toBeNull();
-  });
-
-  test('hides developer-only destinations unless developer mode is on', () => {
-    render(<Harness />);
-    // 'cron-jobs' is a devOnly entry.
-    type('cron');
-    expect(screen.queryByTestId('settings-search-result-cron-jobs')).toBeNull();
-  });
-
-  test('surfaces developer-only destinations when developer mode is on', () => {
-    hoisted.devMode = true;
-    render(<Harness />);
-    type('cron');
-    expect(screen.getByTestId('settings-search-result-cron-jobs')).toBeTruthy();
-  });
-
-  test('Enter activates the highlighted result', () => {
-    render(<Harness />);
-    const input = screen.getByTestId('settings-search-input');
+    expect(screen.queryByTestId('settings-search-clear')).toBeNull();
     type('appearance');
-    fireEvent.keyDown(input, { key: 'Enter' });
-    expect(hoisted.navigate).toHaveBeenCalledWith('appearance');
+    expect(screen.getByTestId('settings-search-clear')).toBeTruthy();
   });
 
   test('Escape clears the query', () => {

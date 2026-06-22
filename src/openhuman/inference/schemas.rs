@@ -87,11 +87,19 @@ struct InferenceUpdateModelSettingsParams {
     reasoning_provider: Option<String>,
     agentic_provider: Option<String>,
     coding_provider: Option<String>,
+    vision_provider: Option<String>,
     memory_provider: Option<String>,
     embeddings_provider: Option<String>,
     heartbeat_provider: Option<String>,
     learning_provider: Option<String>,
     subconscious_provider: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct InferenceClaudeCodeSetFullAccessParams {
+    /// true → full access (`bypassPermissions` + full toolset); false → the
+    /// default `acceptEdits` posture (file edits only).
+    enabled: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -150,6 +158,8 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("analyze_sentiment"),
         schemas("claude_code_status"),
         schemas("claude_code_auth_status"),
+        schemas("claude_code_settings"),
+        schemas("claude_code_set_full_access"),
     ]
 }
 
@@ -247,6 +257,14 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
             schema: schemas("claude_code_auth_status"),
             handler: handle_inference_claude_code_auth_status,
         },
+        RegisteredController {
+            schema: schemas("claude_code_settings"),
+            handler: handle_inference_claude_code_settings,
+        },
+        RegisteredController {
+            schema: schemas("claude_code_set_full_access"),
+            handler: handle_inference_claude_code_set_full_access,
+        },
     ]
 }
 
@@ -297,6 +315,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 optional_string("reasoning_provider", "Optional reasoning workload provider string."),
                 optional_string("agentic_provider", "Optional agentic workload provider string."),
                 optional_string("coding_provider", "Optional coding workload provider string."),
+                optional_string("vision_provider", "Optional vision / multimodal workload provider string."),
                 optional_string("memory_provider", "Optional memory workload provider string."),
                 optional_string("embeddings_provider", "Optional embeddings workload provider string."),
                 optional_string("heartbeat_provider", "Optional heartbeat workload provider string."),
@@ -492,6 +511,29 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 "AuthStatus payload: source = subscription | api_key_env | none, plus optional account_email + expires_at + last_checked.",
             )],
         },
+        "claude_code_settings" => ControllerSchema {
+            namespace: "inference",
+            function: "claude_code_settings",
+            description: "Read the persisted Claude Code provider settings (currently just the full-access toggle). Self-contained per-install state stored under the workspace, not in the central config.",
+            inputs: vec![],
+            outputs: vec![json_output(
+                "settings",
+                "ClaudeCodeSettings payload: { full_access: bool }. full_access=true → bypassPermissions + full toolset; false (default) → acceptEdits.",
+            )],
+        },
+        "claude_code_set_full_access" => ControllerSchema {
+            namespace: "inference",
+            function: "claude_code_set_full_access",
+            description: "Persist the Claude Code full-access toggle. true → bypassPermissions + full native toolset (Bash/network/subagents); false (default) → acceptEdits (file edits only). The OPENHUMAN_CLAUDE_CODE_PERMISSION_MODE env var overrides this at runtime.",
+            inputs: vec![required_bool(
+                "enabled",
+                "true → full access (bypassPermissions); false → acceptEdits.",
+            )],
+            outputs: vec![json_output(
+                "settings",
+                "The persisted ClaudeCodeSettings after the update: { full_access: bool }.",
+            )],
+        },
         other => panic!("unknown inference schema: {other}"),
     }
 }
@@ -511,6 +553,15 @@ fn optional_bool(name: &'static str, comment: &'static str) -> FieldSchema {
         ty: TypeSchema::Option(Box::new(TypeSchema::Bool)),
         comment,
         required: false,
+    }
+}
+
+fn required_bool(name: &'static str, comment: &'static str) -> FieldSchema {
+    FieldSchema {
+        name,
+        ty: TypeSchema::Bool,
+        comment,
+        required: true,
     }
 }
 
@@ -697,6 +748,7 @@ fn handle_inference_update_model_settings(params: Map<String, Value>) -> Control
             reasoning_provider: update.reasoning_provider,
             agentic_provider: update.agentic_provider,
             coding_provider: update.coding_provider,
+            vision_provider: update.vision_provider,
             memory_provider: update.memory_provider,
             embeddings_provider: update.embeddings_provider,
             heartbeat_provider: update.heartbeat_provider,
@@ -914,6 +966,34 @@ fn handle_inference_claude_code_auth_status(_params: Map<String, Value>) -> Cont
         .await
         .map_err(|e| format!("claude_code_auth_status join error: {e}"))?;
         to_json(RpcOutcome::new(auth, vec![]))
+    })
+}
+
+fn handle_inference_claude_code_settings(_params: Map<String, Value>) -> ControllerFuture {
+    use crate::openhuman::inference::provider::claude_code::settings;
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let settings = settings::load_for_config(&config);
+        log::debug!(
+            "[rpc][inference.claude_code_settings] full_access={}",
+            settings.full_access
+        );
+        to_json(RpcOutcome::new(settings, vec![]))
+    })
+}
+
+fn handle_inference_claude_code_set_full_access(params: Map<String, Value>) -> ControllerFuture {
+    use crate::openhuman::inference::provider::claude_code::settings;
+    Box::pin(async move {
+        let p = deserialize_params::<InferenceClaudeCodeSetFullAccessParams>(params)?;
+        let config = config_rpc::load_config_with_timeout().await?;
+        let settings = settings::save_full_access_for_config(&config, p.enabled)
+            .map_err(|e| format!("failed to persist claude code settings: {e}"))?;
+        log::info!(
+            "[rpc][inference.claude_code_set_full_access] persisted full_access={}",
+            settings.full_access
+        );
+        to_json(RpcOutcome::new(settings, vec![]))
     })
 }
 

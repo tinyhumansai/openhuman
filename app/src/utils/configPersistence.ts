@@ -20,6 +20,15 @@ const RPC_URL_STORAGE_KEY = 'openhuman_core_rpc_url';
 // Storage key for cloud-mode bearer token. Pre-login and per-device, parallel
 // to the URL key. Held in plain localStorage because the cloud picker runs
 // before any user session exists.
+//
+// SECURITY (audit U3): a renderer XSS could read this long-lived bearer
+// directly. We keep localStorage for now — there is no generic OS-keychain
+// set/get exposed to the renderer (`keyringApi` is consent-only; the keychain
+// plugin is a `profileStore.ts` TODO) and the cloud picker must persist the
+// token before any session/keychain consent exists. When a generic keychain
+// command lands, migrate this key to it and scope the bearer's lifetime.
+// Defense-in-depth for the read path is handled by tightening the renderer CSP
+// (audit U1) so injected markup cannot exfiltrate it.
 const CORE_TOKEN_STORAGE_KEY = 'openhuman_core_rpc_token';
 
 // Storage key for the user-chosen core mode ('local' | 'cloud'). Mirrors the

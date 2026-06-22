@@ -1,12 +1,16 @@
 /**
- * IntelligenceTeamsTab — the agent-team coordination surface (#3374 PR2).
+ * IntelligenceTeamsTab — the agent-team coordination surface (#3374).
  *
- * Read-only window onto the durable team ledger (PR1, #3546). It lists the
- * teams an agent has spawned, and — for a selected team — renders treatment "A":
- * a {@link TeamHeader} identity strip, the {@link TeamTaskBoard} of owned tasks,
- * and an always-visible {@link TeamActivityRail} of teammate messages. The
- * board/rail sit in a grid that collapses the rail under the board on narrow
- * widths.
+ * A window onto the durable team ledger (PR1, #3546). It lists the teams an
+ * agent has spawned, and — for a selected team — renders a {@link TeamHeader}
+ * identity strip, the {@link TeamTaskBoard} of owned tasks, and an
+ * always-visible {@link TeamActivityRail} of teammate messages. The board/rail
+ * sit in a grid that collapses the rail under the board on narrow widths.
+ *
+ * PR4 makes it interactive on an active team: the lead/user can message a named
+ * teammate (composer in the rail) and start a teammate live on its next
+ * claimable task (the play affordance on each member chip), both wired through
+ * {@link agentTeamApi}. A non-`started` outcome surfaces as a transient notice.
  *
  * Most users will see the EMPTY state first: a team only exists once an agent
  * spawns coordinated sub-agents, so "no teams yet" is the common first view and
@@ -49,6 +53,11 @@ export default function IntelligenceTeamsTab() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [startingMemberId, setStartingMemberId] = useState<string | null>(null);
+  // Transient feedback for a member-start outcome (blocked / already claimed /
+  // nothing claimable) or a send/start error — distinct from the fatal `error`.
+  const [actionNotice, setActionNotice] = useState<string | null>(null);
   const mountedRef = useRef(true);
   // Mirrors `view` for reads inside the poll interval without making the poll
   // effect depend on `view` (which would rebuild the interval every tick).
@@ -107,6 +116,18 @@ export default function IntelligenceTeamsTab() {
     setView(null);
     viewRef.current = null;
     setMessages([]);
+    // Reset transient per-team feedback so a notice from the team we just left
+    // doesn't leak onto the next team opened.
+    setActionNotice(null);
+    setStartingMemberId(null);
+  }, []);
+
+  // Select a team, clearing any transient notice from a previously viewed team
+  // so stale feedback doesn't carry across navigation.
+  const selectTeam = useCallback((teamId: string) => {
+    setActionNotice(null);
+    setStartingMemberId(null);
+    setSelectedId(teamId);
   }, []);
 
   // Mount fetch of the team list (mirrors IntelligenceAgentWorkTab's 0ms
@@ -156,6 +177,65 @@ export default function IntelligenceTeamsTab() {
       if (mountedRef.current) setRefreshing(false);
     }
   }, [selectedId, fetchDetail, fetchTeams]);
+
+  // Send a message as the lead (fromMemberId omitted) to a teammate or the
+  // whole team, then refresh so the new message appears in the rail.
+  const handleSend = useCallback(
+    async (toMemberId: string | null, content: string) => {
+      if (!selectedId) return;
+      setSending(true);
+      setActionNotice(null);
+      try {
+        await agentTeamApi.messageMember({
+          teamId: selectedId,
+          toMemberId: toMemberId ?? undefined,
+          content,
+        });
+        await fetchDetail(selectedId);
+      } catch (err) {
+        if (mountedRef.current) {
+          setActionNotice(err instanceof Error ? err.message : String(err));
+        }
+        // Re-throw so the composer's onSend rejects and keeps the unsent draft.
+        // Swallowing here would resolve handleSend as success and TeamActivityRail
+        // would clear the draft text on a failed send.
+        throw err;
+      } finally {
+        if (mountedRef.current) setSending(false);
+      }
+    },
+    [selectedId, fetchDetail]
+  );
+
+  // Start a live run for a member (auto-picks the member's next claimable task).
+  // A non-`started` outcome is surfaced as a transient notice; either way we
+  // refresh so the board/roster reflect the new state.
+  const handleStartMember = useCallback(
+    async (memberId: string) => {
+      if (!selectedId) return;
+      setStartingMemberId(memberId);
+      setActionNotice(null);
+      try {
+        const outcome = await agentTeamApi.startMember({ teamId: selectedId, memberId });
+        if (outcome.kind === 'blocked') {
+          // Name the unmet dependency ids so the user knows what to finish
+          // first (t() does not interpolate — compose at the call site).
+          const base = t('intelligence.teams.action.blocked');
+          setActionNotice(outcome.unmet.length ? `${base}: ${outcome.unmet.join(', ')}` : base);
+        } else if (outcome.kind !== 'started') {
+          setActionNotice(t(`intelligence.teams.action.${outcome.kind}`));
+        }
+        await fetchDetail(selectedId);
+      } catch (err) {
+        if (mountedRef.current) {
+          setActionNotice(err instanceof Error ? err.message : String(err));
+        }
+      } finally {
+        if (mountedRef.current) setStartingMemberId(null);
+      }
+    },
+    [selectedId, fetchDetail, t]
+  );
 
   if (loading) {
     return (
@@ -215,11 +295,30 @@ export default function IntelligenceTeamsTab() {
           <RefreshButton refreshing={refreshing} onClick={() => void refresh()} t={t} />
         </div>
 
-        <TeamHeader team={view.team} members={view.members} taskCount={view.tasks.length} />
+        <TeamHeader
+          team={view.team}
+          members={view.members}
+          taskCount={view.tasks.length}
+          onStartMember={
+            view.team.status === 'active' ? memberId => void handleStartMember(memberId) : undefined
+          }
+          startingMemberId={startingMemberId}
+        />
+
+        {actionNotice && (
+          <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
+            {actionNotice}
+          </div>
+        )}
 
         <div className="grid grid-cols-1 gap-3 xl:grid-cols-[1fr_300px]">
           <TeamTaskBoard tasks={view.tasks} members={view.members} />
-          <TeamActivityRail messages={messages} members={view.members} />
+          <TeamActivityRail
+            messages={messages}
+            members={view.members}
+            onSend={view.team.status === 'active' ? handleSend : undefined}
+            sending={sending}
+          />
         </div>
       </div>
     );
@@ -239,7 +338,7 @@ export default function IntelligenceTeamsTab() {
           <li key={team.id}>
             <button
               type="button"
-              onClick={() => setSelectedId(team.id)}
+              onClick={() => selectTeam(team.id)}
               className="flex w-full items-center justify-between gap-3 p-3 text-left hover:bg-stone-50 dark:hover:bg-neutral-800/60">
               <div className="min-w-0">
                 <p className="truncate text-sm font-medium text-stone-800 dark:text-neutral-100">

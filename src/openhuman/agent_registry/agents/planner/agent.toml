@@ -67,4 +67,17 @@ named = [
     "composio_list_connections",
     "composio_list_tools",
     "composio_execute",
+    # MCP discovery (read-only) so plans can be grounded in the user's
+    # connected MCP servers — what's connected (`mcp_registry_status`),
+    # which servers are installed (`mcp_registry_installed_list`), and what
+    # tools each connected server exposes (`mcp_registry_list_tools`). All
+    # three are `PermissionLevel::ReadOnly` (no side effects), so they fit
+    # the read-only sandbox. `mcp_registry_tool_call` is deliberately NOT
+    # here: unlike `composio_execute` (gated to Read-scoped slugs by the
+    # sandbox), an MCP tool call invokes an arbitrary server tool the core
+    # cannot classify as read vs. write, so there is no safe read-only gate.
+    # Executing connected-MCP tools stays with `mcp_agent` (`use_mcp_server`).
+    "mcp_registry_status",
+    "mcp_registry_installed_list",
+    "mcp_registry_list_tools",
 ]

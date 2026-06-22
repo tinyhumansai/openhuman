@@ -53,7 +53,7 @@ describe('Skills page — MCP Servers tab (MCP + Meeting bots)', () => {
   it('renders the MCP servers table in the MCP Servers tab', async () => {
     renderWithProviders(<Skills />, { initialEntries: ['/connections'] });
 
-    fireEvent.click(screen.getByRole('tab', { name: 'MCP Servers' }));
+    fireEvent.click(screen.getByTestId('two-pane-nav-mcp'));
 
     // The Tools tab shows filter chips (All / Installed / Registry) and a search input
     await waitFor(() => {
@@ -66,7 +66,7 @@ describe('Skills page — MCP Servers tab (MCP + Meeting bots)', () => {
   it('shows the table header columns on the MCP Servers tab', async () => {
     renderWithProviders(<Skills />, { initialEntries: ['/connections'] });
 
-    fireEvent.click(screen.getByRole('tab', { name: 'MCP Servers' }));
+    fireEvent.click(screen.getByTestId('two-pane-nav-mcp'));
 
     // Wait for initial load to complete
     await waitFor(() => {
@@ -81,7 +81,7 @@ describe('Skills page — MCP Servers tab (MCP + Meeting bots)', () => {
   it('shows empty-installed state when Installed chip is clicked', async () => {
     renderWithProviders(<Skills />, { initialEntries: ['/connections'] });
 
-    fireEvent.click(screen.getByRole('tab', { name: 'MCP Servers' }));
+    fireEvent.click(screen.getByTestId('two-pane-nav-mcp'));
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /Installed/i })).toBeInTheDocument();
@@ -96,10 +96,7 @@ describe('Skills page — MCP Servers tab (MCP + Meeting bots)', () => {
   it('supports direct links via legacy ?tab=mcp (normalised to mcp-servers)', async () => {
     renderWithProviders(<Skills />, { initialEntries: ['/connections?tab=mcp'] });
 
-    expect(screen.getByRole('tab', { name: 'MCP Servers' })).toHaveAttribute(
-      'aria-selected',
-      'true'
-    );
+    expect(screen.getByTestId('two-pane-nav-mcp')).toHaveAttribute('aria-current', 'page');
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'All' })).toBeInTheDocument();
     });

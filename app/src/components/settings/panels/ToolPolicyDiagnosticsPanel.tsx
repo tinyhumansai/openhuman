@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
 import { callCoreRpc } from '../../../services/coreRpcClient';
-import SettingsHeader from '../components/SettingsHeader';
+import PanelPage from '../../layout/PanelPage';
+import SettingsBackButton from '../components/SettingsBackButton';
 import { SettingsStatusLine } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
@@ -45,7 +46,7 @@ type ToolPolicyDiagnostics = {
 
 const ToolPolicyDiagnosticsPanel = () => {
   const { t } = useT();
-  const { navigateBack, breadcrumbs } = useSettingsNavigation();
+  const { navigateBack } = useSettingsNavigation();
 
   const [status, setStatus] = useState<
     | { kind: 'loading' }
@@ -259,15 +260,13 @@ const ToolPolicyDiagnosticsPanel = () => {
   }, [status, t]);
 
   return (
-    <div className="z-10 relative">
-      <SettingsHeader
-        title={t('devOptions.diagnostics')}
-        showBackButton={true}
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
+    <PanelPage
+      className="z-10"
+      contentClassName=""
+      description={t('devOptions.toolPolicyDiagnosticsDesc')}
+      leading={<SettingsBackButton onBack={navigateBack} />}>
       {body}
-    </div>
+    </PanelPage>
   );
 };
 

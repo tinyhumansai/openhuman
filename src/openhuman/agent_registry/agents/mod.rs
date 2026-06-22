@@ -13,6 +13,7 @@ pub mod desktop_control_agent;
 pub mod help;
 pub mod integrations_agent;
 pub mod markets_agent;
+pub mod mcp_agent;
 pub mod mcp_setup;
 pub mod morning_briefing;
 pub mod orchestrator;
@@ -30,5 +31,6 @@ pub mod tool_maker;
 pub mod tools_agent;
 pub mod trigger_reactor;
 pub mod trigger_triage;
+pub mod vision_agent;
 
 pub use loader::{load_builtins, validate_tier_hierarchy, BuiltinAgent, BUILTINS};

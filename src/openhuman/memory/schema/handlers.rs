@@ -149,6 +149,18 @@ pub(super) fn handle_delete_chunk(params: Map<String, Value>) -> ControllerFutur
     })
 }
 
+pub(super) fn handle_delete_source(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        #[derive(serde::Deserialize)]
+        struct Req {
+            source_id: String,
+        }
+        let config = config_rpc::load_config_with_timeout().await?;
+        let req = parse_value::<Req>(Value::Object(params))?;
+        to_json(read_rpc::delete_source_rpc(&config, req.source_id).await?)
+    })
+}
+
 pub(super) fn handle_graph_export(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         #[derive(serde::Deserialize, Default)]
@@ -283,6 +295,7 @@ pub(super) fn handle_smart_walk(params: Map<String, Value>) -> ControllerFuture 
                     user: message.to_string(),
                     temperature,
                     kind: "memory_smart_walk_rpc",
+                    max_tokens: None,
                 };
                 self.inner.chat_for_text(&prompt).await
             }

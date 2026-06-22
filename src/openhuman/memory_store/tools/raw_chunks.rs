@@ -92,6 +92,8 @@ impl Tool for MemoryStoreRawChunksTool {
                 ));
             }
         }
+        // The per-profile memory-source gate is applied inside `list_chunks`
+        // (before the row limit). None = unrestricted.
         let query = ListChunksQuery {
             source_kind,
             source_id: parsed.source_id,
@@ -99,6 +101,8 @@ impl Tool for MemoryStoreRawChunksTool {
             since_ms: parsed.since_ms,
             until_ms: parsed.until_ms,
             limit: parsed.limit,
+            source_scope: crate::openhuman::memory::source_scope::current_source_scope(),
+            exclude_dropped: false,
         };
         let mut rows = list_chunks(&cfg, &query)?;
         if let Some(required) = parsed.tags_all_of.as_ref() {

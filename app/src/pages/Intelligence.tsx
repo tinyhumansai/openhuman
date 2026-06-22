@@ -5,9 +5,11 @@ import { useSearchParams } from 'react-router-dom';
 import { ConfirmationModal } from '../components/intelligence/ConfirmationModal';
 import IntelligenceAgentsTab from '../components/intelligence/IntelligenceAgentsTab';
 import IntelligenceAgentWorkTab from '../components/intelligence/IntelligenceAgentWorkTab';
+import IntelligenceOrchestrationTab from '../components/intelligence/IntelligenceOrchestrationTab';
 import IntelligenceSubconsciousTab from '../components/intelligence/IntelligenceSubconsciousTab';
 import IntelligenceTasksTab from '../components/intelligence/IntelligenceTasksTab';
 import IntelligenceTeamsTab from '../components/intelligence/IntelligenceTeamsTab';
+import IntelligenceWorktreesTab from '../components/intelligence/IntelligenceWorktreesTab';
 import MemorySection from '../components/intelligence/MemorySection';
 import ModelCouncilTab from '../components/intelligence/ModelCouncilTab';
 import { ToastContainer } from '../components/intelligence/Toast';
@@ -34,9 +36,11 @@ type IntelligenceTab =
   | 'subconscious'
   | 'tasks'
   | 'agent-work'
+  | 'worktrees'
   | 'teams'
   | 'agents'
   | 'workflows'
+  | 'orchestration'
   | 'council';
 
 const INTELLIGENCE_TABS: IntelligenceTab[] = [
@@ -44,9 +48,11 @@ const INTELLIGENCE_TABS: IntelligenceTab[] = [
   'subconscious',
   'tasks',
   'agent-work',
+  'worktrees',
   'teams',
   'agents',
   'workflows',
+  'orchestration',
   'council',
 ];
 
@@ -61,7 +67,17 @@ const makeIsVisibleTab =
     (INTELLIGENCE_TABS as string[]).includes(tab ?? '') &&
     (developerModeEnabled || !(DEV_ONLY_TABS as string[]).includes(tab ?? ''));
 
-export default function Intelligence() {
+interface IntelligenceProps {
+  /**
+   * Query-param key backing the active tab. Defaults to `tab` for the standalone
+   * route. When embedded inside another `?tab=`-driven page (e.g. Brain at
+   * `/brain?tab=intelligence`), pass a distinct key so the child's internal tab
+   * switches don't clobber the host's `tab` param and unmount this panel.
+   */
+  tabParamKey?: string;
+}
+
+export default function Intelligence({ tabParamKey = 'tab' }: IntelligenceProps = {}) {
   const { t } = useT();
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
   const developerMode = useDeveloperMode();
@@ -72,24 +88,24 @@ export default function Intelligence() {
   // for an `embedded` prop since this page has no standalone usage.
   log('rendering with settings shell');
 
-  // Tab is URL-backed (`/intelligence?tab=…`) so navigating away — e.g. to
+  // Tab is URL-backed (`?<tabParamKey>=…`) so navigating away — e.g. to
   // Settings → Task Sources from the Agent Tasks tab — and coming back via
   // browser-back restores the same tab instead of resetting to Memory.
   // `replace` so switching tabs doesn't stack history entries.
   const [searchParams, setSearchParams] = useSearchParams();
-  const tabParam = searchParams.get('tab');
+  const tabParam = searchParams.get(tabParamKey);
   const activeTab: IntelligenceTab = isVisibleTab(tabParam) ? tabParam : 'tasks';
   const setActiveTab = useCallback(
     (tab: IntelligenceTab) => {
       setSearchParams(
         prev => {
-          prev.set('tab', tab);
+          prev.set(tabParamKey, tab);
           return prev;
         },
         { replace: true }
       );
     },
-    [setSearchParams]
+    [setSearchParams, tabParamKey]
   );
 
   // The legacy header pills (system-status + Ingesting/Queued chips) were
@@ -160,6 +176,11 @@ export default function Intelligence() {
       label: t('memory.tab.agentWork'),
       description: t('memory.tab.agentWorkDescription'),
     },
+    {
+      id: 'worktrees',
+      label: t('memory.tab.worktrees'),
+      description: t('memory.tab.worktreesDescription'),
+    },
     { id: 'teams', label: t('memory.tab.teams'), description: t('memory.tab.teamsDescription') },
     { id: 'memory', label: t('memory.tab.memory') },
     { id: 'subconscious', label: t('memory.tab.subconscious') },
@@ -167,6 +188,11 @@ export default function Intelligence() {
       id: 'workflows',
       label: t('memory.tab.workflows'),
       description: t('memory.tab.workflowsDescription'),
+    },
+    {
+      id: 'orchestration',
+      label: t('memory.tab.orchestration'),
+      description: t('memory.tab.orchestrationDescription'),
     },
     { id: 'council', label: t('memory.tab.council'), devOnly: true },
     { id: 'agents', label: t('memory.tab.agents'), description: t('memory.tab.agentsDescription') },
@@ -257,11 +283,15 @@ export default function Intelligence() {
 
             {activeTab === 'agent-work' && <IntelligenceAgentWorkTab />}
 
+            {activeTab === 'worktrees' && <IntelligenceWorktreesTab />}
+
             {activeTab === 'teams' && <IntelligenceTeamsTab />}
 
             {activeTab === 'agents' && <IntelligenceAgentsTab />}
 
             {activeTab === 'workflows' && <WorkflowsTab />}
+
+            {activeTab === 'orchestration' && <IntelligenceOrchestrationTab />}
 
             {activeTab === 'council' && <ModelCouncilTab />}
           </div>

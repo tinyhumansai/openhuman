@@ -144,6 +144,36 @@ pub struct McpAuthorizationContext {
     pub authorization_server_metadata: Vec<AuthorizationServerMetadata>,
 }
 
+/// Typed error for an HTTP 401 from a remote MCP server. Carried as the root
+/// of the `anyhow` chain so the connect path can recognise an auth failure via
+/// `downcast_ref` — instead of fragile string matching — and classify the
+/// server as "needs authentication" rather than a generic transport error
+/// (issue #3719). The `Display` form is the diagnostic string used in logs;
+/// the user-facing copy is derived separately in `mcp_registry::connections`.
+#[derive(Debug, Clone)]
+pub struct McpUnauthorizedError {
+    /// Redacted endpoint (scheme + authority only) the 401 came from.
+    pub endpoint: String,
+    /// `resource_metadata` URL advertised by the `WWW-Authenticate` challenge,
+    /// when present — the entry point to OAuth discovery.
+    pub resource_metadata: Option<String>,
+}
+
+impl std::fmt::Display for McpUnauthorizedError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.resource_metadata {
+            Some(rm) => write!(
+                f,
+                "MCP unauthorized for `{}` (HTTP 401; resource metadata: {rm})",
+                self.endpoint
+            ),
+            None => write!(f, "MCP unauthorized for `{}` (HTTP 401)", self.endpoint),
+        }
+    }
+}
+
+impl std::error::Error for McpUnauthorizedError {}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct McpSseEvent {
     pub event: Option<String>,
@@ -189,7 +219,14 @@ impl McpHttpClient {
         let builder = reqwest::Client::builder()
             .timeout(Duration::from_secs(timeout_secs))
             .connect_timeout(Duration::from_secs(10))
-            .redirect(reqwest::redirect::Policy::none());
+            // Follow a bounded number of redirects so servers published behind a
+            // vanity/short URL that 30x-redirects to their real MCP endpoint
+            // (e.g. `sh.inference.ac` -> `api.inference.sh/mcp`) connect instead
+            // of failing with a raw `MCP HTTP 301`. `Policy::limited` is safe
+            // here: reqwest strips sensitive headers (Authorization, Cookie) on
+            // cross-origin redirects, so a server bearer token is never leaked
+            // to the redirect target.
+            .redirect(reqwest::redirect::Policy::limited(5));
         let builder =
             crate::openhuman::config::apply_runtime_proxy_to_builder(builder, "tool.mcp_client");
         let http = builder.build().expect("reqwest client must build");
@@ -568,6 +605,21 @@ impl McpHttpClient {
                 (Ok(name), Ok(value)) => request.header(name, value),
                 _ => request,
             },
+            McpAuthConfig::Headers { headers } => {
+                // Apply every header — for remotes that authenticate with more
+                // than one (e.g. a client key + client secret). A header whose
+                // name/value can't be encoded is skipped, not fatal.
+                let mut req = request;
+                for h in headers {
+                    if let (Ok(name), Ok(value)) = (
+                        HeaderName::try_from(h.name.as_str()),
+                        HeaderValue::from_str(&h.value),
+                    ) {
+                        req = req.header(name, value);
+                    }
+                }
+                req
+            }
             McpAuthConfig::QueryParam { name, value } => {
                 request.query(&[(name.as_str(), value.as_str())])
             }
@@ -710,21 +762,16 @@ impl McpHttpClient {
         let text = response.text().await?;
 
         if status == reqwest::StatusCode::UNAUTHORIZED {
-            let auth_suffix = if let Some(challenge) = parse_www_authenticate_challenge(&headers) {
-                match challenge.resource_metadata.as_deref() {
-                    Some(resource_metadata) => {
-                        format!("; resource metadata: {resource_metadata}")
-                    }
-                    None => String::new(),
-                }
-            } else {
-                String::new()
-            };
-            anyhow::bail!(
-                "MCP unauthorized for `{}` (HTTP 401{})",
-                redact_endpoint(&self.endpoint),
-                auth_suffix
-            );
+            let resource_metadata = parse_www_authenticate_challenge(&headers)
+                .and_then(|challenge| challenge.resource_metadata);
+            // Return a TYPED error (not a string `bail!`) so callers can
+            // `downcast_ref::<McpUnauthorizedError>()` and surface an
+            // actionable "needs authentication" state (#3719) rather than a
+            // generic failure. `anyhow` preserves the root type through `?`.
+            return Err(anyhow::Error::new(McpUnauthorizedError {
+                endpoint: redact_endpoint(&self.endpoint),
+                resource_metadata,
+            }));
         }
         if !status.is_success() {
             anyhow::bail!("MCP HTTP {} — {}", status.as_u16(), text);

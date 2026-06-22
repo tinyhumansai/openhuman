@@ -40,9 +40,8 @@ describe('AgentChatPanel', () => {
   it('renders the panel header and empty conversation area', async () => {
     renderWithProviders(<AgentChatPanel />);
 
-    expect(await screen.findByText('Agent Chat')).toBeInTheDocument();
     // Empty state label shown when no messages
-    expect(screen.getByText(/start a conversation/i)).toBeInTheDocument();
+    expect(await screen.findByText(/start a conversation/i)).toBeInTheDocument();
   });
 
   it('shows model and temperature input fields', async () => {

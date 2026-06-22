@@ -62,6 +62,13 @@ pub struct MeetCallRecord {
     pub spoken_seconds: f32,
     /// Completed agent turns during the call.
     pub turn_count: u32,
+    /// Distinct human participant display names observed in the
+    /// transcript (excludes the bot and system/presence lines). Empty
+    /// for the local meet-agent flow, which has no transcript to mine.
+    /// `#[serde(default)]` keeps older JSONL lines (written before this
+    /// field existed) parseable.
+    #[serde(default)]
+    pub participants: Vec<String>,
 }
 
 /// Hard cap on the rows returned from `read_recent`. The UI shows ~20
@@ -177,6 +184,7 @@ mod tests {
             listened_seconds: 12.5,
             spoken_seconds: 4.2,
             turn_count: 3,
+            participants: vec!["Alice".into(), "Bob".into()],
         }
     }
 

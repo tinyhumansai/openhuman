@@ -18,6 +18,7 @@ import {
   setIntegrationLoading,
   setIntegrationNotifications,
 } from '../../store/notificationSlice';
+import CoreNotificationCard from './CoreNotificationCard';
 import NotificationCard from './NotificationCard';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -32,7 +33,12 @@ const NotificationCenter = () => {
     integrationItems: items,
     integrationLoading: loading,
     integrationError: error,
+    items: coreItems,
   } = useAppSelector(s => s.notifications);
+  // Core-originated notifications that carry action buttons (e.g. the calendar
+  // auto-join prompt, issue #3507). These live in a separate Redux array from
+  // the server-fetched integration notifications and are surfaced at the top.
+  const coreActionItems = coreItems.filter(i => i.actions && i.actions.length > 0);
   const [selectedProvider, setSelectedProvider] = useState<string | undefined>(undefined);
   // All providers seen across unfiltered loads — kept separate so the filter
   // pill row doesn't collapse when a provider filter is active.
@@ -172,6 +178,16 @@ const NotificationCenter = () => {
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto">
+        {/* Actionable core notifications (e.g. meeting auto-join prompt) —
+            always shown first, independent of integration load state. */}
+        {coreActionItems.length > 0 && (
+          <div className="divide-y-0">
+            {coreActionItems.map(item => (
+              <CoreNotificationCard key={item.id} notification={item} />
+            ))}
+          </div>
+        )}
+
         {loading && (
           <div className="flex items-center justify-center py-12 text-stone-400 dark:text-neutral-500 text-sm">
             {t('common.loading')}
@@ -184,7 +200,7 @@ const NotificationCenter = () => {
           </div>
         )}
 
-        {!loading && !error && visibleItems.length === 0 && (
+        {!loading && !error && visibleItems.length === 0 && coreActionItems.length === 0 && (
           <div className="flex flex-col items-center justify-center py-16 text-stone-400 dark:text-neutral-500">
             <svg
               className="w-10 h-10 mb-3 opacity-40"

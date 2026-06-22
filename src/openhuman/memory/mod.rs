@@ -25,6 +25,7 @@ pub mod query;
 pub mod read_rpc;
 pub mod remember;
 pub mod schema;
+pub mod source_scope;
 pub mod sync;
 pub mod tools;
 pub mod util;

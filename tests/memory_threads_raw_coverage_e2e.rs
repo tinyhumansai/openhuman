@@ -4385,7 +4385,7 @@ async fn memory_tree_retrieval_rpc_and_schema_wrappers_cover_empty_and_invalid_p
         openhuman_core::openhuman::memory_tree::retrieval::schemas::all_controller_schemas();
     let controllers =
         openhuman_core::openhuman::memory_tree::retrieval::schemas::all_registered_controllers();
-    assert_eq!(schemas.len(), 4);
+    assert_eq!(schemas.len(), 5);
     assert_eq!(schemas.len(), controllers.len());
     assert_eq!(
         openhuman_core::openhuman::memory_tree::retrieval::schemas::schemas("missing").function,

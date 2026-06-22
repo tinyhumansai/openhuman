@@ -11,11 +11,7 @@ test.describe('Webhooks ingress surface (stub-level)', () => {
   test('reaches the app shell after onboarding', async ({ page }) => {
     await waitForAppReady(page);
     const text = await page.locator('#root').innerText();
-    expect(
-      ['Ask your assistant anything', 'Your device is connected'].some(marker =>
-        text.includes(marker)
-      )
-    ).toBe(true);
+    expect(['New Conversation', 'Threads'].some(marker => text.includes(marker))).toBe(true);
   });
 
   test('exposes the stub webhook RPC surface with stable result and log shapes', async () => {
@@ -69,8 +65,10 @@ test.describe('Webhooks ingress surface (stub-level)', () => {
       .poll(async () => page.evaluate(() => window.location.hash), { timeout: 10_000 })
       .toContain('/settings/webhooks-debug');
 
+    // Panel title dropped in the PanelPage migration; assert the panel's stable
+    // test id, then check the section copy below.
+    await expect(page.getByTestId('webhooks-debug-panel')).toBeVisible();
     const text = await page.locator('#root').innerText();
-    expect(text.includes('Webhooks Debug')).toBe(true);
     expect(text.includes('Registered Webhooks')).toBe(true);
     expect(text.includes('Captured Requests')).toBe(true);
     expect(text.includes('No active registrations.')).toBe(true);

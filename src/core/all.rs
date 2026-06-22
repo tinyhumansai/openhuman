@@ -106,6 +106,8 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     let mut controllers = Vec::new();
     // Application information and capabilities
     controllers.extend(crate::openhuman::about_app::all_about_app_registered_controllers());
+    // AgentBox marketplace adapter status
+    controllers.extend(crate::openhuman::agentbox::all_agentbox_registered_controllers());
     // Core application shell state
     controllers.extend(crate::openhuman::app_state::all_app_state_registered_controllers());
     // Audio generation + podcast-style email delivery
@@ -124,6 +126,8 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::webview_apis::all_webview_apis_registered_controllers());
     // Agent definition and prompt inspection
     controllers.extend(crate::openhuman::agent::all_agent_registered_controllers());
+    // Persistent agent profiles (flavours): name, soul, memory sources, skills, MCP, connectors.
+    controllers.extend(crate::openhuman::profiles::all_profiles_registered_controllers());
     // User-facing agent registry: defaults, enablement, custom agents, tool policy.
     controllers
         .extend(crate::openhuman::agent_registry::all_agent_registry_registered_controllers());
@@ -302,6 +306,13 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     // Durable agent-team coordination — teams, members, dependency-aware task claiming, messaging
     controllers
         .extend(crate::openhuman::agent_orchestration::all_agent_team_registered_controllers());
+    // Git-worktree isolation manager — list / status / diff / remove worker worktrees (#3376)
+    controllers
+        .extend(crate::openhuman::agent_orchestration::all_worktree_registered_controllers());
+    // User-driven cancel of detached background sub-agents (#3711)
+    controllers.extend(
+        crate::openhuman::agent_orchestration::all_subagent_control_registered_controllers(),
+    );
     controllers
 }
 
@@ -317,6 +328,9 @@ fn build_internal_only_controllers() -> Vec<RegisteredController> {
     // MCP write audit list: internal-only so the desktop UI/CLI can inspect
     // local write history without exposing cross-client history as an MCP tool.
     controllers.extend(crate::openhuman::mcp_audit::all_mcp_audit_internal_controllers());
+    // tiny.place A2A social-network integration: renderer-callable via core_rpc_relay
+    // but NOT advertised to agents in tool listings or schema discovery.
+    controllers.extend(crate::openhuman::tinyplace::all_tinyplace_registered_controllers());
     controllers
 }
 
@@ -327,6 +341,7 @@ fn build_internal_only_controllers() -> Vec<RegisteredController> {
 fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     let mut schemas = Vec::new();
     schemas.extend(crate::openhuman::about_app::all_about_app_controller_schemas());
+    schemas.extend(crate::openhuman::agentbox::all_agentbox_controller_schemas());
     schemas.extend(crate::openhuman::app_state::all_app_state_controller_schemas());
     schemas.extend(crate::openhuman::audio_toolkit::all_audio_toolkit_controller_schemas());
     schemas.extend(crate::openhuman::composio::all_composio_controller_schemas());
@@ -336,6 +351,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::mcp_registry::all_mcp_registry_controller_schemas());
     schemas.extend(crate::openhuman::webview_apis::all_webview_apis_controller_schemas());
     schemas.extend(crate::openhuman::agent::all_agent_controller_schemas());
+    schemas.extend(crate::openhuman::profiles::all_profiles_controller_schemas());
     schemas.extend(crate::openhuman::agent_registry::all_agent_registry_controller_schemas());
     schemas.extend(crate::openhuman::agent_experience::all_agent_experience_controller_schemas());
     schemas.extend(crate::openhuman::health::all_health_controller_schemas());
@@ -434,6 +450,11 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::agent_orchestration::all_workflow_run_controller_schemas());
     // Durable agent-team coordination
     schemas.extend(crate::openhuman::agent_orchestration::all_agent_team_controller_schemas());
+    // Git-worktree isolation manager (#3376)
+    schemas.extend(crate::openhuman::agent_orchestration::all_worktree_controller_schemas());
+    // User-driven cancel of detached background sub-agents (#3711)
+    schemas
+        .extend(crate::openhuman::agent_orchestration::all_subagent_control_controller_schemas());
     schemas
 }
 
@@ -459,6 +480,7 @@ pub fn rpc_method_name(schema: &ControllerSchema) -> String {
 pub fn namespace_description(namespace: &str) -> Option<&'static str> {
     match namespace {
         "about_app" => Some("Catalog the app's user-facing capabilities and where to find them."),
+        "agentbox" => Some("AgentBox marketplace adapter status — mode flag and GMI MaaS provider wiring."),
         "ai" => Some("Agent-generated artifact storage, retrieval, and lifecycle management."),
         "app_state" => Some("Expose core-owned app shell state for frontend polling."),
         "auth" => Some("Manage app session and provider credentials."),
@@ -586,6 +608,9 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         "companion" => Some(
             "Desktop companion — Clicky-style hotkey-driven interaction loop with STT, LLM, TTS, and visual pointing.",
         ),
+        "tinyplace" => Some(
+            "tiny.place A2A social-network integration: directory, explorer, and search over the agent network.",
+        ),
         _ => None,
     }
 }
@@ -645,7 +670,111 @@ pub fn validate_params(
         }
     }
 
+    // Type-check each present param against its declared `TypeSchema`, so every
+    // controller gets uniform validation before dispatch rather than relying on
+    // each handler's `serde_json::from_value`. Absent (optional) params are
+    // already handled by the required-presence check above.
+    for input in &schema.inputs {
+        if let Some(value) = params.get(input.name) {
+            check_type(value, &input.ty).map_err(|expected| {
+                format!(
+                    "invalid type for param '{}' in {}.{}: expected {}, got {}",
+                    input.name,
+                    schema.namespace,
+                    schema.function,
+                    expected,
+                    json_type_name(value),
+                )
+            })?;
+        }
+    }
+
     Ok(())
+}
+
+/// A short, human-readable name for the JSON kind of `value`, used in
+/// `validate_params` type-mismatch errors.
+fn json_type_name(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "bool",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
+}
+
+/// Validate a JSON `value` against a declared [`TypeSchema`].
+///
+/// Returns `Ok(())` on a match, or `Err(expected)` where `expected` is a short
+/// description of the type that was required. Unknown/opaque shapes
+/// (`Json`, `Bytes`, `Ref`) accept any value — they are validated by the
+/// handler's typed deserialization.
+fn check_type(value: &Value, ty: &crate::core::TypeSchema) -> Result<(), &'static str> {
+    use crate::core::TypeSchema;
+
+    // JSON-RPC semantics (preserved from the prior presence-only check):
+    // an explicit `null` satisfies validation for any declared type. Required
+    // fields are checked for *presence*, not value; stronger contracts are
+    // enforced by the handler's typed deserialization.
+    if value.is_null() {
+        return Ok(());
+    }
+
+    match ty {
+        // Opaque / handler-validated shapes accept any JSON value.
+        //
+        // Structured types (`Object`/`Map`/`Ref`) are deliberately lenient: a
+        // struct field may have a custom `Deserialize` impl that accepts more
+        // than one JSON shape (e.g. `agent_registry.update`'s `subagents`
+        // accepts both `{ "allowlist": [...] }` and a legacy bare array), and
+        // the declared schema can only describe one of them. Strictly checking
+        // the JSON kind here would reject inputs the handler's `serde_json`
+        // deserialization accepts. We therefore keep pre-dispatch validation to
+        // scalar leaf types (where a type confusion would otherwise reach an
+        // `as_str()/as_u64()`-style accessor) and defer object/map shape
+        // validation to the handler.
+        TypeSchema::Json
+        | TypeSchema::Bytes
+        | TypeSchema::Ref(_)
+        | TypeSchema::Object { .. }
+        | TypeSchema::Map(_) => Ok(()),
+
+        TypeSchema::Bool => value.is_boolean().then_some(()).ok_or("bool"),
+        TypeSchema::String => value.is_string().then_some(()).ok_or("string"),
+        TypeSchema::I64 => value.is_i64().then_some(()).ok_or("integer"),
+        TypeSchema::U64 => value.is_u64().then_some(()).ok_or("unsigned integer"),
+        TypeSchema::F64 => {
+            // Accept any JSON number (ints are valid floats).
+            value.is_number().then_some(()).ok_or("number")
+        }
+
+        // `Option<T>` accepts null or a value matching the inner type.
+        TypeSchema::Option(inner) => {
+            if value.is_null() {
+                Ok(())
+            } else {
+                check_type(value, inner)
+            }
+        }
+
+        TypeSchema::Array(inner) => match value.as_array() {
+            Some(items) => {
+                for item in items {
+                    check_type(item, inner)?;
+                }
+                Ok(())
+            }
+            None => Err("array"),
+        },
+
+        TypeSchema::Enum { variants } => match value.as_str() {
+            Some(s) if variants.contains(&s) => Ok(()),
+            Some(_) => Err("one of the allowed enum variants"),
+            None => Err("string"),
+        },
+    }
 }
 
 /// Attempts to invoke a registered RPC method by name.

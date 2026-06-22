@@ -342,6 +342,14 @@ pub async fn install_workflow_from_url(
     );
     let stderr = parse_warnings.join("\n");
 
+    // Notify live agent sessions so they refresh their `## Installed Skills`
+    // catalogue mid-conversation (see `Agent::refresh_workflows`).
+    let _ = crate::core::event_bus::publish_global(
+        crate::core::event_bus::DomainEvent::WorkflowsChanged {
+            reason: "install".to_string(),
+        },
+    );
+
     Ok(InstallWorkflowFromUrlOutcome {
         url: raw_url,
         stdout,
@@ -507,6 +515,14 @@ pub fn uninstall_workflow(
     );
     std::fs::remove_dir_all(&canonical_candidate)
         .map_err(|e| format!("remove {} failed: {e}", canonical_candidate.display()))?;
+
+    // Notify live agent sessions to drop the removed skill from their
+    // `## Installed Skills` catalogue (see `Agent::refresh_workflows`).
+    let _ = crate::core::event_bus::publish_global(
+        crate::core::event_bus::DomainEvent::WorkflowsChanged {
+            reason: "uninstall".to_string(),
+        },
+    );
 
     Ok(UninstallWorkflowOutcome {
         name: trimmed,

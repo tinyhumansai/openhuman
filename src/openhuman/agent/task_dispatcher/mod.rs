@@ -36,5 +36,22 @@ pub use prompt::build_task_prompt;
 pub use registry::cancel_session;
 pub use types::DispatchOutcome;
 
+/// Run a one-off **system** agent turn on an existing chat thread, streaming the
+/// result into it like a normal assistant turn (the same web-channel bridge
+/// cron / welcome agents use). Used by the background-completion delivery
+/// subsystem to surface a finished detached sub-agent's result back into the
+/// chat. Best-effort: returns the final response text or an error string.
+pub async fn run_system_turn_on_thread(
+    thread_id: String,
+    prompt: String,
+) -> Result<String, String> {
+    let config = crate::openhuman::config::Config::load_or_init()
+        .await
+        .map_err(|e| format!("load config: {e:#}"))?;
+    let executor = executor::resolve_executor(&config.workspace_dir, None);
+    let run_id = format!("bgdeliver-{}", uuid::Uuid::new_v4());
+    executor::run_autonomous(config, &executor, &prompt, &run_id, Some(thread_id)).await
+}
+
 // `pub(crate)` for test drivers.
 pub(crate) use poller::poll_once;

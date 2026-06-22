@@ -26,7 +26,10 @@ vi.mock('../../../utils/tauriCommands', () => ({ isTauri: vi.fn() }));
 
 vi.mock('../../../utils/loopbackOauthListener', () => ({ startLoopbackOauthListener: vi.fn() }));
 
-vi.mock('../../../utils/desktopDeepLinkListener', () => ({ handleDeepLinkUrls: vi.fn() }));
+vi.mock('../../../utils/desktopDeepLinkListener', () => ({
+  handleDeepLinkUrls: vi.fn(),
+  registerAuthDeepLinkState: vi.fn((state?: string) => state ?? 'mock-state'),
+}));
 
 vi.mock('../../../store/deepLinkAuthState', () => ({
   beginDeepLinkAuthProcessing: vi.fn(),

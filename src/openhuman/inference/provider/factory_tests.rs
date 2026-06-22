@@ -835,6 +835,7 @@ fn known_tiers_pass() {
         "coding-v1",
         "reasoning-quick-v1",
         "summarization-v1",
+        "vision-v1",
     ] {
         assert!(
             is_known_openhuman_tier(tier),
@@ -850,6 +851,7 @@ fn known_hints_pass() {
     assert!(is_known_openhuman_tier("hint:agentic"));
     assert!(is_known_openhuman_tier("hint:coding"));
     assert!(is_known_openhuman_tier("hint:summarization"));
+    assert!(is_known_openhuman_tier("hint:vision"));
 }
 
 #[test]
@@ -904,6 +906,15 @@ fn unknown_models_are_not_vision_capable() {
 }
 
 #[test]
+fn vision_tier_is_vision_capable() {
+    // The dedicated multimodal tier (and its hint form) reports vision support,
+    // so the turn engine's image gate accepts image turns for the vision
+    // sub-agent — managed or BYOK (which resolves via this same alias).
+    assert!(oh_tier_supports_vision("vision-v1"));
+    assert!(oh_tier_supports_vision("hint:vision"));
+}
+
+#[test]
 fn make_openhuman_backend_forwards_unknown_hint_verbatim() {
     // Unrecognised hint:* strings (e.g. hint:reaction for lightweight models)
     // must be forwarded to the backend unchanged. The backend is authoritative
@@ -914,7 +925,7 @@ fn make_openhuman_backend_forwards_unknown_hint_verbatim() {
     for hint in ["hint:reaction", "hint:garbage", "hint:lightweight"] {
         let mut config = Config::default();
         config.default_model = Some(hint.to_string());
-        let (_, model) = make_openhuman_backend(&config).expect("factory should succeed");
+        let (_, model) = make_openhuman_backend("chat", &config).expect("factory should succeed");
         assert_eq!(model, hint, "hint '{hint}' should pass through unchanged");
     }
 }
@@ -923,14 +934,14 @@ fn make_openhuman_backend_forwards_unknown_hint_verbatim() {
 fn make_openhuman_backend_translates_summarization_hint() {
     let mut config = Config::default();
     config.default_model = Some("hint:summarization".to_string());
-    let (_, model) = make_openhuman_backend(&config).expect("factory should succeed");
+    let (_, model) = make_openhuman_backend("chat", &config).expect("factory should succeed");
     assert_eq!(model, crate::openhuman::config::MODEL_SUMMARIZATION_V1);
 }
 
 #[test]
 fn make_openhuman_backend_reports_vision_capability() {
     let config = Config::default();
-    let (provider, _) = make_openhuman_backend(&config).expect("factory should succeed");
+    let (provider, _) = make_openhuman_backend("chat", &config).expect("factory should succeed");
     let caps = provider.capabilities();
     assert!(caps.native_tool_calling);
     assert!(
@@ -945,7 +956,7 @@ fn make_openhuman_backend_falls_back_for_invalid_model() {
     // The factory must silently fall back to reasoning-v1 (the platform default).
     let mut config = Config::default();
     config.default_model = Some("deepseek-v4-pro".to_string());
-    let (_, model) = make_openhuman_backend(&config).expect("factory should succeed");
+    let (_, model) = make_openhuman_backend("chat", &config).expect("factory should succeed");
     assert_eq!(
         model,
         crate::openhuman::config::MODEL_REASONING_V1,
@@ -957,7 +968,7 @@ fn make_openhuman_backend_falls_back_for_invalid_model() {
 fn make_openhuman_backend_keeps_valid_tier() {
     let mut config = Config::default();
     config.default_model = Some("chat-v1".to_string());
-    let (_, model) = make_openhuman_backend(&config).expect("factory should succeed");
+    let (_, model) = make_openhuman_backend("chat", &config).expect("factory should succeed");
     assert_eq!(model, "chat-v1");
 }
 
@@ -965,8 +976,25 @@ fn make_openhuman_backend_keeps_valid_tier() {
 fn make_openhuman_backend_keeps_reasoning_quick() {
     let mut config = Config::default();
     config.default_model = Some("reasoning-quick-v1".to_string());
-    let (_, model) = make_openhuman_backend(&config).expect("factory should succeed");
+    let (_, model) = make_openhuman_backend("chat", &config).expect("factory should succeed");
     assert_eq!(model, "reasoning-quick-v1");
+}
+
+#[test]
+fn make_openhuman_backend_pins_vision_role_to_vision_tier() {
+    // Regression (PR #3699): the managed default_model is chat-v1 (a NON-vision
+    // tier). When `vision_provider` is unset the vision workload resolves to the
+    // managed backend, so make_openhuman_backend must override the default model
+    // with `vision-v1` — otherwise `oh_tier_supports_vision` reports false and
+    // the turn engine strips every attached image, blinding the vision sub-agent.
+    let config = Config::default();
+    assert_eq!(config.default_model.as_deref(), Some("chat-v1"));
+    let (_, model) = make_openhuman_backend("vision", &config).expect("factory should succeed");
+    assert_eq!(model, crate::openhuman::config::MODEL_VISION_V1);
+    assert!(
+        oh_tier_supports_vision(&model),
+        "vision role must resolve to a vision-capable managed tier"
+    );
 }
 
 // ── BYOK fail-closed tests ────────────────────────────────────────────────────
@@ -1531,6 +1559,7 @@ async fn live_lmstudio_provider_streams_thinking_and_text() {
                 messages: &messages,
                 tools: None,
                 stream: Some(&tx),
+                max_tokens: None,
             },
             &resolved_model,
             0.0,
@@ -1589,6 +1618,7 @@ async fn live_ollama_provider_streams_text() {
                 messages: &messages,
                 tools: None,
                 stream: Some(&tx),
+                max_tokens: None,
             },
             &resolved_model,
             0.0,
@@ -1896,4 +1926,142 @@ fn resolve_model_for_hint_handles_unknown_hint_passthrough() {
     let config = Config::default();
     let result = resolve_model_for_hint("hint:unknown_tier", &config);
     assert_eq!(result, "hint:unknown_tier");
+}
+
+// ── #3767: managed-credits gate bypass (gate-only, per-tier) ───────────────
+//
+// Routing is NOT changed by this fix — selecting a BYO provider already routes
+// inference correctly. The gate is evaluated PER TIER so the UI checks whichever
+// tier the user actually selected: the chat header's "Quick" mode runs on the
+// `chat` tier and "Reasoning" mode on the `reasoning` tier. `role_bypasses_
+// managed_credits(role)` is true when that role runs on the user's own funding
+// (a BYO cloud key, a local runtime, or claude-code) with usable credentials.
+// Tiers that stay managed and run anyway surface the per-call 402 error.
+
+/// Store a usable provider key under the new-style `provider:<slug>` profile so
+/// `lookup_key_for_slug` resolves it.
+fn store_byo_key(config: &Config, slug: &str, token: &str) {
+    let auth = AuthService::from_config(config);
+    auth.store_provider_token(
+        &format!("provider:{slug}"),
+        "default",
+        token,
+        Default::default(),
+        true,
+    )
+    .expect("store provider token");
+}
+
+#[test]
+fn byo_chat_tier_with_key_bypasses() {
+    let tmp = TempDir::new().expect("tempdir");
+    // Quick mode runs on `chat`; routed to the user's own OpenAI provider + key.
+    let mut config = config_with_providers_in_tempdir(&tmp, vec![openai_entry("p_oai", "openai")]);
+    config.chat_provider = Some("openai:gpt-4o".to_string());
+    store_byo_key(&config, "openai", "sk-byo-test");
+
+    assert!(role_bypasses_managed_credits("chat", &config));
+}
+
+#[test]
+fn byo_reasoning_tier_with_key_bypasses() {
+    let tmp = TempDir::new().expect("tempdir");
+    // Reasoning mode runs on `reasoning`; routed to the user's own provider + key.
+    let mut config = config_with_providers_in_tempdir(&tmp, vec![openai_entry("p_oai", "openai")]);
+    config.reasoning_provider = Some("openai:gpt-4o".to_string());
+    store_byo_key(&config, "openai", "sk-byo-test");
+
+    assert!(role_bypasses_managed_credits("reasoning", &config));
+}
+
+#[test]
+fn per_tier_diverges_chat_byo_reasoning_managed() {
+    let tmp = TempDir::new().expect("tempdir");
+    // The crux of the per-tier check: chat on BYOK, reasoning explicitly managed.
+    // Quick mode (chat) bypasses; Reasoning mode (reasoning) stays gated.
+    let mut config = config_with_providers_in_tempdir(&tmp, vec![openai_entry("p_oai", "openai")]);
+    config.chat_provider = Some("openai:gpt-4o".to_string());
+    config.reasoning_provider = Some("openhuman".to_string());
+    store_byo_key(&config, "openai", "sk-byo-test");
+
+    assert!(role_bypasses_managed_credits("chat", &config));
+    assert!(!role_bypasses_managed_credits("reasoning", &config));
+}
+
+#[test]
+fn local_tier_bypasses_without_any_key() {
+    // A tier on a local on-device runtime → bypass, no cloud key needed.
+    let mut config = Config::default();
+    config.chat_provider = Some("ollama:qwen3:8b".to_string());
+    assert!(role_bypasses_managed_credits("chat", &config));
+}
+
+#[test]
+fn managed_chat_with_byo_agentic_stays_gated() {
+    let tmp = TempDir::new().expect("tempdir");
+    // chat explicitly managed; only tool-use (agentic) is BYOK. The chat tier
+    // still bills managed credits → chat role stays gated. (agentic itself is a
+    // BYO route, but it is not a chat-mode tier and surfaces errors per-call.)
+    let mut config = config_with_providers_in_tempdir(&tmp, vec![openai_entry("p_oai", "openai")]);
+    config.chat_provider = Some("openhuman".to_string());
+    config.reasoning_provider = Some("openhuman".to_string());
+    config.agentic_provider = Some("openai:gpt-4o".to_string());
+    store_byo_key(&config, "openai", "sk-byo-test");
+
+    assert!(!role_bypasses_managed_credits("chat", &config));
+    assert!(!role_bypasses_managed_credits("reasoning", &config));
+}
+
+#[test]
+fn managed_chat_with_byo_vision_stays_gated() {
+    let tmp = TempDir::new().expect("tempdir");
+    // Vision on BYOK but the chat-mode tiers stay managed → chat/reasoning gated.
+    let mut config = config_with_providers_in_tempdir(&tmp, vec![openai_entry("p_oai", "openai")]);
+    config.chat_provider = Some("openhuman".to_string());
+    config.reasoning_provider = Some("openhuman".to_string());
+    config.vision_provider = Some("openai:gpt-4o".to_string());
+    store_byo_key(&config, "openai", "sk-byo-test");
+
+    assert!(!role_bypasses_managed_credits("chat", &config));
+    assert!(!role_bypasses_managed_credits("reasoning", &config));
+}
+
+#[test]
+fn no_byo_provider_stays_gated() {
+    let tmp = TempDir::new().expect("tempdir");
+    // OpenAI entry exists but every tier is left on the managed default and no
+    // key is stored → chat-mode tiers managed → must NOT bypass.
+    let config = config_with_providers_in_tempdir(&tmp, vec![openai_entry("p_oai", "openai")]);
+
+    assert_eq!(provider_for_role("chat", &config), "openhuman");
+    assert!(!role_bypasses_managed_credits("chat", &config));
+    assert!(!role_bypasses_managed_credits("reasoning", &config));
+}
+
+#[test]
+fn default_config_with_no_key_stays_gated() {
+    // No BYO provider at all → both chat-mode tiers gated.
+    let config = Config::default();
+    assert!(!role_bypasses_managed_credits("chat", &config));
+    assert!(!role_bypasses_managed_credits("reasoning", &config));
+}
+
+#[test]
+fn byo_route_without_usable_key_stays_gated() {
+    let tmp = TempDir::new().expect("tempdir");
+    // chat tier points at a BYO slug with NO stored key — the route would fail
+    // with an auth error, not bill managed credits, but we must not bypass for a
+    // route that cannot run on the user's dime (#3767: "BYO key present but
+    // invalid/unverified → still gated").
+    let mut config = config_with_providers_in_tempdir(&tmp, vec![openai_entry("p_oai", "openai")]);
+    config.chat_provider = Some("openai:gpt-4o".to_string());
+
+    // The explicit route is still honored verbatim by provider_for_role…
+    assert_eq!(provider_for_role("chat", &config), "openai:gpt-4o");
+    // …but with no usable key the gate stays on.
+    assert!(!role_bypasses_managed_credits("chat", &config));
+
+    // Once a key is stored, the route becomes a genuine bypass.
+    store_byo_key(&config, "openai", "sk-byo-test");
+    assert!(role_bypasses_managed_credits("chat", &config));
 }

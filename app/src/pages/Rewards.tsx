@@ -74,6 +74,22 @@ const Rewards = () => {
     };
   }, [isLocalSession, loadRewards]);
 
+  // After a Discord (or any) OAuth connect completes, the deep-link listener dispatches
+  // `oauth:success` — refresh the snapshot so the Discord connection / username updates live.
+  useEffect(() => {
+    if (isLocalSession) {
+      return;
+    }
+    const handleOAuthSuccess = () => {
+      log('oauth success event received; refreshing rewards snapshot');
+      void loadRewards();
+    };
+    window.addEventListener('oauth:success', handleOAuthSuccess);
+    return () => {
+      window.removeEventListener('oauth:success', handleOAuthSuccess);
+    };
+  }, [isLocalSession, loadRewards]);
+
   const handleTabChange = useCallback((next: RewardsTab) => {
     log('tab changed next=%s', next);
     setSelectedTab(next);

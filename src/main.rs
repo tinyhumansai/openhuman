@@ -84,6 +84,14 @@ fn main() {
             if openhuman_core::core::observability::is_budget_event(&event) {
                 return None;
             }
+            // Defense-in-depth for insufficient-credits 402s. The native_chat
+            // emit site demotes them, but the compatible provider reports the
+            // same out-of-balance 402 from chat_with_system / chat_with_history
+            // / the streaming gates / api_error too; this is the single net
+            // that catches every path (TAURI-RUST-C62).
+            if openhuman_core::core::observability::is_insufficient_credits_event(&event) {
+                return None;
+            }
             // Defense-in-depth: drop max-tool-iterations cap events that
             // slipped past the call-site filters in
             // `agent::harness::session::runtime::run_single`,

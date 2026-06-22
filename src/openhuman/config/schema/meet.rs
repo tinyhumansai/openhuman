@@ -70,6 +70,20 @@ pub struct MeetConfig {
     /// When `true`, the bot joins in listen-only mode (mic muted).
     #[serde(default = "default_listen_only")]
     pub listen_only_default: bool,
+
+    /// Phase 2 in-call agency (epic #3505, PR-6): when `true`, wake-phrase
+    /// commands detected mid-call (`bot:in_call_request`) are routed
+    /// through the orchestrator and the reply is spoken back into the
+    /// call (`bot:speak`). Off by default.
+    #[serde(default = "default_enable_in_call_agency")]
+    pub enable_in_call_agency: bool,
+
+    /// When `true` (default), the in-call reply is streamed back as
+    /// per-sentence `bot:speak` chunks as the LLM generates them, so the
+    /// bot starts speaking on the first sentence instead of after the whole
+    /// reply. Set `false` to fall back to a single buffered `bot:speak`.
+    #[serde(default = "default_in_call_streaming")]
+    pub in_call_streaming: bool,
 }
 
 fn default_auto_orchestrator_handoff() -> bool {
@@ -84,6 +98,14 @@ fn default_listen_only() -> bool {
     true
 }
 
+fn default_enable_in_call_agency() -> bool {
+    false
+}
+
+fn default_in_call_streaming() -> bool {
+    true
+}
+
 impl Default for MeetConfig {
     fn default() -> Self {
         Self {
@@ -92,6 +114,8 @@ impl Default for MeetConfig {
             auto_join_policy: AutoJoinPolicy::default(),
             auto_summarize_policy: AutoSummarizePolicy::default(),
             listen_only_default: true,
+            enable_in_call_agency: false,
+            in_call_streaming: true,
         }
     }
 }
@@ -132,6 +156,21 @@ mod tests {
     }
 
     #[test]
+    fn default_in_call_agency_is_off() {
+        let cfg = MeetConfig::default();
+        assert!(!cfg.enable_in_call_agency);
+    }
+
+    #[test]
+    fn default_in_call_streaming_is_on() {
+        let cfg = MeetConfig::default();
+        assert!(cfg.in_call_streaming);
+        // And a config that predates the field still defaults it on.
+        let parsed: MeetConfig = serde_json::from_value(json!({})).unwrap();
+        assert!(parsed.in_call_streaming);
+    }
+
+    #[test]
     fn deserialize_missing_fields_uses_defaults() {
         let cfg: MeetConfig = serde_json::from_value(json!({})).unwrap();
         assert!(!cfg.auto_orchestrator_handoff);
@@ -139,6 +178,7 @@ mod tests {
         assert_eq!(cfg.auto_join_policy, AutoJoinPolicy::AskEachTime);
         assert_eq!(cfg.auto_summarize_policy, AutoSummarizePolicy::Ask);
         assert!(cfg.listen_only_default);
+        assert!(!cfg.enable_in_call_agency);
     }
 
     #[test]
@@ -162,6 +202,8 @@ mod tests {
             auto_join_policy: AutoJoinPolicy::Never,
             auto_summarize_policy: AutoSummarizePolicy::Always,
             listen_only_default: false,
+            enable_in_call_agency: true,
+            in_call_streaming: false,
         };
         let s = serde_json::to_string(&original).unwrap();
         let back: MeetConfig = serde_json::from_str(&s).unwrap();
@@ -170,5 +212,6 @@ mod tests {
         assert_eq!(back.auto_join_policy, AutoJoinPolicy::Never);
         assert_eq!(back.auto_summarize_policy, AutoSummarizePolicy::Always);
         assert!(!back.listen_only_default);
+        assert!(back.enable_in_call_agency);
     }
 }

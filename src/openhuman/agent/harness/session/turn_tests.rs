@@ -1101,7 +1101,19 @@ async fn turn_uses_cached_transcript_prefix_on_first_iteration() {
     assert_eq!(requests[0][0].content, "cached-system");
     assert_eq!(requests[0][1].content, "cached-assistant");
     assert_eq!(requests[0][2].role, "user");
-    assert_eq!(requests[0][2].content, "fresh");
+    // #3602: every turn's user message is prefixed with the live
+    // `Current Date & Time:` stamp, then the raw prompt. Assert the stamp
+    // leads and the original prompt is preserved at the tail.
+    assert!(
+        requests[0][2].content.starts_with("Current Date & Time:"),
+        "user message must lead with the per-turn time stamp: {}",
+        requests[0][2].content
+    );
+    assert!(
+        requests[0][2].content.ends_with("fresh"),
+        "user message must preserve the original prompt: {}",
+        requests[0][2].content
+    );
 }
 
 #[tokio::test]
@@ -1775,6 +1787,46 @@ fn integration_announcement_fires_once_for_new_toolkit() {
 }
 
 #[test]
+fn mcp_announcement_fires_once_for_new_server() {
+    // Seed the announced set with the startup-connected MCP server, mirroring
+    // the turn-1 seed in `run_turn` (those are already in the system prompt's
+    // `## Connected MCP Servers` block, so only mid-session connects announce).
+    let mut announced: HashSet<String> = HashSet::new();
+    announced.insert("ac.tandem/docs-mcp".to_string());
+
+    // A mid-session connect adds a weather server: it should be announced once,
+    // and recorded so it never re-announces.
+    let connected = vec![
+        "ac.tandem/docs-mcp".to_string(),
+        "io.weather/mcp".to_string(),
+    ];
+    let newly = newly_connected_slugs(&connected, &mut announced);
+    assert_eq!(newly, vec!["io.weather/mcp".to_string()]);
+    let note = mcp_announcement_note(&newly)
+        .expect("a newly-connected MCP server must produce an announcement");
+    assert!(
+        note.contains("io.weather/mcp"),
+        "announcement must name the new server, got: {note}"
+    );
+    assert!(
+        note.contains("use_mcp_server"),
+        "announcement must point the model at the use_mcp_server delegate, got: {note}"
+    );
+    assert!(
+        !note.contains("ac.tandem/docs-mcp"),
+        "an already-announced server must not be re-announced, got: {note}"
+    );
+
+    // A second pass with the identical connected set parks nothing.
+    let second = newly_connected_slugs(&connected, &mut announced);
+    assert!(
+        second.is_empty(),
+        "an unchanged connected set must not re-surface a server, got: {second:?}"
+    );
+    assert!(mcp_announcement_note(&second).is_none());
+}
+
+#[test]
 fn integration_announcement_accumulates_two_connects_in_one_note() {
     // Two mid-session connects between consecutive user turns must BOTH be
     // announced — the second must not overwrite the first (#3044 regression:
@@ -1816,5 +1868,24 @@ fn integration_announcement_accumulates_two_connects_in_one_note() {
     assert!(
         !note.contains("gmail"),
         "startup slug must not re-announce: {note}"
+    );
+}
+
+#[test]
+fn skill_announcement_note_empty_yields_none() {
+    assert!(super::skill_announcement_note(&[]).is_none());
+}
+
+#[test]
+fn skill_announcement_note_mentions_ids_and_run_skill() {
+    let note =
+        super::skill_announcement_note(&["ascii-art".to_string(), "github-issues".to_string()])
+            .expect("non-empty input should yield a note");
+    assert!(note.contains("[skills update]"));
+    assert!(note.contains("ascii-art"));
+    assert!(note.contains("github-issues"));
+    assert!(
+        note.contains("run_skill"),
+        "note must steer the model to run_skill: {note}"
     );
 }

@@ -795,6 +795,54 @@ pub fn list_summaries_at_level(
     })
 }
 
+/// List every non-deleted summary in a tree whose time-range envelope is
+/// **fully contained** in `[since_ms, until_ms]` (inclusive), across all
+/// levels. This is the "eligible summary" set for the windowed minimum-cover
+/// (the morning-brief 24h tool): a node is eligible only when *all* its
+/// descendant leaves fall inside the window, which — because seal sets
+/// `time_range_start = MIN(children)` and `time_range_end = MAX(children)`
+/// (`bucket_seal::seal_one_level`) — is exactly
+/// `time_range_start_ms >= since_ms AND time_range_end_ms <= until_ms`.
+///
+/// Ordered by `level ASC, time_range_start_ms ASC` so callers can build the
+/// per-tree frontier and order chronologically without a re-sort. `content`
+/// here is the ≤500-char preview; callers that need the full body hydrate via
+/// `content::read::read_summary_body`.
+pub fn list_summaries_in_window(
+    config: &Config,
+    tree_id: &str,
+    since_ms: i64,
+    until_ms: i64,
+) -> Result<Vec<SummaryNode>> {
+    log::debug!(
+        "[tree::store] list_summaries_in_window tree_id={tree_id} since_ms={since_ms} until_ms={until_ms}"
+    );
+    with_connection(config, |conn| {
+        let mut stmt = conn.prepare(
+            "SELECT id, tree_id, tree_kind, level, parent_id,
+                    child_ids_json, content, token_count,
+                    entities_json, topics_json,
+                    time_range_start_ms, time_range_end_ms,
+                    score, sealed_at_ms, deleted, embedding,
+                    doc_id, version_ms
+               FROM mem_tree_summaries
+              WHERE tree_id = ?1 AND deleted = 0
+                AND time_range_start_ms >= ?2
+                AND time_range_end_ms   <= ?3
+              ORDER BY level ASC, time_range_start_ms ASC",
+        )?;
+        let rows = stmt
+            .query_map(params![tree_id, since_ms, until_ms], row_to_summary)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .context("Failed to collect in-window summaries")?;
+        log::debug!(
+            "[tree::store] list_summaries_in_window tree_id={tree_id} matched={}",
+            rows.len()
+        );
+        Ok(rows)
+    })
+}
+
 /// Count summaries in a tree (diagnostic helper).
 pub fn count_summaries(config: &Config, tree_id: &str) -> Result<u64> {
     with_connection(config, |conn| {

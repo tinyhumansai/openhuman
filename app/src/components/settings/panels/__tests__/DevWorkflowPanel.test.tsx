@@ -45,10 +45,6 @@ vi.mock('../../hooks/useSettingsNavigation', () => ({
   }),
 }));
 
-vi.mock('../../components/SettingsHeader', () => ({
-  default: ({ title }: { title: string }) => <div data-testid="settings-header">{title}</div>,
-}));
-
 // Import once — DevWorkflowPanel state is managed via API mocks and
 // cron RPC, not module-level vars, so a single import is sufficient.
 async function importPanel() {
@@ -116,7 +112,7 @@ describe('DevWorkflowPanel', () => {
     renderWithProviders(<Panel />);
 
     // Header is rendered synchronously
-    expect(screen.getByTestId('settings-header')).toBeInTheDocument();
+    expect(screen.getByTestId('dev-workflow-panel')).toBeInTheDocument();
 
     // Wait for repos to load
     await waitFor(() => {
@@ -321,7 +317,7 @@ describe('DevWorkflowPanel', () => {
     renderWithProviders(<Panel />);
 
     // Header always renders
-    expect(screen.getByTestId('settings-header')).toBeInTheDocument();
+    expect(screen.getByTestId('dev-workflow-panel')).toBeInTheDocument();
 
     // Error state shown
     await waitFor(() => {
@@ -519,7 +515,7 @@ describe('DevWorkflowPanel', () => {
     renderWithProviders(<Panel />);
 
     // Panel should still render despite cronList failure
-    expect(screen.getByTestId('settings-header')).toBeInTheDocument();
+    expect(screen.getByTestId('dev-workflow-panel')).toBeInTheDocument();
 
     // Repos should still load
     await waitFor(() => {

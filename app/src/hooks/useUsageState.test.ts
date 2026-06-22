@@ -332,6 +332,79 @@ describe('useUsageState', () => {
     expect(result.current.isAtLimit).toBe(false);
   });
 
+  // -- #3767 — authoritative core-side BYO-key bypass flag --------------------
+
+  it('suppresses the budget banner when the core reports creditsBypass for the active mode (#3767)', async () => {
+    const { useUsageState } = await import('./useUsageState');
+
+    // Budget exhausted, and the raw routing strings still read as managed
+    // (kind=openhuman). The core reports the chat tier runs on a usable BYO
+    // provider (creditsBypass.chat=true), which must win for the default mode.
+    mockGetCurrentPlan.mockResolvedValue(basicPlan());
+    mockGetTeamUsage.mockResolvedValue(buildUsage({ remainingUsd: 0, cycleBudgetUsd: 10 }));
+    mockLoadAISettings.mockResolvedValue({
+      ...ALL_OPENHUMAN_AI_SETTINGS,
+      creditsBypass: { chat: true, reasoning: true },
+    });
+
+    const { result } = renderHook(() => useUsageState());
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    expect(result.current.isFullyRoutedAway).toBe(true);
+    expect(result.current.shouldShowBudgetCompletedMessage).toBe(false);
+    expect(result.current.isBudgetExhausted).toBe(false);
+    expect(result.current.isAtLimit).toBe(false);
+  });
+
+  it('still shows the budget banner when creditsBypass is false for the active mode (#3767)', async () => {
+    const { useUsageState } = await import('./useUsageState');
+
+    // Neither chat-mode tier on a usable BYO provider → gate stays on.
+    mockGetCurrentPlan.mockResolvedValue(basicPlan());
+    mockGetTeamUsage.mockResolvedValue(buildUsage({ remainingUsd: 0, cycleBudgetUsd: 10 }));
+    mockLoadAISettings.mockResolvedValue({
+      ...ALL_OPENHUMAN_AI_SETTINGS,
+      creditsBypass: { chat: false, reasoning: false },
+    });
+
+    const { result } = renderHook(() => useUsageState());
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    expect(result.current.isFullyRoutedAway).toBe(false);
+    expect(result.current.shouldShowBudgetCompletedMessage).toBe(true);
+    expect(result.current.isBudgetExhausted).toBe(true);
+    expect(result.current.isAtLimit).toBe(true);
+  });
+
+  it('gates per selected chat mode — Quick bypassed, Reasoning gated when only chat is BYO (#3767)', async () => {
+    const { useUsageState } = await import('./useUsageState');
+
+    // chat tier on BYO, reasoning tier still managed. Quick mode (chat) should
+    // bypass; Reasoning mode (reasoning) should stay gated.
+    mockGetCurrentPlan.mockResolvedValue(basicPlan());
+    mockGetTeamUsage.mockResolvedValue(buildUsage({ remainingUsd: 0, cycleBudgetUsd: 10 }));
+    mockLoadAISettings.mockResolvedValue({
+      ...ALL_OPENHUMAN_AI_SETTINGS,
+      creditsBypass: { chat: true, reasoning: false },
+    });
+
+    const quick = renderHook(() => useUsageState('chat'));
+    await waitFor(() => expect(quick.result.current.isLoading).toBe(false));
+    expect(quick.result.current.isAtLimit).toBe(false);
+    expect(quick.result.current.shouldShowBudgetCompletedMessage).toBe(false);
+
+    const reasoning = renderHook(() => useUsageState('reasoning'));
+    await waitFor(() => expect(reasoning.result.current.isLoading).toBe(false));
+    expect(reasoning.result.current.isAtLimit).toBe(true);
+    expect(reasoning.result.current.shouldShowBudgetCompletedMessage).toBe(true);
+  });
+
   it('still shows the budget banner when at least one chat workload remains on OpenHuman', async () => {
     const { useUsageState } = await import('./useUsageState');
 

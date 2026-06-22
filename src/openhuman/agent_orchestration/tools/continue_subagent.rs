@@ -229,6 +229,7 @@ impl Tool for ContinueSubagentTool {
             initial_history: Some(history),
             checkpoint_dir: Some(checkpoint_dir.clone()),
             worktree_action_dir: None,
+            run_queue: None,
         };
 
         // Run the sub-agent from its checkpoint
@@ -303,6 +304,9 @@ impl Tool for ContinueSubagentTool {
                                     elapsed_ms: outcome.elapsed.as_millis() as u64,
                                     iterations: outcome.iterations as u32,
                                     output_chars: outcome.output.chars().count(),
+                                    worktree_path: None,
+                                    changed_files: Vec::new(),
+                                    dirty_status: None,
                                 })
                                 .await;
                         }

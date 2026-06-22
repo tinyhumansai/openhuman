@@ -1,9 +1,15 @@
-import { useNavigate } from 'react-router-dom';
+import createDebug from 'debug';
+import { useCallback, useState } from 'react';
 
 import { useT } from '../../lib/i18n/I18nContext';
+import { rewardsApi } from '../../services/api/rewardsApi';
+import { callCoreRpc } from '../../services/coreRpcClient';
 import type { RewardsAchievement, RewardsSnapshot } from '../../types/rewards';
 import { DISCORD_INVITE_URL } from '../../utils/links';
+import { setOAuthReturnRoute } from '../../utils/oauthReturnRoute';
 import { openUrl } from '../../utils/openUrl';
+
+const log = createDebug('rewards:discord');
 
 // discordMembershipLabel is now inlined into JSX to access t()
 
@@ -85,7 +91,10 @@ export default function RewardsCommunityTab({
   snapshot,
 }: RewardsCommunityTabProps) {
   const { t } = useT();
-  const navigate = useNavigate();
+  const [connectState, setConnectState] = useState<'idle' | 'connecting' | 'error'>('idle');
+  const [disconnectState, setDisconnectState] = useState<'idle' | 'disconnecting' | 'error'>(
+    'idle'
+  );
   const rewardRoles: RewardsAchievement[] = snapshot?.achievements ?? [];
   const unlocked =
     snapshot?.summary.unlockedCount ?? rewardRoles.filter(role => role.unlocked).length;
@@ -96,6 +105,58 @@ export default function RewardsCommunityTab({
     rewardRoles.length > 0 ? rewardRoles.slice(0, 8) : new Array(4).fill(null);
   const ringCircumference = 2 * Math.PI * 24;
   const ringOffset = ringCircumference - (progressPercent / 100) * ringCircumference;
+  const discordLinked = snapshot?.discord.linked ?? false;
+  const discordUsername = snapshot?.discord.username ?? null;
+  const membershipStatus = snapshot?.discord.membershipStatus ?? null;
+  const assignedRoleCount = snapshot?.summary.assignedDiscordRoleCount ?? 0;
+  // A connected member who unlocked a role-bearing achievement but has not joined the
+  // server yet cannot receive the role — surface an actionable prompt to join.
+  const hasUnlockedConfiguredRole = rewardRoles.some(role => role.unlocked && Boolean(role.roleId));
+  const showClaimBanner =
+    discordLinked && membershipStatus === 'not_in_guild' && hasUnlockedConfiguredRole;
+
+  const handleConnectDiscord = useCallback(async () => {
+    log('connect discord requested');
+    setConnectState('connecting');
+    try {
+      const response = await callCoreRpc<{ result: { oauthUrl?: string } }>({
+        method: 'openhuman.auth.oauth_connect',
+        params: { provider: 'discord' },
+      });
+      const oauthUrl = response.result?.oauthUrl;
+      if (!oauthUrl) {
+        throw new Error('missing oauthUrl in oauth_connect response');
+      }
+      log('opening discord oauth consent url');
+      await openUrl(oauthUrl);
+      // Persist the return route only after the consent URL actually launched, so a failed
+      // initiation never leaves a stale route that could misroute a later OAuth success.
+      setOAuthReturnRoute('/rewards');
+      // Reset so the button is usable again if the user cancels; once the snapshot
+      // refetches with discord.linked the connected state takes over.
+      setConnectState('idle');
+    } catch (err) {
+      log('connect discord failed error=%s', err instanceof Error ? err.message : String(err));
+      setConnectState('error');
+    }
+  }, []);
+
+  const handleDisconnectDiscord = useCallback(async () => {
+    log('disconnect discord requested');
+    setDisconnectState('disconnecting');
+    try {
+      // Clears user.discordId/discordUsername on the backend (idempotent), which flips the
+      // rewards snapshot back to unlinked.
+      await rewardsApi.disconnectDiscord();
+      log('disconnect discord ok; refreshing snapshot');
+      setDisconnectState('idle');
+      // Refetch the snapshot so the connected state flips back to the Connect button (re-link path).
+      onRetry?.();
+    } catch (err) {
+      log('disconnect discord failed error=%s', err instanceof Error ? err.message : String(err));
+      setDisconnectState('error');
+    }
+  }, [onRetry]);
   return (
     <>
       <section className="relative overflow-hidden rounded-[1.25rem] bg-gradient-to-br from-[#004ad0] to-[#2b64f1] p-6 text-white shadow-[0_20px_40px_rgba(25,28,30,0.08)]">
@@ -109,24 +170,63 @@ export default function RewardsCommunityTab({
             </p>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row">
-            <button
-              onClick={() => navigate('/connections')}
-              className="inline-flex items-center justify-center gap-2 rounded-xl bg-white dark:bg-neutral-900 px-4 py-3 text-sm font-semibold text-primary-700 dark:text-primary-300 shadow-lg transition-transform active:scale-[0.98]">
-              <svg
-                className="w-4 h-4"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-                aria-hidden="true">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M13.828 10.172a4 4 0 0 0-5.656 0l-1 1a4 4 0 0 0 5.656 5.656l.586-.586m-3.242-2.828a4 4 0 0 0 5.656 0l1-1a4 4 0 1 0-5.656-5.656l-.586.586"
-                />
-              </svg>
-              {t('rewards.community.connectDiscord')}
-            </button>
+            {discordLinked ? (
+              <>
+                <div
+                  data-testid="rewards-discord-connected"
+                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-white/15 px-4 py-3 text-sm font-semibold text-white">
+                  <svg
+                    className="h-4 w-4"
+                    viewBox="0 0 24 24"
+                    fill="currentColor"
+                    aria-hidden="true">
+                    <path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" />
+                  </svg>
+                  {discordUsername
+                    ? t('rewards.community.discordConnectedAs').replace(
+                        '{username}',
+                        discordUsername
+                      )
+                    : t('rewards.community.discordConnected')}
+                </div>
+                <button
+                  onClick={() => {
+                    void handleDisconnectDiscord();
+                  }}
+                  disabled={disconnectState === 'disconnecting'}
+                  data-testid="rewards-disconnect-discord"
+                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/20 bg-white/10 px-4 py-3 text-sm font-semibold text-white backdrop-blur-sm transition-colors hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-70">
+                  {disconnectState === 'disconnecting'
+                    ? t('rewards.community.disconnectingDiscord')
+                    : t('rewards.community.disconnectDiscord')}
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={() => {
+                  void handleConnectDiscord();
+                }}
+                disabled={connectState === 'connecting'}
+                data-testid="rewards-connect-discord"
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-white dark:bg-neutral-900 px-4 py-3 text-sm font-semibold text-primary-700 dark:text-primary-300 shadow-lg transition-transform active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-70">
+                <svg
+                  className="w-4 h-4"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  aria-hidden="true">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M13.828 10.172a4 4 0 0 0-5.656 0l-1 1a4 4 0 0 0 5.656 5.656l.586-.586m-3.242-2.828a4 4 0 0 0 5.656 0l1-1a4 4 0 1 0-5.656-5.656l-.586.586"
+                  />
+                </svg>
+                {connectState === 'connecting'
+                  ? t('rewards.community.connectingDiscord')
+                  : t('rewards.community.connectDiscord')}
+              </button>
+            )}
             <button
               onClick={() => {
                 void openUrl(inviteUrl);
@@ -138,6 +238,22 @@ export default function RewardsCommunityTab({
               {t('rewards.community.joinDiscord')}
             </button>
           </div>
+          {connectState === 'error' ? (
+            <p
+              role="alert"
+              data-testid="rewards-connect-discord-error"
+              className="text-xs font-medium text-white/90">
+              {t('rewards.community.connectDiscordError')}
+            </p>
+          ) : null}
+          {discordLinked && disconnectState === 'error' ? (
+            <p
+              role="alert"
+              data-testid="rewards-disconnect-discord-error"
+              className="text-xs font-medium text-white/90">
+              {t('rewards.community.disconnectDiscordError')}
+            </p>
+          ) : null}
         </div>
         <div className="absolute -right-10 -top-10 h-32 w-32 rounded-full bg-white/10 blur-2xl" />
         <div className="absolute -bottom-10 -left-8 h-24 w-24 rounded-full bg-white/15 blur-xl" />
@@ -231,6 +347,30 @@ export default function RewardsCommunityTab({
               {t('rewards.community.rolesAndRewards')}
             </h2>
           </div>
+          {showClaimBanner ? (
+            <div
+              role="status"
+              data-testid="rewards-claim-roles-banner"
+              className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-blue-100 dark:border-blue-500/30 bg-blue-50 dark:bg-blue-500/10 px-4 py-3">
+              <div className="min-w-0">
+                <p className="text-sm font-bold text-stone-900 dark:text-neutral-100">
+                  {t('rewards.community.roleClaimTitle')}
+                </p>
+                <p className="mt-0.5 text-xs leading-relaxed text-stone-600 dark:text-neutral-300">
+                  {t('rewards.community.roleClaimDesc')}
+                </p>
+              </div>
+              <button
+                type="button"
+                data-testid="rewards-claim-roles-join"
+                onClick={() => {
+                  void openUrl(inviteUrl);
+                }}
+                className="inline-flex flex-shrink-0 items-center justify-center gap-2 rounded-xl bg-primary-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-primary-700">
+                {t('rewards.community.joinDiscord')}
+              </button>
+            </div>
+          ) : null}
           {isLoading ? (
             <div className="rounded-2xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-5 shadow-soft">
               <div className="text-sm text-stone-600 dark:text-neutral-300">
@@ -240,6 +380,30 @@ export default function RewardsCommunityTab({
           ) : rewardRoles.length > 0 ? (
             rewardRoles.map((role, index) => {
               const tone = roleAccentTone(index);
+              // Surface Discord role-assignment status only for a linked user's unlocked
+              // achievements — locked badges have no role to claim yet.
+              const roleStatus =
+                discordLinked && role.unlocked
+                  ? role.discordRoleStatus === 'assigned'
+                    ? {
+                        label: t('rewards.community.roleAssigned'),
+                        classes:
+                          'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300',
+                      }
+                    : role.discordRoleStatus === 'not_assigned'
+                      ? {
+                          label: t('rewards.community.rolePending'),
+                          classes:
+                            'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300',
+                        }
+                      : role.discordRoleStatus === 'not_in_guild'
+                        ? {
+                            label: t('rewards.community.roleJoinToClaim'),
+                            classes:
+                              'bg-blue-50 text-primary-700 dark:bg-blue-500/10 dark:text-primary-300',
+                          }
+                        : null
+                  : null;
 
               return (
                 <div
@@ -285,6 +449,15 @@ export default function RewardsCommunityTab({
                       </svg>
                     </div>
                   </div>
+                  {roleStatus ? (
+                    <div className="mt-3">
+                      <span
+                        data-testid={`rewards-role-status-${role.id}`}
+                        className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold ${roleStatus.classes}`}>
+                        {roleStatus.label}
+                      </span>
+                    </div>
+                  ) : null}
                 </div>
               );
             })
@@ -315,6 +488,28 @@ export default function RewardsCommunityTab({
                       : t('rewards.community.discordStatusUnavailable')}
             </span>
           </div>
+          {discordLinked && discordUsername ? (
+            <div className="mt-3 flex items-center justify-between gap-3">
+              <span>{t('rewards.community.discordAccount')}</span>
+              <span
+                data-testid="rewards-discord-username"
+                className="font-semibold text-stone-900 dark:text-neutral-100">
+                {discordUsername}
+              </span>
+            </div>
+          ) : null}
+          {discordLinked && membershipStatus === 'member' ? (
+            <div className="mt-3 flex items-center justify-between gap-3">
+              <span>{t('rewards.community.rolesAndRewards')}</span>
+              <span
+                data-testid="rewards-roles-assigned"
+                className="font-semibold text-stone-900 dark:text-neutral-100">
+                {t('rewards.community.roleAssignmentCount')
+                  .replace('{assigned}', String(assignedRoleCount))
+                  .replace('{unlocked}', String(unlocked))}
+              </span>
+            </div>
+          ) : null}
           <div className="mt-3 flex items-center justify-between gap-3">
             <span>{t('rewards.community.currentStreak')}</span>
             <span className="font-semibold text-stone-900 dark:text-neutral-100">
