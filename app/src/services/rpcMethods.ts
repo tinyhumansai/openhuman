@@ -1,5 +1,4 @@
 export const CORE_RPC_METHODS = {
-  channelsList: 'openhuman.channels_list',
   configGet: 'openhuman.config_get',
   configGetAgentPaths: 'openhuman.config_get_agent_paths',
   configGetAgentSettings: 'openhuman.config_get_agent_settings',
@@ -58,6 +57,7 @@ export const CORE_RPC_METHODS = {
   embeddingsClearApiKey: 'openhuman.embeddings_clear_api_key',
   embeddingsEmbed: 'openhuman.embeddings_embed',
   embeddingsTestConnection: 'openhuman.embeddings_test_connection',
+  channelsList: 'openhuman.channels_list',
   mcpClientsInstalledList: 'openhuman.mcp_clients_installed_list',
   mcpClientsToolCall: 'openhuman.mcp_clients_tool_call',
   healthSnapshot: 'openhuman.health_snapshot',

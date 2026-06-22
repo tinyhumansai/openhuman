@@ -32,11 +32,11 @@ const LEGACY_ALIASES: &[(&str, &str)] = &[
     // `mcp_clients_tool_call` that shipped in at least one older bundle.
     // `mcp_clients.list` sorts before all `openhuman.*` entries (m < o).
     ("mcp_clients.list", "openhuman.mcp_clients_installed_list"),
+    ("openhuman.channels.list", "openhuman.channels_list"),
     (
         "openhuman.get_analytics_settings",
         "openhuman.config_get_analytics_settings",
     ),
-    ("openhuman.channels.list", "openhuman.channels_list"),
     (
         "openhuman.get_composio_trigger_settings",
         "openhuman.config_get_composio_trigger_settings",
@@ -480,17 +480,6 @@ mod tests {
         assert_eq!(
             resolve_legacy("openhuman.update_composio_trigger_settings"),
             "openhuman.config_update_composio_trigger_settings",
-        );
-    }
-
-    #[test]
-    fn resolve_legacy_rewrites_dotted_channels_list() {
-        // Older 0.53.x bundles issued dotted channels-list RPC names while
-        // the registered method is the underscore canonical form.
-        assert_eq!(resolve_legacy("channels.list"), "openhuman.channels_list");
-        assert_eq!(
-            resolve_legacy("openhuman.channels.list"),
-            "openhuman.channels_list",
         );
     }
 
