@@ -5203,6 +5203,10 @@ const messages: TranslationMap = {
   'walkthrough.phase.review': 'Überprüfen',
   'walkthrough.phase.done': 'Fertig',
   'walkthrough.phase.skip': 'Diesen Schritt überspringen',
+  'walkthrough.progress.completed': 'abgeschlossen',
+  'walkthrough.progress.current': 'aktuell',
+  'walkthrough.review.finish': 'Einrichtung abschließen',
+  'walkthrough.step.start': 'Einrichtung starten',
   'walkthrough.step.gmail': 'Gmail',
   'walkthrough.step.slack': 'Slack',
   'walkthrough.step.whatsapp': 'WhatsApp',
@@ -5212,6 +5216,7 @@ const messages: TranslationMap = {
   'walkthrough.step.notifications': 'Intelligente Benachrichtigungen',
   'walkthrough.step.scheduling': 'Automatische Planung',
   'walkthrough.step.summaries': 'Besprechungszusammenfassungen',
+  'walkthrough.desc.start': 'Beginne mit dem empfohlenen Einrichtungsweg',
   'walkthrough.desc.gmail':
     'Verbinden Sie Ihre E-Mail für intelligente Antworten und Zusammenfassungen',
   'walkthrough.desc.slack': 'Lassen Sie Ihren Assistenten an Ihren Teamgesprächen teilnehmen',

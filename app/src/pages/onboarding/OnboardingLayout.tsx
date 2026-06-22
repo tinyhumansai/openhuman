@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { Outlet, useNavigate } from 'react-router-dom';
 
 import { setWalkthroughPending } from '../../components/walkthrough/AppWalkthrough';
+import WalkthroughContainer from '../../components/walkthrough/WalkthroughContainer';
 import { useCoreState } from '../../providers/CoreStateProvider';
 import { trackEvent } from '../../services/analytics';
 import { getDefaultEnabledTools, getEnabledRustToolNames } from '../../utils/toolDefinitions';
@@ -15,6 +16,9 @@ import {
 
 /** Ordered list of walkthrough phases in the narrative arc. */
 const WALKTHROUGH_PHASES: WalkthroughPhase[] = ['welcome', 'connect', 'automate', 'review', 'done'];
+
+/** Default action-card step for the welcome phase. */
+const WELCOME_STEPS = [{ key: 'start', completed: false }];
 
 /** Default action-card steps for the connect phase. */
 const CONNECT_STEPS = [
@@ -34,7 +38,7 @@ const AUTOMATE_STEPS = [
 ];
 
 function createInitialWalkthrough(): WalkthroughState {
-  return { phase: 'welcome', steps: CONNECT_STEPS, completed: false, skipped: false };
+  return { phase: 'welcome', steps: WELCOME_STEPS, completed: false, skipped: false };
 }
 
 /**
@@ -58,8 +62,7 @@ const OnboardingLayout = () => {
     []
   );
 
-  const advanceWalkthrough = useCallback((stepKey?: string): WalkthroughState => {
-    let updated: WalkthroughState | undefined;
+  const advanceWalkthrough = useCallback((stepKey?: string): void => {
     setDraftState(prev => {
       const wt = prev.walkthrough ?? createInitialWalkthrough();
 
@@ -88,21 +91,23 @@ const OnboardingLayout = () => {
           nextSteps = CONNECT_STEPS;
         } else if (nextPhase === 'automate') {
           nextSteps = AUTOMATE_STEPS;
-        } else if (nextPhase === 'review' || nextPhase === 'done') {
+        } else if (nextPhase === 'review') {
+          nextSteps = steps;
+        } else if (nextPhase === 'done') {
           nextSteps = [];
         }
       }
 
-      updated = {
-        phase: nextPhase,
-        steps: nextSteps,
-        completed: nextPhase === 'done',
-        skipped: wt.skipped,
+      return {
+        ...prev,
+        walkthrough: {
+          phase: nextPhase,
+          steps: nextSteps,
+          completed: nextPhase === 'done',
+          skipped: wt.skipped,
+        },
       };
-
-      return { ...prev, walkthrough: updated };
     });
-    return updated!;
   }, []);
 
   const skipWalkthrough = useCallback(() => {
@@ -180,6 +185,9 @@ const OnboardingLayout = () => {
         <div className="relative z-10 w-full max-w-2xl mx-4">
           <BetaBanner />
           <Outlet />
+          <div className="mt-4 rounded-2xl bg-white dark:bg-neutral-900 p-6 shadow-soft">
+            <WalkthroughContainer />
+          </div>
         </div>
       </div>
     </OnboardingContext.Provider>

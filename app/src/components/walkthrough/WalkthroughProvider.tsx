@@ -6,6 +6,8 @@ import type { WalkthroughPhase, WalkthroughState } from '../../pages/onboarding/
 export interface WalkthroughUIContextValue {
   /** Current walkthrough state from the onboarding draft. */
   state: WalkthroughState;
+  /** Advance to the next phase. */
+  advance: () => void;
   /** Mark a specific action card as completed and advance if all done. */
   completeStep: (stepKey: string) => void;
   /** Skip the remaining walkthrough. */
@@ -32,7 +34,7 @@ export function useWalkthroughUI(): WalkthroughUIContextValue {
 
 interface WalkthroughProviderProps {
   state: WalkthroughState;
-  onAdvance: (stepKey?: string) => WalkthroughState;
+  onAdvance: (stepKey?: string) => void;
   onSkip: () => void;
   children: React.ReactNode;
 }
@@ -67,6 +69,7 @@ export const WalkthroughProvider = ({
 
   const stepLabels: Record<string, string> = useMemo(
     () => ({
+      start: t('walkthrough.step.start', 'Start setup'),
       gmail: t('walkthrough.step.gmail', 'Gmail'),
       slack: t('walkthrough.step.slack', 'Slack'),
       whatsapp: t('walkthrough.step.whatsapp', 'WhatsApp'),
@@ -82,6 +85,7 @@ export const WalkthroughProvider = ({
 
   const stepDescriptions: Record<string, string> = useMemo(
     () => ({
+      start: t('walkthrough.desc.start', 'Begin with the recommended setup path'),
       gmail: t('walkthrough.desc.gmail', 'Connect your email for smart replies and summaries'),
       slack: t('walkthrough.desc.slack', 'Let your assistant join your team conversations'),
       whatsapp: t('walkthrough.desc.whatsapp', 'Chat with your assistant on the go'),
@@ -102,9 +106,14 @@ export const WalkthroughProvider = ({
     [onAdvance]
   );
 
+  const advance = useCallback(() => {
+    onAdvance();
+  }, [onAdvance]);
+
   const value: WalkthroughUIContextValue = useMemo(
     () => ({
       state,
+      advance,
       completeStep,
       skip: onSkip,
       phaseLabels,
@@ -112,7 +121,7 @@ export const WalkthroughProvider = ({
       stepLabels,
       stepDescriptions,
     }),
-    [state, completeStep, onSkip, phaseLabels, phaseIcons, stepLabels, stepDescriptions]
+    [state, advance, completeStep, onSkip, phaseLabels, phaseIcons, stepLabels, stepDescriptions]
   );
 
   return <WalkthroughUIContext.Provider value={value}>{children}</WalkthroughUIContext.Provider>;

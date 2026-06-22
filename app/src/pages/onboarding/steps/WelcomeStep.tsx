@@ -32,7 +32,7 @@ const WelcomeStep = ({ onNext }: WelcomeStepProps) => {
       className="rounded-2xl bg-white dark:bg-neutral-900 px-6 py-8 sm:px-10 sm:py-10 shadow-soft animate-fade-up">
       {/* ── Hero section ── */}
       <div className="flex flex-col items-center text-center mb-10">
-        <img src="/logo.png" alt="OpenHuman" className="w-16 h-16 rounded-2xl mb-5" />
+        <img src="/logo.png" alt={t('welcome.logoAlt')} className="w-16 h-16 rounded-2xl mb-5" />
         <h1 className="text-3xl sm:text-4xl font-display text-stone-900 dark:text-neutral-100 mb-3 leading-tight tracking-tight">
           {t('onboarding.welcome.heroTitle')}
         </h1>

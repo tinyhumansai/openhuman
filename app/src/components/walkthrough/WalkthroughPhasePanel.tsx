@@ -11,7 +11,7 @@ import { useWalkthroughUI } from './WalkthroughProvider';
  * When the phase is 'done', shows a celebration screen.
  */
 const WalkthroughPhasePanel = () => {
-  const { state, skip, phaseLabels, phaseIcons } = useWalkthroughUI();
+  const { state, advance, skip, phaseLabels, phaseIcons } = useWalkthroughUI();
   const { t } = useT();
 
   const { phase, steps } = state;
@@ -55,7 +55,7 @@ const WalkthroughPhasePanel = () => {
 
         {/* Summary cards — show what was completed */}
         <div className="space-y-2 mb-6">
-          {steps.length === 0 && (
+          {steps.length === 0 ? (
             <p className="text-sm text-stone-400 dark:text-neutral-500 text-center py-4">
               {state.skipped
                 ? t(
@@ -64,7 +64,18 @@ const WalkthroughPhasePanel = () => {
                   )
                 : t('walkthrough.review.empty', 'No actions completed yet.')}
             </p>
+          ) : (
+            steps.map(step => <WalkthroughActionCard key={step.key} step={step} />)
           )}
+        </div>
+
+        <div className="text-center">
+          <button
+            type="button"
+            onClick={advance}
+            className="rounded-xl bg-[#2F6EF4] px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#2559c7]">
+            {t('walkthrough.review.finish', 'Finish setup')}
+          </button>
         </div>
       </div>
     );

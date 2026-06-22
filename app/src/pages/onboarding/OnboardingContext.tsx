@@ -62,9 +62,8 @@ export interface OnboardingContextValue {
   completeAndExit: () => Promise<void>;
   /**
    * Advance the walkthrough to the next phase or mark a step as completed.
-   * Returns the updated WalkthroughState.
    */
-  advanceWalkthrough: (stepKey?: string) => WalkthroughState;
+  advanceWalkthrough: (stepKey?: string) => void;
   /**
    * Skip the remaining walkthrough and jump to the review phase.
    */

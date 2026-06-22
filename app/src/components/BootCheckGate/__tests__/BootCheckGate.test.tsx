@@ -102,6 +102,14 @@ describe('BootCheckGate — picker (unset mode)', () => {
     expect(screen.getByText('Run on the Cloud (Complex)')).toBeInTheDocument();
   });
 
+  it('bounds the picker panel and allows scrolling on short windows', () => {
+    renderGate();
+
+    const panel = screen.getByText('Welcome to OpenHuman').parentElement?.parentElement;
+    expect(panel).toHaveClass('overflow-y-auto');
+    expect(panel?.className).toContain('max-h-[calc(100vh-2rem)]');
+  });
+
   it('does NOT render children while in picker', () => {
     renderGate();
     expect(screen.queryByTestId('app-content')).not.toBeInTheDocument();

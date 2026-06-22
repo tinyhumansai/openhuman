@@ -195,6 +195,40 @@ describe('OnboardingLayout — Joyride walkthrough integration (#1123)', () => {
     expect(localStorage.getItem('openhuman:walkthrough_pending')).toBe('true');
   });
 
+  it('mounts the onboarding walkthrough inside the layout', async () => {
+    await setupLayout();
+
+    expect(screen.getByText('Start setup')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Complete Start setup/i })).toBeInTheDocument();
+  });
+
+  it('advances walkthrough phases and can finish from review', async () => {
+    await setupLayout();
+
+    fireEvent.click(screen.getByRole('button', { name: /Complete Start setup/i }));
+    expect(screen.getByText('Gmail')).toBeInTheDocument();
+
+    for (const label of ['Gmail', 'Slack', 'WhatsApp', 'Telegram', 'Discord']) {
+      fireEvent.click(screen.getByRole('button', { name: new RegExp(`Complete ${label}`, 'i') }));
+    }
+    expect(screen.getByText('Daily Briefings')).toBeInTheDocument();
+
+    for (const label of [
+      'Daily Briefings',
+      'Smart Notifications',
+      'Auto Scheduling',
+      'Meeting Summaries',
+    ]) {
+      fireEvent.click(screen.getByRole('button', { name: new RegExp(`Complete ${label}`, 'i') }));
+    }
+
+    expect(screen.getByText('Finish setup')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Daily Briefings — completed/i })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Finish setup' }));
+    expect(screen.getByText("You're all set!")).toBeInTheDocument();
+  });
+
   // [#1123] Old test — welcome thread in Redux state — replaced:
   // it('records the welcome thread id in the Redux store after thread creation', ...)
   // The welcome thread is no longer stored in Redux.

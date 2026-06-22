@@ -5687,6 +5687,10 @@ const en: TranslationMap = {
   'walkthrough.phase.review': 'Review',
   'walkthrough.phase.done': 'Done',
   'walkthrough.phase.skip': 'Skip this step',
+  'walkthrough.progress.completed': 'completed',
+  'walkthrough.progress.current': 'current',
+  'walkthrough.review.finish': 'Finish setup',
+  'walkthrough.step.start': 'Start setup',
   // ── Walkthrough step labels (a03) ──────────────────────────────────────
   'walkthrough.step.gmail': 'Gmail',
   'walkthrough.step.slack': 'Slack',
@@ -5697,6 +5701,7 @@ const en: TranslationMap = {
   'walkthrough.step.notifications': 'Smart Notifications',
   'walkthrough.step.scheduling': 'Auto Scheduling',
   'walkthrough.step.summaries': 'Meeting Summaries',
+  'walkthrough.desc.start': 'Begin with the recommended setup path',
   // ── Walkthrough step descriptions (a03) ────────────────────────────────
   'walkthrough.desc.gmail': 'Connect your email for smart replies and summaries',
   'walkthrough.desc.slack': 'Let your assistant join your team conversations',

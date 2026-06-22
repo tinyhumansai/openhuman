@@ -4825,6 +4825,10 @@ const messages: TranslationMap = {
   'walkthrough.phase.review': '回顾',
   'walkthrough.phase.done': '完成',
   'walkthrough.phase.skip': '跳过此步骤',
+  'walkthrough.progress.completed': '已完成',
+  'walkthrough.progress.current': '当前',
+  'walkthrough.review.finish': '完成设置',
+  'walkthrough.step.start': '开始设置',
   // ── Walkthrough step labels (a03) ──────────────────────────────────────
   'walkthrough.step.gmail': 'Gmail',
   'walkthrough.step.slack': 'Slack',
@@ -4835,6 +4839,7 @@ const messages: TranslationMap = {
   'walkthrough.step.notifications': '智能通知',
   'walkthrough.step.scheduling': '自动排程',
   'walkthrough.step.summaries': '会议摘要',
+  'walkthrough.desc.start': '从推荐的设置路径开始',
   // ── Walkthrough step descriptions (a03) ────────────────────────────────
   'walkthrough.desc.gmail': '连接邮箱，获取智能回复和摘要',
   'walkthrough.desc.slack': '让助手加入你的团队对话',

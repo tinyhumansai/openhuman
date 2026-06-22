@@ -81,10 +81,10 @@ interface PanelProps {
 function Panel({ children }: PanelProps) {
   return (
     <div
-      className="fixed inset-0 z-[10000] flex items-center justify-center p-4"
+      className="fixed inset-0 z-[10000] flex items-center justify-center overflow-y-auto p-4"
       style={{ backgroundColor: 'var(--color-background)' }}>
       <AppBackground />
-      <div className="relative z-10 w-full max-w-2xl rounded-2xl bg-white dark:bg-neutral-900 p-10 shadow-soft animate-fade-up">
+      <div className="relative z-10 my-auto max-h-[calc(100vh-2rem)] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white dark:bg-neutral-900 p-6 shadow-soft animate-fade-up sm:p-10">
         {children}
       </div>
     </div>
