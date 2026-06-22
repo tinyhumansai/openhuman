@@ -143,6 +143,21 @@ pub fn start(config: Config) {
                                      backing off 30s: {err:#}"
                                 );
                                 tokio::time::sleep(Duration::from_secs(30)).await;
+                            } else if is_sqlite_disk_full(&err) {
+                                // SQLITE_FULL (primary code 13): the database or
+                                // disk is full. Unlike BUSY/LOCKED or the transient
+                                // I/O family, this only clears when the *user* frees
+                                // disk space, so re-polling every 1s and paging
+                                // Sentry is pure noise — a single full-disk host
+                                // produced ~95k events (OPENHUMAN-TAURI-4R8, #3909).
+                                // Back off hard and do NOT report. The claim is a
+                                // lease `UPDATE`, so jobs stay `ready` and resume
+                                // once space frees — no data loss.
+                                log::warn!(
+                                    "[memory::jobs] worker {idx} hit SQLITE_FULL (disk/db full), \
+                                     backing off 300s without reporting: {err:#}"
+                                );
+                                tokio::time::sleep(Duration::from_secs(300)).await;
                             } else {
                                 crate::core::observability::report_error(
                                     &err,
@@ -339,6 +354,28 @@ fn is_sqlite_io_transient(err: &anyhow::Error) -> bool {
         || msg.contains("unable to open database file")
         || msg.contains("xshmmap")
         || msg.contains("truncate file")
+}
+
+/// Classify whether an error from `run_once` is `SQLITE_FULL` — the database
+/// or disk is full (`ErrorCode::DiskFull`, primary code 13).
+///
+/// This is an unpreventable host condition that only the user can clear, so
+/// the worker treats it like the transient I/O family (long backoff, no Sentry
+/// report) rather than escalating: a tight 1s re-poll on a full disk turned a
+/// single user into ~95k events (OPENHUMAN-TAURI-4R8, #3909).
+fn is_sqlite_disk_full(err: &anyhow::Error) -> bool {
+    if let Some(rusqlite::Error::SqliteFailure(f, _)) = err.downcast_ref::<rusqlite::Error>() {
+        if f.code == rusqlite::ErrorCode::DiskFull {
+            return true;
+        }
+    }
+    // Text fallback for errors wrapped under `.context()` layers or re-rendered
+    // as plain `anyhow!` strings. SQLite renders SQLITE_FULL as "database or
+    // disk is full"; the extended-code form appends ": Error code 13: Insertion
+    // failed because database is full".
+    let msg = format!("{err:#}").to_ascii_lowercase();
+    msg.contains("database or disk is full")
+        || msg.contains("insertion failed because database is full")
 }
 
 /// Classify whether an error from `run_once` is a transient SQLite
@@ -545,6 +582,65 @@ mod tests {
             Some("UNIQUE constraint failed: mem_tree_jobs.dedupe_key".into()),
         );
         assert!(!is_sqlite_io_transient(&anyhow::Error::from(raw)));
+    }
+
+    // ── is_sqlite_disk_full tests (#3909) ────────────────────────────────
+
+    /// `SQLITE_FULL` (`ErrorCode::DiskFull`, primary code 13) must classify as
+    /// disk-full so the worker backs off without paging Sentry.
+    #[test]
+    fn is_sqlite_disk_full_matches_disk_full_code() {
+        let raw = rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error {
+                code: rusqlite::ErrorCode::DiskFull,
+                extended_code: 13, // SQLITE_FULL
+            },
+            Some("database or disk is full".into()),
+        );
+        assert!(is_sqlite_disk_full(&anyhow::Error::from(raw)));
+    }
+
+    /// The exact failure from the issue: the rusqlite error buried under the
+    /// worker's `.context("Failed to claim next mem_tree_jobs row")` layer must
+    /// still classify via the downcast.
+    #[test]
+    fn is_sqlite_disk_full_matches_through_context_layers() {
+        let raw = rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error {
+                code: rusqlite::ErrorCode::DiskFull,
+                extended_code: 13,
+            },
+            Some("Insertion failed because database is full".into()),
+        );
+        let wrapped = anyhow::Error::from(raw).context("Failed to claim next mem_tree_jobs row");
+        assert!(is_sqlite_disk_full(&wrapped));
+    }
+
+    /// The extended-code rendering re-flattened into a plain `anyhow!` string
+    /// (no downcast available) must match via the text fallback — this is the
+    /// `: Error code 13: Insertion failed because database is full` shape that
+    /// the pre-fix suffix anchor missed.
+    #[test]
+    fn is_sqlite_disk_full_text_fallback_extended_code_rendering() {
+        let err = anyhow::anyhow!(
+            "Failed to claim next mem_tree_jobs row: database or disk is full: \
+             Error code 13: Insertion failed because database is full"
+        );
+        assert!(is_sqlite_disk_full(&err));
+    }
+
+    /// A non-full SQLite failure (e.g. UNIQUE constraint) must NOT be
+    /// reclassified as disk-full — those are real bugs worth reporting.
+    #[test]
+    fn is_sqlite_disk_full_does_not_match_constraint_violation() {
+        let raw = rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error {
+                code: rusqlite::ErrorCode::ConstraintViolation,
+                extended_code: 19,
+            },
+            Some("UNIQUE constraint failed: mem_tree_jobs.dedupe_key".into()),
+        );
+        assert!(!is_sqlite_disk_full(&anyhow::Error::from(raw)));
     }
 
     #[tokio::test]
