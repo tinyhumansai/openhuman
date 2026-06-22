@@ -414,13 +414,11 @@ fn assistant_tool_call_ids(content: &str) -> Vec<String> {
     serde_json::from_str::<serde_json::Value>(content)
         .ok()
         .and_then(|v| {
-            v.get("tool_calls")
-                .and_then(|tc| tc.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|c| c.get("id").and_then(|i| i.as_str()).map(str::to_string))
-                        .collect()
-                })
+            v.get("tool_calls").and_then(|tc| tc.as_array()).map(|arr| {
+                arr.iter()
+                    .filter_map(|c| c.get("id").and_then(|i| i.as_str()).map(str::to_string))
+                    .collect()
+            })
         })
         .unwrap_or_default()
 }

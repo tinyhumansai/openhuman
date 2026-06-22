@@ -1572,7 +1572,10 @@ fn delegated_provider_failure_still_halts_first_after_narrowing() {
     let halt = g.record("run_code", "{\"prompt\":\"x\"}", false, delegated);
     let msg = halt.expect("a wrapped delegated provider-config rejection must halt first");
     assert!(msg.contains("rejected the request"), "got: {msg}");
-    assert!(msg.contains("Settings → AI"), "actionable remediation: {msg}");
+    assert!(
+        msg.contains("Settings → AI"),
+        "actionable remediation: {msg}"
+    );
 }
 
 #[test]

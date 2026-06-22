@@ -841,7 +841,8 @@ pub(crate) async fn run_turn_engine(
             // Zip over the executed prefix only — one `role: tool` result per
             // executed `tool_call_id`, matching the trimmed assistant message
             // above so the next provider request has no orphaned tool-call id.
-            for (native_call, result) in executed_native_calls.iter().zip(individual_results.iter()) {
+            for (native_call, result) in executed_native_calls.iter().zip(individual_results.iter())
+            {
                 let tool_msg = serde_json::json!({
                     "tool_call_id": native_call.id,
                     "content": result,
