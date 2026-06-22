@@ -208,11 +208,6 @@ fn assert_no_jsonrpc_error<'a>(v: &'a Value, context: &str) -> &'a Value {
         .unwrap_or_else(|| panic!("{context}: missing `result` field: {v}"))
 }
 
-fn assert_jsonrpc_error<'a>(v: &'a Value, context: &str) -> &'a Value {
-    v.get("error")
-        .unwrap_or_else(|| panic!("{context}: expected JSON-RPC error, got: {v}"))
-}
-
 // ── Test ───────────────────────────────────────────────────────────────────
 
 /// End-to-end coverage for the `openhuman.skill_registry_*` endpoints.
@@ -223,7 +218,7 @@ fn assert_jsonrpc_error<'a>(v: &'a Value, context: &str) -> &'a Value {
 /// 3. `search`   — queries for "git" and expects at least one match.
 /// 4. `schemas`  — exposes CLI/RPC schemas for prod smoke scripts.
 /// 5. `install`  — happy-path install of a skill.
-/// 6. `install`  — duplicate-rejection: same install must return an error.
+/// 6. `install`  — duplicate install returns idempotent success with no new skills.
 /// 7. `uninstall` — removes the installed skill.
 #[tokio::test]
 async fn skill_registry_e2e_sources_browse_search_install() {
@@ -503,7 +498,7 @@ encrypt = false
         skill_file.display()
     );
 
-    // ── Step 6: install (duplicate rejection) ─────────────────────────────
+    // ── Step 6: install (duplicate no-op success) ────────────────────────
 
     let dup_resp = post_json_rpc(
         &rpc_base,
@@ -512,14 +507,22 @@ encrypt = false
         json!({ "entry_id": entry_id }),
     )
     .await;
-    let dup_error = assert_jsonrpc_error(&dup_resp, "skill_registry_install (duplicate)");
-    let dup_message = dup_error
-        .get("message")
+    let dup_result = assert_no_jsonrpc_error(&dup_resp, "skill_registry_install (duplicate)");
+    let dup_stdout = dup_result
+        .get("stdout")
         .and_then(Value::as_str)
-        .unwrap_or_default();
+        .expect("duplicate install result must contain `stdout`");
     assert!(
-        dup_message.contains("already installed"),
-        "duplicate install error should mention 'already installed', got: {dup_message}"
+        dup_stdout.contains("already installed"),
+        "duplicate install stdout should mention 'already installed', got: {dup_stdout}"
+    );
+    let dup_new_skills = dup_result
+        .get("new_skills")
+        .and_then(Value::as_array)
+        .expect("duplicate install result must contain `new_skills` array");
+    assert!(
+        dup_new_skills.is_empty(),
+        "duplicate install should report no new skills, got: {dup_new_skills:?}"
     );
 
     // ── Step 7: uninstall ─────────────────────────────────────────────────
