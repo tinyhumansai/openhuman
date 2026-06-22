@@ -214,6 +214,7 @@ describe('OnboardingLayout — Joyride walkthrough integration (#1123)', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
 
+    expect(screen.getByText('Gmail')).toBeInTheDocument();
     expect(screen.getByText('Daily Briefings')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));

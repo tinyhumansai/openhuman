@@ -93,7 +93,7 @@ const OnboardingLayout = () => {
         } else if (nextPhase === 'automate') {
           nextSteps = AUTOMATE_STEPS;
         } else if (nextPhase === 'review') {
-          nextSteps = steps;
+          nextSteps = [...CONNECT_STEPS, ...AUTOMATE_STEPS];
         } else if (nextPhase === 'done') {
           nextSteps = [];
         }
