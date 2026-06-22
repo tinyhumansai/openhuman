@@ -899,7 +899,9 @@ mod tests {
         );
 
         // (3) the fix: collect_hits_and_nodes hydrates node.embedding from the sidecar.
-        let (_hits, nodes) = collect_hits_and_nodes(&cfg, None, Some(SourceKind::Chat)).unwrap();
+        // 4th arg `source_scope` (added upstream after this PR was opened): None = unrestricted.
+        let (_hits, nodes) =
+            collect_hits_and_nodes(&cfg, None, Some(SourceKind::Chat), None).unwrap();
         let emb_of = |id: &str| {
             nodes
                 .iter()
