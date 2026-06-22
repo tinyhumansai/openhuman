@@ -2253,8 +2253,21 @@ pub fn is_insufficient_credits_message(text: &str) -> bool {
     // whose body says "can only afford 402 tokens"), which is NOT this
     // user-state and must keep reaching Sentry.
     let is_402_status = lower.contains("(402") || lower.contains("402 payment required");
-    is_402_status
-        && crate::openhuman::inference::provider::body_indicates_insufficient_credits(text)
+    if !is_402_status {
+        return false;
+    }
+    // Check the credit/balance signal against the BODY only. The status prefix
+    // "(402 Payment Required)" itself contains the phrase "payment required",
+    // which `body_indicates_insufficient_credits` matches — so feeding it the
+    // whole string would classify ANY 402 (even one whose body is an unrelated
+    // condition) as insufficient-credits and suppress it (codex P2 on #3913).
+    // Slice off everything up to and including the formatted "): " status
+    // separator first; fall back to the whole text when the separator is
+    // absent (non-standard shape) so a credit phrase there still matches.
+    let body = lower
+        .split_once("): ")
+        .map_or(lower.as_str(), |(_, body)| body);
+    crate::openhuman::inference::provider::body_indicates_insufficient_credits(body)
 }
 
 /// Defense-in-depth `before_send` filter for **insufficient-credits 402**
@@ -5385,6 +5398,19 @@ mod tests {
         // The status must be the 402, not a digit in the body.
         assert!(!is_insufficient_credits_message(
             "provider API error (400): can only afford 402 tokens"
+        ));
+        // codex P2: the status prefix "(402 Payment Required)" itself contains
+        // the phrase "payment required". An unrelated body behind a real 402
+        // must NOT be classified as insufficient-credits (else the cron halt
+        // would suppress a genuine 402 defect). The credit signal must live in
+        // the BODY, not the formatted status prefix.
+        assert!(!is_insufficient_credits_message(
+            "provider API error (402 Payment Required): some unrelated condition"
+        ));
+        // But a body that literally carries the credit signal still matches,
+        // even when the status prefix also says "Payment Required".
+        assert!(is_insufficient_credits_message(
+            "provider API error (402 Payment Required): your account has insufficient balance"
         ));
     }
 
