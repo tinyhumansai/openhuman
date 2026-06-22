@@ -483,6 +483,7 @@ impl Agent {
                 agent_definition_id: self.agent_definition_id.clone(),
                 prefer_markdown: self.context.prefer_markdown_tool_output(),
                 budget_bytes: self.context.tool_result_budget_bytes(),
+                compaction_enabled: self.context.compaction_enabled(),
                 artifact_store: artifact_store.clone(),
                 should_send_specs: self.tool_dispatcher.should_send_tool_specs(),
                 advertised_specs: self.visible_tool_specs.as_ref().clone(),

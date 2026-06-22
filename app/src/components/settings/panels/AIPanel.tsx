@@ -109,7 +109,14 @@ export type ProviderRef =
   | { kind: 'local'; model: string; temperature?: number | null }
   | { kind: 'claude-code'; model: string; temperature?: number | null };
 
-type Workload = { id: WorkloadId; group: WorkloadGroup; label: string; description: string };
+type Workload = {
+  id: WorkloadId;
+  group: WorkloadGroup;
+  // i18n keys (resolved with `t()` at render) rather than literal English, so the
+  // workload labels/descriptions translate like the rest of the panel.
+  labelKey: string;
+  descriptionKey: string;
+};
 
 export type RoutingMap = Record<WorkloadId, ProviderRef>;
 type RoutingMode = 'managed' | 'own' | 'custom';
@@ -161,78 +168,98 @@ const WORKLOADS: Workload[] = [
   {
     id: 'chat',
     group: 'chat',
-    label: 'Chat',
-    description: 'Direct conversational back-and-forth — “Quick” mode in Conversations',
+    labelKey: 'settings.ai.routing.workload.chat.label',
+    descriptionKey: 'settings.ai.routing.workload.chat.description',
   },
   {
     id: 'reasoning',
     group: 'chat',
-    label: 'Reasoning',
-    description: 'Main chat agent, meeting summarizer — “Reasoning” mode in Conversations',
+    labelKey: 'settings.ai.routing.workload.reasoning.label',
+    descriptionKey: 'settings.ai.routing.workload.reasoning.description',
   },
   {
     id: 'agentic',
     group: 'chat',
-    label: 'Agentic',
-    description: 'Sub-agent runners, tool loops, GIF decisions',
+    labelKey: 'settings.ai.routing.workload.agentic.label',
+    descriptionKey: 'settings.ai.routing.workload.agentic.description',
   },
   {
     id: 'coding',
     group: 'chat',
-    label: 'Coding',
-    description: 'Code generation and refactor passes',
+    labelKey: 'settings.ai.routing.workload.coding.label',
+    descriptionKey: 'settings.ai.routing.workload.coding.description',
   },
   {
     id: 'vision',
     group: 'chat',
-    label: 'Vision',
-    description: 'Image understanding for the vision sub-agent — always multimodal',
+    labelKey: 'settings.ai.routing.workload.vision.label',
+    descriptionKey: 'settings.ai.routing.workload.vision.description',
   },
   {
     id: 'memory',
     group: 'background',
-    label: 'Memory summarization',
-    description: 'Tree-extracts and consolidations',
+    labelKey: 'settings.ai.routing.workload.memory.label',
+    descriptionKey: 'settings.ai.routing.workload.memory.description',
   },
   {
     id: 'heartbeat',
     group: 'background',
-    label: 'Heartbeat',
-    description: 'Background reasoning between user turns',
+    labelKey: 'settings.ai.routing.workload.heartbeat.label',
+    descriptionKey: 'settings.ai.routing.workload.heartbeat.description',
   },
   {
     id: 'learning',
     group: 'background',
-    label: 'Learning · Reflections',
-    description: 'Periodic reflection over recent history',
+    labelKey: 'settings.ai.routing.workload.learning.label',
+    descriptionKey: 'settings.ai.routing.workload.learning.description',
   },
   {
     id: 'subconscious',
     group: 'background',
-    label: 'Subconscious',
-    description: 'Eventfulness scoring + drift checks',
+    labelKey: 'settings.ai.routing.workload.subconscious.label',
+    descriptionKey: 'settings.ai.routing.workload.subconscious.description',
   },
 ];
 
-const WORKLOAD_MODEL_HINTS: Record<WorkloadId, string> = {
-  chat: 'Recommended: a cheap or mid-cost fast chat model with high tokens/sec and low latency. Open-source local models can work well here if they feel responsive.',
-  reasoning:
-    'Recommended: a more expensive frontier or strong reasoning model for deep thinking. This is used for the main chat agent, meeting summaries, and heavier answer synthesis.',
-  agentic:
-    'Recommended: a reliable instruction-following model with strong tool use. Mid-cost frontier models are usually safest; capable open-source models can work if tool calling is stable.',
-  coding:
-    'Recommended: a coding-tuned model with strong instruction following, edit quality, and long-context performance. This is usually worth spending more on.',
-  vision:
-    'Recommended: a multimodal model that accepts image input. The managed default (vision-v1) is image-capable; any provider you route here is always treated as vision-enabled.',
-  memory:
-    'Recommended: a cheaper summarization model. It should be consistent and compact, but it does not need premium frontier-level reasoning.',
-  heartbeat:
-    'Recommended: a cheap, efficient background model. This runs often between turns, so low cost matters more than maximum intelligence.',
-  learning:
-    'Recommended: a stronger reflective model. This can be mid-cost or premium because it benefits from better synthesis over recent history.',
-  subconscious:
-    'Recommended: a very cheap monitoring model, ideally one that is lightweight and predictable. This is for eventfulness scoring, drift checks, and quiet background evaluation.',
+// i18n keys for the per-workload "Recommended: …" hints (resolved with `t()`).
+const WORKLOAD_MODEL_HINT_KEYS: Record<WorkloadId, string> = {
+  chat: 'settings.ai.routing.workload.chat.hint',
+  reasoning: 'settings.ai.routing.workload.reasoning.hint',
+  agentic: 'settings.ai.routing.workload.agentic.hint',
+  coding: 'settings.ai.routing.workload.coding.hint',
+  vision: 'settings.ai.routing.workload.vision.hint',
+  memory: 'settings.ai.routing.workload.memory.hint',
+  heartbeat: 'settings.ai.routing.workload.heartbeat.hint',
+  learning: 'settings.ai.routing.workload.learning.hint',
+  subconscious: 'settings.ai.routing.workload.subconscious.hint',
 };
+
+// Build the "pending routing changes" summary: one `"<label> → <target>"`
+// entry per workload whose draft route differs from the saved route. Extracted
+// as a pure, exported function so the (translated) formatting is unit-testable
+// without rendering the whole panel.
+export function buildRoutingDiffSummary(
+  saved: RoutingMap,
+  draft: RoutingMap,
+  t: (key: string) => string
+): string[] {
+  const describe = (r: ProviderRef): string => {
+    if (r.kind === 'openhuman') return 'openhuman';
+    if (r.kind === 'default') return 'cloud';
+    const tempSuffix = r.temperature != null ? `@${r.temperature.toFixed(2)}` : '';
+    if (r.kind === 'cloud') return `${r.providerSlug}:${r.model}${tempSuffix}`;
+    return `local:${r.model}${tempSuffix}`;
+  };
+  const out: string[] = [];
+  for (const w of WORKLOADS) {
+    const a = saved[w.id];
+    const b = draft[w.id];
+    if (JSON.stringify(a) !== JSON.stringify(b)) {
+      out.push(`${t(w.labelKey)} → ${describe(b)}`);
+    }
+  }
+  return out;
+}
 
 // TIER_PRESETS removed alongside the Local provider section.
 
@@ -1734,13 +1761,13 @@ const WorkloadRow = ({
     <div className="flex items-center justify-between gap-3 py-3 transition-colors">
       <div className="min-w-0 flex-1 space-y-1">
         <div className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
-          {workload.label}
+          {t(workload.labelKey)}
         </div>
         <div className="text-xs leading-5 text-neutral-500 dark:text-neutral-400">
-          {workload.description}
+          {t(workload.descriptionKey)}
         </div>
         <div className="text-[11px] leading-5 text-neutral-500 dark:text-neutral-400">
-          {WORKLOAD_MODEL_HINTS[workload.id]}
+          {t(WORKLOAD_MODEL_HINT_KEYS[workload.id])}
         </div>
         {resolved ? (
           <div
@@ -2089,7 +2116,9 @@ const CustomRoutingDialog = ({
     <div
       role="dialog"
       aria-modal="true"
-      aria-label={formatI18n(t('settings.ai.customRoutingForWorkload'), { label: workload.label })}
+      aria-label={formatI18n(t('settings.ai.customRoutingForWorkload'), {
+        label: t(workload.labelKey),
+      })}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
       <div className="w-full max-w-md rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-6 shadow-soft">
         <div className="flex items-start justify-between gap-3 mb-4">
@@ -2098,10 +2127,10 @@ const CustomRoutingDialog = ({
               {t('settings.ai.customRouting')}
             </h3>
             <p className="mt-0.5 text-xs text-neutral-500 dark:text-neutral-400">
-              {workload.label}
+              {t(workload.labelKey)}
             </p>
             <p className="mt-2 max-w-md text-xs leading-5 text-neutral-500 dark:text-neutral-400">
-              {WORKLOAD_MODEL_HINTS[workload.id]}
+              {t(WORKLOAD_MODEL_HINT_KEYS[workload.id])}
             </p>
           </div>
           <Button
@@ -2966,24 +2995,10 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
   // applyPreset removed alongside the Cloud / Local / Mixed preset pills —
   // the new Default/Custom binary toggle handles routing per workload.
 
-  const diffSummary = useMemo(() => {
-    const out: string[] = [];
-    for (const w of WORKLOADS) {
-      const a = saved.routing[w.id];
-      const b = draft.routing[w.id];
-      if (JSON.stringify(a) !== JSON.stringify(b)) {
-        const describe = (r: ProviderRef) => {
-          if (r.kind === 'openhuman') return 'openhuman';
-          if (r.kind === 'default') return 'cloud';
-          const tempSuffix = r.temperature != null ? `@${r.temperature.toFixed(2)}` : '';
-          if (r.kind === 'cloud') return `${r.providerSlug}:${r.model}${tempSuffix}`;
-          return `local:${r.model}${tempSuffix}`;
-        };
-        out.push(`${w.label} → ${describe(b)}`);
-      }
-    }
-    return out;
-  }, [saved, draft]);
+  const diffSummary = useMemo(
+    () => buildRoutingDiffSummary(saved.routing, draft.routing, t),
+    [saved, draft, t]
+  );
 
   const chatRows = WORKLOADS.filter(w => w.group === 'chat');
   const bgRows = WORKLOADS.filter(w => w.group === 'background');

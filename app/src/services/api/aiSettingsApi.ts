@@ -148,6 +148,21 @@ export interface AISettings {
    * image attachments for custom/BYOK models.
    */
   modelRegistry: ModelRegistryEntry[];
+  /**
+   * #3767: authoritative, core-side per-tier decision (mirrors the Rust factory's
+   * real routing resolution). For each chat-mode tier (`chat` = Quick mode,
+   * `reasoning` = Reasoning mode), true when that tier runs on a non-managed
+   * provider the user funds themselves (a usable BYO key, local runtime, or
+   * claude-code). `useUsageState` checks the tier matching the selected mode so
+   * the "buy credits" prompt is hidden exactly when the core says that mode does
+   * not bill managed credits. Each entry is `false` when the core snapshot
+   * predates this field (conservative — keep gating).
+   *
+   * Optional: `loadAISettings` always populates it, but AIPanel reconstructs a
+   * draft `AISettings` for `saveAISettings` (which ignores this read-only field)
+   * and test fixtures may omit it — consumers treat a missing entry as `false`.
+   */
+  creditsBypass?: { chat: boolean; reasoning: boolean };
 }
 
 /** Re-export so callers (e.g. the AI panel) can reference the entry type. */
@@ -319,7 +334,15 @@ export async function loadAISettings(): Promise<AISettings> {
   // Per-model registry (vision flags). Defensive default for older snapshots.
   const modelRegistry: ModelRegistryEntry[] = config.model_registry ?? [];
 
-  return { cloudProviders, routing, modelRegistry };
+  // #3767: authoritative per-tier bypass flags from the core. Each entry
+  // defaults to false for older snapshots that don't carry it (conservative —
+  // keep the credits gate on).
+  const creditsBypass = {
+    chat: config.credits_bypass?.chat === true,
+    reasoning: config.credits_bypass?.reasoning === true,
+  };
+
+  return { cloudProviders, routing, modelRegistry, creditsBypass };
 }
 // ─── Write path: diff + save ───────────────────────────────────────────────
 

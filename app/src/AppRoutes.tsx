@@ -42,6 +42,7 @@ const AppRoutes = () => {
         }
       />
 
+      <Route path="/auth" element={<WebCallbackPage callbackKind="auth" />} />
       <Route path="/callback/:kind" element={<WebCallbackPage />} />
       <Route path="/callback/:kind/:status" element={<WebCallbackPage />} />
 
@@ -128,7 +129,7 @@ const AppRoutes = () => {
       {/* Unified chat = agent + connected web apps. Replaces the old
           /conversations and /accounts routes. */}
       <Route
-        path="/chat"
+        path="/chat/:threadId?"
         element={
           <ProtectedRoute requireAuth={true}>
             <Accounts />

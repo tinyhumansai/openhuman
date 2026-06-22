@@ -5,6 +5,7 @@ import { store } from '../../store';
 import { addAccount, resetAccountsState } from '../../store/accountsSlice';
 import {
   closeWebviewAccount,
+  hideWebviewAccount,
   openWebviewAccount,
   retryWebviewAccountLoad,
   setWebviewAccountBounds,
@@ -217,6 +218,22 @@ describe('webviewAccountService load listener', () => {
     await fireLoadEvent({ state: 'finished', url: 'x' });
 
     expect(vi.mocked(invoke)).not.toHaveBeenCalled();
+  });
+
+  it('skips reveal when a load finishes after the host hides during an overlay', async () => {
+    const bounds = { x: 5, y: 15, width: 1024, height: 768 };
+    await openWebviewAccount({ accountId: ACCOUNT_ID, provider: 'telegram', bounds });
+
+    vi.mocked(invoke).mockClear();
+    await hideWebviewAccount(ACCOUNT_ID);
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith('webview_account_hide', {
+      args: { account_id: ACCOUNT_ID },
+    });
+
+    vi.mocked(invoke).mockClear();
+    await fireLoadEvent({ state: 'finished', url: 'https://web.telegram.org/' });
+
+    expect(vi.mocked(invoke)).not.toHaveBeenCalledWith('webview_account_reveal', expect.anything());
   });
 
   it('retry re-opens with cached bounds and provider', async () => {

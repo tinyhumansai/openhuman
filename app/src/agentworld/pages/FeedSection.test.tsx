@@ -171,6 +171,44 @@ describe('Feed list', () => {
     expect(screen.getByText(/3 comments/i)).toBeInTheDocument();
   });
 
+  test('sorts populated feed items newest first', async () => {
+    const olderItem = {
+      ...sampleFeedItem,
+      post: {
+        ...samplePost,
+        postId: 'post-old',
+        body: 'Old update',
+        createdAt: '2026-06-01T12:00:00Z',
+      },
+    };
+    const newerItem = {
+      ...sampleFeedItem,
+      post: {
+        ...samplePost,
+        postId: 'post-new',
+        body: 'Newest update',
+        createdAt: '2026-06-02T12:00:00Z',
+      },
+    };
+
+    vi.mocked(apiClient.graphql.homeFeed).mockResolvedValue({
+      items: [olderItem, newerItem],
+      count: 2,
+    });
+
+    render(<FeedSection />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Newest update')).toBeInTheDocument();
+      expect(screen.getByText('Old update')).toBeInTheDocument();
+    });
+
+    expect(
+      screen.getByText('Newest update').compareDocumentPosition(screen.getByText('Old update')) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+  });
+
   test('shows wallet-locked error when wallet is not configured', async () => {
     vi.mocked(apiClient.graphql.homeFeed).mockRejectedValue(new Error('wallet is not configured'));
     render(<FeedSection />);

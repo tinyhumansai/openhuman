@@ -110,6 +110,21 @@ const messages: TranslationMap = {
   'common.create': 'Créer',
   'common.search': 'Rechercher',
   'common.loading': 'chargement…',
+  'sync.runs': 'synchronisations',
+  'sync.totalCost': 'total',
+  'sync.when': 'Quand',
+  'sync.source': 'Source',
+  'sync.items': 'Éléments',
+  'sync.tokens': 'Jetons',
+  'sync.cost': 'Coût',
+  'sync.duration': 'Durée',
+  'sync.noAuditEntries': "Aucune synchronisation enregistrée pour l'instant.",
+  'sync.timeAgo.justNow': "à l'instant",
+  'sync.timeAgo.minutes': 'il y a {n} min',
+  'sync.timeAgo.hours': 'il y a {n} h',
+  'sync.timeAgo.days': 'il y a {n} j',
+  'sync.status.success': 'Réussi',
+  'sync.status.failed': 'Échec',
   'common.error': 'Erreur',
   'common.success': 'Succès',
   'common.back': 'Retour',
@@ -2495,6 +2510,22 @@ const messages: TranslationMap = {
   'subconscious.decision.failed': 'Échoué',
   'subconscious.decision.cancelled': 'Annulé',
   'subconscious.decision.skipped': 'Ignoré',
+  // Subconscious triggers (event-driven orchestrator) debug panel
+  'subconsciousTriggers.title': 'Déclencheurs du subconscient',
+  'subconsciousTriggers.subtitle': "Orchestrateur d'arrière-plan piloté par événements",
+  'subconsciousTriggers.pipeline': 'Pipeline',
+  'subconsciousTriggers.mode': 'Mode',
+  'subconsciousTriggers.orchestrator': 'Orchestrateur',
+  'subconsciousTriggers.running': 'En cours',
+  'subconsciousTriggers.stopped': 'Arrêté',
+  'subconsciousTriggers.promotionsPerHour': 'Promotions / heure',
+  'subconsciousTriggers.queueDepth': 'Profondeur de la file',
+  'subconsciousTriggers.orchestratorThread': "Fil de l'orchestrateur",
+  'subconsciousTriggers.userThread': "Fil de l'utilisateur",
+  'subconsciousTriggers.disabledHint':
+    'Activez le mode piloté par événements pour démarrer le pipeline.',
+  'subconsciousTriggers.enable': 'Activer',
+  'subconsciousTriggers.disable': 'Désactiver',
   'actionable.complete': 'Terminer',
   'actionable.dismiss': 'Ignorer',
   'actionable.snooze': 'Reporter',
@@ -3693,6 +3724,46 @@ const messages: TranslationMap = {
   'settings.ai.routing.backgroundTasks': 'Tâches en arrière-plan',
   'settings.ai.routing.bgTasksDesc':
     "Modèles utilisés en dehors du flux principal de conversation pour la synthèse, le suivi, l'apprentissage et l'évaluation subconsciente.",
+  'settings.ai.routing.workload.chat.label': 'Chat',
+  'settings.ai.routing.workload.chat.description':
+    'Direct conversational back-and-forth — “Quick” mode in Conversations',
+  'settings.ai.routing.workload.chat.hint':
+    'Recommended: a cheap or mid-cost fast chat model with high tokens/sec and low latency. Open-source local models can work well here if they feel responsive.',
+  'settings.ai.routing.workload.reasoning.label': 'Reasoning',
+  'settings.ai.routing.workload.reasoning.description':
+    'Main chat agent, meeting summarizer — “Reasoning” mode in Conversations',
+  'settings.ai.routing.workload.reasoning.hint':
+    'Recommended: a more expensive frontier or strong reasoning model for deep thinking. This is used for the main chat agent, meeting summaries, and heavier answer synthesis.',
+  'settings.ai.routing.workload.agentic.label': 'Agentic',
+  'settings.ai.routing.workload.agentic.description':
+    'Sub-agent runners, tool loops, GIF decisions',
+  'settings.ai.routing.workload.agentic.hint':
+    'Recommended: a reliable instruction-following model with strong tool use. Mid-cost frontier models are usually safest; capable open-source models can work if tool calling is stable.',
+  'settings.ai.routing.workload.coding.label': 'Coding',
+  'settings.ai.routing.workload.coding.description': 'Code generation and refactor passes',
+  'settings.ai.routing.workload.coding.hint':
+    'Recommended: a coding-tuned model with strong instruction following, edit quality, and long-context performance. This is usually worth spending more on.',
+  'settings.ai.routing.workload.vision.label': 'Vision',
+  'settings.ai.routing.workload.vision.description':
+    'Image understanding for the vision sub-agent — always multimodal',
+  'settings.ai.routing.workload.vision.hint':
+    'Recommended: a multimodal model that accepts image input. The managed default (vision-v1) is image-capable; any provider you route here is always treated as vision-enabled.',
+  'settings.ai.routing.workload.memory.label': 'Memory summarization',
+  'settings.ai.routing.workload.memory.description': 'Tree-extracts and consolidations',
+  'settings.ai.routing.workload.memory.hint':
+    'Recommended: a cheaper summarization model. It should be consistent and compact, but it does not need premium frontier-level reasoning.',
+  'settings.ai.routing.workload.heartbeat.label': 'Heartbeat',
+  'settings.ai.routing.workload.heartbeat.description': 'Background reasoning between user turns',
+  'settings.ai.routing.workload.heartbeat.hint':
+    'Recommended: a cheap, efficient background model. This runs often between turns, so low cost matters more than maximum intelligence.',
+  'settings.ai.routing.workload.learning.label': 'Learning · Reflections',
+  'settings.ai.routing.workload.learning.description': 'Periodic reflection over recent history',
+  'settings.ai.routing.workload.learning.hint':
+    'Recommended: a stronger reflective model. This can be mid-cost or premium because it benefits from better synthesis over recent history.',
+  'settings.ai.routing.workload.subconscious.label': 'Subconscious',
+  'settings.ai.routing.workload.subconscious.description': 'Eventfulness scoring + drift checks',
+  'settings.ai.routing.workload.subconscious.hint':
+    'Recommended: a very cheap monitoring model, ideally one that is lightweight and predictable. This is for eventfulness scoring, drift checks, and quiet background evaluation.',
   'settings.ai.routing.addCustomProvider': 'Ajouter un fournisseur personnalisé',
   'settings.ai.globalModel.title': 'Choisissez un modèle pour tout',
   'settings.ai.globalModel.desc':

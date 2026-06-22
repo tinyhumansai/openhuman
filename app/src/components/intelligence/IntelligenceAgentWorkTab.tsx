@@ -11,7 +11,7 @@
  * {data, loading, error} state, mirroring {@link IntelligenceTasksTab}'s
  * mount pattern (mountedRef + a 0ms `setTimeout` so the first paint shows the
  * loading state before the RPC resolves). Each row offers jumps to the parent
- * / worker thread via the same navigate('/chat', { openThreadId }) path the
+ * / worker thread via the same /chat/:threadId path the
  * Tasks tab uses for "View session".
  */
 import debug from 'debug';
@@ -28,6 +28,7 @@ import {
 } from '../../services/api/agentWorkApi';
 import { useAppDispatch } from '../../store/hooks';
 import { loadThreadMessages, loadThreads, setSelectedThread } from '../../store/threadSlice';
+import { chatThreadPath } from '../../utils/chatRoutes';
 
 const log = debug('intelligence:agent-work');
 
@@ -158,7 +159,7 @@ export default function IntelligenceAgentWorkTab() {
       dispatch(setSelectedThread(threadId));
       void dispatch(loadThreads());
       void dispatch(loadThreadMessages(threadId));
-      navigate('/chat', { state: { openThreadId: threadId } });
+      navigate(chatThreadPath(threadId));
     },
     [dispatch, navigate]
   );

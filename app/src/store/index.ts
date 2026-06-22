@@ -116,7 +116,7 @@ const persistedChannelConnectionsReducer = persistReducer(
 // Issue #2044 — `activeAccountId` is deliberately NOT persisted. It is a
 // per-session UX selection: persisting it caused provider webviews to
 // auto-surface on dev hot reload / app restart without an explicit user
-// click, because `Accounts.tsx` immediately mounts `WebviewHost` for the
+// click, because the desktop shell immediately mounts `WebviewHost` for the
 // active account and `WebviewHost` calls `openWebviewAccount` on mount.
 // `lastActiveAccountId` is still persisted so the off-screen MRU prewarm
 // can warm the same account in the background — that webview stays

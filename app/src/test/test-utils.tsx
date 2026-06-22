@@ -12,6 +12,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { SidebarSlotOutlet, SidebarSlotProvider } from '../components/layout/shell/SidebarSlot';
 import { getCoreStateSnapshot } from '../lib/coreState/store';
 import { CoreStateContext } from '../providers/coreStateContext';
+import accountsReducer from '../store/accountsSlice';
 import backendMeetReducer from '../store/backendMeetSlice';
 import channelConnectionsReducer from '../store/channelConnectionsSlice';
 import companionReducer from '../store/companionSlice';
@@ -38,6 +39,7 @@ import themeReducer from '../store/themeSlice';
  * meeting status from this slice.
  */
 const testRootReducer = combineReducers({
+  accounts: accountsReducer,
   backendMeet: backendMeetReducer,
   channelConnections: channelConnectionsReducer,
   companion: companionReducer,

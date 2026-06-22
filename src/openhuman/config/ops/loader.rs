@@ -277,6 +277,23 @@ pub fn client_config_json(config: &Config) -> serde_json::Value {
         "cloud_providers": cloud_providers,
         "model_registry": model_registry,
         "primary_cloud": config.primary_cloud,
+        // #3767: authoritative, core-side decision telling the UI whether the
+        // managed-credits gate should be bypassed, per chat-mode tier. The chat
+        // header's "Quick" mode runs on the `chat` tier and "Reasoning" mode on
+        // the `reasoning` tier, so each is reported separately and the UI checks
+        // the tier the user actually selected. True for a tier when it runs on a
+        // non-managed provider the user funds themselves (BYO key / local /
+        // claude-code) with usable creds. Managed tiers that run anyway surface
+        // credit errors per-call.
+        "credits_bypass": {
+            "chat": crate::openhuman::inference::provider::factory::role_bypasses_managed_credits(
+                "chat", config,
+            ),
+            "reasoning":
+                crate::openhuman::inference::provider::factory::role_bypasses_managed_credits(
+                    "reasoning", config,
+                ),
+        },
         "chat_provider": config.chat_provider,
         "reasoning_provider": config.reasoning_provider,
         "agentic_provider": config.agentic_provider,

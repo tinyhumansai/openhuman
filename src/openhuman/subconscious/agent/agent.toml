@@ -29,4 +29,5 @@ named = [
     "scratchpad_edit",
     "scratchpad_remove",
     "spawn_subagent",
+    "notify_user",
 ]

@@ -98,10 +98,15 @@ mod tests {
     #[test]
     fn archetype_documents_current_tool_surface() {
         let body = build(&empty_ctx()).unwrap();
+        // Capability scope is still described in prose.
         assert!(body.contains("identity registration"));
         assert!(body.contains("encrypted DMs"));
         assert!(body.contains("marketplace trading"));
         assert!(body.contains("x402 payment challenges"));
-        assert!(!body.contains("tinyplace_job_apply"));
+        // The curated flow surface is named so the agent knows its tools.
+        assert!(body.contains("tinyplace_status"));
+        assert!(body.contains("tinyplace_graphql"));
+        assert!(body.contains("tinyplace_call"));
+        assert!(body.contains("tinyplace_help"));
     }
 }

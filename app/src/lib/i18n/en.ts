@@ -97,6 +97,21 @@ const en: TranslationMap = {
   'common.create': 'Create',
   'common.search': 'Search',
   'common.loading': 'Loading…',
+  'sync.runs': 'sync runs',
+  'sync.totalCost': 'total',
+  'sync.when': 'When',
+  'sync.source': 'Source',
+  'sync.items': 'Items',
+  'sync.tokens': 'Tokens',
+  'sync.cost': 'Cost',
+  'sync.duration': 'Duration',
+  'sync.noAuditEntries': 'No sync runs recorded yet.',
+  'sync.timeAgo.justNow': 'just now',
+  'sync.timeAgo.minutes': '{n}m ago',
+  'sync.timeAgo.hours': '{n}h ago',
+  'sync.timeAgo.days': '{n}d ago',
+  'sync.status.success': 'Success',
+  'sync.status.failed': 'Failed',
   'common.error': 'Error',
   'common.success': 'Success',
   'common.back': 'Back',
@@ -2920,6 +2935,22 @@ const en: TranslationMap = {
   'subconscious.decision.cancelled': 'Cancelled',
   'subconscious.decision.skipped': 'Skipped',
 
+  // Subconscious triggers (event-driven orchestrator) debug panel
+  'subconsciousTriggers.title': 'Subconscious Triggers',
+  'subconsciousTriggers.subtitle': 'Event-driven background orchestrator',
+  'subconsciousTriggers.pipeline': 'Pipeline',
+  'subconsciousTriggers.mode': 'Mode',
+  'subconsciousTriggers.orchestrator': 'Orchestrator',
+  'subconsciousTriggers.running': 'Running',
+  'subconsciousTriggers.stopped': 'Stopped',
+  'subconsciousTriggers.promotionsPerHour': 'Promotions / hour',
+  'subconsciousTriggers.queueDepth': 'Queue depth',
+  'subconsciousTriggers.orchestratorThread': 'Orchestrator thread',
+  'subconsciousTriggers.userThread': 'User thread',
+  'subconsciousTriggers.disabledHint': 'Enable event-driven mode to activate the pipeline.',
+  'subconsciousTriggers.enable': 'Enable',
+  'subconsciousTriggers.disable': 'Disable',
+
   // Actionable
   'actionable.complete': 'Complete',
   'actionable.dismiss': 'Dismiss',
@@ -3375,7 +3406,7 @@ const en: TranslationMap = {
   'composio.connect.dynamicsOrgNameHint':
     'For example, "myorg" for myorg.crm.dynamics.com. Enter the short org name only, not the full URL.',
   'composio.connect.dynamicsOrgNameLabel': 'Dynamics 365 Organization Name',
-  'composio.connect.connectionFailed': 'Connection failed (status: ${hit.status}).',
+  'composio.connect.connectionFailed': 'Connection failed (status: {status}).',
   'composio.connect.disconnectFailed': 'Disconnect failed: {msg}',
   'composio.connect.disconnecting': 'Disconnecting…',
   'composio.connect.idleDescription': 'Connect your',
@@ -3594,7 +3625,7 @@ const en: TranslationMap = {
   'intelligence.tasks.failedToLoad': 'Failed to load',
   'intelligence.tasks.live': 'live',
   'intelligence.tasks.loadingBoards': 'Loading task boards…',
-  'intelligence.tasks.threadPrefix': 'Thread {id}',
+  'intelligence.tasks.threadPrefix': 'Thread {thread}',
   'intelligence.tasks.subtitle': 'Your tasks and agent task boards across the workspace.',
   'intelligence.tasks.newTask': 'New task',
   'intelligence.tasks.personalBoardTitle': 'Agent Tasks',
@@ -4217,6 +4248,46 @@ const en: TranslationMap = {
   'settings.ai.routing.backgroundTasks': 'Background Tasks',
   'settings.ai.routing.bgTasksDesc':
     'Models used outside the main conversation flow for summarization, heartbeat, learning, and subconscious evaluation.',
+  'settings.ai.routing.workload.chat.label': 'Chat',
+  'settings.ai.routing.workload.chat.description':
+    'Direct conversational back-and-forth — “Quick” mode in Conversations',
+  'settings.ai.routing.workload.chat.hint':
+    'Recommended: a cheap or mid-cost fast chat model with high tokens/sec and low latency. Open-source local models can work well here if they feel responsive.',
+  'settings.ai.routing.workload.reasoning.label': 'Reasoning',
+  'settings.ai.routing.workload.reasoning.description':
+    'Main chat agent, meeting summarizer — “Reasoning” mode in Conversations',
+  'settings.ai.routing.workload.reasoning.hint':
+    'Recommended: a more expensive frontier or strong reasoning model for deep thinking. This is used for the main chat agent, meeting summaries, and heavier answer synthesis.',
+  'settings.ai.routing.workload.agentic.label': 'Agentic',
+  'settings.ai.routing.workload.agentic.description':
+    'Sub-agent runners, tool loops, GIF decisions',
+  'settings.ai.routing.workload.agentic.hint':
+    'Recommended: a reliable instruction-following model with strong tool use. Mid-cost frontier models are usually safest; capable open-source models can work if tool calling is stable.',
+  'settings.ai.routing.workload.coding.label': 'Coding',
+  'settings.ai.routing.workload.coding.description': 'Code generation and refactor passes',
+  'settings.ai.routing.workload.coding.hint':
+    'Recommended: a coding-tuned model with strong instruction following, edit quality, and long-context performance. This is usually worth spending more on.',
+  'settings.ai.routing.workload.vision.label': 'Vision',
+  'settings.ai.routing.workload.vision.description':
+    'Image understanding for the vision sub-agent — always multimodal',
+  'settings.ai.routing.workload.vision.hint':
+    'Recommended: a multimodal model that accepts image input. The managed default (vision-v1) is image-capable; any provider you route here is always treated as vision-enabled.',
+  'settings.ai.routing.workload.memory.label': 'Memory summarization',
+  'settings.ai.routing.workload.memory.description': 'Tree-extracts and consolidations',
+  'settings.ai.routing.workload.memory.hint':
+    'Recommended: a cheaper summarization model. It should be consistent and compact, but it does not need premium frontier-level reasoning.',
+  'settings.ai.routing.workload.heartbeat.label': 'Heartbeat',
+  'settings.ai.routing.workload.heartbeat.description': 'Background reasoning between user turns',
+  'settings.ai.routing.workload.heartbeat.hint':
+    'Recommended: a cheap, efficient background model. This runs often between turns, so low cost matters more than maximum intelligence.',
+  'settings.ai.routing.workload.learning.label': 'Learning · Reflections',
+  'settings.ai.routing.workload.learning.description': 'Periodic reflection over recent history',
+  'settings.ai.routing.workload.learning.hint':
+    'Recommended: a stronger reflective model. This can be mid-cost or premium because it benefits from better synthesis over recent history.',
+  'settings.ai.routing.workload.subconscious.label': 'Subconscious',
+  'settings.ai.routing.workload.subconscious.description': 'Eventfulness scoring + drift checks',
+  'settings.ai.routing.workload.subconscious.hint':
+    'Recommended: a very cheap monitoring model, ideally one that is lightweight and predictable. This is for eventfulness scoring, drift checks, and quiet background evaluation.',
   'settings.ai.routing.addCustomProvider': 'Add Custom Provider',
   'settings.ai.globalModel.title': 'Choose one model for everything',
   'settings.ai.globalModel.desc':

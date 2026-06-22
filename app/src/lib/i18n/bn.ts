@@ -109,6 +109,21 @@ const messages: TranslationMap = {
   'common.create': 'তৈরি করুন',
   'common.search': 'খুঁজুন',
   'common.loading': 'লোড হচ্ছে…',
+  'sync.runs': 'সিঙ্ক রান',
+  'sync.totalCost': 'মোট',
+  'sync.when': 'কখন',
+  'sync.source': 'উৎস',
+  'sync.items': 'আইটেম',
+  'sync.tokens': 'টোকেন',
+  'sync.cost': 'খরচ',
+  'sync.duration': 'সময়কাল',
+  'sync.noAuditEntries': 'এখনও কোনো সিঙ্ক রান রেকর্ড করা হয়নি।',
+  'sync.timeAgo.justNow': 'এইমাত্র',
+  'sync.timeAgo.minutes': '{n} মি. আগে',
+  'sync.timeAgo.hours': '{n} ঘ. আগে',
+  'sync.timeAgo.days': '{n} দি. আগে',
+  'sync.status.success': 'সফল',
+  'sync.status.failed': 'ব্যর্থ',
   'common.error': 'ত্রুটি',
   'common.success': 'সফল',
   'common.back': 'পেছনে',
@@ -2438,6 +2453,21 @@ const messages: TranslationMap = {
   'subconscious.decision.failed': 'ব্যর্থ',
   'subconscious.decision.cancelled': 'বাতিল',
   'subconscious.decision.skipped': 'এড়িয়ে গেছে',
+  // Subconscious triggers (event-driven orchestrator) debug panel
+  'subconsciousTriggers.title': 'সাবকনশাস ট্রিগার',
+  'subconsciousTriggers.subtitle': 'ইভেন্ট-চালিত ব্যাকগ্রাউন্ড অর্কেস্ট্রেটর',
+  'subconsciousTriggers.pipeline': 'পাইপলাইন',
+  'subconsciousTriggers.mode': 'মোড',
+  'subconsciousTriggers.orchestrator': 'অর্কেস্ট্রেটর',
+  'subconsciousTriggers.running': 'চলছে',
+  'subconsciousTriggers.stopped': 'বন্ধ',
+  'subconsciousTriggers.promotionsPerHour': 'প্রমোশন / ঘণ্টা',
+  'subconsciousTriggers.queueDepth': 'সারির গভীরতা',
+  'subconsciousTriggers.orchestratorThread': 'অর্কেস্ট্রেটর থ্রেড',
+  'subconsciousTriggers.userThread': 'ব্যবহারকারী থ্রেড',
+  'subconsciousTriggers.disabledHint': 'পাইপলাইন সক্রিয় করতে ইভেন্ট-চালিত মোড সক্ষম করুন।',
+  'subconsciousTriggers.enable': 'সক্ষম করুন',
+  'subconsciousTriggers.disable': 'নিষ্ক্রিয় করুন',
   'actionable.complete': 'সম্পন্ন',
   'actionable.dismiss': 'বাদ দিন',
   'actionable.snooze': 'স্নুজ',
@@ -3615,6 +3645,46 @@ const messages: TranslationMap = {
   'settings.ai.routing.backgroundTasks': 'ব্যাকগ্রাউন্ড টাস্ক',
   'settings.ai.routing.bgTasksDesc':
     'তুলনা, হার্টবিট, শিক্ষা এবং অবচেতনের মূল্যায়নের মূল কথোপকথনের বাইরে যে মডেলগুলো ব্যবহার করা হয়েছে সেগুলো ব্যবহার করা হয়েছে।',
+  'settings.ai.routing.workload.chat.label': 'Chat',
+  'settings.ai.routing.workload.chat.description':
+    'Direct conversational back-and-forth — “Quick” mode in Conversations',
+  'settings.ai.routing.workload.chat.hint':
+    'Recommended: a cheap or mid-cost fast chat model with high tokens/sec and low latency. Open-source local models can work well here if they feel responsive.',
+  'settings.ai.routing.workload.reasoning.label': 'Reasoning',
+  'settings.ai.routing.workload.reasoning.description':
+    'Main chat agent, meeting summarizer — “Reasoning” mode in Conversations',
+  'settings.ai.routing.workload.reasoning.hint':
+    'Recommended: a more expensive frontier or strong reasoning model for deep thinking. This is used for the main chat agent, meeting summaries, and heavier answer synthesis.',
+  'settings.ai.routing.workload.agentic.label': 'Agentic',
+  'settings.ai.routing.workload.agentic.description':
+    'Sub-agent runners, tool loops, GIF decisions',
+  'settings.ai.routing.workload.agentic.hint':
+    'Recommended: a reliable instruction-following model with strong tool use. Mid-cost frontier models are usually safest; capable open-source models can work if tool calling is stable.',
+  'settings.ai.routing.workload.coding.label': 'Coding',
+  'settings.ai.routing.workload.coding.description': 'Code generation and refactor passes',
+  'settings.ai.routing.workload.coding.hint':
+    'Recommended: a coding-tuned model with strong instruction following, edit quality, and long-context performance. This is usually worth spending more on.',
+  'settings.ai.routing.workload.vision.label': 'Vision',
+  'settings.ai.routing.workload.vision.description':
+    'Image understanding for the vision sub-agent — always multimodal',
+  'settings.ai.routing.workload.vision.hint':
+    'Recommended: a multimodal model that accepts image input. The managed default (vision-v1) is image-capable; any provider you route here is always treated as vision-enabled.',
+  'settings.ai.routing.workload.memory.label': 'Memory summarization',
+  'settings.ai.routing.workload.memory.description': 'Tree-extracts and consolidations',
+  'settings.ai.routing.workload.memory.hint':
+    'Recommended: a cheaper summarization model. It should be consistent and compact, but it does not need premium frontier-level reasoning.',
+  'settings.ai.routing.workload.heartbeat.label': 'Heartbeat',
+  'settings.ai.routing.workload.heartbeat.description': 'Background reasoning between user turns',
+  'settings.ai.routing.workload.heartbeat.hint':
+    'Recommended: a cheap, efficient background model. This runs often between turns, so low cost matters more than maximum intelligence.',
+  'settings.ai.routing.workload.learning.label': 'Learning · Reflections',
+  'settings.ai.routing.workload.learning.description': 'Periodic reflection over recent history',
+  'settings.ai.routing.workload.learning.hint':
+    'Recommended: a stronger reflective model. This can be mid-cost or premium because it benefits from better synthesis over recent history.',
+  'settings.ai.routing.workload.subconscious.label': 'Subconscious',
+  'settings.ai.routing.workload.subconscious.description': 'Eventfulness scoring + drift checks',
+  'settings.ai.routing.workload.subconscious.hint':
+    'Recommended: a very cheap monitoring model, ideally one that is lightweight and predictable. This is for eventfulness scoring, drift checks, and quiet background evaluation.',
   'settings.ai.routing.addCustomProvider': 'কাস্টম প্রদানকারী যোগ করুন',
   'settings.ai.globalModel.title': 'সবকিছুর জন্য একটি মডেল চয়ন করুন',
   'settings.ai.globalModel.desc':
