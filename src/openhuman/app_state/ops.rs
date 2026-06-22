@@ -946,6 +946,13 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
         .await
         {
             Ok(Ok(Some(fresh_user))) => {
+                if pending_backend_validation && user_id_from_profile_payload(&fresh_user).is_none()
+                {
+                    warn!(
+                        "{LOG_PREFIX} pending current user refresh returned a user without an id; keeping stored pending session for retry"
+                    );
+                    return SnapshotCurrentUser::User(stored_user.clone());
+                }
                 let fresh_user = clear_pending_backend_validation_flag(fresh_user);
                 if pending_backend_validation {
                     match persist_revalidated_session_user(

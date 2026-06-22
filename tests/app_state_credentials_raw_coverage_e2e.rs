@@ -633,6 +633,83 @@ async fn snapshot_clears_pending_backend_validation_after_successful_revalidatio
 }
 
 #[tokio::test]
+async fn snapshot_preserves_pending_session_when_revalidation_user_lacks_id() {
+    let _lock = env_lock();
+    let (api_url, server_task, shutdown_tx) =
+        auth_me_server(r#"{"data":{"name":"No Id User","email":"no-id@example.test"}}"#).await;
+    let harness = setup(&api_url);
+    let config = harness.config().await;
+
+    let mut metadata = HashMap::new();
+    metadata.insert("user_id".to_string(), "pending-no-id-user".to_string());
+    metadata.insert(
+        "user_json".to_string(),
+        json!({
+            "id": "pending-no-id-user",
+            "name": "Pending No Id User",
+            "email": "pending-no-id@example.test",
+            "pendingBackendValidation": true
+        })
+        .to_string(),
+    );
+    AuthService::from_config(&config)
+        .store_provider_token(
+            APP_SESSION_PROVIDER,
+            DEFAULT_AUTH_PROFILE_NAME,
+            "round14.pending.no-id",
+            metadata,
+            true,
+        )
+        .expect("seed no-id pending app session");
+
+    let snap = snapshot()
+        .await
+        .expect("snapshot with no-id pending revalidation")
+        .value;
+    assert!(
+        snap.auth.is_authenticated,
+        "pending session remains locally authenticated while backend identity lacks id"
+    );
+    assert_eq!(snap.session_token.as_deref(), Some("round14.pending.no-id"));
+    assert_eq!(
+        snap.current_user.as_ref().and_then(|v| v.get("id")),
+        Some(&json!("pending-no-id-user"))
+    );
+    assert_eq!(
+        snap.current_user
+            .as_ref()
+            .and_then(|v| v.get("pendingBackendValidation")),
+        Some(&json!(true)),
+        "no-id revalidation must not clear pendingBackendValidation"
+    );
+
+    let profile = AuthService::from_config(&config)
+        .get_profile(APP_SESSION_PROVIDER, None)
+        .expect("read profile after no-id revalidation")
+        .expect("profile remains pending after no-id revalidation");
+    assert_eq!(
+        profile.metadata.get("user_id").map(String::as_str),
+        Some("pending-no-id-user"),
+        "stale pending user id remains marked pending rather than validated"
+    );
+    let stored_user: Value = serde_json::from_str(
+        profile
+            .metadata
+            .get("user_json")
+            .expect("persisted no-id user_json"),
+    )
+    .expect("stored no-id user json");
+    assert_eq!(
+        stored_user.get("pendingBackendValidation"),
+        Some(&json!(true)),
+        "persisted no-id session must stay pending"
+    );
+
+    let _ = shutdown_tx.send(());
+    let _ = server_task.await;
+}
+
+#[tokio::test]
 async fn snapshot_activates_user_dir_after_pending_revalidation_without_initial_user_id() {
     let _lock = env_lock();
     let (api_url, server_task, shutdown_tx) = auth_me_server(
