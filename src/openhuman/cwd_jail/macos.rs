@@ -98,10 +98,12 @@ fn render_profile(jail: &Jail) -> String {
 
     // The actual directory jail: deny writes everywhere, then re-allow
     // them under root + /private/tmp (the macOS scratchpad most tools
-    // assume exists and is writable).
+    // assume exists and is writable). Keep /dev/null available too: common
+    // CLI tools (including git) open it read/write for stdio plumbing even
+    // during read-only operations such as `git status`.
     out.push_str("(deny file-write*)\n");
     out.push_str(&format!(
-        "(allow file-write*\n  (subpath \"{}\")\n  (subpath \"/private/tmp\")\n)\n",
+        "(allow file-write*\n  (subpath \"{}\")\n  (subpath \"/private/tmp\")\n  (literal \"/dev/null\")\n)\n",
         escape(&jail.root.to_string_lossy())
     ));
 
@@ -229,7 +231,15 @@ mod tests {
         assert!(p.contains("(allow default)"));
         assert!(p.contains("(deny file-write*)"));
         assert!(p.contains("(subpath \"/tmp/abc\")"));
+        assert!(p.contains("(literal \"/dev/null\")"));
         assert!(p.contains("(deny network*)"));
+    }
+
+    #[test]
+    fn profile_allows_dev_null_for_cli_stdio_plumbing() {
+        let jail = Jail::new("/tmp/abc", "test");
+        let p = render_profile(&jail);
+        assert!(p.contains("(literal \"/dev/null\")"));
     }
 
     #[test]
