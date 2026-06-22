@@ -76,10 +76,16 @@ pub fn all_tools(
         action_dir,
         agents,
         root_config,
+        None,
+        None,
     )
 }
 
 /// Create full tool registry including memory tools.
+///
+/// `skill_allowlist` / `mcp_allowlist` scope the skill (workflow) and MCP-server
+/// surfaces to an active agent profile's selection. `None` for either means
+/// "all" (the default for every non-profile caller).
 #[allow(clippy::implicit_hasher, clippy::too_many_arguments)]
 pub fn all_tools_with_runtime(
     config: Arc<Config>,
@@ -92,6 +98,8 @@ pub fn all_tools_with_runtime(
     action_dir: &std::path::Path,
     agents: &HashMap<String, DelegateAgentConfig>,
     root_config: &crate::openhuman::config::Config,
+    skill_allowlist: Option<&std::collections::HashSet<String>>,
+    mcp_allowlist: Option<&[String]>,
 ) -> Vec<Box<dyn Tool>> {
     // Build a session-scoped managed Node.js bootstrap once, so ShellTool,
     // NodeExecTool, and NpmExecTool all share the same memoised resolution
@@ -159,6 +167,13 @@ pub fn all_tools_with_runtime(
         // `agent::harness::subagent_runner` for the dispatch path.
         Box::new(SpawnSubagentTool::new()),
         Box::new(SpawnAsyncSubagentTool::new()),
+        // Steer a running async sub-agent mid-flight and collect its result:
+        // `steer_subagent { task_id, message }` injects into the child's
+        // run-queue (drained at its next iteration boundary), `wait_subagent
+        // { task_id }` blocks for the final output. See
+        // `agent_orchestration::running_subagents`.
+        Box::new(SteerSubagentTool::new()),
+        Box::new(WaitSubagentTool::new()),
         Box::new(ContinueSubagentTool::new()),
         Box::new(SpawnParallelAgentsTool::new()),
         Box::new(DelegateToPersonalityTool::new()),
@@ -180,9 +195,13 @@ pub fn all_tools_with_runtime(
         // Both wrap `skill_runtime::spawn_workflow_run_background` +
         // `await_run_outcome` — the same spawn path `openhuman.workflows_run`
         // JSON-RPC uses, so RPC and tool callers stay in sync.
-        Box::new(RunWorkflowTool::new()),
+        Box::new(RunWorkflowTool::new().with_skill_allowlist(skill_allowlist.cloned())),
         Box::new(AwaitWorkflowTool::new()),
         Box::new(CurrentTimeTool::new()),
+        // Reversibility for native tool-output compaction (Stage 1a): when a
+        // large result is compacted with a `retrieve_tool_output("<hash>")`
+        // marker, this hands the original back from the CCR store on demand.
+        Box::new(RetrieveToolOutputTool::new()),
         // Deterministic time-expression → timestamp resolver. `current_time`
         // only returns *now*, leaving the model to do epoch arithmetic by hand
         // (a real incident had an agent compute "24h ago" ~10 months off, then
@@ -306,8 +325,13 @@ pub fn all_tools_with_runtime(
         // above, so it is not duplicated. Reads ship default-ON; the
         // create/install/uninstall mutators ship default-OFF via
         // `tools::user_filter` (install also fetches remote content).
-        Box::new(WorkflowListTool::new(config.clone())),
-        Box::new(WorkflowDescribeTool::new(config.clone())),
+        Box::new(
+            WorkflowListTool::new(config.clone()).with_skill_allowlist(skill_allowlist.cloned()),
+        ),
+        Box::new(
+            WorkflowDescribeTool::new(config.clone())
+                .with_skill_allowlist(skill_allowlist.cloned()),
+        ),
         // Skill registry tools — browse/search/install from remote registries.
         // Browse and search are read-only (default-ON); install is a write
         // operation (fetches remote content and writes to disk).
@@ -319,7 +343,10 @@ pub fn all_tools_with_runtime(
         // Skill runtime probes — resolve the reusable Node/Python runtimes
         // that skill execution relies on before a script-backed skill runs.
         Box::new(SkillRuntimeResolveRuntimesTool::new(config.clone())),
-        Box::new(WorkflowReadResourceTool::new(config.clone())),
+        Box::new(
+            WorkflowReadResourceTool::new(config.clone())
+                .with_skill_allowlist(skill_allowlist.cloned()),
+        ),
         Box::new(WorkflowRecentRunsTool::new(config.clone())),
         Box::new(WorkflowReadRunLogTool::new(config.clone())),
         Box::new(WorkflowCreateTool::new(config.clone())),
@@ -481,6 +508,7 @@ pub fn all_tools_with_runtime(
         Box::new(McpRegistryGetTool::new(config.clone())),
         Box::new(McpRegistryInstalledListTool::new(config.clone())),
         Box::new(McpRegistryStatusTool::new(config.clone())),
+        Box::new(McpRegistryListToolsTool),
         Box::new(McpRegistryConnectTool::new(config.clone())),
         Box::new(McpRegistryDisconnectTool),
         Box::new(McpRegistryToolCallTool),
@@ -500,6 +528,17 @@ pub fn all_tools_with_runtime(
 
     // Subconscious scratchpad tools — persistent working memory across ticks.
     tools.extend(crate::openhuman::subconscious::scratchpad::tools::all_scratchpad_tools());
+
+    // tiny.place agent surface. These wrap the internal tiny.place controllers
+    // so the dedicated tinyplace subagent can register identities, inspect
+    // inbox/DM state, trade marketplace assets, manage groups, and work jobs
+    // through the same validation/client paths as JSON-RPC.
+    let tinyplace_tools = crate::openhuman::tinyplace::tools::all_tinyplace_agent_tools();
+    log::debug!(
+        "[tools::ops][tinyplace] registering tinyplace agent tools count={}",
+        tinyplace_tools.len()
+    );
+    tools.extend(tinyplace_tools);
 
     // Presentation generation (#2778). Native-Rust engine (ppt-rs
     // backed) as of the #2780-follow-up rust-engine refactor — no
@@ -585,7 +624,15 @@ pub fn all_tools_with_runtime(
 
     // gitbooks — answers questions about OpenHuman by calling the
     // GitBook MCP server. Two tools mirroring the upstream MCP tools.
-    if root_config.gitbooks.enabled {
+    // Gitbooks is modelled as a legacy MCP server (`McpServerRegistry`), so it
+    // honours the same per-profile `mcp_allowlist`: a profile that scopes its
+    // MCP servers and omits "gitbooks" must not see this surface either.
+    let gitbooks_allowed = mcp_allowlist.is_none_or(|allowed| {
+        allowed
+            .iter()
+            .any(|name| name.eq_ignore_ascii_case("gitbooks"))
+    });
+    if root_config.gitbooks.enabled && gitbooks_allowed {
         tools.push(Box::new(GitbooksSearchTool::new(
             root_config.gitbooks.endpoint.clone(),
             root_config.gitbooks.timeout_secs,
@@ -595,6 +642,8 @@ pub fn all_tools_with_runtime(
             root_config.gitbooks.timeout_secs,
         )));
         tracing::debug!("[gitbooks] registered gitbooks_search + gitbooks_get_page");
+    } else if root_config.gitbooks.enabled {
+        tracing::debug!("[profiles] gitbooks tools suppressed by profile mcp allowlist");
     }
 
     // MCP setup-agent tool surface (search/get/request_secret/test/install).
@@ -614,8 +663,15 @@ pub fn all_tools_with_runtime(
     // Generic remote MCP bridge tools. These let the agent enumerate
     // named MCP servers and forward `tools/call` through the core
     // instead of hardcoding one bespoke MCP integration per server.
-    let mcp_registry =
-        Arc::new(crate::openhuman::mcp_client::McpServerRegistry::from_config(root_config));
+    let mcp_registry = {
+        let base = crate::openhuman::mcp_client::McpServerRegistry::from_config(root_config);
+        // Scope the MCP surface to the active profile's allowlist. `None` keeps
+        // every configured server; `Some(&[])` yields an empty registry.
+        match mcp_allowlist {
+            Some(allowed) => Arc::new(base.retaining_servers(allowed)),
+            None => Arc::new(base),
+        }
+    };
     if !mcp_registry.is_empty() {
         tools.push(Box::new(McpListServersTool::new(Arc::clone(&mcp_registry))));
         tools.push(Box::new(McpListToolsTool::new(Arc::clone(&mcp_registry))));

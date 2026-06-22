@@ -11,7 +11,6 @@ export const THREAD_NOT_FOUND_MESSAGE = 'This thread is no longer available.';
 interface ThreadState {
   threads: Thread[];
   selectedThreadId: string | null;
-  threadSidebarVisible: boolean;
   /**
    * Set of threads that currently have an in-flight inference turn, keyed by
    * thread id. Replaces the legacy single `activeThreadId` so that turns on
@@ -36,7 +35,6 @@ interface ThreadState {
 const initialState: ThreadState = {
   threads: [],
   selectedThreadId: null,
-  threadSidebarVisible: false,
   activeThreadIds: {},
   welcomeThreadId: null,
   messagesByThreadId: {},
@@ -370,9 +368,6 @@ const threadSlice = createSlice({
     clearThreadInferenceActive: (state, action: PayloadAction<string>) => {
       delete state.activeThreadIds[action.payload];
     },
-    setThreadSidebarVisible: (state, action: PayloadAction<boolean>) => {
-      state.threadSidebarVisible = action.payload;
-    },
     clearStaleThread: (state, action: PayloadAction<string>) => {
       const threadId = action.payload;
       state.threads = state.threads.filter(thread => thread.id !== threadId);
@@ -497,7 +492,6 @@ export const {
   setActiveThread,
   markThreadInferenceActive,
   clearThreadInferenceActive,
-  setThreadSidebarVisible,
   clearStaleThread,
   clearAllThreads,
   resetThreadCachesPreservingSelection,

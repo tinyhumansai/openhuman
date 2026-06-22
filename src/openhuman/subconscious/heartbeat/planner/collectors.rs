@@ -58,6 +58,7 @@ pub(crate) fn collect_cron_reminders(config: &Config, now: DateTime<Utc>) -> Vec
                 title,
                 body,
                 deep_link: Some("/settings/cron-jobs".to_string()),
+                meeting_url: None,
                 anchor_at: job.next_run,
             }
         })
@@ -355,6 +356,7 @@ fn collect_calendar_events_recursive(
                         .and_then(serde_json::Value::as_str)
                         .or_else(|| map.get("hangoutLink").and_then(serde_json::Value::as_str))
                         .map(ToString::to_string);
+                    let meeting_url = extract_meeting_url_from_map(map);
 
                     let fingerprint = stable_key(&format!(
                         "{}:{}:{}:{}",
@@ -377,6 +379,7 @@ fn collect_calendar_events_recursive(
                         title: title.clone(),
                         body: format!("{} starts at {}.", title, starts_at.format("%H:%M")),
                         deep_link,
+                        meeting_url,
                         anchor_at: starts_at,
                     });
                 }
@@ -428,6 +431,72 @@ fn extract_title_from_map(map: &serde_json::Map<String, serde_json::Value>) -> S
         .map(|raw| sanitize_preview(raw, 80))
         .filter(|title| !title.is_empty())
         .unwrap_or_else(|| "Upcoming meeting".to_string())
+}
+
+const MEETING_HOST_PATTERNS: &[&str] = &[
+    "meet.google.com",
+    "zoom.us",
+    "teams.microsoft.com",
+    "webex.com",
+];
+
+fn is_meeting_url(raw: &str) -> bool {
+    MEETING_HOST_PATTERNS.iter().any(|pat| raw.contains(pat))
+}
+
+/// Pull the first parseable meeting URL out of a free-form string.
+///
+/// Calendar `location` is free-form and commonly mixes a label with a URL
+/// (e.g. `Zoom Meeting: https://zoom.us/j/123`). Returning the whole string
+/// would produce a `meeting_url` that the join handler's `url::Url::parse`
+/// later rejects, leaving AskEachTime prompts with buttons that always fail
+/// while the generic reminder stays suppressed. So scan tokens for one that
+/// both matches a known meeting host and parses as an http(s) URL.
+fn extract_meeting_url_from_text(text: &str) -> Option<String> {
+    text.split_whitespace()
+        // Strip surrounding punctuation that often hugs a URL in prose:
+        // "(https://zoom.us/j/123)," -> "https://zoom.us/j/123".
+        .map(|tok| {
+            tok.trim_matches(|c: char| {
+                matches!(
+                    c,
+                    '(' | ')' | '[' | ']' | '<' | '>' | ',' | ';' | '"' | '\'' | '.'
+                )
+            })
+        })
+        .filter(|tok| is_meeting_url(tok))
+        .find_map(|tok| {
+            let parsed = url::Url::parse(tok).ok()?;
+            matches!(parsed.scheme(), "http" | "https").then(|| parsed.to_string())
+        })
+}
+
+fn extract_meeting_url_from_map(
+    map: &serde_json::Map<String, serde_json::Value>,
+) -> Option<String> {
+    map.get("hangoutLink")
+        .and_then(serde_json::Value::as_str)
+        .filter(|url| is_meeting_url(url))
+        .map(ToString::to_string)
+        .or_else(|| {
+            map.get("conferenceData")
+                .and_then(|cd| cd.get("entryPoints"))
+                .and_then(serde_json::Value::as_array)
+                .and_then(|entries| {
+                    entries.iter().find_map(|entry| {
+                        entry
+                            .get("uri")
+                            .and_then(serde_json::Value::as_str)
+                            .filter(|url| is_meeting_url(url))
+                            .map(ToString::to_string)
+                    })
+                })
+        })
+        .or_else(|| {
+            map.get("location")
+                .and_then(serde_json::Value::as_str)
+                .and_then(extract_meeting_url_from_text)
+        })
 }
 
 fn parse_datetime(raw: &str) -> Option<DateTime<Utc>> {
@@ -489,6 +558,7 @@ pub(crate) fn collect_relevant_notifications(
                 title,
                 body,
                 deep_link: Some("/notifications".to_string()),
+                meeting_url: None,
                 anchor_at: item.received_at,
             }
         })
@@ -575,5 +645,106 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(selected, vec!["active-cal"]);
+    }
+
+    // ── extract_meeting_url_from_map ─────────────────────────────
+
+    fn map_from_value(v: serde_json::Value) -> serde_json::Map<String, serde_json::Value> {
+        match v {
+            serde_json::Value::Object(m) => m,
+            _ => panic!("expected object"),
+        }
+    }
+
+    #[test]
+    fn extract_meeting_url_picks_hangout_link() {
+        let map = map_from_value(serde_json::json!({
+            "hangoutLink": "https://meet.google.com/abc-defg-hij",
+            "summary": "Standup"
+        }));
+        assert_eq!(
+            extract_meeting_url_from_map(&map).as_deref(),
+            Some("https://meet.google.com/abc-defg-hij")
+        );
+    }
+
+    #[test]
+    fn extract_meeting_url_picks_conference_data_entry_point() {
+        let map = map_from_value(serde_json::json!({
+            "conferenceData": {
+                "entryPoints": [
+                    { "entryPointType": "phone", "uri": "tel:+1234567890" },
+                    { "entryPointType": "video", "uri": "https://meet.google.com/xyz-uvwx-yz1" }
+                ]
+            }
+        }));
+        assert_eq!(
+            extract_meeting_url_from_map(&map).as_deref(),
+            Some("https://meet.google.com/xyz-uvwx-yz1")
+        );
+    }
+
+    #[test]
+    fn extract_meeting_url_picks_zoom_from_location() {
+        let map = map_from_value(serde_json::json!({
+            "location": "https://zoom.us/j/123456789"
+        }));
+        assert_eq!(
+            extract_meeting_url_from_map(&map).as_deref(),
+            Some("https://zoom.us/j/123456789")
+        );
+    }
+
+    #[test]
+    fn extract_meeting_url_picks_url_out_of_free_form_location() {
+        // A label + URL is the common calendar shape; we must return only the
+        // parseable URL, not the whole string (which url::Url::parse rejects).
+        let map = map_from_value(serde_json::json!({
+            "location": "Zoom Meeting: (https://zoom.us/j/123456789), dial-in optional"
+        }));
+        assert_eq!(
+            extract_meeting_url_from_map(&map).as_deref(),
+            Some("https://zoom.us/j/123456789")
+        );
+    }
+
+    #[test]
+    fn extract_meeting_url_rejects_unparseable_location() {
+        // Mentions a host substring but has no real URL — must not leak a value
+        // the join handler would reject.
+        let map = map_from_value(serde_json::json!({
+            "location": "Conference Room — ask host for the zoom.us link"
+        }));
+        assert_eq!(extract_meeting_url_from_map(&map), None);
+    }
+
+    #[test]
+    fn extract_meeting_url_rejects_non_meeting_hangout_link() {
+        let map = map_from_value(serde_json::json!({
+            "hangoutLink": "https://not-a-meeting-host.example.com/room/abc"
+        }));
+        assert_eq!(extract_meeting_url_from_map(&map), None);
+    }
+
+    #[test]
+    fn extract_meeting_url_returns_none_for_plain_event() {
+        let map = map_from_value(serde_json::json!({
+            "summary": "Lunch",
+            "location": "Office kitchen"
+        }));
+        assert_eq!(extract_meeting_url_from_map(&map), None);
+    }
+
+    #[test]
+    fn extract_meeting_url_strips_trailing_period() {
+        // url::Url::parse accepts a trailing period as a path segment, but it
+        // produces a subtly different URL. Strip it at the token-trim level.
+        let map = map_from_value(serde_json::json!({
+            "location": "Join the call: https://zoom.us/j/999888777."
+        }));
+        assert_eq!(
+            extract_meeting_url_from_map(&map).as_deref(),
+            Some("https://zoom.us/j/999888777")
+        );
     }
 }

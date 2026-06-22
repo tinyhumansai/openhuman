@@ -63,7 +63,7 @@ pub const BYOK_INCOMPLETE_SENTINEL: &str = "__byok_incomplete__";
 fn is_abstract_tier_model(model: &str) -> bool {
     use crate::openhuman::config::{
         MODEL_AGENTIC_V1, MODEL_CHAT_V1, MODEL_CODING_V1, MODEL_REASONING_QUICK_V1,
-        MODEL_REASONING_V1,
+        MODEL_REASONING_V1, MODEL_VISION_V1,
     };
     // No dedicated constant for the summarization tier yet; keep the literal
     // in sync with the tier name used by the summarizer sub-agent.
@@ -74,6 +74,7 @@ fn is_abstract_tier_model(model: &str) -> bool {
         || trimmed == MODEL_CHAT_V1
         || trimmed == MODEL_AGENTIC_V1
         || trimmed == MODEL_CODING_V1
+        || trimmed == MODEL_VISION_V1
         || trimmed == MODEL_SUMMARIZATION_V1
 }
 
@@ -96,6 +97,7 @@ pub fn resolve_model_for_hint(hint_or_tier: &str, config: &Config) -> String {
         ("chat", crate::openhuman::config::MODEL_CHAT_V1),
         ("agentic", crate::openhuman::config::MODEL_AGENTIC_V1),
         ("coding", crate::openhuman::config::MODEL_CODING_V1),
+        ("vision", crate::openhuman::config::MODEL_VISION_V1),
         ("summarization", "summarization-v1"),
     ];
     let tier_to_role: &[(&str, &str)] = &[
@@ -104,6 +106,7 @@ pub fn resolve_model_for_hint(hint_or_tier: &str, config: &Config) -> String {
         (crate::openhuman::config::MODEL_REASONING_QUICK_V1, "chat"),
         (crate::openhuman::config::MODEL_AGENTIC_V1, "agentic"),
         (crate::openhuman::config::MODEL_CODING_V1, "coding"),
+        (crate::openhuman::config::MODEL_VISION_V1, "vision"),
         ("summarization-v1", "summarization"),
     ];
 
@@ -154,7 +157,7 @@ pub fn resolve_model_for_hint(hint_or_tier: &str, config: &Config) -> String {
 pub(crate) fn is_known_openhuman_tier(model: &str) -> bool {
     use crate::openhuman::config::{
         MODEL_AGENTIC_V1, MODEL_CHAT_V1, MODEL_CODING_V1, MODEL_REASONING_QUICK_V1,
-        MODEL_REASONING_V1, MODEL_SUMMARIZATION_V1,
+        MODEL_REASONING_V1, MODEL_SUMMARIZATION_V1, MODEL_VISION_V1,
     };
     matches!(
         model,
@@ -164,11 +167,13 @@ pub(crate) fn is_known_openhuman_tier(model: &str) -> bool {
             | MODEL_CODING_V1
             | MODEL_REASONING_QUICK_V1
             | MODEL_SUMMARIZATION_V1
+            | MODEL_VISION_V1
             | "hint:reasoning"
             | "hint:chat"
             | "hint:agentic"
             | "hint:coding"
             | "hint:summarization"
+            | "hint:vision"
     )
 }
 
@@ -187,10 +192,13 @@ pub(crate) fn is_known_openhuman_tier(model: &str) -> bool {
 pub(crate) fn oh_tier_supports_vision(model: &str) -> bool {
     use crate::openhuman::config::{
         MODEL_AGENTIC_V1, MODEL_CHAT_V1, MODEL_CODING_V1, MODEL_REASONING_QUICK_V1,
-        MODEL_REASONING_V1, MODEL_SUMMARIZATION_V1,
+        MODEL_REASONING_V1, MODEL_SUMMARIZATION_V1, MODEL_VISION_V1,
     };
     match model {
         MODEL_REASONING_V1 | "hint:reasoning" => true,
+        // Dedicated multimodal tier — the managed backend serves this with the
+        // vision flag enabled. This is what the vision sub-agent rides on.
+        MODEL_VISION_V1 | "hint:vision" => true,
         MODEL_CHAT_V1 | "hint:chat" => false,
         MODEL_REASONING_QUICK_V1 => false,
         MODEL_AGENTIC_V1 | "hint:agentic" => false,
@@ -223,6 +231,10 @@ pub fn provider_for_role(role: &str, config: &Config) -> String {
         "reasoning" => config.reasoning_provider.as_deref(),
         "agentic" => config.agentic_provider.as_deref(),
         "coding" => config.coding_provider.as_deref(),
+        // Tier-specific multimodal model; like `agentic` it is NOT part of the
+        // chat-tier BYOK inheritance below — when unset it falls through to
+        // `primary_cloud` (→ managed `vision-v1`).
+        "vision" => config.vision_provider.as_deref(),
         // `memory_provider` covers both the memory-tree extract path and
         // the summarizer sub-agent (whose definition declares
         // `hint = "summarization"`). Both are "produce a condensed
@@ -275,6 +287,77 @@ pub fn provider_for_role(role: &str, config: &Config) -> String {
     } else {
         s.to_string()
     }
+}
+
+/// #3767: Whether the OpenHuman managed-credits gate should be bypassed for a
+/// single workload role.
+///
+/// Returns true when `role` resolves (via [`provider_for_role`]) to a non-managed
+/// provider the user funds themselves — a BYO cloud key (incl. OpenAI OAuth), a
+/// local runtime, or claude-code — with usable credentials. When the role is on
+/// the OpenHuman managed backend, or a BYO route has no usable key, it returns
+/// false (the gate stays on; #3767: "BYO key present but invalid/unverified →
+/// still gated").
+///
+/// The gate is evaluated per-tier so the UI can check the tier the user actually
+/// selected: the chat header's "Quick" mode runs on the `chat` tier and
+/// "Reasoning" mode on the `reasoning` tier, so each is checked respectively.
+/// These per-role results are surfaced under `credits_bypass` in the
+/// client-config snapshot. Tiers that stay managed and run anyway surface the
+/// per-call `USER_INSUFFICIENT_CREDITS` (402) error reactively.
+pub fn role_bypasses_managed_credits(role: &str, config: &Config) -> bool {
+    let resolved = provider_for_role(role, config);
+    let r = resolved.trim();
+    let is_managed =
+        r.is_empty() || r == "cloud" || r == PROVIDER_OPENHUMAN || r == BYOK_INCOMPLETE_SENTINEL;
+    let usable_byo = !is_managed && route_has_usable_credentials(r, config);
+    log::debug!(
+        "[billing] role_bypasses_managed_credits role={role} resolved={resolved} \
+         is_managed={is_managed} usable_byo={usable_byo}"
+    );
+    usable_byo
+}
+
+/// True when a resolved chat-tier provider string can actually run on the
+/// user's own funding: local runtimes / claude-code carry their own creds; a
+/// concrete cloud slug requires a non-empty stored key. Managed/sentinel
+/// strings are filtered by the caller and never reach here as "usable".
+fn route_has_usable_credentials(resolved: &str, config: &Config) -> bool {
+    let r = resolved.trim();
+    // Local runtimes (ollama/lmstudio/mlx/local-openai) and the local CLI
+    // delegates carry their own credentials / run on-device.
+    if crate::openhuman::inference::local::profile::is_local_provider_string(r)
+        || r.starts_with(crate::openhuman::inference::provider::claude_code::PROVIDER_PREFIX)
+        || r == CLAUDE_AGENT_SDK_PROVIDER
+        || r.starts_with(CLAUDE_AGENT_SDK_PREFIX)
+    {
+        return true;
+    }
+    // Concrete cloud slug "<slug>:<model>" — require a usable stored key.
+    if let Some((slug, _)) = r.split_once(':') {
+        let slug = slug.trim();
+        if !slug.is_empty() {
+            // Don't silently swallow auth-store / OAuth lookup failures — a
+            // transient Err would otherwise keep the credits gate on for a
+            // valid BYO setup with no diagnostics. Log and treat as not-usable.
+            match lookup_key_for_slug(slug, config) {
+                Ok(key) => {
+                    let usable = !key.trim().is_empty();
+                    log::debug!(
+                        "[billing] route_has_usable_credentials slug={slug} usable={usable}"
+                    );
+                    return usable;
+                }
+                Err(e) => {
+                    log::debug!(
+                        "[billing] route_has_usable_credentials slug={slug} lookup_error={e}"
+                    );
+                    return false;
+                }
+            }
+        }
+    }
+    false
 }
 
 /// Find the first BYOK cloud provider string configured across all workload
@@ -457,7 +540,7 @@ pub fn create_chat_provider_from_string(
     }
 
     if p == PROVIDER_OPENHUMAN {
-        return make_openhuman_backend(config);
+        return make_openhuman_backend(role, config);
     }
 
     // ── Session gate ──────────────────────────────────────────────────
@@ -493,15 +576,8 @@ pub fn create_chat_provider_from_string(
                 role
             );
         }
-        let workspace = config
-            .config_path
-            .parent()
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| {
-                directories::UserDirs::new()
-                    .map(|d| d.home_dir().join(".openhuman"))
-                    .unwrap_or_else(|| std::path::PathBuf::from(".openhuman"))
-            });
+        let workspace =
+            crate::openhuman::inference::provider::claude_code::workspace_dir_from_config(config);
         log::debug!(
             "[providers][chat-factory] building claude-code CLI provider model={} workspace={}",
             model,
@@ -511,6 +587,7 @@ pub fn create_chat_provider_from_string(
             crate::openhuman::inference::provider::claude_code::ClaudeCodeProvider::from_env(
                 model.clone(),
                 workspace,
+                config.action_dir.clone(),
             )?;
         let p_box: Box<dyn Provider> = Box::new(provider);
         return Ok((p_box, model));
@@ -696,12 +773,29 @@ pub(crate) fn create_local_chat_provider_from_string(
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
 /// Build the OpenHuman backend provider (session-JWT auth).
-fn make_openhuman_backend(config: &Config) -> anyhow::Result<(Box<dyn Provider>, String)> {
-    let model = config
-        .default_model
-        .clone()
-        .filter(|m| !m.trim().is_empty())
-        .unwrap_or_else(|| "reasoning-v1".to_string());
+///
+/// `role` is the workload name (e.g. `"chat"`, `"vision"`). The managed backend
+/// otherwise derives its model from `config.default_model` (which defaults to the
+/// non-vision `chat-v1` tier), so a tier-specific workload whose per-workload
+/// provider is unset would silently inherit the global default. For the `vision`
+/// workload that mismatch is fatal: an unset `vision_provider` would resolve to
+/// `chat-v1`, `model_supports_vision` would report `false`, and the turn engine
+/// would strip every attached image — leaving the managed vision sub-agent blind.
+/// Pin `vision` to the dedicated multimodal `vision-v1` tier so the managed
+/// default path keeps working without requiring the user to set `vision_provider`.
+fn make_openhuman_backend(
+    role: &str,
+    config: &Config,
+) -> anyhow::Result<(Box<dyn Provider>, String)> {
+    let model = if role == "vision" {
+        crate::openhuman::config::MODEL_VISION_V1.to_string()
+    } else {
+        config
+            .default_model
+            .clone()
+            .filter(|m| !m.trim().is_empty())
+            .unwrap_or_else(|| "reasoning-v1".to_string())
+    };
     // Critical: pass the *config's* workspace directory through so the
     // provider's `AuthService` reads `auth-profiles.json` from the
     // same dir login wrote to. Without this, `ProviderRuntimeOptions::default()`
@@ -734,6 +828,7 @@ fn make_openhuman_backend(config: &Config) -> anyhow::Result<(Box<dyn Provider>,
         Some("agentic") => crate::openhuman::config::MODEL_AGENTIC_V1.to_string(),
         Some("coding") => crate::openhuman::config::MODEL_CODING_V1.to_string(),
         Some("summarization") => crate::openhuman::config::MODEL_SUMMARIZATION_V1.to_string(),
+        Some("vision") => crate::openhuman::config::MODEL_VISION_V1.to_string(),
         Some(_) => {
             // Unrecognised hint — forward verbatim; the backend decides validity.
             model
@@ -745,7 +840,7 @@ fn make_openhuman_backend(config: &Config) -> anyhow::Result<(Box<dyn Provider>,
                 log::warn!(
                     "[providers][chat-factory] model '{}' is not a recognized OpenHuman \
                      backend tier (valid: reasoning-v1, chat-v1, agentic-v1, coding-v1, \
-                     reasoning-quick-v1, summarization-v1); falling back to '{}'",
+                     reasoning-quick-v1, summarization-v1, vision-v1); falling back to '{}'",
                     model,
                     crate::openhuman::config::MODEL_REASONING_V1,
                 );
@@ -768,6 +863,19 @@ fn make_openhuman_backend(config: &Config) -> anyhow::Result<(Box<dyn Provider>,
 /// `<slug>:<model>`) are only reachable when the workspace holds a valid
 /// `app-session` JWT.
 fn verify_session_active(config: &Config) -> anyhow::Result<()> {
+    // AgentBox marketplace containers run headless with no desktop
+    // `app-session` JWT — the deployment is operator-controlled and ships its
+    // own GMI MaaS credentials via `GMI_*` env vars. The session gate exists to
+    // stop an *unregistered desktop user* from routing every workload at a
+    // custom provider; that threat model doesn't apply here, so bypass it.
+    // Without this, every `/run` job would fail `SESSION_EXPIRED` before
+    // reaching GMI (the startup path stores only `provider:gmi-maas`).
+    if crate::openhuman::agentbox::agentbox_mode_enabled() {
+        log::debug!(
+            "[chat-factory] AgentBox mode — bypassing app-session gate for custom provider"
+        );
+        return Ok(());
+    }
     // Fast path: the scheduler gate already knows the session is dead.
     if crate::openhuman::scheduler_gate::is_signed_out() {
         anyhow::bail!(
@@ -1297,7 +1405,7 @@ fn make_cloud_provider_by_slug(
                 "[providers][chat-factory] slug='{}' has auth_style=OpenhumanJwt → routing to openhuman backend",
                 slug
             );
-            make_openhuman_backend(config)
+            make_openhuman_backend(role, config)
         }
         AuthStyle::None => {
             let p = make_openai_compatible_provider_with_config(

@@ -59,17 +59,9 @@ use openhuman_core::openhuman::agent::multimodal::{
     contains_image_markers, count_image_markers, extract_ollama_image_payload, parse_image_markers,
     prepare_messages_for_provider, MultimodalError,
 };
-use openhuman_core::openhuman::agent::personality_paths::{
-    filter_integrations, memory_subdir_for_suffix, memory_tree_subdir_for_suffix,
-    resolve_personality_memory_md, resolve_personality_soul, session_raw_subdir_for_suffix,
-    HasToolkit, PersonalityContext,
-};
 use openhuman_core::openhuman::agent::pformat::{
     build_registry, parse_call as parse_pformat_call, render_signature, render_signature_from_tool,
     PFormatParamType, PFormatRegistry, PFormatToolParams,
-};
-use openhuman_core::openhuman::agent::profiles::{
-    AgentProfile, AgentProfileStore, AgentProfilesState, DEFAULT_PROFILE_ID,
 };
 use openhuman_core::openhuman::agent::prompts::{
     render_ambient_environment, render_subagent_system_prompt, render_tools, ConnectedIntegration,
@@ -176,6 +168,17 @@ use openhuman_core::openhuman::inference::{
     DeviceProfile,
 };
 use openhuman_core::openhuman::memory::{Memory, MemoryCategory, MemoryEntry, RecallOpts};
+use openhuman_core::openhuman::profiles::{
+    all_profiles_controller_schemas, all_profiles_registered_controllers,
+};
+use openhuman_core::openhuman::profiles::{
+    filter_integrations, memory_subdir_for_suffix, memory_tree_subdir_for_suffix,
+    resolve_personality_memory_md, resolve_personality_soul, session_raw_subdir_for_suffix,
+    HasToolkit, PersonalityContext,
+};
+use openhuman_core::openhuman::profiles::{
+    AgentProfile, AgentProfileStore, AgentProfilesState, DEFAULT_PROFILE_ID,
+};
 use openhuman_core::openhuman::security::SecurityPolicy;
 use openhuman_core::openhuman::todos::ops::BoardLocation;
 use openhuman_core::openhuman::tools::{Tool, ToolResult, ToolSpec};
@@ -1116,6 +1119,14 @@ async fn agent_registry_and_profile_controllers_cover_success_and_errors() {
         .iter()
         .all(|controller| controller.rpc_method_name().starts_with("openhuman.agent_")));
 
+    // Profiles moved to their own top-level domain (`openhuman.profiles_*`).
+    let profile_schemas = all_profiles_controller_schemas();
+    let profiles = all_profiles_registered_controllers();
+    assert_eq!(profile_schemas.len(), profiles.len());
+    assert!(profiles.iter().all(|controller| controller
+        .rpc_method_name()
+        .starts_with("openhuman.profiles_")));
+
     let status = call(controller(&registered, "server_status"), json!({}))
         .await
         .expect("server status");
@@ -1155,7 +1166,7 @@ async fn agent_registry_and_profile_controllers_cover_success_and_errors() {
     assert_eq!(reload.pointer("/status"), Some(&json!("noop")));
     assert_eq!(reload.pointer("/registry_initialised"), Some(&json!(true)));
 
-    let list = call(controller(&registered, "profiles_list"), json!({}))
+    let list = call(controller(&profiles, "list"), json!({}))
         .await
         .expect("profiles list");
     assert_eq!(
@@ -1170,7 +1181,7 @@ async fn agent_registry_and_profile_controllers_cover_success_and_errors() {
         .any(|profile| profile.pointer("/id") == Some(&json!("research"))));
 
     let unknown_agent = call(
-        controller(&registered, "profile_upsert"),
+        controller(&profiles, "upsert"),
         json!({
             "profile": {
                 "id": "Bad Agent",
@@ -1185,7 +1196,7 @@ async fn agent_registry_and_profile_controllers_cover_success_and_errors() {
     assert!(unknown_agent.contains("agent definition 'unknown-agent-id' not found"));
 
     let upserted = call(
-        controller(&registered, "profile_upsert"),
+        controller(&profiles, "upsert"),
         json!({
             "profile": {
                 "id": " My Research Profile ",
@@ -1220,7 +1231,7 @@ async fn agent_registry_and_profile_controllers_cover_success_and_errors() {
     );
 
     let selected = call(
-        controller(&registered, "profile_select"),
+        controller(&profiles, "select"),
         json!({ "profile_id": "my-research-profile" }),
     )
     .await
@@ -1231,7 +1242,7 @@ async fn agent_registry_and_profile_controllers_cover_success_and_errors() {
     );
 
     let missing_select = call(
-        controller(&registered, "profile_select"),
+        controller(&profiles, "select"),
         json!({ "profile_id": "missing-profile" }),
     )
     .await
@@ -1239,7 +1250,7 @@ async fn agent_registry_and_profile_controllers_cover_success_and_errors() {
     assert!(missing_select.contains("agent profile 'missing-profile' not found"));
 
     let delete_builtin = call(
-        controller(&registered, "profile_delete"),
+        controller(&profiles, "delete"),
         json!({ "profile_id": DEFAULT_PROFILE_ID }),
     )
     .await
@@ -1247,7 +1258,7 @@ async fn agent_registry_and_profile_controllers_cover_success_and_errors() {
     assert!(delete_builtin.contains("built-in agent profile"));
 
     let deleted = call(
-        controller(&registered, "profile_delete"),
+        controller(&profiles, "delete"),
         json!({ "profile_id": "my-research-profile" }),
     )
     .await
@@ -1359,6 +1370,10 @@ fn agent_profile_store_and_personality_helpers_cover_normalisation_edges() {
             soul_md: Some(" inline soul ".to_string()),
             soul_md_path: None,
             composio_integrations: Some(vec![" gmail ".to_string(), String::new()]),
+            memory_sources: None,
+            include_agent_conversations: true,
+            allowed_skills: None,
+            allowed_mcp_servers: None,
             memory_dir_suffix: None,
             is_master: true,
             sort_order: Some(50),
@@ -1393,6 +1408,10 @@ fn agent_profile_store_and_personality_helpers_cover_normalisation_edges() {
             soul_md: None,
             soul_md_path: None,
             composio_integrations: Some(vec![]),
+            memory_sources: None,
+            include_agent_conversations: true,
+            allowed_skills: None,
+            allowed_mcp_servers: None,
             memory_dir_suffix: None,
             is_master: false,
             sort_order: None,
@@ -1410,6 +1429,10 @@ fn agent_profile_store_and_personality_helpers_cover_normalisation_edges() {
 
     let reused = store
         .upsert(AgentProfile {
+            memory_sources: None,
+            include_agent_conversations: true,
+            allowed_skills: None,
+            allowed_mcp_servers: None,
             memory_dir_suffix: None,
             description: "updated".to_string(),
             ..second_profile.clone()
@@ -1719,6 +1742,10 @@ fn agent_personality_paths_cover_safe_fallbacks_and_integration_filters() {
         soul_md: Some("inline soul".into()),
         soul_md_path: Some("personality-soul.md".into()),
         composio_integrations: Some(vec!["gmail".into(), "slack".into()]),
+        memory_sources: None,
+        include_agent_conversations: true,
+        allowed_skills: None,
+        allowed_mcp_servers: None,
         memory_dir_suffix: Some("-7".into()),
         is_master: false,
         sort_order: Some(10),
@@ -2156,6 +2183,7 @@ async fn inference_provider_trait_defaults_cover_prompt_guided_paths() {
                 messages: &[ChatMessage::user("need docs")],
                 tools: Some(&[tool_spec.clone()]),
                 stream: None,
+                max_tokens: None,
             },
             "agentic-v1",
             0.4,
@@ -2171,6 +2199,7 @@ async fn inference_provider_trait_defaults_cover_prompt_guided_paths() {
                 messages: &[ChatMessage::user("plain")],
                 tools: None,
                 stream: None,
+                max_tokens: None,
             },
             "agentic-v1",
             0.5,
@@ -2256,6 +2285,7 @@ async fn inference_openai_compatible_provider_covers_native_streaming_and_fallba
                 ],
                 tools: Some(&[tool_spec.clone(), tool_spec.clone()]),
                 stream: Some(&delta_tx),
+                max_tokens: None,
             },
             "stream-native",
             0.9,
@@ -2295,6 +2325,7 @@ async fn inference_openai_compatible_provider_covers_native_streaming_and_fallba
                 messages: &[ChatMessage::user("json encoded tool call")],
                 tools: None,
                 stream: None,
+                max_tokens: None,
             },
             "tool-content-json",
             0.2,
@@ -3471,7 +3502,7 @@ async fn agent_public_tools_cover_validation_and_metadata_paths() {
     assert!(clarification.output().contains("Which target?"));
     assert!(clarification.output().contains("unit, coverage"));
 
-    let run_workflow = RunWorkflowTool;
+    let run_workflow = RunWorkflowTool::new();
     assert_eq!(run_workflow.name(), RUN_WORKFLOW_TOOL_NAME);
     assert_eq!(
         run_workflow.parameters_schema().pointer("/required/0"),
@@ -4402,6 +4433,7 @@ async fn inference_router_provider_covers_hint_tier_and_passthrough_routing() {
                 messages: &[ChatMessage::user("fallback")],
                 tools: None,
                 stream: None,
+                max_tokens: None,
             },
             "reasoning-v1",
             0.4,
@@ -4521,6 +4553,7 @@ async fn inference_reliable_provider_covers_retry_fallback_and_aggregate_errors(
                 messages: &[ChatMessage::user("fail")],
                 tools: None,
                 stream: None,
+                max_tokens: None,
             },
             "missing-model",
             0.0,
@@ -4642,6 +4675,7 @@ async fn agent_subagent_public_types_cover_task_local_and_error_display_paths() 
         initial_history: None,
         checkpoint_dir: None,
         worktree_action_dir: None,
+        run_queue: None,
     };
     assert_eq!(options.skill_filter_override.as_deref(), Some("docs"));
     assert_eq!(options.toolkit_override.as_deref(), Some("github"));

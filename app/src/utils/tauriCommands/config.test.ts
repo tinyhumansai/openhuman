@@ -82,6 +82,28 @@ describe('tauriCommands/config', () => {
         params: { auto_orchestrator_handoff: true },
       });
     });
+
+    test('forwards the Meeting Assistant fields (issue #3511)', async () => {
+      mockCallCoreRpc.mockResolvedValue({
+        result: { config: {}, workspace_dir: '/tmp', config_path: '/tmp/cfg.toml' },
+        logs: [],
+      });
+      await openhumanUpdateMeetSettings({
+        auto_join_policy: 'always',
+        auto_summarize_policy: 'never',
+        listen_only_default: false,
+        ingest_backend_transcripts: true,
+      });
+      expect(mockCallCoreRpc).toHaveBeenCalledWith({
+        method: 'openhuman.config_update_meet_settings',
+        params: {
+          auto_join_policy: 'always',
+          auto_summarize_policy: 'never',
+          listen_only_default: false,
+          ingest_backend_transcripts: true,
+        },
+      });
+    });
   });
 
   describe('openhumanGetMeetSettings (#1299)', () => {
@@ -92,12 +114,25 @@ describe('tauriCommands/config', () => {
     });
 
     test('reads via openhuman.config_get_meet_settings', async () => {
-      mockCallCoreRpc.mockResolvedValue({ result: { auto_orchestrator_handoff: true }, logs: [] });
+      mockCallCoreRpc.mockResolvedValue({
+        result: {
+          auto_orchestrator_handoff: true,
+          auto_join_policy: 'always',
+          auto_summarize_policy: 'never',
+          listen_only_default: false,
+          ingest_backend_transcripts: true,
+        },
+        logs: [],
+      });
       const out = await openhumanGetMeetSettings();
       expect(mockCallCoreRpc).toHaveBeenCalledWith({
         method: 'openhuman.config_get_meet_settings',
       });
       expect(out.result.auto_orchestrator_handoff).toBe(true);
+      expect(out.result.auto_join_policy).toBe('always');
+      expect(out.result.auto_summarize_policy).toBe('never');
+      expect(out.result.listen_only_default).toBe(false);
+      expect(out.result.ingest_backend_transcripts).toBe(true);
     });
   });
 

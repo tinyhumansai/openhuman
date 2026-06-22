@@ -23,8 +23,9 @@ import {
   openhumanComposioGetMode,
   openhumanComposioSetApiKey,
 } from '../../../utils/tauriCommands';
+import PanelPage from '../../layout/PanelPage';
 import Button from '../../ui/Button';
-import SettingsHeader from '../components/SettingsHeader';
+import SettingsBackButton from '../components/SettingsBackButton';
 import { SettingsRow, SettingsSection, SettingsStatusLine, SettingsTextField } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
@@ -41,7 +42,7 @@ interface ComposioPanelProps {
 
 const ComposioPanel = ({ embedded = false, managedAuthEnabled }: ComposioPanelProps = {}) => {
   const { t } = useT();
-  const { navigateBack, breadcrumbs } = useSettingsNavigation();
+  const { navigateBack } = useSettingsNavigation();
   const { snapshot } = useCoreState();
   const allowManagedAuth =
     managedAuthEnabled ??
@@ -204,37 +205,29 @@ const ComposioPanel = ({ embedded = false, managedAuthEnabled }: ComposioPanelPr
     setConfirmGate('idle');
   };
 
+  const composioDescription = embedded
+    ? undefined
+    : t('settings.developerMenu.composioRouting.desc');
+  const composioLeading = embedded ? undefined : <SettingsBackButton onBack={navigateBack} />;
+
   if (loading) {
     return (
-      <div>
-        {!embedded && (
-          <SettingsHeader
-            title={t('settings.composio.title')}
-            showBackButton
-            onBack={navigateBack}
-            breadcrumbs={breadcrumbs}
-          />
-        )}
+      <PanelPage contentClassName="" description={composioDescription} leading={composioLeading}>
         <div className={embedded ? '' : 'p-4'}>
           <p className="text-sm text-neutral-500 dark:text-neutral-400">
             {t('settings.composio.loading')}
           </p>
         </div>
-      </div>
+      </PanelPage>
     );
   }
 
   return (
-    <div className="z-10 relative">
-      {!embedded && (
-        <SettingsHeader
-          title={t('settings.composio.title')}
-          showBackButton
-          onBack={navigateBack}
-          breadcrumbs={breadcrumbs}
-        />
-      )}
-
+    <PanelPage
+      className="z-10"
+      contentClassName=""
+      description={composioDescription}
+      leading={composioLeading}>
       <div className={embedded ? 'space-y-5' : 'p-4 pt-2 space-y-5'}>
         <p className="text-sm text-neutral-500 dark:text-neutral-400">
           {t('settings.composio.intro')}
@@ -406,7 +399,7 @@ const ComposioPanel = ({ embedded = false, managedAuthEnabled }: ComposioPanelPr
           </div>
         )}
       </div>
-    </div>
+    </PanelPage>
   );
 };
 

@@ -25,6 +25,13 @@ pub(crate) struct SessionCacheFingerprint {
     /// change) — without this the stale session would be reused. Mirrors
     /// [`Self::autonomy_signature`].
     pub(super) model_registry_signature: String,
+    /// Serialized signature of the active agent profile. The cached `Agent`
+    /// bakes in the profile's tool/skill/MCP/connector visibility and SOUL/MEMORY
+    /// overrides at build time; switching profiles on the same thread keeps the
+    /// same model/agent/provider, so without this the previous profile's
+    /// capability surface would leak into the new profile's turns. Any change to
+    /// the resolved profile forces a rebuild.
+    pub(super) profile_signature: String,
 }
 
 pub(super) struct SessionEntry {
@@ -71,6 +78,23 @@ pub struct ChatRequestMetadata {
     pub speak_reply: Option<bool>,
     pub source: Option<String>,
     pub session_id: Option<u64>,
+}
+
+impl ChatRequestMetadata {
+    /// Constructor for messages submitted via the AgentBox `/run` HTTP surface
+    /// (`OPENHUMAN_AGENTBOX_MODE=1`). These are background invocations driven
+    /// programmatically by a remote marketplace caller — no live UI is
+    /// attached to surface TTS or PTT signals — so `speak_reply` and
+    /// `session_id` stay `None` and the `source` tag identifies the origin
+    /// for analytics / log filtering downstream (mirrors the `"ptt"` /
+    /// `"dictation"` / `"type"` convention used by the desktop UI).
+    pub fn agentbox() -> Self {
+        Self {
+            speak_reply: None,
+            source: Some("agentbox".to_string()),
+            session_id: None,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]

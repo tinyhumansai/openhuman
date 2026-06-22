@@ -34,8 +34,13 @@
 //!                          one-time login tokens, never raw session JWTs
 //! - `GET /auth/telegram` — external browser callback (carries its own token)
 //! - `GET /schema`        — read-only schema discovery
-//! - `GET /events`        — SSE stream; browser `EventSource` cannot set headers
-//! - `GET /ws/dictation`  — WebSocket upgrade; browser WS API cannot set headers
+//! - `GET /events`        — SSE stream; browser `EventSource` cannot set
+//!                          headers, so the handler enforces a bind-token /
+//!                          bearer credential itself
+//! - `GET /ws/dictation`  — WebSocket upgrade; browser WS API cannot set
+//!                          headers, so the handler enforces the bearer
+//!                          (header or `?token=`) + origin itself before the
+//!                          upgrade (C4 / issue #1924)
 //! - `OPTIONS *`          — CORS preflight (handled by outer CORS middleware)
 //!
 //! Endpoints that accept the bearer either via header **or** `?token=…` query
@@ -71,19 +76,51 @@ static RPC_TOKEN: OnceLock<String> = OnceLock::new();
 
 /// Paths that bypass bearer-token authentication.
 ///
-/// `/rpc` and `/v1/*` carry executable surfaces and must be protected. All
-/// other routes are read-only, streaming, or WebSocket upgrades whose clients
-/// (browser `EventSource`, browser `WebSocket`) cannot set `Authorization`
-/// headers via standard APIs.
+/// `/rpc` and `/v1/*` carry executable surfaces and must be protected. The
+/// other routes are read-only, or are streaming / WebSocket upgrades whose
+/// clients (browser `EventSource`, browser `WebSocket`) cannot set
+/// `Authorization` headers via standard APIs. `/events` is not unauthenticated
+/// — it is exempt from the *middleware* header check but enforces its own
+/// bind-token credential inside the handler. `/ws/dictation` is NOT public: it
+/// is bearer-gated by this middleware via [`QUERY_TOKEN_PATHS`] (header or
+/// `?token=`) so an unauthenticated upgrade is rejected with 401 before the
+/// WebSocket handshake; the handler adds an origin check on top (finding C4).
 const PUBLIC_PATHS: &[&str] = &[
     "/",
     "/health",
     "/auth",
     "/auth/telegram",
+    // External browser OAuth redirect for HTTP-remote MCP servers — the
+    // authorization server posts back here with `?code=…&state=…` and no
+    // bearer; the one-time `state` (minted in `oauth_begin`) is the guard.
+    "/oauth/mcp/callback",
     "/schema",
     "/events",
-    "/ws/dictation",
+    // AgentBox marketplace surface — see `openhuman::agentbox::http`.
+    // Mounted only when `OPENHUMAN_AGENTBOX_MODE=1`; the public-path entry is
+    // unconditional so the matcher remains a pure function of the path string.
+    "/run",
 ];
+
+/// Public path prefixes — match when the request path begins with any entry.
+///
+/// Use this only when the suffix is dynamic (path params). For exact paths,
+/// add to [`PUBLIC_PATHS`] instead.
+const PUBLIC_PATH_PREFIXES: &[&str] = &[
+    // AgentBox `GET /jobs/{job_id}` — `{job_id}` is a UUID per submission.
+    "/jobs/",
+];
+
+/// Returns `true` when `path` bypasses bearer-token authentication.
+///
+/// A path is public when it appears in [`PUBLIC_PATHS`] (exact match) or
+/// begins with any entry in [`PUBLIC_PATH_PREFIXES`] (prefix match).
+fn is_public_path(path: &str) -> bool {
+    PUBLIC_PATHS.contains(&path)
+        || PUBLIC_PATH_PREFIXES
+            .iter()
+            .any(|prefix| path.starts_with(prefix))
+}
 
 /// Paths that may authenticate via `?token=…` in the URL when no
 /// `Authorization` header is present.
@@ -98,7 +135,7 @@ const PUBLIC_PATHS: &[&str] = &[
 /// Add new entries here only for SSE / WebSocket routes whose clients cannot
 /// send headers and that carry per-user data. The follow-up approvals stream
 /// (#1339) is the next planned addition.
-const QUERY_TOKEN_PATHS: &[&str] = &["/events/webhooks"];
+const QUERY_TOKEN_PATHS: &[&str] = &["/events/webhooks", "/ws/dictation"];
 
 /// Operator-supplied environment variable that carries the RPC bearer in
 /// non-desktop deployments.
@@ -246,7 +283,7 @@ pub async fn rpc_auth_middleware(req: axum::extract::Request, next: Next) -> Res
     let path = req.uri().path().to_string();
 
     // CORS preflight and public utility paths bypass auth.
-    if req.method() == Method::OPTIONS || PUBLIC_PATHS.contains(&path.as_str()) {
+    if req.method() == Method::OPTIONS || is_public_path(&path) {
         return next.run(req).await;
     }
 
@@ -560,6 +597,18 @@ mod tests {
     #[test]
     fn public_paths_include_desktop_auth_callback() {
         assert!(PUBLIC_PATHS.contains(&"/auth"));
+    }
+
+    #[test]
+    fn agentbox_run_and_jobs_paths_are_public() {
+        // AgentBox marketplace surface bypasses bearer auth (gated externally
+        // by `OPENHUMAN_AGENTBOX_MODE` at router-build time).
+        assert!(is_public_path("/run"));
+        assert!(is_public_path("/jobs/abc-123"));
+        assert!(is_public_path("/jobs/00000000-0000-0000-0000-000000000000"));
+        // Sanity: still protect the executable surface.
+        assert!(!is_public_path("/rpc"));
+        assert!(!is_public_path("/v1/chat/completions"));
     }
 
     #[cfg(unix)]

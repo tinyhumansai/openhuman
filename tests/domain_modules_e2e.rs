@@ -451,11 +451,11 @@ async fn config_agent_tools_and_threads_mutation_paths_round_trip() {
     let profiles_initial = rpc(
         &harness.rpc_base,
         31_001,
-        "openhuman.agent_profiles_list",
+        "openhuman.profiles_list",
         json!({}),
     )
     .await;
-    let initial = ok(&profiles_initial, "agent_profiles_list initial");
+    let initial = ok(&profiles_initial, "profiles_list initial");
     assert_eq!(
         initial.get("activeProfileId").and_then(Value::as_str),
         Some("default")
@@ -464,7 +464,7 @@ async fn config_agent_tools_and_threads_mutation_paths_round_trip() {
     let upsert_profile = rpc(
         &harness.rpc_base,
         31_002,
-        "openhuman.agent_profile_upsert",
+        "openhuman.profiles_upsert",
         json!({
             "profile": {
                 "id": "E2E Planner",
@@ -480,7 +480,7 @@ async fn config_agent_tools_and_threads_mutation_paths_round_trip() {
         }),
     )
     .await;
-    let upserted = ok(&upsert_profile, "agent_profile_upsert");
+    let upserted = ok(&upsert_profile, "profiles_upsert");
     assert!(
         upserted
             .get("profiles")
@@ -494,12 +494,12 @@ async fn config_agent_tools_and_threads_mutation_paths_round_trip() {
     let select_profile = rpc(
         &harness.rpc_base,
         31_003,
-        "openhuman.agent_profile_select",
+        "openhuman.profiles_select",
         json!({ "profile_id": "e2e-planner" }),
     )
     .await;
     assert_eq!(
-        ok(&select_profile, "agent_profile_select")
+        ok(&select_profile, "profiles_select")
             .get("activeProfileId")
             .and_then(Value::as_str),
         Some("e2e-planner")
@@ -508,11 +508,11 @@ async fn config_agent_tools_and_threads_mutation_paths_round_trip() {
     let delete_profile = rpc(
         &harness.rpc_base,
         31_004,
-        "openhuman.agent_profile_delete",
+        "openhuman.profiles_delete",
         json!({ "profile_id": "e2e-planner" }),
     )
     .await;
-    let deleted = ok(&delete_profile, "agent_profile_delete");
+    let deleted = ok(&delete_profile, "profiles_delete");
     assert!(
         deleted
             .get("profiles")

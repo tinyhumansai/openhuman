@@ -43,6 +43,9 @@ export function agentNameTone(status: ToolTimelineEntryStatus | undefined): stri
       return 'text-coral-600 dark:text-coral-300';
     case 'awaiting_user':
       return 'animate-pulse text-amber-600 dark:text-amber-300';
+    case 'cancelled':
+      // Cancelled — terminal, so muted but NOT pulsing (it isn't in progress).
+      return 'text-stone-400 dark:text-neutral-500';
     default:
       // running / unknown — in progress: muted + blinking.
       return 'animate-pulse text-stone-400 dark:text-neutral-500';

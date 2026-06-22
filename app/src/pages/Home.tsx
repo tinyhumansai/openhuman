@@ -130,6 +130,14 @@ const Home = () => {
 
   return (
     <div className="min-h-full flex flex-col items-center justify-center p-4">
+      {/* Welcome title */}
+      <h1 className="min-h-[3.5rem] text-32l font-bold text-stone-900 dark:text-neutral-100 text-center">
+        {typedWelcome}
+        <span aria-hidden="true" className="ml-0.5 inline-block text-primary-500 animate-pulse">
+          |
+        </span>
+      </h1>
+
       <div className="max-w-md w-full">
         {shouldShowBudgetCompletedMessage && (
           <UsageLimitBanner
@@ -205,14 +213,6 @@ const Home = () => {
               )}
             </button>
           </div>
-
-          {/* Welcome title */}
-          <h1 className="min-h-[3.5rem] text-32l font-bold text-stone-900 dark:text-neutral-100 text-center">
-            {typedWelcome}
-            <span aria-hidden="true" className="ml-0.5 inline-block text-primary-500 animate-pulse">
-              |
-            </span>
-          </h1>
 
           {/* Connection status */}
           <div className="flex justify-center mb-3">

@@ -34,6 +34,12 @@ pub struct InferenceTestProviderModelResult {
     pub reply: String,
 }
 
+fn expected_test_provider_model_error_kind(
+    err: &str,
+) -> Option<crate::core::observability::ExpectedErrorKind> {
+    crate::core::observability::expected_error_kind(err)
+}
+
 pub async fn inference_status(config: &Config) -> Result<RpcOutcome<LocalAiStatus>, String> {
     debug!("{LOG_PREFIX} status:start");
     let result = local_runtime::rpc::local_ai_status(config).await;
@@ -179,12 +185,24 @@ pub async fn inference_test_provider_model(
             output_len = outcome.value.reply.len(),
             "{LOG_PREFIX} test_provider_model:ok"
         ),
-        Err(err) => error!(
-            workload,
-            provider,
-            error = %err,
-            "{LOG_PREFIX} test_provider_model:error"
-        ),
+        Err(err) => {
+            if let Some(kind) = expected_test_provider_model_error_kind(err) {
+                warn!(
+                    workload,
+                    provider,
+                    expected_error_kind = ?kind,
+                    error = %err,
+                    "{LOG_PREFIX} test_provider_model:expected_error"
+                );
+            } else {
+                error!(
+                    workload,
+                    provider,
+                    error = %err,
+                    "{LOG_PREFIX} test_provider_model:error"
+                );
+            }
+        }
     }
     result
 }

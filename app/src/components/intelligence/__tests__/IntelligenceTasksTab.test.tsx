@@ -273,9 +273,10 @@ describe('IntelligenceTasksTab', () => {
     expect(screen.getByText('No source tasks waiting.')).toBeInTheDocument();
     expect(hoisted.todosList).toHaveBeenCalledWith('task-sources');
 
-    // "Manage sources" jumps to the dedicated settings page.
+    // "Manage sources" jumps to the merged Integrations settings page
+    // (task-sources was folded into /settings/integrations).
     fireEvent.click(screen.getByText('Manage sources'));
-    expect(hoisted.navigate).toHaveBeenCalledWith('/settings/task-sources');
+    expect(hoisted.navigate).toHaveBeenCalledWith('/settings/integrations');
   });
 
   test('refines a source task and approves it into the personal agent board', async () => {
@@ -431,9 +432,7 @@ describe('IntelligenceTasksTab', () => {
     await waitFor(() => expect(screen.getByText('Worked card')).toBeInTheDocument());
     fireEvent.click(screen.getByText('stub-view-session'));
 
-    expect(hoisted.navigate).toHaveBeenCalledWith('/chat', {
-      state: { openThreadId: 'task-session-99' },
-    });
+    expect(hoisted.navigate).toHaveBeenCalledWith('/chat/task-session-99');
   });
 
   test('renders persisted agent boards from the turn-state list', async () => {

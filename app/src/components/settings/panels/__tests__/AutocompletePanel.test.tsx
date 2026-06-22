@@ -120,7 +120,7 @@ describe('AutocompletePanel (simplified)', () => {
   it('shows user-facing settings and can save style preset changes', async () => {
     renderWithProviders(<AutocompletePanel />, { initialEntries: ['/settings/autocomplete'] });
 
-    await screen.findByText('Autocomplete');
+    await screen.findByText('Style Preset');
 
     // Verify user-facing controls are present
     expect(screen.getByText('Enabled')).toBeInTheDocument();
@@ -150,7 +150,7 @@ describe('AutocompletePanel (simplified)', () => {
   it('can start and stop the autocomplete runtime', async () => {
     renderWithProviders(<AutocompletePanel />, { initialEntries: ['/settings/autocomplete'] });
 
-    await screen.findByText('Autocomplete');
+    await screen.findByText('Style Preset');
 
     // Wait for status to load
     await waitFor(() => {
@@ -183,7 +183,7 @@ describe('AutocompletePanel (simplified)', () => {
 
     renderWithProviders(<AutocompletePanel />, { initialEntries: ['/settings/autocomplete'] });
 
-    await screen.findByText('Autocomplete');
+    await screen.findByText('Style Preset');
 
     // Wait for config to load
     await waitFor(() => {
@@ -211,7 +211,7 @@ describe('AutocompletePanel (simplified)', () => {
   it('shows the Advanced settings link', async () => {
     renderWithProviders(<AutocompletePanel />, { initialEntries: ['/settings/autocomplete'] });
 
-    await screen.findByText('Autocomplete');
+    await screen.findByText('Style Preset');
     expect(screen.getByText('Advanced settings')).toBeInTheDocument();
   });
 
@@ -222,7 +222,7 @@ describe('AutocompletePanel (simplified)', () => {
 
     renderWithProviders(<AutocompletePanel />, { initialEntries: ['/settings/autocomplete'] });
 
-    await screen.findByText('Autocomplete');
+    await screen.findByText('Style Preset');
 
     // SettingsNumberField wraps the input in a div; find the inner spinbutton
     const debounceWrapper = await screen.findByTestId('autocomplete-debounce-ms');
@@ -254,7 +254,7 @@ describe('AutocompletePanel (simplified)', () => {
   it('allows clearing a tuning field mid-edit and clamps to safe minimums at save', async () => {
     renderWithProviders(<AutocompletePanel />, { initialEntries: ['/settings/autocomplete'] });
 
-    await screen.findByText('Autocomplete');
+    await screen.findByText('Style Preset');
 
     const maxCharsWrapper = await screen.findByTestId('autocomplete-max-chars');
     const debounceWrapper = screen.getByTestId('autocomplete-debounce-ms');
@@ -285,7 +285,7 @@ describe('AutocompletePanel (simplified)', () => {
     runtime.config.disabled_apps = ['Slack', 'Zoom'];
 
     renderWithProviders(<AutocompletePanel />, { initialEntries: ['/settings/autocomplete'] });
-    await screen.findByText('Autocomplete');
+    await screen.findByText('Style Preset');
 
     const textarea = (await screen.findByRole('textbox', {
       name: /disabled apps/i,
@@ -311,7 +311,7 @@ describe('AutocompletePanel (simplified)', () => {
 
   it('committing a debounce value via Enter triggers saveConfig', async () => {
     renderWithProviders(<AutocompletePanel />, { initialEntries: ['/settings/autocomplete'] });
-    await screen.findByText('Autocomplete');
+    await screen.findByText('Style Preset');
 
     const debounceWrapper = await screen.findByTestId('autocomplete-debounce-ms');
     const debounce = within(debounceWrapper).getByRole('spinbutton') as HTMLInputElement;
@@ -330,7 +330,7 @@ describe('AutocompletePanel (simplified)', () => {
 
   it('committing a max-chars value triggers saveConfig', async () => {
     renderWithProviders(<AutocompletePanel />, { initialEntries: ['/settings/autocomplete'] });
-    await screen.findByText('Autocomplete');
+    await screen.findByText('Style Preset');
 
     const maxCharsWrapper = await screen.findByTestId('autocomplete-max-chars');
     const maxChars = within(maxCharsWrapper).getByRole('spinbutton') as HTMLInputElement;
@@ -347,7 +347,7 @@ describe('AutocompletePanel (simplified)', () => {
 
   it('committing an overlay-ttl value triggers saveConfig', async () => {
     renderWithProviders(<AutocompletePanel />, { initialEntries: ['/settings/autocomplete'] });
-    await screen.findByText('Autocomplete');
+    await screen.findByText('Style Preset');
 
     const overlayWrapper = await screen.findByTestId('autocomplete-overlay-ttl-ms');
     const overlayTtl = within(overlayWrapper).getByRole('spinbutton') as HTMLInputElement;
@@ -371,7 +371,7 @@ describe('AutocompletePanel (simplified)', () => {
     });
 
     renderWithProviders(<AutocompletePanel />, { initialEntries: ['/settings/autocomplete'] });
-    await screen.findByText('Autocomplete');
+    await screen.findByText('Style Preset');
 
     await waitFor(() => expect(screen.getByText('Running: No')).toBeInTheDocument());
 

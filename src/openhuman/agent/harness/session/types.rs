@@ -201,6 +201,12 @@ pub struct Agent {
     /// ACTIVE mid-turn can refresh the delegation schema in the same thread.
     pub(super) composio_integrations_rx:
         Option<tokio::sync::broadcast::Receiver<crate::core::event_bus::DomainEvent>>,
+    /// Lazily-armed global-bus receiver for [`DomainEvent::WorkflowsChanged`]
+    /// (skill install / uninstall / create). Drained at each turn boundary so
+    /// `refresh_workflows` only re-scans disk when the installed set actually
+    /// changed — no per-turn filesystem walk on the steady-state hot path.
+    pub(super) skill_events_rx:
+        Option<tokio::sync::broadcast::Receiver<crate::core::event_bus::DomainEvent>>,
     /// Toolkit slugs already surfaced to the model as freshly-connected
     /// this session. Seeded at turn 1 with the startup connected set, then
     /// extended whenever a mid-session connect is announced — so each new
@@ -218,6 +224,31 @@ pub struct Agent {
     /// its slug instead of overwriting the first's note. Order-preserving +
     /// de-duped on insert.
     pub(super) pending_integration_announcement: Vec<String>,
+    /// MCP server qualified-names already surfaced to the model as
+    /// freshly-connected this session. The MCP analogue of
+    /// [`Self::announced_integrations`]: seeded at turn 1 with the startup
+    /// connected set, extended as mid-session connects are announced, so each
+    /// server is announced exactly once (never re-announced per turn).
+    pub(super) announced_mcp_servers: std::collections::HashSet<String>,
+    /// MCP servers that connected mid-session and still need announcing on the
+    /// next user message. The MCP analogue of
+    /// [`Self::pending_integration_announcement`]. `use_mcp_server` is a single
+    /// static delegate (no per-server schema to refresh), so this prose note on
+    /// the user turn is the entire mid-session-connect mechanism for MCP. The
+    /// note rides the user turn (NOT the system prompt) so the KV-cache prefix
+    /// stays byte-identical. Order-preserving + de-duped on insert.
+    pub(super) pending_mcp_announcement: Vec<String>,
+    /// Skill ids discovered mid-session (installed after session build) that
+    /// still need announcing on the next user message. Mirrors
+    /// [`Self::pending_integration_announcement`] for the `## Installed Skills`
+    /// catalogue: parked by `refresh_workflows`, rendered + cleared when the
+    /// next user message is built so the note rides the user turn (NOT the
+    /// system prompt) and the KV-cache prefix stays byte-identical.
+    pub(super) pending_skill_announcement: Vec<String>,
+    /// Skill ids already surfaced to the model as installed this session, so
+    /// each newly-installed skill is announced exactly once and never
+    /// re-announced per turn. Seeded from the session-build catalogue.
+    pub(super) announced_skills: std::collections::HashSet<String>,
     /// Optional reference to the `ArchivistHook` registered in
     /// `post_turn_hooks`. Kept separately so the turn loop can call
     /// `flush_open_segment` at session-memory-extraction time (the

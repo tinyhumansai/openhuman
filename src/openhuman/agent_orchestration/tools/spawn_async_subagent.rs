@@ -7,10 +7,12 @@
 use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::agent::harness::definition::AgentDefinitionRegistry;
 use crate::openhuman::agent::harness::fork_context::{current_parent, with_parent_context};
+use crate::openhuman::agent::harness::run_queue::RunQueue;
 use crate::openhuman::agent::harness::subagent_runner::{
     run_subagent, SubagentRunOptions, SubagentRunStatus,
 };
 use crate::openhuman::agent::progress::AgentProgress;
+use crate::openhuman::agent_orchestration::running_subagents::{self, SubagentStatus};
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
@@ -225,6 +227,14 @@ impl Tool for SpawnAsyncSubagentTool {
                 .await;
         }
 
+        // Steering channel + status channel so the parent can `steer_subagent`
+        // this run mid-flight and `wait_subagent` for its result. The engine
+        // drains `steer_queue` at iteration boundaries; `status_tx` publishes
+        // the terminal state to any waiter.
+        let steer_queue = RunQueue::new();
+        let task_queue = steer_queue.clone();
+        let (status_tx, status_rx) = running_subagents::status_channel();
+
         let background_parent = parent.clone();
         let background_definition = definition.clone();
         let background_agent_id = definition.id.clone();
@@ -232,9 +242,25 @@ impl Tool for SpawnAsyncSubagentTool {
         let background_parent_session = parent_session.clone();
         let background_progress = progress_sink.clone();
         let background_worker_thread_id = worker_thread_id.clone();
+        // Capture the parent chat thread NOW (the spawning turn's thread) so the
+        // finished result can be delivered back into it as a system turn.
+        let background_parent_thread_id =
+            crate::openhuman::inference::provider::thread_context::current_thread_id();
+        // Kept on this side (the closure moves its own clone) so the registry
+        // entry knows which parent thread owns this sub-agent — that's how
+        // `cancel_for_thread` aborts it when the thread is deleted.
+        let register_parent_thread_id = background_parent_thread_id.clone();
+        // Lifecycle-critical wiring: log the parent-thread binding so the
+        // thread-close cancellation path (`cancel_for_thread`) is grep-friendly.
+        log::debug!(
+            "[spawn_async_subagent] register task_id={} parent_session={} parent_thread_id={}",
+            task_id,
+            parent_session,
+            register_parent_thread_id.as_deref().unwrap_or("none")
+        );
         let background_prompt = add_background_contract(&prompt);
 
-        tokio::spawn(async move {
+        let join = tokio::spawn(async move {
             let options = SubagentRunOptions {
                 skill_filter_override: None,
                 toolkit_override,
@@ -245,6 +271,7 @@ impl Tool for SpawnAsyncSubagentTool {
                 initial_history: None,
                 checkpoint_dir: None,
                 worktree_action_dir: None,
+                run_queue: Some(task_queue),
             };
 
             let result = with_parent_context(background_parent, async move {
@@ -255,6 +282,21 @@ impl Tool for SpawnAsyncSubagentTool {
             match result {
                 Ok(outcome) => match outcome.status {
                     SubagentRunStatus::Completed => {
+                        // Unblock `wait_subagent` with the final output first.
+                        let _ = status_tx.send(SubagentStatus::Completed {
+                            output: outcome.output.clone(),
+                            iterations: outcome.iterations,
+                        });
+                        // Queue the finished result for idle-gated, batched
+                        // delivery back into the parent chat (the session
+                        // runtime drains this when the session is next idle).
+                        crate::openhuman::agent_orchestration::background_completions::record_completion(
+                            background_parent_session.clone(),
+                            outcome.task_id.clone(),
+                            outcome.agent_id.clone(),
+                            outcome.output.clone(),
+                            background_parent_thread_id.clone(),
+                        );
                         publish_global(DomainEvent::SubagentCompleted {
                             parent_session: background_parent_session,
                             task_id: outcome.task_id.clone(),
@@ -271,11 +313,17 @@ impl Tool for SpawnAsyncSubagentTool {
                                     elapsed_ms: outcome.elapsed.as_millis() as u64,
                                     iterations: outcome.iterations as u32,
                                     output_chars: outcome.output.chars().count(),
+                                    worktree_path: None,
+                                    changed_files: Vec::new(),
+                                    dirty_status: None,
                                 })
                                 .await;
                         }
                     }
                     SubagentRunStatus::AwaitingUser { question, .. } => {
+                        let _ = status_tx.send(SubagentStatus::AwaitingUser {
+                            question: question.clone(),
+                        });
                         let error = format!(
                             "async sub-agent requested user clarification and was not continued: {question}"
                         );
@@ -298,6 +346,9 @@ impl Tool for SpawnAsyncSubagentTool {
                 },
                 Err(err) => {
                     let error = err.to_string();
+                    let _ = status_tx.send(SubagentStatus::Failed {
+                        error: error.clone(),
+                    });
                     publish_global(DomainEvent::SubagentFailed {
                         parent_session: background_parent_session,
                         task_id: background_task_id.clone(),
@@ -317,6 +368,18 @@ impl Tool for SpawnAsyncSubagentTool {
             }
         });
 
+        // Register *after* spawn so the AbortHandle is available. The task owns
+        // `status_tx`; this side holds `status_rx` for `wait_subagent`.
+        running_subagents::register(
+            task_id.clone(),
+            definition.id.clone(),
+            parent_session.clone(),
+            register_parent_thread_id,
+            steer_queue,
+            join.abort_handle(),
+            status_rx,
+        );
+
         let payload = json!({
             "task_id": task_id,
             "agent_id": definition.id,
@@ -324,8 +387,11 @@ impl Tool for SpawnAsyncSubagentTool {
             "worker_thread_id": worker_thread_id,
         });
         Ok(ToolResult::success(format!(
-            "Accepted background sub-agent `{}`. Do not wait for it before answering the user.\n\n[async_subagent_ref]\n{}\n[/async_subagent_ref]",
+            "Accepted background sub-agent `{}` (task_id `{}`). Do not block on it before answering the user. \
+             You may redirect it mid-run with `steer_subagent {{ task_id, message }}` and collect its result \
+             with `wait_subagent {{ task_id }}`.\n\n[async_subagent_ref]\n{}\n[/async_subagent_ref]",
             payload["agent_id"].as_str().unwrap_or("subagent"),
+            task_id,
             serde_json::to_string(&payload).unwrap_or_else(|_| "{}".to_string())
         )))
     }

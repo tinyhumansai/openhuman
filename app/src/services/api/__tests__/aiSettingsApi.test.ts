@@ -311,6 +311,26 @@ describe('loadAISettings', () => {
     expect(settings.cloudProviders[0].has_api_key).toBe(false);
   });
 
+  it('parses per-tier credits_bypass into creditsBypass, defaulting to false (#3767)', async () => {
+    mockAuthListProviderCredentials.mockResolvedValue(makeAuthProfileResult([]));
+
+    // Absent in an older snapshot → both tiers conservative false.
+    mockOpenhumanGetClientConfig.mockResolvedValue(makeClientConfigResult({}));
+    expect((await loadAISettings()).creditsBypass).toEqual({ chat: false, reasoning: false });
+
+    // Per-tier: chat true, reasoning absent → chat true, reasoning false.
+    mockOpenhumanGetClientConfig.mockResolvedValue(
+      makeClientConfigResult({ credits_bypass: { chat: true } })
+    );
+    expect((await loadAISettings()).creditsBypass).toEqual({ chat: true, reasoning: false });
+
+    // Both present.
+    mockOpenhumanGetClientConfig.mockResolvedValue(
+      makeClientConfigResult({ credits_bypass: { chat: true, reasoning: true } })
+    );
+    expect((await loadAISettings()).creditsBypass).toEqual({ chat: true, reasoning: true });
+  });
+
   it('sets has_api_key=true when a matching provider:<slug> profile is stored', async () => {
     mockOpenhumanGetClientConfig.mockResolvedValue(
       makeClientConfigResult({
@@ -584,6 +604,7 @@ describe('saveAISettings', () => {
         reasoning: { kind: 'cloud', providerSlug: 'openai', model: 'gpt-4o' },
         agentic: { kind: 'openhuman' },
         coding: { kind: 'openhuman' },
+        vision: { kind: 'openhuman' },
         memory: { kind: 'openhuman' },
 
         heartbeat: { kind: 'openhuman' },
@@ -591,6 +612,7 @@ describe('saveAISettings', () => {
         subconscious: { kind: 'openhuman' },
       },
       modelRegistry: [],
+      creditsBypass: { chat: false, reasoning: false },
       ...overrides,
     };
   }
@@ -671,6 +693,7 @@ describe('saveAISettings', () => {
         reasoning: { kind: 'openhuman' },
         agentic: { kind: 'openhuman' },
         coding: { kind: 'openhuman' },
+        vision: { kind: 'openhuman' },
         memory: { kind: 'openhuman' },
 
         heartbeat: { kind: 'openhuman' },
@@ -697,6 +720,7 @@ describe('saveAISettings', () => {
       routing: {
         ...makeSettings().routing,
         coding: { kind: 'cloud', providerSlug: 'openai', model: 'gpt-4o-mini' },
+        vision: { kind: 'cloud', providerSlug: 'openai', model: 'gpt-4o-mini' },
       },
     });
 
@@ -705,6 +729,7 @@ describe('saveAISettings', () => {
     const patch = mockOpenhumanUpdateModelSettings.mock.calls[0][0];
     expect(patch.cloud_providers).toBeDefined();
     expect(patch.coding_provider).toBe('openai:gpt-4o-mini');
+    expect(patch.vision_provider).toBe('openai:gpt-4o-mini');
   });
 
   it('sends model_registry when the vision flag changes', async () => {
@@ -727,12 +752,14 @@ describe('saveAISettings', () => {
       routing: {
         ...makeSettings().routing,
         coding: { kind: 'cloud', providerSlug: 'openai', model: 'gpt-4o-mini' },
+        vision: { kind: 'cloud', providerSlug: 'openai', model: 'gpt-4o-mini' },
       },
     });
     await saveAISettings(prev, next);
     const patch = mockOpenhumanUpdateModelSettings.mock.calls[0][0];
     expect(patch.model_registry).toBeUndefined();
     expect(patch.coding_provider).toBe('openai:gpt-4o-mini');
+    expect(patch.vision_provider).toBe('openai:gpt-4o-mini');
   });
 });
 

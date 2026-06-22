@@ -91,6 +91,22 @@ impl WebviewCdpTransport {
         params: Value,
         session_id: Option<&str>,
     ) -> Result<Value, String> {
+        self.call_with_timeout(method, params, session_id, CALL_TIMEOUT)
+            .await
+    }
+
+    /// Same as [`call`](Self::call) but with a caller-supplied response
+    /// timeout. Slack's IDB serialise batches can legitimately exceed the
+    /// default 35s budget; the canonical 60s timeout in that module flows
+    /// through here without forcing every other caller to opt into a
+    /// longer wait.
+    pub async fn call_with_timeout(
+        self: &Arc<Self>,
+        method: &str,
+        params: Value,
+        session_id: Option<&str>,
+        timeout: Duration,
+    ) -> Result<Value, String> {
         let id = {
             let mut n = self.next_id.lock().expect("next_id mutex poisoned");
             let id = *n;
@@ -134,7 +150,7 @@ impl WebviewCdpTransport {
             return Err(e);
         }
 
-        match tokio::time::timeout(CALL_TIMEOUT, rx).await {
+        match tokio::time::timeout(timeout, rx).await {
             Ok(Ok(res)) => res,
             Ok(Err(_)) => {
                 // oneshot dropped — transport torn down between dispatch and
@@ -266,19 +282,29 @@ pub fn set_cef_app_handle(app: AppHandle<tauri::Cef>) {
 /// cold-boot race against a scanner that started before
 /// `webview_accounts::open` finished). Callers back off and retry.
 pub fn install_for_account(account_id: &str) -> Result<Arc<WebviewCdpTransport>, String> {
+    install_for_label(&format!("acct_{account_id}"))
+}
+
+/// Install (or look up) the in-process CDP transport for any
+/// CEF-backed webview, keyed by its concrete label. Generic counterpart
+/// of [`install_for_account`] for webviews that aren't account scanners
+/// — e.g. Meet call windows labelled `meet-call-{request_id}`.
+///
+/// Returns `Err` when the webview hasn't been created yet (cold-boot
+/// race). Callers back off and retry.
+pub fn install_for_label(label: &str) -> Result<Arc<WebviewCdpTransport>, String> {
     let app = CEF_APP_HANDLE
         .get()
         .ok_or_else(|| "cdp::set_cef_app_handle has not been called yet".to_string())?;
-    let label = format!("acct_{account_id}");
     let registry_state = app
         .try_state::<CdpRegistry>()
         .ok_or_else(|| "CdpRegistry not managed by app".to_string())?;
     let registry = registry_state.inner();
-    if let Some(existing) = registry.by_label(&label) {
+    if let Some(existing) = registry.by_label(label) {
         return Ok(existing);
     }
     let webview = app
-        .get_webview(&label)
+        .get_webview(label)
         .ok_or_else(|| format!("no webview for label={label}"))?;
     install_for_webview(registry, webview)
 }

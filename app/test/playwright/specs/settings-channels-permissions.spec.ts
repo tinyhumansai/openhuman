@@ -32,7 +32,7 @@ test.describe('Settings - Channels & Permissions', () => {
     await waitForAppReady(page);
     await dismissWalkthroughIfPresent(page);
 
-    const messagingTab = page.getByRole('tab', { name: 'Channels', exact: true });
+    const messagingTab = page.getByTestId('two-pane-nav-channels');
     if (await messagingTab.isVisible().catch(() => false)) {
       await messagingTab.click();
     }
@@ -50,7 +50,7 @@ test.describe('Settings - Channels & Permissions', () => {
     await waitForAppReady(page);
     await dismissWalkthroughIfPresent(page);
 
-    await expect(page.getByRole('heading', { name: 'Privacy & Security' })).toBeVisible();
+    await expect(page.getByTestId('settings-privacy-panel')).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Product Analytics' })).toBeVisible();
     await expect(page.getByText('Share Product Analytics and Diagnostics')).toBeVisible();
     await expect(page.getByText('What leaves your computer')).toBeVisible();

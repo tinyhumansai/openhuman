@@ -1103,6 +1103,87 @@ async fn notion_sync_max_items_caps_ingest_to_exact_count() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// Notion sync_depth_days enforcement (via the shared orchestrator)
+//
+// Proves the generic orchestrator's depth window actually drops items older
+// than the floor end-to-end through the real Notion provider. The mock returns
+// 2 recent pages (far-future `last_edited_time`, always inside the window) and
+// 3 ancient pages (year-2000, always outside it), in the descending order the
+// provider requests. With sync_depth_days=7 only the 2 recent pages persist —
+// the orchestrator truncates the page at the first item below the floor.
+// ─────────────────────────────────────────────────────────────────────────
+
+/// Build `recent` + `old` Notion pages in descending `last_edited_time` order.
+/// Recent pages use a far-future timestamp (always within any depth window);
+/// old pages use a year-2000 timestamp (always outside it).
+fn notion_depth_pages(recent: usize, old: usize) -> Vec<Value> {
+    let mut pages = Vec::new();
+    for i in 0..recent {
+        pages.push(json!({
+            "id": format!("notion-recent-{i:04}"),
+            "object": "page",
+            "last_edited_time": format!("2099-12-{:02}T10:00:00.000Z", 28 - i),
+            "properties": { "Name": { "type": "title", "title": [{ "plain_text": format!("Recent {i}") }] } }
+        }));
+    }
+    for i in 0..old {
+        pages.push(json!({
+            "id": format!("notion-old-{i:04}"),
+            "object": "page",
+            "last_edited_time": format!("2000-01-{:02}T10:00:00.000Z", 3 - i),
+            "properties": { "Name": { "type": "title", "title": [{ "plain_text": format!("Old {i}") }] } }
+        }));
+    }
+    pages
+}
+
+#[tokio::test]
+async fn notion_sync_depth_days_filters_old_pages() {
+    let _guard = env_lock();
+    let tmp = TempDir::new().expect("tempdir");
+    let _workspace = EnvGuard::set_path("OPENHUMAN_WORKSPACE", tmp.path());
+    let _home = EnvGuard::set_path("HOME", tmp.path());
+    let _backend = EnvGuard::unset("BACKEND_URL");
+
+    // One page: 2 recent + 3 ancient. With a 7-day window only the 2 recent
+    // pages must be ingested.
+    let requests: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
+    let (base, server) = loopback_router(notion_cap_router(
+        notion_depth_pages(2, 3),
+        Arc::clone(&requests),
+    ))
+    .await;
+
+    let mut config = config_in(&tmp);
+    config.api_url = Some(base);
+    persist_config(&config).await;
+    store_session(&config);
+    memory_global::init(config.workspace_dir.clone()).expect("init global memory");
+
+    let ctx = ProviderContext {
+        config: Arc::new(config),
+        toolkit: "notion".to_string(),
+        connection_id: Some("conn-notion-depth".to_string()),
+        usage: Default::default(),
+        max_items: None,
+        // 7-day window: drops the year-2000 pages, keeps the far-future ones.
+        sync_depth_days: Some(7),
+    };
+
+    let outcome = NotionProvider::new()
+        .sync(&ctx, SyncReason::ConnectionCreated)
+        .await
+        .expect("notion depth sync");
+
+    assert_eq!(
+        outcome.items_ingested, 2,
+        "sync_depth_days=7 must drop the 3 year-2000 pages and keep the 2 recent ones"
+    );
+
+    server.abort();
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // Linear cap enforcement
 //
 // Proves that max_items=N caps Linear ingestion to exactly N issues even
@@ -1207,6 +1288,86 @@ async fn linear_sync_max_items_caps_ingest_to_exact_count() {
     assert_eq!(
         outcome.items_ingested, 2,
         "max_items=2 must cap Linear ingest to exactly 2 even though the page held 5"
+    );
+
+    server.abort();
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Linear sync_depth_days enforcement (via the shared orchestrator)
+//
+// Linear applies the depth window client-side (RFC3339 `updatedAt`). The mock
+// returns 2 recent issues (far-future) + 3 ancient (year-2000) in descending
+// order; with sync_depth_days=7 only the 2 recent issues persist — the
+// orchestrator truncates the page at the first item below the floor.
+// ─────────────────────────────────────────────────────────────────────────
+
+/// Build `recent` + `old` Linear issues in descending `updatedAt` order.
+fn linear_depth_issues(recent: usize, old: usize) -> Vec<Value> {
+    let mut issues = Vec::new();
+    for i in 0..recent {
+        issues.push(json!({
+            "id": format!("linear-recent-{i:04}"),
+            "identifier": format!("ENG-R{i}"),
+            "title": format!("Recent {i}"),
+            "updatedAt": format!("2099-12-{:02}T10:00:00.000Z", 28 - i),
+            "url": format!("https://linear.app/cap/issue/ENG-R{i}"),
+            "description": "recent",
+        }));
+    }
+    for i in 0..old {
+        issues.push(json!({
+            "id": format!("linear-old-{i:04}"),
+            "identifier": format!("ENG-O{i}"),
+            "title": format!("Old {i}"),
+            "updatedAt": format!("2000-01-{:02}T10:00:00.000Z", 3 - i),
+            "url": format!("https://linear.app/cap/issue/ENG-O{i}"),
+            "description": "old",
+        }));
+    }
+    issues
+}
+
+#[tokio::test]
+async fn linear_sync_depth_days_filters_old_issues() {
+    let _guard = env_lock();
+    let tmp = TempDir::new().expect("tempdir");
+    let _workspace = EnvGuard::set_path("OPENHUMAN_WORKSPACE", tmp.path());
+    let _home = EnvGuard::set_path("HOME", tmp.path());
+    let _backend = EnvGuard::unset("BACKEND_URL");
+
+    // One page: 2 recent + 3 ancient. With a 7-day window only the 2 recent
+    // issues must be ingested.
+    let requests: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
+    let (base, server) = loopback_router(linear_cap_router(
+        linear_depth_issues(2, 3),
+        Arc::clone(&requests),
+    ))
+    .await;
+
+    let mut config = config_in(&tmp);
+    config.api_url = Some(base);
+    persist_config(&config).await;
+    store_session(&config);
+    memory_global::init(config.workspace_dir.clone()).expect("init global memory");
+
+    let ctx = ProviderContext {
+        config: Arc::new(config),
+        toolkit: "linear".to_string(),
+        connection_id: Some("conn-linear-depth".to_string()),
+        usage: Default::default(),
+        max_items: None,
+        sync_depth_days: Some(7),
+    };
+
+    let outcome = LinearProvider::new()
+        .sync(&ctx, SyncReason::ConnectionCreated)
+        .await
+        .expect("linear depth sync");
+
+    assert_eq!(
+        outcome.items_ingested, 2,
+        "sync_depth_days=7 must drop the 3 year-2000 issues and keep the 2 recent ones"
     );
 
     server.abort();
@@ -1323,6 +1484,87 @@ async fn clickup_sync_max_items_caps_ingest_to_exact_count() {
     assert_eq!(
         outcome.items_ingested, 2,
         "max_items=2 must cap ClickUp ingest to exactly 2 even though the page held 5"
+    );
+
+    server.abort();
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// ClickUp sync_depth_days enforcement (via the shared orchestrator)
+//
+// ClickUp's `date_updated` is an epoch-millis string, so the orchestrator's
+// depth floor must be epoch-ms too (ClickUpSource::depth_floor override). The
+// mock returns 2 recent tasks (year-2030 epoch-ms) + 3 ancient (year-2001) in
+// descending order; with sync_depth_days=7 only the 2 recent tasks persist.
+// ─────────────────────────────────────────────────────────────────────────
+
+/// Build `recent` + `old` ClickUp tasks in descending `date_updated` order,
+/// using epoch-millis strings so the epoch-ms depth floor compares correctly.
+fn clickup_depth_tasks(recent: usize, old: usize) -> Vec<Value> {
+    let mut tasks = Vec::new();
+    for i in 0..recent {
+        tasks.push(json!({
+            "id": format!("clickup-recent-{i:04}"),
+            "name": format!("Recent {i}"),
+            "text_content": "recent",
+            "status": { "status": "open" },
+            "date_updated": format!("{}", 1_900_000_000_000_u64 + (recent - i) as u64),
+            "url": format!("https://app.clickup.com/t/clickup-recent-{i:04}")
+        }));
+    }
+    for i in 0..old {
+        tasks.push(json!({
+            "id": format!("clickup-old-{i:04}"),
+            "name": format!("Old {i}"),
+            "text_content": "old",
+            "status": { "status": "open" },
+            "date_updated": format!("{}", 1_000_000_000_000_u64 + (old - i) as u64),
+            "url": format!("https://app.clickup.com/t/clickup-old-{i:04}")
+        }));
+    }
+    tasks
+}
+
+#[tokio::test]
+async fn clickup_sync_depth_days_filters_old_tasks() {
+    let _guard = env_lock();
+    let tmp = TempDir::new().expect("tempdir");
+    let _workspace = EnvGuard::set_path("OPENHUMAN_WORKSPACE", tmp.path());
+    let _home = EnvGuard::set_path("HOME", tmp.path());
+    let _backend = EnvGuard::unset("BACKEND_URL");
+
+    // One workspace, one page: 2 recent + 3 ancient. With a 7-day window only
+    // the 2 recent tasks must be ingested.
+    let requests: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
+    let (base, server) = loopback_router(clickup_cap_router(
+        clickup_depth_tasks(2, 3),
+        Arc::clone(&requests),
+    ))
+    .await;
+
+    let mut config = config_in(&tmp);
+    config.api_url = Some(base);
+    persist_config(&config).await;
+    store_session(&config);
+    memory_global::init(config.workspace_dir.clone()).expect("init global memory");
+
+    let ctx = ProviderContext {
+        config: Arc::new(config),
+        toolkit: "clickup".to_string(),
+        connection_id: Some("conn-clickup-depth".to_string()),
+        usage: Default::default(),
+        max_items: None,
+        sync_depth_days: Some(7),
+    };
+
+    let outcome = ClickUpProvider::new()
+        .sync(&ctx, SyncReason::ConnectionCreated)
+        .await
+        .expect("clickup depth sync");
+
+    assert_eq!(
+        outcome.items_ingested, 2,
+        "sync_depth_days=7 must drop the 3 year-2001 tasks and keep the 2 recent ones"
     );
 
     server.abort();

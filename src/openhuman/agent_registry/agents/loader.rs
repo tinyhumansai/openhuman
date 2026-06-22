@@ -89,6 +89,11 @@ pub const BUILTINS: &[BuiltinAgent] = &[
         prompt_fn: super::markets_agent::prompt::build,
     },
     BuiltinAgent {
+        id: "tinyplace_agent",
+        toml: include_str!("../../tinyplace/agent/agent.toml"),
+        prompt_fn: crate::openhuman::tinyplace::agent::prompt::build,
+    },
+    BuiltinAgent {
         id: "tools_agent",
         toml: include_str!("tools_agent/agent.toml"),
         prompt_fn: super::tools_agent::prompt::build,
@@ -154,6 +159,11 @@ pub const BUILTINS: &[BuiltinAgent] = &[
         prompt_fn: super::critic::prompt::build,
     },
     BuiltinAgent {
+        id: "vision_agent",
+        toml: include_str!("vision_agent/agent.toml"),
+        prompt_fn: super::vision_agent::prompt::build,
+    },
+    BuiltinAgent {
         id: "archivist",
         toml: include_str!("archivist/agent.toml"),
         prompt_fn: super::archivist::prompt::build,
@@ -187,6 +197,11 @@ pub const BUILTINS: &[BuiltinAgent] = &[
         id: "mcp_setup",
         toml: include_str!("mcp_setup/agent.toml"),
         prompt_fn: super::mcp_setup::prompt::build,
+    },
+    BuiltinAgent {
+        id: "mcp_agent",
+        toml: include_str!("mcp_agent/agent.toml"),
+        prompt_fn: super::mcp_agent::prompt::build,
     },
     BuiltinAgent {
         id: "skill_setup",
@@ -519,6 +534,24 @@ mod tests {
     }
 
     #[test]
+    fn vision_agent_loads_on_vision_hint() {
+        // The vision sub-agent rides the multimodal `vision-v1` tier (via the
+        // `vision` hint) so its model is image-capable, and it must be reachable
+        // from the orchestrator's subagent allowlist.
+        let def = find("vision_agent");
+        assert!(matches!(def.model, ModelSpec::Hint(ref h) if h == "vision"));
+
+        let orchestrator = find("orchestrator");
+        assert!(
+            orchestrator
+                .subagents
+                .iter()
+                .any(|s| matches!(s, SubagentEntry::AgentId(id) if id == "vision_agent")),
+            "orchestrator must list vision_agent in its subagents allowlist"
+        );
+    }
+
+    #[test]
     fn orchestrator_has_chat_hint_and_named_tools() {
         let def = find("orchestrator");
         assert!(matches!(def.model, ModelSpec::Hint(ref h) if h == "chat"));
@@ -573,6 +606,7 @@ mod tests {
             "task_manager_agent",
             "crypto_agent",
             "markets_agent",
+            "tinyplace_agent",
         ] {
             let def = find(id);
             match def.tools {
@@ -665,6 +699,45 @@ mod tests {
         }
     }
 
+    /// The planner grounds plans in connected-MCP context the same way it
+    /// grounds in Composio — but read-only. It must carry the MCP *discovery*
+    /// tools (`status` / `installed_list` / `list_tools`, all
+    /// `PermissionLevel::ReadOnly`) and must NOT carry `mcp_registry_tool_call`
+    /// (no read-only gate exists for an arbitrary MCP tool call) nor the
+    /// install/connect mutators. Execution stays with `mcp_agent`.
+    #[test]
+    fn planner_has_readonly_mcp_discovery_not_execute() {
+        let def = find("planner");
+        assert_eq!(def.sandbox_mode, SandboxMode::ReadOnly);
+        match &def.tools {
+            ToolScope::Named(names) => {
+                for required in [
+                    "mcp_registry_status",
+                    "mcp_registry_installed_list",
+                    "mcp_registry_list_tools",
+                ] {
+                    assert!(
+                        names.iter().any(|n| n == required),
+                        "planner needs read-only MCP discovery tool `{required}`"
+                    );
+                }
+                for forbidden in [
+                    "mcp_registry_tool_call",
+                    "mcp_registry_connect",
+                    "mcp_registry_install",
+                    "mcp_registry_uninstall",
+                ] {
+                    assert!(
+                        !names.iter().any(|n| n == forbidden),
+                        "planner must NOT have `{forbidden}` — it is read-only; MCP execution \
+                         belongs to mcp_agent"
+                    );
+                }
+            }
+            other => panic!("planner must use Named tool scope, got {other:?}"),
+        }
+    }
+
     #[test]
     fn integrations_agent_tool_scope_honours_toml() {
         let def = find("integrations_agent");
@@ -684,6 +757,61 @@ mod tests {
     fn tools_agent_is_registered() {
         let def = find("tools_agent");
         assert!(matches!(def.tools, ToolScope::Wildcard));
+    }
+
+    #[test]
+    fn tinyplace_agent_is_registered_and_narrow() {
+        let def = find("tinyplace_agent");
+        assert!(matches!(def.model, ModelSpec::Hint(ref h) if h == "agentic"));
+        assert_eq!(def.sandbox_mode, SandboxMode::None);
+        assert!(!def.omit_safety_preamble);
+        assert_eq!(def.delegate_name.as_deref(), Some("use_tinyplace"));
+        match &def.tools {
+            ToolScope::Named(names) => {
+                // Curated flow surface (replaced the per-controller 1:1 tools).
+                for required in [
+                    "tinyplace_whoami",
+                    "tinyplace_status",
+                    "tinyplace_feed",
+                    "tinyplace_find_work",
+                    "tinyplace_register",
+                    "tinyplace_post_bounty",
+                    "tinyplace_submit_work",
+                    "tinyplace_job_apply",
+                    "tinyplace_graphql",
+                    "tinyplace_call",
+                    "tinyplace_help",
+                    "ask_user_clarification",
+                    "resolve_time",
+                    "current_time",
+                ] {
+                    assert!(
+                        names.iter().any(|name| name == required),
+                        "tinyplace_agent tool list missing `{required}`"
+                    );
+                }
+                for forbidden in [
+                    "shell",
+                    "file_write",
+                    "composio_execute",
+                    "mcp_registry_tool_call",
+                ] {
+                    assert!(
+                        !names.iter().any(|name| name == forbidden),
+                        "tinyplace_agent must not expose broad tool `{forbidden}`"
+                    );
+                }
+            }
+            other => panic!("tinyplace_agent must use Named tool scope, got {other:?}"),
+        }
+
+        let orchestrator = find("orchestrator");
+        assert!(
+            orchestrator.subagents.iter().any(
+                |entry| matches!(entry, SubagentEntry::AgentId(id) if id == "tinyplace_agent")
+            ),
+            "orchestrator must allow `tinyplace_agent` so use_tinyplace can spawn it"
+        );
     }
 
     #[test]
@@ -744,10 +872,17 @@ mod tests {
         let def = find("morning_briefing");
         assert_eq!(def.sandbox_mode, SandboxMode::ReadOnly);
         assert!(matches!(def.tools, ToolScope::Wildcard));
-        assert!(!def.omit_memory_context);
+        // The brief pulls its own last-24h memory via the `memory_tree`
+        // `cover_window` tool, so the stale all-time memory blob is suppressed.
+        assert!(def.omit_memory_context);
         assert!(def.omit_identity);
         assert!(def.omit_safety_preamble);
         assert_eq!(def.max_iterations, 8);
+        assert!(
+            def.disallowed_tools.iter().any(|t| t == "tinyplace_*"),
+            "morning_briefing.disallowed_tools must contain `tinyplace_*` so \
+             tiny.place routes through tinyplace_agent exclusively"
+        );
     }
 
     #[test]
@@ -1083,13 +1218,11 @@ mod tests {
         );
     }
 
-    /// `tools_agent` must explicitly disallow `polymarket` and `kalshi`
-    /// so the prediction-market venues route ONLY through
-    /// `markets_agent` (`delegate_do_prediction_markets`). Without this
-    /// the wildcard inventory would also surface them as raw tools to
-    /// the generalist, bypassing the venue-aware approval-gate prompt.
+    /// `tools_agent` must explicitly disallow specialist-owned external action
+    /// families so the wildcard inventory does not surface raw paid/write
+    /// tools to the generalist, bypassing specialist prompts.
     #[test]
-    fn tools_agent_disallows_prediction_market_tools() {
+    fn tools_agent_disallows_specialist_owned_external_tools() {
         let def = find("tools_agent");
         assert!(
             def.disallowed_tools.iter().any(|t| t == "polymarket"),
@@ -1101,6 +1234,102 @@ mod tests {
             "tools_agent.disallowed_tools must contain `kalshi` so the \
              venue routes through markets_agent exclusively"
         );
+        assert!(
+            def.disallowed_tools.iter().any(|t| t == "tinyplace_*"),
+            "tools_agent.disallowed_tools must contain `tinyplace_*` so \
+             tiny.place routes through tinyplace_agent exclusively"
+        );
+    }
+
+    /// Routing: the orchestrator must list `mcp_agent` in its `subagents`
+    /// so a `delegate_use_mcp_server` tool is synthesised at agent-build
+    /// time. Without this entry the orchestrator can only *set up* MCP
+    /// servers (via `mcp_setup`) and has no route to actually *use* an
+    /// already-connected server's tools from chat (issue #3495).
+    #[test]
+    fn orchestrator_subagents_include_mcp_agent() {
+        use crate::openhuman::agent::harness::definition::SubagentEntry;
+        let def = find("orchestrator");
+        let listed = def.subagents.iter().any(|e| match e {
+            SubagentEntry::AgentId(id) => id == "mcp_agent",
+            _ => false,
+        });
+        assert!(
+            listed,
+            "orchestrator.subagents must list `mcp_agent` so the routing \
+             layer can synthesise `delegate_use_mcp_server`"
+        );
+    }
+
+    /// The orchestrator gets lightweight MCP discovery (`mcp_registry_status`,
+    /// like `composio_list_connections`) but must NOT carry the per-server
+    /// enumerate/execute tools — those belong to `mcp_agent`, keeping the
+    /// chat agent's schema from ballooning with every connected server's
+    /// full toolset (#3495).
+    #[test]
+    fn orchestrator_has_mcp_discovery_but_not_execution() {
+        let def = find("orchestrator");
+        match &def.tools {
+            ToolScope::Named(tools) => {
+                assert!(
+                    tools.iter().any(|t| t == "mcp_registry_status"),
+                    "orchestrator must have mcp_registry_status for lightweight MCP discovery"
+                );
+                for forbidden in ["mcp_registry_list_tools", "mcp_registry_tool_call"] {
+                    assert!(
+                        !tools.iter().any(|t| t == forbidden),
+                        "orchestrator must NOT have `{forbidden}` — enumerating/calling \
+                         connected MCP tools is mcp_agent's job (keeps the chat schema small)"
+                    );
+                }
+            }
+            ToolScope::Wildcard => panic!("orchestrator must have a Named tool scope"),
+        }
+    }
+
+    /// `mcp_agent` is the connected-server execution specialist: it must hold
+    /// the discover + call surface and a stable `use_mcp_server` delegate name,
+    /// but must NOT hold the secret-handling install/uninstall tools (those are
+    /// `mcp_setup`'s) or any shell/file/network capability.
+    #[test]
+    fn mcp_agent_drives_connected_servers_without_install_or_shell() {
+        let def = find("mcp_agent");
+        assert_eq!(def.agent_tier, AgentTier::Worker);
+        assert_eq!(
+            def.delegate_name.as_deref(),
+            Some("use_mcp_server"),
+            "mcp_agent must keep its `use_mcp_server` delegate name stable"
+        );
+        match &def.tools {
+            ToolScope::Named(tools) => {
+                for required in [
+                    "mcp_registry_status",
+                    "mcp_registry_list_tools",
+                    "mcp_registry_connect",
+                    "mcp_registry_tool_call",
+                ] {
+                    assert!(
+                        tools.iter().any(|t| t == required),
+                        "mcp_agent missing `{required}`"
+                    );
+                }
+                for forbidden in [
+                    "mcp_registry_install",
+                    "mcp_registry_uninstall",
+                    "shell",
+                    "file_write",
+                    "curl",
+                    "http_request",
+                ] {
+                    assert!(
+                        !tools.iter().any(|t| t == forbidden),
+                        "mcp_agent must NOT have `{forbidden}` — it only relays through \
+                         already-connected servers; install/secrets belong to mcp_setup"
+                    );
+                }
+            }
+            ToolScope::Wildcard => panic!("mcp_agent must have a Named tool scope"),
+        }
     }
 
     #[test]

@@ -15,14 +15,16 @@ import { useAppSelector } from '../../../store/hooks';
 import { APP_VERSION, LATEST_APP_DOWNLOAD_URL } from '../../../utils/config';
 import { isTauriEnvironment } from '../../../utils/configPersistence';
 import { openUrl } from '../../../utils/openUrl';
+import PanelPage from '../../layout/PanelPage';
 import Button from '../../ui/Button';
-import SettingsHeader from '../components/SettingsHeader';
+import SettingsBackButton from '../components/SettingsBackButton';
 import { SettingsRow, SettingsSection } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+import SystemDiagnostics from './SystemDiagnostics';
 
 const AboutPanel = () => {
   const { t } = useT();
-  const { navigateBack, breadcrumbs } = useSettingsNavigation();
+  const { navigateBack } = useSettingsNavigation();
   // The auto-cadence is already running via the global <AppUpdatePrompt />;
   // disable it here so opening the panel doesn't double-trigger probes.
   const { phase, info, error, check } = useAppUpdate({ autoCheck: false });
@@ -67,14 +69,11 @@ const AboutPanel = () => {
   };
 
   return (
-    <div className="z-10 relative">
-      <SettingsHeader
-        title={t('settings.about')}
-        showBackButton={true}
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
-
+    <PanelPage
+      className="z-10"
+      contentClassName=""
+      description={t('settings.aboutDesc')}
+      leading={<SettingsBackButton onBack={navigateBack} />}>
       <div className="p-4 space-y-4">
         {/* Version */}
         <SettingsSection>
@@ -169,8 +168,12 @@ const AboutPanel = () => {
             </Button>
           </div>
         </SettingsSection>
+
+        {/* Diagnostics (app logs, restart tour, staging Sentry test) —
+            relocated here from the retired Developer & Diagnostics page. */}
+        <SystemDiagnostics />
       </div>
-    </div>
+    </PanelPage>
   );
 };
 

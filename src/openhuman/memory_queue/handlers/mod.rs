@@ -20,7 +20,9 @@ use crate::openhuman::memory_queue::types::{
     JobOutcome, NewJob, NodeRef, ReembedBackfillPayload, SealDocumentPayload, SealPayload,
 };
 use crate::openhuman::memory_store::chunks::store as chunk_store;
-use crate::openhuman::memory_store::chunks::types::{truncate_to_conservative_tokens, Chunk};
+use crate::openhuman::memory_store::chunks::types::{
+    truncate_to_conservative_tokens, Chunk, Metadata,
+};
 use crate::openhuman::memory_store::content::{
     self as content_store, read as content_read, tags as content_tags,
 };
@@ -67,6 +69,19 @@ fn derive_tree_scope(source_id: &str) -> String {
         }
     }
     source_id.to_string()
+}
+
+/// The source-tree scope a chunk's content is appended under: its
+/// `path_scope` when set (shared-directory sources like Notion), otherwise the
+/// GitHub-aware [`derive_tree_scope`] of its `source_id`. This is the SAME
+/// mapping the append-buffer path uses (see `handle_extract`'s `AppendTarget`),
+/// so read paths such as `memory_tree::retrieval::cover` look up the tree the
+/// seal worker actually wrote to rather than the raw `source_id`.
+pub(crate) fn chunk_tree_scope(metadata: &Metadata) -> String {
+    metadata
+        .path_scope
+        .clone()
+        .unwrap_or_else(|| derive_tree_scope(&metadata.source_id))
 }
 
 /// Whether a chunk's source uses the per-document rollup + versioning path
@@ -246,7 +261,7 @@ struct PreparedExtract {
 async fn prepare_extract(config: &Config, job: &Job) -> Result<Option<PreparedExtract>> {
     let payload: ExtractChunkPayload =
         serde_json::from_str(&job.payload_json).context("parse ExtractChunk payload")?;
-    let Some(chunk) = chunk_store::get_chunk(config, &payload.chunk_id)? else {
+    let Some(mut chunk) = chunk_store::get_chunk(config, &payload.chunk_id)? else {
         log::warn!(
             "[memory::jobs] extract chunk missing chunk_id={}",
             payload.chunk_id
@@ -257,13 +272,17 @@ async fn prepare_extract(config: &Config, job: &Job) -> Result<Option<PreparedEx
     // Read the full body from disk (the `content` column in SQLite holds a
     // ≤500-char preview after the MD-on-disk migration). The scorer needs
     // the complete text so extraction operates over the full chunk body.
+    //
+    // Swap the full body INTO the owned chunk for scoring instead of cloning
+    // the whole struct: `score_chunk` only borrows `chunk`, so we temporarily
+    // replace `content` with the body, score, then restore the preview. This
+    // avoids a full `Chunk` clone (metadata + preview) per extract job, and —
+    // crucially — keeps `PreparedExtract` holding only the small preview rather
+    // than the full body, so a batch of N prepared items doesn't retain N full
+    // bodies in memory before finalize.
     let body = content_read::read_chunk_body(config, &chunk.id)
         .with_context(|| format!("read full body for extract chunk_id={}", chunk.id))?;
-    let chunk_with_body = {
-        let mut c = chunk.clone();
-        c.content = body;
-        c
-    };
+    let preview = std::mem::replace(&mut chunk.content, body);
 
     emit_build_progress(
         "extract",
@@ -275,7 +294,10 @@ async fn prepare_extract(config: &Config, job: &Job) -> Result<Option<PreparedEx
     );
 
     let scoring_cfg = score::ScoringConfig::from_config(config);
-    let result = score::score_chunk(&chunk_with_body, &scoring_cfg).await?;
+    let result = score::score_chunk(&chunk, &scoring_cfg).await?;
+
+    // Restore the preview, dropping the full body now that scoring is done.
+    chunk.content = preview;
     Ok(Some(PreparedExtract {
         job: job.clone(),
         chunk,
@@ -300,11 +322,7 @@ fn finalize_extract(config: &Config, item: PreparedExtract) -> Result<JobOutcome
                 chunk_id: chunk.id.clone(),
             },
             target: AppendTarget::Source {
-                source_id: chunk
-                    .metadata
-                    .path_scope
-                    .clone()
-                    .unwrap_or_else(|| derive_tree_scope(&chunk.metadata.source_id)),
+                source_id: chunk_tree_scope(&chunk.metadata),
             },
         })?)
     } else {

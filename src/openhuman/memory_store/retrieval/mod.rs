@@ -128,6 +128,8 @@ impl RetrievalFacade {
             since_ms: filters.since_ms,
             until_ms: filters.until_ms,
             limit: filters.limit,
+            source_scope: None,
+            exclude_dropped: false,
         };
         let rows = list_chunks(config, &query)?;
         let Some(required) = filters.tags_all_of.as_ref() else {

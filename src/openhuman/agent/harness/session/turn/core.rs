@@ -3,7 +3,10 @@
 use super::super::transcript;
 use super::super::turn_engine_adapter::{AgentCheckpoint, AgentObserver, AgentToolSource};
 use super::super::types::Agent;
-use super::{integration_announcement_note, normalize_tool_call};
+use super::{
+    integration_announcement_note, mcp_announcement_note, newly_connected_slugs,
+    skill_announcement_note,
+};
 use crate::openhuman::agent::harness;
 use crate::openhuman::agent::harness::definition::TriggerMemoryAgent;
 use crate::openhuman::agent::harness::fork_context::ParentExecutionContext;
@@ -53,6 +56,11 @@ impl Agent {
             self.config.max_tool_iterations
         );
         self.ensure_composio_integrations_listener();
+        // Arm the installed-skills listener at turn start (not lazily inside
+        // `drain_skill_events`, which is only reached after the first turn) —
+        // broadcast subscriptions are not retroactive, so a skill installed
+        // during turn 1 would otherwise be missed until a later subscribe.
+        self.ensure_skill_events_listener();
         // ── Session transcript resume ─────────────────────────────────
         // On a fresh session (empty history), look for a previous
         // transcript to pre-populate the exact provider messages for
@@ -119,6 +127,16 @@ impl Agent {
                 .iter()
                 .map(|i| i.toolkit.clone())
                 .collect();
+            // MCP analogue: seed the announced MCP set with the servers already
+            // connected at startup. Those are already in the (turn-1) system
+            // prompt's `## Connected MCP Servers` block, so only servers that
+            // connect *mid-session* should later be announced on the user turn.
+            self.announced_mcp_servers =
+                crate::openhuman::mcp_registry::connections::connected_overview()
+                    .await
+                    .into_iter()
+                    .map(|s| s.qualified_name)
+                    .collect();
         } else {
             // Deliberately do NOT rebuild the system prompt on subsequent
             // turns. The rendered prompt is the KV-cache prefix the inference
@@ -158,10 +176,45 @@ impl Agent {
             // old `Config::load_or_init()` round-trip on every turn.
             //
             let _ = self.refresh_delegation_tools_from_cached_integrations("turn-boundary");
+            // Same idea for installed skills. The system-prompt
+            // `## Installed Skills` block is frozen at turn 1 for KV-cache
+            // stability (history is non-empty here, so it is never rebuilt
+            // mid-session), so — exactly like the MCP mechanism — the
+            // user-turn announcement below is what surfaces a mid-session
+            // install to the model. `refresh_workflows` updates the tracked
+            // set (so the next refresh diffs correctly and a future fresh
+            // session renders the new catalogue) and parks the announcement.
+            // Event-driven (mirror of the composio path): only re-scan disk
+            // when a `WorkflowsChanged` event was published since the last
+            // turn — no per-turn filesystem walk on the steady-state hot path.
+            if self.drain_skill_events() {
+                let _ = self.refresh_workflows("event");
+            }
             // Cache empty/expired or config unavailable => no signal.
             // We leave the current tool surface alone and pick up any
             // real change on the next turn after the UI's 5 s poll has
             // repopulated [`INTEGRATIONS_CACHE`].
+
+            // MCP mid-session connect surfacing — the analogue of the Composio
+            // path above. `use_mcp_server` is a single static delegate (no
+            // per-server schema to refresh), so the whole mechanism is: diff
+            // the live in-process connection map against what we've already
+            // announced and queue a one-shot note for any newly-connected
+            // server onto the next user message. The map is in-process (no
+            // network, unlike Composio's cache), so reading it every turn is
+            // cheap. Like the Composio block, the frozen `## Connected MCP
+            // Servers` system-prompt section stays as the turn-1 snapshot.
+            let connected_mcp: Vec<String> =
+                crate::openhuman::mcp_registry::connections::connected_overview()
+                    .await
+                    .into_iter()
+                    .map(|s| s.qualified_name)
+                    .collect();
+            for qn in newly_connected_slugs(&connected_mcp, &mut self.announced_mcp_servers) {
+                if !self.pending_mcp_announcement.contains(&qn) {
+                    self.pending_mcp_announcement.push(qn);
+                }
+            }
 
             log::trace!(
                 "[agent_loop] system prompt reused (history_len={}) — KV cache prefix preserved",
@@ -293,42 +346,19 @@ impl Agent {
             .inject_agent_experience_context(user_message, enriched)
             .await;
 
-        // ── SKILL.md body injection (#781) ───────────────────────────
-        // Match installed SKILL.md skills against the user message and
-        // prepend their bodies ahead of the memory-context block so the
-        // LLM sees them at the top of the user turn. See the module
-        // docs on [`crate::openhuman::workflows::inject`] for the matching
-        // heuristic and size cap rationale.
-        let enriched = {
-            use crate::openhuman::workflows::inject;
-            let matches = inject::match_workflows(&self.workflows, user_message);
-            if matches.is_empty() {
-                log::debug!(
-                    "[workflows:inject] no skill matches for user message (skill_catalog_len={})",
-                    self.workflows.len()
-                );
-                enriched
-            } else {
-                let injection = inject::render_injection(
-                    &matches,
-                    inject::DEFAULT_MAX_INJECTION_BYTES,
-                    |skill| skill.read_body(),
-                );
-                let matched_count = injection.decisions.iter().filter(|d| d.matched).count();
-                log::info!(
-                    "[workflows:inject] summary candidates={} matched={} injected_bytes={} truncated_any={}",
-                    injection.decisions.len(),
-                    matched_count,
-                    injection.injected_bytes,
-                    injection.truncated
-                );
-                if injection.rendered.is_empty() {
-                    enriched
-                } else {
-                    format!("{}\n{}", injection.rendered, enriched)
-                }
-            }
-        };
+        // ── SKILL.md body injection: REMOVED (was #781) ──────────────
+        // We used to keyword-match installed skills against the user message
+        // and prepend their full SKILL.md bodies onto the user turn. That
+        // brittle name/description/tag match fired unintentionally and — by
+        // baking the body into the stored user message — left full skill text
+        // permanently in chat history (microcompact only clears tool results,
+        // not user messages).
+        //
+        // Skills are now surfaced via the compact `## Installed Skills`
+        // catalog in the orchestrator prompt and executed via `run_skill`,
+        // which loads and follows the SKILL.md inside an isolated worker, so
+        // the full body never enters this conversation. `self.workflows` still
+        // feeds the catalog through `PromptContext`.
 
         // Consume any one-shot mid-session connect announcement parked by
         // `refresh_delegation_tools_from_cached_integrations`. It rides on the
@@ -337,6 +367,23 @@ impl Agent {
         // `.take()` clears it so it fires exactly once.
         let pending_slugs = std::mem::take(&mut self.pending_integration_announcement);
         let enriched = match integration_announcement_note(&pending_slugs) {
+            Some(note) => format!("{note}\n\n{enriched}"),
+            None => enriched,
+        };
+
+        // Same one-shot treatment for MCP servers connected mid-session
+        // (queued above). `.take()` clears it so it fires exactly once.
+        let pending_mcp = std::mem::take(&mut self.pending_mcp_announcement);
+        let enriched = match mcp_announcement_note(&pending_mcp) {
+            Some(note) => format!("{note}\n\n{enriched}"),
+            None => enriched,
+        };
+
+        // Same one-shot pattern for skills installed mid-session (parked by
+        // `refresh_workflows` above). Rides the user turn so the KV-cache
+        // prefix stays stable; `.take()` fires it exactly once.
+        let pending_skills = std::mem::take(&mut self.pending_skill_announcement);
+        let enriched = match skill_announcement_note(&pending_skills) {
             Some(note) => format!("{note}\n\n{enriched}"),
             None => enriched,
         };
@@ -370,6 +417,20 @@ impl Agent {
         let enriched = self
             .inject_triggered_memory_agent_context(user_message, enriched, &parent_context)
             .await;
+
+        // #3602: stamp every turn's user message with the live local time
+        // so time-relative phrasing (greetings, "today"/"tonight") is
+        // grounded on the real clock. Rides the user message — not the
+        // frozen system-prompt prefix (see core.rs KV-cache note above) — so
+        // it stays fresh across a long-lived session without busting the
+        // cached prefix. This path runs for every `turn()` caller, including
+        // one-shot `run_single` flows (cron/morning-briefing/meet), so those
+        // get a fresh stamp too. The grounding *rule* lives in the system
+        // prompt's `## Current Date & Time` section.
+        let enriched = format!(
+            "{}\n\n{enriched}",
+            crate::openhuman::agent::prompts::current_datetime_line()
+        );
 
         self.history
             .push(ConversationMessage::Chat(ChatMessage::user(enriched)));
@@ -422,6 +483,7 @@ impl Agent {
                 agent_definition_id: self.agent_definition_id.clone(),
                 prefer_markdown: self.context.prefer_markdown_tool_output(),
                 budget_bytes: self.context.tool_result_budget_bytes(),
+                compaction_enabled: self.context.compaction_enabled(),
                 artifact_store: artifact_store.clone(),
                 should_send_specs: self.tool_dispatcher.should_send_tool_specs(),
                 advertised_specs: self.visible_tool_specs.as_ref().clone(),
@@ -477,9 +539,20 @@ impl Agent {
             // overflow happens during the parent's poll on the way in
             // — verified against the `chat-harness-subagent` Playwright
             // lane crash on PR #3151.
-            let outcome = super::super::super::model_vision_context::with_current_model_vision(
-                model_vision,
-                Box::pin(super::super::super::engine::run_turn_engine(
+            // Carry the current turn's image placeholders so a delegation to the
+            // vision sub-agent (analyze_image) can forward the attached image
+            // into its prompt — the orchestrator's own non-vision turn keeps the
+            // placeholder as text and never rehydrates it.
+            let turn_image_placeholders =
+                crate::openhuman::agent::multimodal::extract_image_placeholders_in_text(
+                    user_message,
+                );
+            let outcome =
+                super::super::super::turn_attachments_context::with_current_turn_image_placeholders(
+                    turn_image_placeholders,
+                    super::super::super::model_vision_context::with_current_model_vision(
+                        model_vision,
+                        Box::pin(super::super::super::engine::run_turn_engine(
                     provider.as_ref(),
                     &mut buf,
                     &mut tool_source,
@@ -497,9 +570,11 @@ impl Agent {
                     None, // the web bridge streams via on_progress deltas, not on_delta
                     &[],
                     turn_run_queue,
-                )),
-            )
-            .await?;
+                    None, // main agent compacts via its ContextManager in before_dispatch
+                        )),
+                    ),
+                )
+                .await?;
 
             // Pull the observer's accounting out, then drop it to release the
             // `&mut self` borrow so the epilogue can use `self`.

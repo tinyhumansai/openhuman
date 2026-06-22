@@ -16,8 +16,9 @@ import { APP_ENVIRONMENT } from '../../../utils/config';
 // TAURI-REACT-6 — into a rejected Promise so the existing `.catch(...)` /
 // try/catch handlers see it as a normal IPC failure.
 import { safeInvoke as invoke, isTauri } from '../../../utils/tauriCommands/common';
+import PanelPage from '../../layout/PanelPage';
 import { resetWalkthrough } from '../../walkthrough/AppWalkthrough';
-import SettingsHeader from '../components/SettingsHeader';
+import SettingsBackButton from '../components/SettingsBackButton';
 import SettingsMenuItem from '../components/SettingsMenuItem';
 import { SettingsSection } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
@@ -236,6 +237,22 @@ const modelsDebugGroup: DevGroup = {
             strokeLinejoin="round"
             strokeWidth={2}
             d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
+          />
+        </svg>
+      ),
+    },
+    {
+      id: 'agentbox',
+      titleKey: 'settings.agentbox.title',
+      descriptionKey: 'settings.agentbox.desc',
+      route: 'agentbox',
+      icon: (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"
           />
         </svg>
       ),
@@ -634,7 +651,7 @@ const LogsFolderRow = () => {
 const DeveloperOptionsPanel = () => {
   const { t } = useT();
   const navigate = useNavigate();
-  const { navigateToSettings, navigateBack, breadcrumbs } = useSettingsNavigation();
+  const { navigateToSettings, navigateBack } = useSettingsNavigation();
   const showSentryTest = APP_ENVIRONMENT === 'staging';
 
   // Trailing actions (restart tour) that don't fit cleanly in any group
@@ -659,14 +676,11 @@ const DeveloperOptionsPanel = () => {
   };
 
   return (
-    <div className="z-10 relative">
-      <SettingsHeader
-        title={t('devOptions.titleDiagnostics')}
-        showBackButton={true}
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
-
+    <PanelPage
+      className="z-10"
+      contentClassName=""
+      description={t('settings.developerDiagnosticsDesc')}
+      leading={<SettingsBackButton onBack={navigateBack} />}>
       {/* Debug-only sub-sections */}
       <div className="p-4 pt-2 space-y-3">
         {DEV_GROUPS.map(group => (
@@ -710,7 +724,7 @@ const DeveloperOptionsPanel = () => {
         <LogsFolderRow />
         {showSentryTest && <SentryTestRow />}
       </div>
-    </div>
+    </PanelPage>
   );
 };
 

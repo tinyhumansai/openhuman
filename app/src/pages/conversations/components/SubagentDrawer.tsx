@@ -50,7 +50,12 @@ function transcriptFromMessages(messages: ThreadMessage[]): {
 function statusTone(status: ToolTimelineEntryStatus | undefined): {
   dot: string;
   pill: string;
-  label: 'statusRunning' | 'statusCompleted' | 'statusFailed' | 'statusAwaitingUser';
+  label:
+    | 'statusRunning'
+    | 'statusCompleted'
+    | 'statusFailed'
+    | 'statusAwaitingUser'
+    | 'statusCancelled';
 } {
   if (status === 'success') {
     return {
@@ -64,6 +69,13 @@ function statusTone(status: ToolTimelineEntryStatus | undefined): {
       dot: 'bg-coral-500',
       pill: 'bg-coral-100 dark:bg-coral-500/20 text-coral-700 dark:text-coral-300',
       label: 'statusFailed',
+    };
+  }
+  if (status === 'cancelled') {
+    return {
+      dot: 'bg-stone-400 dark:bg-neutral-500',
+      pill: 'bg-stone-100 dark:bg-neutral-700/40 text-stone-600 dark:text-neutral-300',
+      label: 'statusCancelled',
     };
   }
   if (status === 'awaiting_user') {
@@ -101,14 +113,28 @@ function formatElapsed(ms: number): string {
 export function SubagentDrawer({
   subagent,
   status,
+  onCancel,
   onClose,
 }: {
   subagent: SubagentActivity | null;
   /** Lifecycle status of the owning timeline row (running/success/error). */
   status?: ToolTimelineEntryStatus;
+  /**
+   * Cancel this still-running detached sub-agent. When provided and the run is
+   * running, a "Cancel task" affordance is shown. The parent owns the actual
+   * abort + chat delivery (via `subagentApi.cancel`); the drawer only manages
+   * the in-flight / error UI and closes on success. Rejecting surfaces an error.
+   */
+  onCancel?: () => Promise<void>;
   onClose: () => void;
 }) {
   const { t } = useT();
+  // Cancel-in-flight + last-error state for the "Cancel task" affordance.
+  // The parent keys this drawer by task id, so a different sub-agent remounts
+  // with fresh state — no effect-driven reset needed (which would trip the
+  // repo's `react-hooks/set-state-in-effect` rule).
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelError, setCancelError] = useState(false);
 
   // Close on Escape for keyboard parity with the backdrop click.
   useEffect(() => {
@@ -162,7 +188,25 @@ export function SubagentDrawer({
   if (!subagent) return null;
 
   const tone = statusTone(status);
-  const isRunning = status !== 'success' && status !== 'error';
+  const isRunning = status !== 'success' && status !== 'error' && status !== 'cancelled';
+  // The "Cancel task" CTA is only meaningful for a live, still-running run the
+  // parent gave us a cancel handler for.
+  const canCancel = status === 'running' && Boolean(onCancel);
+
+  const handleCancel = async () => {
+    if (!onCancel || cancelling) return;
+    setCancelling(true);
+    setCancelError(false);
+    try {
+      await onCancel();
+      // Success: the parent flips the row to cancelled and the notice rides the
+      // idle-delivery path into chat — close the drawer.
+      onClose();
+    } catch {
+      setCancelling(false);
+      setCancelError(true);
+    }
+  };
   // Only trust the fetched transcript when it belongs to the current worker.
   const fetchedForCurrent =
     fetched && workerThreadId && fetched.workerThreadId === workerThreadId ? fetched : null;
@@ -219,6 +263,18 @@ export function SubagentDrawer({
               {subagent.mode ? <span>{subagent.mode}</span> : null}
             </div>
           </div>
+          {canCancel ? (
+            <button
+              type="button"
+              onClick={handleCancel}
+              disabled={cancelling}
+              data-testid="subagent-cancel"
+              className="shrink-0 rounded-full border border-coral-200 px-2.5 py-1 text-xs font-medium text-coral-600 hover:bg-coral-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-coral-500/40 dark:text-coral-300 dark:hover:bg-coral-500/10">
+              {cancelling
+                ? t('conversations.subagent.cancelling')
+                : t('conversations.subagent.cancel')}
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={onClose}
@@ -227,6 +283,14 @@ export function SubagentDrawer({
             ✕
           </button>
         </header>
+        {cancelError ? (
+          <div
+            role="alert"
+            data-testid="subagent-cancel-error"
+            className="border-b border-coral-200 bg-coral-50 px-4 py-2 text-xs text-coral-700 dark:border-coral-500/30 dark:bg-coral-500/10 dark:text-coral-300">
+            {t('conversations.subagent.cancelFailed')}
+          </div>
+        ) : null}
 
         {/* Body — a parent↔subagent conversation: the parent's delegation
             prompt opens it, then the sub-agent replies as one chronological

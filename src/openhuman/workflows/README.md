@@ -1,6 +1,6 @@
 # Skills
 
-Discovery, parsing, and per-turn injection of agentskills.io-style skills (a directory containing `SKILL.md` with YAML frontmatter and Markdown instructions). Owns scope resolution (User vs Project vs Legacy), trust-marker enforcement, resource reading, install / uninstall, and the matching heuristic that decides which `SKILL.md` body to splice into a chat turn. Does NOT own runtime execution internals or general tool execution (`tools/` / `javascript/`).
+Discovery and parsing of agentskills.io-style skills (a directory containing `SKILL.md` with YAML frontmatter and Markdown instructions). Owns scope resolution (User vs Project vs Legacy), trust-marker enforcement, resource reading, and install / uninstall. Skills are surfaced to agents via the compact `## Installed Skills` catalog and executed via `run_skill` in an isolated worker — bodies are no longer spliced into chat turns. Does NOT own runtime execution internals or general tool execution (`tools/` / `javascript/`).
 
 ## Public surface
 
@@ -8,14 +8,13 @@ Discovery, parsing, and per-turn injection of agentskills.io-style skills (a dir
 - `pub const MAX_SKILL_RESOURCE_BYTES: u64 = 128 * 1024` — `ops.rs:39` — bound on per-resource RPC payload.
 - `pub use ops::*` — `mod.rs:9` — re-exports skill discovery, parsing, install, uninstall, resource reading, and frontmatter types.
 - `pub struct ToolResult` / `pub enum ToolContent` — `types.rs:7-60` — content blocks returned by skill / tool execution.
-- `pub mod inject` — `inject.rs` — per-turn `SKILL.md` body matching + injection into the user prompt (explicit `@name`, tag / description / name substring, with an 8 KiB injected-byte cap).
 - `pub mod bus` — `bus.rs` — emits skill events on the global event bus.
 - RPC `skills.{skills_list, skills_read_resource, skills_create, skills_install_from_url, skills_uninstall}` — `schemas.rs` (re-exported `all_skills_controller_schemas` / `all_skills_registered_controllers` via `mod.rs:10`).
 
 ## Calls into
 
 - `src/openhuman/config/` — workspace path resolution and trust-marker location.
-- `src/openhuman/agent/` — injection consumers in `agent/prompts/` and `agent/harness/session/turn.rs`.
+- `src/openhuman/agent/` — the `## Installed Skills` catalog rendered in `agent_registry/agents/orchestrator/prompt.rs`, fed by the skill list on `PromptContext` (`agent/harness/session/turn/context.rs`).
 - `src/openhuman/workspace/` — workspace-relative skill paths.
 - `src/core/event_bus/` — emits `DomainEvent::Skill(*)` on install / uninstall.
 
@@ -31,5 +30,5 @@ Discovery, parsing, and per-turn injection of agentskills.io-style skills (a dir
 
 ## Tests
 
-- Unit: tests live alongside `ops.rs`, `inject.rs`, `schemas.rs`, and `types.rs` as `#[cfg(test)] mod tests` blocks (no separate `*_tests.rs` files in this domain).
+- Unit: tests live alongside `ops.rs`, `schemas.rs`, and `types.rs` as `#[cfg(test)] mod tests` blocks (no separate `*_tests.rs` files in this domain).
 - Cross-cutting agent + skill behavior is covered indirectly by `src/openhuman/agent/harness/session/{turn,runtime}_tests.rs`.

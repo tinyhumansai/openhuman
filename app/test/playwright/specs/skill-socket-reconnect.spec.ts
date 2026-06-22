@@ -7,12 +7,14 @@ import {
 } from '../helpers/core-rpc';
 
 test.describe('Socket reconnect skill sync smoke', () => {
-  test('reaches Home after login as baseline for post-reconnect flows', async ({ page }) => {
+  test('reaches the chat surface after login as baseline for post-reconnect flows', async ({
+    page,
+  }) => {
+    // Home folded into the unified chat surface: post-login landing is /chat,
+    // whose "new window" empty state renders the former Home hero card.
     await bootAuthenticatedPage(page, 'pw-skill-socket-reconnect', '/home');
     await waitForAppReady(page);
     await dismissWalkthroughIfPresent(page);
-    await expect(
-      page.getByRole('button', { name: 'Ask your assistant anything...' })
-    ).toBeVisible();
+    await expect(page.locator('[data-walkthrough="home-card"]')).toBeVisible();
   });
 });

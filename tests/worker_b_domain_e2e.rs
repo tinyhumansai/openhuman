@@ -257,10 +257,10 @@ async fn worker_b_schema_catalog_exposes_all_controller_methods() {
         "openhuman.agent_get_definition",
         "openhuman.agent_reload_definitions",
         "openhuman.agent_triage_evaluate",
-        "openhuman.agent_profiles_list",
-        "openhuman.agent_profile_select",
-        "openhuman.agent_profile_upsert",
-        "openhuman.agent_profile_delete",
+        "openhuman.profiles_list",
+        "openhuman.profiles_select",
+        "openhuman.profiles_upsert",
+        "openhuman.profiles_delete",
         "openhuman.tools_composio_execute",
         "openhuman.tools_web_search",
         "openhuman.tools_seltz_search",
@@ -487,7 +487,7 @@ async fn agent_definitions_profiles_and_validation_paths_are_reachable() {
             "not found",
         ),
         (
-            "openhuman.agent_profile_upsert",
+            "openhuman.profiles_upsert",
             json!({
                 "profile": {
                     "id": "bad-worker-b-profile",
@@ -501,7 +501,7 @@ async fn agent_definitions_profiles_and_validation_paths_are_reachable() {
             "not found",
         ),
         (
-            "openhuman.agent_profile_select",
+            "openhuman.profiles_select",
             json!({ "profile_id": "missing-worker-b-profile" }),
             "not found",
         ),
@@ -539,12 +539,12 @@ async fn agent_definitions_profiles_and_validation_paths_are_reachable() {
     let profiles = rpc(
         &harness.rpc_base,
         20_200,
-        "openhuman.agent_profiles_list",
+        "openhuman.profiles_list",
         json!({}),
     )
     .await;
     assert_eq!(
-        ok(&profiles, "agent_profiles_list")
+        ok(&profiles, "profiles_list")
             .get("activeProfileId")
             .and_then(Value::as_str),
         Some("default")

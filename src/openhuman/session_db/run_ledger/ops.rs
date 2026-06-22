@@ -224,6 +224,56 @@ pub fn get_agent_run(config: &Config, id: &str) -> Result<Option<AgentRun>> {
     })
 }
 
+/// Apply a durable status transition to a single agent run.
+///
+/// Unlike [`upsert_agent_run`] — whose `ON CONFLICT` clause `COALESCE`s the
+/// `error` and `completed_at` columns and can therefore only ever *set* them —
+/// this is a direct `UPDATE` that can both set and *clear* both columns. That
+/// is required by control verbs such as "retry", which moves a failed run back
+/// to `pending` and must drop the stale failure reason and completion time.
+///
+/// `status` is always written. `error` and `completed_at` are written verbatim,
+/// so passing `None` clears the column. `updated_at` is bumped to now. Returns
+/// the freshly-read run, or `None` when no row matched `id` (e.g. it was
+/// deleted between a prior read and this write).
+pub fn transition_agent_run_status(
+    config: &Config,
+    id: &str,
+    status: AgentRunStatus,
+    error: Option<&str>,
+    completed_at: Option<DateTime<Utc>>,
+) -> Result<Option<AgentRun>> {
+    let now = Utc::now();
+    log::debug!(
+        "{LOG_PREFIX} transition_agent_run_status id={id} status={} has_error={} has_completed_at={}",
+        status.as_str(),
+        error.is_some(),
+        completed_at.is_some()
+    );
+    crate::openhuman::session_db::store::with_connection(config, |conn| {
+        init_run_ledger_schema(conn)?;
+        let rows_affected = conn
+            .execute(
+                "UPDATE agent_runs
+                 SET status = ?1, error = ?2, completed_at = ?3, updated_at = ?4
+                 WHERE id = ?5",
+                params![
+                    status.as_str(),
+                    error,
+                    completed_at.map(|dt| dt.to_rfc3339()),
+                    now.to_rfc3339(),
+                    id,
+                ],
+            )
+            .context("transition agent run status")?;
+        if rows_affected == 0 {
+            log::debug!("{LOG_PREFIX} transition_agent_run_status.miss id={id}");
+            return Ok(None);
+        }
+        get_agent_run_inner(conn, id)
+    })
+}
+
 pub fn list_agent_runs(
     config: &Config,
     request: &AgentRunListRequest,
@@ -1089,6 +1139,104 @@ pub fn shutdown_agent_team_member(
     Ok(result)
 }
 
+/// Mark a member as actively running a task: status → `active`, with the
+/// current task id and the worker/run identifiers of the spawned agent. Used by
+/// the live runtime right after it claims a task and dispatches a worker.
+/// Returns the updated member, or `None` if the member is not in the team.
+pub fn mark_agent_team_member_running(
+    config: &Config,
+    team_id: &str,
+    member_id: &str,
+    task_id: &str,
+    worker_thread_id: &str,
+    run_id: &str,
+) -> Result<Option<AgentTeamMember>> {
+    log::debug!(
+        "{LOG_PREFIX} mark_agent_team_member_running.entry team={team_id} member={member_id} task={task_id} run={run_id}"
+    );
+    crate::openhuman::session_db::store::with_connection(config, |conn| {
+        init_run_ledger_schema(conn)?;
+        let now = Utc::now();
+        let changed = conn
+            .execute(
+                "UPDATE agent_team_members
+                 SET member_status = 'active', current_task_id = ?1,
+                     worker_thread_id = ?2, run_id = ?3, updated_at = ?4
+                 WHERE id = ?5 AND team_id = ?6",
+                params![
+                    task_id,
+                    worker_thread_id,
+                    run_id,
+                    now.to_rfc3339(),
+                    member_id,
+                    team_id
+                ],
+            )
+            .context("mark agent team member running")?;
+        if changed == 0 {
+            return Ok(None);
+        }
+        get_agent_team_member_inner(conn, member_id)
+    })
+}
+
+/// Mark a member idle: status → `idle`, clearing `current_task_id`. The
+/// `worker_thread_id` / `run_id` are intentionally retained as a pointer to the
+/// member's last run for history. Returns the updated member, or `None` if the
+/// member is not in the team. Used when a worker run finishes (completed,
+/// gate-failed, or failed) so the member is free to pick up new work.
+pub fn mark_agent_team_member_idle(
+    config: &Config,
+    team_id: &str,
+    member_id: &str,
+) -> Result<Option<AgentTeamMember>> {
+    log::debug!("{LOG_PREFIX} mark_agent_team_member_idle.entry team={team_id} member={member_id}");
+    crate::openhuman::session_db::store::with_connection(config, |conn| {
+        init_run_ledger_schema(conn)?;
+        let now = Utc::now();
+        let changed = conn
+            .execute(
+                "UPDATE agent_team_members
+                 SET member_status = 'idle', current_task_id = NULL, updated_at = ?1
+                 WHERE id = ?2 AND team_id = ?3",
+                params![now.to_rfc3339(), member_id, team_id],
+            )
+            .context("mark agent team member idle")?;
+        if changed == 0 {
+            return Ok(None);
+        }
+        get_agent_team_member_inner(conn, member_id)
+    })
+}
+
+/// Release a single `in_progress` task back to `todo`, clearing its claim and
+/// resetting the quality gate. Returns `true` if a row was actually released
+/// (the task existed, belonged to the team, and was `in_progress`). Used by the
+/// live runtime when a worker run fails or is aborted, so the task is free for
+/// another teammate — the per-task analogue of the bulk release in
+/// `shutdown_agent_team_member`.
+pub fn release_agent_team_task(config: &Config, team_id: &str, task_id: &str) -> Result<bool> {
+    log::debug!("{LOG_PREFIX} release_agent_team_task.entry team={team_id} task={task_id}");
+    crate::openhuman::session_db::store::with_connection(config, |conn| {
+        init_run_ledger_schema(conn)?;
+        let now = Utc::now();
+        let changed = conn
+            .execute(
+                "UPDATE agent_team_tasks
+                 SET status = 'todo', claimed_by_member_id = NULL, claim_token = NULL,
+                     gate_status = 'pending', gate_reason = NULL, updated_at = ?1
+                 WHERE id = ?2 AND team_id = ?3 AND status = 'in_progress'",
+                params![now.to_rfc3339(), task_id, team_id],
+            )
+            .context("release agent team task")?;
+        log::debug!(
+            "{LOG_PREFIX} release_agent_team_task.exit team={team_id} task={task_id} released={}",
+            changed > 0
+        );
+        Ok(changed > 0)
+    })
+}
+
 fn get_agent_team_inner(conn: &Connection, id: &str) -> Result<Option<AgentTeam>> {
     let mut stmt = conn.prepare(
         "SELECT id, parent_thread_id, lead_agent_id, status, summary,
@@ -1387,6 +1535,74 @@ mod tests {
         assert_eq!(list.runs[0].worker_thread_id.as_deref(), Some("worker-1"));
     }
 
+    #[test]
+    fn transition_sets_status_and_clears_error_and_completed_at() {
+        let dir = TempDir::new().unwrap();
+        let config = test_config(&dir);
+
+        // Seed a failed run carrying an error + completion time.
+        let completed_at = Utc::now();
+        upsert_agent_run(
+            &config,
+            AgentRunUpsert {
+                id: "run-1".into(),
+                kind: super::super::types::AgentRunKind::Subagent,
+                parent_run_id: None,
+                parent_thread_id: Some("thread-1".into()),
+                agent_id: Some("researcher".into()),
+                status: AgentRunStatus::Failed,
+                prompt_ref: None,
+                worker_thread_id: None,
+                task_board_id: None,
+                task_card_id: None,
+                checkpoint_path: None,
+                checkpoint: None,
+                summary: None,
+                error: Some("boom".into()),
+                metadata: json!({}),
+                started_at: None,
+                completed_at: Some(completed_at),
+            },
+        )
+        .unwrap();
+
+        // Re-queue: passing None for both columns must CLEAR them (the upsert
+        // path's COALESCE cannot do this — that is the whole reason this op
+        // exists).
+        let updated =
+            transition_agent_run_status(&config, "run-1", AgentRunStatus::Pending, None, None)
+                .unwrap()
+                .expect("run present");
+        assert_eq!(updated.status, AgentRunStatus::Pending);
+        assert_eq!(updated.error, None);
+        assert_eq!(updated.completed_at, None);
+
+        // Stopping: status + error + completion are all set verbatim.
+        let stopped_at = Utc::now();
+        let updated = transition_agent_run_status(
+            &config,
+            "run-1",
+            AgentRunStatus::Cancelled,
+            Some("manual"),
+            Some(stopped_at),
+        )
+        .unwrap()
+        .expect("run present");
+        assert_eq!(updated.status, AgentRunStatus::Cancelled);
+        assert_eq!(updated.error.as_deref(), Some("manual"));
+        assert!(updated.completed_at.is_some());
+    }
+
+    #[test]
+    fn transition_unknown_run_returns_none() {
+        let dir = TempDir::new().unwrap();
+        let config = test_config(&dir);
+        let result =
+            transition_agent_run_status(&config, "ghost", AgentRunStatus::Pending, None, None)
+                .unwrap();
+        assert!(result.is_none());
+    }
+
     fn seed_team(config: &Config, team_id: &str) {
         upsert_agent_team(
             config,
@@ -1452,6 +1668,85 @@ mod tests {
         seed_team(&config, "team-1");
         let outcome = claim_agent_team_task(&config, "team-1", "ghost", "m1", "tok").unwrap();
         assert_eq!(outcome, ClaimOutcome::UnknownTask);
+    }
+
+    fn seed_member(config: &Config, team_id: &str, member_id: &str) {
+        upsert_agent_team_member(
+            config,
+            AgentTeamMemberUpsert {
+                id: member_id.into(),
+                team_id: team_id.into(),
+                name: member_id.into(),
+                agent_id: None,
+                member_status: AgentTeamMemberStatus::Pending,
+                current_task_id: None,
+                worker_thread_id: None,
+                run_id: None,
+                created_at: None,
+            },
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn mark_member_running_then_idle_keeps_run_pointer() {
+        let dir = TempDir::new().unwrap();
+        let config = test_config(&dir);
+        seed_team(&config, "team-1");
+        seed_member(&config, "team-1", "m1");
+        seed_task(&config, "team-1", "task-a", vec![]);
+        claim_agent_team_task(&config, "team-1", "task-a", "m1", "tok-1").unwrap();
+
+        let running =
+            mark_agent_team_member_running(&config, "team-1", "m1", "task-a", "worker-x", "run-x")
+                .unwrap()
+                .expect("member updated");
+        assert_eq!(running.member_status, AgentTeamMemberStatus::Active);
+        assert_eq!(running.current_task_id.as_deref(), Some("task-a"));
+        assert_eq!(running.worker_thread_id.as_deref(), Some("worker-x"));
+        assert_eq!(running.run_id.as_deref(), Some("run-x"));
+
+        let idle = mark_agent_team_member_idle(&config, "team-1", "m1")
+            .unwrap()
+            .expect("member updated");
+        assert_eq!(idle.member_status, AgentTeamMemberStatus::Idle);
+        assert_eq!(idle.current_task_id, None);
+        // worker/run pointer retained as last-run history.
+        assert_eq!(idle.worker_thread_id.as_deref(), Some("worker-x"));
+        assert_eq!(idle.run_id.as_deref(), Some("run-x"));
+
+        // Unknown member → None, no-op.
+        assert!(
+            mark_agent_team_member_running(&config, "team-1", "ghost", "task-a", "w", "r")
+                .unwrap()
+                .is_none()
+        );
+        assert!(mark_agent_team_member_idle(&config, "team-1", "ghost")
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn release_task_frees_in_progress_only() {
+        let dir = TempDir::new().unwrap();
+        let config = test_config(&dir);
+        seed_team(&config, "team-1");
+        seed_member(&config, "team-1", "m1");
+        seed_task(&config, "team-1", "task-a", vec![]);
+        claim_agent_team_task(&config, "team-1", "task-a", "m1", "tok-1").unwrap();
+
+        // In progress → released back to todo, claim cleared, gate reset.
+        assert!(release_agent_team_task(&config, "team-1", "task-a").unwrap());
+        let task = get_agent_team_task(&config, "task-a").unwrap().unwrap();
+        assert_eq!(task.status, AgentTeamTaskStatus::Todo);
+        assert_eq!(task.claimed_by_member_id, None);
+        assert_eq!(task.claim_token, None);
+        assert_eq!(task.gate_status, "pending");
+
+        // Already todo (not in_progress) → no-op, returns false.
+        assert!(!release_agent_team_task(&config, "team-1", "task-a").unwrap());
+        // Unknown task → false.
+        assert!(!release_agent_team_task(&config, "team-1", "ghost").unwrap());
     }
 
     #[test]

@@ -49,16 +49,37 @@ fn read_workflow_id(args: &serde_json::Value) -> anyhow::Result<String> {
         .map_err(|_| anyhow::anyhow!("missing required string argument `workflow_id`"))
 }
 
+/// Skill/workflow allowlist applied per agent profile. `None` = all skills are
+/// visible (the default). `Some(set)` restricts to the named `dir_name` slugs.
+type SkillAllowlist = Option<std::collections::HashSet<String>>;
+
+/// Whether `dir_name` passes the optional per-profile skill allowlist.
+fn skill_allowed(allowlist: &SkillAllowlist, dir_name: &str) -> bool {
+    match allowlist {
+        None => true,
+        Some(set) => set.contains(dir_name),
+    }
+}
+
 /// List installed skills.
 pub struct WorkflowListTool {
     workspace_dir: PathBuf,
+    skill_allowlist: SkillAllowlist,
 }
 
 impl WorkflowListTool {
     pub fn new(config: Arc<Config>) -> Self {
         Self {
             workspace_dir: config.workspace_dir.clone(),
+            skill_allowlist: None,
         }
+    }
+
+    /// Scope the listed workflows to a per-profile allowlist of `dir_name`
+    /// slugs. `None` leaves all workflows visible.
+    pub fn with_skill_allowlist(mut self, allowlist: SkillAllowlist) -> Self {
+        self.skill_allowlist = allowlist;
+        self
     }
 }
 
@@ -83,7 +104,15 @@ impl Tool for WorkflowListTool {
         log::debug!("[tool][workflows] list invoked");
         let home = dirs::home_dir();
         let trusted = is_workspace_trusted(&self.workspace_dir);
-        let workflows = discover_workflows(home.as_deref(), Some(&self.workspace_dir), trusted);
+        let mut workflows = discover_workflows(home.as_deref(), Some(&self.workspace_dir), trusted);
+        if self.skill_allowlist.is_some() {
+            let before = workflows.len();
+            workflows.retain(|w| skill_allowed(&self.skill_allowlist, &w.dir_name));
+            log::debug!(
+                "[profiles] list_workflows scoped to profile allowlist: before={before} after={}",
+                workflows.len()
+            );
+        }
         Ok(ToolResult::success(serde_json::to_string(&json!({
             "count": workflows.len(),
             "workflows": workflows,
@@ -98,13 +127,21 @@ impl Tool for WorkflowListTool {
 /// Describe one skill (definition + declared inputs).
 pub struct WorkflowDescribeTool {
     workspace_dir: PathBuf,
+    skill_allowlist: SkillAllowlist,
 }
 
 impl WorkflowDescribeTool {
     pub fn new(config: Arc<Config>) -> Self {
         Self {
             workspace_dir: config.workspace_dir.clone(),
+            skill_allowlist: None,
         }
+    }
+
+    /// Scope describe access to a per-profile allowlist of `dir_name` slugs.
+    pub fn with_skill_allowlist(mut self, allowlist: SkillAllowlist) -> Self {
+        self.skill_allowlist = allowlist;
+        self
     }
 }
 
@@ -132,6 +169,12 @@ impl Tool for WorkflowDescribeTool {
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         log::debug!("[tool][workflows] describe invoked");
         let skill_id = read_workflow_id(&args)?;
+        if !skill_allowed(&self.skill_allowlist, &skill_id) {
+            log::debug!("[profiles] describe_workflow blocked by profile allowlist: {skill_id}");
+            return Ok(ToolResult::error(format!(
+                "describe_workflow: workflow `{skill_id}` is not available to the active agent profile"
+            )));
+        }
         let def = get_workflow(&self.workspace_dir, &skill_id)
             .ok_or_else(|| anyhow::anyhow!("describe_workflow: workflow `{skill_id}` not found"))?;
         Ok(ToolResult::success(serde_json::to_string(&json!({
@@ -149,13 +192,23 @@ impl Tool for WorkflowDescribeTool {
 /// Read a bundled resource file from a skill.
 pub struct WorkflowReadResourceTool {
     workspace_dir: PathBuf,
+    skill_allowlist: SkillAllowlist,
 }
 
 impl WorkflowReadResourceTool {
     pub fn new(config: Arc<Config>) -> Self {
         Self {
             workspace_dir: config.workspace_dir.clone(),
+            skill_allowlist: None,
         }
+    }
+
+    /// Scope resource reads to a per-profile allowlist of `dir_name` slugs, so a
+    /// restricted profile can't exfiltrate the bundled scripts/docs of a
+    /// workflow outside its skill set.
+    pub fn with_skill_allowlist(mut self, allowlist: SkillAllowlist) -> Self {
+        self.skill_allowlist = allowlist;
+        self
     }
 }
 
@@ -186,6 +239,14 @@ impl Tool for WorkflowReadResourceTool {
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         log::debug!("[tool][workflows] read_resource invoked");
         let skill_id = read_workflow_id(&args)?;
+        if !skill_allowed(&self.skill_allowlist, &skill_id) {
+            log::debug!(
+                "[profiles] read_workflow_resource blocked by profile allowlist: {skill_id}"
+            );
+            return Ok(ToolResult::error(format!(
+                "read_workflow_resource: workflow `{skill_id}` is not available to the active agent profile"
+            )));
+        }
         let relative_path = read_required_str(&args, "relative_path")?;
         let content =
             read_workflow_resource(&self.workspace_dir, &skill_id, Path::new(&relative_path))
@@ -483,6 +544,39 @@ mod tests {
 
     fn cfg() -> Arc<Config> {
         Arc::new(Config::default())
+    }
+
+    #[test]
+    fn skill_allowed_respects_optional_allowlist() {
+        // None = all skills visible.
+        assert!(skill_allowed(&None, "deep-research"));
+        // Some(set) restricts to named dir_name slugs.
+        let set: std::collections::HashSet<String> =
+            ["deep-research".to_string()].into_iter().collect();
+        assert!(skill_allowed(&Some(set.clone()), "deep-research"));
+        assert!(!skill_allowed(&Some(set), "ship-and-babysit"));
+        // Empty allowlist blocks everything (profile selected no skills).
+        assert!(!skill_allowed(
+            &Some(std::collections::HashSet::new()),
+            "anything"
+        ));
+    }
+
+    #[tokio::test]
+    async fn describe_workflow_blocks_disallowed_skill_before_lookup() {
+        let allow: std::collections::HashSet<String> =
+            ["allowed-skill".to_string()].into_iter().collect();
+        let tool = WorkflowDescribeTool::new(cfg()).with_skill_allowlist(Some(allow));
+        let res = tool
+            .execute(json!({ "workflow_id": "blocked-skill" }))
+            .await
+            .expect("execute");
+        assert!(res.is_error, "disallowed skill must return an error result");
+        let text = serde_json::to_string(&res.content).expect("serialize content");
+        assert!(
+            text.contains("not available to the active agent profile"),
+            "expected profile-allowlist rejection, got: {text}"
+        );
     }
 
     #[test]

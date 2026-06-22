@@ -20,8 +20,11 @@
 // For sovereign users who prefer plaintext, `secrets.encrypt = false` disables this.
 //
 // Migration: values with the legacy `enc:` prefix (XOR cipher) are decrypted
-// using the old algorithm for backward compatibility. New encryptions always
-// produce `enc2:` (ChaCha20-Poly1305).
+// using the old algorithm for backward compatibility, but the config loader
+// force-migrates them to `enc2:` on read (`decrypt_and_migrate`) and persists
+// the upgrade so the insecure ciphertext never lingers on disk (audit C8). The
+// legacy decode path logs a loud security warning every time it runs. New
+// encryptions always produce `enc2:` (ChaCha20-Poly1305).
 
 use anyhow::{Context, Result};
 use chacha20poly1305::aead::{Aead, KeyInit, OsRng};
@@ -31,6 +34,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
+use zeroize::Zeroizing;
 
 use super::crypto;
 
@@ -160,7 +164,22 @@ impl SecretStore {
     }
 
     /// Decrypt using legacy XOR cipher (insecure, for backward compatibility only).
+    ///
+    /// This is the single choke-point for the insecure `enc:` format, so it logs
+    /// a loud security warning every time it runs. The repeating-key XOR is
+    /// unauthenticated and leaks the master key to anyone who knows (or can guess
+    /// the structure of) the plaintext — e.g. `xoxb-`/`sk-` token prefixes give
+    /// `key[i] = ct[i] XOR pt[i]`. Callers on the read path should prefer
+    /// [`decrypt_and_migrate`](Self::decrypt_and_migrate) so the value is rewritten
+    /// to `enc2:` and the legacy ciphertext stops persisting on disk.
     fn decrypt_legacy_xor(&self, hex_str: &str) -> Result<String> {
+        log::warn!(
+            "[security] decrypting legacy XOR-encrypted secret (enc: prefix). \
+             This format is INSECURE (unauthenticated repeating-key XOR; known-plaintext \
+             recovers the master key) and must be migrated to enc2: (ChaCha20-Poly1305). \
+             It will be removed in a future release — re-save your config or settings to \
+             force migration."
+        );
         let ciphertext = hex_decode(hex_str)
             .context("Failed to decode legacy encrypted secret (corrupt hex)")?;
         let key = self.load_or_create_key()?;
@@ -187,7 +206,7 @@ impl SecretStore {
         keyring_user_id_from_dir(self.key_path.parent().unwrap_or_else(|| Path::new(".")))
     }
 
-    fn load_or_create_key_from_keyring(&self) -> Result<Vec<u8>> {
+    fn load_or_create_key_from_keyring(&self) -> Result<Zeroizing<Vec<u8>>> {
         let user_id = self.keyring_user_id();
         match crate::openhuman::keyring::migrate_from_file(
             &user_id,
@@ -228,7 +247,11 @@ impl SecretStore {
     /// The decoded key is cached process-wide keyed by `key_path`, so repeated
     /// callers (e.g. every `app_state_snapshot` poll) hit memory instead of
     /// disk/keychain lookup.
-    fn load_or_create_key(&self) -> Result<Vec<u8>> {
+    ///
+    /// The key bytes are wrapped in [`Zeroizing`] so every copy — the returned
+    /// value, the cache entry, and any intermediate buffers — is wiped from
+    /// memory on drop rather than lingering in the heap/swap/core-dumps.
+    fn load_or_create_key(&self) -> Result<Zeroizing<Vec<u8>>> {
         // Normalize the path once so all callers share the same cache slot
         // regardless of how `key_path` was spelled (relative vs absolute,
         // symlinks, case-variants on Windows).
@@ -462,18 +485,20 @@ fn normalize_cache_path(path: &Path) -> PathBuf {
 /// transiently inaccessible (AV scanners holding a handle), and re-reading
 /// turned that transient failure into a perma-failure for every subsequent
 /// RPC call.
-fn key_cache() -> &'static Mutex<HashMap<PathBuf, Vec<u8>>> {
-    static CACHE: OnceLock<Mutex<HashMap<PathBuf, Vec<u8>>>> = OnceLock::new();
+fn key_cache() -> &'static Mutex<HashMap<PathBuf, Zeroizing<Vec<u8>>>> {
+    static CACHE: OnceLock<Mutex<HashMap<PathBuf, Zeroizing<Vec<u8>>>>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn cached_key(path: &Path) -> Option<Vec<u8>> {
+fn cached_key(path: &Path) -> Option<Zeroizing<Vec<u8>>> {
     key_cache().lock().ok()?.get(path).cloned()
 }
 
 fn cache_key(path: &Path, key: &[u8]) {
     if let Ok(mut cache) = key_cache().lock() {
-        cache.insert(path.to_path_buf(), key.to_vec());
+        // Stored as `Zeroizing` so the cached copy is wiped from memory when the
+        // entry is removed (e.g. via `clear_cached_key`) or the process exits.
+        cache.insert(path.to_path_buf(), Zeroizing::new(key.to_vec()));
     }
 }
 
@@ -621,12 +646,12 @@ fn xor_cipher(data: &[u8], key: &[u8]) -> Vec<u8> {
         .collect()
 }
 
-fn generate_random_key() -> Vec<u8> {
-    crypto::generate_random_bytes(KEY_LEN)
+fn generate_random_key() -> Zeroizing<Vec<u8>> {
+    Zeroizing::new(crypto::generate_random_bytes(KEY_LEN))
 }
 
-fn decode_key_hex(hex_key: &str) -> Result<Vec<u8>> {
-    let key = hex_decode(hex_key).context("Secret key file is corrupt")?;
+fn decode_key_hex(hex_key: &str) -> Result<Zeroizing<Vec<u8>>> {
+    let key = Zeroizing::new(hex_decode(hex_key).context("Secret key file is corrupt")?);
     anyhow::ensure!(
         key.len() == KEY_LEN,
         "Secret key file has wrong length: expected {KEY_LEN} bytes, got {}",

@@ -55,6 +55,11 @@ const computeHealthCounts = (statuses: ConnStatus[]): HealthCounts => {
       case 'connecting':
         connectingCount += 1;
         break;
+      // An `unauthorized` server is not connected, but it must NOT join the
+      // `errorIds` set — "Retry all" blindly reconnects those, which would just
+      // 401 again. Re-auth is a deliberate per-server action (sign in / token),
+      // so we surface it under the disconnected tally rather than as an error.
+      case 'unauthorized':
       case 'disconnected':
         disconnectedCount += 1;
         break;

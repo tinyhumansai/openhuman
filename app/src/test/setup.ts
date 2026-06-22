@@ -8,7 +8,7 @@
  * - Resets rate limiter module-level state between tests
  */
 import '@testing-library/jest-dom/vitest';
-import { cleanup } from '@testing-library/react';
+import { cleanup, configure } from '@testing-library/react';
 import type React from 'react';
 import { afterAll, afterEach, beforeEach, vi } from 'vitest';
 
@@ -19,6 +19,18 @@ import {
   startMockServer,
   stopMockServer,
 } from '../../../scripts/mock-api-core.mjs';
+
+// The full Vitest run is executed under v8 coverage instrumentation with a
+// single worker (see test/vitest.config.ts), which makes individual renders
+// markedly slower than an isolated, un-instrumented file run. Testing Library's
+// default 1000ms async-utility timeout is too tight in that environment, so
+// `findBy*`/`waitFor` assertions in render-heavy suites (e.g. the workflow
+// orchestration tab) flake intermittently — and which test trips first is
+// non-deterministic. Raising the global async-util budget removes that whole
+// class of false timeouts without masking real failures: `waitFor`/`findBy`
+// still resolve the instant their condition is met, this only widens the
+// ceiling before they give up (well within the 30s testTimeout).
+configure({ asyncUtilTimeout: 5000 });
 
 const DEFAULT_TEST_MOCK_API_PORT = 5005;
 
@@ -165,7 +177,16 @@ vi.mock('../utils/tauriCommands', () => ({
     }),
   openhumanGetMeetSettings: vi
     .fn()
-    .mockResolvedValue({ result: { auto_orchestrator_handoff: false }, logs: [] }),
+    .mockResolvedValue({
+      result: {
+        auto_orchestrator_handoff: false,
+        auto_join_policy: 'ask_each_time',
+        auto_summarize_policy: 'ask',
+        listen_only_default: true,
+        ingest_backend_transcripts: false,
+      },
+      logs: [],
+    }),
   exchangeToken: vi.fn(),
   invoke: vi.fn(),
 }));
@@ -259,9 +280,14 @@ vi.mock('@sentry/react', () => ({
   setUser: vi.fn(),
 }));
 
-// Silence console during tests to keep output clean
+// Silence console during tests to keep output clean. `debug`/`info` are
+// included because error-path diagnostics across the app (e.g. VoicePanel
+// "voice settings load failed", threadSlice "title refresh failed") use
+// `console.debug`, which otherwise floods the test output with expected noise.
 if (!process.env.DEBUG_TESTS) {
   vi.spyOn(console, 'log').mockImplementation(() => {});
+  vi.spyOn(console, 'info').mockImplementation(() => {});
+  vi.spyOn(console, 'debug').mockImplementation(() => {});
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   vi.spyOn(console, 'error').mockImplementation(() => {});
 }

@@ -65,6 +65,7 @@ vi.mock('../../hooks/useSettingsNavigation', () => ({
 vi.mock('../../components/SettingsHeader', () => ({
   default: ({ title }: { title: string }) => <h1 data-testid="settings-header">{title}</h1>,
 }));
+vi.mock('../../components/SettingsBackButton', () => ({ default: () => null }));
 
 const mockUpdateTeam = vi.fn();
 const mockDeleteTeam = vi.fn();

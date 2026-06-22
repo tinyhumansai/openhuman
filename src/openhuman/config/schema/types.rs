@@ -15,6 +15,9 @@ pub const MODEL_CHAT_V1: &str = "chat-v1";
 pub const MODEL_REASONING_QUICK_V1: &str = "reasoning-quick-v1";
 pub const MODEL_CODING_V1: &str = "coding-v1";
 pub const MODEL_SUMMARIZATION_V1: &str = "summarization-v1";
+/// Multimodal (image-input) tier. Managed backend serves this with the vision
+/// flag enabled; the vision sub-agent rides this tier via `hint:vision`.
+pub const MODEL_VISION_V1: &str = "vision-v1";
 /// Default model used when no explicit model is configured.
 ///
 /// Set to `chat-v1`, the backend's low-latency conversational tier. The
@@ -336,6 +339,11 @@ pub struct Config {
     #[serde(default)]
     pub coding_provider: Option<String>,
 
+    /// Provider string for the multimodal / image-understanding workload
+    /// (the vision sub-agent). Managed default resolves to `vision-v1`.
+    #[serde(default)]
+    pub vision_provider: Option<String>,
+
     /// Provider string for memory-tree extract + summarise workloads.
     #[serde(default)]
     pub memory_provider: Option<String>,
@@ -575,6 +583,7 @@ impl Config {
             "reasoning" => self.reasoning_provider.as_deref(),
             "agentic" => self.agentic_provider.as_deref(),
             "coding" => self.coding_provider.as_deref(),
+            "vision" => self.vision_provider.as_deref(),
             "memory" => self.memory_provider.as_deref(),
             "embeddings" => self.embeddings_provider.as_deref(),
             "heartbeat" => self.heartbeat_provider.as_deref(),
@@ -746,6 +755,7 @@ impl Default for Config {
             reasoning_provider: None,
             agentic_provider: None,
             coding_provider: None,
+            vision_provider: None,
             memory_provider: None,
             embeddings_provider: None,
             heartbeat_provider: None,

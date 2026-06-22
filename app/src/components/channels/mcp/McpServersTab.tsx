@@ -32,6 +32,7 @@ const STATUS_DOT: Record<ServerStatus, string> = {
   connected: 'bg-sage-500',
   connecting: 'bg-amber-400',
   disconnected: 'bg-stone-300 dark:bg-neutral-600',
+  unauthorized: 'bg-amber-500',
   error: 'bg-coral-500',
   disabled: 'bg-stone-200 dark:bg-neutral-700',
 };
@@ -119,8 +120,18 @@ const McpServersTab = () => {
 
   // Poll status
   useEffect(() => {
-    const hasConnected = statuses.some(s => s.status === 'connected');
-    if (!hasConnected) {
+    // Poll while anything is in a non-terminal state — not just `connected`.
+    // An `unauthorized`/`error`/`connecting` server can transition (the
+    // background reconnect supervisor, a completed OAuth sign-in, an expiring
+    // token) and the UI must reflect that without a manual refresh (#3719 RC5).
+    const hasActive = statuses.some(
+      s =>
+        s.status === 'connected' ||
+        s.status === 'connecting' ||
+        s.status === 'unauthorized' ||
+        s.status === 'error'
+    );
+    if (!hasActive) {
       if (pollTimerRef.current) {
         clearTimeout(pollTimerRef.current);
         pollTimerRef.current = null;
@@ -446,12 +457,16 @@ const McpServersTab = () => {
 
         {/* Empty states */}
         {activeChip === 'installed' && filteredInstalled.length === 0 && (
-          <div className="py-8 text-center text-sm text-stone-400 dark:text-neutral-500">
+          <div
+            data-testid="mcp-installed-empty"
+            className="py-8 text-center text-sm text-stone-400 dark:text-neutral-500">
             {t('mcp.installed.empty')}
           </div>
         )}
         {activeChip === 'registry' && filteredCatalog.length === 0 && !catalogLoading && (
-          <div className="py-8 text-center text-sm text-stone-400 dark:text-neutral-500">
+          <div
+            data-testid="mcp-catalog-empty"
+            className="py-8 text-center text-sm text-stone-400 dark:text-neutral-500">
             {searchQuery
               ? t('mcp.catalog.noResultsFor').replace('{query}', searchQuery)
               : t('mcp.catalog.noResults')}
@@ -461,7 +476,9 @@ const McpServersTab = () => {
           filteredInstalled.length === 0 &&
           filteredCatalog.length === 0 &&
           !catalogLoading && (
-            <div className="py-8 text-center text-sm text-stone-400 dark:text-neutral-500">
+            <div
+              data-testid="mcp-catalog-empty"
+              className="py-8 text-center text-sm text-stone-400 dark:text-neutral-500">
               {searchQuery
                 ? t('mcp.catalog.noResultsFor').replace('{query}', searchQuery)
                 : t('mcp.catalog.noResults')}

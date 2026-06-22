@@ -35,6 +35,7 @@ pub(crate) fn persist_heartbeat_alert(
             "stage": plan.stage,
             "anchor_at": event.anchor_at.to_rfc3339(),
             "deep_link": event.deep_link.clone(),
+            "meeting_url": event.meeting_url.clone(),
         }),
         importance_score: Some(match event.category {
             HeartbeatCategory::Meetings => 0.8,

@@ -29,16 +29,21 @@ interface Route {
 }
 
 // Phase 2/3/6 IA revamp:
+//   /home        → /chat        (Phase 6 — /home is now the merged chat surface)
 //   /human       → /chat        (Phase 6 — back-compat redirect)
 //   /skills      → /connections (Phase 2 — back-compat redirect)
 //   /intelligence → /activity   (Phase 3 — back-compat redirect)
+// Note: /home is intentionally omitted here because AppRoutes.tsx redirects it
+// to /chat — navigateViaHash('/home') settles on #/chat, which is covered by
+// the /chat row. Keeping /home in ROUTES would cause the hash assertion to
+// fail since the actual hash is #/chat, not #/home.
 const ROUTES: Route[] = [
-  { hash: '/home' },
   { hash: '/chat' },
   { hash: '/connections' },
   { hash: '/activity' },
   { hash: '/rewards' },
   { hash: '/settings' },
+  { hash: '/agent-world' },
 ];
 
 async function rootTextLength(): Promise<number> {

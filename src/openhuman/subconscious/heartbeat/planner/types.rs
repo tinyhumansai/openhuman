@@ -43,6 +43,9 @@ pub(crate) struct PendingEvent {
     pub title: String,
     pub body: String,
     pub deep_link: Option<String>,
+    /// Join URL for calendar-backed meeting events. Kept separate from
+    /// `deep_link`, which may point at a calendar details page.
+    pub meeting_url: Option<String>,
     pub anchor_at: DateTime<Utc>,
 }
 

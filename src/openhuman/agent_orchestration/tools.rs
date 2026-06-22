@@ -14,9 +14,13 @@ mod spawn_parallel_agents;
 mod spawn_subagent;
 #[path = "tools/spawn_worker_thread.rs"]
 pub mod spawn_worker_thread;
+#[path = "tools/steer_subagent.rs"]
+mod steer_subagent;
 #[cfg(test)]
 #[path = "tools/tools_e2e_tests.rs"]
 mod tools_e2e_tests;
+#[path = "tools/wait_subagent.rs"]
+mod wait_subagent;
 #[path = "tools/worker_thread.rs"]
 mod worker_thread;
 
@@ -29,3 +33,5 @@ pub use spawn_async_subagent::SpawnAsyncSubagentTool;
 pub use spawn_parallel_agents::SpawnParallelAgentsTool;
 pub use spawn_subagent::SpawnSubagentTool;
 pub use spawn_worker_thread::SpawnWorkerThreadTool;
+pub use steer_subagent::SteerSubagentTool;
+pub use wait_subagent::WaitSubagentTool;

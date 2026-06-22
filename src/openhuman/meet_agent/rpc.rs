@@ -232,6 +232,10 @@ pub async fn handle_stop_session(params: Map<String, Value>) -> Result<Value, St
         listened_seconds: session.listened_seconds(),
         spoken_seconds: session.spoken_seconds(),
         turn_count: session.turn_count,
+        // Local meet-agent calls expose no per-speaker transcript here,
+        // so we leave participants empty. The backend-meet flow
+        // (agent_meetings) populates this from the transcript.
+        participants: Vec::new(),
     };
     if let Err(err) = store::append_record(&record).await {
         log::warn!(

@@ -103,6 +103,21 @@ pub struct ContextConfig {
     /// downstream consumer expects strict JSON tool output.
     #[serde(default = "default_true")]
     pub prefer_markdown_tool_output: bool,
+
+    /// Master switch for native tool-output compaction (Stage 1a). When
+    /// `true` (the default), large structured tool outputs (build/test logs,
+    /// diffs, JSON arrays) are content-aware compressed in
+    /// `Agent::execute_tool_call` *before* the [`Self::tool_result_budget_bytes`]
+    /// byte cap and before they enter history. The compression never drops the
+    /// first/last/high-signal lines and only ever shrinks output, so it is on
+    /// by default.
+    ///
+    /// This is invisible infrastructure (like microcompact/autocompact): no
+    /// user-facing UI. The only reason to flip it off is a support / debugging
+    /// / A/B bisect, via config or the `OPENHUMAN_COMPACTION=0` env override.
+    /// See `compaction-plan.md`.
+    #[serde(default = "default_true")]
+    pub compaction_enabled: bool,
 }
 
 fn default_enabled() -> bool {
@@ -146,6 +161,7 @@ impl Default for ContextConfig {
             session_memory: SessionMemoryConfig::default(),
             summarizer_model: None,
             prefer_markdown_tool_output: default_true(),
+            compaction_enabled: default_true(),
         }
     }
 }

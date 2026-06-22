@@ -9,14 +9,15 @@ import type {
   StopCompanionSessionResult,
 } from '../../../store/companionSlice';
 import { useAppSelector } from '../../../store/hooks';
+import PanelPage from '../../layout/PanelPage';
 import Button from '../../ui/Button';
-import SettingsHeader from '../components/SettingsHeader';
+import SettingsBackButton from '../components/SettingsBackButton';
 import { SettingsRow, SettingsSection, SettingsStatusLine } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 const CompanionPanel = () => {
   const { t } = useT();
-  const { navigateBack, breadcrumbs } = useSettingsNavigation();
+  const { navigateBack } = useSettingsNavigation();
   const companionState = useAppSelector(state => state.companion.state);
 
   const [status, setStatus] = useState<CompanionSessionStatus | null>(null);
@@ -99,14 +100,11 @@ const CompanionPanel = () => {
   const sessionActive = status?.active ?? false;
 
   return (
-    <div className="z-10 relative">
-      <SettingsHeader
-        title={t('settings.companion.title')}
-        showBackButton
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
-
+    <PanelPage
+      className="z-10"
+      contentClassName=""
+      description={t('pages.settings.features.desktopCompanionDesc')}
+      leading={<SettingsBackButton onBack={navigateBack} />}>
       <div className="space-y-4 p-4">
         {/* Session status + controls */}
         <SettingsSection>
@@ -222,7 +220,7 @@ const CompanionPanel = () => {
           savingLabel={t('settings.agentAccess.saving')}
         />
       </div>
-    </div>
+    </PanelPage>
   );
 };
 

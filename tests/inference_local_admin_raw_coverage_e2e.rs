@@ -151,6 +151,7 @@ async fn compatible_provider_covers_retry_headers_responses_and_parse_errors() {
                 ],
                 tools: Some(&tools),
                 stream: Some(&tx),
+                max_tokens: None,
             },
             "stream-tools-unsupported",
             0.2,

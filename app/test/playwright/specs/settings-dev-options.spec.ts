@@ -16,7 +16,7 @@ test.describe('Settings - Developer Options', () => {
     await waitForAppReady(page);
     await dismissWalkthroughIfPresent(page);
 
-    await expect(page.getByText('Webhooks Debug')).toBeVisible();
+    await expect(page.getByTestId('webhooks-debug-panel')).toBeVisible();
     await expect(page.getByText('Registered Webhooks')).toBeVisible();
     await expect(page.getByText('Captured Requests')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Refresh' }).first()).toBeVisible();
@@ -27,7 +27,7 @@ test.describe('Settings - Developer Options', () => {
     await waitForAppReady(page);
     await dismissWalkthroughIfPresent(page);
 
-    await expect(page.getByText('Memory Debug')).toBeVisible();
+    await expect(page.getByTestId('memory-debug-panel')).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Documents', exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Namespaces', exact: true })).toBeVisible();
     await expect(page.getByText('Query & Recall')).toBeVisible();
@@ -39,7 +39,8 @@ test.describe('Settings - Developer Options', () => {
     await waitForAppReady(page);
     await dismissWalkthroughIfPresent(page);
 
-    await expect(page.getByText('Autocomplete Debug')).toBeVisible();
+    // Panel title dropped in the PanelPage migration; the panel is confirmed by
+    // its Live Logs section below.
     await expect(page.getByText('Live Logs')).toBeVisible();
     await expect(page.getByText(/No logs yet\.|\[runtime\]/)).toBeVisible();
   });

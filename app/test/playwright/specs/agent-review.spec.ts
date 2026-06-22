@@ -23,18 +23,17 @@ test.describe('Agent review - canonical onboarding + privacy flow', () => {
   test('launches, reaches the shell, and opens the privacy panel', async ({ page }) => {
     await bootReviewedFlow(page, 'pw-agent-review');
 
+    // Home folded into the unified chat surface: post-login landing is /chat,
+    // whose sidebar/new-window state renders these structural markers.
     const shellText = await page.locator('#root').innerText();
     expect(
-      ['Ask your assistant anything', 'Your device is connected', 'Settings', 'Home'].some(marker =>
-        shellText.includes(marker)
-      )
+      ['New Conversation', 'Threads', 'Settings'].some(marker => shellText.includes(marker))
     ).toBe(true);
 
     await page.goto('/#/settings/privacy');
     await waitForAppReady(page);
 
     await expect(page.getByTestId('settings-privacy-panel')).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Privacy & Security' })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Product Analytics' })).toBeVisible();
     await expect(page.getByText('Share Product Analytics and Diagnostics')).toBeVisible();
   });

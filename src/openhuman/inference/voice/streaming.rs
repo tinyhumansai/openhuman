@@ -16,11 +16,15 @@
 //! # Security notes
 //!
 //! ## Authentication
-//! `GET /ws/dictation` is intentionally exempt from Bearer-token authentication because
-//! the browser WebSocket API cannot set arbitrary request headers on upgrade. The correct
-//! auth mechanism is a separate maintainer decision; see `src/core/auth.rs` for the
-//! documented exemption. Do NOT add a Bearer-header check here — it will not work from
-//! browsers and the design decision is tracked in issue #1924.
+//! `GET /ws/dictation` is authenticated at the upgrade boundary (C4 / issue #1924).
+//! The browser WebSocket API cannot set arbitrary request headers on upgrade, so the
+//! check lives in `dictation_ws_handler` (`src/core/jsonrpc.rs`), not here: it requires
+//! the per-process core bearer via `Authorization: Bearer <token>` (native callers) or
+//! `?token=<token>` (browser clients), plus the same origin allowlist Socket.IO enforces,
+//! and rejects the upgrade with 401/403 before this function runs. Do NOT add a
+//! Bearer-header check in this function — by the time `handle_dictation_ws` is reached the
+//! upgrade has already been authenticated, and a header check here would not work from
+//! browsers anyway.
 //!
 //! ## Memory cap
 //! The full-audio accumulation buffer (`full_audio_buf`) is bounded by

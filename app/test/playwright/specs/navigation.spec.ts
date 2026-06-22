@@ -12,16 +12,17 @@ interface RouteEntry {
 // Back-compat redirects are included so the router redirect itself is tested.
 //   /human       → renders the Human surface (first-class route, restored)
 //   /skills      → /connections (Phase 2)
-//   /activity    → /settings/notifications-hub (Phase 6)
-//   /intelligence → /settings/notifications-hub (Phase 6)
+//   /activity    → /settings/notifications (Phase 6)
+//   /intelligence → /settings/notifications (Phase 6)
+//   /home        → /chat (Home folded into the unified two-panel chat surface)
 const ROUTES: RouteEntry[] = [
-  { route: '/home' },
+  { route: '/home', expectedHash: '/chat' }, // back-compat redirect (Home → chat)
   { route: '/human' }, // first-class route again (no longer redirects to /chat)
   { route: '/chat' },
   { route: '/connections' },
   { route: '/skills', expectedHash: '/connections' }, // back-compat redirect
-  { route: '/activity', expectedHash: '/settings/notifications-hub' }, // back-compat redirect
-  { route: '/intelligence', expectedHash: '/settings/notifications-hub' }, // back-compat redirect
+  { route: '/activity', expectedHash: '/settings/notifications' }, // back-compat redirect
+  { route: '/intelligence', expectedHash: '/settings/notifications' }, // back-compat redirect
   { route: '/rewards' },
   { route: '/settings' },
 ];

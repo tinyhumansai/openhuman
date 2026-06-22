@@ -27,7 +27,7 @@ use std::collections::{HashMap, HashSet};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use super::CdpConn;
+use crate::cdp::CdpConn;
 
 /// One scraped message row. Mirrors the JSON object the old JS emitted so
 /// the merge path in `mod.rs` keeps working unchanged.

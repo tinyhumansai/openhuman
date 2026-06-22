@@ -11,13 +11,17 @@
 //! (`readOnlyHint: false`, `destructiveHint: true`).
 
 mod http;
+mod local;
 mod protocol;
 mod resources;
 mod session;
 mod stdio;
+mod subagent_depth;
 mod tools;
 mod write_dispatch;
 
-pub use http::{run_http, HttpServerConfig};
+pub use http::{run_http, run_http_reporting, HttpServerConfig};
+pub use local::{ensure_local_http, LocalMcpEndpoint};
 pub use stdio::run_stdio_from_cli;
+pub use subagent_depth::{current_depth as current_subagent_depth, HEADER_SUBAGENT_DEPTH};
 pub use tools::{tool_specs, McpToolSpec};

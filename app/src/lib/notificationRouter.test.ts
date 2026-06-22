@@ -41,12 +41,20 @@ describe('resolveIntegrationRoute', () => {
     expect(resolveIntegrationRoute(n)).toBe('/chat?account=abc');
   });
 
-  it.each(['gmail', 'slack', 'whatsapp', 'wechat', 'telegram', 'discord', 'linkedin'])(
-    'routes %s provider to /chat',
-    provider => {
-      expect(resolveIntegrationRoute(makeIntegration({ provider }))).toBe('/chat');
-    }
-  );
+  it.each([
+    'gmail',
+    'slack',
+    'whatsapp',
+    'wechat',
+    'telegram',
+    'discord',
+    'linkedin',
+    'outlook',
+    'instagram',
+    'twitter',
+  ])('routes %s provider to /chat', provider => {
+    expect(resolveIntegrationRoute(makeIntegration({ provider }))).toBe('/chat');
+  });
 
   it('falls back to /notifications for unknown providers', () => {
     expect(resolveIntegrationRoute(makeIntegration({ provider: 'unknown-app' }))).toBe(

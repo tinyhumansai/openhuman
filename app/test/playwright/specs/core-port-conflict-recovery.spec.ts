@@ -12,8 +12,8 @@ test.describe('Core port conflict recovery', () => {
     await waitForAppReady(page);
     const text = await page.locator('#root').innerText();
     expect(
-      ['Ask your assistant anything', 'Your device is connected', 'Welcome', 'Get Started'].some(
-        marker => text.includes(marker)
+      ['New Conversation', 'Threads', 'Welcome', 'Get Started'].some(marker =>
+        text.includes(marker)
       )
     ).toBe(true);
   });

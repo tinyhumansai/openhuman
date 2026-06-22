@@ -465,6 +465,7 @@ impl AgentOrchestrationSession {
             initial_history: None,
             checkpoint_dir: None,
             worktree_action_dir: None,
+            run_queue: None,
         };
 
         let task_session = self.clone();
@@ -538,6 +539,9 @@ impl AgentOrchestrationSession {
                                 elapsed_ms: outcome.elapsed.as_millis() as u64,
                                 iterations: outcome.iterations as u32,
                                 output_chars: outcome.output.chars().count(),
+                                worktree_path: None,
+                                changed_files: Vec::new(),
+                                dirty_status: None,
                             },
                         ));
                     }

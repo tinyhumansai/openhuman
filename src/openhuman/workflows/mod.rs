@@ -1,7 +1,6 @@
-//! Workflow metadata helpers and prompt-injection support.
+//! Workflow metadata helpers.
 
 pub mod bus;
-pub mod inject;
 pub mod ops;
 pub mod ops_create;
 pub mod ops_discover;

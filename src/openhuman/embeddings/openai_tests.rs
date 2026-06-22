@@ -124,6 +124,55 @@ async fn empty_input_returns_empty() {
     assert!(result.is_empty());
 }
 
+// ── empty/whitespace entries — pre-flight reject (#13021) ────────
+//
+// `embed(&[""])` and friends used to fall through to the HTTP layer
+// and trip a backend 400 ("input must be a non-empty string …"),
+// which was then captured as a Sentry server fault even though the
+// real defect was a caller passing empty text. The guard bails
+// without touching the network — the "http://unused" base URL would
+// otherwise refuse to connect.
+
+#[tokio::test]
+async fn embed_refuses_single_empty_string() {
+    let p = OpenAiEmbedding::new("http://unused", "k", "m", 1);
+    let err = p.embed(&[""]).await.unwrap_err().to_string();
+    assert!(
+        err.contains("refusing empty/whitespace input at index 0"),
+        "unexpected error: {err}"
+    );
+}
+
+#[tokio::test]
+async fn embed_refuses_whitespace_only_string() {
+    let p = OpenAiEmbedding::new("http://unused", "k", "m", 1);
+    let err = p.embed(&["   \n\t"]).await.unwrap_err().to_string();
+    assert!(err.contains("refusing empty/whitespace input at index 0"));
+}
+
+#[tokio::test]
+async fn embed_refuses_mixed_batch_with_empty() {
+    let p = OpenAiEmbedding::new("http://unused", "k", "m", 1);
+    let err = p.embed(&["ok", "", "fine"]).await.unwrap_err().to_string();
+    assert!(err.contains("refusing empty/whitespace input at index 1"));
+}
+
+#[tokio::test]
+async fn embed_refuses_does_not_use_embedding_api_error_prefix() {
+    // The classifier in `core::observability` treats `"Embedding API error"`
+    // / `"(<status>"` shapes as upstream HTTP failures. The client-side
+    // pre-flight refusal MUST NOT collide with that shape, otherwise this
+    // very fix would re-enter the same Sentry-as-server-fault path that
+    // #13021 was about. Lock the bail wording so a future rename can't
+    // silently reintroduce the regression.
+    let p = OpenAiEmbedding::new("http://unused", "k", "m", 1);
+    let err = p.embed(&[""]).await.unwrap_err().to_string();
+    assert!(
+        !err.contains("Embedding API error"),
+        "bail wording must not collide with TransientUpstreamHttp classifier: {err}"
+    );
+}
+
 // ── embed — success ─────────────────────────────────────
 
 #[tokio::test]
@@ -261,6 +310,36 @@ async fn embed_server_error() {
     let msg = err.to_string();
     assert!(msg.contains("500"), "status: {msg}");
     assert!(msg.contains("rate limited"), "body: {msg}");
+}
+
+/// A 404 means the configured base URL has no embeddings route (the user
+/// pointed the Custom provider at a chat-only endpoint, e.g. DeepSeek —
+/// TAURI-RUST-5JR). The message must (a) carry an actionable remediation, and
+/// (b) PRESERVE the `Embedding API error (404…)` prefix the
+/// `observability::is_embedding_endpoint_absent` classifier keys on, so the
+/// flood is demoted from Sentry rather than firing on every re-embed.
+#[tokio::test]
+async fn embed_404_endpoint_absent_is_actionable_and_classifier_stable() {
+    let app = Router::new().route(
+        "/v1/embeddings",
+        post(|| async { (StatusCode::NOT_FOUND, "Not Found") }),
+    );
+    let url = start_mock(app).await;
+    let p = OpenAiEmbedding::new(&url, "k", "m", 1);
+
+    let err = p.embed(&["hi"]).await.unwrap_err();
+    let msg = err.to_string();
+    // Classifier contract: prefix preserved.
+    assert!(
+        msg.to_ascii_lowercase()
+            .contains("embedding api error (404"),
+        "must preserve the (404 classifier prefix: {msg}"
+    );
+    // Actionable remediation appended.
+    assert!(
+        msg.contains("no embeddings API") && msg.contains("Settings → Memory"),
+        "must carry actionable remediation: {msg}"
+    );
 }
 
 /// 429 rate-limit responses must format their message in the canonical

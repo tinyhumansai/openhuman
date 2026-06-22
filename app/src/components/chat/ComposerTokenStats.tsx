@@ -18,7 +18,12 @@ function dot() {
   return <span className="text-stone-300 dark:text-neutral-700">·</span>;
 }
 
-export default function ComposerTokenStats() {
+interface ComposerTokenStatsProps {
+  /** Resolved model id, shown as the leading stat when present. */
+  model?: string | null;
+}
+
+export default function ComposerTokenStats({ model }: ComposerTokenStatsProps = {}) {
   const { t } = useT();
   const usage = useAppSelector(state => state.chatRuntime.sessionTokenUsage);
 
@@ -28,7 +33,9 @@ export default function ComposerTokenStats() {
   const lastIn = usage.lastTurnInputTokens || 0;
   const lastOut = usage.lastTurnOutputTokens || 0;
 
-  if (turns === 0) return null;
+  // Still render when only the model is known (no turns yet) so the resolved
+  // model stays visible in the composer footer.
+  if (turns === 0 && !model) return null;
 
   const showIn = ok(inTok);
   const showOut = ok(outTok);
@@ -40,6 +47,13 @@ export default function ComposerTokenStats() {
 
   const parts: React.ReactNode[] = [];
 
+  if (model) {
+    parts.push(
+      <span key="model" className="truncate" title={model}>
+        {model}
+      </span>
+    );
+  }
   if (showIn) {
     parts.push(
       <span key="in" title={t('token.inputTokens')}>
@@ -72,7 +86,7 @@ export default function ComposerTokenStats() {
   if (parts.length === 0) return null;
 
   return (
-    <div className="flex items-center gap-2.5 mt-1.5 text-[10px] font-mono text-stone-400 dark:text-neutral-500 select-none">
+    <div className="flex min-w-0 flex-wrap items-center gap-2.5 text-[10px] font-mono text-stone-400 dark:text-neutral-500 select-none">
       {parts.map((part, i) => (
         <span key={i} className="contents">
           {i > 0 && dot()}

@@ -21,6 +21,10 @@
 /// Order doesn't matter for correctness, but is kept alphabetical by legacy
 /// key for easier diffing against the frontend table.
 const LEGACY_ALIASES: &[(&str, &str)] = &[
+    // #3565: old desktop clients called the channels controller with a dotted
+    // namespace/function spelling before the canonical
+    // `openhuman.<namespace>_<function>` form was established.
+    ("channels.list", "openhuman.channels_list"),
     // MCP clients — old method names that appeared in Sentry (CORE-RUST-DR/DS/DT/DV/DW).
     // Callers used dotted namespace, bare `mcp_list`, `mcp_servers_list`, and
     // `mcp_clients_list` before the canonical `mcp_clients_installed_list` was
@@ -28,6 +32,7 @@ const LEGACY_ALIASES: &[(&str, &str)] = &[
     // `mcp_clients_tool_call` that shipped in at least one older bundle.
     // `mcp_clients.list` sorts before all `openhuman.*` entries (m < o).
     ("mcp_clients.list", "openhuman.mcp_clients_installed_list"),
+    ("openhuman.channels.list", "openhuman.channels_list"),
     (
         "openhuman.get_analytics_settings",
         "openhuman.config_get_analytics_settings",
@@ -154,6 +159,17 @@ const LEGACY_ALIASES: &[(&str, &str)] = &[
     // bare `health_snapshot` (no namespace prefix) was used by older clients
     // before the canonical `openhuman.health_snapshot` form was established.
     ("health_snapshot", "openhuman.health_snapshot"),
+    // Dotted / bare health probes from older clients and SDK callers (#3566,
+    // Sentry CORE-2C). The canonical method is `openhuman.health_snapshot`
+    // (namespace `health`, function `snapshot`); these legacy spellings fell
+    // through to the unknown-method path and produced Sentry noise. There is no
+    // distinct `status`/`get` health handler — the snapshot already carries the
+    // health verdict (`healthy`/`degraded`/`critical_unhealthy`), so all four
+    // variants alias to the snapshot.
+    ("health", "openhuman.health_snapshot"),
+    ("health.get", "openhuman.health_snapshot"),
+    ("health.snapshot", "openhuman.health_snapshot"),
+    ("health.status", "openhuman.health_snapshot"),
     // `openhuman.system_info` was used by older clients / SDK callers before
     // the method was namespaced under `health` as `openhuman.health_system_info`.
     // Sentry CORE-RUST-G0 — https://sentry.tinyhumans.ai/organizations/tinyhumans/issues/6340/
@@ -480,6 +496,35 @@ mod tests {
     }
 
     #[test]
+    fn resolve_legacy_rewrites_health_probe_variants() {
+        // #3566 / Sentry CORE-2C: older clients and SDK callers issued the
+        // health snapshot under several legacy spellings (bare `health`, and
+        // the dotted `health.snapshot` / `health.status` / `health.get`).
+        // There is no distinct status/get handler, so every variant must
+        // resolve to the canonical `openhuman.health_snapshot`.
+        for legacy in ["health", "health.get", "health.snapshot", "health.status"] {
+            assert_eq!(
+                resolve_legacy(legacy),
+                "openhuman.health_snapshot",
+                "expected health probe variant {legacy} to resolve to the snapshot method",
+            );
+        }
+    }
+
+    #[test]
+    fn resolve_legacy_bare_health_snapshot_regression() {
+        // Sentry CORE-2C regression guard: bare `health_snapshot` (no
+        // namespace prefix) must keep resolving to the canonical method. The
+        // CORE-2C events were stale (release 0.53.43 predated the alias added
+        // in #2853), but this lock-in proves the alias still fires on the
+        // exact-match resolver so the bare form can never regress.
+        assert_eq!(
+            resolve_legacy("health_snapshot"),
+            "openhuman.health_snapshot",
+        );
+    }
+
+    #[test]
     fn resolve_legacy_rewrites_system_info() {
         // Sentry CORE-RUST-G0: older clients called `openhuman.system_info`
         // before the method was namespaced under `health` as
@@ -521,6 +566,15 @@ mod tests {
         // the table when it matches, not a copy of the input.
         let out = resolve_legacy("openhuman.ping");
         assert_eq!(out, "core.ping");
+    }
+
+    #[test]
+    fn resolve_legacy_rewrites_dotted_channel_list_aliases() {
+        assert_eq!(resolve_legacy("channels.list"), "openhuman.channels_list");
+        assert_eq!(
+            resolve_legacy("openhuman.channels.list"),
+            "openhuman.channels_list"
+        );
     }
 
     #[test]

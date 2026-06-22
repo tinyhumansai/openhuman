@@ -28,6 +28,9 @@ const MESSAGE_PROVIDERS = new Set([
   'telegram',
   'discord',
   'linkedin',
+  'outlook',
+  'instagram',
+  'twitter',
 ]);
 
 // ─────────────────────────────────────────────────────────────────────────────
