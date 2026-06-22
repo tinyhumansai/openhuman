@@ -482,19 +482,31 @@ async fn activate_revalidated_user_dir(config: &Config, user_id: &str) -> Config
         })
 }
 
-async fn finish_revalidated_user_activation(config: &Config, user_id: &str) {
-    if let Err(error) = crate::openhuman::memory::global::init(config.workspace_dir.clone()) {
+async fn finish_revalidated_user_activation(
+    target_config: &Config,
+    user_id: &str,
+    service_rebind_source: Option<&Config>,
+) {
+    if let Err(error) = crate::openhuman::memory::global::init(target_config.workspace_dir.clone())
+    {
         warn!(
             "{LOG_PREFIX} failed to bind memory client after pending session revalidation: {error}"
         );
     }
     crate::openhuman::memory_conversations::register_conversation_persistence_subscriber(
-        config.workspace_dir.clone(),
+        target_config.workspace_dir.clone(),
     );
     if let Err(error) = crate::openhuman::subconscious::global::bootstrap_after_login().await {
         warn!("{LOG_PREFIX} subconscious bootstrap failed after pending session revalidation: {error}");
     }
-    crate::openhuman::credentials::start_login_gated_services(config).await;
+    if let Some(source_config) = service_rebind_source {
+        crate::openhuman::credentials::stop_login_gated_services(source_config).await;
+        crate::openhuman::credentials::start_login_gated_services(target_config).await;
+    } else {
+        debug!(
+            "{LOG_PREFIX} pending session revalidation left login-gated services running without restart"
+        );
+    }
     crate::openhuman::scheduler_gate::set_signed_out(false);
     crate::openhuman::credentials::sentry_scope::bind(user_id);
 }
@@ -572,7 +584,12 @@ async fn persist_revalidated_session_user(
     }
 
     if let Some(user_id) = user_id.as_deref() {
-        finish_revalidated_user_activation(&target_config, user_id).await;
+        finish_revalidated_user_activation(
+            &target_config,
+            user_id,
+            source_moved.then_some(&source_config),
+        )
+        .await;
     }
 
     Ok(())
