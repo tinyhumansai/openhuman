@@ -1843,11 +1843,28 @@ fn byok_fallback_skips_mlx_and_local_openai() {
 }
 
 #[test]
+fn byok_fallback_skips_omlx() {
+    let mut config = Config::default();
+    config.chat_provider = Some("omlx:llama3".to_string());
+
+    assert!(
+        resolve_byok_fallback_provider_string(&config).is_none(),
+        "OMLX is a local provider and must not be treated as a BYOK cloud fallback"
+    );
+    assert_eq!(
+        provider_for_role("coding", &config),
+        "openhuman",
+        "unset coding must not inherit chat OMLX as a BYOK fallback"
+    );
+}
+
+#[test]
 fn local_provider_string_detection() {
     use crate::openhuman::inference::local::profile::is_local_provider_string;
     assert!(is_local_provider_string("ollama:phi3"));
     assert!(is_local_provider_string("lmstudio:model"));
     assert!(is_local_provider_string("mlx:llama"));
+    assert!(is_local_provider_string("omlx:llama"));
     assert!(is_local_provider_string("local-openai:qwen2"));
     assert!(!is_local_provider_string("openai:gpt-4o"));
     assert!(!is_local_provider_string("openhuman"));
@@ -1926,6 +1943,70 @@ fn resolve_model_for_hint_handles_unknown_hint_passthrough() {
     let config = Config::default();
     let result = resolve_model_for_hint("hint:unknown_tier", &config);
     assert_eq!(result, "hint:unknown_tier");
+}
+
+#[test]
+fn omlx_provider_builds_with_bearer_key() {
+    let mut config = crate::openhuman::config::Config::default();
+    config.local_ai.api_key = Some("sk-omlx-test".to_string());
+    config.local_ai.base_url = Some("http://127.0.0.1:8000/v1".to_string());
+    let (_provider, model) =
+        super::make_omlx_provider("my-model", None, &config).expect("omlx provider builds");
+    assert_eq!(model, "my-model");
+}
+
+#[test]
+fn omlx_dispatch_empty_model_errors() {
+    // Covers the empty-model bail! arms in create_chat_provider_from_string
+    // and create_local_chat_provider_from_string for the "omlx:" prefix.
+    let config = crate::openhuman::config::Config::default();
+
+    let err = create_chat_provider_from_string("chat", "omlx:", &config)
+        .err()
+        .expect("omlx: with empty model must fail");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("empty model") || msg.contains("omlx:<model"),
+        "expected empty-model diagnostic, got: {msg}"
+    );
+
+    let err_local = create_local_chat_provider_from_string("omlx:", &config)
+        .err()
+        .expect("omlx: with empty model must fail via local dispatch");
+    let msg_local = err_local.to_string();
+    assert!(
+        msg_local.contains("empty model") || msg_local.contains("omlx:<model"),
+        "expected empty-model diagnostic from local dispatch, got: {msg_local}"
+    );
+}
+
+#[test]
+fn omlx_provider_builds_without_key_uses_no_auth() {
+    // Covers the no-api_key warn branch in make_omlx_provider — must not panic,
+    // must return Ok with the correct model name.
+    let mut config = crate::openhuman::config::Config::default();
+    config.local_ai.api_key = None;
+    config.local_ai.base_url = Some("http://127.0.0.1:8000/v1".to_string());
+    let (_provider, model) =
+        super::make_omlx_provider("m", None, &config).expect("omlx provider builds without key");
+    assert_eq!(model, "m");
+}
+
+#[test]
+fn omlx_dispatch_success_builds_provider() {
+    // Covers the success arms (non-empty model -> make_omlx_provider) in both
+    // create_chat_provider_from_string and create_local_chat_provider_from_string.
+    let mut config = crate::openhuman::config::Config::default();
+    config.local_ai.api_key = Some("sk-omlx-test".to_string());
+    config.local_ai.base_url = Some("http://127.0.0.1:8000/v1".to_string());
+
+    let (_p, model) = create_chat_provider_from_string("chat", "omlx:my-model", &config)
+        .expect("omlx:<model> builds via public factory");
+    assert_eq!(model, "my-model");
+
+    let (_p_local, model_local) = create_local_chat_provider_from_string("omlx:my-model", &config)
+        .expect("omlx:<model> builds via local dispatch");
+    assert_eq!(model_local, "my-model");
 }
 
 // ── #3767: managed-credits gate bypass (gate-only, per-tier) ───────────────

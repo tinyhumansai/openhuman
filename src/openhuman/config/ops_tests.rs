@@ -938,6 +938,7 @@ async fn apply_local_ai_settings_updates_lm_studio_provider_fields() {
         usage_heartbeat: Some(true),
         usage_learning_reflection: Some(false),
         usage_subconscious: Some(true),
+        api_key: None,
     };
 
     let outcome = apply_local_ai_settings(&mut cfg, patch)
@@ -1008,6 +1009,66 @@ async fn apply_local_ai_settings_normalizes_ollama_unspecified_host_and_allows_n
     .expect("clear ollama base url");
 
     assert!(cfg.local_ai.base_url.is_none());
+}
+
+#[tokio::test]
+async fn apply_local_ai_settings_persists_api_key() {
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    cfg.local_ai.api_key = None;
+
+    // Non-empty key is stored.
+    let patch = LocalAiSettingsPatch {
+        runtime_enabled: Some(true),
+        opt_in_confirmed: Some(true),
+        provider: Some("omlx".into()),
+        base_url: Some(Some("http://localhost:8080/v1".into())),
+        api_key: Some("sk-omlx-1".into()),
+        ..LocalAiSettingsPatch::default()
+    };
+    apply_local_ai_settings(&mut cfg, patch)
+        .await
+        .expect("apply omlx api key");
+    assert_eq!(cfg.local_ai.api_key.as_deref(), Some("sk-omlx-1"));
+
+    // Whitespace-only key clears to None.
+    let patch_clear = LocalAiSettingsPatch {
+        api_key: Some("   ".into()),
+        ..LocalAiSettingsPatch::default()
+    };
+    apply_local_ai_settings(&mut cfg, patch_clear)
+        .await
+        .expect("clear api key");
+    assert!(cfg.local_ai.api_key.is_none());
+}
+
+#[tokio::test]
+async fn apply_local_ai_settings_omlx_keeps_provider_and_v1_suffix() {
+    // Regression: omlx must NOT collapse to ollama (normalize_provider) and its
+    // `/v1` suffix must survive (no validate_ollama_url path-strip).
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+
+    apply_local_ai_settings(
+        &mut cfg,
+        LocalAiSettingsPatch {
+            runtime_enabled: Some(true),
+            opt_in_confirmed: Some(true),
+            provider: Some("omlx".into()),
+            base_url: Some(Some("http://localhost:8000/v1".into())),
+            api_key: Some("sk-omlx-1".into()),
+            ..LocalAiSettingsPatch::default()
+        },
+    )
+    .await
+    .expect("apply omlx");
+
+    assert_eq!(cfg.local_ai.provider, "omlx");
+    assert_eq!(
+        cfg.local_ai.base_url.as_deref(),
+        Some("http://localhost:8000/v1")
+    );
+    assert_eq!(cfg.local_ai.api_key.as_deref(), Some("sk-omlx-1"));
 }
 
 #[tokio::test]

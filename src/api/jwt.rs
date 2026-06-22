@@ -11,6 +11,18 @@ pub fn bearer_authorization_value(token: &str) -> String {
     format!("Bearer {}", token.trim())
 }
 
+/// Best-effort decode of a JWT payload without verifying the signature.
+pub fn decode_jwt_payload(token: &str) -> Option<serde_json::Value> {
+    // JWT = header.payload.signature (base64url, no padding). Only the payload
+    // segment is needed.
+    let payload_b64 = token.trim().split('.').nth(1)?;
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(payload_b64)
+        .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(payload_b64))
+        .ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
 /// Best-effort decode of a JWT's `exp` (expiry) claim into a UTC timestamp.
 ///
 /// The backend app-session token is a JWT but is stored bare — the client
@@ -26,14 +38,7 @@ pub fn bearer_authorization_value(token: &str) -> String {
 /// non-JWT / malformed / `exp`-less token, in which case expiry tracking
 /// degrades to the previous behaviour (no local precheck).
 pub fn decode_jwt_exp(token: &str) -> Option<DateTime<Utc>> {
-    // JWT = header.payload.signature (base64url, no padding). Only the payload
-    // segment is needed.
-    let payload_b64 = token.trim().split('.').nth(1)?;
-    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(payload_b64)
-        .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(payload_b64))
-        .ok()?;
-    let claims: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    let claims = decode_jwt_payload(token)?;
     // `exp` is a NumericDate (seconds since epoch); accept int or float shapes.
     let exp = claims
         .get("exp")

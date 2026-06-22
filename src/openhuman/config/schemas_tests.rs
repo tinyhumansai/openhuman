@@ -267,6 +267,20 @@ fn update_local_ai_settings_schema_allows_json_base_url() {
 }
 
 #[test]
+fn update_local_ai_settings_schema_accepts_api_key() {
+    let schema = schemas("update_local_ai_settings");
+    let field = schema
+        .inputs
+        .iter()
+        .find(|field| field.name == "api_key")
+        .expect("api_key field must be declared so validate_params accepts it");
+    match &field.ty {
+        TypeSchema::Option(inner) => assert!(matches!(**inner, TypeSchema::String)),
+        other => panic!("expected Option<String>, got {other:?}"),
+    }
+}
+
+#[test]
 fn deserialize_params_parses_workspace_onboarding_flag_params() {
     let out: WorkspaceOnboardingFlagParams = deserialize_params(Map::new()).unwrap();
     assert!(out.flag_name.is_none());

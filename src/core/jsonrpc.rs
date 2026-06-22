@@ -801,7 +801,11 @@ async fn telegram_auth_handler(
     };
 
     // Store the resulting session token in the local configuration.
-    match crate::openhuman::credentials::ops::store_session(&config, &jwt_token, None, None).await {
+    match crate::openhuman::credentials::ops::store_session_with_deferred_validation(
+        &config, &jwt_token, None, None,
+    )
+    .await
+    {
         Ok(outcome) => {
             for msg in &outcome.logs {
                 log::info!("[auth:telegram] {msg}");
@@ -918,7 +922,11 @@ async fn desktop_auth_handler(
         }
     };
 
-    match crate::openhuman::credentials::ops::store_session(&config, &jwt_token, None, None).await {
+    match crate::openhuman::credentials::ops::store_session_with_deferred_validation(
+        &config, &jwt_token, None, None,
+    )
+    .await
+    {
         Ok(outcome) => {
             for msg in &outcome.logs {
                 log::info!("[auth:desktop] {msg}");

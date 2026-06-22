@@ -121,6 +121,9 @@ pub struct Config {
     pub runtime: RuntimeConfig,
 
     #[serde(default)]
+    pub shell: ShellConfig,
+
+    #[serde(default)]
     pub screen_intelligence: ScreenIntelligenceConfig,
 
     #[serde(default)]
@@ -707,6 +710,7 @@ impl Default for Config {
             autonomy: AutonomyConfig::default(),
             sandbox: SandboxConfig::default(),
             runtime: RuntimeConfig::default(),
+            shell: ShellConfig::default(),
             screen_intelligence: ScreenIntelligenceConfig::default(),
             autocomplete: AutocompleteConfig::default(),
             reliability: ReliabilityConfig::default(),

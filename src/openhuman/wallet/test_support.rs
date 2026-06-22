@@ -2,11 +2,14 @@
 //!
 //! Provides:
 //! - [`TEST_LOCK`]: serializes wallet tests that mutate the global quote store
-//!   and per-chain env-var overrides.
+//!   and per-chain env-var overrides. Tests that mutate
+//!   `OPENHUMAN_WORKSPACE` also hold the config `TEST_ENV_LOCK`.
 //! - [`setup_wallet_in`]: writes a configured wallet state into a
 //!   [`tempfile::TempDir`] using the standard "abandon × 11 about" mnemonic
 //!   so every chain's signer derives a deterministic address.
 //! - Sample addresses corresponding to that mnemonic (one per chain).
+
+use std::path::Path;
 
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
@@ -62,6 +65,20 @@ pub(crate) struct WorkspaceEnvGuard {
     _env_lock: std::sync::MutexGuard<'static, ()>,
 }
 
+impl WorkspaceEnvGuard {
+    pub(crate) fn set(path: impl AsRef<Path>) -> Self {
+        // OPENHUMAN_WORKSPACE is process-global, so hold the shared config env
+        // lock for the full lifetime of the test workspace override.
+        let env_lock = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prev = std::env::var_os("OPENHUMAN_WORKSPACE");
+        std::env::set_var("OPENHUMAN_WORKSPACE", path.as_ref());
+        Self {
+            prev,
+            _env_lock: env_lock,
+        }
+    }
+}
+
 impl Drop for WorkspaceEnvGuard {
     fn drop(&mut self) {
         match self.prev.take() {
@@ -72,15 +89,7 @@ impl Drop for WorkspaceEnvGuard {
 }
 
 pub(crate) fn set_workspace_env_for_test(temp: &TempDir) -> WorkspaceEnvGuard {
-    // OPENHUMAN_WORKSPACE is process-global, so hold the shared config env lock
-    // for the full lifetime of the test workspace override.
-    let env_lock = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let prev = std::env::var_os("OPENHUMAN_WORKSPACE");
-    std::env::set_var("OPENHUMAN_WORKSPACE", temp.path());
-    WorkspaceEnvGuard {
-        prev,
-        _env_lock: env_lock,
-    }
+    WorkspaceEnvGuard::set(temp.path())
 }
 
 pub(crate) async fn setup_wallet_in(temp: &TempDir) -> Result<WorkspaceEnvGuard, String> {

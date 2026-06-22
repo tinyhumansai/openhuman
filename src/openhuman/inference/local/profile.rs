@@ -20,6 +20,8 @@ pub enum LocalProviderKind {
     LmStudio,
     /// MLX-compatible local server (e.g. `mlx_lm.server`).
     Mlx,
+    /// OMLX — OpenAI v1-compatible MLX server that requires an API key.
+    Omlx,
     /// Generic local OpenAI-compatible endpoint (llama.cpp, vLLM, etc.).
     LocalOpenai,
 }
@@ -30,6 +32,7 @@ impl LocalProviderKind {
             Self::Ollama => "ollama",
             Self::LmStudio => "lmstudio",
             Self::Mlx => "mlx",
+            Self::Omlx => "omlx",
             Self::LocalOpenai => "local-openai",
         }
     }
@@ -39,6 +42,7 @@ impl LocalProviderKind {
             Self::Ollama => "Ollama",
             Self::LmStudio => "LM Studio",
             Self::Mlx => "MLX",
+            Self::Omlx => "OMLX",
             Self::LocalOpenai => "Local OpenAI",
         }
     }
@@ -49,6 +53,7 @@ impl LocalProviderKind {
             "ollama" => Some(Self::Ollama),
             "lmstudio" | "lm-studio" | "lm_studio" => Some(Self::LmStudio),
             "mlx" | "mlx-server" | "mlx_lm" => Some(Self::Mlx),
+            "omlx" | "omlx-server" => Some(Self::Omlx),
             "local-openai" | "local_openai" | "llamacpp" | "llama.cpp" | "vllm" => {
                 Some(Self::LocalOpenai)
             }
@@ -160,6 +165,23 @@ pub const MLX_PROFILE: LocalProviderProfile = LocalProviderProfile {
     base_url_env: "MLX_SERVER_URL",
 };
 
+/// OMLX profile: OpenAI v1-compatible MLX server, default port 8000, key required.
+pub const OMLX_PROFILE: LocalProviderProfile = LocalProviderProfile {
+    kind: LocalProviderKind::Omlx,
+    tool_support: ToolSupport::PromptGuided,
+    default_context_window: Some(4_096),
+    supports_responses_api: false,
+    supports_streaming: true,
+    default_quirks: RequestQuirks {
+        num_ctx: None,
+        suppress_thinking: false,
+        omit_temperature: false,
+        merge_system_into_user: false,
+    },
+    default_base_url: "http://127.0.0.1:8000/v1",
+    base_url_env: "OMLX_SERVER_URL",
+};
+
 /// Generic local OpenAI-compatible server (llama.cpp, vLLM, etc.).
 pub const LOCAL_OPENAI_PROFILE: LocalProviderProfile = LocalProviderProfile {
     kind: LocalProviderKind::LocalOpenai,
@@ -183,6 +205,7 @@ pub fn profile_for_kind(kind: LocalProviderKind) -> &'static LocalProviderProfil
         LocalProviderKind::Ollama => &OLLAMA_PROFILE,
         LocalProviderKind::LmStudio => &LM_STUDIO_PROFILE,
         LocalProviderKind::Mlx => &MLX_PROFILE,
+        LocalProviderKind::Omlx => &OMLX_PROFILE,
         LocalProviderKind::LocalOpenai => &LOCAL_OPENAI_PROFILE,
     }
 }
@@ -201,6 +224,8 @@ pub fn kind_from_provider_string(provider: &str) -> Option<LocalProviderKind> {
         Some(LocalProviderKind::LmStudio)
     } else if p.starts_with("mlx:") {
         Some(LocalProviderKind::Mlx)
+    } else if p.starts_with("omlx:") {
+        Some(LocalProviderKind::Omlx)
     } else if p.starts_with("local-openai:") || p.starts_with("local_openai:") {
         Some(LocalProviderKind::LocalOpenai)
     } else {
@@ -295,5 +320,28 @@ mod tests {
     fn ollama_profile_is_conservative_on_tools() {
         let profile = profile_for_kind(LocalProviderKind::Ollama);
         assert_eq!(profile.tool_support, ToolSupport::PromptGuided);
+    }
+
+    #[test]
+    fn omlx_kind_and_profile() {
+        assert_eq!(
+            LocalProviderKind::from_str_loose("omlx"),
+            Some(LocalProviderKind::Omlx)
+        );
+        assert_eq!(
+            LocalProviderKind::from_str_loose("omlx-server"),
+            Some(LocalProviderKind::Omlx)
+        );
+        assert_eq!(LocalProviderKind::Omlx.as_str(), "omlx");
+        assert_eq!(LocalProviderKind::Omlx.display_name(), "OMLX");
+        assert_eq!(
+            profile_for_kind(LocalProviderKind::Omlx).default_base_url,
+            "http://127.0.0.1:8000/v1"
+        );
+        assert_eq!(
+            kind_from_provider_string("omlx:my-model"),
+            Some(LocalProviderKind::Omlx)
+        );
+        assert!(is_local_provider_string("omlx:my-model"));
     }
 }

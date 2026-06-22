@@ -234,6 +234,53 @@ impl Provider for RouterProvider {
             .any(|(_, provider)| provider.supports_vision())
     }
 
+    /// Delegate to the provider that actually handles `model` so local
+    /// runtimes report their runtime-loaded window (LM Studio `n_ctx`) instead
+    /// of the static-table default the trait would otherwise return (#3550 /
+    /// TAURI-RUST-6V0).
+    async fn effective_context_window(&self, model: &str) -> Option<u64> {
+        let (provider_idx, resolved_model) = self.resolve(model);
+        let (_, provider) = &self.providers[provider_idx];
+        provider.effective_context_window(&resolved_model).await
+    }
+
+    /// Whether the *default* provider is local. Model-blind — kept for callers
+    /// that have no model in hand. The engine's pre-dispatch guard uses the
+    /// model-aware [`Provider::is_local_provider_for_model`] below instead, so a
+    /// cloud-default router still gates correctly when it routes a model to a
+    /// local provider (#3550 / TAURI-RUST-6V0).
+    fn is_local_provider(&self) -> bool {
+        self.providers
+            .get(self.default_index)
+            .map(|(_, p)| p.is_local_provider())
+            .unwrap_or(false)
+    }
+
+    /// Resolve `model` to the provider that actually handles it and report
+    /// *that* provider's locality. Without this, a router whose default is
+    /// cloud reports `is_local_provider() == false` even when `model` routes to
+    /// a local provider, so the engine's pre-dispatch un-evictable-prefix guard
+    /// is skipped and the opaque local `400 (n_keep >= n_ctx)` reaches the user
+    /// (Codex P2 + CodeRabbit review on PR #3771). `effective_context_window`
+    /// already resolves the routed provider, so this keeps the two in step.
+    fn is_local_provider_for_model(&self, model: &str) -> bool {
+        let (provider_idx, _) = self.resolve(model);
+        self.providers
+            .get(provider_idx)
+            .map(|(_, p)| p.is_local_provider())
+            .unwrap_or(false)
+    }
+
+    /// Delegate the authoritative runtime-loaded window to the routed provider,
+    /// mirroring [`RouterProvider::effective_context_window`] so the engine's
+    /// hard pre-dispatch abort sees the same routed provider's loaded `n_ctx`
+    /// (#3550 / TAURI-RUST-6V0).
+    async fn loaded_context_window(&self, model: &str) -> Option<u64> {
+        let (provider_idx, resolved_model) = self.resolve(model);
+        let (_, provider) = &self.providers[provider_idx];
+        provider.loaded_context_window(&resolved_model).await
+    }
+
     async fn warmup(&self) -> anyhow::Result<()> {
         for (name, provider) in &self.providers {
             tracing::info!(provider = name, "Warming up routed provider");

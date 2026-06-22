@@ -14,6 +14,8 @@ use regex::Regex;
 /// information is redacted before being sent to the server. After setup, it
 /// delegates execution to the core library based on CLI arguments.
 fn main() {
+    restore_default_sigpipe();
+
     // Load `.env` before `sentry::init` so a DSN defined only in the dotenv
     // file is visible to the Sentry client at startup. `dotenvy::dotenv()` is
     // a no-op for variables already present in the process environment, and
@@ -57,6 +59,11 @@ fn main() {
             // (transient codes excluded). This filter catches any future call
             // site that bypasses it.
             if openhuman_core::core::observability::is_transient_provider_http_failure(&event) {
+                return None;
+            }
+            if openhuman_core::core::observability::is_all_transient_provider_exhaustion_event(
+                &event,
+            ) {
                 return None;
             }
             // Defense-in-depth: drop managed-backend `errorCode` events (#870)
@@ -126,6 +133,21 @@ fn main() {
             // filter catches any future call site that re-emits the same
             // shape — keeping OPENHUMAN-TAURI-25 / -1Q / -27 / -1G off
             // Sentry permanently (~185 events/day combined).
+            // Defense-in-depth: drop opaque "GET /auth/me" events from the
+            // `openhuman.auth_get_me` RPC. The primary fix in
+            // `credentials::ops::auth_get_me` walks the full anyhow context
+            // chain so `is_transient_message_failure` can demote transient
+            // transport failures at the rpc dispatcher. This catches any
+            // future regression where a sibling call site collapses the
+            // chain via `e.to_string()` and reproduces TAURI-RUST-10
+            // (~409 events / 17 users).
+            if openhuman_core::core::observability::is_auth_get_me_opaque_transport_event(&event) {
+                log::debug!(
+                    "[sentry-auth-get-me-opaque-filter] dropping opaque transport event_id={:?}",
+                    event.event_id
+                );
+                return None;
+            }
             if openhuman_core::core::observability::is_session_expired_event(&event) {
                 // Metadata-only log shape — `event.message` carries the raw
                 // backend response body (often a JSON envelope with the
@@ -187,6 +209,19 @@ fn main() {
         std::process::exit(1);
     }
 }
+
+#[cfg(unix)]
+fn restore_default_sigpipe() {
+    // Rust ignores SIGPIPE at startup. That makes writes to a closed pipe
+    // return EPIPE, which the print macros turn into a panic. CLI tools should
+    // instead terminate quietly when a downstream reader such as `head` exits.
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+}
+
+#[cfg(not(unix))]
+fn restore_default_sigpipe() {}
 
 // ---------------------------------------------------------------------------
 // Release / environment resolution for Sentry

@@ -188,6 +188,57 @@ fn apply_env_overrides_reasoning_enabled_parses_truthy_falsy() {
 }
 
 #[test]
+fn apply_env_overrides_shell_hide_window_parses_truthy_falsy() {
+    let _g = env_lock();
+    clear_env(&["OPENHUMAN_SHELL_HIDE_WINDOW", "SHELL_HIDE_WINDOW"]);
+    let mut cfg = Config::default();
+    assert!(!cfg.shell.hide_window, "default should be off");
+
+    unsafe {
+        std::env::set_var("OPENHUMAN_SHELL_HIDE_WINDOW", "on");
+    }
+    cfg.apply_env_overrides();
+    assert!(cfg.shell.hide_window);
+
+    unsafe {
+        std::env::set_var("OPENHUMAN_SHELL_HIDE_WINDOW", "false");
+    }
+    cfg.apply_env_overrides();
+    assert!(!cfg.shell.hide_window);
+
+    // The unprefixed alias `SHELL_HIDE_WINDOW` is honored too.
+    unsafe {
+        std::env::remove_var("OPENHUMAN_SHELL_HIDE_WINDOW");
+        std::env::set_var("SHELL_HIDE_WINDOW", "on");
+    }
+    cfg.apply_env_overrides();
+    assert!(cfg.shell.hide_window, "alias should set hide_window");
+
+    // The namespaced var takes precedence over the alias when both are set.
+    unsafe {
+        std::env::set_var("OPENHUMAN_SHELL_HIDE_WINDOW", "off");
+        std::env::set_var("SHELL_HIDE_WINDOW", "on");
+    }
+    cfg.apply_env_overrides();
+    assert!(
+        !cfg.shell.hide_window,
+        "OPENHUMAN_-prefixed var should win over the alias"
+    );
+
+    // Unknown value leaves the field unchanged.
+    cfg.shell.hide_window = true;
+    unsafe {
+        std::env::set_var("OPENHUMAN_SHELL_HIDE_WINDOW", "maybe");
+        std::env::remove_var("SHELL_HIDE_WINDOW");
+    }
+    cfg.apply_env_overrides();
+    assert!(cfg.shell.hide_window);
+    unsafe {
+        std::env::remove_var("OPENHUMAN_SHELL_HIDE_WINDOW");
+    }
+}
+
+#[test]
 fn apply_env_overrides_web_search_limits_only() {
     let _g = env_lock();
     clear_env(&[
@@ -1767,6 +1818,7 @@ allowed_users = ["@admin"]
     };
     cfg.channels_config.telegram = Some(TelegramConfig {
         bot_token: known_secret.to_string(),
+        chat_id: None,
         allowed_users: vec!["@admin".to_string()],
         stream_mode: StreamMode::Off,
         draft_update_interval_ms: 1000,

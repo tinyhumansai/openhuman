@@ -113,6 +113,11 @@ fn default_silent_streaming() -> bool {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TelegramConfig {
     pub bot_token: String,
+    /// Default chat for recipient-less *proactive* sends (morning briefings,
+    /// cron output, etc.). Mirrors `DiscordConfig::channel_id`: `None` ⇒ proactive
+    /// routing skips Telegram rather than POSTing to an empty `chat_id`.
+    #[serde(default)]
+    pub chat_id: Option<String>,
     pub allowed_users: Vec<String>,
     #[serde(default)]
     pub stream_mode: StreamMode,

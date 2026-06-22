@@ -1,5 +1,26 @@
 export type ChannelType = 'telegram' | 'discord' | 'web' | 'lark' | 'dingtalk' | 'mcp' | 'yuanbao';
 
+/** Every valid {@link ChannelType}, for runtime validation of values that arrive
+ *  from the core (which is typed `string`). `satisfies` keeps this list in
+ *  lockstep with the `ChannelType` union — adding a member there without updating
+ *  here is a compile error. */
+export const KNOWN_CHANNEL_TYPES = [
+  'telegram',
+  'discord',
+  'web',
+  'lark',
+  'dingtalk',
+  'mcp',
+  'yuanbao',
+] as const satisfies readonly ChannelType[];
+
+/** Runtime guard: narrow an untrusted value to a known `ChannelType`. Use before
+ *  coercing core-provided `channel_id` / `active_channel` strings so unknown
+ *  channels never leak into Redux/API consumers (issue #3794 review). */
+export function isChannelType(value: unknown): value is ChannelType {
+  return typeof value === 'string' && (KNOWN_CHANNEL_TYPES as readonly string[]).includes(value);
+}
+
 export type ChannelAuthMode = 'managed_dm' | 'oauth' | 'bot_token' | 'api_key';
 
 export type ChannelConnectionStatus = 'connected' | 'connecting' | 'disconnected' | 'error';
@@ -74,6 +95,10 @@ export interface ChannelStatusEntry {
   auth_mode: ChannelAuthMode;
   connected: boolean;
   has_credentials: boolean;
+  /** Live failure reason from the supervised listener when the channel is
+   *  configured but its runtime listener is currently failing (issue #3712).
+   *  Absent when healthy, still starting, or for listener-less modes. */
+  error?: string;
 }
 
 export interface ChannelConnectionResult {

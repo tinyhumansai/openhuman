@@ -2016,6 +2016,46 @@ pub fn is_transient_provider_transport_failure(event: &sentry::protocol::Event<'
     event_has_transient_transport_phrase(event)
 }
 
+/// Defense-in-depth filter for aggregate provider exhaustion events where the
+/// aggregate only restates transient attempt failures.
+///
+/// Keep ordinary `failure=all_exhausted` events: they are the useful "every
+/// fallback failed" signal. Drop only the narrow shape observed in #3542,
+/// where the aggregate body starts with the reliable-provider exhaustion
+/// prefix and contains transient HTTP/transport wording already classified by
+/// [`is_transient_message_failure`].
+pub fn is_all_transient_provider_exhaustion_event(event: &sentry::protocol::Event<'_>) -> bool {
+    let tags = &event.tags;
+    if tags.get("domain").map(String::as_str) != Some("llm_provider") {
+        return false;
+    }
+    if tags.get("failure").map(String::as_str) != Some("all_exhausted") {
+        return false;
+    }
+
+    let direct = event.message.as_deref();
+    let from_logentry = event.logentry.as_ref().map(|log| log.message.as_str());
+    let from_exception = event.exception.last().and_then(|e| e.value.as_deref());
+    [direct, from_logentry, from_exception]
+        .into_iter()
+        .flatten()
+        .any(all_provider_attempts_are_transient)
+}
+
+fn all_provider_attempts_are_transient(message: &str) -> bool {
+    let Some(attempts) = message.strip_prefix("All providers/models failed. Attempts:") else {
+        return false;
+    };
+    let mut saw_attempt = false;
+    for attempt in attempts.split(';').map(str::trim).filter(|s| !s.is_empty()) {
+        saw_attempt = true;
+        if !is_transient_message_failure(attempt) {
+            return false;
+        }
+    }
+    saw_attempt
+}
+
 /// Returns true when a Sentry event's message/exception text contains the
 /// canonical max-tool-iterations cap phrase (see
 /// `openhuman::agent::error::MAX_ITERATIONS_ERROR_PREFIX`).
@@ -2091,6 +2131,54 @@ pub fn is_session_expired_event(event: &sentry::protocol::Event<'_>) -> bool {
     }
 
     false
+}
+
+/// Defense-in-depth `before_send` filter for opaque `openhuman.auth_get_me`
+/// RPC failures whose message body has been collapsed to just the bare
+/// HTTP method + path (`"GET /auth/me"`) with no underlying transport error.
+///
+/// Pairs with the primary fix at `openhuman::credentials::ops::auth_get_me`,
+/// which replaced `e.to_string()` with `format!("{e:#}")` so the full
+/// `anyhow` context chain reaches the rpc dispatcher. Before that
+/// fix, every transient network failure under this RPC — reqwest timeout,
+/// connection reset, TLS handshake EOF, DNS hiccup — fingerprinted to one
+/// opaque "GET /auth/me" Sentry group (TAURI-RUST-10, ~409 events / 17
+/// users) because `is_transient_message_failure` could not see the
+/// stripped transport phrases.
+///
+/// This filter is the catch-all if anyone re-introduces the same anyhow
+/// `.to_string()` collapse at another call site that eventually reaches
+/// `report_error_or_expected` with the same shape, OR if the existing fix
+/// regresses. Genuine `auth_get_me` errors that carry the underlying
+/// context chain (`"GET /auth/me: error sending request for url (...): …"`)
+/// still page — only the bare path-only body is dropped.
+///
+/// Match criteria (all required):
+/// - tag `domain == "rpc"`
+/// - tag `operation == "invoke_method"`
+/// - tag `method == "openhuman.auth_get_me"`
+/// - `event.message` (or last exception `value`) trims to **exactly**
+///   `"GET /auth/me"` — strict equality, not `contains`, so a body with
+///   the chain appended still surfaces.
+pub fn is_auth_get_me_opaque_transport_event(event: &sentry::protocol::Event<'_>) -> bool {
+    let tags = &event.tags;
+    if tags.get("domain").map(String::as_str) != Some("rpc") {
+        return false;
+    }
+    if tags.get("operation").map(String::as_str) != Some("invoke_method") {
+        return false;
+    }
+    if tags.get("method").map(String::as_str) != Some("openhuman.auth_get_me") {
+        return false;
+    }
+
+    const OPAQUE_BODY: &str = "GET /auth/me";
+    let direct = event.message.as_deref();
+    let from_exception = event.exception.last().and_then(|e| e.value.as_deref());
+    [direct, from_exception]
+        .into_iter()
+        .flatten()
+        .any(|body| body.trim() == OPAQUE_BODY)
 }
 
 pub fn is_transient_http_status(status: &str) -> bool {
@@ -2847,6 +2935,41 @@ mod tests {
                 "should classify as context-window-exceeded: {raw}"
             );
         }
+    }
+
+    #[test]
+    fn classifies_lmstudio_n_keep_exceeds_n_ctx_rereport() {
+        // TAURI-RUST-6V0: the verbatim LM Studio 400 body — the un-evictable
+        // prefix (`n_keep`) is larger than the model's loaded context
+        // (`n_ctx`). When this 400 slips past the pre-dispatch guard and is
+        // re-raised by the agent/web_channel, `report_error_or_expected` must
+        // classify it as expected user-state so it stays out of Sentry.
+        assert_eq!(
+            expected_error_kind(
+                "lmstudio API error (400 Bad Request): {\"error\":\"The number of tokens to keep from the initial prompt is greater than the context length (n_keep: 10978 >= n_ctx: 8192). Try to load the model with a larger context length, or provide a shorter input.\"}"
+            ),
+            Some(ExpectedErrorKind::ContextWindowExceeded)
+        );
+    }
+
+    #[test]
+    fn context_prefix_too_large_error_display_classifies_as_expected() {
+        // S3.5.d coupling test: the pre-dispatch actionable error's Display
+        // string MUST classify as the suppressed ContextWindowExceeded bucket,
+        // so a wording drift in the user-facing message (which is what gets
+        // re-raised and re-reported up the stack) fails CI instead of silently
+        // leaking the event to Sentry.
+        let err = crate::openhuman::agent::harness::token_budget::ContextPrefixTooLargeError {
+            prefix_tokens: 10_978,
+            context_window: 8_192,
+            max_input_tokens: 7_372,
+        };
+        assert_eq!(
+            expected_error_kind(&err.to_string()),
+            Some(ExpectedErrorKind::ContextWindowExceeded),
+            "ContextPrefixTooLargeError Display must stay coupled to the \
+             context-window-exceeded classifier (drift would leak Sentry events)"
+        );
     }
 
     #[test]
@@ -6279,5 +6402,131 @@ mod tests {
             "operation timed out",
         );
         assert!(!is_transient_provider_transport_failure(&event));
+    }
+
+    // ── is_auth_get_me_opaque_transport_event ────────────────────────────
+    // Covers the TAURI-RUST-10 fingerprint shape: `domain=rpc`,
+    // `operation=invoke_method`, `method=openhuman.auth_get_me`, message
+    // body = exactly "GET /auth/me" (no underlying chain). See the
+    // function docstring + the `auth_get_me` fix in
+    // `openhuman::credentials::ops::auth_get_me` for the broader
+    // context.
+
+    fn auth_get_me_tags() -> Vec<(&'static str, &'static str)> {
+        vec![
+            ("domain", "rpc"),
+            ("operation", "invoke_method"),
+            ("method", "openhuman.auth_get_me"),
+            ("elapsed_ms", "5003"),
+        ]
+    }
+
+    #[test]
+    fn auth_get_me_opaque_filter_drops_bare_method_path_message() {
+        let event = event_with_tags_and_message(&auth_get_me_tags(), "GET /auth/me");
+        assert!(
+            is_auth_get_me_opaque_transport_event(&event),
+            "bare 'GET /auth/me' message must be dropped (TAURI-RUST-10 shape)"
+        );
+    }
+
+    #[test]
+    fn auth_get_me_opaque_filter_tolerates_surrounding_whitespace() {
+        let event = event_with_tags_and_message(&auth_get_me_tags(), "  GET /auth/me  ");
+        assert!(
+            is_auth_get_me_opaque_transport_event(&event),
+            "trimmed equality must still match the opaque shape"
+        );
+    }
+
+    #[test]
+    fn auth_get_me_opaque_filter_keeps_full_anyhow_chain_message() {
+        // Post-fix shape from `auth_get_me` now using `format!("{e:#}")`.
+        let event = event_with_tags_and_message(
+            &auth_get_me_tags(),
+            "GET /auth/me: error sending request for url \
+             (https://api.tinyhumans.ai/auth/me): operation timed out",
+        );
+        assert!(
+            !is_auth_get_me_opaque_transport_event(&event),
+            "messages carrying the underlying transport chain must surface — \
+             the transient classifier handles those at the rpc dispatcher"
+        );
+    }
+
+    #[test]
+    fn auth_get_me_opaque_filter_keeps_other_rpc_methods() {
+        // Same opaque shape but for a different RPC must NOT be dropped —
+        // we don't have evidence the same anti-pattern exists elsewhere,
+        // and a path-only body might be a legitimate distinct error for a
+        // future endpoint.
+        for method in [
+            "openhuman.consume_login_token",
+            "openhuman.auth_create_channel_link_token",
+            "openhuman.thread_list",
+        ] {
+            let mut tags = auth_get_me_tags();
+            // Replace the method tag.
+            if let Some(slot) = tags.iter_mut().find(|(k, _)| *k == "method") {
+                slot.1 = method;
+            }
+            let event = event_with_tags_and_message(&tags, "GET /auth/me");
+            assert!(
+                !is_auth_get_me_opaque_transport_event(&event),
+                "filter must be scoped strictly to method=openhuman.auth_get_me \
+                 — saw method={method}"
+            );
+        }
+    }
+
+    #[test]
+    fn auth_get_me_opaque_filter_requires_rpc_invoke_method_domain() {
+        // Wrong domain → must surface.
+        let mut tags = auth_get_me_tags();
+        if let Some(slot) = tags.iter_mut().find(|(k, _)| *k == "domain") {
+            slot.1 = "backend_api";
+        }
+        let event = event_with_tags_and_message(&tags, "GET /auth/me");
+        assert!(!is_auth_get_me_opaque_transport_event(&event));
+
+        // Wrong operation → must surface.
+        let mut tags = auth_get_me_tags();
+        if let Some(slot) = tags.iter_mut().find(|(k, _)| *k == "operation") {
+            slot.1 = "post";
+        }
+        let event = event_with_tags_and_message(&tags, "GET /auth/me");
+        assert!(!is_auth_get_me_opaque_transport_event(&event));
+    }
+
+    #[test]
+    fn auth_get_me_opaque_filter_matches_exception_value_path() {
+        // sentry-tracing path: message empty, exception last value carries
+        // the body. The filter must still match.
+        let mut event = event_with_tags(&auth_get_me_tags());
+        event.exception.values.push(sentry::protocol::Exception {
+            value: Some("GET /auth/me".to_string()),
+            ..Default::default()
+        });
+        assert!(
+            is_auth_get_me_opaque_transport_event(&event),
+            "must also catch the exception-value shape (sentry-tracing bridge)"
+        );
+    }
+
+    #[test]
+    fn auth_get_me_opaque_filter_ignores_empty_and_unrelated() {
+        // No message and no exception → false.
+        let event = event_with_tags(&auth_get_me_tags());
+        assert!(!is_auth_get_me_opaque_transport_event(&event));
+
+        // Unrelated message body with the right tags → false.
+        let event = event_with_tags_and_message(
+            &auth_get_me_tags(),
+            "session JWT verified via GET /auth/me on https://api.tinyhumans.ai",
+        );
+        assert!(
+            !is_auth_get_me_opaque_transport_event(&event),
+            "substring match must NOT trigger — strict equality only"
+        );
     }
 }

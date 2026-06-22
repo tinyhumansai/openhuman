@@ -334,8 +334,23 @@ pub fn is_context_window_exceeded_message(body: &str) -> bool {
         "context size has been exceeded",
         "prompt is too long",
         "input is too long",
+        // LM Studio / llama.cpp un-evictable-prefix overflow (TAURI-RUST-6V0):
+        // `"The number of tokens to keep from the initial prompt is greater
+        //   than the context length (n_keep: 10978 >= n_ctx: 8192). Try to
+        //   load the model with a larger context length, …"`. The user's local
+        // model was loaded with an `n_ctx` smaller than the system/un-evictable
+        // prefix; the remediation lives in the user's local server (reload with
+        // a larger context), so this is expected user-state, not a product bug.
+        "greater than the context length",
     ];
     if CONTEXT_HINTS.iter().any(|hint| lower.contains(hint)) {
+        return true;
+    }
+
+    // LM Studio / llama.cpp emit the overflow as a paired `n_keep … n_ctx`
+    // diagnostic. Require BOTH tokens so the arm stays anchored to that exact
+    // shape (TAURI-RUST-6V0) and never broadens to unrelated `n_ctx` logging.
+    if lower.contains("n_keep") && lower.contains("n_ctx") {
         return true;
     }
 

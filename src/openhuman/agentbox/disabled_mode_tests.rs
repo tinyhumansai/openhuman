@@ -1,17 +1,10 @@
 //! Verifies that with `OPENHUMAN_AGENTBOX_MODE` unset (the desktop default),
 //! the core HTTP router does NOT expose `/run` or `/jobs/{id}`.
 //!
-//! Env vars are process-global, so if any other test sets this var in
-//! parallel the assertion could flap. The repo standard for env-mutating
-//! tests is to use the `serial_test` crate; if it's available, mark this
-//! test `#[serial]`. Otherwise the test is best-effort and a fallback
-//! `#[ignore]` is acceptable.
-//!
-//! `serial_test` is NOT a dev-dependency in this workspace, and a grep
-//! across `src/` and `tests/` confirms no other test sets
-//! `OPENHUMAN_AGENTBOX_MODE`, so unsetting the var inline is sufficient
-//! today. Authoritative coverage of the disabled-mode contract lives in
-//! the E2E test (Task 12) which boots a fresh process.
+//! Env vars are process-global, so this test holds the AgentBox test env lock
+//! while it clears `OPENHUMAN_AGENTBOX_MODE` and builds the router.
+//! Authoritative coverage of the disabled-mode contract lives in the E2E test
+//! (Task 12) which boots a fresh process.
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};

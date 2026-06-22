@@ -574,6 +574,7 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
     let io_memory_sync = io.clone();
     let io_agent_meetings = io.clone();
     let io_tinyplace = io.clone();
+    let io_channel_status = io.clone();
 
     // 2. Dictation hotkey events → broadcast to all connected clients.
     tokio::spawn(async move {
@@ -1143,6 +1144,104 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
         }
         log::debug!("[socketio] tinyplace stream bridge stopped");
     });
+
+    // 11. Channel listener health → broadcast `channel:connection-updated` to
+    //     all clients so the Messaging tab reflects the *live* connection state
+    //     instead of a stale, credential-presence-only "Connected" (issue
+    //     #3712). The supervised listener publishes `ChannelConnected` when it
+    //     (re)enters its recv loop and `ChannelDisconnected { reason }` when it
+    //     errors/exits. Only listener-backed channels (telegram/discord
+    //     `bot_token`) fire these, so we map them to the `bot_token` auth mode —
+    //     the frontend `normalizeChannelConnectionUpdatePayload` drops any
+    //     channel/mode it doesn't recognise.
+    tokio::spawn(async move {
+        let bus = {
+            const RETRY_INTERVAL_MS: u64 = 250;
+            const MAX_WAIT_SECS: u64 = 30;
+            let max_attempts = (MAX_WAIT_SECS * 1000) / RETRY_INTERVAL_MS;
+            let mut attempts: u64 = 0;
+            loop {
+                if let Some(bus) = crate::core::event_bus::global() {
+                    break bus;
+                }
+                attempts += 1;
+                if attempts > max_attempts {
+                    log::warn!(
+                        "[socketio] event_bus not initialised after {}s — channel_status bridge giving up",
+                        MAX_WAIT_SECS
+                    );
+                    return;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(RETRY_INTERVAL_MS)).await;
+            }
+        };
+        let mut rx = bus.raw_receiver();
+        loop {
+            let event = match rx.recv().await {
+                Ok(event) => event,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                    log::warn!(
+                        "[socketio] dropped {} event_bus events due to lag (channel_status bridge)",
+                        skipped
+                    );
+                    continue;
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            };
+            let payload = match event {
+                crate::core::event_bus::DomainEvent::ChannelConnected { channel } => {
+                    log::debug!(
+                        "[socketio] broadcast channel:connection-updated {channel} -> connected"
+                    );
+                    Some(channel_connection_update_payload(
+                        &channel,
+                        "connected",
+                        None,
+                    ))
+                }
+                crate::core::event_bus::DomainEvent::ChannelDisconnected { channel, reason } => {
+                    log::debug!(
+                        "[socketio] broadcast channel:connection-updated {channel} -> error reason_len={}",
+                        reason.len()
+                    );
+                    Some(channel_connection_update_payload(
+                        &channel,
+                        "error",
+                        Some(&reason),
+                    ))
+                }
+                _ => None,
+            };
+            if let Some(payload) = payload {
+                // Emit both colon and underscore variants for FE compatibility.
+                let _ = io_channel_status.emit("channel:connection-updated", &payload);
+                let _ = io_channel_status.emit("channel_connection_updated", &payload);
+            }
+        }
+        log::debug!("[socketio] channel_status bridge stopped");
+    });
+}
+
+/// Build the `channel:connection-updated` payload broadcast when a supervised
+/// channel listener changes state (issue #3712). Listener-backed channels are
+/// always the `bot_token` auth mode (the only mode that materialises a runtime
+/// listener for telegram/discord); `last_error` carries the disconnect reason.
+/// Matches the shape consumed by the frontend
+/// `normalizeChannelConnectionUpdatePayload`.
+pub(crate) fn channel_connection_update_payload(
+    channel: &str,
+    status: &str,
+    last_error: Option<&str>,
+) -> serde_json::Value {
+    let mut payload = serde_json::json!({
+        "channel": channel,
+        "auth_mode": "bot_token",
+        "status": status,
+    });
+    if let Some(reason) = last_error {
+        payload["last_error"] = serde_json::Value::String(reason.to_string());
+    }
+    payload
 }
 
 /// Join `socket` to `room`, logging the result.
@@ -1252,7 +1351,30 @@ fn emit_with_aliases(socket: &SocketRef, name: &str, payload: &serde_json::Value
 
 #[cfg(test)]
 mod tests {
-    use super::{event_alias, origin_is_allowed};
+    use super::{channel_connection_update_payload, event_alias, origin_is_allowed};
+
+    #[test]
+    fn channel_connection_update_payload_connected_omits_error() {
+        let payload = channel_connection_update_payload("discord", "connected", None);
+        assert_eq!(payload["channel"], "discord");
+        // Listener-backed channels always map to the bot_token auth mode.
+        assert_eq!(payload["auth_mode"], "bot_token");
+        assert_eq!(payload["status"], "connected");
+        assert!(
+            payload.get("last_error").is_none(),
+            "connected payload must not carry a last_error: {payload}"
+        );
+    }
+
+    #[test]
+    fn channel_connection_update_payload_error_carries_reason() {
+        let payload =
+            channel_connection_update_payload("discord", "error", Some("gateway closed (4004)"));
+        assert_eq!(payload["channel"], "discord");
+        assert_eq!(payload["auth_mode"], "bot_token");
+        assert_eq!(payload["status"], "error");
+        assert_eq!(payload["last_error"], "gateway closed (4004)");
+    }
 
     #[test]
     fn event_alias_translates_between_delimiters() {
