@@ -568,7 +568,9 @@ async fn deliver_if_configured_skips_non_announce_mode() {
     let job = test_job("echo ok");
 
     // Default delivery mode is not "announce", so nothing is published.
-    assert!(deliver_if_configured(&config, &job, true, "x").await.is_ok());
+    assert!(deliver_if_configured(&config, &job, true, "x")
+        .await
+        .is_ok());
 }
 
 #[tokio::test]
@@ -786,7 +788,10 @@ async fn deliver_if_configured_proactive_mode_succeeds() {
 #[test]
 fn should_deliver_to_chat_true_only_for_successful_nonempty_output() {
     // Successful, real output → deliver.
-    assert!(should_deliver_to_chat(true, "morning briefing: 3 new emails"));
+    assert!(should_deliver_to_chat(
+        true,
+        "morning briefing: 3 new emails"
+    ));
     assert!(should_deliver_to_chat(true, "  trimmed but real  "));
 
     // Failed run (canned error copy) → never deliver, even though non-empty.
@@ -805,10 +810,7 @@ fn should_deliver_to_chat_true_only_for_successful_nonempty_output() {
         true,
         AGENT_JOB_EMPTY_OUTPUT_PLACEHOLDER
     ));
-    assert!(!should_deliver_to_chat(
-        true,
-        "  agent job executed  "
-    ));
+    assert!(!should_deliver_to_chat(true, "  agent job executed  "));
 }
 
 #[tokio::test]
@@ -832,9 +834,7 @@ async fn deliver_if_configured_proactive_suppresses_failed_run() {
             .is_ok()
     );
     // Empty successful run.
-    assert!(deliver_if_configured(&config, &job, true, "")
-        .await
-        .is_ok());
+    assert!(deliver_if_configured(&config, &job, true, "").await.is_ok());
     // Placeholder successful run.
     assert!(
         deliver_if_configured(&config, &job, true, AGENT_JOB_EMPTY_OUTPUT_PLACEHOLDER)
@@ -856,8 +856,7 @@ async fn deliver_if_configured_announce_validates_before_gate_even_on_failure() 
         to: Some("target".into()),
         best_effort: true,
     };
-    let result =
-        deliver_if_configured(&config, &job, false, AGENT_JOB_USER_FAILURE_MESSAGE).await;
+    let result = deliver_if_configured(&config, &job, false, AGENT_JOB_USER_FAILURE_MESSAGE).await;
     assert!(result.is_err());
 }
 
