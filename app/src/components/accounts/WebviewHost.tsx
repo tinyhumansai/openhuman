@@ -226,7 +226,9 @@ const WebviewHost = ({ accountId, provider }: WebviewHostProps) => {
           />
           <span
             className={`text-xs font-medium tracking-wide ${isLoading ? '' : 'text-stone-500 dark:text-neutral-400'}`}>
-            {isLoading ? `${t('accounts.webviewHost.loading')} ${providerName}...` : providerName}
+            {isLoading
+              ? t('accounts.webviewHost.loading').replace('{providerName}', providerName)
+              : providerName}
           </span>
           {isLoading ? (
             <div
@@ -251,7 +253,9 @@ const WebviewHost = ({ accountId, provider }: WebviewHostProps) => {
           aria-live="polite"
           aria-label={t('accounts.webviewHost.loadTimeout')}>
           <div className="max-w-sm space-y-1">
-            <p className="text-sm font-semibold text-stone-800 dark:text-neutral-100">{`${providerName} ${t('accounts.webviewHost.takingLonger')}`}</p>
+            <p className="text-sm font-semibold text-stone-800 dark:text-neutral-100">
+              {t('accounts.webviewHost.takingLonger').replace('{providerName}', providerName)}
+            </p>
             <p className="text-xs text-stone-600 dark:text-neutral-300">
               {t('accounts.webviewHost.timeoutHint')}
             </p>

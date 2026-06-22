@@ -25,6 +25,8 @@
 //! signing (`m/44'/501'/0'/0'`); the wallet key becomes the tiny.place identity.
 //! The seed is never logged, persisted, or returned across any IPC boundary.
 
+pub(crate) mod agent;
+mod agent_tools;
 mod manifest;
 mod ops;
 mod payment;

@@ -527,7 +527,7 @@ export default function IntelligenceTasksTab() {
     const title =
       thread?.title && thread.title.trim().length > 0
         ? thread.title
-        : `${t('intelligence.tasks.threadPrefix')} ${shortId(threadId)}`;
+        : t('intelligence.tasks.threadPrefix').replace('{thread}', shortId(threadId));
 
     boardEntries.push({ threadId, title, board, live: Boolean(liveBoard) });
   }

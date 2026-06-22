@@ -298,7 +298,9 @@ export default function ComposioConnectModal({
           if (state === 'error') {
             stopPolling();
             setPhase('error');
-            setError(`${t('composio.connect.connectionFailed')} (status: ${hit.status}).`);
+            setError(
+              t('composio.connect.connectionFailed').replace('{status}', String(hit.status))
+            );
             return;
           }
           if (state === 'expired') {
@@ -539,7 +541,7 @@ export default function ComposioConnectModal({
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         setPhase('error');
-        setError(`${t('composio.connect.disconnectFailed')}: ${msg}`);
+        setError(t('composio.connect.disconnectFailed').replace('{msg}', msg));
         setClearMemoryOnDisconnect(false);
       }
     },
