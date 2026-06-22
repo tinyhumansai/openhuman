@@ -768,6 +768,55 @@ pub(crate) async fn run_turn_engine(
             }
         }
 
+        // A circuit-breaker / early-exit `break` can stop the batch before every
+        // tool call ran, so `individual_results` (one entry per EXECUTED call)
+        // may be shorter than `native_tool_calls` (every call the model emitted).
+        // The persisted assistant message must reference ONLY the executed calls:
+        // a native-mode assistant turn carrying N `tool_call` ids followed by
+        // fewer than N `role: tool` results is rejected by OpenAI-compatible
+        // providers ("an assistant message with tool_calls must be followed by
+        // tool messages responding to each tool_call_id") on the next request —
+        // exactly the raw `ChatMessage` histories used by run_tool_call_loop /
+        // the sub-agent paths (Codex review #3779). Trim the persisted tool-call
+        // list to the executed prefix so call-ids and tool-results stay in
+        // lockstep. `tool_calls` is a 1:1, same-order map of `native_tool_calls`
+        // (see `parse_structured_tool_calls`), so the executed prefix is simply
+        // the first `individual_results.len()` native calls.
+        let executed = individual_results.len();
+        let executed_native_calls = &native_tool_calls[..executed.min(native_tool_calls.len())];
+        // The parsed list is a 1:1, same-order map of the native list, so the
+        // executed prefix lines up. Trim it too: the typed-history observer
+        // (`turn_engine_adapter::persisted_tool_calls`) builds the `Agent::turn`
+        // `AssistantToolCalls` entry from these, and would otherwise persist a
+        // tool-call for every emitted call while only collecting results for the
+        // executed prefix — the same orphaned-id mismatch in the raw-ChatMessage
+        // path (Codex review #3779).
+        let executed_parsed_calls = &tool_calls[..executed.min(tool_calls.len())];
+        let assistant_history_content = if executed < native_tool_calls.len() {
+            tracing::debug!(
+                iteration,
+                emitted = native_tool_calls.len(),
+                executed,
+                "[agent_loop] batch truncated before all tool calls ran — trimming \
+                 persisted assistant tool-calls to the executed prefix so tool_call_ids \
+                 match tool-results (no orphaned id)"
+            );
+            // Rebuild from the executed prefix. Empty prefix (a break before the
+            // first call could ever produce one) degrades to the plain
+            // response-text assistant message, mirroring the no-tool-call path.
+            if executed_native_calls.is_empty() {
+                response_text.clone()
+            } else {
+                build_native_assistant_history(
+                    &response_text,
+                    reasoning_content.as_deref(),
+                    executed_native_calls,
+                )
+            }
+        } else {
+            assistant_history_content
+        };
+
         // Add assistant message with tool calls + tool results to history.
         // Native mode: JSON-structured messages so convert_messages() can
         // reconstruct OpenAI-format tool_calls + tool result messages. Prompt
@@ -778,8 +827,8 @@ pub(crate) async fn run_turn_engine(
                 &display_text,
                 &response_text,
                 reasoning_content.as_deref(),
-                &native_tool_calls,
-                &tool_calls,
+                executed_native_calls,
+                executed_parsed_calls,
                 iteration,
                 false,
             )
@@ -789,7 +838,10 @@ pub(crate) async fn run_turn_engine(
             observer.on_results_batch(&content, iteration);
             history.push(ChatMessage::user(content));
         } else {
-            for (native_call, result) in native_tool_calls.iter().zip(individual_results.iter()) {
+            // Zip over the executed prefix only — one `role: tool` result per
+            // executed `tool_call_id`, matching the trimmed assistant message
+            // above so the next provider request has no orphaned tool-call id.
+            for (native_call, result) in executed_native_calls.iter().zip(individual_results.iter()) {
                 let tool_msg = serde_json::json!({
                     "tool_call_id": native_call.id,
                     "content": result,
