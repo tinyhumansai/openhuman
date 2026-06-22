@@ -127,6 +127,8 @@ const baseHeartbeatSettings = {
   notify_reminders: true,
   notify_relevant_events: false,
   external_delivery_enabled: false,
+  triggers_enabled: false,
+  max_promotions_per_hour: 30,
   meeting_lookahead_minutes: 60,
   max_calendar_connections_per_tick: 2,
   reminder_lookahead_minutes: 30,
