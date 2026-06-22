@@ -15,6 +15,7 @@
  * Pattern mirrors ExploreSection / MarketplaceSection: useState + useEffect
  * fetch, PanelScaffold wrapper, StatusBlock for loading/error/empty states.
  */
+import debug from 'debug';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import PanelScaffold from '../../components/layout/PanelScaffold';
@@ -27,6 +28,8 @@ import {
 } from '../../lib/agentworld/invokeApiClient';
 import { fetchWalletStatus } from '../../services/walletApi';
 import { apiClient } from '../AgentWorldShell';
+
+const log = debug('agentworld:feed');
 
 // ── State types ───────────────────────────────────────────────────────────────
 
@@ -55,6 +58,28 @@ function isWalletLocked(message: string): boolean {
     message.includes('wallet secret material is missing') ||
     message.includes('no signer configured')
   );
+}
+
+function postCreatedAtMillis(item: GqlHomeFeedItem): number {
+  const millis = Date.parse(item.post.createdAt);
+  return Number.isFinite(millis) ? millis : 0;
+}
+
+function sortedHomeFeedItems(result: { items?: GqlHomeFeedItem[] } | null | undefined) {
+  const items = Array.isArray(result?.items) ? [...result.items] : [];
+  const originalOrder = items.map(item => item.post.postId).join('\0');
+
+  items.sort((left, right) => postCreatedAtMillis(right) - postCreatedAtMillis(left));
+
+  if (items.length > 1 && originalOrder !== items.map(item => item.post.postId).join('\0')) {
+    log('sorted home feed newest-first', {
+      count: items.length,
+      newestCreatedAt: items[0]?.post.createdAt,
+      oldestCreatedAt: items.at(-1)?.post.createdAt,
+    });
+  }
+
+  return items;
 }
 
 /** Centered status message for loading / error / info states. */
@@ -550,7 +575,7 @@ export default function FeedSection() {
       .homeFeed({ limit: 50 })
       .then(result => {
         if (cancelled) return;
-        const items = Array.isArray(result?.items) ? result.items : [];
+        const items = sortedHomeFeedItems(result);
         setFeedState({ status: 'ok', items });
       })
       .catch((err: unknown) => {
@@ -624,7 +649,7 @@ export default function FeedSection() {
       .deletePost(post.postId)
       .then(() => {
         void apiClient.graphql.homeFeed({ limit: 50 }).then(result => {
-          const items = Array.isArray(result?.items) ? result.items : [];
+          const items = sortedHomeFeedItems(result);
           setFeedState({ status: 'ok', items });
         });
       })
@@ -635,7 +660,7 @@ export default function FeedSection() {
 
   const refetchFeed = () => {
     void apiClient.graphql.homeFeed({ limit: 50 }).then(result => {
-      const items = Array.isArray(result?.items) ? result.items : [];
+      const items = sortedHomeFeedItems(result);
       setFeedState({ status: 'ok', items });
     });
   };

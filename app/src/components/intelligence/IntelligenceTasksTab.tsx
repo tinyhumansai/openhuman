@@ -47,6 +47,7 @@ import {
 } from '../../store/threadSlice';
 import type { ThreadMessage } from '../../types/thread';
 import type { TaskBoard, TaskBoardCard, TaskBoardCardStatus } from '../../types/turnState';
+import { chatThreadPath } from '../../utils/chatRoutes';
 import { UserTaskComposer } from './UserTaskComposer';
 
 const log = debug('intelligence:tasks');
@@ -391,7 +392,7 @@ export default function IntelligenceTasksTab() {
         dispatch(setActiveThread(thread.id));
         void dispatch(loadThreads());
         void dispatch(loadThreadMessages(thread.id));
-        navigate('/chat');
+        navigate(chatThreadPath(thread.id));
 
         await chatSend({
           threadId: thread.id,
@@ -527,7 +528,7 @@ export default function IntelligenceTasksTab() {
     const title =
       thread?.title && thread.title.trim().length > 0
         ? thread.title
-        : `${t('intelligence.tasks.threadPrefix')} ${shortId(threadId)}`;
+        : t('intelligence.tasks.threadPrefix').replace('{thread}', shortId(threadId));
 
     boardEntries.push({ threadId, title, board, live: Boolean(liveBoard) });
   }
@@ -588,10 +589,7 @@ export default function IntelligenceTasksTab() {
             dispatch(setSelectedThread(tid));
             void dispatch(loadThreads());
             void dispatch(loadThreadMessages(tid));
-            // Pass the thread as an explicit open-intent so Conversations'
-            // mount-resume honors it (its default resume only considers
-            // General-tab threads and would otherwise drop this task session).
-            navigate('/chat', { state: { openThreadId: tid } });
+            navigate(chatThreadPath(tid));
           }}
           workingCardId={workingCardId}
           mutatingCardId={mutatingCardId}

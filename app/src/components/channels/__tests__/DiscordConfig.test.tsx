@@ -55,12 +55,63 @@ describe('DiscordConfig', () => {
     renderWithProviders(<DiscordConfig definition={discordDef} />);
     expect(screen.getByPlaceholderText(/Your Discord bot token/)).toBeInTheDocument();
     expect(screen.getByPlaceholderText(/restrict to a specific server/)).toBeInTheDocument();
+    // Issue #3763: the allowlist must be settable in the connect UI.
+    expect(screen.getByPlaceholderText(/Discord user IDs, or \* for everyone/)).toBeInTheDocument();
   });
 
   it('shows Connect buttons for each auth mode', () => {
     renderWithProviders(<DiscordConfig definition={discordDef} />);
     const connectButtons = screen.getAllByText('Connect');
     expect(connectButtons.length).toBe(3);
+  });
+
+  // #3794 review (Codex P2): clearing the allowlist must reach the backend as an
+  // explicit empty value so it means "allow everyone", instead of being omitted
+  // and silently reusing the previously-saved list on reconnect.
+  it('submits an explicit empty allowed_users when the field is cleared', async () => {
+    vi.mocked(channelConnectionsApi.connectChannel).mockResolvedValue({
+      status: 'connected',
+      restart_required: true,
+    });
+    renderWithProviders(<DiscordConfig definition={discordDef} />);
+
+    fireEvent.change(screen.getByPlaceholderText(/Your Discord bot token/), {
+      target: { value: 'bot-token-xyz' },
+    });
+    const allowlist = screen.getByPlaceholderText(/Discord user IDs, or \* for everyone/);
+    fireEvent.change(allowlist, { target: { value: '111,222' } });
+    fireEvent.change(allowlist, { target: { value: '' } }); // user clears it
+
+    // bot_token is the first auth mode, so its Connect button is index 0.
+    fireEvent.click(screen.getAllByRole('button', { name: 'Connect' })[0]);
+
+    await waitFor(() => {
+      expect(channelConnectionsApi.connectChannel).toHaveBeenCalledWith('discord', {
+        authMode: 'bot_token',
+        credentials: { bot_token: 'bot-token-xyz', allowed_users: '' },
+      });
+    });
+  });
+
+  it('omits allowed_users entirely when the field is never touched', async () => {
+    vi.mocked(channelConnectionsApi.connectChannel).mockResolvedValue({
+      status: 'connected',
+      restart_required: true,
+    });
+    renderWithProviders(<DiscordConfig definition={discordDef} />);
+
+    fireEvent.change(screen.getByPlaceholderText(/Your Discord bot token/), {
+      target: { value: 'bot-token-xyz' },
+    });
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Connect' })[0]);
+
+    await waitFor(() => {
+      expect(channelConnectionsApi.connectChannel).toHaveBeenCalledWith('discord', {
+        authMode: 'bot_token',
+        credentials: { bot_token: 'bot-token-xyz' },
+      });
+    });
   });
 
   it('passes clearMemory when disconnecting a connected bot token account', async () => {

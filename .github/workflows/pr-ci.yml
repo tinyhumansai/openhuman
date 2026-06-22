@@ -436,7 +436,27 @@ jobs:
       image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
     env:
       CARGO_INCREMENTAL: "0"
+      # The instrumented Tauri shell binary (whole tauri/zbus/CEF graph) is
+      # dominated by DWARF debug info, which exhausts the runner disk and
+      # SIGBUSes the linker (collect2: ld terminated with signal 7) during the
+      # final link. Drop debug info — llvm-cov reads coverage from the embedded
+      # __llvm_covmap/__llvm_covfun sections, NOT from DWARF, so coverage
+      # numbers are unaffected. Mirrors rust-core-coverage.
+      CARGO_PROFILE_DEV_DEBUG: "0"
     steps:
+      - name: Free disk space
+        run: |
+          # Coverage-instrumented builds produce huge binaries that exhaust the
+          # runner's ~14GB free disk during linking (SIGBUS). Inside a container,
+          # host paths are bind-mounted:
+          #   /opt/hostedtoolcache → /__t
+          #   /home/runner/work    → /__w
+          # Deleting /__t frees ~8GB on the same partition the build uses.
+          # Mirrors rust-core-coverage.
+          rm -rf /__t/* || true
+          echo "Disk after cleanup:"
+          df -h /__w || true
+
       - name: Checkout code
         uses: actions/checkout@v5
         with:
@@ -471,6 +491,11 @@ jobs:
 
       - name: Run cargo llvm-cov for Tauri shell
         run: bash scripts/ci-cancel-aware.sh cargo llvm-cov --manifest-path app/src-tauri/Cargo.toml --lcov --output-path lcov-tauri.info
+        env:
+          # Serialize codegen/link to cap peak memory + disk during the
+          # instrumented Tauri-shell link (SIGBUS otherwise). Mirrors
+          # rust-core-coverage.
+          CARGO_BUILD_JOBS: "1"
 
       - name: Save CEF binary distribution cache
         if: always() && steps.cef-cache.outputs.cache-hit != 'true'

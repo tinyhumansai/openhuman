@@ -256,6 +256,41 @@ describe('parseMessageImages', () => {
     expect(result.text).toBe('');
     expect(result.dataUris).toHaveLength(1);
   });
+
+  it('strips FILE markers without including them in dataUris', () => {
+    const result = parseMessageImages('read this [FILE:data:application/pdf;base64,xyz]');
+    expect(result.text).toBe('read this');
+    expect(result.dataUris).toEqual([]);
+  });
+
+  it('handles mixed IMAGE and FILE markers', () => {
+    const result = parseMessageImages(
+      'check this [IMAGE:data:image/png;base64,a] and [FILE:data:application/pdf;base64,b] thanks'
+    );
+    expect(result.text).toBe('check this and thanks');
+    expect(result.dataUris).toEqual(['data:image/png;base64,a']);
+  });
+
+  it('strips multiple FILE markers', () => {
+    const result = parseMessageImages(
+      '[FILE:data:application/pdf;base64,a] [FILE:data:text/plain;base64,b]'
+    );
+    expect(result.text).toBe('');
+    expect(result.dataUris).toEqual([]);
+  });
+
+  it('preserves paragraph breaks (double newlines) in user text', () => {
+    const result = parseMessageImages('first paragraph\n\nsecond paragraph');
+    expect(result.text).toBe('first paragraph\n\nsecond paragraph');
+  });
+
+  it('preserves newlines when stripping a marker', () => {
+    const result = parseMessageImages(
+      'first paragraph\n\n[FILE:data:application/pdf;base64,x]\n\nsecond paragraph'
+    );
+    expect(result.text).toBe('first paragraph\n\n\n\nsecond paragraph');
+    expect(result.text).toContain('\n\n');
+  });
 });
 
 describe('formatFileSize', () => {

@@ -114,8 +114,82 @@ fn output_reserve_tokens(context_window: u64) -> u64 {
         .min(DEFAULT_OUTPUT_RESERVE_TOKENS.max(context_window / 4))
 }
 
-fn max_input_tokens(context_window: u64) -> u64 {
+/// Token budget available for the *input* prompt after reserving room for the
+/// model's completion + overhead. Public so the agent engine can detect the
+/// un-evictable-prefix overflow (see [`unevictable_prefix_overflow`]).
+pub fn max_input_tokens(context_window: u64) -> u64 {
     context_window.saturating_sub(output_reserve_tokens(context_window))
+}
+
+/// Estimated token count of the prompt's **un-evictable prefix** — the
+/// messages [`trim_chat_messages_to_budget`] can never drop: every `system`
+/// message plus the single newest non-system message (the current user turn).
+/// These are exactly the messages a maximal trim leaves behind, so this is the
+/// floor below which trimming cannot take the prompt.
+fn unevictable_prefix_tokens(messages: &[ChatMessage]) -> usize {
+    let newest_non_system = messages.iter().rposition(|m| m.role != "system");
+    messages
+        .iter()
+        .enumerate()
+        .filter(|(idx, m)| m.role == "system" || Some(*idx) == newest_non_system)
+        .map(|(_, m)| estimate_chat_message_tokens(m))
+        .sum()
+}
+
+/// The actionable, user-facing condition behind Sentry TAURI-RUST-6V0: a local
+/// model was loaded with a context window (`context_window`, the runtime
+/// `n_ctx`) smaller than the assistant's un-evictable system/prompt prefix
+/// (`prefix_tokens`, the runtime `n_keep`). Trimming can evict conversation
+/// history but never the system prefix or the current turn, so it can never get
+/// the prompt under budget — the request is doomed to the opaque upstream
+/// `400 (n_keep >= n_ctx)`. We detect it pre-dispatch and surface the remedy the
+/// user actually controls: reload the model with a larger context length.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error(
+    "Your local model's context length ({context_window} tokens) is smaller than \
+     the assistant's required system prompt (~{prefix_tokens} tokens), so the \
+     prompt can't be trimmed to fit (n_keep >= n_ctx). Reload the model in your \
+     local server (e.g. LM Studio) with a larger context length, then try again."
+)]
+pub struct ContextPrefixTooLargeError {
+    /// Tokens in the un-evictable prefix (system + current turn) — the `n_keep`.
+    pub prefix_tokens: usize,
+    /// The model's effective (runtime-loaded) context window — the `n_ctx`.
+    pub context_window: u64,
+    /// The derived input budget the prefix must fit within.
+    pub max_input_tokens: u64,
+}
+
+/// Detect the [`ContextPrefixTooLargeError`] condition: the un-evictable prefix
+/// alone overflows the model's runtime context window, so even a maximal trim
+/// (which can only drop evictable history) can never get the prompt to fit.
+/// Returns `Some(err)` only when the prompt can *never* fit — i.e. the prefix is
+/// at least as large as the whole `context_window` (`n_keep >= n_ctx`), the exact
+/// condition the runtime rejects — so the caller surfaces the actionable error
+/// instead of dispatching. `None` when trimming can keep the prompt within
+/// budget.
+///
+/// The predicate is anchored on `context_window` (the runtime `n_ctx`), **not**
+/// `max_input_tokens` (which subtracts a conservative reply reserve). Comparing
+/// against `max_input_tokens` would abort valid requests whose prefix fits inside
+/// the context window but exceeds the reply reserve — those are over-trim
+/// candidates (the reply just gets less room), not the un-fixable
+/// `n_keep >= n_ctx` failure this actionable error is meant to report (#3550 /
+/// Sentry TAURI-RUST-6V0; CodeRabbit review on PR #3771).
+pub fn unevictable_prefix_overflow(
+    messages: &[ChatMessage],
+    context_window: u64,
+) -> Option<ContextPrefixTooLargeError> {
+    let max_input = max_input_tokens(context_window);
+    let prefix_tokens = unevictable_prefix_tokens(messages);
+    // `n_keep >= n_ctx`: the un-evictable prefix is at least the whole runtime
+    // window. This is the precise condition the local runtime rejects, and the
+    // only one no trim can rescue.
+    (prefix_tokens as u64 >= context_window).then_some(ContextPrefixTooLargeError {
+        prefix_tokens,
+        context_window,
+        max_input_tokens: max_input,
+    })
 }
 
 /// Trim `messages` oldest-first (never removing `system` role) until the
@@ -313,6 +387,136 @@ mod tests {
         assert!(
             messages.iter().any(|m| m.content.contains("keep-me")),
             "newest user message should survive trimming"
+        );
+    }
+
+    #[test]
+    fn conservative_local_floor_bounds_oversized_history() {
+        // TAURI-RUST-6V0 / #3550: when a local provider resolves a conservative
+        // fallback window (instead of `None`, which would skip trimming and let
+        // the prompt overflow the runtime `n_ctx` → a hard 400), trimming MUST
+        // still engage and leave the prompt BOUNDED — not unbounded. Mirrors the
+        // 4096-token floor returned by
+        // `context_window_for_model_with_local_fallback` for a local provider
+        // with no profile default.
+        let floor: u64 = 4_096;
+        let mut messages = vec![
+            ChatMessage::system("system prompt"),
+            user_msg(&"x".repeat(400_000)), // ~100k tokens, far over the floor
+            user_msg("newest"),
+        ];
+        let outcome = trim_chat_messages_to_budget(&mut messages, floor);
+        assert!(outcome.trimmed, "oversized history must be trimmed");
+        // The retained prompt must fit the input budget derived from the floor —
+        // i.e. it is bounded, never left at the original ~100k tokens.
+        let max_input = max_input_tokens(floor) as usize;
+        assert!(
+            outcome.final_tokens <= max_input,
+            "trimmed prompt ({} tokens) must fit the conservative floor budget ({max_input})",
+            outcome.final_tokens
+        );
+        assert!(outcome.final_tokens < outcome.original_tokens);
+        // The newest user turn survives.
+        assert!(messages.iter().any(|m| m.content == "newest"));
+    }
+
+    #[test]
+    fn unevictable_prefix_overflow_fires_when_system_prefix_exceeds_local_ctx() {
+        // TAURI-RUST-6V0: a large system prompt (the un-evictable `n_keep`)
+        // alone exceeds a small local context window (`n_ctx`). Trimming can
+        // never help — it never drops the system message — so the pre-dispatch
+        // guard must fire with the numbers needed for the actionable error.
+        let ctx: u64 = 8_192; // LM Studio loaded n_ctx from the live events
+        let mut messages = vec![
+            // ~11k-token system prefix (the reported n_keep ≈ 10978).
+            ChatMessage::system(&"s".repeat(44_000)),
+            user_msg("hi"),
+        ];
+        // Even a maximal trim leaves the prompt over budget.
+        let outcome = trim_chat_messages_to_budget(&mut messages, ctx);
+        assert!(
+            outcome.final_tokens as u64 > max_input_tokens(ctx),
+            "precondition: trim cannot fit the prompt"
+        );
+
+        let overflow = unevictable_prefix_overflow(&messages, ctx)
+            .expect("un-evictable prefix overflow must be detected");
+        assert_eq!(overflow.context_window, ctx);
+        assert!(
+            overflow.prefix_tokens as u64 > overflow.max_input_tokens,
+            "prefix must exceed the input budget"
+        );
+        // The user-facing remedy + the diagnostic anchor are both present.
+        let msg = overflow.to_string();
+        assert!(
+            msg.contains("larger context length"),
+            "must name the remedy"
+        );
+        assert!(
+            msg.contains("n_keep >= n_ctx"),
+            "must carry the diagnostic anchor"
+        );
+    }
+
+    #[test]
+    fn unevictable_prefix_overflow_anchors_on_context_window_not_reply_reserve() {
+        // CodeRabbit boundary case (PR #3771): a prefix that lands in the band
+        // `max_input_tokens < prefix < context_window` fits the runtime `n_ctx`
+        // — the reply just gets less room — so it MUST NOT be aborted as the
+        // un-fixable `n_keep >= n_ctx` failure. Anchoring on `max_input_tokens`
+        // (the old `>` predicate) would have wrongly aborted it.
+        let ctx: u64 = 8_192;
+        // output_reserve = max(819, min(8192/4=2048, 8192/10=819)) = 819, so
+        // max_input = 8192 - 819 = 7373.
+        let max_input = max_input_tokens(ctx);
+        // ~7700-token system prefix: above max_input (7373), below ctx (8192).
+        let messages = vec![
+            ChatMessage::system(&"s".repeat(30_800)), // (30800+3)/4 = 7700 tokens
+            user_msg("hi"),
+        ];
+        let prefix = unevictable_prefix_tokens(&messages) as u64;
+        assert!(
+            prefix > max_input && prefix < ctx,
+            "test precondition: prefix ({prefix}) must sit between max_input \
+             ({max_input}) and context_window ({ctx})"
+        );
+        assert!(
+            unevictable_prefix_overflow(&messages, ctx).is_none(),
+            "prefix that fits the context window (just over the reply reserve) \
+             must NOT be aborted — it is an over-trim case, not n_keep >= n_ctx"
+        );
+
+        // The same prefix against a context window it actually overflows
+        // (prefix >= n_ctx) MUST fire.
+        let small_ctx: u64 = prefix; // n_ctx == n_keep ⇒ the boundary itself fires
+        assert!(
+            unevictable_prefix_overflow(&messages, small_ctx).is_some(),
+            "prefix >= context_window (n_keep >= n_ctx) must be detected"
+        );
+    }
+
+    #[test]
+    fn unevictable_prefix_overflow_none_when_prompt_fits() {
+        // A small prompt against a normal window: trimming isn't needed and the
+        // guard must NOT fire (no false-positive actionable error).
+        let messages = vec![ChatMessage::system("short system"), user_msg("hello")];
+        assert!(unevictable_prefix_overflow(&messages, 8_192).is_none());
+    }
+
+    #[test]
+    fn unevictable_prefix_overflow_counts_newest_turn_not_old_history() {
+        // The un-evictable prefix is system + the NEWEST non-system turn. Old
+        // history is evictable, so a huge oldest turn must NOT, by itself,
+        // trigger the guard when the system prefix + newest turn fit.
+        let ctx: u64 = 32_000;
+        let messages = vec![
+            ChatMessage::system("small system"),
+            user_msg(&"x".repeat(400_000)), // oldest, evictable — ~100k tokens
+            user_msg("newest small turn"),
+        ];
+        assert!(
+            unevictable_prefix_overflow(&messages, ctx).is_none(),
+            "evictable old history must not count toward the un-evictable prefix"
         );
     }
 

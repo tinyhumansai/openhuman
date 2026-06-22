@@ -252,14 +252,10 @@ impl UnifiedMemory {
                 }
             }
 
-            for entry in &episodic_hits {
+            for (position_idx, entry) in episodic_hits.iter().enumerate() {
                 let freshness = Self::recency_score(entry.timestamp, now);
                 // Episodic FTS5 returns results ordered by rank (best first).
                 // Normalize position to a 0-1 relevance score.
-                let position_idx = episodic_hits
-                    .iter()
-                    .position(|e| e.id == entry.id)
-                    .unwrap_or(0);
                 let fts_relevance = 1.0 - (position_idx as f64 / episodic_hits.len().max(1) as f64);
 
                 let episodic_score = (fts_relevance * 0.7) + (freshness * 0.3);

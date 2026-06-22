@@ -1544,6 +1544,50 @@ fn convert_messages_for_native_tool_call_without_extra_content_stays_none() {
         .is_none());
 }
 
+/// INVARIANT (TAURI-RUST-4PK / 4PJ): a PARALLEL multi-`functionCall` assistant
+/// turn reloaded from history must echo a non-empty `thought_signature` on
+/// EVERY part of the rebuilt outbound payload — not just the first. The stored
+/// JSON here is the exact shape `build_native_assistant_history` now emits (per
+/// the writer-side test in `agent::harness::parse_tests`). Before the fix the
+/// writer dropped `extra_content`, so a reloaded multi-call turn went out with
+/// missing signatures and Gemini 400'd ("Function call is missing a
+/// thought_signature in functionCall parts"). Covers both the non-stream and
+/// streaming paths since both persist through the single native history writer.
+#[test]
+fn convert_messages_for_native_echoes_signature_on_every_parallel_call() {
+    let stored = r#"{"content":"on it","tool_calls":[
+        {"id":"call_a","name":"shell","arguments":"{}","extra_content":{"google":{"thought_signature":"SIG_A"}}},
+        {"id":"call_b","name":"read","arguments":"{}","extra_content":{"google":{"thought_signature":"SIG_B"}}}
+    ]}"#;
+    let input = vec![
+        ChatMessage::assistant(stored),
+        ChatMessage::tool(r#"{"tool_call_id":"call_a","content":"done"}"#),
+        ChatMessage::tool(r#"{"tool_call_id":"call_b","content":"done"}"#),
+    ];
+    let converted = OpenAiCompatibleProvider::convert_messages_for_native(&input);
+    let tool_calls = converted[0]
+        .tool_calls
+        .as_ref()
+        .expect("assistant tool_calls survive the reload");
+    assert_eq!(tool_calls.len(), 2, "both parallel calls survive");
+
+    let wire = serde_json::to_value(tool_calls).unwrap();
+    for (idx, expected) in ["SIG_A", "SIG_B"].iter().enumerate() {
+        let sig = wire
+            .pointer(&format!("/{idx}/extra_content/google/thought_signature"))
+            .and_then(|v| v.as_str());
+        assert_eq!(
+            sig,
+            Some(*expected),
+            "functionCall part {idx} must echo its own thought_signature on the wire"
+        );
+        assert!(
+            sig.is_some_and(|s| !s.is_empty()),
+            "functionCall part {idx} thought_signature must be non-empty"
+        );
+    }
+}
+
 /// Streaming: Gemini sends the thought_signature in the tool-call delta's
 /// `extra_content` on the first chunk. The accumulator must preserve it onto the
 /// aggregated tool call so it reaches history (TAURI-RUST-4PK).

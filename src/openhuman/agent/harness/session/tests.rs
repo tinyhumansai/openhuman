@@ -6,7 +6,7 @@
 //! (`MockProvider`, `RecordingProvider`, `MockTool`) are defined here.
 
 use super::types::{Agent, AgentBuilder};
-use crate::core::event_bus::{init_global, publish_global, DomainEvent};
+use crate::core::event_bus::DomainEvent;
 use crate::openhuman::agent::dispatcher::{NativeToolDispatcher, XmlToolDispatcher};
 use crate::openhuman::inference::provider::{ChatRequest, ConversationMessage, Provider};
 use crate::openhuman::memory::Memory;
@@ -400,12 +400,19 @@ fn refresh_delegation_tools_no_duplicate_specs_across_shared_arc_connects() {
 
 #[test]
 fn composio_listener_drains_integrations_changed_events() {
-    let _ = init_global(64);
     let mut agent = build_minimal_agent_with_definition_name(Some("orchestrator"));
-    agent.ensure_composio_integrations_listener();
-    publish_global(DomainEvent::ComposioIntegrationsChanged {
+    // Use an isolated bus, NOT the global singleton: other tests (e.g.
+    // `events_tests` and any composio-listener publisher) emit
+    // `ComposioIntegrationsChanged` on the global bus in parallel, which would
+    // leak into this receiver and make the second drain observe a foreign
+    // event — racing the "drained after one pass" assertion. Injecting a
+    // locally-owned channel keeps this test deterministic.
+    let (tx, rx) = tokio::sync::broadcast::channel::<DomainEvent>(64);
+    agent.set_composio_integrations_rx_for_test(rx);
+    tx.send(DomainEvent::ComposioIntegrationsChanged {
         toolkits: vec!["gmail".into()],
-    });
+    })
+    .expect("isolated bus has a live receiver");
     assert!(agent.drain_composio_integrations_changed_events());
     assert!(
         !agent.drain_composio_integrations_changed_events(),
@@ -415,12 +422,20 @@ fn composio_listener_drains_integrations_changed_events() {
 
 #[test]
 fn skill_listener_drains_workflows_changed_events() {
-    let _ = init_global(64);
     let mut agent = build_minimal_agent_with_definition_name(Some("orchestrator"));
-    agent.ensure_skill_events_listener();
-    publish_global(DomainEvent::WorkflowsChanged {
+    // Use an isolated bus, NOT the global singleton: other tests publish
+    // `WorkflowsChanged` on the global bus in parallel — `skill_listener_
+    // treats_lag_as_signal` floods 256 of them and
+    // `create_workflow_inner_emits_workflows_changed` emits one — so a foreign
+    // event could land between the two drains below and flip the second drain
+    // to `true`, failing the "drained after one pass" assertion. Injecting a
+    // locally-owned channel isolates this test from those publishers.
+    let (tx, rx) = tokio::sync::broadcast::channel::<DomainEvent>(64);
+    agent.set_skill_events_rx_for_test(rx);
+    tx.send(DomainEvent::WorkflowsChanged {
         reason: "install".into(),
-    });
+    })
+    .expect("isolated bus has a live receiver");
     assert!(
         agent.drain_skill_events(),
         "a WorkflowsChanged event should be observed"
@@ -433,14 +448,17 @@ fn skill_listener_drains_workflows_changed_events() {
 
 #[test]
 fn skill_listener_treats_lag_as_signal() {
-    let _ = init_global(64);
     let mut agent = build_minimal_agent_with_definition_name(Some("orchestrator"));
-    agent.ensure_skill_events_listener();
-    // Flood well past the 64-slot bounded bus so the receiver lags. The
-    // `Lagged` arm must still report a signal (returns true) so a refresh
-    // isn't silently dropped under load.
+    // Isolated bus (see `skill_listener_drains_workflows_changed_events` for
+    // why the global singleton races). Flood well past the 64-slot bounded
+    // channel so the receiver lags. The `Lagged` arm must still report a
+    // signal (returns true) so a refresh isn't silently dropped under load.
+    let (tx, rx) = tokio::sync::broadcast::channel::<DomainEvent>(64);
+    agent.set_skill_events_rx_for_test(rx);
     for _ in 0..256 {
-        publish_global(DomainEvent::WorkflowsChanged {
+        // Sender outlives the receiver here, so `send` only errors when there
+        // are zero receivers — ignore the bounded-channel overwrite path.
+        let _ = tx.send(DomainEvent::WorkflowsChanged {
             reason: "install".into(),
         });
     }
@@ -530,6 +548,112 @@ fn refresh_workflows_picks_up_skill_installed_on_disk() {
     assert!(
         !agent.refresh_workflows("test"),
         "no install since last refresh -> no change"
+    );
+}
+
+#[test]
+fn refresh_workflows_retracts_skill_removed_from_disk() {
+    use crate::openhuman::workflows::ops_types::{SKILL_MD, TRUST_MARKER};
+
+    let ws = tempfile::TempDir::new().expect("temp workspace");
+    let wsp = ws.path().to_path_buf();
+    std::fs::create_dir_all(wsp.join(".openhuman")).unwrap();
+    std::fs::write(wsp.join(".openhuman").join(TRUST_MARKER), "").unwrap();
+
+    // Write a skill to disk.
+    let skill_dir = wsp
+        .join(".openhuman")
+        .join("skills")
+        .join("zz-retract-test");
+    std::fs::create_dir_all(&skill_dir).unwrap();
+    std::fs::write(
+        skill_dir.join(SKILL_MD),
+        "---\nname: zz-retract-test\ndescription: a retraction test skill\n---\n# body\n",
+    )
+    .unwrap();
+
+    let memory_cfg = crate::openhuman::config::MemoryConfig {
+        backend: "none".into(),
+        ..crate::openhuman::config::MemoryConfig::default()
+    };
+    let mem: Arc<dyn Memory> =
+        Arc::from(crate::openhuman::memory_store::create_memory(&memory_cfg, &wsp).unwrap());
+    let provider = Box::new(MockProvider {
+        responses: Mutex::new(vec![]),
+    });
+    let mut agent = Agent::builder()
+        .provider(provider)
+        .tools(vec![Box::new(MockTool)])
+        .memory(mem)
+        .tool_dispatcher(Box::new(NativeToolDispatcher))
+        .workspace_dir(wsp.clone())
+        .build()
+        .expect("agent build should succeed");
+
+    // First refresh: picks up the installed skill.
+    assert!(agent.refresh_workflows("test-install"));
+    assert!(
+        agent
+            .test_workflow_ids()
+            .iter()
+            .any(|id| id == "zz-retract-test"),
+        "skill should be in catalogue after first refresh"
+    );
+    assert!(
+        agent
+            .test_pending_skill_announcement()
+            .iter()
+            .any(|id| id == "zz-retract-test"),
+        "skill should be parked for announcement"
+    );
+    // Now remove the skill from disk.
+    std::fs::remove_dir_all(&skill_dir).unwrap();
+
+    // Second refresh: detects the removal, parks the retraction.
+    assert!(
+        agent.refresh_workflows("test-remove"),
+        "removing a skill should change the set"
+    );
+    assert!(
+        !agent
+            .test_workflow_ids()
+            .iter()
+            .any(|id| id == "zz-retract-test"),
+        "skill should be gone from catalogue after removal"
+    );
+    assert!(
+        agent
+            .test_pending_skill_retraction()
+            .iter()
+            .any(|id| id == "zz-retract-test"),
+        "removed skill should be parked for retraction"
+    );
+    // Retraction should have cleared it from announced_skills; re-install will
+    // be announced fresh (not silently re-added). Verify by re-adding the skill
+    // and confirming it gets announced again.
+    std::fs::create_dir_all(&skill_dir).unwrap();
+    std::fs::write(
+        skill_dir.join(SKILL_MD),
+        "---\nname: zz-retract-test\ndescription: a retraction test skill\n---\n# body\n",
+    )
+    .unwrap();
+    assert!(agent.refresh_workflows("test-reinstall"));
+    assert!(
+        agent
+            .test_pending_skill_announcement()
+            .iter()
+            .any(|id| id == "zz-retract-test"),
+        "re-installed skill should be announced again after retraction cleared it from announced set"
+    );
+    // Re-install must also cancel the still-pending retraction so the user turn
+    // never carries a contradictory "installed" + "retracted" pair for the same
+    // skill.
+    assert!(
+        !agent
+            .test_pending_skill_retraction()
+            .iter()
+            .any(|id| id == "zz-retract-test"),
+        "re-install should cancel the pending retraction for the same skill"
     );
 }
 

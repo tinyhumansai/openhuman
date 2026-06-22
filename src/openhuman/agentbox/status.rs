@@ -46,6 +46,7 @@ mod tests {
     // Env vars are process-global; these toggles are restored on exit and no
     // other test mutates the same keys concurrently (see disabled_mode_tests).
     fn with_clean_env<F: FnOnce()>(f: F) {
+        let _lock = super::super::test_support::test_env_lock();
         let prior_mode = std::env::var(AGENTBOX_MODE_ENV_VAR).ok();
         let prior_url = std::env::var("GMI_MAAS_BASE_URL").ok();
         let prior_key = std::env::var("GMI_MAAS_API_KEY").ok();

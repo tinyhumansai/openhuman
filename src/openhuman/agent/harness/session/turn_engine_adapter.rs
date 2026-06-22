@@ -99,6 +99,9 @@ pub(super) struct AgentToolSource {
     pub agent_definition_id: String,
     pub prefer_markdown: bool,
     pub budget_bytes: usize,
+    /// Stage 1a kill-switch. Constant for the session, so (unlike the tool
+    /// surface) it is set once at construction and never re-synced.
+    pub compaction_enabled: bool,
     pub artifact_store: Option<ToolResultArtifactStore>,
     pub should_send_specs: bool,
     pub advertised_specs: Vec<ToolSpec>,
@@ -141,6 +144,7 @@ impl ToolSource for AgentToolSource {
             agent_definition_id: &self.agent_definition_id,
             prefer_markdown: self.prefer_markdown,
             budget_bytes: self.budget_bytes,
+            compaction_enabled: self.compaction_enabled,
             artifact_store: self.artifact_store.as_ref(),
         };
         let (exec_result, record) =

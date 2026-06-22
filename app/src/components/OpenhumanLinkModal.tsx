@@ -11,7 +11,6 @@
  * Mounted once at AppShell root.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 
 import { useChannelDefinitions } from '../hooks/useChannelDefinitions';
 import { useT } from '../lib/i18n/I18nContext';
@@ -456,7 +455,6 @@ export function statusDisplay(status: AccountStatus): { labelKey: string; dotCla
 const AccountsSetupBody = ({ close }: { close: () => void }) => {
   const { t } = useT();
   const dispatch = useAppDispatch();
-  const navigate = useNavigate();
   const accountsById = useAppSelector(s => s.accounts.accounts);
   const order = useAppSelector(s => s.accounts.order);
 
@@ -508,12 +506,11 @@ const AccountsSetupBody = ({ close }: { close: () => void }) => {
 
   const handleDone = () => {
     close();
-    // Navigate to /chat and activate the first newly-added account so its
-    // WebviewHost mounts and the auth flow starts immediately.
+    // Activate the first newly-added account so the shell-level WebviewHost
+    // opens the auth flow immediately without mutating the current route.
     const firstNew = [...newlyAdded.keys()][0];
     if (firstNew) {
       dispatch(setActiveAccount(firstNew));
-      navigate('/chat');
     }
   };
 

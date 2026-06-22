@@ -5,7 +5,7 @@ use super::super::turn_engine_adapter::{AgentCheckpoint, AgentObserver, AgentToo
 use super::super::types::Agent;
 use super::{
     integration_announcement_note, mcp_announcement_note, newly_connected_slugs,
-    skill_announcement_note,
+    skill_announcement_note, skill_retraction_note,
 };
 use crate::openhuman::agent::harness;
 use crate::openhuman::agent::harness::definition::TriggerMemoryAgent;
@@ -388,6 +388,16 @@ impl Agent {
             None => enriched,
         };
 
+        // Same one-shot treatment for skills uninstalled mid-session (parked by
+        // `refresh_workflows`). The model must know the skill is gone so it does
+        // not attempt `run_skill` on a removed entry. Rides the user turn for
+        // the same KV-cache reason as the install note above.
+        let pending_retracted = std::mem::take(&mut self.pending_skill_retraction);
+        let enriched = match skill_retraction_note(&pending_retracted) {
+            Some(note) => format!("{note}\n\n{enriched}"),
+            None => enriched,
+        };
+
         // Pin the main agent to its configured model for the lifetime of
         // the session. Per-turn classification used to run here, but it
         // would flip `effective_model` mid-conversation (e.g. reasoning →
@@ -483,6 +493,7 @@ impl Agent {
                 agent_definition_id: self.agent_definition_id.clone(),
                 prefer_markdown: self.context.prefer_markdown_tool_output(),
                 budget_bytes: self.context.tool_result_budget_bytes(),
+                compaction_enabled: self.context.compaction_enabled(),
                 artifact_store: artifact_store.clone(),
                 should_send_specs: self.tool_dispatcher.should_send_tool_specs(),
                 advertised_specs: self.visible_tool_specs.as_ref().clone(),
@@ -507,10 +518,28 @@ impl Agent {
             // local providers (LM Studio) trim to their runtime-loaded n_ctx
             // rather than the trained-max table (#3550 / TAURI-RUST-6V0).
             // Must run before `agent: self` takes the &mut borrow below.
+            //
+            // For local providers this is always `Some` (a conservative floor
+            // backs up any missing profile default), so trimming always engages.
+            // `None` means a cloud provider with an unknown model — trimming is
+            // intentionally skipped there (large window; over-trimming is worse).
             let turn_context_window = self
                 .provider
                 .effective_context_window(&effective_model)
                 .await;
+            match turn_context_window {
+                Some(context_window) => tracing::debug!(
+                    provider = %provider_name,
+                    model = %effective_model,
+                    context_window,
+                    "[agent_loop] effective context window resolved for turn"
+                ),
+                None => tracing::debug!(
+                    provider = %provider_name,
+                    model = %effective_model,
+                    "[agent_loop] effective context window unavailable (cloud unknown model); pre-dispatch trimming skipped this turn"
+                ),
+            }
             let mut observer = AgentObserver {
                 agent: self,
                 artifact_store,

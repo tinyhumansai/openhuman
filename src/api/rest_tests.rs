@@ -170,7 +170,7 @@ async fn spawn_header_capture_server() -> (String, CapturedHeaders) {
         captured.push(&headers);
         Json(json!({
             "success": true,
-            "data": { "jwtToken": "mock-jwt-token" }
+            "data": { "jwt": "mock-jwt-token" }
         }))
     }
 
@@ -184,10 +184,7 @@ async fn spawn_header_capture_server() -> (String, CapturedHeaders) {
 
     let captured = CapturedHeaders::default();
     let app = Router::new()
-        .route(
-            "/telegram/login-tokens/{token}/consume",
-            post(capture_consume),
-        )
+        .route("/auth/login-token/consume", post(capture_consume))
         .route("/probe", get(capture_probe))
         .with_state(captured.clone());
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

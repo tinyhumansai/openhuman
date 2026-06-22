@@ -637,6 +637,73 @@ describe('Conversations — attachment feature', () => {
       expect(document.body.textContent).toContain('report.pdf');
     });
   });
+
+  it('strips raw IMAGE/FILE markers from a legacy message with no extraMetadata', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    const thread = makeThread({ id: 'legacy-thread', title: 'Legacy Thread' });
+    const dataUri = 'data:image/png;base64,legacy123';
+    const message = {
+      id: 'msg-legacy-1',
+      content: `read this [IMAGE:${dataUri}] and [FILE:data:application/pdf;base64,xyz]`,
+      type: 'text' as const,
+      sender: 'user' as const,
+      createdAt: new Date().toISOString(),
+      extraMetadata: {},
+    };
+
+    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
+    mockGetThreadMessages.mockResolvedValue({ messages: [message], count: 1 });
+
+    const store = buildStore({
+      thread: {
+        threads: [thread],
+        selectedThreadId: thread.id,
+        activeThreadIds: {},
+        welcomeThreadId: null,
+        messagesByThreadId: { [thread.id]: [message] },
+        messages: [message],
+        isLoadingThreads: false,
+        isLoadingMessages: false,
+        messagesError: null,
+      },
+      socket: socketState('connected'),
+    });
+
+    const { default: Conversations } = await import('../Conversations');
+
+    render(
+      <Provider store={store}>
+        <MemoryRouter>
+          <SidebarSlotProvider>
+            <SidebarSlotOutlet />
+            <Conversations />
+          </SidebarSlotProvider>
+        </MemoryRouter>
+      </Provider>
+    );
+
+    // The image marker's data URI still renders as an <img> (parsed out for display)...
+    await waitFor(() => {
+      const img = document.querySelector(`img[src="${dataUri}"]`);
+      expect(img).not.toBeNull();
+    });
+
+    // ...but the raw marker syntax must never leak into the rendered bubble text.
+    expect(document.body.textContent).not.toContain('[IMAGE:');
+    expect(document.body.textContent).not.toContain('[FILE:');
+    expect(document.body.textContent).toContain('read this');
+    expect(document.body.textContent).toContain('and');
+
+    // Copy-to-clipboard must use the same cleaned text as the bubble, not the
+    // raw msg.content with markers still embedded.
+    await act(async () => {
+      fireEvent.click(screen.getByTitle('Copy response'));
+    });
+    expect(writeText).toHaveBeenCalledWith('read this and');
+    expect(writeText).not.toHaveBeenCalledWith(expect.stringContaining('[IMAGE:'));
+    expect(writeText).not.toHaveBeenCalledWith(expect.stringContaining('[FILE:'));
+  });
 });
 
 describe('Conversations — thread rename', () => {

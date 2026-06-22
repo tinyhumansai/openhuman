@@ -1473,3 +1473,66 @@ fn nested_subagent_dispatch_runs_on_a_constrained_worker_stack() {
         outcome.output
     );
 }
+
+// ── Repro: issue #3152 — near-miss write slug fails to resolve ──────
+//
+// The model emits `NOTION_SEARCH_NOTION` (drops the `_PAGE` suffix). The
+// real action `NOTION_SEARCH_NOTION_PAGE` is the unique superstring, yet
+// find_action's three tiers (exact / case-insensitive / normalized) all
+// miss → None → lazy registration never fires → allowlist gate blocks the
+// write. Asserts DESIRED post-fix behaviour → RED until the unique
+// prefix/superstring resolution tier lands. Must stay conservative: a
+// fabricated slug with no unique match must still resolve to None (covered
+// by `lazy_resolver_tolerates_near_miss_slugs`).
+#[test]
+fn repro_3152_near_miss_write_slug_resolves_uniquely() {
+    use crate::openhuman::context::prompt::ConnectedIntegrationTool;
+    let mk = |name: &str| ConnectedIntegrationTool {
+        name: name.into(),
+        description: "d".into(),
+        parameters: None,
+    };
+    let resolver = LazyToolkitResolver {
+        config: std::sync::Arc::new(crate::openhuman::config::Config::default()),
+        actions: vec![
+            mk("NOTION_SEARCH_NOTION_PAGE"),
+            mk("NOTION_CREATE_NOTION_PAGE"),
+            mk("NOTION_FETCH_DATA"),
+        ],
+    };
+    let resolved = resolver
+        .resolve("NOTION_SEARCH_NOTION")
+        .expect("#3152: near-miss write slug must resolve to its unique superstring");
+    assert_eq!(resolved.name(), "NOTION_SEARCH_NOTION_PAGE");
+}
+
+// ── Guard: #3152 prefix tier must stay strictly unique ──────────────
+//
+// When a truncated slug prefix-matches MORE than one catalogued action,
+// the resolver must refuse rather than guess — a mis-dispatched write
+// could create/update the wrong resource (data-integrity). Also asserts
+// the length gate: a too-short request never fans out.
+#[test]
+fn prefix_tier_refuses_ambiguous_and_short_slugs() {
+    use crate::openhuman::context::prompt::ConnectedIntegrationTool;
+    let mk = |name: &str| ConnectedIntegrationTool {
+        name: name.into(),
+        description: "d".into(),
+        parameters: None,
+    };
+    let resolver = LazyToolkitResolver {
+        config: std::sync::Arc::new(crate::openhuman::config::Config::default()),
+        actions: vec![
+            mk("NOTION_SEARCH_NOTION_PAGE"),
+            mk("NOTION_SEARCH_NOTION_DATABASE"),
+            mk("NOTION_CREATE_NOTION_PAGE"),
+        ],
+    };
+    // `NOTION_SEARCH_NOTION` is a prefix of TWO actions → ambiguous → None.
+    assert!(
+        resolver.resolve("NOTION_SEARCH_NOTION").is_none(),
+        "#3152: ambiguous prefix must not silently dispatch to a guess"
+    );
+    // Short slug below the length gate never engages the prefix tier.
+    assert!(resolver.resolve("NOTION").is_none());
+}

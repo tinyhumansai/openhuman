@@ -142,6 +142,36 @@ fn spec_for(slug: &str) -> Option<TaskWindowSpec> {
             ],
             order_arg: None,
         }),
+        // Todoist — `TODOIST_GET_ALL_TASKS` (returns incomplete tasks; the
+        // brief's catalog slug, fixed from the non-existent
+        // `TODOIST_GET_ACTIVE_TASKS`). No server-side narrowing: GET tasks does
+        // NOT accept a `filter` query (that lives on the separate
+        // `TODOIST_FILTER_TASKS` / `/tasks/filter` endpoint), so enforcement is
+        // pure post-filter. Todoist's v1 task object timestamps are `added_at`
+        // (creation) and `updated_at` (modification) — keying on both gives
+        // created-or-modified semantics. `created_at` is kept as a harmless
+        // defensive fallback (extra fields only ever keep, never drop).
+        // CONFIRM-AT-RUNTIME: response envelope via composio_list_tools (Todoist
+        // is not a native sync provider, so there's no repo extractor to mirror).
+        "TODOIST_GET_ALL_TASKS" => Some(TaskWindowSpec {
+            items_paths: &[
+                &["tasks"],
+                &["data", "tasks"],
+                &["results"],
+                &["data", "results"],
+                &["data"],
+                &[],
+            ],
+            ts_fields: &[
+                ("added_at", TsFormat::Iso8601),
+                ("updated_at", TsFormat::Iso8601),
+                ("created_at", TsFormat::Iso8601),
+                ("data.added_at", TsFormat::Iso8601),
+                ("data.updated_at", TsFormat::Iso8601),
+                ("data.created_at", TsFormat::Iso8601),
+            ],
+            order_arg: None,
+        }),
         _ => None,
     }
 }
@@ -174,6 +204,11 @@ pub(crate) fn apply_window_args(
         map.entry("modified_since".to_string())
             .or_insert_with(|| Value::String(since.to_rfc3339()));
     }
+
+    // Todoist has no server-side narrowing here: `TODOIST_GET_ALL_TASKS`
+    // (GET /tasks) does not accept a `filter` query — that belongs to the
+    // separate `TODOIST_FILTER_TASKS` (`/tasks/filter`) endpoint. Recency is
+    // enforced entirely by the post-filter on `added_at`/`updated_at`.
 
     tracing::debug!(
         target: "composio",

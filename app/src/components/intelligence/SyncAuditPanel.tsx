@@ -35,15 +35,18 @@ function scopeLabel(scope: string): string {
   return scope;
 }
 
-function timeAgo(iso: string): string {
+// `t` is threaded in because this is a module-level helper with no hook scope.
+// The `{n}` placeholder follows the codebase's interpolation convention
+// (t(...).replace('{n}', value)) — `t()` itself does not interpolate params.
+export function timeAgo(iso: string, t: (key: string, fallback?: string) => string): string {
   const diff = Date.now() - new Date(iso).getTime();
   const mins = Math.floor(diff / 60_000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
+  if (mins < 1) return t('sync.timeAgo.justNow', 'just now');
+  if (mins < 60) return t('sync.timeAgo.minutes', '{n}m ago').replace('{n}', String(mins));
   const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
+  if (hours < 24) return t('sync.timeAgo.hours', '{n}h ago').replace('{n}', String(hours));
   const days = Math.floor(hours / 24);
-  return `${days}d ago`;
+  return t('sync.timeAgo.days', '{n}d ago').replace('{n}', String(days));
 }
 
 export function SyncAuditPanel() {
@@ -126,7 +129,7 @@ export function SyncAuditPanel() {
                 <td
                   className="px-3 py-1.5 text-stone-600 dark:text-neutral-300 whitespace-nowrap"
                   title={e.timestamp}>
-                  {timeAgo(e.timestamp)}
+                  {timeAgo(e.timestamp, t)}
                 </td>
                 <td
                   className="px-3 py-1.5 text-stone-700 dark:text-neutral-200 truncate max-w-[180px]"
@@ -149,11 +152,13 @@ export function SyncAuditPanel() {
                 </td>
                 <td className="px-3 py-1.5 text-center">
                   {e.success ? (
-                    <span className="text-green-500" title="Success">
+                    <span className="text-green-500" title={t('sync.status.success', 'Success')}>
                       ✓
                     </span>
                   ) : (
-                    <span className="text-red-500" title={e.error ?? 'Failed'}>
+                    <span
+                      className="text-red-500"
+                      title={e.error ?? t('sync.status.failed', 'Failed')}>
                       ✗
                     </span>
                   )}

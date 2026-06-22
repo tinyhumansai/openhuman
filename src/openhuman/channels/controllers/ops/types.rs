@@ -25,6 +25,13 @@ pub struct ChannelStatusEntry {
     pub auth_mode: super::super::definitions::ChannelAuthMode,
     pub connected: bool,
     pub has_credentials: bool,
+    /// Live failure reason from the supervised listener when the channel is
+    /// configured but its runtime listener is currently in an error state
+    /// (issue #3712 — surface a real error instead of a false "Connected").
+    /// `None` when healthy, still starting, or when the mode has no runtime
+    /// listener (e.g. managed-DM, which routes through the backend bot).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 /// Result returned by `test_channel`.

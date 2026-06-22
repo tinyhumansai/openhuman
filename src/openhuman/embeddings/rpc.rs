@@ -155,6 +155,56 @@ pub async fn update_settings(
                         provider = effective_provider.as_str(),
                         "{LOG_PREFIX} update_settings rejected — embeddings endpoint failed verification"
                     );
+                    // Right-feedback (issue #3761): the probe failed. If the
+                    // endpoint lists its served models and the requested id
+                    // isn't among them, the cause is almost certainly a name
+                    // mismatch (e.g. the user entered `bge-m3` but LM Studio
+                    // serves `text-embedding-bge-m3`). Replace the generic
+                    // failure with an actionable message naming the available
+                    // models and the suggested match. Best-effort and only on
+                    // the failure path, so a passing config is never blocked by
+                    // an endpoint that doesn't expose `/models`. Derive the
+                    // endpoint from the payload OR the already-stored
+                    // `custom:<url>` provider, so a model-only update to an
+                    // existing custom endpoint still gets the guidance.
+                    let listed_endpoint = custom_endpoint
+                        .as_deref()
+                        .or_else(|| effective_provider.strip_prefix("custom:"));
+                    if let Some(ep) = listed_endpoint {
+                        let api_key = resolve_api_key(&config, "custom");
+                        tracing::debug!(
+                            provider = effective_provider.as_str(),
+                            requested = new_model.as_str(),
+                            "{LOG_PREFIX} update_settings: probing endpoint /models for served-id guidance"
+                        );
+                        match fetch_served_model_ids(ep, &api_key).await {
+                            Ok(served) => match check_requested_model_served(&new_model, &served) {
+                                Some(better) => {
+                                    tracing::warn!(
+                                        provider = effective_provider.as_str(),
+                                        requested = new_model.as_str(),
+                                        served = served.len(),
+                                        "{LOG_PREFIX} update_settings: model not in served list — returning name-mismatch guidance"
+                                    );
+                                    return Ok(better);
+                                }
+                                None => {
+                                    tracing::debug!(
+                                        provider = effective_provider.as_str(),
+                                        served = served.len(),
+                                        "{LOG_PREFIX} update_settings: requested model is served (or list empty) — keeping generic verification error"
+                                    );
+                                }
+                            },
+                            Err(e) => {
+                                tracing::debug!(
+                                    provider = effective_provider.as_str(),
+                                    error = %e,
+                                    "{LOG_PREFIX} update_settings: /models lookup failed — keeping generic verification error"
+                                );
+                            }
+                        }
+                    }
                     return Ok(reject);
                 }
                 tracing::debug!(
@@ -569,6 +619,100 @@ fn classify_embed_probe(outcome: EmbedProbe) -> Option<RpcOutcome<serde_json::Va
     }
 }
 
+/// GET `{endpoint}/models` (OpenAI-compatible) and return the served model ids.
+/// Time-boxed and best-effort — any failure returns `Err` and the caller falls
+/// back to the live test-embed probe (issue #3761).
+async fn fetch_served_model_ids(endpoint: &str, api_key: &str) -> Result<Vec<String>, String> {
+    #[derive(serde::Deserialize)]
+    struct ModelEntry {
+        id: String,
+    }
+    #[derive(serde::Deserialize)]
+    struct ModelsResponse {
+        #[serde(default)]
+        data: Vec<ModelEntry>,
+    }
+
+    let url = format!("{}/models", endpoint.trim_end_matches('/'));
+    let client = reqwest::Client::new();
+    let mut req = client.get(&url).timeout(std::time::Duration::from_secs(5));
+    if !api_key.trim().is_empty() {
+        req = req.bearer_auth(api_key.trim());
+    }
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| format!("models request failed: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("models request returned status {}", resp.status()));
+    }
+    let parsed: ModelsResponse = resp
+        .json()
+        .await
+        .map_err(|e| format!("models parse failed: {e}"))?;
+    Ok(parsed.data.into_iter().map(|m| m.id).collect())
+}
+
+/// Normalize an embedding model id for tolerant *suggestion* matching:
+/// lowercase, drop a leading `text-embedding-`, drop a trailing `:tag`. Used
+/// only to suggest the right served name — never to silently rewrite the id.
+fn normalize_embed_model_id(name: &str) -> String {
+    let lower = name.trim().to_ascii_lowercase();
+    let stripped = lower.strip_prefix("text-embedding-").unwrap_or(&lower);
+    stripped.split(':').next().unwrap_or(stripped).to_string()
+}
+
+/// Decide whether the requested model is acceptable given the endpoint's served
+/// list. Returns `Some(reject)` only when the endpoint reports a non-empty list
+/// that does NOT contain the requested id — i.e. we have positive evidence the
+/// model isn't loaded. An empty/unknown list returns `None` (defer to the live
+/// test-embed probe) so we never block on a server that doesn't expose
+/// `/models` (issue #3761).
+fn check_requested_model_served(
+    requested: &str,
+    served: &[String],
+) -> Option<RpcOutcome<serde_json::Value>> {
+    if served.is_empty() || served.iter().any(|m| m == requested) {
+        return None;
+    }
+    Some(reject_model_not_served(requested, served))
+}
+
+/// Build the "model not served" rejection: names what the endpoint actually
+/// serves and, when a normalized match exists, suggests the exact name to pick
+/// (e.g. `bge-m3` → `text-embedding-bge-m3`). Reuses the
+/// `EMBEDDINGS_NO_MODEL_LOADED` error code so the existing Embeddings setup
+/// dialog surfaces `message` and keeps the config unsaved (issue #3761).
+fn reject_model_not_served(requested: &str, served: &[String]) -> RpcOutcome<serde_json::Value> {
+    let want = normalize_embed_model_id(requested);
+    let suggestion = served
+        .iter()
+        .find(|m| normalize_embed_model_id(m) == want)
+        .cloned();
+    let served_list = served.join(", ");
+    let message = match suggestion.as_deref() {
+        Some(s) => format!(
+            "`{requested}` isn't loaded on this embeddings server — but the same model appears to be served as `{s}`. Select `{s}` (the exact name your server reports), then save again. Available models: {served_list}."
+        ),
+        None => format!(
+            "`{requested}` isn't loaded on this embeddings server. Select one of the loaded models (the exact name your server reports), then save again. Available models: {served_list}."
+        ),
+    };
+    let mut body = serde_json::json!({
+        "error": "EMBEDDINGS_NO_MODEL_LOADED",
+        "message": message,
+        "requested_model": requested,
+        "available_models": served,
+    });
+    if let Some(s) = suggestion {
+        body["suggested_model"] = serde_json::Value::String(s);
+    }
+    RpcOutcome::new(
+        body,
+        vec!["embedding model not served by endpoint — not saved".to_string()],
+    )
+}
+
 pub(crate) fn resolve_api_key(config: &Config, provider_name: &str) -> String {
     let slug = if provider_name.starts_with("custom:") {
         "custom"
@@ -644,6 +788,78 @@ mod tests {
             resolve_api_key(&config, "custom:http://localhost:1234"),
             "sk-custom-test"
         );
+    }
+
+    #[test]
+    fn normalize_embed_model_id_strips_prefix_and_tag() {
+        assert_eq!(normalize_embed_model_id("text-embedding-bge-m3"), "bge-m3");
+        assert_eq!(normalize_embed_model_id("bge-m3"), "bge-m3");
+        assert_eq!(normalize_embed_model_id("bge-m3:latest"), "bge-m3");
+        assert_eq!(normalize_embed_model_id("TEXT-EMBEDDING-BGE-M3"), "bge-m3");
+        // Exact-after-strip: must not collapse a different model onto bge-m3.
+        assert_ne!(normalize_embed_model_id("bge-m3-distill"), "bge-m3");
+    }
+
+    #[test]
+    fn reject_model_not_served_suggests_normalized_match() {
+        // User entered `bge-m3`; LM Studio serves `text-embedding-bge-m3` —
+        // the feedback names the exact served id to select (issue #3761).
+        let served = vec!["text-embedding-bge-m3".to_string(), "qwen-chat".to_string()];
+        let out = reject_model_not_served("bge-m3", &served);
+        assert_eq!(out.value["error"], "EMBEDDINGS_NO_MODEL_LOADED");
+        assert_eq!(out.value["suggested_model"], "text-embedding-bge-m3");
+        let msg = out.value["message"].as_str().unwrap();
+        assert!(msg.contains("text-embedding-bge-m3"));
+    }
+
+    #[test]
+    fn reject_model_not_served_without_match_lists_available() {
+        let served = vec!["qwen-chat".to_string(), "llama-3".to_string()];
+        let out = reject_model_not_served("bge-m3", &served);
+        assert_eq!(out.value["error"], "EMBEDDINGS_NO_MODEL_LOADED");
+        assert!(out.value.get("suggested_model").is_none());
+        let msg = out.value["message"].as_str().unwrap();
+        assert!(msg.contains("qwen-chat") && msg.contains("llama-3"));
+    }
+
+    #[test]
+    fn check_requested_model_served_decisions() {
+        // Served exactly → accept (None).
+        assert!(check_requested_model_served(
+            "text-embedding-bge-m3",
+            &["text-embedding-bge-m3".to_string()],
+        )
+        .is_none());
+        // Empty/unknown list → defer to probe (None), never block.
+        assert!(check_requested_model_served("bge-m3", &[]).is_none());
+        // Non-empty list without the model → reject with feedback.
+        let reject = check_requested_model_served("bge-m3", &["text-embedding-bge-m3".to_string()]);
+        assert_eq!(reject.unwrap().value["error"], "EMBEDDINGS_NO_MODEL_LOADED");
+    }
+
+    #[tokio::test]
+    async fn fetch_served_model_ids_parses_openai_models_list() {
+        use axum::{routing::get, Json, Router};
+        let app = Router::new().route(
+            "/v1/models",
+            get(|| async {
+                Json(serde_json::json!({
+                    "object": "list",
+                    "data": [
+                        { "id": "text-embedding-bge-m3", "object": "model" },
+                        { "id": "qwen-chat", "object": "model" }
+                    ]
+                }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let ids = fetch_served_model_ids(&format!("{base}/v1"), "")
+            .await
+            .expect("models list");
+        assert_eq!(ids, vec!["text-embedding-bge-m3", "qwen-chat"]);
     }
 
     /// Helper: pull the `error` code out of a reject payload.

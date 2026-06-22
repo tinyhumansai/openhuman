@@ -98,7 +98,7 @@ describe('OpenhumanLinkModal accounts setup', () => {
     expect(Object.values(store.getState().accounts.accounts)).toHaveLength(0);
   });
 
-  it('Done button navigates to /chat and sets first new account as active', () => {
+  it('Done button sets first new account as active without navigating', () => {
     const { store } = renderModal();
     openAccountsModal();
 
@@ -113,7 +113,7 @@ describe('OpenhumanLinkModal accounts setup', () => {
     fireEvent.click(screen.getByRole('button', { name: /Continue with Telegram Web sign-in/ }));
 
     expect(store.getState().accounts.activeAccountId).toBe(accountIds[0]);
-    expect(mockNavigate).toHaveBeenCalledWith('/chat');
+    expect(mockNavigate).not.toHaveBeenCalled();
   });
 
   it('Skip button closes modal without navigating', () => {

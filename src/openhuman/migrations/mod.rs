@@ -24,6 +24,7 @@
 use crate::openhuman::config::Config;
 
 mod expand_autonomy_defaults;
+mod migrate_legacy_embedding_provider;
 mod phase_out_profile_md;
 mod reconcile_orphaned_providers;
 mod remove_write_auto_approve;
@@ -32,7 +33,7 @@ mod retire_chat_v1_model;
 mod unify_ai_provider_settings;
 
 /// Current target schema version. Bumped alongside every new migration.
-pub const CURRENT_SCHEMA_VERSION: u32 = 6;
+pub const CURRENT_SCHEMA_VERSION: u32 = 7;
 
 /// Run any migrations whose `schema_version` gate hasn't yet been
 /// crossed for this workspace.
@@ -324,6 +325,60 @@ pub async fn run_pending(config: &mut Config) {
                 "[migrations] schema_version bumped to 6 \
                  (repair_http_request_limits + reconcile_orphaned_providers)"
             );
+        }
+    }
+
+    // 6 -> 7: retire the removed `"fastembed"` embedding provider. Older builds
+    // shipped a local fastembed provider; it no longer exists in the embedding
+    // factory, which hard-errors on unknown provider strings. A persisted
+    // `embedding_provider = "fastembed"` therefore aborts `start_channels`'
+    // memory build and takes every messaging channel offline (issue #3712).
+    // `fastembed` was a *local* embedder, so prefer a still-local target when a
+    // local Ollama server is reachable (preserves the user's offline intent);
+    // otherwise fall back to the managed cloud default. The probe is bounded and
+    // best-effort, and only runs for `fastembed` configs (the only ones this step
+    // rewrites) so unaffected upgrades pay no network cost. Guard on `== 6` so an
+    // earlier failed step doesn't get skipped.
+    if config.schema_version == 6 {
+        let prefer_local = if config
+            .memory
+            .embedding_provider
+            .trim()
+            .eq_ignore_ascii_case("fastembed")
+        {
+            let base = crate::openhuman::inference::local::ollama_base_url_from_config(config);
+            migrate_legacy_embedding_provider::local_ollama_reachable(&base).await
+        } else {
+            false
+        };
+        match migrate_legacy_embedding_provider::run(config, prefer_local) {
+            Ok(stats) => {
+                let previous_version = config.schema_version;
+                config.schema_version = 7;
+                if let Err(err) = config.save().await {
+                    config.schema_version = previous_version;
+                    log::warn!(
+                        "[migrations] migrate_legacy_embedding_provider ran but config.save \
+                         failed: {err:#} — rolled in-memory schema_version back to \
+                         {previous_version}, will retry on next launch"
+                    );
+                    return;
+                }
+                log::info!(
+                    "[migrations] schema_version bumped to 7 (migrate_legacy_embedding_provider \
+                     provider_migrated={} migrated_to_local={} old_dims={} new_dims={})",
+                    stats.provider_migrated,
+                    stats.migrated_to_local,
+                    stats.old_dimensions,
+                    stats.new_dimensions,
+                );
+            }
+            Err(err) => {
+                log::warn!(
+                    "[migrations] migrate_legacy_embedding_provider failed: {err:#} — \
+                     will retry on next launch"
+                );
+            }
         }
     }
 }

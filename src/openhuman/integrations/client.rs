@@ -41,6 +41,95 @@ fn managed_budget_applies_to_path(path: &str) -> bool {
     path != "/agent-integrations/pricing" && path.starts_with("/agent-integrations/")
 }
 
+/// Handle a `401 Unauthorized` from the OpenHuman backend's
+/// `/agent-integrations/*` routes.
+///
+/// **Why this 401 is unambiguously a session-JWT rejection.** Every request
+/// from [`IntegrationClient`] attaches the *app-session JWT* as its
+/// `Authorization: Bearer` — [`build_client`] resolves the token via
+/// [`crate::api::jwt::get_session_token`], the same token billing / team /
+/// webhooks / memory all use. The backend's auth middleware
+/// (`backend-openhuman`) is what answers `401 {"error":"Invalid token"}` when
+/// that JWT is expired / revoked / rotated server-side — see the identical
+/// envelope pinned in `inference/provider/config_rejection.rs` and the socket
+/// reconnect loop's `"Invalid token"` handling in
+/// `openhuman::socket::ws_loop`. A *third-party* integration's auth failure
+/// never reaches this arm:
+///
+/// - **Composio backend mode** (the default that routes through this client):
+///   provider-side failures come back as `2xx` envelope `success:false`
+///   (`"Toolkit X is not enabled"`, `"Missing required fields: …"`) or a
+///   descriptive non-401 4xx/5xx — handled by
+///   [`crate::core::observability::is_provider_user_state_message`] /
+///   [`crate::core::observability::is_backend_user_error_message`], NOT a bare
+///   401. The backend's auth wall is the only thing that returns 401 here.
+/// - **Composio direct mode**: bypasses this client entirely (it talks to
+///   `backend.composio.dev` with `x-api-key` via `ComposioTool`), so a
+///   direct-mode key 401 carries the distinct `"[composio-direct] … HTTP 401:
+///   Invalid API key"` shape and never lands here.
+///
+/// So narrowing to `status == 401` (and *only* 401 — 403 stays generic, it can
+/// be an authz/scope rejection on a backend-mediated resource rather than a
+/// dead session) targets exactly the session-JWT rejection with zero risk of
+/// logging the user out for an unrelated integration problem.
+///
+/// What this does, mirroring `api/rest.rs::flatten_authed_error` (typed-401 →
+/// `SESSION_EXPIRED:` sentinel) and
+/// `inference/provider/ops/http_error.rs::publish_backend_session_expired`
+/// (direct publish for paths whose error is consumed inline / swallowed):
+///
+/// 1. Build a `SESSION_EXPIRED:`-prefixed message so it (a) classifies as
+///    [`crate::core::observability::ExpectedErrorKind::SessionExpired`] and
+///    stays demoted from Sentry, and (b) is recognised by
+///    `core::jsonrpc::is_session_expired_error` *if* it ever propagates up to
+///    the RPC boundary.
+/// 2. **Publish `DomainEvent::SessionExpired` directly.** The autonomous agent
+///    loop (`agent/harness/engine/tools.rs::run_one_tool`) swallows tool errors
+///    into a `role:tool` result string fed back to the model — the `Err` never
+///    reaches `jsonrpc::invoke_method`, so relying on propagation alone would
+///    leave re-login un-triggered (this is the root-cause gap behind
+///    TAURI-RUST-84E: the prior fix demoted the noise but never drove
+///    recovery). Publishing here makes the credentials subscriber clear the
+///    session and the UI prompt re-sign-in regardless of which call site
+///    surfaced the 401.
+fn handle_session_jwt_unauthorized(method: &str, path: &str, url: &str, detail: &str) -> String {
+    let message = format!(
+        "SESSION_EXPIRED: backend rejected session token on {method} {path} \
+         (401 for {url}: {detail}) — sign in again to resume"
+    );
+
+    tracing::warn!(
+        path = %path,
+        method = %method,
+        "[integrations] backend rejected session JWT (401) — publishing SessionExpired to drive re-login"
+    );
+
+    // Demote from Sentry (SESSION_EXPIRED classifies as expected) — keeps the
+    // noise suppression the prior fix established.
+    crate::core::observability::report_error_or_expected(
+        message.as_str(),
+        "integrations",
+        "session_expired",
+        &[
+            ("path", path),
+            ("status", "401"),
+            ("failure", "session_jwt"),
+        ],
+    );
+
+    // Drive recovery: publish SessionExpired so the credentials subscriber
+    // clears the stale token and the UI prompts re-sign-in. The reason string
+    // is already free of secrets (it names the path + sanitized backend
+    // `error` detail), but re-scrub for defense-in-depth before it reaches the
+    // subscriber's logs.
+    crate::core::event_bus::publish_global(crate::core::event_bus::DomainEvent::SessionExpired {
+        source: format!("integrations.{method}:{path}"),
+        reason: crate::openhuman::inference::provider::ops::sanitize_api_error(&message),
+    });
+
+    message
+}
+
 /// Strip any inference-style path that snuck into a backend URL before
 /// it becomes the [`IntegrationClient::backend_url`] field. Idempotent —
 /// returns the input unchanged when already clean.
@@ -197,6 +286,19 @@ impl IntegrationClient {
             let body_text = resp.text().await.unwrap_or_default();
             let detail = extract_error_detail(&body_text, MAX_ERROR_BODY_LEN);
             let status_str = status.as_u16().to_string();
+            // A 401 is the backend's auth middleware rejecting our app-session
+            // JWT (not a third-party provider 401 — see
+            // `handle_session_jwt_unauthorized` for the full
+            // session-JWT-vs-provider argument). Route it into the
+            // session-expiry recovery flow: demote from Sentry AND publish
+            // `SessionExpired` so re-login fires even though the autonomous
+            // agent loop swallows the propagated error (TAURI-RUST-84E). This
+            // must come BEFORE the generic non-2xx branch so the 401 doesn't
+            // fall through to a plain `BackendUserError` that only demotes.
+            if status == reqwest::StatusCode::UNAUTHORIZED {
+                let message = handle_session_jwt_unauthorized("POST", path, &url, &detail);
+                anyhow::bail!("{message}");
+            }
             // Route through `report_error_or_expected` so 4xx user-input /
             // auth-state failures (e.g. OPENHUMAN-TAURI-BC: SharePoint
             // authorize 400 because the user didn't fill in the required
@@ -280,6 +382,14 @@ impl IntegrationClient {
             let body_text = resp.text().await.unwrap_or_default();
             let detail = extract_error_detail(&body_text, MAX_ERROR_BODY_LEN);
             let status_str = status.as_u16().to_string();
+            // Mirrors the post() session-JWT 401 arm — a 401 here is the
+            // backend rejecting our session JWT, so drive re-login (publish
+            // SessionExpired) and demote from Sentry, before the generic
+            // non-2xx branch. See `handle_session_jwt_unauthorized`.
+            if status == reqwest::StatusCode::UNAUTHORIZED {
+                let message = handle_session_jwt_unauthorized("GET", path, &url, &detail);
+                anyhow::bail!("{message}");
+            }
             // Mirrors the post() site — see OPENHUMAN-TAURI-BC. 4xx
             // user-input / auth-state shapes demote to a warn breadcrumb
             // via the observability classifier; 5xx and non-transient 4xx

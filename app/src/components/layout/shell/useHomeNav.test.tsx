@@ -95,7 +95,7 @@ describe('useHomeNav', () => {
     const { result } = renderHook(() => useHomeNav(), { wrapper });
     result.current();
 
-    expect(mockNavigate).not.toHaveBeenCalled();
+    expect(mockNavigate).toHaveBeenCalledWith('/chat/empty-1');
     expect(mockDispatch).toHaveBeenCalledWith({
       type: 'thread/setSelectedThread',
       payload: 'empty-1',
@@ -125,7 +125,7 @@ describe('useHomeNav', () => {
       type: 'thread/loadThreadMessages',
       payload: 'fresh-thread',
     });
-    expect(mockNavigate).not.toHaveBeenCalled();
+    expect(mockNavigate).toHaveBeenCalledWith('/chat/fresh-thread');
   });
 
   it('swallows a failed thread creation without throwing', async () => {

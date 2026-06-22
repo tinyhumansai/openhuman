@@ -5,6 +5,7 @@ import { setActiveAccount } from '../../../store/accountsSlice';
 import { useAppDispatch, useAppSelector } from '../../../store/hooks';
 import { createNewThread, loadThreadMessages, setSelectedThread } from '../../../store/threadSlice';
 import { AGENT_ACCOUNT_ID } from '../../../utils/accountsFullscreen';
+import { chatThreadPath } from '../../../utils/chatRoutes';
 
 /**
  * The shell's "Home" action — shared by the sidebar header (expanded) and the
@@ -35,6 +36,7 @@ export function useHomeNav(): () => void {
     if (empty) {
       dispatch(setSelectedThread(empty.id));
       void dispatch(loadThreadMessages(empty.id));
+      navigate(chatThreadPath(empty.id));
       return;
     }
     void dispatch(createNewThread())
@@ -42,6 +44,7 @@ export function useHomeNav(): () => void {
       .then(thr => {
         dispatch(setSelectedThread(thr.id));
         void dispatch(loadThreadMessages(thr.id));
+        navigate(chatThreadPath(thr.id));
       })
       .catch(() => {});
   }, [navigate, location.pathname, dispatch, threads]);

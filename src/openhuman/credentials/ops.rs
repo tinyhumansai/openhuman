@@ -471,7 +471,13 @@ pub async fn auth_get_me(config: &Config) -> Result<RpcOutcome<serde_json::Value
     let user = client
         .fetch_current_user(&token)
         .await
-        .map_err(|e| e.to_string())?;
+        // `{e:#}` walks the full anyhow context chain so the underlying
+        // reqwest transport error (timeout / connection reset / TLS / DNS)
+        // reaches `core::observability::is_transient_message_failure`. Bare
+        // `e.to_string()` only renders the top context layer
+        // ("GET /auth/me") and collapsed every transient transport failure
+        // into Sentry TAURI-RUST-10.
+        .map_err(|e| format!("{e:#}"))?;
 
     Ok(RpcOutcome::single_log(user, "current user fetched"))
 }
@@ -490,13 +496,14 @@ pub async fn consume_login_token(
     let jwt_token = client
         .consume_login_token(token)
         .await
-        .map_err(|e| e.to_string())?;
+        // See `auth_get_me` above for why we walk the full anyhow chain.
+        .map_err(|e| format!("{e:#}"))?;
 
     Ok(RpcOutcome::new(
         serde_json::json!({ "jwtToken": jwt_token }),
         vec![
             format!(
-                "login token consumed via POST /telegram/login-tokens/:token/consume on {}",
+                "login token consumed via POST /auth/login-token/consume on {}",
                 api_url.trim_end_matches('/')
             ),
             "session JWT received".to_string(),
@@ -523,7 +530,8 @@ pub async fn auth_create_channel_link_token(
     let payload = client
         .create_channel_link_token(&channel, &token)
         .await
-        .map_err(|e| e.to_string())?;
+        // See `auth_get_me` above for why we walk the full anyhow chain.
+        .map_err(|e| format!("{e:#}"))?;
 
     Ok(RpcOutcome::single_log(
         payload,

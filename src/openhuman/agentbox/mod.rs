@@ -32,3 +32,5 @@ mod http_tests;
 mod ops_tests;
 #[cfg(test)]
 mod store_tests;
+#[cfg(test)]
+mod test_support;
