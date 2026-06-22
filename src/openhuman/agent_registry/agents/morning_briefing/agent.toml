@@ -5,12 +5,20 @@ temperature = 0.5
 max_iterations = 8
 sandbox_mode = "read_only"
 
-# Needs memory for user context and preferences, but not identity/safety
-# boilerplate — the prompt carries its own voice.
+# The brief pulls its recent memory itself via `memory_tree_cover_window`
+# (last 24h, source-grouped) — see prompt.md. We therefore suppress the
+# injected all-time memory blob (`## User Memory`, the namespace root
+# summaries): it is stale relative to "today" and would compete with the
+# fresh windowed tool result. Identity/safety boilerplate stays off too —
+# the prompt carries its own voice.
 omit_identity = true
-omit_memory_context = false
+omit_memory_context = true
 omit_safety_preamble = true
 omit_skills_catalog = true
+
+# Specialist-owned external action families stay behind their dedicated
+# subagent prompts and confirmations.
+disallowed_tools = ["tinyplace_*"]
 
 [model]
 hint = "agentic"

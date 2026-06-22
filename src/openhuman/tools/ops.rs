@@ -198,6 +198,10 @@ pub fn all_tools_with_runtime(
         Box::new(RunWorkflowTool::new().with_skill_allowlist(skill_allowlist.cloned())),
         Box::new(AwaitWorkflowTool::new()),
         Box::new(CurrentTimeTool::new()),
+        // Reversibility for native tool-output compaction (Stage 1a): when a
+        // large result is compacted with a `retrieve_tool_output("<hash>")`
+        // marker, this hands the original back from the CCR store on demand.
+        Box::new(RetrieveToolOutputTool::new()),
         // Deterministic time-expression → timestamp resolver. `current_time`
         // only returns *now*, leaving the model to do epoch arithmetic by hand
         // (a real incident had an agent compute "24h ago" ~10 months off, then
@@ -524,6 +528,20 @@ pub fn all_tools_with_runtime(
 
     // Subconscious scratchpad tools — persistent working memory across ticks.
     tools.extend(crate::openhuman::subconscious::scratchpad::tools::all_scratchpad_tools());
+
+    // Subconscious user-facing handoff — notify_user proactive delivery.
+    tools.extend(crate::openhuman::subconscious::user_thread::all_user_thread_tools());
+
+    // tiny.place agent surface. These wrap the internal tiny.place controllers
+    // so the dedicated tinyplace subagent can register identities, inspect
+    // inbox/DM state, trade marketplace assets, manage groups, and work jobs
+    // through the same validation/client paths as JSON-RPC.
+    let tinyplace_tools = crate::openhuman::tinyplace::tools::all_tinyplace_agent_tools();
+    log::debug!(
+        "[tools::ops][tinyplace] registering tinyplace agent tools count={}",
+        tinyplace_tools.len()
+    );
+    tools.extend(tinyplace_tools);
 
     // Presentation generation (#2778). Native-Rust engine (ppt-rs
     // backed) as of the #2780-follow-up rust-engine refactor — no

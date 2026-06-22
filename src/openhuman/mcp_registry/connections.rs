@@ -205,20 +205,59 @@ fn connections() -> &'static RwLock<HashMap<String, Arc<Connection>>> {
 
 // ── Per-server last connect error ────────────────────────────────────────────
 
-static LAST_ERRORS: OnceLock<RwLock<HashMap<String, String>>> = OnceLock::new();
+/// The most recent connect failure for one server: the raw diagnostic message
+/// (for logs/debugging) plus whether it was specifically an HTTP 401 (auth
+/// required). Both live in ONE record under ONE lock so a status read can never
+/// observe a torn snapshot — e.g. the message updated but the auth flag stale,
+/// which a two-map design would allow if `all_status` interleaved between the
+/// two writes (#3719).
+#[derive(Clone)]
+struct ConnectFailure {
+    message: String,
+    /// `true` when the failure was an MCP HTTP 401 → drives
+    /// `ServerStatus::Unauthorized` so the UI offers a re-auth path instead of
+    /// a raw error blob.
+    unauthorized: bool,
+}
 
-fn last_errors() -> &'static RwLock<HashMap<String, String>> {
+static LAST_ERRORS: OnceLock<RwLock<HashMap<String, ConnectFailure>>> = OnceLock::new();
+
+fn last_errors() -> &'static RwLock<HashMap<String, ConnectFailure>> {
     LAST_ERRORS.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+/// Whether a connect failure's root cause was an MCP HTTP 401 (auth required).
+/// Uses a typed `downcast` on the `anyhow` chain — not string matching — so the
+/// classification can't drift from the message wording.
+fn is_unauthorized_error(err: &anyhow::Error) -> bool {
+    // Walk the whole source chain (not just the outermost error) so the
+    // classification survives any `?`/`.context()` wrapping a caller may add.
+    err.chain()
+        .any(|cause| cause.is::<crate::openhuman::mcp_client::McpUnauthorizedError>())
 }
 
 /// Read the most recent connect-failure message for `server_id`. `None` when
 /// the server has never failed, or when the most recent connect succeeded.
 pub async fn last_error_for(server_id: &str) -> Option<String> {
-    last_errors().read().await.get(server_id).cloned()
+    last_errors()
+        .read()
+        .await
+        .get(server_id)
+        .map(|f| f.message.clone())
 }
 
-/// Drop any recorded error for `server_id`. Called on successful connect,
-/// explicit disconnect, uninstall, and enable→disable transitions.
+/// Whether `server_id`'s most recent connect failed due to HTTP 401.
+pub async fn needs_auth(server_id: &str) -> bool {
+    last_errors()
+        .read()
+        .await
+        .get(server_id)
+        .is_some_and(|f| f.unauthorized)
+}
+
+/// Drop any recorded error (generic or auth-required) for `server_id`. Called on
+/// successful connect, explicit disconnect, uninstall, and enable→disable
+/// transitions.
 pub async fn clear_last_error(server_id: &str) {
     last_errors().write().await.remove(server_id);
 }
@@ -249,12 +288,19 @@ pub async fn connect(config: &Config, server: &InstalledServer) -> anyhow::Resul
             );
         }
         Err(err) => {
-            last_errors()
-                .write()
-                .await
-                .insert(server.server_id.clone(), err.to_string());
+            // Record the raw diagnostic AND the 401 classification together in a
+            // single record under one lock, so a concurrent `all_status` can't
+            // observe a torn snapshot (message set but auth flag stale).
+            let unauthorized = is_unauthorized_error(err);
+            last_errors().write().await.insert(
+                server.server_id.clone(),
+                ConnectFailure {
+                    message: err.to_string(),
+                    unauthorized,
+                },
+            );
             tracing::debug!(
-                "[mcp-registry] last_error recorded server_id={} err={err}",
+                "[mcp-registry] last_error recorded server_id={} unauthorized={unauthorized} err={err}",
                 server.server_id
             );
         }
@@ -466,11 +512,48 @@ pub async fn call_tool(
 
 /// Return status summaries for all installed servers.
 ///
-/// Priority order: `Disabled` > `Connected` > `Error` > `Disconnected`.
+/// Priority order: `Disabled` > `Connected` > `Unauthorized` > `Error` >
+/// `Disconnected`.
 /// - `!s.enabled` → `Disabled` (suppresses tool count and last_error).
 /// - connected (id in live registry) → `Connected` + tool count.
-/// - recorded connect failure in `LAST_ERRORS` → `Error` + last_error message.
+/// - connect failed with HTTP 401 (`AUTH_REQUIRED`) → `Unauthorized`. The raw
+///   error string is intentionally NOT surfaced (it leaks an internal OAuth
+///   metadata URL, #3719) — the UI renders a localized "needs sign-in" message
+///   and the re-auth affordance keyed off the status alone.
+/// - other recorded connect failure in `LAST_ERRORS` → `Error` + message.
 /// - otherwise → `Disconnected`.
+/// Pure status decision for one installed server, factored out of
+/// [`all_status`] so the priority order is unit-testable without a live
+/// connection registry or store. Inputs:
+/// - `enabled` — the install's enabled flag.
+/// - `connected_tool_count` — `Some(n)` when the server is in the live map
+///   (with its advertised tool count), `None` otherwise.
+/// - `auth_required` — most recent connect failed with HTTP 401.
+/// - `generic_error` — most recent (non-401) connect error message, if any.
+///
+/// Priority: `Disabled` > `Connected` > `Unauthorized` > `Error` >
+/// `Disconnected`. The raw error is surfaced ONLY for the generic `Error` case;
+/// `Unauthorized` deliberately carries no message (the UI localizes it and
+/// avoids leaking the OAuth metadata URL, #3719).
+fn classify_server_status(
+    enabled: bool,
+    connected_tool_count: Option<u32>,
+    auth_required: bool,
+    generic_error: Option<String>,
+) -> (ServerStatus, u32, Option<String>) {
+    if !enabled {
+        (ServerStatus::Disabled, 0, None)
+    } else if let Some(n) = connected_tool_count {
+        (ServerStatus::Connected, n, None)
+    } else if auth_required {
+        (ServerStatus::Unauthorized, 0, None)
+    } else if let Some(err) = generic_error {
+        (ServerStatus::Error, 0, Some(err))
+    } else {
+        (ServerStatus::Disconnected, 0, None)
+    }
+}
+
 pub async fn all_status(config: &Config) -> Vec<ConnStatus> {
     let installed = store::list_servers(config).unwrap_or_default();
     let connected_ids: Vec<String> = {
@@ -478,26 +561,38 @@ pub async fn all_status(config: &Config) -> Vec<ConnStatus> {
         map.keys().cloned().collect()
     };
 
-    let errors_snapshot = last_errors().read().await.clone();
+    // One snapshot of the unified failure map — message + auth flag are read
+    // together, so a server's status can't be classified from a torn pair.
+    let failures_snapshot = last_errors().read().await.clone();
 
     let mut out = Vec::with_capacity(installed.len());
     for s in installed {
         let is_connected = connected_ids.iter().any(|id| id == &s.server_id);
 
-        let (status, tool_count, last_error) = if !s.enabled {
-            (ServerStatus::Disabled, 0u32, None)
-        } else if is_connected {
+        // Resolve the live tool count up front (the only async input), then let
+        // the pure classifier pick the status — keeps the priority logic
+        // testable without a live registry / DB.
+        let connected_tool_count = if is_connected {
             let map = connections().read().await;
-            let tool_count = match map.get(&s.server_id) {
+            Some(match map.get(&s.server_id) {
                 Some(c) => c.tools_snapshot().await.len() as u32,
                 None => 0,
-            };
-            (ServerStatus::Connected, tool_count, None)
-        } else if let Some(err) = errors_snapshot.get(&s.server_id).cloned() {
-            (ServerStatus::Error, 0u32, Some(err))
+            })
         } else {
-            (ServerStatus::Disconnected, 0u32, None)
+            None
         };
+
+        let failure = failures_snapshot.get(&s.server_id);
+        let (status, tool_count, last_error) = classify_server_status(
+            s.enabled,
+            connected_tool_count,
+            failure.is_some_and(|f| f.unauthorized),
+            // Only a generic (non-401) failure carries a surfaced message; the
+            // 401 message is withheld (it leaks the OAuth metadata URL).
+            failure
+                .filter(|f| !f.unauthorized)
+                .map(|f| f.message.clone()),
+        );
 
         out.push(ConnStatus {
             server_id: s.server_id,
@@ -593,8 +688,62 @@ fn into_registry_tool(remote: McpRemoteTool) -> McpTool {
 mod tests {
     // Live-connection tests require a real MCP subprocess and live in
     // tests/json_rpc_e2e.rs. Keep this slot for sync helper tests.
-    use super::{build_http_auth, credential_safe_dial_url};
+    use super::{
+        build_http_auth, classify_server_status, credential_safe_dial_url, is_unauthorized_error,
+    };
     use crate::openhuman::config::McpAuthConfig;
+    use crate::openhuman::mcp_client::McpUnauthorizedError;
+    use crate::openhuman::mcp_registry::types::ServerStatus;
+
+    #[test]
+    fn classify_server_status_priority_order() {
+        // Disabled wins over everything (even a live connection / 401 / error).
+        assert_eq!(
+            classify_server_status(false, Some(3), true, Some("boom".into())),
+            (ServerStatus::Disabled, 0, None)
+        );
+        // Connected → tool count surfaced, no error.
+        assert_eq!(
+            classify_server_status(true, Some(5), true, Some("boom".into())),
+            (ServerStatus::Connected, 5, None)
+        );
+        // Not connected + 401 → Unauthorized, and NO raw error is leaked even
+        // when a generic error is also recorded.
+        assert_eq!(
+            classify_server_status(true, None, true, Some("MCP unauthorized … HTTP 401".into())),
+            (ServerStatus::Unauthorized, 0, None)
+        );
+        // Not connected + generic error (no 401) → Error + message.
+        assert_eq!(
+            classify_server_status(true, None, false, Some("timed out".into())),
+            (ServerStatus::Error, 0, Some("timed out".into()))
+        );
+        // Not connected, no error → Disconnected.
+        assert_eq!(
+            classify_server_status(true, None, false, None),
+            (ServerStatus::Disconnected, 0, None)
+        );
+    }
+
+    #[test]
+    fn is_unauthorized_error_classifies_typed_401_only() {
+        // A typed 401 from the transport → auth required (regardless of the
+        // message wording, since we downcast rather than string-match).
+        let unauth = anyhow::Error::new(McpUnauthorizedError {
+            endpoint: "https://example.com".into(),
+            resource_metadata: Some("https://example.com/.well-known/x".into()),
+        });
+        assert!(is_unauthorized_error(&unauth));
+
+        // A 401 survives `?`-style context wrapping (anyhow keeps the root
+        // downcastable), matching how the error reaches `connect`.
+        let wrapped = unauth.context("connecting to MCP server");
+        assert!(is_unauthorized_error(&wrapped));
+
+        // Any other transport failure → NOT auth required (stays generic Error).
+        let other = anyhow::anyhow!("MCP HTTP 500 — upstream exploded");
+        assert!(!is_unauthorized_error(&other));
+    }
 
     fn kv(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
         pairs

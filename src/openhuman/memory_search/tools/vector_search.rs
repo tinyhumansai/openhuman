@@ -153,6 +153,7 @@ impl Tool for MemoryVectorSearchTool {
             until_ms: None,
             limit: Some(1000),
             source_scope: crate::openhuman::memory::source_scope::current_source_scope(),
+            exclude_dropped: false,
         };
 
         let chunks = list_chunks(&config, &query)

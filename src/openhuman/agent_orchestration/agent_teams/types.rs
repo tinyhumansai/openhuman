@@ -27,6 +27,37 @@ pub struct MemberShutdown {
     pub released_task_ids: Vec<String>,
 }
 
+/// Outcome of starting a live run for a team member ([`ops::start_member`]).
+///
+/// `Started` means a task was atomically claimed for the member and a worker
+/// agent was dispatched on a background task (the member flips to `active` with
+/// the returned `run_id`); the run drives to completion asynchronously and the
+/// UI observes progress by polling `get`. The non-`Started` variants mean no
+/// worker was spawned — the caller can surface the reason without any side
+/// effect on member or task state.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", tag = "kind")]
+pub enum StartMemberOutcome {
+    /// A task was claimed and a worker dispatched. `run_id` is the orchestration
+    /// id of the spawned agent; `task` is the freshly-claimed task row.
+    Started {
+        run_id: String,
+        task: Box<AgentTeamTask>,
+    },
+    /// The target task's dependencies are not all `done`; `unmet` lists them.
+    Blocked { unmet: Vec<String> },
+    /// The target task is already claimed by another member.
+    AlreadyClaimed,
+    /// The member is already `active` on a run — starting again would spawn a
+    /// second concurrent worker and clobber its task/run pointer. Rejected before
+    /// any claim or state mutation.
+    AlreadyActive,
+    /// No explicit task was given and the member has no claimable ready task.
+    NoClaimableTask,
+    /// An explicit `task_id` was given but no such task exists in the team.
+    UnknownTask,
+}
+
 /// A validation / coordination problem surfaced by the agent-team ops.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase", tag = "kind", content = "detail")]

@@ -16,7 +16,7 @@ use std::collections::{HashMap, HashSet};
 
 use serde_json::{json, Value};
 
-use super::CdpConn;
+use crate::cdp::CdpConn;
 
 /// Only database that carries the chat + message stores. Discovered
 /// empirically — a full `Target.getTargets` + `storeMap` dump (now removed)

@@ -201,6 +201,12 @@ pub struct Agent {
     /// ACTIVE mid-turn can refresh the delegation schema in the same thread.
     pub(super) composio_integrations_rx:
         Option<tokio::sync::broadcast::Receiver<crate::core::event_bus::DomainEvent>>,
+    /// Lazily-armed global-bus receiver for [`DomainEvent::WorkflowsChanged`]
+    /// (skill install / uninstall / create). Drained at each turn boundary so
+    /// `refresh_workflows` only re-scans disk when the installed set actually
+    /// changed — no per-turn filesystem walk on the steady-state hot path.
+    pub(super) skill_events_rx:
+        Option<tokio::sync::broadcast::Receiver<crate::core::event_bus::DomainEvent>>,
     /// Toolkit slugs already surfaced to the model as freshly-connected
     /// this session. Seeded at turn 1 with the startup connected set, then
     /// extended whenever a mid-session connect is announced — so each new
@@ -232,6 +238,24 @@ pub struct Agent {
     /// note rides the user turn (NOT the system prompt) so the KV-cache prefix
     /// stays byte-identical. Order-preserving + de-duped on insert.
     pub(super) pending_mcp_announcement: Vec<String>,
+    /// Skill ids discovered mid-session (installed after session build) that
+    /// still need announcing on the next user message. Mirrors
+    /// [`Self::pending_integration_announcement`] for the `## Installed Skills`
+    /// catalogue: parked by `refresh_workflows`, rendered + cleared when the
+    /// next user message is built so the note rides the user turn (NOT the
+    /// system prompt) and the KV-cache prefix stays byte-identical.
+    pub(super) pending_skill_announcement: Vec<String>,
+    /// Skill ids removed mid-session (uninstalled after session build) that
+    /// still need retracting on the next user message. Symmetric to
+    /// [`Self::pending_skill_announcement`]: parked by `refresh_workflows`,
+    /// rendered + cleared when the next user message is built so the retraction
+    /// note rides the user turn (NOT the system prompt) and the KV-cache prefix
+    /// stays byte-identical.
+    pub(super) pending_skill_retraction: Vec<String>,
+    /// Skill ids already surfaced to the model as installed this session, so
+    /// each newly-installed skill is announced exactly once and never
+    /// re-announced per turn. Seeded from the session-build catalogue.
+    pub(super) announced_skills: std::collections::HashSet<String>,
     /// Optional reference to the `ArchivistHook` registered in
     /// `post_turn_hooks`. Kept separately so the turn loop can call
     /// `flush_open_segment` at session-memory-extraction time (the

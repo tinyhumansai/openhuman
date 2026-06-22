@@ -78,6 +78,26 @@ fn discord_has_bot_token_and_oauth() {
 }
 
 #[test]
+fn discord_bot_token_exposes_allowed_users_field() {
+    // Issue #3763: the Discord bot_token connect UI must offer an allowed_users
+    // field (like Telegram) so a self-hosted bot's allowlist is set in-app
+    // instead of by hand-editing config.toml.
+    let def = find_channel_definition("discord").expect("discord not found");
+    let bot_token = def
+        .auth_mode_spec(ChannelAuthMode::BotToken)
+        .expect("discord bot_token mode");
+    let allowed = bot_token
+        .fields
+        .iter()
+        .find(|f| f.key == "allowed_users")
+        .expect("discord bot_token must expose an allowed_users field");
+    assert!(
+        !allowed.required,
+        "allowed_users must be optional (blank = allow everyone)"
+    );
+}
+
+#[test]
 fn find_unknown_channel_returns_none() {
     assert!(find_channel_definition("nonexistent").is_none());
 }

@@ -478,8 +478,10 @@ test.describe('MCP Tab — Empty & Edge States', () => {
     await navigateToMcpTab(page);
 
     await page.getByRole('button', { name: /Installed/ }).click();
-    const emptyMsg = page.locator('text=/no.*servers|no.*installed/i');
-    await expect(emptyMsg).toBeVisible({ timeout: 5_000 });
+    // Target the empty-state element directly: a broad `text=/no.*servers/i`
+    // locator also matches ancestor containers (the root shell wraps the panel),
+    // tripping Playwright strict mode.
+    await expect(page.getByTestId('mcp-installed-empty')).toBeVisible({ timeout: 10_000 });
   });
 
   test('search with no results shows no-results message', async ({ page }) => {
@@ -504,8 +506,8 @@ test.describe('MCP Tab — Empty & Edge States', () => {
     await navigateToMcpTab(page);
     await page.locator('input[type="search"]').fill('xyznonexistent999');
 
-    // Wait for the no-results state to appear rather than using a fixed delay
-    const noResults = page.locator('text=/no.*results|no.*found|no.*servers/i');
-    await expect(noResults).toBeVisible({ timeout: 5_000 });
+    // Target the catalog empty-state element directly — a broad text regex also
+    // matches the root-shell ancestor container and trips strict mode.
+    await expect(page.getByTestId('mcp-catalog-empty')).toBeVisible({ timeout: 10_000 });
   });
 });

@@ -332,3 +332,26 @@ fn real_data_full_funnel_report() {
     );
     assert!(total_out < total_in / 3, "overall reduction should be >66%");
 }
+
+// ── Repro: issue #3152 — Composio write action unreachable ──────────
+//
+// `integrations_agent` asked to CREATE a Notion page. Notion is a
+// HEAVY_SCHEMA toolkit → production top_k = 12. The verb gate + score cull
+// advertise only read-leaning actions, so `NOTION_CREATE_NOTION_PAGE` never
+// reaches the model. Asserts DESIRED post-fix behaviour → RED until the
+// write-reservation fix lands.
+#[test]
+fn repro_3152_create_page_reachable_in_top_k() {
+    let actions = load_real_toolkit("notion");
+    let hits = filter_actions_by_prompt(
+        "create a notion page with the meeting notes and give me the link",
+        &actions,
+        12,
+    );
+    assert_in_top(
+        &actions,
+        &hits,
+        "NOTION_CREATE_NOTION_PAGE",
+        "#3152 notion create-page",
+    );
+}

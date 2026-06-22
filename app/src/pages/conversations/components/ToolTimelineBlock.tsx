@@ -1,5 +1,7 @@
+import WorktreeActions from '../../../components/worktree/WorktreeActions';
 import { useT } from '../../../lib/i18n/I18nContext';
 import type { SubagentActivity, ToolTimelineEntry } from '../../../store/chatRuntimeSlice';
+import { basename } from '../../../utils/pathUtils';
 import { formatTimelineEntry, formatToolName } from '../../../utils/toolTimelineFormatting';
 import { parseWorkerThreadRef } from '../utils/workerThreadRef';
 import { agentNameTone, AgentTimelineRail } from './AgentTimelineRail';
@@ -147,6 +149,40 @@ export function SubagentActivityBlock({
           data-testid="subagent-preview">
           <span aria-hidden>{previewIcon}</span>
           <span className="line-clamp-2 break-words italic">{preview}</span>
+        </div>
+      ) : null}
+      {subagent.worktreePath ? (
+        <div
+          className="mt-1 space-y-1 rounded-md border border-stone-200 bg-stone-50/70 p-1.5 dark:border-neutral-800 dark:bg-neutral-900/50"
+          data-testid="subagent-worktree">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="font-medium text-stone-600 dark:text-neutral-300">
+              {t('worktree.label')}
+            </span>
+            <span
+              className="truncate font-mono text-[10px] text-stone-500 dark:text-neutral-400"
+              title={subagent.worktreePath}>
+              {basename(subagent.worktreePath)}
+            </span>
+            {subagent.isDirty ? (
+              <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-medium text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
+                {t('worktree.dirty')}
+              </span>
+            ) : (
+              <span className="rounded-full bg-sage-100 px-1.5 py-0.5 text-[9px] font-medium text-sage-700 dark:bg-sage-500/15 dark:text-sage-300">
+                {t('worktree.clean')}
+              </span>
+            )}
+            {subagent.changedFiles && subagent.changedFiles.length > 0 ? (
+              <span className="text-[9px] text-stone-400 dark:text-neutral-500">
+                {subagent.changedFiles.length}{' '}
+                {subagent.changedFiles.length === 1
+                  ? t('worktree.changedFile')
+                  : t('worktree.changedFiles')}
+              </span>
+            ) : null}
+          </div>
+          <WorktreeActions path={subagent.worktreePath} isDirty={subagent.isDirty} compact />
         </div>
       ) : null}
       {onView ? (

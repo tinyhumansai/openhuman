@@ -45,6 +45,7 @@ const MODEL_HINTS = [
   'hint:agentic',
   'hint:coding',
   'hint:summarization',
+  'hint:vision',
 ];
 const MODEL_TIERS = [
   'reasoning-v1',
@@ -53,6 +54,7 @@ const MODEL_TIERS = [
   'agentic-v1',
   'coding-v1',
   'summarization-v1',
+  'vision-v1',
 ];
 const KNOWN_MODELS = new Set([...MODEL_HINTS, ...MODEL_TIERS]);
 const CUSTOM_MODEL = '__custom__';

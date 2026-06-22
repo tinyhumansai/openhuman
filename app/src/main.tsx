@@ -17,6 +17,7 @@ import { primeActiveUserId } from './store/userScopedStorage';
 import './styles/theme.css';
 import { APP_VERSION } from './utils/config';
 import { setupDesktopDeepLinkListener } from './utils/desktopDeepLinkListener';
+import { missingHashRedirectTarget } from './utils/hashRouterBootstrap';
 import { getActiveUserIdFromCore } from './utils/tauriCommands';
 import { isTauri as tauriRuntimeAvailable } from './utils/tauriCommands/common';
 
@@ -52,7 +53,9 @@ const isStandaloneWindow = isOverlayWindow || isMascotWindow || isNotchWindow;
 const ensureDefaultHashRoute = () => {
   const hash = window.location.hash;
   if (!hash || hash === '#') {
-    window.location.replace(`${window.location.pathname}${window.location.search}#/`);
+    window.location.replace(
+      missingHashRedirectTarget(window.location.pathname, window.location.search)
+    );
     return;
   }
   if (!hash.startsWith('#/')) {

@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import Markdown, { defaultUrlTransform } from 'react-markdown';
 import rehypeKatex from 'rehype-katex';
+import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 
 import { OPENHUMAN_LINK_EVENT } from '../../../components/OpenhumanLinkModal';
@@ -16,7 +17,8 @@ import {
   parseBubbleSegments,
 } from '../utils/format';
 
-const MATH_REMARK_PLUGINS = [remarkMath];
+const GFM_REMARK_PLUGINS = [remarkGfm];
+const MATH_REMARK_PLUGINS = [remarkGfm, remarkMath];
 const MATH_REHYPE_PLUGINS = [rehypeKatex];
 const EMPTY_PLUGINS: [] = [];
 type ParsedMarkdownTable = NonNullable<ReturnType<typeof parseMarkdownTable>>;
@@ -99,7 +101,7 @@ export function BubbleMarkdown({
       <Markdown
         urlTransform={transformMarkdownUrl}
         components={{ a: MarkdownAnchor }}
-        remarkPlugins={hasMath ? MATH_REMARK_PLUGINS : EMPTY_PLUGINS}
+        remarkPlugins={hasMath ? MATH_REMARK_PLUGINS : GFM_REMARK_PLUGINS}
         rehypePlugins={hasMath ? MATH_REHYPE_PLUGINS : EMPTY_PLUGINS}>
         {rendered}
       </Markdown>
@@ -115,7 +117,7 @@ export function TableCellMarkdown({ content }: { content: string }) {
       <Markdown
         urlTransform={transformMarkdownUrl}
         components={{ a: MarkdownAnchor }}
-        remarkPlugins={hasMath ? MATH_REMARK_PLUGINS : EMPTY_PLUGINS}
+        remarkPlugins={hasMath ? MATH_REMARK_PLUGINS : GFM_REMARK_PLUGINS}
         rehypePlugins={hasMath ? MATH_REHYPE_PLUGINS : EMPTY_PLUGINS}>
         {rendered}
       </Markdown>

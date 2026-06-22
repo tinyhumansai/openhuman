@@ -66,6 +66,7 @@ pub(super) struct ModelSettingsUpdate {
     pub(super) reasoning_provider: Option<String>,
     pub(super) agentic_provider: Option<String>,
     pub(super) coding_provider: Option<String>,
+    pub(super) vision_provider: Option<String>,
     pub(super) memory_provider: Option<String>,
     pub(super) embeddings_provider: Option<String>,
     pub(super) heartbeat_provider: Option<String>,
@@ -117,6 +118,12 @@ pub(super) struct AnalyticsSettingsUpdate {
 #[derive(Debug, Deserialize)]
 pub(super) struct MeetSettingsUpdate {
     pub(super) auto_orchestrator_handoff: Option<bool>,
+    /// Calendar auto-join policy as a string: `ask_each_time` | `always` | `never`.
+    pub(super) auto_join_policy: Option<String>,
+    /// Post-call summary policy as a string: `ask` | `always` | `never`.
+    pub(super) auto_summarize_policy: Option<String>,
+    pub(super) listen_only_default: Option<bool>,
+    pub(super) ingest_backend_transcripts: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]

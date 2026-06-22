@@ -80,6 +80,26 @@ describe('nativeNotifications service', () => {
     expect(items[0].deepLink).toBe('/settings/webhooks-triggers');
   });
 
+  it('passes action buttons through to the notification center (issue #3507)', () => {
+    store.dispatch(setPreference({ category: 'meetings', enabled: true }));
+    __handleCoreNotificationForTests({
+      id: 'meet-auto-join:m1',
+      category: 'meetings',
+      title: 'Meeting starting: Standup',
+      body: 'Add Tiny to this meeting?',
+      timestamp_ms: 1,
+      actions: [
+        { actionId: 'join_listen', label: 'Join (listen only)', payload: { meetingId: 'm1' } },
+        { actionId: 'skip', label: 'Not this one', payload: { meetingId: 'm1' } },
+      ],
+    });
+    const items = store.getState().notifications.items;
+    expect(items).toHaveLength(1);
+    expect(items[0].actions).toHaveLength(2);
+    expect(items[0].actions?.[0].actionId).toBe('join_listen');
+    expect(items[0].actions?.[0].payload).toEqual({ meetingId: 'm1' });
+  });
+
   it('ignores core_notification payloads missing id/title', () => {
     __handleCoreNotificationForTests({
       id: '',

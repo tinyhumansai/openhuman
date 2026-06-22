@@ -3,7 +3,7 @@
 
 use serde_json::json;
 
-use crate::openhuman::config::Config;
+use crate::openhuman::config::{AutoJoinPolicy, AutoSummarizePolicy, Config};
 use crate::openhuman::screen_intelligence;
 use crate::rpc::RpcOutcome;
 
@@ -36,6 +36,14 @@ pub struct AnalyticsSettingsPatch {
 #[derive(Debug, Clone, Default)]
 pub struct MeetSettingsPatch {
     pub auto_orchestrator_handoff: Option<bool>,
+    /// Calendar auto-join policy (issue #3511 settings UI).
+    pub auto_join_policy: Option<AutoJoinPolicy>,
+    /// Post-call auto-summarize policy.
+    pub auto_summarize_policy: Option<AutoSummarizePolicy>,
+    /// When `true`, the bot joins in listen-only mode (mic muted).
+    pub listen_only_default: Option<bool>,
+    /// When `true`, backend-bot transcripts are ingested into memory.
+    pub ingest_backend_transcripts: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -209,6 +217,18 @@ pub async fn apply_meet_settings(
 ) -> Result<RpcOutcome<serde_json::Value>, String> {
     if let Some(enabled) = update.auto_orchestrator_handoff {
         config.meet.auto_orchestrator_handoff = enabled;
+    }
+    if let Some(policy) = update.auto_join_policy {
+        config.meet.auto_join_policy = policy;
+    }
+    if let Some(policy) = update.auto_summarize_policy {
+        config.meet.auto_summarize_policy = policy;
+    }
+    if let Some(listen_only) = update.listen_only_default {
+        config.meet.listen_only_default = listen_only;
+    }
+    if let Some(ingest) = update.ingest_backend_transcripts {
+        config.meet.ingest_backend_transcripts = ingest;
     }
     config.save().await.map_err(|e| e.to_string())?;
     let snapshot = snapshot_config_json(config)?;

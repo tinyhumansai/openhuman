@@ -1,6 +1,8 @@
 //! Tests for the builder module — dedup_visible_tool_specs and related logic.
 
-use super::{dedup_visible_tool_specs, should_synthesize_delegation_tools};
+use super::{
+    dedup_visible_tool_specs, ensure_recovery_tool_visible, should_synthesize_delegation_tools,
+};
 use crate::openhuman::tools::ToolSpec;
 use serde_json::json;
 
@@ -10,6 +12,36 @@ fn spec(name: &str) -> ToolSpec {
         description: format!("description for {name}"),
         parameters: json!({}),
     }
+}
+
+#[test]
+fn recovery_tool_joins_a_named_allowlist() {
+    use crate::openhuman::agent::harness::compaction::RECOVERY_TOOL_NAME;
+    use std::collections::HashSet;
+
+    // A curated Named-scope allowlist gains retrieve_tool_output as a *real*
+    // member, so the policy session, advertised specs, and the run-time
+    // visible-name gate (all driven by this set) make a compaction footer
+    // actionable.
+    let mut visible: HashSet<String> = ["file_read".to_string(), "grep".to_string()]
+        .into_iter()
+        .collect();
+    ensure_recovery_tool_visible(&mut visible);
+    assert!(
+        visible.contains(RECOVERY_TOOL_NAME),
+        "recovery tool must join: {visible:?}"
+    );
+    assert!(visible.contains("file_read"));
+}
+
+#[test]
+fn empty_allowlist_stays_empty() {
+    use std::collections::HashSet;
+    // Empty == "no filter" (all tools visible) AND the deliberately tool-less
+    // Named([]) case — both must stay empty so the invariant holds.
+    let mut visible: HashSet<String> = HashSet::new();
+    ensure_recovery_tool_visible(&mut visible);
+    assert!(visible.is_empty(), "empty allowlist must not gain a tool");
 }
 
 #[test]

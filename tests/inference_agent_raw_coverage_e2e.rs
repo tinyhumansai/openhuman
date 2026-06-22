@@ -2183,6 +2183,7 @@ async fn inference_provider_trait_defaults_cover_prompt_guided_paths() {
                 messages: &[ChatMessage::user("need docs")],
                 tools: Some(&[tool_spec.clone()]),
                 stream: None,
+                max_tokens: None,
             },
             "agentic-v1",
             0.4,
@@ -2198,6 +2199,7 @@ async fn inference_provider_trait_defaults_cover_prompt_guided_paths() {
                 messages: &[ChatMessage::user("plain")],
                 tools: None,
                 stream: None,
+                max_tokens: None,
             },
             "agentic-v1",
             0.5,
@@ -2283,6 +2285,7 @@ async fn inference_openai_compatible_provider_covers_native_streaming_and_fallba
                 ],
                 tools: Some(&[tool_spec.clone(), tool_spec.clone()]),
                 stream: Some(&delta_tx),
+                max_tokens: None,
             },
             "stream-native",
             0.9,
@@ -2322,6 +2325,7 @@ async fn inference_openai_compatible_provider_covers_native_streaming_and_fallba
                 messages: &[ChatMessage::user("json encoded tool call")],
                 tools: None,
                 stream: None,
+                max_tokens: None,
             },
             "tool-content-json",
             0.2,
@@ -3895,36 +3899,45 @@ fn agent_dispatchers_and_host_runtime_cover_public_edge_paths() {
     assert!(provider_messages[2].content.contains("call-1"));
     assert_eq!(provider_messages[3].content, "done");
 
-    let native_runtime = create_runtime(&RuntimeConfig {
-        kind: "native".into(),
-        ..Default::default()
-    })
+    let native_runtime = create_runtime(
+        &RuntimeConfig {
+            kind: "native".into(),
+            ..Default::default()
+        },
+        false,
+    )
     .expect("native runtime");
     assert_eq!(native_runtime.name(), "native");
     assert!(native_runtime.has_shell_access());
 
-    let docker_runtime = create_runtime(&RuntimeConfig {
-        kind: "docker".into(),
-        docker: DockerRuntimeConfig {
-            image: "alpine:coverage".into(),
-            network: "none".into(),
-            mount_workspace: false,
-            read_only_rootfs: false,
-            memory_limit_mb: Some(128),
-            cpu_limit: None,
+    let docker_runtime = create_runtime(
+        &RuntimeConfig {
+            kind: "docker".into(),
+            docker: DockerRuntimeConfig {
+                image: "alpine:coverage".into(),
+                network: "none".into(),
+                mount_workspace: false,
+                read_only_rootfs: false,
+                memory_limit_mb: Some(128),
+                cpu_limit: None,
+                ..Default::default()
+            },
             ..Default::default()
         },
-        ..Default::default()
-    })
+        false,
+    )
     .expect("docker runtime");
     assert_eq!(docker_runtime.name(), "docker");
     assert!(!docker_runtime.has_filesystem_access());
     assert_eq!(docker_runtime.memory_budget(), 128);
 
-    let unsupported = match create_runtime(&RuntimeConfig {
-        kind: "wasm".into(),
-        ..Default::default()
-    }) {
+    let unsupported = match create_runtime(
+        &RuntimeConfig {
+            kind: "wasm".into(),
+            ..Default::default()
+        },
+        false,
+    ) {
         Ok(runtime) => panic!(
             "unsupported runtime unexpectedly created: {}",
             runtime.name()
@@ -4429,6 +4442,7 @@ async fn inference_router_provider_covers_hint_tier_and_passthrough_routing() {
                 messages: &[ChatMessage::user("fallback")],
                 tools: None,
                 stream: None,
+                max_tokens: None,
             },
             "reasoning-v1",
             0.4,
@@ -4548,6 +4562,7 @@ async fn inference_reliable_provider_covers_retry_fallback_and_aggregate_errors(
                 messages: &[ChatMessage::user("fail")],
                 tools: None,
                 stream: None,
+                max_tokens: None,
             },
             "missing-model",
             0.0,

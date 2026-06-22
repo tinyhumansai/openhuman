@@ -9,6 +9,8 @@
  * (≈2–5 members) a header strip is the right density — a full sidebar would be
  * heavy furniture for three chips.
  */
+import { LuLoaderCircle, LuPlay } from 'react-icons/lu';
+
 import { useT } from '../../lib/i18n/I18nContext';
 import type {
   AgentTeam,
@@ -36,9 +38,19 @@ interface TeamHeaderProps {
   team: AgentTeam;
   members: AgentTeamMember[];
   taskCount: number;
+  /** When provided, renders a "Start" affordance on each non-active member. */
+  onStartMember?: (memberId: string) => void;
+  /** Id of the member whose live run is currently being dispatched. */
+  startingMemberId?: string | null;
 }
 
-export function TeamHeader({ team, members, taskCount }: TeamHeaderProps) {
+export function TeamHeader({
+  team,
+  members,
+  taskCount,
+  onStartMember,
+  startingMemberId,
+}: TeamHeaderProps) {
   const { t } = useT();
   const title = team.summary?.trim() || team.leadAgentId;
 
@@ -74,6 +86,21 @@ export function TeamHeader({ team, members, taskCount }: TeamHeaderProps) {
               <span
                 className={`h-1.5 w-1.5 flex-none rounded-full ${MEMBER_STATUS_DOT[member.memberStatus]}`}
               />
+              {onStartMember && member.memberStatus !== 'active' && (
+                <button
+                  type="button"
+                  disabled={startingMemberId === member.id}
+                  onClick={() => onStartMember(member.id)}
+                  title={t('intelligence.teams.member.start')}
+                  aria-label={`${t('intelligence.teams.member.start')} ${member.name}`}
+                  className="ml-0.5 inline-flex h-3.5 w-3.5 flex-none items-center justify-center rounded text-ocean-600 hover:text-ocean-700 disabled:opacity-40 dark:text-ocean-300">
+                  {startingMemberId === member.id ? (
+                    <LuLoaderCircle className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <LuPlay className="h-3 w-3" />
+                  )}
+                </button>
+              )}
             </span>
           ))}
         </div>

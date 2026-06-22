@@ -242,6 +242,22 @@ impl Tool for SpawnAsyncSubagentTool {
         let background_parent_session = parent_session.clone();
         let background_progress = progress_sink.clone();
         let background_worker_thread_id = worker_thread_id.clone();
+        // Capture the parent chat thread NOW (the spawning turn's thread) so the
+        // finished result can be delivered back into it as a system turn.
+        let background_parent_thread_id =
+            crate::openhuman::inference::provider::thread_context::current_thread_id();
+        // Kept on this side (the closure moves its own clone) so the registry
+        // entry knows which parent thread owns this sub-agent — that's how
+        // `cancel_for_thread` aborts it when the thread is deleted.
+        let register_parent_thread_id = background_parent_thread_id.clone();
+        // Lifecycle-critical wiring: log the parent-thread binding so the
+        // thread-close cancellation path (`cancel_for_thread`) is grep-friendly.
+        log::debug!(
+            "[spawn_async_subagent] register task_id={} parent_session={} parent_thread_id={}",
+            task_id,
+            parent_session,
+            register_parent_thread_id.as_deref().unwrap_or("none")
+        );
         let background_prompt = add_background_contract(&prompt);
 
         let join = tokio::spawn(async move {
@@ -271,6 +287,16 @@ impl Tool for SpawnAsyncSubagentTool {
                             output: outcome.output.clone(),
                             iterations: outcome.iterations,
                         });
+                        // Queue the finished result for idle-gated, batched
+                        // delivery back into the parent chat (the session
+                        // runtime drains this when the session is next idle).
+                        crate::openhuman::agent_orchestration::background_completions::record_completion(
+                            background_parent_session.clone(),
+                            outcome.task_id.clone(),
+                            outcome.agent_id.clone(),
+                            outcome.output.clone(),
+                            background_parent_thread_id.clone(),
+                        );
                         publish_global(DomainEvent::SubagentCompleted {
                             parent_session: background_parent_session,
                             task_id: outcome.task_id.clone(),
@@ -287,6 +313,9 @@ impl Tool for SpawnAsyncSubagentTool {
                                     elapsed_ms: outcome.elapsed.as_millis() as u64,
                                     iterations: outcome.iterations as u32,
                                     output_chars: outcome.output.chars().count(),
+                                    worktree_path: None,
+                                    changed_files: Vec::new(),
+                                    dirty_status: None,
                                 })
                                 .await;
                         }
@@ -345,6 +374,7 @@ impl Tool for SpawnAsyncSubagentTool {
             task_id.clone(),
             definition.id.clone(),
             parent_session.clone(),
+            register_parent_thread_id,
             steer_queue,
             join.abort_handle(),
             status_rx,

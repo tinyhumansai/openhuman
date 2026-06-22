@@ -45,7 +45,15 @@ export type InstalledServer = {
 
 export type McpTool = { name: string; description?: string; input_schema: unknown };
 
-export type ServerStatus = 'disconnected' | 'connecting' | 'connected' | 'error' | 'disabled';
+export type ServerStatus =
+  | 'disconnected'
+  | 'connecting'
+  | 'connected'
+  // Server reachable but rejected the connect with HTTP 401 — needs sign-in or
+  // an access token. Distinct from `error` so the UI offers a re-auth path.
+  | 'unauthorized'
+  | 'error'
+  | 'disabled';
 
 export type ConnStatus = {
   server_id: string;

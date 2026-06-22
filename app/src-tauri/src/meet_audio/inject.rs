@@ -60,11 +60,13 @@ const TARGET_DISCOVERY_INTERVAL: Duration = Duration::from_millis(500);
 /// connection + session id so the caller (the speak pump) can keep
 /// using it for `Runtime.evaluate` calls — opening one CDP session
 /// per call rather than per pump tick saves ~5 ms per push.
-pub async fn install_audio_bridge(
+pub async fn install_audio_bridge<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    request_id: &str,
     meet_url: &str,
     frame_bus_port: u16,
 ) -> Result<(CdpConn, String), String> {
-    let (mut cdp, session) = wait_for_meet_target(meet_url).await?;
+    let (mut cdp, session) = wait_for_meet_target(app, request_id, meet_url).await?;
     log::info!(
         "[meet-audio] inject attached session={} meet_url_chars={}",
         session,
@@ -118,7 +120,11 @@ pub async fn install_audio_bridge(
     // rationale. Meet's first getUserMedia call only fires after the
     // user clicks "Ask to join" (multiple seconds), so a post-reload
     // Runtime.evaluate lands well before it's needed.
-    crate::meet_video::inject::spawn_diagnostics_poller(meet_url.to_string());
+    crate::meet_video::inject::spawn_diagnostics_poller(
+        app.clone(),
+        request_id.to_string(),
+        meet_url.to_string(),
+    );
     if let Err(err) = crate::meet_video::inject::install_camera_bridge_post_reload(
         &mut cdp,
         &session,
@@ -134,11 +140,23 @@ pub async fn install_audio_bridge(
     Ok((cdp, session))
 }
 
-async fn wait_for_meet_target(meet_url: &str) -> Result<(CdpConn, String), String> {
+async fn wait_for_meet_target<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    request_id: &str,
+    meet_url: &str,
+) -> Result<(CdpConn, String), String> {
+    let label = crate::meet_call::window_label_for(request_id);
     let deadline = tokio::time::Instant::now() + TARGET_DISCOVERY_BUDGET;
     let mut last_err = String::new();
     while tokio::time::Instant::now() < deadline {
-        match cdp::connect_and_attach_matching(|t| t.url.starts_with(meet_url)).await {
+        let meet_url_owned = meet_url.to_string();
+        let pred =
+            move |t: &crate::cdp::target::CdpTarget| -> bool { t.url.starts_with(&meet_url_owned) };
+        match cdp::target::connect_and_attach_matching_in_process_by_label::<R, _>(
+            app, &label, pred,
+        )
+        .await
+        {
             Ok(pair) => return Ok(pair),
             Err(err) => {
                 last_err = err;

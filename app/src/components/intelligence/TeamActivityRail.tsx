@@ -13,6 +13,9 @@
  * narrow widths (handled by the parent tab's responsive grid), so it is always
  * visible on a wide Intelligence pane and stacks gracefully when cramped.
  */
+import { useState } from 'react';
+import { LuSend } from 'react-icons/lu';
+
 import { useT } from '../../lib/i18n/I18nContext';
 import type { AgentTeamMember, TeamMessage } from '../../services/api/agentTeamApi';
 import { memberColor } from './memberColors';
@@ -20,11 +23,37 @@ import { memberColor } from './memberColors';
 interface TeamActivityRailProps {
   messages: TeamMessage[];
   members: AgentTeamMember[];
+  /**
+   * When provided, renders a composer footer so the user (as the lead) can
+   * address a named teammate, or the whole team when `toMemberId` is `null`.
+   */
+  onSend?: (toMemberId: string | null, content: string) => void | Promise<void>;
+  /** True while a send is in flight (disables the composer). */
+  sending?: boolean;
 }
 
-export function TeamActivityRail({ messages, members }: TeamActivityRailProps) {
+export function TeamActivityRail({ messages, members, onSend, sending }: TeamActivityRailProps) {
   const { t } = useT();
   const memberById = new Map(members.map(m => [m.id, m]));
+
+  const [draft, setDraft] = useState('');
+  const [recipient, setRecipient] = useState<string>('');
+
+  const submit = () => {
+    const content = draft.trim();
+    if (!content || sending || !onSend) return;
+    // Clear the draft only on a resolved send; on rejection keep the unsent text
+    // so the user can retry. The empty .catch() handles the rejection (the parent
+    // surfaces the error via its own notice state) and prevents an unhandled
+    // promise rejection from the now-throwing onSend.
+    void Promise.resolve(onSend(recipient === '' ? null : recipient, content))
+      .then(() => {
+        setDraft('');
+      })
+      .catch(() => {
+        /* send failed — draft retained; error surfaced by the parent */
+      });
+  };
 
   const nameFor = (id: string | null): string => {
     if (!id) return t('intelligence.teams.activity.toTeam');
@@ -70,6 +99,48 @@ export function TeamActivityRail({ messages, members }: TeamActivityRailProps) {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {onSend && (
+        <div className="mt-3 border-t border-stone-100 pt-2 dark:border-neutral-800">
+          <div className="flex items-center gap-1.5">
+            <select
+              value={recipient}
+              onChange={e => setRecipient(e.target.value)}
+              aria-label={t('intelligence.teams.composer.recipient')}
+              className="max-w-[40%] flex-none rounded-md border border-stone-200 bg-white px-1.5 py-1 text-[11px] text-stone-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200">
+              <option value="">{t('intelligence.teams.composer.toTeam')}</option>
+              {members.map(m => (
+                <option key={m.id} value={m.id}>
+                  {m.name}
+                </option>
+              ))}
+            </select>
+            <input
+              type="text"
+              value={draft}
+              disabled={sending}
+              onChange={e => setDraft(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  submit();
+                }
+              }}
+              placeholder={t('intelligence.teams.composer.placeholder')}
+              className="min-w-0 flex-1 rounded-md border border-stone-200 px-2 py-1 text-[11px] text-stone-700 placeholder:text-stone-400 disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
+            />
+            <button
+              type="button"
+              disabled={sending || draft.trim() === ''}
+              onClick={submit}
+              aria-label={t('intelligence.teams.composer.send')}
+              title={t('intelligence.teams.composer.send')}
+              className="inline-flex h-6 w-6 flex-none items-center justify-center rounded-md bg-ocean-500 text-white hover:bg-ocean-600 disabled:opacity-40">
+              <LuSend className="h-3 w-3" />
+            </button>
+          </div>
         </div>
       )}
     </aside>

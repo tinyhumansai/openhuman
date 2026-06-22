@@ -83,6 +83,25 @@ describe('WebviewHost — issue #1233 loading UX', () => {
     expect(screen.queryByTestId(`webview-loading-${ACCOUNT_ID}`)).not.toBeInTheDocument();
   });
 
+  // Issue #3759: the loading/timeout copy must SUBSTITUTE the provider name
+  // into the `{providerName}` slot, not concatenate it — otherwise the raw
+  // placeholder token leaks to screen ("Loading {providerName}... Slack...").
+  it('substitutes the provider name into the loading copy (issue #3759)', () => {
+    seedAccount('loading');
+    renderHost();
+    const placeholder = screen.getByTestId(`webview-placeholder-${ACCOUNT_ID}`);
+    expect(placeholder).toHaveTextContent('Loading Slack...');
+    expect(placeholder.textContent).not.toContain('{providerName}');
+  });
+
+  it('substitutes the provider name into the timeout copy (issue #3759)', () => {
+    seedAccount('timeout');
+    renderHost();
+    const timeout = screen.getByTestId(`webview-timeout-${ACCOUNT_ID}`);
+    expect(timeout).toHaveTextContent('Slack is taking longer than expected.');
+    expect(timeout.textContent).not.toContain('{providerName}');
+  });
+
   it('renders the phase hint after 5s of loading and escalates after 10s', () => {
     seedAccount('loading');
     renderHost();

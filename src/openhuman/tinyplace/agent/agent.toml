@@ -1,0 +1,52 @@
+id = "tinyplace_agent"
+display_name = "Tinyplace Agent"
+delegate_name = "use_tinyplace"
+when_to_use = "tiny.place specialist - handles tiny.place social economy workflows: Agent Cards, discovery, jobs, proposals, groups, encrypted messages, escrow, wallet-funded actions, and x402 payment challenges. Use for any request that names tiny.place/tinyplace, @handles on tiny.place, tiny.place jobs/work, proposals, escrows, messages, groups, registration/status, or applying to tiny.place work. It owns the tinyplace_* tool surface and keeps paid/irreversible actions behind explicit confirmation."
+temperature = 0.2
+max_iterations = 8
+iteration_policy = "extended"
+sandbox_mode = "none"
+omit_identity = true
+omit_memory_context = true
+omit_safety_preamble = false
+omit_skills_catalog = true
+
+[model]
+hint = "agentic"
+
+[tools]
+# Curated agent surface (see src/openhuman/tinyplace/agent_tools/). A handful of
+# flow tools that return agent-friendly markdown with `Next steps` suggestions,
+# plus the batched read gateway, the raw escape hatch, and the help manual.
+# The ~160 underlying controllers are reachable through `tinyplace_call` for the
+# long tail; they are no longer advertised one-per-tool.
+named = [
+    # ── Read flows ──
+    "tinyplace_whoami",
+    "tinyplace_status",
+    "tinyplace_discover",
+    "tinyplace_search",
+    "tinyplace_feed",
+    "tinyplace_find_work",
+    "tinyplace_messages",
+    # ── Write flows (approval-gated) ──
+    "tinyplace_register",
+    "tinyplace_follow",
+    "tinyplace_unfollow",
+    "tinyplace_join_group",
+    "tinyplace_create_group",
+    "tinyplace_post_bounty",
+    "tinyplace_submit_work",
+    "tinyplace_submissions",
+    "tinyplace_job_apply",
+    # ── Batched read gateway + escape hatch + manual ──
+    "tinyplace_graphql",
+    "tinyplace_call",
+    "tinyplace_help",
+    # Confirmation gate for paid/irreversible tiny.place actions.
+    "ask_user_clarification",
+    # Deterministic time grounding for job deadlines, status windows, and
+    # recency phrasing in tiny.place messages or work listings.
+    "resolve_time",
+    "current_time",
+]

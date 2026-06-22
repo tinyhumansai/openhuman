@@ -14,6 +14,8 @@ use regex::Regex;
 /// information is redacted before being sent to the server. After setup, it
 /// delegates execution to the core library based on CLI arguments.
 fn main() {
+    restore_default_sigpipe();
+
     // Load `.env` before `sentry::init` so a DSN defined only in the dotenv
     // file is visible to the Sentry client at startup. `dotenvy::dotenv()` is
     // a no-op for variables already present in the process environment, and
@@ -59,6 +61,11 @@ fn main() {
             if openhuman_core::core::observability::is_transient_provider_http_failure(&event) {
                 return None;
             }
+            if openhuman_core::core::observability::is_all_transient_provider_exhaustion_event(
+                &event,
+            ) {
+                return None;
+            }
             // Defense-in-depth: drop managed-backend `errorCode` events (#870)
             // the backend owns (F2/F4) — primary suppression lives in
             // `api_error` / the streaming gates and the `web_channel`
@@ -82,6 +89,14 @@ fn main() {
             // future non_2xx/status=400 event that carries the same tight body
             // phrases.
             if openhuman_core::core::observability::is_budget_event(&event) {
+                return None;
+            }
+            // Defense-in-depth for insufficient-credits 402s. The native_chat
+            // emit site demotes them, but the compatible provider reports the
+            // same out-of-balance 402 from chat_with_system / chat_with_history
+            // / the streaming gates / api_error too; this is the single net
+            // that catches every path (TAURI-RUST-C62).
+            if openhuman_core::core::observability::is_insufficient_credits_event(&event) {
                 return None;
             }
             // Defense-in-depth: drop max-tool-iterations cap events that
@@ -179,6 +194,19 @@ fn main() {
         std::process::exit(1);
     }
 }
+
+#[cfg(unix)]
+fn restore_default_sigpipe() {
+    // Rust ignores SIGPIPE at startup. That makes writes to a closed pipe
+    // return EPIPE, which the print macros turn into a panic. CLI tools should
+    // instead terminate quietly when a downstream reader such as `head` exits.
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+}
+
+#[cfg(not(unix))]
+fn restore_default_sigpipe() {}
 
 // ---------------------------------------------------------------------------
 // Release / environment resolution for Sentry

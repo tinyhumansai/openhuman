@@ -158,6 +158,20 @@ pub struct ChatRequest<'a> {
     /// implementation ignore the sender and return only the aggregated
     /// response.
     pub stream: Option<&'a tokio::sync::mpsc::Sender<ProviderDelta>>,
+    /// Optional upper bound on output tokens to request from the provider
+    /// (`max_tokens` on the OpenAI-compatible wire).
+    ///
+    /// Left `None` for open-ended generation (orchestrator, agent turns)
+    /// where the model should use its full budget. Set to a small concrete
+    /// value by callers whose output is bounded by construction — notably
+    /// memory extraction, whose response is a tiny structured-JSON object.
+    /// Beyond capping wasted generation, this stops credit-metered providers
+    /// (e.g. OpenRouter) from reserving the model's *entire* output window
+    /// during their pre-flight balance check: an unset `max_tokens` makes
+    /// OpenRouter price the request against the full 64k+ window and 402 a
+    /// low-balance BYO user who could easily afford the few thousand tokens
+    /// an extraction actually needs (TAURI-RUST-C62).
+    pub max_tokens: Option<u32>,
 }
 
 /// A tool result to feed back to the LLM.
@@ -410,12 +424,30 @@ pub trait Provider: Send + Sync {
     }
 
     /// Structured chat API for agent loop callers.
+    ///
+    /// **`max_tokens` caveat:** the default implementation delegates to
+    /// [`Self::chat_with_history`], whose signature carries no output-token
+    /// budget, so a `request.max_tokens` set by the caller is **not** honored
+    /// on this path. Providers that need to enforce an output cap (e.g. the
+    /// OpenAI-compatible provider, which threads it onto the wire for
+    /// credit-metered backends — TAURI-RUST-C62) override `chat()` directly.
+    /// The drop is logged below rather than silently swallowed; it is not a
+    /// hard error because no production caller both sets `max_tokens` and
+    /// routes through a default-`chat()` provider (agent turns pass `None`;
+    /// memory extraction uses the compatible provider).
     async fn chat(
         &self,
         request: ChatRequest<'_>,
         model: &str,
         temperature: f64,
     ) -> anyhow::Result<ChatResponse> {
+        if let Some(cap) = request.max_tokens {
+            log::debug!(
+                "[provider] default chat() for model={model} ignores max_tokens={cap} — \
+                 this provider does not override chat() and chat_with_history() carries no \
+                 output budget; the cap will not reach the wire"
+            );
+        }
         let log_prompts = should_log_prompts();
         // If tools are provided but provider doesn't support native tools,
         // inject tool instructions into system prompt as fallback.
@@ -504,6 +536,53 @@ pub trait Provider: Send + Sync {
     /// TAURI-RUST-6V0). `None` means "unknown — skip pre-dispatch trimming".
     async fn effective_context_window(&self, model: &str) -> Option<u64> {
         crate::openhuman::inference::context_window_for_model(model)
+    }
+
+    /// Whether this provider talks to a **local** runtime (LM Studio, Ollama,
+    /// llama.cpp, vLLM, …) rather than a cloud API. Local runtimes enforce the
+    /// model's *runtime-loaded* `n_ctx` and can be loaded with a window smaller
+    /// than the assistant's un-evictable system prefix — the
+    /// `n_keep >= n_ctx` overflow (#3550 / TAURI-RUST-6V0). The agent engine
+    /// uses this to gate its pre-dispatch un-evictable-prefix guard, which
+    /// surfaces an actionable "reload with a larger context length" error only
+    /// for local providers (cloud windows are large enough that the guard would
+    /// only ever fire on a genuine overflow the user can't remedy by reloading).
+    /// Defaults to `false`.
+    fn is_local_provider(&self) -> bool {
+        false
+    }
+
+    /// Like [`Provider::is_local_provider`] but resolved for the specific
+    /// `model` about to be dispatched. A router whose *default* provider is
+    /// cloud may still route a given model to a local provider; the engine's
+    /// pre-dispatch un-evictable-prefix guard keys off this so the actionable
+    /// "reload with a larger context length" error fires for that routed local
+    /// model instead of letting the opaque local `400 (n_keep >= n_ctx)` reach
+    /// the user (#3550 / TAURI-RUST-6V0; Codex/CodeRabbit review on PR #3771).
+    ///
+    /// Defaults to the model-blind [`Provider::is_local_provider`]; only a
+    /// routing wrapper needs to override it.
+    fn is_local_provider_for_model(&self, _model: &str) -> bool {
+        self.is_local_provider()
+    }
+
+    /// The model's **authoritative runtime-loaded** context window, when the
+    /// local runtime actually reports it (e.g. LM Studio's native
+    /// `/api/v0/models` `loaded_context_length`). Returns `None` whenever the
+    /// window is unknown or merely *guessed* — a cloud provider, a local
+    /// runtime that exposes no loaded window (llama.cpp / vLLM), or a
+    /// profile-default / conservative-floor fallback.
+    ///
+    /// Distinct from [`Provider::effective_context_window`], which always
+    /// yields a value for local providers (falling back to a guess) so
+    /// pre-dispatch *trimming* still engages. Trimming may safely run against a
+    /// guess (over-trim is harmless), but the hard pre-dispatch abort must only
+    /// fire on an authoritative window — aborting with "reload with a larger
+    /// context length" against a guessed 4096 floor would wrongly reject a
+    /// request that the real (e.g. 32k) loaded window would have accepted
+    /// (Codex P1 review on PR #3771). Defaults to `None`.
+    async fn loaded_context_window(&self, _model: &str) -> Option<u64> {
+        None
     }
 
     /// Warm up the HTTP connection pool (TLS handshake, DNS, HTTP/2 setup).

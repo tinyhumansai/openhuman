@@ -14,7 +14,12 @@ import { resetUserScopedState } from './resetActions';
 
 const turnStateLog = debug('chatRuntime.turnState');
 
-export type ToolTimelineEntryStatus = 'running' | 'success' | 'error' | 'awaiting_user';
+export type ToolTimelineEntryStatus =
+  | 'running'
+  | 'success'
+  | 'error'
+  | 'awaiting_user'
+  | 'cancelled';
 
 export interface InferenceStatus {
   phase: 'thinking' | 'tool_use' | 'subagent';
@@ -400,8 +405,9 @@ function timelineStatusFromRun(status: AgentRun['status']): ToolTimelineEntrySta
   switch (status) {
     case 'completed':
       return 'success';
-    case 'failed':
     case 'cancelled':
+      return 'cancelled';
+    case 'failed':
     case 'interrupted':
       return 'error';
     case 'awaiting_user':
@@ -513,6 +519,19 @@ const chatRuntimeSlice = createSlice({
     },
     clearToolTimelineForThread: (state, action: PayloadAction<{ threadId: string }>) => {
       delete state.toolTimelineByThread[action.payload.threadId];
+    },
+    /**
+     * Optimistically mark a detached background sub-agent as cancelled after the
+     * user confirms a cancel via `openhuman.subagent_cancel`. The aborted run
+     * emits no terminal socket event, so without this the row would keep showing
+     * "running" forever. Located by the subagent's stable `taskId`.
+     */
+    markSubagentCancelled: (state, action: PayloadAction<{ threadId: string; taskId: string }>) => {
+      const { threadId, taskId } = action.payload;
+      const entry = state.toolTimelineByThread[threadId]?.find(e => e.subagent?.taskId === taskId);
+      if (!entry) return;
+      entry.status = 'cancelled';
+      if (entry.subagent) entry.subagent.status = 'cancelled';
     },
     /**
      * Append a streamed `subagent_text_delta` / `subagent_thinking_delta`
@@ -909,6 +928,7 @@ export const {
   clearParallelRequest,
   setToolTimelineForThread,
   clearToolTimelineForThread,
+  markSubagentCancelled,
   appendSubagentStreamDelta,
   recordSubagentTranscriptTool,
   resolveSubagentTranscriptTool,

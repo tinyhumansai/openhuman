@@ -272,9 +272,8 @@ struct LoginTokenConsumeEnvelope {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct LoginTokenConsumeData {
-    jwt_token: String,
+    jwt: String,
 }
 
 /// Decrypted OAuth token payload for handing off tokens to a local service or skill.
@@ -423,17 +422,21 @@ impl BackendOAuthClient {
         let token = login_token.trim();
         anyhow::ensure!(!token.is_empty(), "login token is required");
 
+        // Backend serves `POST /auth/login-token/consume` with the token in a JSON
+        // body `{ token, audience? }` and returns `{ success, data: { jwt } }`
+        // (see backend `routes/auth.ts`). The legacy
+        // `telegram/login-tokens/{token}/consume` path-param route was removed, so
+        // the old call 404'd and Telegram/OAuth-token login could never complete
+        // (WIRING_GAPS_AUDIT C1/C2).
         let url = self
             .base
-            .join(&format!(
-                "telegram/login-tokens/{}/consume",
-                urlencoding::encode(token)
-            ))
+            .join("auth/login-token/consume")
             .context("build login-token consume URL")?;
 
         let resp = self
             .client
             .post(url)
+            .json(&serde_json::json!({ "token": token }))
             .send()
             .await
             .context("consume login token")?;
@@ -450,11 +453,8 @@ impl BackendOAuthClient {
             anyhow::bail!("consume login token unsuccessful: {text}");
         }
 
-        let jwt = env.data.jwt_token.trim().to_string();
-        anyhow::ensure!(
-            !jwt.is_empty(),
-            "consume login token response missing jwtToken"
-        );
+        let jwt = env.data.jwt.trim().to_string();
+        anyhow::ensure!(!jwt.is_empty(), "consume login token response missing jwt");
         Ok(jwt)
     }
 

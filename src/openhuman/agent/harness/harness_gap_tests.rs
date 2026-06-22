@@ -475,6 +475,114 @@ fn parse_tool_calls_invoke_tag_with_json_body() {
     );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Item 3b — parse_tool_calls: Claude-native <invoke name="…"> attribute form
+//           with nested <parameter name="…"> children (issue #3493).
+//           Claude-family models ignore the injected <tool_call>{json} template
+//           and emit their trained syntax; the parser must recover it instead of
+//           leaking the raw markup as assistant text.
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn parse_tool_calls_invoke_attribute_form_single_param() {
+    use crate::openhuman::agent::harness::parse::parse_tool_calls;
+
+    let input =
+        "Sure.\n<invoke name=\"echo\">\n<parameter name=\"value\">hi</parameter>\n</invoke>\ndone";
+    let (text, calls) = parse_tool_calls(input);
+
+    assert_eq!(
+        calls.len(),
+        1,
+        "attribute-form <invoke> should parse one call"
+    );
+    assert_eq!(calls[0].name, "echo");
+    assert_eq!(calls[0].arguments, serde_json::json!({"value": "hi"}));
+    // Surrounding prose preserved; raw <invoke> markup must not leak.
+    assert!(text.contains("Sure."), "text before tag preserved");
+    assert!(text.contains("done"), "text after tag preserved");
+    assert!(
+        !text.contains("<invoke"),
+        "raw <invoke> markup must not surface in assistant text"
+    );
+    assert!(
+        !text.contains("<parameter"),
+        "raw <parameter> markup must not surface in assistant text"
+    );
+}
+
+#[test]
+fn parse_tool_calls_invoke_attribute_form_multiple_params_scalar_policy() {
+    use crate::openhuman::agent::harness::parse::parse_tool_calls;
+
+    // Multiple <parameter> children. Scalar policy: a value that parses as JSON
+    // (number, bool) becomes that JSON type; anything else stays a string. A
+    // parameter with an empty name is skipped (it cannot key an argument).
+    let input = concat!(
+        "<invoke name=\"search\">\n",
+        "<parameter name=\"query\">rust parsers</parameter>\n",
+        "<parameter name=\"limit\">5</parameter>\n",
+        "<parameter name=\"fuzzy\">true</parameter>\n",
+        "<parameter name=\"\">ignored</parameter>\n",
+        "</invoke>"
+    );
+    let (_text, calls) = parse_tool_calls(input);
+
+    assert_eq!(calls.len(), 1, "should parse one call");
+    assert_eq!(calls[0].name, "search");
+    assert_eq!(
+        calls[0].arguments,
+        serde_json::json!({"query": "rust parsers", "limit": 5, "fuzzy": true})
+    );
+}
+
+#[test]
+fn parse_tool_calls_invoke_attribute_form_missing_close_tag_is_text() {
+    use crate::openhuman::agent::harness::parse::parse_tool_calls;
+
+    // No closing </invoke>: nothing to dispatch. The block is left as text
+    // rather than silently dropped.
+    let input = "before\n<invoke name=\"echo\">\n<parameter name=\"v\">hi</parameter>";
+    let (text, calls) = parse_tool_calls(input);
+
+    assert_eq!(calls.len(), 0, "unterminated <invoke> yields no calls");
+    assert!(text.contains("before"), "preceding text preserved");
+    assert!(
+        text.contains("<invoke"),
+        "unterminated block left as text, not dropped"
+    );
+}
+
+#[test]
+fn parse_tool_calls_invoke_attribute_form_missing_name_is_text() {
+    use crate::openhuman::agent::harness::parse::parse_tool_calls;
+
+    // Attribute form without a `name` attribute cannot name a tool → no call.
+    let input = "<invoke foo=\"bar\">\n<parameter name=\"v\">hi</parameter>\n</invoke>";
+    let (_text, calls) = parse_tool_calls(input);
+
+    assert_eq!(calls.len(), 0, "missing name attribute yields no calls");
+}
+
+#[test]
+fn parse_tool_calls_mixed_tool_call_json_and_invoke_attribute() {
+    use crate::openhuman::agent::harness::parse::parse_tool_calls;
+
+    // A canonical <tool_call>{json} block and a Claude-native attribute-form
+    // <invoke> block in the same response are both recovered, earliest first.
+    let input = concat!(
+        "<tool_call>{\"name\":\"first\",\"arguments\":{\"a\":1}}</tool_call>\n",
+        "<invoke name=\"second\">\n<parameter name=\"b\">two</parameter>\n</invoke>"
+    );
+    let (_text, calls) = parse_tool_calls(input);
+
+    assert_eq!(calls.len(), 2, "both tag forms parsed");
+    assert_eq!(calls[0].name, "first");
+    assert_eq!(calls[0].arguments, serde_json::json!({"a": 1}));
+    assert_eq!(calls[1].name, "second");
+    assert_eq!(calls[1].arguments, serde_json::json!({"b": "two"}));
+}
+
 #[test]
 fn parse_tool_calls_markdown_fence_yaml_like_json_body() {
     use crate::openhuman::agent::harness::parse::parse_tool_calls;
@@ -511,12 +619,41 @@ fn tool_timeout_parse_default_and_boundaries() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Item 8 — DateTimeSection: ISO 8601 timestamp + IANA timezone token.
-//           Extended coverage beyond the existing mod_tests.rs test.
+// Item 8 — Current-time grounding (#3602). The volatile timestamp now rides the
+//           per-turn user message via `current_datetime_line` (so a long-lived
+//           session's frozen prompt prefix can't go stale); `DateTimeSection`
+//           carries only the static grounding *rule*. Pin both halves.
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn datetime_section_output_matches_iso8601_date_and_utc_offset_pattern() {
+fn current_datetime_line_matches_iso8601_date_and_utc_offset_pattern() {
+    // The per-turn stamp is the one carrying the concrete clock — assert its
+    // ISO-8601 date, UTC offset, and IANA zone (or `UTC` fallback).
+    let payload = crate::openhuman::agent::prompts::current_datetime_line();
+
+    // Parse the concrete `YYYY-MM-DD HH:MM:SS` prefix rather than counting
+    // loose digits, so a malformed layout can't slip through.
+    let rest = payload
+        .strip_prefix("Current Date & Time: ")
+        .expect("stamp must start with the canonical prefix");
+    let dt = rest
+        .get(0..19)
+        .expect("stamp must include YYYY-MM-DD HH:MM:SS");
+    chrono::NaiveDateTime::parse_from_str(dt, "%Y-%m-%d %H:%M:%S")
+        .expect("timestamp must match YYYY-MM-DD HH:MM:SS");
+    assert!(
+        payload.contains("UTC"),
+        "stamp must contain UTC offset marker: {payload}"
+    );
+    let has_iana = payload.contains('/') || payload.contains(" UTC ");
+    assert!(
+        has_iana,
+        "stamp must contain an IANA zone (slashed) or UTC fallback: {payload}"
+    );
+}
+
+#[test]
+fn datetime_section_is_static_grounding_rule_not_a_volatile_timestamp() {
     use crate::openhuman::agent::prompts::{DateTimeSection, PromptContext, PromptSection};
     use std::collections::HashSet;
     use std::path::Path;
@@ -552,23 +689,21 @@ fn datetime_section_output_matches_iso8601_date_and_utc_offset_pattern() {
         .strip_prefix("## Current Date & Time\n\n")
         .expect("DateTimeSection must start with the heading");
 
-    // Must contain a date token matching YYYY-MM-DD.
-    let has_date = payload.chars().filter(|c| c.is_ascii_digit()).count() >= 8;
+    // The section is a static rule: it must carry the greeting-grounding
+    // guidance and point at the per-turn line, but NOT bake in a date — a
+    // concrete YYYY-MM-DD here would re-freeze the volatile clock into the
+    // cached prefix (the #3602 regression this guards against).
     assert!(
-        has_date,
-        "payload must contain enough digits for a date: {payload}"
+        payload.contains("match the actual local hour") && payload.contains("Current Date & Time:"),
+        "section must carry the grounding rule pointing at the per-turn stamp: {payload}"
     );
-
-    // Must include a UTC offset in the form UTC+HH:MM or UTC-HH:MM or UTC+00:00.
-    assert!(
-        payload.contains("UTC"),
-        "payload must contain UTC offset marker: {payload}"
-    );
-
-    // The IANA timezone string is either a slashed zone or the literal "UTC" fallback.
-    let has_iana = payload.contains('/') || payload.contains(" UTC ");
-    assert!(
-        has_iana,
-        "payload must contain an IANA zone (slashed) or UTC fallback: {payload}"
+    // Byte-stability is the real no-volatile-timestamp invariant (a static
+    // literal like "11 PM" in the rule is fine; a baked `Local::now()` is
+    // not): two renders a moment apart must be identical, or the cached
+    // prefix would churn every second.
+    let again = DateTimeSection.build(&ctx).unwrap();
+    assert_eq!(
+        rendered, again,
+        "datetime section must be byte-stable (no volatile timestamp baked in)"
     );
 }

@@ -188,6 +188,57 @@ fn apply_env_overrides_reasoning_enabled_parses_truthy_falsy() {
 }
 
 #[test]
+fn apply_env_overrides_shell_hide_window_parses_truthy_falsy() {
+    let _g = env_lock();
+    clear_env(&["OPENHUMAN_SHELL_HIDE_WINDOW", "SHELL_HIDE_WINDOW"]);
+    let mut cfg = Config::default();
+    assert!(!cfg.shell.hide_window, "default should be off");
+
+    unsafe {
+        std::env::set_var("OPENHUMAN_SHELL_HIDE_WINDOW", "on");
+    }
+    cfg.apply_env_overrides();
+    assert!(cfg.shell.hide_window);
+
+    unsafe {
+        std::env::set_var("OPENHUMAN_SHELL_HIDE_WINDOW", "false");
+    }
+    cfg.apply_env_overrides();
+    assert!(!cfg.shell.hide_window);
+
+    // The unprefixed alias `SHELL_HIDE_WINDOW` is honored too.
+    unsafe {
+        std::env::remove_var("OPENHUMAN_SHELL_HIDE_WINDOW");
+        std::env::set_var("SHELL_HIDE_WINDOW", "on");
+    }
+    cfg.apply_env_overrides();
+    assert!(cfg.shell.hide_window, "alias should set hide_window");
+
+    // The namespaced var takes precedence over the alias when both are set.
+    unsafe {
+        std::env::set_var("OPENHUMAN_SHELL_HIDE_WINDOW", "off");
+        std::env::set_var("SHELL_HIDE_WINDOW", "on");
+    }
+    cfg.apply_env_overrides();
+    assert!(
+        !cfg.shell.hide_window,
+        "OPENHUMAN_-prefixed var should win over the alias"
+    );
+
+    // Unknown value leaves the field unchanged.
+    cfg.shell.hide_window = true;
+    unsafe {
+        std::env::set_var("OPENHUMAN_SHELL_HIDE_WINDOW", "maybe");
+        std::env::remove_var("SHELL_HIDE_WINDOW");
+    }
+    cfg.apply_env_overrides();
+    assert!(cfg.shell.hide_window);
+    unsafe {
+        std::env::remove_var("OPENHUMAN_SHELL_HIDE_WINDOW");
+    }
+}
+
+#[test]
 fn apply_env_overrides_web_search_limits_only() {
     let _g = env_lock();
     clear_env(&[
@@ -985,6 +1036,30 @@ fn env_overlay_context_tool_result_budget_env_suppresses_legacy_migration() {
 }
 
 #[test]
+fn env_overlay_compaction_default_on_and_kill_switch() {
+    // Default is on.
+    assert!(Config::default().context.compaction_enabled);
+
+    // `OPENHUMAN_COMPACTION=0` disables it.
+    let mut cfg = Config::default();
+    cfg.apply_env_overlay_with(&HashMapEnv::new().with("OPENHUMAN_COMPACTION", "0"));
+    assert!(!cfg.context.compaction_enabled);
+
+    // Truthy re-enables; the namespaced alias works too.
+    let mut cfg = Config::default();
+    cfg.context.compaction_enabled = false;
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new().with("OPENHUMAN_CONTEXT_COMPACTION_ENABLED", "on"),
+    );
+    assert!(cfg.context.compaction_enabled);
+
+    // Garbage is ignored (leaves the prior value untouched).
+    let mut cfg = Config::default();
+    cfg.apply_env_overlay_with(&HashMapEnv::new().with("OPENHUMAN_COMPACTION", "maybe"));
+    assert!(cfg.context.compaction_enabled);
+}
+
+#[test]
 fn env_overlay_context_tool_result_budget_legacy_migration_when_env_absent() {
     // Env absent, context at default, agent customised → agent value copies forward.
     let default_budget = crate::openhuman::context::DEFAULT_TOOL_RESULT_BUDGET_BYTES;
@@ -1743,6 +1818,7 @@ allowed_users = ["@admin"]
     };
     cfg.channels_config.telegram = Some(TelegramConfig {
         bot_token: known_secret.to_string(),
+        chat_id: None,
         allowed_users: vec!["@admin".to_string()],
         stream_mode: StreamMode::Off,
         draft_update_interval_ms: 1000,

@@ -50,6 +50,7 @@ pub mod ops;
 pub mod periodic;
 pub mod providers;
 pub mod schemas;
+pub mod task_window;
 pub mod tools;
 pub mod trigger_history;
 pub mod types;

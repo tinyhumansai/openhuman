@@ -128,6 +128,12 @@ export interface MeetCallRecord {
   listened_seconds: number;
   spoken_seconds: number;
   turn_count: number;
+  /**
+   * Distinct human participant display names mined from the transcript
+   * (backend-meet flow). Older records and local meet-agent calls omit this,
+   * so it is optional and defaults to an empty list at the UI.
+   */
+  participants?: string[];
 }
 
 interface CoreListCallsResponse {

@@ -16,6 +16,7 @@ export interface RewardsSnapshot {
   discord: {
     linked: boolean;
     discordId: string | null;
+    username: string | null;
     inviteUrl: string | null;
     membershipStatus: RewardsDiscordMembershipStatus;
   };

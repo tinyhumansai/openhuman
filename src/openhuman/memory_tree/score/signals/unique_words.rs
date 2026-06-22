@@ -20,7 +20,10 @@ pub const MIN_TOTAL_WORDS: usize = 5;
 /// - Linear in between
 pub fn score(text: &str) -> f32 {
     let mut total: usize = 0;
-    let mut uniq: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    // Only `uniq.len()` is ever read — never the iteration order — so a hash set
+    // gives the identical type-token ratio with O(1) inserts instead of the
+    // ordered set's O(log n) String comparisons per word.
+    let mut uniq: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for raw in text.split_whitespace() {
         let w: String = raw

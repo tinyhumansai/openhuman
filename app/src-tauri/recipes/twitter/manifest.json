@@ -1,0 +1,7 @@
+{
+  "id": "twitter",
+  "name": "X (Twitter)",
+  "version": "0.1.0",
+  "serviceURL": "https://x.com/messages/",
+  "icon": "icon.svg"
+}

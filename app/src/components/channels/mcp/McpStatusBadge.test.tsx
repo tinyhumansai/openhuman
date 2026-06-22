@@ -13,6 +13,7 @@ describe('McpStatusBadge', () => {
     ['connected', 'Connected'],
     ['connecting', 'Connecting'],
     ['disconnected', 'Disconnected'],
+    ['unauthorized', 'Sign in needed'],
     ['error', 'Error'],
   ])('renders i18n label for status=%s', (status, expectedLabel) => {
     render(<McpStatusBadge status={status} />);

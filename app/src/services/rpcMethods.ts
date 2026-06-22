@@ -67,17 +67,16 @@ export const CORE_RPC_METHODS = {
 export type CoreRpcMethod = (typeof CORE_RPC_METHODS)[keyof typeof CORE_RPC_METHODS];
 
 export const LEGACY_METHOD_ALIASES: Record<string, CoreRpcMethod> = {
-  // Channels — older 0.53.x clients emitted dotted RPC names before the
-  // canonical `openhuman.channels_list` underscore form stabilized.
+  // #3565: old desktop clients used dotted namespace/function channel calls.
   'channels.list': CORE_RPC_METHODS.channelsList,
   // MCP clients — old method names that appeared in Sentry (CORE-RUST-DR/DS/DT/DV/DW).
   // See src/core/legacy_aliases.rs for the Rust-side mirror of this table.
   'mcp_clients.list': CORE_RPC_METHODS.mcpClientsInstalledList,
+  'openhuman.channels.list': CORE_RPC_METHODS.channelsList,
   'openhuman.mcp_clients_list': CORE_RPC_METHODS.mcpClientsInstalledList,
   'openhuman.mcp_list': CORE_RPC_METHODS.mcpClientsInstalledList,
   'openhuman.mcp_servers_list': CORE_RPC_METHODS.mcpClientsInstalledList,
   'openhuman.tool_registry_call': CORE_RPC_METHODS.mcpClientsToolCall,
-  'openhuman.channels.list': CORE_RPC_METHODS.channelsList,
   'openhuman.get_analytics_settings': CORE_RPC_METHODS.configGetAnalyticsSettings,
   'openhuman.get_composio_trigger_settings': CORE_RPC_METHODS.configGetComposioTriggerSettings,
   'openhuman.get_dashboard_settings': CORE_RPC_METHODS.configGetDashboardSettings,
@@ -119,6 +118,14 @@ export const LEGACY_METHOD_ALIASES: Record<string, CoreRpcMethod> = {
   'openhuman.providers_list_models': CORE_RPC_METHODS.inferenceListModels,
   'openhuman.inference_embed': CORE_RPC_METHODS.embeddingsEmbed,
   health_snapshot: CORE_RPC_METHODS.healthSnapshot,
+  // Dotted / bare health probes from older clients and SDK callers (#3566,
+  // Sentry CORE-2C). No distinct status/get handler exists — the snapshot
+  // already carries the health verdict — so all four alias to the snapshot.
+  // Keep in sync with src/core/legacy_aliases.rs (drift guard enforces it).
+  health: CORE_RPC_METHODS.healthSnapshot,
+  'health.get': CORE_RPC_METHODS.healthSnapshot,
+  'health.snapshot': CORE_RPC_METHODS.healthSnapshot,
+  'health.status': CORE_RPC_METHODS.healthSnapshot,
   // `openhuman.system_info` was used by older clients / SDK callers before the
   // method was namespaced as `openhuman.health_system_info`.
   // Sentry CORE-RUST-G0 — https://sentry.tinyhumans.ai/organizations/tinyhumans/issues/6340/

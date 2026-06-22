@@ -252,6 +252,13 @@ impl Channel for CapturingChannel {
         "capture"
     }
 
+    // External channel exposes a proactive delivery target so the proactive
+    // router resolves a recipient for it (#3794 — recipient-less proactive sends
+    // are skipped for channels that return `None`).
+    fn proactive_target(&self) -> Option<String> {
+        Some("capture".to_string())
+    }
+
     async fn send(&self, message: &SendMessage) -> Result<()> {
         self.sent
             .lock()
@@ -2207,7 +2214,9 @@ async fn proactive_subscriber_routes_web_and_active_external_channel_without_net
     let sent = capture.sent.lock().expect("capture lock").clone();
     assert_eq!(sent.len(), 1);
     assert_eq!(sent[0].content, "send through active external channel");
-    assert_eq!(sent[0].recipient, "");
+    // Recipient is now resolved from the channel's proactive_target (#3794),
+    // rather than the previously-empty recipient.
+    assert_eq!(sent[0].recipient, "capture");
 
     subscriber.set_active_channel(Some("web".into()));
     subscriber

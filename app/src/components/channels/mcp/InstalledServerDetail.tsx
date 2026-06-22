@@ -245,8 +245,21 @@ const InstalledServerDetail = ({
         </div>
       </div>
 
-      {/* Error */}
-      {(error || connStatus?.last_error) && (
+      {/* Auth required — a graceful, actionable notice rather than the raw HTTP
+          401 string. The core reports `unauthorized` (no raw error) for a 401;
+          the Connect button below opens the auth modal, which probes the server
+          and offers browser sign-in or a token field as appropriate (#3719). */}
+      {status === 'unauthorized' && (
+        <div className="rounded-lg border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-300">
+          {t('mcp.detail.authRequired')}
+        </div>
+      )}
+
+      {/* Error — a genuine (non-auth) connect failure. Suppressed entirely while
+          `unauthorized`: the amber notice above is the only message shown, so a
+          local action error (e.g. a reconfigure reconnect that re-hits the 401)
+          can't re-expose raw transport/auth text in this state (#3719). */}
+      {status !== 'unauthorized' && (error || connStatus?.last_error) && (
         <div className="rounded-lg border border-coral-200 dark:border-coral-500/30 bg-coral-50 dark:bg-coral-500/10 px-4 py-3 text-sm text-coral-700 dark:text-coral-300">
           {error ?? connStatus?.last_error}
         </div>
@@ -270,7 +283,11 @@ const InstalledServerDetail = ({
               disabled={busy || status === 'connecting'}
               onClick={handleConnect}
               className="rounded-lg bg-primary-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-600 disabled:opacity-50 transition-colors">
-              {status === 'connecting' ? t('mcp.detail.connecting') : t('mcp.detail.connect')}
+              {status === 'connecting'
+                ? t('mcp.detail.connecting')
+                : status === 'unauthorized'
+                  ? t('mcp.detail.authenticate')
+                  : t('mcp.detail.connect')}
             </button>
           ) : (
             <button

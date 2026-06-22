@@ -5,7 +5,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { handleDeepLinkUrls } from '../../utils/desktopDeepLinkListener';
 import WebCallbackPage from '../WebCallbackPage';
 
-vi.mock('../../utils/desktopDeepLinkListener', () => ({ handleDeepLinkUrls: vi.fn() }));
+vi.mock('../../utils/desktopDeepLinkListener', () => ({
+  handleDeepLinkUrls: vi.fn(),
+  registerAuthDeepLinkState: vi.fn((state?: string) => state ?? 'mock-state'),
+}));
 
 describe('WebCallbackPage', () => {
   afterEach(() => {
@@ -16,6 +19,7 @@ describe('WebCallbackPage', () => {
     return render(
       <MemoryRouter initialEntries={[initialEntry]}>
         <Routes>
+          <Route path="/auth" element={<WebCallbackPage callbackKind="auth" />} />
           <Route path="/callback/:kind" element={<WebCallbackPage />} />
           <Route path="/callback/:kind/:status" element={<WebCallbackPage />} />
         </Routes>
@@ -28,9 +32,22 @@ describe('WebCallbackPage', () => {
 
     expect(screen.getByText('Completing sign-in')).toBeInTheDocument();
     await waitFor(() => {
-      expect(handleDeepLinkUrls).toHaveBeenCalledWith([
-        'openhuman://auth?token=jwt-token&key=auth',
-      ]);
+      expect(handleDeepLinkUrls).toHaveBeenCalledWith(
+        ['openhuman://auth?token=jwt-token&key=auth'],
+        { requireStateNonce: false }
+      );
+    });
+  });
+
+  it('routes legacy /auth callbacks through the synthetic auth deep link handler', async () => {
+    renderRoute('/auth?token=jwt-token&key=auth');
+
+    expect(screen.getByText('Completing sign-in')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(handleDeepLinkUrls).toHaveBeenCalledWith(
+        ['openhuman://auth?token=jwt-token&key=auth'],
+        { requireStateNonce: false }
+      );
     });
   });
 
@@ -38,9 +55,10 @@ describe('WebCallbackPage', () => {
     renderRoute('/callback/oauth/success?provider=google&integrationId=int-1');
 
     await waitFor(() => {
-      expect(handleDeepLinkUrls).toHaveBeenCalledWith([
-        'openhuman://oauth/success?provider=google&integrationId=int-1',
-      ]);
+      expect(handleDeepLinkUrls).toHaveBeenCalledWith(
+        ['openhuman://oauth/success?provider=google&integrationId=int-1'],
+        { requireStateNonce: false }
+      );
     });
   });
 

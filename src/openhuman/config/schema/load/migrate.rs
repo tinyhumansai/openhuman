@@ -162,6 +162,7 @@ pub(crate) fn migrate_cloud_provider_slugs(config: &mut Config) {
     rewrite(&mut config.reasoning_provider);
     rewrite(&mut config.agentic_provider);
     rewrite(&mut config.coding_provider);
+    rewrite(&mut config.vision_provider);
     rewrite(&mut config.memory_provider);
     rewrite(&mut config.embeddings_provider);
     rewrite(&mut config.heartbeat_provider);

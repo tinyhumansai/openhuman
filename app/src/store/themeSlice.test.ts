@@ -15,9 +15,9 @@ describe('themeSlice', () => {
     expect(state.fontSize).toBe('medium');
   });
 
-  it('defaults assistant message rendering to bubbles', () => {
+  it('defaults assistant message rendering to plain text', () => {
     const state = themeReducer(undefined, { type: '@@INIT' });
-    expect(state.agentMessageViewMode).toBe('bubbles');
+    expect(state.agentMessageViewMode).toBe('text');
   });
 
   it('updates fontSize via setFontSize', () => {
@@ -37,7 +37,7 @@ describe('themeSlice', () => {
       mode: 'dark',
       tabBarLabels: 'always',
       fontSize: 'xlarge',
-      agentMessageViewMode: 'bubbles',
+      agentMessageViewMode: 'text',
       developerMode: false,
     });
   });

@@ -84,6 +84,91 @@ describe('splitAgentMessageIntoBubbles', () => {
     expect(splitAgentMessageIntoBubbles('___')).toEqual([]);
     expect(splitAgentMessageIntoBubbles('Before\n\n---\n\nAfter')).toEqual(['Before', 'After']);
   });
+
+  // Issue #3807: a heading and its body must never land in separate bubbles.
+  it('keeps an ATX heading together with its body in one bubble', () => {
+    expect(splitAgentMessageIntoBubbles('## 📅 Calendar\n\n- 9am standup')).toEqual([
+      '## 📅 Calendar\n\n- 9am standup',
+    ]);
+  });
+
+  it('keeps a bold-line heading together with its body in one bubble', () => {
+    expect(splitAgentMessageIntoBubbles('**Tasks**\n\n- Ship the PR')).toEqual([
+      '**Tasks**\n\n- Ship the PR',
+    ]);
+  });
+
+  it('renders a multi-section morning briefing as one bubble per section', () => {
+    const briefing = [
+      'Good morning! Here is what today looks like.',
+      '## 📅 Calendar',
+      '- 9:00 Standup\n- 14:00 Design review',
+      '## ✅ Tasks',
+      '- Finish the proposal (due today)',
+      '## 📧 Emails',
+      '2 unread threads from key contacts',
+    ].join('\n\n');
+
+    const bubbles = splitAgentMessageIntoBubbles(briefing);
+
+    expect(bubbles).toEqual([
+      'Good morning! Here is what today looks like.',
+      '## 📅 Calendar\n\n- 9:00 Standup\n- 14:00 Design review',
+      '## ✅ Tasks\n\n- Finish the proposal (due today)',
+      '## 📧 Emails\n\n2 unread threads from key contacts',
+    ]);
+
+    // No bubble is a heading with no body, and no body bubble lacks its heading.
+    for (const bubble of bubbles.slice(1)) {
+      const lines = bubble.split('\n').filter(line => line.trim().length > 0);
+      expect(lines.length).toBeGreaterThan(1);
+      expect(lines[0].startsWith('#')).toBe(true);
+    }
+  });
+
+  it('absorbs trailing closing lines into the final section bubble', () => {
+    const briefing = '## 📧 Emails\n\n2 unread threads\n\nHave a great day! ☀️';
+    expect(splitAgentMessageIntoBubbles(briefing)).toEqual([
+      '## 📧 Emails\n\n2 unread threads\n\nHave a great day! ☀️',
+    ]);
+  });
+
+  it('keeps a table out of the heading bubble so the table renderer still fires', () => {
+    // A table folded behind a heading would not sit at the bubble start and
+    // would render as raw pipe text, so it stays its own segment.
+    const content = '## 📅 Calendar\n\n| Time | Event |\n| --- | --- |\n| 9:00 | Standup |';
+    expect(splitAgentMessageIntoBubbles(content)).toEqual([
+      '## 📅 Calendar',
+      '| Time | Event |\n| --- | --- |\n| 9:00 | Standup |',
+    ]);
+  });
+
+  it('still groups body paragraphs that follow a table under their heading', () => {
+    const content =
+      '## 📅 Calendar\n\n| Time | Event |\n| --- | --- |\n| 9:00 | Standup |\n\n## ✅ Tasks\n\n- Ship the PR';
+    expect(splitAgentMessageIntoBubbles(content)).toEqual([
+      '## 📅 Calendar',
+      '| Time | Event |\n| --- | --- |\n| 9:00 | Standup |',
+      '## ✅ Tasks\n\n- Ship the PR',
+    ]);
+  });
+
+  it('folds a trailing body-less heading into the previous bubble', () => {
+    const content = '## 📅 Calendar\n\n- 9:00 Standup\n\n## ✅ Tasks';
+    expect(splitAgentMessageIntoBubbles(content)).toEqual([
+      '## 📅 Calendar\n\n- 9:00 Standup\n\n## ✅ Tasks',
+    ]);
+  });
+
+  it('does not treat inline bold emphasis with trailing prose as a heading', () => {
+    // Only a fully-bold line is a heading; emphasis followed by prose stays a
+    // plain paragraph so ordinary content is not misclassified.
+    const content = '**Heads up:** the meeting moved\n\nSee you at 3pm';
+    expect(splitAgentMessageIntoBubbles(content)).toEqual([
+      '**Heads up:** the meeting moved',
+      'See you at 3pm',
+    ]);
+  });
 });
 
 describe('parseMarkdownTable', () => {

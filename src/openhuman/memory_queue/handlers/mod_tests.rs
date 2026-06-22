@@ -594,3 +594,89 @@ fn cap_embed_text_bounds_oversized_input() {
     let small = "hello world";
     assert_eq!(cap_embed_text(small), small);
 }
+
+/// C9: `prepare_extract` must score over the **full** on-disk body but leave
+/// the returned `PreparedExtract.chunk` holding only the ≤500-char preview —
+/// never the full body. This is the swap-then-restore guarantee that keeps a
+/// batch of N prepared items from retaining N full bodies in memory before
+/// finalize. We assert the body is read from disk (a body longer than the
+/// preview) yet the returned chunk content equals the preview again.
+#[tokio::test]
+async fn prepare_extract_scores_full_body_but_returns_preview() {
+    use crate::openhuman::memory::chat::{test_override, StaticChatProvider};
+    use crate::openhuman::memory_queue::types::ExtractChunkPayload;
+    use crate::openhuman::memory_store::chunks::store::upsert_chunks;
+    use crate::openhuman::memory_store::chunks::types::{
+        chunk_id, Chunk, Metadata, SourceKind, SourceRef,
+    };
+    use std::sync::Arc;
+
+    let (_tmp, cfg) = test_config();
+    let ts = chrono::Utc.timestamp_millis_opt(1_700_000_000_000).unwrap();
+
+    // Full body is > 500 chars so the stored preview is a strict prefix and
+    // is observably different from the body the scorer reads off disk.
+    let body: String = "the quarterly planning notes from the engineering sync covering rollout sequencing and staffing. "
+        .repeat(12);
+    assert!(body.len() > 500, "test body must exceed the preview cap");
+    let expected_preview: String = body.chars().take(500).collect();
+
+    let chunk = Chunk {
+        id: chunk_id(SourceKind::Chat, "slack:#eng", 0, "c9-extract-seed"),
+        content: body.clone(),
+        metadata: Metadata {
+            source_kind: SourceKind::Chat,
+            source_id: "slack:#eng".into(),
+            owner: "alice".into(),
+            timestamp: ts,
+            time_range: (ts, ts),
+            tags: vec![],
+            source_ref: Some(SourceRef::new("slack://x")),
+            path_scope: None,
+        },
+        token_count: 64,
+        seq_in_source: 0,
+        created_at: ts,
+        partial_message: false,
+    };
+    // upsert_chunks stores only the ≤500-char preview in the `content` column.
+    upsert_chunks(&cfg, &[chunk.clone()]).unwrap();
+    // Stage the full body to disk so `read_chunk_body` returns it.
+    let content_root = cfg.memory_tree_content_root();
+    std::fs::create_dir_all(&content_root).unwrap();
+    let staged = content_store::stage_chunks(&content_root, &[chunk.clone()]).unwrap();
+    with_connection(&cfg, |conn| {
+        let tx = conn.unchecked_transaction()?;
+        crate::openhuman::memory_store::chunks::store::upsert_staged_chunks_tx(&tx, &staged)?;
+        tx.commit()?;
+        Ok(())
+    })
+    .unwrap();
+
+    let payload = ExtractChunkPayload {
+        chunk_id: chunk.id.clone(),
+    };
+    let job = mk_running_job(
+        JobKind::ExtractChunk,
+        serde_json::to_string(&payload).unwrap(),
+    );
+
+    // Pin a static (offline) chat provider so any borderline LLM consult is
+    // deterministic and never touches the network.
+    let prepared = test_override::with_provider(
+        Arc::new(StaticChatProvider::new("[]")),
+        prepare_extract(&cfg, &job),
+    )
+    .await
+    .unwrap()
+    .expect("seeded chunk must produce a PreparedExtract");
+
+    assert_eq!(
+        prepared.chunk.content, expected_preview,
+        "returned chunk must hold the restored preview, not the full body"
+    );
+    assert_ne!(
+        prepared.chunk.content, body,
+        "returned chunk must NOT retain the full on-disk body"
+    );
+}

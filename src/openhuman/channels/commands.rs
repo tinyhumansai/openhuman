@@ -328,6 +328,7 @@ mod tests {
         config.channels_config = crate::openhuman::config::ChannelsConfig::default();
         config.channels_config.telegram = Some(TelegramConfig {
             bot_token: "fake:token".into(),
+            chat_id: None,
             allowed_users: vec!["user1".into()],
             stream_mode: StreamMode::default(),
             draft_update_interval_ms: 2000,
@@ -385,6 +386,7 @@ mod tests {
         config.channels_config = crate::openhuman::config::ChannelsConfig::default();
         config.channels_config.telegram = Some(TelegramConfig {
             bot_token: "fake".into(),
+            chat_id: None,
             allowed_users: vec![],
             stream_mode: StreamMode::default(),
             draft_update_interval_ms: 2000,

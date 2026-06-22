@@ -95,6 +95,63 @@ impl ProactiveMessageSubscriber {
             *guard = channel;
         }
     }
+
+    /// Share this subscriber's active-channel handle so the runtime can update it
+    /// in place after construction (see [`register_active_channel_handle`]).
+    pub fn active_channel_handle(&self) -> Arc<RwLock<Option<String>>> {
+        Arc::clone(&self.active_channel)
+    }
+}
+
+/// Handle to the live proactive subscriber's `active_channel`, registered at
+/// channel-runtime startup (issue #3712 — "switch default channel
+/// Telegram↔Discord"). The `channels_set_default` RPC mutates this exact handle
+/// via [`set_runtime_active_channel`] so a default-channel switch from the UI
+/// takes effect without a restart. Only the full channel runtime registers
+/// (the web-only subscriber can't deliver externally), and nothing registers in
+/// unit tests — so [`set_runtime_active_channel`] is a no-op there and never
+/// leaks across the parallel test suite. The choice is also persisted to
+/// `config.channels_config.active_channel`, which seeds the handle on next start.
+static ACTIVE_CHANNEL_HANDLE: std::sync::OnceLock<RwLock<Option<Arc<RwLock<Option<String>>>>>> =
+    std::sync::OnceLock::new();
+
+fn active_channel_handle_slot() -> &'static RwLock<Option<Arc<RwLock<Option<String>>>>> {
+    ACTIVE_CHANNEL_HANDLE.get_or_init(|| RwLock::new(None))
+}
+
+/// Register the live subscriber's active-channel handle so the RPC can update it
+/// at runtime. Called once from channel-runtime startup; the latest registration
+/// wins.
+pub fn register_active_channel_handle(handle: Arc<RwLock<Option<String>>>) {
+    if let Ok(mut slot) = active_channel_handle_slot().write() {
+        *slot = Some(handle);
+    }
+}
+
+/// Update the live proactive subscriber's active channel. No-op when no
+/// subscriber has registered a handle (e.g. unit tests, or before the channel
+/// runtime starts) — config persistence still applies and the value is read at
+/// next startup.
+pub fn set_runtime_active_channel(channel: Option<String>) {
+    // Clone the Arc out and drop the slot read-guard before locking the handle,
+    // so we never hold two locks at once and the borrow doesn't outlive the read.
+    let handle = match active_channel_handle_slot().read() {
+        Ok(slot) => slot.clone(),
+        Err(_) => return,
+    };
+    let Some(handle) = handle else {
+        tracing::debug!("[proactive] set_runtime_active_channel: no live subscriber registered");
+        return;
+    };
+    // Bind the guard out of the match (rather than `if let`) so the write-lock
+    // temporary is dropped before `handle`, avoiding an E0597 borrow on the
+    // local `handle`.
+    let mut guard = match handle.write() {
+        Ok(guard) => guard,
+        Err(_) => return,
+    };
+    tracing::debug!(channel = ?channel, "[proactive] runtime active channel updated");
+    *guard = channel;
 }
 
 #[async_trait]
@@ -159,6 +216,8 @@ impl EventHandler for ProactiveMessageSubscriber {
         });
 
         // 2. If an active external channel is configured, deliver there too.
+        //    The `channels_set_default` RPC mutates this handle in place (issue
+        //    #3712), so reading it here picks up a live default-channel switch.
         let active = self
             .active_channel
             .read()
@@ -173,6 +232,25 @@ impl EventHandler for ProactiveMessageSubscriber {
 
             let key = channel_name.to_ascii_lowercase();
             if let Some(ch) = self.channels_by_name.get(&key) {
+                // Resolve a delivery target before doing any work. Proactive
+                // sends carry no inbound recipient, so the channel must supply
+                // its configured default (e.g. Discord's `channel_id`). Channels
+                // with no resolvable target (e.g. Telegram, which has no stored
+                // default chat) are skipped with a warning rather than handed an
+                // empty recipient that would hit the platform API with a blank
+                // chat/channel id (#3794 review — Codex P2). Web delivery above
+                // already happened, so skipping only drops the external echo.
+                let Some(recipient) = ch.proactive_target() else {
+                    tracing::warn!(
+                        source = %source,
+                        channel = %key,
+                        "[proactive] active external channel has no configured \
+                         delivery target for recipient-less proactive messages; \
+                         skipping external delivery (web delivery unaffected)"
+                    );
+                    return;
+                };
+
                 tracing::debug!(
                     source = %source,
                     channel = %key,
@@ -223,7 +301,7 @@ impl EventHandler for ProactiveMessageSubscriber {
                     }
                 }
 
-                let send_result = ch.send(&SendMessage::new(message, "")).await;
+                let send_result = ch.send(&SendMessage::new(message, &recipient)).await;
                 // Record the terminal status on the approval audit
                 // row before we log the outcome — best-effort, see
                 // #2135. `record_execution` itself logs write
@@ -281,12 +359,40 @@ mod tests {
     struct MockChannel {
         name: String,
         send_count: Arc<AtomicUsize>,
+        /// Configured proactive delivery target. `Some` ⇒ the channel can
+        /// receive recipient-less proactive sends; `None` ⇒ proactive routing
+        /// skips it (models Telegram, which has no stored default chat).
+        target: Option<String>,
+    }
+
+    impl MockChannel {
+        /// A channel that *can* receive proactive sends (target defaults to its
+        /// own name, mirroring Discord's configured `channel_id`).
+        fn new(name: &str, send_count: Arc<AtomicUsize>) -> Self {
+            Self {
+                name: name.to_string(),
+                send_count,
+                target: Some(name.to_string()),
+            }
+        }
+
+        /// A channel with no resolvable proactive target (e.g. Telegram).
+        fn without_target(name: &str, send_count: Arc<AtomicUsize>) -> Self {
+            Self {
+                name: name.to_string(),
+                send_count,
+                target: None,
+            }
+        }
     }
 
     #[async_trait]
     impl Channel for MockChannel {
         fn name(&self) -> &str {
             &self.name
+        }
+        fn proactive_target(&self) -> Option<String> {
+            self.target.clone()
         }
         async fn send(&self, _message: &SendMessage) -> anyhow::Result<()> {
             self.send_count.fetch_add(1, Ordering::SeqCst);
@@ -315,10 +421,7 @@ mod tests {
     #[tokio::test]
     async fn routes_to_active_external_channel() {
         let send_count = Arc::new(AtomicUsize::new(0));
-        let ch: Arc<dyn Channel> = Arc::new(MockChannel {
-            name: "telegram".into(),
-            send_count: Arc::clone(&send_count),
-        });
+        let ch: Arc<dyn Channel> = Arc::new(MockChannel::new("telegram", Arc::clone(&send_count)));
         let map: HashMap<String, Arc<dyn Channel>> = [("telegram".into(), ch)].into();
         let sub = ProactiveMessageSubscriber::new(Arc::new(map), Some("telegram".into()));
 
@@ -328,12 +431,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn skips_external_when_channel_has_no_proactive_target() {
+        // The active channel is the configured default, but it has no resolvable
+        // delivery target (e.g. Telegram with no stored chat). Proactive routing
+        // must skip it rather than calling `send` with an empty recipient
+        // (#3794 review — Codex P2).
+        let send_count = Arc::new(AtomicUsize::new(0));
+        let ch: Arc<dyn Channel> = Arc::new(MockChannel::without_target(
+            "telegram",
+            Arc::clone(&send_count),
+        ));
+        let map: HashMap<String, Arc<dyn Channel>> = [("telegram".into(), ch)].into();
+        let sub = ProactiveMessageSubscriber::new(Arc::new(map), Some("telegram".into()));
+
+        sub.handle(&proactive_event()).await;
+
+        assert_eq!(send_count.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
     async fn skips_external_when_active_is_web() {
         let send_count = Arc::new(AtomicUsize::new(0));
-        let ch: Arc<dyn Channel> = Arc::new(MockChannel {
-            name: "telegram".into(),
-            send_count: Arc::clone(&send_count),
-        });
+        let ch: Arc<dyn Channel> = Arc::new(MockChannel::new("telegram", Arc::clone(&send_count)));
         let map: HashMap<String, Arc<dyn Channel>> = [("telegram".into(), ch)].into();
         let sub = ProactiveMessageSubscriber::new(Arc::new(map), Some("web".into()));
 
@@ -346,10 +465,7 @@ mod tests {
     #[tokio::test]
     async fn skips_external_when_active_is_none() {
         let send_count = Arc::new(AtomicUsize::new(0));
-        let ch: Arc<dyn Channel> = Arc::new(MockChannel {
-            name: "telegram".into(),
-            send_count: Arc::clone(&send_count),
-        });
+        let ch: Arc<dyn Channel> = Arc::new(MockChannel::new("telegram", Arc::clone(&send_count)));
         let map: HashMap<String, Arc<dyn Channel>> = [("telegram".into(), ch)].into();
         let sub = ProactiveMessageSubscriber::new(Arc::new(map), None);
 
@@ -361,10 +477,7 @@ mod tests {
     #[tokio::test]
     async fn runtime_update_active_channel() {
         let send_count = Arc::new(AtomicUsize::new(0));
-        let ch: Arc<dyn Channel> = Arc::new(MockChannel {
-            name: "discord".into(),
-            send_count: Arc::clone(&send_count),
-        });
+        let ch: Arc<dyn Channel> = Arc::new(MockChannel::new("discord", Arc::clone(&send_count)));
         let map: HashMap<String, Arc<dyn Channel>> = [("discord".into(), ch)].into();
         let sub = ProactiveMessageSubscriber::new(Arc::new(map), None);
 
@@ -381,10 +494,7 @@ mod tests {
     #[tokio::test]
     async fn ignores_non_proactive_events() {
         let send_count = Arc::new(AtomicUsize::new(0));
-        let ch: Arc<dyn Channel> = Arc::new(MockChannel {
-            name: "telegram".into(),
-            send_count: Arc::clone(&send_count),
-        });
+        let ch: Arc<dyn Channel> = Arc::new(MockChannel::new("telegram", Arc::clone(&send_count)));
         let map: HashMap<String, Arc<dyn Channel>> = [("telegram".into(), ch)].into();
         let sub = ProactiveMessageSubscriber::new(Arc::new(map), Some("telegram".into()));
 
