@@ -451,6 +451,62 @@ fn is_insufficient_credits_failure_does_not_halt_shell_jobs() {
     ));
 }
 
+// TAURI-RUST-BMW — a managed-backend 400 "Insufficient budget"
+// (USER_INSUFFICIENT_CREDITS) leaks from a cron-fired agent job through
+// `last_agent_error`. `is_budget_exhausted_failure` must consult the budget
+// classifier so the retry loop halts on the first occurrence (a permanent
+// billing state) instead of retrying N times and reporting
+// `failure=retries_exhausted` to Sentry — the tag-gated `is_budget_event`
+// `before_send` filter never matched this cron re-report.
+#[test]
+fn is_budget_exhausted_failure_matches_verbatim_400_in_agent_error() {
+    let wire = r#"OpenHuman API error (400 Bad Request): {"success":false,"error":"Insufficient budget","errorCode":"USER_INSUFFICIENT_CREDITS"}"#;
+    assert!(
+        is_budget_exhausted_failure(&JobType::Agent, Some(wire), AGENT_JOB_USER_FAILURE_MESSAGE),
+        "raw agent error carrying the 400 budget body must trip the halt"
+    );
+}
+
+// Defense-in-depth: classify even if a future path surfaces the raw 400 in
+// `last_output` rather than `last_agent_error`.
+#[test]
+fn is_budget_exhausted_failure_matches_when_only_output_carries_signal() {
+    let wire = r#"OpenHuman API error (400 Bad Request): budget exceeded — add credits"#;
+    assert!(is_budget_exhausted_failure(&JobType::Agent, None, wire));
+}
+
+// Negative guard: the canned user-facing message and an ordinary provider
+// error must NOT halt — those are what the retry loop +
+// `failure=retries_exhausted` capture exist for.
+#[test]
+fn is_budget_exhausted_failure_does_not_match_non_budget_errors() {
+    assert!(!is_budget_exhausted_failure(
+        &JobType::Agent,
+        Some(AGENT_JOB_USER_FAILURE_MESSAGE),
+        AGENT_JOB_USER_FAILURE_MESSAGE,
+    ));
+    let server_err =
+        r#"OpenHuman API error (500 Internal Server Error): {"error":"Internal server error"}"#;
+    assert!(!is_budget_exhausted_failure(
+        &JobType::Agent,
+        Some(server_err),
+        ""
+    ));
+}
+
+// Scope guard: shell jobs that echo a budget-shaped string keep their retry
+// semantics — only agent jobs route through the inference layer.
+#[test]
+fn is_budget_exhausted_failure_does_not_halt_shell_jobs() {
+    let wire = r#"OpenHuman API error (400 Bad Request): {"error":"Insufficient budget"}"#;
+    assert!(!is_budget_exhausted_failure(&JobType::Shell, None, wire));
+    assert!(!is_budget_exhausted_failure(
+        &JobType::Shell,
+        Some(wire),
+        wire
+    ));
+}
+
 #[tokio::test]
 async fn run_agent_job_returns_error_without_provider_key() {
     let tmp = TempDir::new().unwrap();
