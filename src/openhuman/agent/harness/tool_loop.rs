@@ -101,21 +101,32 @@ pub(crate) enum TerminalInferenceFailure {
 /// API key" and stop after a single attempt.
 ///
 /// Gating on these envelope markers scopes the classifier to genuinely
-/// delegated inference failures, every one of which surfaces wrapped in one of:
-///   * a provider HTTP-error envelope (`"<provider> API error (…)"`,
-///     `"<provider> Responses API error: …"`, `"<provider> streaming API error
-///     (…)"`) — all contain the `"api error"` substring,
+/// delegated inference failures. Every marker here is **harness-generated** —
+/// produced by our own reliable-chain rollup or sub-agent dispatch wrapper, NOT
+/// by a provider HTTP body that arbitrary tool stderr could forge:
 ///   * the reliable-chain exhaustion rollup (`"All providers/models failed"` /
-///     `"may not be available on your provider"`),
+///     `"may not be available on your provider"`, reliable.rs), and
 ///   * the sub-agent dispatch wrapper (`"failed and did not complete"`, see
-///     [`crate::openhuman::agent_orchestration::tools::dispatch`]).
+///     [`crate::openhuman::agent_orchestration::tools::dispatch::format_subagent_failure`]).
+///
+/// **Why the bare provider envelope is NOT a marker (Codex review #3779):** the
+/// raw provider-HTTP shape (`"<provider> API error (…)"`, `"<provider> Responses
+/// API error: …"`) is reproducible verbatim by a *recoverable* tool that is
+/// debugging its own API client — e.g. a `shell`/`run_code` script printing
+/// `OpenAI API error (400): invalid temperature` or `… model field is required`.
+/// Matching the bare `"api error"` substring there would let that script trip
+/// the broad provider-config classifier and HALT the whole turn after a single
+/// failed command with a misleading "fix your model in Settings → AI" message,
+/// even though the agent should just recover. Every *genuine* delegated
+/// inference failure additionally surfaces through one of the harness wrappers
+/// above (a sub-agent provider error reaches the orchestrator only via
+/// `dispatch::format_subagent_failure`; a direct reliable-chain exhaustion via
+/// the rollup), so dropping the bare provider envelope loses no real detection
+/// while closing the false-positive on tool stderr.
 ///
 /// [`is_budget_exhausted_message`]: crate::openhuman::inference::provider::is_budget_exhausted_message
 /// [`is_provider_config_rejection_message`]: crate::openhuman::inference::provider::is_provider_config_rejection_message
 const INFERENCE_FAILURE_ENVELOPE_MARKERS: &[&str] = &[
-    // Provider HTTP/Responses/streaming error envelopes from the inference
-    // layer (compatible_provider_impl.rs / compatible_helpers.rs / error_code.rs).
-    "api error",
     // Reliable-chain exhaustion rollup (reliable.rs::format_failure_aggregate).
     "all providers/models failed",
     "may not be available on your provider",
@@ -233,6 +244,7 @@ impl RepeatFailureGuard {
                 TerminalInferenceFailure::BudgetExhausted => format!(
                     "Stopping: the `{tool}` step failed because the account is out of inference \
                      budget/credits — every retry hits the same wall. Add credits to your account \
+                     (or, when using a custom/BYO provider, top up that provider's own account) \
                      and try again. Details:\n{}",
                     truncate_for_halt(result),
                 ),
