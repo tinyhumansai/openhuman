@@ -244,8 +244,7 @@ async fn fetch_catalog_uncached() -> Result<Vec<CatalogEntry>, String> {
         "[skill_registry] parsing catalog"
     );
 
-    let mut entries: Vec<CatalogEntry> =
-        raw_items.iter().filter_map(parse_hermes_entry).collect();
+    let mut entries: Vec<CatalogEntry> = raw_items.iter().filter_map(parse_hermes_entry).collect();
     ensure_unique_catalog_ids(&mut entries);
 
     tracing::info!(count = entries.len(), "[skill_registry] catalog indexed");
@@ -790,12 +789,24 @@ mod tests {
         // Every id in the catalog is globally unique.
         let ids: std::collections::HashSet<&String> = entries.iter().map(|e| &e.id).collect();
         assert_eq!(ids.len(), entries.len());
+
+        // No collisions → ids are left untouched (early-return path).
+        let mut unique = vec![make("only-one", "delta"), make("only-two", "epsilon")];
+        ensure_unique_catalog_ids(&mut unique);
+        assert_eq!(unique[0].id, "only-one");
+        assert_eq!(unique[1].id, "only-two");
     }
 
     #[test]
     fn short_hash_is_stable_and_differs_by_input() {
-        assert_eq!(short_hash("https://example.com/a"), short_hash("https://example.com/a"));
-        assert_ne!(short_hash("https://example.com/a"), short_hash("https://example.com/b"));
+        assert_eq!(
+            short_hash("https://example.com/a"),
+            short_hash("https://example.com/a")
+        );
+        assert_ne!(
+            short_hash("https://example.com/a"),
+            short_hash("https://example.com/b")
+        );
         assert_eq!(short_hash("anything").len(), 8);
     }
 
